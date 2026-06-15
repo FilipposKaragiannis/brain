@@ -8,6 +8,11 @@
       "name": "spec-driven-development",
       "source": "./plugins/spec-driven-development",
       "description": "Adds a set of spec-driven-development skills for sdd workflows"
+    },
+    {
+      "name": "workstream",
+      "source": "./plugins/workstream",
+      "description": "GitHub-native solo spec-driven workflow: grill, publish a concise epic issue, slice into sub-issues, track progress natively, ship one slice at a time, and open a reviewed PR"
     }
   ]
 }
