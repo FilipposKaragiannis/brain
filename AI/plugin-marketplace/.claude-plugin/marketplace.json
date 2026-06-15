@@ -1,0 +1,13 @@
+{
+  "name": "brain-plugins",
+  "owner": {
+    "name": "Filip Karagiannis"
+  },
+  "plugins": [
+    {
+      "name": "spec-driven-development",
+      "source": "./plugins/spec-driven-development",
+      "description": "Adds a set of spec-driven-development skills for sdd workflows"
+    }
+  ]
+}
