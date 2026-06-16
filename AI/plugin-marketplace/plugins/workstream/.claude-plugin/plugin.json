@@ -1,5 +1,5 @@
 {
-  "name": "ws",
+  "name": "workstream",
   "description": "GitHub-native, solo spec-driven workflow: grill a plan, publish a concise epic issue, slice it into sub-issues, track progress natively, ship one slice at a time, and open a reviewed PR.",
   "version": "1.0.0",
   "author": {
