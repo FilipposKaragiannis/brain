@@ -25,6 +25,7 @@ If you haven't explored the codebase, do so. Titles and bodies use the `## Gloss
 - Prefer many thin slices over few thick ones.
 - **Size** each slice **S / M / L**. Anything that feels **XL → split it** before publishing (flag it and propose the split).
 - **Sequence** the slices in intended order. If a slice genuinely cannot start until another is done, note `Blocked by #N`. Don't over-declare blockers — only real ones.
+- **Refactor mode** — when the parent is a refactor (e.g. from `improve`), treat each slice as a Martin Fowler micro-step: the smallest change that leaves the program working and green. Sequence them so the codebase is shippable and tests pass after *every* slice — prefer many tiny behaviour-preserving slices over a few big ones, even more so than for feature work.
 
 ## 4. Quiz the user once
 

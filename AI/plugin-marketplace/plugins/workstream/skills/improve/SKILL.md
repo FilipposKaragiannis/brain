@@ -1,11 +1,11 @@
 ---
-name: improve-codebase-architecture
-description: Find deepening opportunities in a codebase, informed by the domain language in CONTEXT.md and the decisions in .progress/adr/. Use when the user wants to improve architecture, find refactoring opportunities, consolidate tightly-coupled modules, or make a codebase more testable and AI-navigable.
+name: improve
+description: The architecture-improvement on-ramp for workstream. Find "deepening" opportunities — refactors that turn shallow modules into deep ones for testability and AI-navigability — render them as a visual HTML report, grill the one you pick, then feed it into to-epic / to-task → to-subissues. Informed by the `## Glossary` in CLAUDE.md and the ADRs in docs/adr/. Use to improve architecture, find refactoring opportunities, consolidate tightly-coupled modules, or make a codebase more testable.
 ---
 
-# Improve Codebase Architecture
+# workstream: improve
 
-Surface architectural friction and propose **deepening opportunities** — refactors that turn shallow modules into deep ones. The aim is testability and AI-navigability.
+The architecture-improvement on-ramp. Surface architectural friction and propose **deepening opportunities** — refactors that turn shallow modules into deep ones. The aim is testability and AI-navigability. Once a candidate is chosen and grilled, hand it to the rest of the pipeline (`to-epic` / `to-task` → `to-subissues` → `ship`) — this skill discovers and specifies; it does not implement.
 
 ## Glossary
 
@@ -26,13 +26,13 @@ Key principles (see [LANGUAGE.md](LANGUAGE.md) for the full list):
 - **The interface is the test surface.**
 - **One adapter = hypothetical seam. Two adapters = real seam.**
 
-This skill is _informed_ by the project's domain model. The domain language gives names to good seams; ADRs record decisions the skill should not re-litigate.
+This skill is _informed_ by the project's domain model. The domain language gives names to good seams; ADRs record decisions the skill should not re-litigate. Workstream keeps the domain vocabulary in the `## Glossary` section of `CLAUDE.md` and ADRs in `docs/adr/` (set up by `init`, maintained by `grill`).
 
 ## Process
 
 ### 1. Explore
 
-Read the project's domain glossary and any ADRs in the area you're touching first.
+Read the domain glossary — the `## Glossary` section of `CLAUDE.md` — and any ADRs in `docs/adr/` for the area you're touching first.
 
 Then use the Agent tool with `subagent_type=Explore` to walk the codebase. Don't follow rigid heuristics — explore organically and note where you experience friction:
 
@@ -50,7 +50,7 @@ Write a self-contained HTML file to the OS temp directory so nothing lands in th
 
 The report uses **Tailwind via CDN** for layout and styling, and **Mermaid via CDN** for diagrams where a graph/flow/sequence reliably communicates the structure. Mix Mermaid with hand-crafted CSS/SVG visuals — use Mermaid when relationships are graph-shaped (call graphs, dependencies, sequences), and hand-built divs/SVG when you want something more editorial (mass diagrams, cross-sections, collapse animations). Each candidate gets a **before/after visualisation**. Be visual.
 
-For each candidate, the same template as before, but rendered as a card:
+For each candidate, render a card with:
 
 - **Files** — which files/modules are involved
 - **Problem** — why the current architecture is causing friction
@@ -61,21 +61,30 @@ For each candidate, the same template as before, but rendered as a card:
 
 End the report with a **Top recommendation** section: which candidate you'd tackle first and why.
 
-**Use CONTEXT.md vocabulary for the domain, and [LANGUAGE.md](LANGUAGE.md) vocabulary for the architecture.** If `CONTEXT.md` defines "Order," talk about "the Order intake module" — not "the FooBarHandler," and not "the Order service."
+**Use the `## Glossary` vocabulary for the domain, and [LANGUAGE.md](LANGUAGE.md) vocabulary for the architecture.** If the glossary defines "Order," talk about "the Order intake module" — not "the FooBarHandler," and not "the Order service."
 
-**ADR conflicts**: if a candidate contradicts an existing ADR, only surface it when the friction is real enough to warrant revisiting the ADR. Mark it clearly in the card (e.g. a warning callout: _"contradicts ADR-0007 — but worth reopening because…"_). Don't list every theoretical refactor an ADR forbids.
+**ADR conflicts**: if a candidate contradicts an existing ADR in `docs/adr/`, only surface it when the friction is real enough to warrant revisiting the ADR. Mark it clearly in the card (e.g. a warning callout: _"contradicts ADR-0007 — but worth reopening because…"_). Don't list every theoretical refactor an ADR forbids.
 
 See [HTML-REPORT.md](HTML-REPORT.md) for the full HTML scaffold, diagram patterns, and styling guidance.
 
 Do NOT propose interfaces yet. After the file is written, ask the user: "Which of these would you like to explore?"
 
-### 3. Grilling loop
+### 3. Grill the chosen candidate
 
-Once the user picks a candidate, drop into a grilling conversation. Walk the design tree with them — constraints, dependencies, the shape of the deepened module, what sits behind the seam, what tests survive.
+Once the user picks one, drop into a grilling conversation — the same discipline as the `grill` skill, applied to a deepening. Walk the design tree with them: constraints, dependencies, the shape of the deepened module, what sits behind the seam, which tests survive.
 
-Side effects happen inline as decisions crystallize:
+The vocabulary and decision side-effects follow `grill`'s conventions — keep them inline as the design crystallizes:
 
-- **Naming a deepened module after a concept not in `CONTEXT.md`?** Add the term to `CONTEXT.md` — same discipline as `/grill-with-docs` (see [CONTEXT-FORMAT.md](../grill-with-docs/CONTEXT-FORMAT.md)). Create the file lazily if it doesn't exist.
-- **Sharpening a fuzzy term during the conversation?** Update `CONTEXT.md` right there.
-- **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral reasons ("not worth it right now") and self-evident ones. See [ADR-FORMAT.md](../grill-with-docs/ADR-FORMAT.md).
+- **Naming a deepened module after a concept not yet in the glossary?** Add the term to the `## Glossary` section of `CLAUDE.md` right there.
+- **Sharpening a fuzzy term during the conversation?** Update the `## Glossary` inline.
+- **User rejects the candidate with a load-bearing reason?** Offer an ADR, framed as: _"Want me to record this as an ADR so future architecture reviews don't re-suggest it?"_ Apply the same 3-gate test `grill` uses (hard to reverse + surprising + a real trade-off), write it to `docs/adr/NNNN-slug.md`, and only offer when the reason would actually be needed by a future explorer to avoid re-suggesting the same thing — skip ephemeral ("not worth it right now") and self-evident reasons.
 - **Want to explore alternative interfaces for the deepened module?** See [INTERFACE-DESIGN.md](INTERFACE-DESIGN.md).
+
+### 4. Hand off to the pipeline
+
+Once the deepening is specified, publish it like any other workstream item — don't implement it here:
+
+- **Multi-slice refactor** → `to-epic` to publish the concise epic, then `to-subissues` to break it into tiny, safe slices (use its **refactor mode** — each slice a behaviour-preserving micro-step that leaves the program green).
+- **Single self-contained deepening** → `to-task`, then `ship`.
+
+State which you recommend and why, then point the user at the next skill.
