@@ -1,78 +1,90 @@
 ---
 name: review
-description: Review the changes since a fixed point (commit, branch, tag, or merge-base) along two axes — Standards (does the code follow this repo's documented coding standards?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents and reports them side by side. Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
+description: Two-axis review of the changes since a fixed point (commit, branch, tag, merge-base, or a PR) — Standards (does the code follow this repo's documented standards, glossary, and ADRs?) and Spec (does it implement what the originating issue/PRD asked, criterion by criterion?). Runs both axes as parallel sub-agents, keeps them separate, and returns a severity-graded verdict per axis. Complements code-review (bugs/cleanups) and verify (does it actually run). Use when the user wants to review a branch, a PR, work-in-progress changes, or asks to "review since X".
 ---
 
 # Review
 
-Two-axis review of the diff between `HEAD` and a fixed point the user supplies:
+Two-axis review of the diff between a fixed point (commit, branch, tag, merge-base, or a PR) and the work under review:
 
-- **Standards** — does the code conform to this repo's documented coding standards?
-- **Spec** — does the code faithfully implement the originating issue / PRD / spec?
+- **Standards** — does the code conform to this repo's documented standards, `## Glossary`, and ADRs?
+- **Spec** — does it implement what the originating issue / PRD asked, **criterion by criterion**?
 
-Both axes run as **parallel sub-agents** so they don't pollute each other's context, then this skill aggregates their findings.
+Both axes run as **parallel sub-agents** (so they don't pollute each other's context); this skill aggregates them, keeps them separate, and stamps a **verdict** on each.
 
-Issue references are resolved from this repo's GitHub issues via the `gh` CLI.
+**This is not a bug hunt — stay in lane and point elsewhere for the rest:**
+
+| Question | Skill |
+|---|---|
+| Does it follow the rules and match the ask? | **review** (this) |
+| Are there correctness bugs / cleanups? | `code-review` |
+| Does it actually run? | `verify` |
 
 ## Process
 
 ### 1. Pin the fixed point
 
-Whatever the user said is the fixed point — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. Don't be opinionated; pass it through. If they didn't specify one, ask: "Review against what — a branch, a commit, or `main`?" Don't proceed until you have it.
+- **`review <PR#>` or a PR URL** → PR mode. Read it with `gh pr view <#> --json title,body,baseRefName,headRefName,url`; diff with `gh pr diff <#>`. The fixed point is the PR's base branch; the spec comes from `Resolves/Closes #n` in the PR body.
+- **An explicit fixed point** (SHA, branch, tag, `main`, `HEAD~5`) → pass it through; don't be opinionated.
+- **Nothing given** → if you're on a non-default branch, default to its merge-base with the default branch and say so ("reviewing against `main`…"); only ask if you're on the default branch with no other signal.
 
-Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
+Capture once: `git diff <fixed-point>...HEAD` (three-dot, against the merge-base) and the commit list `git log <fixed-point>..HEAD --oneline`. **Empty diff → STOP** ("nothing to review since X").
 
-### 2. Identify the spec source
+### 2. Resolve the spec source
 
-Look for the originating spec, in this order:
+First hit wins:
 
-1. Issue references in the commit messages (`#123`, `Closes #45`, etc.) — fetch with `gh issue view <n>`.
-2. A path the user passed as an argument.
-3. A PRD/spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
-4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+1. PR mode → `Resolves #n` / `Closes #n` in the PR body.
+2. Branch named `ws/<issue#>-slug` → that issue: `gh issue view <n> --json title,body,labels`.
+3. Issue references in the commit messages (`#123`, `Closes #45`).
+4. A path the user passed.
+5. A PRD/spec under `docs/`, `specs/`, or `.scratch/` matching the branch/feature.
+6. Nothing → the Spec axis skips and reports "no spec available."
 
-### 3. Identify the standards sources
+If the issue has a parent epic, fetch it too — its **Scope** and **Out-of-scope** frame the slice (as `ship` treats them).
 
-Anything in the repo that documents how code should be written. Common locations:
+### 3. Collect the standards sources
 
-- `CLAUDE.md`, `AGENTS.md`
-- `CONTRIBUTING.md`
-- the `## Glossary` section of `CLAUDE.md` (the project's domain vocabulary — the diff should use these terms consistently)
-- `docs/adr/` (architectural decisions are standards)
-- `.editorconfig`, `eslint.config.*`, `biome.json`, `prettier.config.*`, `tsconfig.json` (machine-enforced standards — note them but don't re-check what tooling already checks)
-- Any `STYLE.md`, `STANDARDS.md`, `STYLEGUIDE.md`, or similar at the repo root or under `docs/`
+Everything that documents how code should be written here:
 
-Collect the list of files. The **Standards** sub-agent will read them.
+- `CLAUDE.md` / `AGENTS.md`, and especially its **`## Glossary`** (the domain vocabulary — the diff must use these terms).
+- `docs/adr/` — architecture decisions are standards.
+- `CONTRIBUTING.md`, any `STYLE.md` / `STANDARDS.md` / `STYLEGUIDE.md`.
+- Documented testing conventions (e.g. "tests verify behavior through public interfaces").
+- Machine-enforced config (`.editorconfig`, `eslint.*`, `biome.json`, `tsconfig.json`) — note it, but **don't re-check what tooling already enforces**.
 
-### 4. Spawn both sub-agents in parallel
+Collect the paths; the sub-agent reads them.
 
-Send a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both.
+### 4. Spawn both axes in parallel
 
-**Standards sub-agent prompt** — include:
+One message, two `Agent` calls (`general-purpose`). For each, read the matching brief from this skill's folder and send it as the agent's instructions, with the dynamic context filled in at the top:
 
-- The full diff command and commit list.
-- The list of standards-source files you found in step 3.
-- The brief: "Read the standards docs. Then read the diff. Report — per file/hunk where relevant — every place the diff violates a documented standard. Treat the `## Glossary` in CLAUDE.md (if the repo has one) as a standard: flag terminology drift — any new or changed identifier, type, comment, or user-facing string that uses a term the glossary lists under 'Aliases to avoid', or coins a fresh synonym for a concept the glossary already names — and name the canonical term it should use. Cite the standard (file + the rule). Distinguish hard violations from judgement calls. Skip anything tooling enforces. Under 400 words."
+- **Standards** → [STANDARDS.md](STANDARDS.md) + the diff command, commit list, and the standards-source paths from step 3.
+- **Spec** → [SPEC.md](SPEC.md) + the diff command, commit list, the spec (path or fetched contents), and the epic scope if any.
 
-**Spec sub-agent prompt** — include:
+Skip the Spec agent if there's no spec; note it in the report.
 
-- The diff command and commit list.
-- The path or fetched contents of the spec.
-- The brief: "Read the spec. Then read the diff. Report: (a) requirements the spec asked for that are missing or partial; (b) behaviour in the diff that wasn't asked for (scope creep); (c) requirements that look implemented but where the implementation looks wrong. Quote the spec line for each finding. Under 400 words."
+### 5. Aggregate + verdict
 
-If the spec is missing, skip the Spec sub-agent and note this in the final report.
+Present the two reports under `## Standards` and `## Spec`, verbatim or lightly cleaned. **Do not merge or rerank** — the axes are deliberately independent so neither masks the other.
 
-### 5. Aggregate
+Both briefs grade findings on one scale: 🔴 **blocker** (must fix before merge) · 🟡 **should-fix** (real, but a judgement call) · ⚪ **nit** (minor). Stamp each axis with a verdict from its worst finding:
 
-Present the two reports under `## Standards` and `## Spec` headings, verbatim or lightly cleaned. Do **not** merge or rerank findings — the two axes are deliberately separate so the user can see them independently.
+- 🔴 **FAIL** — at least one blocker.
+- 🟡 **PASS WITH NITS** — only should-fix / nits.
+- 🟢 **PASS** — clean.
 
-End with a one-line summary: total findings per axis, and the worst single issue (if any) flagged.
+End with one line: the verdict per axis + the single worst finding overall. Then offer the next step:
+
+- PR mode, if the user wants it on the record → offer to post the verdict + findings as a PR comment (`gh pr comment`). **Confirm before posting.**
+- Both axes **PASS / PASS WITH NITS** → it's ready to open / advance the PR (on the workstream flow, hand to `to-pr`).
+- Any **FAIL** → recommend fixing the blockers and re-running review (on the workstream flow, back to `ship`).
 
 ## Why two axes
 
-A change can pass one axis and fail the other:
+A change can pass one and fail the other:
 
-- Code that follows every standard but implements the wrong thing → **Standards pass, Spec fail.**
-- Code that does exactly what the issue asked but breaks the project's conventions → **Spec pass, Standards fail.**
+- Follows every standard but builds the wrong thing → **Standards pass, Spec fail.**
+- Does exactly what the issue asked but breaks the conventions → **Spec pass, Standards fail.**
 
-Reporting them separately stops one axis from masking the other.
+Separate reports stop one axis from masking the other.

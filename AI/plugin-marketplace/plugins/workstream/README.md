@@ -82,6 +82,11 @@ If `ship` discovers a chosen issue is too big, it stops and offers `to-subissues
 - Ready to build the next slice → **ship**
 - Work's done, want it reviewed and merged → **to-pr**
 - "Where's this epic at?" → **board**
+- Want a read-only check before the PR → the standalone **`review`** skill (see Companion below)
+
+## Companion
+
+**`review`** is a separate, standalone skill (not bundled here) that pairs naturally with this flow: a read-only, two-axis review of the diff — **Standards** (does it follow `## Glossary` / ADRs / `CLAUDE.md`?) and **Spec** (does it implement the issue's acceptance criteria?) — with a severity-graded verdict per axis. It understands workstream conventions (`ws/<issue#>-slug` branches, `Resolves #n`, epic scope) and slots between `ship` and `to-pr`. Run it alongside `code-review` (bugs/cleanups) and `verify` (does it run) for full coverage.
 
 ## Notes
 
