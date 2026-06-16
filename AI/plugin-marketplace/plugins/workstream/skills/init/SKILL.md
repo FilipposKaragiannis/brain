@@ -1,5 +1,4 @@
 ---
-name: init
 description: Bootstrap a repo for the workstream flow — verify gh auth + a GitHub remote, create the size/epic labels, and stub a ## Glossary section in CLAUDE.md. Run once per repo before first use of grill, to-epic, or to-subissues.
 ---
 

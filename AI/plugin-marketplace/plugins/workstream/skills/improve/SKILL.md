@@ -1,5 +1,4 @@
 ---
-name: improve
 description: The architecture-improvement on-ramp for workstream. Find "deepening" opportunities — refactors that turn shallow modules into deep ones for testability and AI-navigability — render them as a visual HTML report, grill the one you pick, then feed it into to-epic / to-task → to-subissues. Informed by the `## Glossary` in CLAUDE.md and the ADRs in docs/adr/. Use to improve architecture, find refactoring opportunities, consolidate tightly-coupled modules, or make a codebase more testable.
 ---
 

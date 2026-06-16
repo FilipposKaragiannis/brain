@@ -1,5 +1,4 @@
 ---
-name: board
 description: Read-only progress dashboard for an epic — shows the native sub-issue progress rollup plus each slice's state, size, and whether it's ready or blocked. Never modifies anything.
 ---
 

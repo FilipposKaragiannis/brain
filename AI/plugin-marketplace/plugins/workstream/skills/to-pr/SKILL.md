@@ -1,5 +1,4 @@
 ---
-name: to-pr
 description: Take completed, verified work to a pull request — run the test suite green, show a concise diff summary and pause for the user's manual feel-test and approval, then commit on the working branch, push, and open a PR via gh (following the repo's conventions) that tags @codex and @claude for review. Use after ship.
 ---
 
