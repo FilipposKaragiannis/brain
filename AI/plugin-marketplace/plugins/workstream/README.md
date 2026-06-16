@@ -70,8 +70,9 @@ If `ship` discovers a chosen issue is too big, it stops and offers `to-subissues
 | **to-task** | Captures one small standalone issue (no epic, no decomposition). Ship it directly. |
 | **improve** | Architecture on-ramp: finds "deepening" opportunities (shallow→deep modules), renders a visual HTML report, grills the one you pick, then hands it to `to-epic`/`to-task`. Discovers & specs; never implements. |
 | **board** | Read-only dashboard for an epic — progress bar + each slice's state, size, and ready/blocked status. Never modifies anything. |
-| **ship** | Implements exactly one issue end-to-end: pick it (or suggest the next ready one), advise a split if it's too big, choose a test strategy (TDD / tests-after / none), verify each acceptance criterion, then finish via `to-pr` or a direct close. |
+| **ship** | Implements exactly one issue end-to-end: pick it (or suggest the next ready one), advise a split if it's too big, choose a test strategy — TDD (runs **tdd-task**), tests-after, or none — verify each acceptance criterion, then finish via `to-pr` or a direct close. |
 | **to-pr** | Takes verified work to a PR through three hard gates: **tests green → your manual feel-test + approval → commit/push/PR**. Opens the PR with `Resolves #n`, tags `@codex` and `@claude` for review, and marks the issue `status:in-review`. |
+| **tdd-task** | The red-green-refactor loop `ship` follows when you pick the TDD strategy: one failing test → minimal code → refactor, repeat. Tests verify behavior through public interfaces so they survive refactors. Bundled notes cover deep modules, mocking, interface design, and refactoring. |
 
 ## Which skill do I run?
 
