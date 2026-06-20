@@ -1,4 +1,5 @@
 ---
+name: help
 description: Display the SDD skill reference and workflow guide
 ---
 

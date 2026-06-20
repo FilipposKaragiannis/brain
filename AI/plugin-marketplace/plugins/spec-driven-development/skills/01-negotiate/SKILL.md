@@ -1,4 +1,5 @@
 ---
+name: 01-negotiate
 description: Conduct a structured requirements interview to extract feature specs
 ---
 

@@ -1,4 +1,5 @@
 ---
+name: ship
 description: Implement one issue end-to-end (an epic sub-issue or a standalone to-task issue) — pick it or let it suggest the next ready one, advise a sub-issue split first if the work is too complex, test it with one default behavior-test workflow (auto-selecting a TDD or no-test variant only for bug-repro/algorithmic or declarative work), verify against acceptance criteria, then either hand off to to-pr (moving it to "in review") or close it directly.
 ---
 

@@ -1,4 +1,5 @@
 ---
+name: to-task
 description: Capture a single small piece of work as one standalone GitHub issue — concise body, size label, no epic and no decomposition. Use when the work is one vertical slice that doesn't warrant an epic + sub-issues, then ship it directly.
 ---
 

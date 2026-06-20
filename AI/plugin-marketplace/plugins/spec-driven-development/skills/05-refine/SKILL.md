@@ -1,4 +1,5 @@
 ---
+name: 05-refine
 description: Validate task readiness and auto-split complex tasks
 ---
 

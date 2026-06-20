@@ -1,4 +1,5 @@
 ---
+name: 07-verify
 description: Verify a completed task against its acceptance criteria
 ---
 

@@ -1,0 +1,33 @@
+{
+  "name": "workstream",
+  "version": "1.1.0",
+  "description": "GitHub-native, solo spec-driven workflow for planning, slicing, tracking, shipping, and opening reviewed PRs.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": [
+    "github",
+    "issues",
+    "pull-requests",
+    "spec-driven-development",
+    "developer-workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Workstream",
+    "shortDescription": "Plan and ship GitHub issue work end to end",
+    "longDescription": "Adds a GitHub-native solo workflow for grilling a plan, publishing concise epic and task issues, slicing work into shippable sub-issues, tracking progress, implementing one slice at a time, and opening reviewed pull requests.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Grill this plan before I create issues",
+      "Create an epic from this conversation",
+      "Ship the next ready workstream issue"
+    ],
+    "brandColor": "#0F766E"
+  }
+}

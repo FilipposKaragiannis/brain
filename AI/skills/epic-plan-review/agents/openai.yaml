@@ -1,0 +1,4 @@
+interface:
+  display_name: "Epic Plan Review"
+  short_description: "Find pragmatic gaps in epics"
+  default_prompt: "Use $epic-plan-review to scrutinize this epic and its task breakdown for pragmatic gaps."

@@ -1,4 +1,5 @@
 ---
+name: 06-execute
 description: Implement a single task following clean-code principles with tests
 ---
 

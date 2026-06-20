@@ -1,4 +1,5 @@
 ---
+name: 03-decompose
 description: Break a PRD into independently executable tasks
 ---
 

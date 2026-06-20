@@ -1,4 +1,5 @@
 ---
+name: status
 description: Show the SDD status dashboard (read-only)
 ---
 

@@ -1,4 +1,5 @@
 ---
+name: 02-specify
 description: Generate a PRD from interview answers or feature description
 ---
 

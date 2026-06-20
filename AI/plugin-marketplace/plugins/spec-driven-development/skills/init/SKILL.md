@@ -1,4 +1,5 @@
 ---
+name: init
 description: Initialize the .specs/ directory for Spec-Driven Development
 ---
 

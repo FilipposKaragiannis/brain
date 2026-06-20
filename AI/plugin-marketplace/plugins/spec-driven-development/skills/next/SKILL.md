@@ -1,4 +1,5 @@
 ---
+name: next
 description: Pick the next ready task, execute it, and verify — all in one flow
 ---
 

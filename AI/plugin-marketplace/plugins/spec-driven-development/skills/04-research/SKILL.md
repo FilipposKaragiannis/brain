@@ -1,4 +1,5 @@
 ---
+name: 04-research
 description: Analyze task complexity by reading actual source code
 ---
 

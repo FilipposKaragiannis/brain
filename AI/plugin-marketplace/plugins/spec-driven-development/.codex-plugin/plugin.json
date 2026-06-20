@@ -1,0 +1,32 @@
+{
+  "name": "spec-driven-development",
+  "version": "1.0.1",
+  "description": "Plugin that encapsulates spec-driven development workflows.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": [
+    "spec-driven-development",
+    "prd",
+    "planning",
+    "developer-workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Spec-Driven Development",
+    "shortDescription": "Plan, decompose, execute, and verify SDD work",
+    "longDescription": "Adds a complete spec-driven development workflow for negotiating requirements, writing PRDs, decomposing work into tasks, researching complexity, refining readiness, executing tasks, and verifying acceptance criteria.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Help me turn a feature idea into a PRD",
+      "Decompose a PRD into executable tasks",
+      "Pick the next ready SDD task"
+    ],
+    "brandColor": "#2563EB"
+  }
+}
