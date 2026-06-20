@@ -1,5 +1,5 @@
 ---
-description: Implement one issue end-to-end (an epic sub-issue or a standalone to-task issue) — pick it or let it suggest the next ready one, advise a sub-issue split first if the work is too complex, choose a test strategy (TDD, tests-after, or none), verify against acceptance criteria, then either hand off to to-pr (moving it to "in review") or close it directly.
+description: Implement one issue end-to-end (an epic sub-issue or a standalone to-task issue) — pick it or let it suggest the next ready one, advise a sub-issue split first if the work is too complex, test it with one default behavior-test workflow (auto-selecting a TDD or no-test variant only for bug-repro/algorithmic or declarative work), verify against acceptance criteria, then either hand off to to-pr (moving it to "in review") or close it directly.
 ---
 
 # workstream: ship
@@ -18,7 +18,7 @@ Implement exactly ONE issue per run — a sub-issue from an epic, or a standalon
 gh issue view <#> --json title,body,labels
 ```
 
-Also read: the parent epic (if this issue has one), `CLAUDE.md` (conventions + `## Glossary`), any ADRs in `docs/adr/` for the area, and the existing code you'll touch. Mark the issue in progress: `gh issue edit <#> --add-assignee @me`.
+Also read: the parent epic (if this issue has one), `CLAUDE.md` (conventions + `## Glossary`), the repo's **code-standards docs** (e.g. `AGENTS.md` conventions, `docs/coding-conventions.md`, any `STANDARDS.md`), any ADRs in `docs/adr/` for the area, and the existing code you'll touch. Mark the issue in progress: `gh issue edit <#> --add-assignee @me`.
 
 ## 3. Gauge complexity — advise a split if it's too big
 
@@ -30,19 +30,27 @@ Before committing to implementation, judge the real complexity from the code you
 
 Only continue to implement when the user chooses to, or the work is genuinely S/M. (A standalone `to-task` issue that turns out complex simply becomes a parent once sub-issues are added under it — no separate "promote" step.)
 
-## 4. Choose the test strategy
+## 4. Test the work — one default, two escapes you choose
 
-Pick the strategy that fits the task, state a one-line rationale, and let the user override (`--tdd` / `--tests-after` / `--no-tests`):
+There is **one default approach**. The two escapes exist for narrow cases and **you decide when they apply** — don't make the user pick a strategy up front. State in one line which you're using and why.
 
-- **tdd** (red-green-refactor; one test → one implementation, vertical slices) — logic-heavy / algorithmic work, or a bug with a clear repro. When in TDD mode, follow the `tdd-task` skill.
-- **tests-after** — implement the slice, then write meaningful tests covering its behavior — wiring / integration / CRUD / UI work.
-- **none** — purely declarative (config, enums, data-only DTOs, docs). Say so explicitly.
+**Default — behavior tests after a deliberate design.** For almost all work (features, wiring, integration, CRUD, UI, APIs):
 
-Either way, tests verify behavior through public interfaces, never implementation details — they should survive an internal refactor.
+1. **Design the abstraction first.** Decide the public interface/API deliberately before implementing — small surface, dependencies injected at the boundaries, results returned over hidden mutation. See [interface-design.md](../tdd-task/interface-design.md) and [deep-modules.md](../tdd-task/deep-modules.md).
+2. **Implement** the slice following `CLAUDE.md` and existing conventions.
+3. **Write behavior tests from the acceptance criteria** — not from re-reading your own implementation, which only mirrors its blind spots. Cover the module's functionality and its **meaningful** edge cases (boundaries, error/failure paths, inputs where behavior changes); skip exhaustive permutations and shape tests. Through public interfaces only; mock only at system boundaries. Full quality bar: [tests.md](../tdd-task/tests.md) and [mocking.md](../tdd-task/mocking.md).
+4. **Confirm each test has teeth.** For every test, state in a phrase why it would fail if the behavior were wrong. If you can't, it's noise — cut it or sharpen it.
+5. **Never bend core code to be testable.** No test-only branches, flags, hooks, or widened visibility. If something is hard to test, fix the _interface_, not the implementation.
+
+**Escape — `--tdd` (red-green-refactor).** Choose this yourself for **logic-heavy / algorithmic** work, or a **bug with a clear repro** (write the failing repro test first — the cheapest proof you reproduced it). Follow the [tdd-task](../tdd-task/SKILL.md) skill. Same quality bar as the default; the only difference is test-first, one test → one implementation.
+
+**Escape — `--no-tests`.** Choose this yourself for **purely declarative** changes (config, enums, data-only DTOs, docs) — nothing with behavior to pin. Say so explicitly.
+
+The user can still force a path with `--tdd` / `--no-tests`; absent that, you judge. Either way, tests verify behavior through public interfaces, never implementation details — they survive an internal refactor.
 
 ## 5. Plan, then implement
 
-Present a short plan: approach, files to create/modify, the tests you'll write, and what you will NOT touch (the issue's non-goals, plus the epic's Out-of-scope if it has a parent). On user OK, implement following the existing codebase conventions and `CLAUDE.md`.
+Present a short plan: approach, files to create/modify, the tests you'll write, what you will NOT touch (the issue's non-goals, plus the epic's Out-of-scope if it has a parent), and **how the design honours the repo's code standards** — name the specific invariants in play (e.g. pure-over-stateful, `T?`-over-bool, minimal state, immutability, abstractions-earn-their-place) so conformance is a conscious choice up front, not a hope. On user OK, implement following those standards and `CLAUDE.md`.
 
 - Stay strictly in scope — no "while I'm here" changes, no unrelated refactors or bug fixes.
 - If implementation reveals the spec is wrong, ambiguous, or impossible, STOP and tell the user rather than improvising.
@@ -50,6 +58,10 @@ Present a short plan: approach, files to create/modify, the tests you'll write, 
 ## 6. Build and verify
 
 Always build; always run the relevant tests. Then verify EACH acceptance criterion from the issue → pass / fail with `file:line` evidence. If anything fails, fix it (keeping new tests green) or explain why it can't be fixed. Do not proceed while the build is red or a criterion fails.
+
+Then **walk the diff against the code standards.** The design invariants are behaviour-preserving, so green tests never flag a violation — check the actual diff against the standards docs, not your memory of them. For a thorough pass, run the `review` skill (its Standards axis treats a documented-rule breach as a blocker).
+
+**Then consider the docs.** If the change altered behaviour or structure in an area that carries living documentation, update that documentation in the *same* slice — name which docs you checked and whether they needed changing. Stale docs are a defect, not a follow-up.
 
 ## 7. Decide how to finish — do NOT auto-close
 

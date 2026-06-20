@@ -16,6 +16,10 @@ This skill OWNS all interrogation. It produces no spec — its output is a conve
 
 Read the `## Glossary` section in `CLAUDE.md` (or `AGENTS.md`). When the user uses a term that conflicts with it, call it out immediately: "Your glossary defines 'cancellation' as X, but you seem to mean Y — which is it?"
 
+### Challenge against the code standards
+
+Read the repo's code-standards docs (`AGENTS.md`/`CLAUDE.md` conventions, `docs/coding-conventions.md`, any `STANDARDS.md`). When a decision fixes an **API shape** or a **state model**, hold it against them on the spot: a `bool` flag where `T?` or an enum fits, a stateful class where a pure function would do, a speculative interface with no second consumer, a field that could be derived. Surface the conflict and propose the conforming shape — a design decision is far cheaper to correct here than in review.
+
 ### Sharpen fuzzy language
 
 When the user uses a vague or overloaded term, propose a precise canonical one: "You're saying 'account' — do you mean the Customer or the User? Those are different things."

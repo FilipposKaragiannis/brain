@@ -6,10 +6,11 @@ Built for working alone with issues you actually enjoy reading: short bodies, si
 
 ## Conventions
 
-The whole plugin shares two homes (created/seeded by `init`):
+The whole plugin shares three homes:
 
-- **Domain vocabulary** → the `## Glossary` section of `CLAUDE.md`. One home, used by every skill.
+- **Domain vocabulary** → the `## Glossary` section of `CLAUDE.md` (seeded by `init`). One home, used by every skill.
 - **Architecture decisions** → `docs/adr/NNNN-slug.md`. One file per hard-to-reverse decision; skills respect them and don't re-litigate.
+- **Code standards** → the repo's existing standards docs (`CLAUDE.md`/`AGENTS.md` conventions, `docs/coding-conventions.md`, any `STANDARDS.md`/`STYLE.md`). `grill` challenges plans against them, `ship` designs and implements to them, and `review`'s Standards axis blocks on violations. The repo authors these; the skills only read them. The design rules that have no compiler to catch them (pure-over-stateful, immutability, `T?`-over-bool, minimal state, abstractions-earn-their-place) live here — keep them **checkable**, so review can flag a breach as a blocker rather than a vague nit.
 
 **Issue model** — GitHub is open/closed only, so state is modelled with labels:
 
@@ -70,9 +71,9 @@ If `ship` discovers a chosen issue is too big, it stops and offers `to-subissues
 | **to-task** | Captures one small standalone issue (no epic, no decomposition). Ship it directly. |
 | **improve** | Architecture on-ramp: finds "deepening" opportunities (shallow→deep modules), renders a visual HTML report, grills the one you pick, then hands it to `to-epic`/`to-task`. Discovers & specs; never implements. |
 | **board** | Read-only dashboard for an epic — progress bar + each slice's state, size, and ready/blocked status. Never modifies anything. |
-| **ship** | Implements exactly one issue end-to-end: pick it (or suggest the next ready one), advise a split if it's too big, choose a test strategy — TDD (runs **tdd-task**), tests-after, or none — verify each acceptance criterion, then finish via `to-pr` or a direct close. |
+| **ship** | Implements exactly one issue end-to-end: pick it (or suggest the next ready one), advise a split if it's too big, run its **default behavior-test workflow** (deliberate API design → implement → meaningful behavior + edge-case tests through public interfaces), auto-selecting a TDD or no-test variant only when the work warrants it, verify each acceptance criterion, then finish via `to-pr` or a direct close. |
 | **to-pr** | Takes verified work to a PR through three hard gates: **tests green → your manual feel-test + approval → commit/push/PR**. Opens the PR with `Resolves #n`, tags `@codex` and `@claude` for review, and marks the issue `status:in-review`. |
-| **tdd-task** | The red-green-refactor loop `ship` follows when you pick the TDD strategy: one failing test → minimal code → refactor, repeat. Tests verify behavior through public interfaces so they survive refactors. Bundled notes cover deep modules, mocking, interface design, and refactoring. |
+| **tdd-task** | The opt-in **red-green** variant `ship` selects for algorithmic logic or a bug with a clear repro (or via `--tdd`): one failing test → minimal code → refactor, repeat. Its test-quality and design notes (public-interface tests, meaningful edge cases, deep modules, mocking, interface design) are the **same bar** `ship`'s default uses — not TDD-specific. |
 
 ## Which skill do I run?
 
