@@ -1,6 +1,6 @@
 ---
 name: to-pr
-description: Take completed, verified work to a pull request — run the test suite green, show a concise diff summary and pause for the user's manual feel-test and approval, then commit on the working branch, push, and open a PR via gh (following the repo's conventions) that tags @codex and @claude for review. Use after ship.
+description: Take completed, verified work to a pull request — run the test suite green, show a concise diff summary and pause for the user's manual feel-test and approval, then commit on the working branch, push, and open a PR via gh (following the repo's conventions), then request review from @codex and @claude in individual comments. Use after ship.
 ---
 
 # workstream: to-pr
@@ -39,20 +39,38 @@ Stage the work explicitly (never commit `.env`, keys, or other secrets). Write a
 `git push -u origin <branch>`.
 
 ### Open the PR
-Follow the repo's PR guidelines — read `.github/PULL_REQUEST_TEMPLATE.md` and `CONTRIBUTING.md` if present and fill the template. Create it with `gh pr create --title "<title>" --body "<body>"`.
+Follow the repo's PR guidelines — read `.github/PULL_REQUEST_TEMPLATE.md` and `CONTRIBUTING.md` if present and fill the template.
+
+**Pick the base branch first.** The PR base is the branch the working branch was forked from (usually the corresponding `epic/*`), **never `main` by default**. If you're unsure of the fork-parent, **ask before opening** — don't guess. Pass it explicitly with `--base <fork-parent>`.
+
+Create it with `gh pr create --base <fork-parent> --title "<title>" --body "<body>"`.
 
 The PR body MUST:
 
 - Summarize the change and link the shipped slice: `Resolves #<issue#>`.
-- Include a **Reviews** section tagging the bots:
-
-  ```
-  ## Reviews
-  @codex — requesting review.
-  @claude — requesting individual (line-by-line) review.
-  ```
-
 - End with the Claude Code footer: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+
+Do NOT tag the bots in the PR body — tagging there does not reliably trigger a review. Request reviews via individual comments in the next step instead.
+
+### Request reviews — one comment per bot
+
+Tag each bot in its **own** PR comment (never both in one comment, never in the body). Each comment must ask the bot to do two things: (1) review the code line-by-line for correctness, and (2) check the implementation against the linked issue's description / acceptance criteria.
+
+First, if the slice resolves an issue, pull its description so you can point the bots at the actual criteria:
+
+```
+gh issue view <issue#> --json title,body
+```
+
+Then post two separate comments:
+
+```
+gh pr comment <pr-url-or-#> --body "@codex — please review this PR. Go through the diff line-by-line for correctness, then verify the implementation satisfies the description and acceptance criteria of #<issue#>."
+
+gh pr comment <pr-url-or-#> --body "@claude — please do an individual, line-by-line review of this PR for correctness, and verify the implementation meets the description and acceptance criteria of #<issue#>."
+```
+
+If there is no linked issue (or it has no acceptance criteria), drop the acceptance-criteria clause and just request the line-by-line code review.
 
 ### Mark the slice in review
 
@@ -71,4 +89,6 @@ Print the PR URL when done; if the issue has a parent epic, suggest `board <epic
 - Three gates in order: green tests → explicit user approval → PR. Never skip one.
 - Push and open the PR only after the user approves in step 2.
 - Never commit straight to the default branch — always a working branch.
+- PR base = the branch the working branch was forked from (usually the corresponding `epic/*`), never `main` by default. If unsure of the fork-parent, ask before opening.
+- Tag the bots in individual PR comments (one bot per comment), never in the PR body — each comment requests a line-by-line review AND a check against the issue's acceptance criteria.
 - Never close the issue — mark it `status:in-review`; the merge closes it (via `Resolves #<issue#>`).
