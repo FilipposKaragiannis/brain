@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Implement one issue end-to-end (an epic sub-issue or a standalone to-task issue) — pick it or let it suggest the next ready one, advise a sub-issue split first if the work is too complex, test it with one default behavior-test workflow (auto-selecting a TDD or no-test variant only for bug-repro/algorithmic or declarative work), verify against acceptance criteria, then either hand off to to-pr (moving it to "in review") or close it directly.
+description: Implement one workstream issue end-to-end, from picked to verified against its acceptance criteria. Use when the user wants to ship, implement, or start work on a workstream issue (an epic sub-issue or a standalone to-task issue).
 ---
 
 # workstream: ship
@@ -39,9 +39,9 @@ There is **one default approach**. The two escapes exist for narrow cases and **
 
 1. **Design the abstraction first.** Decide the public interface/API deliberately before implementing — small surface, dependencies injected at the boundaries, results returned over hidden mutation. See [interface-design.md](../tdd-task/interface-design.md) and [deep modules](../improve/LANGUAGE.md).
 2. **Implement** the slice following `CLAUDE.md` and existing conventions.
-3. **Write behavior tests from the acceptance criteria** — not from re-reading your own implementation, which only mirrors its blind spots. Cover the module's functionality and its **meaningful** edge cases (boundaries, error/failure paths, inputs where behavior changes); skip exhaustive permutations and shape tests. Through public interfaces only; mock only at system boundaries. Full quality bar: [tests.md](../tdd-task/tests.md) and [mocking.md](../tdd-task/mocking.md).
+3. **Write behavior tests from the acceptance criteria** — not from re-reading your own implementation, which only mirrors its blind spots. Through public interfaces only; mock only at system boundaries. Full quality bar, including which edge cases earn a test: [tests.md](../tdd-task/tests.md) and [mocking.md](../tdd-task/mocking.md).
 4. **Confirm each test has teeth.** For every test, state in a phrase why it would fail if the behavior were wrong. If you can't, it's noise — cut it or sharpen it.
-5. **Never bend core code to be testable.** No test-only branches, flags, hooks, or widened visibility. If something is hard to test, fix the _interface_, not the implementation.
+5. **Never bend core code to be testable.** If something is hard to test, fix the _interface_, not the implementation — see [tests.md](../tdd-task/tests.md) for what that looks like and why it's a defect.
 
 **Escape — `--tdd` (red-green-refactor).** Choose this yourself for **logic-heavy / algorithmic** work, or a **bug with a clear repro** (write the failing repro test first — the cheapest proof you reproduced it). Follow the [tdd-task](../tdd-task/SKILL.md) skill. Same quality bar as the default; the only difference is test-first, one test → one implementation.
 

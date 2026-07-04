@@ -1,6 +1,7 @@
 ---
 name: to-subissues
 description: Break a parent issue — an epic, or a task that grew too big — into concise, independently-shippable vertical-slice sub-issues on GitHub, each size-tagged (S/M/L), optionally blocked-by another, and linked under the parent so progress rolls up natively. Use after to-epic, or when ship advises a split.
+disable-model-invocation: true
 ---
 
 # workstream: to-subissues

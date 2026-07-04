@@ -145,4 +145,4 @@ Mark the current task with an arrow indicator.
 2. **Do NOT fix failures.** Report them. Let the user decide the next action.
 3. **Always provide file:line evidence.** Every PASS needs a source reference. Every FAIL needs an explanation of where you looked.
 4. **Read actual code.** Do not rely on task status or descriptions. Open files and verify.
-5. **One task at a time.** This command verifies a single task. For whole-feature review, use `/sdd-review`.
+5. **One task at a time.** This command verifies a single task. There's no dedicated whole-feature review command yet — once every task is `done`, re-check the implementation against the PRD's acceptance criteria by hand.

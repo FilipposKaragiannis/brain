@@ -1,6 +1,6 @@
 {
   "name": "spec-driven-development",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Plugin that encapsulates spec-driven development workflows.",
   "author": {
     "name": "Filip Karagiannis"

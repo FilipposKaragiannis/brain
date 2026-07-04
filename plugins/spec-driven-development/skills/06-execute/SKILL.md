@@ -52,7 +52,7 @@ Read `.specs/<slug>/tasks-<slug>.json`. The file structure is:
       "dependencies": [<other task IDs>],
       "non_goals": ["..."],
       "status": "pending",
-      "complexity": "S|M|L|XL",
+      "complexity": 7,
       "ready": true,
       ...
     }
@@ -207,9 +207,9 @@ SDD Status: <feature-slug>
 ═══════════════════════════════════════════
  #  Task                          Cx  Ready  Status
 ── ─────────────────────────────── ─── ────── ─────────────────────
- 1  <task title truncated 30ch>   S   Yes    done
- 2  <task title truncated 30ch>   M   Yes    awaiting_verification
- 3  <task title truncated 30ch>   L   No     pending
+ 1  <task title truncated 30ch>   3   Yes    done
+ 2  <task title truncated 30ch>   5   Yes    awaiting_verification
+ 3  <task title truncated 30ch>   8   No     pending
  ...
 ═══════════════════════════════════════════
 Progress: X/Y done | Next: /sdd-verify <id>

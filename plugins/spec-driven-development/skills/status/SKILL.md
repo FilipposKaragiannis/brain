@@ -175,14 +175,14 @@ After every output (whether overview, feature dashboard, or single-task), you MU
 1. Any feature has `prd (orphaned)` → "Orphaned PRD found. Run `/sdd-2-specify` to create it properly in a feature folder."
 2. Any feature in `prd` phase → "Feature `<slug>` has a PRD but no tasks. Run `/sdd-3-decompose <slug>`."
 3. Any feature in `in_progress` or `verifying` → "Feature `<slug>` has active work. Run `/sdd-status <slug>` for details."
-4. All features complete → "All features complete! Run `/sdd-review <slug>` for final review."
+4. All features complete → "All features complete! Re-check each against its PRD's acceptance criteria by hand — there's no dedicated whole-feature review command yet."
 
 ### For feature dashboard or single-task detail:
 1. **Tasks with `status: needs_rework`** exist → "Next action: Re-execute reworked tasks. Run `/sdd-execute <slug> <id>` for: #X, #Y"
 2. **Tasks with `status: awaiting_verification`** exist → "Next action: Verify completed work. Run `/sdd-verify <slug> <id>` (suggest the lowest ID)"
 3. **Tasks with `status: pending` and `ready: true`** exist → "Next action: Execute the next ready task. Run `/sdd-next <slug>` or `/sdd-execute <slug> <id>`"
 4. **Tasks with `status: pending` and `ready: false`** exist (but none are ready) → "Next action: Refine blocked tasks. Run `/sdd-5-refine <slug>`"
-5. **All tasks are `done`** → "All tasks complete! Run `/sdd-review <slug>` for a final review."
+5. **All tasks are `done`** → "All tasks complete! Re-check the implementation against the PRD's acceptance criteria by hand — there's no dedicated whole-feature review command yet."
 6. **No tasks exist** → "No tasks found. Run `/sdd-3-decompose <slug>` to break down the PRD."
 
 ---

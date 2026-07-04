@@ -102,7 +102,7 @@ Determine why and suggest the appropriate action. Check these conditions in orde
    ════════════════════════════════════════════
    Total: N tasks completed.
    ```
-   Then suggest: "Run `/sdd-review` for a final review of the implementation against the PRD."
+   Then suggest: "Run `/sdd-status` to confirm, then re-check the implementation against the PRD's acceptance criteria by hand — there's no dedicated whole-feature review command yet."
 
 5. **No tasks exist at all:**
    > No tasks found. Run `/sdd-3-decompose` to break down the PRD into tasks.
@@ -250,7 +250,7 @@ Rules for the dashboard:
 - Always include a "Next action" line:
   - More ready tasks → "Run `/sdd-next` to continue"
   - Blocked tasks → "Run `/sdd-5-refine` to unblock"
-  - All done → "Run `/sdd-review` for final review"
+  - All done → "All tasks done — re-check the implementation against the PRD's acceptance criteria by hand (no dedicated whole-feature review command yet)"
 
 ---
 

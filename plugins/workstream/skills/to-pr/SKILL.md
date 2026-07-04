@@ -1,6 +1,7 @@
 ---
 name: to-pr
-description: Take completed, verified work to a pull request — run the test suite green, show a concise diff summary and pause for the user's manual feel-test and approval, then commit on the working branch, push, and open a PR via gh (following the repo's conventions), then request review from @codex and @claude in individual comments. Use after ship.
+description: Take completed, verified work to a pull request — green tests, a feel-test approval gate, then commit/push/PR with bot review requests. Use after ship.
+disable-model-invocation: true
 ---
 
 # workstream: to-pr

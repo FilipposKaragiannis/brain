@@ -14,15 +14,9 @@ description: Test-driven development with red-green-refactor loop. Use when user
 
 ## Philosophy
 
-**Core principle**: Tests should verify behavior through public interfaces, not implementation details. Code can change entirely; tests shouldn't.
+**Core principle**: Tests verify behavior through public interfaces, not implementation details — code can change entirely, tests shouldn't. See [tests.md](tests.md) for what separates a good test from a bad one, with examples.
 
-**Good tests** are integration-style: they exercise real code paths through public APIs. They describe _what_ the system does, not _how_ it does it. A good test reads like a specification - "user can checkout with valid cart" tells you exactly what capability exists. These tests survive refactors because they don't care about internal structure.
-
-**Bad tests** are coupled to implementation. They mock internal collaborators, test private methods, or verify through external means (like querying a database directly instead of using the interface). The warning sign: your test breaks when you refactor, but behavior hasn't changed. If you rename an internal function and tests fail, those tests were testing implementation, not behavior.
-
-**Testable by design, never by contamination**: Make code testable through its _public interface_ — inject dependencies at the boundaries, return values instead of mutating hidden state, keep the surface small (see [interface-design.md](interface-design.md) and [mocking.md](mocking.md)). The core implementation must **not** change for the sake of tests. No test-only code may exist in a core path: no `if (env == "Test")` / `#if DEBUG` test branches, no test-only methods, flags, or hooks, no widening a member's visibility (`public`/`internal`/`[InternalsVisibleTo]`) just so a test can reach it. If something is hard to test, fix the _interface_ — don't carve a seam into production code. Test-specific code in a core path is itself a defect.
-
-See [tests.md](tests.md) for examples and [mocking.md](mocking.md) for mocking guidelines.
+**Testable by design, never by contamination**: make code testable through its _public interface_ — inject dependencies at the boundaries, return values instead of mutating hidden state, keep the surface small (see [interface-design.md](interface-design.md) and [mocking.md](mocking.md)). The core implementation must **not** change for the sake of tests — see [tests.md](tests.md) for what that looks like and why it's a defect.
 
 ## Anti-Pattern: Horizontal Slices
 

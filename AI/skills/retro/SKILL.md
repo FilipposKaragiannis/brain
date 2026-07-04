@@ -1,6 +1,7 @@
 ---
 name: retro
-description: End-of-session retrospective that makes your skills self-improving — it assesses the session for repetitive work, bottlenecks, and feedback that should become a rule, then routes each finding to a concrete durable home (a new skill, a hook or permission, a memory, a doc or skill edit) and offers to apply it. Use at the end of a long or notable session, or when the user asks for a retro / retrospective / "what did we learn", or wants the toolkit to improve from this session.
+description: End-of-session retrospective that makes your skills self-improving — assesses the session for repetitive work, bottlenecks, and feedback that should become a rule, then routes each finding to a concrete durable home (a new skill, a hook or permission, a memory, a doc or skill edit) and offers to apply it.
+disable-model-invocation: true
 ---
 
 # Retro

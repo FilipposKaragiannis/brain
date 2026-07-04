@@ -1,6 +1,7 @@
 ---
 name: grill
 description: Relentlessly interview the user about a plan until shared understanding is reached — challenging it against the codebase and the project glossary, sharpening terminology, and recording durable decisions (glossary terms, ADRs) inline. Use to stress-test a plan before writing a spec. Hands off to to-epic.
+disable-model-invocation: true
 ---
 
 # workstream: grill

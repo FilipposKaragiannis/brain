@@ -1,6 +1,7 @@
 ---
 name: to-epic
 description: Synthesize the current conversation into a concise PRD and publish it as a parent ("epic") GitHub issue. Does NOT interview — that is grill's job. Use after grill, or when the feature is already clear from the conversation.
+disable-model-invocation: true
 ---
 
 # workstream: to-epic

@@ -42,7 +42,7 @@ Move thinking to the front. Make execution mechanical.
   +--------------------------------------+
         |
         v  (all tasks done)
-  /sdd-review ................ Final check: whole feature vs. PRD
+  /sdd-status ................ Confirm every task is done; re-check the PRD by hand
 ```
 
 ### All Commands
@@ -71,7 +71,6 @@ Move thinking to the front. Make execution mechanical.
 |---------|-------------|
 | `/sdd-init` | Create `.specs/` directory, add to `.gitignore`, scaffold `AGENTS.md` |
 | `/sdd-status` | Dashboard: see all tasks, progress, and what to do next |
-| `/sdd-review` | Final holistic review of the entire feature against the PRD |
 | `/sdd-help` | Show this guide |
 
 ### Quick Tips
@@ -79,7 +78,7 @@ Move thinking to the front. Make execution mechanical.
 - **Already have a PRD?** Skip to `/sdd-3-decompose`.
 - **Just checking in?** Run `/sdd-status` anytime.
 - **Just keep going?** `/sdd-next` picks, executes, and verifies in one shot.
-- **All tasks done?** `/sdd-review` does the final sign-off against the PRD.
+- **All tasks done?** Run `/sdd-status` to confirm, then re-read the PRD's acceptance criteria by hand — there's no dedicated whole-feature review command yet.
 - **Multiple features?** Each gets its own folder under `.specs/`. Skills auto-detect or ask you to pick.
 - **Progress tracking:** `/sdd-execute`, `/sdd-verify`, and `/sdd-next` automatically append entries to `.specs/<slug>/progress-<slug>.md` so you always have a human-readable history of what was done, when, and by whom.
 

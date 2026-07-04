@@ -1,6 +1,6 @@
 ---
 name: arsenal
-description: Refresh and republish the skills-arsenal artifact — a searchable index of every skill across standalone install and both plugins (workstream, spec-driven-development), showing what each does and whether it auto-invokes or waits to be asked. Use when the user asks to see, refresh, or update the skills arsenal, toolkit map, or skills dashboard.
+description: Refresh and republish the skills-arsenal artifact — a searchable index of every skill across standalone install and both plugins (workstream, spec-driven-development), showing what each does and whether it auto-invokes or waits to be asked.
 disable-model-invocation: true
 ---
 
