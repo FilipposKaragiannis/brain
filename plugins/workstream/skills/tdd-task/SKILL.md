@@ -59,7 +59,7 @@ Before writing any code:
 
 - [ ] Confirm with user what interface changes are needed
 - [ ] Confirm with user which behaviors to test (prioritize)
-- [ ] Identify opportunities for [deep modules](deep-modules.md) (small interface, deep implementation)
+- [ ] Identify opportunities for [deep modules](../improve/LANGUAGE.md) (small interface, deep implementation)
 - [ ] Design interfaces for [testability](interface-design.md) — via dependency injection at the boundaries, never test-only hooks in core paths
 - [ ] List the behaviors to test (not implementation steps)
 - [ ] Get user approval on the plan

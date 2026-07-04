@@ -37,7 +37,7 @@ There is **one default approach**. The two escapes exist for narrow cases and **
 
 **Default — behavior tests after a deliberate design.** For almost all work (features, wiring, integration, CRUD, UI, APIs):
 
-1. **Design the abstraction first.** Decide the public interface/API deliberately before implementing — small surface, dependencies injected at the boundaries, results returned over hidden mutation. See [interface-design.md](../tdd-task/interface-design.md) and [deep-modules.md](../tdd-task/deep-modules.md).
+1. **Design the abstraction first.** Decide the public interface/API deliberately before implementing — small surface, dependencies injected at the boundaries, results returned over hidden mutation. See [interface-design.md](../tdd-task/interface-design.md) and [deep modules](../improve/LANGUAGE.md).
 2. **Implement** the slice following `CLAUDE.md` and existing conventions.
 3. **Write behavior tests from the acceptance criteria** — not from re-reading your own implementation, which only mirrors its blind spots. Cover the module's functionality and its **meaningful** edge cases (boundaries, error/failure paths, inputs where behavior changes); skip exhaustive permutations and shape tests. Through public interfaces only; mock only at system boundaries. Full quality bar: [tests.md](../tdd-task/tests.md) and [mocking.md](../tdd-task/mocking.md).
 4. **Confirm each test has teeth.** For every test, state in a phrase why it would fail if the behavior were wrong. If you can't, it's noise — cut it or sharpen it.
