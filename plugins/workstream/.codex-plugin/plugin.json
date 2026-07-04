@@ -1,6 +1,6 @@
 {
   "name": "workstream",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "GitHub-native, solo spec-driven workflow for planning, slicing, tracking, shipping, and opening reviewed PRs.",
   "author": {
     "name": "Filip Karagiannis"
