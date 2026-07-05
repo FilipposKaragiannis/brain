@@ -45,7 +45,7 @@ Read `CLAUDE.md` at the repo root (fall back to `AGENTS.md` if that's the file t
 
 The standards channel is the repo's own docs — `init` doesn't author them, it just confirms the skills will find them. Look for a standards source: a conventions section in `CLAUDE.md`/`AGENTS.md`, a `docs/coding-conventions.md`, or a `STANDARDS.md`/`STYLE.md`.
 
-- If one exists, note its path in the summary — `grill`, `ship`, and `review` will read it.
+- If one exists, note its path in the summary — `grill`, `ship`, and `two-axis-review` will read it.
 - If none exists, tell the user the Standards axis will have nothing to enforce, and offer to stub a `## Code standards` section — but don't create it unasked.
 
 ## 5. Summary

@@ -60,7 +60,7 @@ Present a short plan: approach, files to create/modify, the tests you'll write, 
 
 Always build; always run the relevant tests. Then verify EACH acceptance criterion from the issue → pass / fail with `file:line` evidence. If anything fails, fix it (keeping new tests green) or explain why it can't be fixed. Do not proceed while the build is red or a criterion fails.
 
-Then **walk the diff against the code standards.** The design invariants are behaviour-preserving, so green tests never flag a violation — check the actual diff against the standards docs, not your memory of them. For a thorough pass, run the `review` skill (its Standards axis treats a documented-rule breach as a blocker).
+Then **walk the diff against the code standards.** The design invariants are behaviour-preserving, so green tests never flag a violation — check the actual diff against the standards docs, not your memory of them. For a thorough pass, run the `two-axis-review` skill (its Standards axis grades a documented-rule breach P0).
 
 **Then consider the docs.** If the change altered behaviour or structure in an area that carries living documentation, update that documentation in the *same* slice — name which docs you checked and whether they needed changing. Stale docs are a defect, not a follow-up.
 

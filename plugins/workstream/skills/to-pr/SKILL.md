@@ -34,7 +34,7 @@ Add 2-4 plain-English bullets on what changed and why. Then ask the user to **ma
 Check the current branch (`git branch --show-current`). If it's the default branch (`main` / `master`), create a working branch first: `ws/<issue#>-<short-slug>`. Otherwise commit on the current working branch.
 
 ### Commit
-Stage the work explicitly (never commit `.env`, keys, or other secrets). Write a commit message following the repo's conventions (check `CLAUDE.md` / `AGENTS.md` / `CONTRIBUTING.md`), and end it with the Claude Code `Co-Authored-By` trailer for the active model.
+Stage the work explicitly (never commit `.env`, keys, or other secrets). Write a commit message following the repo's conventions (check `CLAUDE.md` / `AGENTS.md` / `CONTRIBUTING.md`).
 
 ### Push
 `git push -u origin <branch>`.
@@ -46,10 +46,7 @@ Follow the repo's PR guidelines — read `.github/PULL_REQUEST_TEMPLATE.md` and 
 
 Create it with `gh pr create --base <fork-parent> --title "<title>" --body "<body>"`.
 
-The PR body MUST:
-
-- Summarize the change and link the shipped slice: `Resolves #<issue#>`.
-- End with the Claude Code footer: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+The PR body MUST summarize the change and link the shipped slice: `Resolves #<issue#>`.
 
 Do NOT tag the bots in the PR body — tagging there does not reliably trigger a review. Request reviews via individual comments in the next step instead.
 
