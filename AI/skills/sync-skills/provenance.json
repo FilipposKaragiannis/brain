@@ -1,0 +1,42 @@
+{
+  "mattpocock/skills": {
+    "_readme": "Maps local skills to the upstream mattpocock skill they were adapted from, so sync-skills doesn't have to re-derive this every run. Update this file whenever a skill is renamed, split, merged, or newly absorbed/ported. 'noEquivalent' = verified original, nothing upstream to compare against. 'unrelatedPlugins' = whole plugin dirs confirmed to have no relationship to this source, skip entirely.",
+    "mapped": [
+      { "local": "AI/skills/codebase-design", "upstream": "engineering/codebase-design", "note": "Close port, same core vocabulary. Reviewed 2026-07-29 — content identical, no gaps." },
+      { "local": "AI/skills/diagnosing-bugs", "upstream": "engineering/diagnosing-bugs", "note": "Close port. Reviewed 2026-07-29 — content identical, no gaps." },
+      { "local": "AI/skills/handoff", "upstream": "productivity/handoff", "note": "Close port. Reviewed 2026-07-29 — content identical, no gaps." },
+      { "local": "AI/skills/prototype", "upstream": "engineering/prototype", "note": "Close port. 2026-07-29: ported upstream's branch-preserve change — prototypes now get committed to a throwaway branch (e.g. prototype/<name>) instead of deleted, so abandoned variants stay recoverable; only the validated answer lands in main." },
+      { "local": "AI/skills/resolving-merge-conflicts", "upstream": "engineering/resolving-merge-conflicts", "note": "Close port. Reviewed 2026-07-29 — content identical, no gaps." },
+      { "local": "AI/skills/teach", "upstream": "productivity/teach", "note": "Ported; last topped up in commit 7acb8ca (reuse-first ./assets/ component model). Reviewed 2026-07-29 — still at full parity, no gaps." },
+      { "local": "AI/skills/triage", "upstream": "engineering/triage", "note": "Adapted; last topped up in commit 7acb8ca (external-PR handling, verify-the-claim step). 2026-07-29: ported AGENT-BRIEF.md's PR-specific intro clause + worked PR example. Also considered upstream's grill-step running domain-modeling inline (updating CONTEXT.md/ADRs during triage, not just the issue) — user declined, keep triage scoped to sharpening the issue only; don't re-suggest." },
+      { "local": "AI/skills/two-axis-review", "upstream": "engineering/code-review", "note": "Renamed from local 'review' and merged with 'ubiquitous-language' (commit 8dd6149). Upstream's own 'review' was separately renamed to 'code-review' (upstream v1.1.0) — different rename, same starting point. Extended with P0/P1/P2 grading and per-finding PR comments, which upstream doesn't have; also already carries the Fowler smell baseline upstream added. Reviewed 2026-07-29 — local is a strict superset, no gaps." },
+      { "local": "AI/skills/writing-great-skills", "upstream": "productivity/writing-great-skills", "note": "Ported near-verbatim; last topped up in commit 7acb8ca (Negation only — despite that commit's message, Negative Space wasn't actually ported then). 2026-07-29: added Negative Space, hand-authored from upstream's own CHANGELOG.md description since the entry is documented there (PR #463) but not actually present in this checkout's GLOSSARY.md/SKILL.md — worth re-diffing against upstream's real files next sync in case they eventually land it themselves." },
+      { "local": "plugins/workstream/skills/grill", "upstream": "engineering/grill-with-docs", "note": "Adapted; also draws on productivity/grilling and productivity/grill-me for the interview mechanic. 2026-07-29: ported the facts-vs-decisions split (facts get looked up, decisions always go to the user and wait, even mid another skill's flow) and hardened the wrap-up into an explicit confirmation gate (no hand-off to to-epic without user confirmation)." },
+      { "local": "plugins/workstream/skills/improve", "upstream": "engineering/improve-codebase-architecture", "note": "Close port. 2026-07-29: ported the 'Scope before you scan — YAGNI' step — use git log to find recently-changed hot spots before an unscoped Explore sweep, or take a user-named direction directly." },
+      { "local": "plugins/workstream/skills/init", "upstream": "engineering/setup-matt-pocock-skills", "note": "Same 'run once before first use' bootstrap role, adapted to workstream's own labels/glossary setup. 2026-07-29: ported preview-before-write (show what will be created, confirm before touching the repo) and duplicate-label detection (check for an existing equivalently-named label before creating a new one)." },
+      { "local": "plugins/workstream/skills/ship", "upstream": "engineering/implement", "note": "Adapted to workstream's picked-to-verified issue lifecycle. Reviewed 2026-07-29 — upstream implement is a thin stub, local ship is a strict superset on every axis checked, no gaps." },
+      { "local": "plugins/workstream/skills/tdd-task", "upstream": "engineering/tdd", "note": "Adapted; adds explicit integration-test framing upstream doesn't. 2026-07-29: ported 'seam' as the explicit anchor word with a hard gate (no test written at an unconfirmed seam, fewer seams the better) and the tautological-test anti-pattern into tests.md. Skipped upstream's reference-only restructuring and refactor-stage removal — deliberate local design choices, not gaps (see pendingDecisions history if reconsidered)." },
+      { "local": "plugins/workstream/skills/to-epic", "upstream": "engineering/to-spec", "note": "Same 'synthesize, don't interview' framing, publishes as a parent GitHub issue instead of a generic tracker doc. 2026-07-29: ported explicit seam-confirmation with the user and the 'fewer seams, ideal is one' minimization principle." },
+      { "local": "plugins/workstream/skills/to-subissues", "upstream": "engineering/to-tickets", "note": "to-tickets' decomposition half — split out as its own skill. 2026-07-29: ported wide-refactor/expand-contract handling (distinct from the existing Fowler-micro-step refactor mode — for blast-radius mechanical changes) and native GitHub issue-dependency links (REST 'dependencies/blocked_by' API, per upstream's issue-tracker-github.md) alongside the existing body-text 'Blocked by' line." },
+      { "local": "plugins/workstream/skills/to-task", "upstream": "engineering/to-tickets", "note": "to-tickets' single-vertical-slice-ticket half — split out as its own skill. Reviewed 2026-07-29 — correctly has no blocking-edge/wide-refactor concept, single tickets don't need either." },
+      { "local": "AI/skills/write-a-skill", "upstream": "productivity/writing-great-skills", "note": "Not a port itself, but explicitly built to use writing-great-skills as its quality-bar reference — keep both in sync together." }
+    ],
+    "noEquivalent": [
+      { "local": "AI/skills/arsenal", "note": "Filip-specific artifact-publishing tooling." },
+      { "local": "AI/skills/caveman", "note": "No upstream analog." },
+      { "local": "AI/skills/epic-plan-review", "note": "No upstream analog; workstream-epic-specific." },
+      { "local": "AI/skills/real-work", "note": "No upstream analog. Loosely adjacent to wayfinder's decision-map idea but different shape (phased checklist artifact vs. tracker-native map) — worth a look if wayfinder changes significantly." },
+      { "local": "AI/skills/retro", "note": "No upstream analog." },
+      { "local": "AI/skills/sync-skills", "note": "This skill itself — about the mattpocock source, not derived from it." },
+      { "local": "AI/skills/zoom-out", "note": "No upstream analog." },
+      { "local": "plugins/workstream/skills/board", "note": "No upstream analog; workstream's own GitHub sub-issue rollup dashboard." },
+      { "local": "plugins/workstream/skills/to-pr", "note": "No direct upstream analog." }
+    ],
+    "dropped": [
+      { "local": "AI/skills/qa", "upstream": "deprecated/qa", "note": "Removed 2026-07-29 — unused. Upstream had already deprecated it too. Don't re-suggest porting this even if upstream's deprecated/qa changes." }
+    ],
+    "unrelatedPlugins": [
+      { "path": "plugins/spec-driven-development", "note": "Numbered PRD/decompose/execute/verify workflow (01-negotiate..07-verify, help/init/next/status). Different vocabulary and structure than mattpocock's engineering skills (spec/tickets/wayfinder) — separate origin, not derived from this source. Skip entirely in future syncs unless the user says otherwise." }
+    ]
+  }
+}

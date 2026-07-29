@@ -73,6 +73,34 @@ public async Task CreateUser_makes_user_retrievable()
 }
 ```
 
+## Tautological Tests
+
+A test whose expected value is recomputed the same way the code computes it passes **by construction** — it gives zero confidence, distinct from an implementation-detail test (which couples to internals; this one just restates the algorithm). Expected values must come from an independent source of truth: a hand-picked literal, a known fixture, or a different method of computing the same answer — never the code under test copy-pasted into the assertion.
+
+```csharp
+// BAD: tautological — recomputes the discount the same way Cart.Total() does
+[Fact]
+public void Total_applies_discount()
+{
+    var items = new[] { 10m, 20m, 30m };
+    var discount = 0.1m;
+    var expected = items.Sum() * (1 - discount); // same formula as the implementation
+
+    var cart = new Cart(items, discount);
+
+    Assert.Equal(expected, cart.Total());
+}
+
+// GOOD: expected value is an independent literal, not the same computation
+[Fact]
+public void Total_applies_discount()
+{
+    var cart = new Cart(new[] { 10m, 20m, 30m }, discount: 0.1m);
+
+    Assert.Equal(54m, cart.Total()); // 60 * 0.9, worked out by hand, not by calling the formula
+}
+```
+
 ## Meaningful vs Exhaustive Edge Cases
 
 Cover the edges where behavior genuinely changes. Skip permutations that re-exercise a

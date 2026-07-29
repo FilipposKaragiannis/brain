@@ -18,7 +18,7 @@ Never start a full interview here.
 ## Process
 
 1. If you haven't explored the repo yet, do so. Use the `## Glossary` vocabulary throughout, and respect any ADRs in `docs/adr/` for the area you're touching.
-2. Identify, at a high level, the test seams for the feature (prefer existing seams; propose new ones at the highest point possible). Keep this brief — detail belongs in the sub-issues, not the epic.
+2. Identify, at a high level, the test seams for the feature (prefer existing seams; propose new ones at the highest point possible — the fewer seams across the feature, the better, ideally just one). Check the seams match the user's expectations before drafting around them. Keep this brief — detail belongs in the sub-issues, not the epic.
 3. Draft the epic body using the template below. **Keep it scannable** — terse bullets, no user-story spam. Push any verbose design detail into the collapsed `<details>` block so the issue reads short by default.
 4. Show the draft to the user. On approval, publish:
 

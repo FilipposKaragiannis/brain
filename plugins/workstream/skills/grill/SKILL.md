@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Interview the user relentlessly about every aspect of this plan until you reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one at a time. For each question, provide your recommended answer.
 
-**Ask one question at a time. Wait for the answer before asking the next.** If a question can be answered by reading the codebase, read the codebase instead of asking.
+**Ask one question at a time. Wait for the answer before asking the next.** Split every open question into a **fact** or a **decision**. Facts — anything the codebase already answers — you look up yourself; don't ask the user something you can find by reading. Decisions are the user's alone: put each one to them and wait for their answer, even when this skill is invoked from inside another skill's flow. Answering a decision yourself to keep things moving breaks the point of grilling — it exists specifically so a human, not the agent, makes the call.
 
 This skill OWNS all interrogation. It produces no spec — its output is a converged conversation plus durable repo knowledge (glossary, ADRs). `to-epic` serializes that understanding later; it does not re-ask.
 
@@ -61,4 +61,4 @@ Continue until the decision tree has no unresolved branches, or the user signals
 
 1. Present a short recap of what was decided, plus any glossary terms or ADRs written.
 2. Ask the user to confirm it's accurate or flag corrections.
-3. On confirmation, tell the user: "Understanding locked. Run `to-epic` to publish this as an epic issue."
+3. **Do not hand off to `to-epic` until the user confirms.** A recap the user hasn't acknowledged is not a shared understanding, whatever it looks like. On confirmation, tell the user: "Understanding locked. Run `to-epic` to publish this as an epic issue."

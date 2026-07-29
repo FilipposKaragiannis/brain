@@ -32,6 +32,8 @@ This skill is _informed_ by the project's domain model. The domain language give
 
 ### 1. Explore
 
+**Scope before you scan — YAGNI.** Deepening a module pays off by making future changes to it easier, so weight the parts of the codebase that have recently changed over parts that are stable and rarely touched. If the user named a direction ("look at the billing module"), take it and skip the inference below. Otherwise, walk back a good stretch of commit history (`git log --oneline`) to find the codebase's hot spots before scanning broadly.
+
 Read the domain glossary — the `## Glossary` section of `CLAUDE.md` — and any ADRs in `docs/adr/` for the area you're touching first.
 
 Then use the Agent tool with `subagent_type=Explore` to walk the codebase. Don't follow rigid heuristics — explore organically and note where you experience friction:

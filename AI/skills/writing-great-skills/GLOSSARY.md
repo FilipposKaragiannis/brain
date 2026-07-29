@@ -164,6 +164,12 @@ _Failure mode._ Steering by prohibition — telling the agent what _not_ to do �
 
 _Avoid_: ironic rebound, don't-prompting, the pink elephant
 
+### Negative Space
+
+_Failure mode._ Blindness to the steering done by what a skill leaves out. Every decision a skill declines to make is delegated to the agent's priors rather than left neutral — an unaddressed case doesn't stay unaddressed, it just gets decided by default behaviour instead of by you. Its **leading word** is the _void_: the silence a draft leaves behind. Cure: read a draft specifically for its silences — the branches, edge cases, and judgment calls it never mentions — and decide each one deliberately, either filling it in or leaving it open on purpose as a real **branch**, not by omission.
+
+_Avoid_: blind spot, the gap, unstated default
+
 ## Pruning
 
 Keeping a skill lean — each remedy paired with the failure it cures.

@@ -27,6 +27,12 @@ If you haven't explored the codebase, do so. Titles and bodies use the `## Gloss
 - **Size** each slice **S / M / L**. Anything that feels **XL → split it** before publishing (flag it and propose the split).
 - **Sequence** the slices in intended order. If a slice genuinely cannot start until another is done, note `Blocked by #N`. Don't over-declare blockers — only real ones.
 - **Refactor mode** — when the parent is a refactor (e.g. from `improve`), treat each slice as a Martin Fowler micro-step: the smallest change that leaves the program working and green. Sequence them so the codebase is shippable and tests pass after *every* slice — prefer many tiny behaviour-preserving slices over a few big ones, even more so than for feature work.
+- **Wide refactor (a different case from refactor mode above)** — a single mechanical change (rename a column, retype a shared symbol) whose **blast radius** fans across the whole codebase, breaking many call sites at once so no vertical slice — and no Fowler micro-step — can land green on its own. Don't force it into either shape; sequence it as **expand–contract** instead:
+  1. **Expand** — add the new form beside the old, so nothing breaks. One slice.
+  2. **Migrate** — move call sites over in batches sized by blast radius (per package, per directory). Each batch is its own slice, `Blocked by` the expand slice. CI stays green batch to batch because the old form still exists alongside the new one.
+  3. **Contract** — delete the old form once no caller remains. One slice, `Blocked by` every migrate batch.
+
+  If even a single batch can't land green alone, keep the sequence but let the migrate batches share an integration branch that all block a final integrate-and-verify slice — green is promised only there, not batch by batch.
 
 ## 4. Quiz the user once
 
@@ -57,7 +63,16 @@ Make sure the size labels exist (run `init` if not). Then, in sequence order (pu
    gh api graphql -f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' -f p="$parent" -f c="$child"
    ```
 
-This makes the parent's native progress bar track these slices automatically.
+   This makes the parent's native progress bar track these slices automatically.
+
+3. If this slice has a `Blocked by #N`, record it as a native GitHub issue dependency (not just body text) so the frontier is queryable without opening bodies:
+
+   ```
+   blocker_id=$(gh api repos/<owner>/<repo>/issues/<N> --jq .id)   # database id, not #number or node_id
+   gh api --method POST repos/<owner>/<repo>/issues/<child#>/dependencies/blocked_by -F issue_id="$blocker_id"
+   ```
+
+   Still write the `Blocked by #<n>` line in the body too (below) — it's the human-readable copy; the API call is what makes it a real, queryable edge.
 
 ## Sub-issue template (keep it to ~6 lines)
 
