@@ -71,8 +71,16 @@ Keep it current as you go:
 7. **Update state.** Set `lastSyncedCommit` (to the `origin/<branch>` SHA you just reviewed) and
    `lastSyncedDate` for that source in `sources.json`. Make sure every `mapped`/`noEquivalent`
    finding from step 3 landed in `provenance.json`.
-8. **Refresh the arsenal.** If any `SKILL.md` changed, the post-commit hook regenerates
+8. **Bump plugin versions.** If any port landed under `plugins/<plugin>/skills/`, that plugin's
+   consumers need a version bump to know to update — it's easy to forget since it's a separate
+   file from the skill you were actually editing. Bump the `version` field in *both*
+   `plugins/<plugin>/.claude-plugin/plugin.json` and `plugins/<plugin>/.codex-plugin/plugin.json`
+   (they must stay in sync) and commit as its own commit, following the existing
+   `<plugin>: bump to X.X.X (<summary>)` convention — `git log --oneline --all | grep "bump to"`
+   shows prior examples. A standalone `AI/skills/*` port never needs this; there's no plugin
+   manifest to bump.
+9. **Refresh the arsenal.** If any `SKILL.md` changed, the post-commit hook regenerates
    `.scratch/skills-arsenal.html` automatically on commit. Run the `arsenal` skill afterward to
    publish the refreshed artifact to its live URL.
-9. **Offer to commit.** Don't commit automatically — summarize what was ported (skill by skill,
-   like commit `7acb8ca`'s message) and ask before creating the commit.
+10. **Offer to commit.** Don't commit automatically — summarize what was ported (skill by skill,
+    like commit `7acb8ca`'s message) and ask before creating the commit.
