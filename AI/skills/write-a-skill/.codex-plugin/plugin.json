@@ -1,0 +1,19 @@
+{
+  "name": "write-a-skill",
+  "version": "1.0.0",
+  "description": "Create new agent skills with proper structure, progressive disclosure, and bundled resources. Use when user wants to create, write, or build a new skill.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["skills", "authoring"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Write a Skill",
+    "shortDescription": "Create new agent skills with proper structure",
+    "longDescription": "Create new agent skills with proper structure, progressive disclosure, and bundled resources. Use when user wants to create, write, or build a new skill.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#16A34A"
+  }
+}

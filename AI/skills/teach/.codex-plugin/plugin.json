@@ -1,0 +1,19 @@
+{
+  "name": "teach",
+  "version": "1.0.0",
+  "description": "Teach the user a new skill or concept, within this workspace.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["teaching", "learning"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Teach",
+    "shortDescription": "Teach the user a new skill or concept",
+    "longDescription": "Teach the user a new skill or concept, within this workspace.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#9333EA"
+  }
+}

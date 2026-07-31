@@ -1,0 +1,19 @@
+{
+  "name": "writing-great-skills",
+  "version": "1.0.0",
+  "description": "Reference for writing and editing skills well — the vocabulary and principles that make a skill predictable.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["skills", "reference"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Writing Great Skills",
+    "shortDescription": "Vocabulary and principles for writing predictable skills",
+    "longDescription": "Reference for writing and editing skills well — the vocabulary and principles that make a skill predictable.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive"],
+    "brandColor": "#0D9488"
+  }
+}

@@ -27,6 +27,198 @@
         "authentication": "ON_INSTALL"
       },
       "category": "Developer Tools"
+    },
+    {
+      "name": "caveman",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/caveman"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "codebase-design",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/codebase-design"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "diagnosing-bugs",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/diagnosing-bugs"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "epic-plan-review",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/epic-plan-review"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "handoff",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/handoff"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "prototype",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/prototype"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "real-work",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/real-work"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "resolving-merge-conflicts",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/resolving-merge-conflicts"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "retro",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/retro"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "sync-skills",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/sync-skills"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "teach",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/teach"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "triage",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/triage"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "two-axis-review",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/two-axis-review"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "write-a-skill",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/write-a-skill"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "writing-great-skills",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/writing-great-skills"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "zoom-out",
+      "source": {
+        "source": "local",
+        "path": "./AI/skills/zoom-out"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
     }
   ]
 }

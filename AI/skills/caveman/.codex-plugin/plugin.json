@@ -1,0 +1,19 @@
+{
+  "name": "caveman",
+  "version": "1.0.0",
+  "description": "Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, articles, and pleasantries while keeping full technical accuracy.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["communication", "token-efficiency"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Caveman",
+    "shortDescription": "Ultra-compressed, filler-free communication mode",
+    "longDescription": "Ultra-compressed communication mode. Cuts token usage ~75% by dropping filler, articles, and pleasantries while keeping full technical accuracy.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive"],
+    "brandColor": "#78716C"
+  }
+}

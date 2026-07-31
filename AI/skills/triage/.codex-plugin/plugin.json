@@ -1,0 +1,19 @@
+{
+  "name": "triage",
+  "version": "1.0.0",
+  "description": "Triage issues and external PRs through a state machine driven by triage roles. Use when user wants to create an issue, triage issues or PRs, review incoming bugs or feature requests, prepare issues for an AFK agent, or manage issue workflow.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["github", "issues", "triage"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Triage",
+    "shortDescription": "Triage issues and external PRs through a state machine",
+    "longDescription": "Triage issues and external PRs through a state machine driven by triage roles. Use when user wants to create an issue, triage issues or PRs, review incoming bugs or feature requests, prepare issues for an AFK agent, or manage issue workflow.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#B91C1C"
+  }
+}

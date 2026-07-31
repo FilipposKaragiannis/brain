@@ -1,0 +1,8 @@
+{
+  "name": "handoff",
+  "description": "Compact the current conversation into a handoff document for another agent to pick up.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Filip Karagiannis"
+  }
+}

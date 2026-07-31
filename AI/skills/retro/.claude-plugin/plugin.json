@@ -1,0 +1,8 @@
+{
+  "name": "retro",
+  "description": "End-of-session retrospective that makes your skills self-improving — assesses the session for repetitive work, bottlenecks, and feedback that should become a rule, then routes each finding to a concrete durable home.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Filip Karagiannis"
+  }
+}

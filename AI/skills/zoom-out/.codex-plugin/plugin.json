@@ -1,0 +1,19 @@
+{
+  "name": "zoom-out",
+  "version": "1.0.0",
+  "description": "Tell the agent to zoom out and give broader context or a higher-level perspective. Use when you're unfamiliar with a section of code or need to understand how it fits into the bigger picture.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["context", "orientation"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Zoom Out",
+    "shortDescription": "Get broader context or a higher-level perspective on code",
+    "longDescription": "Tell the agent to zoom out and give broader context or a higher-level perspective. Use when you're unfamiliar with a section of code or need to understand how it fits into the bigger picture.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive"],
+    "brandColor": "#64748B"
+  }
+}

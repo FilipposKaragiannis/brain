@@ -1,0 +1,19 @@
+{
+  "name": "handoff",
+  "version": "1.0.0",
+  "description": "Compact the current conversation into a handoff document for another agent to pick up.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["handoff", "workflow"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Handoff",
+    "shortDescription": "Compact a conversation into a handoff document",
+    "longDescription": "Compact the current conversation into a handoff document for another agent to pick up.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#0F766E"
+  }
+}

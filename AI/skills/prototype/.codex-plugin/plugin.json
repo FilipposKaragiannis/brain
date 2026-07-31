@@ -1,0 +1,19 @@
+{
+  "name": "prototype",
+  "version": "1.0.0",
+  "description": "Build a throwaway prototype to answer a design question. Use when the user wants to sanity-check whether a state model or logic feels right, or explore what a UI should look like.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["prototype", "design", "ui"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Prototype",
+    "shortDescription": "Build a throwaway prototype to answer a design question",
+    "longDescription": "Build a throwaway prototype to answer a design question. Use when the user wants to sanity-check whether a state model or logic feels right, or explore what a UI should look like.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#F59E0B"
+  }
+}

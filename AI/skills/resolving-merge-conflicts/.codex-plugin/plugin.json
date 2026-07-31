@@ -1,0 +1,19 @@
+{
+  "name": "resolving-merge-conflicts",
+  "version": "1.0.0",
+  "description": "Use when you need to resolve an in-progress git merge/rebase conflict.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["git", "merge-conflicts"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Resolving Merge Conflicts",
+    "shortDescription": "Resolve an in-progress git merge or rebase conflict",
+    "longDescription": "Use when you need to resolve an in-progress git merge/rebase conflict.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#EA580C"
+  }
+}

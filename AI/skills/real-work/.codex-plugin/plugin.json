@@ -1,0 +1,19 @@
+{
+  "name": "real-work",
+  "version": "1.0.0",
+  "description": "Use when planning a multi-step task or working in plan mode and you need to capture the plan as a durable, resumable artifact — breaking work into phases with per-item checkboxes, completion tracking, autonomous verification, and a handoff summary so a future agent can pick up where you left off.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["planning", "workflow"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Real Work",
+    "shortDescription": "Capture a multi-step plan as a durable, resumable artifact",
+    "longDescription": "Use when planning a multi-step task or working in plan mode and you need to capture the plan as a durable, resumable artifact — breaking work into phases with per-item checkboxes, completion tracking, autonomous verification, and a handoff summary so a future agent can pick up where you left off.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#0EA5E9"
+  }
+}

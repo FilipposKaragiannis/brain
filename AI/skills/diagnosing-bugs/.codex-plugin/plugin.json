@@ -1,0 +1,19 @@
+{
+  "name": "diagnosing-bugs",
+  "version": "1.0.0",
+  "description": "Diagnosis loop for hard bugs and performance regressions. Use when the user says \"diagnose\"/\"debug this\", or reports something broken/throwing/failing/slow.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["debugging", "diagnosis", "performance"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Diagnosing Bugs",
+    "shortDescription": "Diagnosis loop for hard bugs and performance regressions",
+    "longDescription": "Diagnosis loop for hard bugs and performance regressions. Use when the user says \"diagnose\"/\"debug this\", or reports something broken/throwing/failing/slow.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive"],
+    "brandColor": "#DC2626"
+  }
+}

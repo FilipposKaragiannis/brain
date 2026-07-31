@@ -1,0 +1,19 @@
+{
+  "name": "retro",
+  "version": "1.0.0",
+  "description": "End-of-session retrospective that makes your skills self-improving — assesses the session for repetitive work, bottlenecks, and feedback that should become a rule, then routes each finding to a concrete durable home (a new skill, a hook or permission, a memory, a doc or skill edit) and offers to apply it.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["retrospective", "self-improvement", "workflow"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Retro",
+    "shortDescription": "End-of-session retrospective that makes your skills self-improving",
+    "longDescription": "End-of-session retrospective that makes your skills self-improving — assesses the session for repetitive work, bottlenecks, and feedback that should become a rule, then routes each finding to a concrete durable home (a new skill, a hook or permission, a memory, a doc or skill edit) and offers to apply it.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#65A30D"
+  }
+}

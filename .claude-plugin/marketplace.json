@@ -1,5 +1,6 @@
 {
   "name": "brain-plugins",
+  "description": "Filip Karagiannis's personal Claude Code plugins and standalone skills",
   "owner": {
     "name": "Filip Karagiannis"
   },
@@ -13,6 +14,86 @@
       "name": "workstream",
       "source": "./plugins/workstream",
       "description": "GitHub-native solo spec-driven workflow: grill, publish a concise epic issue, slice into sub-issues, track progress natively, ship one slice at a time, and open a reviewed PR"
+    },
+    {
+      "name": "caveman",
+      "source": "./AI/skills/caveman",
+      "description": "Ultra-compressed communication mode that cuts token usage ~75% while keeping full technical accuracy"
+    },
+    {
+      "name": "codebase-design",
+      "source": "./AI/skills/codebase-design",
+      "description": "Shared vocabulary for designing deep modules — deepening opportunities, seam placement, testability, AI-navigability"
+    },
+    {
+      "name": "diagnosing-bugs",
+      "source": "./AI/skills/diagnosing-bugs",
+      "description": "Diagnosis loop for hard bugs and performance regressions"
+    },
+    {
+      "name": "epic-plan-review",
+      "source": "./AI/skills/epic-plan-review",
+      "description": "Scrutinize epics, PRDs, and task breakdowns for planning gaps, flawed assumptions, and implementation smells before coding"
+    },
+    {
+      "name": "handoff",
+      "source": "./AI/skills/handoff",
+      "description": "Compact the current conversation into a handoff document for another agent to pick up"
+    },
+    {
+      "name": "prototype",
+      "source": "./AI/skills/prototype",
+      "description": "Build a throwaway prototype to sanity-check a state model, logic, or UI design question"
+    },
+    {
+      "name": "real-work",
+      "source": "./AI/skills/real-work",
+      "description": "Capture a multi-step plan as a durable, resumable artifact with per-item tracking and handoff summaries"
+    },
+    {
+      "name": "resolving-merge-conflicts",
+      "source": "./AI/skills/resolving-merge-conflicts",
+      "description": "Resolve an in-progress git merge or rebase conflict"
+    },
+    {
+      "name": "retro",
+      "source": "./AI/skills/retro",
+      "description": "End-of-session retrospective that routes findings into a new skill, hook, memory, or doc edit to make your skills self-improving"
+    },
+    {
+      "name": "sync-skills",
+      "source": "./AI/skills/sync-skills",
+      "description": "Pull the latest commits from tracked upstream skill repos and port improvements into your own refined skills"
+    },
+    {
+      "name": "teach",
+      "source": "./AI/skills/teach",
+      "description": "Teach the user a new skill or concept within the current workspace"
+    },
+    {
+      "name": "triage",
+      "source": "./AI/skills/triage",
+      "description": "Triage issues and external PRs through a state machine driven by triage roles"
+    },
+    {
+      "name": "two-axis-review",
+      "source": "./AI/skills/two-axis-review",
+      "description": "Review changes along two axes — repo Standards and originating Spec — with parallel sub-agent reviews and P0/P1/P2 grading"
+    },
+    {
+      "name": "write-a-skill",
+      "source": "./AI/skills/write-a-skill",
+      "description": "Create new agent skills with proper structure, progressive disclosure, and bundled resources"
+    },
+    {
+      "name": "writing-great-skills",
+      "source": "./AI/skills/writing-great-skills",
+      "description": "Reference for writing and editing skills well — the vocabulary and principles that make a skill predictable"
+    },
+    {
+      "name": "zoom-out",
+      "source": "./AI/skills/zoom-out",
+      "description": "Zoom out and give broader context or a higher-level perspective on unfamiliar code"
     }
   ]
 }

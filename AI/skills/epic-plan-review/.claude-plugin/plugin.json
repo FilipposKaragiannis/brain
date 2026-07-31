@@ -1,0 +1,8 @@
+{
+  "name": "epic-plan-review",
+  "description": "Scrutinize GitHub/workstream epics, PRDs, task breakdowns, and implementation plans for pragmatic planning gaps, flawed assumptions, missing acceptance criteria, risky sequencing, and implementation smells.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Filip Karagiannis"
+  }
+}

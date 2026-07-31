@@ -1,0 +1,19 @@
+{
+  "name": "sync-skills",
+  "version": "1.0.0",
+  "description": "Pull the latest commits from tracked upstream skill repos (e.g. mattpocock/skills), review what changed since the last sync, and port improvements into your own refined skills. Use when periodically reviewing an upstream skills repo for updates, or asked to sync/absorb changes from a tracked source.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": ["skills", "sync", "maintenance"],
+  "skills": "./SKILL.md",
+  "interface": {
+    "displayName": "Sync Skills",
+    "shortDescription": "Sync and port improvements from tracked upstream skill repos",
+    "longDescription": "Pull the latest commits from tracked upstream skill repos (e.g. mattpocock/skills), review what changed since the last sync, and port improvements into your own refined skills. Use when periodically reviewing an upstream skills repo for updates, or asked to sync/absorb changes from a tracked source.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "brandColor": "#0891B2"
+  }
+}
