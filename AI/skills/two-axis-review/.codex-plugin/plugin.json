@@ -1,6 +1,6 @@
 {
   "name": "two-axis-review",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Review the changes since a fixed point (commit, branch, tag, merge-base, or a PR) along two axes — Standards (does the code follow this repo's documented coding standards, Glossary, and ADRs?) and Spec (does the code match what the originating issue/PRD asked for?). Runs both reviews in parallel sub-agents, grades findings P0/P1/P2, and reports them side by side.",
   "author": {
     "name": "Filip Karagiannis"

@@ -27,12 +27,20 @@ Before going further, confirm the fixed point resolves (`git rev-parse <fixed-po
 Look for the originating spec, in this order:
 
 1. PR mode → `Resolves #n` / `Closes #n` in the PR body.
-2. Issue references in the commit messages (`#123`, `Closes #45`, GitLab `!67`, etc.) — fetch via `gh issue view` (GitHub) or the equivalent for this repo's tracker.
-3. A path the user passed as an argument.
+2. Issue references in the commit messages or PR body: GitHub `#123`/`Closes #45`, GitLab `!67`, a Jira-style key (`ABC-123` — uppercase project prefix + dash + number), or an Airtable record URL/ID.
+3. A path, URL, or issue key the user passed as an argument (a Jira key or Airtable record link works here too).
 4. A PRD/spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
-5. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+5. If nothing is found, ask the user where the spec is — which tracker, and the issue key/URL/ID. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
 
-If the issue has a parent epic, fetch it too — its **Scope** and **Out-of-scope** frame the slice.
+Once you know where the spec lives, fetch it per-tracker:
+
+- **GitHub** → `gh issue view <#>` (add `--repo <owner/repo>` for a cross-repo reference).
+- **GitLab** → `glab issue view <!#>` if `glab` is available, else the GitLab MCP if connected.
+- **Jira** → `ToolSearch` for a connected Jira/Atlassian MCP (query like `"jira atlassian issue"`) and fetch the issue by key if one's found. No MCP connected → try `WebFetch` on the issue's browse URL (only works for public/anonymous-viewable instances, most are not). Both fail → ask the user to paste the issue's summary/description/acceptance criteria.
+- **Airtable** → same order: `ToolSearch` for a connected Airtable MCP (query like `"airtable base record"`) and fetch the record by base/table/record ID if found. Airtable's web UI is JS-rendered, so `WebFetch` on a share link will not reliably return field content — don't rely on it as a fallback. No MCP connected → ask the user to paste the record's fields, or (only if they're comfortable using a token in-session) for an API key plus base/table ID to call `https://api.airtable.com/v0/<baseId>/<tableIdOrName>/<recordId>`.
+- **Any other tracker** → same fallback chain: connected MCP first (highest fidelity) → a direct/authenticated fetch only if it'll actually work → ask the user to paste the content. Never hard-block the review on tracker access.
+
+If the issue has a parent epic (GitHub) or equivalent parent record (Jira epic, Airtable linked record), fetch it too — its **Scope** and **Out-of-scope** frame the slice.
 
 ### 3. Identify the standards sources
 
