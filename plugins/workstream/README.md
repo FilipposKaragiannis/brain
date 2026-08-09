@@ -23,7 +23,9 @@ The whole plugin shares three homes:
 
 **Sizes** — `size:S` / `size:M` / `size:L`. Anything that feels **XL → split it**.
 
-**Hierarchy** — 2 tiers: an **epic** (`epic` label) is the parent; **sub-issues** are linked under it so the epic's native progress bar tracks them automatically. A standalone **task** has no parent.
+**Hierarchy** — 2 tiers: an **epic** (`epic` label) is the parent; **sub-issues** are linked under it so the epic's native progress bar tracks them automatically. A standalone **task** has no parent — unless it's filed with `to-task <epic#>`, which attaches it as a native sub-issue of an already-decomposed epic (the late-addition path).
+
+**Dependency graph** — one model, two renderers. `scripts/epic_graph.py <owner/repo> <epic#>` computes readiness waves and the size-weighted critical path from native `blocked_by` edges; `skills/_shared/dependency-graph.md` pins exactly how that JSON becomes `board --plan`'s SVG and its optional Mermaid comment, so the two views can't drift apart. Analysis lives once, in the script — a renderer only formats.
 
 ## Setup
 
@@ -43,7 +45,7 @@ Verifies `gh` auth + a GitHub remote, creates the labels (`epic`, `size:S|M|L|XL
 grill  →  to-epic  →  to-subissues  →  ship  →  to-pr
  plan      epic        slices         build    reviewed PR
                          │              ▲
-                         └──── board ───┘   (watch progress anytime)
+                         └──── board ────┘   (watch progress anytime — flags + offers to fix drift automatically)
 ```
 
 **Small work** — one self-contained slice:
@@ -66,13 +68,13 @@ If `ship` discovers a chosen issue is too big, it stops and offers `to-subissues
 |---|---|
 | **init** | One-time repo setup: checks `gh`/remote, creates labels, seeds `## Glossary`. |
 | **grill** | Interview you one question at a time, stress-testing the plan against the codebase and `## Glossary`. Updates the glossary inline; offers ADRs sparingly. Ends pointing at `to-epic`. |
-| **to-epic** | Synthesizes the conversation (never re-interviews) into a **concise** parent epic issue — Problem / Solution / Scope / Acceptance, design notes collapsed. |
-| **to-subissues** | Slices a parent (epic, or a task being split) into vertical-slice sub-issues — each a thin end-to-end path, size-tagged, optionally `Blocked by #n`, linked under the parent. **Refactor mode**: when the parent is a refactor, each slice is a tiny step that leaves the program green. |
-| **to-task** | Captures one small standalone issue (no epic, no decomposition). Ship it directly. |
+| **to-epic** | Synthesizes the conversation (never re-interviews) into a **concise** parent epic issue — Problem / Solution / Scope / Acceptance, design notes collapsed. Scans the code for existing invariants the epic's new capabilities would invalidate and adds them as acceptance lines. |
+| **to-subissues** | Slices a parent (epic, or a task being split) into vertical-slice sub-issues — each a thin end-to-end path, size-tagged, optionally `Blocked by #n` (written natively, not just in prose), linked under the parent. Assigns every epic acceptance line to a slice or a dedicated verification-closeout slice, and flags merge-order `Contends with` collisions between parallel slices. **Refactor mode**: when the parent is a refactor, each slice is a tiny step that leaves the program green. |
+| **to-task** | Captures one small issue (no decomposition) — standalone by default, or `to-task <epic#>` to attach it as a native sub-issue of an existing epic (writing any real blocker as a native edge too). Ship it directly. |
 | **improve** | Architecture on-ramp: finds "deepening" opportunities (shallow→deep modules), renders a visual HTML report, grills the one you pick, then hands it to `to-epic`/`to-task`. Discovers & specs; never implements. |
-| **board** | Read-only dashboard for an epic — progress bar + each slice's state, size, and ready/blocked status. Never modifies anything. |
-| **ship** | Implements exactly one issue end-to-end: pick it (or suggest the next ready one), advise a split if it's too big, run its **default behavior-test workflow** (deliberate API design → implement → meaningful behavior + edge-case tests through public interfaces), auto-selecting a TDD or no-test variant only when the work warrants it, verify each acceptance criterion, then finish via `to-pr` or a direct close. |
-| **to-pr** | Takes verified work to a PR through three hard gates: **tests green → your manual feel-test + approval → commit/push/PR**. Opens the PR with `Resolves #n` (no bot tags in the body), then tags `@codex` and `@claude` for review in separate follow-up comments, and marks the issue `status:in-review`. |
+| **board** | Dashboard for an epic — progress bar + each slice's state, size, and ready/blocked status (computed from the native dependency graph, not body text). Read-only in the common case; if the data it already fetched shows drift (a prose `Blocked by` with no native edge, a closed issue still labeled `status:*`, a merged PR that didn't auto-close the issue) it flags it and offers a confirmed fix — silent on a healthy epic, nothing to run separately. `board <epic#> --plan` renders an execution plan instead — a wave/blocked-by table plus an SVG dependency graph off `scripts/epic_graph.py`'s JSON model, with an optional Mermaid mirror to a pinned epic comment. |
+| **ship** | Implements exactly one issue end-to-end: pick it (or suggest the next ready one), re-check its acceptance criteria against current code in case a neighbouring slice already delivered part of it, advise a split if it's too big, run its **default behavior-test workflow** (deliberate API design → implement → meaningful behavior + edge-case tests through public interfaces), auto-selecting a TDD or no-test variant only when the work warrants it, verify each acceptance criterion, then finish via `to-pr` or a direct close. |
+| **to-pr** | Takes verified work to a PR through three hard gates: **tests green → your manual feel-test + approval → commit/push/PR**. Opens the PR with `Resolves #n` (no bot tags in the body), warns if the base isn't the default branch (merge won't auto-close), then tags `@codex` and `@claude` for review in separate follow-up comments, and marks the issue `status:in-review`. |
 | **tdd-task** | The opt-in **red-green** variant `ship` selects for algorithmic logic or a bug with a clear repro (or via `--tdd`): one failing test → minimal code → refactor, repeat. Its test-quality and design notes (public-interface tests, meaningful edge cases, deep modules, mocking, interface design) are the **same bar** `ship`'s default uses — not TDD-specific. |
 
 ## Which skill do I run?
@@ -82,7 +84,7 @@ If `ship` discovers a chosen issue is too big, it stops and offers `to-subissues
 - "This code is painful / hard to test" → **improve**
 - Ready to build the next slice → **ship**
 - Work's done, want it reviewed and merged → **to-pr**
-- "Where's this epic at?" → **board**
+- "Where's this epic at?" → **board** (or **board --plan** for what to start next / what runs in parallel) — it also flags and offers to fix any drift it notices while it's in there
 - Want a read-only check before the PR → the standalone **`two-axis-review`** skill (see Companion below)
 
 ## Companion

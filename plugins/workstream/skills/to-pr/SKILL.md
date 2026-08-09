@@ -44,6 +44,8 @@ Follow the repo's PR guidelines — read `.github/PULL_REQUEST_TEMPLATE.md` and 
 
 **Pick the base branch first.** The PR base is the branch the working branch was forked from (usually the corresponding `epic/*`), **never `main` by default**. If you're unsure of the fork-parent, **ask before opening** — don't guess. Pass it explicitly with `--base <fork-parent>`.
 
+Check that base against the repo's actual default branch (`gh repo view --json defaultBranchRef`). **If the base isn't the default branch**, warn the user now: squash-merging a PR into a non-default branch does **not** trigger GitHub's auto-close, even with `Resolves #<n>` in the body — the issue will sit open after merge until someone closes it by hand. Say so explicitly and note that the next `board <epic#>` catches and offers to fix this drift if it's missed.
+
 Create it with `gh pr create --base <fork-parent> --title "<title>" --body "<body>"`.
 
 The PR body MUST summarize the change and link the shipped slice: `Resolves #<issue#>`.
@@ -78,7 +80,7 @@ After the PR is open, move the slice to the **in review** state — do NOT close
 gh issue edit <issue#> --add-label "status:in-review"
 ```
 
-Because the PR body carries `Resolves #<issue#>`, GitHub auto-closes the issue when the PR merges to the default branch — that is when its parent epic's progress bar advances (if the issue has one). There is no manual close on this path.
+Because the PR body carries `Resolves #<issue#>`, GitHub auto-closes the issue when the PR merges to the **default** branch — that is when its parent epic's progress bar advances (if the issue has one). There is no manual close on this path. If the base isn't the default branch (flagged above), this auto-close won't fire — the issue needs a manual close after merge; the next `board <epic#>` catches it and offers to fix it if no one remembers.
 
 Print the PR URL when done; if the issue has a parent epic, suggest `board <epic#>`.
 
@@ -88,5 +90,6 @@ Print the PR URL when done; if the issue has a parent epic, suggest `board <epic
 - Push and open the PR only after the user approves in step 2.
 - Never commit straight to the default branch — always a working branch.
 - PR base = the branch the working branch was forked from (usually the corresponding `epic/*`), never `main` by default. If unsure of the fork-parent, ask before opening.
+- If that base isn't the repo's default branch, warn that merge won't auto-close the issue — `board` catching and offering to fix the drift later is a backstop, not a substitute for closing it.
 - Tag the bots in individual PR comments (one bot per comment), never in the PR body — each comment requests a line-by-line review AND a check against the issue's acceptance criteria.
 - Never close the issue — mark it `status:in-review`; the merge closes it (via `Resolves #<issue#>`).

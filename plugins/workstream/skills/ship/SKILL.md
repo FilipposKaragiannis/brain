@@ -1,6 +1,6 @@
 ---
 name: ship
-description: Implement one workstream issue end-to-end, from picked to verified against its acceptance criteria. Use when the user wants to ship, implement, or start work on a workstream issue (an epic sub-issue or a standalone to-task issue).
+description: Implement one workstream issue end-to-end, from picked to verified against its acceptance criteria. Re-checks the issue's acceptance criteria against current code before sizing up the work, since a neighbouring slice may have shipped part of it already. Use when the user wants to ship, implement, or start work on a workstream issue (an epic sub-issue or a standalone to-task issue).
 ---
 
 # workstream: ship
@@ -21,7 +21,16 @@ gh issue view <#> --json title,body,labels
 
 Also read: the parent epic (if this issue has one), `CLAUDE.md` (conventions + `## Glossary`), the repo's **code-standards docs** (e.g. `AGENTS.md` conventions, `docs/coding-conventions.md`, any `STANDARDS.md`), any ADRs in `docs/adr/` for the area, and the existing code you'll touch. Mark the issue in progress: `gh issue edit <#> --add-assignee @me`.
 
-## 3. Gauge complexity — advise a split if it's too big
+## 3. Refresh against current code
+
+A slice written at decomposition time can go stale before anyone picks it up — a neighbouring slice that landed since may have already delivered part of it. Before sizing up the work, re-check each `## Acceptance` line against the code you just read in step 2: does anything already appear satisfied?
+
+- Cite the actual code (a function, a test, a call site) for any line you believe is already done — never take a doc, a comment, or your own summary as evidence.
+- **Never auto-tick.** Surface what you found and ask the user to confirm before treating anything as done. Retroactively checking a box without that confirmation fakes an evidence trail — worse than leaving it unticked.
+- If the user confirms one or more lines are already satisfied, re-size the remaining work (it may drop, e.g. M → S) before moving on. Note the resize in the plan you present in step 6.
+- If nothing's stale, say so in one line and move on — this isn't a step that needs ceremony when it finds nothing.
+
+## 4. Gauge complexity — advise a split if it's too big
 
 Before committing to implementation, judge the real complexity from the code you just read: files touched, integration points, ambiguity in the acceptance criteria, and risk of breaking existing behavior. If the work is effectively **XL** — too big to ship as one clean vertical slice — **STOP and advise a split** instead of ploughing ahead:
 
@@ -31,7 +40,7 @@ Before committing to implementation, judge the real complexity from the code you
 
 Only continue to implement when the user chooses to, or the work is genuinely S/M. (A standalone `to-task` issue that turns out complex simply becomes a parent once sub-issues are added under it — no separate "promote" step.)
 
-## 4. Test the work — one default, two escapes you choose
+## 5. Test the work — one default, two escapes you choose
 
 There is **one default approach**. The two escapes exist for narrow cases and **you decide when they apply** — don't make the user pick a strategy up front. State in one line which you're using and why.
 
@@ -49,14 +58,14 @@ There is **one default approach**. The two escapes exist for narrow cases and **
 
 The user can still force a path with `--tdd` / `--no-tests`; absent that, you judge. Either way, tests verify behavior through public interfaces, never implementation details — they survive an internal refactor.
 
-## 5. Plan, then implement
+## 6. Plan, then implement
 
 Present a short plan: approach, files to create/modify, the tests you'll write, what you will NOT touch (the issue's non-goals, plus the epic's Out-of-scope if it has a parent), and **how the design honours the repo's code standards** — name the specific invariants in play (e.g. pure-over-stateful, `T?`-over-bool, minimal state, immutability, abstractions-earn-their-place) so conformance is a conscious choice up front, not a hope. On user OK, implement following those standards and `CLAUDE.md`.
 
 - Stay strictly in scope — no "while I'm here" changes, no unrelated refactors or bug fixes.
 - If implementation reveals the spec is wrong, ambiguous, or impossible, STOP and tell the user rather than improvising.
 
-## 6. Build and verify
+## 7. Build and verify
 
 Always build; always run the relevant tests. Then verify EACH acceptance criterion from the issue → pass / fail with `file:line` evidence. If anything fails, fix it (keeping new tests green) or explain why it can't be fixed. Do not proceed while the build is red or a criterion fails.
 
@@ -64,7 +73,7 @@ Then **walk the diff against the code standards.** The design invariants are beh
 
 **Then consider the docs.** If the change altered behaviour or structure in an area that carries living documentation, update that documentation in the *same* slice — name which docs you checked and whether they needed changing. Stale docs are a defect, not a follow-up.
 
-## 7. Decide how to finish — do NOT auto-close
+## 8. Decide how to finish — do NOT auto-close
 
 The build is green and every acceptance criterion passes. **Leave the issue open** (still assigned = in progress) and present two paths:
 
