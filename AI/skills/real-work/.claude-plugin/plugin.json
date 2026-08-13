@@ -1,7 +1,7 @@
 {
   "name": "real-work",
-  "description": "Use when planning a multi-step task or working in plan mode and you need to capture the plan as a durable, resumable artifact — breaking work into phases with per-item checkboxes, completion tracking, autonomous verification, and a handoff summary so a future agent can pick up where you left off.",
-  "version": "1.0.0",
+  "description": "Use when planning or executing multi-step work that needs a durable, resumable plan with phased checklists, autonomous verification, mandatory user review of each phase's changed files, and an explicit choice between committing locally or opening a PR.",
+  "version": "1.0.1",
   "author": {
     "name": "Filip Karagiannis"
   }

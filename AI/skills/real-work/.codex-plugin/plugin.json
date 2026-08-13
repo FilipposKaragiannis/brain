@@ -1,7 +1,7 @@
 {
   "name": "real-work",
-  "version": "1.0.0",
-  "description": "Use when planning a multi-step task or working in plan mode and you need to capture the plan as a durable, resumable artifact — breaking work into phases with per-item checkboxes, completion tracking, autonomous verification, and a handoff summary so a future agent can pick up where you left off.",
+  "version": "1.0.1",
+  "description": "Use when planning or executing multi-step work that needs a durable, resumable plan with phased checklists, autonomous verification, mandatory user review of each phase's changed files, and an explicit choice between committing locally or opening a PR.",
   "author": {
     "name": "Filip Karagiannis"
   },
@@ -9,11 +9,12 @@
   "skills": "./SKILL.md",
   "interface": {
     "displayName": "Real Work",
-    "shortDescription": "Capture a multi-step plan as a durable, resumable artifact",
-    "longDescription": "Use when planning a multi-step task or working in plan mode and you need to capture the plan as a durable, resumable artifact — breaking work into phases with per-item checkboxes, completion tracking, autonomous verification, and a handoff summary so a future agent can pick up where you left off.",
+    "shortDescription": "Run phased plans through review and delivery gates",
+    "longDescription": "Capture and execute a multi-step plan as a durable, resumable artifact. Each phase tracks concrete work and autonomous verification, pauses for the user to review every updated file, then asks whether to commit locally on the plan branch or branch off and open a pull request.",
     "developerName": "Filip Karagiannis",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Write"],
-    "brandColor": "#0EA5E9"
+    "brandColor": "#0EA5E9",
+    "defaultPrompt": "Use $real-work to turn this multi-phase task into a durable plan with review and delivery gates."
   }
 }
