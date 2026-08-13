@@ -180,6 +180,12 @@ The desired state where each meaning lives in exactly one authoritative place, s
 
 _Avoid_: home, canonical location
 
+### Cache
+
+_Failure mode._ Agent-facing prose that restates truth already available from the environment — task-runner scripts, config files, directory layout, or `--help` output. The prose is a cached lookup: it can drift while the authoritative source stays correct. A cache earns its load only when the lookup is expensive. Keep what the environment cannot reveal by inspection, such as unwritten conventions, rationale, and gotchas; otherwise point to the authoritative source.
+
+_Avoid_: restatement, snapshot, copied configuration
+
 ### Duplication
 
 _Failure mode._ The same meaning given more than one **single source of truth**. It costs maintenance (change one place, you must change the others), costs tokens, and inflates prominence — repeating a meaning weights it on the ladder past its real rank. The accidental inverse of a **leading word**, which raises attention on purpose by repeating a token, never the meaning.

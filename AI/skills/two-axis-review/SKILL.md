@@ -73,7 +73,7 @@ Each smell reads *what it is* → *how to fix*; match it against the diff:
 
 ### 4. Spawn both sub-agents in parallel
 
-Send a single message with two `Agent` tool calls. Use the `general-purpose` subagent for both. Both briefs grade every finding on one scale:
+Spawn both sub-agents in parallel. Both briefs grade every finding on one scale:
 
 - **P0** — a hard violation: a documented-standard breach, `## Glossary` terminology drift, an ADR contradiction, a required spec criterion missing/wrong, or scope creep into a stated non-goal. Must fix before merge.
 - **P1** — should-fix: a real deviation that's still a judgement call, an undocumented-but-sensible convention, a baseline smell, or a partial spec criterion.

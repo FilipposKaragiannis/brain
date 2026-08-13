@@ -56,6 +56,8 @@ Keep each meaning in a **single source of truth**: one authoritative place, so c
 
 Check every line for **relevance**: does it still bear on what the skill does?
 
+Treat agent-facing prose that repeats environment truth — commands already in task-runner scripts, config values, directory layout, or `--help` output — as a **cache**. Keep it only when the underlying lookup is expensive; otherwise point the agent at the authoritative source so the prose cannot drift.
+
 Then hunt **no-ops** sentence by sentence, not just line by line: run the no-op test on each sentence in isolation, and when one fails, delete the whole sentence rather than trim words from it. Be aggressive — most prose that fails should go, not be rewritten.
 
 ## Leading words
