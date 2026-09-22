@@ -35,6 +35,17 @@ these lenses. The first three are the user's core asks; the rest often surface t
 - **Rediscovered knowledge** — facts we had to re-derive or re-read that should have been recorded.
 - **Decisions worth pinning** — a choice that shouldn't be re-litigated next time.
 - **Calibration** — did the agent over/under-verify, over-ask, or over-explain?
+- **Missing check** — did the agent make a mistake a *machine* could have caught? A lint rule, a
+  type, a test, a filesystem linter. A rule an automated check enforces never needs a human, an
+  instruction, or a context slot.
+- **Information access** — was a crucial fact simply unreachable? Dev-server logs nobody teed to a
+  file, a third-party dashboard with no read-only token, a DB the agent can't query. Distinct from
+  *rediscovered* knowledge: that had to be re-derived, this couldn't be got at all.
+- **Tool economy** — which calls were expensive for what they returned? A custom CLI or MCP that
+  dumps thousands of tokens to answer a narrow question is a standing tax on every future session.
+- **No-ops and bloat** — the counterweight to every lens above. Which standing instructions did
+  *not* change what the agent did this session? An always-loaded rule that never fires is paying
+  context rent for nothing. A retro that only ever adds is how `CLAUDE.md` gets too big to read.
 
 ## 2. Route each finding to a durable home
 
@@ -51,6 +62,17 @@ puts it there:
 | Knowledge we had to rediscover | a **reference** / **project** memory | memory |
 | A decision not to re-litigate | an ADR or project memory | `docs/adr/` / memory |
 | A skill that misfired or has a fuzzy trigger | that skill's description or body | Edit |
+| A mistake a machine could have caught | a lint rule, type, test, or CI check | Edit |
+| A rule the reviewer should enforce | `two-axis-review`'s standards sources | Edit |
+| Information the agent couldn't reach | a teed log, a read-only token, a script | `update-config` / Edit |
+| A standing instruction that changed nothing | delete it from where it lives | Edit |
+
+**Standards belong to the reviewer, not the implementer.** Work runs in two stages, and they sit
+under very different context pressure: the implementing agent is carrying exploration, the code, and
+the failures, while the reviewer gets a diff and little else. So a new coding rule routes to what
+the review reads (`two-axis-review`'s standards sources) rather than to `CLAUDE.md`, where it would
+be re-loaded on every turn of every session to be consulted on one. Prefer a machine check over
+either — it costs no context at all.
 
 ## 3. Report, then apply
 

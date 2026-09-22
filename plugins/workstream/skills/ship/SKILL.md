@@ -35,8 +35,9 @@ A slice written at decomposition time can go stale before anyone picks it up —
 Before committing to implementation, judge the real complexity from the code you just read: files touched, integration points, ambiguity in the acceptance criteria, and risk of breaking existing behavior. If the work is effectively **XL** — too big to ship as one clean vertical slice — **STOP and advise a split** instead of ploughing ahead:
 
 - Propose 2-4 sub-issues along natural seam lines, each a thin end-to-end slice.
-- Offer to create them under THIS issue: run `to-subissues #<this>` — that links them as sub-issues, so this issue becomes their parent and tracks their progress natively.
+- Offer to create them under THIS issue: `to-subissues #<this>` — that links them as sub-issues, so this issue becomes their parent and tracks their progress natively.
 - Ask: **split into sub-issues (recommended), or implement as-is anyway?**
+- On "split", **you don't run it** — `to-subissues` is user-invoked, so no skill can reach it. Stop here and tell the user to run `to-subissues #<this>`.
 
 Only continue to implement when the user chooses to, or the work is genuinely S/M. (A standalone `to-task` issue that turns out complex simply becomes a parent once sub-issues are added under it — no separate "promote" step.)
 
@@ -69,7 +70,7 @@ Present a short plan: approach, files to create/modify, the tests you'll write, 
 
 Always build; always run the relevant tests. Then verify EACH acceptance criterion from the issue → pass / fail with `file:line` evidence. If anything fails, fix it (keeping new tests green) or explain why it can't be fixed. Do not proceed while the build is red or a criterion fails.
 
-Then **walk the diff against the code standards.** The design invariants are behaviour-preserving, so green tests never flag a violation — check the actual diff against the standards docs, not your memory of them. For a thorough pass, run the `two-axis-review` skill (its Standards axis grades a documented-rule breach P0).
+Then **walk the diff against the code standards.** The design invariants are behaviour-preserving, so green tests never flag a violation — check the actual diff against the standards docs, not your memory of them. For a thorough pass, call the Skill tool with `two-axis-review` (its Standards axis grades a documented-rule breach P0) — naming the tool is what actually fires it; a skill named in prose often just gets read as prose.
 
 **Then consider the docs.** If the change altered behaviour or structure in an area that carries living documentation, update that documentation in the *same* slice — name which docs you checked and whether they needed changing. Stale docs are a defect, not a follow-up.
 

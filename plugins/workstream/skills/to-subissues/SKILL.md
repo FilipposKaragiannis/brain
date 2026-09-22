@@ -64,7 +64,7 @@ Iterate until the user approves.
 
 ## 7. Publish and link
 
-Make sure the size labels exist (run `init` if not). Then, in sequence order (publish blockers before the slices they block, so `Blocked by #N` references real numbers):
+Make sure the size labels exist. If they don't, stop and tell the user to run `init` first — it's user-invoked, so no skill can call it for them. Then, in sequence order (publish blockers before the slices they block, so `Blocked by #N` references real numbers):
 
 1. Create the issue and capture its number:
 
