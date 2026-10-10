@@ -37,7 +37,10 @@ these lenses. The first three are the user's core asks; the rest often surface t
 - **Calibration** — did the agent over/under-verify, over-ask, or over-explain?
 - **Missing check** — did the agent make a mistake a *machine* could have caught? A lint rule, a
   type, a test, a filesystem linter. A rule an automated check enforces never needs a human, an
-  instruction, or a context slot.
+  instruction, or a context slot. Read the repo's own check command first (`lint`/`check` scripts,
+  the CI workflow): a check that exists but sits unwired or silently broken is the finding, not a
+  reinvention. A repo with no guardrail at all — no pre-commit hook, no CI job running its
+  lint/typecheck/tests — is itself a finding, not a neutral default.
 - **Information access** — was a crucial fact simply unreachable? Dev-server logs nobody teed to a
   file, a third-party dashboard with no read-only token, a DB the agent can't query. Distinct from
   *rediscovered* knowledge: that had to be re-derived, this couldn't be got at all.
@@ -72,7 +75,11 @@ under very different context pressure: the implementing agent is carrying explor
 the failures, while the reviewer gets a diff and little else. So a new coding rule routes to what
 the review reads (`two-axis-review`'s standards sources) rather than to `CLAUDE.md`, where it would
 be re-loaded on every turn of every session to be consulted on one. Prefer a machine check over
-either — it costs no context at all.
+either — it costs no context at all. So classify the violation first: a **mechanical** one (a fixed
+syntactic pattern, a banned API, an import shape, a file-location rule) gets a deterministic check,
+full stop — a custom lint rule, a pre-commit hook, or a CI job, whichever the repo's existing
+guardrail makes cheapest. Only genuine **judgement calls** (cross-file consistency, "matches the
+surrounding style") become a written standard.
 
 ## 3. Report, then apply
 

@@ -40,7 +40,7 @@ Stage the work explicitly (never commit `.env`, keys, or other secrets). Write a
 `git push -u origin <branch>`.
 
 ### Open the PR
-Follow the repo's PR guidelines — read `.github/PULL_REQUEST_TEMPLATE.md` and `CONTRIBUTING.md` if present and fill the template.
+Follow the repo's PR guidelines — read `.github/PULL_REQUEST_TEMPLATE.md` and `CONTRIBUTING.md` if present and fill the template. With no repo template, write the body from [PR-BODY.md](PR-BODY.md): a visual summary, before/after evidence, and the merge danger (one-way vs. two-way door, blast radius).
 
 **Pick the base branch first.** The PR base is the branch the working branch was forked from (usually the corresponding `epic/*`), **never `main` by default**. If you're unsure of the fork-parent, **ask before opening** — don't guess. Pass it explicitly with `--base <fork-parent>`.
 

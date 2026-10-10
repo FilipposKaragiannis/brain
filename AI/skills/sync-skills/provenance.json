@@ -5,12 +5,12 @@
       {
         "local": "AI/skills/codebase-design",
         "upstream": "engineering/codebase-design",
-        "note": "Close port, same core vocabulary. 2026-08-09: ported harness-neutral sub-agent wording in DESIGN-IT-TWICE.md; no remaining gaps."
+        "note": "Close port, same core vocabulary. 2026-08-09: ported harness-neutral sub-agent wording in DESIGN-IT-TWICE.md; no remaining gaps. 2026-10-05: same stale CONTEXT.md pointer in DESIGN-IT-TWICE.md fixed to the local `## Glossary` convention."
       },
       {
         "local": "AI/skills/diagnosing-bugs",
         "upstream": "engineering/diagnosing-bugs",
-        "note": "Close port. 2026-08-09: ported the secret-redaction rule, redacted artifact/output gates, and HITL capture warning."
+        "note": "Close port. 2026-08-09: ported the secret-redaction rule, redacted artifact/output gates, and HITL capture warning. 2026-10-05: upstream renamed CONTEXT.md to GLOSSARY.md; local had a stale CONTEXT.md pointer, now points at the `## Glossary` in CLAUDE.md/AGENTS.md (the local convention)."
       },
       {
         "local": "AI/skills/handoff",
@@ -21,11 +21,6 @@
         "local": "AI/skills/prototype",
         "upstream": "engineering/prototype",
         "note": "Close port. 2026-07-29: ported upstream's branch-preserve change — prototypes now get committed to a throwaway branch (e.g. prototype/<name>) instead of deleted, so abandoned variants stay recoverable; only the validated answer lands in main. 2026-08-09: upstream replaced host-language terminal logic prototypes with self-contained shareable HTML demos; judgment-heavy, recorded in pendingDecisions."
-      },
-      {
-        "local": "AI/skills/resolving-merge-conflicts",
-        "upstream": "engineering/resolving-merge-conflicts",
-        "note": "Close port. Reviewed 2026-07-29 — content identical, no gaps."
       },
       {
         "local": "AI/skills/teach",
@@ -99,13 +94,18 @@
       },
       {
         "local": "AI/skills/retro",
-        "upstream": "in-progress/retro",
-        "note": "Was noEquivalent until 2026-09-13, when upstream added its own retro. Local is a strict superset in shape (routed findings + durable homes vs. a flat candidate list), so this stays an adapt-from, not a port-of. 2026-09-13: ported four lenses local lacked (missing machine check, information access, tool economy, no-ops/steering bloat as the counterweight to an additive-only retro) plus the implementation-vs-review context-pressure argument, which routes new coding rules to two-axis-review's standards sources rather than CLAUDE.md."
+        "upstream": "engineering/retro",
+        "note": "Was noEquivalent until 2026-09-13, when upstream added its own retro. Local is a strict superset in shape (routed findings + durable homes vs. a flat candidate list), so this stays an adapt-from, not a port-of. 2026-09-13: ported four lenses local lacked (missing machine check, information access, tool economy, no-ops/steering bloat as the counterweight to an additive-only retro) plus the implementation-vs-review context-pressure argument, which routes new coding rules to two-axis-review's standards sources rather than CLAUDE.md. 2026-10-05: upstream graduated retro to engineering. Ported: read the repo's existing check command first (unwired/broken check is the finding), a repo with no guardrail is itself a finding, and classify violations as mechanical (deterministic check) vs judgement (written standard)."
       },
       {
         "local": "plugins/workstream/skills/grill",
         "upstream": "engineering/domain-modeling",
         "note": "Upstream keeps domain modelling as its own model-invoked skill that grill-with-docs calls alongside grilling; locally it is folded into grill's inline glossary/ADR side-effects, so there is no local skill to carry a trigger. 2026-09-13: upstream broadened its description to fire on discussing codebase terminology and on writing/editing a CONTEXT.md or ADR directly. Not portable while the behaviour lives inside a user-invoked skill; revisit only if domain modelling is ever split out locally."
+      },
+      {
+        "local": "plugins/workstream/skills/to-pr",
+        "upstream": "engineering/pr",
+        "note": "Was noEquivalent until upstream added pr (a PR-body format reference, credited to humanlayer's show-me). 2026-10-05: adapted its template into to-pr/PR-BODY.md as the default body when the repo has no PR template — visual Summary, before/after Evidence, Merge Danger (door + blast radius). Kept to-pr's gates, Resolves line, and bot-review comments, which upstream pr does not cover."
       }
     ],
     "noEquivalent": [
@@ -138,8 +138,8 @@
         "note": "No upstream analog; workstream's own GitHub sub-issue rollup dashboard. 2026-09-13: applied upstream's Skill-tool convention to _shared/dependency-graph.md, which reached dataviz's palette and validator by bare relative path (those resolve in the skill's install dir, not the target repo)."
       },
       {
-        "local": "plugins/workstream/skills/to-pr",
-        "note": "No direct upstream analog."
+        "local": "AI/skills/resolving-merge-conflicts",
+        "note": "Was a close port of engineering/resolving-merge-conflicts until upstream deleted it (2026-10-05 sync, commit daa01d8). Local keeps it; nothing upstream to compare against any more."
       }
     ],
     "pendingDecisions": [
@@ -184,9 +184,15 @@
       },
       {
         "id": "adopt-implement-spec",
-        "upstream": "in-progress/implement-spec",
+        "upstream": "engineering/implement-spec",
         "surfaced": "2026-09-13",
-        "decision": "Choose whether to adopt upstream's implement-spec, which burns a whole spec's ticket graph down to one PR: implementer subagents running concurrently in background worktrees across the ready frontier, a merger subagent folding each back into the PR branch, subagents briefed by context pointers only, then a code review before the PR goes ready. It conflicts with workstream's deliberate shape on two axes: ship is one issue per run and refuses more, and to-pr gates on a human feel-test before anything is committed. The frontier model itself already exists locally in board --plan's wave/blocked-by graph, so adoption would be about handing that graph to parallel agents, not about computing it."
+        "decision": "Choose whether to adopt upstream's implement-spec, which burns a whole spec's ticket graph down to one PR: implementer subagents running concurrently in background worktrees across the ready frontier, a merger subagent folding each back into the PR branch, subagents briefed by context pointers only, then a code review before the PR goes ready. It conflicts with workstream's deliberate shape on two axes: ship is one issue per run and refuses more, and to-pr gates on a human feel-test before anything is committed. The frontier model itself already exists locally in board --plan's wave/blocked-by graph, so adoption would be about handing that graph to parallel agents, not about computing it. 2026-10-05: upstream graduated it to engineering and reworked it: the goal is now an integration branch (draft PR only if the tracker closes work through PRs), implementers verify their worktree base, build each ticket via tdd, and merge the integration tip before reporting done. Same conflict with ship/to-pr remains."
+      },
+      {
+        "id": "adopt-chief-of-staff",
+        "upstream": "in-progress/chief-of-staff",
+        "surfaced": "2026-10-05",
+        "decision": "Experimental, still in-progress upstream. A long-running orchestrator session: all work in subagents, context pointers only, suggests recurring schedules, and 'gardens' the agents' environment. Revisit if it graduates; nothing to port while it is a 25-line sketch."
       }
     ],
     "dropped": [
@@ -197,11 +203,15 @@
       },
       {
         "upstream": "engineering/ask-matt",
-        "note": "Reviewed 2026-08-09 — upstream-specific router over that repo's exact flow topology. Local skill discovery and the arsenal artifact cover a different topology; skip."
+        "note": "Reviewed 2026-08-09 — upstream-specific router over that repo's exact flow topology. Local skill discovery and the arsenal artifact cover a different topology; skip. 2026-10-05: changed again (routes implement-spec, pr, retro); still upstream-specific."
       },
       {
         "upstream": "repo-wide em-dash removal",
         "note": "Reviewed 2026-09-13 — upstream banned em-dashes across its whole repo and hand-rewrote every sentence, which is most of this sync range's diff by volume. A house-style choice recorded in their CLAUDE.md, with no behavioural effect on any skill. Local prose uses em-dashes deliberately; don't re-suggest, and read future diffs in this range as punctuation noise unless something else moved."
+      },
+      {
+        "upstream": "CONTEXT.md -> GLOSSARY.md rename",
+        "note": "Reviewed 2026-10-05 — upstream renamed its domain-doc convention repo-wide. Local never used CONTEXT.md as its convention (it uses a `## Glossary` section in CLAUDE.md/AGENTS.md); only two stale pointers were fixed. Read future diffs of this rename as noise."
       }
     ],
     "unrelatedPlugins": [
