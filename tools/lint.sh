@@ -32,6 +32,22 @@ for skill_dir in plugins/*/skills/*/; do
   grep -q '^description:' "$md" || fail "no description: $md"
 done
 
+# Committed symlinks are relative and resolve inside the repo. GitHub Actions downloads this
+# repo to run plugins/standards/action, and an absolute or dangling link fails "Set up job".
+root="$(pwd -P)"
+for link in $(git ls-files -s | awk '$1 == "120000" { print $4 }'); do
+  target="$(readlink "$link")"
+  case "$target" in
+    /*) fail "absolute symlink: $link -> $target"; continue ;;
+  esac
+  [ -e "$link" ] || { fail "dangling symlink: $link -> $target"; continue; }
+  resolved="$(cd "$(dirname "$link")" && cd "$(dirname "$target")" && pwd -P)"
+  case "$resolved/" in
+    "$root"/*) ;;
+    *) fail "symlink leaves the repo: $link -> $target" ;;
+  esac
+done
+
 # Relative links in plugin Markdown resolve and stay inside the plugin (plugins install apart).
 python3 - <<'PY2' || status=1
 import glob, os, re, sys
