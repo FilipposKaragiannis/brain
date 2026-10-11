@@ -1,11 +1,11 @@
 #!/bin/sh
 # Git pre-commit hook installed by `standards init`: the gates that need no commit message, so a
 # human commit meets the same bar as an agent's. The formatter check and the project's command
-# gates run here; the marker-aware gates run from commit-msg, where the message exists.
-# The scripts live next to this file.
+# gates without a marker run here; the marker-aware gates run from commit-msg, where the message
+# exists. The scripts live next to this file.
 dir="$(cd "$(dirname "$0")" && pwd)/.."
 payload='{"tool_input":{"command":"git commit"}}'
 for check in check-format check-gates; do
-  printf '%s' "$payload" | "$dir/$check.sh" || exit 1
+  printf '%s' "$payload" | STANDARDS_GATES=unmarked STANDARDS_FROM_GIT=1 "$dir/$check.sh" || exit 1
 done
 exit 0

@@ -92,7 +92,8 @@ if [ ! -f .flow/config.yaml ]; then
       echo "# while the pool is below pool_max, and the steward appends it here. 0 never adds."
       echo "pool:"
       if [ -n "$pool" ]; then printf '%s\n' "$pool" | sed 's/^/  - /'; else echo "  # - ../$(basename "$main")-wt-1"; fi
-      echo "pool_max: 3"
+      pool_n="$(printf '%s\n' "$pool" | grep -c .)"; pool_max=3; [ "$pool_n" -gt 3 ] && pool_max="$pool_n"
+      echo "pool_max: $pool_max"
       echo "# Git-ignored files a new worktree gets from the main worktree when it lacks them, and"
       echo "# commands run in a new worktree after that (steward.sh setup <path> re-runs both)."
       echo "worktree_copy:"
@@ -100,14 +101,22 @@ if [ ! -f .flow/config.yaml ]; then
       echo "worktree_setup:"
       echo "  # - dotnet restore"
       echo "# Project gates the verifier runs after build, format and tests: name: command, run from the root."
+      echo "# A gate that only matters for some files takes a map: command, and paths (globs; it runs when a"
+      echo "# changed file matches one, else the report says it was skipped)."
       echo "gates:"
       echo "  # determinism: ./tools/check-determinism.sh"
+      echo "  # harness:"
+      echo "  #   command: ./tools/check-harness.sh"
+      echo "  #   paths: [server/**, tools/**]"
       echo "# Changed files matching these globs raise the feel-test gate after verify passes."
       echo "feel_test_paths:"
       echo "  # - client/unity/**"
       echo "notify:"
       echo "  desktop: true"
-      echo "  slack_webhook: \"\"   # Slack incoming webhook URL; empty disables"
+      echo "  idle: false   # true: the scheduled next job says once when it finds nothing ready"
+      echo "  # Slack: set FLOW_SLACK_WEBHOOK in the environment of the session or the scheduler (keeps the URL"
+      echo "  # out of the repository). A URL here is the fallback; empty with no variable disables Slack."
+      echo "  slack_webhook: \"\"   # Slack incoming webhook URL"
       echo "# Scheduled jobs (.flow/jobs/*.sh): the orchestrating session's model and effort, empty for"
       echo "# the host default; the marketplace checkout the weekly retro opens its PR from."
       echo "jobs:"
@@ -117,6 +126,7 @@ if [ ! -f .flow/config.yaml ]; then
     } > .flow/config.yaml
     [ -s .flow/config.yaml ] || die "could not write .flow/config.yaml"
     note ".flow/config.yaml written from the repository (adapters, base, pool). Review it."
+    [ "$pool_n" -gt 3 ] && note ".flow/config.yaml: $pool_n worktrees already exist, so the pool lists all $pool_n and pool_max is $pool_max. Every one of them becomes a task slot: trim the list if some are not for the flow."
   fi
 fi
 

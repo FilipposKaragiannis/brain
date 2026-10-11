@@ -1,5 +1,31 @@
 # standards
 
+## 1.1.0 (2026-10-11)
+
+- `init` no longer leaves its call dead in a project's own `.githooks/*`. It puts the call before
+  a trailing top-level `exit`, and moves a call that an earlier init left after one.
+  `init --check` reports such a call as drift ("is after an exit and never runs").
+- Command gates honour `marker`. A commit whose message carries it skips the gate. The git
+  `pre-commit` hook has no message, so it runs only the gates without a marker
+  (`STANDARDS_GATES=unmarked`); `commit-msg` runs the marked ones (`=marked`); the agent hosts
+  and CI run all of them against the message of the commit.
+- The gate command gets `STANDARDS_COMMIT_MESSAGE` and `STANDARDS_STAGE` in its environment, so
+  a script can check the staged files against the message itself.
+- Forbid gates match the text as a word in the part of the command that runs. A heredoc body, a
+  comment, a commit message or an `echo` that names a paused verb no longer blocks. The quoted
+  argument of `sh -c`, `bash -c` and `eval`, and `$( )` inside double quotes, still count.
+  `update-golden-all` is not `update-golden`; `./update-golden.sh` is. A one-word quoted argument
+  (`make "update-golden"`) still counts; quoted prose, a `-m`/`-e`/`--grep` value and the
+  arguments of `echo`, `printf`, `grep`, `rg`, `sed`, `awk` and `cat` do not.
+- An agent's commit runs the formatter and the gates once, not twice. The agent hook records the
+  index tree it passed (in the git dir); git's `pre-commit` and `commit-msg` skip that same tree
+  for ten minutes. Any other index runs them again.
+- Mutation: an empty `mutation` is the supported off switch. T-04 says so and the test reviewer
+  never reports a missing mutation run. `mutation` may carry `{files}`; the flow verifier then
+  runs it on the changed source files only.
+- `init` falls back to a general agent fed the project-advisor brief when the plugin's agents are
+  not loaded yet (the session that installed the plugin).
+
 ## 1.0.0 (2026-10-11)
 
 First stable release: the config keys and the hook contracts are kept from here on.

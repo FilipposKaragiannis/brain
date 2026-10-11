@@ -181,6 +181,53 @@ check "verify checks: build, format, tests, mutation signal, two gates" [ "$(pyt
 check "verify summary carries the error text" sh -c "grep -q 'harness broke' '$rv/verify.json'"
 check "verify feel_test from changed ui file" [ "$(jget feel_test < "$rv/verify.json")" = "true" ]
 check "verify.md twin" sh -c "grep -q 'Feel-test needed' '$rv/verify.md' && grep -q '| build | pass' '$rv/verify.md'"
+echo "verify: gate paths and the mutation switch"
+cat > .flow/config.yaml <<'YAML'
+adapters:
+  default: local
+base: main
+pool:
+  - ../wt-1
+  - ../wt-2
+gates:
+  flat: 'sh -c "exit 0"'
+  server-only:
+    command: 'sh -c "exit 1"'
+    paths: [server/**, db/*.sql]
+  tools:
+    command: 'sh -c "exit 0"'
+    paths:
+      - "*.sh"
+notify:
+  desktop: false
+YAML
+(cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
+vchecks() { python3 -c 'import json; cs=json.load(open("'"$rv"'/verify.json"))["checks"]; print(",".join(c["name"]+":"+c["status"] for c in cs))'; }
+check "gate with paths: skipped when no changed file matches, runs when one does" [ "$(vchecks | sed 's/.*mutation:[a-z]*,//')" = "gate flat:pass,gate server-only:skipped,gate tools:pass" ] && [ "$code" -eq 0 ]
+check "a skipped gate says why" sh -c "grep -q 'no changed file under its paths' '$rv/verify.json'"
+mkdir -p "$wv/server"; printf 'x\n' > "$wv/server/a.txt"
+(cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
+check "gate with paths: runs and fails once a changed file matches" [ "$code" -eq 1 ] && [ "$(vchecks | grep -o 'gate server-only:[a-z]*')" = "gate server-only:fail" ]
+std="$wv/.standards/config.json"
+setstd() { python3 - "$std" "$1" "$2" <<'PY'
+import json, sys
+p = sys.argv[1]; c = json.load(open(p)); c[sys.argv[2]] = sys.argv[3]; json.dump(c, open(p, "w"))
+PY
+}
+setstd mutation ""
+(cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1)
+check "empty mutation is the off switch: a skipped check, never a fail" [ "$(vchecks | grep -o 'mutation:[a-z]*')" = "mutation:skipped" ]
+setstd mutation "sh -c 'echo MUTATING {files}; exit 1'"
+(cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1)
+vm="$(vchecks | grep -o 'mutation:[a-z]*')"
+check "mutation with {files} runs on the changed source files only, as a signal" sh -c "[ '$vm' = mutation:signal ] && grep -q 'MUTATING tool.sh' '$rv/verify.log' && ! grep -q 'MUTATING .*panel.txt' '$rv/verify.log'"
+python3 - "$std" <<'PY'
+import json, sys
+c = json.load(open(sys.argv[1])); c["languages"] = [{"name": "z", "extensions": [".zzz"], "format": [{"prefix": "", "command": "true"}]}]; json.dump(c, open(sys.argv[1], "w"))
+PY
+(cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1)
+check "mutation with {files} is skipped when no changed source file applies" [ "$(vchecks | grep -o 'mutation:[a-z]*')" = "mutation:skipped" ]
+git -C "$wv" checkout -q .standards/config.json; rm -r "$wv/server"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\ngates:\n  determinism: '"'"'sh -c "exit 0"'"'"'\nfeel_test_paths:\n  - ui/**\nnotify:\n  desktop: false\n' > .flow/config.yaml
 for s in implement test review; do printf '{"status":"done"}\n' > "$rv/$s.json"; "$P/scripts/advance.sh" "$v1" >/dev/null 2>&1; "$P/scripts/next.sh" "$v1" >/dev/null 2>&1; done
 (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
@@ -297,6 +344,11 @@ check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null
 home2="$work/home2"; mkdir -p "$home2"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > "$home2/config.yaml"
 check "next job: nothing ready is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'quiet: nothing ready'"
+check "next job: no idle notification unless notify.idle is on" sh -c "! grep -q '	idle	' '$home2/events.log' 2>/dev/null"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n  idle: true\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null; FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null
+check "next job: notify.idle says it once, not on every run" [ "$(grep -c '	idle	' "$home2/events.log")" = 1 ]
+check "the idle notice is an event, not a gate" sh -c "[ -z \"\$(ls '$home2/gates' 2>/dev/null)\" ]"
 check "retro job: no lessons is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'quiet: 0 new'"
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" review-blocker 'local:task/9' "Magic number" --rule N-06 >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify failed 3 times" >/dev/null
@@ -343,6 +395,38 @@ for s in design plan; do "$P/scripts/next.sh" "$a2" >/dev/null 2>&1; rb2="$(cat 
 check "an unlisted size still stops at plan-approval" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$a2" | jget state.gate)" = "plan-approval" ]
 printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nauto_gates:\n  merge: S\n' > .flow/config.yaml
 check "init: --check flags an auto gate that is not allowed" sh -c "FLOW_PLUGIN='$P' '$P/skills/init/scripts/init.sh' --check | grep -q 'gap: .flow/config.yaml: auto_gates lists merge'"
+echo "parallel runs: the pick lock and --workers"
+mkdir -p "$work/par" && cd "$work/par" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 3\nnotify:\n  desktop: false\n' > .flow/config.yaml
+for t in one two; do "$P/scripts/new.sh" task "Parallel $t" --size S --body "## Acceptance
+- [ ] $t" >/dev/null; done
+"$P/scripts/next.sh" --json > "$work/p1.json" 2>/dev/null & q1=$!
+"$P/scripts/next.sh" --json > "$work/p2.json" 2>/dev/null & q2=$!
+wait "$q1"; wait "$q2"
+i1="$(jget item < "$work/p1.json")"; i2="$(jget item < "$work/p2.json")"
+w1="$(jget worktree < "$work/p1.json")"; w2="$(jget worktree < "$work/p2.json")"
+check "two runs started together take two items" [ -n "$i1" ] && [ -n "$i2" ] && [ "$i1" != "$i2" ]
+check "...in two worktrees" [ -n "$w1" ] && [ "$w1" != "$w2" ]
+check "the pick lock is released after the pick" [ ! -d .flow/pick.lock ]
+sleep 30 & held=$!
+mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
+"$P/scripts/new.sh" task "Parallel three" --size S --body "## Acceptance
+- [ ] three" >/dev/null
+FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
+check "a live holder makes the next pick wait, then exit 7 (quiet)" [ "$code" -eq 7 ]
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
+FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
+check "a stale lock (holder gone) is taken over" [ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]
+for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
+: > "$HOST_LOG"
+"$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1
+check "--workers 2: two loops, two logs" [ -f .flow/log/next-1.log ] && [ -f .flow/log/next-2.log ]
+check "--workers 2: each worker ran a step in its own worktree" [ "$(cut -f2 "$HOST_LOG" | sort -u | grep -c .)" = 2 ]
+check "--workers with an item is refused" sh -c "! '$P/jobs/next.sh' claude local:task/1 --workers 2 2>/dev/null"
+check "--workers 0 is refused" sh -c "! '$P/jobs/next.sh' claude --workers 0 2>/dev/null"
+cd "$repo"
+
 echo "help"
 check "help lists every skill" sh -c "for s in \$(ls '$P/skills'); do '$P/scripts/help.sh' | grep -q \"^| \$s |\" || exit 1; done"
 check "help <skill> shows one" sh -c "'$P/scripts/help.sh' gate | grep -q '/flow:gate'"
@@ -374,6 +458,25 @@ check "init: --check flags an empty pool with pool_max 0 as a gap" sh -c "! FLOW
 check "init: lists the gap after an install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' | grep -q 'Gaps'"
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q
 check "session-start: silent in a project without the flow" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+
+echo "init: a long pool, and the Slack webhook from the environment"
+mkdir -p "$work/bigpool" && cd "$work/bigpool" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+for n in 1 2 3 4 5; do git worktree add -q "../app-wt-$n" -b "wt$n" >/dev/null 2>&1; done
+out="$(FLOW_PLUGIN="$plugin_copy" "$init" 2>&1)"
+check "init: more worktrees than three raise pool_max to match" sh -c "grep -qx 'pool_max: 5' .flow/config.yaml && [ \"\$(grep -c '^  - ../app-wt-' .flow/config.yaml)\" = 5 ]"
+check "init: says every listed worktree becomes a task slot" sh -c "printf '%s' '$out' | grep -q '5 worktrees already exist'"
+mkdir -p "$work/fakebin" && printf '#!/bin/sh\necho "$@" >> "%s/curl.log"\n' "$work" > "$work/fakebin/curl" && chmod +x "$work/fakebin/curl"
+printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop: false\n  slack_webhook: https://config.example/hook\n' > .flow/config.yaml
+: > "$work/curl.log"
+PATH="$work/fakebin:$PATH" "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
+check "notify: the config webhook is the fallback" sh -c "grep -q 'config.example/hook' '$work/curl.log'"
+: > "$work/curl.log"
+PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
+check "notify: FLOW_SLACK_WEBHOOK wins over the config" sh -c "grep -q 'env.example/hook' '$work/curl.log' && ! grep -q 'config.example' '$work/curl.log'"
+printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop: false\n' > .flow/config.yaml
+: > "$work/curl.log"
+PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
+check "notify: the variable alone is enough, with no URL in the config" sh -c "grep -q 'env.example/hook' '$work/curl.log'"
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1

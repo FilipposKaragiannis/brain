@@ -1,5 +1,32 @@
 # flow
 
+## 1.2.0 (2026-10-11)
+
+- Gates in `.flow/config.yaml` take `paths`. `name: command` still always runs. A map with
+  `command:` and `paths:` (globs) runs when a changed file matches one, else the report lists the
+  gate as skipped.
+- Slack: `FLOW_SLACK_WEBHOOK` in the environment supplies the webhook, so the URL stays out of
+  the repository. `notify.slack_webhook` is the fallback.
+- Mutation in `verify`: an empty `mutation` in `.standards/config.json` is off and shows as a
+  skipped check. A command with `{files}` runs on the changed source files only and is skipped
+  when none changed.
+- `notify.idle: true`: the scheduled `next` job sends one notice when it finds nothing ready, then
+  stays quiet until a run does work again. `notify.sh --event <name> <message>` sends a notice
+  that is not a gate (no gate record).
+- Parallel unattended runs. `jobs/next.sh <host> --workers N` starts N loops, each on its own
+  ready item and worktree, each with its own lock and log (`next-1` ... `next-N`). A worker
+  still busy from the last schedule is skipped. A full pool stops a worker quietly (exit 3).
+- The pick lock. `next.sh` picks the item, claims the worktree and records the run under one
+  lock (`<flow home>/pick.lock`), so runs started together never take the same item or
+  worktree. A busy lock waits up to `FLOW_LOCK_WAIT` seconds (60), then exits 7; a lock whose
+  holder died is taken over.
+- `do` starts unattended runs from plain words: "start a one-off unattended run" runs the job in
+  the background; "run a repeating unattended flow every 30 minutes" creates a scheduled task
+  where the host has a tool for it, else gives the command and cadence for the owner's scheduler.
+- `init` no longer writes `pool_max: 3` over a longer pool. When the repository already has more
+  than three worktrees, `pool_max` is their count and `init` says that every one becomes a task
+  slot.
+
 ## 1.1.0 (2026-10-11)
 
 - `do`: the front door. A model-invoked skill that takes a plain sentence ("what is stuck?",

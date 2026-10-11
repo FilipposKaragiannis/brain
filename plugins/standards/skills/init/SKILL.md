@@ -22,8 +22,14 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
    next.
 3. **When it listed gaps, spawn the `project-advisor`** with the gap lines, the config and the
    guide paths. It reads the repository and returns one recommendation per gap with its evidence
-   and a confidence word. Do not research the gaps yourself. In a session that cannot spawn
-   agents, list the gaps without recommendations and say the advisor did not run.
+   and a confidence word. Do not research the gaps yourself. When the `project-advisor` is not
+   available, which is usual in the session that installed the plugin (the host has not loaded
+   its agents yet), spawn a general-purpose agent instead and give it the advisor's brief: the
+   body of `<plugin root>/agents/project-advisor.md` on Claude, the `developer_instructions` of
+   `<plugin root>/codex-agents/project-advisor.toml` on Codex, followed by the same gap lines,
+   config and guide paths. Say in the report that a general agent stood in. In a session that
+   cannot spawn agents at all, list the gaps without recommendations and say the advisor did
+   not run.
 4. **Report once**, per W-07, in one short message (about ten lines plus the gap list, no step
    narration, no copy of the installer's output): the files changed, grouped by folder; what the
    owner must do by hand, in one list (review `.standards/config.json` on a first install, the
@@ -88,17 +94,35 @@ above; it never creates `docs/` or `.githooks/`.
 "gates": [
   {"name": "build", "command": "dotnet build src/App.sln --nologo -v q",
    "paths": ["src/**", ".editorconfig", "Directory.Build.*"], "when": ["commit", "ci"]},
+  {"name": "hash-pause", "command": "tools/check-hashes.sh", "marker": "[closeout #218]"},
   {"name": "pause", "forbid": ["update-golden"], "marker": "[closeout #218]"}
 ]
 ```
 
 A command gate runs its command from the repo root before a commit when a committed file matches
 one of its globs (no `paths`: always), before a push (`"push"`, no path filter) and per commit in
-CI (`"ci"`); `when` defaults to `["commit"]`; a failing command blocks. A forbid gate blocks any
-agent command containing one of its texts unless the command or its commit message carries the
-marker. The same hook (`check-gates.sh`) serves the agent hosts, the git hooks and
-`check-range.sh`. The commit-message markers (`[config]`, `[allow-docs]`, `[why-comment]`, a
-gate's marker) reach the git hooks through `commit-msg`, which git hands the real message.
+CI (`"ci"`); `when` defaults to `["commit"]`; a failing command blocks. The command sees two
+environment variables: `STANDARDS_COMMIT_MESSAGE` (the message of the commit, empty before a
+push) and `STANDARDS_STAGE` (`commit`, `push` or `ci`). A command gate with a `marker` is skipped
+by a commit whose message carries it, so an approved commit goes through. A forbid gate blocks
+an agent command that runs one of its texts unless the command or its commit message carries
+the marker. The text must stand as a word in the part of the command that runs. A heredoc body,
+a comment, a commit message, a grep pattern, an `echo` or quoted prose that only names it does
+not trip the gate. A one-word quoted argument (`make "update-golden"`) and the argument of
+`sh -c`, `bash -c` and `eval` do. The same hook (`check-gates.sh`) serves the
+agent hosts, the git hooks and `check-range.sh`. The commit-message markers (`[config]`,
+`[allow-docs]`, `[why-comment]`, a gate's marker) reach the git hooks through `commit-msg`,
+which git hands the real message. That is also where a command gate with a marker runs: the
+`pre-commit` hook has no message yet and runs the gates without one. An agent's commit runs each
+gate once: when the agent hook passes the formatter or the gates for a plain `git commit` of the
+index, it records that index tree in the git dir, and git's own hooks skip the same tree for ten
+minutes. A `git add` in the same command, `-a` or a pathspec changes the index, so git's hooks
+run the gates again.
+
+**Mutation** is `mutation` in `.standards/config.json`. An empty string turns it off: verify
+reports a skipped check, the test reviewer and T-04 do not ask for it. With `{files}` in the
+command, verify runs it on the changed source files only (like a format command) and skips it
+when none changed; without it the command runs as written. It is a signal, never a fail (T-05).
 
 **CI** calls the plugin's composite action in one step, after a checkout with `fetch-depth: 0`
 and the toolchain setup: `uses: FilipposKaragiannis/brain/plugins/standards/action@main`. It runs

@@ -27,6 +27,8 @@ For every added or changed test check, in this order:
 6. T-04 the right level: a regression test for a bug fix, an integration test where a boundary is
    crossed.
 Grade by the rule tag: a broken [hard] rule is P0, a [judgement] rule is P2.
+Mutation is the project's switch: an empty `mutation` in `.standards/config.json` is off, so never
+report a missing mutation run under T-04 or T-05.
 
 ## Output
 Findings only: grade, rule id, file:line, what is wrong, the fix. Under 400 words.

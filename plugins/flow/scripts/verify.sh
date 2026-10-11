@@ -1,11 +1,15 @@
 #!/bin/sh
 # verify.sh <item> [--base <ref>]: the one verify run. From the claimed worktree, runs in order
 # build, format (changed files only), tests, mutation (signal, never a fail) and the project
-# gates from .flow/config.yaml (gates: name: command), each once, and writes
+# gates from .flow/config.yaml, each once, and writes
 # <reports>/verify.json {status, checks: [{name, status, command, summary}], attempts, base,
 # head, changed_files, feel_test} and its Markdown twin verify.md for the PR body. Commands come
-# from .standards/config.json (build, test, mutation, languages[].format). feel_test is true
-# when a changed file matches feel_test_paths in the flow config. Never edits anything.
+# from .standards/config.json (build, test, mutation, languages[].format). An empty mutation is
+# the off switch (a skipped check); a mutation command with {files} runs on the changed source
+# files only, like a format command, and is skipped when none changed. A project gate is
+# `name: command` (always runs) or a map with `command:` and `paths:` (runs when a changed file
+# matches a glob; otherwise a skipped check). feel_test is true when a changed file matches
+# feel_test_paths in the flow config. Never edits anything.
 . "$(dirname "$0")/../lib/flow.sh"
 [ $# -ge 1 ] || die "usage: verify.sh <item> [--base <ref>]" 2
 item="$1"; shift
@@ -25,6 +29,25 @@ data="$(adapter read "$item" 2>/dev/null)" || data='{}'
 attempts="$(state_get "$data" attempts)"; attempts=$(( ${attempts:-0} + 1 ))
 checks=""; overall="pass"; sep=""
 
+skipped() {
+  # skipped <name> <why>: a check that did not apply, kept in the report so the reader sees why.
+  checks="$checks$sep$(json_obj "name=$1" status=skipped command= "summary=$2")"; sep=","
+}
+changed_matches() {
+  # changed_matches <globs, one per line>: true when a changed file matches one of them.
+  while IFS= read -r g; do
+    [ -n "$g" ] || continue
+    while IFS= read -r f; do
+      [ -n "$f" ] && glob_match "$g" "$f" && return 0
+    done <<EOF_FILES
+$changed
+EOF_FILES
+  done <<EOF_GLOBS
+$1
+EOF_GLOBS
+  return 1
+}
+
 run_check() {
   # run_check <name> <command> <kind: gate|signal> [files]
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
@@ -42,7 +65,7 @@ run_check() {
 
 build="$(json_get "$std" build)"
 [ -n "$build" ] && run_check build "$build" gate || checks="$checks$sep$(json_obj name=build status=skipped command= "summary=no build command in .standards/config.json")" ; [ -n "$build" ] || sep=","
-nlang="$(json_length "$std" languages)"; i=0; ran_format=0
+nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
   lang="$(json_get "$std" "languages.$i")"
   exts="$(json_list "$lang" extensions | tr '\n' '|' | sed 's/|$//; s/\./\\./g')"
@@ -50,7 +73,7 @@ while [ "$i" -lt "${nlang:-0}" ]; do
   while [ "$j" -lt "${nf:-0}" ]; do
     prefix="$(json_get "$lang" "format.$j.prefix")"; command="$(json_get "$lang" "format.$j.command")"
     files="$(printf '%s\n' "$changed" | grep -E "($exts)$" | { [ -n "$prefix" ] && grep "^$prefix" || cat; } | while read -r f; do [ -f "$f" ] && printf '%s ' "$f"; done)"
-    if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "$files"; ran_format=1; fi
+    if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "$files"; ran_format=1; all_files="$all_files$files"; fi
     j=$((j + 1))
   done
   i=$((i + 1))
@@ -59,10 +82,19 @@ done
 test_cmd="$(json_get "$std" test)"
 if [ -n "$test_cmd" ]; then run_check tests "$test_cmd" gate; else checks="$checks$sep$(json_obj name=tests status=skipped command= "summary=no test command in .standards/config.json")"; sep=","; fi
 mutation="$(json_get "$std" mutation)"
-[ -n "$mutation" ] && run_check mutation "$mutation" signal
+if [ -z "$mutation" ]; then skipped mutation "mutation is empty in .standards/config.json (off)"
+else
+  case "$mutation" in
+    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run"; fi ;;
+    *) run_check mutation "$mutation" signal ;;
+  esac
+fi
 for name in $(yaml_keys "$(config_file)" gates); do
-  command="$(cfg "gates.$name")"
-  [ -n "$command" ] && run_check "gate $name" "$command" gate
+  command="$(cfg "gates.$name")"; paths=""
+  if [ -z "$command" ]; then command="$(cfg "gates.$name.command")"; paths="$(cfg "gates.$name.paths")"; fi
+  [ -n "$command" ] || continue
+  if [ -n "$paths" ] && ! changed_matches "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
+  run_check "gate $name" "$command" gate
 done
 feel=false
 for g in $(cfg feel_test_paths); do

@@ -1,0 +1,553 @@
+<title>Brain Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Hanken+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<style>
+/* Monochrome: black, white and greys with gradients. Lines and plugins differ by shade and by label. Every colour is a token. */
+:root{--bg:#F3F3F2;--panel:#FFFFFF;--fg:#0E0E0E;--muted:#666666;--line:#D9D9D9;--accent:#0E0E0E;--glow:#FFFFFF;--tint:#EDEDED;--term:#121212;--term-fg:#F2F2F2;--term-dim:#8C8C8C;--term-hot:#D0D0D0;--c-standards:#0E0E0E;--c-flow:#4D4D4D;--c-craft:#808080;--c-meta:#ABABAB;--l-bugfix:#0E0E0E;--l-task-S:#4D4D4D;--l-task-M:#808080;--l-task-L:#ABABAB;--l-epic:#2B2B2B;--display:"Fraunces",Georgia,serif;--body:"Hanken Grotesk",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0A0A0A;--panel:#151515;--fg:#F2F2F2;--muted:#9A9A9A;--line:#2B2B2B;--accent:#F2F2F2;--glow:#242424;--tint:#1E1E1E;--term:#000000;--c-standards:#F2F2F2;--c-flow:#C4C4C4;--c-craft:#8E8E8E;--c-meta:#5E5E5E;--l-bugfix:#F2F2F2;--l-task-S:#C4C4C4;--l-task-M:#8E8E8E;--l-task-L:#5E5E5E;--l-epic:#DADADA;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0A0A0A;--panel:#151515;--fg:#F2F2F2;--muted:#9A9A9A;--line:#2B2B2B;--accent:#F2F2F2;--glow:#242424;--tint:#1E1E1E;--term:#000000;--c-standards:#F2F2F2;--c-flow:#C4C4C4;--c-craft:#8E8E8E;--c-meta:#5E5E5E;--l-bugfix:#F2F2F2;--l-task-S:#C4C4C4;--l-task-M:#8E8E8E;--l-task-L:#5E5E5E;--l-epic:#DADADA;color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.5;padding:0 16px;padding-block:0 72px;background-image:radial-gradient(ellipse 80% 420px at 50% 0,var(--glow),transparent 70%)}
+main{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:72px}
+main>*,.stack>*,figure{min-width:0}
+.hero{padding-block:56px 8px;display:grid;gap:26px}
+.hero h1{font:500 clamp(54px,11vw,120px)/.9 var(--display);letter-spacing:-.03em;margin:0;text-wrap:balance}
+.hero h1 em{font-style:italic;font-weight:500;background:linear-gradient(100deg,var(--fg) 10%,var(--muted) 95%);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero p{max-width:46ch;margin:0;font-size:19px;color:var(--muted);text-wrap:balance}
+.stats{display:flex;flex-wrap:wrap;gap:12px 40px}
+.stats div{display:grid}.stats b{font:500 44px/1 var(--display);font-variant-numeric:tabular-nums}.stats span{font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
+nav.jump{display:flex;flex-wrap:wrap;gap:8px}
+nav.jump a{background:var(--panel);font:600 12px var(--mono);text-decoration:none;color:var(--fg);border:1.5px solid var(--fg);border-radius:99px;padding:5px 13px}
+nav.jump a:hover{background:var(--fg);color:var(--bg)}
+section>h2{font:500 clamp(30px,5vw,44px)/1 var(--display);letter-spacing:-.02em;margin:0 0 6px;display:flex;align-items:baseline;gap:14px}
+section>h2 i{font:600 12px var(--mono);color:var(--accent);letter-spacing:.08em;font-style:normal}
+.sub{color:var(--muted);margin:0 0 22px;max-width:60ch}
+.plugins{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.plugin{background:linear-gradient(155deg,var(--panel) 40%,var(--tint));border:2px solid var(--fg);border-radius:14px;padding:18px 18px 16px;display:grid;gap:10px;min-width:0;position:relative;overflow:hidden;box-shadow:5px 5px 0 var(--pc)}
+.plugin h3{font:500 30px/1 var(--display);margin:0;color:var(--fg);display:flex;justify-content:space-between;align-items:baseline;gap:8px;letter-spacing:-.02em}
+.plugin h3 small{font:600 11px var(--mono);color:var(--muted);letter-spacing:0}
+.plugin p{margin:0;color:var(--muted);font-size:14px}
+.dots{display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.dots i{display:block;width:12px;height:12px;background:var(--pc)}
+.dots .ds{border-radius:50%}.dots .da{border-radius:2px}.dots .dh{width:0;height:0;background:none;border:7px solid transparent;border-bottom:12px solid var(--pc);border-top:0;border-left-width:6px;border-right-width:6px}
+.key{display:flex;gap:12px;font:600 11px var(--mono);color:var(--muted);flex-wrap:wrap}
+.key span{display:inline-flex;align-items:center;gap:5px}
+.key i{display:inline-block;width:10px;height:10px;background:var(--fg)}
+.key .ds{border-radius:50%}.key .da{border-radius:2px}.key .dh{width:0;height:0;background:none;border:6px solid transparent;border-bottom:10px solid var(--fg);border-top:0;border-left-width:5px;border-right-width:5px}
+figure{margin:0;background:linear-gradient(180deg,var(--panel),var(--tint));border:2px solid var(--fg);border-radius:14px;padding:16px 18px;min-width:0}
+figure>div{overflow-x:auto}figure svg{display:block;max-width:none;height:auto}
+figcaption{color:var(--muted);font-size:14px;margin-top:10px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.chips button{font:600 12px var(--mono);border:2px solid var(--fg);border-left-width:10px;border-left-color:var(--lc);color:var(--fg);background:var(--panel);border-radius:99px;padding:4px 12px;cursor:pointer}
+.chips button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.ln{transition:opacity .2s}.dim{opacity:.18}
+.stack{display:grid;gap:16px}
+.bar{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;justify-content:space-between;margin-bottom:16px}
+.seg{display:none;border:2px solid var(--fg);border-radius:99px;overflow:hidden}
+.js .seg{display:inline-flex}
+.seg button{font:600 12px var(--mono);border:0;background:var(--panel);color:var(--fg);padding:6px 16px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.tabs{display:none;flex-wrap:wrap;gap:8px}
+.js .tabs{display:flex}
+.tabs button{font:600 14px var(--body);border:2px solid var(--fg);background:var(--panel);color:var(--fg);border-radius:10px;padding:8px 14px;cursor:pointer;display:inline-flex;gap:8px;align-items:center}
+.tabs button::before{content:"";width:12px;height:12px;border-radius:50%;background:var(--lc)}
+.tabs button[aria-selected="true"]{background:var(--fg);color:var(--bg)}
+.js .pb{display:none}.js .pb.on{display:block}
+.pb{background:linear-gradient(180deg,var(--panel) 70%,var(--tint));border:2px solid var(--fg);border-radius:14px;padding:22px clamp(14px,3vw,28px) 10px;box-shadow:6px 6px 0 var(--lc);margin-bottom:22px}
+.pb header h3{font:500 clamp(24px,4vw,32px)/1.1 var(--display);margin:0;letter-spacing:-.01em}
+.pb header p{margin:4px 0 12px;color:var(--muted)}
+.strip{list-style:none;padding:0;margin:0 0 18px;display:flex;flex-wrap:wrap;gap:4px 6px}
+.strip li{font:600 11px var(--mono);padding:2px 9px;border-radius:99px;border:1.5px solid var(--lc);color:var(--fg)}
+.strip li.gate{background:var(--fg);color:var(--bg);border-color:var(--fg);padding:1px 9px 1px 7px}
+.strip li.gate::before{content:"\25C6  "}
+.steps{list-style:none;margin:0;padding:0;counter-reset:s}
+.steps>li{display:grid;grid-template-columns:34px 1fr;gap:0 14px;position:relative;padding-bottom:20px}
+.steps>li::before{content:"";position:absolute;left:16px;top:34px;bottom:0;width:2px;background:var(--lc);opacity:.5}
+.steps>li:last-child::before{display:none}
+.steps .n{width:34px;height:34px;border-radius:50%;background:var(--panel);border:3px solid var(--lc);display:grid;place-items:center;font:700 14px var(--mono);z-index:1}
+.steps .gateful .n{border-radius:8px;transform:rotate(45deg);width:30px;height:30px;margin:2px;border-color:var(--fg);background:var(--fg)}
+.steps .gateful .n{font-size:0}
+.b{min-width:0;display:grid;gap:7px;padding-top:2px}
+.cmd{display:flex;align-items:center;gap:10px;background:linear-gradient(100deg,var(--term),#2A2A2A);color:var(--term-fg);border-radius:9px;padding:9px 10px 9px 14px;font:500 14px var(--mono);min-width:0}
+.cmd .p{color:var(--term-hot)}
+.cmd code{flex:1;min-width:0;overflow-wrap:anywhere;font:inherit;user-select:all}
+.cp{font:600 11px var(--mono);border:1px solid var(--term-dim);background:none;color:var(--term-dim);border-radius:6px;padding:2px 8px;cursor:pointer;display:none}
+.js .cp{display:block}.cp:hover{color:var(--term-fg);border-color:var(--term-fg)}
+.c-codex,.c-say{display:none}body[data-host="codex"] .c-claude,body[data-host="say"] .c-claude{display:none}body[data-host="codex"] .c-codex,body[data-host="say"] .c-say{display:inline}
+.act{font-weight:700}
+.say{margin:0;max-width:64ch}
+.meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.ag{font:600 11px var(--mono);color:var(--fg);border:1.5px solid var(--pc);border-left-width:6px;border-radius:6px;padding:1px 7px}
+.out{font:600 12px var(--mono);color:var(--muted)}
+.stop{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;border-left:4px solid var(--fg);background:linear-gradient(90deg,var(--tint),transparent);border-radius:0 8px 8px 0;padding:8px 12px;align-items:baseline}
+.stop b{font:700 12px var(--mono);color:var(--fg);text-transform:uppercase;letter-spacing:.06em}
+.stop b::before{content:"\25C6  "}
+.also{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px}
+.also div{display:grid;gap:6px}.also p{margin:0;color:var(--muted);font-size:14px}
+.skills{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px}
+.group{background:var(--panel);border:2px solid var(--fg);border-radius:14px;padding:14px 16px;min-width:0}
+.group h3{font:500 24px/1 var(--display);margin:0 0 8px;color:var(--fg);padding-left:10px;border-left:8px solid var(--pc)}
+.skill{display:grid;grid-template-columns:18px 1fr;gap:0 8px;padding:8px 0;border-top:1px solid var(--line);align-items:start}
+.skill:first-of-type{border-top:0}
+.skill code{font:600 13px var(--mono)}
+.skill .when{color:var(--muted);font-size:14px;grid-column:2}
+.g{width:14px;height:14px;margin-top:3px;color:var(--fg)}
+.legend{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:14px;align-items:center;margin-bottom:12px}.legend span{display:inline-flex;align-items:center;gap:6px}
+.agents{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:10px}
+.agent{background:var(--panel);border:1.5px solid var(--line);border-left:6px solid var(--pc);border-radius:8px;padding:9px 12px;display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;min-width:0}
+.agent code{font:600 13px var(--mono);overflow-wrap:anywhere}
+.agent .step{color:var(--muted);font-size:13px}
+.agent.proj{border-style:dashed;border-left-style:solid;border-left-color:var(--fg)}
+.proj-head{font:700 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;margin:22px 0 10px}
+.agent .m{font:600 11px var(--mono);color:var(--muted);grid-row:1/3;grid-column:2;display:grid;justify-items:end;gap:3px}
+.bars{display:inline-flex;gap:2px}.bars i{width:5px;height:10px;background:var(--line);border-radius:1px}.bars i.on{background:var(--pc)}
+.install{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.install div{background:linear-gradient(135deg,var(--term),#262626);color:var(--term-fg);border-radius:14px;padding:16px 18px;min-width:0}
+.install b{display:block;font:700 11px var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--term-hot);margin-bottom:8px}
+pre{margin:0;font:13px/1.7 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
+a{color:var(--accent)}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.ln{transition:none}}
+</style>
+<main>
+<header class="hero"><h1>The <em>brain</em>,<br>mapped.</h1><p>Plugins for Claude Code and Codex that file the work, plan it, build it, check it and open the PR.</p>
+<div class="stats"><div><b>4</b><span>plugins</span></div><div><b>23</b><span>skills</span></div><div><b>18</b><span>agents<!--project-count--></span></div><div><b>11</b><span>hooks</span></div></div>
+<nav class="jump"><a href="#flows">Flows</a><a href="#playbooks">Playbooks</a><a href="#hooks">Hooks</a><a href="#skills">Skills</a><a href="#agents">Agents</a><a href="#install">Install</a></nav></header>
+<section id="plugins"><div class="key"><span><i class="ds"></i>skill</span><span><i class="da"></i>agent</span><span><i class="dh"></i>hook</span></div><div class="plugins" style="margin-top:12px">
+<div class="plugin" style="--pc:var(--c-standards)"><h3>standards<small>v1.1.0</small></h3><p>Enforce the coding standards</p><div class="dots" aria-label="2 skills, 6 agents, 8 hooks"><i class="ds"></i><i class="ds"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i></div></div>
+<div class="plugin" style="--pc:var(--c-flow)"><h3>flow<small>v1.2.0</small></h3><p>Run tracked work end to end</p><div class="dots" aria-label="16 skills, 12 agents, 3 hooks"><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i></div></div>
+<div class="plugin" style="--pc:var(--c-craft)"><h3>craft<small>v1.0.0</small></h3><p>Design and improve deep modules</p><div class="dots" aria-label="2 skills, 0 agents, 0 hooks"><i class="ds"></i><i class="ds"></i></div></div>
+<div class="plugin" style="--pc:var(--c-meta)"><h3>meta<small>v1.1.0</small></h3><p>Write skills and run retros</p><div class="dots" aria-label="3 skills, 0 agents, 0 hooks"><i class="ds"></i><i class="ds"></i><i class="ds"></i></div></div>
+</div></section>
+<section id="flows"><h2><i>01</i>The flows</h2><p class="sub">You file an item. Its kind and size pick a line. The run follows the line and stops at every diamond.</p><div class="stack">
+<div><div class="chips" aria-label="Highlight one line"><button type="button" data-line="bugfix" aria-pressed="false" style="--lc:var(--l-bugfix)">bug</button><button type="button" data-line="task-S" aria-pressed="false" style="--lc:var(--l-task-S)">task S</button><button type="button" data-line="task-M" aria-pressed="false" style="--lc:var(--l-task-M)">task M</button><button type="button" data-line="task-L" aria-pressed="false" style="--lc:var(--l-task-L)">task L / XL</button></div><figure><div><svg viewBox="0 0 1042 366" width="1042" role="img" aria-label="The steps a bug or task runs, one line per profile" xmlns="http://www.w3.org/2000/svg">
+<style>text{font:11px var(--mono);fill:currentColor}.rl{font:700 13px var(--body)}.lbl{font:600 11px var(--mono)}.gt{fill:currentColor;font-weight:700}.sub{fill:var(--muted);font-size:10px}</style>
+<line x1="143" y1="98" x2="143" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(140 90) rotate(-38)" class="lbl">design</text>
+<text x="143" y="330" text-anchor="middle" class="sub" font-style="italic">plan</text>
+<line x1="221" y1="98" x2="221" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(218 90) rotate(-38)" class="lbl">plan</text>
+<text x="221" y="330" text-anchor="middle" class="sub">planner</text>
+<line x1="299" y1="98" x2="299" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(296 90) rotate(-38)" class="lbl gt">plan-approval</text>
+<text x="299" y="330" text-anchor="middle" class="sub gt">you</text>
+<line x1="377" y1="98" x2="377" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(374 90) rotate(-38)" class="lbl">reproduce</text>
+<text x="377" y="330" text-anchor="middle" class="sub">test-writer</text>
+<line x1="455" y1="98" x2="455" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(452 90) rotate(-38)" class="lbl">implement</text>
+<text x="455" y="330" text-anchor="middle" class="sub" font-style="italic">implement</text>
+<line x1="533" y1="98" x2="533" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(530 90) rotate(-38)" class="lbl">test</text>
+<text x="533" y="330" text-anchor="middle" class="sub">test-writer</text>
+<line x1="611" y1="98" x2="611" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(608 90) rotate(-38)" class="lbl">review</text>
+<text x="611" y="330" text-anchor="middle" class="sub" font-style="italic">review</text>
+<line x1="689" y1="98" x2="689" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(686 90) rotate(-38)" class="lbl">verify</text>
+<text x="689" y="330" text-anchor="middle" class="sub">verifier</text>
+<line x1="767" y1="98" x2="767" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(764 90) rotate(-38)" class="lbl">explain</text>
+<text x="767" y="330" text-anchor="middle" class="sub" font-style="italic">explain</text>
+<line x1="845" y1="98" x2="845" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(842 90) rotate(-38)" class="lbl">pr</text>
+<text x="845" y="330" text-anchor="middle" class="sub">pr-creator</text>
+<line x1="923" y1="98" x2="923" y2="314" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(920 90) rotate(-38)" class="lbl gt">merge</text>
+<text x="923" y="330" text-anchor="middle" class="sub gt">you</text>
+<rect x="133.0" y="212.0" width="20" height="72.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<rect x="211.0" y="212.0" width="20" height="72.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<rect x="289.0" y="212.0" width="20" height="72.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<rect x="445.0" y="116.0" width="20" height="168.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<rect x="523.0" y="116.0" width="20" height="168.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<rect x="601.0" y="116.0" width="20" height="168.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<rect x="679.0" y="116.0" width="20" height="168.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<rect x="835.0" y="116.0" width="20" height="168.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<rect x="913.0" y="116.0" width="20" height="168.0" rx="10" fill="var(--panel)" stroke="var(--fg)" stroke-width="2"/>
+<g class="ln" data-line="bugfix">
+<text x="6" y="128" dominant-baseline="middle" class="rl">bug</text>
+<line x1="377" y1="128" x2="923" y2="128" stroke="var(--l-bugfix)" stroke-width="7" stroke-linecap="round"/>
+<circle cx="377" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-bugfix)" stroke-width="3.5"/>
+<circle cx="455" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-bugfix)" stroke-width="3.5"/>
+<circle cx="533" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-bugfix)" stroke-width="3.5"/>
+<circle cx="611" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-bugfix)" stroke-width="3.5"/>
+<circle cx="689" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-bugfix)" stroke-width="3.5"/>
+<circle cx="845" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-bugfix)" stroke-width="3.5"/>
+<path d="M923 118 l10 10 l-10 10 l-10 -10 z" fill="var(--fg)" stroke="var(--panel)" stroke-width="2.5"/>
+</g>
+<g class="ln" data-line="task-S">
+<text x="6" y="176" dominant-baseline="middle" class="rl">task S</text>
+<line x1="455" y1="176" x2="923" y2="176" stroke="var(--l-task-S)" stroke-width="7" stroke-linecap="round"/>
+<circle cx="455" cy="176" r="6.5" fill="var(--panel)" stroke="var(--l-task-S)" stroke-width="3.5"/>
+<circle cx="533" cy="176" r="6.5" fill="var(--panel)" stroke="var(--l-task-S)" stroke-width="3.5"/>
+<circle cx="611" cy="176" r="6.5" fill="var(--panel)" stroke="var(--l-task-S)" stroke-width="3.5"/>
+<circle cx="689" cy="176" r="6.5" fill="var(--panel)" stroke="var(--l-task-S)" stroke-width="3.5"/>
+<circle cx="845" cy="176" r="6.5" fill="var(--panel)" stroke="var(--l-task-S)" stroke-width="3.5"/>
+<path d="M923 166 l10 10 l-10 10 l-10 -10 z" fill="var(--fg)" stroke="var(--panel)" stroke-width="2.5"/>
+</g>
+<g class="ln" data-line="task-M">
+<text x="6" y="224" dominant-baseline="middle" class="rl">task M</text>
+<line x1="143" y1="224" x2="923" y2="224" stroke="var(--l-task-M)" stroke-width="7" stroke-linecap="round"/>
+<circle cx="143" cy="224" r="6.5" fill="var(--panel)" stroke="var(--l-task-M)" stroke-width="3.5"/>
+<circle cx="221" cy="224" r="6.5" fill="var(--panel)" stroke="var(--l-task-M)" stroke-width="3.5"/>
+<path d="M299 214 l10 10 l-10 10 l-10 -10 z" fill="var(--fg)" stroke="var(--panel)" stroke-width="2.5"/>
+<circle cx="455" cy="224" r="6.5" fill="var(--panel)" stroke="var(--l-task-M)" stroke-width="3.5"/>
+<circle cx="533" cy="224" r="6.5" fill="var(--panel)" stroke="var(--l-task-M)" stroke-width="3.5"/>
+<circle cx="611" cy="224" r="6.5" fill="var(--panel)" stroke="var(--l-task-M)" stroke-width="3.5"/>
+<circle cx="689" cy="224" r="6.5" fill="var(--panel)" stroke="var(--l-task-M)" stroke-width="3.5"/>
+<circle cx="845" cy="224" r="6.5" fill="var(--panel)" stroke="var(--l-task-M)" stroke-width="3.5"/>
+<path d="M923 214 l10 10 l-10 10 l-10 -10 z" fill="var(--fg)" stroke="var(--panel)" stroke-width="2.5"/>
+</g>
+<g class="ln" data-line="task-L">
+<text x="6" y="272" dominant-baseline="middle" class="rl">task L / XL</text>
+<line x1="143" y1="272" x2="923" y2="272" stroke="var(--l-task-L)" stroke-width="7" stroke-linecap="round"/>
+<circle cx="143" cy="272" r="6.5" fill="var(--panel)" stroke="var(--l-task-L)" stroke-width="3.5"/>
+<circle cx="221" cy="272" r="6.5" fill="var(--panel)" stroke="var(--l-task-L)" stroke-width="3.5"/>
+<path d="M299 262 l10 10 l-10 10 l-10 -10 z" fill="var(--fg)" stroke="var(--panel)" stroke-width="2.5"/>
+<circle cx="455" cy="272" r="6.5" fill="var(--panel)" stroke="var(--l-task-L)" stroke-width="3.5"/>
+<circle cx="533" cy="272" r="6.5" fill="var(--panel)" stroke="var(--l-task-L)" stroke-width="3.5"/>
+<circle cx="611" cy="272" r="6.5" fill="var(--panel)" stroke="var(--l-task-L)" stroke-width="3.5"/>
+<circle cx="689" cy="272" r="6.5" fill="var(--panel)" stroke="var(--l-task-L)" stroke-width="3.5"/>
+<circle cx="767" cy="272" r="6.5" fill="var(--panel)" stroke="var(--l-task-L)" stroke-width="3.5"/>
+<circle cx="845" cy="272" r="6.5" fill="var(--panel)" stroke="var(--l-task-L)" stroke-width="3.5"/>
+<path d="M923 262 l10 10 l-10 10 l-10 -10 z" fill="var(--fg)" stroke="var(--panel)" stroke-width="2.5"/>
+</g>
+<circle cx="104" cy="354" r="5" fill="var(--panel)" stroke="currentColor" stroke-width="3"/><text x="116" y="354" dominant-baseline="middle" class="sub">a step, run in a fresh context</text>
+<path d="M324 347 l7 7 l-7 7 l-7 -7 z" fill="var(--fg)"/><text x="336" y="354" dominant-baseline="middle" class="sub">a gate: the run stops and asks you</text>
+<text x="544" y="354" dominant-baseline="middle" class="sub">agent name, or <tspan font-style="italic">skill</tspan> when it spawns several</text>
+</svg></div><figcaption>Bugs and tasks. Where lines meet, they share a step. A failed review or verify sends the item back to implement.</figcaption></figure></div>
+<div><div class="chips" aria-label="Highlight one line"><button type="button" data-line="epic" aria-pressed="false" style="--lc:var(--l-epic)">epic</button></div><figure><div><svg viewBox="0 0 652 222" width="652" role="img" aria-label="The steps an epic runs" xmlns="http://www.w3.org/2000/svg">
+<style>text{font:11px var(--mono);fill:currentColor}.rl{font:700 13px var(--body)}.lbl{font:600 11px var(--mono)}.gt{fill:currentColor;font-weight:700}.sub{fill:var(--muted);font-size:10px}</style>
+<line x1="143" y1="98" x2="143" y2="170" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(140 90) rotate(-38)" class="lbl">grill</text>
+<text x="143" y="186" text-anchor="middle" class="sub">interviewer</text>
+<line x1="221" y1="98" x2="221" y2="170" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(218 90) rotate(-38)" class="lbl gt">interview</text>
+<text x="221" y="186" text-anchor="middle" class="sub gt">you</text>
+<line x1="299" y1="98" x2="299" y2="170" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(296 90) rotate(-38)" class="lbl">epic</text>
+<text x="299" y="186" text-anchor="middle" class="sub">planner</text>
+<line x1="377" y1="98" x2="377" y2="170" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(374 90) rotate(-38)" class="lbl">tasks</text>
+<text x="377" y="186" text-anchor="middle" class="sub">planner</text>
+<line x1="455" y1="98" x2="455" y2="170" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(452 90) rotate(-38)" class="lbl gt">decomposition</text>
+<text x="455" y="186" text-anchor="middle" class="sub gt">you</text>
+<line x1="533" y1="98" x2="533" y2="170" stroke="var(--line)" stroke-dasharray="2 5"/>
+<text transform="translate(530 90) rotate(-38)" class="lbl">closeout</text>
+<text x="533" y="186" text-anchor="middle" class="sub">verifier</text>
+<g class="ln" data-line="epic">
+<text x="6" y="128" dominant-baseline="middle" class="rl">epic</text>
+<line x1="143" y1="128" x2="533" y2="128" stroke="var(--l-epic)" stroke-width="7" stroke-linecap="round"/>
+<circle cx="143" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-epic)" stroke-width="3.5"/>
+<path d="M221 118 l10 10 l-10 10 l-10 -10 z" fill="var(--fg)" stroke="var(--panel)" stroke-width="2.5"/>
+<circle cx="299" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-epic)" stroke-width="3.5"/>
+<circle cx="377" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-epic)" stroke-width="3.5"/>
+<path d="M455 118 l10 10 l-10 10 l-10 -10 z" fill="var(--fg)" stroke="var(--panel)" stroke-width="2.5"/>
+<circle cx="533" cy="128" r="6.5" fill="var(--panel)" stroke="var(--l-epic)" stroke-width="3.5"/>
+</g>
+<circle cx="104" cy="210" r="5" fill="var(--panel)" stroke="currentColor" stroke-width="3"/><text x="116" y="210" dominant-baseline="middle" class="sub">a step, run in a fresh context</text>
+<path d="M324 203 l7 7 l-7 7 l-7 -7 z" fill="var(--fg)"/><text x="336" y="210" dominant-baseline="middle" class="sub">a gate: the run stops and asks you</text>
+</svg></div><figcaption>Epics. They produce tasks, then wait for every one to merge.</figcaption></figure></div>
+</div></section>
+<section id="playbooks"><h2><i>02</i>Playbooks</h2><p class="sub">Real sessions, step by step. Type what the dark box says, or switch to Plain words and say it. A $ box goes in a terminal or a scheduler. The diamond is where you answer.</p>
+<div class="bar"><div class="tabs" role="tablist"><button type="button" role="tab" data-pb="epic" aria-selected="false" style="--lc:var(--l-epic)">A new epic, from nothing</button><button type="button" role="tab" data-pb="github" aria-selected="false" style="--lc:var(--l-task-M)">Work the tasks of a GitHub epic</button><button type="button" role="tab" data-pb="local" aria-selected="false" style="--lc:var(--l-task-L)">A multi-step task in the local tracker</button><button type="button" role="tab" data-pb="bug" aria-selected="false" style="--lc:var(--l-bugfix)">Triage and fix a bug</button><button type="button" role="tab" data-pb="auto" aria-selected="false" style="--lc:var(--l-task-M)">Work the backlog unattended</button></div><div class="seg" role="group" aria-label="Host"><button type="button" data-host="claude" aria-pressed="true">Claude</button><button type="button" data-host="codex" aria-pressed="false">Codex</button><button type="button" data-host="say" aria-pressed="false">Plain words</button></div></div>
+<article class="pb" id="pb-epic" style="--lc:var(--l-epic)">
+<header><h3>A new epic, from nothing</h3><p>You have an idea that needs several PRs.</p><ol class="strip" aria-label="the steps of this line"><li>grill</li><li class="gate">interview</li><li>epic</li><li>tasks</li><li class="gate">decomposition</li><li>closeout</li></ol></header>
+<ol class="steps">
+<li class=""><span class="n">1</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:new epic &quot;Players rejoin after a disconnect&quot;</span><span class="c-codex">$new epic &quot;Players rejoin after a disconnect&quot;</span><span class="c-say">File an epic: players rejoin after a disconnect</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Files the epic with a problem and an outcome. No size, no tasks yet.</p>
+<div class="meta"><span class="out">&rarr; gh#310</span></div>
+</div></li>
+<li class="gateful"><span class="n">2</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next gh#310</span><span class="c-codex">$next gh#310</span><span class="c-say">Grill me on gh#310</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Interviews you one question at a time, each with its own recommended answer. Facts it reads from the code.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">interviewer</span></div>
+<div class="stop"><b>interview</b><span>Answer in the session. Confirm the recap.</span></div>
+</div></li>
+<li class=""><span class="n">3</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate gh#310 &quot;spec confirmed&quot;</span><span class="c-codex">$gate gh#310 &quot;spec confirmed&quot;</span><span class="c-say">The spec is right, go on</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Records your answer and opens the next step.</p>
+</div></li>
+<li class="gateful"><span class="n">4</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next gh#310</span><span class="c-codex">$next gh#310</span><span class="c-say">Write the epic and split it into tasks for gh#310</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Writes the epic body, then splits it into thin vertical tasks with sizes and blockers.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">planner</span><span class="ag" style="--pc:var(--c-flow)">epic-plan-reviewer</span></div>
+<div class="stop"><b>decomposition</b><span>Read the task list. Say what to merge, split or reorder.</span></div>
+</div></li>
+<li class=""><span class="n">5</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate gh#310 &quot;approved, split T3 in two&quot;</span><span class="c-codex">$gate gh#310 &quot;approved, split T3 in two&quot;</span><span class="c-say">Approved, but split T3 in two</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Your change goes to the planner in the next run.</p>
+</div></li>
+<li class=""><span class="n">6</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next gh#310</span><span class="c-codex">$next gh#310</span><span class="c-say">Create the tasks for gh#310</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Creates the tasks as issues under the epic, blockers set.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">planner</span><span class="out">&rarr; gh#311 to gh#318</span></div>
+</div></li>
+<li class=""><span class="n">7</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:board show the dependency graph of gh#310</span><span class="c-codex">$board show the dependency graph of gh#310</span><span class="c-say">Show me the dependency graph of gh#310</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Waves, what can run in parallel, the critical path.</p>
+</div></li>
+<li class=""><span class="n">8</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next gh#310</span><span class="c-codex">$next gh#310</span><span class="c-say">Close out gh#310, every task is merged</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Later, when every task is merged: checks them all closed, runs the epic-level checks, closes the epic.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">verifier</span></div>
+</div></li>
+</ol></article>
+<article class="pb" id="pb-github" style="--lc:var(--l-task-M)">
+<header><h3>Work the tasks of a GitHub epic</h3><p>The epic exists. Its tasks are issues.</p><ol class="strip" aria-label="the steps of this line"><li>design</li><li>plan</li><li class="gate">plan-approval</li><li>implement</li><li>test</li><li>review</li><li>verify</li><li>pr</li><li class="gate">merge</li></ol></header>
+<ol class="steps">
+<li class=""><span class="n">1</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:board</span><span class="c-codex">$board</span><span class="c-say">What is ready, blocked and waiting?</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Which tasks are ready, which are blocked, which worktrees are free, which gates wait on you.</p>
+</div></li>
+<li class="gateful"><span class="n">2</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next gh#312</span><span class="c-codex">$next gh#312</span><span class="c-say">Start on gh#312</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Takes a free worktree, explores, designs, writes plan.md in phases. Without a name it takes the first ready task in list order.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">explorer</span><span class="ag" style="--pc:var(--c-flow)">architect</span><span class="ag" style="--pc:var(--c-flow)">planner</span></div>
+<div class="stop"><b>plan-approval</b><span>Read plan.md. Approve it or send it back with the change.</span></div>
+</div></li>
+<li class=""><span class="n">3</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate gh#312 &quot;plan approved&quot;</span><span class="c-codex">$gate gh#312 &quot;plan approved&quot;</span><span class="c-say">Plan approved</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Opens the build.</p>
+</div></li>
+<li class="gateful"><span class="n">4</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next gh#312</span><span class="c-codex">$next gh#312</span><span class="c-say">Build gh#312</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Builds phase by phase, writes tests from the acceptance lines, reviews, verifies, opens the PR. A failed review or verify goes back to build, three times at most.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">implementer</span><span class="ag" style="--pc:var(--c-flow)">test-writer</span><span class="ag" style="--pc:var(--c-flow)">verifier</span><span class="ag" style="--pc:var(--c-flow)">pr-creator</span></div>
+<div class="stop"><b>merge</b><span>Review the PR. Merge it on GitHub.</span></div>
+</div></li>
+<li class=""><span class="n">5</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate gh#312 &quot;merged&quot;</span><span class="c-codex">$gate gh#312 &quot;merged&quot;</span><span class="c-say">gh#312 is merged</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Closes the gate.</p>
+</div></li>
+<li class=""><span class="n">6</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:steward release gh#312</span><span class="c-codex">$steward release gh#312</span><span class="c-say">Free the worktree for gh#312</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Frees the worktree for the next task. Refuses if anything is uncommitted.</p>
+</div></li>
+<li class=""><span class="n">7</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next</span><span class="c-codex">$next</span><span class="c-say">Start the next ready task</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">The merge cleared blockers. The next ready task starts. Open a second session and run it again to work two tasks at once.</p>
+</div></li>
+<li class=""><span class="n">8</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:comments gh#312</span><span class="c-codex">$comments gh#312</span><span class="c-say">Address the review comments on gh#312</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">When a reviewer comments: grades each thread, fixes the valid ones, replies.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">comment-addresser</span></div>
+</div></li>
+</ol></article>
+<article class="pb" id="pb-local" style="--lc:var(--l-task-L)">
+<header><h3>A multi-step task in the local tracker</h3><p>No GitHub issue. The item is a file under .flow/items.</p><ol class="strip" aria-label="the steps of this line"><li>design</li><li>plan</li><li class="gate">plan-approval</li><li>implement</li><li>test</li><li>review</li><li>verify</li><li>explain</li><li>pr</li><li class="gate">merge</li></ol></header>
+<ol class="steps">
+<li class=""><span class="n">1</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:new an L task: bots aim ahead of the ball</span><span class="c-codex">$new an L task: bots aim ahead of the ball</span><span class="c-say">File an L task: bots aim ahead of the ball</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Files it in the tracker the config names for tasks. Local by default.</p>
+<div class="meta"><span class="out">&rarr; local:task/1</span></div>
+</div></li>
+<li class="gateful"><span class="n">2</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next local:task/1</span><span class="c-codex">$next local:task/1</span><span class="c-say">Start local:task/1</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Explores the code, researches only what the repo cannot answer, designs, then plans in phases. Phases that would each be a PR become sub-items instead.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">explorer</span><span class="ag" style="--pc:var(--c-flow)">researcher</span><span class="ag" style="--pc:var(--c-flow)">architect</span><span class="ag" style="--pc:var(--c-flow)">planner</span><span class="ag" style="--pc:var(--c-flow)">epic-plan-reviewer</span></div>
+<div class="stop"><b>plan-approval</b><span>Read design.md and plan.md. Approve or send back.</span></div>
+</div></li>
+<li class=""><span class="n">3</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate local:task/1 &quot;plan approved&quot;</span><span class="c-codex">$gate local:task/1 &quot;plan approved&quot;</span><span class="c-say">Plan approved</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Opens the build.</p>
+</div></li>
+<li class="gateful"><span class="n">4</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next local:task/1</span><span class="c-codex">$next local:task/1</span><span class="c-say">Build local:task/1</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">One implementer per phase. Independent phases run in parallel in temporary worktrees and rebase onto the task branch. Then tests, deep review, verify, a plain-language explainer with a quiz, a draft PR.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">implementer</span><span class="ag" style="--pc:var(--c-flow)">test-writer</span><span class="ag" style="--pc:var(--c-flow)">verifier</span><span class="ag" style="--pc:var(--c-flow)">pr-creator</span></div>
+<div class="stop"><b>merge</b><span>Answer the quiz on the PR. Merge it.</span></div>
+</div></li>
+<li class=""><span class="n">5</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate local:task/1 &quot;merged&quot;</span><span class="c-codex">$gate local:task/1 &quot;merged&quot;</span><span class="c-say">local:task/1 is merged</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Closes the gate.</p>
+</div></li>
+<li class=""><span class="n">6</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:steward release local:task/1</span><span class="c-codex">$steward release local:task/1</span><span class="c-say">Free the worktree for local:task/1</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Frees the worktree. The task branch goes with it.</p>
+</div></li>
+</ol></article>
+<article class="pb" id="pb-bug" style="--lc:var(--l-bugfix)">
+<header><h3>Triage and fix a bug</h3><p>Something is wrong today and you can show it.</p><ol class="strip" aria-label="the steps of this line"><li>reproduce</li><li>implement</li><li>test</li><li>review</li><li>verify</li><li>pr</li><li class="gate">merge</li></ol></header>
+<ol class="steps">
+<li class=""><span class="n">1</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:new bug &quot;Bots stall at the net after a restart&quot;</span><span class="c-codex">$new bug &quot;Bots stall at the net after a restart&quot;</span><span class="c-say">File a bug: bots stall at the net after a restart</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Looks for an existing item first. A match becomes a comment. Otherwise it files the bug with the steps to see it.</p>
+<div class="meta"><span class="out">&rarr; gh#340</span></div>
+</div></li>
+<li class="gateful"><span class="n">2</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next gh#340</span><span class="c-codex">$next gh#340</span><span class="c-say">Fix gh#340</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Writes one failing test that pins the bug, runs it red, commits it. Then the fix, tests, quick review, verify, the PR.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">test-writer</span><span class="ag" style="--pc:var(--c-flow)">implementer</span><span class="ag" style="--pc:var(--c-flow)">verifier</span><span class="ag" style="--pc:var(--c-flow)">pr-creator</span></div>
+<div class="stop"><b>merge</b><span>Check the failing test now passes. Merge.</span></div>
+</div></li>
+<li class=""><span class="n">3</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate gh#340 &quot;merged&quot;</span><span class="c-codex">$gate gh#340 &quot;merged&quot;</span><span class="c-say">gh#340 is merged</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Closes the gate.</p>
+</div></li>
+<li class=""><span class="n">4</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:steward release gh#340</span><span class="c-codex">$steward release gh#340</span><span class="c-say">Free the worktree for gh#340</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Frees the worktree.</p>
+</div></li>
+</ol></article>
+<article class="pb" id="pb-auto" style="--lc:var(--l-task-M)">
+<header><h3>Work the backlog unattended</h3><p>The tasks are filed, grilled and sized. Agents work them while you are away.</p><ol class="strip" aria-label="the steps of this line"><li>design</li><li>plan</li><li class="gate">plan-approval</li><li>implement</li><li>test</li><li>review</li><li>verify</li><li>pr</li><li class="gate">merge</li></ol></header>
+<ol class="steps">
+<li class=""><span class="n">1</span><div class="b">
+<div class="act">In .flow/config.yaml: auto_gates.plan-approval: S,M and notify.idle: true</div>
+<p class="say">Small and medium plans pass on their own. Merge and every other gate still wait for you.</p>
+</div></li>
+<li class=""><span class="n">2</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:board</span><span class="c-codex">$board</span><span class="c-say">What is ready?</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Check what is ready. A run takes ready tasks in list order; blocked ones wait.</p>
+</div></li>
+<li class="gateful"><span class="n">3</span><div class="b">
+<div class="cmd sh"><span class="p" aria-hidden="true">$</span><code><span class="c-claude">.flow/run-unattended.sh claude --max-steps 15</span><span class="c-codex">.flow/run-unattended.sh codex --max-steps 15</span><span class="c-say">Start a one-off unattended run on the queue</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">One run by hand first. It takes the first ready task, claims a worktree and runs every step as a fresh process with that agent&#x27;s model and effort.</p>
+<div class="meta"><span class="ag" style="--pc:var(--c-flow)">explorer</span><span class="ag" style="--pc:var(--c-flow)">architect</span><span class="ag" style="--pc:var(--c-flow)">planner</span><span class="ag" style="--pc:var(--c-flow)">implementer</span><span class="ag" style="--pc:var(--c-flow)">test-writer</span><span class="ag" style="--pc:var(--c-flow)">verifier</span><span class="ag" style="--pc:var(--c-flow)">pr-creator</span></div>
+<div class="stop"><b>merge</b><span>Review the PR. Merge it on GitHub.</span></div>
+</div></li>
+<li class=""><span class="n">4</span><div class="b">
+<div class="cmd sh"><span class="p" aria-hidden="true">$</span><code><span class="c-claude">&lt;repo&gt;/.flow/jobs/next.sh claude --max-steps 15 --workers 2</span><span class="c-codex">&lt;repo&gt;/.flow/jobs/next.sh codex --max-steps 15 --workers 2</span><span class="c-say">Run a repeating unattended flow every 30 minutes, two at a time</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Schedule it every 30 minutes: a Claude Desktop scheduled task, or launchd. Each worker takes its own ready task and worktree, works it to the next gate and logs to .flow/log/next-&lt;n&gt;.log. The pool caps the workers.</p>
+</div></li>
+<li class=""><span class="n">5</span><div class="b">
+<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate gh#312 &quot;merged&quot;</span><span class="c-codex">$gate gh#312 &quot;merged&quot;</span><span class="c-say">gh#312 is merged</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
+<p class="say">Your merge unblocks the tasks behind it. The next scheduled run starts one.</p>
+</div></li>
+<li class=""><span class="n">6</span><div class="b">
+<div class="act">The queue runs dry.</div>
+<p class="say">notify.idle sends one notice, on the desktop and in Slack, then stays quiet until a run does work again.</p>
+</div></li>
+</ol></article>
+<h3 class="sub" style="font:700 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;margin-top:30px">Also at hand</h3><div class="also">
+<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:help</span><span class="c-codex">$help</span><span class="c-say">What can the flow do?</span></code></div><p>The manual: every skill, the lines, the gates.</p></div>
+<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:next</span><span class="c-codex">$next</span><span class="c-say">Work the queue</span></code></div><p>Work the queue. Stops at the first gate.</p></div>
+<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate</span><span class="c-codex">$gate</span><span class="c-say">What is waiting on me?</span></code></div><p>List the gates waiting on you.</p></div>
+<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:board</span><span class="c-codex">$board</span><span class="c-say">What is going on?</span></code></div><p>Everything in flight on one screen.</p></div>
+<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/craft:improve</span><span class="c-codex">$improve</span><span class="c-say">Find refactors worth an epic</span></code></div><p>Find refactors worth an epic, as a report with diagrams.</p></div>
+<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/standards:review</span><span class="c-codex">$review</span><span class="c-say">Review this branch</span></code></div><p>Review a branch or PR without an item (standards).</p></div>
+<div><div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/meta:retro</span><span class="c-codex">$retro</span><span class="c-say">Run a retro</span></code></div><p>Turn the flow&#x27;s lessons into changes to rules and skills.</p></div>
+</div></section>
+<section id="hooks"><h2><i>03</i>Hooks</h2><p class="sub">Always on, no command needed. They stop mistakes while an agent works.</p><figure><div><svg viewBox="0 0 1028 186" width="1028" role="img" aria-label="Where the plugins intervene during a session" xmlns="http://www.w3.org/2000/svg">
+<style>text{font:12px var(--body);fill:currentColor}.sub{fill:var(--muted);font-size:10.5px}</style>
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<line x1="20" y1="46" x2="1020" y2="46" stroke="currentColor" stroke-width="2" marker-end="url(#arr)"/>
+<circle cx="36" cy="46" r="6" fill="var(--panel)" stroke="currentColor" stroke-width="2.5"/>
+<text x="31" y="30" font-weight="700">session starts</text>
+<circle cx="36" cy="76" r="4" fill="var(--c-standards)"/><text x="46" y="76" dominant-baseline="middle" class="sub">install check</text>
+<circle cx="36" cy="94" r="4" fill="var(--c-flow)"/><text x="46" y="94" dominant-baseline="middle" class="sub">install check</text>
+<circle cx="204" cy="46" r="6" fill="var(--panel)" stroke="currentColor" stroke-width="2.5"/>
+<text x="199" y="30" font-weight="700">each shell command</text>
+<circle cx="204" cy="76" r="4" fill="var(--c-standards)"/><text x="214" y="76" dominant-baseline="middle" class="sub">no-verify check</text>
+<circle cx="204" cy="94" r="4" fill="var(--c-standards)"/><text x="214" y="94" dominant-baseline="middle" class="sub">protected config check</text>
+<circle cx="204" cy="112" r="4" fill="var(--c-standards)"/><text x="214" y="112" dominant-baseline="middle" class="sub">comment check</text>
+<circle cx="204" cy="130" r="4" fill="var(--c-standards)"/><text x="214" y="130" dominant-baseline="middle" class="sub">formatter check</text>
+<circle cx="204" cy="148" r="4" fill="var(--c-standards)"/><text x="214" y="148" dominant-baseline="middle" class="sub">project gates</text>
+<circle cx="372" cy="46" r="6" fill="var(--panel)" stroke="currentColor" stroke-width="2.5"/>
+<text x="367" y="30" font-weight="700">worktree opened</text>
+<circle cx="372" cy="76" r="4" fill="var(--c-flow)"/><text x="382" y="76" dominant-baseline="middle" class="sub">claiming a pool worktree</text>
+<circle cx="540" cy="46" r="6" fill="var(--panel)" stroke="currentColor" stroke-width="2.5"/>
+<text x="535" y="30" font-weight="700">worktree closed</text>
+<circle cx="540" cy="76" r="4" fill="var(--c-flow)"/><text x="550" y="76" dominant-baseline="middle" class="sub">releasing the pool worktree</text>
+<circle cx="708" cy="46" r="6" fill="var(--panel)" stroke="currentColor" stroke-width="2.5"/>
+<text x="703" y="30" font-weight="700">an agent finishes</text>
+<circle cx="708" cy="76" r="4" fill="var(--c-standards)"/><text x="718" y="76" dominant-baseline="middle" class="sub">delivery gate</text>
+<circle cx="876" cy="46" r="6" fill="var(--panel)" stroke="currentColor" stroke-width="2.5"/>
+<text x="871" y="30" font-weight="700">session ends</text>
+<circle cx="876" cy="76" r="4" fill="var(--c-standards)"/><text x="886" y="76" dominant-baseline="middle" class="sub">delivery gate</text>
+</svg></div><figcaption>Dots take the plugin's colour. Same hooks on both hosts.</figcaption></figure></section>
+<section id="skills"><h2><i>04</i>Skills</h2><div class="legend"><span><svg class="g" style="color:var(--fg)" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg> runs by itself when the ask fits</span><span><svg class="g" style="color:var(--fg)" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> you call it</span></div><div class="skills">
+<div class="group" style="--pc:var(--c-standards)"><h3>standards</h3>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>init</code><div class="when">A repo adopts the standards plugin, after a plugin update, when the user asks to check whether the standards are up to date (init --check is the one drift check), or asks where a new test level, gate, reviewer or rule belongs (init &lt;the ask&gt;)</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>review</code><div class="when">Review a branch, a PR, work in progress, or asks to review since X</div></div>
+</div>
+<div class="group" style="--pc:var(--c-flow)"><h3>flow</h3>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>board</code><div class="when">What is running, what is ready, what is blocked, or wants the dependency graph of an epic</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>comments</code><div class="when">Address comments on a PR, or from the scheduled comments job</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>do</code><div class="when">The user talks about work items, tasks, bugs, epics, the board, gates or what the agents are doing, in their own words and without naming a skill</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>explain</code><div class="when">Explain a change or when the next step of an item is explain</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>gate</code><div class="when">Approve a plan, confirm a spec or a task list, answer a gate, or see which gates are waiting</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>help</code><div class="when">What is available, how to do something with the flow, or what a skill or a gate means</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>implement</code><div class="when">Implement, build, ship or code an item, or when the next step of an item is implement</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>init</code><div class="when">A repo adopts the flow, after a plugin update, or to check the install is current (init --check is the one drift check)</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>new</code><div class="when">File, add, create or log a piece of work, or when an agent working a backlog needs a follow-up item for something out of its scope</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>next</code><div class="when">Next, run the next item, continue &lt;item&gt;, or work the queue</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>plan</code><div class="when">Plan, design, grill, write an epic or decompose an item, or when the next step of an item is grill, epic, tasks, design or plan</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>pr</code><div class="when">Open a PR for an item or when the next step of an item is pr</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>review</code><div class="when">Review an item or when the next step of an item is review</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>steward</code><div class="when">Worktrees, wants one freed, claimed or reset, or a conflict resolved</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>test</code><div class="when">Tests for an item, to reproduce a bug, or when the next step of an item is test or reproduce</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>verify</code><div class="when">Verify an item or when the next step of an item is verify or closeout</div></div>
+</div>
+<div class="group" style="--pc:var(--c-craft)"><h3>craft</h3>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>codebase-design</code><div class="when">Design or improve a module&#x27;s interface, find deepening opportunities, decide where a seam goes, make code more testable or AI-navigable, or when another skill needs the deep-module vocabulary</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>improve</code><div class="when">Improve the architecture, find refactoring opportunities, consolidate tightly coupled modules, or make a codebase more testable</div></div>
+</div>
+<div class="group" style="--pc:var(--c-meta)"><h3>meta</h3>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>map</code><div class="when">What is available, what a plugin or skill does, when to use one, or wants the map refreshed after a change</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>retro</code><div class="when">End-of-session retrospective</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>write-a-skill</code><div class="when">Create, write or package a skill, or when retro routes a finding to a new skill</div></div>
+</div>
+</div></section>
+<section id="agents"><h2><i>05</i>Agents</h2><div class="legend"><span>bars: effort</span><span>stripe: plugin</span><span>right: model, what it may touch</span><!--project-legend--></div><div class="agents">
+<div class="agent" style="--pc:var(--c-standards)"><code>performance-reviewer</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span>read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>project-advisor</code><div class="m"><span>opus</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>read-only</span></div><div class="step">init</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>security-reviewer</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span>read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>spec-reviewer</code><div class="m"><span>opus</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>standards-reviewer</code><div class="m"><span>sonnet</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>test-reviewer</code><div class="m"><span>sonnet</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>architect</code><div class="m"><span>fable</span><span class="bars" title="effort xhigh"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span>read-only</span></div><div class="step">architect</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>comment-addresser</code><div class="m"><span>opus</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>worktree-write</span></div><div class="step">comments</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>epic-plan-reviewer</code><div class="m"><span>fable</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span>read-only</span></div><div class="step">plan-review</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>explorer</code><div class="m"><span>sonnet</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>read-only</span></div><div class="step">explore</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>implementer</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span>worktree-write</span></div><div class="step">implement</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>interviewer</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span>read-only</span></div><div class="step">interview</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>planner</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span>read-only</span></div><div class="step">plan</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>pr-creator</code><div class="m"><span>sonnet</span><span class="bars" title="effort low"><i class="on"></i><i></i><i></i><i></i><i></i></span><span>read-only</span></div><div class="step">pr</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>researcher</code><div class="m"><span>sonnet</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>read-only</span></div><div class="step">research</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>test-writer</code><div class="m"><span>opus</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span>worktree-write</span></div><div class="step">test</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>verifier</code><div class="m"><span>sonnet</span><span class="bars" title="effort low"><i class="on"></i><i></i><i></i><i></i><i></i></span><span>worktree-write</span></div><div class="step">verify</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>worktree-steward</code><div class="m"><span>haiku</span><span class="bars" title="effort low"><i class="on"></i><i></i><i></i><i></i><i></i></span><span>worktree-write</span></div><div class="step">steward</div></div>
+</div>
+<!--project-roster-->
+</section>
+<section id="install"><h2><i>06</i>Install</h2><div class="install">
+<div><b>Claude</b><pre>claude plugin marketplace add FilipposKaragiannis/brain
+claude plugin install &lt;plugin&gt;@brain-plugins --scope project
+/standards:init  /flow:init</pre></div>
+<div><b>Codex</b><pre>codex plugin marketplace add FilipposKaragiannis/brain
+codex plugin add &lt;plugin&gt;@brain-plugins
+[plugins."&lt;plugin&gt;@brain-plugins"] enabled = true in .codex/config.toml
+/hooks once to trust the plugin hooks  $init</pre></div>
+</div></section>
+</main>
+<script>
+(function(){
+var d=document,r=d.documentElement;r.classList.add('js');
+function all(s,c){return Array.prototype.slice.call((c||d).querySelectorAll(s));}
+function store(k,v){try{if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v);}catch(e){return null;}}
+function setHost(h){d.body.setAttribute('data-host',h);all('.seg button').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-host')===h));});}
+all('.seg button').forEach(function(b){b.addEventListener('click',function(){var h=b.getAttribute('data-host');setHost(h);store('brain-host',h);});});
+var h0=store('brain-host');setHost(h0==='codex'||h0==='say'?h0:'claude');
+function showPb(id){all('.pb').forEach(function(p){p.classList.toggle('on',p.id==='pb-'+id);});all('.tabs button').forEach(function(t){t.setAttribute('aria-selected',String(t.getAttribute('data-pb')===id));});}
+all('.tabs button').forEach(function(t){t.addEventListener('click',function(){showPb(t.getAttribute('data-pb'));});});
+var first=all('.tabs button')[0];var want=(location.hash||'').replace('#pb-','');
+showPb(all('.tabs button').some(function(t){return t.getAttribute('data-pb')===want;})?want:first.getAttribute('data-pb'));
+all('.cp').forEach(function(b){b.addEventListener('click',function(){
+  var c=b.parentNode.querySelector('.c-'+d.body.getAttribute('data-host'));var t=c.textContent;
+  var done=function(){b.textContent='copied';setTimeout(function(){b.textContent='copy';},1200);};
+  var sel=function(){var g=d.createRange();g.selectNodeContents(c);var s=getSelection();s.removeAllRanges();s.addRange(g);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(done,sel);}else{sel();}
+});});
+all('.chips').forEach(function(box){
+  var svg=box.nextElementSibling.querySelector('svg');var cur=null;
+  all('button',box).forEach(function(b){b.addEventListener('click',function(){
+    var k=b.getAttribute('data-line');cur=(cur===k)?null:k;
+    all('button',box).forEach(function(x){x.setAttribute('aria-pressed',String(x.getAttribute('data-line')===cur));});
+    all('.ln',svg).forEach(function(g){g.classList.toggle('dim',cur!==null&&g.getAttribute('data-line')!==cur);});
+  });});
+});
+})();
+</script>

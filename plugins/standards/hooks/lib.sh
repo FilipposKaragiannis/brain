@@ -87,6 +87,113 @@ commit_has_marker() {
   commit_message_text "$1" | grep -qiF -- "$2"
 }
 
+command_code() {
+  # $1 command text. Prints the part of it that runs. Heredoc bodies and comments are dropped.
+  # Quoted text is dropped when it is prose: more than one word, the value of a message or pattern
+  # flag (-m, --message, -F, -e, --grep), or an argument of a text tool (echo, printf, grep, rg,
+  # sed, awk, cat). Kept: a one-word quoted argument of any other command ("update-golden" passed
+  # to make or dotnet), the quoted argument of `sh -c`, `bash -c` and `eval`, and any $( ) inside
+  # double quotes. A forbid gate matches against this, so a doc, a commit message or an echo that
+  # names a paused verb does not trip it, but quoting the verb does not hide a run.
+  printf '%s\n' "$1" | awk '
+    BEGIN { sq = sprintf("%c", 39); dq = sprintf("%c", 34); term = ""; n = 0 }
+    {
+      if (term != "") { t = $0; sub(/^\t+/, "", t); if (t == term) term = ""; next }
+      src[++n] = $0
+      p = index($0, "<<")
+      if (p > 0 && substr($0, p, 3) != "<<<") {
+        s = substr($0, p + 2); sub(/^-/, "", s); sub(/^[ \t]+/, "", s)
+        while (substr(s, 1, 1) == sq || substr(s, 1, 1) == dq || substr(s, 1, 1) == "\\") s = substr(s, 2)
+        w = ""
+        for (k = 1; k <= length(s); k++) { ch = substr(s, k, 1); if (ch ~ /[A-Za-z0-9_]/) w = w ch; else break }
+        term = w
+      }
+    }
+    END {
+      text = ""
+      for (i = 1; i <= n; i++) text = text src[i] "\n"
+      len = length(text); i = 1; out = ""; tok = ""; last = ""; cmdword = ""
+      while (i <= len) {
+        c = substr(text, i, 1)
+        if (c == sq || c == dq) {
+          q = c; j = i + 1; body = ""; run = ""; depth = 0
+          while (j <= len) {
+            d = substr(text, j, 1)
+            if (depth > 0) {
+              if (d == "(") depth++
+              else if (d == ")") { depth--; if (depth == 0) { run = run " "; j++; continue } }
+              run = run d; j++; continue
+            }
+            if (q == dq && d == "\\") { j += 2; continue }
+            if (q == dq && d == "$" && substr(text, j + 1, 1) == "(") { depth = 1; j += 2; continue }
+            if (d == q) break
+            body = body d; j++
+          }
+          prev = (tok != "") ? tok : last
+          inert = (cmdword ~ /^(.*\/)?(echo|printf|grep|egrep|fgrep|rg|sed|awk|cat)$/)
+          prose = (body ~ /[ \t\n]/ || prev ~ /^(-m|--message|-F|--file|-e|--regexp|--grep)$/ || prev ~ /^--(message|file|grep)=$/)
+          keep = (prev == "eval" || prev ~ /^-[A-Za-z]*c$/ || (!inert && !prose))
+          if (cmdword == "" && tok == "") cmdword = body
+          out = out " " (keep ? body : "") " " run " "
+          tok = ""; last = ""; i = j + 1; continue
+        }
+        if (c == "\\") { out = out substr(text, i, 2); i += 2; continue }
+        if (c == "#" && tok == "") { while (i <= len && substr(text, i, 1) != "\n") i++; continue }
+        out = out c
+        if (c ~ /[ \t\n;|&()<>]/) {
+          if (tok != "") { last = tok; if (cmdword == "" && tok !~ /=/) cmdword = tok }
+          tok = ""
+          if (c ~ /[\n;|&(]/) cmdword = ""
+        } else tok = tok c
+        i++
+      }
+      print out
+    }'
+}
+
+code_has_word() {
+  # $1 code text, $2 wanted text. True when the text occurs with no word character (letter, digit,
+  # _ or -) directly before or after it: update-golden matches ./update-golden.sh and
+  # `dotnet update-golden`, not update-golden-all.
+  printf '%s\n' "$1" | T="$2" awk '
+    BEGIN { t = ENVIRON["T"]; found = 0 }
+    {
+      s = $0; base = 0
+      while (t != "" && (p = index(s, t)) > 0) {
+        before = (base + p > 1) ? substr($0, base + p - 1, 1) : ""
+        after = substr($0, base + p + length(t), 1)
+        if (before !~ /[A-Za-z0-9_-]/ && after !~ /[A-Za-z0-9_-]/) { found = 1; exit }
+        base += p; s = substr(s, p + 1)
+      }
+    }
+    END { exit !found }'
+}
+
+# The agent hook and git's own hooks both see an agent's commit. When a check passes in the agent
+# hook for a plain `git commit` of the index, it records the index tree; git's pre-commit and
+# commit-msg (STANDARDS_FROM_GIT=1) skip that check when the index they see is the same tree,
+# recorded in the last 10 minutes. Any other index (a `git add` in the same command, -a, a
+# pathspec, a later edit) runs the check again. The record lives in the worktree's git dir.
+passed_file() { printf '%s/standards-passed' "$(git rev-parse --git-dir 2>/dev/null)"; }
+
+passed_mark() {
+  # $1 check name, $2 commit segment. Records the pass when the commit takes the index as it is.
+  [ -z "${STANDARDS_FROM_GIT:-}${STANDARDS_STAGE:-}${STANDARDS_GATES:-}" ] || return 0
+  [ "$(commit_diff_args "$2")" = "--cached" ] || return 0
+  tree="$(git write-tree 2>/dev/null)" || return 0
+  f="$(passed_file)"
+  { tail -n 19 "$f" 2>/dev/null; printf '%s %s %s\n' "$1" "$tree" "$(date +%s)"; } > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f" 2>/dev/null
+  return 0
+}
+
+passed_seen() {
+  # $1 check name. True in a git hook when the agent hook passed this check for the same index.
+  [ -n "${STANDARDS_FROM_GIT:-}" ] || return 1
+  tree="$(git write-tree 2>/dev/null)" || return 1
+  now="$(date +%s)"
+  awk -v c="$1" -v t="$tree" -v now="$now" '$1 == c && $2 == t && now - $3 <= 600 { ok = 1 } END { exit !ok }' "$(passed_file)" 2>/dev/null
+}
+
 commit_diff_args() {
   # $1 segment. Prints the git diff arguments that mirror what this commit will stage:
   # -a/--all or a pathspec reads the working tree against HEAD, otherwise the index.

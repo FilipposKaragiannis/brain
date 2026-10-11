@@ -9,8 +9,11 @@ import html
 import json
 import os
 import re
+import sys
 
 from playbooks import EXTRAS, PLAYBOOKS  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugins", "meta", "skills", "map", "scripts"))
+from project_map import EFFORT_RANK, MARK_COUNT, MARK_GROUP, MARK_LEGEND, agent_card, inject, load_roster, trigger_of  # noqa: E402,F401  (the plugin ships them)
 
 PLUGIN_ORDER = ["standards", "flow", "craft", "meta"]
 MODEL_RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}
@@ -21,7 +24,6 @@ LIGHT_TINT = {"standards": "#0E0E0E", "flow": "#4D4D4D", "craft": "#808080", "me
 LINES = {"bugfix": ("#0E0E0E", "#F2F2F2"), "task-S": ("#4D4D4D", "#C4C4C4"), "task-M": ("#808080", "#8E8E8E"),
          "task-L": ("#ABABAB", "#5E5E5E"), "epic": ("#2B2B2B", "#DADADA")}
 LINE_LABEL = {"bugfix": "bug", "task-S": "task S", "task-M": "task M", "task-L": "task L / XL", "epic": "epic"}
-EFFORT_RANK = {"low": 1, "medium": 2, "high": 3, "xhigh": 4, "max": 5}
 
 
 def read_json(path):
@@ -39,16 +41,6 @@ def frontmatter(path):
             if m:
                 out[m.group(1)] = m.group(2).strip()
     return out
-
-
-def trigger_of(description):
-    """The 'when' of a skill: the sentence that starts with 'Use when', shortened."""
-    m = re.search(r"Use (?:it )?when (.*?)(?:\.|$)", description)
-    if not m:
-        return ""
-    when = m.group(1).strip()
-    when = re.sub(r"^(the user|a user|the owner|someone) (asks|wants|says|mentions|reports)( to| for| about)? ?", "", when)
-    return when[0].upper() + when[1:] if when else ""
 
 
 def load(root):
@@ -207,6 +199,12 @@ def cmd_html(spec, ask=""):
             % (esc(cmd_text(spec, "claude")), esc(cmd_text(spec, "codex")), esc(ask or cmd_text(spec, "claude"))))
 
 
+def sh_html(command, ask=""):
+    """A shell step: the command with {host} filled per host; Plain words shows what to say to flow:do."""
+    return ('<span class="c-claude">%s</span><span class="c-codex">%s</span><span class="c-say">%s</span>'
+            % (esc(command.replace("{host}", "claude")), esc(command.replace("{host}", "codex")), esc(ask or command.replace("{host}", "claude"))))
+
+
 def playbook_html(pb, pj, agents_by_name):
     key = pb["line"]
     strip = []
@@ -220,6 +218,8 @@ def playbook_html(pb, pj, agents_by_name):
         out.append('<li class="%s"><span class="n">%d</span><div class="b">' % (cls, n))
         if st.get("cmd"):
             out.append('<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % cmd_html(st["cmd"], st.get("ask", "")))
+        if st.get("sh"):
+            out.append('<div class="cmd sh"><span class="p" aria-hidden="true">$</span><code>%s</code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>' % sh_html(st["sh"], st.get("ask", "")))
         if st.get("act"):
             out.append('<div class="act">%s</div>' % esc(st["act"]))
         out.append('<p class="say">%s</p>' % esc(st["say"]))
@@ -244,7 +244,8 @@ CSS = """
 :root[data-theme="dark"]{--bg:#0A0A0A;--panel:#151515;--fg:#F2F2F2;--muted:#9A9A9A;--line:#2B2B2B;--accent:#F2F2F2;--glow:#242424;--tint:#1E1E1E;--term:#000000;DARKcolor-scheme:dark}
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.5;padding:0 16px;padding-block:0 72px;background-image:radial-gradient(ellipse 80% 420px at 50% 0,var(--glow),transparent 70%)}
-main{max-width:1120px;margin:0 auto;display:grid;gap:72px}
+main{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:72px}
+main>*,.stack>*,figure{min-width:0}
 .hero{padding-block:56px 8px;display:grid;gap:26px}
 .hero h1{font:500 clamp(54px,11vw,120px)/.9 var(--display);letter-spacing:-.03em;margin:0;text-wrap:balance}
 .hero h1 em{font-style:italic;font-weight:500;background:linear-gradient(100deg,var(--fg) 10%,var(--muted) 95%);-webkit-background-clip:text;background-clip:text;color:transparent}
@@ -332,6 +333,8 @@ figcaption{color:var(--muted);font-size:14px;margin-top:10px}
 .agent{background:var(--panel);border:1.5px solid var(--line);border-left:6px solid var(--pc);border-radius:8px;padding:9px 12px;display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;min-width:0}
 .agent code{font:600 13px var(--mono);overflow-wrap:anywhere}
 .agent .step{color:var(--muted);font-size:13px}
+.agent.proj{border-style:dashed;border-left-style:solid;border-left-color:var(--fg)}
+.proj-head{font:700 12px var(--mono);text-transform:uppercase;letter-spacing:.08em;margin:22px 0 10px}
 .agent .m{font:600 11px var(--mono);color:var(--muted);grid-row:1/3;grid-column:2;display:grid;justify-items:end;gap:3px}
 .bars{display:inline-flex;gap:2px}.bars i{width:5px;height:10px;background:var(--line);border-radius:1px}.bars i.on{background:var(--pc)}
 .install{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
@@ -378,7 +381,9 @@ def chips_html(keys):
         '<button type="button" data-line="%s" aria-pressed="false" style="--lc:var(--l-%s)">%s</button>' % (esc(k), esc(k), esc(LINE_LABEL.get(k, k))) for k in keys)
 
 
-def render_map(root):
+def render_map(root, project_roster=None):
+    """project_roster: path to a project's roster JSON. The page then shows those agents beside
+    the plugin agents. The committed docs/map.html is rendered without one."""
     plugins, agents, profiles = load(root)
     by_plugin = {p["name"]: p for p in plugins}
     agent_plugin = {a["name"]: a["plugin"] for a in agents}
@@ -396,6 +401,7 @@ def render_map(root):
     o.append('<header class="hero"><h1>The <em>brain</em>,<br>mapped.</h1><p>Plugins for Claude Code and Codex that file the work, plan it, build it, check it and open the PR.</p>')
     o.append('<div class="stats"><div><b>%d</b><span>plugins</span></div><div><b>%d</b><span>skills</span></div><div><b>%d</b><span>agents</span></div><div><b>%d</b><span>hooks</span></div></div>'
              % (len(plugins), skill_count, len(agents), hook_count))
+    o[-1] = o[-1].replace("<span>agents</span></div>", "<span>agents%s</span></div>" % MARK_COUNT, 1)
     o.append('<nav class="jump"><a href="#flows">Flows</a><a href="#playbooks">Playbooks</a><a href="#hooks">Hooks</a><a href="#skills">Skills</a><a href="#agents">Agents</a><a href="#install">Install</a></nav></header>')
     # plugins
     o.append('<section id="plugins"><div class="key"><span><i class="ds"></i>skill</span><span><i class="da"></i>agent</span><span><i class="dh"></i>hook</span></div><div class="plugins" style="margin-top:12px">')
@@ -414,7 +420,7 @@ def render_map(root):
              % (chips_html(["epic"]), metro(profiles, ["epic"], "The steps an epic runs")))
     o.append("</div></section>")
     # playbooks
-    o.append('<section id="playbooks"><h2><i>02</i>Playbooks</h2><p class="sub">Four real sessions. Type what the dark box says, or switch to Plain words and say it. The diamond is where you answer.</p>')
+    o.append('<section id="playbooks"><h2><i>02</i>Playbooks</h2><p class="sub">Real sessions, step by step. Type what the dark box says, or switch to Plain words and say it. A $ box goes in a terminal or a scheduler. The diamond is where you answer.</p>')
     o.append('<div class="bar"><div class="tabs" role="tablist">%s</div><div class="seg" role="group" aria-label="Host"><button type="button" data-host="claude" aria-pressed="true">Claude</button><button type="button" data-host="codex" aria-pressed="false">Codex</button><button type="button" data-host="say" aria-pressed="false">Plain words</button></div></div>'
              % "".join('<button type="button" role="tab" data-pb="%s" aria-selected="false" style="--lc:var(--l-%s)">%s</button>' % (esc(pb["id"]), esc(pb["line"]), esc(pb["title"])) for pb in PLAYBOOKS))
     for pb in PLAYBOOKS:
@@ -435,13 +441,13 @@ def render_map(root):
         o.append("</div>")
     o.append("</div></section>")
     # agents
-    o.append('<section id="agents"><h2><i>05</i>Agents</h2><div class="legend"><span>bars: effort</span><span>stripe: plugin</span><span>right: model, what it may touch</span></div><div class="agents">')
+    o.append('<section id="agents"><h2><i>05</i>Agents</h2><div class="legend"><span>bars: effort</span><span>stripe: plugin</span><span>right: model, what it may touch</span>%s</div><div class="agents">' % MARK_LEGEND)
     for a in sorted(agents, key=lambda a: (PLUGIN_ORDER.index(a["plugin"]) if a["plugin"] in PLUGIN_ORDER else 9, a["name"])):
         color = "var(--c-%s)" % a["plugin"] if a["plugin"] in by_plugin else "var(--muted)"
-        bars = "".join('<i%s></i>' % (' class="on"' if i < EFFORT_RANK.get(a["effort"], 0) else "") for i in range(5))
-        o.append('<div class="agent" style="--pc:%s"><code>%s</code><div class="m"><span>%s</span><span class="bars" title="effort %s">%s</span><span>%s</span></div><div class="step">%s</div></div>'
-                 % (esc(color), esc(a["name"]), esc(a["model"]), esc(a["effort"]), bars, esc(a["tier"]), esc(a["step"] or "")))
-    o.append("</div></section>")
+        o.append(agent_card(a, color))
+    o.append("</div>")
+    o.append(MARK_GROUP)
+    o.append("</section>")
     # install
     o.append('<section id="install"><h2><i>06</i>Install</h2><div class="install">')
     o.append('<div><b>Claude</b><pre>claude plugin marketplace add FilipposKaragiannis/brain\nclaude plugin install &lt;plugin&gt;@brain-plugins --scope project\n/standards:init  /flow:init</pre></div>')
@@ -449,10 +455,14 @@ def render_map(root):
     o.append("</div></section>")
     o.append("</main>")
     o.append("<script>%s</script>" % JS)
-    return "\n".join(o) + "\n"
+    page = "\n".join(o) + "\n"
+    return inject(page, load_roster(project_roster)) if project_roster else page
 
 
 if __name__ == "__main__":
-    import sys
-    root = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    sys.stdout.write(render_map(root))
+    import argparse
+    ap = argparse.ArgumentParser(description="Render the map to stdout, optionally with a project's roster beside the plugin agents.")
+    ap.add_argument("--root", default=os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    ap.add_argument("--roster", help="a project's roster JSON (project.roster in .standards/config.json)")
+    args = ap.parse_args()
+    sys.stdout.write(render_map(args.root, args.roster))
