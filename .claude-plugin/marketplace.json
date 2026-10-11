@@ -9,7 +9,7 @@
       "name": "craft",
       "source": "./plugins/craft",
       "description": "Design vocabulary and improvement passes for deep modules: codebase-design and improve, both citing the standards by rule id.",
-      "version": "0.1.0"
+      "version": "1.0.0"
     },
     {
       "name": "flow",
@@ -20,8 +20,8 @@
     {
       "name": "meta",
       "source": "./plugins/meta",
-      "description": "Skills about skills: write-a-skill and the retro that turns lessons into rule and skill changes.",
-      "version": "0.1.0"
+      "description": "Skills about skills: write-a-skill, the retro that turns lessons into rule and skill changes, and the map of everything the marketplace offers.",
+      "version": "1.0.0"
     },
     {
       "name": "standards",

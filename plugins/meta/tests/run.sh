@@ -22,5 +22,11 @@ check "user-invoked: flag and command prompt" sh -c "grep -q 'disable-model-invo
 check "refuses an existing skill" [ "$code" -eq 1 ]
 "$P/skills/write-a-skill/scripts/scaffold.sh" "$work/plug" "Bad Name" >/dev/null 2>&1; code=$?
 check "refuses a bad name" [ "$code" -eq 2 ]
+echo "map"
+root="$(cd "$P/../.." && pwd)"
+map="$(python3 "$root/tools/lib/map.py" "$root")"
+check "map renders every skill" sh -c "for s in \$(ls -d '$root'/plugins/*/skills/*/ | xargs -n1 basename | sort -u); do printf '%s' \"\$0\" | grep -q \"<code>\$s</code>\" || exit 1; done" "$map"
+check "map renders every agent" sh -c "for a in \$(python3 -c \"import json; print(' '.join(json.load(open('$root/roster/agents.json'))['agents']))\"); do printf '%s' \"\$0\" | grep -q \"<code>\$a</code>\" || exit 1; done" "$map"
+check "map draws the profiles and the hooks" sh -c "printf '%s' \"\$0\" | grep -q 'task-L' && printf '%s' \"\$0\" | grep -q 'delivery gate'" "$map"
 [ "$fails" -eq 0 ] && { echo "meta: ok"; exit 0; }
 echo "meta: $fails failed"; exit 1

@@ -8,7 +8,7 @@ plugins/
   standards/   coding standards as rules, hooks, delivery gate, two-axis review
   flow/        the work flow: adapters (github, local), profiles, next, steward, board, gates
   craft/       codebase-design (with rule ids), improve
-  meta/        write-a-skill (scaffolder), retro (lessons log)
+  meta/        write-a-skill (scaffolder), retro (lessons log), map (docs/map.html)
 shared/        sh/json.sh, copied into each plugin by the generator
 roster/        agents.json (every agent, model, effort, tier), briefs/<agent>.md, templates/
 tools/         generate.sh, lint.sh, test.sh, eval.sh, host-cleanup.sh
@@ -69,6 +69,8 @@ principle; `craft:improve` finds deepening candidates and hands the chosen one t
 `meta:write-a-skill` scaffolds a skill with its eval and registration
 (`skills/write-a-skill/scripts/scaffold.sh`); `meta:retro` reads `.flow/lessons.jsonl` and
 routes each lesson to a durable home, as a PR to this repo when a rule or skill changes.
+`meta:map` shows `docs/map.html`, the generated map of every plugin, skill, agent and hook
+(`tools/lib/map.py`; stale when the sources change, so `tools/lint.sh` fails until regenerated).
 Tests: `plugins/meta/tests/run.sh`. Evals: `tools/eval.sh craft`, `tools/eval.sh meta`.
 
 ## Install
