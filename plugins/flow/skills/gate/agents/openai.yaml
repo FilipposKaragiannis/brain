@@ -1,0 +1,6 @@
+interface:
+  display_name: "Gate"
+  short_description: "See or answer the gates waiting on you"
+  default_prompt: "Use $gate to list the gates waiting on me, or to approve one."
+policy:
+  allow_implicit_invocation: false

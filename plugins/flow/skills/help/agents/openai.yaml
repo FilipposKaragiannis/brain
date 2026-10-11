@@ -1,0 +1,6 @@
+interface:
+  display_name: "Help"
+  short_description: "What the flow can do, like a man page"
+  default_prompt: "Use $help to list what the flow can do and how to call it."
+policy:
+  allow_implicit_invocation: false

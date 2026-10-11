@@ -1,0 +1,4 @@
+interface:
+  display_name: "Do"
+  short_description: "Say what you want in plain words"
+  default_prompt: "Use $do to work on my backlog in plain words, for example: start the bots bug."

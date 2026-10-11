@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "The work flow: pick the next ready item, plan, implement, test, review, verify and open a PR, with agents in worktrees and human gates only where a human adds value.",
   "keywords": [
     "workflow",
@@ -46,6 +46,27 @@
       "displayName": "New Item",
       "shortDescription": "Create an epic, task or bug",
       "defaultPrompt": "Use $new to file a task, a bug or an epic in the tracker."
+    },
+    {
+      "name": "do",
+      "invocation": "model",
+      "displayName": "Do",
+      "shortDescription": "Say what you want in plain words",
+      "defaultPrompt": "Use $do to work on my backlog in plain words, for example: start the bots bug."
+    },
+    {
+      "name": "help",
+      "invocation": "user",
+      "displayName": "Help",
+      "shortDescription": "What the flow can do, like a man page",
+      "defaultPrompt": "Use $help to list what the flow can do and how to call it."
+    },
+    {
+      "name": "gate",
+      "invocation": "user",
+      "displayName": "Gate",
+      "shortDescription": "See or answer the gates waiting on you",
+      "defaultPrompt": "Use $gate to list the gates waiting on me, or to approve one."
     },
     {
       "name": "board",

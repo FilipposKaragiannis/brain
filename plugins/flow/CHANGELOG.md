@@ -1,5 +1,20 @@
 # flow
 
+## 1.1.0 (2026-10-11)
+
+- `do`: the front door. A model-invoked skill that takes a plain sentence ("what is stuck?",
+  "start the bots bug", "approve the plan for 312"), finds the item by its title, asks once before
+  anything that runs agents or clears a gate, and follows the matching skill.
+- `help`: a manual read from the installed plugin. `help` lists every skill with how to call it on
+  Claude and Codex; `help <skill>` shows one; `help lines` and `help gates` show the steps per
+  kind and size and what each stop asks of you. `scripts/help.sh` does the work.
+- `auto_gates` in `.flow/config.yaml`: `plan-approval: S,M` lets the flow clear the plan-approval
+  gate itself for those sizes (logged on the item and in `events.log`). Merge, interview,
+  decomposition, feel-test, escalation and ambiguity, and a re-size gate, always wait. `init`
+  flags any other name as a gap.
+- `gate`: a skill to list the gates waiting on the owner and to answer one (`gate.sh clear`), so
+  approving a plan, a spec or a task list is a command, not a script path.
+
 ## 1.0.0 (2026-10-11)
 
 First stable release: the config keys and the hook contracts are kept from here on.

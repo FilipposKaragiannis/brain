@@ -3,7 +3,8 @@
 #            [--message TEXT]
 # Applies a finished step: reads <reports>/<step>.json (flags override), updates attempts, size
 # and touches, moves the state to the next step, raises the gate the profile puts there, and
-# clears the run. Exit codes: 0 next step ready · 4 waiting at a gate · 6 done.
+# clears the run (a plan-approval gate listed in auto_gates for the item's size is not raised).
+# Exit codes: 0 next step ready · 4 waiting at a gate · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
@@ -114,6 +115,14 @@ case "$following" in
     g="${following#gate:}"
     after="$(profile_steps "$profile" | awk -v s="$following" 'f {print; exit} $0 == s {f = 1}')"
     [ -n "$after" ] || after="done"
+    # auto_gates: only plan-approval can be cleared by the flow, by item size; every other gate waits.
+    if [ "$g" = "plan-approval" ] && case ",$(cfg auto_gates.plan-approval | tr -d ' ')," in *",$size,"*) true ;; *) false ;; esac; then
+      adapter write-state "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g auto-approved (size $size)" >/dev/null
+      adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Gate $g auto-approved by auto_gates for size $size. Next: $after." >/dev/null
+      printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$item" "$g" "auto-approved (size $size)" >> "$home/events.log"
+      finish_run
+      report 0 "$after" ""
+    fi
     adapter write-state "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g" >/dev/null
     "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$g" "${summary:-$step done}. $(json_get "$profiles" "gates.$g.says")" >/dev/null
     report 4 "$after" "$g" ;;
