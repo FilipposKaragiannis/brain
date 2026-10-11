@@ -1,0 +1,6 @@
+interface:
+  display_name: "Board"
+  short_description: "Pool, items, gates, overlaps"
+  default_prompt: "Use $board to show every worktree, item, gate and overlap."
+policy:
+  allow_implicit_invocation: false

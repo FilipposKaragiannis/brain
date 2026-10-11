@@ -1,0 +1,13 @@
+#!/bin/sh
+# Git commit-msg hook installed by `standards init`. Git hands over the message file as $1, so the
+# gates that honour a message marker ([config], [allow-docs], [why-comment]) read the real
+# message; a pre-commit hook never has one. By now git holds what the commit will contain in the
+# index it gives the hook, so the payload is a plain `git commit -F <file>` and the scripts read
+# the index.
+dir="$(cd "$(dirname "$0")" && pwd)/.."
+. "$dir/lib.sh"
+payload="$(printf '{"tool_input":{"command":%s}}' "$(json_string "git commit -F \"$1\"")")"
+for check in check-config check-comments; do
+  printf '%s' "$payload" | "$dir/$check.sh" || exit 1
+done
+exit 0

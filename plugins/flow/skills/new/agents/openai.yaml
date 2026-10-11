@@ -1,0 +1,4 @@
+interface:
+  display_name: "New Item"
+  short_description: "Create an epic, task or bug"
+  default_prompt: "Use $new to file a task, a bug or an epic in the tracker."

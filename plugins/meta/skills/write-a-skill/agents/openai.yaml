@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write a Skill"
+  short_description: "Create a well-structured skill"
+  default_prompt: "Use $write-a-skill to package this workflow as a skill."

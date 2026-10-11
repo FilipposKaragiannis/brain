@@ -1,0 +1,1 @@
+I need to design a module that computes shipping cost for an Order from its weight, destination and the carrier's rate table, which comes from a remote service. How should I shape its interface so it is easy to test?

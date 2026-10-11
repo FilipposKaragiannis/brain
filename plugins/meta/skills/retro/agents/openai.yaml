@@ -1,0 +1,6 @@
+interface:
+  display_name: "Retro"
+  short_description: "End-of-session retrospective"
+  default_prompt: "Use $retro to review this session for rule and skill improvements."
+policy:
+  allow_implicit_invocation: false

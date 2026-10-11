@@ -1,0 +1,210 @@
+{
+  "mattpocock/skills": {
+    "_readme": "Maps local skills (paths relative to the repo root; plugins/<plugin>/skills/<skill> since the 2026-10-10 rework) to the upstream mattpocock skill they were adapted from, so sync-skills doesn't have to re-derive this every run. Update this file whenever a skill is renamed, split, merged, or newly absorbed/ported. 'noEquivalent' = verified original, nothing upstream to compare against. 'unrelatedPlugins' = whole plugin dirs confirmed to have no relationship to this source, skip entirely.",
+    "mapped": [
+      {
+        "local": "plugins/craft/skills/codebase-design",
+        "upstream": "engineering/codebase-design",
+        "note": "Close port, same core vocabulary. 2026-08-09: ported harness-neutral sub-agent wording in DESIGN-IT-TWICE.md; no remaining gaps. 2026-10-05: same stale CONTEXT.md pointer in DESIGN-IT-TWICE.md fixed to the local `## Glossary` convention."
+      },
+      {
+        "local": "plugins/standards/skills/review",
+        "upstream": "engineering/code-review",
+        "note": "Renamed from local 'review' and merged with 'ubiquitous-language' (commit 8dd6149). Extended with P0/P1/P2 grading and per-finding PR comments, which upstream doesn't have; also already carries the Fowler smell baseline upstream added. 2026-08-09: ported harness-neutral sub-agent wording. Retained PRD as an accepted local spec source because workstream deliberately publishes PRDs. 2026-09-13: upstream's only substantive change was the user-invoked setup-skill precondition rewording; local has no such precondition. Rest of the diff was the repo-wide em-dash sweep."
+      },
+      {
+        "local": "plugins/workstream/skills/grill",
+        "upstream": "engineering/grill-with-docs",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/grill",
+        "upstream": "productivity/grilling",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/improve",
+        "upstream": "engineering/improve-codebase-architecture",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/init",
+        "upstream": "engineering/setup-matt-pocock-skills",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/ship",
+        "upstream": "engineering/implement",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/tdd-task",
+        "upstream": "engineering/tdd",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/to-epic",
+        "upstream": "engineering/to-spec",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/to-subissues",
+        "upstream": "engineering/to-tickets",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/to-task",
+        "upstream": "engineering/to-tickets",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/meta/skills/write-a-skill",
+        "upstream": "productivity/writing-for-agents",
+        "note": "Not a port itself, but explicitly built to use local writing-great-skills as its quality-bar reference. 2026-08-09: inherits the newly ported Cache principle through that reference."
+      },
+      {
+        "local": "plugins/meta/skills/retro",
+        "upstream": "engineering/retro",
+        "note": "Was noEquivalent until 2026-09-13, when upstream added its own retro. Local is a strict superset in shape (routed findings + durable homes vs. a flat candidate list), so this stays an adapt-from, not a port-of. 2026-09-13: ported four lenses local lacked (missing machine check, information access, tool economy, no-ops/steering bloat as the counterweight to an additive-only retro) plus the implementation-vs-review context-pressure argument, which routes new coding rules to two-axis-review's standards sources rather than CLAUDE.md. 2026-10-05: upstream graduated retro to engineering. Ported: read the repo's existing check command first (unwired/broken check is the finding), a repo with no guardrail is itself a finding, and classify violations as mechanical (deterministic check) vs judgement (written standard)."
+      },
+      {
+        "local": "plugins/workstream/skills/grill",
+        "upstream": "engineering/domain-modeling",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      },
+      {
+        "local": "plugins/workstream/skills/to-pr",
+        "upstream": "engineering/pr",
+        "note": "Retired 2026-10-11: the workstream plugin was removed, the flow plugin replaces it. Do not re-suggest."
+      }
+    ],
+    "noEquivalent": [
+      {
+        "local": "AI/skills/epic-plan-review",
+        "note": "No upstream analog; workstream-epic-specific."
+      },
+      {
+        "local": "AI/skills/real-work",
+        "note": "No upstream analog. Loosely adjacent to wayfinder's decision-map idea but different shape (phased checklist artifact vs. tracker-native decision map). Reviewed wayfinder's 2026-08-09 decision-ticket/sub-agent changes; they remain specific to its tracker-native map and do not fit real-work."
+      },
+      {
+        "local": "local/sync-skills",
+        "note": "This skill itself — about the mattpocock source, not derived from it."
+      },
+      {
+        "local": "plugins/workstream/skills/board",
+        "note": "No upstream analog; workstream's own GitHub sub-issue rollup dashboard. 2026-09-13: applied upstream's Skill-tool convention to _shared/dependency-graph.md, which reached dataviz's palette and validator by bare relative path (those resolve in the skill's install dir, not the target repo)."
+      },
+      {
+        "local": "AI/skills/resolving-merge-conflicts",
+        "note": "Was a close port of engineering/resolving-merge-conflicts until upstream deleted it (2026-10-05 sync, commit daa01d8). Local keeps it; nothing upstream to compare against any more."
+      }
+    ],
+    "pendingDecisions": [
+      {
+        "id": "grill-frontier-rounds",
+        "local": "roster/briefs/interviewer.md",
+        "upstream": "productivity/grilling",
+        "surfaced": "2026-08-09",
+        "decision": "2026-10-11: workstream grill was removed; the one-question-at-a-time interview now lives in the flow interviewer brief. Choose whether to replace the explicit one-question-at-a-time contract with dependency-aware frontier rounds. Rounds are faster and permit parallel fact-finding; one-at-a-time reduces cognitive load and preserves focused decisions."
+      },
+      {
+        "id": "adopt-wizard",
+        "upstream": "engineering/wizard",
+        "surfaced": "2026-08-09",
+        "decision": "Choose whether to adopt the promoted wizard skill, which generates verified interactive bash scripts for human-only setup, credential, dashboard, migration, and cutover steps."
+      },
+      {
+        "id": "adopt-to-questionnaire",
+        "upstream": "productivity/to-questionnaire",
+        "surfaced": "2026-08-09",
+        "decision": "Choose whether to adopt the promoted to-questionnaire skill, which interviews about the recipient and needed outcome, then writes a Markdown discovery questionnaire for someone who holds missing knowledge."
+      },
+      {
+        "id": "adopt-wait-what",
+        "upstream": "productivity/wait-what",
+        "surfaced": "2026-08-09",
+        "decision": "Choose whether to adopt the new three-line wait-what corrective, which re-pitches the last message with more context, simplified English, and project vocabulary."
+      },
+      {
+        "id": "adopt-implement-spec",
+        "upstream": "engineering/implement-spec",
+        "surfaced": "2026-09-13",
+        "decision": "Choose whether to adopt upstream's implement-spec, which burns a whole spec's ticket graph down to one PR: implementer subagents running concurrently in background worktrees across the ready frontier, a merger subagent folding each back into the PR branch, subagents briefed by context pointers only, then a code review before the PR goes ready. It conflicts with workstream's deliberate shape on two axes: ship is one issue per run and refuses more, and to-pr gates on a human feel-test before anything is committed. The frontier model itself already exists locally in board --plan's wave/blocked-by graph, so adoption would be about handing that graph to parallel agents, not about computing it. 2026-10-05: upstream graduated it to engineering and reworked it: the goal is now an integration branch (draft PR only if the tracker closes work through PRs), implementers verify their worktree base, build each ticket via tdd, and merge the integration tip before reporting done. Same conflict with ship/to-pr remains."
+      },
+      {
+        "id": "adopt-chief-of-staff",
+        "upstream": "in-progress/chief-of-staff",
+        "surfaced": "2026-10-05",
+        "decision": "Experimental, still in-progress upstream. A long-running orchestrator session: all work in subagents, context pointers only, suggests recurring schedules, and 'gardens' the agents' environment. Revisit if it graduates; nothing to port while it is a 25-line sketch."
+      }
+    ],
+    "dropped": [
+      {
+        "local": "AI/skills/qa",
+        "upstream": "deprecated/qa",
+        "note": "Removed 2026-07-29 — unused. Upstream deleted it entirely in v1.2.0. Don't re-suggest porting it."
+      },
+      {
+        "upstream": "engineering/ask-matt",
+        "note": "Reviewed 2026-08-09 — upstream-specific router over that repo's exact flow topology. Local skill discovery and the arsenal artifact cover a different topology; skip. 2026-10-05: changed again (routes implement-spec, pr, retro); still upstream-specific."
+      },
+      {
+        "upstream": "repo-wide em-dash removal",
+        "note": "Reviewed 2026-09-13 — upstream banned em-dashes across its whole repo and hand-rewrote every sentence, which is most of this sync range's diff by volume. A house-style choice recorded in their CLAUDE.md, with no behavioural effect on any skill. Local prose uses em-dashes deliberately; don't re-suggest, and read future diffs in this range as punctuation noise unless something else moved."
+      },
+      {
+        "upstream": "CONTEXT.md -> GLOSSARY.md rename",
+        "note": "Reviewed 2026-10-05 — upstream renamed its domain-doc convention repo-wide. Local never used CONTEXT.md as its convention (it uses a `## Glossary` section in CLAUDE.md/AGENTS.md); only two stale pointers were fixed. Read future diffs of this rename as noise."
+      },
+      {
+        "local": "AI/skills/diagnosing-bugs",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest.",
+        "upstream": "engineering/diagnosing-bugs"
+      },
+      {
+        "local": "AI/skills/handoff",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest.",
+        "upstream": "productivity/handoff"
+      },
+      {
+        "local": "AI/skills/prototype",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest.",
+        "upstream": "engineering/prototype"
+      },
+      {
+        "local": "AI/skills/teach",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest.",
+        "upstream": "productivity/teach"
+      },
+      {
+        "local": "AI/skills/triage",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest.",
+        "upstream": "engineering/triage"
+      },
+      {
+        "local": "plugins/meta/skills/write-a-skill/writing-great-skills",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest.",
+        "upstream": "productivity/writing-for-agents"
+      },
+      {
+        "local": "AI/skills/arsenal",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest."
+      },
+      {
+        "local": "AI/skills/caveman",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest."
+      },
+      {
+        "local": "AI/skills/zoom-out",
+        "note": "Retired 2026-10-10 in the marketplace rework. Do not re-suggest."
+      }
+    ],
+    "unrelatedPlugins": [
+      {
+        "path": "plugins/spec-driven-development",
+        "note": "Removed 2026-10-11. Numbered PRD/decompose/execute/verify workflow (01-negotiate..07-verify, help/init/next/status). Different vocabulary and structure than mattpocock's engineering skills (spec/tickets/wayfinder) — separate origin, not derived from this source. Skip entirely in future syncs unless the user says otherwise."
+      }
+    ]
+  }
+}

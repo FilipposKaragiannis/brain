@@ -1,8 +1,0 @@
-{
-  "name": "teach",
-  "description": "Teach the user a new skill or concept, within this workspace.",
-  "version": "1.0.0",
-  "author": {
-    "name": "Filip Karagiannis"
-  }
-}

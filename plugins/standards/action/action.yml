@@ -1,0 +1,44 @@
+name: standards gates
+description: >-
+  Runs the standards commit gates per commit over a range, each commit against its own message:
+  the comment rules, the protected files and the project's gates that list "ci" in
+  .standards/config.json. Needs a checkout with fetch-depth 0 and the project's toolchain set up
+  before this step.
+inputs:
+  base:
+    description: >-
+      Where the range starts (exclusive). Default: the PR base branch, else the push's previous
+      head, else the default branch; the merge-base with head is used either way.
+    default: ""
+  head:
+    description: Where the range ends.
+    default: HEAD
+  gates:
+    description: The gate scripts to run per commit, space-separated.
+    default: check-config check-comments check-gates
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        INPUT_BASE: ${{ inputs.base }}
+        INPUT_HEAD: ${{ inputs.head }}
+        INPUT_GATES: ${{ inputs.gates }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        base="$INPUT_BASE"
+        if [ -z "$base" ]; then
+          before="$(jq -r '.before // ""' "$GITHUB_EVENT_PATH")"
+          default_branch="$(jq -r '.repository.default_branch // "main"' "$GITHUB_EVENT_PATH")"
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            base="origin/$GITHUB_BASE_REF"
+          elif [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$before" 2>/dev/null; then
+            base="$before"
+          else
+            base="origin/$default_branch"
+          fi
+        fi
+        base="$(git merge-base "$base" "$INPUT_HEAD")"
+        echo "checking commits in $base..$INPUT_HEAD"
+        "$ACTION_PATH/../hooks/check-range.sh" --gates "$INPUT_GATES" "$base" "$INPUT_HEAD"

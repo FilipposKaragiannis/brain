@@ -1,0 +1,6 @@
+interface:
+  display_name: "Standards Init"
+  short_description: "Install the standards in a repo"
+  default_prompt: "Use $init to install or refresh the coding standards in this repository."
+policy:
+  allow_implicit_invocation: false

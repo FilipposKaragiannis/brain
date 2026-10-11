@@ -1,0 +1,41 @@
+{
+  "name": "craft",
+  "version": "0.1.0",
+  "description": "Design vocabulary and improvement passes for deep modules: codebase-design and improve, both citing the standards by rule id.",
+  "keywords": [
+    "design",
+    "architecture",
+    "refactoring"
+  ],
+  "codex": {
+    "displayName": "Craft",
+    "shortDescription": "Design and improve deep modules",
+    "longDescription": "A shared vocabulary for designing deep modules, placing seams and keeping code navigable, plus guided improvement passes that cite the standards by rule id.",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Help me design this module"
+    ],
+    "brandColor": "#7C3AED"
+  },
+  "skills": [
+    {
+      "name": "codebase-design",
+      "invocation": "model",
+      "displayName": "Codebase Design",
+      "shortDescription": "Vocabulary for deep modules",
+      "defaultPrompt": "Use $codebase-design to shape this module."
+    },
+    {
+      "name": "improve",
+      "invocation": "model",
+      "displayName": "Improve",
+      "shortDescription": "Find deepening opportunities",
+      "defaultPrompt": "Use $improve to find deepening opportunities in this codebase."
+    }
+  ]
+}

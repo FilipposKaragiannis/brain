@@ -1,0 +1,20 @@
+# flow plugin: commands Codex agents run outside the sandbox under workspace-write.
+# Installed by flow:init into <repo>/.codex/rules/flow.rules; the project .codex layer must be
+# trusted (trust_level = "trusted" in ~/.codex/config.toml) for this file to load.
+# .git of a linked worktree lives in the main repository, outside the workspace, so git commands
+# that write need these rules. gh needs the network, which the sandbox blocks.
+prefix_rule(pattern=["git", "add"], decision="allow", justification="flow: stage in the claimed worktree")
+prefix_rule(pattern=["git", "commit"], decision="allow", justification="flow: commit on the task branch")
+prefix_rule(pattern=["git", "tag"], decision="allow", justification="flow: tags for releases")
+prefix_rule(pattern=["git", "push"], decision="allow", justification="flow: push the task branch")
+prefix_rule(pattern=["git", "fetch"], decision="allow", justification="flow: refresh the base")
+prefix_rule(pattern=["git", "switch"], decision="allow", justification="flow: steward branch moves")
+prefix_rule(pattern=["git", "worktree"], decision="allow", justification="flow: temporary worktrees")
+prefix_rule(pattern=["git", "rebase"], decision="allow", justification="flow: rebase phases onto the task branch")
+prefix_rule(pattern=["git", "merge"], decision="allow", justification="flow: merge phases")
+prefix_rule(pattern=["git", "stash"], decision="allow", justification="flow: steward")
+prefix_rule(pattern=["gh", "pr"], decision="allow", justification="flow: open and update PRs")
+prefix_rule(pattern=["gh", "issue"], decision="allow", justification="flow: tracker adapter")
+prefix_rule(pattern=["gh", "api"], decision="allow", justification="flow: tracker adapter")
+prefix_rule(pattern=["gh", "label"], decision="allow", justification="flow: state labels")
+prefix_rule(pattern=["gh", "repo", "view"], decision="allow", justification="flow: repository name")

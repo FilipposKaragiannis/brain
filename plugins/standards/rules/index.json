@@ -1,0 +1,566 @@
+{
+  "U-01": {
+    "title": "Scope",
+    "tag": "usage",
+    "section": "0. How these rules are used",
+    "file": "common/00-usage.md"
+  },
+  "U-02": {
+    "title": "Breaking a [judgement] rule must be declared in three places:",
+    "tag": "judgement",
+    "section": "0. How these rules are used",
+    "file": "common/00-usage.md"
+  },
+  "U-03": {
+    "title": "A [hard] rule is a gate, not advice",
+    "tag": "hard",
+    "section": "0. How these rules are used",
+    "file": "common/00-usage.md"
+  },
+  "U-04": {
+    "title": "A [signal] rule is a smell detector",
+    "tag": "signal",
+    "section": "0. How these rules are used",
+    "file": "common/00-usage.md"
+  },
+  "U-05": {
+    "title": "Rules bind new and touched code",
+    "tag": "usage",
+    "section": "0. How these rules are used",
+    "file": "common/00-usage.md"
+  },
+  "U-06": {
+    "title": "Each engine or framework gets a short exception list in the project rules",
+    "tag": "usage",
+    "section": "0. How these rules are used",
+    "file": "common/00-usage.md"
+  },
+  "U-07": {
+    "title": "Project concerns stay out of this file",
+    "tag": "usage",
+    "section": "0. How these rules are used",
+    "file": "common/00-usage.md"
+  },
+  "D-01": {
+    "title": "Deep modules, narrow surface",
+    "tag": "judgement",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-02": {
+    "title": "One responsibility",
+    "tag": "judgement",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-03": {
+    "title": "Compose, don't inherit",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-04": {
+    "title": "Abstractions must earn their place",
+    "tag": "judgement",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-05": {
+    "title": "No unnecessary dependencies",
+    "tag": "judgement",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-06": {
+    "title": "No compiler-flag branching in production code",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-07": {
+    "title": "No downcasting from interfaces or base types",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-08": {
+    "title": "Null-object over nullable defaults",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-09": {
+    "title": "Every parameter is explicit",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-10": {
+    "title": "No static mutable state",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-11": {
+    "title": "No service locator",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-12": {
+    "title": "No reflection in production code",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "D-13": {
+    "title": "No `dynamic`",
+    "tag": "hard",
+    "section": "1. Design",
+    "file": "common/01-design.md"
+  },
+  "A-01": {
+    "title": "Dependencies point inward; the core is framework-free",
+    "tag": "hard",
+    "section": "1b. Architecture",
+    "file": "common/02-architecture.md"
+  },
+  "A-02": {
+    "title": "Pick the architecture for the problem",
+    "tag": "judgement",
+    "section": "1b. Architecture",
+    "file": "common/02-architecture.md"
+  },
+  "A-03": {
+    "title": "Validate at boundaries, fail fast at startup",
+    "tag": "hard",
+    "section": "1b. Architecture",
+    "file": "common/02-architecture.md"
+  },
+  "A-04": {
+    "title": "Logging goes through an injected abstraction",
+    "tag": "hard",
+    "section": "1b. Architecture",
+    "file": "common/02-architecture.md"
+  },
+  "P-01": {
+    "title": "Measure before optimising",
+    "tag": "judgement",
+    "section": "1c. Performance",
+    "file": "common/03-performance.md"
+  },
+  "P-02": {
+    "title": "Hot paths are declared, and zero-allocation there",
+    "tag": "hard",
+    "section": "1c. Performance",
+    "file": "common/03-performance.md"
+  },
+  "S-01": {
+    "title": "Minimise stored state",
+    "tag": "judgement",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-02": {
+    "title": "Pure functions and immutability first",
+    "tag": "judgement",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-03": {
+    "title": "No boolean state flags",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-04": {
+    "title": "Structs are data, not behaviour",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-05": {
+    "title": "Wrap primitives at boundaries",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-06": {
+    "title": "Collection operations get their own type",
+    "tag": "judgement",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-07": {
+    "title": "Immutable surface, owned storage",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-08": {
+    "title": "Return empty, never null, for collections",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-09": {
+    "title": "No `out` parameters",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-10": {
+    "title": "No tuples across non-private APIs",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-11": {
+    "title": "Time and randomness are injected",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-12": {
+    "title": "Errors and alternatives as values",
+    "tag": "judgement",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-13": {
+    "title": "Exceptions are for broken invariants only",
+    "tag": "hard",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "S-14": {
+    "title": "Close what should not be extended",
+    "tag": "judgement",
+    "section": "2. State and data",
+    "file": "common/04-state.md"
+  },
+  "M-01": {
+    "title": "Cyclomatic complexity above 5 or 6 per method is a signal",
+    "tag": "signal",
+    "section": "3. Methods and control flow",
+    "file": "common/05-methods.md"
+  },
+  "M-02": {
+    "title": "Nesting deeper than 2 inside a method is a signal",
+    "tag": "signal",
+    "section": "3. Methods and control flow",
+    "file": "common/05-methods.md"
+  },
+  "M-03": {
+    "title": "Favour early exits. Avoid `else`",
+    "tag": "judgement",
+    "section": "3. Methods and control flow",
+    "file": "common/05-methods.md"
+  },
+  "M-04": {
+    "title": "Single constructor per type",
+    "tag": "hard",
+    "section": "3. Methods and control flow",
+    "file": "common/05-methods.md"
+  },
+  "M-05": {
+    "title": "Async all the way",
+    "tag": "hard",
+    "section": "3. Methods and control flow",
+    "file": "common/05-methods.md"
+  },
+  "M-06": {
+    "title": "Every async method takes a cancellation token",
+    "tag": "hard",
+    "section": "3. Methods and control flow",
+    "file": "common/05-methods.md"
+  },
+  "M-07": {
+    "title": "Readability over cleverness",
+    "tag": "judgement",
+    "section": "3. Methods and control flow",
+    "file": "common/05-methods.md"
+  },
+  "N-01": {
+    "title": "Files over 300 lines smell",
+    "tag": "signal",
+    "section": "4. Files and naming",
+    "file": "common/06-naming.md"
+  },
+  "N-02": {
+    "title": "More than 4 parameters smell",
+    "tag": "signal",
+    "section": "4. Files and naming",
+    "file": "common/06-naming.md"
+  },
+  "N-03": {
+    "title": "Long methods smell",
+    "tag": "signal",
+    "section": "4. Files and naming",
+    "file": "common/06-naming.md"
+  },
+  "N-04": {
+    "title": "Names state the role",
+    "tag": "hard",
+    "section": "4. Files and naming",
+    "file": "common/06-naming.md"
+  },
+  "N-05": {
+    "title": "No abbreviations",
+    "tag": "hard",
+    "section": "4. Files and naming",
+    "file": "common/06-naming.md"
+  },
+  "N-06": {
+    "title": "No magic numbers",
+    "tag": "hard",
+    "section": "4. Files and naming",
+    "file": "common/06-naming.md"
+  },
+  "N-07": {
+    "title": "Say it once (DRY)",
+    "tag": "judgement",
+    "section": "4. Files and naming",
+    "file": "common/06-naming.md"
+  },
+  "N-08": {
+    "title": "Keep it simple (KISS)",
+    "tag": "judgement",
+    "section": "4. Files and naming",
+    "file": "common/06-naming.md"
+  },
+  "T-01": {
+    "title": "A test fails only when functionality breaks",
+    "tag": "hard",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-02": {
+    "title": "Tests assert behaviour and edge cases, with meaningful values",
+    "tag": "judgement",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-03": {
+    "title": "Tests are written after the implementation, from the spec",
+    "tag": "judgement",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-04": {
+    "title": "Test levels",
+    "tag": "hard",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-05": {
+    "title": "Mutation score is a signal",
+    "tag": "signal",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-06": {
+    "title": "Coverage is a signal",
+    "tag": "signal",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-07": {
+    "title": "No test without an assertion",
+    "tag": "hard",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-08": {
+    "title": "No assertion on a double's calls",
+    "tag": "hard",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-09": {
+    "title": "One behaviour per test",
+    "tag": "hard",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-10": {
+    "title": "Doubles",
+    "tag": "judgement",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-11": {
+    "title": "Names are behavioural sentences",
+    "tag": "hard",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-12": {
+    "title": "Testability through real seams",
+    "tag": "judgement",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "T-13": {
+    "title": "Test enforcement belongs to the plugin",
+    "tag": "usage",
+    "section": "5. Tests",
+    "file": "common/07-tests.md"
+  },
+  "C-01": {
+    "title": "No comments that explain code behaviour",
+    "tag": "hard",
+    "section": "6. Comments and documentation",
+    "file": "common/08-comments.md"
+  },
+  "C-02": {
+    "title": "API documentation is welcome on public APIs and system boundaries",
+    "tag": "judgement",
+    "section": "6. Comments and documentation",
+    "file": "common/08-comments.md"
+  },
+  "C-03": {
+    "title": "No task, ticket, PR or spec identifiers in source",
+    "tag": "hard",
+    "section": "6. Comments and documentation",
+    "file": "common/08-comments.md"
+  },
+  "L-01": {
+    "title": "Code to green",
+    "tag": "hard",
+    "section": "7. Linting and formatting",
+    "file": "common/09-formatting.md"
+  },
+  "L-02": {
+    "title": "Clean namespaces",
+    "tag": "hard",
+    "section": "7. Linting and formatting",
+    "file": "common/09-formatting.md"
+  },
+  "L-03": {
+    "title": "`.editorconfig` is the single source of truth for formatting",
+    "tag": "hard",
+    "section": "7. Linting and formatting",
+    "file": "common/09-formatting.md"
+  },
+  "W-01": {
+    "title": "Conventional commits, short bodies",
+    "tag": "hard",
+    "section": "8. Commits, PRs and behaviour",
+    "file": "common/10-workflow.md"
+  },
+  "W-02": {
+    "title": "One concern per PR",
+    "tag": "hard",
+    "section": "8. Commits, PRs and behaviour",
+    "file": "common/10-workflow.md"
+  },
+  "W-03": {
+    "title": "PR size is a signal",
+    "tag": "signal",
+    "section": "8. Commits, PRs and behaviour",
+    "file": "common/10-workflow.md"
+  },
+  "W-04": {
+    "title": "Minimal diff",
+    "tag": "hard",
+    "section": "8. Commits, PRs and behaviour",
+    "file": "common/10-workflow.md"
+  },
+  "W-05": {
+    "title": "Review severity",
+    "tag": "hard",
+    "section": "8. Commits, PRs and behaviour",
+    "file": "common/10-workflow.md"
+  },
+  "W-06": {
+    "title": "Learning loop",
+    "tag": "hard",
+    "section": "8. Commits, PRs and behaviour",
+    "file": "common/10-workflow.md"
+  },
+  "W-07": {
+    "title": "Reporting",
+    "tag": "hard",
+    "section": "8. Commits, PRs and behaviour",
+    "file": "common/10-workflow.md"
+  },
+  "W-08": {
+    "title": "Ambiguity: ask, unless current practice already answers it",
+    "tag": "judgement",
+    "section": "8. Commits, PRs and behaviour",
+    "file": "common/10-workflow.md"
+  },
+  "CS-01": {
+    "title": "`sealed` and `internal` by default",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-02": {
+    "title": "`var` preferred",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-03": {
+    "title": "Nullable reference types enabled everywhere",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-04": {
+    "title": "Expression bodies only for single-line returns; everything else is a block body",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-05": {
+    "title": "Max line length 200",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-06": {
+    "title": "No `#region`",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-07": {
+    "title": "`readonly record struct` / `readonly struct` for values, `sealed record` for immutable data and configuration, `with` for copies",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-08": {
+    "title": "Hot-path values are `readonly struct` passed `in`; storage is `T[]`, surface is `ReadOnlySpan<T>`, iteration is an index `for`",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-09": {
+    "title": "Never `",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-10": {
+    "title": "Tests: NUnit or xUnit with FluentAssertions; because-strings on every assertion; `[TestCase]` for genuine data variants",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-11": {
+    "title": "Doc comments are `///`, on public APIs and boundaries only: above `public` declarations and on `interface` and `enum` members",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-12": {
+    "title": "`",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  }
+}

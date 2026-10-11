@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codebase Design"
+  short_description: "Vocabulary for deep modules"
+  default_prompt: "Use $codebase-design to shape this module."

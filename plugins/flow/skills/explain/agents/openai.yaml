@@ -1,0 +1,6 @@
+interface:
+  display_name: "Explain"
+  short_description: "Plain-language page plus a quiz"
+  default_prompt: "Use $explain to explain this item's change and write the quiz."
+policy:
+  allow_implicit_invocation: false

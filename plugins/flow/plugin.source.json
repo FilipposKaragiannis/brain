@@ -1,0 +1,121 @@
+{
+  "name": "flow",
+  "version": "1.0.0",
+  "description": "The work flow: pick the next ready item, plan, implement, test, review, verify and open a PR, with agents in worktrees and human gates only where a human adds value.",
+  "keywords": [
+    "workflow",
+    "agents",
+    "worktrees",
+    "github",
+    "tracker"
+  ],
+  "codex": {
+    "displayName": "Flow",
+    "shortDescription": "Run tracked work end to end",
+    "longDescription": "Picks the next ready item from the tracker, plans it to the right depth, implements and tests it in a worktree, reviews, verifies and opens a PR. Humans decide only at the gates.",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use $next to run the next ready item",
+      "Use $board to show what is running and waiting"
+    ],
+    "brandColor": "#1D4ED8"
+  },
+  "skills": [
+    {
+      "name": "init",
+      "invocation": "user",
+      "displayName": "Flow Init",
+      "shortDescription": "Install the flow in a repo",
+      "defaultPrompt": "Use $init to install or refresh the flow plugin in this repository."
+    },
+    {
+      "name": "next",
+      "invocation": "user",
+      "displayName": "Next",
+      "shortDescription": "Run the next step of an item",
+      "defaultPrompt": "Use $next to run the next ready item through its flow."
+    },
+    {
+      "name": "new",
+      "invocation": "model",
+      "displayName": "New Item",
+      "shortDescription": "Create an epic, task or bug",
+      "defaultPrompt": "Use $new to file a task, a bug or an epic in the tracker."
+    },
+    {
+      "name": "board",
+      "invocation": "user",
+      "displayName": "Board",
+      "shortDescription": "Pool, items, gates, overlaps",
+      "defaultPrompt": "Use $board to show every worktree, item, gate and overlap."
+    },
+    {
+      "name": "steward",
+      "invocation": "user",
+      "displayName": "Steward",
+      "shortDescription": "Claim, release and reset worktrees",
+      "defaultPrompt": "Use $steward to show the worktree pool and free a worktree."
+    },
+    {
+      "name": "plan",
+      "invocation": "user",
+      "displayName": "Plan",
+      "shortDescription": "Plan, design or decompose an item",
+      "defaultPrompt": "Use $plan to plan this item to its profile's depth."
+    },
+    {
+      "name": "implement",
+      "invocation": "user",
+      "displayName": "Implement",
+      "shortDescription": "Implement an item's plan",
+      "defaultPrompt": "Use $implement to implement this item in its worktree."
+    },
+    {
+      "name": "test",
+      "invocation": "user",
+      "displayName": "Test",
+      "shortDescription": "Write the tests from the acceptance lines",
+      "defaultPrompt": "Use $test to write the tests for this item."
+    },
+    {
+      "name": "review",
+      "invocation": "user",
+      "displayName": "Review Item",
+      "shortDescription": "Review an item's diff at its depth",
+      "defaultPrompt": "Use $review to review this item's diff against the standards and its spec."
+    },
+    {
+      "name": "verify",
+      "invocation": "user",
+      "displayName": "Verify",
+      "shortDescription": "Build, format, tests, gates; one report",
+      "defaultPrompt": "Use $verify to verify this item and write the report."
+    },
+    {
+      "name": "pr",
+      "invocation": "user",
+      "displayName": "PR",
+      "shortDescription": "Open the PR with the house body",
+      "defaultPrompt": "Use $pr to open the pull request for this item."
+    },
+    {
+      "name": "comments",
+      "invocation": "user",
+      "displayName": "Comments",
+      "shortDescription": "Address PR review comments",
+      "defaultPrompt": "Use $comments to address the review comments on this PR."
+    },
+    {
+      "name": "explain",
+      "invocation": "user",
+      "displayName": "Explain",
+      "shortDescription": "Plain-language page plus a quiz",
+      "defaultPrompt": "Use $explain to explain this item's change and write the quiz."
+    }
+  ]
+}

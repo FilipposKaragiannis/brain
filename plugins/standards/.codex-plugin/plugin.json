@@ -1,0 +1,31 @@
+{
+  "name": "standards",
+  "version": "1.0.0",
+  "description": "Coding standards as enforceable rules: rule ids, a rules block for CLAUDE.md and AGENTS.md, commit hooks, a delivery gate and the two-axis review.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": [
+    "coding-standards",
+    "code-review",
+    "hooks",
+    "quality"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Standards",
+    "shortDescription": "Enforce the coding standards",
+    "longDescription": "Installs the coding standards as rules with ids, enforces the mechanical ones with hooks, and reviews a diff along the standards and spec axes.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Review the changes on this branch against the standards"
+    ],
+    "brandColor": "#0F766E"
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "description": "standards: commit gates (no-verify, protected config, comments, formatter, the project's own gates), the delivery gate and the session-start install check",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/check-no-verify.sh",
+            "timeout": 10,
+            "statusMessage": "standards: no-verify check"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/check-config.sh",
+            "timeout": 10,
+            "statusMessage": "standards: protected config check"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/check-comments.sh",
+            "timeout": 30,
+            "statusMessage": "standards: comment check"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/check-format.sh",
+            "timeout": 300,
+            "statusMessage": "standards: formatter check"
+          },
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/check-gates.sh",
+            "timeout": 900,
+            "statusMessage": "standards: project gates"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/delivery-gate.sh",
+            "timeout": 10,
+            "statusMessage": "standards: delivery gate"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/delivery-gate.sh",
+            "timeout": 10,
+            "statusMessage": "standards: delivery gate"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-start.sh",
+            "timeout": 10,
+            "statusMessage": "standards: install check"
+          }
+        ]
+      }
+    ]
+  }
+}
