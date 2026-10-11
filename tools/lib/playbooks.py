@@ -4,6 +4,7 @@ checks that every skill and agent named here exists, so a rename cannot leave a 
 
 A step is a dict:
   cmd   (plugin:skill, args)  what you type; Claude shows /plugin:skill args, Codex shows $skill args
+  sh    text           a shell command, in a terminal or a scheduler; {host} becomes claude or codex
   act   text           something you do outside the session (merge a PR, answer in chat)
   say   text           what happens, in one line
   who   [agents]       the agents that run it, in order
@@ -119,6 +120,29 @@ PLAYBOOKS = [
     },
 ]
 
+PLAYBOOKS.append({
+    "id": "auto",
+    "line": "task-M",
+    "title": "Work the backlog unattended",
+    "lede": "The tasks are filed, grilled and sized. Agents work them while you are away.",
+    "steps": [
+        {"act": "In .flow/config.yaml: auto_gates.plan-approval: S,M and notify.idle: true",
+         "say": "Small and medium plans pass on their own. Merge and every other gate still wait for you."},
+        {"cmd": ("flow:board", ""),
+         "say": "Check what is ready. A run takes ready tasks in list order; blocked ones wait."},
+        {"sh": ".flow/run-unattended.sh {host} --max-steps 15",
+         "say": "One run by hand first. It takes the first ready task, claims a worktree and runs every step as a fresh process with that agent's model and effort.",
+         "who": ["explorer", "architect", "planner", "implementer", "test-writer", "verifier", "pr-creator"],
+         "stop": ("merge", "Review the PR. Merge it on GitHub.")},
+        {"sh": "<repo>/.flow/jobs/next.sh {host} --max-steps 15 --workers 2",
+         "say": "Schedule it every 30 minutes: a Claude Desktop scheduled task, or launchd. Each worker takes its own ready task and worktree, works it to the next gate and logs to .flow/log/next-<n>.log. The pool caps the workers."},
+        {"cmd": ("flow:gate", 'gh#312 "merged"'),
+         "say": "Your merge unblocks the tasks behind it. The next scheduled run starts one."},
+        {"act": "The queue runs dry.",
+         "say": "notify.idle sends one notice, on the desktop and in Slack, then stays quiet until a run does work again."},
+    ],
+})
+
 EXTRAS = [
     {"cmd": ("flow:next", ""), "say": "Work the queue. Stops at the first gate."},
     {"cmd": ("flow:gate", ""), "say": "List the gates waiting on you."},
@@ -138,6 +162,8 @@ ASK = {
     "local": ["File an L task: bots aim ahead of the ball", "Start local:task/1", "Plan approved", "Build local:task/1",
               "local:task/1 is merged", "Free the worktree for local:task/1"],
     "bug": ["File a bug: bots stall at the net after a restart", "Fix gh#340", "gh#340 is merged", "Free the worktree for gh#340"],
+    "auto": ["", "What is ready?", "Start a one-off unattended run on the queue",
+             "Run a repeating unattended flow every 30 minutes, two at a time", "gh#312 is merged", ""],
 }
 for _pb in PLAYBOOKS:
     assert len(ASK[_pb["id"]]) == len(_pb["steps"]), _pb["id"]

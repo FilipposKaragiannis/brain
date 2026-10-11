@@ -4,7 +4,8 @@
 # claim. Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
-# Exit codes: 0 step ready · 4 waiting at a gate · 5 nothing ready · 6 item is done.
+# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate · 5 nothing
+# ready · 6 item is done · 7 the item has a run in flight, or another run held the pick lock.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
@@ -18,6 +19,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 mkdir -p "$home/runs"
+# Two runs started together must not pick the same item or claim the same worktree: the pick, the
+# claim and the run record happen under one lock. The brief is written after it is released.
+flow_lock pick || { echo "another run is picking an item for over ${FLOW_LOCK_WAIT:-60}s; try again" >&2; exit 7; }
 
 run_file() { printf '%s/runs/%s.json' "$home" "$(item_slug "$1")"; }
 
@@ -91,6 +95,7 @@ touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; pri
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
   "started=$(now_iso)" "touches:=$touches" > "$(run_file "$item")"
 adapter write-state "$item" "step=$step" "profile=$profile" "size=$size" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
+flow_unlock
 
 brief="$reports/brief-$step.md"
 {

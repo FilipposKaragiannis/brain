@@ -5,7 +5,8 @@
 # .standards/rules/*.md, .standards/hooks/* and .standards/stamp (what it wrote; see stamp.sh).
 # Outside it only what the hosts and git mandate: the marked block in AGENTS.md (and a separate
 # CLAUDE.md), .claude/rules/standards-*.md, .codex/agents/*.toml, the git hooks (a call appended
-# to the project's own .githooks/pre-commit, commit-msg and pre-push when that folder exists, else
+# to the project's own .githooks/pre-commit, commit-msg and pre-push when that folder exists (before
+# a trailing `exit`, and moved there when an earlier init left it after one), else
 # core.hooksPath pointed at .standards/hooks/git), and, when .standards/config.json "project"
 # names them, the skills and rules links (.claude/skills, .agents/skills, .claude/rules/project)
 # and the project roster rendered into .claude/agents/ and .codex/agents/. The agent hosts run
@@ -98,7 +99,7 @@ if solutions:
         "comments": {"line": "//", "doc": "///", "public": "public", "doc_inside": ["interface", "enum"], "allow_markers": ["float-boundary:"]},
     })
 config = {
-    "_readme": "Project settings for the standards plugin hooks and the flow verifier. Edit freely; init never overwrites this file. format[].command runs from the repo root with {files} replaced by the staged files under prefix. build runs in the git pre-push hook and in verify; test and mutation run in verify (mutation is a signal). protected files need [config] in the commit message. comments: line and doc are the comment tokens, public the modifier a doc comment must sit above, doc_inside the type kinds whose members may carry a doc without it (their members have no modifier), allow_markers the prefixes that make a line comment legal. gates: the project's own gates, run by the plugin hook, the git hooks and CI (check-gates.sh): {name, command, paths, when: [commit|push|ci]} runs command when a committed file matches a path glob; {name, forbid: [text], marker} blocks a command containing a text unless it carries the marker. project: skills (a folder; init links .claude/skills and .agents/skills to it), rules (a folder; init links .claude/rules/project to it), roster (a roster JSON in the marketplace schema; init renders it into .claude/agents/ and .codex/agents/, and the review skill spawns its reviewers by paths). Empty strings mean none.",
+    "_readme": "Project settings for the standards plugin hooks and the flow verifier. Edit freely; init never overwrites this file. format[].command runs from the repo root with {files} replaced by the staged files under prefix. build runs in the git pre-push hook and in verify; test and mutation run in verify (mutation is a signal; empty turns it off; {files} limits it to the changed source files). protected files need [config] in the commit message. comments: line and doc are the comment tokens, public the modifier a doc comment must sit above, doc_inside the type kinds whose members may carry a doc without it (their members have no modifier), allow_markers the prefixes that make a line comment legal. gates: the project's own gates, run by the plugin hook, the git hooks and CI (check-gates.sh): {name, command, paths, when: [commit|push|ci], marker} runs command when a committed file matches a path glob (the command sees STANDARDS_COMMIT_MESSAGE and STANDARDS_STAGE; a commit whose message carries the marker skips the gate); {name, forbid: [text], marker} blocks a command that runs a text (as a word, not inside a heredoc, comment or quoted text, except sh -c, bash -c and eval) unless it carries the marker. project: skills (a folder; init links .claude/skills and .agents/skills to it), rules (a folder; init links .claude/rules/project to it), roster (a roster JSON in the marketplace schema; init renders it into .claude/agents/ and .codex/agents/, and the review skill spawns its reviewers by paths). Empty strings mean none.",
     "version": version,
     "languages": languages,
     "build": " && ".join("dotnet build %s --nologo" % s for s in solutions),
@@ -200,16 +201,52 @@ for src in "$plugin"/hooks/*.sh "$plugin"/hooks/git/*; do
   install_file "$src" "$dst" +x
 done
 # Wiring git to them. The plugin never creates .githooks/: a project that has one keeps it and
-# gets one appended call per hook; a project without one points core.hooksPath (local git config,
-# per clone) at the plugin's own folder.
+# gets one call per hook, placed before a trailing top-level `exit` so it runs (a call after the
+# exit never does); a project without one points core.hooksPath (local git config, per clone) at
+# the plugin's own folder.
+hook_with_call() {
+  # hook_with_call <file> <call> <needle>: prints the file with the call before its trailing
+  # `exit` (else last). A line that already holds the needle is moved, not duplicated.
+  CALL="$2" NEEDLE="$3" awk '
+    index($0, ENVIRON["NEEDLE"]) { mine = $0; next }
+    { line[++n] = $0 }
+    END {
+      call = (mine != "") ? mine : ENVIRON["CALL"]
+      last = n
+      while (last > 0 && line[last] ~ /^[ \t]*$/) last--
+      at = (last > 0 && line[last] ~ /^exit([ \t]+[^ \t]+)?[ \t]*(#.*)?$/) ? last : n + 1
+      for (i = 1; i < at; i++) print line[i]
+      print call
+      for (i = at; i <= n; i++) print line[i]
+    }' "$1"
+}
+hook_call_is_dead() {
+  # hook_call_is_dead <file> <needle>: true when the call sits after a top-level `exit`.
+  NEEDLE="$2" awk '
+    index($0, ENVIRON["NEEDLE"]) && seen { dead = 1 }
+    /^exit([ \t]|$)/ { seen = 1 }
+    END { exit !dead }' "$1"
+}
+place_call() {
+  # place_call <file> <call> <needle> <what>: rewrites the hook in place (its mode stays) when the
+  # placement changes it.
+  hook_with_call "$1" "$2" "$3" > "$(tmpfile hook)" || return 0
+  cmp -s "$(tmpfile hook)" "$1" && return 0
+  cat "$(tmpfile hook)" > "$1" && note "$1: standards call $4"
+}
 hooks_path="$(git config core.hooksPath 2>/dev/null || true)"
 if [ -d .githooks ]; then
   for hook in pre-commit commit-msg pre-push; do
-    call="\"\$(git rev-parse --show-toplevel)/.standards/hooks/git/$hook\" \"\$@\" || exit 1  # standards plugin"
+    needle=".standards/hooks/git/$hook"
+    call="\"\$(git rev-parse --show-toplevel)/$needle\" \"\$@\" || exit 1  # standards plugin"
     if [ ! -f ".githooks/$hook" ]; then
       if [ "$check" -eq 1 ]; then drifted ".githooks/$hook"; else printf '#!/bin/sh\n%s\n' "$call" > ".githooks/$hook" && chmod +x ".githooks/$hook" && note ".githooks/$hook"; fi
-    elif ! grep -qF ".standards/hooks/git/$hook" ".githooks/$hook"; then
-      if [ "$check" -eq 1 ]; then drifted ".githooks/$hook lacks the standards call"; else printf '%s\n' "$call" >> ".githooks/$hook" && note ".githooks/$hook: standards call appended"; fi
+    elif ! grep -qF "$needle" ".githooks/$hook"; then
+      if [ "$check" -eq 1 ]; then drifted ".githooks/$hook lacks the standards call"
+      else place_call ".githooks/$hook" "$call" "$needle" "added"; fi
+    elif hook_call_is_dead ".githooks/$hook" "$needle"; then
+      if [ "$check" -eq 1 ]; then drifted ".githooks/$hook: the standards call is after an exit and never runs"
+      else place_call ".githooks/$hook" "$call" "$needle" "moved before the exit"; fi
     fi
   done
   wanted=".githooks"

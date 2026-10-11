@@ -58,9 +58,10 @@ lands in the pool through the project hook `init` prints. The step skills `plan`
 agents and briefs `next` uses; `scripts/verify.sh` is the one verify run, `scripts/comments.sh`
 the PR thread plumbing. Unattended: `.flow/run-unattended.sh claude|codex`. Scheduled jobs
 (`jobs/`, installed as `.flow/jobs/*.sh`): `comments` every 30 minutes while PRs are open,
-`next` at a chosen cadence, `retro` weekly; each takes the host as its first argument, locks
-against overlap and logs to `.flow/log/`. Scheduling is the host's job (Claude Desktop tasks
-or launchd).
+`next` at a chosen cadence (`--workers N` runs N items in parallel, capped by the pool;
+`notify.idle` says once when nothing is ready), `retro` weekly; each takes the host as its first
+argument, locks against overlap and logs to `.flow/log/`. Scheduling is the host's job (Claude
+Desktop tasks or launchd); `flow:do` sets one up from "run a repeating unattended flow".
 Tests: `plugins/flow/tests/run.sh`. Evals: `tools/eval.sh flow`.
 
 ## Craft and meta

@@ -18,15 +18,18 @@ Install the flow plugin into the current repository, or refresh it after a plugi
    the refusal and ask. The edit belongs in the plugin source.
 2. **Read what it printed** and report once (W-07), in one short message: the files written,
    the `Gaps` list as is, what the owner reviews by hand, and that nothing is committed.
+   When the installer says the pool lists more worktrees than the default `pool_max`, say so first:
+   each listed worktree becomes a task slot, so the owner trims the list or keeps it.
 3. **On a first install, end that same message with the config questions**, one numbered list,
    each with the value the installer wrote and the one you recommend from the repository:
    `pool_max` (the parallelism budget; the pool grows to it on its own), `worktree_copy` (the
    git-ignored files a worktree needs: `.claude/settings.local.json`, local env files; read
    `.gitignore` for candidates), `worktree_setup` (restore or install commands a fresh checkout
    needs; read the CI workflow and the README for them), `gates` (project checks the verifier
-   runs; scripts under `tools/` or `scripts/` named check, lint or verify), `feel_test_paths`
+   runs; scripts under `tools/` or `scripts/` named check, lint or verify; a gate that only
+   matters for some files takes `command` and `paths`), `feel_test_paths`
    (the client or UI folders), `auto_gates` (leave `plan-approval` empty unless the owner says items are
-   grilled and defined before they enter the backlog; then recommend `S,M`), `notify.slack_webhook`. Never hold the report back for the
+   grilled and defined before they enter the backlog; then recommend `S,M`), `notify.idle` (true: the scheduled `next` job says once when nothing is ready), `notify.slack_webhook` (prefer the `FLOW_SLACK_WEBHOOK` environment variable on the session or the scheduler, so the URL stays out of the repository). Never hold the report back for the
    answers. When the owner answers, write the accepted values into `.flow/config.yaml`, then run
    `init --check` and show that the gaps are closed.
 

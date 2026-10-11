@@ -174,6 +174,7 @@ def generated_on_disk(root):
         "plugins/*/.claude-plugin/plugin.json",
         "plugins/*/.codex-plugin/plugin.json",
         "plugins/*/skills/*/agents/openai.yaml",
+        "plugins/meta/skills/map/assets/*.html",
         "plugins/*/agents/*.md",
         "plugins/*/codex-agents/*.toml",
         "plugins/standards/rules/*.md",
@@ -202,6 +203,8 @@ def main():
     root = args.root
     rendered = render_all(root)
     rendered["docs/map.html"] = render_map(root)
+    # The meta plugin ships the same page, so its map skill can add a project's roster anywhere.
+    rendered["plugins/meta/skills/map/assets/map.html"] = rendered["docs/map.html"]
     if args.check:
         stale = []
         for rel, content in sorted(rendered.items()):

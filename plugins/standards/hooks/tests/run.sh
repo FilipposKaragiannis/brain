@@ -10,6 +10,7 @@ fails=0
 EXPECT_ENV=""
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
+check() { name="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$name"; else fail "$name"; fi; }
 
 expect() {
   # $1 name, $2 hook, $3 command text, $4 expected exit, $5 expected stderr substring or empty
@@ -142,6 +143,19 @@ expect "forbidden command with the marker in the command" check-gates.sh 'dotnet
 printf '[closeout #1] regenerate\n' > "$work/msg"
 expect "forbidden command with the marker in the -F message" check-gates.sh "git commit -F $work/msg && ./update-hash-stream" 0 ""
 expect "plain command untouched"     check-gates.sh 'dotnet build'                       0 ""
+expect "forbid: a quoted mention is no run" check-gates.sh 'echo "update-golden is paused" > note.txt' 0 ""
+expect "forbid: a heredoc doc edit is no run" check-gates.sh "cat > docs/golden.md <<'EOF'
+Never run update-golden without the owner.
+EOF" 0 ""
+expect "forbid: a commit message naming it is no run" check-gates.sh 'git commit -m "docs: update-golden is paused"' 0 ""
+expect "forbid: a longer word is no run" check-gates.sh 'ls update-golden-all' 0 ""
+expect "forbid: the script path runs it" check-gates.sh './tools/update-golden.sh' 2 "gate pause"
+expect "forbid: bash -c runs it" check-gates.sh 'bash -c "update-golden x.json"' 2 "gate pause"
+expect "forbid: after && runs it" check-gates.sh 'git add . && update-hash-stream' 2 "gate pause"
+expect "forbid: a quoted one-word argument still runs it" check-gates.sh 'dotnet run -- "update-golden" x.json' 2 "gate pause"
+expect "forbid: a quoted script path still runs it" check-gates.sh '"./tools/update-golden.sh"' 2 "gate pause"
+expect "forbid: a one-word -m message is no run" check-gates.sh 'git commit -m "update-golden"' 0 ""
+expect "forbid: a one-word grep pattern is no run" check-gates.sh 'grep -rn "update-golden" docs' 0 ""
 printf 'class G {}\n' > src/App/G.cs; git add src/App/G.cs; touch gate-ok
 EXPECT_ENV="STANDARDS_STAGE=ci"
 expect "ci stage runs only the gates that list ci" check-gates.sh 'git commit -m x'     0 ""
@@ -149,6 +163,66 @@ rm gate-ok
 expect "ci stage: the ci gate still blocks" check-gates.sh 'git commit -m x'            2 "gate build failed"
 EXPECT_ENV=""
 git reset -q src/App/G.cs; rm src/App/G.cs local-ok
+cp "$work/config.bak" .standards/config.json
+
+echo "command gates: marker and the commit message"
+python3 - <<'PY'
+import json
+c = json.load(open(".standards/config.json"))
+c["gates"] = [
+  {"name": "golden", "command": "test -f golden-ok", "marker": "[closeout #2]"},
+  {"name": "hand-edits", "command": "case \"$STANDARDS_COMMIT_MESSAGE\" in *hand-edit*) echo \"saw: $STANDARDS_COMMIT_MESSAGE\"; exit 1;; esac", "when": ["commit"]}
+]
+json.dump(c, open(".standards/config.json", "w"), indent=2)
+PY
+expect "marked command gate runs on a plain commit"   check-gates.sh 'git commit -m x'                     2 "gate golden failed"
+expect "...and names the marker that lets it through" check-gates.sh 'git commit -m x'                    2 "add [closeout #2]"
+expect "marked command gate skipped by the marker in -m" check-gates.sh 'git commit -m "[closeout #2] regenerate"' 0 ""
+printf '[closeout #2] regenerate\n' > "$work/msg"
+expect "marked command gate skipped by the marker in -F" check-gates.sh "git commit -F $work/msg"          0 ""
+EXPECT_ENV="STANDARDS_GATES=unmarked"
+expect "pre-commit mode leaves marked gates to commit-msg" check-gates.sh 'git commit -m x'                0 ""
+EXPECT_ENV="STANDARDS_GATES=marked"
+expect "commit-msg mode runs the marked gate"        check-gates.sh 'git commit -m x'                     2 "gate golden failed"
+expect "commit-msg mode skips the unmarked gate"     check-gates.sh 'git commit -m "hand-edit hashes [closeout #2]"' 0 ""
+EXPECT_ENV=""
+touch golden-ok
+expect "the gate command sees the commit message"    check-gates.sh 'git commit -m "hand-edit hashes"'    2 "saw: hand-edit hashes"
+expect "...and passes on another message"            check-gates.sh 'git commit -m "tidy"'                0 ""
+git reset -q; mv golden-ok golden-ok.off
+printf 'x\n' > golden-pending; git add golden-pending
+printf 'tidy\n' > "$work/msg"
+if "$hooks/git/pre-commit" >/dev/null 2>&1; then pass "git pre-commit does not run the marked gate"; else fail "pre-commit blocked on a marked gate"; fi
+if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then fail "git commit-msg lets the marked gate through"; else pass "git commit-msg runs the marked gate"; fi
+printf '[closeout #2] tidy\n' > "$work/msg"
+if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then pass "git commit-msg honours the marker"; else fail "git commit-msg ignored the gate marker"; fi
+git reset -q golden-pending; mv golden-pending golden-pending.off; mv golden-pending.off "$work/"; mv golden-ok.off "$work/"
+cp "$work/config.bak" .standards/config.json
+
+echo "an agent's commit runs the gates once"
+python3 - "$work/count.log" <<'PY'
+import json, sys
+c = json.load(open(".standards/config.json"))
+c["gates"] = [{"name": "count", "command": "echo ran >> %s" % sys.argv[1]}]
+json.dump(c, open(".standards/config.json", "w"), indent=2)
+PY
+: > "$work/count.log"
+printf 'x\n' > once.txt; git add once.txt
+expect "the agent hook runs the gate"                check-gates.sh 'git commit -m "add once"'            0 ""
+printf 'add once\n' > "$work/msg"
+"$hooks/git/pre-commit" >/dev/null 2>&1; "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1
+check "git's hooks skip the gate the agent hook passed for the same index" [ "$(grep -c ran "$work/count.log")" = 1 ]
+printf 'y\n' > twice.txt; git add twice.txt
+"$hooks/git/pre-commit" >/dev/null 2>&1
+check "a different index runs the gate again" [ "$(grep -c ran "$work/count.log")" = 2 ]
+: > "$work/count.log"
+expect "commit -a records nothing (the index will change)" check-gates.sh 'git commit -a -m x'          0 ""
+"$hooks/git/pre-commit" >/dev/null 2>&1
+check "...so git's hook runs the gate" [ "$(grep -c ran "$work/count.log")" = 2 ]
+: > "$work/count.log"
+"$hooks/git/pre-commit" >/dev/null 2>&1
+check "a human commit with no agent record runs the gate" [ "$(grep -c ran "$work/count.log")" = 1 ]
+git reset -q; mv once.txt twice.txt "$work/"
 cp "$work/config.bak" .standards/config.json
 
 echo "git hooks"
@@ -225,7 +299,6 @@ echo "init: stamp, guard, session-start nudge (on a copy of the plugin, so the p
 PATH="$orig_path"; export PATH
 plugin_copy="$work/plugin"; cp -R "$hooks/.." "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
-check() { name="$1"; shift; if "$@" >/dev/null 2>&1; then pass "$name"; else fail "$name"; fi; }
 mkdir -p "$work/empty" && cd "$work/empty" && git init -q -b main && git config user.email t@t && git config user.name t
 check "init: an empty repo installs and lists the gaps" sh -c "'$init' | grep -q 'Gaps' && '$init' | grep -q 'build is empty' && '$init' | grep -q 'languages is empty' && '$init' | grep -q 'testing-guide.md: 4 placeholder'"
 check "init: --check flags the gaps (exit 1)" sh -c "! '$init' --check >/dev/null && '$init' --check | grep -q 'gap: .standards/config.json: test is empty'"
@@ -296,5 +369,25 @@ check "init: old guide moved with its edits" sh -c "[ ! -f docs/testing-guide.md
 check "init: project .githooks kept, one call appended, hooksPath .githooks" sh -c "grep -q 'echo mine' .githooks/pre-commit && [ \"\$(grep -c standards/hooks/git/pre-commit .githooks/pre-commit)\" = 1 ] && [ -f .githooks/pre-push ] && [ \"\$(git config core.hooksPath)\" = .githooks ]"
 check "init: commit-msg written with the message file passed on" sh -c "[ -x .githooks/commit-msg ] && grep -q 'standards/hooks/git/commit-msg\" \"\\\$@\"' .githooks/commit-msg"
 check "init: second run appends nothing more" sh -c "'$init' >/dev/null; [ \"\$(grep -c standards/hooks/git/pre-commit .githooks/pre-commit)\" = 1 ]"
+
+echo "init: a project hook that ends in exit"
+mkdir -p "$work/exits" && cd "$work/exits" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .githooks .standards
+printf '#!/bin/sh\necho mine\nexit 0\n' > .githooks/pre-commit
+printf '#!/bin/sh\necho mine\nexit 0\n"$(git rev-parse --show-toplevel)/.standards/hooks/git/commit-msg" "$@" || exit 1  # standards plugin\n' > .githooks/commit-msg
+printf '#!/bin/sh\nset -e\necho mine\nexit\n' > .githooks/pre-push
+chmod +x .githooks/*
+printf '{"version":"0.1.0","languages":[],"build":"true","test":"true","protected":[]}\n' > .standards/config.json
+check "init --check: a call after an exit is drift" sh -c "'$init' --check | grep -q 'commit-msg: the standards call is after an exit'"
+check "init --check: a missing call is drift" sh -c "'$init' --check | grep -q 'pre-commit lacks the standards call'"
+"$init" >/dev/null
+before_exit='index($0, n) { c = NR } /^exit/ { e = NR } END { exit !(c && e && c < e) }'
+check "init: the call goes before a trailing exit 0" sh -c "tail -1 .githooks/pre-commit | grep -qx 'exit 0' && awk -v n=standards/hooks/git/pre-commit '$before_exit' .githooks/pre-commit"
+check "init: a bare exit stays last, call before it" sh -c "tail -1 .githooks/pre-push | grep -qx 'exit' && awk -v n=standards/hooks/git/pre-push '$before_exit' .githooks/pre-push"
+check "init: a stranded call moves up, once" sh -c "[ \"\$(grep -c standards/hooks/git/commit-msg .githooks/commit-msg)\" = 1 ] && awk -v n=standards/hooks/git/commit-msg '$before_exit' .githooks/commit-msg"
+check "init: the user's own lines stay" sh -c "grep -q 'echo mine' .githooks/pre-commit && grep -q 'set -e' .githooks/pre-push"
+cp .githooks/pre-commit "$work/pc.after"
+"$init" >/dev/null
+check "init: a second run changes nothing" sh -c "cmp -s .githooks/pre-commit '$work/pc.after' && ! '$init' --check | grep -q 'githooks'"
 
 [ "$fails" -eq 0 ] && echo "hooks: ok" || { echo "hooks: $fails failed"; exit 1; }

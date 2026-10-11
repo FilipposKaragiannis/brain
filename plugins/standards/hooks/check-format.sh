@@ -11,6 +11,7 @@ seg="$(git_segment commit "$cmd")"
 cd "$(repo_root)" 2>/dev/null || exit 0
 config="$(config_text)"
 [ -n "$config" ] || exit 0
+passed_seen check-format && exit 0   # the agent hook already passed this index
 files="$(changed_files "$seg")"
 [ -n "$files" ] || exit 0
 failed=""
@@ -40,5 +41,5 @@ $(printf '%s\n' "$output" | tail -40 | sed 's/^/    /')
   done
   i=$((i + 1))
 done
-[ -n "$failed" ] || exit 0
+if [ -z "$failed" ]; then passed_mark check-format "$seg"; exit 0; fi
 block "the formatter check failed" "$failed  L-03: run the formatter on the files above, re-stage, then commit again."
