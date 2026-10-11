@@ -25,7 +25,8 @@ Install the flow plugin into the current repository, or refresh it after a plugi
    `.gitignore` for candidates), `worktree_setup` (restore or install commands a fresh checkout
    needs; read the CI workflow and the README for them), `gates` (project checks the verifier
    runs; scripts under `tools/` or `scripts/` named check, lint or verify), `feel_test_paths`
-   (the client or UI folders), `notify.slack_webhook`. Never hold the report back for the
+   (the client or UI folders), `auto_gates` (leave `plan-approval` empty unless the owner says items are
+   grilled and defined before they enter the backlog; then recommend `S,M`), `notify.slack_webhook`. Never hold the report back for the
    answers. When the owner answers, write the accepted values into `.flow/config.yaml`, then run
    `init --check` and show that the gaps are closed.
 
@@ -33,7 +34,7 @@ Install the flow plugin into the current repository, or refresh it after a plugi
 
 | Target | Content | Re-run |
 |---|---|---|
-| `.flow/config.yaml` | adapters, base, github repo, pool and `pool_max`, `worktree_copy` and `worktree_setup`, gates, feel-test paths, notify | written once, never overwritten; `--check` reports a gap when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist) |
+| `.flow/config.yaml` | adapters, base, github repo, pool and `pool_max`, `worktree_copy` and `worktree_setup`, `auto_gates`, gates, feel-test paths, notify | written once, never overwritten; `--check` reports a gap when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist, an `auto_gates` entry other than `plan-approval`) |
 | `.flow/notify.sh` | wrapper around the plugin notify script | replaced |
 | `.flow/run-unattended.sh` | the unattended loop for `claude` or `codex` | replaced |
 | `.flow/hooks/worktree-*.sh` | Claude `WorktreeCreate`/`WorktreeRemove` wrappers; the owner adds the printed entry to `.claude/settings.json` | replaced |

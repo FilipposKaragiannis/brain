@@ -28,5 +28,15 @@ map="$(python3 "$root/tools/lib/map.py" "$root")"
 check "map renders every skill" sh -c "for s in \$(ls -d '$root'/plugins/*/skills/*/ | xargs -n1 basename | sort -u); do printf '%s' \"\$0\" | grep -q \"<code>\$s</code>\" || exit 1; done" "$map"
 check "map renders every agent" sh -c "for a in \$(python3 -c \"import json; print(' '.join(json.load(open('$root/roster/agents.json'))['agents']))\"); do printf '%s' \"\$0\" | grep -q \"<code>\$a</code>\" || exit 1; done" "$map"
 check "map draws the profiles and the hooks" sh -c "printf '%s' \"\$0\" | grep -q 'task-L' && printf '%s' \"\$0\" | grep -q 'delivery gate'" "$map"
+check "playbooks name only real skills and agents" python3 -I -c "
+import sys; sys.path.insert(0, '$root/tools/lib')
+import map as m, playbooks as pb
+plugins, agents, _ = m.load('$root')
+skills = {p['name'] + ':' + s['name'] for p in plugins for s in p['skills']}
+names = {a['name'] for a in agents}
+bad = [st['cmd'][0] for b in pb.PLAYBOOKS + [{'steps': pb.EXTRAS}] for st in b['steps'] if st.get('cmd') and st['cmd'][0] not in skills]
+bad += [a for b in pb.PLAYBOOKS for st in b['steps'] for a in st.get('who', []) if a not in names]
+sys.exit(1 if bad else 0)"
+check "map shows the four playbooks" sh -c "printf '%s' \"\$0\" | grep -c 'class=\"pb\"' | grep -qx 4" "$map"
 [ "$fails" -eq 0 ] && { echo "meta: ok"; exit 0; }
 echo "meta: $fails failed"; exit 1

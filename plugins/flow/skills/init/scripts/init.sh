@@ -82,6 +82,10 @@ if [ ! -f .flow/config.yaml ]; then
       echo "adapters:"
       if [ -n "$repo" ]; then echo "  default: github"; echo "  # bug: local    # keep bugs out of GitHub"; else echo "  default: local"; fi
       echo "base: $base"
+      echo "# Gates the flow clears itself, by item size. Only plan-approval can be listed. Merge, interview,"
+      echo "# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined."
+      echo "auto_gates:"
+      echo "  # plan-approval: S,M"
       [ -n "$repo" ] && { echo "github:"; echo "  repo: $repo"; echo "  limit: 100"; }
       echo "# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism."
       echo "# A claim with no free worktree adds one (named after the last entry, ../$(basename "$main")-wt-<n>)"
@@ -158,6 +162,8 @@ if [ -f .flow/config.yaml ]; then
   [ -n "$(cfg pool | grep .)" ] || [ "$(cfg_or pool_max 0)" -gt 0 ] 2>/dev/null || gap ".flow/config.yaml: the pool is empty and pool_max is 0; list a worktree under pool: or set pool_max"
   [ -n "$(cfg base)" ] || gap ".flow/config.yaml: base is empty; name the branch tasks start from"
   for k in epic task bug; do a="$(cfg "adapters.$k")"; [ -z "$a" ] || [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.$k names $a, not an adapter"; done
+  bad_auto="$(sed -n '/^auto_gates:/,/^[^ #]/p' .flow/config.yaml | grep -E '^  [A-Za-z]' | grep -v '^  plan-approval:' | sed 's/:.*//; s/^ *//' | head -1)"
+  [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"
   a="$(cfg_or adapters.default local)"; [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.default names $a, not an adapter"
 fi
 
