@@ -1,0 +1,6 @@
+interface:
+  display_name: "Map"
+  short_description: "Every plugin, skill, agent and hook on one page"
+  default_prompt: "Use $map to show what the brain plugins offer and when to use each."
+policy:
+  allow_implicit_invocation: false

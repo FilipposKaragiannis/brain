@@ -1,0 +1,250 @@
+<title>Brain Map</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a plugin strip on top, then four figures (the flow, the session, the skills, the agents); every colour a token, each plugin keeps its brand hue. */
+:root{--bg:#F3F5F7;--panel:#FFFFFF;--fg:#182029;--muted:#5E6B78;--line:#D3DAE2;--accent:#1D4ED8;--c-standards:#0F766E;--c-flow:#1D4ED8;--c-craft:#7C3AED;--c-meta:#B45309;--body:"Atkinson Hyperlegible",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0E1318;--panel:#161C23;--fg:#E4E9EF;--muted:#8E9AA7;--line:#2A333D;--accent:#7FA2FF;--c-standards:#3FD1BE;--c-flow:#8FB0FF;--c-craft:#C9A8FF;--c-meta:#F3B06A;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0E1318;--panel:#161C23;--fg:#E4E9EF;--muted:#8E9AA7;--line:#2A333D;--accent:#7FA2FF;--c-standards:#3FD1BE;--c-flow:#8FB0FF;--c-craft:#C9A8FF;--c-meta:#F3B06A;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.45;padding:0 16px;padding-block:28px 48px}
+main{max-width:1080px;margin:0 auto;display:grid;gap:36px}
+h1{font-size:26px;margin:0;letter-spacing:-.01em;text-wrap:balance}
+h1 small{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:10px;font-weight:400}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 12px;font-weight:700}
+.plugins{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.plugin{background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--pc);border-radius:6px;padding:12px 14px;display:grid;gap:4px;min-width:0}
+.plugin b{font-family:var(--mono);font-size:14px}.plugin b span{color:var(--muted);font-weight:400;margin-left:6px;font-size:12px}
+.plugin .role{color:var(--muted);font-size:13px}
+.plugin .n{font-family:var(--mono);font-size:11px;color:var(--muted);display:flex;gap:12px;font-variant-numeric:tabular-nums}
+figure{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px;min-width:0}
+figure>div{overflow-x:auto}figure svg{display:block;max-width:100%;height:auto}
+figcaption{color:var(--muted);font-size:13px;margin-top:8px}
+.skills{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.group{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;min-width:0}
+.group h3{font-family:var(--mono);font-size:13px;margin:0 0 8px;color:var(--pc)}
+.skill{display:grid;grid-template-columns:18px 1fr;gap:0 8px;padding:7px 0;border-top:1px solid var(--line);align-items:start}
+.skill:first-of-type{border-top:0}
+.skill code{font-family:var(--mono);font-size:13px;font-weight:600}
+.skill .when{color:var(--muted);font-size:13px;grid-column:2}
+.g{width:14px;height:14px;margin-top:3px;color:var(--pc)}
+.legend{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:13px;align-items:center}.legend span{display:inline-flex;align-items:center;gap:6px}
+.agents{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px}
+.agent{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px 12px;display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;min-width:0}
+.agent code{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--pc);overflow-wrap:anywhere}
+.agent .step{color:var(--muted);font-size:12px;grid-column:1}
+.agent .m{font-family:var(--mono);font-size:11px;color:var(--muted);grid-row:1/3;display:grid;justify-items:end;gap:3px;font-variant-numeric:tabular-nums}
+.bars{display:inline-flex;gap:2px}.bars i{width:5px;height:9px;background:var(--line);border-radius:1px}.bars i.on{background:var(--pc)}
+.tier{font-size:10px;letter-spacing:.04em;text-transform:uppercase}
+.install{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.install div{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;min-width:0}
+.install b{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:6px}
+pre{margin:0;font-family:var(--mono);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+a{color:var(--accent)}
+@media (prefers-reduced-motion:no-preference){.agent,.plugin{transition:border-color .15s}}
+</style>
+<main>
+<header><h1>Brain Map<small>4 plugins · 20 skills · 18 agents</small></h1></header>
+<section><h2>Plugins</h2><div class="plugins">
+<div class="plugin" style="--pc:var(--c-standards)"><b>standards<span>v1.0.0</span></b><div class="role">Enforce the coding standards</div><div class="n"><span>2 skills</span><span>6 agents</span><span>8 hooks</span></div></div>
+<div class="plugin" style="--pc:var(--c-flow)"><b>flow<span>v1.0.0</span></b><div class="role">Run tracked work end to end</div><div class="n"><span>13 skills</span><span>12 agents</span><span>3 hooks</span></div></div>
+<div class="plugin" style="--pc:var(--c-craft)"><b>craft<span>v1.0.0</span></b><div class="role">Design and improve deep modules</div><div class="n"><span>2 skills</span><span>0 agents</span><span>0 hooks</span></div></div>
+<div class="plugin" style="--pc:var(--c-meta)"><b>meta<span>v1.0.0</span></b><div class="role">Write skills and run retros</div><div class="n"><span>3 skills</span><span>0 agents</span><span>0 hooks</span></div></div>
+</div></section>
+<section><h2>The flow, by item kind and size</h2>
+<figure><div><svg viewBox="0 0 856 254" width="856" role="img" aria-label="The steps a task or bug runs, per profile" xmlns="http://www.w3.org/2000/svg">
+<style>text{font:11px var(--mono);fill:currentColor}.lbl{font:12px var(--body)}.sub{fill:var(--muted);font-size:10px}</style>
+<text x="126" y="22" text-anchor="middle" class="lbl">design</text>
+<text x="126" y="40" text-anchor="middle" class="sub">flow:plan</text>
+<line x1="126" y1="52" x2="126" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="194" y="22" text-anchor="middle" class="lbl">plan</text>
+<text x="194" y="40" text-anchor="middle" class="sub">planner</text>
+<line x1="194" y1="52" x2="194" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="262" y="22" text-anchor="middle" class="lbl" fill="var(--muted)">plan-approval</text>
+<text x="262" y="40" text-anchor="middle" class="sub">you decide</text>
+<line x1="262" y1="52" x2="262" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="330" y="22" text-anchor="middle" class="lbl">reproduce</text>
+<text x="330" y="40" text-anchor="middle" class="sub">test-writer</text>
+<line x1="330" y1="52" x2="330" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="398" y="22" text-anchor="middle" class="lbl">implement</text>
+<text x="398" y="40" text-anchor="middle" class="sub">flow:implement</text>
+<line x1="398" y1="52" x2="398" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="466" y="22" text-anchor="middle" class="lbl">test</text>
+<text x="466" y="40" text-anchor="middle" class="sub">test-writer</text>
+<line x1="466" y1="52" x2="466" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="534" y="22" text-anchor="middle" class="lbl">review</text>
+<text x="534" y="40" text-anchor="middle" class="sub">flow:review</text>
+<line x1="534" y1="52" x2="534" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="602" y="22" text-anchor="middle" class="lbl">verify</text>
+<text x="602" y="40" text-anchor="middle" class="sub">verifier</text>
+<line x1="602" y1="52" x2="602" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="670" y="22" text-anchor="middle" class="lbl">explain</text>
+<text x="670" y="40" text-anchor="middle" class="sub">flow:explain</text>
+<line x1="670" y1="52" x2="670" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="738" y="22" text-anchor="middle" class="lbl">pr</text>
+<text x="738" y="40" text-anchor="middle" class="sub">pr-creator</text>
+<line x1="738" y1="52" x2="738" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="806" y="22" text-anchor="middle" class="lbl" fill="var(--muted)">merge</text>
+<text x="806" y="40" text-anchor="middle" class="sub">you decide</text>
+<line x1="806" y1="52" x2="806" y2="218" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="8" y="91" dominant-baseline="middle" class="lbl">bugfix</text>
+<line x1="330" y1="91" x2="806" y2="91" stroke="currentColor" stroke-width="1.5"/>
+<circle cx="330" cy="91" r="6" fill="currentColor"/>
+<circle cx="398" cy="91" r="6" fill="currentColor"/>
+<circle cx="466" cy="91" r="6" fill="currentColor"/>
+<circle cx="534" cy="91" r="6" fill="currentColor"/>
+<circle cx="602" cy="91" r="6" fill="currentColor"/>
+<circle cx="738" cy="91" r="6" fill="currentColor"/>
+<rect x="800.5" y="85.5" width="11" height="11" transform="rotate(45 806.0 91.0)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/>
+<text x="8" y="125" dominant-baseline="middle" class="lbl">task-S</text>
+<line x1="398" y1="125" x2="806" y2="125" stroke="currentColor" stroke-width="1.5"/>
+<circle cx="398" cy="125" r="6" fill="currentColor"/>
+<circle cx="466" cy="125" r="6" fill="currentColor"/>
+<circle cx="534" cy="125" r="6" fill="currentColor"/>
+<circle cx="602" cy="125" r="6" fill="currentColor"/>
+<circle cx="738" cy="125" r="6" fill="currentColor"/>
+<rect x="800.5" y="119.5" width="11" height="11" transform="rotate(45 806.0 125.0)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/>
+<text x="8" y="159" dominant-baseline="middle" class="lbl">task-M</text>
+<line x1="126" y1="159" x2="806" y2="159" stroke="currentColor" stroke-width="1.5"/>
+<circle cx="126" cy="159" r="6" fill="currentColor"/>
+<circle cx="194" cy="159" r="6" fill="currentColor"/>
+<rect x="256.5" y="153.5" width="11" height="11" transform="rotate(45 262.0 159.0)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/>
+<circle cx="398" cy="159" r="6" fill="currentColor"/>
+<circle cx="466" cy="159" r="6" fill="currentColor"/>
+<circle cx="534" cy="159" r="6" fill="currentColor"/>
+<circle cx="602" cy="159" r="6" fill="currentColor"/>
+<circle cx="738" cy="159" r="6" fill="currentColor"/>
+<rect x="800.5" y="153.5" width="11" height="11" transform="rotate(45 806.0 159.0)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/>
+<text x="8" y="193" dominant-baseline="middle" class="lbl">task-L</text>
+<line x1="126" y1="193" x2="806" y2="193" stroke="currentColor" stroke-width="1.5"/>
+<circle cx="126" cy="193" r="6" fill="currentColor"/>
+<circle cx="194" cy="193" r="6" fill="currentColor"/>
+<rect x="256.5" y="187.5" width="11" height="11" transform="rotate(45 262.0 193.0)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/>
+<circle cx="398" cy="193" r="6" fill="currentColor"/>
+<circle cx="466" cy="193" r="6" fill="currentColor"/>
+<circle cx="534" cy="193" r="6" fill="currentColor"/>
+<circle cx="602" cy="193" r="6" fill="currentColor"/>
+<circle cx="670" cy="193" r="6" fill="currentColor"/>
+<circle cx="738" cy="193" r="6" fill="currentColor"/>
+<rect x="800.5" y="187.5" width="11" height="11" transform="rotate(45 806.0 193.0)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/>
+<circle cx="92" cy="240" r="5" fill="currentColor"/><text x="104" y="240" dominant-baseline="middle" class="sub">a step, run by an agent in a fresh context</text>
+<rect x="377.5" y="235.5" width="9" height="9" transform="rotate(45 382 240)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/><text x="394" y="240" dominant-baseline="middle" class="sub">a gate: the run stops and asks you</text>
+</svg></div><figcaption>A task or a bug: the steps each profile runs, left to right. The size (S, M, L) picks the profile; a P0 in review or a failed verify sends the item back to implement.</figcaption></figure>
+<figure style="margin-top:12px"><div><svg viewBox="0 0 516 152" width="516" role="img" aria-label="The steps an epic runs" xmlns="http://www.w3.org/2000/svg">
+<style>text{font:11px var(--mono);fill:currentColor}.lbl{font:12px var(--body)}.sub{fill:var(--muted);font-size:10px}</style>
+<text x="126" y="22" text-anchor="middle" class="lbl">grill</text>
+<text x="126" y="40" text-anchor="middle" class="sub">interviewer</text>
+<line x1="126" y1="52" x2="126" y2="116" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="194" y="22" text-anchor="middle" class="lbl" fill="var(--muted)">interview</text>
+<text x="194" y="40" text-anchor="middle" class="sub">you decide</text>
+<line x1="194" y1="52" x2="194" y2="116" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="262" y="22" text-anchor="middle" class="lbl">epic</text>
+<text x="262" y="40" text-anchor="middle" class="sub">planner</text>
+<line x1="262" y1="52" x2="262" y2="116" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="330" y="22" text-anchor="middle" class="lbl">tasks</text>
+<text x="330" y="40" text-anchor="middle" class="sub">planner</text>
+<line x1="330" y1="52" x2="330" y2="116" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="398" y="22" text-anchor="middle" class="lbl" fill="var(--muted)">decomposition</text>
+<text x="398" y="40" text-anchor="middle" class="sub">you decide</text>
+<line x1="398" y1="52" x2="398" y2="116" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="466" y="22" text-anchor="middle" class="lbl">closeout</text>
+<text x="466" y="40" text-anchor="middle" class="sub">verifier</text>
+<line x1="466" y1="52" x2="466" y2="116" stroke="var(--line)" stroke-dasharray="2 4"/>
+<text x="8" y="91" dominant-baseline="middle" class="lbl">epic</text>
+<line x1="126" y1="91" x2="466" y2="91" stroke="currentColor" stroke-width="1.5"/>
+<circle cx="126" cy="91" r="6" fill="currentColor"/>
+<rect x="188.5" y="85.5" width="11" height="11" transform="rotate(45 194.0 91.0)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/>
+<circle cx="262" cy="91" r="6" fill="currentColor"/>
+<circle cx="330" cy="91" r="6" fill="currentColor"/>
+<rect x="392.5" y="85.5" width="11" height="11" transform="rotate(45 398.0 91.0)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/>
+<circle cx="466" cy="91" r="6" fill="currentColor"/>
+<circle cx="92" cy="138" r="5" fill="currentColor"/><text x="104" y="138" dominant-baseline="middle" class="sub">a step, run by an agent in a fresh context</text>
+<rect x="377.5" y="133.5" width="9" height="9" transform="rotate(45 382 138)" fill="var(--bg)" stroke="var(--accent)" stroke-width="2"/><text x="394" y="138" dominant-baseline="middle" class="sub">a gate: the run stops and asks you</text>
+</svg></div><figcaption>An epic: interview, epic body, decomposition into tasks, then closeout once every task is merged.</figcaption></figure>
+</section>
+<section><h2>Where the plugins step in</h2><figure><div><svg viewBox="0 0 920 186" width="920" role="img" aria-label="Where the plugins intervene during a session" xmlns="http://www.w3.org/2000/svg">
+<style>text{font:11px var(--body);fill:currentColor}.sub{fill:var(--muted);font-size:10px}</style>
+<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<line x1="20" y1="46" x2="912" y2="46" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<circle cx="36" cy="46" r="5" fill="var(--bg)" stroke="currentColor" stroke-width="2"/>
+<text x="31" y="32">session starts</text>
+<circle cx="36" cy="76" r="4" fill="var(--c-standards)"/><text x="46" y="76" dominant-baseline="middle" class="sub">install check</text>
+<circle cx="36" cy="94" r="4" fill="var(--c-flow)"/><text x="46" y="94" dominant-baseline="middle" class="sub">install check</text>
+<circle cx="186" cy="46" r="5" fill="var(--bg)" stroke="currentColor" stroke-width="2"/>
+<text x="181" y="32">each shell command</text>
+<circle cx="186" cy="76" r="4" fill="var(--c-standards)"/><text x="196" y="76" dominant-baseline="middle" class="sub">no-verify check</text>
+<circle cx="186" cy="94" r="4" fill="var(--c-standards)"/><text x="196" y="94" dominant-baseline="middle" class="sub">protected config check</text>
+<circle cx="186" cy="112" r="4" fill="var(--c-standards)"/><text x="196" y="112" dominant-baseline="middle" class="sub">comment check</text>
+<circle cx="186" cy="130" r="4" fill="var(--c-standards)"/><text x="196" y="130" dominant-baseline="middle" class="sub">formatter check</text>
+<circle cx="186" cy="148" r="4" fill="var(--c-standards)"/><text x="196" y="148" dominant-baseline="middle" class="sub">project gates</text>
+<circle cx="336" cy="46" r="5" fill="var(--bg)" stroke="currentColor" stroke-width="2"/>
+<text x="331" y="32">a worktree is opened</text>
+<circle cx="336" cy="76" r="4" fill="var(--c-flow)"/><text x="346" y="76" dominant-baseline="middle" class="sub">claiming a pool worktree</text>
+<circle cx="486" cy="46" r="5" fill="var(--bg)" stroke="currentColor" stroke-width="2"/>
+<text x="481" y="32">a worktree is closed</text>
+<circle cx="486" cy="76" r="4" fill="var(--c-flow)"/><text x="496" y="76" dominant-baseline="middle" class="sub">releasing the pool worktree</text>
+<circle cx="636" cy="46" r="5" fill="var(--bg)" stroke="currentColor" stroke-width="2"/>
+<text x="631" y="32">an agent finishes</text>
+<circle cx="636" cy="76" r="4" fill="var(--c-standards)"/><text x="646" y="76" dominant-baseline="middle" class="sub">delivery gate</text>
+<circle cx="786" cy="46" r="5" fill="var(--bg)" stroke="currentColor" stroke-width="2"/>
+<text x="781" y="32">the session ends</text>
+<circle cx="786" cy="76" r="4" fill="var(--c-standards)"/><text x="796" y="76" dominant-baseline="middle" class="sub">delivery gate</text>
+</svg></div><figcaption>Hooks run on both hosts from the plugin itself. The dots take the plugin's colour.</figcaption></figure></section>
+<section><h2>Skills</h2><div class="legend"><span><svg class="g" style="color:var(--fg)" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg> runs on its own when the ask matches</span><span><svg class="g" style="color:var(--fg)" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg> runs when you call it</span></div><div class="skills" style="margin-top:10px">
+<div class="group" style="--pc:var(--c-standards)"><h3>standards</h3>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>init</code><div class="when">A repo adopts the standards plugin, after a plugin update, when the user asks to check whether the standards are up to date (init --check is the one drift check), or asks where a new test level, gate, reviewer or rule belongs (init &lt;the ask&gt;)</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>review</code><div class="when">Review a branch, a PR, work in progress, or asks to review since X</div></div>
+</div>
+<div class="group" style="--pc:var(--c-flow)"><h3>flow</h3>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>board</code><div class="when">What is running, what is ready, what is blocked, or wants the dependency graph of an epic</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>comments</code><div class="when">Address comments on a PR, or from the scheduled comments job</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>explain</code><div class="when">Explain a change or when the next step of an item is explain</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>implement</code><div class="when">Implement, build, ship or code an item, or when the next step of an item is implement</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>init</code><div class="when">A repo adopts the flow, after a plugin update, or to check the install is current (init --check is the one drift check)</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>new</code><div class="when">File, add, create or log a piece of work, or when an agent working a backlog needs a follow-up item for something out of its scope</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>next</code><div class="when">Next, run the next item, continue &lt;item&gt;, or work the queue</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>plan</code><div class="when">Plan, design, grill, write an epic or decompose an item, or when the next step of an item is grill, epic, tasks, design or plan</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>pr</code><div class="when">Open a PR for an item or when the next step of an item is pr</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>review</code><div class="when">Review an item or when the next step of an item is review</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>steward</code><div class="when">Worktrees, wants one freed, claimed or reset, or a conflict resolved</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>test</code><div class="when">Tests for an item, to reproduce a bug, or when the next step of an item is test or reproduce</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>verify</code><div class="when">Verify an item or when the next step of an item is verify or closeout</div></div>
+</div>
+<div class="group" style="--pc:var(--c-craft)"><h3>craft</h3>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>codebase-design</code><div class="when">Design or improve a module&#x27;s interface, find deepening opportunities, decide where a seam goes, make code more testable or AI-navigable, or when another skill needs the deep-module vocabulary</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>improve</code><div class="when">Improve the architecture, find refactoring opportunities, consolidate tightly coupled modules, or make a codebase more testable</div></div>
+</div>
+<div class="group" style="--pc:var(--c-meta)"><h3>meta</h3>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>map</code><div class="when">What is available, what a plugin or skill does, when to use one, or wants the map refreshed after a change</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5v3M6 8.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><code>retro</code><div class="when">End-of-session retrospective</div></div>
+<div class="skill"><svg class="g" viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1 2 7h4l-1 4 5-6H6z" fill="currentColor"/></svg><code>write-a-skill</code><div class="when">Create, write or package a skill, or when retro routes a finding to a new skill</div></div>
+</div>
+</div></section>
+<section><h2>Agents</h2><div class="legend"><span>bars: effort</span><span>name colour: plugin</span><span>tier: what it may touch</span></div><div class="agents" style="margin-top:10px">
+<div class="agent" style="--pc:var(--c-standards)"><code>performance-reviewer</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>project-advisor</code><div class="m"><span>opus</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">init</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>security-reviewer</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>spec-reviewer</code><div class="m"><span>opus</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>standards-reviewer</code><div class="m"><span>sonnet</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-standards)"><code>test-reviewer</code><div class="m"><span>sonnet</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">review</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>architect</code><div class="m"><span>fable</span><span class="bars" title="effort xhigh"><i class="on"></i><i class="on"></i><i class="on"></i><i class="on"></i><i></i></span><span class="tier">read-only</span></div><div class="step">architect</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>comment-addresser</code><div class="m"><span>opus</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="tier">worktree-write</span></div><div class="step">comments</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>epic-plan-reviewer</code><div class="m"><span>fable</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">plan-review</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>explorer</code><div class="m"><span>sonnet</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">explore</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>implementer</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span class="tier">worktree-write</span></div><div class="step">implement</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>interviewer</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">interview</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>planner</code><div class="m"><span>opus</span><span class="bars" title="effort high"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">plan</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>pr-creator</code><div class="m"><span>sonnet</span><span class="bars" title="effort low"><i class="on"></i><i></i><i></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">pr</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>researcher</code><div class="m"><span>sonnet</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="tier">read-only</span></div><div class="step">research</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>test-writer</code><div class="m"><span>opus</span><span class="bars" title="effort medium"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></span><span class="tier">worktree-write</span></div><div class="step">test</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>verifier</code><div class="m"><span>sonnet</span><span class="bars" title="effort low"><i class="on"></i><i></i><i></i><i></i><i></i></span><span class="tier">worktree-write</span></div><div class="step">verify</div></div>
+<div class="agent" style="--pc:var(--c-flow)"><code>worktree-steward</code><div class="m"><span>haiku</span><span class="bars" title="effort low"><i class="on"></i><i></i><i></i><i></i><i></i></span><span class="tier">worktree-write</span></div><div class="step">steward</div></div>
+</div></section>
+<section><h2>Install</h2><div class="install">
+<div><b>Claude</b><pre>claude plugin marketplace add FilipposKaragiannis/brain
+claude plugin install &lt;plugin&gt;@brain-plugins --scope project
+/standards:init · /flow:init</pre></div>
+<div><b>Codex</b><pre>codex plugin marketplace add FilipposKaragiannis/brain
+codex plugin add &lt;plugin&gt;@brain-plugins
+[plugins."&lt;plugin&gt;@brain-plugins"] enabled = true in .codex/config.toml
+/hooks once to trust the plugin hooks · $init</pre></div>
+</div></section>
+</main>

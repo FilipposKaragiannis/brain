@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rules  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugins", "standards", "skills", "init", "scripts"))
 import render_agents  # noqa: E402  (the plugin ships the renderer; init uses it for project rosters)
+from map import render_map  # noqa: E402  (tools/lib is on the path)
 
 AUTHOR = {"name": "Filip Karagiannis"}
 # The agent templates and the roster defaults (tiers, model map) are copied into the standards
@@ -200,6 +201,7 @@ def main():
     args = parser.parse_args()
     root = args.root
     rendered = render_all(root)
+    rendered["docs/map.html"] = render_map(root)
     if args.check:
         stale = []
         for rel, content in sorted(rendered.items()):

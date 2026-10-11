@@ -1,6 +1,6 @@
 {
   "name": "craft",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Design vocabulary and improvement passes for deep modules: codebase-design and improve, both citing the standards by rule id.",
   "keywords": [
     "design",
