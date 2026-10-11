@@ -1,0 +1,31 @@
+{
+  "name": "meta",
+  "version": "0.1.0",
+  "description": "Skills about skills: write-a-skill and the retro that turns lessons into rule and skill changes.",
+  "keywords": ["skills", "retro", "authoring"],
+  "codex": {
+    "displayName": "Meta",
+    "shortDescription": "Write skills and run retros",
+    "longDescription": "Write and package new skills to the house quality bar, and run end-of-session retros that route lessons into the standards and the skills.",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": ["Write a skill for this workflow"],
+    "brandColor": "#B45309"
+  },
+  "skills": [
+    {
+      "name": "write-a-skill",
+      "invocation": "model",
+      "displayName": "Write a Skill",
+      "shortDescription": "Create a well-structured skill",
+      "defaultPrompt": "Use $write-a-skill to package this workflow as a skill."
+    },
+    {
+      "name": "retro",
+      "invocation": "user",
+      "displayName": "Retro",
+      "shortDescription": "End-of-session retrospective",
+      "defaultPrompt": "Use $retro to review this session for rule and skill improvements."
+    }
+  ]
+}

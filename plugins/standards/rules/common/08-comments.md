@@ -1,0 +1,5 @@
+# 6. Comments and documentation
+
+- **C-01 No comments that explain code behaviour.** [hard] Names, small types and explicit steps carry the meaning. The one exception is math, physics or a rigid complex computation, where a short comment explains *why* the formula has its shape. *Why:* a comment that restates the code rots and lies.
+- **C-02 API documentation is welcome on public APIs and system boundaries.** [judgement] Doc comments (`///` in C#) describe what a public type or boundary promises. They sit directly above a `public` declaration, or above any declaration inside an `interface` or `enum`, whose members carry no modifier (attribute lines in between are fine). Internals carry no docs; a doc elsewhere needs `[allow-docs]` in the commit message. The hook reads the container kinds from `comments.doc_inside` in `.standards/config.json`; `interface` and `enum` when the key is absent, `[]` turns it off. *Why:* a boundary is read by people who cannot see the code behind it.
+- **C-03 No task, ticket, PR or spec identifiers in source.** [hard] That context lives in the work item. *Why:* the source outlives the tracker.

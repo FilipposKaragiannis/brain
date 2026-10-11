@@ -1,0 +1,6 @@
+interface:
+  display_name: "Test"
+  short_description: "Write the tests from the acceptance lines"
+  default_prompt: "Use $test to write the tests for this item."
+policy:
+  allow_implicit_invocation: false

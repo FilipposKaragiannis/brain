@@ -1,0 +1,6 @@
+interface:
+  display_name: "Flow Init"
+  short_description: "Install the flow in a repo"
+  default_prompt: "Use $init to install or refresh the flow plugin in this repository."
+policy:
+  allow_implicit_invocation: false

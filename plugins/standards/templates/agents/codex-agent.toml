@@ -1,0 +1,8 @@
+name = "{{name}}"
+description = "{{description}}"
+model = "{{codex_model}}"
+model_reasoning_effort = "{{effort}}"
+sandbox_mode = "{{sandbox_mode}}"
+developer_instructions = """
+{{brief}}
+"""

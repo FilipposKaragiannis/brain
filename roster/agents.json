@@ -1,0 +1,174 @@
+{
+  "_readme": "The one source for every agent on both hosts. tools/generate.sh renders plugins/<plugin>/agents/<name>.md for Claude and plugins/<plugin>/codex-agents/<name>.toml for Codex. Model and effort are the owner's decisions of 2026-10-10. Edit here, then run tools/generate.sh. tools/lint.sh fails on drift.",
+  "model_map": {
+    "sonnet": "gpt-6-luna",
+    "opus": "gpt-6-sol",
+    "fable": "gpt-6-astra",
+    "haiku": "gpt-6-luna"
+  },
+  "tiers": {
+    "read-only": {
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash",
+        "WebFetch",
+        "WebSearch"
+      ],
+      "codex_sandbox": "read-only"
+    },
+    "worktree-write": {
+      "codex_sandbox": "workspace-write"
+    },
+    "full": {
+      "codex_sandbox": "danger-full-access"
+    }
+  },
+  "agents": {
+    "interviewer": {
+      "plugin": "flow",
+      "step": "interview",
+      "tier": "read-only",
+      "model": "opus",
+      "effort": "high",
+      "description": "Interviews the owner one question at a time until the item has a testable spec. Use at the start of an epic or an L task."
+    },
+    "explorer": {
+      "plugin": "flow",
+      "step": "explore",
+      "tier": "read-only",
+      "model": "sonnet",
+      "effort": "medium",
+      "description": "Maps the code that an item touches and reports entry points, seams and risks. Use before planning."
+    },
+    "researcher": {
+      "plugin": "flow",
+      "step": "research",
+      "tier": "read-only",
+      "model": "sonnet",
+      "effort": "medium",
+      "description": "Reads docs, issues and prior art for an item and reports verified facts with sources. Use when a plan depends on something outside the repo."
+    },
+    "architect": {
+      "plugin": "flow",
+      "step": "architect",
+      "tier": "read-only",
+      "model": "fable",
+      "effort": "xhigh",
+      "description": "Designs the shape of a large change: modules, seams, data and the order of slices. Use for epics and L tasks after exploration."
+    },
+    "planner": {
+      "plugin": "flow",
+      "step": "plan",
+      "tier": "read-only",
+      "model": "opus",
+      "effort": "high",
+      "description": "Turns a spec and an exploration into an ordered plan of vertical slices with acceptance checks. Use for M and L tasks and epics."
+    },
+    "epic-plan-reviewer": {
+      "plugin": "flow",
+      "step": "plan-review",
+      "tier": "read-only",
+      "model": "fable",
+      "effort": "high",
+      "description": "Finds pragmatic gaps, flawed assumptions and smells in an epic plan before any code is written. Use after the planner."
+    },
+    "implementer": {
+      "plugin": "flow",
+      "step": "implement",
+      "tier": "worktree-write",
+      "model": "opus",
+      "effort": "high",
+      "description": "Implements one slice in its worktree to the standards, keeps the build green and commits. Use for every implement step."
+    },
+    "test-writer": {
+      "plugin": "flow",
+      "step": "test",
+      "tier": "worktree-write",
+      "model": "opus",
+      "effort": "medium",
+      "description": "Writes the tests for a slice from the spec, not from the implementation. Use after the implementer, never the same agent."
+    },
+    "standards-reviewer": {
+      "plugin": "standards",
+      "step": "review",
+      "tier": "read-only",
+      "model": "sonnet",
+      "effort": "medium",
+      "description": "Reviews a diff against the coding standards by rule id and grades findings P0 to P2. Use in every review step."
+    },
+    "spec-reviewer": {
+      "plugin": "standards",
+      "step": "review",
+      "tier": "read-only",
+      "model": "opus",
+      "effort": "medium",
+      "description": "Reviews a diff against the item's spec and acceptance checks. Use in every review step."
+    },
+    "security-reviewer": {
+      "plugin": "standards",
+      "step": "review",
+      "tier": "read-only",
+      "model": "opus",
+      "effort": "high",
+      "description": "Reviews a diff for security risks: injection, auth gaps, secrets, unsafe defaults. Use when the diff touches input, auth, storage or network."
+    },
+    "performance-reviewer": {
+      "plugin": "standards",
+      "step": "review",
+      "tier": "read-only",
+      "model": "opus",
+      "effort": "high",
+      "description": "Reviews a diff for allocation, complexity and hot-path risks. Use when the diff touches simulation, rendering or per-frame code."
+    },
+    "test-reviewer": {
+      "plugin": "standards",
+      "step": "review",
+      "tier": "read-only",
+      "model": "sonnet",
+      "effort": "medium",
+      "description": "Reviews tests for the standards test rules: names, because strings, no tautologies, mocking per the philosophy. Use after the test writer."
+    },
+    "verifier": {
+      "plugin": "flow",
+      "step": "verify",
+      "tier": "worktree-write",
+      "model": "sonnet",
+      "effort": "low",
+      "description": "Runs the project checks and writes .flow/reports/<item>/verify.json. Use before any PR. Never edits code."
+    },
+    "pr-creator": {
+      "plugin": "flow",
+      "step": "pr",
+      "tier": "read-only",
+      "model": "sonnet",
+      "effort": "low",
+      "description": "Opens or updates the PR from the verify report and the item, with the house PR body. Use after verify passes."
+    },
+    "comment-addresser": {
+      "plugin": "flow",
+      "step": "comments",
+      "tier": "worktree-write",
+      "model": "opus",
+      "effort": "medium",
+      "description": "Addresses PR review comments one by one, replies on each and pushes. Use when a PR has unresolved comments."
+    },
+    "worktree-steward": {
+      "plugin": "flow",
+      "step": "steward",
+      "tier": "worktree-write",
+      "model": "haiku",
+      "effort": "low",
+      "description": "Claims, resets and releases worktrees in the pool and records the claim in the tracker. Never resets a worktree with uncommitted changes."
+    },
+    "project-advisor": {
+      "plugin": "standards",
+      "step": "init",
+      "tier": "read-only",
+      "model": "opus",
+      "effort": "medium",
+      "description": "Reads the repository and recommends a value for every gap init reports (build, test and format commands, the testing guide's fixtures, exceptions and hand tests, gates, the roster, the skills and rules folders), each with its evidence. Use after init lists gaps, or when the owner asks where a new test level, gate, reviewer or rule belongs."
+    }
+  }
+}

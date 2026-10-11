@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review"
+  short_description: "Two-axis review of a diff"
+  default_prompt: "Use $review to review the changes since main along the standards and spec axes."

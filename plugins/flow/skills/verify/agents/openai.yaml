@@ -1,0 +1,6 @@
+interface:
+  display_name: "Verify"
+  short_description: "Build, format, tests, gates; one report"
+  default_prompt: "Use $verify to verify this item and write the report."
+policy:
+  allow_implicit_invocation: false

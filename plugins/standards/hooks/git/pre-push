@@ -1,0 +1,12 @@
+#!/bin/sh
+# Git pre-push hook installed by `standards init`. Runs the project's build command from
+# .standards/config.json ("build") when one is set, then the project gates that list "push".
+dir="$(cd "$(dirname "$0")" && pwd)/.."
+. "$dir/lib.sh"
+cd "$(repo_root)" || exit 0
+build="$(json_get "$(config_text)" "build")"
+if [ -n "$build" ]; then
+  sh -c "$build" || { echo "standards: the build failed (L-01). Fix it before pushing." >&2; exit 1; }
+fi
+printf '%s' '{"tool_input":{"command":"git push"}}' | "$dir/check-gates.sh" || exit 1
+exit 0

@@ -1,0 +1,33 @@
+{
+  "name": "flow",
+  "version": "1.0.0",
+  "description": "The work flow: pick the next ready item, plan, implement, test, review, verify and open a PR, with agents in worktrees and human gates only where a human adds value.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": [
+    "workflow",
+    "agents",
+    "worktrees",
+    "github",
+    "tracker"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Flow",
+    "shortDescription": "Run tracked work end to end",
+    "longDescription": "Picks the next ready item from the tracker, plans it to the right depth, implements and tests it in a worktree, reviews, verifies and opens a PR. Humans decide only at the gates.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use $next to run the next ready item",
+      "Use $board to show what is running and waiting"
+    ],
+    "brandColor": "#1D4ED8"
+  }
+}

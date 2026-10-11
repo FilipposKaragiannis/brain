@@ -1,0 +1,42 @@
+{
+  "description": "flow: the session-start install check, and the pool worktree hooks. Note: for `claude --worktree` the worktree hooks do not fire from a plugin (the worktree is created before plugins load); flow:init writes wrappers under .flow/hooks/ and prints the .claude/settings.json entry. Kept here for hosts that do load plugin hooks first.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/session-start.sh",
+            "timeout": 10,
+            "statusMessage": "flow: install check"
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/worktree-create.sh",
+            "timeout": 60,
+            "statusMessage": "flow: claiming a pool worktree"
+          }
+        ]
+      }
+    ],
+    "WorktreeRemove": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/worktree-remove.sh",
+            "timeout": 60,
+            "statusMessage": "flow: releasing the pool worktree"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "_readme": "Roster defaults copied from the marketplace (roster/agents.json): the tiers and the Claude-to-Codex model map a project roster may leave out or override.",
+  "model_map": {
+    "sonnet": "gpt-6-luna",
+    "opus": "gpt-6-sol",
+    "fable": "gpt-6-astra",
+    "haiku": "gpt-6-luna"
+  },
+  "tiers": {
+    "read-only": {
+      "claude_tools": [
+        "Read",
+        "Grep",
+        "Glob",
+        "Bash",
+        "WebFetch",
+        "WebSearch"
+      ],
+      "codex_sandbox": "read-only"
+    },
+    "worktree-write": {
+      "codex_sandbox": "workspace-write"
+    },
+    "full": {
+      "codex_sandbox": "danger-full-access"
+    }
+  }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Improve"
+  short_description: "Find deepening opportunities"
+  default_prompt: "Use $improve to find deepening opportunities in this codebase."

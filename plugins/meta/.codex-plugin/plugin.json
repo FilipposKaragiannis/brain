@@ -1,0 +1,30 @@
+{
+  "name": "meta",
+  "version": "0.1.0",
+  "description": "Skills about skills: write-a-skill and the retro that turns lessons into rule and skill changes.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": [
+    "skills",
+    "retro",
+    "authoring"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Meta",
+    "shortDescription": "Write skills and run retros",
+    "longDescription": "Write and package new skills to the house quality bar, and run end-of-session retros that route lessons into the standards and the skills.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Write a skill for this workflow"
+    ],
+    "brandColor": "#B45309"
+  }
+}
