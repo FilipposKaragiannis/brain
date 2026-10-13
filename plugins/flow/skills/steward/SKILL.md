@@ -15,6 +15,7 @@ path `codex plugin list` prints for `flow`). Call it `$P`. The script is `"$P/sc
 | add a worktree | `steward.sh add [path]`: adds it, appends it under `pool:` in `.flow/config.yaml`, copies the `worktree_copy` files and runs `worktree_setup` |
 | set up a worktree again | `steward.sh setup <path or item>`: the copies and the setup commands, on demand |
 | temporary worktree for a phase | `steward.sh tmp add <item> <phase>` from the task branch; `steward.sh tmp remove <path>` after the phase is rebased onto the task branch |
+| clear old reports | `steward.sh prune` deletes `.flow/reports/<item>/` for closed items that no worktree claims, in the main and every pool worktree; `--dry-run` lists them first |
 
 ## Claude's own worktree features
 

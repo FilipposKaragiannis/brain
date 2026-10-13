@@ -445,6 +445,21 @@ check "help gates names every gate" sh -c "for g in interview plan-approval deco
 check "help of an unknown skill fails" sh -c "! '$P/scripts/help.sh' nonesuch >/dev/null"
 cd "$repo"
 
+echo "prune"
+pc="$("$P/adapters/local/create.sh" task "Pruned")"; "$P/adapters/local/close.sh" "$pc" >/dev/null
+po="$("$P/adapters/local/create.sh" task "Still open")"
+pk="$("$P/adapters/local/create.sh" task "Closed but claimed")"; wk="$("$P/scripts/steward.sh" claim "$pk")"; "$P/adapters/local/close.sh" "$pk" >/dev/null
+for d in "$repo" "$(cd ../wt-1 && pwd)"; do mkdir -p "$d/.flow/reports/$(item_slug "$pc")" "$d/.flow/reports/$(item_slug "$po")" "$d/.flow/reports/298"; done
+mkdir -p "$wk/.flow/reports/$(item_slug "$pk")"
+out="$("$P/scripts/steward.sh" prune --dry-run 2>&1)"
+check "prune: --dry-run names the closed item's folders and deletes nothing" sh -c "[ \"\$(printf '%s' '$out' | grep -c 'would remove .*/$(item_slug "$pc") ')\" = 2 ] && [ -d '$repo/.flow/reports/$(item_slug "$pc")' ]"
+out="$("$P/scripts/steward.sh" prune 2>&1)"
+check "prune: removes a closed item's reports in the main and pool worktrees" sh -c "[ ! -e '$repo/.flow/reports/$(item_slug "$pc")' ] && [ ! -e '../wt-1/.flow/reports/$(item_slug "$pc")' ]"
+check "prune: keeps an open item's reports" [ -d "$repo/.flow/reports/$(item_slug "$po")" ]
+check "prune: keeps a claimed item's reports even when closed" [ -d "$wk/.flow/reports/$(item_slug "$pk")" ]
+check "prune: keeps and names a folder that is not an item's" sh -c "[ -d '$repo/.flow/reports/298' ] && printf '%s' '$out' | grep -q 'reports/298: not an item folder'"
+"$P/scripts/steward.sh" release "$pk" --force >/dev/null 2>&1
+
 # --- init: stamp, guard, session-start nudge (on a copy of the plugin, so the plugin can change). The fake gh stays on PATH; init tolerates it.
 plugin_copy="$work/plugin"; cp -R "$P" "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"

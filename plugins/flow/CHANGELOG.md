@@ -1,5 +1,12 @@
 # flow
 
+## 1.3.0 (2026-10-13)
+
+- `steward.sh prune [--dry-run]` deletes the reports of closed items. Reports outlive the
+  release, so they piled up in every worktree. It looks in the main worktree and every pool
+  worktree, and keeps the folders of open items, of claimed items, of items it cannot read, and
+  of folders that are not an item's (it names those). The steward skill lists it.
+
 ## 1.2.0 (2026-10-11)
 
 - Gates in `.flow/config.yaml` take `paths`. `name: command` still always runs. A map with

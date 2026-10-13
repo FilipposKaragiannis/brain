@@ -9,6 +9,8 @@
 #   steward.sh add [path]                        add a worktree to the pool (git worktree add,
 #                                                pool entry in config.yaml, copies and setup)
 #   steward.sh setup <path>                      run worktree_copy and worktree_setup there
+#   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
+#                                                worktree and every pool worktree
 # A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named
 # after the last pool entry (../app-wt-3 after ../app-wt-2). worktree_copy lists ignored paths
 # copied from the main worktree when the new one lacks them (.claude/settings.local.json);
@@ -221,6 +223,44 @@ cmd_setup() {
   run_setup "$p"
 }
 
+# slug_item <reports folder name>: the item id item_slug made it from (gh-12 -> gh#12,
+# local-task-3 -> local:task/3), or nothing for a folder no adapter owns.
+slug_item() {
+  printf '%s' "$1" | sed -n 's/^gh-\([0-9][0-9]*\)$/gh#\1/p; s/^local-\([a-z][a-z0-9]*\)-\([0-9][0-9]*\)$/local:\1\/\2/p'
+}
+
+# cmd_prune: reports outlive the release, so they pile up in every worktree. A folder goes when
+# its item is closed and no worktree claims it. Open, claimed, unreadable and unknown folders stay.
+cmd_prune() {
+  dry=0
+  while [ $# -gt 0 ]; do case "$1" in --dry-run) dry=1; shift ;; *) die "unknown option $1" 2 ;; esac; done
+  known=""; removed=0; kept=0
+  for root in "$main" $(pool_paths); do
+    for d in "$root"/.flow/reports/*/; do
+      [ -d "$d" ] || continue
+      d="${d%/}"; item="$(slug_item "$(basename "$d")")"
+      if [ -z "$item" ]; then echo "kept $d: not an item folder"; kept=$((kept + 1)); continue; fi
+      if [ -n "$(cmd_find "$item")" ]; then kept=$((kept + 1)); continue; fi
+      status="$(printf '%s' "$known" | sed -n "s|^$item=||p" | head -1)"
+      if [ -z "$status" ]; then
+        status="$(json_get "$(adapter read "$item" 2>/dev/null)" status)"; [ -n "$status" ] || status="unreadable"
+        known="$known$item=$status
+"
+      fi
+      case "$status" in
+        closed)
+          if [ "$dry" -eq 1 ]; then echo "would remove $d ($item is closed)"
+          else rm -rf "$d" && echo "removed $d ($item is closed)"; fi
+          removed=$((removed + 1)) ;;
+        unreadable) echo "kept $d: cannot read $item"; kept=$((kept + 1)) ;;
+        *) kept=$((kept + 1)) ;;
+      esac
+    done
+  done
+  verb="removed"; [ "$dry" -eq 1 ] && verb="would remove"
+  echo "prune: $verb $removed, kept $kept"
+}
+
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
@@ -230,5 +270,6 @@ case "$cmd" in
   tmp) cmd_tmp "$@" ;;
   add) cmd_add "${1:-}" ;;
   setup) [ $# -ge 1 ] || die "usage: setup <path|item>" 2; cmd_setup "$1" ;;
-  *) sed -n '2,11p' "$0"; exit 2 ;;
+  prune) cmd_prune "$@" ;;
+  *) sed -n '2,13p' "$0"; exit 2 ;;
 esac
