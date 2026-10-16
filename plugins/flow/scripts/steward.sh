@@ -4,6 +4,8 @@
 #   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh release <item|path> [--force]     reset to the base, delete the task branch, clear
+#                                                the claim; a closed item's reports go too
+#   steward.sh reports <item>                    print (and create) the item's reports folder
 #   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
 #   steward.sh tmp remove <path>                 remove it and its branch
 #   steward.sh add [path]                        add a worktree to the pool (git worktree add,
@@ -121,6 +123,37 @@ cmd_release() {
   rm -f "$p/.flow/claim.json"
   [ -n "$item" ] && write_state "$item" "worktree=" "last_event=$(now_iso) released $(basename "$p")"
   echo "released $p"
+  if [ -n "$item" ] && [ "$(item_status "$item")" = closed ]; then
+    for root in "$main" $(pool_paths); do
+      d="$root/.flow/reports/$(item_slug "$item")"
+      [ -d "$d" ] && rm -rf "$d" && echo "removed $d ($item is closed)"
+    done
+  fi
+  return 0
+}
+
+# item_status <item>: open, closed, or nothing when no adapter owns the id or it cannot be read.
+item_status() {
+  adapter_for "$1" >/dev/null 2>&1 || return 0
+  json_get "$(adapter read "$1" 2>/dev/null)" status
+}
+
+# cmd_reports <item>: the one place an item's reports live, for skills run outside next.sh. The
+# claimed worktree's folder; else an existing folder in a pool worktree or the main worktree
+# (a released item keeps its reports where they were written); else the main worktree's.
+cmd_reports() {
+  adapter_for "$1" >/dev/null 2>&1 || die "not an item id: $1 (use gh#<n> or local:<kind>/<n>)" 2
+  slug="$(item_slug "$1")"
+  dir=""; wt="$(cmd_find "$1")"
+  if [ -n "$wt" ]; then dir="$wt/.flow/reports/$slug"
+  else
+    for root in $(pool_paths) "$main"; do
+      [ -d "$root/.flow/reports/$slug" ] && { dir="$root/.flow/reports/$slug"; break; }
+    done
+  fi
+  [ -n "$dir" ] || dir="$main/.flow/reports/$slug"
+  mkdir -p "$dir" || die "cannot create $dir"
+  printf '%s\n' "$dir"
 }
 
 cmd_tmp() {
@@ -243,7 +276,7 @@ cmd_prune() {
       if [ -n "$(cmd_find "$item")" ]; then kept=$((kept + 1)); continue; fi
       status="$(printf '%s' "$known" | sed -n "s|^$item=||p" | head -1)"
       if [ -z "$status" ]; then
-        status="$(json_get "$(adapter read "$item" 2>/dev/null)" status)"; [ -n "$status" ] || status="unreadable"
+        status="$(item_status "$item")"; [ -n "$status" ] || status="unreadable"
         known="$known$item=$status
 "
       fi
@@ -271,5 +304,6 @@ case "$cmd" in
   add) cmd_add "${1:-}" ;;
   setup) [ $# -ge 1 ] || die "usage: setup <path|item>" 2; cmd_setup "$1" ;;
   prune) cmd_prune "$@" ;;
-  *) sed -n '2,13p' "$0"; exit 2 ;;
+  reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
 esac

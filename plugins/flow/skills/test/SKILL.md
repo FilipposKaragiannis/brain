@@ -7,6 +7,10 @@ disable-model-invocation: true
 Tests for one item. Plugin root `$P`: the directory holding this skill (`${CLAUDE_PLUGIN_ROOT}`
 on Claude; on Codex the path `codex plugin list` prints for `flow`).
 
+`<reports>` is the reports folder the `next.sh` brief names. Run outside `next.sh`, it is the
+path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
+`local:<kind>/<n>`. Never build the path by hand.
+
 1. **Inputs**: the item (acceptance lines), its claimed worktree, `<reports>/plan.md` (test
    seams) when present, `.standards/testing-guide.md`, the standards tests section.
 2. **Spawn `test-writer`** with the step brief from `next.sh`, or one of the same shape. For

@@ -8,8 +8,13 @@ Address comments on one PR. Plugin root `$P`: the directory holding this skill
 (`${CLAUDE_PLUGIN_ROOT}` on Claude; on Codex the path `codex plugin list` prints for `flow`).
 GitHub only (`"$P/scripts/comments.sh"`).
 
+`<reports>` is the reports folder the `next.sh` brief names. Run outside `next.sh`, it is the
+path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
+`local:<kind>/<n>`. Never build the path by hand.
+
 1. **Resolve the PR**: from the argument, or the item's state `pr`. `comments.sh state <pr>`:
    merged or closed → release is the steward's job; report and stop.
+   The item is the one the PR's branch names (`flow/gh-310` is `gh#310`).
 2. **Threads**: `comments.sh threads <pr>` lists the unresolved review threads. None, and no new
    plain comment since the last pass (`comments.sh issue-comments`, compare with
    `<reports>/comments.json`) → stop, "quiet".

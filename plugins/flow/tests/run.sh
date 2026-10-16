@@ -458,7 +458,15 @@ check "prune: removes a closed item's reports in the main and pool worktrees" sh
 check "prune: keeps an open item's reports" [ -d "$repo/.flow/reports/$(item_slug "$po")" ]
 check "prune: keeps a claimed item's reports even when closed" [ -d "$wk/.flow/reports/$(item_slug "$pk")" ]
 check "prune: keeps and names a folder that is not an item's" sh -c "[ -d '$repo/.flow/reports/298' ] && printf '%s' '$out' | grep -q 'reports/298: not an item folder'"
-"$P/scripts/steward.sh" release "$pk" --force >/dev/null 2>&1
+check "reports: a claimed item's folder is in its worktree" [ "$("$P/scripts/steward.sh" reports "$pk")" = "$wk/.flow/reports/$(item_slug "$pk")" ]
+check "reports: an unclaimed item's existing folder is found in the pool" [ "$("$P/scripts/steward.sh" reports "$po")" = "$(cd ../wt-1 && pwd -P)/.flow/reports/$(item_slug "$po")" ]
+pn="$("$P/adapters/local/create.sh" task "No reports yet")"
+check "reports: a new item's folder is made in the main worktree" sh -c "[ \"\$('$P/scripts/steward.sh' reports '$pn')\" = '$(cd "$repo" && pwd -P)/.flow/reports/$(item_slug "$pn")' ] && [ -d '$repo/.flow/reports/$(item_slug "$pn")' ]"
+"$P/scripts/steward.sh" reports 298 >/dev/null 2>&1; code=$?
+check "reports: a bare number is not an item id (exit 2)" [ "$code" -eq 2 ]
+check "release: a closed item's reports go with it" sh -c "'$P/scripts/steward.sh' release '$pk' --force && [ ! -e '$wk/.flow/reports/$(item_slug "$pk")' ]"
+"$P/scripts/steward.sh" claim "$po" >/dev/null 2>&1; wo="$("$P/scripts/steward.sh" find "$po")"
+check "release: an open item's reports stay" sh -c "'$P/scripts/steward.sh' release '$po' --force && [ -d '$repo/.flow/reports/$(item_slug "$po")' ]"
 
 # --- init: stamp, guard, session-start nudge (on a copy of the plugin, so the plugin can change). The fake gh stays on PATH; init tolerates it.
 plugin_copy="$work/plugin"; cp -R "$P" "$plugin_copy"; rm -rf "$plugin_copy/evals/results"

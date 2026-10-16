@@ -15,6 +15,7 @@ path `codex plugin list` prints for `flow`). Call it `$P`. The script is `"$P/sc
 | add a worktree | `steward.sh add [path]`: adds it, appends it under `pool:` in `.flow/config.yaml`, copies the `worktree_copy` files and runs `worktree_setup` |
 | set up a worktree again | `steward.sh setup <path or item>`: the copies and the setup commands, on demand |
 | temporary worktree for a phase | `steward.sh tmp add <item> <phase>` from the task branch; `steward.sh tmp remove <path>` after the phase is rebased onto the task branch |
+| where an item's reports are | `steward.sh reports <item>` prints the folder (and creates it): the claimed worktree's, else the one that already exists, else the main worktree's |
 | clear old reports | `steward.sh prune` deletes `.flow/reports/<item>/` for closed items that no worktree claims, in the main and every pool worktree; `--dry-run` lists them first |
 
 ## Claude's own worktree features
@@ -35,6 +36,7 @@ releases it through `WorktreeRemove` unless it holds uncommitted work. Codex has
   `pool_max`, named after the last entry (`../app-wt-3` after `../app-wt-2`), appends it to
   `pool:` and runs the copies and the setup. At `pool_max` the claim fails with exit 3: tell the
   owner, who raises `pool_max` or releases one. Never edit `pool:` by hand; `add` does it.
+- A release of a closed item also deletes its reports in every worktree.
 - A release leaves the worktree detached at the base branch with the task branch deleted when
   merged; an unmerged branch is kept and named in the output.
 

@@ -7,6 +7,10 @@ disable-model-invocation: true
 Verify one item. Plugin root `$P`: the directory holding this skill (`${CLAUDE_PLUGIN_ROOT}` on
 Claude; on Codex the path `codex plugin list` prints for `flow`).
 
+`<reports>` is the reports folder the `next.sh` brief names. Run outside `next.sh`, it is the
+path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
+`local:<kind>/<n>`. Never build the path by hand.
+
 1. **Inputs**: the item, its claimed worktree (clean apart from `.flow/`), `.standards/config.json`
    (build, format, test, mutation), `.flow/config.yaml` (`gates`, `feel_test_paths`).
 2. **Spawn `verifier`** with the step brief. The brief names `"$P/scripts/verify.sh" <item>`,

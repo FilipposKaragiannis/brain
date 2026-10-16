@@ -7,6 +7,10 @@ disable-model-invocation: true
 Review one item's diff. Plugin root `$P`: the directory holding this skill (`${CLAUDE_PLUGIN_ROOT}`
 on Claude; on Codex the path `codex plugin list` prints for `flow`).
 
+`<reports>` is the reports folder the `next.sh` brief names. Run outside `next.sh`, it is the
+path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
+`local:<kind>/<n>`. Never build the path by hand.
+
 1. **Fixed point**: the item's base. The parent's task branch when the item has a parent with a
    claimed branch, else `base` from `.flow/config.yaml`. Say it.
 2. **Depth** from the profile (`next.sh` prints it; else `review_depth` in `$P/profiles.json`):
