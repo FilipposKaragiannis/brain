@@ -134,6 +134,11 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  model: \"\""
       echo "  effort: \"\""
       echo "  marketplace: \"\""
+      echo "  # permission_mode: auto    # dontAsk (default) denies edits without an allow list; auto lets the classifier decide"
+      echo "# The intake job files the notes in this file as items (jobs/intake.sh, nightly):"
+      echo "# intake:"
+      echo "#   notes: ~/Desktop/notes.md"
+      echo "#   batch: 10"
     } > .flow/config.yaml
     [ -s .flow/config.yaml ] || die "could not write .flow/config.yaml"
     note ".flow/config.yaml written from the repository (adapters, base, pool). Review it."
@@ -147,7 +152,7 @@ install_file "$plugin/templates/plugin.sh" .flow/plugin.sh 644
 tmp="$scratch/notify"; printf '#!/bin/sh\n# Written by flow:init. Calls the flow plugin notify script: notify.sh <gate> <item> <message>.\n. "$(dirname "$0")/plugin.sh"\nexec "$FLOW_PLUGIN/scripts/notify.sh" "$@"\n' > "$tmp"
 install_file "$tmp" .flow/notify.sh 755
 install_file "$plugin/templates/run-unattended.sh" .flow/run-unattended.sh 755
-for j in comments next retro; do
+for j in comments intake next retro; do
   tmp="$scratch/job-$j"
   printf '#!/bin/sh\n# Written by flow:init. Scheduled job: %s.sh <claude|codex> [args]. Logs to .flow/log/%s.log.\n. "$(dirname "$0")/../plugin.sh"\nexec "$FLOW_PLUGIN/jobs/%s.sh" "$@"\n' "$j" "$j" "$j" > "$tmp"
   install_file "$tmp" ".flow/jobs/$j.sh" 755
@@ -218,6 +223,7 @@ echo "  - schedule the jobs on this machine (each is a plain command; the lock s
 echo "      $main/.flow/jobs/comments.sh claude     every 30 min while PRs are open"
 echo "      $main/.flow/jobs/next.sh claude         at the cadence new work should start"
 echo "      $main/.flow/jobs/retro.sh claude        weekly"
+echo "      $main/.flow/jobs/intake.sh claude       nightly, once intake.notes names your notes file"
 echo "    Claude Desktop: a scheduled task whose prompt runs the command; launchd: a plist per job;"
 echo "    Codex: the same commands with codex, from a scheduler (ChatGPT desktop Scheduled, or launchd)."
 command -v python3 >/dev/null 2>&1 || echo "  - python3 is not installed; the flow scripts need it"

@@ -1,5 +1,17 @@
 # flow
 
+## 1.6.0 (2026-10-17)
+
+- The intake job and skill: `jobs/intake.sh <host>` reads the next notes from `intake.notes`
+  (at most `intake.batch`, default 10) and runs the `intake` skill once on them. The skill
+  files each note as a typed, sized item with a suggested priority in its notes (never the
+  priority field), names the open item a note duplicates, and gates a note that needs the owner
+  with `ambiguity` and its questions. The job records each handled note in a ledger and removes
+  it from the notes file by its exact text; `--keep-notes` reads a file without changing it.
+- `jobs.permission_mode` (`dontAsk`, the default, or `auto`) sets the Claude permission mode of
+  every unattended session. Under `dontAsk` without an allow list a run cannot edit a file;
+  `auto` lets the classifier allow the safe tools.
+
 ## 1.5.1 (2026-10-17)
 
 - An item with open native sub-issues is not ready, so an epic is never picked for its closeout
