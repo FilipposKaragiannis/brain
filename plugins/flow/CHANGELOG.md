@@ -1,5 +1,19 @@
 # flow
 
+## 1.3.0 (2026-10-13)
+
+- `steward.sh prune [--dry-run]` deletes the reports of closed items. Reports outlive the
+  release, so they piled up in every worktree. It looks in the main worktree and every pool
+  worktree, and keeps the folders of open items, of claimed items, of items it cannot read, and
+  of folders that are not an item's (it names those). The steward skill lists it.
+- A release of a closed item deletes its reports in every worktree, so `prune` is only for
+  what was left before.
+- `steward.sh reports <item>` prints the item's reports folder: the claimed worktree's, else the
+  one that exists, else the main worktree's. Skills run outside `next.sh` (review, comments,
+  explain, verify, test, pr, implement, plan) take it from there, so a standalone run no longer
+  writes to a folder of its own naming (a bare `298` beside `gh-298`) or in the wrong worktree.
+  An id that is not an item's fails with exit 2.
+
 ## 1.2.0 (2026-10-11)
 
 - Gates in `.flow/config.yaml` take `paths`. `name: command` still always runs. A map with

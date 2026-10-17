@@ -8,6 +8,10 @@ Explain one item's change. Spawn a general subagent (no roster role) with this b
 writes `<reports>/explain.html` and `<reports>/quiz.md`. Plugin root `$P`: the directory
 holding this skill.
 
+`<reports>` is the reports folder the `next.sh` brief names. Run outside `next.sh`, it is the
+path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
+`local:<kind>/<n>`. Never build the path by hand.
+
 ## The page (`explain.html`)
 
 Self-contained: inline CSS, Mermaid from `https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs`

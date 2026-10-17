@@ -7,6 +7,10 @@ disable-model-invocation: true
 Open the PR for one item. Plugin root `$P`: the directory holding this skill
 (`${CLAUDE_PLUGIN_ROOT}` on Claude; on Codex the path `codex plugin list` prints for `flow`).
 
+`<reports>` is the reports folder the `next.sh` brief names. Run outside `next.sh`, it is the
+path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
+`local:<kind>/<n>`. Never build the path by hand.
+
 1. **Preconditions**: `<reports>/verify.json` is `pass`; the worktree is clean; every commit is
    on the task branch. Otherwise stop with status `fail` and say which.
 2. **Spawn `pr-creator`** with the step brief plus the path of [PR-BODY.md](PR-BODY.md) (the

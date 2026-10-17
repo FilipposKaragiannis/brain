@@ -8,6 +8,10 @@ Implement one item. You orchestrate; the implementer agent writes the code. Plug
 the directory holding this skill (`${CLAUDE_PLUGIN_ROOT}` on Claude; on Codex the path
 `codex plugin list` prints for `flow`).
 
+`<reports>` is the reports folder the `next.sh` brief names. Run outside `next.sh`, it is the
+path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
+`local:<kind>/<n>`. Never build the path by hand.
+
 ## 1. Inputs
 
 - The item id, its claimed worktree and branch (from `next.sh`, or `"$P/scripts/steward.sh" find <id>`;

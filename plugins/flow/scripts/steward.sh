@@ -4,11 +4,15 @@
 #   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh release <item|path> [--force]     reset to the base, delete the task branch, clear
+#                                                the claim; a closed item's reports go too
+#   steward.sh reports <item>                    print (and create) the item's reports folder
 #   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
 #   steward.sh tmp remove <path>                 remove it and its branch
 #   steward.sh add [path]                        add a worktree to the pool (git worktree add,
 #                                                pool entry in config.yaml, copies and setup)
 #   steward.sh setup <path>                      run worktree_copy and worktree_setup there
+#   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
+#                                                worktree and every pool worktree
 # A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named
 # after the last pool entry (../app-wt-3 after ../app-wt-2). worktree_copy lists ignored paths
 # copied from the main worktree when the new one lacks them (.claude/settings.local.json);
@@ -119,6 +123,37 @@ cmd_release() {
   rm -f "$p/.flow/claim.json"
   [ -n "$item" ] && write_state "$item" "worktree=" "last_event=$(now_iso) released $(basename "$p")"
   echo "released $p"
+  if [ -n "$item" ] && [ "$(item_status "$item")" = closed ]; then
+    for root in "$main" $(pool_paths); do
+      d="$root/.flow/reports/$(item_slug "$item")"
+      [ -d "$d" ] && rm -rf "$d" && echo "removed $d ($item is closed)"
+    done
+  fi
+  return 0
+}
+
+# item_status <item>: open, closed, or nothing when no adapter owns the id or it cannot be read.
+item_status() {
+  adapter_for "$1" >/dev/null 2>&1 || return 0
+  json_get "$(adapter read "$1" 2>/dev/null)" status
+}
+
+# cmd_reports <item>: the one place an item's reports live, for skills run outside next.sh. The
+# claimed worktree's folder; else an existing folder in a pool worktree or the main worktree
+# (a released item keeps its reports where they were written); else the main worktree's.
+cmd_reports() {
+  adapter_for "$1" >/dev/null 2>&1 || die "not an item id: $1 (use gh#<n> or local:<kind>/<n>)" 2
+  slug="$(item_slug "$1")"
+  dir=""; wt="$(cmd_find "$1")"
+  if [ -n "$wt" ]; then dir="$wt/.flow/reports/$slug"
+  else
+    for root in $(pool_paths) "$main"; do
+      [ -d "$root/.flow/reports/$slug" ] && { dir="$root/.flow/reports/$slug"; break; }
+    done
+  fi
+  [ -n "$dir" ] || dir="$main/.flow/reports/$slug"
+  mkdir -p "$dir" || die "cannot create $dir"
+  printf '%s\n' "$dir"
 }
 
 cmd_tmp() {
@@ -221,6 +256,44 @@ cmd_setup() {
   run_setup "$p"
 }
 
+# slug_item <reports folder name>: the item id item_slug made it from (gh-12 -> gh#12,
+# local-task-3 -> local:task/3), or nothing for a folder no adapter owns.
+slug_item() {
+  printf '%s' "$1" | sed -n 's/^gh-\([0-9][0-9]*\)$/gh#\1/p; s/^local-\([a-z][a-z0-9]*\)-\([0-9][0-9]*\)$/local:\1\/\2/p'
+}
+
+# cmd_prune: reports outlive the release, so they pile up in every worktree. A folder goes when
+# its item is closed and no worktree claims it. Open, claimed, unreadable and unknown folders stay.
+cmd_prune() {
+  dry=0
+  while [ $# -gt 0 ]; do case "$1" in --dry-run) dry=1; shift ;; *) die "unknown option $1" 2 ;; esac; done
+  known=""; removed=0; kept=0
+  for root in "$main" $(pool_paths); do
+    for d in "$root"/.flow/reports/*/; do
+      [ -d "$d" ] || continue
+      d="${d%/}"; item="$(slug_item "$(basename "$d")")"
+      if [ -z "$item" ]; then echo "kept $d: not an item folder"; kept=$((kept + 1)); continue; fi
+      if [ -n "$(cmd_find "$item")" ]; then kept=$((kept + 1)); continue; fi
+      status="$(printf '%s' "$known" | sed -n "s|^$item=||p" | head -1)"
+      if [ -z "$status" ]; then
+        status="$(item_status "$item")"; [ -n "$status" ] || status="unreadable"
+        known="$known$item=$status
+"
+      fi
+      case "$status" in
+        closed)
+          if [ "$dry" -eq 1 ]; then echo "would remove $d ($item is closed)"
+          else rm -rf "$d" && echo "removed $d ($item is closed)"; fi
+          removed=$((removed + 1)) ;;
+        unreadable) echo "kept $d: cannot read $item"; kept=$((kept + 1)) ;;
+        *) kept=$((kept + 1)) ;;
+      esac
+    done
+  done
+  verb="removed"; [ "$dry" -eq 1 ] && verb="would remove"
+  echo "prune: $verb $removed, kept $kept"
+}
+
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
@@ -230,5 +303,7 @@ case "$cmd" in
   tmp) cmd_tmp "$@" ;;
   add) cmd_add "${1:-}" ;;
   setup) [ $# -ge 1 ] || die "usage: setup <path|item>" 2; cmd_setup "$1" ;;
-  *) sed -n '2,11p' "$0"; exit 2 ;;
+  prune) cmd_prune "$@" ;;
+  reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
 esac

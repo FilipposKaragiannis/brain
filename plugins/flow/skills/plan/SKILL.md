@@ -13,8 +13,8 @@ on Codex the path `codex plugin list` prints for `flow`).
 - Item id from the argument (`gh#310`, `local:task/3`). Read it: `"$P/adapters/<github|local>/read.sh" <id>`.
 - Step: the one `next.sh` gave you, else from the state, else by kind: epic → `grill`; task M or
   L → `design`; S or bug → say planning is not in that profile and stop.
-- Reports directory: `<worktree or repo root>/.flow/reports/<slug>/` (slug = id with `#`, `:`
-  and `/` as dashes). Earlier reports there are inputs; do not redo them.
+- Reports directory: the one the `next.sh` brief names, else the path
+  `"$P/scripts/steward.sh" reports <item>` prints. Earlier reports there are inputs; do not redo them.
 
 ## 2. Run the step
 
