@@ -1,5 +1,11 @@
 # flow
 
+## 1.5.1 (2026-10-17)
+
+- An item with open native sub-issues is not ready, so an epic is never picked for its closeout
+  while its tasks are open; its project card shows In progress. The GitHub query reads each
+  issue's sub-issue summary for it.
+
 ## 1.5.0 (2026-10-17)
 
 - The GitHub adapter lists and reads issues through one paged GraphQL query: labels, native

@@ -42,7 +42,8 @@ project_sync() {
 # issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: the issue
 # type Epic or Bug, else the label epic or bug, else task. Parent: the native sub-issue parent,
 # else a "Parent #N" line in the body. rank orders ready items (lower first); needs lists the
-# github.ready_needs fields an unstarted item still lacks.
+# github.ready_needs fields an unstarted item still lacks; open_children counts its open native
+# sub-issues.
 issue_to_item() {
   python3 -I -c '
 import json, os, re, sys
@@ -86,7 +87,7 @@ print(json.dumps({
     "status": "open" if is_open else "closed",
     "labels": labels, "blocked_by": ["gh#%d" % b["number"] for b in raw.get("blocked_by", [])],
     "open_blockers": ["gh#%d" % b["number"] for b in raw.get("blocked_by", []) if b.get("state", "open") != "closed"],
-    "parent": parent, "state": state, "url": raw.get("url", ""), "body": raw.get("body", ""),
+    "open_children": raw.get("open_children", 0), "parent": parent, "state": state, "url": raw.get("url", ""), "body": raw.get("body", ""),
     "project": {"item": item["id"], "status": item["status"]} if item else {},
 }))'
 }

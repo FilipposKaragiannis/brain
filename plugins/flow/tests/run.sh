@@ -325,7 +325,9 @@ cat > "$FAKE_GH_DIR/issues.json" <<'JSON'
   {"number": 35, "title": "Blocked", "state": "OPEN", "labels": [], "type": "Task", "fields": {"Size": "S", "Priority": "P3"}, "blocked_by": [33]},
   {"number": 36, "title": "Started", "state": "OPEN", "labels": ["step:implement"], "type": "Task", "fields": {"Size": "S", "Priority": "P2"}},
   {"number": 37, "title": "Asking", "state": "OPEN", "labels": ["gate:ambiguity"], "type": "Task", "fields": {"Size": "S", "Priority": "P2"}},
-  {"number": 38, "title": "Merging", "state": "OPEN", "labels": ["gate:merge"], "type": "Task", "fields": {"Size": "S", "Priority": "P2"}}
+  {"number": 38, "title": "Merging", "state": "OPEN", "labels": ["gate:merge"], "type": "Task", "fields": {"Size": "S", "Priority": "P2"}},
+  {"number": 39, "title": "Epic underway", "state": "OPEN", "labels": [], "type": "Epic", "fields": {"Priority": "P0"}},
+  {"number": 40, "title": "Its task", "state": "OPEN", "labels": [], "type": "Task", "parent": 39, "fields": {"Priority": "P1"}}
 ]}
 JSON
 cat > .flow/config.yaml <<'YAML'
@@ -354,8 +356,8 @@ check "gh a Parent: line with a colon names the parent" [ "$("$P/adapters/github
 check "gh an unstarted item lists the fields it lacks" sh -c "grep -qx 'gh#33 task S - priority' '$work/ghlist' && grep -qx 'gh#34 task - P1 size' '$work/ghlist'"
 check "gh an epic needs no size" grep -qx 'gh#30 epic - P1 -' "$work/ghlist"
 check "gh a started item needs nothing" grep -qx 'gh#36 task S P2 -' "$work/ghlist"
-check "gh ready: missing fields, blockers and gates are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
-check "gh list pages through every issue" [ "$(FLOW_GH_PAGE=2 "$P/adapters/github/list.sh" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "9" ]
+check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
+check "gh list pages through every issue" [ "$(FLOW_GH_PAGE=2 "$P/adapters/github/list.sh" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "11" ]
 check "gh list stops at the limit and says so" sh -c "[ \"\$('$P/adapters/github/list.sh' --limit 3 2>'$work/limit.err' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')\" = 3 ] && grep -q 'github.limit 3' '$work/limit.err'"
 : > "$FAKE_GH_DIR/calls.log"
 "$P/adapters/github/sync.sh" > "$work/sync.out"
@@ -365,6 +367,7 @@ check "gh sync: a missing field or an open blocker is Backlog" [ "$(status_of 33
 check "gh sync: a started step is In progress, a gate Needs you, the merge gate In review" [ "$(status_of 36)|$(status_of 37)|$(status_of 38)" = "In progress|Needs you|In review" ]
 check "gh sync: a card already at its status costs no write" sh -c "! grep -q 'i=PI_31' '$FAKE_GH_DIR/calls.log' && ! grep -q '^gh#31' '$work/sync.out'"
 check "gh sync: a card missing from the project is added" sh -c "grep -q addProjectV2ItemById '$FAKE_GH_DIR/calls.log'"
+check "gh sync: an item with open sub-issues is In progress" [ "$(status_of 39)" = "In progress" ]
 check "gh sync twice moves nothing" [ -z "$("$P/adapters/github/sync.sh")" ]
 : > "$FAKE_GH_DIR/calls.log"
 "$P/adapters/github/write-state.sh" 'gh#33' size=L gate=ambiguity
@@ -378,6 +381,8 @@ check "gh create: an epic gets the Epic type, not the label" sh -c "'$P/adapters
 picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [i.update(state='CLOSED') for i in d['issues'] if i['number']==40]; json.dump(d,open(p,'w'))"
+check "gh an epic is ready again once its sub-issues close" sh -c "'$P/adapters/github/list-ready.sh' | grep -q '\"gh#39\"'"
 cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
 
 echo "comments plumbing (fake gh)"

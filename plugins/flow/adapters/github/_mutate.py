@@ -5,8 +5,8 @@
   _mutate.py sync <repo> <project>                    stdin: adapter items, one per line
 
 sync moves each open item's card in the project to the Status its flow state implies: an open
-gate is the gate status (the merge gate is the review status), a started step is the running
-status, an unstarted item with no missing field and no open blocker is the ready status, any
+gate is the gate status (the merge gate is the review status), a started step or an item with
+open sub-issues is the running status, an unstarted item with no missing field and no open blocker is the ready status, any
 other is the backlog status. Closed items are left to the project's own workflows. The status
 names come from GH_STATUS_<KEY>; an item already at its status costs no write."""
 import json, os, subprocess, sys
@@ -59,7 +59,7 @@ def desired(item):
         return STATUS["review"]
     if gate != "none":
         return STATUS["gate"]
-    if step:
+    if step or item.get("open_children"):
         return STATUS["running"]
     if not item.get("needs") and not item.get("open_blockers"):
         return STATUS["ready"]
