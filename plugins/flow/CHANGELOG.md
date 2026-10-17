@@ -1,5 +1,13 @@
 # flow
 
+## 1.7.0 (2026-10-17)
+
+- A gate notification names the item by its id and title. Slack links it to the tracker and
+  says how to answer; the desktop shows the title as the subtitle. The message keeps its lines.
+- Ambiguity questions have one format, set in the step brief, the gate skill and intake:
+  numbered, one per line, each followed by `Recommended:` with the agent's answer and why. The
+  owner can reply "as recommended" or change one.
+
 ## 1.6.1 (2026-10-17)
 
 - Unattended sessions start a skill as the owner would type it (`/flow:intake ...` on Claude,

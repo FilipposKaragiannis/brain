@@ -41,7 +41,8 @@ as written, a bullet with its sub-lines. `section` is the chain of headings abov
    owner sets it, and an item without one is not ready.
 7. **Needs the owner?** When the note cannot become binary acceptance lines without a choice
    only the owner can make (what "feels robotic" should become, which of two designs), file it
-   anyway, then raise the gate with the questions, numbered, each answerable in a sentence:
+   anyway, then raise the gate with the questions in the gate skill's format (numbered, one per
+   line, each with its recommended answer):
    `"$P/scripts/gate.sh" raise <id> ambiguity "<questions>"`. Mark the result `needs_owner`.
    A question you can answer from the code is not one for the owner.
 

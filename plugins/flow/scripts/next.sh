@@ -116,7 +116,7 @@ brief="$reports/brief-$step.md"
   echo "## When you finish"
   echo "Write \`$reports/$step.json\`:"
   echo '```json'
-  echo '{"status": "done | fail | gate", "summary": "one paragraph", "size": "S|M|L (only when your estimate changed)", "gate": "feel-test | ambiguity (status gate only)", "message": "what the owner must decide (status gate only)", "touches": ["globs you changed or will change"]}'
+  echo '{"status": "done | fail | gate", "summary": "one paragraph", "size": "S|M|L (only when your estimate changed)", "gate": "feel-test | ambiguity (status gate only)", "message": "what the owner must decide (status gate only); for ambiguity, numbered questions, one per line, each followed by a line Recommended: <your answer>, <why in a clause>", "touches": ["globs you changed or will change"]}'
   echo '```'
   echo "Then stop. Do not advance the tracker yourself; the orchestrator calls advance.sh."
   echo "Stop with status fail when a check you cannot fix stays red; status gate when the codebase does not answer a question."

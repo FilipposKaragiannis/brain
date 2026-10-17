@@ -30,6 +30,19 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
 | `merge` | the PR is merged (release the worktree with `steward`) |
 | `escalation`, `ambiguity` | the decision, or the fix, in a sentence |
 
+## Asking (agents raising `ambiguity`)
+
+The message is numbered questions, one per line, each answerable in a sentence. Under each, a
+line `Recommended:` with the answer the agent would pick and why, in one clause, from the code
+or the spec. The owner can then reply "as recommended" or change one answer.
+
+```
+1. Should the motion touch the ball, or stay visual only?
+   Recommended: visual only, so the charge hold stays hash-inert and the goldens do not move.
+2. Is the motion the same for the tap and the depth pass?
+   Recommended: the same, until a feel test says otherwise.
+```
+
 ## Never
 
 - Never clear a gate without the owner's answer in this turn.
