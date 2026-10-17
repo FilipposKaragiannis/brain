@@ -150,8 +150,7 @@ for h in create remove; do
   printf '#!/bin/sh\n# Written by flow:init. Claude Worktree%s hook: lands --worktree sessions in the pool.\nFLOW_PLUGIN="${FLOW_PLUGIN:-%s}"\nexec "$FLOW_PLUGIN/hooks/worktree-%s.sh" "$@"\n' "$( [ "$h" = create ] && echo Create || echo Remove )" "$plugin" "$h" > "$tmp"
   install_file "$tmp" ".flow/hooks/worktree-$h.sh" 755
 done
-settings_has_hook=0
-[ -f .claude/settings.json ] && grep -q 'worktree-create.sh' .claude/settings.json && settings_has_hook=1
+settings_has_hook=0; claude_hooks_present && settings_has_hook=1
 
 # 4. Codex: rules and agents (Codex cannot load agents or rules from a plugin).
 install_file "$plugin/templates/flow.rules" .codex/rules/flow.rules "" guard
@@ -176,6 +175,8 @@ if [ -f .flow/config.yaml ]; then
   [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"
   a="$(cfg_or adapters.default local)"; [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.default names $a, not an adapter"
 fi
+[ -d .claude ] && [ "$settings_has_hook" -eq 0 ] && gap ".claude/settings.json: no WorktreeCreate and WorktreeRemove hooks, so claude --worktree lands outside the pool (init prints the entry under Next)"
+
 
 if [ "$check" -eq 1 ]; then
   [ "$drift" -eq 0 ] && echo "init: up to date with flow v$version"

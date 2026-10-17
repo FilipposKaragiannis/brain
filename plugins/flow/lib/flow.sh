@@ -41,6 +41,14 @@ flow_home() {
   printf '%s/.flow' "$main"
 }
 
+# claude_hooks_present [root]: the project's Claude settings name both flow worktree hooks. A plugin
+# cannot provide them (the worktree is created before plugins load), so init prints the entry
+# and the install check and the session-start hook report it missing.
+claude_hooks_present() {
+  _r="${1:-.}"; _f="$(cat "$_r/.claude/settings.json" "$_r/.claude/settings.local.json" 2>/dev/null)"
+  printf '%s' "$_f" | grep -q 'worktree-create.sh' && printf '%s' "$_f" | grep -q 'worktree-remove.sh'
+}
+
 config_file() { printf '%s/config.yaml' "$(flow_home)"; }
 
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }

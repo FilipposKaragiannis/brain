@@ -1,5 +1,14 @@
 # flow
 
+## 1.3.1 (2026-10-17)
+
+- `init --check` reports missing Claude worktree hooks as a gap when the project has a `.claude`
+  folder: `.claude/settings.json` (or `settings.local.json`) must name both
+  `worktree-create.sh` and `worktree-remove.sh`. Init still only prints the entry; the file is
+  the owner's.
+- The session-start hook says so too, on every session, so a branch from before the flow was set
+  up (no hooks in its settings) shows at once.
+
 ## 1.3.0 (2026-10-13)
 
 - `steward.sh prune [--dry-run]` deletes the reports of closed items. Reports outlive the
