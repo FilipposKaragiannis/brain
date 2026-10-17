@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "The work flow: pick the next ready item, plan, implement, test, review, verify and open a PR, with agents in worktrees and human gates only where a human adds value.",
   "keywords": [
     "workflow",
@@ -130,6 +130,13 @@
       "displayName": "Comments",
       "shortDescription": "Address PR review comments",
       "defaultPrompt": "Use $comments to address the review comments on this PR."
+    },
+    {
+      "name": "intake",
+      "invocation": "user",
+      "displayName": "Intake",
+      "shortDescription": "File the notes as typed items",
+      "defaultPrompt": "Use $intake to file my notes as items."
     },
     {
       "name": "explain",

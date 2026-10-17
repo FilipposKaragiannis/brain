@@ -1,0 +1,6 @@
+interface:
+  display_name: "Intake"
+  short_description: "File the notes as typed items"
+  default_prompt: "Use $intake to file my notes as items."
+policy:
+  allow_implicit_invocation: false

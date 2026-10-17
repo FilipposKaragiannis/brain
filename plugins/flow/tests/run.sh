@@ -439,6 +439,59 @@ check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/
 printf '%s\t2\t1\t1\n' "$(date -u +%FT%TZ)" > "$home2/retros.log"
 check "retro job: retros.log marks the lessons read" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude --min-lessons 1 | grep -q 'quiet: 0 new'"
 
+echo "intake (fake hosts)"
+cat > "$work/notes.md" <<'MD'
+# Notes:
+
+- First note, with a detail
+	- sub line under it
+
+## Bugs:
+
+- Second note
+- [x] already done
+- filed long ago #promoted -> #3
+
+### Code
+- Third note
+	```c#
+	var x = 1;
+	```
+MD
+python3 -I "$P/scripts/_intake.py" parse "$work/notes.md" "$work/none.jsonl" 10 > "$work/parsed.json"
+check "intake parse: bullets with their sub-lines, checked and promoted ones skipped" sh -c "python3 -c 'import json; d=json.load(open(\"$work/parsed.json\")); n=d[\"notes\"]; assert [x[\"id\"] for x in n]==[\"n1\",\"n2\",\"n3\"] and \"sub line\" in n[0][\"text\"] and \"var x\" in n[2][\"text\"] and d[\"left\"]==0'"
+check "intake parse: the section is the heading chain" sh -c "python3 -c 'import json; n=json.load(open(\"$work/parsed.json\"))[\"notes\"]; assert (n[0][\"section\"],n[2][\"section\"])==(\"Notes\",\"Notes > Bugs > Code\")'"
+check "intake parse: the batch caps it and counts the rest" sh -c "python3 -I '$P/scripts/_intake.py' parse '$work/notes.md' '$work/none.jsonl' 1 | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d[\"notes\"])==1 and d[\"left\"]==2'"
+cat > "$work/bin/claude" <<'SH'
+#!/bin/sh
+printf '%s\t%s\t%s\n' "$0" "$PWD" "$*" >> "$HOST_LOG"
+out="$(printf '%s' "$*" | sed -n 's/.* and write \([^ ]*results.json\).*/\1/p')"
+[ -n "$out" ] && [ -z "${FAKE_NO_RESULTS:-}" ] && python3 -c "
+import json, os, sys
+n = json.load(open(os.path.join(os.path.dirname(sys.argv[1]), 'notes.json')))['notes'][0]
+o = 'filed' if 'First' in n['text'] else 'duplicate' if 'Second' in n['text'] else 'kept'
+json.dump([{'note': n['id'], 'outcome': o, 'issues': []}], open(sys.argv[1], 'w'))" "$out"
+exit 0
+SH
+chmod +x "$work/bin/claude"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\njobs:\n  permission_mode: auto\nintake:\n  notes: %s\n' "$work/notes.md" > "$home2/config.yaml"
+cp "$work/notes.md" "$work/notes.orig"
+check "intake job: no notes file is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/intake.sh' claude --notes '$work/missing.md' | grep -q 'quiet: no notes file'"
+FAKE_NO_RESULTS=1 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude >/dev/null 2>&1; code=$?
+check "intake job: no results file fails and leaves the notes" sh -c "[ $code -eq 1 ] && cmp -s '$work/notes.md' '$work/notes.orig'"
+: > "$HOST_LOG"
+FLOW_HOME="$home2" "$P/jobs/intake.sh" claude > "$work/intake.out"
+check "intake job: one session per note, with jobs.permission_mode" sh -c "[ \$(grep -c 'intake skill' '$HOST_LOG') = 3 ] && grep -q -- '--permission-mode auto' '$HOST_LOG'"
+check "intake job: filed and duplicate notes leave the file, kept ones and headings stay" sh -c "! grep -q 'First note' '$work/notes.md' && ! grep -q 'sub line' '$work/notes.md' && ! grep -q 'Second note' '$work/notes.md' && grep -q 'Third note' '$work/notes.md' && grep -q '^## Bugs' '$work/notes.md' && grep -q 'already done' '$work/notes.md'"
+check "intake job: the ledger records the handled notes" [ "$(wc -l < "$home2/log/intake-ledger.jsonl" | tr -d ' ')" = 2 ]
+check "intake job: says what it did" grep -q 'done: duplicate 1 filed 1 kept 1' "$work/intake.out"
+cp "$work/notes.orig" "$work/kept.md"
+: > "$HOST_LOG"
+FLOW_HOME="$home2" "$P/jobs/intake.sh" claude --notes "$work/kept.md" --keep-notes >/dev/null
+check "intake job: --keep-notes leaves the file and the ledger skips what it filed" sh -c "cmp -s '$work/kept.md' '$work/notes.orig' && [ \$(grep -c 'intake skill' '$HOST_LOG') = 1 ] && grep -q 'Third note' \$(grep -l Third '$home2'/tmp/intake-*/n1/notes.json | tail -1)"
+check "jobs.permission_mode refuses anything but dontAsk or auto" sh -c "FLOW_PERMISSION_MODE=bypassPermissions FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_permission_mode' 2>&1 | grep -q 'dontAsk or auto'"
+printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"; chmod +x "$work/bin/claude"
+
 echo "new item and pool growth"
 mkdir -p "$work/grow" && cd "$work/grow" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && printf 'local\n' > .gitignore && printf 'secret\n' > local && git add -A && git commit -qm init
