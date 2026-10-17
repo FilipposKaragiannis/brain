@@ -26,7 +26,16 @@ done
 case "$workers" in ''|*[!0-9]*|0) die "--workers takes a number from 1" 2 ;; esac
 # A tracker that keeps a board (the GitHub adapter's sync) is brought in step once per schedule,
 # so an item whose last missing field was just set shows as ready before a worker looks.
+# Gates the owner answered on the tracker (an /answer comment) clear first, so the item they free
+# can be picked in this same schedule.
 if [ -z "$worker" ]; then
+  mkdir -p "$(job_log_dir)"
+  if flow_lock answers; then
+    for a in $(adapters_configured); do
+      [ -x "$FLOW_PLUGIN/adapters/$a/answers.sh" ] && { adapter answers "$a" 2>/dev/null | while read -r id; do job_say "$id: gate answered on the tracker"; done; }
+    done
+    flow_unlock
+  fi
   for a in $(adapters_configured); do
     [ -x "$FLOW_PLUGIN/adapters/$a/sync.sh" ] && { adapter sync "$a" >/dev/null 2>&1 || true; }
   done

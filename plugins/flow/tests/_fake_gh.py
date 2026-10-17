@@ -1,5 +1,5 @@
 """The fake gh used by the adapter tests. See fake-gh.sh."""
-import json, re, sys
+import json, os, re, sys
 db = sys.argv[1]; args = sys.argv[2:]
 data = json.load(open(db))
 def save(): json.dump(data, open(db, "w"))
@@ -40,7 +40,8 @@ elif args[:2] == ["issue", "edit"]:
         else: k += 1
     save()
 elif args[:2] == ["issue", "comment"]:
-    i = issue(args[2]); i.setdefault("comments", []).append({"id": len(i.get("comments", [])) + 1, "body": sys.stdin.read()}); save()
+    i = issue(args[2]); i.setdefault("comments", []).append({"id": i["number"] * 100 + len(i.get("comments", [])) + 1, "body": sys.stdin.read(),
+                                                          "user": {"login": os.environ.get("FAKE_GH_USER", "owner")}}); save()
 elif args[:2] == ["issue", "close"]:
     issue(args[2])["state"] = "CLOSED"; save()
 elif args[:2] == ["label", "create"]:
@@ -145,10 +146,17 @@ elif args[0] == "api":
     if m and "-X" not in args:
         i = issue(m.group(1))
         if "-F" in args:
-            i.setdefault("comments", []).append({"id": len(i.get("comments", [])) + 1, "body": sys.stdin.read()}); save(); print("{}")
+            i.setdefault("comments", []).append({"id": i["number"] * 100 + len(i.get("comments", [])) + 1, "body": sys.stdin.read(),
+                                                 "user": {"login": os.environ.get("FAKE_GH_USER", "owner")}}); save(); print("{}")
         else:
             print(json.dumps(i.get("comments", [])))
         sys.exit()
+    if path == "user":
+        print("owner" if "-q" in args else json.dumps({"login": "owner"})); sys.exit()
+    m = re.match(r"repos/[^/]+/[^/]+/issues/comments/(\d+)/reactions", path)
+    if m:
+        data.setdefault("reactions", []).append({"comment": int(m.group(1)), "content": [a for a in args if a.startswith("content=")][0][8:]})
+        save(); print("{}"); sys.exit()
     m = re.match(r"repos/[^/]+/[^/]+/issues/comments/(\d+)", path)
     if m:
         for i in data["issues"]:

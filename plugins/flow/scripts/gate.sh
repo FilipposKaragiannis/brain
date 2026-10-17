@@ -21,7 +21,11 @@ $message" >/dev/null
   clear)
     [ $# -ge 2 ] || die "usage: gate.sh clear <item> [<message>]" 2
     item="$2"; message="${3:-cleared}"
-    adapter write-state "$item" "gate=none" "attempts=0" "last_event=$(now_iso) gate cleared: $message" >/dev/null
+    record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""
+    [ -f "$record" ] && { asked="$(json_get "$(cat "$record")" message)"; gate="$(json_get "$(cat "$record")" gate)"; }
+    # The question and the answer stay in the state, so the next step's brief carries them.
+    adapter write-state "$item" "gate=none" "attempts=0" "answered=$gate" "asked=$asked" "answer=$message" \
+      "last_event=$(now_iso) gate cleared: $message" >/dev/null
     adapter comment "$item" --body "Gate cleared: $message" >/dev/null
     rm -f "$home/gates/$(item_slug "$item").json"
     echo "gate cleared on $item; run next $item to continue" ;;

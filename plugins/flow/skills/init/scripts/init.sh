@@ -96,6 +96,7 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  # priority_order: [P0, P1, P2, P3]"
         echo "  # ready_needs: [priority, size]   # an unstarted item without these is not ready"
         echo "  # project: 1                  # the project whose Status follows the flow state"
+        echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
         echo "  #   gate: Needs you           # also backlog, ready, running, review"; }
       echo "# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism."
@@ -137,7 +138,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  # permission_mode: auto    # dontAsk (default) denies edits without an allow list; auto lets the classifier decide"
       echo "# The intake job files the notes in this file as items (jobs/intake.sh, nightly):"
       echo "# intake:"
-      echo "#   notes: ~/Desktop/notes.md"
+      echo "#   notes: docs/notes.md      # in the repo: committed and pushed after each run (commit: false to stop)"
       echo "#   batch: 10"
     } > .flow/config.yaml
     [ -s .flow/config.yaml ] || die "could not write .flow/config.yaml"
