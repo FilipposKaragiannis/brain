@@ -87,7 +87,17 @@ if [ ! -f .flow/config.yaml ]; then
       echo "# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined."
       echo "auto_gates:"
       echo "  # plan-approval: S,M"
-      [ -n "$repo" ] && { echo "github:"; echo "  repo: $repo"; echo "  limit: 100"; }
+      [ -n "$repo" ] && { echo "github:"; echo "  repo: $repo"; echo "  limit: 500"
+        echo "  # Opt in to the issue types, the org issue fields and one project's Status:"
+        echo "  # types: true                 # kind sets the type (Epic, Bug, Task); flow:new --type picks others"
+        echo "  # fields:"
+        echo "  #   size: Size                # a single-select issue field replaces the size: labels"
+        echo "  #   priority: Priority        # orders the ready items"
+        echo "  # priority_order: [P0, P1, P2, P3]"
+        echo "  # ready_needs: [priority, size]   # an unstarted item without these is not ready"
+        echo "  # project: 1                  # the project whose Status follows the flow state"
+        echo "  # status:                     # override the Status names, one key each:"
+        echo "  #   gate: Needs you           # also backlog, ready, running, review"; }
       echo "# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism."
       echo "# A claim with no free worktree adds one (named after the last entry, ../$(basename "$main")-wt-<n>)"
       echo "# while the pool is below pool_max, and the steward appends it here. 0 never adds."

@@ -36,7 +36,10 @@ for item in items:
         continue
     if item.get("state", {}).get("gate", "none") not in ("", "none"):
         continue
+    if item.get("needs"):
+        continue
     if any(blocker_open(b) for b in item.get("blocked_by", [])):
         continue
     ready.append(item)
+ready.sort(key=lambda i: i.get("rank", 999))
 print(json.dumps(ready))

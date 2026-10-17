@@ -1,14 +1,17 @@
 #!/bin/sh
-# github create <kind> <title> [--size S|M|L] [--blocked-by gh#a,gh#b] [--body TEXT] [--parent gh#N]:
-# a new issue; prints its id. kind epic adds the epic label, bug the bug label. A parent makes it
-# a native sub-issue; blockers become native dependency edges (and stay readable in the body).
+# github create <kind> <title> [--size S|M|L] [--type NAME] [--blocked-by gh#a,gh#b] [--body TEXT] [--parent gh#N]:
+# a new issue; prints its id. With github.types true the kind sets the issue type (epic Epic, bug
+# Bug, task Task, or --type), else epic adds the epic label and bug the bug label. The size goes to
+# the github.fields.size issue field when set, else a size: label. A parent makes it a native
+# sub-issue; blockers become native dependency edges (and stay readable in the body).
 . "$(dirname "$0")/_gh.sh"
 [ $# -ge 2 ] || die "usage: create <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--parent gh#N]" 2
 kind="$1"; title="$2"; shift 2
-size=""; blocked=""; body=""; parent=""
+size=""; blocked=""; body=""; parent=""; type=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --size) size="$2"; shift 2 ;;
+    --type) type="$2"; shift 2 ;;
     --blocked-by) blocked="$2"; shift 2 ;;
     --body) body="$2"; shift 2 ;;
     --parent) parent="$2"; shift 2 ;;
@@ -16,9 +19,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 repo="$(gh_repo)"
-labels=""
-case "$kind" in epic) labels="epic" ;; bug) labels="bug" ;; esac
-[ -n "$size" ] && { ensure_label "size:$size"; labels="${labels:+$labels,}size:$size"; }
+labels=""; types="$(cfg github.types)"
+if [ "$types" = "true" ]; then
+  [ -n "$type" ] || case "$kind" in epic) type="Epic" ;; bug) type="Bug" ;; *) type="Task" ;; esac
+else
+  case "$kind" in epic) labels="epic" ;; bug) labels="bug" ;; esac
+fi
+[ -n "$size" ] && [ -z "$GH_SIZE_FIELD" ] && { ensure_label "size:$size"; labels="${labels:+$labels,}size:$size"; }
 tail=""
 [ -n "$parent" ] && tail="$tail
 Parent #$(issue_number "$parent")"
@@ -27,6 +34,8 @@ Blocked by $(printf '%s\n' "$blocked" | tr ',' '\n' | while read -r b; do [ -n "
 [ -n "$labels" ] && set -- --label "$labels" || set --
 url="$(printf '%s\n%s\n' "$body" "$tail" | gh issue create -R "$repo" --title "$title" --body-file - "$@")" || die "cannot create the issue"
 n="${url##*/}"
+[ -n "$type" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" type "$repo" "$n" "$type" || echo "flow: could not set gh#$n to type $type" >&2; }
+[ -n "$size" ] && [ -n "$GH_SIZE_FIELD" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "$size" || echo "flow: could not set the size of gh#$n" >&2; }
 if [ -n "$parent" ]; then
   pid="$(gh issue view "$(issue_number "$parent")" -R "$repo" --json id -q .id)"
   cid="$(gh issue view "$n" -R "$repo" --json id -q .id)"

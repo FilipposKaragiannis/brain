@@ -34,11 +34,11 @@ for p in pool:
     run = " (running on %s)" % running[p["item"]]["host"] if p["item"] in running else ""
     print("| %s | %s | %s | %s | %s | %s%s |" % (p["worktree"], p["branch"], p["item"] or "-", p["step"] or "-", ev, p["state"], run))
 print("\n## Items")
-print("| item | kind | size | title | step | gate | worktree | blocked by |")
-print("|---|---|---|---|---|---|---|---|")
-for i in items:
+print("| item | kind | priority | size | title | step | gate | worktree | blocked by |")
+print("|---|---|---|---|---|---|---|---|---|")
+for i in sorted(items, key=lambda i: i.get("rank", 999)):
     s = i["state"]
-    print("| %s | %s | %s | %s | %s | %s | %s | %s |" % (i["id"], i["kind"], i.get("size") or s.get("size", ""), i["title"][:50],
+    print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (i["id"], i["kind"], i.get("priority", ""), i.get("size") or s.get("size", ""), i["title"][:50],
           s.get("step") or "-", s.get("gate") or "none", s.get("worktree") or "-", ", ".join(i.get("blocked_by", [])) or "-"))
 if gates:
     print("\n## Waiting on you")
