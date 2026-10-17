@@ -114,7 +114,7 @@ a{color:var(--accent)}
 <nav class="jump"><a href="#flows">Flows</a><a href="#playbooks">Playbooks</a><a href="#hooks">Hooks</a><a href="#skills">Skills</a><a href="#agents">Agents</a><a href="#install">Install</a></nav></header>
 <section id="plugins"><div class="key"><span><i class="ds"></i>skill</span><span><i class="da"></i>agent</span><span><i class="dh"></i>hook</span></div><div class="plugins" style="margin-top:12px">
 <div class="plugin" style="--pc:var(--c-standards)"><h3>standards<small>v1.1.0</small></h3><p>Enforce the coding standards</p><div class="dots" aria-label="2 skills, 6 agents, 8 hooks"><i class="ds"></i><i class="ds"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i></div></div>
-<div class="plugin" style="--pc:var(--c-flow)"><h3>flow<small>v1.7.0</small></h3><p>Run tracked work end to end</p><div class="dots" aria-label="17 skills, 12 agents, 3 hooks"><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i></div></div>
+<div class="plugin" style="--pc:var(--c-flow)"><h3>flow<small>v1.8.0</small></h3><p>Run tracked work end to end</p><div class="dots" aria-label="17 skills, 12 agents, 3 hooks"><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="ds"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="da"></i><i class="dh"></i><i class="dh"></i><i class="dh"></i></div></div>
 <div class="plugin" style="--pc:var(--c-craft)"><h3>craft<small>v1.0.0</small></h3><p>Design and improve deep modules</p><div class="dots" aria-label="2 skills, 0 agents, 0 hooks"><i class="ds"></i><i class="ds"></i></div></div>
 <div class="plugin" style="--pc:var(--c-meta)"><h3>meta<small>v1.1.0</small></h3><p>Write skills and run retros</p><div class="dots" aria-label="3 skills, 0 agents, 0 hooks"><i class="ds"></i><i class="ds"></i><i class="ds"></i></div></div>
 </div></section>
@@ -425,13 +425,13 @@ a{color:var(--accent)}
 <header><h3>From a playtest note to an issue</h3><p>You jot notes while you play. An agent files each one overnight.</p><ol class="strip" aria-label="the steps of this line"><li>implement</li><li>test</li><li>review</li><li>verify</li><li>pr</li><li class="gate">merge</li></ol></header>
 <ol class="steps">
 <li class=""><span class="n">1</span><div class="b">
-<div class="act">In .flow/config.yaml: intake.notes names your notes file; jobs.permission_mode: auto</div>
+<div class="act">In .flow/config.yaml: intake.notes: docs/notes.md, a file in the repo; jobs.permission_mode: auto</div>
 <p class="say">One bullet per note, sub-lines under it. Headings are hints at the kind and the area.</p>
 </div></li>
 <li class=""><span class="n">2</span><div class="b">
 <div class="cmd sh"><span class="p" aria-hidden="true">$</span><code><span class="c-claude">.flow/jobs/intake.sh claude --batch 3</span><span class="c-codex">.flow/jobs/intake.sh codex --batch 3</span><span class="c-say">File my next three notes</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
 <p class="say">One run by hand first. Each note gets its own fresh session: it checks the open items and the code, then files a typed, sized item with a suggested priority, or names the item it duplicates.</p>
-<div class="meta"><span class="out">&rarr; gh#341 to gh#343; the three notes leave the file</span></div>
+<div class="meta"><span class="out">&rarr; gh#341 to gh#343; the three notes leave the file, which is committed and pushed</span></div>
 </div></li>
 <li class=""><span class="n">3</span><div class="b">
 <div class="cmd sh"><span class="p" aria-hidden="true">$</span><code><span class="c-claude">&lt;repo&gt;/.flow/jobs/intake.sh claude</span><span class="c-codex">&lt;repo&gt;/.flow/jobs/intake.sh codex</span><span class="c-say">&lt;repo&gt;/.flow/jobs/intake.sh claude</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
@@ -442,8 +442,8 @@ a{color:var(--accent)}
 <p class="say">The agent only suggests one. An item without a priority is never ready, so nothing starts before you look.</p>
 </div></li>
 <li class="gateful"><span class="n">5</span><div class="b">
-<div class="cmd"><span class="p" aria-hidden="true">&rsaquo;</span><code><span class="c-claude">/flow:gate gh#342 &quot;a figure lunges at a ball in reach&quot;</span><span class="c-codex">$gate gh#342 &quot;a figure lunges at a ball in reach&quot;</span><span class="c-say">The answer for gh#342: a figure lunges at a ball in reach</span></code><button type="button" class="cp" aria-label="Copy the command">copy</button></div>
-<p class="say">A note the agent could not turn into testable lines waits at the ambiguity gate with numbered questions. Your answer opens it.</p>
+<div class="act">On the issue, comment: /answer as recommended, but 2 is a lunge</div>
+<p class="say">A note the agent could not turn into testable lines waits at the ambiguity gate: numbered questions, each with a recommended answer. The next scheduled run reads your /answer, clears the gate and hands your words to the next step.</p>
 <div class="stop"><b>ambiguity</b><span>Answer the questions in a sentence each.</span></div>
 </div></li>
 <li class=""><span class="n">6</span><div class="b">

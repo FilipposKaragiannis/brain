@@ -383,11 +383,22 @@ check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget ite
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [i.update(state='CLOSED') for i in d['issues'] if i['number']==40]; json.dump(d,open(p,'w'))"
 check "gh an epic is ready again once its sub-issues close" sh -c "'$P/adapters/github/list-ready.sh' | grep -q '\"gh#39\"'"
+"$P/scripts/gate.sh" raise 'gh#37' ambiguity "1. Visual only?
+   Recommended: yes." >/dev/null 2>&1
+printf '/answer 1. no, let it touch the ball' | FAKE_GH_USER=stranger gh issue comment 37 -R acme/widgets --body-file - >/dev/null
+printf 'thinking about it' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
+printf '/answer 1. no, keep it visual' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
+check "answers: an /answer from the owner after the gate clears it" [ "$("$P/adapters/github/answers.sh")" = "gh#37" ]
+check "answers: the owner's words, not a stranger's, and the question stay in the state" sh -c "'$P/adapters/github/read.sh' 'gh#37' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; assert (s[\"gate\"],s[\"answer\"],s[\"answered\"])==(\"none\",\"1. no, keep it visual\",\"ambiguity\") and \"Visual only?\" in s[\"asked\"]'"
+check "answers: the answer gets a +1 and a second pass finds nothing" sh -c "grep -q '\"content\": \"+1\"' '$FAKE_GH_DIR/issues.json' && [ -z \"\$('$P/adapters/github/answers.sh')\" ]"
+picked="$("$P/scripts/next.sh" 'gh#37' --json)"; brief="$(printf '%s' "$picked" | jget brief)"
+check "the next brief carries the owner's answer and the question" sh -c "grep -q \"The owner's answer to the last gate (ambiguity)\" '$brief' && grep -q 'Answer: 1. no, keep it visual' '$brief' && grep -q 'Visual only?' '$brief'"
+rm -f .flow/runs/gh-37.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 mkdir -p "$work/slackbin" && printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done >> "%s/slack.log"\n' "$work" > "$work/slackbin/curl" && chmod +x "$work/slackbin/curl"
 PATH="$work/slackbin:$PATH" FLOW_SLACK_WEBHOOK=https://hook.example "$P/scripts/notify.sh" ambiguity 'gh#32' "1. Visual only?
    Recommended: yes, hash-inert." >/dev/null
 check "notify: a gate names the item by title and links it" grep -qF '*flow: ambiguity* on <https://github.com/acme/widgets/issues/32|gh#32 Bug>' "$work/slack.log"
-check "notify: the questions keep their lines, the recommendation under each" sh -c "python3 -c 'import json,sys; t=[json.loads(l) for l in open(sys.argv[1]) if l.startswith(\"{\")][0][\"text\"]; assert \"\\n1. Visual only?\\n   Recommended: yes\" in t and \"flow:gate gh#32\" in t' '$work/slack.log'"
+check "notify: the questions keep their lines, the recommendation under each" sh -c "python3 -c 'import json,sys; t=[json.loads(l) for l in open(sys.argv[1]) if l.startswith(\"{\")][0][\"text\"]; assert \"\\n1. Visual only?\\n   Recommended: yes\" in t and \"comment \x60/answer\" in t' '$work/slack.log'"
 cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
 
 echo "comments plumbing (fake gh)"
@@ -497,6 +508,15 @@ cp "$work/notes.orig" "$work/kept.md"
 : > "$HOST_LOG"
 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude --notes "$work/kept.md" --keep-notes >/dev/null
 check "intake job: --keep-notes leaves the file and the ledger skips what it filed" sh -c "cmp -s '$work/kept.md' '$work/notes.orig' && [ \$(grep -c -- '-p /flow:intake on' '$HOST_LOG') = 1 ] && grep -q 'Third note' \$(grep -l Third '$home2'/tmp/intake-*/n1/notes.json | tail -1)"
+here="$(pwd)"; mkdir -p "$work/notesrepo" && cd "$work/notesrepo" && git init -q --bare origin.git && git clone -q origin.git app 2>/dev/null && cd app && git config user.email t@t && git config user.name t
+mkdir -p docs .flow && cp "$work/notes.orig" docs/notes.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && git push -q origin HEAD:main 2>/dev/null && git branch -q -M main && git branch -q -u origin/main
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\nintake:\n  notes: docs/notes.md\n' > .flow/config.yaml
+"$P/jobs/intake.sh" claude > "$work/notesrepo.out" 2>&1
+check "intake job: a tracked notes file is committed alone and pushed" sh -c "git -C '$work/notesrepo/origin.git' log -1 --format=%s main | grep -q '^chore(notes)' && ! git -C '$work/notesrepo/origin.git' show main:docs/notes.md | grep -q 'First note' && [ \"\$(git -C '$work/notesrepo/origin.git' show --name-only --format= main)\" = docs/notes.md ]"
+printf 'x\n' > other.txt && git add other.txt && git commit -qm other && printf -- '- Fourth note\n' >> docs/notes.md
+"$P/jobs/intake.sh" claude >> "$work/notesrepo.out" 2>&1
+check "intake job: other unpushed commits hold the push back" sh -c "grep -q 'other unpushed changes' .flow/log/intake.log && ! git -C '$work/notesrepo/origin.git' log --format=%s main | grep -q '^other'"
+cd "$here"
 check "jobs.permission_mode refuses anything but dontAsk or auto" sh -c "FLOW_PERMISSION_MODE=bypassPermissions FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_permission_mode' 2>&1 | grep -q 'dontAsk or auto'"
 printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"; chmod +x "$work/bin/claude"
 

@@ -1,5 +1,18 @@
 # flow
 
+## 1.8.0 (2026-10-17)
+
+- Answer a gate on GitHub: a comment after the gate's comment that starts with `/answer` (alone:
+  as recommended). The scheduled next job clears the gate with those words, reacts +1 and can
+  pick the item in the same run. Only the authenticated user counts, or `github.answer_from`.
+  The merge gate is not answered this way. Slack's gate notice says how.
+- A cleared gate keeps its question and answer in the item's state, and the next step's brief
+  shows them; before, the answer reached only a comment the next agent never read. A single
+  GitHub read now always fetches the state comment, since an unstarted item has no flow label.
+- `intake.notes` may be a path in the repository. A tracked notes file is committed alone and
+  pushed after the run when the main worktree is on the base branch and nothing else is
+  unpushed, so a cloud session reads the same notes; `intake.commit: false` turns it off.
+
 ## 1.7.0 (2026-10-17)
 
 - A gate notification names the item by its id and title. Slack links it to the tracker and

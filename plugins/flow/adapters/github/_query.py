@@ -8,7 +8,8 @@ count, issue field
 values and project items, so a list costs one call per page, not one per issue. The field values
 are asked for only when GH_SIZE_FIELD or GH_PRIORITY_FIELD is set, and the project items only when
 GH_PROJECT is set, because they need the read:project scope a default login lacks. The state
-comment is read only for issues that carry a flow label, as before. Prints one JSON object per
+comment is read for a single issue, and in a list only for issues that carry a flow label: an
+unstarted item keeps the last gate's answer there with no label. Prints one JSON object per
 line. FLOW_GH_PAGE sets the page size (tests)."""
 import json, os, re, subprocess, sys
 
@@ -58,8 +59,8 @@ def graphql(query, **variables):
     return gh(*args)
 
 
-def state_comment(repo, issue, marker):
-    if not any(l["name"].split(":")[0] in ("step", "gate", "wt", "flow") for l in issue["labels"]):
+def state_comment(repo, issue, marker, always=False):
+    if not always and not any(l["name"].split(":")[0] in ("step", "gate", "wt", "flow") for l in issue["labels"]):
         return {}
     for c in gh("api", "repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"])) or []:
         if marker in c.get("body", ""):
@@ -71,7 +72,7 @@ def state_comment(repo, issue, marker):
     return {}
 
 
-def raw(repo, node, marker):
+def raw(repo, node, marker, always=False):
     fields = {}
     for v in (node.get("issueFieldValues") or {}).get("nodes", []):
         name = (v.get("field") or {}).get("name")
@@ -90,7 +91,7 @@ def raw(repo, node, marker):
                            "status": (p.get("fieldValueByName") or {}).get("name", "")}
                           for p in (node.get("projectItems") or {}).get("nodes", [])],
     }
-    issue["state_comment"] = state_comment(repo, issue, marker)
+    issue["state_comment"] = state_comment(repo, issue, marker, always)
     return issue
 
 
@@ -102,7 +103,7 @@ def main():
         node = data and data["data"]["repository"]["issue"]
         if not node:
             sys.exit(1)
-        print(json.dumps(raw(repo, node, marker)))
+        print(json.dumps(raw(repo, node, marker, always=True)))
         return
     states = "OPEN" if sys.argv[4] == "open" else None
     what = "open issues" if states else "issues"

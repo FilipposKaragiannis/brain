@@ -42,7 +42,8 @@ esc = lambda s: s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"
 title, link, url, gate, item, message = sys.argv[1:7]
 if gate:
     head = "*flow: %s* on %s" % (esc(gate), "<%s|%s>" % (url, esc(link)) if url else "*%s*" % esc(link))
-    tail = "\nAnswer in a session: `flow:gate %s \"<your answer>\"`" % item
+    tail = ("\nAnswer on the issue: comment `/answer <your answer>`, or `/answer` alone for the recommendations."
+            if url and item.startswith("gh#") else "\nAnswer in a session: `flow:gate %s \"<your answer>\"`" % item)
 else:
     head, tail = "*%s*" % esc(title), ""
 print(json.dumps({"text": "%s\n%s%s" % (head, esc(message), tail)}))' "$title" "$link" "${url:-}" "${gate:-}" "${item:-}" "$message")"

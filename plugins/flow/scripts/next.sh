@@ -121,6 +121,15 @@ brief="$reports/brief-$step.md"
   echo "Then stop. Do not advance the tracker yourself; the orchestrator calls advance.sh."
   echo "Stop with status fail when a check you cannot fix stays red; status gate when the codebase does not answer a question."
   echo
+  answer="$(state_get "$data" answer)"; answered="$(state_get "$data" answered)"
+  if [ -n "$answer" ]; then
+    echo "## The owner's answer to the last gate${answered:+ ($answered)}"
+    echo
+    asked="$(state_get "$data" asked)"
+    [ -n "$asked" ] && { echo "Asked:"; echo; printf '%s\n' "$asked"; echo; }
+    echo "Answer: $answer"
+    echo
+  fi
   echo "## The item"
   echo
   json_get "$data" body

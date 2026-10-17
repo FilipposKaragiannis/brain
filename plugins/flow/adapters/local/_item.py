@@ -18,7 +18,8 @@ import re
 import sys
 from datetime import datetime, timezone
 
-STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_event", "pr", "touches"]
+STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_event", "pr", "touches",
+              "answered", "asked", "answer"]
 LIST_KEYS = {"blocked_by", "labels", "touches"}
 INT_KEYS = {"attempts"}
 
@@ -48,7 +49,7 @@ def unquote(s):
 
 def quote(s):
     s = str(s)
-    if s == "" or re.search(r"[:#\[\]{},\"']|^\s|\s$", s) or s.lower() in ("true", "false", "null", "none"):
+    if s == "" or re.search(r"[:#\[\]{},\"'\n]|^\s|\s$", s) or s.lower() in ("true", "false", "null", "none"):
         return json.dumps(s, ensure_ascii=False)
     return s
 

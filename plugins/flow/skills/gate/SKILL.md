@@ -30,6 +30,14 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
 | `merge` | the PR is merged (release the worktree with `steward`) |
 | `escalation`, `ambiguity` | the decision, or the fix, in a sentence |
 
+## Answering on the tracker
+
+On GitHub the owner can answer without a session: a comment on the issue, after the gate's
+comment, that starts with `/answer`. The rest is the answer; `/answer` alone takes the
+recommendations. The scheduled `next` job reads it, clears the gate with those words and
+reacts +1, then picks the item up in the same run. Only the authenticated user's comments
+count, or the logins in `github.answer_from`. The merge gate is not answered this way.
+
 ## Asking (agents raising `ambiguity`)
 
 The message is numbered questions, one per line, each answerable in a sentence. Under each, a
