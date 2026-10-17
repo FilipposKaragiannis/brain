@@ -20,6 +20,12 @@ host_permission_mode() {
   case "${_mode:-dontAsk}" in dontAsk|auto) printf '%s' "${_mode:-dontAsk}" ;;
     *) echo "flow: jobs.permission_mode is dontAsk or auto, not $_mode" >&2; return 2 ;; esac
 }
+# host_skill_prompt <host> <plugin> <skill> <text>: a prompt that starts the skill as the owner
+# would type it (/plugin:skill on Claude, $skill on Codex), then the text as its arguments. Most
+# flow skills are user-invoked only, so a prompt asking the model to invoke one is refused.
+host_skill_prompt() {
+  case "$1" in codex) printf '$%s %s' "$3" "$4" ;; *) printf '/%s:%s %s' "$2" "$3" "$4" ;; esac
+}
 host_codex_model() { printf '%s' "$1" | sed 's/^sonnet$/gpt-6-luna/; s/^opus$/gpt-6-sol/; s/^fable$/gpt-6-astra/; s/^haiku$/gpt-6-luna/'; }
 host_run() {
   host="$1"; dir="$2"; prompt="$3"; model="${4:-}"; effort="${5:-}"

@@ -22,7 +22,9 @@ while [ "$n" -lt "$max" ]; do
   get() { printf '%s' "$step" | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"; }
   item="$(get item)"; wt="$(get worktree)"; brief="$(get brief)"; model="$(get model)"; effort="$(get effort)"
   echo "run-unattended: $item step $(get step) in $wt"
-  host_run "$host" "$wt" "Follow the brief in $brief exactly. Work in $wt." "$model" "$effort"
+  prompt="Follow the brief in $brief exactly. Work in $wt."
+  skill="$(get skill)"; [ -n "$skill" ] && [ -z "$(get agent)" ] && prompt="$(host_skill_prompt "$host" flow "$skill" "$item. $prompt")"
+  host_run "$host" "$wt" "$prompt" "$model" "$effort"
   "$plugin/scripts/advance.sh" "$item"; code=$?
   [ "$code" -eq 0 ] || { echo "run-unattended: stopped (exit $code)"; exit "$code"; }
 done

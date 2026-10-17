@@ -20,7 +20,7 @@ case "$read_so_far" in ''|*[!0-9]*) read_so_far=0 ;; esac
 new=$((total - read_so_far)); [ "$new" -ge 0 ] || new="$total"
 [ "$new" -ge "$min" ] || { job_say "quiet: $new new lesson(s), minimum $min"; exit 0; }
 job_say "running over $new new lesson(s)"
-host_run "$host" "$main" "Invoke the meta plugin's retro skill (Claude: /meta:retro, Codex: \$retro) unattended: nobody answers questions. Read the $new lessons since the last retro from $home/lessons.jsonl ($total lines, $read_so_far read before). Marketplace changes go in a PR${market:+ from the marketplace at $market}; project changes are listed, not applied, in $home/reports/retro-$(date +%F).md. Append the retros.log line with $total as the lessons read so far." "$(job_model)" "$(job_effort)" \
+host_run "$host" "$main" "$(host_skill_prompt "$host" meta retro "Unattended: nobody answers questions. Read the $new lessons since the last retro from $home/lessons.jsonl ($total lines, $read_so_far read before). Marketplace changes go in a PR${market:+ from the marketplace at $market}; project changes are listed, not applied, in $home/reports/retro-$(date +%F).md. Append the retros.log line with $total as the lessons read so far.")" "$(job_model)" "$(job_effort)" \
   >> "$(job_log_dir)/$job.log" 2>&1 || job_say "host exit $?"
 [ -f "$home/reports/retro-$(date +%F).md" ] && job_say "report: $home/reports/retro-$(date +%F).md"
 job_say "done"
