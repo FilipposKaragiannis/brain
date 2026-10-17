@@ -1,5 +1,6 @@
 schema_version: "1.1"
 name: improve-finds-shallow
+tags: [baseline]
 runs: 3
 execution:
   max_turns: 20

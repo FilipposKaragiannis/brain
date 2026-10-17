@@ -44,7 +44,9 @@ each from the repository; `init --check` reports gaps until they are filled. Com
 members, `[why-comment]` for a math or physics `//`. `standards:review` runs the two-axis review.
 `init` stamps what it wrote (`.standards/stamp`), refuses to replace a copy edited by hand
 (`--force` overrides), and a `SessionStart` hook asks for `init` when the stamp is behind the plugin.
-Hook tests: `plugins/standards/hooks/tests/run.sh`. Evals: `tools/eval.sh standards` (costs money, not in CI).
+Hook tests: `plugins/standards/hooks/tests/run.sh`. Evals: `tools/eval.sh standards` (costs money, not in CI);
+`tools/eval.sh <plugin> --baseline` adds a no-plugin arm to the cases tagged `baseline` (the advisory
+skills: `standards:review`, the craft skills) and `--tag negative` runs the should-not-trigger cases.
 
 ## Flow plugin
 `flow:init` writes `.flow/config.yaml` (adapters, base branch, worktree pool and `pool_max`,
