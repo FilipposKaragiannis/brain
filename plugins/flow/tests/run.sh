@@ -313,6 +313,73 @@ child2="$("$P/adapters/github/create.sh" task "Slice two" --blocked-by 'gh#21')"
 check "gh create: blocker edge recorded" [ "$("$P/adapters/github/read.sh" "$child2" | jget blocked_by)" = '["gh#21"]' ]
 check "gh parent from the body line in list" sh -c "'$P/adapters/github/list.sh' | grep -q '\"parent\": *\"gh#20\"'"
 
+echo "github fields, types and project (fake gh)"
+cp "$FAKE_GH_DIR/issues.json" "$work/issues.saved"; cp .flow/config.yaml "$work/config.saved"
+cat > "$FAKE_GH_DIR/issues.json" <<'JSON'
+{"issues": [
+  {"number": 30, "title": "Epic", "state": "OPEN", "labels": [], "type": "Epic", "fields": {"Priority": "P1"}},
+  {"number": 31, "title": "Feature", "body": "Parent: #30", "state": "OPEN", "labels": [], "type": "Feature", "fields": {"Size": "S", "Priority": "P2"}, "project_item": "PI_31", "project_status": "Ready"},
+  {"number": 32, "title": "Bug", "state": "OPEN", "labels": [], "type": "Bug", "fields": {"Size": "M", "Priority": "P0"}},
+  {"number": 33, "title": "No priority", "state": "OPEN", "labels": [], "type": "Task", "fields": {"Size": "S"}},
+  {"number": 34, "title": "No size", "state": "OPEN", "labels": [], "type": "Task", "fields": {"Priority": "P1"}},
+  {"number": 35, "title": "Blocked", "state": "OPEN", "labels": [], "type": "Task", "fields": {"Size": "S", "Priority": "P3"}, "blocked_by": [33]},
+  {"number": 36, "title": "Started", "state": "OPEN", "labels": ["step:implement"], "type": "Task", "fields": {"Size": "S", "Priority": "P2"}},
+  {"number": 37, "title": "Asking", "state": "OPEN", "labels": ["gate:ambiguity"], "type": "Task", "fields": {"Size": "S", "Priority": "P2"}},
+  {"number": 38, "title": "Merging", "state": "OPEN", "labels": ["gate:merge"], "type": "Task", "fields": {"Size": "S", "Priority": "P2"}}
+]}
+JSON
+cat > .flow/config.yaml <<'YAML'
+adapters:
+  default: github
+base: main
+github:
+  repo: acme/widgets
+  types: true
+  fields:
+    size: Size
+    priority: Priority
+  priority_order: [P0, P1, P2, P3]
+  ready_needs: [priority, size]
+  project: 1
+pool:
+  - ../wt-1
+  - ../wt-2
+notify:
+  desktop: false
+YAML
+"$P/adapters/github/list.sh" | python3 -c 'import json,sys; [print("%s %s %s %s %s" % (i["id"], i["kind"], i["size"] or "-", i["priority"] or "-", ",".join(i["needs"]) or "-")) for i in json.load(sys.stdin)]' > "$work/ghlist"
+check "gh type picks the kind: Epic epic, Bug bug, Feature task" sh -c "'$P/adapters/github/list.sh' | python3 -c 'import json,sys; k={i[\"id\"]:i[\"kind\"] for i in json.load(sys.stdin)}; assert (k[\"gh#30\"],k[\"gh#32\"],k[\"gh#31\"])==(\"epic\",\"bug\",\"task\")'"
+check "gh size and priority come from the issue fields" sh -c "'$P/adapters/github/read.sh' 'gh#32' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"size\"],i[\"priority\"],i[\"rank\"])==(\"M\",\"P0\",0)'"
+check "gh a Parent: line with a colon names the parent" [ "$("$P/adapters/github/read.sh" 'gh#31' | jget parent)" = "gh#30" ]
+check "gh an unstarted item lists the fields it lacks" sh -c "grep -qx 'gh#33 task S - priority' '$work/ghlist' && grep -qx 'gh#34 task - P1 size' '$work/ghlist'"
+check "gh an epic needs no size" grep -qx 'gh#30 epic - P1 -' "$work/ghlist"
+check "gh a started item needs nothing" grep -qx 'gh#36 task S P2 -' "$work/ghlist"
+check "gh ready: missing fields, blockers and gates are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
+check "gh list pages through every issue" [ "$(FLOW_GH_PAGE=2 "$P/adapters/github/list.sh" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "9" ]
+check "gh list stops at the limit and says so" sh -c "[ \"\$('$P/adapters/github/list.sh' --limit 3 2>'$work/limit.err' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')\" = 3 ] && grep -q 'github.limit 3' '$work/limit.err'"
+: > "$FAKE_GH_DIR/calls.log"
+"$P/adapters/github/sync.sh" > "$work/sync.out"
+status_of() { python3 -c "import json; print(next(i.get('project_status','') for i in json.load(open('$FAKE_GH_DIR/issues.json'))['issues'] if i['number']==$1))"; }
+check "gh sync: triaged and unblocked items are Ready" [ "$(status_of 30)$(status_of 32)" = "ReadyReady" ]
+check "gh sync: a missing field or an open blocker is Backlog" [ "$(status_of 33)$(status_of 34)$(status_of 35)" = "BacklogBacklogBacklog" ]
+check "gh sync: a started step is In progress, a gate Needs you, the merge gate In review" [ "$(status_of 36)|$(status_of 37)|$(status_of 38)" = "In progress|Needs you|In review" ]
+check "gh sync: a card already at its status costs no write" sh -c "! grep -q 'i=PI_31' '$FAKE_GH_DIR/calls.log' && ! grep -q '^gh#31' '$work/sync.out'"
+check "gh sync: a card missing from the project is added" sh -c "grep -q addProjectV2ItemById '$FAKE_GH_DIR/calls.log'"
+check "gh sync twice moves nothing" [ -z "$("$P/adapters/github/sync.sh")" ]
+: > "$FAKE_GH_DIR/calls.log"
+"$P/adapters/github/write-state.sh" 'gh#33' size=L gate=ambiguity
+check "gh write-state: size goes to the field, not a label" sh -c "[ \"\$('$P/adapters/github/read.sh' 'gh#33' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"size\"])')\" = L ] && ! grep -q 'size:L' '$FAKE_GH_DIR/calls.log'"
+check "gh write-state moves the card" [ "$(status_of 33)" = "Needs you" ]
+chore="$("$P/scripts/new.sh" task "Tidy" --size M --type Chore --body "## Acceptance
+- x")"
+check "gh create: --type sets the type, the size goes to the field, no labels" sh -c "'$P/adapters/github/read.sh' '$chore' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"type\"],i[\"size\"],i[\"labels\"])==(\"Chore\",\"M\",[])'"
+epic="$("$P/scripts/new.sh" epic "Big")"
+check "gh create: an epic gets the Epic type, not the label" sh -c "'$P/adapters/github/read.sh' '$epic' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"type\"],i[\"kind\"],i[\"labels\"])==(\"Epic\",\"epic\",[])'"
+picked="$("$P/scripts/next.sh" --json)"
+check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
+rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
+cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
+
 echo "comments plumbing (fake gh)"
 python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
 import json, sys

@@ -51,7 +51,53 @@ elif args[:2] == ["pr", "ready"]:
     pr()["isDraft"] = False; save()
 elif args[0] == "api" and "graphql" in args:
     q = args[args.index("query=" + [a for a in args if a.startswith("query=")][0][6:]) ] if False else [a for a in args if a.startswith("query=")][0]
-    if "addSubIssue" in q:
+    var = {}
+    for k in range(len(args) - 1):
+        if args[k] in ("-f", "-F") and not args[k + 1].startswith("query="):
+            key, value = args[k + 1].split("=", 1); var[key] = value
+    by_node = lambda node: next(i for i in data["issues"] if i.get("node", "I_%d" % i["number"]) == node)
+    field_defs = data.setdefault("field_defs", {"Size": ["S", "M", "L", "XL"], "Priority": ["P0", "P1", "P2", "P3"]})
+    statuses = data.setdefault("statuses", ["Backlog", "Ready", "Needs you", "In progress", "In review"])
+    def node_of(i):
+        fields = i.get("fields", {})
+        return {"number": i["number"], "title": i["title"], "body": i.get("body", ""), "state": i["state"], "url": i.get("url", ""),
+                "labels": {"nodes": [{"name": l} for l in i["labels"]]},
+                "issueType": {"name": i["type"]} if i.get("type") else None,
+                "parent": {"number": i["parent"]} if i.get("parent") else None,
+                "blockedBy": {"nodes": [{"number": b, "state": issue(b)["state"]} for b in i.get("blocked_by", [])]},
+                "issueFieldValues": {"nodes": [{"name": v, "field": {"name": k}} for k, v in fields.items()]},
+                "projectItems": {"nodes": [{"id": i["project_item"], "project": {"number": 1},
+                                            "fieldValueByName": {"name": i["project_status"]} if i.get("project_status") else None}]
+                                 if i.get("project_item") else []}}
+    if "pageInfo" in q:
+        rows = [i for i in data["issues"] if "states" not in var or i["state"] == "OPEN"]
+        start = int(var.get("after", "0")); first = int(var["first"]); page = rows[start:start + first]
+        more = start + first < len(rows)
+        print(json.dumps({"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": more, "endCursor": str(start + first)},
+                                                             "nodes": [node_of(i) for i in page]}}}}))
+    elif "...F" in q:
+        i = next((i for i in data["issues"] if i["number"] == int(var["number"])), None)
+        print(json.dumps({"data": {"repository": {"issue": node_of(i) if i else None}}}))
+    elif "issue(number:$number){id}" in q:
+        i = issue(var["number"]); print(json.dumps({"data": {"repository": {"issue": {"id": i.get("node", "I_%d" % i["number"])}}}}))
+    elif "issueFields(first:50)" in q:
+        nodes = [{"id": "F_" + n, "name": n, "options": [{"id": "O_%s_%s" % (n, o), "name": o} for o in opts]} for n, opts in field_defs.items()]
+        print(json.dumps({"data": {"repository": {"issueFields": {"nodes": nodes}}}}))
+    elif "setIssueFieldValue" in q:
+        name, option = var["o"].split("_", 2)[1:]
+        by_node(var["i"]).setdefault("fields", {})[name] = option; save(); print('{"data":{}}')
+    elif "issueTypes(first:50)" in q:
+        print(json.dumps({"data": {"repository": {"issueTypes": {"nodes": [{"id": "T_" + t, "name": t} for t in ("Task", "Bug", "Feature", "Epic", "Chore")]}}}}))
+    elif "updateIssueIssueType" in q:
+        by_node(var["i"])["type"] = var["t"][2:]; save(); print('{"data":{}}')
+    elif "projectV2(number:$number)" in q:
+        print(json.dumps({"data": {"repositoryOwner": {"projectV2": {"id": "P_1", "field": {"id": "S_1", "options": [{"id": "SO_" + s, "name": s} for s in statuses]}}}}}))
+    elif "addProjectV2ItemById" in q:
+        i = by_node(var["c"]); i["project_item"] = "PI_%d" % i["number"]; save()
+        print(json.dumps({"data": {"addProjectV2ItemById": {"item": {"id": i["project_item"]}}}}))
+    elif "updateProjectV2ItemFieldValue" in q:
+        i = next(i for i in data["issues"] if i.get("project_item") == var["i"]); i["project_status"] = var["o"][3:]; save(); print('{"data":{}}')
+    elif "addSubIssue" in q:
         p_node = args[args.index("p=") + 1] if "p=" in args else [a for a in args if a.startswith("p=")][0][2:]
         c_node = [a for a in args if a.startswith("c=")][0][2:]
         for i in data["issues"]:

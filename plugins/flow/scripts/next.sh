@@ -1,6 +1,6 @@
 #!/bin/sh
 # next.sh [item] [--json] [--embed-agent]: prepare the next step of one item. Without an item,
-# picks the first ready item from every adapter that no run holds and that does not overlap a
+# picks the first ready item, by rank (the tracker's priority), from every adapter that no run holds and that does not overlap a
 # claim. Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
@@ -45,6 +45,7 @@ for line in sys.stdin:
     for i in json.loads(line):
         if i["id"] not in seen:
             seen.add(i["id"]); out.append(i)
+out.sort(key=lambda i: i.get("rank", 999))
 print(json.dumps(out))')"
   n="$(json_length "$ready" "")"
   i=0
@@ -94,7 +95,8 @@ reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
   "started=$(now_iso)" "touches:=$touches" > "$(run_file "$item")"
-adapter write-state "$item" "step=$step" "profile=$profile" "size=$size" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
+sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
+adapter write-state "$item" "step=$step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock
 
 brief="$reports/brief-$step.md"

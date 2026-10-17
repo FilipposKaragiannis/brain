@@ -24,6 +24,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$workers" in ''|*[!0-9]*|0) die "--workers takes a number from 1" 2 ;; esac
+# A tracker that keeps a board (the GitHub adapter's sync) is brought in step once per schedule,
+# so an item whose last missing field was just set shows as ready before a worker looks.
+if [ -z "$worker" ]; then
+  for a in $(adapters_configured); do
+    [ -x "$FLOW_PLUGIN/adapters/$a/sync.sh" ] && { adapter sync "$a" >/dev/null 2>&1 || true; }
+  done
+fi
 if [ "$workers" -gt 1 ] && [ -z "$worker" ]; then
   [ -z "$item" ] || die "--workers runs the queue; drop the item, or run one worker for it" 2
   host_check "$host" || exit 2

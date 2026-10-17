@@ -1,5 +1,23 @@
 # flow
 
+## 1.5.0 (2026-10-17)
+
+- The GitHub adapter lists and reads issues through one paged GraphQL query: labels, native
+  parent, blockers, issue type, issue field values and project cards in one call per page, not
+  one per issue. `github.limit` defaults to 500 and the list says when it stops there.
+- Kind comes from the issue type (Epic, Bug, else task) before the labels. A `Parent: #N` line
+  with a colon names the parent too; the native sub-issue parent wins.
+- Opt-in keys under `github:` in `.flow/config.yaml`: `types`, `fields.size`, `fields.priority`,
+  `priority_order`, `ready_needs`, `project` and `status`. With them the size lives in the issue
+  field instead of a `size:` label, `flow:new --type` names the issue type, an unstarted item
+  lacking a `ready_needs` field is not ready, ready items go highest priority first (also on the
+  board), and the project card's Status follows the flow state: gate Needs you, merge gate In
+  review, a started step In progress, ready Ready, else Backlog.
+- `adapters/github/sync.sh [id]` brings the project in step; `write-state` runs it for its item
+  and the next job runs it once per schedule.
+- The query asks for issue field values only when a field is configured, and for project cards
+  only when `github.project` is set, so a login without the `read:project` scope still lists.
+
 ## 1.4.0 (2026-10-17)
 
 - The wrappers under `.flow/` hold no path and no version. Each sources the new `.flow/plugin.sh`,

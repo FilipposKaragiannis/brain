@@ -1,6 +1,7 @@
 #!/bin/sh
 # github write-state <id> key=value...: labels for step, gate, worktree (wt:), profile (flow:)
-# and size; the full state in the marked comment. Lists are comma-separated.
+# and size (the github.fields.size issue field instead, when set); the full state in the marked
+# comment; then the project card's Status. Lists are comma-separated.
 . "$(dirname "$0")/_gh.sh"
 [ $# -ge 2 ] || die "usage: write-state <id> key=value..." 2
 repo="$(gh_repo)"; n="$(issue_number "$1")"; shift
@@ -17,7 +18,9 @@ for kv in sys.argv[1:]:
 data.setdefault("gate", "none")
 print(json.dumps(data))' "$@")"
 add=""; remove=""
-for key in step gate worktree profile size; do
+label_keys="step gate worktree profile size"
+[ -n "$GH_SIZE_FIELD" ] && label_keys="step gate worktree profile"
+for key in $label_keys; do
   case "$key" in step) prefix="step:" ;; gate) prefix="gate:" ;; worktree) prefix="wt:" ;; profile) prefix="flow:" ;; size) prefix="size:" ;; esac
   for kv in "$@"; do
     [ "${kv%%=*}" = "$key" ] || continue
@@ -37,3 +40,11 @@ if [ -n "$cid" ]; then
 else
   printf '%s' "$body" | gh api "repos/$repo/issues/$n/comments" -F body=@- >/dev/null
 fi
+if [ -n "$GH_SIZE_FIELD" ]; then
+  for kv in "$@"; do
+    case "$kv" in size=?*) python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "${kv#size=}" \
+      || echo "flow: could not set the size of gh#$n" >&2 ;; esac
+  done
+fi
+[ -n "$GH_PROJECT" ] && { "$FLOW_PLUGIN/adapters/github/sync.sh" "gh#$n" >/dev/null || echo "flow: could not move the project card of gh#$n" >&2; }
+exit 0
