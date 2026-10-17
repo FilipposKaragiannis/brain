@@ -47,14 +47,15 @@ MD
 cat > "$plugin/evals/$name-works/case.yaml" <<YAML
 schema_version: "1.1"
 name: $name-works
-runs: 1
-max_turns: 15
-timeout_seconds: 600
-allowed_tools:
-  - Bash
-  - Read
-  - Glob
-  - Grep
+runs: 3
+execution:
+  max_turns: 15
+  timeout_seconds: 600
+  allowed_tools:
+    - Bash
+    - Read
+    - Glob
+    - Grep
 context:
   scaffold_script: scaffold.sh
 YAML
