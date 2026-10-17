@@ -61,6 +61,6 @@ check "the plugin ships the page, same as docs/map.html" cmp -s "$root/plugins/m
 mkdir -p "$work/elsewhere"
 check "the plugin's script fills the roster from outside the marketplace" sh -c "cd '$work/elsewhere' && python3 -I '$root/plugins/meta/skills/map/scripts/project_map.py' --roster '$work/project-roster.json' --out page.html >/dev/null && grep -q 'This project (1)' page.html && grep -q '<code>physics-reviewer</code>' page.html && grep -q 'agents (+1 yours)' page.html && grep -q 'dashed: this project' page.html"
 check "the script and the marketplace render the same page" sh -c "python3 '$root/tools/lib/map.py' --root '$root' --roster '$work/project-roster.json' | cmp -s - '$work/elsewhere/page.html'"
-check "map shows the five playbooks" sh -c "printf '%s' \"\$0\" | grep -c 'class=\"pb\"' | grep -qx 5" "$map"
+check "map shows the six playbooks" sh -c "printf '%s' \"\$0\" | grep -c 'class=\"pb\"' | grep -qx 6" "$map"
 [ "$fails" -eq 0 ] && { echo "meta: ok"; exit 0; }
 echo "meta: $fails failed"; exit 1
