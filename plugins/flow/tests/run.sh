@@ -466,7 +466,11 @@ cat > "$work/bin/claude" <<'SH'
 #!/bin/sh
 printf '%s\t%s\t%s\n' "$0" "$PWD" "$*" >> "$HOST_LOG"
 out="$(printf '%s' "$*" | sed -n 's/.* and write \([^ ]*results.json\).*/\1/p')"
-[ -n "$out" ] && [ -z "${FAKE_NO_RESULTS:-}" ] && printf '[{"note":"n1","outcome":"filed","issues":["local:task/9"]},{"note":"n2","outcome":"duplicate","issues":["local:task/1"]},{"note":"n3","outcome":"kept","issues":[]}]' > "$out"
+[ -n "$out" ] && [ -z "${FAKE_NO_RESULTS:-}" ] && python3 -c "
+import json, os, sys
+n = json.load(open(os.path.join(os.path.dirname(sys.argv[1]), 'notes.json')))['notes'][0]
+o = 'filed' if 'First' in n['text'] else 'duplicate' if 'Second' in n['text'] else 'kept'
+json.dump([{'note': n['id'], 'outcome': o, 'issues': []}], open(sys.argv[1], 'w'))" "$out"
 exit 0
 SH
 chmod +x "$work/bin/claude"
@@ -477,14 +481,14 @@ FAKE_NO_RESULTS=1 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude >/dev/null 2>&1;
 check "intake job: no results file fails and leaves the notes" sh -c "[ $code -eq 1 ] && cmp -s '$work/notes.md' '$work/notes.orig'"
 : > "$HOST_LOG"
 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude > "$work/intake.out"
-check "intake job: runs the skill once with jobs.permission_mode" sh -c "[ \$(grep -c 'intake skill' '$HOST_LOG') = 1 ] && grep -q -- '--permission-mode auto' '$HOST_LOG'"
+check "intake job: one session per note, with jobs.permission_mode" sh -c "[ \$(grep -c 'intake skill' '$HOST_LOG') = 3 ] && grep -q -- '--permission-mode auto' '$HOST_LOG'"
 check "intake job: filed and duplicate notes leave the file, kept ones and headings stay" sh -c "! grep -q 'First note' '$work/notes.md' && ! grep -q 'sub line' '$work/notes.md' && ! grep -q 'Second note' '$work/notes.md' && grep -q 'Third note' '$work/notes.md' && grep -q '^## Bugs' '$work/notes.md' && grep -q 'already done' '$work/notes.md'"
 check "intake job: the ledger records the handled notes" [ "$(wc -l < "$home2/log/intake-ledger.jsonl" | tr -d ' ')" = 2 ]
 check "intake job: says what it did" grep -q 'done: duplicate 1 filed 1 kept 1' "$work/intake.out"
 cp "$work/notes.orig" "$work/kept.md"
 : > "$HOST_LOG"
 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude --notes "$work/kept.md" --keep-notes >/dev/null
-check "intake job: --keep-notes leaves the file and the ledger skips what it filed" sh -c "cmp -s '$work/kept.md' '$work/notes.orig' && [ \$(wc -l < '$home2/log/intake-ledger.jsonl' | tr -d ' ') = 3 ] && python3 -I '$P/scripts/_intake.py' parse '$work/kept.md' '$home2/log/intake-ledger.jsonl' 10 | python3 -c 'import json,sys; assert json.load(sys.stdin)[\"notes\"]==[]'"
+check "intake job: --keep-notes leaves the file and the ledger skips what it filed" sh -c "cmp -s '$work/kept.md' '$work/notes.orig' && [ \$(grep -c 'intake skill' '$HOST_LOG') = 1 ] && grep -q 'Third note' \$(grep -l Third '$home2'/tmp/intake-*/n1/notes.json | tail -1)"
 check "jobs.permission_mode refuses anything but dontAsk or auto" sh -c "FLOW_PERMISSION_MODE=bypassPermissions FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_permission_mode' 2>&1 | grep -q 'dontAsk or auto'"
 printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"; chmod +x "$work/bin/claude"
 

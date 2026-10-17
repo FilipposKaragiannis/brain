@@ -4,8 +4,8 @@ description: Turn the owner's raw notes into tracker items. Reads a notes JSON f
 disable-model-invocation: true
 ---
 
-Turn notes into items. The intake job (`jobs/intake.sh`) owns the notes file: it hands you a
-batch as `notes.json` and, from your `results.json`, records what you handled and removes it
+Turn notes into items. The intake job (`jobs/intake.sh`) owns the notes file: it runs one
+session per note, hands you that note as `notes.json` and, from your `results.json`, records what you handled and removes it
 from the file. You never edit the notes file.
 
 Plugin root `$P`: the directory holding this skill (`${CLAUDE_PLUGIN_ROOT}` on Claude; on Codex
@@ -23,7 +23,8 @@ as written, a bullet with its sub-lines. `section` is the chain of headings abov
 
 ## Per note
 
-1. **List the open items once** for the batch: `"$P/adapters/<adapter>/list.sh"`.
+1. **List the open items** fresh: `"$P/adapters/<adapter>/list.sh"`. The note before yours may
+   have just filed the item yours duplicates.
 2. **Duplicate?** An open item that already covers the ask: outcome `duplicate` with its id. If
    the note adds a detail the item lacks (a repro, a case), add it as a comment on that item.
 3. **Done already?** Only with code evidence (the behaviour the note asks for exists and is
@@ -45,7 +46,7 @@ as written, a bullet with its sub-lines. `section` is the chain of headings abov
 
 ## Output
 
-Write `results.json` next to `notes.json`, one row per note in the batch:
+Write `results.json` next to `notes.json`, one row per note it holds:
 
 ```json
 [{"note": "n1", "outcome": "filed", "issues": ["gh#341"], "needs_owner": false, "reason": "..."},

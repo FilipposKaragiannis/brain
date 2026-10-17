@@ -1,7 +1,9 @@
 """Notes file plumbing for the intake job. See jobs/intake.sh.
 
   _intake.py parse <notes> <ledger> <batch>                    the next unfiled notes, as JSON
+  _intake.py split <parsed> <run>                              one <run>/<id>/notes.json per note
   _intake.py apply <notes> <ledger> <parsed> <results> <keep>  ledger the results, drop filed notes
+  _intake.py tally <run>                                       the outcomes of every note in the run
 
 A note is a top-level bullet ("- " or "* " at column 0) with every line under it that is blank
 or indented, up to the next unindented line. Its section is the chain of headings above it. A
@@ -111,10 +113,37 @@ def apply(notes, ledger, parsed, results, keep):
     print(" ".join("%s %d" % (k, v) for k, v in sorted(counts.items())) + ("; %d need you" % owner if owner else ""))
 
 
+def split(parsed, run):
+    with open(parsed) as f:
+        notes = json.load(f)["notes"]
+    for note in notes:
+        os.makedirs(os.path.join(run, note["id"]), exist_ok=True)
+        with open(os.path.join(run, note["id"], "notes.json"), "w") as f:
+            json.dump({"notes": [note], "left": 0}, f, indent=1)
+        print(note["id"])
+
+
+def tally(run):
+    counts, owner = {}, 0
+    for name in sorted(os.listdir(run)):
+        if not os.path.isdir(os.path.join(run, name)):
+            continue
+        path = os.path.join(run, name, "results.json")
+        rows = json.load(open(path)) if os.path.exists(path) else [{"outcome": "no-result"}]
+        for row in rows:
+            counts[row.get("outcome", "")] = counts.get(row.get("outcome", ""), 0) + 1
+            owner += 1 if row.get("needs_owner") else 0
+    print(" ".join("%s %d" % (k, v) for k, v in sorted(counts.items())) + ("; %d need you" % owner if owner else ""))
+
+
 def main():
     command = sys.argv[1]
     if command == "parse":
         parse(sys.argv[2], sys.argv[3], int(sys.argv[4]))
+    elif command == "split":
+        split(sys.argv[2], sys.argv[3])
+    elif command == "tally":
+        tally(sys.argv[2])
     elif command == "apply":
         apply(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6] == "1")
     else:
