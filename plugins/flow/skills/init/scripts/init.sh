@@ -1,8 +1,9 @@
 #!/bin/sh
 # Install or refresh the flow plugin in a repository.
 #   init.sh [--root <repo>] [--check] [--force] [--source-hash]
-# Writes: .flow/config.yaml (once), .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and
-# .flow/hooks/*.sh (wrappers, always replaced), .codex/rules/flow.rules and
+# Writes: .flow/config.yaml (once), .flow/plugin.sh (finds the installed plugin when a wrapper
+# runs), .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and .flow/hooks/*.sh (wrappers,
+# always replaced; they hold no path or version, so a plugin update leaves them as they are), .codex/rules/flow.rules and
 # .codex/agents/<flow agents>.toml (replaced, unless edited by hand since: then refused, exit 1,
 # --force replaces), a marked block in .gitignore, and .flow/stamp (what it wrote; see stamp.sh).
 # --check reports drift and hand edits and writes nothing (exit 1 on either). --source-hash
@@ -45,7 +46,7 @@ install_file() {
   # install_file <built file> <target> [mode] [guard]: replace the target when it differs from
   # the built file. With "guard", refuse when the target also differs from what init last wrote
   # (a hand edit) unless --force; guarded targets land in the stamp. Wrappers and merged files
-  # are not guarded: wrappers carry this machine's plugin path, merged files are the owner's.
+  # are not guarded: wrappers are flow's own and always replaced, merged files are the owner's.
   if [ -f "$2" ] && cmp -s "$1" "$2"; then [ "${4:-}" = guard ] && stamped="$stamped $2"; return; fi
   if [ "${4:-}" = guard ] && [ -f "$2" ] && [ "$force" -eq 0 ]; then
     last="$(stamp_get "$stamp" "$2")"
@@ -130,15 +131,15 @@ if [ ! -f .flow/config.yaml ]; then
   fi
 fi
 
-# 2. Wrappers that know where the plugin is on this machine.
-tmp="$scratch/notify"; printf '#!/bin/sh\n# Written by flow:init. Calls the flow plugin notify script: notify.sh <gate> <item> <message>.\nFLOW_PLUGIN="${FLOW_PLUGIN:-%s}"\nexec "$FLOW_PLUGIN/scripts/notify.sh" "$@"\n' "$plugin" > "$tmp"
+# 2. Wrappers. Each sources .flow/plugin.sh, which finds the installed plugin when it runs, so
+# none of them holds this machine's path or the plugin version.
+install_file "$plugin/templates/plugin.sh" .flow/plugin.sh 644
+tmp="$scratch/notify"; printf '#!/bin/sh\n# Written by flow:init. Calls the flow plugin notify script: notify.sh <gate> <item> <message>.\n. "$(dirname "$0")/plugin.sh"\nexec "$FLOW_PLUGIN/scripts/notify.sh" "$@"\n' > "$tmp"
 install_file "$tmp" .flow/notify.sh 755
-tmp="$scratch/run"; sed "s|^plugin=\"\${FLOW_PLUGIN:-}\"|plugin=\"\${FLOW_PLUGIN:-$plugin}\"|" "$plugin/templates/run-unattended.sh" > "$tmp"
-[ -s "$tmp" ] || die "could not build run-unattended.sh"
-install_file "$tmp" .flow/run-unattended.sh 755
+install_file "$plugin/templates/run-unattended.sh" .flow/run-unattended.sh 755
 for j in comments next retro; do
   tmp="$scratch/job-$j"
-  printf '#!/bin/sh\n# Written by flow:init. Scheduled job: %s.sh <claude|codex> [args]. Logs to .flow/log/%s.log.\nFLOW_PLUGIN="${FLOW_PLUGIN:-%s}"\nexec "$FLOW_PLUGIN/jobs/%s.sh" "$@"\n' "$j" "$j" "$plugin" "$j" > "$tmp"
+  printf '#!/bin/sh\n# Written by flow:init. Scheduled job: %s.sh <claude|codex> [args]. Logs to .flow/log/%s.log.\n. "$(dirname "$0")/../plugin.sh"\nexec "$FLOW_PLUGIN/jobs/%s.sh" "$@"\n' "$j" "$j" "$j" > "$tmp"
   install_file "$tmp" ".flow/jobs/$j.sh" 755
 done
 
@@ -147,7 +148,7 @@ done
 # must name the hook. Stable wrappers under .flow/hooks/ keep the settings entry path-free.
 for h in create remove; do
   tmp="$scratch/wt-$h"
-  printf '#!/bin/sh\n# Written by flow:init. Claude Worktree%s hook: lands --worktree sessions in the pool.\nFLOW_PLUGIN="${FLOW_PLUGIN:-%s}"\nexec "$FLOW_PLUGIN/hooks/worktree-%s.sh" "$@"\n' "$( [ "$h" = create ] && echo Create || echo Remove )" "$plugin" "$h" > "$tmp"
+  printf '#!/bin/sh\n# Written by flow:init. Claude Worktree%s hook: lands --worktree sessions in the pool.\n. "$(dirname "$0")/../plugin.sh"\nexec "$FLOW_PLUGIN/hooks/worktree-%s.sh" "$@"\n' "$( [ "$h" = create ] && echo Create || echo Remove )" "$h" > "$tmp"
   install_file "$tmp" ".flow/hooks/worktree-$h.sh" 755
 done
 settings_has_hook=0; claude_hooks_present && settings_has_hook=1
@@ -188,7 +189,7 @@ if [ "$refused" -eq 1 ]; then echo "flow v$version: some copies were refused (se
 [ -n "$gaps" ] && { echo "Gaps (the flow cannot run until these are filled; init --check reports them):"; printf '%s' "$gaps"; }
 echo "Next:"
 echo "  - review .flow/config.yaml: the pool and pool_max, worktree_copy and worktree_setup, the base branch, the adapters, the gates, feel_test_paths, the Slack webhook"
-echo "  - commit .flow/config.yaml, .flow/stamp, .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/, .flow/hooks/, .codex/ and .gitignore"
+echo "  - commit .flow/config.yaml, .flow/stamp, .flow/plugin.sh, .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/, .flow/hooks/, .codex/ and .gitignore"
 if [ "$settings_has_hook" -eq 0 ]; then
   echo "  - Claude: add the worktree hooks to .claude/settings.json so --worktree lands in the pool"
   echo "    (a plugin cannot provide them: the worktree is created before plugins load):"

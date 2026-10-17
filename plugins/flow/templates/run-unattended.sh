@@ -10,14 +10,8 @@ host="${1:-}"; shift || true
 [ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N]" >&2; exit 2; }
 item=""; max=20
 while [ $# -gt 0 ]; do case "$1" in --max-steps) max="$2"; shift 2 ;; *) item="$1"; shift ;; esac; done
-plugin="${FLOW_PLUGIN:-}"
-if [ -z "$plugin" ]; then
-  for c in "$HOME"/.claude/plugins/cache/*/flow "$HOME"/.claude/plugins/marketplaces/*/plugins/flow "$HOME"/.codex/plugins/*/flow; do
-    [ -f "$c/scripts/next.sh" ] && { plugin="$c"; break; }
-  done
-fi
-[ -n "$plugin" ] || { echo "run-unattended: set FLOW_PLUGIN to the installed flow plugin directory" >&2; exit 2; }
-export FLOW_PLUGIN="$plugin"
+. "$(dirname "$0")/plugin.sh"
+plugin="$FLOW_PLUGIN"
 . "$plugin/lib/host.sh"
 host_check "$host" || exit 2
 n=0

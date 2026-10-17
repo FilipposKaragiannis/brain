@@ -38,6 +38,7 @@ Install the flow plugin into the current repository, or refresh it after a plugi
 | Target | Content | Re-run |
 |---|---|---|
 | `.flow/config.yaml` | adapters, base, github repo, pool and `pool_max`, `worktree_copy` and `worktree_setup`, `auto_gates`, gates, feel-test paths, notify | written once, never overwritten; `--check` reports a gap when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist, an `auto_gates` entry other than `plan-approval`) |
+| `.flow/plugin.sh` | finds the installed plugin when a wrapper runs: `$FLOW_PLUGIN`, else the newest flow in the Claude plugin cache, else the Codex one | replaced |
 | `.flow/notify.sh` | wrapper around the plugin notify script | replaced |
 | `.flow/run-unattended.sh` | the unattended loop for `claude` or `codex` | replaced |
 | `.flow/hooks/worktree-*.sh` | Claude `WorktreeCreate`/`WorktreeRemove` wrappers; the owner adds the printed entry to `.claude/settings.json` | replaced |
@@ -48,12 +49,14 @@ Install the flow plugin into the current repository, or refresh it after a plugi
 
 **The guard.** `.codex/rules/flow.rules` and `.codex/agents/*.toml` are guarded: before replacing
 one, `init` compares it with the stamp, refuses a hand edit (exit 1, the rest is installed) and
-`--force` replaces it. The wrappers under `.flow/` are not guarded: they carry this machine's
-plugin path and are always replaced.
+`--force` replaces it. The wrappers under `.flow/` are not guarded: they are flow's own and
+always replaced. They hold no path and no version, so a plugin update changes none of them and
+needs no `init`; only a release that changes a copied file does.
 
 **The nudge.** The plugin's `SessionStart` hook compares the stamp's first line with the plugin
-on disk and, when they differ, prints the drift and asks for `init`. It is silent in a project
-without `.flow/config.yaml` and it does not look for hand edits; `init --check` does.
+on disk and, when they differ and a copy really drifted, prints the drift and asks for `init`.
+A version bump alone does not change the hash. It is silent in a project without
+`.flow/config.yaml` and it does not look for hand edits; `init --check` does.
 
 ## Never
 

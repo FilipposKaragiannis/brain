@@ -22,10 +22,10 @@ die() { echo "flow: $1" >&2; exit "${2:-1}"; }
 repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 
 # The install set of plugin <root>: every file whose content init copies into a project, plus
-# init.sh (it shapes the wrappers) and the manifest (the version). init stamps its hash; the
-# session-start hook compares.
+# init.sh (it shapes the wrappers). Not the manifest: a version bump alone changes no installed
+# file. init stamps its hash; the session-start hook compares.
 flow_install_set() {
-  for f in "$1"/.claude-plugin/plugin.json "$1"/skills/init/scripts/init.sh "$1"/templates/* \
+  for f in "$1"/skills/init/scripts/init.sh "$1"/templates/* \
            "$1"/codex-agents/*.toml; do [ -f "$f" ] && echo "$f"; done | sort
 }
 flow_source_hash() { hash_files $(flow_install_set "$1"); }

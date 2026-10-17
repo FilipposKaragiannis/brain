@@ -477,6 +477,22 @@ check "init: --check is clean after install" sh -c "FLOW_PLUGIN='$plugin_copy' '
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 printf '# mine\n' >> .flow/notify.sh
 check "init: a wrapper is replaced without a guard" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && ! grep -q '# mine' .flow/notify.sh"
+check "init: no wrapper holds the plugin path" sh -c "! grep -rqF '$plugin_copy' .flow/plugin.sh .flow/notify.sh .flow/run-unattended.sh .flow/jobs .flow/hooks"
+fake_flow() { # fake_flow <home> <host dir> <version>: a stub flow whose scripts print the version
+  d="$1/$2/plugins/cache/m/flow/$3"; mkdir -p "$d/scripts" "$d/jobs" "$d/hooks"
+  for f in scripts/next.sh scripts/notify.sh jobs/next.sh hooks/worktree-create.sh; do printf '#!/bin/sh\necho %s\n' "$3" > "$d/$f"; chmod +x "$d/$f"; done
+}
+fake_flow "$work/h1" .claude 1.9.0; fake_flow "$work/h1" .claude 1.10.0; fake_flow "$work/h1" .codex 2.0.0
+fake_flow "$work/h2" .codex 1.4.0
+check "plugin.sh: the newest Claude version wins (1.10.0 over 1.9.0)" [ "$(env -u FLOW_PLUGIN HOME="$work/h1" .flow/notify.sh)" = "1.10.0" ]
+check "plugin.sh: the job and hook wrappers find it too" sh -c "[ \"\$(env -u FLOW_PLUGIN HOME='$work/h1' .flow/jobs/next.sh)\" = 1.10.0 ] && [ \"\$(env -u FLOW_PLUGIN HOME='$work/h1' .flow/hooks/worktree-create.sh)\" = 1.10.0 ]"
+check "plugin.sh: the Codex cache when Claude has none" [ "$(env -u FLOW_PLUGIN HOME="$work/h2" .flow/notify.sh)" = "1.4.0" ]
+check "plugin.sh: FLOW_PLUGIN wins" [ "$(FLOW_PLUGIN="$work/h2/.codex/plugins/cache/m/flow/1.4.0" HOME="$work/h1" .flow/notify.sh)" = "1.4.0" ]
+mkdir -p "$work/h3"; env -u FLOW_PLUGIN HOME="$work/h3" .flow/notify.sh >/dev/null 2>&1; code=$?
+check "plugin.sh: no installed plugin exits 2" [ "$code" -eq 2 ]
+before="$(head -1 .flow/stamp)"
+sed -i.bak 's/"version": "[^"]*"/"version": "9.9.9"/' "$plugin_copy/.claude-plugin/plugin.json" && rm -f "$plugin_copy/.claude-plugin/plugin.json.bak"
+check "a version bump alone: the stamp source holds and session-start is silent" sh -c "[ \"\$(FLOW_PLUGIN='$plugin_copy' '$init' --source-hash)\" = \"\$(printf '%s' '$before' | cut -f2)\" ] && [ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 printf '# mine\n' >> .codex/rules/flow.rules
 check "init: --check names a hand edit" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'edited by hand: .codex/rules/flow.rules'"
 check "init: refuses to replace a hand edit (exit 1, file kept)" sh -c "! FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '# mine' .codex/rules/flow.rules"

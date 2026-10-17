@@ -1,5 +1,15 @@
 # flow
 
+## 1.4.0 (2026-10-17)
+
+- The wrappers under `.flow/` hold no path and no version. Each sources the new `.flow/plugin.sh`,
+  which finds the installed plugin when the wrapper runs: `$FLOW_PLUGIN`, else the newest flow in
+  the Claude plugin cache, else the newest in the Codex one (exit 2 when neither has it). A plugin
+  update no longer changes committed files or leaves the wrappers on the old version, and a clone
+  on another machine works as is. Run `init` once and commit `.flow/` to move a project over.
+- The stamp's source hash leaves out the manifest, so a version bump alone is no drift.
+- The session-start hook stays quiet when the plugin changed but the copies still match.
+
 ## 1.3.1 (2026-10-17)
 
 - `init --check` reports missing Claude worktree hooks as a gap when the project has a `.claude`
