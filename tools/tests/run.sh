@@ -1,5 +1,6 @@
 #!/bin/sh
-# Tests for the repo tools: lint catches a broken plugin. Exit 1 on any failure.
+# Tests for the repo tools: lint catches a broken plugin, the cost report parses and never
+# fails. Exit 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
@@ -19,6 +20,26 @@ check "a missing path in an installer" grep -q 'init.sh names a missing plugin p
 check "a missing path under CLAUDE_PLUGIN_ROOT" grep -q 'SKILL.md names a missing plugin path: scripts/gone.sh' "$out"
 check "nothing else" [ "$(wc -l < "$out" | tr -d ' ')" -eq 5 ]
 check "passes on the marketplace" python3 "$root/tools/lib/check_plugins.py" "$root"
+
+echo "cost report"
+mkdir -p "$work/bin"
+fake() { printf '#!/bin/sh\n%s\n' "$1" > "$work/bin/claude"; chmod +x "$work/bin/claude"; }
+fake 'printf "Projected token cost\n  Always-on:   ~2,603 tok   added to every session\n"'
+out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 2000)"; code=$?
+check "exits 0" [ "$code" -eq 0 ]
+check "warns over the budget" sh -c "printf '%s' \"\$0\" | grep -q 'cost: warning: flow always-on ~2603 tok, over the 2000 budget'" "$out"
+check "reports under the budget" sh -c "printf '%s' \"\$0\" | grep -q 'cost: flow always-on ~2603 tok\$'" "$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 3000)"
+fake 'echo "Always-on:  ~1.2k tok"'
+check "reads a k suffix" sh -c "printf '%s' \"\$0\" | grep -q 'craft always-on ~1200 tok'" "$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 2000)"
+fake 'echo "a format nobody expected"'
+out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh")"; code=$?
+check "unparsed output: silent, exit 0" [ "$code-$out" = "0-" ]
+fake 'exit 1'
+out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh")"; code=$?
+check "failing CLI: silent, exit 0" [ "$code-$out" = "0-" ]
+rm "$work/bin/claude"
+out="$(PATH="$work/bin:/usr/bin:/bin" "$root/tools/cost.sh")"; code=$?
+check "no CLI: silent, exit 0" [ "$code-$out" = "0-" ]
 
 [ "$fails" -eq 0 ] && echo "tools: ok"
 exit $(( fails > 0 ))

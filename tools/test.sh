@@ -1,6 +1,6 @@
 #!/bin/sh
-# Run every check for this repo: lint, the test suites, then plugin validation with the Claude
-# CLI when present.
+# Run every check for this repo: lint, the test suites, then plugin validation and the always-on
+# token cost report with the Claude CLI when present.
 set -u
 cd "$(dirname "$0")/.."
 status=0
@@ -18,6 +18,7 @@ if command -v claude >/dev/null 2>&1; then
     claude plugin validate "$dir" >/dev/null 2>&1 || { echo "test: claude plugin validate failed: $dir"; claude plugin validate "$dir"; status=1; }
   done
   claude plugin validate .claude-plugin/marketplace.json >/dev/null 2>&1 || { echo "test: marketplace validate failed"; claude plugin validate .claude-plugin/marketplace.json; status=1; }
+  tools/cost.sh || true   # a report with warnings, never a failure
 else
   echo "test: claude CLI not found, skipping plugin validate"
 fi
