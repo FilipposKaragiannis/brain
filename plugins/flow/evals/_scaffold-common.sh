@@ -7,7 +7,9 @@
 # the steps after implement (test, verify, explain, pr) have a change to work on.
 scaffold() {
   set -e
-  P=/work/brain/plugins/flow
+  # The plugins under test, from the case's scaffold.sh (the eval CLI runs it by its real path).
+  P="$(cd "$(dirname "$0")/../.." && pwd)"
+  S="$(cd "$P/../standards" && pwd)"
   git init -q -b main .
   git config user.email eval@example.com
   git config user.name eval
@@ -22,7 +24,7 @@ scaffold() {
   # Install stamps that match the plugins on disk, so the session-start hooks stay quiet: the
   # fixture stands for a project whose init ran already.
   (FLOW_PLUGIN="$P"; . "$P/lib/flow.sh"; printf 'source\t%s\n' "$(flow_source_hash "$P")" > .flow/stamp)
-  (STANDARDS_HOOKS=/work/brain/plugins/standards/hooks; . "$STANDARDS_HOOKS/lib.sh"; printf 'source\t%s\n' "$(standards_source_hash /work/brain/plugins/standards)" > .standards/stamp)
+  (STANDARDS_HOOKS="$S/hooks"; . "$STANDARDS_HOOKS/lib.sh"; printf 'source\t%s\n' "$(standards_source_hash "$S")" > .standards/stamp)
   git add -A && git commit -qm "chore: initial"
   mkdir -p .pool && git worktree add -q --detach .pool/wt-1
   export FLOW_PLUGIN="$P"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fixture: a copy of the marketplace tools and one plugin, so write-a-skill can scaffold.
+# Fixture: a marketplace-shaped repo with one empty plugin, so write-a-skill can scaffold into it.
 set -e
 git init -q -b main .
 git config user.email eval@example.com
