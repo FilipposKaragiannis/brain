@@ -1,5 +1,6 @@
 #!/bin/sh
-# Run every check for this repo: lint, then plugin validation with the Claude CLI when present.
+# Run every check for this repo: lint, the test suites, then plugin validation with the Claude
+# CLI when present.
 set -u
 cd "$(dirname "$0")/.."
 status=0
@@ -10,6 +11,7 @@ clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG
 clean plugins/standards/hooks/tests/run.sh || status=1
 clean plugins/flow/tests/run.sh || status=1
 clean plugins/meta/tests/run.sh || status=1
+clean tools/tests/run.sh || status=1
 if command -v claude >/dev/null 2>&1; then
   for dir in plugins/*/; do
     [ -f "$dir/plugin.source.json" ] || continue

@@ -11,7 +11,7 @@ plugins/
   meta/        write-a-skill (scaffolder), retro (lessons log), map (docs/map.html)
 shared/        sh/json.sh, copied into each plugin by the generator
 roster/        agents.json (every agent, model, effort, tier), briefs/<agent>.md, templates/
-tools/         generate.sh, lint.sh, test.sh, eval.sh, host-cleanup.sh
+tools/         generate.sh, lint.sh, test.sh, eval.sh, host-cleanup.sh, tests/
 local/         sync-skills (not shipped)
 docs/          coding-standards.md, adr/
 ```
@@ -24,8 +24,11 @@ are both marketplace files. See `docs/adr/0001-one-source-two-hosts.md`.
 ```bash
 tools/generate.sh   # render generated files after editing a source, a brief or the roster
 tools/lint.sh       # fresh generated files, well-formed skills, roster in step
-tools/test.sh       # lint plus `claude plugin validate`; CI runs this
+tools/test.sh       # lint, the suites and `claude plugin validate`; CI runs this
 ```
+`tools/lint.sh` also checks that every hook command names an executable script in its plugin and
+that the plugin paths the shipped files name exist; `tools/tests/run.sh` proves it fails on the
+broken fixture under `tools/tests/fixtures/`.
 
 ## Standards plugin
 `standards:init` installs the coding standards in a repo: the rules block in `AGENTS.md`, the

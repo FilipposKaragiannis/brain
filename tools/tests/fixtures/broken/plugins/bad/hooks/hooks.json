@@ -1,0 +1,15 @@
+{
+  "description": "A broken plugin for tools/tests/run.sh: lint must report every hook but ok.sh.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/ok.sh" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/missing.sh" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/not-executable.sh" },
+          { "type": "command", "command": "echo outside the plugin" }
+        ]
+      }
+    ]
+  }
+}
