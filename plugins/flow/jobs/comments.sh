@@ -31,7 +31,7 @@ fi
 [ -n "$targets" ] || { job_say "quiet: no open PR"; exit 0; }
 for t in $targets; do
   job_say "addressing $t"
-  host_run "$host" "$main" "Invoke the flow plugin's comments skill (Claude: /flow:comments, Codex: \$comments) for $t. Unattended: nobody answers questions; collect owner decisions in the report and stop." "$(job_model)" "$(job_effort)" \
+  host_run "$host" "$main" "$(host_skill_prompt "$host" flow comments "$t. Unattended: nobody answers questions; collect owner decisions in the report and stop.")" "$(job_model)" "$(job_effort)" \
     >> "$(job_log_dir)/$job.log" 2>&1 || job_say "$t: host exit $?"
 done
 job_say "done: $(printf '%s\n' $targets | wc -l | tr -d ' ') PR(s)"

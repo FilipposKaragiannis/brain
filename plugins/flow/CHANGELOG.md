@@ -1,5 +1,15 @@
 # flow
 
+## 1.6.1 (2026-10-17)
+
+- Unattended sessions start a skill as the owner would type it (`/flow:intake ...` on Claude,
+  `$intake ...` on Codex) through `host_skill_prompt`, in the intake, comments and retro jobs
+  and in the unattended loop's skill steps (design, implement, review, explain). Those skills
+  are user-invoked only, so a prompt asking the model to invoke one was refused and the session
+  did nothing. The loop template changed: re-run `flow:init`.
+- Intake removes a note without touching the blank lines elsewhere in the file, and sets a
+  parent only when the note names the epic, since a sub-item holds its epic open.
+
 ## 1.6.0 (2026-10-17)
 
 - The intake job and skill: `jobs/intake.sh <host>` reads the next notes from `intake.notes`

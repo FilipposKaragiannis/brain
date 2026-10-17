@@ -36,7 +36,7 @@ job_say "filing $count note(s) from $notes, $left more after this batch"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 missing=0
 for id in $(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json" "$run"); do
-  host_run "$host" "$main" "Invoke the flow plugin's intake skill (Claude: /flow:intake, Codex: \$intake) on $run/$id/notes.json and write $run/$id/results.json. Unattended: nobody answers questions; a note that needs the owner is filed and gated." "$(job_model)" "$(job_effort)" \
+  host_run "$host" "$main" "$(host_skill_prompt "$host" flow intake "on $run/$id/notes.json and write $run/$id/results.json. Unattended: nobody answers questions; a note that needs the owner is filed and gated.")" "$(job_model)" "$(job_effort)" \
     >> "$(job_log_dir)/$job.log" 2>&1 || job_say "$id: host exit $?"
   if [ -f "$run/$id/results.json" ]; then
     python3 -I "$FLOW_PLUGIN/scripts/_intake.py" apply "$notes" "$ledger" "$run/$id/notes.json" "$run/$id/results.json" "$keep" \

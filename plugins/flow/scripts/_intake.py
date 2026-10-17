@@ -78,8 +78,10 @@ def remove(content, text):
     end = at + len(text)
     if content[end:end + 1] == "\n":
         end += 1
-    content = content[:at] + content[end:]
-    return re.sub(r"\n{3,}", "\n\n", content), True
+    before, after = content[:at], content[end:]
+    if before.endswith("\n\n") and after.startswith("\n"):
+        after = after[1:]
+    return before + after, True
 
 
 def apply(notes, ledger, parsed, results, keep):

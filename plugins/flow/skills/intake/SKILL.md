@@ -33,8 +33,9 @@ as written, a bullet with its sub-lines. `section` is the chain of headings abov
 5. **Look at the code just enough** to name the area and confirm what the note describes:
    grep, read the entry point. No exploration agents, no plan, at most a few minutes a note.
 6. **File it** with the `new` skill's shape and script (`"$P/scripts/new.sh"`): the kind (and
-   `--type` where the tracker has issue types), a size when it is clear (`S`, `M`, `L`), the
-   parent epic when one plainly owns it. The note's own words go in `## Notes`, quoted,
+   `--type` where the tracker has issue types), a size when it is clear (`S`, `M`, `L`). Set a
+   parent only when the note names the epic: a sub-item holds its epic open until it closes,
+   so name a related epic in `## Notes` instead. The note's own words go in `## Notes`, quoted,
    with the section. Add one line to `## Notes`:
    `Suggested priority: P<n>, <the reason in one clause>.` Never set the priority field: the
    owner sets it, and an item without one is not ready.

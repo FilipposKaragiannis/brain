@@ -407,10 +407,12 @@ export HOST_LOG="$work/host.log"; realrepo="$(cd "$repo" && pwd -P)"
 for h in claude codex; do printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/$h"; chmod +x "$work/bin/$h"; done
 "$P/adapters/github/write-state.sh" 'gh#21' step=pr && "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/90
 "$P/jobs/comments.sh" claude >/dev/null
-check "comments job: runs the skill per open PR from the main worktree" sh -c "grep -q 'claude	$realrepo	-p Invoke the flow plugin.s comments skill.*gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
+check "comments job: runs the skill per open PR from the main worktree" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
 check "comments job: one PR, one run" [ "$(grep -c comments "$HOST_LOG")" = "1" ]
 "$P/jobs/comments.sh" codex >/dev/null
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec -C $realrepo -s workspace-write' '$HOST_LOG'"
+check "a job starts its skill as typed: /plugin:skill on Claude, \$skill on Codex" sh -c "grep -q 'codex	.*workspace-write.* \\\$comments gh#21' '$HOST_LOG' && [ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow implement gh#7')\" = '/flow:implement gh#7' ]"
+check "the unattended loop starts a skill step as typed" grep -q 'host_skill_prompt "$host" flow "$skill"' "$P/templates/run-unattended.sh"
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "jobs.model and jobs.effort reach the host" sh -c "grep -q 'gh#21.*--model haiku --effort low' '$HOST_LOG'"
@@ -435,7 +437,7 @@ check "retro job: no lessons is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" review-blocker 'local:task/9' "Magic number" --rule N-06 >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify failed 3 times" >/dev/null
 : > "$HOST_LOG"
-check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new' && grep -q 'retro skill.*Read the 2 lessons.*2 lines, 0 read before' '$HOST_LOG'"
+check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new' && grep -q '/meta:retro Unattended.*Read the 2 lessons.*2 lines, 0 read before' '$HOST_LOG'"
 printf '%s\t2\t1\t1\n' "$(date -u +%FT%TZ)" > "$home2/retros.log"
 check "retro job: retros.log marks the lessons read" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude --min-lessons 1 | grep -q 'quiet: 0 new'"
 
@@ -481,14 +483,15 @@ FAKE_NO_RESULTS=1 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude >/dev/null 2>&1;
 check "intake job: no results file fails and leaves the notes" sh -c "[ $code -eq 1 ] && cmp -s '$work/notes.md' '$work/notes.orig'"
 : > "$HOST_LOG"
 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude > "$work/intake.out"
-check "intake job: one session per note, with jobs.permission_mode" sh -c "[ \$(grep -c 'intake skill' '$HOST_LOG') = 3 ] && grep -q -- '--permission-mode auto' '$HOST_LOG'"
+check "intake job: one session per note, with jobs.permission_mode" sh -c "[ \$(grep -c -- '-p /flow:intake on' '$HOST_LOG') = 3 ] && grep -q -- '--permission-mode auto' '$HOST_LOG'"
 check "intake job: filed and duplicate notes leave the file, kept ones and headings stay" sh -c "! grep -q 'First note' '$work/notes.md' && ! grep -q 'sub line' '$work/notes.md' && ! grep -q 'Second note' '$work/notes.md' && grep -q 'Third note' '$work/notes.md' && grep -q '^## Bugs' '$work/notes.md' && grep -q 'already done' '$work/notes.md'"
+check "intake job: removing a note leaves the blank lines elsewhere as they were" sh -c "python3 -c 'import sys; s=open(sys.argv[1]).read(); assert \"\\n\\n\\n\" not in s and s.startswith(\"# Notes:\\n\\n## Bugs:\\n\\n- [x]\")' '$work/notes.md'"
 check "intake job: the ledger records the handled notes" [ "$(wc -l < "$home2/log/intake-ledger.jsonl" | tr -d ' ')" = 2 ]
 check "intake job: says what it did" grep -q 'done: duplicate 1 filed 1 kept 1' "$work/intake.out"
 cp "$work/notes.orig" "$work/kept.md"
 : > "$HOST_LOG"
 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude --notes "$work/kept.md" --keep-notes >/dev/null
-check "intake job: --keep-notes leaves the file and the ledger skips what it filed" sh -c "cmp -s '$work/kept.md' '$work/notes.orig' && [ \$(grep -c 'intake skill' '$HOST_LOG') = 1 ] && grep -q 'Third note' \$(grep -l Third '$home2'/tmp/intake-*/n1/notes.json | tail -1)"
+check "intake job: --keep-notes leaves the file and the ledger skips what it filed" sh -c "cmp -s '$work/kept.md' '$work/notes.orig' && [ \$(grep -c -- '-p /flow:intake on' '$HOST_LOG') = 1 ] && grep -q 'Third note' \$(grep -l Third '$home2'/tmp/intake-*/n1/notes.json | tail -1)"
 check "jobs.permission_mode refuses anything but dontAsk or auto" sh -c "FLOW_PERMISSION_MODE=bypassPermissions FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_permission_mode' 2>&1 | grep -q 'dontAsk or auto'"
 printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"; chmod +x "$work/bin/claude"
 
