@@ -319,7 +319,7 @@ cat > "$FAKE_GH_DIR/issues.json" <<'JSON'
 {"issues": [
   {"number": 30, "title": "Epic", "state": "OPEN", "labels": [], "type": "Epic", "fields": {"Priority": "P1"}},
   {"number": 31, "title": "Feature", "body": "Parent: #30", "state": "OPEN", "labels": [], "type": "Feature", "fields": {"Size": "S", "Priority": "P2"}, "project_item": "PI_31", "project_status": "Ready"},
-  {"number": 32, "title": "Bug", "state": "OPEN", "labels": [], "type": "Bug", "fields": {"Size": "M", "Priority": "P0"}},
+  {"number": 32, "title": "Bug", "state": "OPEN", "labels": [], "type": "Bug", "fields": {"Size": "M", "Priority": "P0"}, "url": "https://github.com/acme/widgets/issues/32"},
   {"number": 33, "title": "No priority", "state": "OPEN", "labels": [], "type": "Task", "fields": {"Size": "S"}},
   {"number": 34, "title": "No size", "state": "OPEN", "labels": [], "type": "Task", "fields": {"Priority": "P1"}},
   {"number": 35, "title": "Blocked", "state": "OPEN", "labels": [], "type": "Task", "fields": {"Size": "S", "Priority": "P3"}, "blocked_by": [33]},
@@ -383,6 +383,11 @@ check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget ite
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [i.update(state='CLOSED') for i in d['issues'] if i['number']==40]; json.dump(d,open(p,'w'))"
 check "gh an epic is ready again once its sub-issues close" sh -c "'$P/adapters/github/list-ready.sh' | grep -q '\"gh#39\"'"
+mkdir -p "$work/slackbin" && printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done >> "%s/slack.log"\n' "$work" > "$work/slackbin/curl" && chmod +x "$work/slackbin/curl"
+PATH="$work/slackbin:$PATH" FLOW_SLACK_WEBHOOK=https://hook.example "$P/scripts/notify.sh" ambiguity 'gh#32' "1. Visual only?
+   Recommended: yes, hash-inert." >/dev/null
+check "notify: a gate names the item by title and links it" grep -qF '*flow: ambiguity* on <https://github.com/acme/widgets/issues/32|gh#32 Bug>' "$work/slack.log"
+check "notify: the questions keep their lines, the recommendation under each" sh -c "python3 -c 'import json,sys; t=[json.loads(l) for l in open(sys.argv[1]) if l.startswith(\"{\")][0][\"text\"]; assert \"\\n1. Visual only?\\n   Recommended: yes\" in t and \"flow:gate gh#32\" in t' '$work/slack.log'"
 cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
 
 echo "comments plumbing (fake gh)"
