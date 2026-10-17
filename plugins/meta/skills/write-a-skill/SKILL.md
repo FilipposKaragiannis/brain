@@ -33,7 +33,7 @@ marketplace and the hosts.
    Skill tool, a `regex` or `file_exists` on the promised output, one `llm` rubric on the final
    message. A fixture goes in `scaffold.sh`. A model-invoked skill that a nearby request could
    fire by mistake also gets a should-not-trigger case: a nearby, unrelated prompt and a
-   `tool_used` grader with `max: 0`. Done when `tools/eval.sh <plugin>` passes.
+   `tool_used` grader with `min: 0` and `max: 0`. Done when `tools/eval.sh <plugin>` passes.
 6. **Review with the owner.** Show the skill and the eval; ask what is missing or unclear and
    what should move up or down the ladder.
 
