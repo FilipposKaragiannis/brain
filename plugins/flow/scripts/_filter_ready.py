@@ -38,6 +38,8 @@ for item in items:
         continue
     if item.get("needs"):
         continue
+    if item.get("open_children"):
+        continue
     if any(blocker_open(b) for b in item.get("blocked_by", [])):
         continue
     ready.append(item)

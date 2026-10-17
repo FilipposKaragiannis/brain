@@ -65,6 +65,8 @@ elif args[0] == "api" and "graphql" in args:
                 "issueType": {"name": i["type"]} if i.get("type") else None,
                 "parent": {"number": i["parent"]} if i.get("parent") else None,
                 "blockedBy": {"nodes": [{"number": b, "state": issue(b)["state"]} for b in i.get("blocked_by", [])]},
+                "subIssuesSummary": {"total": sum(1 for c in data["issues"] if c.get("parent") == i["number"]),
+                                     "completed": sum(1 for c in data["issues"] if c.get("parent") == i["number"] and c["state"] == "CLOSED")},
                 "issueFieldValues": {"nodes": [{"name": v, "field": {"name": k}} for k, v in fields.items()]},
                 "projectItems": {"nodes": [{"id": i["project_item"], "project": {"number": 1},
                                             "fieldValueByName": {"name": i["project_status"]} if i.get("project_status") else None}]

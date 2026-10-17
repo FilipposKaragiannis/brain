@@ -3,7 +3,8 @@
   _query.py list <repo> <marker> <open|all> <limit>
   _query.py read <repo> <marker> <number>
 
-One paged query returns each issue with its labels, type, native parent, blockers, issue field
+One paged query returns each issue with its labels, type, native parent, blockers, open sub-issue
+count, issue field
 values and project items, so a list costs one call per page, not one per issue. The field values
 are asked for only when GH_SIZE_FIELD or GH_PRIORITY_FIELD is set, and the project items only when
 GH_PROJECT is set, because they need the read:project scope a default login lacks. The state
@@ -18,7 +19,8 @@ BASE = """
   labels(first: 50) { nodes { name } }
   issueType { name }
   parent { number }
-  blockedBy(first: 50) { nodes { number state } }"""
+  blockedBy(first: 50) { nodes { number state } }
+  subIssuesSummary { total completed }"""
 FIELD_VALUES = """
   issueFieldValues(first: 20) { nodes {
     ... on IssueFieldSingleSelectValue { name field { ... on IssueFieldSingleSelect { name } } }
@@ -83,6 +85,7 @@ def raw(repo, node, marker):
         "parent": node.get("parent"),
         "blocked_by": [{"number": b["number"], "state": b["state"].lower()} for b in node["blockedBy"]["nodes"]],
         "fields": fields,
+        "open_children": (lambda s: s["total"] - s["completed"])(node.get("subIssuesSummary") or {"total": 0, "completed": 0}),
         "project_items": [{"id": p["id"], "project": p["project"]["number"],
                            "status": (p.get("fieldValueByName") or {}).get("name", "")}
                           for p in (node.get("projectItems") or {}).get("nodes", [])],
