@@ -340,6 +340,7 @@ github:
   fields:
     size: Size
     priority: Priority
+    area: Area
   priority_order: [P0, P1, P2, P3]
   ready_needs: [priority, size]
   project: 1
@@ -378,6 +379,9 @@ chore="$("$P/scripts/new.sh" task "Tidy" --size M --type Chore --body "## Accept
 check "gh create: --type sets the type, the size goes to the field, no labels" sh -c "'$P/adapters/github/read.sh' '$chore' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"type\"],i[\"size\"],i[\"labels\"])==(\"Chore\",\"M\",[])'"
 epic="$("$P/scripts/new.sh" epic "Big")"
 check "gh create: an epic gets the Epic type, not the label" sh -c "'$P/adapters/github/read.sh' '$epic' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"type\"],i[\"kind\"],i[\"labels\"])==(\"Epic\",\"epic\",[])'"
+bots="$("$P/scripts/new.sh" task "Bot thing" --area Bots)"
+check "gh create: --area goes to the area field" sh -c "python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); i=[x for x in d[\"issues\"] if x[\"number\"]==int(sys.argv[2])][0]; assert i[\"fields\"].get(\"Area\")==\"Bots\", i' '$FAKE_GH_DIR/issues.json' '${bots#gh#}'"
+check "gh vocabulary: the issue types and the area options" sh -c "'$P/adapters/github/vocabulary.sh' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert \"Chore\" in v[\"types\"] and v[\"areas\"]==[\"Bots\",\"Debugging & Observability\"], v'"
 picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
@@ -595,6 +599,45 @@ cp "$work/notes.orig" "$work/kept.md"
 : > "$HOST_LOG"
 FLOW_HOME="$home2" "$P/jobs/intake.sh" claude --notes "$work/kept.md" --keep-notes >/dev/null
 check "intake job: --keep-notes leaves the file and the ledger skips what it filed" sh -c "cmp -s '$work/kept.md' '$work/notes.orig' && [ \$(grep -c -- '-p /flow:intake on' '$HOST_LOG') = 1 ] && grep -q 'Third note' \$(grep -l Third '$home2'/tmp/intake-*/n1/notes.json | tail -1)"
+cat > "$work/old.md" <<'MD'
+## Bots
+
+- [ ] Ball spins forever  #bug  ^spin
+    - desc: after a goalpost edge
+    - rel: ^refl
+- [ ] Why does a free rod swing?  ^why
+- [ ] Old net settings  #parked  ^net
+- [ ] Vague thing  ^vague
+- [ ] Spins again #dup (see ^spin) ^spin2
+MD
+printf '{"hash":"x","outcome":"filed","issues":["gh#5"],"ref":"refl","rel":[]}\n' > "$work/old-ledger.jsonl"
+python3 -I "$P/scripts/_intake.py" parse "$work/old.md" "$work/old-ledger.jsonl" 10 > "$work/old.json"
+check "intake parse: title, tags, handle and rel from the note" sh -c "python3 -c 'import json; n=json.load(open(\"$work/old.json\"))[\"notes\"][0]; assert (n[\"title\"],n[\"tags\"],n[\"ref\"],n[\"rel\"])==(\"Ball spins forever\",[\"bug\"],\"spin\",[\"refl\"]), n'"
+check "intake parse: related notes carry the items already filed for them" sh -c "python3 -c 'import json; n=json.load(open(\"$work/old.json\"))[\"notes\"][0]; assert n[\"related\"]==[{\"ref\":\"refl\",\"issues\":[\"gh#5\"],\"filed\":True}], n'"
+check "intake parse: a title ending in ? is a question, #dup names its handle, #parked is a plain tag" sh -c "python3 -c 'import json; n=json.load(open(\"$work/old.json\"))[\"notes\"]; assert n[1][\"question\"] and not n[0][\"question\"] and n[4][\"dup\"]==\"spin\" and n[4][\"ref\"]==\"spin2\" and n[2][\"tags\"]==[\"parked\"]'"
+cat > "$work/bin/claude" <<'SH'
+#!/bin/sh
+printf '%s\t%s\t%s\n' "$0" "$PWD" "$*" >> "$HOST_LOG"
+out="$(printf '%s' "$*" | sed -n 's/.* and write \([^ ]*results.json\).*/\1/p')"
+python3 -c "
+import json, os, sys
+d = json.load(open(os.path.join(os.path.dirname(sys.argv[1]), 'notes.json'))); n = d['notes'][0]
+open(os.environ['HOST_LOG'], 'a').write('vocabulary %s %s\n' % (d['types'], d['areas']))
+row = {'note': n['id'], 'outcome': 'filed', 'issues': ['gh#9']}
+if n['question']: row = {'note': n['id'], 'outcome': 'answered', 'issues': [], 'title': n['title'], 'answer': 'The ball gives it momentum.\n\nSee \`Rod.cs:12\`.'}
+if 'Old' in n['title']: row = {'note': n['id'], 'outcome': 'dropped', 'issues': [], 'reason': 'The net settings were removed in gh#120.'}
+if 'Vague' in n['title']: row = {'note': n['id'], 'outcome': 'dropped', 'issues': []}
+json.dump([row], open(sys.argv[1], 'w'))" "$out"
+SH
+chmod +x "$work/bin/claude"
+: > "$HOST_LOG"
+FLOW_HOME="$home2" "$P/jobs/intake.sh" claude --notes "$work/old.md" > "$work/old.out" 2>&1
+check "intake job: an answered question goes to the answers page, not the tracker" sh -c "grep -q '^# Answers' '$work/answers.md' && grep -q '^## Why does a free rod swing?' '$work/answers.md' && grep -q 'Rod.cs:12' '$work/answers.md' && grep -q 'From the notes (Bots), answered' '$work/answers.md' && ! grep -q 'free rod' '$work/old.md'"
+check "intake job: a dropped note goes to the dropped page with its reason" sh -c "grep -q '^- \*\*Old net settings\*\* (Bots), .*: The net settings were removed in gh#120.' '$work/dropped.md' && ! grep -q 'Old net' '$work/old.md'"
+check "intake job: a drop without a reason is kept" sh -c "grep -q 'Vague thing' '$work/old.md' && ! grep -q Vague '$work/dropped.md' && grep -q 'dropped without a reason, kept' '$home2/log/intake.log'"
+check "intake job: the ledger keeps each note's handle and links for the notes after it" sh -c "grep '\"ref\": \"spin2\"' '$home2/log/intake-ledger.jsonl' | grep -q '\"rel\": \[\"spin\"\]'"
+check "intake job: the summary counts answered and dropped" grep -q 'done: answered 1 dropped 1 filed 2 kept 1' "$work/old.out"
+check "intake job: a tracker without types or areas sends empty lists" grep -q 'vocabulary \[\] \[\]' "$HOST_LOG"
 here="$(pwd)"; mkdir -p "$work/notesrepo" && cd "$work/notesrepo" && git init -q --bare origin.git && git clone -q origin.git app 2>/dev/null && cd app && git config user.email t@t && git config user.name t
 mkdir -p docs .flow && cp "$work/notes.orig" docs/notes.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && git push -q origin HEAD:main 2>/dev/null && git branch -q -M main && git branch -q -u origin/main
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\nintake:\n  notes: docs/notes.md\n' > .flow/config.yaml

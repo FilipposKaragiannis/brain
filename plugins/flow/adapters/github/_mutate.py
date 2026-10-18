@@ -3,6 +3,7 @@
   _mutate.py field <repo> <number> <field> <option>   set a single-select issue field
   _mutate.py type <repo> <number> <type>              set the issue type
   _mutate.py sync <repo> <project>                    stdin: adapter items, one per line
+  _mutate.py vocabulary <repo> <area field> <types>   the issue types and the area options, as JSON
 
 sync moves each open item's card in the project to the Status its flow state implies: an open
 gate is the gate status (the merge gate is the review status), a started step or an item with
@@ -41,6 +42,23 @@ def set_field(owner, name, number, field, option):
         sys.exit("flow: the %s field has no option %s" % (field, option))
     m = "mutation($i:ID!,$f:ID!,$o:ID!){setIssueFieldValue(input:{issueId:$i,issueFields:[{fieldId:$f,singleSelectOptionId:$o}]}){clientMutationId}}"
     graphql(m, i=issue_id(owner, name, number), f=found[0]["id"], o=options[0])
+
+
+def field_options(owner, name, field):
+    q = """query($owner:String!,$name:String!){repository(owner:$owner,name:$name){issueFields(first:50){nodes{
+      ... on IssueFieldSingleSelect{id name options{id name}}}}}}"""
+    found = [f for f in graphql(q, owner=owner, name=name)["repository"]["issueFields"]["nodes"] if f.get("name") == field]
+    return [o["name"] for o in found[0]["options"]] if found else []
+
+
+def vocabulary(owner, name, area_field, types):
+    out = {"types": [], "areas": []}
+    if types == "true":
+        q = "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){issueTypes(first:50){nodes{id name}}}}"
+        out["types"] = [t["name"] for t in graphql(q, owner=owner, name=name)["repository"]["issueTypes"]["nodes"]]
+    if area_field:
+        out["areas"] = field_options(owner, name, area_field)
+    print(json.dumps(out))
 
 
 def set_type(owner, name, number, type_name):
@@ -107,6 +125,8 @@ def main():
         set_type(owner, name, int(sys.argv[3]), sys.argv[4])
     elif command == "sync":
         sync(owner, name, int(sys.argv[3]))
+    elif command == "vocabulary":
+        vocabulary(owner, name, sys.argv[3], sys.argv[4])
     else:
         sys.exit("flow: unknown command %s" % command)
 
