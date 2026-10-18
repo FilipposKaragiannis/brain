@@ -1,5 +1,13 @@
 # standards
 
+## 1.2.1 (2026-10-18)
+
+- The eval runner copies the cases into its wrapper instead of linking them: a real run refused
+  the link ("an eval-directory link that points outside the plugin"). The copy carries
+  `.repo-root`, the repo's path, because a scaffold script runs from the copy without the
+  runner's environment; AGENT-EVALS.md shows the read and the `execution:` block its example
+  case was missing.
+
 ## 1.2.0 (2026-10-18)
 
 - `init` installs `.standards/evals/run.sh` (and a `.gitignore` for its `results/`) in a project

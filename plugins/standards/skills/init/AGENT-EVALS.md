@@ -19,9 +19,10 @@ AI/agents/evals/
     graders/*.md                     one grader per file
 ```
 
-The runner assembles a throwaway wrapper plugin with copies of `.claude/agents/*.md` and `cases`
-linked to this folder, so the agents run as `<repo folder>:<name>` and a scaffold script still
-reaches the repo from its own path (`git -C "$case_dir" rev-parse --show-toplevel`).
+The runner assembles a throwaway wrapper plugin with copies of `.claude/agents/*.md` and of this
+folder, so the agents run as `<repo folder>:<name>`. A scaffold script runs from that copy and
+sees none of the runner's environment, so it reads the repo's path from `.repo-root`, which the
+runner writes beside the cases: `"$(cat "$case_dir/../.repo-root")"`.
 
 ## A planted bug
 `case.yaml`:
@@ -30,9 +31,10 @@ reaches the repo from its own path (`git -C "$case_dir" rev-parse --show-topleve
 schema_version: "1.1"
 name: security-reviewer-flags-sql-concat
 runs: 3
-max_turns: 30
-timeout_seconds: 1200
-allowed_tools: [Agent, Bash, Read, Glob, Grep]
+execution:
+  max_turns: 30
+  timeout_seconds: 1200
+  allowed_tools: [Agent, Bash, Read, Glob, Grep]
 context:
   scaffold_script: scaffold.sh
 ```
@@ -44,7 +46,7 @@ needs, commits it on `main`, then applies the plant on a branch:
 #!/bin/sh
 set -e
 case_dir="$(cd "$(dirname "$0")" && pwd)"
-root="$(git -C "$case_dir" rev-parse --show-toplevel)"
+root="$(cat "$case_dir/../.repo-root")"
 git -C "$root" archive --format=tar HEAD -- AGENTS.md .standards src/orders | tar -xf -
 git init -q -b main . && git config user.email eval@example.com && git config user.name eval
 git add -A && git commit -qm "chore: baseline"

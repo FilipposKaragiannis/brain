@@ -6,9 +6,10 @@
 # plugin eval, and its agents render from the same briefs.
 #   .standards/evals/run.sh [extra claude plugin eval flags, e.g. --case 'physics-*' --runs 1]
 # claude plugin eval loads agents only from a plugin, so each run assembles a throwaway wrapper
-# plugin: the manifest, copies of .claude/agents/*.md, and `cases` as a link to the real folder,
-# so a case's scaffold script still finds this repo from its own path. The agents run as
-# <repo folder>:<name>. Results land in .standards/evals/results/<time>/ (git-ignored).
+# plugin: the manifest, copies of .claude/agents/*.md, and a copy of the cases folder as cases/
+# (the CLI refuses a link that leaves the plugin). The copy carries .repo-root, this repo's path:
+# a scaffold script runs from the copy and sees none of this environment, so it reads the repo
+# from there. The agents run as <repo folder>:<name>. Results land in .standards/evals/results/<time>/ (git-ignored).
 # The exit status is the eval's.
 set -u
 cd "$(dirname "$0")/../.." || exit 2
@@ -25,7 +26,10 @@ trap 'exit 130' INT TERM
 mkdir -p "$tmp/.claude-plugin" "$tmp/agents"
 printf '{"name": "%s", "version": "0.0.0", "description": "Throwaway wrapper for .standards/evals/run.sh.", "experimental": {"evals": "cases"}}\n' "$name" > "$tmp/.claude-plugin/plugin.json"
 for f in .claude/agents/*.md; do [ -f "$f" ] && cp "$f" "$tmp/agents/"; done
-ln -s "$cases" "$tmp/cases"
+mkdir -p "$tmp/cases"
+cp -R "$cases/." "$tmp/cases/"
+rm -rf "$tmp/cases/results"
+pwd -P > "$tmp/cases/.repo-root"
 status=0
 claude plugin eval "$tmp" --scaffold --allow-tools Bash Read Glob Grep Agent --trust-plugin --no-publish \
   --ablation none --judge-model sonnet --output-dir ".standards/evals/results/$(date +%Y%m%d-%H%M%S)" "$@" || status=$?
