@@ -28,7 +28,7 @@ A note:
 | `section` | the chain of headings above it ("Bots", "tasks > Bot Bugs"): the area, and a hint at the kind |
 | `tags` | the `#` tags on the first line (`bug`, `perf`, `question`, `parked`) |
 | `ref`, `dup`, `rel` | its handle (`^id`), the handle it says it duplicates (`#dup (see ^id)`), the handles its `rel:` line names |
-| `related` | for `dup`, `rel` and the filed notes that name this one: `{"ref", "issues", "filed"}` |
+| `related` | for `dup`, `rel` and the handled notes that name this one: `{"ref", "issues", "outcome", "reason"}`, read from the ledger just before your session, so a note handled earlier in the same run is there. `outcome` is that note's (`filed`, `duplicate`, `done`, `answered`, `dropped`), empty when it is not handled yet; `reason` comes with a `done` or `dropped` one |
 | `question` | tagged `#question`, or a title that ends with `?` |
 
 ## Per note
@@ -40,7 +40,11 @@ Every note ends as an item, a duplicate, done, answered or dropped. Nothing is p
    have just filed the item yours duplicates.
 2. **Duplicate?** An open item that already covers the ask: outcome `duplicate` with its id. A
    `dup` handle whose `related` entry has issues names it. If the note adds a detail the item
-   lacks (a repro, a case), add it as a comment on that item.
+   lacks (a repro, a case), add it as a comment on that item. A `dup` of a note that has no item:
+   - `dropped`: drop this one too, `reason` "Same as ^id, dropped: " and that note's reason.
+   - `done`: outcome `done`, with that note's reason.
+   - `answered`: outcome `dropped`, `reason` "Answered with ^id on the answers page."
+   - empty: not handled yet; judge the note on its own.
 3. **Done already?** Only with code evidence (the behaviour the note asks for exists and is
    tested), outcome `done` with the file and line in `reason`. When unsure, file it.
 4. **A question?** A `question` note, or one that asks what something is, why it behaves so, or
@@ -76,8 +80,8 @@ Every note ends as an item, a duplicate, done, answered or dropped. Nothing is p
    - **Parent** only when the note names the epic: a sub-item holds its epic open until it
      closes, so name a related epic in `## Notes` instead.
    - **Notes:** the note's own words in `## Notes`, quoted, with the section. One line
-     `Related: gh#12, gh#40.` for the `related` entries with issues; a `related` handle not
-     filed yet is left out, since that note names this one when it is filed. Add one line:
+     `Related: gh#12, gh#40.` for the `related` entries with issues; a `related` handle with
+     no issues is left out, since that note names this one when it is filed. Add one line:
      `Suggested priority: P<n>, <the reason in one clause>.` Never set the priority field: the
      owner sets it, and an item without one is not ready.
 9. **Needs the owner?** When the note cannot become binary acceptance lines without a choice

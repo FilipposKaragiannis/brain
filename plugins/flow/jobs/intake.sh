@@ -11,9 +11,9 @@
 # reason to intake.dropped (default answers.md and dropped.md beside the notes), and removes the
 # note from the notes file; --keep-notes leaves the file as it is and relies on the ledger alone. A
 # relative path is read from the main worktree. A notes file git tracks is committed and pushed
-# after the run with those two pages, alone, when the main worktree is on the base branch
-# (intake.commit: false turns it off), so a cloud session reads the same notes. No new notes: a
-# quiet exit, no model spend.
+# after the run with those two pages (a page git ignores is left out), alone, when the main
+# worktree is on the base branch (intake.commit: false turns it off), so a cloud session reads the
+# same notes. No new notes: a quiet exit, no model spend.
 # Schedule it nightly; the lock skips an overlap.
 set -u
 job=intake
@@ -48,6 +48,8 @@ missing=0
 words="$(adapter_for_kind task)"
 [ -x "$FLOW_PLUGIN/adapters/$words/vocabulary.sh" ] && { adapter vocabulary "$words" > "$run/vocabulary.json" 2>>"$(job_log_dir)/$job.log" || job_say "could not read the types and areas"; }
 for id in $(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json" "$run" "$run/vocabulary.json"); do
+  # The ledger as it is now, so a note links the notes filed before it in this run.
+  python3 -I "$FLOW_PLUGIN/scripts/_intake.py" refresh "$run/$id/notes.json" "$ledger" 2>>"$(job_log_dir)/$job.log" || job_say "$id: could not refresh its related notes"
   host_run "$host" "$main" "$(host_skill_prompt "$host" flow intake "on $run/$id/notes.json and write $run/$id/results.json. Unattended: nobody answers questions; a note that needs the owner is filed and gated, never parked.")" "$(job_model)" "$(job_effort)" \
     >> "$(job_log_dir)/$job.log" 2>&1 || job_say "$id: host exit $?"
   if [ -f "$run/$id/results.json" ]; then
@@ -65,19 +67,20 @@ if [ "$keep" -eq 0 ] && [ "$(cfg intake.commit)" != "false" ] && git -C "$main" 
   if [ "$(git -C "$main" symbolic-ref --short HEAD 2>/dev/null)" != "$base" ]; then
     job_say "the main worktree is not on $base: the notes file is left uncommitted"
   else
-    pages=""
+    # The pages to commit with the notes, as the positional parameters; an ignored one is left out.
+    set --; ignored=""
     for f in "$answers" "$dropped"; do
-      case "$f" in "$main"/*) [ -f "$f" ] && pages="$pages $f" ;; esac
+      case "$f" in "$main"/*) ;; *) continue ;; esac
+      [ -f "$f" ] || continue
+      if git -C "$main" check-ignore -q -- "$f"; then ignored="$ignored ${f#"$main"/}"; else set -- "$@" "$f"; fi
     done
-    # shellcheck disable=SC2086
-    [ -z "$pages" ] || git -C "$main" add -- $pages >/dev/null 2>&1
-    # shellcheck disable=SC2086
-    if ! git -C "$main" diff --quiet HEAD -- "$notes" $pages; then
-      git -C "$main" commit -q --only -m "chore(notes): file notes as tracker items [skip ci]" -- "$notes" $pages >/dev/null 2>&1 \
+    [ -z "$ignored" ] || job_say "git ignores$ignored: left out of the notes commit"
+    [ $# -eq 0 ] || git -C "$main" add -- "$@" >/dev/null 2>&1
+    if ! git -C "$main" diff --quiet HEAD -- "$notes" "$@"; then
+      git -C "$main" commit -q --only -m "chore(notes): file notes as tracker items [skip ci]" -- "$notes" "$@" >/dev/null 2>&1 \
         || job_say "could not commit the notes file"
     fi
-    # shellcheck disable=SC2086
-    ours="$(git -C "$main" ls-files --full-name -- "$notes" $pages | sort)"
+    ours="$(git -C "$main" ls-files --full-name -- "$notes" "$@" | sort)"
     ahead="$(git -C "$main" diff --name-only "$(git -C "$main" merge-base "origin/$base" "$base" 2>/dev/null)" "$base" 2>/dev/null | sort)"
     if [ -n "$ahead" ] && [ -n "$(printf '%s\n' "$ahead" | grep -vxF "$ours")" ]; then
       job_say "$base has other unpushed changes: the notes commit waits for your push"

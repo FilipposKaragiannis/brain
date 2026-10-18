@@ -6,10 +6,14 @@
   docs, and the job appends the answer to `intake.answers` (default `answers.md` beside the
   notes) instead of filing an item. `dropped`: only with a reason the owner can check, appended
   to `intake.dropped` (default `dropped.md`). A row without its answer or reason is kept. No note
-  is parked: `#parked` is a plain tag. Both pages are committed with the notes file.
-- A parsed note carries its title, tags, `^id` handle, `#dup (see ^id)` and `rel:` handles, and
-  the items already filed for those handles from the ledger, which now records them. The skill
-  maps the tags to issue types, files a `#dup` as a duplicate and links related items.
+  is parked: `#parked` is a plain tag. Both pages are committed with the notes file, unless git
+  ignores one: that page is left out and the notes file is still committed.
+- A parsed note carries its title, tags, `^id` handle (a caret at the start or after a space),
+  `#dup (see ^id)` and `rel:` handles, and what the ledger holds for those handles: each one's
+  outcome, items and the reason it was dropped or done. They are read again before each session,
+  so a note links the notes filed earlier in the same run. The skill maps the tags to issue
+  types, files a `#dup` as a duplicate, drops a `#dup` of a dropped or answered note with a
+  reason that names it, and links related items.
 - Each intake session gets the tracker's issue types and area options (`vocabulary.sh` on
   GitHub). `new.sh --area` sets the `github.fields.area` issue field, or the local item's area;
   the skill picks the area from the note's section.

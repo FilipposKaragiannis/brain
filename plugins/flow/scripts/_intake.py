@@ -2,6 +2,7 @@
 
   _intake.py parse <notes> <ledger> <batch>                    the next unfiled notes, as JSON
   _intake.py split <parsed> <run> [vocabulary]                 one <run>/<id>/notes.json per note
+  _intake.py refresh <notes.json> <ledger>                     re-read related from the ledger as it is now
   _intake.py apply <notes> <ledger> <parsed> <results> <keep> <answers> <dropped>
                                                                ledger the results, drop handled notes
   _intake.py tally <run>                                       the outcomes of every note in the run
@@ -9,9 +10,10 @@
 A note is a top-level bullet ("- " or "* " at column 0) with every line under it that is blank
 or indented, up to the next unindented line. Its section is the chain of headings above it. A
 checked bullet ("- [x]") or one marked #promoted is not a note. The first line may carry tags
-(#bug), a handle (^id) and "#dup (see ^id)"; a sub-line "rel: ^a ^b" names related notes. A
-parsed note carries its title without them, its tags, handle and related notes, and the items
-already filed for those notes from the ledger. The ledger (one JSON line per handled note, keyed
+(#bug), a handle (^id, at the start or after a space) and "#dup (see ^id)"; a sub-line "rel: ^a ^b"
+names related notes. A parsed note carries its title without them, its tags, handle and related
+notes, and what the ledger holds for those notes: their outcome, items and reason. refresh reads
+them again before each session, so a note sees the notes filed before it in the same run. The ledger (one JSON line per handled note, keyed
 by the hash of its text) keeps a note from being filed twice, so a notes file can also be read
 without being changed (keep = 1). apply removes a note by its exact text from the file as it is
 now, so lines the owner added or changed during the run stay put. An answered note's answer is
@@ -25,7 +27,7 @@ HEADING = re.compile(r"^(#+)\s+(.*?)\s*:?\s*$")
 HANDLED = ("filed", "duplicate", "done", "answered", "dropped")
 TAG = re.compile(r"(?<![\w&/])#([A-Za-z][\w-]*)")
 DUP = re.compile(r"#dup\s*\(see\s+\^([\w-]+)\)", re.I)
-HANDLE = re.compile(r"\^([A-Za-z0-9][\w-]*)")
+HANDLE = re.compile(r"(?<!\S)\^([A-Za-z0-9][\w-]*)")
 REL = re.compile(r"^\s*[-*]\s*rel:\s*(.*)$", re.I)
 ANSWERS_HEAD = ("# Answers\n\nQuestions from the notes, answered from the code and the docs by the intake job. "
                 "Newest last.\n")
@@ -78,16 +80,30 @@ def describe(block):
             "question": "question" in tags or title.endswith("?")}
 
 
-def related(note, rows):
-    filed = {}
-    for r in rows:
-        if r.get("ref"):
-            filed[r["ref"]] = r.get("issues", [])
-    out = [{"ref": h, "issues": filed.get(h, []), "filed": h in filed} for h in [note["dup"]] + note["rel"] if h]
-    if note["ref"]:
-        out += [{"ref": r["ref"], "issues": r.get("issues", []), "filed": True}
-                for r in rows if r.get("ref") and note["ref"] in r.get("rel", []) and r["ref"] not in [o["ref"] for o in out]]
+def link(ref, row):
+    out = {"ref": ref, "issues": row.get("issues", []), "outcome": row.get("outcome", "")}
+    if row.get("reason"):
+        out["reason"] = row["reason"]
     return out
+
+
+def related(note, rows):
+    by_ref = {r["ref"]: r for r in rows if r.get("ref")}
+    out = [link(h, by_ref.get(h, {})) for h in [note["dup"]] + note["rel"] if h]
+    if note["ref"]:
+        out += [link(r["ref"], r) for r in by_ref.values()
+                if note["ref"] in r.get("rel", []) and r["ref"] not in [o["ref"] for o in out]]
+    return out
+
+
+def refresh(path, ledger):
+    with open(path) as f:
+        doc = json.load(f)
+    rows = ledger_rows(ledger)
+    for note in doc["notes"]:
+        note["related"] = related(note, rows)
+    with open(path, "w") as f:
+        json.dump(doc, f, indent=1)
 
 
 def parse(notes, ledger, batch):
@@ -143,7 +159,7 @@ def effective(row):
 
 def record(row, note, answers, dropped, day):
     outcome = row.get("outcome", "")
-    title = row.get("title") or note.get("title") or note["text"].split("\n")[0]
+    title = " ".join((row.get("title") or note.get("title") or note["text"].split("\n")[0]).split())
     issues = ", ".join(row.get("issues", []))
     if outcome == "answered":
         if not (row.get("answer") or "").strip():
@@ -180,9 +196,13 @@ def apply(notes, ledger, parsed, results, keep, answers, dropped):
             counts[outcome] = counts.get(outcome, 0) + 1
             if outcome not in HANDLED:
                 continue
-            log.write(json.dumps({"hash": note["hash"], "outcome": outcome, "issues": row.get("issues", []),
-                                  "needs_owner": bool(row.get("needs_owner")), "ref": note.get("ref", ""),
-                                  "rel": [h for h in [note.get("dup", "")] + note.get("rel", []) if h], "at": stamp}) + "\n")
+            entry = {"hash": note["hash"], "outcome": outcome, "issues": row.get("issues", []),
+                     "needs_owner": bool(row.get("needs_owner")), "ref": note.get("ref", ""),
+                     "rel": [h for h in [note.get("dup", "")] + note.get("rel", []) if h], "at": stamp}
+            if outcome in ("dropped", "done") and (row.get("reason") or "").strip():
+                entry["reason"] = " ".join(row["reason"].split())
+            log.write(json.dumps(entry) + "\n")
+            log.flush()
             if not keep:
                 content, found = remove(content, note["text"])
                 if not found:
@@ -229,6 +249,8 @@ def main():
         parse(sys.argv[2], sys.argv[3], int(sys.argv[4]))
     elif command == "split":
         split(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "")
+    elif command == "refresh":
+        refresh(sys.argv[2], sys.argv[3])
     elif command == "tally":
         tally(sys.argv[2])
     elif command == "apply":

@@ -613,12 +613,12 @@ MD
 printf '{"hash":"x","outcome":"filed","issues":["gh#5"],"ref":"refl","rel":[]}\n' > "$work/old-ledger.jsonl"
 python3 -I "$P/scripts/_intake.py" parse "$work/old.md" "$work/old-ledger.jsonl" 10 > "$work/old.json"
 check "intake parse: title, tags, handle and rel from the note" sh -c "python3 -c 'import json; n=json.load(open(\"$work/old.json\"))[\"notes\"][0]; assert (n[\"title\"],n[\"tags\"],n[\"ref\"],n[\"rel\"])==(\"Ball spins forever\",[\"bug\"],\"spin\",[\"refl\"]), n'"
-check "intake parse: related notes carry the items already filed for them" sh -c "python3 -c 'import json; n=json.load(open(\"$work/old.json\"))[\"notes\"][0]; assert n[\"related\"]==[{\"ref\":\"refl\",\"issues\":[\"gh#5\"],\"filed\":True}], n'"
+check "intake parse: related notes carry the items already filed for them" sh -c "python3 -c 'import json; n=json.load(open(\"$work/old.json\"))[\"notes\"][0]; assert n[\"related\"]==[{\"ref\":\"refl\",\"issues\":[\"gh#5\"],\"outcome\":\"filed\"}], n'"
 check "intake parse: a title ending in ? is a question, #dup names its handle, #parked is a plain tag" sh -c "python3 -c 'import json; n=json.load(open(\"$work/old.json\"))[\"notes\"]; assert n[1][\"question\"] and not n[0][\"question\"] and n[4][\"dup\"]==\"spin\" and n[4][\"ref\"]==\"spin2\" and n[2][\"tags\"]==[\"parked\"]'"
 cat > "$work/bin/claude" <<'SH'
 #!/bin/sh
 printf '%s\t%s\t%s\n' "$0" "$PWD" "$*" >> "$HOST_LOG"
-out="$(printf '%s' "$*" | sed -n 's/.* and write \([^ ]*results.json\).*/\1/p')"
+out="$(printf '%s' "$*" | sed -n 's/.* and write \(.*results\.json\)\. Unattended.*/\1/p')"
 python3 -c "
 import json, os, sys
 d = json.load(open(os.path.join(os.path.dirname(sys.argv[1]), 'notes.json'))); n = d['notes'][0]
@@ -639,14 +639,60 @@ check "intake job: the ledger keeps each note's handle and links for the notes a
 check "intake job: the summary counts answered and dropped" grep -q 'done: answered 1 dropped 1 filed 2 kept 1' "$work/old.out"
 check "intake job: a tracker without types or areas sends empty lists" grep -q 'vocabulary \[\] \[\]' "$HOST_LOG"
 here="$(pwd)"; mkdir -p "$work/notesrepo" && cd "$work/notesrepo" && git init -q --bare origin.git && git clone -q origin.git app 2>/dev/null && cd app && git config user.email t@t && git config user.name t
-mkdir -p docs .flow && cp "$work/notes.orig" docs/notes.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && git push -q origin HEAD:main 2>/dev/null && git branch -q -M main && git branch -q -u origin/main
+mkdir -p docs .flow && cp "$work/notes.orig" docs/notes.md && printf -- '- How does a pin hold?\n' >> docs/notes.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && git push -q origin HEAD:main 2>/dev/null && git branch -q -M main && git branch -q -u origin/main
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\nintake:\n  notes: docs/notes.md\n' > .flow/config.yaml
 "$P/jobs/intake.sh" claude > "$work/notesrepo.out" 2>&1
-check "intake job: a tracked notes file is committed alone and pushed" sh -c "git -C '$work/notesrepo/origin.git' log -1 --format=%s main | grep -q '^chore(notes)' && ! git -C '$work/notesrepo/origin.git' show main:docs/notes.md | grep -q 'First note' && [ \"\$(git -C '$work/notesrepo/origin.git' show --name-only --format= main)\" = docs/notes.md ]"
+check "intake job: a tracked notes file is committed with its answers page, alone, and pushed" sh -c "git -C '$work/notesrepo/origin.git' log -1 --format=%s main | grep -q '^chore(notes)' && ! git -C '$work/notesrepo/origin.git' show main:docs/notes.md | grep -q 'First note' && git -C '$work/notesrepo/origin.git' show main:docs/answers.md | grep -q '^## How does a pin hold?' && [ \"\$(git -C '$work/notesrepo/origin.git' show --name-only --format= main | tr '\n' ' ')\" = 'docs/answers.md docs/notes.md ' ]"
 printf 'x\n' > other.txt && git add other.txt && git commit -qm other && printf -- '- Fourth note\n' >> docs/notes.md
 "$P/jobs/intake.sh" claude >> "$work/notesrepo.out" 2>&1
 check "intake job: other unpushed commits hold the push back" sh -c "grep -q 'other unpushed changes' .flow/log/intake.log && ! git -C '$work/notesrepo/origin.git' log --format=%s main | grep -q '^other'"
 cd "$here"
+notes_clone() { # notes_clone <dir> <more intake config>: <dir>/origin.git and its clone <dir>/app, notes with a question
+  mkdir -p "$1" && git init -q --bare "$1/origin.git" && git clone -q "$1/origin.git" "$1/app" 2>/dev/null && (cd "$1/app" &&
+    git config user.email t@t && git config user.name t && mkdir -p docs .flow && cp "$work/notes.orig" docs/notes.md &&
+    printf -- '- How does a pin hold?\n' >> docs/notes.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init &&
+    git push -q origin HEAD:main 2>/dev/null && git branch -q -M main && git branch -q -u origin/main &&
+    printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\nintake:\n  notes: docs/notes.md\n%b' "$2" > .flow/config.yaml)
+}
+notes_clone "$work/notes repo" ""
+(cd "$work/notes repo/app" && "$P/jobs/intake.sh" claude) > "$work/space.out" 2>&1
+check "intake job: a repo path with a space still commits the notes and the page" sh -c "[ \"\$(git -C '$work/notes repo/origin.git' show --name-only --format= main | tr '\n' ' ')\" = 'docs/answers.md docs/notes.md ' ] && ! git -C '$work/notes repo/origin.git' show main:docs/notes.md | grep -q 'First note'"
+notes_clone "$work/ignored" "  answers: .flow/answers.md\n"
+(cd "$work/ignored/app" && "$P/jobs/intake.sh" claude) > "$work/ignored.out" 2>&1
+check "intake job: an ignored answers page is left out and the notes are still committed" sh -c "[ \"\$(git -C '$work/ignored/origin.git' show --name-only --format= main)\" = docs/notes.md ] && grep -q 'pin hold' '$work/ignored/app/.flow/answers.md' && grep -q 'git ignores .flow/answers.md' '$work/ignored.out'"
+cat > "$work/batch.md" <<'MD'
+## Batch
+
+- Ball rolls off the rail ^bat1
+- Rolls off again #dup (see ^bat1) ^bat2
+- Gone rail guard ^bat3
+- Guard again #dup (see ^bat3) ^bat4
+- Speed grows as x^2 [^1] ^bat5
+- Why does it bend?
+MD
+python3 -I "$P/scripts/_intake.py" parse "$work/batch.md" "$work/none.jsonl" 10 > "$work/batch.json"
+check "intake parse: a caret inside a word or a footnote is not a handle" sh -c "python3 -c 'import json; n=json.load(open(\"$work/batch.json\"))[\"notes\"][4]; assert (n[\"title\"],n[\"ref\"])==(\"Speed grows as x^2 [^1]\",\"bat5\"), n'"
+cat > "$work/bin/claude" <<'SH'
+#!/bin/sh
+out="$(printf '%s' "$*" | sed -n 's/.* and write \(.*results\.json\)\. Unattended.*/\1/p')"
+python3 -c "
+import json, os, sys
+n = json.load(open(os.path.join(os.path.dirname(sys.argv[1]), 'notes.json')))['notes'][0]
+open(os.environ['HOST_LOG'], 'a').write('related %s %s\n' % (n['ref'], json.dumps(n['related'], sort_keys=True)))
+row = {'note': n['id'], 'outcome': 'filed', 'issues': ['gh#7' + n['id'][1:]]}
+if 'Gone' in n['title']: row = {'note': n['id'], 'outcome': 'dropped', 'issues': [], 'reason': 'The rail\nwas removed.'}
+if n['question']: row = {'note': n['id'], 'outcome': 'answered', 'issues': [], 'title': 'Why does it\n  bend?', 'answer': 'It bends.'}
+json.dump([row], open(sys.argv[1], 'w'))" "$out"
+SH
+chmod +x "$work/bin/claude"
+: > "$HOST_LOG"
+FLOW_HOME="$home2" "$P/jobs/intake.sh" claude --notes "$work/batch.md" > "$work/batch.out" 2>&1
+seen() { python3 -c 'import json,sys
+for l in open(sys.argv[1]):
+    if l.startswith("related %s " % sys.argv[2]): print(l.split(" ", 2)[2].strip())' "$HOST_LOG" "$1"; }
+check "intake job: a #dup sees the item its target filed earlier in the same run" [ "$(seen bat2)" = '[{"issues": ["gh#71"], "outcome": "filed", "ref": "bat1"}]' ]
+check "intake job: a #dup of a dropped note sees it dropped, with its reason" [ "$(seen bat4)" = '[{"issues": [], "outcome": "dropped", "reason": "The rail was removed.", "ref": "bat3"}]' ]
+check "intake job: a model title with a newline gives a one-line heading" sh -c "grep -qx '## Why does it bend?' '$work/answers.md'"
 check "jobs.permission_mode refuses anything but dontAsk or auto" sh -c "FLOW_PERMISSION_MODE=bypassPermissions FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_permission_mode' 2>&1 | grep -q 'dontAsk or auto'"
 printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"; chmod +x "$work/bin/claude"
 
