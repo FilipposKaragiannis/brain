@@ -24,6 +24,7 @@ Route one sentence to the flow skill that does it. You translate; the skills act
    | free, claim or add a worktree; a conflict in one | `steward` |
    | run unattended, on its own, in the background, "a one-off unattended run", "N in parallel" | **Unattended**, below |
    | a repeating or scheduled unattended run, "keep working the backlog", "every 30 minutes" | **Unattended**, below |
+   | the scheduled jobs: when they ran or run next, what they did; run, stop, pause, resume or schedule one | `jobs` |
    | set up or check the flow in this repo | `init` |
    | what can I do, how do I, what does X do | `help` |
 
@@ -49,10 +50,9 @@ Route one sentence to the flow skill that does it. You translate; the skills act
      `.flow/jobs/next.sh <host> [item] --max-steps N [--workers N] &` (the job adds the lock,
      the log under `.flow/log/` and the quiet exits). On Claude use the Bash tool's background
      mode. Say where the log is and that `board` shows progress.
-   - **Repeating:** ask the cadence (default every 30 minutes). Where this host gives you a tool
-     that creates a scheduled task on this machine, create one whose prompt runs that command,
-     on the owner's yes. Otherwise give the exact command and cadence for their scheduler
-     (launchd, cron) in one block. Never claim a schedule exists unless the tool confirmed it.
+   - **Repeating:** ask the cadence (default every 30 minutes), write it as
+     `jobs.schedule.next` in `.flow/config.yaml` and, on the owner's yes, follow the `jobs` skill
+     to install it. Never claim a schedule exists unless `jobs.sh status` shows it scheduled.
    - Parallel is `--workers N`, capped by the pool (`pool_max`). Say so when N is above it.
 6. **For a gate, use the user's words as the answer.** Never write one for them; no answer in
    the sentence means ask for it.

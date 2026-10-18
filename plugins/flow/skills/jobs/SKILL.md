@@ -1,0 +1,40 @@
+---
+name: jobs
+description: Run and watch the scheduled flow jobs on this machine (next, comments, intake, retro). Shows each job's schedule, state, last run with its length and result, next run and last week's counts; shows a job's run history or log; runs one now, stops a running one, pauses and resumes, and installs or removes the schedule from .flow/config.yaml. Use when the owner asks what the jobs are doing, when a job last ran or runs next, or to start, stop, pause, resume or schedule one.
+disable-model-invocation: true
+---
+
+The schedule is the owner's machine, so every change here is theirs to ask for.
+
+Plugin root `$P`: the directory holding this skill (`${CLAUDE_PLUGIN_ROOT}` on Claude; on Codex
+the path `codex plugin list` prints for `flow`). Run from the main worktree.
+
+| The owner asks | Run |
+|---|---|
+| what the jobs are doing, when they run | `"$P/scripts/jobs.sh" status` |
+| the runs of one job | `"$P/scripts/jobs.sh" history <job> [N]` |
+| what a job said | `"$P/scripts/jobs.sh" logs <job> [N]` |
+| run one now | `"$P/scripts/jobs.sh" run <job>` |
+| end a run now | `"$P/scripts/jobs.sh" stop <job>` |
+| hold a job, or all, without unscheduling | `"$P/scripts/jobs.sh" pause <job\|all>`, then `resume` |
+| schedule the jobs, or change a schedule | set `jobs.schedule.<job>` in `.flow/config.yaml`, then `"$P/scripts/jobs.sh" install [job]` |
+| remove a schedule | `"$P/scripts/jobs.sh" uninstall [job]` |
+
+1. Show `status` and `history` tables as they print. Under the table, one line per job that
+   failed or waits on a gate, saying what to do.
+2. A schedule is `every 30m [args]`, `daily 02:00 [args]` or `weekly sun 03:00 [args]`; the
+   args go to the job (`next`: `--workers 2 --max-steps 15`). Edit the config, show the diff,
+   then install.
+3. `stop` ends the agent sessions mid-step. Confirm it first: the item stays where its last
+   step left it, and the next run picks it up again.
+4. Pause is the safe hold: a paused job's runs exit at once and show as `paused`, the schedule
+   stays loaded, and a running run finishes.
+
+Facts to answer with:
+- On macOS each job is a launchd agent that loads at login. It runs while the owner is logged in
+  and the Mac is awake. A run missed while asleep starts on wake; one missed while the Mac is off
+  is skipped. Pause survives a restart.
+- An idle run (nothing ready, no new notes, no open PR) ends at once and spends no model time.
+- A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
+  still busy from the last schedule is skipped, which shows as `skipped`.
+- Never claim a schedule exists unless `status` shows it `scheduled`.
