@@ -1,0 +1,1 @@
+/flow:jobs What are the jobs doing? Then schedule next every 30 minutes and install it. This machine runs cron, not launchd: put `FLOW_SCHEDULER=cron FLOW_LAUNCH_AGENTS=.flow/launch-agents` in front of every jobs.sh command.

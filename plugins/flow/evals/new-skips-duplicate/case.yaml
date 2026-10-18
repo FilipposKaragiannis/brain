@@ -1,0 +1,15 @@
+schema_version: "1.1"
+name: new-skips-duplicate
+runs: 3
+execution:
+  max_turns: 15
+  timeout_seconds: 600
+  allowed_tools:
+    - Bash
+    - Read
+    - Glob
+    - Grep
+    - Write
+    - Edit
+context:
+  scaffold_script: scaffold.sh
