@@ -1,5 +1,5 @@
 {
-  "commit": "85ab1b8",
+  "commit": "15373e6",
   "plugins": {
     "craft": {
       "design-skips-explanation": {
@@ -109,9 +109,9 @@
       },
       "write-a-skill-scaffolds": {
         "with": {
-          "passed": 0,
+          "passed": 3,
           "runs": 3,
-          "score": 0.81
+          "score": 1.0
         }
       }
     },
