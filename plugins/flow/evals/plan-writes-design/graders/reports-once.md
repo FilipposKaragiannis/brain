@@ -1,4 +1,8 @@
 ---
-type: llm
+type: regex
+pattern: "^(?=[\\s\\S]*design\\.md)(?=[\\s\\S]*explore\\.md)(?=[\\s\\S]*\\bsize\\b)(?=[\\s\\S]*\\bgate\\b)"
+flags: "i"
+match: contains
+target: last_message
 ---
-The final message says the design step ran, names design.md (and explore.md) under the reports directory, and does not paste the whole design. It reports once, briefly.
+The final message names design.md and explore.md, states the item's size, and says whether a gate was raised.

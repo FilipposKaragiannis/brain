@@ -1,5 +1,5 @@
 {
-  "commit": "dab9172",
+  "commit": "3cb8405",
   "plugins": {
     "craft": {
       "design-skips-explanation": {
@@ -65,9 +65,9 @@
       },
       "explain-writes-page": {
         "with": {
-          "passed": 2,
+          "passed": 3,
           "runs": 3,
-          "score": 0.94
+          "score": 1.0
         }
       },
       "gate-raises-and-clears": {
@@ -86,16 +86,16 @@
       },
       "implement-commits": {
         "with": {
-          "passed": 0,
+          "passed": 3,
           "runs": 3,
-          "score": 0.86
+          "score": 1.0
         }
       },
       "init-installs": {
         "with": {
-          "passed": 2,
+          "passed": 3,
           "runs": 3,
-          "score": 0.97
+          "score": 1.0
         }
       },
       "intake-files-notes": {
@@ -135,9 +135,9 @@
       },
       "plan-writes-design": {
         "with": {
-          "passed": 2,
+          "passed": 3,
           "runs": 3,
-          "score": 0.92
+          "score": 1.0
         }
       },
       "pr-opens-pr": {

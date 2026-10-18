@@ -1,4 +1,8 @@
 ---
-type: llm
+type: regex
+pattern: "<(?:html|head|body|div|section|svg|h[1-6])\\b|```html"
+flags: "i"
+match: not_contains
+target: last_message
 ---
-The final message summarises the change in a few lines instead of pasting the explain page's content.
+The final message does not paste the explain page: no HTML from it.
