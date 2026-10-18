@@ -1,0 +1,16 @@
+schema_version: "1.1"
+name: next-runs-ready-item
+runs: 3
+execution:
+  max_turns: 40
+  timeout_seconds: 1200
+  allowed_tools:
+    - Bash
+    - Read
+    - Glob
+    - Grep
+    - Agent
+    - Write
+    - Edit
+context:
+  scaffold_script: scaffold.sh
