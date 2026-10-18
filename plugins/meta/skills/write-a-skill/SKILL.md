@@ -21,19 +21,24 @@ marketplace and the hosts.
    ```
    It writes `skills/<name>/SKILL.md`, `evals/<name>-works/` and the entry in
    `plugin.source.json`; `tools/generate.sh` then renders `agents/openai.yaml` (Codex reads the
-   `invocation` flag from there; Claude from `disable-model-invocation`).
-3. **Write the body.** Steps in order, each ending on a checkable completion criterion;
+   `invocation` flag from there; Claude from `disable-model-invocation`). Done when the files
+   exist and the frontmatter carries the invocation you picked.
+3. **Write the body.** Steps in order, every one ending on `Done when <check>`, the last too;
    reference on demand, long reference disclosed to a sibling file; one hard guardrail under
    `## Never`, phrased with what to do instead. Prune: no-ops, duplication, cached environment
    truth. Done when every sentence changes behaviour versus the default.
 4. **Write the description.** Model-invoked: the leading word first, one trigger per branch, a
-   reach clause when another skill calls it. User-invoked: one human-facing line.
+   reach clause when another skill calls it. User-invoked: one human-facing line. Done when
+   the description fits its kind.
 5. **Write the eval.** `prompt.md` is a user message that should fire the skill without naming
    it (model-invoked) or the `/plugin:name` command (user-invoked); graders: `tool_used` on the
    Skill tool, a `regex` or `file_exists` on the promised output, one `llm` rubric on the final
-   message. A fixture goes in `scaffold.sh`. Done when `tools/eval.sh <plugin>` passes.
-6. **Review with the owner.** Show the skill and the eval; ask what is missing or unclear and
-   what should move up or down the ladder.
+   message. A fixture goes in `scaffold.sh`. A model-invoked skill that a nearby request could
+   fire by mistake also gets a should-not-trigger case: a nearby, unrelated prompt and a
+   `tool_used` grader with `min: 0` and `max: 0`. Done when `tools/eval.sh <plugin>` passes.
+6. **Review with the owner.** Show the skill and the eval, and say whether it is user-invoked
+   or model-invoked. Ask what is missing or unclear and what should move up or down the ladder.
+   Done when the message ends on that question.
 
 ## House rules
 

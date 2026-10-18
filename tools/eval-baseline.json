@@ -1,0 +1,148 @@
+{
+  "commit": "15373e6",
+  "plugins": {
+    "craft": {
+      "design-skips-explanation": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "design-uses-vocabulary": {
+        "with": {
+          "passed": 1,
+          "runs": 3,
+          "score": 0.9
+        },
+        "without": {
+          "passed": 0,
+          "runs": 3,
+          "score": 0.5
+        }
+      },
+      "improve-finds-shallow": {
+        "with": {
+          "passed": 2,
+          "runs": 2,
+          "score": 1.0
+        },
+        "without": {
+          "passed": 0,
+          "runs": 3,
+          "score": 0.44
+        }
+      },
+      "improve-skips-rename": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "flow": {
+      "do-skips-code-edit": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "explain-writes-page": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "implement-commits": {
+        "with": {
+          "passed": 0,
+          "runs": 1,
+          "score": 0.86
+        }
+      },
+      "init-installs": {
+        "with": {
+          "passed": 2,
+          "runs": 3,
+          "score": 0.97
+        }
+      },
+      "plan-writes-design": {
+        "with": {
+          "passed": 1,
+          "runs": 3,
+          "score": 0.83
+        }
+      },
+      "test-writes-list": {
+        "with": {
+          "passed": 1,
+          "runs": 1,
+          "score": 1.0
+        }
+      },
+      "verify-writes-report": {
+        "with": {
+          "passed": 2,
+          "runs": 2,
+          "score": 1.0
+        }
+      }
+    },
+    "meta": {
+      "retro-routes-lessons": {
+        "with": {
+          "passed": 2,
+          "runs": 3,
+          "score": 0.96
+        }
+      },
+      "retro-unattended-reports": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "write-a-skill-scaffolds": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      }
+    },
+    "standards": {
+      "init-installs": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "review-cites-rule-ids": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        },
+        "without": {
+          "passed": 0,
+          "runs": 3,
+          "score": 0.17
+        }
+      },
+      "review-skips-summary": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      }
+    }
+  },
+  "recorded": "2026-10-18"
+}

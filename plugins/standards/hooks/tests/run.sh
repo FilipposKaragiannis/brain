@@ -318,6 +318,7 @@ check "init: a fresh install writes the stamp" sh -c "'$init' >/dev/null && grep
 check "init: detected commands leave only the guide placeholders as gaps" sh -c "'$init' --check | grep -c 'gap:' | grep -qx 1 && '$init' --check | grep -q 'gap: .standards/testing-guide.md: 4 placeholder'"
 python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
 check "init: writes only under .standards and the host paths" sh -c "[ ! -d docs ] && [ ! -d .githooks ] && [ -f .standards/testing-guide.md ] && [ -f .standards/rules/csharp.md ]"
+check "init: no project roster, no eval runner" sh -c "[ ! -e .standards/evals ]"
 check "init: no .githooks, hooksPath is the plugin folder" sh -c "[ \"\$(git config core.hooksPath)\" = .standards/hooks/git ]"
 check "init: --check is clean after install" sh -c "'$init' --check | grep -q 'up to date'"
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
@@ -355,6 +356,30 @@ check "init --check: links and agents are drift before the run" sh -c "'$init' -
 check "init: links point at the project folders, relative" sh -c "'$init' >/dev/null && [ \"\$(readlink .claude/skills)\" = ../AI/agents/skills ] && [ \"\$(readlink .agents/skills)\" = ../AI/agents/skills ] && [ \"\$(readlink .claude/rules/project)\" = ../../AI/rules ] && [ -f .claude/skills/physics/SKILL.md ]"
 check "init: roster rendered for both hosts with the plugin defaults" sh -c "grep -q '^model: opus' .claude/agents/physics-reviewer.md && grep -q '^tools: Read, Grep' .claude/agents/physics-reviewer.md && grep -q '^  - physics' .claude/agents/physics-reviewer.md && grep -q 'Review the physics' .claude/agents/physics-reviewer.md && grep -q 'model = \"gpt-6-sol\"' .codex/agents/physics-reviewer.toml && grep -q 'sandbox_mode = \"read-only\"' .codex/agents/physics-reviewer.toml"
 check "init: --check is clean after the run" sh -c "'$init' --check | grep -q 'up to date'"
+check "init: a roster installs the eval runner and ignores its results" sh -c "[ -x .standards/evals/run.sh ] && grep -qx 'results/' .standards/evals/.gitignore && grep -q '	.standards/evals/run.sh' .standards/stamp"
+check "evals: no project.evals prints the hint and exits 0 without claude" sh -c ".standards/evals/run.sh | grep -q 'Set project.evals' && ! grep -q 'plugin eval' '$work/offline.log' 2>/dev/null"
+# A fake claude records what the runner hands it: the flags, the wrapper's manifest and agents,
+# and where a case's own path resolves the repo (the scaffold scripts depend on it).
+mkdir -p "$work/evalbin" "$work/evallog" AI/agents/evals/case-a
+printf 'name: case-a\n' > AI/agents/evals/case-a/case.yaml
+cat > "$work/evalbin/claude" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" > "$work/evallog/args"
+printf '%s\n' "\$3" > "$work/evallog/dir"
+cat "\$3/.claude-plugin/plugin.json" > "$work/evallog/manifest"
+ls "\$3/agents" > "$work/evallog/agents"
+[ -L "\$3/cases" ] && git -C "\$3/cases/case-a" rev-parse --show-toplevel > "$work/evallog/top"
+exit 3
+EOF
+chmod +x "$work/evalbin/claude"
+python3 -c 'import json; p = ".standards/config.json"; c = json.load(open(p)); c["project"]["evals"] = "AI/agents/evals"; json.dump(c, open(p, "w"), indent=2)'
+PATH="$work/evalbin:$PATH" .standards/evals/run.sh --case 'case-*' >/dev/null 2>&1; eval_status=$?
+check "evals: the runner keeps the eval's exit status" [ "$eval_status" = 3 ]
+check "evals: the runner passes the flags, then the caller's" grep -q '^plugin eval .* --scaffold --allow-tools Bash Read Glob Grep Agent --trust-plugin --no-publish --ablation none --judge-model sonnet --output-dir .standards/evals/results/[0-9-]* --case case-\*$' "$work/evallog/args"
+check "evals: the wrapper is named after the repo and reads its cases from cases/" sh -c "grep -q '\"name\": \"fresh\"' '$work/evallog/manifest' && grep -q '\"evals\": \"cases\"' '$work/evallog/manifest'"
+check "evals: the wrapper carries copies of the rendered agents" grep -qx physics-reviewer.md "$work/evallog/agents"
+check "evals: a case's path still resolves this repo (cases is a link)" sh -c "[ \"\$(cat '$work/evallog/top')\" = \"\$(pwd -P)\" ]"
+check "evals: the wrapper is removed after the run" sh -c "[ ! -e \"\$(cat '$work/evallog/dir')\" ]"
 printf 'More.\n' >> AI/agents/briefs/physics-reviewer.md
 check "init --check: an edited brief makes the rendered agents stale" sh -c "'$init' --check | grep -q 'drift: .claude/agents/physics-reviewer.md' && '$init' --check | grep -q 'drift: .codex/agents/physics-reviewer.toml'"
 check "init: re-render picks the edit up" sh -c "'$init' >/dev/null && grep -q 'More.' .codex/agents/physics-reviewer.toml"
@@ -362,6 +387,10 @@ rm .claude/skills && ln -s /nowhere .claude/skills
 check "init: a link pointing elsewhere is fixed" sh -c "'$init' >/dev/null && [ \"\$(readlink .claude/skills)\" = ../AI/agents/skills ]"
 printf '{ "agents": {} }\n' > AI/agents/roster.json
 check "init: an agent dropped from the roster is removed" sh -c "'$init' | grep -q 'physics-reviewer.md removed' && [ ! -f .claude/agents/physics-reviewer.md ] && [ ! -f .codex/agents/physics-reviewer.toml ]"
+check "init: an empty roster keeps the eval runner" [ -x .standards/evals/run.sh ]
+python3 -c 'import json; p = ".standards/config.json"; c = json.load(open(p)); c["project"]["roster"] = ""; json.dump(c, open(p, "w"), indent=2)'
+check "init --check: the runner is stale once the roster goes" sh -c "'$init' --check | grep -q 'stale: .standards/evals/run.sh (no project roster)'"
+check "init: the runner goes with the roster" sh -c "'$init' | grep -q 'run.sh removed' && [ ! -e .standards/evals ] && '$init' --check | grep -q 'up to date'"
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q
 check "session-start: silent in a project without the standards" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
 
