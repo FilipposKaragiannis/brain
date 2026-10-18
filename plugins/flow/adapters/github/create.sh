@@ -1,17 +1,19 @@
 #!/bin/sh
-# github create <kind> <title> [--size S|M|L] [--type NAME] [--blocked-by gh#a,gh#b] [--body TEXT] [--parent gh#N]:
+# github create <kind> <title> [--size S|M|L] [--type NAME] [--area NAME] [--blocked-by gh#a,gh#b] [--body TEXT] [--parent gh#N]:
 # a new issue; prints its id. With github.types true the kind sets the issue type (epic Epic, bug
 # Bug, task Task, or --type), else epic adds the epic label and bug the bug label. The size goes to
-# the github.fields.size issue field when set, else a size: label. A parent makes it a native
+# the github.fields.size issue field when set, else a size: label; the area to github.fields.area
+# when set, else nowhere (the body names it). A parent makes it a native
 # sub-issue; blockers become native dependency edges (and stay readable in the body).
 . "$(dirname "$0")/_gh.sh"
 [ $# -ge 2 ] || die "usage: create <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--parent gh#N]" 2
 kind="$1"; title="$2"; shift 2
-size=""; blocked=""; body=""; parent=""; type=""
+size=""; blocked=""; body=""; parent=""; type=""; area=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --size) size="$2"; shift 2 ;;
     --type) type="$2"; shift 2 ;;
+    --area) area="$2"; shift 2 ;;
     --blocked-by) blocked="$2"; shift 2 ;;
     --body) body="$2"; shift 2 ;;
     --parent) parent="$2"; shift 2 ;;
@@ -36,6 +38,8 @@ url="$(printf '%s\n%s\n' "$body" "$tail" | gh issue create -R "$repo" --title "$
 n="${url##*/}"
 [ -n "$type" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" type "$repo" "$n" "$type" || echo "flow: could not set gh#$n to type $type" >&2; }
 [ -n "$size" ] && [ -n "$GH_SIZE_FIELD" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "$size" || echo "flow: could not set the size of gh#$n" >&2; }
+area_field="$(cfg github.fields.area)"
+[ -n "$area" ] && [ -n "$area_field" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$area_field" "$area" || echo "flow: could not set the area of gh#$n" >&2; }
 if [ -n "$parent" ]; then
   pid="$(gh issue view "$(issue_number "$parent")" -R "$repo" --json id -q .id)"
   cid="$(gh issue view "$n" -R "$repo" --json id -q .id)"

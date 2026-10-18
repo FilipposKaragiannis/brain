@@ -57,7 +57,8 @@ elif args[0] == "api" and "graphql" in args:
         if args[k] in ("-f", "-F") and not args[k + 1].startswith("query="):
             key, value = args[k + 1].split("=", 1); var[key] = value
     by_node = lambda node: next(i for i in data["issues"] if i.get("node", "I_%d" % i["number"]) == node)
-    field_defs = data.setdefault("field_defs", {"Size": ["S", "M", "L", "XL"], "Priority": ["P0", "P1", "P2", "P3"]})
+    field_defs = data.setdefault("field_defs", {"Size": ["S", "M", "L", "XL"], "Priority": ["P0", "P1", "P2", "P3"],
+                                                    "Area": ["Bots", "Debugging & Observability"]})
     statuses = data.setdefault("statuses", ["Backlog", "Ready", "Needs you", "In progress", "In review"])
     def node_of(i):
         fields = i.get("fields", {})

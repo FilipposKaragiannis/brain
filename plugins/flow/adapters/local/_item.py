@@ -9,7 +9,7 @@ Usage (always from the shell scripts):
   _item.py write-state <home> <id> key=value...
   _item.py comment <home> <id> <text>
   _item.py close <home> <id> [<text>]
-  _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID]
+  _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME]
 """
 import glob
 import json
@@ -191,7 +191,7 @@ def cmd_close(home, args):
 
 def cmd_create(home, args):
     kind, title, rest = args[0], args[1], args[2:]
-    opt = {"size": "", "blocked_by": [], "body": "", "labels": [], "parent": ""}
+    opt = {"size": "", "blocked_by": [], "body": "", "labels": [], "parent": "", "area": ""}
     i = 0
     while i < len(rest):
         if rest[i] == "--size":
@@ -204,6 +204,8 @@ def cmd_create(home, args):
             opt["labels"] = [x for x in rest[i + 1].split(",") if x]; i += 2
         elif rest[i] == "--parent":
             opt["parent"] = rest[i + 1]; i += 2
+        elif rest[i] == "--area":
+            opt["area"] = rest[i + 1]; i += 2
         else:
             raise SystemExit("flow: unknown option %s" % rest[i])
     folder = os.path.join(home, "items", kind)
@@ -216,6 +218,8 @@ def cmd_create(home, args):
             "blocked_by": opt["blocked_by"], "labels": opt["labels"], "parent": opt["parent"], "step": "", "profile": "",
             "worktree": "", "attempts": 0, "gate": "none", "last_event": "", "pr": "", "touches": [],
             "created": now()}
+    if opt["area"]:
+        meta["area"] = opt["area"]
     dump(os.path.join(folder, "%d.md" % n), meta, "# %s\n\n%s\n" % (title, opt["body"]))
     print(item_id)
 
