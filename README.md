@@ -47,6 +47,8 @@ members, `[why-comment]` for a math or physics `//`. `standards:review` runs the
 Hook tests: `plugins/standards/hooks/tests/run.sh`. Evals: `tools/eval.sh standards` (costs money, not in CI);
 `tools/eval.sh <plugin> --baseline` adds a no-plugin arm to the cases tagged `baseline` (the advisory
 skills: `standards:review`, the craft skills) and `--tag negative` runs the should-not-trigger cases.
+Each eval run ends with a summary (`tools/lib/eval_summary.py`) that scores the cases over the runs
+that did not fail for an infrastructure reason and counts those BLOCKED runs apart.
 
 ## Flow plugin
 `flow:init` writes `.flow/config.yaml` (adapters, base branch, worktree pool and `pool_max`,
