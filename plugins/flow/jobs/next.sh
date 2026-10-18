@@ -29,6 +29,7 @@ case "$workers" in ''|*[!0-9]*|0) die "--workers takes a number from 1" 2 ;; esa
 # Gates the owner answered on the tracker (an /answer comment) clear first, so the item they free
 # can be picked in this same schedule.
 if [ -z "$worker" ]; then
+  job_skip_if_paused
   mkdir -p "$(job_log_dir)"
   if flow_lock answers; then
     for a in $(adapters_configured); do

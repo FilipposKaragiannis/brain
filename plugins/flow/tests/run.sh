@@ -12,7 +12,7 @@ trap 'rm -rf "$work"' EXIT
 # A test that needs one of them puts its own fake earlier in PATH.
 unset FLOW_SLACK_WEBHOOK
 mkdir -p "$work/offline"
-for tool in curl wget gh osascript notify-send claude codex; do
+for tool in curl wget gh osascript notify-send claude codex launchctl; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
   chmod +x "$work/offline/$tool"
 done
@@ -436,10 +436,18 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: merged PR skipped, quiet" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'quiet: no open PR' .flow/log/comments.log"
-mkdir -p .flow/log/comments.lock && echo $$ > .flow/log/comments.lock/pid
-check "job lock: live pid skips"  sh -c "'$P/jobs/comments.sh' claude | grep -q 'skipped: run $$ still going'"
+# A stand-in run: its command line names jobs/comments.sh, as a real run's does, and it has a child.
+mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
+fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
+mkdir -p .flow/log/comments.lock && echo "$fakejob" > .flow/log/comments.lock/pid
+check "job lock: live pid skips"  sh -c "'$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
+pkill -P "$fakejob" 2>/dev/null; kill "$fakejob" 2>/dev/null
 echo 999999 > .flow/log/comments.lock/pid
 check "job lock: stale pid runs" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ]"
+sleep 60 & other=$!
+mkdir -p .flow/log/comments.lock && echo "$other" > .flow/log/comments.lock/pid
+check "job lock: a pid a restart gave to another process is stale, and that process is left alone" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ] && kill -0 $other"
+kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null"
 home2="$work/home2"; mkdir -p "$home2"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > "$home2/config.yaml"
@@ -456,6 +464,85 @@ FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify fail
 check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new' && grep -q '/meta:retro Unattended.*Read the 2 lessons.*2 lines, 0 read before' '$HOST_LOG'"
 printf '%s\t2\t1\t1\n' "$(date -u +%FT%TZ)" > "$home2/retros.log"
 check "retro job: retros.log marks the lessons read" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude --min-lessons 1 | grep -q 'quiet: 0 new'"
+
+echo "flow jobs: the run ledger, pause and the schedule (fake launchctl)"
+J="$P/scripts/jobs.sh"
+check "a run is a line in runs.jsonl: job, start, length, exit, last words" sh -c "grep '\"job\":\"comments\"' .flow/log/runs.jsonl | grep -q '\"exit\":0,\"result\":\"quiet: no open PR\"'"
+check "a run skipped by a live lock is a line too" grep -q '"result":"skipped: run' .flow/log/runs.jsonl
+check "next workers record their own runs" grep -q '"job":"next"' "$home2/log/runs.jsonl"
+FLOW_HOME="$home2" "$P/jobs/intake.sh" claude >/dev/null 2>&1
+check "a job that dies after it starts records the error and its exit" sh -c "tail -1 '$home2/log/runs.jsonl' | grep -q '\"exit\":1,\"result\":\"error: no notes file'"
+: > "$HOST_LOG"
+FLOW_HOME="$home2" "$J" pause retro >/dev/null
+FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "again" >/dev/null
+check "a paused job exits at once and spends nothing" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q '^.*paused:' && [ ! -s '$HOST_LOG' ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"result\":\"paused'"
+FLOW_HOME="$home2" "$J" pause next >/dev/null
+check "a paused next skips the tracker sync and every worker" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude --workers 2 | grep -q 'paused' && [ ! -f '$home2/log/next-1.log' ]"
+FLOW_HOME="$home2" "$J" resume all >/dev/null
+check "resume all clears every pause" sh -c "! ls '$home2'/log/*.paused 2>/dev/null"
+check "jobs: an unknown job is refused" sh -c "! '$J' history vim 2>/dev/null"
+mkdir -p "$work/agents"
+cat > "$work/bin/launchctl" <<'SH'
+#!/bin/sh
+echo "launchctl $*" >> "$LAUNCH_LOG"
+case "$1" in
+  print) [ -f "$LAUNCH_DIR/${2##*/}.loaded" ] || exit 113; printf '\tstate = not running\n\truns = 3\n\tlast exit code = 0\n' ;;
+  bootstrap) touch "$LAUNCH_DIR/$(basename "$3" .plist).loaded" ;;
+  bootout) rm -f "$LAUNCH_DIR/${2##*/}.loaded" ;;
+esac
+SH
+chmod +x "$work/bin/launchctl"
+export LAUNCH_LOG="$work/launchctl.log" LAUNCH_DIR="$work/agents" FLOW_LAUNCH_AGENTS="$work/agents" FLOW_SCHEDULER=launchd
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\njobs:\n  schedule:\n    next: every 30m --workers 2 --max-steps 15\n    comments: every 2h\n    intake: daily 02:00\n    retro: weekly sun 03:30\n' > "$home2/config.yaml"
+lbl="com.$(basename "$repo" | tr 'A-Z' 'a-z').flow"
+FLOW_HOME="$home2" "$J" install > "$work/install.out"
+check "install writes a launchd agent per scheduled job and loads it" sh -c "[ \$(ls '$work/agents'/*.plist | wc -l) = 4 ] && [ \$(grep -c bootstrap '$LAUNCH_LOG') = 4 ]"
+check "install: every 30m is a 1800 s interval, with the job's args" sh -c "grep -q '<integer>1800</integer>' '$work/agents/$lbl.next.plist' && grep -q 'next.sh claude --workers 2 --max-steps 15' '$work/agents/$lbl.next.plist' && grep -q '<integer>7200</integer>' '$work/agents/$lbl.comments.plist'"
+check "install: daily and weekly are calendar times, Sunday is 0" sh -c "grep -q '<key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer>' '$work/agents/$lbl.intake.plist' && grep -q '<key>Minute</key><integer>30</integer><key>Weekday</key><integer>0</integer>' '$work/agents/$lbl.retro.plist'"
+FLOW_HOME="$home2" "$J" install next > /dev/null
+check "install again unloads the old agent first" sh -c "grep -q 'bootout gui/.*/$lbl.next' '$LAUNCH_LOG'"
+FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
+check "status: schedule, loaded, launchd's run count, the last run and what it said" sh -c "python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}; n=r[\"next\"]; i=r[\"intake\"]; assert n[\"schedule\"]==\"every 30m\" and n[\"args\"]==\"--workers 2 --max-steps 15\" and n[\"loaded\"] and n[\"launchd\"][\"runs\"]==3, n; assert i[\"last\"][\"outcome\"]==\"failed\" and i[\"last\"][\"result\"].startswith(\"error\"), i; assert r[\"retro\"][\"week\"][\"paused\"]==1' '$work/status.json'"
+check "status: the next run of a calendar job is a time, an interval job is due after a long gap" sh -c "python3 -c 'import json,sys,re; r={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}; assert re.match(r\"[A-Z][a-z]{2} \d\d 02:00\", r[\"intake\"][\"next\"]), r[\"intake\"][\"next\"]' '$work/status.json'"
+check "status prints a table" sh -c "FLOW_HOME='$home2' '$J' status | grep -q '^| intake | daily 02:00 | scheduled |'"
+check "history lists the runs, newest first" sh -c "FLOW_HOME='$home2' '$J' history intake 5 | sed -n 3p | grep -q '| failed | error: no notes file'"
+printf 'jobs:\n  schedule:\n    next: hourly\n' > "$home2/config.yaml"
+check "install refuses a schedule it cannot read" sh -c "! FLOW_HOME='$home2' '$J' install next 2>&1 | grep -q 'as $lbl'"
+printf 'jobs:\n  schedule:\n    next: every 30m\n    intake: weekly sun 03:30\n' > "$home2/config.yaml"
+check "install elsewhere prints the crontab lines" sh -c "FLOW_SCHEDULER=cron FLOW_HOME='$home2' '$J' install | grep -q '^\*/30 \* \* \* \* cd .*next.sh claude' && FLOW_SCHEDULER=cron FLOW_HOME='$home2' '$J' install intake | grep -q '^30 3 \* \* 0 '"
+home3="$work/flow home"; mkdir -p "$home3" && cp "$home2/config.yaml" "$home3/config.yaml"
+check "the crontab line quotes a flow home with a space" sh -c "FLOW_SCHEDULER=cron FLOW_HOME='$home3' '$J' install next | grep -qF \">> '$home3/log/launchd-next.log' 2>&1\""
+printf 'jobs:\n  schedule:\n    next: every 90m\n    comments: every 45m\n    intake: every 15m\n    retro: every 2h\n' > "$home2/config.yaml"
+for j in next comments; do
+  check "cron refuses $(yaml_get "$home2/config.yaml" jobs.schedule.$j), naming the intervals it can run" sh -c "! FLOW_SCHEDULER=cron FLOW_HOME='$home2' '$J' install $j >/dev/null 2>&1 && FLOW_SCHEDULER=cron FLOW_HOME='$home2' '$J' install $j 2>&1 | grep -q 'minutes that divide 60.*hours that divide 24'"
+done
+check "cron takes every 15m and every 2h" sh -c "FLOW_SCHEDULER=cron FLOW_HOME='$home2' '$J' install intake | grep -q '^\*/15 \* \* \* \* ' && FLOW_SCHEDULER=cron FLOW_HOME='$home2' '$J' install retro | grep -q '^0 \*/2 \* \* \* '"
+printf 'jobs:\n  schedule:\n    next: every 30m ; touch %s/pwned\n' "$work" > "$home2/config.yaml"
+check "install refuses an arg that is not a plain option or value and writes nothing" sh -c "! FLOW_HOME='$home2' '$J' install next >/dev/null 2>&1 && FLOW_HOME='$home2' '$J' install next 2>&1 | grep -q 'one option or value' && ! grep -q pwned '$work/agents/$lbl.next.plist'"
+check "run refuses it too and runs nothing" sh -c "FLOW_HOME='$home2' '$J' run next >/dev/null 2>&1; c=\$?; sleep 1; [ \$c -ne 0 ] && [ ! -e '$work/pwned' ]"
+printf 'jobs:\n  schedule:\n    next: every 30m\n    intake: daily 25:00\n    retro: weekly sun 07:61\n' > "$home2/config.yaml"
+check "install refuses a time out of range" sh -c "FLOW_HOME='$home2' '$J' install intake 2>&1 | grep -q 'no time 25:00' && FLOW_HOME='$home2' '$J' install retro 2>&1 | grep -q 'no time 07:61' && ! FLOW_HOME='$home2' '$J' install retro >/dev/null 2>&1"
+check "status shows a bad schedule's error in its row and the other jobs as usual" sh -c "FLOW_HOME='$home2' '$J' status > '$work/bad.out' && grep -q '^| intake | error: .*25:00' '$work/bad.out' && grep -q '^| next | every 30m |' '$work/bad.out' && FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert \"07:61\" in r[\"retro\"][\"error\"] and \"error\" not in r[\"next\"]'"
+printf 'jobs:\n  schedule:\n    next: every 30m\n    comments: every 2h\n' > "$home2/config.yaml"
+printf 'the job said this\n' >> "$home2/log/next.log"; printf 'a worker said this\n' > "$home2/log/next-1.log"
+check "logs prints the job's log and each worker's" sh -c "FLOW_HOME='$home2' '$J' logs next 5 > '$work/logs.out' && grep -q '^== next.log' '$work/logs.out' && grep -q 'the job said this' '$work/logs.out' && grep -q '^== next-1.log' '$work/logs.out' && grep -q 'a worker said this' '$work/logs.out'"
+fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
+sleep 1; fakechild="$(pgrep -P "$fakejob")"
+mkdir -p "$home2/log/comments.lock" && echo "$fakejob" > "$home2/log/comments.lock/pid"
+check "run refuses a job that is running" sh -c "FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
+check "status shows a running job" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
+FLOW_HOME="$home2" "$J" stop comments >/dev/null
+sleep 1
+check "stop ends the running run and every process under it" sh -c "[ -n '$fakechild' ] && ! kill -0 $fakejob 2>/dev/null && ! kill -0 $fakechild 2>/dev/null"
+sleep 60 & other=$!
+echo "$other" > "$home2/log/comments.lock/pid"
+check "a lock whose pid now runs something else is not a running job" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"]==[]'"
+check "stop leaves that process alone" sh -c "FLOW_HOME='$home2' '$J' stop comments | grep -q 'not running' && kill -0 $other"
+kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
+rm -rf "$home2/log/comments.lock"
+FLOW_HOME="$home2" "$J" uninstall >/dev/null
+check "uninstall unloads and removes every agent" sh -c "[ -z \"\$(ls '$work/agents'/*.plist 2>/dev/null)\" ] && [ \$(grep -c bootout '$LAUNCH_LOG') -ge 5 ]"
+unset FLOW_LAUNCH_AGENTS FLOW_SCHEDULER
 
 echo "intake (fake hosts)"
 cat > "$work/notes.md" <<'MD'

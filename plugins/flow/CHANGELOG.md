@@ -1,5 +1,21 @@
 # flow
 
+## 1.9.0 (2026-10-18)
+
+- The `jobs` skill and `scripts/jobs.sh` run and watch the scheduled jobs: `status` shows each
+  job's schedule, state, last run with its length and result, next run and the last 7 days'
+  counts; `history`, `logs`, `run`, `stop`, `pause`, `resume`. `install` writes and loads the
+  schedule from `jobs.schedule.<job>` in `.flow/config.yaml` (`every 30m`, `daily 02:00`,
+  `weekly sun 03:00`, then the job's args): launchd agents on macOS, the crontab lines
+  elsewhere. `jobs.host` picks the host.
+- Every job run is one line in `<flow home>/log/runs.jsonl`: start, length, exit and its last
+  words, also for a run a live lock skips and a job that dies after it starts.
+- A paused job's runs exit at once, before any tracker call or model spend, and the schedule
+  stays loaded. The init config and hints, and `do`, point at the skill. Re-run `flow:init`.
+- A schedule's args are checked (plain options and values only) and shell-quoted, and its times
+  must exist; cron refuses an interval it cannot keep steady. A lock whose pid a restart gave to
+  another process no longer counts as a running job, and the ledger rotates without losing a line.
+
 ## 1.8.0 (2026-10-17)
 
 - Answer a gate on GitHub: a comment after the gate's comment that starts with `/answer` (alone:

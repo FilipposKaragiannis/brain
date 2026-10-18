@@ -1,6 +1,6 @@
 {
   "name": "flow",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "The work flow: pick the next ready item, plan, implement, test, review, verify and open a PR, with agents in worktrees and human gates only where a human adds value.",
   "author": {
     "name": "Filip Karagiannis"
