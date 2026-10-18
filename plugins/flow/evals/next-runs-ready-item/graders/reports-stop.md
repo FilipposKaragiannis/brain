@@ -1,5 +1,8 @@
 ---
-type: llm
+type: regex
+pattern: '^(?=[\s\S]*local:task/1)(?=[\s\S]*https://gh/pull/91)(?=[\s\S]*\bmerge\b)'
+flags: "i"
+match: contains
+target: last_message
 ---
-The final message reports local:task/1, that the pr step ran, the PR URL https://gh/pull/91, and
-that the run stopped at the merge gate waiting for the owner to merge.
+The report names the item, the PR and the merge gate it waits at.

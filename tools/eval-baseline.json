@@ -1,5 +1,5 @@
 {
-  "commit": "15373e6",
+  "commit": "dab9172",
   "plugins": {
     "craft": {
       "design-skips-explanation": {
@@ -42,6 +42,20 @@
       }
     },
     "flow": {
+      "board-shows-state": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "comments-fixes-and-replies": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
       "do-skips-code-edit": {
         "with": {
           "passed": 3,
@@ -51,6 +65,20 @@
       },
       "explain-writes-page": {
         "with": {
+          "passed": 2,
+          "runs": 3,
+          "score": 0.94
+        }
+      },
+      "gate-raises-and-clears": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "help-lists-skills": {
+        "with": {
           "passed": 3,
           "runs": 3,
           "score": 1.0
@@ -59,7 +87,7 @@
       "implement-commits": {
         "with": {
           "passed": 0,
-          "runs": 1,
+          "runs": 3,
           "score": 0.86
         }
       },
@@ -70,24 +98,87 @@
           "score": 0.97
         }
       },
+      "intake-files-notes": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "jobs-installs-with-cron": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "new-files-item": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "new-skips-duplicate": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "next-runs-ready-item": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
       "plan-writes-design": {
         "with": {
-          "passed": 1,
+          "passed": 2,
           "runs": 3,
-          "score": 0.83
+          "score": 0.92
+        }
+      },
+      "pr-opens-pr": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "pr-refuses-failing-verify": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "review-fails-without-engine": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "steward-keeps-dirty-worktree": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
         }
       },
       "test-writes-list": {
         "with": {
-          "passed": 1,
-          "runs": 1,
+          "passed": 3,
+          "runs": 3,
           "score": 1.0
         }
       },
       "verify-writes-report": {
         "with": {
-          "passed": 2,
-          "runs": 2,
+          "passed": 3,
+          "runs": 3,
           "score": 1.0
         }
       }
