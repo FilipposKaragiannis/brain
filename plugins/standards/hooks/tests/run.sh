@@ -359,8 +359,8 @@ check "init: --check is clean after the run" sh -c "'$init' --check | grep -q 'u
 check "init: a roster installs the eval runner and ignores its results" sh -c "[ -x .standards/evals/run.sh ] && grep -qx 'results/' .standards/evals/.gitignore && grep -q '	.standards/evals/run.sh' .standards/stamp"
 check "evals: no project.evals prints the hint and exits 0 without claude" sh -c ".standards/evals/run.sh | grep -q 'Set project.evals' && ! grep -q 'plugin eval' '$work/offline.log' 2>/dev/null"
 # A fake claude records what the runner hands it: the flags, the wrapper's manifest and agents,
-# and where a case's own path resolves the repo (the scaffold scripts depend on it).
-mkdir -p "$work/evalbin" "$work/evallog" AI/agents/evals/case-a
+# and the copied cases with the repo's path beside them (the scaffold scripts depend on it).
+mkdir -p "$work/evalbin" "$work/evallog" AI/agents/evals/case-a AI/agents/evals/results/old
 printf 'name: case-a\n' > AI/agents/evals/case-a/case.yaml
 cat > "$work/evalbin/claude" <<EOF
 #!/bin/sh
@@ -368,7 +368,8 @@ printf '%s\n' "\$*" > "$work/evallog/args"
 printf '%s\n' "\$3" > "$work/evallog/dir"
 cat "\$3/.claude-plugin/plugin.json" > "$work/evallog/manifest"
 ls "\$3/agents" > "$work/evallog/agents"
-[ -L "\$3/cases" ] && git -C "\$3/cases/case-a" rev-parse --show-toplevel > "$work/evallog/top"
+[ ! -L "\$3/cases" ] && [ -f "\$3/cases/case-a/case.yaml" ] && cat "\$3/cases/.repo-root" > "$work/evallog/top"
+[ -e "\$3/cases/results" ] && echo yes > "$work/evallog/results"
 exit 3
 EOF
 chmod +x "$work/evalbin/claude"
@@ -378,7 +379,8 @@ check "evals: the runner keeps the eval's exit status" [ "$eval_status" = 3 ]
 check "evals: the runner passes the flags, then the caller's" grep -q '^plugin eval .* --scaffold --allow-tools Bash Read Glob Grep Agent --trust-plugin --no-publish --ablation none --judge-model sonnet --output-dir .standards/evals/results/[0-9-]* --case case-\*$' "$work/evallog/args"
 check "evals: the wrapper is named after the repo and reads its cases from cases/" sh -c "grep -q '\"name\": \"fresh\"' '$work/evallog/manifest' && grep -q '\"evals\": \"cases\"' '$work/evallog/manifest'"
 check "evals: the wrapper carries copies of the rendered agents" grep -qx physics-reviewer.md "$work/evallog/agents"
-check "evals: a case's path still resolves this repo (cases is a link)" sh -c "[ \"\$(cat '$work/evallog/top')\" = \"\$(pwd -P)\" ]"
+check "evals: the cases are a copy that names this repo in .repo-root" sh -c "[ \"\$(cat '$work/evallog/top')\" = \"\$(pwd -P)\" ]"
+check "evals: old results stay out of the copy" [ ! -e "$work/evallog/results" ]
 check "evals: the wrapper is removed after the run" sh -c "[ ! -e \"\$(cat '$work/evallog/dir')\" ]"
 printf 'More.\n' >> AI/agents/briefs/physics-reviewer.md
 check "init --check: an edited brief makes the rendered agents stale" sh -c "'$init' --check | grep -q 'drift: .claude/agents/physics-reviewer.md' && '$init' --check | grep -q 'drift: .codex/agents/physics-reviewer.toml'"
