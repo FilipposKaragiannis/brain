@@ -61,7 +61,7 @@ such and left to `flow:init`.
 
 | Target | Content | Re-run behaviour |
 |---|---|---|
-| `.standards/config.json` | format, build, test and mutation commands, protected files, hot paths, gates, project links and roster | written once, never overwritten; empty `build`, `test`, `languages` or a language without `format` is a gap |
+| `.standards/config.json` | format, build, test and mutation commands, protected files, hot paths, gates, project links, roster and eval cases folder (`project.evals`) | written once, never overwritten; empty `build`, `test`, `languages` or a language without `format` is a gap |
 | `.standards/testing-guide.md` | levels and commands, fixtures, declared exceptions, the hand-test list | written once, never overwritten; a `_fill in_` placeholder is a gap |
 | `.standards/rules/*.md` | the full rule text with ids and reasons | replaced |
 | `AGENTS.md` (and a separate `CLAUDE.md`) | one block between `<!-- standards:begin vX.Y.Z -->` and `<!-- standards:end -->`: hard rules, signals, `## Code Review Rules` | the block is replaced, nothing outside it is touched |
@@ -72,6 +72,7 @@ such and left to `flow:init`.
 | `.claude/skills`, `.agents/skills` | relative links to `project.skills` from the config, when set | fixed when they point elsewhere; a real folder in the way is reported |
 | `.claude/rules/project` | a relative link to `project.rules`, when set | same |
 | `.claude/agents/<name>.md`, `.codex/agents/<name>.toml` | the project roster (`project.roster`) rendered with the plugin's templates and defaults (`templates/agents/`) | replaced; an agent dropped from the roster is removed |
+| `.standards/evals/run.sh`, `.standards/evals/.gitignore` | with a project roster: the runner for the project's agent evals (cases in `project.evals`, see [AGENT-EVALS.md](AGENT-EVALS.md)) and `results/` ignored | replaced; removed when the roster goes |
 | `.standards/stamp` | a hash of the plugin's install set, then one hash per copy above | rewritten; commit it |
 
 **Gaps.** `init` ends with a `Gaps` list when the config or the guide cannot do its job yet;
@@ -118,6 +119,11 @@ gate once: when the agent hook passes the formatter or the gates for a plain `gi
 index, it records that index tree in the git dir, and git's own hooks skip the same tree for ten
 minutes. A `git add` in the same command, `-a` or a pathspec changes the index, so git's hooks
 run the gates again.
+
+**Agent evals.** `.standards/evals/run.sh` runs the cases in `project.evals` (one folder per
+case, the `claude plugin eval` format) against the rendered `.claude/agents/`; without the key it
+prints how to add one and exits 0. The cases are the project's own; [AGENT-EVALS.md](AGENT-EVALS.md)
+shows how to write one. Each run costs money, so CI never runs it.
 
 **Mutation** is `mutation` in `.standards/config.json`. An empty string turns it off: verify
 reports a skipped check, the test reviewer and T-04 do not ask for it. With `{files}` in the

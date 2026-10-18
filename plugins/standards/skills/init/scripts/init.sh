@@ -9,7 +9,8 @@
 # a trailing `exit`, and moved there when an earlier init left it after one), else
 # core.hooksPath pointed at .standards/hooks/git), and, when .standards/config.json "project"
 # names them, the skills and rules links (.claude/skills, .agents/skills, .claude/rules/project)
-# and the project roster rendered into .claude/agents/ and .codex/agents/. The agent hosts run
+# and the project roster rendered into .claude/agents/ and .codex/agents/ (with the eval runner
+# .standards/evals/run.sh and its .gitignore). The agent hosts run
 # the gates from the plugin's own hooks/hooks.json: init writes no hook entry into a host
 # settings file, and reports one that would run the gates twice. Old copies under docs/ (before
 # v0.2.0) are removed when unchanged, or reported.
@@ -99,7 +100,7 @@ if solutions:
         "comments": {"line": "//", "doc": "///", "public": "public", "doc_inside": ["interface", "enum"], "allow_markers": ["float-boundary:"]},
     })
 config = {
-    "_readme": "Project settings for the standards plugin hooks and the flow verifier. Edit freely; init never overwrites this file. format[].command runs from the repo root with {files} replaced by the staged files under prefix. build runs in the git pre-push hook and in verify; test and mutation run in verify (mutation is a signal; empty turns it off; {files} limits it to the changed source files). protected files need [config] in the commit message. comments: line and doc are the comment tokens, public the modifier a doc comment must sit above, doc_inside the type kinds whose members may carry a doc without it (their members have no modifier), allow_markers the prefixes that make a line comment legal. gates: the project's own gates, run by the plugin hook, the git hooks and CI (check-gates.sh): {name, command, paths, when: [commit|push|ci], marker} runs command when a committed file matches a path glob (the command sees STANDARDS_COMMIT_MESSAGE and STANDARDS_STAGE; a commit whose message carries the marker skips the gate); {name, forbid: [text], marker} blocks a command that runs a text (as a word, not inside a heredoc, comment or quoted text, except sh -c, bash -c and eval) unless it carries the marker. project: skills (a folder; init links .claude/skills and .agents/skills to it), rules (a folder; init links .claude/rules/project to it), roster (a roster JSON in the marketplace schema; init renders it into .claude/agents/ and .codex/agents/, and the review skill spawns its reviewers by paths). Empty strings mean none.",
+    "_readme": "Project settings for the standards plugin hooks and the flow verifier. Edit freely; init never overwrites this file. format[].command runs from the repo root with {files} replaced by the staged files under prefix. build runs in the git pre-push hook and in verify; test and mutation run in verify (mutation is a signal; empty turns it off; {files} limits it to the changed source files). protected files need [config] in the commit message. comments: line and doc are the comment tokens, public the modifier a doc comment must sit above, doc_inside the type kinds whose members may carry a doc without it (their members have no modifier), allow_markers the prefixes that make a line comment legal. gates: the project's own gates, run by the plugin hook, the git hooks and CI (check-gates.sh): {name, command, paths, when: [commit|push|ci], marker} runs command when a committed file matches a path glob (the command sees STANDARDS_COMMIT_MESSAGE and STANDARDS_STAGE; a commit whose message carries the marker skips the gate); {name, forbid: [text], marker} blocks a command that runs a text (as a word, not inside a heredoc, comment or quoted text, except sh -c, bash -c and eval) unless it carries the marker. project: skills (a folder; init links .claude/skills and .agents/skills to it), rules (a folder; init links .claude/rules/project to it), roster (a roster JSON in the marketplace schema; init renders it into .claude/agents/ and .codex/agents/ and installs the eval runner .standards/evals/run.sh; the review skill spawns its reviewers by paths), evals (a folder of claude plugin eval cases, one per subfolder, for the roster's agents; .standards/evals/run.sh runs them). Empty strings mean none.",
     "version": version,
     "languages": languages,
     "build": " && ".join("dotnet build %s --nologo" % s for s in solutions),
@@ -109,7 +110,7 @@ config = {
     "hot_paths": [],
     "review": {"security_paths": [], "performance_paths": []},
     "gates": [],
-    "project": {"skills": "", "rules": "", "roster": ""},
+    "project": {"skills": "", "rules": "", "roster": "", "evals": ""},
 }
 print(json.dumps(config, indent=2))
 PY
@@ -313,17 +314,22 @@ if [ -n "$project_roster" ]; then
     python3 "$plugin/skills/init/scripts/render_agents.py" --roster "$project_roster" --templates "$plugin/templates/agents" --out "$out" >/dev/null || die "could not render $project_roster"
     for f in "$out"/claude/*.md; do [ -f "$f" ] && install_file "$f" ".claude/agents/$(basename "$f")"; done
     for f in "$out"/codex/*.toml; do [ -f "$f" ] && install_file "$f" ".codex/agents/$(basename "$f")"; done
+    # The runner for the project's agent evals (the cases live in project.evals; Claude only).
+    install_file "$plugin/templates/evals/run.sh" .standards/evals/run.sh +x
+    install_file "$plugin/templates/evals/gitignore" .standards/evals/.gitignore
   fi
 fi
-# A rendered agent the roster dropped: stamped, no longer written, removed when still what init
-# wrote.
-for old in $(awk -F'\t' 'NR > 1 && ($2 ~ /^\.claude\/agents\// || $2 ~ /^\.codex\/agents\//) { print $2 }' "$stamp" 2>/dev/null); do
+# A rendered agent the roster dropped, or the eval runner once the roster is gone: stamped, no
+# longer written, removed when still what init wrote.
+for old in $(awk -F'\t' 'NR > 1 && ($2 ~ /^\.claude\/agents\// || $2 ~ /^\.codex\/agents\// || $2 ~ /^\.standards\/evals\//) { print $2 }' "$stamp" 2>/dev/null); do
   case " $stamped $kept " in *" $old "*) continue ;; esac
   [ -f "$old" ] || continue
-  if [ "$check" -eq 1 ]; then drifted "stale: $old (no longer in the roster)"
-  elif [ "$(stamp_get "$stamp" "$old")" = "$(hash_file "$old")" ]; then rm -f "$old" && note "$old removed (no longer in the roster)"
-  else echo "init: $old is no longer in the roster but was edited by hand; delete it yourself"; fi
+  case "$old" in .standards/evals/*) why="no project roster" ;; *) why="no longer in the roster" ;; esac
+  if [ "$check" -eq 1 ]; then drifted "stale: $old ($why)"
+  elif [ "$(stamp_get "$stamp" "$old")" = "$(hash_file "$old")" ]; then rm -f "$old" && note "$old removed ($why)"
+  else echo "init: $old is stale ($why) but was edited by hand; delete it yourself"; fi
 done
+[ "$check" -eq 0 ] && [ -d .standards/evals ] && [ ! -f .standards/evals/run.sh ] && rmdir .standards/evals 2>/dev/null
 
 # 10. Gaps: the values the hooks and the verifier cannot run without, and the guide's
 # placeholders. Reported every run; drift under --check. The init skill fills them with the
