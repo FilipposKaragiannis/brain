@@ -1,5 +1,15 @@
 # standards
 
+## 1.2.0 (2026-10-18)
+
+- `init` installs `.standards/evals/run.sh` (and a `.gitignore` for its `results/`) in a project
+  with a roster (`project.roster`), stamped and guarded like the other copies, and removes it
+  when the roster goes. It runs the project's own agent evals with `claude plugin eval`: the
+  cases in the new `project.evals` folder, against copies of `.claude/agents/*.md` in a
+  throwaway wrapper plugin whose `cases` links to the real folder. Without `project.evals` it
+  prints how to add cases and exits 0. Claude only; costs money, never in CI.
+- `skills/init/AGENT-EVALS.md`: how to write a case (layout, a planted bug, the three graders).
+
 ## 1.1.0 (2026-10-11)
 
 - `init` no longer leaves its call dead in a project's own `.githooks/*`. It puts the call before

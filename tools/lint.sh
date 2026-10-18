@@ -1,6 +1,6 @@
 #!/bin/sh
 # Lint the marketplace: generated files fresh, skills well-formed, roster and agents in step,
-# JSON valid, shell scripts parse. Exit 1 on any finding.
+# JSON valid, shell scripts parse, hooks and plugin paths resolve. Exit 1 on any finding.
 set -u
 cd "$(dirname "$0")/.."
 status=0
@@ -66,6 +66,9 @@ for md in glob.glob("plugins/*/**/*.md", recursive=True):
             print("lint: link leaves the plugin in %s: %s" % (md, target)); bad += 1
 sys.exit(1 if bad else 0)
 PY2
+
+# Hook commands name executable scripts in the plugin; plugin paths the shipped files name exist.
+python3 tools/lib/check_plugins.py || status=1
 
 # The invocation flag in plugin.source.json matches the SKILL.md frontmatter.
 python3 - <<'PY' || status=1

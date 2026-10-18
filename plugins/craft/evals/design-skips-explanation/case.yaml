@@ -1,0 +1,14 @@
+schema_version: "1.1"
+name: design-skips-explanation
+tags: [negative]
+runs: 3
+execution:
+  max_turns: 10
+  timeout_seconds: 300
+  allowed_tools:
+    - Bash
+    - Read
+    - Glob
+    - Grep
+context:
+  scaffold_script: scaffold.sh
