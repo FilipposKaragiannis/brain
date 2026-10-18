@@ -25,6 +25,9 @@ check "scaffold exits 0" [ "$code" -eq 0 ]
 check "SKILL.md with name and description" sh -c "grep -q '^name: tidy-up$' '$work/plug/skills/tidy-up/SKILL.md' && grep -q '^description: Tidy a module' '$work/plug/skills/tidy-up/SKILL.md'"
 check "model-invoked: no disable flag" sh -c "! grep -q disable-model-invocation '$work/plug/skills/tidy-up/SKILL.md'"
 check "eval case written" [ -f "$work/plug/evals/tidy-up-works/case.yaml" ] && [ -f "$work/plug/evals/tidy-up-works/prompt.md" ] && [ -x "$work/plug/evals/tidy-up-works/scaffold.sh" ]
+# The eval CLI reads max_turns, timeout_seconds and allowed_tools only under execution: in
+# case.yaml; at the top level they are dropped without a warning.
+check "eval settings under execution" sh -c "grep -q '^execution:$' '$work/plug/evals/tidy-up-works/case.yaml' && grep -q '^  max_turns: ' '$work/plug/evals/tidy-up-works/case.yaml' && ! grep -q '^max_turns:' '$work/plug/evals/tidy-up-works/case.yaml'"
 check "registered in plugin.source.json" sh -c "python3 -c \"import json; d=json.load(open('$work/plug/plugin.source.json')); s=d['skills'][0]; assert s['name']=='tidy-up' and s['invocation']=='model'\""
 "$P/skills/write-a-skill/scripts/scaffold.sh" "$work/plug" ship-it --user --short "Ship it" >/dev/null
 check "user-invoked: flag and command prompt" sh -c "grep -q 'disable-model-invocation: true' '$work/plug/skills/ship-it/SKILL.md' && grep -q '^/plug:ship-it' '$work/plug/evals/ship-it-works/prompt.md'"

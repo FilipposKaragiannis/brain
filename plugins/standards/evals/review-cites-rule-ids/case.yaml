@@ -1,13 +1,15 @@
 schema_version: "1.1"
 name: review-cites-rule-ids
-runs: 1
-max_turns: 20
-timeout_seconds: 600
-allowed_tools:
-  - Bash
-  - Read
-  - Glob
-  - Grep
-  - Agent
+tags: [baseline]
+runs: 3
+execution:
+  max_turns: 20
+  timeout_seconds: 600
+  allowed_tools:
+    - Bash
+    - Read
+    - Glob
+    - Grep
+    - Agent
 context:
   scaffold_script: scaffold.sh

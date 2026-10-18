@@ -31,6 +31,7 @@ project already keeps (`AI/`, `.claude/`, `.codex/`).
 | paths that trigger the security or performance reviewer | `review.security_paths`, `review.performance_paths`, `hot_paths` |
 | a project reviewer or any project agent | the roster `project.roster` names, with `paths` for a reviewer |
 | a skill or a rules folder shared by both hosts | `project.skills`, `project.rules` (init links them) |
+| an eval for a project agent (a planted bug its reviewer must flag) | a case folder under `project.evals`; `.standards/evals/run.sh` runs them (the init skill's `AGENT-EVALS.md`) |
 | a check the flow verifier runs after build and tests | `.flow/config.yaml` `gates` (the flow plugin) |
 
 ## Procedure

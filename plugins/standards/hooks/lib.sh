@@ -22,7 +22,7 @@ repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 standards_install_set() {
   for f in "$1"/.claude-plugin/plugin.json "$1"/skills/init/scripts/init.sh "$1"/rules/block.md \
            "$1"/rules/common/*.md "$1"/rules/csharp.md "$1"/codex-agents/*.toml \
-           "$1"/hooks/*.sh "$1"/hooks/git/*; do [ -f "$f" ] && echo "$f"; done | sort
+           "$1"/hooks/*.sh "$1"/hooks/git/* "$1"/templates/evals/*; do [ -f "$f" ] && echo "$f"; done | sort
 }
 standards_source_hash() { hash_files $(standards_install_set "$1"); }
 

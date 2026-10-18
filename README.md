@@ -11,7 +11,7 @@ plugins/
   meta/        write-a-skill (scaffolder), retro (lessons log), map (docs/map.html)
 shared/        sh/json.sh, copied into each plugin by the generator
 roster/        agents.json (every agent, model, effort, tier), briefs/<agent>.md, templates/
-tools/         generate.sh, lint.sh, test.sh, eval.sh, host-cleanup.sh
+tools/         generate.sh, lint.sh, test.sh, eval.sh, cost.sh, host-cleanup.sh, tests/
 local/         sync-skills (not shipped)
 docs/          coding-standards.md, adr/
 ```
@@ -24,8 +24,12 @@ are both marketplace files. See `docs/adr/0001-one-source-two-hosts.md`.
 ```bash
 tools/generate.sh   # render generated files after editing a source, a brief or the roster
 tools/lint.sh       # fresh generated files, well-formed skills, roster in step
-tools/test.sh       # lint plus `claude plugin validate`; CI runs this
+tools/test.sh       # lint, the suites and `claude plugin validate`; CI runs this
+tools/cost.sh       # each plugin's always-on token cost, a warning over budget (needs the claude CLI)
 ```
+`tools/lint.sh` also checks that every hook command names an executable script in its plugin and
+that the plugin paths the shipped files name exist; `tools/tests/run.sh` proves it fails on the
+broken fixture under `tools/tests/fixtures/`.
 
 ## Standards plugin
 `standards:init` installs the coding standards in a repo: the rules block in `AGENTS.md`, the
@@ -40,7 +44,11 @@ each from the repository; `init --check` reports gaps until they are filled. Com
 members, `[why-comment]` for a math or physics `//`. `standards:review` runs the two-axis review.
 `init` stamps what it wrote (`.standards/stamp`), refuses to replace a copy edited by hand
 (`--force` overrides), and a `SessionStart` hook asks for `init` when the stamp is behind the plugin.
-Hook tests: `plugins/standards/hooks/tests/run.sh`. Evals: `tools/eval.sh standards` (costs money, not in CI).
+Hook tests: `plugins/standards/hooks/tests/run.sh`. Evals: `tools/eval.sh standards` (costs money, not in CI);
+`tools/eval.sh <plugin> --baseline` adds a no-plugin arm to the cases tagged `baseline` (the advisory
+skills: `standards:review`, the craft skills) and `--tag negative` runs the should-not-trigger cases.
+Each eval run ends with a summary (`tools/lib/eval_summary.py`) that scores the cases over the runs
+that did not fail for an infrastructure reason and counts those BLOCKED runs apart.
 
 ## Flow plugin
 `flow:init` writes `.flow/config.yaml` (adapters, base branch, worktree pool and `pool_max`,
