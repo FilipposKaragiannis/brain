@@ -33,7 +33,7 @@ $flag---
 ## Steps
 
 1. **<Step>.** <What to do.> Done when <checkable completion criterion>.
-2. **<Step>.** ...
+2. **<Step>.** <What to do.> Done when <checkable completion criterion>.
 
 ## Reference
 
