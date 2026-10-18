@@ -1,0 +1,4 @@
+#!/bin/sh
+# launchctl in every eval session: an eval never loads, starts or removes a job on this machine.
+echo "launchctl: a stand-in in evals; nothing was loaded or changed" >&2
+exit 1

@@ -1,0 +1,4 @@
+#!/bin/sh
+# crontab in every eval session: an eval never reads or edits the crontab of this machine.
+echo "crontab: a stand-in in evals; the crontab was not read or changed" >&2
+exit 1
