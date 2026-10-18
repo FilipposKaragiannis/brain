@@ -1,7 +1,8 @@
 #!/bin/sh
-# Run a plugin's eval suite with the settings the suites need: scaffolded fixtures, the tools the
-# cases list, and a judge model that reads long outputs correctly (the default judge fails long
-# review reports). Costs money; not run in CI.
+# Run a plugin's eval suite with the settings the suites need: scaffolded fixtures, the tools
+# the skills have in production (Write and Edit included; a read-only case narrows them in its
+# own execution.allowed_tools), and a judge model that reads long outputs correctly (the default
+# judge fails long review reports). Costs money; not run in CI.
 #   tools/eval.sh <plugin> [--baseline] [extra claude plugin eval flags]
 # The default run has no baseline arm. --baseline runs only the cases tagged baseline (advisory
 # skills plain Claude could attempt) twice, with and without the plugin, and reports the score
@@ -27,7 +28,7 @@ done
 marker="$(mktemp)"; trap 'rm -f "$marker"' EXIT
 status=0
 # shellcheck disable=SC2086
-claude plugin eval "plugins/$plugin" --scaffold --allow-tools Bash Read Glob Grep Agent \
+claude plugin eval "plugins/$plugin" --scaffold --allow-tools Bash Read Glob Grep Agent Write Edit \
   --trust-plugin --no-publish $ablation --judge-model sonnet "$@" || status=$?
 latest="$(find "$results" -name aggregate-result.json -newer "$marker" 2>/dev/null | sort | tail -1)"
 if [ -n "$latest" ]; then

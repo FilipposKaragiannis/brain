@@ -67,6 +67,7 @@ chmod +x "$work/bin/claude"
 out="$(PATH="$work/bin:$PATH" "$root/tools/eval.sh" demo --output-dir "$work/eval-out")"; code=$?
 check "exit status of the eval" [ "$code" -eq 1 ]
 check "prints the summary" has 'cases passed 0/3 over scored runs; 6 runs scored, 2 BLOCKED'
+check "grants Write and Edit" grep -q -- '--allow-tools Bash Read Glob Grep Agent Write Edit ' "$work/eval-args"
 printf '#!/bin/sh\nexit 0\n' > "$work/bin/claude"
 out="$(PATH="$work/bin:$PATH" "$root/tools/eval.sh" demo --output-dir "$work/eval-none")"; code=$?
 check "no new result: says so, exit 0" [ "$code" -eq 0 ]
