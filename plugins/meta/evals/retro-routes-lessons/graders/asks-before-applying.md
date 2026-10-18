@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: "\\bapply[^\\n?]*\\?"
+pattern: "\\bappl(?:y|ied)\\b[^\\n?]*\\?"
 flags: "i"
 match: contains
 target: last_message

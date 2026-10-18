@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: "user[- ]invoked|disable-model-invocation|invoked by hand|invocation\\W+user"
+pattern: "user[- ]invo(?:ked|cation)|disable-model-invocation|invoked (?:only )?(?:by hand|by the user|manually)|invocation\\W+user|only (?:the )?users? (?:can )?invoke|(?:never|not) (?:be )?(?:model[- ]invoked|invoked by the model)|model invocation (?:is )?(?:off|disabled)"
 flags: "i"
 match: contains
 target: last_message

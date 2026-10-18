@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: "\\?[*_`\\s]*$|\\bapply\\b[^\\n?]*\\?"
+pattern: "\\?[*_`\\s]*$|\\bappl(?:y|ied)\\b[^\\n?]*\\?"
 flags: "i"
 match: not_contains
 target: last_message
