@@ -31,6 +31,10 @@ check "warns over the budget" sh -c "printf '%s' \"\$0\" | grep -q 'cost: warnin
 check "reports under the budget" sh -c "printf '%s' \"\$0\" | grep -q 'cost: flow always-on ~2603 tok\$'" "$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 3000)"
 fake 'echo "Always-on:  ~1.2k tok"'
 check "reads a k suffix" sh -c "printf '%s' \"\$0\" | grep -q 'craft always-on ~1200 tok'" "$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 2000)"
+out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" flow 3000)"
+check "a named plugin only, with a budget" [ "$out" = "cost: flow always-on ~1200 tok" ]
+out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" nope 2>&1)"; code=$?
+check "an unknown plugin: exit 2" [ "$code-$out" = "2-cost: no plugin named nope" ]
 fake 'echo "a format nobody expected"'
 out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh")"; code=$?
 check "unparsed output: silent, exit 0" [ "$code-$out" = "0-" ]
