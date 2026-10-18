@@ -623,6 +623,7 @@ python3 -c "
 import json, os, sys
 d = json.load(open(os.path.join(os.path.dirname(sys.argv[1]), 'notes.json'))); n = d['notes'][0]
 open(os.environ['HOST_LOG'], 'a').write('vocabulary %s %s\n' % (d['types'], d['areas']))
+open(os.environ['HOST_LOG'], 'a').write('rules %s\n' % d['rules'])
 row = {'note': n['id'], 'outcome': 'filed', 'issues': ['gh#9']}
 if n['question']: row = {'note': n['id'], 'outcome': 'answered', 'issues': [], 'title': n['title'], 'answer': 'The ball gives it momentum.\n\nSee \`Rod.cs:12\`.'}
 if 'Old' in n['title']: row = {'note': n['id'], 'outcome': 'dropped', 'issues': [], 'reason': 'The net settings were removed in gh#120.'}
@@ -638,6 +639,7 @@ check "intake job: a drop without a reason is kept" sh -c "grep -q 'Vague thing'
 check "intake job: the ledger keeps each note's handle and links for the notes after it" sh -c "grep '\"ref\": \"spin2\"' '$home2/log/intake-ledger.jsonl' | grep -q '\"rel\": \[\"spin\"\]'"
 check "intake job: the summary counts answered and dropped" grep -q 'done: answered 1 dropped 1 filed 2 kept 1' "$work/old.out"
 check "intake job: a tracker without types or areas sends empty lists" grep -q 'vocabulary \[\] \[\]' "$HOST_LOG"
+check "intake job: without project rules each session gets flow's default rules" sh -c "grep -qx 'rules $P/skills/intake/rules.md' '$HOST_LOG' && [ -s '$P/skills/intake/rules.md' ]"
 here="$(pwd)"; mkdir -p "$work/notesrepo" && cd "$work/notesrepo" && git init -q --bare origin.git && git clone -q origin.git app 2>/dev/null && cd app && git config user.email t@t && git config user.name t
 mkdir -p docs .flow && cp "$work/notes.orig" docs/notes.md && printf -- '- How does a pin hold?\n' >> docs/notes.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && git push -q origin HEAD:main 2>/dev/null && git branch -q -M main && git branch -q -u origin/main
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\nintake:\n  notes: docs/notes.md\n' > .flow/config.yaml
@@ -660,6 +662,13 @@ check "intake job: a repo path with a space still commits the notes and the page
 notes_clone "$work/ignored" "  answers: .flow/answers.md\n"
 (cd "$work/ignored/app" && "$P/jobs/intake.sh" claude) > "$work/ignored.out" 2>&1
 check "intake job: an ignored answers page is left out and the notes are still committed" sh -c "[ \"\$(git -C '$work/ignored/origin.git' show --name-only --format= main)\" = docs/notes.md ] && grep -q 'pin hold' '$work/ignored/app/.flow/answers.md' && grep -q 'git ignores .flow/answers.md' '$work/ignored.out'"
+notes_clone "$work/ownrules" ""
+printf '# Our rules\n' > "$work/ownrules/app/.flow/intake.md"; : > "$HOST_LOG"
+(cd "$work/ownrules/app" && "$P/jobs/intake.sh" claude) > /dev/null 2>&1
+check "intake job: a project's .flow/intake.md is the rules each session gets" sh -c "grep -q '^rules .*/ownrules/app/.flow/intake.md\$' '$HOST_LOG' && ! grep -q 'skills/intake/rules.md' '$HOST_LOG'"
+notes_clone "$work/badrules" "  rules: docs/missing-rules.md\n"; : > "$HOST_LOG"
+(cd "$work/badrules/app" && "$P/jobs/intake.sh" claude) > "$work/badrules.out" 2>&1; code=$?
+check "intake job: intake.rules naming a missing file fails before any session" sh -c "[ $code -ne 0 ] && grep -q 'intake.rules names .*missing-rules.md, which does not exist' '$work/badrules.out' && [ ! -s '$HOST_LOG' ]"
 cat > "$work/batch.md" <<'MD'
 ## Batch
 

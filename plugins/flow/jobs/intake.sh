@@ -14,6 +14,8 @@
 # after the run with those two pages (a page git ignores is left out), alone, when the main
 # worktree is on the base branch (intake.commit: false turns it off), so a cloud session reads the
 # same notes. No new notes: a quiet exit, no model spend.
+# How a note becomes an item (outcomes, type, area, priority) is the project's: the session gets
+# intake.rules, else .flow/intake.md, else the plugin's skills/intake/rules.md.
 # Schedule it nightly; the lock skips an overlap.
 set -u
 job=intake
@@ -36,6 +38,11 @@ resolve() { case "$1" in "~/"*) printf '%s' "$HOME/${1#\~/}" ;; /*) printf '%s' 
 notes="$(resolve "$notes")"
 answers="$(cfg intake.answers)"; if [ -n "$answers" ]; then answers="$(resolve "$answers")"; else answers="$(dirname "$notes")/answers.md"; fi
 dropped="$(cfg intake.dropped)"; if [ -n "$dropped" ]; then dropped="$(resolve "$dropped")"; else dropped="$(dirname "$notes")/dropped.md"; fi
+# How a note becomes an item is the project's: intake.rules, else .flow/intake.md, else flow's defaults.
+rules="$(cfg intake.rules)"
+if [ -n "$rules" ]; then rules="$(resolve "$rules")"; [ -f "$rules" ] || die "intake.rules names $rules, which does not exist"
+elif [ -f "$main/.flow/intake.md" ]; then rules="$main/.flow/intake.md"
+else rules="$FLOW_PLUGIN/skills/intake/rules.md"; fi
 [ -f "$notes" ] || { job_say "quiet: no notes file at $notes"; exit 0; }
 ledger="$(job_log_dir)/intake-ledger.jsonl"
 run="$(flow_home)/tmp/intake-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$run"
@@ -47,7 +54,7 @@ missing=0
 # The tracker's issue types and area options reach every session, so the skill names real ones.
 words="$(adapter_for_kind task)"
 [ -x "$FLOW_PLUGIN/adapters/$words/vocabulary.sh" ] && { adapter vocabulary "$words" > "$run/vocabulary.json" 2>>"$(job_log_dir)/$job.log" || job_say "could not read the types and areas"; }
-for id in $(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json" "$run" "$run/vocabulary.json"); do
+for id in $(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json" "$run" "$run/vocabulary.json" "$rules"); do
   # The ledger as it is now, so a note links the notes filed before it in this run.
   python3 -I "$FLOW_PLUGIN/scripts/_intake.py" refresh "$run/$id/notes.json" "$ledger" 2>>"$(job_log_dir)/$job.log" || job_say "$id: could not refresh its related notes"
   host_run "$host" "$main" "$(host_skill_prompt "$host" flow intake "on $run/$id/notes.json and write $run/$id/results.json. Unattended: nobody answers questions; a note that needs the owner is filed and gated, never parked.")" "$(job_model)" "$(job_effort)" \

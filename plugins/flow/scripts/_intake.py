@@ -214,7 +214,7 @@ def apply(notes, ledger, parsed, results, keep, answers, dropped):
     print(" ".join("%s %d" % (k, v) for k, v in sorted(counts.items())) + ("; %d need you" % owner if owner else ""))
 
 
-def split(parsed, run, vocabulary):
+def split(parsed, run, vocabulary, rules):
     with open(parsed) as f:
         notes = json.load(f)["notes"]
     words = {"types": [], "areas": []}
@@ -226,7 +226,7 @@ def split(parsed, run, vocabulary):
     for note in notes:
         os.makedirs(os.path.join(run, note["id"]), exist_ok=True)
         with open(os.path.join(run, note["id"], "notes.json"), "w") as f:
-            json.dump({"notes": [note], "left": 0, "types": words["types"], "areas": words["areas"]}, f, indent=1)
+            json.dump({"notes": [note], "left": 0, "types": words["types"], "areas": words["areas"], "rules": rules}, f, indent=1)
         print(note["id"])
 
 
@@ -248,7 +248,7 @@ def main():
     if command == "parse":
         parse(sys.argv[2], sys.argv[3], int(sys.argv[4]))
     elif command == "split":
-        split(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "")
+        split(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else "", sys.argv[5] if len(sys.argv) > 5 else "")
     elif command == "refresh":
         refresh(sys.argv[2], sys.argv[3])
     elif command == "tally":

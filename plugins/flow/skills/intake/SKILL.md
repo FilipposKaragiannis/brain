@@ -1,6 +1,6 @@
 ---
 name: intake
-description: Turn the owner's raw notes into tracker items. Reads a notes JSON from the intake job, checks each note against the open items and the code, files it as a typed, sized item in its area with a suggested priority, answers the questions on a report page, drops a note only with a stated reason, gates the ones that need the owner, and writes a results file. Use when the intake job runs, or when the owner asks to file their notes, triage a notes file, or turn a backlog file into issues.
+description: Turn the owner's raw notes into tracker items. Reads a notes JSON from the intake job, checks each note against the open items and the code, and by the project's intake rules files it as a typed item in its area, names the item it duplicates, answers it on a report page or drops it with a stated reason, gates the ones that need the owner, and writes a results file. Use when the intake job runs, or when the owner asks to file their notes, triage a notes file, or turn a backlog file into issues.
 disable-model-invocation: true
 ---
 
@@ -17,8 +17,10 @@ another file, and report its last log line. Do not file the notes by hand.
 
 ## Input
 
-`notes.json`: `{"notes": [note], "left": N, "types": [...], "areas": [...]}`. `types` are the
-tracker's issue types and `areas` its area options; either is empty when the tracker has none.
+`notes.json`: `{"notes": [note], "left": N, "types": [...], "areas": [...], "rules": "<path>"}`.
+`types` are the tracker's issue types and `areas` its area options; either is empty when the
+tracker has none. `rules` is the intake rules file: the project's (`intake.rules`, default
+`.flow/intake.md`) or, without one, flow's defaults in this skill's `rules.md`.
 A note:
 
 | Key | What it holds |
@@ -33,8 +35,10 @@ A note:
 
 ## Per note
 
-Every note ends as an item, a duplicate, done, answered or dropped. Nothing is parked for later:
-`#parked` is a tag like any other, and a note you can file is filed.
+**Read `rules` first.** It is the owner's: it decides when a note is done, answered or dropped,
+when to split it, its type, area, size, parent and suggested priority, what its `## Notes` hold
+and when it needs the owner. Follow it over anything here; the steps below are how to carry it
+out.
 
 1. **List the open items** fresh: `"$P/adapters/<adapter>/list.sh"`. The note before yours may
    have just filed the item yours duplicates.
@@ -45,51 +49,20 @@ Every note ends as an item, a duplicate, done, answered or dropped. Nothing is p
    - `done`: outcome `done`, with that note's reason.
    - `answered`: outcome `dropped`, `reason` "Answered with ^id on the answers page."
    - empty: not handled yet; judge the note on its own.
-3. **Done already?** Only with code evidence (the behaviour the note asks for exists and is
-   tested), outcome `done` with the file and line in `reason`. When unsure, file it.
-4. **A question?** A `question` note, or one that asks what something is, why it behaves so, or
-   how it works, is for the owner to understand, not work to do. Answer it from the code and
-   the docs: outcome `answered`, a `title` that is the question, and an `answer` in Markdown. The
-   answer leads with the answer in one or two sentences, then the evidence as `file:line` and
-   doc links, then what is unknown and what would settle it. When the answer shows a gap that
-   needs work, file that item too and list it in `issues`.
-5. **Drop it?** Only for a reason the owner can check: the code it names is gone, a decision or
-   a doc retired it (name it), or an open or closed item already did it (name it). Outcome
-   `dropped`, the reason in `reason` with its evidence. Vague, old or hard is never a reason:
-   file it, and gate it when it needs the owner.
-6. **Split** a note that asks for two unrelated things into one item each.
-7. **Look at the code just enough** to confirm what the note describes: grep, read the entry
+3. **Decide the outcome** by the rules: `done` with its evidence in `reason`, `answered` with a
+   `title` that is the question and an `answer` in Markdown (any item the answer files goes in
+   `issues`), `dropped` with its evidence in `reason`, else filed, split as the rules say.
+4. **Look at the code just enough** to confirm what the note describes: grep, read the entry
    point. No exploration agents, no plan, at most a few minutes a note.
-8. **File it** with the `new` skill's shape and script (`"$P/scripts/new.sh"`):
-   - **Type** from the tags first, then the section, then the note's words, named from `types`
-     (with `--type`). With no `types`, the kind alone (`bug` or `task`).
-
-     | Tag | Type |
-     |---|---|
-     | `#bug` | Bug |
-     | `#feature`, `#idea` | Feature |
-     | `#task`, `#experiment` | Task |
-     | `#perf` | Task; Bug when something got slower |
-     | `#rule` | Chore (a rule doc change) |
-
-   - **Area** from the section's top heading, matched to the closest of `areas` (with
-     `--area`). A section that names a kind of work, not a part of the game (Bugs,
-     Performance, Experiments), takes the area of the code the note touches. No match, or no
-     `areas`: no `--area`, and the body names the section.
-   - **Size** when it is clear (`S`, `M`, `L`).
-   - **Parent** only when the note names the epic: a sub-item holds its epic open until it
-     closes, so name a related epic in `## Notes` instead.
-   - **Notes:** the note's own words in `## Notes`, quoted, with the section. One line
-     `Related: gh#12, gh#40.` for the `related` entries with issues; a `related` handle with
-     no issues is left out, since that note names this one when it is filed. Add one line:
-     `Suggested priority: P<n>, <the reason in one clause>.` Never set the priority field: the
-     owner sets it, and an item without one is not ready.
-9. **Needs the owner?** When the note cannot become binary acceptance lines without a choice
-   only the owner can make (what "feels robotic" should become, which of two designs), file it
-   anyway, then raise the gate with the questions in the gate skill's format (numbered, one per
-   line, each with its recommended answer):
-   `"$P/scripts/gate.sh" raise <id> ambiguity "<questions>"`. Mark the result `needs_owner`.
-   A question you can answer from the code is not one for the owner.
+5. **File it** with the `new` skill's shape and script (`"$P/scripts/new.sh"`): the type from
+   `types` with `--type`, the area from `areas` with `--area`, the size and parent as the rules
+   pick them. In `## Notes`, after what the rules put there, one line `Related: gh#12, gh#40.`
+   for the `related` entries with issues; a `related` handle with no issues is left out, since
+   that note names this one when it is filed.
+6. **Needs the owner?** When the rules say so, file it anyway, then raise the gate with the
+   questions in the gate skill's format (numbered, one per line, each with its recommended
+   answer): `"$P/scripts/gate.sh" raise <id> ambiguity "<questions>"`. Mark the result
+   `needs_owner`.
 
 ## Output
 
@@ -111,7 +84,7 @@ Write the file even when every note failed, so the job can tell a failed run fro
 
 ## Never
 
-- Never edit the notes file or the answers and dropped pages, and never set the priority field.
-- Never keep a note to park it for later, and never drop one without a reason the owner can check.
+- Never edit the notes file, the answers and dropped pages, or the rules file.
+- Never keep a note to park it for later.
 - Never mark a note `done` without code evidence, or `duplicate` without the item's id.
 - Never start work on an item: no claim, no worktree, no plan.

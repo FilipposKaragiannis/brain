@@ -18,6 +18,12 @@
   GitHub). `new.sh --area` sets the `github.fields.area` issue field, or the local item's area;
   the skill picks the area from the note's section.
 
+- How a note becomes an item is the project's: the outcome rules, the tag-to-type table, the
+  area, size and priority rules and when a note needs the owner live in a rules file, which each
+  session reads first. `intake.rules` names it, else `.flow/intake.md` when it exists, else the
+  plugin's `skills/intake/rules.md`, flow's defaults: copy it to `.flow/intake.md` to change
+  them. An `intake.rules` that names a missing file fails the run before any session.
+
 ## 1.9.0 (2026-10-18)
 
 - The `jobs` skill and `scripts/jobs.sh` run and watch the scheduled jobs: `status` shows each

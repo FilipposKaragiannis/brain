@@ -150,6 +150,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "#   batch: 10"
       echo "#   answers: docs/answers.md  # answered questions (default answers.md beside the notes)"
       echo "#   dropped: docs/dropped.md  # dropped notes with their reasons (default dropped.md beside the notes)"
+      echo "#   rules: .flow/intake.md    # how a note becomes an item (default: this file if it exists, else flow's rules)"
     } > .flow/config.yaml
     [ -s .flow/config.yaml ] || die "could not write .flow/config.yaml"
     note ".flow/config.yaml written from the repository (adapters, base, pool). Review it."
