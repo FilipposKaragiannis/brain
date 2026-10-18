@@ -3,41 +3,61 @@
   _jobs.py status <log dir> <launch agents dir> <prefix> [--json] <job>=<schedule>...
   _jobs.py history <log dir> <job> <n>
   _jobs.py plist <label> <dir> <command> <schedule> <log> <path>
-  _jobs.py cron <schedule> <command>
+  _jobs.py cron <schedule> <dir> <command> <log>
   _jobs.py args <schedule>
 
 A schedule is "every 30m [args]", "every 2h [args]", "daily 02:00 [args]" or
-"weekly sun 03:00 [args]". The runs come from <log dir>/runs.jsonl, one line per run that the job
-library writes; launchd adds whether the job is loaded and its own run count. Times print in
-local time."""
+"weekly sun 03:00 [args]"; args prints its args checked and shell-quoted. The runs come from
+<log dir>/runs.1.jsonl and runs.jsonl, one line per run that the job library writes; launchd
+adds whether the job is loaded and its own run count. Times print in local time."""
 import calendar, json, os, re, subprocess, sys, time
 from datetime import datetime, timedelta
 from xml.sax.saxutils import escape
 
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 WEEK = 7 * 86400
+# The args go into a shell command, so each is one plain option or value: no spaces, quotes,
+# globs, redirections or substitutions.
+ARG = re.compile(r"[A-Za-z0-9_./:=@%+,-]+")
 
 
+# parse: the schedule as a dict, or ValueError naming what is wrong with it.
 def parse(spec):
     words = spec.split()
+    s = None
     if len(words) >= 2 and words[0] == "every":
         m = re.fullmatch(r"(\d+)([mh])", words[1])
         if m and int(m.group(1)) > 0:
-            return {"every": int(m.group(1)) * (60 if m.group(2) == "m" else 3600), "args": words[2:]}
+            s = {"every": int(m.group(1)) * (60 if m.group(2) == "m" else 3600), "args": words[2:]}
     if len(words) >= 2 and words[0] == "daily":
-        m = re.fullmatch(r"(\d\d):(\d\d)", words[1])
-        if m:
-            return {"hour": int(m.group(1)), "minute": int(m.group(2)), "args": words[2:]}
+        s = clock(spec, words[1], {"args": words[2:]})
     if len(words) >= 3 and words[0] == "weekly" and words[1][:3].lower() in DAYS:
-        m = re.fullmatch(r"(\d\d):(\d\d)", words[2])
-        if m:
-            return {"weekday": DAYS.index(words[1][:3].lower()), "hour": int(m.group(1)),
-                    "minute": int(m.group(2)), "args": words[3:]}
-    sys.exit("flow: cannot read the schedule %r: use every 30m, daily 02:00 or weekly sun 03:00" % spec)
+        s = clock(spec, words[2], {"weekday": DAYS.index(words[1][:3].lower()), "args": words[3:]})
+    if s is None:
+        raise ValueError("cannot read the schedule %r: use every 30m, daily 02:00 or weekly sun 03:00" % spec)
+    for a in s["args"]:
+        if not ARG.fullmatch(a):
+            raise ValueError("the schedule %r has the arg %r: an arg is one option or value of letters, digits and _./:=@%%+,-" % (spec, a))
+    return s
 
 
-def when(spec):
-    s = parse(spec)
+def clock(spec, at, s):
+    m = re.fullmatch(r"(\d\d):(\d\d)", at)
+    if not m:
+        return None
+    if int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        raise ValueError("the schedule %r has no time %s: the hour is 00-23, the minute 00-59" % (spec, at))
+    return dict(s, hour=int(m.group(1)), minute=int(m.group(2)))
+
+
+def read(spec):
+    try:
+        return parse(spec)
+    except ValueError as e:
+        sys.exit("flow: %s" % e)
+
+
+def when(s):
     if "every" in s:
         n = s["every"]
         return "every %dh" % (n // 3600) if n % 3600 == 0 else "every %dm" % (n // 60)
@@ -54,10 +74,9 @@ def next_calendar(s, now):
 
 
 def runs(log, base=None):
-    path = os.path.join(log, "runs.jsonl")
     out = []
-    if os.path.exists(path):
-        for line in open(path):
+    for path in (os.path.join(log, "runs.1.jsonl"), os.path.join(log, "runs.jsonl")):
+        for line in open(path) if os.path.exists(path) else []:
             try:
                 r = json.loads(line)
             except ValueError:
@@ -99,12 +118,15 @@ def took(seconds):
     return "%dh %02dm" % (seconds // 3600, seconds % 3600 // 60)
 
 
-def alive(pid):
-    try:
-        os.kill(int(pid), 0)
-        return True
-    except (OSError, ValueError):
+# alive: the pid still runs jobs/<base>.sh. A lock left by a restart can name a reused pid.
+def alive(pid, base):
+    if not pid.isdigit():
         return False
+    try:
+        p = subprocess.run(["ps", "-o", "command=", "-p", pid], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return p.returncode == 0 and ("jobs/%s.sh" % base) in p.stdout
 
 
 def running(log, base):
@@ -116,7 +138,7 @@ def running(log, base):
         d = os.path.join(log, name)
         pid = open(os.path.join(d, "pid")).read().strip() if os.path.exists(os.path.join(d, "pid")) else ""
         at = open(os.path.join(d, "at")).read().strip() if os.path.exists(os.path.join(d, "at")) else ""
-        if alive(pid):
+        if alive(pid, base):
             out.append({"job": name[:-5], "pid": int(pid), "at": at})
     return out
 
@@ -139,8 +161,12 @@ def launchd(label):
 
 def job_status(log, agents, prefix, name, spec, now):
     label = "%s.%s" % (prefix, name)
-    row = {"job": name, "label": label, "schedule": when(spec) if spec else "",
-           "args": " ".join(parse(spec)["args"]) if spec else "",
+    try:
+        s, error = (parse(spec) if spec else None), ""
+    except ValueError as e:
+        s, error = None, str(e)
+    row = {"job": name, "label": label, "schedule": when(s) if s else "",
+           "args": " ".join(s["args"]) if s else "",
            "installed": os.path.exists(os.path.join(agents, label + ".plist")),
            "paused": os.path.exists(os.path.join(log, name + ".paused")),
            "running": running(log, name)}
@@ -153,22 +179,25 @@ def job_status(log, agents, prefix, name, spec, now):
     row["week"] = {k: sum(1 for r in week if outcome(r) == k) for k in ("work", "gate", "quiet", "skipped", "paused", "failed")}
     done = [r for r in history if outcome(r) not in ("skipped", "paused")]
     row["last"] = dict(done[-1], outcome=outcome(done[-1])) if done else None
-    row["next"] = next_run(spec, row, history, now)
+    if error:
+        row["error"] = error
+    row["next"] = next_run(s, row, history, now)
     return row
 
 
-def next_run(spec, row, history, now):
-    if not spec:
+def next_run(s, row, history, now):
+    if row.get("error"):
+        return "fix the schedule"
+    if not s:
         return "no schedule"
     if row["paused"]:
         return "paused"
     if not row["loaded"]:
         return "not scheduled"
-    s = parse(spec)
     if "every" in s:
         last = max((epoch(r.get("at")) for r in history), default=0)
         if not last:
-            return "within %s" % when(spec)[6:]
+            return "within %s" % when(s)[6:]
         due = last + s["every"]
         return local(due) if due > now else "due"
     return next_calendar(s, datetime.fromtimestamp(now)).strftime("%b %d %H:%M")
@@ -198,9 +227,15 @@ def status(log, agents, prefix, as_json, pairs):
         last = r["last"]
         week = ", ".join("%d %s" % (v, k) for k, v in r["week"].items() if v) or "none"
         print("| %s | %s | %s | %s | %s | %s | %s | %s |" % (
-            r["job"], (r["schedule"] + (" `%s`" % r["args"] if r["args"] else "")) or "none", state(r, now),
+            r["job"], schedule_cell(r), state(r, now),
             local(epoch(last["at"])) if last else "never", took(last["seconds"]) if last else "",
             cell(last) if last else "", r["next"], week))
+
+
+def schedule_cell(r):
+    if r.get("error"):
+        return "error: " + r["error"].replace("|", "/")
+    return (r["schedule"] + (" `%s`" % r["args"] if r["args"] else "")) or "none"
 
 
 def cell(r):
@@ -222,7 +257,7 @@ def history(log, base, n):
 
 
 def plist(label, workdir, command, spec, log, path):
-    s = parse(spec)
+    s = read(spec)
     if "every" in s:
         timing = "  <key>StartInterval</key><integer>%d</integer>\n" % s["every"]
     else:
@@ -251,14 +286,19 @@ def sh(text):
     return text if re.fullmatch(r"[A-Za-z0-9_./-]+", text) else "'" + text.replace("'", "'\\''") + "'"
 
 
-def cron(spec, command):
-    s = parse(spec)
+def cron(spec, workdir, command, log):
+    s = read(spec)
     if "every" in s:
         n = s["every"] // 60
+        # */n restarts at each hour or day, so only a step that divides it evenly is a steady interval.
+        if (n < 60 and 60 % n) or (n >= 60 and (n % 60 or 24 % (n // 60))):
+            sys.exit("flow: cron cannot run %s steadily: use minutes that divide 60 (1-6, 10, 12, 15, 20, 30m)"
+                     " or hours that divide 24 (1-4, 6, 8, 12, 24h); launchd takes any interval" % when(s))
         timing = "*/%d * * * *" % n if n < 60 else "0 */%d * * *" % (n // 60)
     else:
         timing = "%d %d * * %s" % (s["minute"], s["hour"], (s["weekday"] + 1) % 7 if "weekday" in s else "*")
-    print("%s %s" % (timing, command))
+    run = "cd %s && %s >> %s 2>&1" % (sh(workdir), command, sh(log))
+    print("%s %s" % (timing, run.replace("%", "\\%")))
 
 
 def main():
@@ -274,7 +314,7 @@ def main():
     elif command == "cron":
         cron(*args)
     elif command == "args":
-        print(" ".join(parse(args[0])["args"]))
+        print(" ".join(sh(a) for a in read(args[0])["args"]))
     else:
         sys.exit("flow: unknown command %s" % command)
 

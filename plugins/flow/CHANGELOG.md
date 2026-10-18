@@ -12,6 +12,9 @@
   words, also for a run a live lock skips and a job that dies after it starts.
 - A paused job's runs exit at once, before any tracker call or model spend, and the schedule
   stays loaded. The init config and hints, and `do`, point at the skill. Re-run `flow:init`.
+- A schedule's args are checked (plain options and values only) and shell-quoted, and its times
+  must exist; cron refuses an interval it cannot keep steady. A lock whose pid a restart gave to
+  another process no longer counts as a running job, and the ledger rotates without losing a line.
 
 ## 1.8.0 (2026-10-17)
 

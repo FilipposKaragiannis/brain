@@ -31,6 +31,7 @@ targets() {
     *) known "$1"; echo "$1" ;;
   esac
 }
+# command_for <job>: the job's command; its args come back from _jobs.py checked and quoted.
 command_for() {
   s="$(spec "$1")"; a=""; [ -n "$s" ] && a=" $(py args "$s")"
   printf '.flow/jobs/%s.sh %s%s' "$1" "$host" "$a"
@@ -38,11 +39,14 @@ command_for() {
 label() { printf '%s.%s' "$prefix" "$1"; }
 plist() { printf '%s/%s.plist' "$agents" "$(label "$1")"; }
 loaded() { [ "$scheduler" = launchd ] && launchctl print "$domain/$(label "$1")" >/dev/null 2>&1; }
+# is_job <pid> <job>: the pid still runs jobs/<job>.sh; a lock left by a restart can name a pid
+# the system has since given to something else.
+is_job() { case "$(ps -o command= -p "$1" 2>/dev/null)" in *"jobs/$2.sh"*) return 0 ;; esac; return 1; }
 # live <job>: the pids of its running runs, one per worker, from the job locks.
 live() {
   for d in "$log/$1.lock" "$log/$1"-[0-9]*.lock; do
     [ -f "$d/pid" ] || continue
-    p="$(cat "$d/pid")"; kill -0 "$p" 2>/dev/null && echo "$p"
+    p="$(cat "$d/pid")"; is_job "$p" "$1" && echo "$p"
   done
   if loaded "$1"; then launchctl print "$domain/$(label "$1")" 2>/dev/null | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\)$/\1/p'; fi
 }
@@ -65,6 +69,7 @@ case "$cmd" in
     done ;;
   run)
     [ -n "${1:-}" ] || die "run <job>" 2; known "$1"
+    [ -z "$(spec "$1")" ] || py args "$(spec "$1")" >/dev/null || exit 2
     [ -z "$(live "$1")" ] || { echo "$1 is running already: jobs.sh stop $1 ends it"; exit 0; }
     if loaded "$1"; then
       launchctl kickstart "$domain/$(label "$1")" || die "launchd could not start $(label "$1")"
@@ -98,7 +103,7 @@ case "$cmd" in
       s="$(spec "$j")"; [ -n "$s" ] || die "set jobs.schedule.$j in .flow/config.yaml first" 2
       py args "$s" >/dev/null || exit 2
       if [ "$scheduler" != launchd ]; then
-        py cron "$s" "cd $main && $(command_for "$j") >> $log/launchd-$j.log 2>&1"; continue
+        py cron "$s" "$main" "$(command_for "$j")" "$log/launchd-$j.log" || exit 2; continue
       fi
       if loaded "$j"; then
         [ -z "$(live "$j")" ] || { echo "$j: running now, left as it is; install it again after the run"; continue; }
