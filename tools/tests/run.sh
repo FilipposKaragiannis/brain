@@ -80,7 +80,7 @@ cat > "$work/bin/claude" <<EOF
 out=""; prev=""
 for arg in "\$@"; do [ "\$prev" = "--output-dir" ] && out="\$arg"; prev="\$arg"; done
 printf '%s\n' "\$*" > "$work/eval-args"
-command -v gh launchctl crontab > "$work/eval-path"
+for t in gh launchctl crontab; do command -v "\$t"; done > "$work/eval-path"
 mkdir -p "\$out" && cp "$here/fixtures/eval-result/aggregate-result.json" "\$out/"
 exit 1
 EOF
