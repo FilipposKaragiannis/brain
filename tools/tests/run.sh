@@ -24,15 +24,26 @@ check "passes on the marketplace" python3 "$root/tools/lib/check_plugins.py" "$r
 echo "cost report"
 mkdir -p "$work/bin"
 fake() { printf '#!/bin/sh\n%s\n' "$1" > "$work/bin/claude"; chmod +x "$work/bin/claude"; }
-fake 'printf "Projected token cost\n  Always-on:   ~2,603 tok   added to every session\n"'
-out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 2000)"; code=$?
+# A /context report: rows of every plugin, the agent and skill tables, a k suffix, a repeat.
+cat > "$work/context.md" <<'MD'
+### Custom Agents
+| Agent Type | Source | Tokens |
+| flow:planner | Plugin | 600 |
+| other:planner | Plugin | 9000 |
+### Skills
+| Skill | Source | Tokens |
+| flow:do | Plugin (flow) | ~1.2k |
+| flow:do | Plugin (flow) | ~1.2k |
+| flow:new | Plugin (flow) | ~100 |
+MD
+fake "cat '$work/context.md'"
+out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 1000)"; code=$?
 check "exits 0" [ "$code" -eq 0 ]
-check "warns over the budget" sh -c "printf '%s' \"\$0\" | grep -q 'cost: warning: flow always-on ~2603 tok, over the 2000 budget'" "$out"
-check "reports under the budget" sh -c "printf '%s' \"\$0\" | grep -q 'cost: flow always-on ~2603 tok\$'" "$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 3000)"
-fake 'echo "Always-on:  ~1.2k tok"'
-check "reads a k suffix" sh -c "printf '%s' \"\$0\" | grep -q 'craft always-on ~1200 tok'" "$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 2000)"
+check "sums the plugin's rows once each" sh -c "printf '%s' \"\$0\" | grep -q 'cost: warning: flow always-on ~1900 tok, over the 1000 budget'" "$out"
+check "reports under the budget" sh -c "printf '%s' \"\$0\" | grep -q 'cost: flow always-on ~1900 tok\$'" "$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" 3000)"
+check "a plugin with no rows: no line" sh -c "! printf '%s' \"\$0\" | grep -q 'craft'" "$out"
 out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" flow 3000)"
-check "a named plugin only, with a budget" [ "$out" = "cost: flow always-on ~1200 tok" ]
+check "a named plugin only, with a budget" [ "$out" = "cost: flow always-on ~1900 tok" ]
 out="$(PATH="$work/bin:$PATH" "$root/tools/cost.sh" nope 2>&1)"; code=$?
 check "an unknown plugin: exit 2" [ "$code-$out" = "2-cost: no plugin named nope" ]
 fake 'echo "a format nobody expected"'
