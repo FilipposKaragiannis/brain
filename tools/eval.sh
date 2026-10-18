@@ -10,7 +10,10 @@
 # picks the should-not-trigger cases.
 # After the run it prints tools/lib/eval_summary.py on the new aggregate-result.json: the
 # scores over the runs that did not fail for an infrastructure reason (not logged in, a rate
-# limit), which the CLI counts as 0, and those BLOCKED runs apart. The exit status is the eval's.
+# limit), which the CLI counts as 0, and those BLOCKED runs apart, each case next to its score
+# in tools/eval-baseline.json. To move the baseline after a change you accept:
+#   python3 tools/lib/eval_summary.py plugins/<plugin>/evals/results --save
+# The exit status is the eval's.
 set -eu
 cd "$(dirname "$0")/.."
 plugin="${1:?plugin name, e.g. standards}"; shift

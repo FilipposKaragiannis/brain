@@ -50,9 +50,14 @@ check "max turns stays scored" has 'review-cites-rule-ids \[with\] *score 0.67, 
 check "the case timeout stays scored" has 'plan-writes-design \[with\] *score 0.50, passed 0/1$'
 check "the baseline arm is scored apart" has 'review-cites-rule-ids \[without\] *score 0.25, passed 0/1$'
 check "a case with only BLOCKED runs has no score" has 'init-installs \[with\] *no scored run, BLOCKED 1'
-check "the totals" has 'cases passed 0/3 over scored runs; 6 runs scored, 2 BLOCKED'
+check "a sandbox-broken tool is BLOCKED" has "verify-writes-report \\[with\\] *score 1.00, passed 1/1, BLOCKED 1 (sandbox: Failed to locate 'git')"
+check "the totals" has 'cases passed 1/4 over scored runs; 7 runs scored, 3 BLOCKED'
 python3 "$root/tools/lib/eval_summary.py" "$work/nothing-here" >/dev/null; code=$?
 check "no result: exit 1" [ "$code" -eq 1 ]
+EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$here/fixtures/eval-result" --save >/dev/null
+check "--save writes the scored runs" python3 -c "import json,sys; d=json.load(open(sys.argv[1]))['plugins']['demo']; assert d['retro-unattended-reports']['with'] == {'score': 0.75, 'passed': 1, 'runs': 2}" "$work/baseline.json"
+out="$(python3 "$root/tools/lib/eval_summary.py" "$here/fixtures/eval-result" --against "$work/baseline.json")"
+check "compares with the baseline" has 'review-cites-rule-ids \[without\] *score 0.25, passed 0/1 (baseline 0.25, +0.00)$'
 
 echo "eval.sh prints the summary and keeps the eval's exit status"
 cat > "$work/bin/claude" <<EOF
@@ -66,7 +71,7 @@ EOF
 chmod +x "$work/bin/claude"
 out="$(PATH="$work/bin:$PATH" "$root/tools/eval.sh" demo --output-dir "$work/eval-out")"; code=$?
 check "exit status of the eval" [ "$code" -eq 1 ]
-check "prints the summary" has 'cases passed 0/3 over scored runs; 6 runs scored, 2 BLOCKED'
+check "prints the summary" has 'cases passed 1/4 over scored runs; 7 runs scored, 3 BLOCKED'
 check "grants Write and Edit" grep -q -- '--allow-tools Bash Read Glob Grep Agent Write Edit ' "$work/eval-args"
 printf '#!/bin/sh\nexit 0\n' > "$work/bin/claude"
 out="$(PATH="$work/bin:$PATH" "$root/tools/eval.sh" demo --output-dir "$work/eval-none")"; code=$?
