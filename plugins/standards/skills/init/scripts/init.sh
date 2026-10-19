@@ -329,7 +329,10 @@ for old in $(awk -F'\t' 'NR > 1 && ($2 ~ /^\.claude\/agents\// || $2 ~ /^\.codex
   elif [ "$(stamp_get "$stamp" "$old")" = "$(hash_file "$old")" ]; then rm -f "$old" && note "$old removed ($why)"
   else echo "init: $old is stale ($why) but was edited by hand; delete it yourself"; fi
 done
-[ "$check" -eq 0 ] && [ -d .standards/evals ] && [ ! -f .standards/evals/run.sh ] && rmdir .standards/evals 2>/dev/null
+# The runner's .bin (its git and python3 wrappers) goes with it; results/ is the owner's.
+if [ "$check" -eq 0 ] && [ -d .standards/evals ] && [ ! -f .standards/evals/run.sh ]; then
+  rm -rf .standards/evals/.bin; rmdir .standards/evals 2>/dev/null
+fi
 
 # 10. Gaps: the values the hooks and the verifier cannot run without, and the guide's
 # placeholders. Reported every run; drift under --check. The init skill fills them with the

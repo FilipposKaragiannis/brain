@@ -370,6 +370,7 @@ cat "\$3/.claude-plugin/plugin.json" > "$work/evallog/manifest"
 ls "\$3/agents" > "$work/evallog/agents"
 [ ! -L "\$3/cases" ] && [ -f "\$3/cases/case-a/case.yaml" ] && cat "\$3/cases/.repo-root" > "$work/evallog/top"
 [ -e "\$3/cases/results" ] && echo yes > "$work/evallog/results"
+command -v git > "$work/evallog/git"
 exit 3
 EOF
 chmod +x "$work/evalbin/claude"
@@ -382,6 +383,12 @@ check "evals: the wrapper carries copies of the rendered agents" grep -qx physic
 check "evals: the cases are a copy that names this repo in .repo-root" sh -c "[ \"\$(cat '$work/evallog/top')\" = \"\$(pwd -P)\" ]"
 check "evals: old results stay out of the copy" [ ! -e "$work/evallog/results" ]
 check "evals: the wrapper is removed after the run" sh -c "[ ! -e \"\$(cat '$work/evallog/dir')\" ]"
+if real_git="$(xcrun --find git 2>/dev/null)"; then
+  check "evals: git runs through a wrapper that calls the real binary" sh -c "[ \"\$(cat '$work/evallog/git')\" = \"\$(pwd)/.standards/evals/.bin/git\" ] && grep -q '$real_git' .standards/evals/.bin/git"
+else
+  check "evals: without xcrun git is left alone" sh -c "[ ! -e .standards/evals/.bin/git ]"
+fi
+check "evals: the wrappers are git-ignored" grep -qx '.bin/' .standards/evals/.gitignore
 printf 'More.\n' >> AI/agents/briefs/physics-reviewer.md
 check "init --check: an edited brief makes the rendered agents stale" sh -c "'$init' --check | grep -q 'drift: .claude/agents/physics-reviewer.md' && '$init' --check | grep -q 'drift: .codex/agents/physics-reviewer.toml'"
 check "init: re-render picks the edit up" sh -c "'$init' >/dev/null && grep -q 'More.' .codex/agents/physics-reviewer.toml"

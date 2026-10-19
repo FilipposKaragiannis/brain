@@ -1,5 +1,13 @@
 # standards
 
+## 1.2.2 (2026-10-19)
+
+- The eval runner puts git and python3 wrappers first on PATH, from `.standards/evals/.bin`
+  (git-ignored), as `tools/eval.sh` does. On macOS `/usr/bin/git` and `/usr/bin/python3` ask
+  xcrun, which cannot write its cache in the sandbox, so git failed ("Failed to locate 'git'")
+  and python3 printed errors. Each wrapper calls the binary `xcrun --find` names; without xcrun
+  there is none. `init` removes `.bin` with the runner.
+
 ## 1.2.1 (2026-10-18)
 
 - The eval runner copies the cases into its wrapper instead of linking them: a real run refused

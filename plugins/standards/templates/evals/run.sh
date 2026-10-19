@@ -10,6 +10,10 @@
 # (the CLI refuses a link that leaves the plugin). The copy carries .repo-root, this repo's path:
 # a scaffold script runs from the copy and sees none of this environment, so it reads the repo
 # from there. The agents run as <repo folder>:<name>. Results land in .standards/evals/results/<time>/ (git-ignored).
+# On macOS git and python3 that call the real binaries by path come first on PATH, from
+# .standards/evals/.bin (git-ignored; in the repo, because the sandbox reads it and not /tmp):
+# /usr/bin/git and /usr/bin/python3 ask xcrun, which cannot write its cache in the sandbox, so
+# git fails ("Failed to locate 'git'") and python3 prints errors.
 # The exit status is the eval's.
 set -u
 cd "$(dirname "$0")/../.." || exit 2
@@ -20,6 +24,15 @@ if [ -z "$cases" ] || [ ! -d "$cases" ]; then
 fi
 case "$cases" in /*) ;; *) cases="$PWD/$cases" ;; esac
 name="$(basename "$PWD" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9-]/-/g')"
+bin="$PWD/.standards/evals/.bin"; mkdir -p "$bin"
+for tool in git python3; do
+  if real="$(xcrun --find "$tool" 2>/dev/null)"; then
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$bin/$tool"; chmod +x "$bin/$tool"
+  else
+    rm -f "$bin/$tool"
+  fi
+done
+PATH="$bin:$PATH"; export PATH
 tmp="$(mktemp -d)" || exit 2
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 130' INT TERM
