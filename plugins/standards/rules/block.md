@@ -1,4 +1,4 @@
-# Coding standards (standards plugin v1.2.1)
+# Coding standards (standards plugin v1.2.2)
 Full text with reasons in `.standards/rules/`. Cite rules by id. Rules bind new and touched
 code only; existing code is not refactored to meet a rule (U-05). A [judgement] breach is
 declared in the commit message, the PR body and the review (U-02). Language conventions:
