@@ -421,6 +421,12 @@ check "threads: unresolved only, with ids" [ "$(printf '%s' "$threads" | jget 0.
 "$P/scripts/comments.sh" resolve T_1
 check "reply and resolve" sh -c "python3 -c \"import json; d=json.load(open('$FAKE_GH_DIR/issues.json')); t=d['threads'][0]; assert t['isResolved'] and 'abc123' in t['comments']['nodes'][1]['body']\""
 check "state and ready" sh -c "'$P/scripts/comments.sh' state 90 | grep -q '\"isDraft\": *true' && '$P/scripts/comments.sh' ready 90 && '$P/scripts/comments.sh' state 90 | grep -q '\"isDraft\": *false'"
+# The PR calls the evals make through the same fake (tools/eval-bin/gh): none open, then one.
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']=None; json.dump(d,open(p,'w'))"
+check "fake gh: no PR yet" sh -c "! gh pr view 1 -R acme/widgets >/dev/null 2>&1 && [ \"\$(gh pr list --head flow/x)\" = '[]' ]"
+printf 'the body' | gh pr create --base main --head flow/x --title T --body-file - >/dev/null
+gh pr comment 91 --body "@codex please review"
+check "fake gh: pr create and comment" sh -c "gh pr view 91 | grep -q '\"headRefName\": \"flow/x\"' && gh pr list --head flow/x | grep -q 'the body' && gh pr view 91 | grep -q '@codex please review'"
 
 echo "jobs (fake hosts)"
 export HOST_LOG="$work/host.log"; realrepo="$(cd "$repo" && pwd -P)"

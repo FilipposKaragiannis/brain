@@ -13,9 +13,23 @@
 # limit), which the CLI counts as 0, and those BLOCKED runs apart, each case next to its score
 # in tools/eval-baseline.json. To move the baseline after a change you accept:
 #   python3 tools/lib/eval_summary.py plugins/<plugin>/evals/results --save
+# Every session runs with tools/eval-bin first on its PATH (the sandbox passes PATH on and reads
+# the repo, not /tmp): gh on a case's fake state, launchctl and crontab that refuse, so no eval
+# reaches GitHub or the machine's schedule. On macOS git and python3 that call the real binaries
+# by path come first: /usr/bin/git and /usr/bin/python3 ask xcrun, which cannot write its cache
+# in the sandbox, so git fails ("Failed to locate 'git'") and python3 prints errors.
 # The exit status is the eval's.
 set -eu
 cd "$(dirname "$0")/.."
+bin="$PWD/tools/.eval-bin"; mkdir -p "$bin"
+for tool in git python3; do
+  if real="$(xcrun --find "$tool" 2>/dev/null)"; then
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$bin/$tool"; chmod +x "$bin/$tool"
+  else
+    rm -f "$bin/$tool"
+  fi
+done
+PATH="$bin:$PWD/tools/eval-bin:$PATH"; export PATH
 plugin="${1:?plugin name, e.g. standards}"; shift
 ablation="--ablation none"
 if [ "${1:-}" = "--baseline" ]; then

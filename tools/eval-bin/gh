@@ -1,0 +1,8 @@
+#!/bin/sh
+# gh in every eval session (tools/eval.sh puts this folder first on the PATH): no eval reaches
+# GitHub. A case that needs gh puts its state in .fake-gh/ of its repo (issues.json, and pr for a
+# pull request) and gets flow's test fake, which logs each call to .fake-gh/calls.log.
+root="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
+state="$(dirname "${root:-/nonexistent}")/.fake-gh"
+[ -f "$state/issues.json" ] || { echo "gh: a stand-in in evals, and this case has no .fake-gh/" >&2; exit 1; }
+FAKE_GH_DIR="$state" exec sh "$(dirname "$0")/../../plugins/flow/tests/fake-gh.sh" "$@"

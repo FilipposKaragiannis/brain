@@ -2,14 +2,18 @@
 # Shared fixture for the flow step evals: a repo with the flow config, a pool worktree inside
 # the repo (the eval sandbox allows writes under the repo only), one local item, and the
 # step prepared with next.sh so the skill finds the claim, the run and the brief.
-#   . _scaffold-common.sh; scaffold <kind> <size> <title> <step-state> [implemented]
+#   . _scaffold-common.sh; scaffold <kind> <size> <title> <step-state> [implemented|ready]
 # With "implemented", the fix is committed on the task branch in the pool worktree first, so
-# the steps after implement (test, verify, explain, pr) have a change to work on.
+# the steps after implement (test, verify, explain, pr) have a change to work on. With "ready",
+# the fix is on the task branch but nothing is prepared: no claim, no run, no brief, so the case
+# starts where flow:next does.
 scaffold() {
   set -e
   # The plugins under test, from the case's scaffold.sh (the eval CLI runs it by its real path).
   P="$(cd "$(dirname "$0")/../.." && pwd)"
   S="$(cd "$P/../standards" && pwd)"
+  # The eval CLI runs this in an empty temp dir; anywhere else it would rewrite a real repo.
+  [ -z "$(ls -A)" ] || { echo "scaffold: run it in an empty directory, not $(pwd)" >&2; exit 1; }
   git init -q -b main .
   git config user.email eval@example.com
   git config user.name eval
@@ -35,11 +39,30 @@ $3
 - [ ] greet prints \"hello <name>\" for any name
 - [ ] greet with no argument prints \"hello stranger\"")"
   [ -n "$4" ] && "$P/adapters/local/write-state.sh" "$id" "step=$4"
-  "$P/scripts/next.sh" "$id" > .flow/next.txt
-  if [ "${5:-}" = "implemented" ]; then
-    wt="$PWD/.pool/wt-1"
+  wt="$PWD/.pool/wt-1"
+  if [ "${5:-}" = "ready" ]; then
+    git -C "$wt" switch -q -c "flow/$(printf '%s' "$id" | tr ':/#' '---')"
+  else
+    "$P/scripts/next.sh" "$id" > .flow/next.txt
+  fi
+  if [ -n "${5:-}" ]; then
     printf '#!/bin/sh\n# greet [name]: prints a greeting; a missing name greets a stranger\nprintf "hello %%s\\n" "${1:-stranger}"\n' > "$wt/src/greet.sh"
     git -C "$wt" add -A && git -C "$wt" commit -qm "feat(greet): greet strangers when no name is given"
   fi
+  [ "${5:-}" = "ready" ] && git -C "$wt" switch -q --detach main
   set +e
+}
+
+# github <state>: GitHub with no network. An origin, a bare repo beside the fixture that main is
+# pushed to, and the state the gh stand-in reads (tools/eval-bin/gh, which tools/eval.sh puts on
+# the PATH): <state> is the fake's issues.json, with "pr" for the item's pull request, or null
+# for none yet. Neither shows in git status. The origin logs every push, so a grader can count
+# them in .origin.git/logs/refs/heads/<branch>.
+github() {
+  git init -q --bare .origin.git
+  git -C .origin.git config core.logAllRefUpdates always
+  git remote add origin "$PWD/.origin.git"
+  git push -q origin main
+  mkdir -p .fake-gh && printf '%s\n' "$1" > .fake-gh/issues.json
+  printf '.fake-gh/\n.origin.git/\n' >> .git/info/exclude
 }

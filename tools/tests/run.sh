@@ -80,6 +80,7 @@ cat > "$work/bin/claude" <<EOF
 out=""; prev=""
 for arg in "\$@"; do [ "\$prev" = "--output-dir" ] && out="\$arg"; prev="\$arg"; done
 printf '%s\n' "\$*" > "$work/eval-args"
+for t in gh launchctl crontab; do command -v "\$t"; done > "$work/eval-path"
 mkdir -p "\$out" && cp "$here/fixtures/eval-result/aggregate-result.json" "\$out/"
 exit 1
 EOF
@@ -88,6 +89,7 @@ out="$(PATH="$work/bin:$PATH" "$root/tools/eval.sh" demo --output-dir "$work/eva
 check "exit status of the eval" [ "$code" -eq 1 ]
 check "prints the summary" has 'cases passed 1/4 over scored runs; 7 runs scored, 3 BLOCKED'
 check "grants Write and Edit" grep -q -- '--allow-tools Bash Read Glob Grep Agent Write Edit ' "$work/eval-args"
+check "the sessions get the stand-ins for gh, launchctl and crontab" [ "$(grep -c "^$root/tools/eval-bin/" "$work/eval-path")" -eq 3 ]
 printf '#!/bin/sh\nexit 0\n' > "$work/bin/claude"
 out="$(PATH="$work/bin:$PATH" "$root/tools/eval.sh" demo --output-dir "$work/eval-none")"; code=$?
 check "no new result: says so, exit 0" [ "$code" -eq 0 ]

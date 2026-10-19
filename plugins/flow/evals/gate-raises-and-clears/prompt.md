@@ -1,0 +1,1 @@
+/flow:gate Raise an ambiguity gate on local:task/1 for me. Its acceptance leaves two choices open: whether an empty name ("") counts as no name, and whether "stranger" is capitalised. Once it is raised, here is my answer to it: as recommended.

@@ -1,4 +1,4 @@
 ---
 type: llm
 ---
-Each numbered config question gives a recommended value drawn from the repository, or says that the repository gives no hint (nothing found) and what to keep.
+Every numbered config question gives the owner a recommendation for that key.

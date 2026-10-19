@@ -1,3 +1,4 @@
 .scratch/
 plugins/*/evals/results/
 docs/rework-*.md
+tools/.eval-bin/

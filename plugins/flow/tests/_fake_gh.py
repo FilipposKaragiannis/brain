@@ -47,7 +47,21 @@ elif args[:2] == ["issue", "close"]:
 elif args[:2] == ["label", "create"]:
     data.setdefault("labels", []).append(args[2]); save()
 elif args[:2] == ["pr", "view"]:
+    if data.get("pr", {}) is None: print("no pull requests found", file=sys.stderr); sys.exit(1)
     print(json.dumps(pr()))
+elif args[:2] == ["pr", "list"]:
+    head = args[args.index("--head") + 1] if "--head" in args else None
+    print(json.dumps([pr()] if data.get("pr") and head in (None, pr()["headRefName"]) else []))
+elif args[:2] == ["pr", "create"]:
+    opt = lambda f, d="": args[args.index(f) + 1] if f in args else d
+    body = sys.stdin.read() if opt("--body-file") == "-" else open(opt("--body-file")).read() if "--body-file" in args else opt("--body")
+    head = opt("--head") or os.popen("git symbolic-ref --short HEAD").read().strip()
+    data["pr"] = {"number": 91, "state": "OPEN", "isDraft": "--draft" in args, "mergedAt": None, "url": "https://gh/pull/91",
+                  "headRefName": head, "baseRefName": opt("--base", "main"), "title": opt("--title"), "body": body}
+    save(); print(data["pr"]["url"])
+elif args[:2] == ["pr", "comment"]:
+    body = sys.stdin.read() if "--body-file" in args else args[args.index("--body") + 1]
+    pr().setdefault("comments", []).append(body); save()
 elif args[:2] == ["pr", "ready"]:
     pr()["isDraft"] = False; save()
 elif args[0] == "api" and "graphql" in args:
