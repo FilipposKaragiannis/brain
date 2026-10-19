@@ -37,6 +37,9 @@ Facts to answer with:
 - Each `next` run first frees the worktrees whose PR was merged or whose item was closed
   (`steward.sh sweep`): the merge gate clears and the item closes, without the owner.
 - An idle run (nothing ready, no new notes, no open PR) ends at once and spends no model time.
+- Each `retro` run, quiet or not, commits `lessons.jsonl` and `retros.log` on the base branch and
+  pushes them, as `intake` does the notes, so a cloud session reads the same lessons
+  (`retro.commit: false` turns it off).
 - A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
   still busy from the last schedule is skipped, which shows as `skipped`.
 - Never claim a schedule exists unless `status` shows it `scheduled`.

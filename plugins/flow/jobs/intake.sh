@@ -70,30 +70,6 @@ summary="$(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" tally "$run")"
 job_say "done: $summary"
 "$FLOW_PLUGIN/scripts/notify.sh" --event intake "notes filed: $summary" >/dev/null 2>&1 || true
 if [ "$keep" -eq 0 ] && [ "$(cfg intake.commit)" != "false" ] && git -C "$main" ls-files --error-unmatch "$notes" >/dev/null 2>&1; then
-  base="$(cfg_or base main)"
-  if [ "$(git -C "$main" symbolic-ref --short HEAD 2>/dev/null)" != "$base" ]; then
-    job_say "the main worktree is not on $base: the notes file is left uncommitted"
-  else
-    # The pages to commit with the notes, as the positional parameters; an ignored one is left out.
-    set --; ignored=""
-    for f in "$answers" "$dropped"; do
-      case "$f" in "$main"/*) ;; *) continue ;; esac
-      [ -f "$f" ] || continue
-      if git -C "$main" check-ignore -q -- "$f"; then ignored="$ignored ${f#"$main"/}"; else set -- "$@" "$f"; fi
-    done
-    [ -z "$ignored" ] || job_say "git ignores$ignored: left out of the notes commit"
-    [ $# -eq 0 ] || git -C "$main" add -- "$@" >/dev/null 2>&1
-    if ! git -C "$main" diff --quiet HEAD -- "$notes" "$@"; then
-      git -C "$main" commit -q --only -m "chore(notes): file notes as tracker items [skip ci]" -- "$notes" "$@" >/dev/null 2>&1 \
-        || job_say "could not commit the notes file"
-    fi
-    ours="$(git -C "$main" ls-files --full-name -- "$notes" "$@" | sort)"
-    ahead="$(git -C "$main" diff --name-only "$(git -C "$main" merge-base "origin/$base" "$base" 2>/dev/null)" "$base" 2>/dev/null | sort)"
-    if [ -n "$ahead" ] && [ -n "$(printf '%s\n' "$ahead" | grep -vxF "$ours")" ]; then
-      job_say "$base has other unpushed changes: the notes commit waits for your push"
-    elif [ -n "$ahead" ]; then
-      git -C "$main" push -q origin "$base" >/dev/null 2>&1 && job_say "notes file pushed" || job_say "notes file committed; the push failed, the next run retries"
-    fi
-  fi
+  job_commit notes "notes file" "chore(notes): file notes as tracker items [skip ci]" "$notes" "$answers" "$dropped"
 fi
 [ "$missing" -eq 0 ] || exit 1

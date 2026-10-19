@@ -56,3 +56,34 @@ job_start() {
 # job_model / job_effort: the orchestrating session's model from jobs.model / jobs.effort, if set.
 job_model() { cfg jobs.model; }
 job_effort() { cfg jobs.effort; }
+# job_commit <what> <noun> <message> <file>...: commit the files alone on the base branch in the
+# main worktree ($main) and push, when the base's unpushed changes are only these files. A file
+# outside the main worktree or missing is skipped; one git ignores is left out, and said.
+job_commit() {
+  _what="$1"; _noun="$2"; _msg="$3"; shift 3
+  _base="$(cfg_or base main)"
+  if [ "$(git -C "$main" symbolic-ref --short HEAD 2>/dev/null)" != "$_base" ]; then
+    job_say "the main worktree is not on $_base: the $_noun is left uncommitted"; return 0
+  fi
+  # The files to commit stay in the positional parameters, each one checked as it goes round.
+  _n=$#; _ignored=""
+  while [ "$_n" -gt 0 ]; do
+    _f="$1"; shift; _n=$((_n - 1))
+    case "$_f" in "$main"/*) ;; *) continue ;; esac
+    [ -f "$_f" ] || continue
+    if git -C "$main" check-ignore -q -- "$_f"; then _ignored="$_ignored ${_f#"$main"/}"; else set -- "$@" "$_f"; fi
+  done
+  [ -z "$_ignored" ] || job_say "git ignores$_ignored: left out of the $_what commit"
+  [ $# -gt 0 ] || return 0
+  git -C "$main" add -- "$@" >/dev/null 2>&1
+  if ! git -C "$main" diff --quiet HEAD -- "$@"; then
+    git -C "$main" commit -q --only -m "$_msg" -- "$@" >/dev/null 2>&1 || job_say "could not commit the $_noun"
+  fi
+  _ours="$(git -C "$main" ls-files --full-name -- "$@" | sort)"
+  _ahead="$(git -C "$main" diff --name-only "$(git -C "$main" merge-base "origin/$_base" "$_base" 2>/dev/null)" "$_base" 2>/dev/null | sort)"
+  if [ -n "$_ahead" ] && [ -n "$(printf '%s\n' "$_ahead" | grep -vxF "$_ours")" ]; then
+    job_say "$_base has other unpushed changes: the $_what commit waits for your push"
+  elif [ -n "$_ahead" ]; then
+    git -C "$main" push -q origin "$_base" >/dev/null 2>&1 && job_say "$_noun pushed" || job_say "$_noun committed; the push failed, the next run retries"
+  fi
+}

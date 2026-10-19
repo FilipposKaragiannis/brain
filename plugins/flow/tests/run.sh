@@ -474,6 +474,28 @@ FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify fail
 check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new' && grep -q '/meta:retro Unattended.*Read the 2 lessons.*2 lines, 0 read before' '$HOST_LOG'"
 printf '%s\t2\t1\t1\n' "$(date -u +%FT%TZ)" > "$home2/retros.log"
 check "retro job: retros.log marks the lessons read" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude --min-lessons 1 | grep -q 'quiet: 0 new'"
+lessons_clone() { # lessons_clone <dir> <more config>: <dir>/origin.git and its clone <dir>/app on main, the flow home tracked
+  mkdir -p "$1" && git init -q --bare "$1/origin.git" && git clone -q "$1/origin.git" "$1/app" 2>/dev/null && (cd "$1/app" &&
+    git config user.email t@t && git config user.name t && mkdir -p .flow && printf '.flow/log/\n.flow/tmp/\n' > .gitignore &&
+    printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\n%b' "$2" > .flow/config.yaml &&
+    printf '%s\t0\t0\t0\n' "$(date -u +%FT%TZ)" > .flow/retros.log && git add -A && git commit -qm init &&
+    git push -q origin HEAD:main 2>/dev/null && git branch -q -M main && git branch -q -u origin/main &&
+    "$P/scripts/lesson.sh" review-blocker 'local:task/9' "Magic number" --rule N-06 >/dev/null)
+}
+lessons_clone "$work/lessons" ""
+(cd "$work/lessons/app" && "$P/jobs/retro.sh" claude) > "$work/lessons.out" 2>&1
+check "retro job: the lessons are committed alone on the base branch and pushed" sh -c "git -C '$work/lessons/origin.git' log -1 --format=%s main | grep -q '^chore(flow): record the lessons the retro read' && [ \"\$(git -C '$work/lessons/origin.git' show --name-only --format= main | tr '\n' ' ')\" = '.flow/lessons.jsonl ' ] && grep -q 'lessons log pushed' '$work/lessons.out' && [ -z \"\$(git -C '$work/lessons/app' status --porcelain -- .flow/lessons.jsonl)\" ]"
+(cd "$work/lessons/app" && "$P/scripts/lesson.sh" escalation 'local:task/9' "again" >/dev/null && "$P/jobs/retro.sh" claude --min-lessons 5) > "$work/lessons.out" 2>&1
+check "retro job: a quiet run still commits and pushes the lessons recorded since" sh -c "grep -q 'quiet: 2 new' '$work/lessons.out' && git -C '$work/lessons/origin.git' show main:.flow/lessons.jsonl | grep -q again"
+lessons_clone "$work/lessons-off" ""
+(cd "$work/lessons-off/app" && git checkout -q -b other && "$P/jobs/retro.sh" claude) > "$work/lessons.out" 2>&1
+check "retro job: off the base branch the lessons are left uncommitted" sh -c "grep -q 'not on main: the lessons log is left uncommitted' '$work/lessons.out' && git -C '$work/lessons-off/app' status --porcelain | grep -q 'lessons.jsonl' && [ \"\$(git -C '$work/lessons-off/app' rev-list --count HEAD)\" = 1 ]"
+lessons_clone "$work/lessons-no" "retro:\n  commit: false\n"
+(cd "$work/lessons-no/app" && "$P/jobs/retro.sh" claude) > "$work/lessons.out" 2>&1
+check "retro job: retro.commit false leaves the lessons uncommitted" sh -c "git -C '$work/lessons-no/app' status --porcelain | grep -q 'lessons.jsonl' && [ \"\$(git -C '$work/lessons-no/origin.git' rev-list --count main)\" = 1 ]"
+lessons_clone "$work/lessons-ign" ""
+(cd "$work/lessons-ign/app" && git rm -q --cached .flow/retros.log && printf '.flow/retros.log\n' >> .gitignore && git commit -qam ignore && git push -q 2>/dev/null; "$P/jobs/retro.sh" claude) > "$work/lessons.out" 2>&1
+check "retro job: an ignored retros.log is left out and the lessons are still committed" sh -c "grep -q 'git ignores .flow/retros.log: left out of the lessons commit' '$work/lessons.out' && [ \"\$(git -C '$work/lessons-ign/origin.git' show --name-only --format= main)\" = .flow/lessons.jsonl ]"
 
 echo "flow jobs: the run ledger, pause and the schedule (fake launchctl)"
 J="$P/scripts/jobs.sh"
