@@ -62,5 +62,5 @@ Route one sentence to the flow skill that does it. You translate; the skills act
 
 - Never start a run on an item you have not named back to the user in this turn. An unattended
   run on the queue names the queue: "the first ready items, N at a time".
-- Never clear `merge`; the user merges on the host and then answers.
+- Never clear `merge`; the user merges on the host and the sweep clears it.
 - Never guess between two items.

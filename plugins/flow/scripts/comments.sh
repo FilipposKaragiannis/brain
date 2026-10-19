@@ -5,7 +5,7 @@
 #   comments.sh resolve <thread_id>             resolve a review thread
 #   comments.sh issue-comments <pr>             plain PR comments as JSON (quiz answers live here)
 #   comments.sh ready <pr>                      mark a draft PR ready for review
-#   comments.sh state <pr>                      {state, isDraft, merged, url, headRefName, baseRefName}
+#   comments.sh state <pr>                      {state, isDraft, mergedAt, url, headRefName, headRefOid, baseRefName}
 . "$(dirname "$0")/../lib/flow.sh"
 command -v gh >/dev/null 2>&1 || die "gh is not installed"
 repo="$(cfg github.repo)"; [ -n "$repo" ] || repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" || die "not a GitHub repository"
@@ -40,6 +40,6 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
   ready)
     gh pr ready "$(pr_number "$2")" -R "$repo" ;;
   state)
-    gh pr view "$(pr_number "$2")" -R "$repo" --json state,isDraft,mergedAt,url,headRefName,baseRefName,number ;;
+    gh pr view "$(pr_number "$2")" -R "$repo" --json state,isDraft,mergedAt,url,headRefName,headRefOid,baseRefName,number ;;
   *) sed -n '2,8p' "$0"; exit 2 ;;
 esac

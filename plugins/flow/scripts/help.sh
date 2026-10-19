@@ -41,7 +41,7 @@ def gates():
     print("# The gates\n")
     ask = {"interview": "confirm the recap of the spec", "decomposition": "check the task list, sizes and blockers",
            "plan-approval": "read plan.md; approve or send it back", "feel-test": "launch it and say how it feels",
-           "merge": "merge the PR on the host, then answer", "escalation": "a step failed three times; say what to do",
+           "merge": "merge the PR on the host; the next job clears it", "escalation": "a step failed three times; say what to do",
            "ambiguity": "an agent needs a decision; give it"}
     for g, v in profiles["gates"].items():
         print("- **%s** (raised by %s): %s. Answer: `flow:gate <item> \"<answer>\"`." % (g, v["raised_by"], ask.get(g, v["says"])))

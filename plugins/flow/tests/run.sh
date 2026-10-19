@@ -812,6 +812,36 @@ check "release: a closed item's reports go with it" sh -c "'$P/scripts/steward.s
 "$P/scripts/steward.sh" claim "$po" >/dev/null 2>&1; wo="$("$P/scripts/steward.sh" find "$po")"
 check "release: an open item's reports stay" sh -c "'$P/scripts/steward.sh' release '$po' --force && [ -d '$repo/.flow/reports/$(item_slug "$po")' ]"
 
+echo "sweep"
+# The fake gh answers pr view with the PR in its state file, whatever the URL. One pool
+# worktree is free here, so each case claims it in turn.
+fake_pr() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pr"]={"number":90,"state":sys.argv[2],"isDraft":False,"mergedAt":None,"url":"https://gh/pull/90","headRefName":"","headRefOid":sys.argv[3],"baseRefName":"main"}; json.dump(d,open(p,"w"))' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
+commit_in() { printf '%s\n' "$2" > "$1/$2.txt" && git -C "$1" add -- "$2.txt" && git -C "$1" commit -qm "$2" && git -C "$1" rev-parse HEAD; }
+sc="$("$P/adapters/local/create.sh" task "Closed, claimed")"; wc_="$("$P/scripts/steward.sh" claim "$sc")"
+"$P/adapters/local/close.sh" "$sc" >/dev/null
+check "sweep --dry-run: names the closed item's worktree and touches nothing" sh -c "'$P/scripts/steward.sh' sweep --dry-run | grep -q '$sc: would release' && [ -f '$wc_/.flow/claim.json' ]"
+printf 'x\n' > "$wc_/dirty.txt"
+check "sweep: uncommitted changes keep the worktree" sh -c "'$P/scripts/steward.sh' sweep | grep -q '$sc: kept .*uncommitted' && [ -f '$wc_/.flow/claim.json' ]"
+rm "$wc_/dirty.txt"
+check "sweep: a closed item's worktree is released" sh -c "'$P/scripts/steward.sh' sweep | grep -q '$sc: released' && [ ! -f '$wc_/.flow/claim.json' ]"
+sm="$("$P/adapters/local/create.sh" task "Merged PR")"; wm="$("$P/scripts/steward.sh" claim "$sm")"
+tip="$(commit_in "$wm" merged)"; "$P/adapters/local/link-pr.sh" "$sm" https://gh/pull/90
+"$P/scripts/gate.sh" raise "$sm" merge "Merge the PR." >/dev/null 2>&1
+fake_pr OPEN "$tip"
+check "sweep: an open PR keeps its worktree" sh -c "[ -z \"\$('$P/scripts/steward.sh' sweep)\" ] && [ -f '$wm/.flow/claim.json' ]"
+fake_pr MERGED "$tip"
+out="$("$P/scripts/steward.sh" sweep)"
+check "sweep: a merged PR releases its worktree" sh -c "printf '%s' '$out' | grep -q '$sm: released .*pull/90 merged' && [ ! -f '$wm/.flow/claim.json' ]"
+check "sweep: the merge gate clears with the PR" sh -c "[ \"\$('$P/adapters/local/read.sh' '$sm' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"gate\"])')\" = none ] && [ ! -f .flow/gates/$(item_slug "$sm").json ] && grep -q 'Gate cleared: merged: https://gh/pull/90' .flow/items/task/${sm##*/}.md"
+check "sweep: the item closes when the merge did not close it" [ "$("$P/adapters/local/read.sh" "$sm" | jget status)" = closed ]
+check "sweep: a squash-merged branch at the PR's head is deleted" sh -c "! git -C '$wm' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sm")"
+sl="$("$P/adapters/local/create.sh" task "Commit after merge")"; wl="$("$P/scripts/steward.sh" claim "$sl")"
+merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
+"$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
+"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+check "sweep: a commit after the merge keeps the branch" sh -c "[ ! -f '$wl/.flow/claim.json' ] && git -C '$wl' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sl")"
+fake_pr OPEN ""
+
 # --- init: stamp, guard, session-start nudge (on a copy of the plugin, so the plugin can change). The fake gh stays on PATH; init tolerates it.
 plugin_copy="$work/plugin"; cp -R "$P" "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"

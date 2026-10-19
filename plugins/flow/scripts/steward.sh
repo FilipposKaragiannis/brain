@@ -13,6 +13,8 @@
 #   steward.sh setup <path>                      run worktree_copy and worktree_setup there
 #   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
 #                                                worktree and every pool worktree
+#   steward.sh sweep [--dry-run]                 release each worktree whose work landed: its item
+#                                                is closed, or its PR is merged
 # A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named
 # after the last pool entry (../app-wt-3 after ../app-wt-2). worktree_copy lists ignored paths
 # copied from the main worktree when the new one lacks them (.claude/settings.local.json);
@@ -294,6 +296,38 @@ cmd_prune() {
   echo "prune: $verb $removed, kept $kept"
 }
 
+# cmd_sweep: merging on the host is the owner's answer to the merge gate, so nobody has to say it
+# again. Each claimed worktree whose item is closed, or whose linked PR is merged, is released:
+# an open merge gate clears with the PR's URL, an item still open closes (a PR into an epic
+# branch does not close its issue), and the task branch goes even when squash-merged, but only
+# while its tip is the PR's head, so a commit made after the merge keeps it. A worktree with
+# uncommitted changes, a run in flight, or an item that cannot be read is left alone.
+cmd_sweep() {
+  dry=0
+  while [ $# -gt 0 ]; do case "$1" in --dry-run) dry=1; shift ;; *) die "unknown option $1" 2 ;; esac; done
+  for p in $(pool_paths); do
+    [ -d "$p" ] || continue
+    c="$(claim_of "$p")"; it="$(json_get "$c" item)"; br="$(json_get "$c" branch)"; name="$(basename "$p")"
+    [ -n "$it" ] && adapter_for "$it" >/dev/null 2>&1 || continue
+    data="$(adapter read "$it" 2>/dev/null)" || continue
+    status="$(json_get "$data" status)"; gate="$(state_get "$data" gate)"; pr="$(state_get "$data" pr)"
+    merged=0; head=""
+    if [ -n "$pr" ] && st="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pr" 2>/dev/null)" && [ "$(json_get "$st" state)" = MERGED ]; then
+      merged=1; head="$(json_get "$st" headRefOid)"
+    fi
+    [ "$status" = closed ] || [ "$merged" -eq 1 ] || continue
+    why="$it is closed"; [ "$merged" -eq 1 ] && why="$pr merged"
+    if [ -f "$home/runs/$(item_slug "$it").json" ]; then echo "$it: kept $name, a run is in flight"; continue; fi
+    if dirty "$p"; then echo "$it: kept $name, it has uncommitted changes ($why)"; continue; fi
+    if [ "$dry" -eq 1 ]; then echo "$it: would release $name ($why)"; continue; fi
+    [ "$gate" = merge ] && "$FLOW_PLUGIN/scripts/gate.sh" clear "$it" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" >/dev/null
+    [ "$status" = closed ] || adapter close "$it" --comment "Closed by flow: $pr is merged." >/dev/null || echo "flow: could not close $it" >&2
+    force=""
+    [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
+    (cmd_release "$p" $force >/dev/null) && echo "$it: released $name ($why)"
+  done
+}
+
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
@@ -304,6 +338,7 @@ case "$cmd" in
   add) cmd_add "${1:-}" ;;
   setup) [ $# -ge 1 ] || die "usage: setup <path|item>" 2; cmd_setup "$1" ;;
   prune) cmd_prune "$@" ;;
+  sweep) cmd_sweep "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,16p' "$0"; exit 2 ;;
+  *) sed -n '2,18p' "$0"; exit 2 ;;
 esac
