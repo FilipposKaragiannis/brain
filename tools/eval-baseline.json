@@ -1,5 +1,5 @@
 {
-  "commit": "3cb8405",
+  "commit": "f1c6259",
   "plugins": {
     "craft": {
       "design-skips-explanation": {
@@ -235,5 +235,5 @@
       }
     }
   },
-  "recorded": "2026-10-18"
+  "recorded": "2026-10-19"
 }
