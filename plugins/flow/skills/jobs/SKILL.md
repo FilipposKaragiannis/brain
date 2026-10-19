@@ -34,6 +34,8 @@ Facts to answer with:
 - On macOS each job is a launchd agent that loads at login. It runs while the owner is logged in
   and the Mac is awake. A run missed while asleep starts on wake; one missed while the Mac is off
   is skipped. Pause survives a restart.
+- Each `next` run first frees the worktrees whose PR was merged or whose item was closed
+  (`steward.sh sweep`): the merge gate clears and the item closes, without the owner.
 - An idle run (nothing ready, no new notes, no open PR) ends at once and spends no model time.
 - A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
   still busy from the last schedule is skipped, which shows as `skipped`.

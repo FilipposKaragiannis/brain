@@ -27,7 +27,8 @@ case "$workers" in ''|*[!0-9]*|0) die "--workers takes a number from 1" 2 ;; esa
 # A tracker that keeps a board (the GitHub adapter's sync) is brought in step once per schedule,
 # so an item whose last missing field was just set shows as ready before a worker looks.
 # Gates the owner answered on the tracker (an /answer comment) clear first, so the item they free
-# can be picked in this same schedule.
+# can be picked in this same schedule. Then the sweep frees the worktrees whose PR the owner
+# merged (steward.sh sweep), so the pool has room before a worker claims.
 if [ -z "$worker" ]; then
   job_skip_if_paused
   mkdir -p "$(job_log_dir)"
@@ -35,6 +36,10 @@ if [ -z "$worker" ]; then
     for a in $(adapters_configured); do
       [ -x "$FLOW_PLUGIN/adapters/$a/answers.sh" ] && { adapter answers "$a" 2>/dev/null | while read -r id; do job_say "$id: gate answered on the tracker"; done; }
     done
+    flow_unlock
+  fi
+  if flow_lock sweep; then
+    "$FLOW_PLUGIN/scripts/steward.sh" sweep 2>/dev/null | while read -r line; do job_say "$line"; done
     flow_unlock
   fi
   for a in $(adapters_configured); do

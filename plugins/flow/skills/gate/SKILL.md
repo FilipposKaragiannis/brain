@@ -27,7 +27,7 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
 | `decomposition` | the task list, sizes and blockers, before the sub-items are created |
 | `plan-approval` | `plan.md`, or sends it back with the change |
 | `feel-test` | they launched it and it feels right |
-| `merge` | the PR is merged (release the worktree with `steward`) |
+| `merge` | the PR is merged; the next `next` job clears it and frees the worktree (`steward.sh sweep`), or run the sweep now |
 | `escalation`, `ambiguity` | the decision, or the fix, in a sentence |
 
 ## Answering on the tracker
@@ -54,4 +54,4 @@ or the spec. The owner can then reply "as recommended" or change one answer.
 ## Never
 
 - Never clear a gate without the owner's answer in this turn.
-- Never clear `merge` before the PR is merged or closed.
+- Never clear `merge` before the PR is merged or closed. The sweep clears it on the merge itself.

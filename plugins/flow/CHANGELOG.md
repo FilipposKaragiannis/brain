@@ -1,5 +1,17 @@
 # flow
 
+## 1.11.0 (2026-10-19)
+
+- `steward.sh sweep [--dry-run]` frees the worktrees whose work landed. A claimed worktree is
+  released when its item is closed or its linked PR is merged. On a merge it clears the merge
+  gate with the PR's URL and closes an item the merge left open, as a PR into an epic branch
+  does. It deletes a squash-merged task branch only while the branch tip is the PR's head, so a
+  commit made after the merge keeps the branch. It leaves alone a worktree with uncommitted
+  changes, a run in flight, or an item it cannot read.
+- The scheduled `next` job runs the sweep each time, after the tracker answers and before a
+  worker claims. Merging on the host is now the whole answer to the merge gate.
+- `comments.sh state` also prints `headRefOid`.
+
 ## 1.10.0 (2026-10-18)
 
 - Intake has two new outcomes. `answered`: a question note is answered from the code and the
