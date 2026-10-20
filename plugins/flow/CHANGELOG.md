@@ -1,5 +1,16 @@
 # flow
 
+## 1.12.0 (2026-10-19)
+
+- The retro job commits the lessons log. After each run, quiet or not, `lessons.jsonl` and
+  `retros.log` are committed alone on the base branch in the main worktree and pushed, so a cloud
+  session reads the same lessons. As with the notes: only when the main worktree is on the base
+  branch, a file git ignores is left out and said, the push waits for the owner when the base has
+  other unpushed changes, and a failed push is retried by the next run. `retro.commit: false`
+  turns it off; the config `flow:init` writes names it.
+- The commit and push both jobs share is `job_commit` in `jobs/_job.sh`; intake's commits and
+  messages are as before.
+
 ## 1.11.0 (2026-10-19)
 
 - `steward.sh sweep [--dry-run]` frees the worktrees whose work landed. A claimed worktree is
