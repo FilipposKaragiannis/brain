@@ -8,16 +8,20 @@
   pauses and schedules it like the others (`jobs.schedule.health`; the config `flow:init` writes
   sets `every 15m`). Per claimed worktree, in order:
   - Heartbeat. A run is alive when the pid its record names still runs the unattended loop or the
-    host session, or an agent works in the worktree, or a process names the worktree or the item.
-    A record with no live process for `jobs.health.grace` (10m) is a dead run: the record goes.
+    host session, or an agent works in the worktree, or an agent or the loop names the worktree or
+    the item. An editor, a `tail` or the claude daemon naming the worktree is not a run. A record
+    with no live process for `jobs.health.grace` (10m) is a dead run: the record goes. When `ps`
+    fails or lists nothing, no run is judged dead: the claimed worktrees are left as they are and
+    the job says so once.
   - An empty claim (no run, no gate, a clean tree, no commit past the base, no step result, quiet
     for the grace) is released with `release`, never `--force`.
   - Work with a dead run is resumed through `run-unattended.sh` with the item, once per run, at
     most `jobs.health.max_resumes` (3) times in a row while the step does not advance, then an
-    escalation gate. The resumed step's brief carries a note. Nothing is reset, stashed or
-    discarded.
+    escalation gate. The resumed step's brief carries a note, in that one brief only. The resumed
+    run logs to `log/resume-<item>.log`. Nothing is reset, stashed or discarded.
   - Branch sync for a clean tree and no live run: fast-forward when only behind the remote branch,
-    push when only ahead of one that exists (never a new remote branch, never forced). A diverged
+    push when only ahead of one that exists and `jobs.health.push: true` (off by default: the
+    job says once that the branch is ahead; never a new remote branch, never forced). A diverged
     branch, or one more than `jobs.health.behind_base` (20) commits behind the base, is only
     flagged: a notification and a note in the item's reports that the next brief carries. A free
     worktree follows the base tip. A dirty or running worktree is never synced.
