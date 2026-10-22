@@ -93,8 +93,11 @@ else
 fi
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
+# The run's owner: the unattended loop (it exports its pid), else the host session that called this
+# script. The health job reads it to tell a live run from a dead one.
+owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
-  "started=$(now_iso)" "touches:=$touches" > "$(run_file "$item")"
+  "started=$(now_iso)" ${owner:+"pid=$owner"} "touches:=$touches" > "$(run_file "$item")"
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
 adapter write-state "$item" "step=$step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock
@@ -128,6 +131,12 @@ brief="$reports/brief-$step.md"
     asked="$(state_get "$data" asked)"
     [ -n "$asked" ] && { echo "Asked:"; echo; printf '%s\n' "$asked"; echo; }
     echo "Answer: $answer"
+    echo
+  fi
+  if [ -s "$reports/health.md" ]; then
+    echo "## From the health job"
+    echo
+    cat "$reports/health.md"
     echo
   fi
   echo "## The item"

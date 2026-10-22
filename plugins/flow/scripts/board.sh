@@ -19,7 +19,12 @@ out = []
 for line in sys.stdin:
     if line.strip(): out.extend(json.loads(line))
 print(json.dumps(out))')"
-runs="$(for f in "$home"/runs/*.json; do [ -f "$f" ] && cat "$f" && echo; done | python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
+# Each run record says whether a process still holds it: "running on shell" is only true then.
+grace="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
+reminder="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
+procs="$(mktemp)"; trap 'rm -f "$procs"' EXIT
+python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$procs"
+runs="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" runs "$home/runs" "$procs" "$grace")"
 gates="$(for f in "$home"/gates/*.json; do [ -f "$f" ] && cat "$f" && echo; done | python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
 pool="$("$FLOW_PLUGIN/scripts/steward.sh" pool 2>/dev/null | tail -n +2)"
-printf '%s\n%s\n%s\n' "$items" "$runs" "$gates" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool"
+printf '%s\n%s\n%s\n' "$items" "$runs" "$gates" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder"

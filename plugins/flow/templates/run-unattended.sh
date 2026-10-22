@@ -8,6 +8,7 @@
 set -u
 host="${1:-}"; shift || true
 [ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N]" >&2; exit 2; }
+FLOW_RUN_PID=$$; export FLOW_RUN_PID   # next.sh records it, so the health job knows this loop is alive
 item=""; max=20
 while [ $# -gt 0 ]; do case "$1" in --max-steps) max="$2"; shift 2 ;; *) item="$1"; shift ;; esac; done
 . "$(dirname "$0")/plugin.sh"

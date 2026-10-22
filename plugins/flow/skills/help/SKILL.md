@@ -9,5 +9,6 @@ the path `codex plugin list` prints for `flow`).
 
 Run `"$P/scripts/help.sh" [<skill> | lines | gates]` and show its output as is. It reads the
 skills and `profiles.json` of the installed plugin, so it is always current. No argument: the
-list. When the user asks something the output answers, point at the line; do not paraphrase
+list. `help jobs` covers the scheduled jobs, including `health`, which checks the worktree pool and
+the gates. When the user asks something the output answers, point at the line; do not paraphrase
 the whole page. For every plugin at once, `meta:map` draws the page.

@@ -4,17 +4,21 @@
 # through the incoming webhook in the FLOW_SLACK_WEBHOOK environment variable (so the URL stays out
 # of the repository), else notify.slack_webhook in the config; and always a record in
 # <flow home>/gates/<item>.json plus a line in <flow home>/events.log, which the board reads.
-# A gate names the item by its id and title, Slack links it to the tracker, and the message keeps
+# The events: idle (the next job found nothing ready; notify.idle) and health (the health job found
+# something: a gate waiting past its reminder, a diverged branch, a full pool; notify.health, on
+# unless set to false). A gate names the item by its id and title, Slack links it to the tracker, and the message keeps
 # its lines, so numbered questions read as a list.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 if [ "${1:-}" = "--event" ]; then
-  # notify.sh --event <name> <message>: the same channels for something that is not a gate (the
-  # queue ran dry). A line in events.log, no gate record.
-  [ $# -ge 3 ] || die "usage: notify.sh --event <name> <message>" 2
-  name="$2"; message="$3"
+  # notify.sh --event <name> [--no-log] <message>: the same channels for something that is not a
+  # gate (the queue ran dry). A line in events.log, unless the caller logged it, no gate record.
+  [ $# -ge 3 ] || die "usage: notify.sh --event <name> [--no-log] <message>" 2
+  name="$2"; shift 2; logged=1
+  [ "$1" != "--no-log" ] || { logged=0; shift; }
+  message="$1"
   mkdir -p "$home"
-  printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "-" "$name" "$(printf '%s' "$message" | tr '\n' ' ')" >> "$home/events.log"
+  [ "$logged" -eq 0 ] || printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "-" "$name" "$(printf '%s' "$message" | tr '\n' ' ')" >> "$home/events.log"
   title="flow: $name"; subtitle=""; link=""
 else
   [ $# -ge 3 ] || die "usage: notify.sh <gate> <item> <message> | --event <name> <message>" 2

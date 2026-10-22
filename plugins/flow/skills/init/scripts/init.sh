@@ -127,6 +127,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "notify:"
       echo "  desktop: true"
       echo "  idle: false   # true: the scheduled next job says once when it finds nothing ready"
+      echo "  health: true  # false: the health job still logs what it finds, but sends no notification"
       echo "  # Slack: set FLOW_SLACK_WEBHOOK in the environment of the session or the scheduler (keeps the URL"
       echo "  # out of the repository). A URL here is the fallback; empty with no variable disables Slack."
       echo "  slack_webhook: \"\"   # Slack incoming webhook URL"
@@ -139,11 +140,19 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  # permission_mode: auto    # dontAsk (default) denies edits without an allow list; auto lets the classifier decide"
       echo "  # host: claude             # the host the scheduled jobs run on"
       echo "  # The jobs' schedule on this machine: flow:jobs install loads it (launchd on macOS)."
-      echo "  # schedule:"
-      echo "  #   next: every 30m --workers 1 --max-steps 15"
-      echo "  #   comments: every 30m"
-      echo "  #   intake: daily 02:00"
-      echo "  #   retro: weekly sun 03:00"
+      echo "  # The health job checks the worktree pool and the gates and spends no model while all is well,"
+      echo "  # so it is the one schedule set here:"
+      echo "  schedule:"
+      echo "    health: every 15m"
+      echo "    # next: every 30m --workers 1 --max-steps 15"
+      echo "    # comments: every 30m"
+      echo "    # intake: daily 02:00"
+      echo "    # retro: weekly sun 03:00"
+      echo "  # health:                   # what the health job does with a claim, and when it speaks up"
+      echo "  #   grace: 10m              # a run record with no live process for this long is a dead run"
+      echo "  #   max_resumes: 3          # resumes of a dead run in a row, while the step does not advance"
+      echo "  #   behind_base: 20         # a task branch this many commits behind the base is flagged"
+      echo "  #   gate_reminder: 24h      # a gate waiting this long gets one reminder per interval"
       echo "# The intake job files the notes in this file as items (jobs/intake.sh, nightly):"
       echo "# intake:"
       echo "#   notes: docs/notes.md      # in the repo: committed and pushed after each run (commit: false to stop)"
@@ -167,7 +176,7 @@ install_file "$plugin/templates/plugin.sh" .flow/plugin.sh 644
 tmp="$scratch/notify"; printf '#!/bin/sh\n# Written by flow:init. Calls the flow plugin notify script: notify.sh <gate> <item> <message>.\n. "$(dirname "$0")/plugin.sh"\nexec "$FLOW_PLUGIN/scripts/notify.sh" "$@"\n' > "$tmp"
 install_file "$tmp" .flow/notify.sh 755
 install_file "$plugin/templates/run-unattended.sh" .flow/run-unattended.sh 755
-for j in comments intake next retro; do
+for j in comments health intake next retro; do
   tmp="$scratch/job-$j"
   printf '#!/bin/sh\n# Written by flow:init. Scheduled job: %s.sh <claude|codex> [args]. Logs to .flow/log/%s.log.\n. "$(dirname "$0")/../plugin.sh"\nexec "$FLOW_PLUGIN/jobs/%s.sh" "$@"\n' "$j" "$j" "$j" > "$tmp"
   install_file "$tmp" ".flow/jobs/$j.sh" 755
@@ -192,7 +201,7 @@ tmp="$scratch/gitignore"
 {
   [ -f .gitignore ] && awk '/^# flow:begin/{skip=1} !skip{print} /^# flow:end/{skip=0}' .gitignore
   echo "# flow:begin (written by flow:init; state that stays on this machine)"
-  for p in .flow/items/ .flow/reports/ .flow/runs/ .flow/gates/ .flow/tmp/ .flow/log/ .flow/claim.json .flow/events.log .flow/.init-tmp/; do echo "$p"; done
+  for p in .flow/items/ .flow/reports/ .flow/runs/ .flow/gates/ .flow/health/ .flow/tmp/ .flow/log/ .flow/claim.json .flow/events.log .flow/.init-tmp/; do echo "$p"; done
   echo "# flow:end"
 } > "$tmp"
 install_file "$tmp" .gitignore

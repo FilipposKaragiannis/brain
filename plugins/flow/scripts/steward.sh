@@ -15,6 +15,10 @@
 #                                                worktree and every pool worktree
 #   steward.sh sweep [--dry-run]                 release each worktree whose work landed: its item
 #                                                is closed, or its PR is merged
+#   steward.sh health [--dry-run] [--host H] [--wait]
+#                                                check every claim: clear a dead run, release an
+#                                                empty claim, resume cut-off work, sync branches,
+#                                                remind on old gates, say when the pool is stuck
 # A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named
 # after the last pool entry (../app-wt-3 after ../app-wt-2). worktree_copy lists ignored paths
 # copied from the main worktree when the new one lacks them (.claude/settings.local.json);
@@ -328,6 +332,268 @@ cmd_sweep() {
   done
 }
 
+# --- health: the pool checked in order, claim by claim. See jobs/health.sh, which runs it.
+hpy() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
+
+# health_say <item> <fact>: one line per fact, on stdout and in events.log.
+health_say() {
+  echo "$1: $2"
+  facts=$((facts + 1))
+  [ "$dry" -eq 1 ] && return 0
+  printf '%s\t%s\thealth\t%s\n' "$(now_iso)" "$([ "$1" = pool ] && echo - || echo "$1")" "$2" >> "$home/events.log"
+}
+
+# health_notify <message>: a notification on the health event; notify.health: false silences it.
+health_notify() {
+  [ "$(cfg notify.health)" = false ] && return 0
+  if [ "$dry" -eq 1 ]; then echo "would notify: $1"; return 0; fi
+  "$FLOW_PLUGIN/scripts/notify.sh" --event health --no-log "$1" >/dev/null 2>&1 || true
+}
+
+# health_changed <key> <text>: true when the fact under the key is new or changed since the last
+# run, and records it, so a condition that stays is said once. health_cleared <key> forgets it.
+health_changed() {
+  f="$home/health/$1.seen"
+  [ -f "$f" ] && [ "$(cat "$f")" = "$(printf '%s' "$2")" ] && return 1
+  [ "$dry" -eq 1 ] || printf '%s\n' "$2" > "$f"
+  return 0
+}
+health_cleared() { [ "$dry" -eq 1 ] || rm -f "$home/health/$1.seen"; }
+
+health_ago() { hpy ago "$1"; }
+
+# health_branch_state <item> <path> <branch> <base>: bring a clean claimed worktree in step with
+# its remote branch (fast-forward when only behind, push when only ahead of a branch that exists)
+# and leave in $health_flags what needs a person: a diverged branch, a branch far behind its base.
+health_branch_state() {
+  hb_item="$1"; hb_path="$2"; hb_branch="$3"; hb_base="$(base_ref "$4")"; health_flags=""
+  [ "$(git -C "$hb_path" symbolic-ref --short -q HEAD)" = "$hb_branch" ] || return 0
+  if [ "$have_remote" -eq 1 ] && git -C "$hb_path" show-ref --verify --quiet "refs/remotes/origin/$hb_branch"; then
+    set -- $(git -C "$hb_path" rev-list --left-right --count "HEAD...origin/$hb_branch")
+    ahead="${1:-0}"; behind="${2:-0}"
+    if [ "$ahead" -eq 0 ] && [ "$behind" -gt 0 ]; then
+      if [ "$dry" -eq 1 ]; then health_say "$hb_item" "would fast-forward $hb_branch by $behind commit(s)"
+      elif git -C "$hb_path" merge -q --ff-only "origin/$hb_branch" >/dev/null 2>&1; then health_say "$hb_item" "fast-forwarded $hb_branch by $behind commit(s) from origin"
+      else health_say "$hb_item" "could not fast-forward $hb_branch"; fi
+    elif [ "$ahead" -gt 0 ] && [ "$behind" -eq 0 ]; then
+      if [ "$dry" -eq 1 ]; then health_say "$hb_item" "would push $ahead commit(s) of $hb_branch"
+      elif git -C "$hb_path" push -q origin "refs/heads/$hb_branch:refs/heads/$hb_branch" >/dev/null 2>&1; then health_say "$hb_item" "pushed $ahead commit(s) of $hb_branch"
+      else health_say "$hb_item" "could not push $hb_branch"; fi
+    elif [ "$ahead" -gt 0 ]; then
+      health_flags="$hb_branch has diverged from origin/$hb_branch ($ahead ahead, $behind behind). History was not rewritten: rebase or merge it before more work lands on it.
+"
+    fi
+  fi
+  late="$(git -C "$hb_path" rev-list --count "HEAD..$hb_base" 2>/dev/null)"
+  if [ "${late:-0}" -gt "$behind_base" ]; then
+    health_flags="$health_flags$hb_branch is $late commits behind $hb_base (the limit is $behind_base). Merge or rebase the base in before more work lands on it.
+"
+  fi
+}
+
+# health_free <path>: a free pool worktree follows the base branch tip; a dirty one is only said.
+health_free() {
+  hf_name="$(basename "$1")"
+  if dirty "$1"; then
+    health_changed "free-$hf_name" dirty && health_say pool "$hf_name is free but has uncommitted changes, so no claim can use it"
+    return 0
+  fi
+  health_cleared "free-$hf_name"
+  hf_tip="$(git -C "$1" rev-parse -q --verify "$(base_ref)" 2>/dev/null)"; hf_head="$(git -C "$1" rev-parse -q --verify HEAD 2>/dev/null)"
+  [ -n "$hf_tip" ] && [ "$hf_tip" != "$hf_head" ] || return 0
+  if git -C "$1" symbolic-ref -q HEAD >/dev/null 2>&1; then
+    health_changed "free-$hf_name-branch" on && health_say pool "$hf_name is free but on the branch $(git -C "$1" symbolic-ref --short HEAD), so it is not moved"
+  elif ! git -C "$1" merge-base --is-ancestor "$hf_head" "$hf_tip" 2>/dev/null; then
+    health_changed "free-$hf_name-branch" off && health_say pool "$hf_name is free but its commit is not in $base_branch, so it is not moved"
+  elif [ "$dry" -eq 1 ]; then health_say pool "would fast-forward free $hf_name to $base_branch"
+  elif git -C "$1" merge -q --ff-only "$hf_tip" >/dev/null 2>&1; then health_say pool "fast-forwarded free $hf_name to $base_branch"
+  else health_say pool "could not fast-forward free $hf_name"; fi
+}
+
+# health_resume <item> <step> <path>: start the step again in the background, where the dead run
+# left it, at most max_resumes times in a row while the step does not advance; then escalate.
+health_resume() {
+  hr_item="$1"; hr_step="$2"; hr_path="$3"; hr_file="$home/health/$(item_slug "$1").resume"
+  hr_n=0; hr_last=""
+  [ -f "$hr_file" ] && read -r hr_n hr_last < "$hr_file"
+  [ "$hr_last" = "$hr_step" ] || hr_n=0
+  if [ "$hr_n" -ge "$max_resumes" ]; then
+    if [ "$dry" -eq 1 ]; then health_say "$hr_item" "would raise an escalation gate: the run of $hr_step died $hr_n times in a row"; return 0; fi
+    health_say "$hr_item" "the run of $hr_step died $hr_n times in a row without the step advancing; escalation gate raised"
+    "$FLOW_PLUGIN/scripts/gate.sh" raise "$hr_item" escalation "The run of step $hr_step died $hr_n times in a row, and the health job resumed it each time without the step advancing. $(basename "$hr_path") keeps its commits and uncommitted changes untouched. Read $home/log, then clear the gate to let the flow try again." >/dev/null 2>&1 || true
+    rm -f "$hr_file"; health_gate=escalation
+    return 0
+  fi
+  if [ "$dry" -eq 1 ]; then health_say "$hr_item" "would resume $hr_step on $resume_host (attempt $((hr_n + 1)) of $max_resumes)"; return 0; fi
+  if ! host_check "$resume_host" >/dev/null 2>&1; then health_say "$hr_item" "cannot resume $hr_step: $resume_host is not installed"; return 0; fi
+  hr_n=$((hr_n + 1)); printf '%s %s\n' "$hr_n" "$hr_step" > "$hr_file"
+  mkdir -p "$health_reports" && printf '%sThe previous run of step %s died. Health job resume %s of %s: this worktree holds its commits and uncommitted changes. Read git status and git log, continue from there, and discard nothing.\n' "$health_flags" "$hr_step" "$hr_n" "$max_resumes" > "$health_reports/health.md"
+  health_say "$hr_item" "resumed $hr_step on $resume_host (attempt $hr_n of $max_resumes)"
+  hr_run="$FLOW_PLUGIN/templates/run-unattended.sh"
+  if [ "$wait_for_resume" -eq 1 ]; then "$hr_run" "$resume_host" "$hr_item" >> "$home/log/health.log" 2>&1
+  else hpy spawn "$home/log/health.log" "$hr_run" "$resume_host" "$hr_item" >/dev/null; fi
+}
+
+# health_claim <path>: every check of one claimed worktree, in order: the heartbeat, the empty
+# claim, the resume of cut-off work, the branch sync, the notes for the next step.
+health_claim() {
+  p="$1"; name="$(basename "$p")"; c="$(claim_of "$p")"; it="$(json_get "$c" item)"; br="$(json_get "$c" branch)"
+  bs="$(json_get "$c" base)"; [ -n "$bs" ] || bs="$base_branch"
+  claims=$((claims + 1))
+  if ! adapter_for "$it" >/dev/null 2>&1; then holders="$holders$name $it a session outside the flow
+"; return 0; fi
+  slug="$(item_slug "$it")"; rec="$home/runs/$slug.json"; health_reports="$p/.flow/reports/$slug"; health_gate=""; health_flags=""
+  if ! data="$(adapter read "$it" 2>/dev/null)"; then holders="$holders$name $it unreadable
+"; health_say "$it" "cannot read it on the tracker; $name is left alone"; return 0; fi
+  step="$(state_get "$data" step)"; health_gate="$(state_get "$data" gate)"
+  [ "$health_gate" != none ] || health_gate=""
+  [ -n "$health_gate" ] || [ ! -f "$home/gates/$slug.json" ] || health_gate="$(json_get "$(cat "$home/gates/$slug.json")" gate)"
+  state=none; dead=0; pid=""; started=0
+  if [ -f "$rec" ]; then
+    pid="$(json_get "$(cat "$rec")" pid)"; started="$(hpy epoch "$(json_get "$(cat "$rec")" started)")"
+    if [ -n "$(hpy alive "$procs" "$it" "$p" "$pid")" ]; then state=running
+    elif [ $((now - started)) -le "$grace" ]; then state=running
+    else state=dead; fi
+  elif [ -n "$(hpy alive "$procs" "$it" "$p" "")" ]; then state=running; fi
+  if [ "$state" = running ]; then
+    running=$((running + 1)); holders="$holders$name $it running
+"; return 0
+  fi
+  last="$(hpy activity "$p" "$health_reports" "$home/events.log" "$it")"
+  if [ "$state" = dead ]; then
+    dead=1
+    if [ "$dry" -eq 1 ]; then health_say "$it" "would clear the dead run of ${step:-?} (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
+    else
+      rm -f "$rec"
+      adapter write-state "$it" "last_event=$(now_iso) health: cleared the dead run of ${step:-?}" >/dev/null 2>&1 || true
+      health_say "$it" "dead run of ${step:-?} cleared (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
+    fi
+  fi
+  [ -z "$health_gate" ] || { gated=$((gated + 1)); holders="$holders$name $it waiting at the $health_gate gate
+"; }
+  ahead="$(git -C "$p" rev-list --count "$(base_ref "$bs")..HEAD" 2>/dev/null)"; ahead="${ahead:-0}"
+  results="$(ls "$health_reports"/*.json 2>/dev/null | head -1)"
+  isdirty=0; dirty "$p" && isdirty=1
+  claimed="$(hpy epoch "$(json_get "$c" claimed_at)")"
+  quiet_for=$((now - last)); [ "$last" -gt "$claimed" ] || quiet_for=$((now - claimed))
+  if [ -z "$health_gate" ] && [ "$isdirty" -eq 0 ] && [ "$ahead" -eq 0 ] && [ -z "$results" ] && [ "$quiet_for" -gt "$grace" ]; then
+    health_empty "$it" "$p" "$rec" "$last"; [ "$released" -eq 1 ] && return 0
+  fi
+  if [ -z "$health_gate" ] && [ "$dead" -eq 1 ] && { [ "$isdirty" -eq 1 ] || [ "$ahead" -gt 0 ] || [ -n "$results" ]; }; then
+    health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty"
+    health_resume "$it" "${step:-}" "$p"
+    [ -z "$health_gate" ] || { gated=$((gated + 1)); holders="$holders$name $it waiting at the $health_gate gate
+"; return 0; }
+    holders="$holders$name $it dead run, resumed
+"; return 0
+  fi
+  [ -n "$health_gate" ] || holders="$holders$name $it $([ "$isdirty" -eq 1 ] && echo "uncommitted changes" || echo "no run; the next job continues it")
+"
+  health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty"
+}
+
+# health_branch_notes <item> <path> <branch> <base> <dirty>: the branch sync for a worktree with no
+# live run and a clean tree, and the note for the item's next step when the branch needs a person.
+health_branch_notes() {
+  [ "$5" -eq 0 ] || { health_flags=""; return 0; }
+  health_branch_state "$1" "$2" "$3" "$4"
+  if [ -n "$health_flags" ]; then
+    if health_changed "branch-$(item_slug "$1")" "$health_flags"; then
+      health_say "$1" "$(printf '%s' "$health_flags" | head -1)"
+      health_notify "$1: $(printf '%s' "$health_flags" | tr '\n' ' ')"
+    fi
+    [ "$dry" -eq 1 ] || { mkdir -p "$health_reports" && printf '%s' "$health_flags" > "$health_reports/health.md"; }
+  else
+    health_cleared "branch-$(item_slug "$1")"
+    [ "$dry" -eq 1 ] || rm -f "$health_reports/health.md"
+  fi
+}
+
+# health_empty <item> <path> <record> <last activity>: release a claim that holds nothing, under
+# the pick lock so a next that is claiming it right now wins.
+health_empty() {
+  released=0
+  if [ "$dry" -eq 1 ]; then
+    health_say "$1" "would release the empty claim on $name (no run, no commits past $bs, nothing changed since $(health_ago "$4"))"; released=1; return 0
+  fi
+  flow_lock pick || { health_say "$1" "$name looks empty but the pick lock is busy; left for the next run"; return 0; }
+  if [ ! -f "$3" ] && [ -f "$2/.flow/claim.json" ] && (cmd_release "$2" >/dev/null 2>&1); then
+    health_say "$1" "released the empty claim on $name (no run, no commits past $bs, nothing changed since $(health_ago "$4"))"
+    released=1; claims=$((claims - 1)); claimable=$((claimable + 1))
+  else health_say "$1" "could not release the empty claim on $name"; fi
+  flow_unlock
+}
+
+# health_gates: a gate pending longer than gate_reminder says so once per interval.
+health_gates() {
+  for f in "$home"/gates/*.json; do
+    [ -f "$f" ] || continue
+    g="$(cat "$f")"; gi="$(json_get "$g" item)"; gt="$(json_get "$g" gate)"; since="$(hpy epoch "$(json_get "$g" time)")"
+    waiting=$((waiting + 1))
+    [ $((now - since)) -gt "$reminder" ] || continue
+    rf="$home/health/$(item_slug "$gi").remind"; sent=0; sent_gate=""
+    [ -f "$rf" ] && read -r sent_gate sent < "$rf"
+    [ "$sent_gate" = "$gt" ] && [ $((now - sent)) -lt "$reminder" ] && continue
+    msg="waiting $(health_ago "$since" | sed 's/ ago$//') at the $gt gate: $(json_get "$g" message | head -1)"
+    health_say "$gi" "$msg"
+    health_notify "$gi $msg. Answer with: flow:gate $gi \"<answer>\""
+    [ "$dry" -eq 1 ] || printf '%s %s\n' "$gt" "$now" > "$rf"
+  done
+  for rf in "$home"/health/*.remind; do
+    [ -f "$rf" ] || continue
+    [ -f "$home/gates/$(basename "$rf" .remind).json" ] || { [ "$dry" -eq 1 ] || rm -f "$rf"; }
+  done
+}
+
+# health_pressure: every worktree is claimed and the last next run could not start; say who holds
+# each one and why, once until the pool has room again.
+health_pressure() {
+  mark="$home/health/pool-full"
+  entries="$(pool_paths | grep -c .)"; max="$(cfg_or pool_max 0)"
+  if [ "$claimable" -eq 0 ] && [ "$entries" -ge "$max" ] && hpy last-next "$home/log" | grep -q 'no free worktree'; then
+    [ ! -f "$mark" ] || return 0
+    msg="the pool is full ($claims of $entries worktrees claimed, pool_max $max) and the next job has no worktree to start in. $(printf '%s' "$holders" | sed 's/^\([^ ]*\) \([^ ]*\) /\1 holds \2: /' | tr '\n' ';')"
+    health_say pool "$msg"
+    health_notify "$msg"
+    [ "$dry" -eq 1 ] || : > "$mark"
+  else
+    [ "$dry" -eq 1 ] || rm -f "$mark"
+  fi
+}
+
+cmd_health() {
+  dry=0; wait_for_resume=0; resume_host="$(cfg_or jobs.host claude)"
+  while [ $# -gt 0 ]; do
+    case "$1" in --dry-run) dry=1; shift ;; --wait) wait_for_resume=1; shift ;; --host) resume_host="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac
+  done
+  . "$FLOW_PLUGIN/lib/host.sh"
+  grace="$(hpy seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
+  reminder="$(hpy seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
+  max_resumes="$(cfg_or jobs.health.max_resumes 3)"; behind_base="$(cfg_or jobs.health.behind_base 20)"
+  case "$max_resumes$behind_base" in *[!0-9]*) die "jobs.health.max_resumes and jobs.health.behind_base take whole numbers" 2 ;; esac
+  FLOW_LOCK_WAIT="${FLOW_LOCK_WAIT:-10}"
+  now="$(date +%s)"; facts=0; claims=0; running=0; gated=0; waiting=0; claimable=0; released=0; holders=""
+  mkdir -p "$home/health" "$home/log"
+  procs="${FLOW_HEALTH_PROCS:-}"
+  if [ -z "$procs" ]; then procs="$home/health/.procs.$$"; hpy procs > "$procs"; fi
+  have_remote=0
+  if git -C "$main" remote get-url origin >/dev/null 2>&1; then
+    if [ "$dry" -eq 1 ] || git -C "$main" fetch -q --prune origin >/dev/null 2>&1; then have_remote=1; health_cleared fetch
+    else health_changed fetch failed && health_say pool "git fetch origin failed; branches are not synced this run"; fi
+  fi
+  for p in $(pool_paths); do
+    [ -d "$p" ] || continue
+    if [ -z "$(json_get "$(claim_of "$p")" item)" ]; then
+      health_free "$p"
+      dirty "$p" || claimable=$((claimable + 1))
+    else health_claim "$p"; fi
+  done
+  health_gates
+  health_pressure
+  [ "${FLOW_HEALTH_PROCS:-}" = "$procs" ] || rm -f "$procs"
+  echo "health: $claims claimed ($running running, $gated at a gate), $claimable free, $waiting gate(s) waiting; $([ "$facts" -eq 0 ] && echo "nothing to do" || echo "$facts finding(s)")"
+}
+
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
@@ -339,6 +605,7 @@ case "$cmd" in
   setup) [ $# -ge 1 ] || die "usage: setup <path|item>" 2; cmd_setup "$1" ;;
   prune) cmd_prune "$@" ;;
   sweep) cmd_sweep "$@" ;;
+  health) cmd_health "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,18p' "$0"; exit 2 ;;
+  *) sed -n '2,21p' "$0"; exit 2 ;;
 esac

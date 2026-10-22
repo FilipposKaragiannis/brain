@@ -30,6 +30,9 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
 | `merge` | the PR is merged; the next `next` job clears it and frees the worktree (`steward.sh sweep`), or run the sweep now |
 | `escalation`, `ambiguity` | the decision, or the fix, in a sentence |
 
+A gate nobody answers is not forgotten: the `health` job reminds once per `jobs.health.gate_reminder`
+(24h) while it waits, and the board's `## Health` section lists it.
+
 ## Answering on the tracker
 
 On GitHub the owner can answer without a session: a comment on the issue, after the gate's

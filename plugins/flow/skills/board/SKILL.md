@@ -15,5 +15,9 @@ path `codex plugin list` prints for `flow`). Call it `$P`.
    (waves, nodes, critical path). Render it as a Mermaid flowchart: one subgraph per wave, an
    edge per blocker, the critical path with a thicker stroke. Keep the renderer dumb: it formats
    the model and never recomputes waves.
-3. When a gate waits, say in one line per gate what the owner must do, and how to clear it:
+3. A `## Health` section appears when something is stale: a run record with no live process
+   (the pool row says `dead run`, not `running on <host>`) or a gate waiting past the reminder.
+   Say what it means in one line and that the `health` job clears and resumes it, or run
+   `"$P/scripts/steward.sh" health --dry-run`.
+4. When a gate waits, say in one line per gate what the owner must do, and how to clear it:
    `"$P/scripts/gate.sh" clear <item> "<answer>"`.

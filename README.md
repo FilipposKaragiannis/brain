@@ -67,7 +67,9 @@ agents and briefs `next` uses; `scripts/verify.sh` is the one verify run, `scrip
 the PR thread plumbing. Unattended: `.flow/run-unattended.sh claude|codex`. Scheduled jobs
 (`jobs/`, installed as `.flow/jobs/*.sh`): `comments` every 30 minutes while PRs are open,
 `next` at a chosen cadence (`--workers N` runs N items in parallel, capped by the pool;
-`notify.idle` says once when nothing is ready), `retro` weekly; each takes the host as its first
+`notify.idle` says once when nothing is ready), `retro` weekly, `health` every 15 minutes
+(`steward.sh health`: clears a dead run, releases an empty claim, resumes cut-off work, syncs clean
+task branches, reminds on old gates, says when the pool is full; no model while all is well); each takes the host as its first
 argument, locks against overlap and logs to `.flow/log/`. Scheduling is the host's job (Claude
 Desktop tasks or launchd); `flow:do` sets one up from "run a repeating unattended flow".
 Tests: `plugins/flow/tests/run.sh`. Evals: `tools/eval.sh flow`.

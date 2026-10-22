@@ -1,0 +1,1 @@
+/flow:jobs The worktree pool feels stuck: the board says a run is going on in the worktree, but nothing has moved for two days. Check the pool's health and tell me what is wrong and what the health job would do about it. Change nothing yet.

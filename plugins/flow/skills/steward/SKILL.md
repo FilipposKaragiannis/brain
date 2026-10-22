@@ -16,6 +16,7 @@ path `codex plugin list` prints for `flow`). Call it `$P`. The script is `"$P/sc
 | set up a worktree again | `steward.sh setup <path or item>`: the copies and the setup commands, on demand |
 | temporary worktree for a phase | `steward.sh tmp add <item> <phase>` from the task branch; `steward.sh tmp remove <path>` after the phase is rebased onto the task branch |
 | where an item's reports are | `steward.sh reports <item>` prints the folder (and creates it): the claimed worktree's, else the one that already exists, else the main worktree's |
+| check the pool: a run that died, a claim that holds nothing, branches out of step, gates waiting | `steward.sh health` clears a run record with no live process, releases an empty claim, resumes cut-off work (up to `jobs.health.max_resumes`, then an escalation gate), fast-forwards or pushes clean task branches and flags a diverged one, reminds on old gates; `--dry-run` lists first. The scheduled `health` job runs it |
 | free the worktrees whose work landed | `steward.sh sweep` releases each claimed worktree whose item is closed or whose PR is merged: it clears the merge gate, closes an item the merge left open, and deletes a squash-merged branch still at the PR's head; `--dry-run` lists them first. The scheduled `next` job runs it each time |
 | clear old reports | `steward.sh prune` deletes `.flow/reports/<item>/` for closed items that no worktree claims, in the main and every pool worktree; `--dry-run` lists them first |
 
