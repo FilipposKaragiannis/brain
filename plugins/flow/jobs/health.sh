@@ -4,7 +4,7 @@
 # Runs `steward.sh health`: clears the run records whose process is gone, releases a claim that
 # holds nothing, resumes work a dead run cut off (the host runs only then, and only up to
 # jobs.health.max_resumes times before an escalation gate), brings clean task branches in step
-# with their remote, reminds on gates pending past jobs.health.gate_reminder, and says once when
+# with their remote (a push only with jobs.health.push: true), reminds on gates pending past jobs.health.gate_reminder, and says once when
 # the pool is full and the next job has no worktree to start in. Each fact is a line in the log
 # and in events.log. Nothing to do: one quiet line, no notification. Schedule it every 15
 # minutes; the lock skips an overlap. --dry-run says what it would do and changes nothing.
@@ -20,7 +20,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 job_start "$host"
-out="$("$FLOW_PLUGIN/scripts/steward.sh" health --host "$host" $pass 2>&1)" || { job_say "error: steward.sh health stopped: $(printf '%s\n' "$out" | tail -1)"; exit 1; }
+out="$("$FLOW_PLUGIN/scripts/steward.sh" health --host "$host" $pass 2>&1)" || {
+  printf '%s\n' "$out" | sed '$d' | while IFS= read -r line; do job_say "$line"; done
+  job_say "error: steward.sh health stopped: $(printf '%s\n' "$out" | tail -1)"; exit 1
+}
 printf '%s\n' "$out" | sed '$d' | while IFS= read -r line; do job_say "$line"; done
 summary="$(printf '%s\n' "$out" | tail -1)"
 case "$summary" in

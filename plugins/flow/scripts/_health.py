@@ -12,13 +12,16 @@
   _health.py spawn <log> <command>...
 
 procs prints one line per process: pid, working directory (agent processes only) and command,
-tab separated. A run is alive when the pid its record names still runs an agent or the unattended
-loop, or when any other process is an agent working in the worktree, or names the worktree or
-the item in its command line. A run record carries no pid when an older flow wrote it; the scan
+tab separated, and fails when ps lists nothing, so a missing ps never reads as every run dead. A
+run is alive when the pid its record names still runs an agent or the unattended loop, or when
+any other process is an agent working in the worktree, or an agent or the loop names the worktree
+or the item in its command line. An editor, a tail or the claude daemon naming the worktree is
+not a run. A run record carries no pid when an older flow wrote it; the scan
 covers it. Times print in local time."""
 import calendar, glob, json, os, re, subprocess, sys, time
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
+SERVICE = {"daemon", "mcp"}
 LOOP = re.compile(r"run-unattended\.sh|jobs/(next|comments)\.sh")
 DURATION = re.compile(r"(\d+)([smhd]?)")
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "": 60}
@@ -26,7 +29,7 @@ UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "": 60}
 
 def is_agent(command):
     words = command.split()
-    return bool(words) and bool(AGENT.search(words[0]))
+    return bool(words) and bool(AGENT.search(words[0])) and (len(words) < 2 or words[1] not in SERVICE)
 
 
 def is_host(command):
@@ -74,6 +77,8 @@ def procs():
         parts = line.strip().split(None, 1)
         if len(parts) == 2 and parts[0].isdigit():
             rows.append((parts[0], parts[1].replace("\t", " ")))
+    if not rows:
+        sys.exit("flow: ps listed no processes")
     where = cwds([pid for pid, command in rows if is_host(command)])
     for pid, command in rows:
         print("%s\t%s\t%s" % (pid, where.get(pid, ""), command))
@@ -110,7 +115,7 @@ def alive(rows, item, worktree, pid):
         real = os.path.realpath(where) if where else ""
         if is_agent(command) and any(real == w or real.startswith(w + "/") for w in wts):
             return "process %s" % number
-        if named.search(command) or (item in command.split() and is_host(command)):
+        if is_host(command) and (named.search(command) or item in command.split()):
             return "process %s" % number
     return ""
 
@@ -141,10 +146,12 @@ def newest(paths):
 
 def activity(worktree, reports, events, item):
     changed = run(["git", "-C", worktree, "status", "--porcelain", "-z", "--", ".", ":!.flow"])
-    names = []
-    for entry in changed.split("\0"):
+    names, entries = [], iter(changed.split("\0"))
+    for entry in entries:
         if len(entry) > 3:
             names.append(os.path.join(worktree, entry[3:]))
+            if entry[0] in "RC":
+                names.append(os.path.join(worktree, next(entries, "")))
     best = newest(names)
     for root, _, files in os.walk(reports):
         best = max(best, newest([os.path.join(root, f) for f in files]), newest([root]))

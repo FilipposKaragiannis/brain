@@ -953,6 +953,8 @@ age_run "$b"; stale_claim "$wb"; : > "$hroot/host.log"
 hs --wait > "$hroot/out" 2>&1
 check "health: a dead run with commits is resumed, never released" sh -c "[ -f '$wb/.flow/claim.json' ] && grep -q \"$b: resumed implement on claude (attempt 1 of 3)\" '$hroot/out' && grep -q 'Follow the brief' '$hroot/host.log' && [ \"\$(cat .flow/health/$(item_slug "$b").resume)\" = '1 implement' ]"
 check "health: the resumed step's brief says where the dead run stopped" grep -q 'The previous run of step implement died' "$wb/.flow/reports/$(item_slug "$b")/brief-implement.md"
+check "health: the resume note goes in that one brief and no later one" sh -c "[ ! -f '$wb/.flow/reports/$(item_slug "$b")/resume.md' ] && ! grep -qs 'previous run' '$wb/.flow/reports/$(item_slug "$b")/health.md'"
+check "health: the resumed run logs to its own file, not the health log" sh -c "[ -f .flow/log/resume-$(item_slug "$b").log ] && ! grep -q 'Follow the brief' .flow/log/health.log"
 c="$(hitem "Dirty tree")"; wc2="$(hold "$c")"; printf 'unsaved\n' > "$wc2/dirty.txt"
 age_run "$c"; stale_claim "$wc2"; : > "$hroot/host.log"
 hs --wait > "$hroot/out" 2>&1
@@ -977,8 +979,11 @@ git -C "$wd" push -q origin "$bd"; remote_commit "$bd" r1
 hs > "$hroot/out" 2>&1
 check "health: a clean branch only behind its remote is fast-forwarded" sh -c "[ \"\$(git -C '$wd' rev-parse HEAD)\" = \"\$(git -C '$hroot/other' rev-parse HEAD)\" ] && grep -q 'fast-forwarded $bd' '$hroot/out'"
 commit_in "$wd" l1 >/dev/null
-hs > "$hroot/out" 2>&1
-check "health: a clean branch only ahead of an existing remote branch is pushed" sh -c "[ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" = \"\$(git -C '$wd' rev-parse HEAD)\" ] && grep -q 'pushed 1 commit' '$hroot/out'"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: by default a branch only ahead of its remote is said once and not pushed" sh -c "[ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" != \"\$(git -C '$wd' rev-parse HEAD)\" ] && grep -q 'not pushed (jobs.health.push is off)' '$hroot/out' && ! grep -q 'not pushed' '$hroot/out2'"
+cp .flow/config.yaml "$hroot/config.yaml"; printf '    push: true\n' >> .flow/config.yaml
+hs > "$hroot/out" 2>&1; cp "$hroot/config.yaml" .flow/config.yaml
+check "health: with jobs.health.push a clean branch only ahead of an existing remote branch is pushed" sh -c "[ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" = \"\$(git -C '$wd' rev-parse HEAD)\" ] && grep -q 'pushed 1 commit' '$hroot/out'"
 rm -f "$wd/.flow/reports/$(item_slug "$d")/health.md"; : > "$work/offline.log"
 remote_commit main m2; remote_commit main m3; remote_commit main m4
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
@@ -1009,9 +1014,10 @@ check "health: a state it already said is not said again" grep -q 'nothing to do
 printf '4242\t\tclaude -p Follow the brief. Work in %s.\n' "$we" > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
 check "health: a record with no pid is alive while a process names its worktree" sh -c "[ -f '$(rec "$e")' ] && ! grep -q 'dead run' '$hroot/out'"
-: > "$FLOW_HEALTH_PROCS"
+printf '7671\t\tclaude daemon run --spawned-by {"cwd":"%s"}\n4243\t\tvim %s/README.md\n4244\t\ttail -f %s/log\n' "$we" "$we" "$we" > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
-check "health: the same record is a dead run once no process names it" grep -q "$e: dead run of implement cleared" "$hroot/out"
+check "health: the same record is a dead run once only a daemon, an editor or a tail names it" grep -q "$e: dead run of implement cleared" "$hroot/out"
+: > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
 check "health: a record younger than the grace is left alone, whatever its pid" sh -c "[ -f '$(rec "$e")' ] && [ $(facts "$e.*resumed implement") = 1 ]"
 rm -f "$wd/.flow/reports/$(item_slug "$d")/health.md"; "$P/scripts/steward.sh" release "$d" --force >/dev/null 2>&1
@@ -1027,6 +1033,11 @@ check "health: an empty claim with an agent working in its worktree is not relea
 kill "$agent" 2>/dev/null; wait "$agent" 2>/dev/null
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
 check "health: the same claim is released once the agent is gone" sh -c "[ ! -f '$wg/.flow/claim.json' ] && grep -q 'released the empty claim' '$hroot/out'"
+h="$(hitem "No ps")"; wh="$(hold "$h")"; age_run "$h"; stale_claim "$wh"
+mkdir -p "$work/nops"; printf '#!/bin/sh\nexit 1\n' > "$work/nops/ps"; chmod +x "$work/nops/ps"
+PATH="$work/nops:$PATH" env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
+check "health: with no process list no run is judged dead and no claim is released" sh -c "[ -f '$(rec "$h")' ] && [ -f '$wh/.flow/claim.json' ] && grep -q 'cannot list processes' '$hroot/out' && ! grep -q 'dead run\\|released\\|resumed' '$hroot/out'"
+rm -f "$(rec "$h")"; "$P/scripts/steward.sh" release "$h" --force >/dev/null 2>&1
 "$P/scripts/jobs.sh" pause health >/dev/null; : > .flow/events.log
 "$P/jobs/health.sh" claude | grep -q paused
 check "health job: a paused job does nothing" [ ! -s .flow/events.log ]

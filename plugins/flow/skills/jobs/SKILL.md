@@ -44,7 +44,8 @@ Facts to answer with:
 - The `health` job (every 15 minutes in the config `flow:init` writes) checks each claim and spends
   no model while all is well: it clears a dead run's record, releases an empty claim, resumes
   cut-off work up to `jobs.health.max_resumes` times, then raises an escalation gate, syncs clean
-  task branches (never rewriting history or resetting work), reminds on gates older than
+  task branches (never rewriting history or resetting work; it pushes only with
+  `jobs.health.push: true`), reminds on gates older than
   `jobs.health.gate_reminder` and says when the pool is full. `notify.health: false` mutes it.
 - A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
   still busy from the last schedule is skipped, which shows as `skipped`.

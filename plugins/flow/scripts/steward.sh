@@ -363,30 +363,34 @@ health_cleared() { [ "$dry" -eq 1 ] || rm -f "$home/health/$1.seen"; }
 health_ago() { hpy ago "$1"; }
 
 # health_branch_state <item> <path> <branch> <base>: bring a clean claimed worktree in step with
-# its remote branch (fast-forward when only behind, push when only ahead of a branch that exists)
-# and leave in $health_flags what needs a person: a diverged branch, a branch far behind its base.
+# its remote branch (fast-forward when only behind; push when only ahead of a branch that exists and
+# jobs.health.push is true, else say it once) and leave in $health_flags what needs a person: a
+# diverged branch, a branch far behind its base.
 health_branch_state() {
   hb_item="$1"; hb_path="$2"; hb_branch="$3"; hb_base="$(base_ref "$4")"; health_flags=""
   [ "$(git -C "$hb_path" symbolic-ref --short -q HEAD)" = "$hb_branch" ] || return 0
   if [ "$have_remote" -eq 1 ] && git -C "$hb_path" show-ref --verify --quiet "refs/remotes/origin/$hb_branch"; then
     set -- $(git -C "$hb_path" rev-list --left-right --count "HEAD...origin/$hb_branch")
-    ahead="${1:-0}"; behind="${2:-0}"
-    if [ "$ahead" -eq 0 ] && [ "$behind" -gt 0 ]; then
-      if [ "$dry" -eq 1 ]; then health_say "$hb_item" "would fast-forward $hb_branch by $behind commit(s)"
-      elif git -C "$hb_path" merge -q --ff-only "origin/$hb_branch" >/dev/null 2>&1; then health_say "$hb_item" "fast-forwarded $hb_branch by $behind commit(s) from origin"
+    hb_ahead="${1:-0}"; hb_behind="${2:-0}"
+    [ "$hb_ahead" -gt 0 ] && [ "$hb_behind" -eq 0 ] || health_cleared "unpushed-$(item_slug "$hb_item")"
+    if [ "$hb_ahead" -eq 0 ] && [ "$hb_behind" -gt 0 ]; then
+      if [ "$dry" -eq 1 ]; then health_say "$hb_item" "would fast-forward $hb_branch by $hb_behind commit(s)"
+      elif git -C "$hb_path" merge -q --ff-only "origin/$hb_branch" >/dev/null 2>&1; then health_say "$hb_item" "fast-forwarded $hb_branch by $hb_behind commit(s) from origin"
       else health_say "$hb_item" "could not fast-forward $hb_branch"; fi
-    elif [ "$ahead" -gt 0 ] && [ "$behind" -eq 0 ]; then
-      if [ "$dry" -eq 1 ]; then health_say "$hb_item" "would push $ahead commit(s) of $hb_branch"
-      elif git -C "$hb_path" push -q origin "refs/heads/$hb_branch:refs/heads/$hb_branch" >/dev/null 2>&1; then health_say "$hb_item" "pushed $ahead commit(s) of $hb_branch"
+    elif [ "$hb_ahead" -gt 0 ] && [ "$hb_behind" -eq 0 ]; then
+      if [ "$push" != true ]; then
+        health_changed "unpushed-$(item_slug "$hb_item")" "$hb_ahead" && health_say "$hb_item" "$hb_branch is $hb_ahead commit(s) ahead of origin; not pushed (jobs.health.push is off)"
+      elif [ "$dry" -eq 1 ]; then health_say "$hb_item" "would push $hb_ahead commit(s) of $hb_branch"
+      elif git -C "$hb_path" push -q origin "refs/heads/$hb_branch:refs/heads/$hb_branch" >/dev/null 2>&1; then health_say "$hb_item" "pushed $hb_ahead commit(s) of $hb_branch"
       else health_say "$hb_item" "could not push $hb_branch"; fi
-    elif [ "$ahead" -gt 0 ]; then
-      health_flags="$hb_branch has diverged from origin/$hb_branch ($ahead ahead, $behind behind). History was not rewritten: rebase or merge it before more work lands on it.
+    elif [ "$hb_ahead" -gt 0 ]; then
+      health_flags="$hb_branch has diverged from origin/$hb_branch ($hb_ahead ahead, $hb_behind behind). History was not rewritten: rebase or merge it before more work lands on it.
 "
     fi
   fi
-  late="$(git -C "$hb_path" rev-list --count "HEAD..$hb_base" 2>/dev/null)"
-  if [ "${late:-0}" -gt "$behind_base" ]; then
-    health_flags="$health_flags$hb_branch is $late commits behind $hb_base (the limit is $behind_base). Merge or rebase the base in before more work lands on it.
+  hb_late="$(git -C "$hb_path" rev-list --count "HEAD..$hb_base" 2>/dev/null)"
+  if [ "${hb_late:-0}" -gt "$behind_base" ]; then
+    health_flags="$health_flags$hb_branch is $hb_late commits behind $hb_base (the limit is $behind_base). Merge or rebase the base in before more work lands on it.
 "
   fi
 }
@@ -411,7 +415,8 @@ health_free() {
 }
 
 # health_resume <item> <step> <path>: start the step again in the background, where the dead run
-# left it, at most max_resumes times in a row while the step does not advance; then escalate.
+# left it, at most max_resumes times in a row while the step does not advance; then escalate. The
+# note for the resumed step goes in resume.md, which next.sh puts in that one brief and removes.
 health_resume() {
   hr_item="$1"; hr_step="$2"; hr_path="$3"; hr_file="$home/health/$(item_slug "$1").resume"
   hr_n=0; hr_last=""
@@ -427,11 +432,11 @@ health_resume() {
   if [ "$dry" -eq 1 ]; then health_say "$hr_item" "would resume $hr_step on $resume_host (attempt $((hr_n + 1)) of $max_resumes)"; return 0; fi
   if ! host_check "$resume_host" >/dev/null 2>&1; then health_say "$hr_item" "cannot resume $hr_step: $resume_host is not installed"; return 0; fi
   hr_n=$((hr_n + 1)); printf '%s %s\n' "$hr_n" "$hr_step" > "$hr_file"
-  mkdir -p "$health_reports" && printf '%sThe previous run of step %s died. Health job resume %s of %s: this worktree holds its commits and uncommitted changes. Read git status and git log, continue from there, and discard nothing.\n' "$health_flags" "$hr_step" "$hr_n" "$max_resumes" > "$health_reports/health.md"
+  mkdir -p "$health_reports" && printf 'The previous run of step %s died. Health job resume %s of %s: this worktree holds its commits and uncommitted changes. Read git status and git log, continue from there, and discard nothing.\n' "$hr_step" "$hr_n" "$max_resumes" > "$health_reports/resume.md"
   health_say "$hr_item" "resumed $hr_step on $resume_host (attempt $hr_n of $max_resumes)"
-  hr_run="$FLOW_PLUGIN/templates/run-unattended.sh"
-  if [ "$wait_for_resume" -eq 1 ]; then "$hr_run" "$resume_host" "$hr_item" >> "$home/log/health.log" 2>&1
-  else hpy spawn "$home/log/health.log" "$hr_run" "$resume_host" "$hr_item" >/dev/null; fi
+  hr_run="$FLOW_PLUGIN/templates/run-unattended.sh"; hr_log="$home/log/resume-$(item_slug "$hr_item").log"
+  if [ "$wait_for_resume" -eq 1 ]; then "$hr_run" "$resume_host" "$hr_item" >> "$hr_log" 2>&1
+  else hpy spawn "$hr_log" "$hr_run" "$resume_host" "$hr_item" >/dev/null; fi
 }
 
 # health_claim <path>: every check of one claimed worktree, in order: the heartbeat, the empty
@@ -440,6 +445,8 @@ health_claim() {
   p="$1"; name="$(basename "$p")"; c="$(claim_of "$p")"; it="$(json_get "$c" item)"; br="$(json_get "$c" branch)"
   bs="$(json_get "$c" base)"; [ -n "$bs" ] || bs="$base_branch"
   claims=$((claims + 1))
+  if [ "$procs_ok" -eq 0 ]; then holders="$holders$name $it not checked: no process list
+"; return 0; fi
   if ! adapter_for "$it" >/dev/null 2>&1; then holders="$holders$name $it a session outside the flow
 "; return 0; fi
   slug="$(item_slug "$it")"; rec="$home/runs/$slug.json"; health_reports="$p/.flow/reports/$slug"; health_gate=""; health_flags=""
@@ -514,7 +521,8 @@ health_branch_notes() {
 health_empty() {
   released=0
   if [ "$dry" -eq 1 ]; then
-    health_say "$1" "would release the empty claim on $name (no run, no commits past $bs, nothing changed since $(health_ago "$4"))"; released=1; return 0
+    health_say "$1" "would release the empty claim on $name (no run, no commits past $bs, nothing changed since $(health_ago "$4"))"
+    released=1; claims=$((claims - 1)); claimable=$((claimable + 1)); return 0
   fi
   flow_lock pick || { health_say "$1" "$name looks empty but the pick lock is busy; left for the next run"; return 0; }
   if [ ! -f "$3" ] && [ -f "$2/.flow/claim.json" ] && (cmd_release "$2" >/dev/null 2>&1); then
@@ -569,13 +577,21 @@ cmd_health() {
   . "$FLOW_PLUGIN/lib/host.sh"
   grace="$(hpy seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
   reminder="$(hpy seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
-  max_resumes="$(cfg_or jobs.health.max_resumes 3)"; behind_base="$(cfg_or jobs.health.behind_base 20)"
+  max_resumes="$(cfg_or jobs.health.max_resumes 3)"; behind_base="$(cfg_or jobs.health.behind_base 20)"; push="$(cfg_or jobs.health.push false)"
   case "$max_resumes$behind_base" in *[!0-9]*) die "jobs.health.max_resumes and jobs.health.behind_base take whole numbers" 2 ;; esac
   FLOW_LOCK_WAIT="${FLOW_LOCK_WAIT:-10}"
   now="$(date +%s)"; facts=0; claims=0; running=0; gated=0; waiting=0; claimable=0; released=0; holders=""
   mkdir -p "$home/health" "$home/log"
-  procs="${FLOW_HEALTH_PROCS:-}"
-  if [ -z "$procs" ]; then procs="$home/health/.procs.$$"; hpy procs > "$procs"; fi
+  procs="${FLOW_HEALTH_PROCS:-}"; procs_ok=1
+  if [ -z "$procs" ]; then
+    find "$home/health" -name '.procs.*' -mmin +60 -exec rm -f {} + 2>/dev/null
+    procs="$home/health/.procs.$$"
+    if ! hpy procs > "$procs" 2>/dev/null; then
+      rm -f "$procs"
+      procs_ok=0
+      health_changed procs failed && health_say pool "cannot list processes (ps failed or listed nothing), so no run is judged dead; claimed worktrees are left as they are"
+    else health_cleared procs; fi
+  fi
   have_remote=0
   if git -C "$main" remote get-url origin >/dev/null 2>&1; then
     if [ "$dry" -eq 1 ] || git -C "$main" fetch -q --prune origin >/dev/null 2>&1; then have_remote=1; health_cleared fetch
