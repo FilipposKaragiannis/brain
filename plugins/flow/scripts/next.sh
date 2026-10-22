@@ -6,6 +6,8 @@
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate · 5 nothing
 # ready · 6 item is done · 7 the item has a run in flight, or another run held the pick lock.
+# A pick that finds the pool full skips the items that need a new worktree and takes one that
+# already holds a claim; it exits 3 only when no such item is left.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
@@ -18,6 +20,7 @@ while [ $# -gt 0 ]; do
     *) item="$1"; shift ;;
   esac
 done
+named="$item"
 mkdir -p "$home/runs"
 # Two runs started together must not pick the same item or claim the same worktree: the pick, the
 # claim and the run record happen under one lock. The brief is written after it is released.
@@ -53,11 +56,15 @@ print(json.dumps(out))')"
     cand="$(json_get "$ready" "$i")"; cid="$(json_get "$cand" id)"
     i=$((i + 1))
     [ -f "$(run_file "$cid")" ] && continue
+    case " ${FLOW_NEXT_SKIP:-} " in *" $cid "*) continue ;; esac
     mine="$(json_list "$cand" state.touches)"
     if [ -n "$mine" ] && touches_overlap "$mine" "$(claimed_touches "$cid")"; then continue; fi
     item="$cid"; break
   done
-  [ -n "$item" ] || { echo "nothing ready: every ready item is running, overlaps a claim, or there is none" >&2; exit 5; }
+  if [ -z "$item" ]; then
+    [ -z "${FLOW_NEXT_SKIP:-}" ] || { echo "no free worktree: every ready item left needs one, and the pool is at pool_max" >&2; exit 3; }
+    echo "nothing ready: every ready item is running, overlaps a claim, or there is none" >&2; exit 5
+  fi
 fi
 
 data="$(adapter read "$item")" || die "cannot read $item"
@@ -84,7 +91,17 @@ agent="$(step_field "$step" agent)"; skill="$(step_field "$step" skill)"; summar
 depth="$(json_get "$profiles" "review_depth.$profile")"
 base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
-  wt="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item" --base "$base")" || exit $?
+  wt="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item" --base "$base")" || {
+    code=$?
+    if [ "$code" -eq 3 ] && [ -z "$named" ]; then
+      flow_unlock
+      set --
+      [ "$as_json" -eq 1 ] && set -- "$@" --json
+      [ "$embed" -eq 1 ] && set -- "$@" --embed-agent
+      FLOW_NEXT_SKIP="${FLOW_NEXT_SKIP:-} $item" exec "$0" "$@"
+    fi
+    exit "$code"
+  }
   branch="$(json_get "$(cat "$wt/.flow/claim.json")" branch)"
   claim="$(cat "$wt/.flow/claim.json")"
   json_set "$claim" step "$(json_string "$step")" > "$wt/.flow/claim.json"
