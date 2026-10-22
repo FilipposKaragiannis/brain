@@ -6,8 +6,10 @@
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate · 5 nothing
 # ready · 6 item is done · 7 the item has a run in flight, or another run held the pick lock.
-# A pick that finds the pool full skips the items that need a new worktree and takes one that
-# already holds a claim; it exits 3 only when no such item is left.
+# A pick whose claim finds the pool full skips that item and tries the next ready one: one that
+# already holds a claim, or whose step needs no worktree. It exits 3 when every ready item left
+# needs a new worktree. The retry re-runs this script with exec, so it keeps the pid; the skip
+# list and the cached ready list count only when FLOW_NEXT_PID names this process.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
@@ -21,6 +23,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 named="$item"
+ready_cache="$home/runs/.ready.$$"
+if [ "${FLOW_NEXT_PID:-}" != "$$" ]; then FLOW_NEXT_SKIP=""; rm -f "$ready_cache"; fi
 mkdir -p "$home/runs"
 # Two runs started together must not pick the same item or claim the same worktree: the pick, the
 # claim and the run record happen under one lock. The brief is written after it is released.
@@ -38,7 +42,9 @@ claimed_touches() {
   done
 }
 
-if [ -z "$item" ]; then
+if [ -z "$item" ] && [ -f "$ready_cache" ]; then
+  ready="$(cat "$ready_cache")"; rm -f "$ready_cache"
+elif [ -z "$item" ]; then
   ready="$(for a in $(adapters_configured); do adapter list-ready "$a" 2>/dev/null; done | python3 -I -c '
 import json, sys
 seen, out = set(), []
@@ -50,6 +56,8 @@ for line in sys.stdin:
             seen.add(i["id"]); out.append(i)
 out.sort(key=lambda i: i.get("rank", 999))
 print(json.dumps(out))')"
+fi
+if [ -z "$item" ]; then
   n="$(json_length "$ready" "")"
   i=0
   while [ "$i" -lt "$n" ]; do
@@ -98,7 +106,8 @@ if [ "$(step_field "$step" worktree)" = "true" ]; then
       set --
       [ "$as_json" -eq 1 ] && set -- "$@" --json
       [ "$embed" -eq 1 ] && set -- "$@" --embed-agent
-      FLOW_NEXT_SKIP="${FLOW_NEXT_SKIP:-} $item" exec "$0" "$@"
+      printf '%s\n' "$ready" > "$ready_cache"
+      FLOW_NEXT_PID=$$ FLOW_NEXT_SKIP="${FLOW_NEXT_SKIP:-} $item" exec "$0" "$@"
     fi
     exit "$code"
   }

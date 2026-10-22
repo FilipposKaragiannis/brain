@@ -781,10 +781,14 @@ f2="$("$P/scripts/new.sh" task "Holds a worktree" --size S --body "## Acceptance
 - [ ] b")"
 "$P/scripts/steward.sh" claim "$f2" >/dev/null 2>&1
 out="$("$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
-check "a full pool: next takes the item that holds a claim, not exit 3" [ "$code" -eq 0 ] && [ "$(printf '%s' "$out" | jget item)" = "$f2" ]
+check "a full pool: next takes the item that holds a claim, not exit 3" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$f2"
 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "a full pool with only unclaimed items left: exit 3, not 5" [ "$code" -eq 3 ]
 check "the pick lock is released after a skipped pick" [ ! -d .flow/pick.lock ]
+check "a skipped pick leaves no cached ready list behind" sh -c '! ls .flow/runs/.ready.* >/dev/null 2>&1'
+rm -f ".flow/runs/$(item_slug "$f2").json"
+out="$(FLOW_NEXT_SKIP="$f2" "$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
+check "a FLOW_NEXT_SKIP from the caller's environment is ignored" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$f2"
 "$P/scripts/next.sh" "$f1" >/dev/null 2>&1; code=$?
 check "a named item that needs a worktree still exits 3" [ "$code" -eq 3 ]
 
