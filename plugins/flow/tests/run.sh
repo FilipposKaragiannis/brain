@@ -403,6 +403,8 @@ PATH="$work/slackbin:$PATH" FLOW_SLACK_WEBHOOK=https://hook.example "$P/scripts/
    Recommended: yes, hash-inert." >/dev/null
 check "notify: a gate names the item by title and links it" grep -qF '*flow: ambiguity* on <https://github.com/acme/widgets/issues/32|gh#32 Bug>' "$work/slack.log"
 check "notify: the questions keep their lines, the recommendation under each" sh -c "python3 -c 'import json,sys; t=[json.loads(l) for l in open(sys.argv[1]) if l.startswith(\"{\")][0][\"text\"]; assert \"\\n1. Visual only?\\n   Recommended: yes\" in t and \"comment \x60/answer\" in t' '$work/slack.log'"
+check "notify: Slack blocks number the questions and nest the recommendation" sh -c "python3 -c 'import json,sys; d=[json.loads(l) for l in open(sys.argv[1]) if l.startswith(\"{\")][0]; ls=d[\"blocks\"][1][\"elements\"]; assert (ls[0][\"style\"],ls[0][\"indent\"],ls[1][\"style\"],ls[1][\"indent\"])==(\"ordered\",0,\"bullet\",1); assert d[\"blocks\"][0][\"elements\"][0][\"elements\"][1]==dict(type=\"text\",text=\"ambiguity\",style=dict(code=True)); assert d[\"blocks\"][-1][\"type\"]==\"context\"' '$work/slack.log'"
+check "slack: a long line breaks into sentences, ids and code names read as code" sh -c "python3 -I '$P/scripts/_slack.py' t '' '' '' '' 'The branch flow/gh-310 is behind at 3a677d23 and OptionUtility still prices the giveaway under the floor for every weight. The test step cannot change production code; see gh#320.' | python3 -c 'import json,sys; ls=json.load(sys.stdin)[\"blocks\"][1][\"elements\"][0][\"elements\"]; assert len(ls)==2; code=[e[\"text\"] for s in ls for e in s[\"elements\"] if e.get(\"style\",{}).get(\"code\")]; assert code==[\"flow/gh-310\",\"3a677d23\",\"OptionUtility\",\"gh#320\"], code'"
 cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
 
 echo "comments plumbing (fake gh)"
@@ -427,6 +429,59 @@ check "fake gh: no PR yet" sh -c "! gh pr view 1 -R acme/widgets >/dev/null 2>&1
 printf 'the body' | gh pr create --base main --head flow/x --title T --body-file - >/dev/null
 gh pr comment 91 --body "@codex please review"
 check "fake gh: pr create and comment" sh -c "gh pr view 91 | grep -q '\"headRefName\": \"flow/x\"' && gh pr list --head flow/x | grep -q 'the body' && gh pr view 91 | grep -q '@codex please review'"
+
+echo "review requests and chases (fake gh)"
+cp .flow/config.yaml "$work/config.reviews"
+check "reviewers: codex and claude when reviews.reviewers is unset" [ "$("$P/scripts/comments.sh" reviewers | tr '\n' ' ')" = "codex claude " ]
+printf 'reviews:\n  reviewers: [codex, copilot]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
+check "reviewers: the config list, inline" [ "$("$P/scripts/comments.sh" reviewers | tr '\n' ' ')" = "codex copilot " ]
+"$P/scripts/comments.sh" request-review 91 "please review the diff." >/dev/null
+check "request-review: a mention comment with the marker per reviewer, copilot through the API, no claude" sh -c "python3 -c \"import json; p=json.load(open('$FAKE_GH_DIR/issues.json'))['pr']; c=[b for b in p['comments'] if 'flow:review-request' in b]; assert len(c)==1 and c[0].startswith('@codex please review the diff.') and p['reviewers']==['@copilot'] and not any('@claude' in b for b in p['comments'])\""
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [bad name]\n' >> .flow/config.yaml
+check "reviewers: a name with a space is refused" sh -c "! '$P/scripts/comments.sh' reviewers 2>/dev/null"
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [codex]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
+seed() { # seed <request age s> <codex status> <+1 count> [chase]: one request by the owner and the Codex summary
+  python3 - "$FAKE_GH_DIR/issues.json" "$@" <<'PY2'
+import json, sys, time
+p, age, status, plus = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+asked = time.time() - age
+d = json.load(open(p)); pr = d["pr"]; pr["headRefOid"] = "abc1234def5678"; pr["comments"] = []; pr["reviews"] = []
+state = '{"code_review":{"commit_sha":"abc1234def5678","status":"%s"}}' % status
+pr["rest_comments"] = [{"id": 7, "user": {"login": "owner"}, "body": "@codex please review", "created_at": iso(asked), "updated_at": iso(asked), "reactions": {"+1": plus}},
+                       {"id": 8, "user": {"login": "chatgpt-codex-connector[bot]"}, "created_at": iso(asked - 3600), "updated_at": iso(asked + 5),
+                        "body": "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 %s -->" % state, "reactions": {}}]
+if len(sys.argv) > 5:
+    pr["rest_comments"].append({"id": 9, "user": {"login": "owner"}, "body": "@codex review\n\n<!-- flow:chase codex -->", "created_at": iso(asked + 1), "updated_at": iso(asked + 1), "reactions": {}})
+json.dump(d, open(p, "w"))
+PY2
+}
+printf '#!/bin/sh\npython3 -c "import json; print(len(json.load(open(\\"%s/issues.json\\"))[\\"pr\\"][\\"comments\\"]))"\n' "$FAKE_GH_DIR" > "$work/bin/posted" && chmod +x "$work/bin/posted"
+seed 7200 running 0
+check "reviews: a Codex summary still running is no answer" sh -c "'$P/scripts/comments.sh' reviews 91 | grep -q '\"answered\": false, \"waiting\": 72[0-9][0-9], \"chases\": 0'"
+check "chase: a silent reviewer past chase_after is asked again with the trigger phrase" sh -c "'$P/scripts/comments.sh' chase 91 | grep -q 'chased codex on #91' && python3 -c \"import json; c=json.load(open('$FAKE_GH_DIR/issues.json'))['pr']['comments']; assert len(c)==1 and c[0].startswith('@codex review') and 'flow:chase codex' in c[0] and 'abc1234d' in c[0]\""
+seed 600 running 0
+check "chase: a request younger than chase_after waits" sh -c "[ -z \"\$('$P/scripts/comments.sh' chase 91)\" ] && [ \"\$(posted)\" = 0 ]"
+seed 7200 completed 0
+check "reviews: a finished Codex summary for the head answers" sh -c "'$P/scripts/comments.sh' reviews 91 | grep -q '\"answered\": true' && [ -z \"\$('$P/scripts/comments.sh' chase 91)\" ]"
+seed 7200 running 1
+check "reviews: a +1 on the request answers" sh -c "'$P/scripts/comments.sh' reviews 91 | grep -q '\"answered\": true'"
+seed 7200 running 0 chased
+rm -rf .flow/reviews; : > .flow/events.log
+check "chase: past max_chases the owner is told once, and nothing is posted" sh -c "'$P/scripts/comments.sh' chase 91 | grep -q 'stalled codex on #91' && [ -z \"\$('$P/scripts/comments.sh' chase 91)\" ] && [ \"\$(posted)\" = 0 ] && [ \"\$(grep -c '	review-stalled	' .flow/events.log)\" = 1 ]"
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [copilot]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
+import json, sys, time
+p = sys.argv[1]; d = json.load(open(p)); pr = d["pr"]
+pr["comments"], pr["reviewers"], pr["reviews"] = [], [], []
+pr["timeline"] = [{"event": "review_requested", "requested_reviewer": {"login": "Copilot"},
+                   "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 7200))}]
+json.dump(d, open(p, "w"))
+PY2
+check "chase: a silent Copilot is asked again through the reviewers API, no comment" sh -c "'$P/scripts/comments.sh' chase 91 | grep -q 'chased copilot on #91' && python3 -c \"import json; p=json.load(open('$FAKE_GH_DIR/issues.json'))['pr']; assert p['reviewers']==['@copilot'] and p['comments']==[]\""
+python3 -c "import json,time; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['reviews']=[{'user': {'login': 'copilot-pull-request-reviewer[bot]'}, 'submitted_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}]; json.dump(d, open(p,'w'))"
+check "reviews: a Copilot review after the request answers" sh -c "'$P/scripts/comments.sh' reviews 91 | grep -q '\"reviewer\": \"copilot\".*\"answered\": true'"
+cp "$work/config.reviews" .flow/config.yaml
 
 echo "jobs (fake hosts)"
 export HOST_LOG="$work/host.log"; realrepo="$(cd "$repo" && pwd -P)"

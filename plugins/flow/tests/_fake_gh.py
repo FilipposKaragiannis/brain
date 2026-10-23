@@ -48,7 +48,9 @@ elif args[:2] == ["label", "create"]:
     data.setdefault("labels", []).append(args[2]); save()
 elif args[:2] == ["pr", "view"]:
     if data.get("pr", {}) is None: print("no pull requests found", file=sys.stderr); sys.exit(1)
-    print(json.dumps(pr()))
+    print(pr().get(args[args.index("-q") + 1].lstrip("."), "") if "-q" in args else json.dumps(pr()))
+elif args[:2] == ["pr", "edit"]:
+    pr().setdefault("reviewers", []).append(args[args.index("--add-reviewer") + 1]); save()
 elif args[:2] == ["pr", "list"]:
     head = args[args.index("--head") + 1] if "--head" in args else None
     print(json.dumps([pr()] if data.get("pr") and head in (None, pr()["headRefName"]) else []))
@@ -157,7 +159,13 @@ elif args[0] == "api":
             if th["comments"]["nodes"][0]["databaseId"] == int(m.group(1)):
                 th["comments"]["nodes"].append({"databaseId": 9000, "body": sys.stdin.read(), "author": {"login": "bot"}, "createdAt": "t"})
         save(); print("{}"); sys.exit()
+    if re.match(r"repos/[^/]+/[^/]+/issues/\d+/timeline", path):
+        print(json.dumps(pr().get("timeline", []))); sys.exit()
+    if re.match(r"repos/[^/]+/[^/]+/pulls/\d+/reviews", path):
+        print(json.dumps(pr().get("reviews", []))); sys.exit()
     m = re.match(r"repos/[^/]+/[^/]+/issues/(\d+)/comments", path)
+    if m and int(m.group(1)) == pr().get("number") and "-F" not in args:
+        print(json.dumps(pr().get("rest_comments", []))); sys.exit()
     if m and "-X" not in args:
         i = issue(m.group(1))
         if "-F" in args:

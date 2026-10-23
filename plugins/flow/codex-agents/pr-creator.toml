@@ -31,9 +31,11 @@ The item (its `parent`, acceptance lines), the task branch in the claimed worktr
    `Resolves #<n>` for a GitHub item (a local item gets `Item: <id>`). Glossary words only.
 5. When a quiz exists: open as a draft (`--draft`), post `quiz.md` as the first comment with
    the marker `<!-- flow:quiz -->`, and say the PR goes ready when the owner's answers pass.
-6. Request reviews in separate comments, one per reviewer: ask each to review the diff line
-   by line for correctness and to check the implementation against the item's acceptance
-   lines. Reviewers from `.flow/config.yaml` `reviewers` when set, else `@codex` and `@claude`.
+6. Request reviews with `<plugin>/scripts/comments.sh request-review <pr> "<ask>"`: the ask
+   is to review the diff line by line for correctness and to check the implementation against
+   the item's acceptance lines. The script asks each reviewer in `.flow/config.yaml`
+   `reviews.reviewers` (default codex and claude) in its own comment, Copilot through the API.
+   Never write a reviewer mention yourself.
 7. Record the PR on the item: `adapters/<name>/link-pr.sh <item> <url>`.
 8. When the base is not the default branch, warn in the result that the merge will not
    auto-close the item; the closeout step closes it.
