@@ -6,9 +6,8 @@
 # <flow home>/gates/<item>.json plus a line in <flow home>/events.log, which the board reads.
 # The events: idle (the next job found nothing ready; notify.idle) and health (the health job found
 # something: a gate waiting past its reminder, a diverged branch, a full pool; notify.health, on
-# unless set to false) and review-stalled (a reviewer stayed silent through every chase). A gate names the item by its
-# id and title and Slack links it to the tracker. The Slack message is a list (scripts/_slack.py): numbered questions
-# stay numbered, long prose breaks into one bullet per sentence, ids and code names read as code.
+# unless set to false) and review-stalled (a reviewer stayed silent through every chase). A gate names the item by its id and title, Slack links it to the tracker, and the message keeps
+# its lines, so numbered questions read as a list.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 if [ "${1:-}" = "--event" ]; then
@@ -41,7 +40,17 @@ if [ "$(cfg notify.desktop)" != "false" ]; then
 fi
 hook="${FLOW_SLACK_WEBHOOK:-$(cfg notify.slack_webhook)}"
 if [ -n "$hook" ] && command -v curl >/dev/null 2>&1; then
-  payload="$(python3 -I "$FLOW_PLUGIN/scripts/_slack.py" "$title" "$link" "${url:-}" "${gate:-}" "${item:-}" "$message")"
+  payload="$(python3 -I -c '
+import json, sys
+esc = lambda s: s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+title, link, url, gate, item, message = sys.argv[1:7]
+if gate:
+    head = "*flow: %s* on %s" % (esc(gate), "<%s|%s>" % (url, esc(link)) if url else "*%s*" % esc(link))
+    tail = ("\nAnswer on the issue: comment `/answer <your answer>`, or `/answer` alone for the recommendations."
+            if url and item.startswith("gh#") else "\nAnswer in a session: `flow:gate %s \"<your answer>\"`" % item)
+else:
+    head, tail = "*%s*" % esc(title), ""
+print(json.dumps({"text": "%s\n%s%s" % (head, esc(message), tail)}))' "$title" "$link" "${url:-}" "${gate:-}" "${item:-}" "$message")"
   curl -s -S -m 10 -X POST -H 'Content-type: application/json' --data "$payload" "$hook" >/dev/null 2>&1 || echo "flow: Slack notification failed" >&2
 fi
 echo "notified: $title"

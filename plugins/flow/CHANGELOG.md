@@ -13,15 +13,14 @@
   `comments.sh chase <pr>` asks again with the reviewer's trigger phrase once
   `reviews.chase_after` (1h) passes, at most `reviews.max_chases` (2) times, then sends one
   `review-stalled` notification. The comments job runs it before each PR, with no model.
-  Copilot's requests are read from the PR timeline and re-asked through the reviewers API.
+  Copilot's requests are read from the PR timeline and re-asked through the reviewers API;
+  each re-ask is also counted in the flow home, because GitHub may record none while the first
+  request is pending. Only a bot account speaks for codex, claude or copilot. Drafts are not
+  chased: they wait on the quiz.
 - A PR that conflicts with its base is fixed. `comments.sh state` carries `mergeable`, the job
   names a conflict in the brief, and the comments skill's new Conflicts step merges the base in
   the task worktree (never a rebase or a force push), verifies, pushes and re-requests review.
   A conflict only the owner can settle raises the ambiguity gate.
-- Slack notifications are Block Kit lists (`scripts/_slack.py`). Numbered questions stay
-  numbered with the recommendation nested under each, long prose breaks into one bullet per
-  sentence, and ids, commits, paths and code names read as code. The plain text stays as the
-  push preview.
 
 ## 1.13.1 (2026-10-22)
 

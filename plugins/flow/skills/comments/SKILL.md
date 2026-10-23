@@ -17,15 +17,16 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    The item is the one the PR's branch names (`flow/gh-310` is `gh#310`).
 2. **Conflicts**: `state` says `mergeable: CONFLICTING` → in the claimed worktree
    (`"$P/scripts/steward.sh" find <item>`, claim when released), with a clean tree, spawn the
-   `implementer` with this brief: `git fetch origin`, merge `origin/<baseRefName>` into the task
-   branch (never rebase, never force), resolve each conflict so both sides keep their intent,
-   build and run the tests the conflicted files touch, commit the merge as
-   `chore: merge <base> into <branch>`. Then spawn the `verifier`; on `pass` push and re-request
-   review (step 7) naming the merge commit. A conflict whose resolution needs the owner (two
-   intents that cannot both hold) → `"$P/scripts/gate.sh" raise <item> ambiguity` with each file
-   and the choice; abort the merge and stop. A dirty tree or a failing verify → abort or leave
-   the merge unpushed, report it, stop. `UNKNOWN` means GitHub is still computing: skip, the
-   next pass sees it.
+   `implementer` with this brief: `git fetch origin`, `git merge "origin/<baseRefName>"` into the
+   task branch (never rebase, never force), resolve each conflict so both sides keep their intent,
+   build and run the tests the conflicted files touch, commit the merge as `chore: merge <base>
+   into <branch>`. Then spawn the `verifier`; on `pass` run `git push origin "HEAD:<headRefName>"`
+   (never `-f` or `--force-with-lease`: a merge always fast-forwards) and re-request review (step
+   7) naming the merge commit. A conflict whose resolution needs the owner (two intents that
+   cannot both hold) → `"$P/scripts/gate.sh" raise <item> ambiguity` with each file and the
+   choice; abort the merge and stop. A dirty tree or a failing verify → abort or leave the merge
+   unpushed, report it, stop. `UNKNOWN` means GitHub is still computing: skip, the next pass sees
+   it.
 3. **Threads**: `comments.sh threads <pr>` lists the unresolved review threads. None, no new
    plain comment since the last pass (`comments.sh issue-comments`, compare with
    `<reports>/comments.json`) and no merge in step 2 → stop, "quiet".

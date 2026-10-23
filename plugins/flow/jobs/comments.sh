@@ -31,16 +31,23 @@ for i in json.load(sys.stdin):
   targets="$(cat "$(job_log_dir)/$job.targets")"; rm -f "$(job_log_dir)/$job.targets"
 fi
 [ -n "$targets" ] || { job_say "quiet: no open PR"; exit 0; }
+# prepare_pr <target>: chase its silent reviewers (not on a draft, which waits on its quiz) and
+# print the brief's note when the PR conflicts with its base. Model free.
+prepare_pr() {
+  case "$1" in *#*|local:*) pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)" ;; *) pull="$1" ;; esac
+  [ -n "$pull" ] && state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pull" 2>/dev/null)" || return 0
+  [ "$(json_get "$state" isDraft)" = "true" ] || chase_reviewers "$1" "$pull"
+  [ "$(json_get "$state" mergeable)" = "CONFLICTING" ] || return 0
+  base="$(json_get "$state" baseRefName)"
+  case "$base" in ""|*[!A-Za-z0-9._/-]*) job_say "$1: $pull conflicts with a base named oddly, not merged" >/dev/null; return 0 ;; esac
+  job_say "$1: $pull conflicts with $base" >/dev/null
+  printf ' The PR conflicts with its base %s: run the Conflicts step first.' "$base"
+}
+chase_reviewers() { # chase_reviewers <target> <pr>
+  "$FLOW_PLUGIN/scripts/comments.sh" chase "$2" 2>&1 | while IFS= read -r line; do job_say "$1: $line" >/dev/null; done
+}
 for t in $targets; do
-  case "$t" in *#*|local:*) pr="$(json_get "$(adapter read "$t" 2>/dev/null)" state.pr)" ;; *) pr="$t" ;; esac
-  note=""
-  if [ -n "$pr" ] && state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pr" 2>/dev/null)"; then
-    [ "$(json_get "$state" isDraft)" = "true" ] || "$FLOW_PLUGIN/scripts/comments.sh" chase "$pr" 2>&1 | while IFS= read -r line; do job_say "$t: $line" >/dev/null; done
-    if [ "$(json_get "$state" mergeable)" = "CONFLICTING" ]; then
-      job_say "$t: $pr conflicts with $(json_get "$state" baseRefName)" >/dev/null
-      note=" The PR conflicts with its base $(json_get "$state" baseRefName): run the Conflicts step first."
-    fi
-  fi
+  note="$(prepare_pr "$t")"
   job_say "addressing $t"
   host_run "$host" "$main" "$(host_skill_prompt "$host" flow comments "$t.$note Unattended: nobody answers questions; collect owner decisions in the report and stop.")" "$(job_model)" "$(job_effort)" \
     >> "$(job_log_dir)/$job.log" 2>&1 || job_say "$t: host exit $?"
