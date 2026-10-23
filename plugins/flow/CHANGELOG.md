@@ -1,5 +1,14 @@
 # flow
 
+## 1.13.1 (2026-10-22)
+
+- `next.sh` no longer stops at "no free worktree" while an item that already holds a claim is ready.
+  A pick whose claim finds the pool full skips that item and tries the next ready one: one that
+  holds a claim, or whose step needs no worktree. So a full pool keeps working through its claimed
+  items. It exits 3 only when every ready item left needs a new worktree. Naming an item still
+  exits 3 when it has no room. The retry reuses the ready list it already read, so a skipped item
+  costs no tracker call, and a `FLOW_NEXT_SKIP` set by the caller is ignored.
+
 ## 1.13.0 (2026-10-22)
 
 - A `health` job checks the worktree pool and the gates every 15 minutes and spends no model while
