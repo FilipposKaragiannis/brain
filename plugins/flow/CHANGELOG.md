@@ -1,5 +1,12 @@
 # flow
 
+## 1.15.0 (2026-10-23)
+
+- Slack notifications are Block Kit lists (`scripts/_slack.py`). Numbered questions stay
+  numbered with the recommendation nested under each, long prose breaks into one bullet per
+  sentence, and ids, commits, paths and code names read as code. The plain text stays as the
+  push preview; a tracker link that is not https is left out of it.
+
 ## 1.14.0 (2026-10-23)
 
 - The reviewers are config. `reviews.reviewers` lists who each review round asks: `codex`,
