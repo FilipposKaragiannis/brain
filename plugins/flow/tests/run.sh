@@ -771,6 +771,27 @@ for s in design plan; do "$P/scripts/next.sh" "$a2" >/dev/null 2>&1; rb2="$(cat 
 check "an unlisted size still stops at plan-approval" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$a2" | jget state.gate)" = "plan-approval" ]
 printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nauto_gates:\n  merge: S\n' > .flow/config.yaml
 check "init: --check flags an auto gate that is not allowed" sh -c "FLOW_PLUGIN='$P' '$P/skills/init/scripts/init.sh' --check | grep -q 'gap: .flow/config.yaml: auto_gates lists merge'"
+echo "a full pool: next skips what needs a new worktree"
+mkdir -p "$work/full" && cd "$work/full" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 1\nnotify:\n  desktop: false\n' > .flow/config.yaml
+f1="$("$P/scripts/new.sh" task "Needs a worktree" --size S --body "## Acceptance
+- [ ] a")"
+f2="$("$P/scripts/new.sh" task "Holds a worktree" --size S --body "## Acceptance
+- [ ] b")"
+"$P/scripts/steward.sh" claim "$f2" >/dev/null 2>&1
+out="$("$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
+check "a full pool: next takes the item that holds a claim, not exit 3" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$f2"
+"$P/scripts/next.sh" >/dev/null 2>&1; code=$?
+check "a full pool with only unclaimed items left: exit 3, not 5" [ "$code" -eq 3 ]
+check "the pick lock is released after a skipped pick" [ ! -d .flow/pick.lock ]
+check "a skipped pick leaves no cached ready list behind" sh -c '! ls .flow/runs/.ready.* >/dev/null 2>&1'
+rm -f ".flow/runs/$(item_slug "$f2").json"
+out="$(FLOW_NEXT_SKIP="$f2" "$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
+check "a FLOW_NEXT_SKIP from the caller's environment is ignored" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$f2"
+"$P/scripts/next.sh" "$f1" >/dev/null 2>&1; code=$?
+check "a named item that needs a worktree still exits 3" [ "$code" -eq 3 ]
+
 echo "parallel runs: the pick lock and --workers"
 mkdir -p "$work/par" && cd "$work/par" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow

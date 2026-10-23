@@ -17,6 +17,8 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
    "$P/scripts/next.sh" --json [item]
    ```
    Exit 0 prints JSON: `item, step, agent, skill, worktree, branch, brief, reports, model, effort`.
+   Exit 3: no free worktree, and every ready item left needs a new one; say which worktrees
+   hold what (`steward.sh pool`) and stop.
    Exit 4: the item waits at a gate; tell the user what the gate asks and stop.
    Exit 5: nothing is ready; say so and stop. Exit 6: the item is done; say so and stop.
    Exit 7: a run is already in flight for it; show the run file and stop (another session may be on it).
