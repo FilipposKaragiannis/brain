@@ -1,5 +1,42 @@
 # flow
 
+## 1.13.0 (2026-10-22)
+
+- A `health` job checks the worktree pool and the gates every 15 minutes and spends no model while
+  all is well. `steward.sh health [--dry-run] [--host H] [--wait]` does the work, so it also runs
+  by hand; `jobs/health.sh` adds the lock, the pause and the log, and `jobs.sh` lists, runs,
+  pauses and schedules it like the others (`jobs.schedule.health`; the config `flow:init` writes
+  sets `every 15m`). Per claimed worktree, in order:
+  - Heartbeat. A run is alive when the pid its record names still runs the unattended loop or the
+    host session, or an agent works in the worktree, or an agent or the loop names the worktree or
+    the item. An editor, a `tail` or the claude daemon naming the worktree is not a run. A record
+    with no live process for `jobs.health.grace` (10m) is a dead run: the record goes. When `ps`
+    fails or lists nothing, no run is judged dead: the claimed worktrees are left as they are and
+    the job says so once.
+  - An empty claim (no run, no gate, a clean tree, no commit past the base, no step result, quiet
+    for the grace) is released with `release`, never `--force`.
+  - Work with a dead run is resumed through `run-unattended.sh` with the item, once per run, at
+    most `jobs.health.max_resumes` (3) times in a row while the step does not advance, then an
+    escalation gate. The resumed step's brief carries a note, in that one brief only. The resumed
+    run logs to `log/resume-<item>.log`. Nothing is reset, stashed or discarded.
+  - Branch sync for a clean tree and no live run: fast-forward when only behind the remote branch,
+    push when only ahead of one that exists and `jobs.health.push: true` (off by default: the
+    job says once that the branch is ahead; never a new remote branch, never forced). A diverged
+    branch, or one more than `jobs.health.behind_base` (20) commits behind the base, is only
+    flagged: a notification and a note in the item's reports that the next brief carries. A free
+    worktree follows the base tip. A dirty or running worktree is never synced.
+  - A gate pending past `jobs.health.gate_reminder` (24h) gets one reminder per interval.
+  - A full pool that the last `next` run could not start in is said once, with who holds each
+    worktree and why.
+- Each fact is one line in the job log and in `events.log`; a state already said is not said again.
+  Nothing to do is one `quiet:` line and no notification. The notify event is `health`;
+  `notify.health: false` turns the notifications off.
+- The run record carries the `pid` of its owner: the unattended loop (it exports `FLOW_RUN_PID`)
+  or the host session that called `next.sh`. A record without one, from an older flow, is read by
+  scanning the processes. Run `flow:init` again to get the loop that records it.
+- The board prints `dead run` for a record with no live process instead of `running on <host>`,
+  and a `## Health` section when a run is dead or a gate waits past the reminder.
+- `notify.sh --event <name> --no-log <message>` skips the events.log line for a caller that logged it.
 ## 1.12.0 (2026-10-19)
 
 - The retro job commits the lessons log. After each run, quiet or not, `lessons.jsonl` and

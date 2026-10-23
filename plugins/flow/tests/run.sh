@@ -864,12 +864,176 @@ merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 check "sweep: a commit after the merge keeps the branch" sh -c "[ ! -f '$wl/.flow/claim.json' ] && git -C '$wl' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sl")"
 fake_pr OPEN ""
 
+echo "health"
+hroot="$work/health"; mkdir -p "$hroot"
+git init -q --bare "$hroot/origin.git"
+git clone -q "$hroot/origin.git" "$hroot/app" 2>/dev/null
+cd "$hroot/app" || exit 1
+git config user.email t@t && git config user.name t
+git symbolic-ref HEAD refs/heads/main
+printf 'hi\n' > README.md && git add -A && git commit -qm init && git push -q -u origin main
+for n in 1 2 3; do git worktree add -q --detach "../wt-$n"; done
+mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\n  - ../wt-3\npool_max: 3\nnotify:\n  desktop: true\njobs:\n  schedule:\n    health: every 15m\n  health:\n    behind_base: 2\n' > .flow/config.yaml
+git clone -q "$hroot/origin.git" "$hroot/other" 2>/dev/null
+git -C "$hroot/other" config user.email t@t && git -C "$hroot/other" config user.name t
+hs() { "$P/scripts/steward.sh" health "$@"; }
+hitem() { "$P/adapters/local/create.sh" task "$1" --size S --body "x"; }
+hold() { "$P/scripts/next.sh" "$1" >/dev/null && "$P/scripts/steward.sh" find "$1"; }
+rec() { printf '%s/.flow/runs/%s.json' "$hroot/app" "$(item_slug "$1")"; }
+age_run() { python3 -c '
+import json, sys, time
+p, pid = sys.argv[1], sys.argv[2]
+d = json.load(open(p)); d["started"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 172800))
+d.pop("pid", None)
+if pid != "-": d["pid"] = int(pid)
+json.dump(d, open(p, "w"))' "$(rec "$1")" "${2:-999999}"; }
+stale_claim() { python3 -c '
+import json, sys, time
+p = sys.argv[1] + "/.flow/claim.json"
+d = json.load(open(p)); d["claimed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 172800)); json.dump(d, open(p, "w"))' "$1"
+  find "$1/.flow/reports" -exec touch -t 202401010000 {} + 2>/dev/null; }
+remote_commit() { git -C "$hroot/other" fetch -q origin && git -C "$hroot/other" checkout -q -B "$1" "origin/$1" && printf '%s\n' "$2" > "$hroot/other/$2.txt" && git -C "$hroot/other" add -- "$2.txt" && git -C "$hroot/other" commit -qm "$2" && git -C "$hroot/other" push -q origin "$1"; }
+facts() { n="$(grep -c "$1" .flow/events.log 2>/dev/null)"; echo "${n:-0}"; }
+pings() { n="$(grep -c 'flow: health' "$work/offline.log" 2>/dev/null)"; echo "${n:-0}"; }
+printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> "%s/host.log"\n' "$hroot" > "$work/bin/claude"; chmod +x "$work/bin/claude"
+export FLOW_HEALTH_PROCS="$hroot/procs"; : > "$FLOW_HEALTH_PROCS"; : > "$work/offline.log"
+
+hs > "$hroot/out" 2>&1
+check "health: a healthy pool is one quiet line" sh -c "[ \$(wc -l < '$hroot/out' | tr -d ' ') = 1 ] && grep -q 'health: 0 claimed.*3 free.*nothing to do' '$hroot/out'"
+"$P/jobs/health.sh" claude >/dev/null
+check "health job: nothing to do is a quiet run with no event and no notification" sh -c "grep -q 'quiet: 0 claimed' .flow/log/health.log && tail -1 .flow/log/runs.jsonl | grep -q '\"result\":\"quiet' && [ ! -s .flow/events.log ] && [ \$(grep -c 'flow: health' '$work/offline.log') = 0 ]"
+remote_commit main m1
+hs > "$hroot/out" 2>&1
+check "health: a free worktree follows the base branch tip" sh -c "[ \"\$(git -C ../wt-1 rev-parse HEAD)\" = \"\$(git rev-parse origin/main)\" ] && [ \"\$(git -C ../wt-3 rev-parse HEAD)\" = \"\$(git rev-parse origin/main)\" ] && grep -q 'fast-forwarded free wt-2' '$hroot/out'"
+hs > "$hroot/out" 2>&1
+check "health: a worktree already at the tip is not a finding" grep -q 'nothing to do' "$hroot/out"
+
+fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
+loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
+a="$(hitem "Empty claim")"; FLOW_RUN_PID="$loop" "$P/scripts/next.sh" "$a" >/dev/null; wa="$("$P/scripts/steward.sh" find "$a")"
+check "next records the pid of the loop that owns the run" [ "$(jget pid < "$(rec "$a")")" = "$loop" ]
+age_run "$a" "$loop"; stale_claim "$wa"
+env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
+check "health: a record whose pid still runs the loop is alive, however old" sh -c "[ -f '$(rec "$a")' ] && [ -f '$wa/.flow/claim.json' ] && grep -q '1 claimed (1 running' '$hroot/out'"
+check "board: a live run shows where it runs" sh -c "'$P/scripts/board.sh' | grep -q 'running on'"
+pkill -P "$loop" 2>/dev/null; kill "$loop" 2>/dev/null; wait "$loop" 2>/dev/null
+check "board: a record with no process is a dead run, not a running one" sh -c "'$P/scripts/board.sh' > '$hroot/board' && grep -q '(dead run)' '$hroot/board' && ! grep -q 'running on' '$hroot/board' && grep -q '^## Health' '$hroot/board' && grep -q 'dead run of implement' '$hroot/board'"
+events_before="$(wc -l < .flow/events.log | tr -d ' ')"
+hs --dry-run > "$hroot/out" 2>&1
+check "health --dry-run: says what it would do and changes nothing" sh -c "grep -q 'would clear the dead run' '$hroot/out' && grep -q 'would release the empty claim' '$hroot/out' && [ -f '$(rec "$a")' ] && [ -f '$wa/.flow/claim.json' ] && [ \"\$(wc -l < .flow/events.log | tr -d ' ')\" = $events_before ]"
+"$P/jobs/health.sh" claude >/dev/null
+check "health: a dead run's record is cleared and logged" sh -c "[ ! -f '$(rec "$a")' ] && grep -q \"$a: dead run of implement cleared\" .flow/log/health.log && grep -q \"$a	health	dead run of implement cleared\" .flow/events.log"
+check "health: an empty claim is released and the item is back with the tracker" sh -c "[ ! -f '$wa/.flow/claim.json' ] && [ -z \"\$('$P/adapters/local/read.sh' '$a' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"].get(\"worktree\",\"\"))')\" ] && ! git -C '$wa' symbolic-ref -q HEAD && grep -q 'released the empty claim' .flow/log/health.log"
+check "health job: a run that found something says so" tail -1 .flow/log/runs.jsonl | grep -q '"result":"done: '
+
+b="$(hitem "Has commits")"; wb="$(hold "$b")"; commit_in "$wb" work >/dev/null
+age_run "$b"; stale_claim "$wb"; : > "$hroot/host.log"
+hs --wait > "$hroot/out" 2>&1
+check "health: a dead run with commits is resumed, never released" sh -c "[ -f '$wb/.flow/claim.json' ] && grep -q \"$b: resumed implement on claude (attempt 1 of 3)\" '$hroot/out' && grep -q 'Follow the brief' '$hroot/host.log' && [ \"\$(cat .flow/health/$(item_slug "$b").resume)\" = '1 implement' ]"
+check "health: the resumed step's brief says where the dead run stopped" grep -q 'The previous run of step implement died' "$wb/.flow/reports/$(item_slug "$b")/brief-implement.md"
+check "health: the resume note goes in that one brief and no later one" sh -c "[ ! -f '$wb/.flow/reports/$(item_slug "$b")/resume.md' ] && ! grep -qs 'previous run' '$wb/.flow/reports/$(item_slug "$b")/health.md'"
+check "health: the resumed run logs to its own file, not the health log" sh -c "[ -f .flow/log/resume-$(item_slug "$b").log ] && ! grep -q 'Follow the brief' .flow/log/health.log"
+c="$(hitem "Dirty tree")"; wc2="$(hold "$c")"; printf 'unsaved\n' > "$wc2/dirty.txt"
+age_run "$c"; stale_claim "$wc2"; : > "$hroot/host.log"
+hs --wait > "$hroot/out" 2>&1
+check "health: a dirty tree is never released or reset, and its run resumes" sh -c "[ -f '$wc2/.flow/claim.json' ] && [ \"\$(cat '$wc2/dirty.txt')\" = unsaved ] && grep -q \"$c: resumed implement\" '$hroot/out' && grep -q \"$wc2\" '$hroot/host.log'"
+d="$(hitem "Idle with commits")"; wd="$(hold "$d")"; commit_in "$wd" idle >/dev/null; rm -f "$(rec "$d")"; stale_claim "$wd"; : > "$hroot/host.log"
+hs --wait > "$hroot/out" 2>&1
+check "health: a claim with commits and no run is left to the next job" sh -c "[ -f '$wd/.flow/claim.json' ] && [ ! -s '$hroot/host.log' ] && ! grep -q \"$d\" '$hroot/out'"
+
+for i in 2 3; do age_run "$b"; hs --wait > "$hroot/out" 2>&1; done
+check "health: a step that keeps dying is resumed up to max_resumes times" [ "$(facts "$b.*resumed implement")" = 3 ]
+age_run "$b"; hs --wait > "$hroot/out" 2>&1
+check "health: after max_resumes it raises an escalation gate instead of looping" sh -c "[ \"\$('$P/adapters/local/read.sh' '$b' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"gate\"])')\" = escalation ] && [ -f .flow/gates/$(item_slug "$b").json ] && grep -q 'died 3 times in a row' '$hroot/out' && [ $(facts "$b.*resumed implement") = 3 ] && [ -f '$wb/.flow/claim.json' ]"
+check "health: the escalation notifies" grep -q "$(printf '\t')escalation$(printf '\t')" .flow/events.log
+
+printf '{"job":"next","at":"2026-10-20T10:00:00Z","seconds":1,"exit":0,"result":"quiet: no free worktree (the pool is at pool_max)"}\n' >> .flow/log/runs.jsonl
+: > "$work/offline.log"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a full pool that next cannot start in is said once, with who holds each worktree and why" sh -c "[ \$(grep -c 'the pool is full' .flow/events.log) = 1 ] && [ \$(grep -c 'flow: health' '$work/offline.log') = 1 ] && grep -q 'wt-1 holds $b: waiting at the escalation gate' '$hroot/out' && grep -q 'holds $c: .*dead run, resumed\\|holds $c: running' '$hroot/out' && grep -q 'holds $d: no run' '$hroot/out' && ! grep -q 'the pool is full' '$hroot/out2'"
+
+bd="flow/$(item_slug "$d")"
+git -C "$wd" push -q origin "$bd"; remote_commit "$bd" r1
+hs > "$hroot/out" 2>&1
+check "health: a clean branch only behind its remote is fast-forwarded" sh -c "[ \"\$(git -C '$wd' rev-parse HEAD)\" = \"\$(git -C '$hroot/other' rev-parse HEAD)\" ] && grep -q 'fast-forwarded $bd' '$hroot/out'"
+commit_in "$wd" l1 >/dev/null
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: by default a branch only ahead of its remote is said once and not pushed" sh -c "[ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" != \"\$(git -C '$wd' rev-parse HEAD)\" ] && grep -q 'not pushed (jobs.health.push is off)' '$hroot/out' && ! grep -q 'not pushed' '$hroot/out2'"
+cp .flow/config.yaml "$hroot/config.yaml"; printf '    push: true\n' >> .flow/config.yaml
+hs > "$hroot/out" 2>&1; cp "$hroot/config.yaml" .flow/config.yaml
+check "health: with jobs.health.push a clean branch only ahead of an existing remote branch is pushed" sh -c "[ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" = \"\$(git -C '$wd' rev-parse HEAD)\" ] && grep -q 'pushed 1 commit' '$hroot/out'"
+rm -f "$wd/.flow/reports/$(item_slug "$d")/health.md"; : > "$work/offline.log"
+remote_commit main m2; remote_commit main m3; remote_commit main m4
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a branch far behind its base is flagged for the next step, and notified once" sh -c "grep -q '$bd is 3 commits behind' '$hroot/out' && grep -q 'behind origin/main' '$wd/.flow/reports/$(item_slug "$d")/health.md' && [ \$(grep -c 'flow: health' '$work/offline.log') = 2 ] && ! grep -q 'commits behind' '$hroot/out2'"
+check "health: the flag reaches the next step's brief" sh -c "'$P/scripts/next.sh' '$d' >/dev/null && grep -q 'From the health job' '$wd/.flow/reports/$(item_slug "$d")/brief-implement.md' && rm -f '$(rec "$d")'"
+commit_in "$wd" l2 >/dev/null; remote_commit "$bd" r2
+local_tip="$(git -C "$wd" rev-parse HEAD)"; remote_tip="$(git --git-dir="$hroot/origin.git" rev-parse "refs/heads/$bd")"
+hs > "$hroot/out" 2>&1
+check "health: a diverged branch is flagged and its history left alone" sh -c "grep -q '$bd has diverged' '$hroot/out' && [ \"\$(git -C '$wd' rev-parse HEAD)\" = '$local_tip' ] && [ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" = '$remote_tip' ] && grep -q 'has diverged' '$wd/.flow/reports/$(item_slug "$d")/health.md'"
+
+python3 -c '
+import json, sys, time
+p = sys.argv[1]; d = json.load(open(p)); d["time"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 172800)); json.dump(d, open(p, "w"))' ".flow/gates/$(item_slug "$b").json"
+: > "$work/offline.log"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a gate waiting past the reminder interval is reminded once" sh -c "grep -q '$b: waiting 2d .* at the escalation gate' '$hroot/out' && ! grep -q 'at the escalation gate' '$hroot/out2' && [ \$(grep -c 'flow: health' '$work/offline.log') = 1 ]"
+printf 'escalation 1\n' > ".flow/health/$(item_slug "$b").remind"
+hs > "$hroot/out" 2>&1
+check "health: the next interval reminds again" grep -q "$b: waiting 2d .* at the escalation gate" "$hroot/out"
+
+rm -f "$wc2/dirty.txt"; "$P/scripts/steward.sh" release "$c" --force >/dev/null 2>&1
+e="$(hitem "No remote branch")"; we="$(hold "$e")"; commit_in "$we" solo >/dev/null; rm -f "$(rec "$e")"; stale_claim "$we"
+hs > "$hroot/out" 2>&1
+check "health: a task branch with no remote counterpart is never pushed" sh -c "[ -z \"\$(git ls-remote --heads origin 'flow/$(item_slug "$e")')\" ] && [ -f '$we/.flow/claim.json' ]"
+hs > "$hroot/out" 2>&1
+check "health: a state it already said is not said again" grep -q 'nothing to do' "$hroot/out"
+"$P/scripts/next.sh" "$e" >/dev/null; age_run "$e" -
+printf '4242\t\tclaude -p Follow the brief. Work in %s.\n' "$we" > "$FLOW_HEALTH_PROCS"
+hs --wait > "$hroot/out" 2>&1
+check "health: a record with no pid is alive while a process names its worktree" sh -c "[ -f '$(rec "$e")' ] && ! grep -q 'dead run' '$hroot/out'"
+printf '7671\t\tclaude daemon run --spawned-by {"cwd":"%s"}\n4243\t\tvim %s/README.md\n4244\t\ttail -f %s/log\n' "$we" "$we" "$we" > "$FLOW_HEALTH_PROCS"
+hs --wait > "$hroot/out" 2>&1
+check "health: the same record is a dead run once only a daemon, an editor or a tail names it" grep -q "$e: dead run of implement cleared" "$hroot/out"
+: > "$FLOW_HEALTH_PROCS"
+hs --wait > "$hroot/out" 2>&1
+check "health: a record younger than the grace is left alone, whatever its pid" sh -c "[ -f '$(rec "$e")' ] && [ $(facts "$e.*resumed implement") = 1 ]"
+rm -f "$wd/.flow/reports/$(item_slug "$d")/health.md"; "$P/scripts/steward.sh" release "$d" --force >/dev/null 2>&1
+g="$(hitem "Empty at a gate")"; wg="$(hold "$g")"; "$P/scripts/gate.sh" raise "$g" ambiguity "Which one?" >/dev/null 2>&1; stale_claim "$wg"
+hs > "$hroot/out" 2>&1
+check "health: an empty claim waiting at a gate is not released" sh -c "[ -f '$wg/.flow/claim.json' ] && ! grep -q 'released the empty claim' '$hroot/out'"
+"$P/scripts/gate.sh" clear "$g" answered >/dev/null 2>&1; stale_claim "$wg"
+grep -v "$(printf '\t')$g$(printf '\t')" .flow/events.log > "$hroot/events" || true; cp "$hroot/events" .flow/events.log
+(cd "$wg" && exec bash -c 'exec -a claude sleep 30') >/dev/null 2>&1 & agent=$!
+sleep 1
+env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
+check "health: an empty claim with an agent working in its worktree is not released" sh -c "[ -f '$wg/.flow/claim.json' ] && ! grep -q 'released the empty claim' '$hroot/out'"
+kill "$agent" 2>/dev/null; wait "$agent" 2>/dev/null
+env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
+check "health: the same claim is released once the agent is gone" sh -c "[ ! -f '$wg/.flow/claim.json' ] && grep -q 'released the empty claim' '$hroot/out'"
+h="$(hitem "No ps")"; wh="$(hold "$h")"; age_run "$h"; stale_claim "$wh"
+mkdir -p "$work/nops"; printf '#!/bin/sh\nexit 1\n' > "$work/nops/ps"; chmod +x "$work/nops/ps"
+PATH="$work/nops:$PATH" env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
+check "health: with no process list no run is judged dead and no claim is released" sh -c "[ -f '$(rec "$h")' ] && [ -f '$wh/.flow/claim.json' ] && grep -q 'cannot list processes' '$hroot/out' && ! grep -q 'dead run\\|released\\|resumed' '$hroot/out'"
+rm -f "$(rec "$h")"; "$P/scripts/steward.sh" release "$h" --force >/dev/null 2>&1
+"$P/scripts/jobs.sh" pause health >/dev/null; : > .flow/events.log
+"$P/jobs/health.sh" claude | grep -q paused
+check "health job: a paused job does nothing" [ ! -s .flow/events.log ]
+"$P/scripts/jobs.sh" resume health >/dev/null
+check "jobs: status lists the health job with its schedule" sh -c "'$P/scripts/jobs.sh' status | grep -q '^| health | every 15m'"
+check "jobs: cron gets the health line" sh -c "FLOW_SCHEDULER=cron '$P/scripts/jobs.sh' install health | grep -q '^\*/15 \* \* \* \* .*\.flow/jobs/health\.sh claude'"
+check "jobs: history and logs take the health job" sh -c "'$P/scripts/jobs.sh' history health 3 | grep -q 'quiet\|work' && '$P/scripts/jobs.sh' logs health 3 | grep -q 'health.log'"
+unset FLOW_HEALTH_PROCS
+cd "$repo"
+
 # --- init: stamp, guard, session-start nudge (on a copy of the plugin, so the plugin can change). The fake gh stays on PATH; init tolerates it.
 plugin_copy="$work/plugin"; cp -R "$P" "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
 mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 check "init: a fresh install writes the stamp" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '^source	' .flow/stamp && grep -q '	.codex/rules/flow.rules' .flow/stamp && ! grep -q 'notify.sh' .flow/stamp"
 check "init: --check is clean after install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+check "init: installs the health job wrapper, its default schedule and its state folder in the gitignore" sh -c "[ -x .flow/jobs/health.sh ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.schedule.health)\" = 'every 15m' ] && grep -q '^.flow/health/' .gitignore && grep -q 'health: true' .flow/config.yaml"
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 printf '# mine\n' >> .flow/notify.sh
 check "init: a wrapper is replaced without a guard" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && ! grep -q '# mine' .flow/notify.sh"

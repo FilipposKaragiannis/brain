@@ -15,7 +15,7 @@
 # are logged in and the Mac is awake. Elsewhere install prints the crontab lines to add.
 set -u
 . "$(dirname "$0")/../lib/flow.sh"
-JOBS="next comments intake retro"
+JOBS="next comments intake retro health"
 log="$(flow_home)/log"; main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 agents="${FLOW_LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}"
 prefix="com.$(basename "$main" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n-' '-').flow"
