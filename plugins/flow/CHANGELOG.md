@@ -1,5 +1,21 @@
 # flow
 
+## 1.16.0 (2026-10-24)
+
+- The health job merges the base in. A clean task branch with no live run, no PR and no gate, more than
+  `jobs.health.behind_base` (20) commits behind its base, gets the base merged in as
+  `chore: merge <base> into <branch>`, under the pick lock. No notification: one log line.
+- A merge it cannot make goes to an agent. A base merge that conflicts is aborted, and a branch
+  diverged from its remote is left as it is. Either way the refs to merge go in `sync.md` in the
+  item's reports. The item's next run is then the new `sync` step: the implementer merges each
+  ref (never a rebase or a force push), resolves the conflicts, runs the tests they touch,
+  commits and pushes when the remote branch exists. The item's own step follows.
+- `sync` is in no profile and never moves the item's step. Done drops `sync.md`. Two intents
+  that cannot both hold raise the ambiguity gate; checks that stay red raise an escalation gate.
+  `sync.md` stays for the run after the gate clears.
+- A branch with a PR is not merged into: a conflict with its base is the comments job's. The
+  branch flags no longer notify, and `health.md` no longer carries them.
+
 ## 1.15.0 (2026-10-23)
 
 - Slack notifications are Block Kit lists (`scripts/_slack.py`). Numbered questions stay

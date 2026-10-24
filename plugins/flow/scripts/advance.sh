@@ -57,6 +57,28 @@ report() {
   exit "$1"
 }
 
+# The sync step runs ahead of the item's own step and never moves it: done drops the merge order,
+# a gate or a failure stops at a gate, and the order stays for the run after it clears.
+if [ "$step" = sync ]; then
+  own="$(state_get "$data" step)"
+  case "$status" in
+    done)
+      rm -f "$reports/sync.md"
+      adapter write-state "$item" "last_event=$(now_iso) sync done -> $own" >/dev/null
+      adapter comment "$item" --body "The task branch is in step: ${summary:-merged}. Next: $own." >/dev/null
+      finish_run
+      report 0 "$own" "" ;;
+    gate)
+      [ -n "$gate" ] || gate="ambiguity"
+      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$gate" "${message:-$summary}" >/dev/null
+      report 4 "" "$gate" ;;
+    fail)
+      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "The sync step could not merge into the task branch: ${summary:-no summary}" >/dev/null
+      report 4 "" escalation ;;
+    *) die "unknown status '$status' (done, fail or gate)" 2 ;;
+  esac
+fi
+
 case "$status" in
   gate)
     [ -n "$gate" ] || gate="ambiguity"

@@ -1088,21 +1088,43 @@ check "health: by default a branch only ahead of its remote is said once and not
 cp .flow/config.yaml "$hroot/config.yaml"; printf '    push: true\n' >> .flow/config.yaml
 hs > "$hroot/out" 2>&1; cp "$hroot/config.yaml" .flow/config.yaml
 check "health: with jobs.health.push a clean branch only ahead of an existing remote branch is pushed" sh -c "[ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" = \"\$(git -C '$wd' rev-parse HEAD)\" ] && grep -q 'pushed 1 commit' '$hroot/out'"
-rm -f "$wd/.flow/reports/$(item_slug "$d")/health.md"; : > "$work/offline.log"
+dr="$wd/.flow/reports/$(item_slug "$d")"; : > "$work/offline.log"
 remote_commit main m2; remote_commit main m3; remote_commit main m4
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
-check "health: a branch far behind its base is flagged for the next step, and notified once" sh -c "grep -q '$bd is 3 commits behind' '$hroot/out' && grep -q 'behind origin/main' '$wd/.flow/reports/$(item_slug "$d")/health.md' && [ \$(grep -c 'flow: health' '$work/offline.log') = 2 ] && ! grep -q 'commits behind' '$hroot/out2'"
-check "health: the flag reaches the next step's brief" sh -c "'$P/scripts/next.sh' '$d' >/dev/null && grep -q 'From the health job' '$wd/.flow/reports/$(item_slug "$d")/brief-implement.md' && rm -f '$(rec "$d")'"
+check "health: a clean branch far behind its base, with no PR, gets the base merged in and no notification" sh -c "git -C '$wd' merge-base --is-ancestor origin/main HEAD && grep -q 'merged origin/main into $bd (3 commits behind)' '$hroot/out' && ! grep -q 'merged origin/main' '$hroot/out2' && [ ! -f '$dr/sync.md' ] && ! grep -q 'flow: health' '$work/offline.log'"
+"$P/adapters/local/write-state.sh" "$d" pr=https://github.com/o/r/pull/9 >/dev/null
+remote_commit main m5; remote_commit main m6; remote_commit main m7
+hs > "$hroot/out" 2>&1
+check "health: a branch with a PR is not merged into: its conflicts are the comments job's" sh -c "! git -C '$wd' merge-base --is-ancestor origin/main HEAD && ! grep -q 'origin/main into $bd\|$bd needs' '$hroot/out' && [ ! -f '$dr/sync.md' ]"
+"$P/adapters/local/write-state.sh" "$d" pr= >/dev/null
+printf 'mine\n' > "$wd/README.md"; git -C "$wd" commit -qam mine
+git -C "$hroot/other" checkout -q -B main origin/main && git -C "$hroot/other" pull -q origin main && printf 'theirs\n' > "$hroot/other/README.md" && git -C "$hroot/other" commit -qam theirs && git -C "$hroot/other" push -q origin main
+pre="$(git -C "$wd" rev-parse HEAD)"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a base merge that conflicts is aborted and handed to the sync step, with no notification" sh -c "[ \"\$(git -C '$wd' rev-parse HEAD)\" = '$pre' ] && [ -z \"\$(git -C '$wd' status --porcelain -- . ':!.flow')\" ] && [ \"\$(cat '$dr/sync.md')\" = origin/main ] && grep -q '$bd needs origin/main merged in' '$hroot/out' && ! grep -q 'needs origin/main' '$hroot/out2' && ! grep -q 'flow: health' '$work/offline.log'"
+"$P/scripts/next.sh" "$d" >/dev/null
+run_step="$(jget step < "$(rec "$d")")"; own="$("$P/adapters/local/read.sh" "$d" | jget state.step)"
+check "health: the next run is the sync step, ahead of the item's own step" sh -c "grep -q '## The merge' '$dr/brief-sync.md' && grep -q '^- \`origin/main\`' '$dr/brief-sync.md' && grep -q 'Your own step is implement' '$dr/brief-sync.md' && [ '$run_step' = sync ] && [ '$own' = implement ]"
+printf '{"status": "done", "summary": "merged origin/main"}\n' > "$dr/sync.json"
+"$P/scripts/advance.sh" "$d" > "$hroot/out" 2>&1; code=$?
+own="$("$P/adapters/local/read.sh" "$d" | jget state.step)"
+check "health: a finished sync step drops the order and leaves the item on its own step" sh -c "[ $code = 0 ] && grep -q 'sync done -> implement' '$hroot/out' && [ ! -f '$dr/sync.md' ] && [ ! -f '$(rec "$d")' ] && [ '$own' = implement ]"
+printf 'origin/main\n' > "$dr/sync.md"; "$P/scripts/next.sh" "$d" >/dev/null
+printf '{"status": "fail", "summary": "tests red after the merge"}\n' > "$dr/sync.json"; "$P/scripts/advance.sh" "$d" >/dev/null 2>&1; code=$?
+gate_now="$("$P/adapters/local/read.sh" "$d" | jget state.gate)"; own="$("$P/adapters/local/read.sh" "$d" | jget state.step)"
+check "health: a failed sync step raises an escalation gate and keeps the order" sh -c "[ $code = 4 ] && [ '$gate_now' = escalation ] && [ '$own' = implement ] && [ -f '$dr/sync.md' ]"
+"$P/scripts/gate.sh" clear "$d" "retry" >/dev/null 2>&1
 commit_in "$wd" l2 >/dev/null; remote_commit "$bd" r2
 local_tip="$(git -C "$wd" rev-parse HEAD)"; remote_tip="$(git --git-dir="$hroot/origin.git" rev-parse "refs/heads/$bd")"
 hs > "$hroot/out" 2>&1
-check "health: a diverged branch is flagged and its history left alone" sh -c "grep -q '$bd has diverged' '$hroot/out' && [ \"\$(git -C '$wd' rev-parse HEAD)\" = '$local_tip' ] && [ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" = '$remote_tip' ] && grep -q 'has diverged' '$wd/.flow/reports/$(item_slug "$d")/health.md'"
+check "health: a diverged branch goes to the sync step with its remote first, and its history is left alone" sh -c "[ \"\$(head -1 '$dr/sync.md')\" = 'origin/$bd' ] && [ \"\$(tail -1 '$dr/sync.md')\" = origin/main ] && [ \"\$(git -C '$wd' rev-parse HEAD)\" = '$local_tip' ] && [ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" = '$remote_tip' ]"
 
 python3 -c '
 import json, sys, time
 p = sys.argv[1]; d = json.load(open(p)); d["time"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 172800)); json.dump(d, open(p, "w"))' ".flow/gates/$(item_slug "$b").json"
 : > "$work/offline.log"
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a branch waiting at a gate is not merged into" sh -c "! grep -q 'merged origin/main into flow/$(item_slug "$b")' .flow/events.log"
 check "health: a gate waiting past the reminder interval is reminded once" sh -c "grep -q '$b: waiting 2d .* at the escalation gate' '$hroot/out' && ! grep -q 'at the escalation gate' '$hroot/out2' && [ \$(grep -c 'flow: health' '$work/offline.log') = 1 ]"
 printf 'escalation 1\n' > ".flow/health/$(item_slug "$b").remind"
 hs > "$hroot/out" 2>&1
@@ -1124,7 +1146,7 @@ check "health: the same record is a dead run once only a daemon, an editor or a 
 : > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
 check "health: a record younger than the grace is left alone, whatever its pid" sh -c "[ -f '$(rec "$e")' ] && [ $(facts "$e.*resumed implement") = 1 ]"
-rm -f "$wd/.flow/reports/$(item_slug "$d")/health.md"; "$P/scripts/steward.sh" release "$d" --force >/dev/null 2>&1
+rm -f "$wd/.flow/reports/$(item_slug "$d")/sync.md"; "$P/scripts/steward.sh" release "$d" --force >/dev/null 2>&1
 g="$(hitem "Empty at a gate")"; wg="$(hold "$g")"; "$P/scripts/gate.sh" raise "$g" ambiguity "Which one?" >/dev/null 2>&1; stale_claim "$wg"
 hs > "$hroot/out" 2>&1
 check "health: an empty claim waiting at a gate is not released" sh -c "[ -f '$wg/.flow/claim.json' ] && ! grep -q 'released the empty claim' '$hroot/out'"
