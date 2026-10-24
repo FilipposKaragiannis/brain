@@ -1,0 +1,18 @@
+# fixture flow config
+adapters:
+  default: github
+base: main
+github:
+  repo: example/fixture
+  project: 1
+pool:
+  - ../project-wt-2
+  - ../project-wt-3
+  - ../project-wt-4
+pool_max: 3
+reviews:
+  reviewers: [codex, "claude"]
+jobs:
+  schedule:
+    next: every 30m --workers 2
+    health: every 15m

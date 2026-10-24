@@ -1,0 +1,1 @@
+{"gate":"ambiguity","item":"gh#7","message":"1. Keep the old name? Recommended: yes, because callers depend on it.\n2. Split the type?\nRecommended: no.","time":"2026-10-22T07:43:00Z","host":"shell"}

@@ -12,6 +12,20 @@ jobs:
         with:
           python-version: "3.12"
       - run: tools/test.sh
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: npm ci
+      - run: npm run check
   # The standards plugin's composite action must load and run; this repo has no
   # .standards/config.json, so every commit is skipped and the step only proves the wiring.
   gates-action:
