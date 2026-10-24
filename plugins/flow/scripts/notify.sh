@@ -6,7 +6,7 @@
 # <flow home>/gates/<item>.json plus a line in <flow home>/events.log, which the board reads.
 # The events: idle (the next job found nothing ready; notify.idle) and health (the health job found
 # something: a gate waiting past its reminder, a diverged branch, a full pool; notify.health, on
-# unless set to false). A gate names the item by its id and title, Slack links it to the tracker, and the message keeps
+# unless set to false) and review-stalled (a reviewer stayed silent through every chase). A gate names the item by its id and title, Slack links it to the tracker, and the message keeps
 # its lines, so numbered questions read as a list.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"

@@ -1,5 +1,27 @@
 # flow
 
+## 1.14.0 (2026-10-23)
+
+- The reviewers are config. `reviews.reviewers` lists who each review round asks: `codex`,
+  `claude`, `copilot` or any GitHub login (default codex and claude, as before).
+  `comments.sh request-review <pr> <ask>` asks each in its own comment with a marker; Copilot goes
+  through the reviewers API. The pr-creator and the comments step call it and never write a
+  mention by hand.
+- A silent reviewer is chased. `comments.sh reviews <pr>` reads each reviewer's last request and
+  whether it is answered: a review or comment after it, a +1 on it, or a finished Codex summary
+  for the head. A Codex summary stuck on running, or a usage-limit reply, is no answer.
+  `comments.sh chase <pr>` asks again with the reviewer's trigger phrase once
+  `reviews.chase_after` (1h) passes, at most `reviews.max_chases` (2) times, then sends one
+  `review-stalled` notification. The comments job runs it before each PR, with no model.
+  Copilot's requests are read from the PR timeline and re-asked through the reviewers API;
+  each re-ask is also counted in the flow home, because GitHub may record none while the first
+  request is pending. Only a bot account speaks for codex, claude or copilot. Drafts are not
+  chased: they wait on the quiz.
+- A PR that conflicts with its base is fixed. `comments.sh state` carries `mergeable`, the job
+  names a conflict in the brief, and the comments skill's new Conflicts step merges the base in
+  the task worktree (never a rebase or a force push), verifies, pushes and re-requests review.
+  A conflict only the owner can settle raises the ambiguity gate.
+
 ## 1.13.1 (2026-10-22)
 
 - `next.sh` no longer stops at "no free worktree" while an item that already holds a claim is ready.

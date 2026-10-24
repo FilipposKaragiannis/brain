@@ -428,6 +428,92 @@ printf 'the body' | gh pr create --base main --head flow/x --title T --body-file
 gh pr comment 91 --body "@codex please review"
 check "fake gh: pr create and comment" sh -c "gh pr view 91 | grep -q '\"headRefName\": \"flow/x\"' && gh pr list --head flow/x | grep -q 'the body' && gh pr view 91 | grep -q '@codex please review'"
 
+echo "review requests and chases (fake gh)"
+cp .flow/config.yaml "$work/config.reviews"
+check "reviewers: codex and claude when reviews.reviewers is unset" [ "$("$P/scripts/comments.sh" reviewers | tr '\n' ' ')" = "codex claude " ]
+printf 'reviews:\n  reviewers: [codex, copilot]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
+check "reviewers: the config list, inline" [ "$("$P/scripts/comments.sh" reviewers | tr '\n' ' ')" = "codex copilot " ]
+"$P/scripts/comments.sh" request-review 91 "please review the diff. @claude <!-- flow:chase codex -->" >/dev/null
+pr_field() { python3 -c "import json,sys; print(json.dumps(json.load(open('$FAKE_GH_DIR/issues.json'))['pr'].get(sys.argv[1])))" "$1"; }
+check "request-review: codex gets one mention comment with the request marker" sh -c "python3 -c \"import json,sys; c=[b for b in json.loads(sys.argv[1]) if 'flow:review-request codex' in b]; assert len(c)==1 and c[0].startswith('@codex please review the diff.'), c\" '$(pr_field comments)'"
+check "request-review: copilot is asked through the reviewers API" [ "$(pr_field reviewers)" = '["@copilot"]' ]
+check "request-review: a reviewer not in the list is not asked" sh -c "! printf '%s' '$(pr_field comments)' | grep -q '@claude'"
+check "request-review: the ask carries no chase marker" sh -c "! printf '%s' '$(pr_field comments)' | grep -q '<!-- flow:chase'"
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [bad name]\n' >> .flow/config.yaml
+check "reviewers: a name with a space is refused by name" sh -c "'$P/scripts/comments.sh' reviewers 2>&1 >/dev/null | grep -q \"'bad name' is not a reviewer name\""
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [codex]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
+seed() { # seed <request age s> <codex status> <+1 count> [chase|reply <body>|lookalike]: one request by the owner and the Codex summary
+  python3 - "$FAKE_GH_DIR/issues.json" "$@" <<'PY2'
+import json, sys, time
+p, age, status, plus, extra = sys.argv[1], int(sys.argv[2]), sys.argv[3], int(sys.argv[4]), sys.argv[5:]
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+asked = time.time() - age
+owner, codex = {"login": "owner", "type": "User"}, {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}
+d = json.load(open(p)); pr = d["pr"]; pr["headRefOid"] = "abc1234def5678"; pr["comments"] = []; pr["reviews"] = []
+state = '{"code_review":{"commit_sha":"abc1234def5678","status":"%s"}}' % status
+pr["rest_comments"] = [{"id": 7, "user": owner, "body": "@codex please review", "created_at": iso(asked), "updated_at": iso(asked), "reactions": {"+1": plus}},
+                       {"id": 8, "user": codex, "created_at": iso(asked - 3600), "updated_at": iso(asked + 5),
+                        "body": "<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 %s -->" % state, "reactions": {}}]
+later = lambda user, body: {"id": 9, "user": user, "body": body, "created_at": iso(asked + 1), "updated_at": iso(asked + 1), "reactions": {}}
+if extra[:1] == ["chase"]:
+    pr["rest_comments"].append(later(owner, "@codex review\n\n<!-- flow:chase codex -->"))
+elif extra[:1] == ["reply"]:
+    pr["rest_comments"].append(later(codex, extra[1]))
+elif extra[:1] == ["lookalike"]:
+    pr["rest_comments"].append(later({"login": "xcodex", "type": "User"}, "Looks good to me."))
+json.dump(d, open(p, "w"))
+PY2
+}
+posted() { python3 -c "import json; print(len(json.load(open('$FAKE_GH_DIR/issues.json'))['pr']['comments']))"; }
+answered() { "$P/scripts/comments.sh" reviews 91 | python3 -c "import json,sys; print(json.loads(sys.stdin.readline())['answered'])"; }
+seed 7200 running 0
+check "reviews: a Codex summary still running is no answer" [ "$(answered)" = False ]
+check "reviews: the wait counts from the request" sh -c "'$P/scripts/comments.sh' reviews 91 | grep -q '\"waiting\": 72[0-9][0-9], \"chases\": 0'"
+seed 7200 running 0 reply "You have reached your Codex usage limit. Try again later."
+check "reviews: a usage-limit reply is no answer" [ "$(answered)" = False ]
+seed 7200 running 0 reply "No issues found."
+check "reviews: a plain reply from the reviewer answers" [ "$(answered)" = True ]
+seed 7200 running 0 lookalike
+check "reviews: a person whose login holds the bot's name does not answer for it" [ "$(answered)" = False ]
+seed 7200 completed 0
+check "reviews: a finished Codex summary for the head answers" [ "$(answered)" = True ]
+seed 7200 running 1
+check "reviews: a +1 on the request answers" [ "$(answered)" = True ]
+seed 7200 running 0
+out="$("$P/scripts/comments.sh" chase 91)"; code=$?
+check "chase: a silent reviewer past chase_after is asked again" sh -c "[ $code -eq 0 ] && printf '%s' '$out' | grep -q 'chased codex on #91: .*(chase 1 of 1)'"
+check "chase: the chase uses the trigger phrase, the marker and the head commit" sh -c "python3 -c \"import json,sys; c=json.loads(sys.argv[1]); assert len(c)==1 and c[0].startswith('@codex review') and 'flow:chase codex' in c[0] and 'abc1234d ' in c[0], c\" '$(pr_field comments)'"
+seed 1790 running 0
+out="$("$P/scripts/comments.sh" chase 91)"; code=$?
+check "chase: a request just under chase_after waits" sh -c "[ $code -eq 0 ] && [ -z '$out' ] && [ $(posted) = 0 ]"
+seed 1810 running 0
+out="$("$P/scripts/comments.sh" chase 91)"
+check "chase: a request just over chase_after is chased" sh -c "printf '%s' '$out' | grep -q 'chased codex' && [ $(posted) = 1 ]"
+seed 7200 running 0 chase
+rm -rf .flow/reviews; : > .flow/events.log
+first="$("$P/scripts/comments.sh" chase 91)"; second="$("$P/scripts/comments.sh" chase 91)"; code=$?
+check "chase: past max_chases the owner is told" sh -c "printf '%s' '$first' | grep -q 'stalled codex on #91'"
+check "chase: the owner is told once per request" sh -c "[ $code -eq 0 ] && [ -z '$second' ] && [ \"\$(grep -c '	review-stalled	' .flow/events.log)\" = 1 ]"
+check "chase: past max_chases nothing is posted on the PR" [ "$(posted)" = 0 ]
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [copilot]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
+import json, sys, time
+p = sys.argv[1]; d = json.load(open(p)); pr = d["pr"]
+pr["comments"], pr["reviewers"], pr["reviews"] = [], ["@copilot"], []
+pr["timeline"] = [{"event": "review_requested", "requested_reviewer": {"login": "Copilot", "type": "Bot"},
+                   "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 7200))}]
+json.dump(d, open(p, "w"))
+PY2
+rm -rf .flow/reviews; : > .flow/events.log
+check "chase: a silent Copilot is asked again through the reviewers API" sh -c "'$P/scripts/comments.sh' chase 91 | grep -q 'chased copilot on #91: .*(chase 1 of 1)'"
+check "chase: a Copilot chase posts no comment" [ "$(posted)" = 0 ]
+check "chase: a Copilot re-ask that left no timeline event still waits chase_after" [ -z "$("$P/scripts/comments.sh" chase 91)" ]
+python3 -c "import time; p='.flow/reviews/91-copilot.chases'; r,c,_=open(p).read().split(); open(p,'w').write('%s %s %d\n' % (r, c, time.time() - 7200))"
+check "chase: a Copilot re-ask that left no timeline event still counts toward max_chases" sh -c "'$P/scripts/comments.sh' chase 91 | grep -q 'stalled copilot on #91' && [ \"\$(grep -c '	review-stalled	' .flow/events.log)\" = 1 ]"
+python3 -c "import json,time; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['reviews']=[{'user': {'login': 'copilot-pull-request-reviewer[bot]', 'type': 'Bot'}, 'submitted_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}]; json.dump(d, open(p,'w'))"
+check "reviews: a Copilot review after the request answers" sh -c "'$P/scripts/comments.sh' reviews 91 | grep -q '\"reviewer\": \"copilot\".*\"answered\": true'"
+cp "$work/config.reviews" .flow/config.yaml
+
 echo "jobs (fake hosts)"
 export HOST_LOG="$work/host.log"; realrepo="$(cd "$repo" && pwd -P)"
 for h in claude codex; do printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/$h"; chmod +x "$work/bin/$h"; done
@@ -435,6 +521,15 @@ for h in claude codex; do printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: runs the skill per open PR from the main worktree" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
 check "comments job: one PR, one run" [ "$(grep -c comments "$HOST_LOG")" = "1" ]
+check "comments job: a mergeable PR gets no conflict note" sh -c "! grep -q 'Conflicts step' '$HOST_LOG'"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['mergeable']='CONFLICTING'; json.dump(d, open(p,'w'))"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a PR that conflicts with its base is named in the brief" grep -q 'gh#21. The PR conflicts with its base main: run the Conflicts step first.' "$HOST_LOG"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['baseRefName']='main;touch x'; json.dump(d, open(p,'w'))"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a base name with shell characters never reaches the brief" sh -c "! grep -q 'touch x' '$HOST_LOG' && grep -q 'conflicts with a base named oddly' .flow/log/comments.log"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['baseRefName']='main'; d['pr']['mergeable']='MERGEABLE'; json.dump(d, open(p,'w'))"
+: > "$HOST_LOG"
 "$P/jobs/comments.sh" codex >/dev/null
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec -C $realrepo -s workspace-write' '$HOST_LOG'"
 check "a job starts its skill as typed: /plugin:skill on Claude, \$skill on Codex" sh -c "grep -q 'codex	.*workspace-write.* \\\$comments gh#21' '$HOST_LOG' && [ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow implement gh#7')\" = '/flow:implement gh#7' ]"
@@ -1055,6 +1150,7 @@ mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config 
 check "init: a fresh install writes the stamp" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '^source	' .flow/stamp && grep -q '	.codex/rules/flow.rules' .flow/stamp && ! grep -q 'notify.sh' .flow/stamp"
 check "init: --check is clean after install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 check "init: installs the health job wrapper, its default schedule and its state folder in the gitignore" sh -c "[ -x .flow/jobs/health.sh ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.schedule.health)\" = 'every 15m' ] && grep -q '^.flow/health/' .gitignore && grep -q 'health: true' .flow/config.yaml"
+check "init: the fresh config asks codex and claude for reviews" [ "$(FLOW_PLUGIN="$plugin_copy" "$plugin_copy/scripts/comments.sh" reviewers | tr '\n' ' ')" = "codex claude " ]
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 printf '# mine\n' >> .flow/notify.sh
 check "init: a wrapper is replaced without a guard" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && ! grep -q '# mine' .flow/notify.sh"
