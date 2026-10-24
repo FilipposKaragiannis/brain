@@ -531,6 +531,19 @@ for h in claude codex; do printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$
 check "comments job: runs the skill per open PR from the main worktree" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
 check "comments job: one PR, one run" [ "$(grep -c comments "$HOST_LOG")" = "1" ]
 check "comments job: a mergeable PR gets no conflict note" sh -c "! grep -q 'Conflicts step' '$HOST_LOG'"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a PR with nothing new since the last pass is skipped, quiet" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: nothing new since the last pass, skipped' .flow/log/comments.log && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 1 PR(s)'"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['updatedAt']='2026-10-24T16:06:00Z'; json.dump(d, open(p,'w'))"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a new comment on the PR starts a pass" grep -q 'comments gh#21' "$HOST_LOG"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
+check "comments job: a named PR runs even with nothing new" grep -q 'comments gh#21' "$HOST_LOG"
+printf '#!/bin/sh\nexit 1\n' > "$work/bin/claude"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['updatedAt']='2026-10-24T16:30:00Z'; json.dump(d, open(p,'w'))"
+"$P/jobs/comments.sh" claude >/dev/null
+printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a pass the host failed is tried again" grep -q 'comments gh#21' "$HOST_LOG"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['mergeable']='CONFLICTING'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a PR that conflicts with its base is named in the brief" grep -q 'gh#21. The PR conflicts with its base main: run the Conflicts step first.' "$HOST_LOG"
