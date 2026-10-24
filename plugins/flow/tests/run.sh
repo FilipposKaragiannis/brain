@@ -403,6 +403,15 @@ PATH="$work/slackbin:$PATH" FLOW_SLACK_WEBHOOK=https://hook.example "$P/scripts/
    Recommended: yes, hash-inert." >/dev/null
 check "notify: a gate names the item by title and links it" grep -qF '*flow: ambiguity* on <https://github.com/acme/widgets/issues/32|gh#32 Bug>' "$work/slack.log"
 check "notify: the questions keep their lines, the recommendation under each" sh -c "python3 -c 'import json,sys; t=[json.loads(l) for l in open(sys.argv[1]) if l.startswith(\"{\")][0][\"text\"]; assert \"\\n1. Visual only?\\n   Recommended: yes\" in t and \"comment \x60/answer\" in t' '$work/slack.log'"
+slack_blocks() { python3 -c 'import json,sys; print(json.dumps([json.loads(l) for l in open(sys.argv[1]) if l.startswith("{")][0]["blocks"]))' "$work/slack.log"; }
+check "notify: Slack numbers the questions" sh -c "printf '%s' '$(slack_blocks)' | python3 -c 'import json,sys; lists=json.load(sys.stdin)[1][\"elements\"]; assert lists[0][\"style\"]==\"ordered\", lists[0]'"
+check "notify: Slack nests the recommendation under its question" sh -c "printf '%s' '$(slack_blocks)' | python3 -c 'import json,sys; lists=json.load(sys.stdin)[1][\"elements\"]; nested=[l for l in lists if l[\"indent\"]==1]; assert nested and \"Recommended\" in json.dumps(nested), lists'"
+check "notify: Slack names the gate as code" sh -c "printf '%s' '$(slack_blocks)' | python3 -c 'import json,sys; head=json.load(sys.stdin)[0]; assert {\"type\":\"text\",\"text\":\"ambiguity\",\"style\":{\"code\":True}} in head[\"elements\"][0][\"elements\"], head'"
+check "notify: Slack says how to answer" sh -c "printf '%s' '$(slack_blocks)' | grep -q '/answer'"
+slack_long() { python3 -I "$P/scripts/_slack.py" t '' '' '' '' 'The branch flow/gh-310 is behind at 3a677d23 and OptionUtility still prices the giveaway under the floor for every weight. The test step cannot change production code; see gh#320.'; }
+check "slack: a long line breaks into one bullet per sentence" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; bullets=json.load(sys.stdin)[\"blocks\"][1][\"elements\"][0][\"elements\"]; assert len(bullets)==2, bullets'"
+check "slack: ids, commits, paths and code names read as code" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; d=json.load(sys.stdin); code=[e[\"text\"] for l in d[\"blocks\"][1][\"elements\"] for s in l[\"elements\"] for e in s[\"elements\"] if e.get(\"style\",{}).get(\"code\")]; assert code==[\"flow/gh-310\",\"3a677d23\",\"OptionUtility\",\"gh#320\"], code'"
+check "slack: a link that is not https stays out of the fallback" sh -c "python3 -I '$P/scripts/_slack.py' t 'gh#1 x' 'javascript:x|<!channel>' ambiguity 'gh#1' m | python3 -c 'import json,sys; t=json.load(sys.stdin)[\"text\"]; assert \"javascript\" not in t and \"<!channel>\" not in t, t'"
 cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
 
 echo "comments plumbing (fake gh)"
