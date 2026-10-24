@@ -5,7 +5,7 @@
 #   comments.sh resolve <thread_id>             resolve a review thread
 #   comments.sh issue-comments <pr>             plain PR comments as JSON (quiz answers live here)
 #   comments.sh ready <pr>                      mark a draft PR ready for review
-#   comments.sh state <pr>                      {state, isDraft, mergedAt, url, headRefName, headRefOid, baseRefName, mergeable}
+#   comments.sh state <pr>                      {state, isDraft, mergedAt, url, headRefName, headRefOid, baseRefName, mergeable, updatedAt}
 #   comments.sh reviewers                       the reviewers each round asks, one per line (reviews.reviewers)
 #   comments.sh request-review <pr> <ask>       ask each reviewer: a comment "@<reviewer> <ask>" each, copilot through the API
 #   comments.sh reviews <pr>                    each reviewer's last request: answered, waiting, chases (JSON lines)
@@ -115,7 +115,7 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
   ready)
     gh pr ready "$(pr_number "$2")" -R "$repo" ;;
   state)
-    gh pr view "$(pr_number "$2")" -R "$repo" --json state,isDraft,mergedAt,url,headRefName,headRefOid,baseRefName,number,mergeable ;;
+    gh pr view "$(pr_number "$2")" -R "$repo" --json state,isDraft,mergedAt,url,headRefName,headRefOid,baseRefName,number,mergeable,updatedAt ;;
   reviewers)
     reviewers ;;
   request-review)

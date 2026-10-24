@@ -1,5 +1,15 @@
 # flow
 
+## 1.17.0 (2026-10-24)
+
+- The comments job skips a PR with nothing new. Before a pass it reads the PR's last update,
+  head commit and mergeable state, with no model. When they match the last pass's, the PR is
+  skipped and the run is quiet. A failed pass is tried again, and a named PR always runs.
+- A pass's own replies count as new, so one quiet pass follows each working one.
+- Quiet runs now cost no model time, so the comments schedule can drop from every 30m to
+  every 5m or 10m. An owner's answer on a PR is then picked up within minutes.
+- `comments.sh state` also returns `updatedAt`.
+
 ## 1.16.0 (2026-10-24)
 
 - The health job merges the base in. A clean task branch with no live run, no PR and no gate, more than

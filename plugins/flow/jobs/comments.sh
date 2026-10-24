@@ -6,7 +6,10 @@
 # worktree (the skill spawns the comment-addresser in the task's worktree). Before that, with no
 # model: a reviewer silent past reviews.chase_after is asked again (comments.sh chase), and a PR
 # that conflicts with its base is named in the brief so the skill merges the base in first.
-# Nothing open: a quiet exit, no model spend. Schedule it every 30 minutes; the lock skips an overlap.
+# A PR whose activity (last update, head commit, mergeable) matches the last pass's is skipped
+# with no model; a named PR always runs. A pass's own replies count as activity, so one quiet
+# pass follows each working one. Nothing open or nothing new: a quiet exit, no model spend.
+# Cheap when quiet, so it can run every 5 or 10 minutes; the lock skips an overlap.
 set -u
 job=comments
 . "$(dirname "$0")/_job.sh"
@@ -46,10 +49,28 @@ prepare_pr() {
 chase_reviewers() { # chase_reviewers <target> <pr>
   "$FLOW_PLUGIN/scripts/comments.sh" chase "$2" 2>&1 | while IFS= read -r line; do job_say "$1: $line" >/dev/null; done
 }
+# activity <target>: one line that changes when anything lands on the PR, read after the chase.
+activity() {
+  case "$1" in *#*|local:*) pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)" ;; *) pull="$1" ;; esac
+  [ -n "$pull" ] && state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pull" 2>/dev/null)" || return 0
+  printf '%s %s %s' "$(json_get "$state" updatedAt)" "$(json_get "$state" headRefOid)" "$(json_get "$state" mergeable)"
+}
+seen_file() { printf '%s/%s.seen/%s' "$(job_log_dir)" "$job" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+addressed=0; unchanged=0
 for t in $targets; do
   note="$(prepare_pr "$t")"
+  seen="$(activity "$t")"
+  if [ -z "$one" ] && [ -n "$seen" ] && [ "$seen" = "$(cat "$(seen_file "$t")" 2>/dev/null)" ]; then
+    job_say "$t: nothing new since the last pass, skipped" >/dev/null; unchanged=$((unchanged + 1)); continue
+  fi
   job_say "addressing $t"
-  host_run "$host" "$main" "$(host_skill_prompt "$host" flow comments "$t.$note Unattended: nobody answers questions; collect owner decisions in the report and stop.")" "$(job_model)" "$(job_effort)" \
-    >> "$(job_log_dir)/$job.log" 2>&1 || job_say "$t: host exit $?"
+  if host_run "$host" "$main" "$(host_skill_prompt "$host" flow comments "$t.$note Unattended: nobody answers questions; collect owner decisions in the report and stop.")" "$(job_model)" "$(job_effort)" \
+    >> "$(job_log_dir)/$job.log" 2>&1; then
+    [ -z "$seen" ] || { mkdir -p "$(dirname "$(seen_file "$t")")"; printf '%s\n' "$seen" > "$(seen_file "$t")"; }
+  else
+    job_say "$t: host exit $?"
+  fi
+  addressed=$((addressed + 1))
 done
-job_say "done: $(printf '%s\n' $targets | wc -l | tr -d ' ') PR(s)"
+[ "$addressed" -gt 0 ] || { job_say "quiet: nothing new on $unchanged PR(s)"; exit 0; }
+job_say "done: $addressed PR(s), $unchanged unchanged"
