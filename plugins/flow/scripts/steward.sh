@@ -362,12 +362,14 @@ health_cleared() { [ "$dry" -eq 1 ] || rm -f "$home/health/$1.seen"; }
 
 health_ago() { hpy ago "$1"; }
 
-# health_branch_state <item> <path> <branch> <base>: bring a clean claimed worktree in step with
-# its remote branch (fast-forward when only behind; push when only ahead of a branch that exists and
-# jobs.health.push is true, else say it once) and leave in $health_flags what needs a person: a
-# diverged branch, a branch far behind its base.
+# health_branch_state <item> <path> <branch> <base> <pr>: bring a clean claimed worktree in step
+# with its remote branch (fast-forward when only behind; push when only ahead of a branch that
+# exists and jobs.health.push is true, else say it once) and with its base (merge it in once the
+# branch is more than behind_base commits behind, has no PR and waits at no gate: a PR's conflicts
+# are the comments job's). Leave in $health_sync the refs a merge needs an agent for, one per line: the remote
+# branch when the two diverged, the base when its merge conflicts.
 health_branch_state() {
-  hb_item="$1"; hb_path="$2"; hb_branch="$3"; hb_base="$(base_ref "$4")"; health_flags=""
+  hb_item="$1"; hb_path="$2"; hb_branch="$3"; hb_base="$(base_ref "$4")"; hb_pr="$5"; health_sync=""
   [ "$(git -C "$hb_path" symbolic-ref --short -q HEAD)" = "$hb_branch" ] || return 0
   if [ "$have_remote" -eq 1 ] && git -C "$hb_path" show-ref --verify --quiet "refs/remotes/origin/$hb_branch"; then
     set -- $(git -C "$hb_path" rev-list --left-right --count "HEAD...origin/$hb_branch")
@@ -384,15 +386,30 @@ health_branch_state() {
       elif git -C "$hb_path" push -q origin "refs/heads/$hb_branch:refs/heads/$hb_branch" >/dev/null 2>&1; then health_say "$hb_item" "pushed $hb_ahead commit(s) of $hb_branch"
       else health_say "$hb_item" "could not push $hb_branch"; fi
     elif [ "$hb_ahead" -gt 0 ]; then
-      health_flags="$hb_branch has diverged from origin/$hb_branch ($hb_ahead ahead, $hb_behind behind). History was not rewritten: rebase or merge it before more work lands on it.
+      health_sync="origin/$hb_branch
 "
     fi
   fi
+  [ -z "$hb_pr" ] || return 0
   hb_late="$(git -C "$hb_path" rev-list --count "HEAD..$hb_base" 2>/dev/null)"
-  if [ "${hb_late:-0}" -gt "$behind_base" ]; then
-    health_flags="$health_flags$hb_branch is $hb_late commits behind $hb_base (the limit is $behind_base). Merge or rebase the base in before more work lands on it.
+  [ "${hb_late:-0}" -gt "$behind_base" ] || return 0
+  # A diverged branch goes to the agent whole: the base merge waits for the remote one.
+  if [ -n "$health_sync" ]; then health_sync="$health_sync$hb_base
+"; return 0; fi
+  # A branch waiting at a gate is the owner's to look at: it is merged once the gate clears.
+  [ -z "$health_gate" ] || return 0
+  if [ "$dry" -eq 1 ]; then health_say "$hb_item" "would merge $hb_base into $hb_branch ($hb_late commits behind)"; return 0; fi
+  # Under the pick lock, so a next that starts a step here waits for the merge to finish.
+  flow_lock pick || return 0
+  if [ -f "$home/runs/$(item_slug "$hb_item").json" ]; then flow_unlock; return 0; fi
+  if git -C "$hb_path" merge -q --no-edit -m "chore: merge $hb_base into $hb_branch" "$hb_base" >/dev/null 2>&1; then
+    health_say "$hb_item" "merged $hb_base into $hb_branch ($hb_late commits behind)"
+  else
+    git -C "$hb_path" merge --abort >/dev/null 2>&1
+    health_sync="$hb_base
 "
   fi
+  flow_unlock
 }
 
 # health_free <path>: a free pool worktree follows the base branch tip; a dirty one is only said.
@@ -449,7 +466,7 @@ health_claim() {
 "; return 0; fi
   if ! adapter_for "$it" >/dev/null 2>&1; then holders="$holders$name $it a session outside the flow
 "; return 0; fi
-  slug="$(item_slug "$it")"; rec="$home/runs/$slug.json"; health_reports="$p/.flow/reports/$slug"; health_gate=""; health_flags=""
+  slug="$(item_slug "$it")"; rec="$home/runs/$slug.json"; health_reports="$p/.flow/reports/$slug"; health_gate=""; health_sync=""
   if ! data="$(adapter read "$it" 2>/dev/null)"; then holders="$holders$name $it unreadable
 "; health_say "$it" "cannot read it on the tracker; $name is left alone"; return 0; fi
   step="$(state_get "$data" step)"; health_gate="$(state_get "$data" gate)"
@@ -487,7 +504,7 @@ health_claim() {
     health_empty "$it" "$p" "$rec" "$last"; [ "$released" -eq 1 ] && return 0
   fi
   if [ -z "$health_gate" ] && [ "$dead" -eq 1 ] && { [ "$isdirty" -eq 1 ] || [ "$ahead" -gt 0 ] || [ -n "$results" ]; }; then
-    health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty"
+    health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty" "$(state_get "$data" pr)"
     health_resume "$it" "${step:-}" "$p"
     [ -z "$health_gate" ] || { gated=$((gated + 1)); holders="$holders$name $it waiting at the $health_gate gate
 "; return 0; }
@@ -496,23 +513,25 @@ health_claim() {
   fi
   [ -n "$health_gate" ] || holders="$holders$name $it $([ "$isdirty" -eq 1 ] && echo "uncommitted changes" || echo "no run; the next job continues it")
 "
-  health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty"
+  health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty" "$(state_get "$data" pr)"
 }
 
-# health_branch_notes <item> <path> <branch> <base> <dirty>: the branch sync for a worktree with no
-# live run and a clean tree, and the note for the item's next step when the branch needs a person.
+# health_branch_notes <item> <path> <branch> <base> <dirty> <pr>: the branch sync for a worktree
+# with no live run and a clean tree. A merge only an agent can make goes in sync.md in the item's
+# reports, where next.sh finds it and runs the sync step before the item's own step. No
+# notification: the sync step raises a gate when the owner has to choose.
 health_branch_notes() {
-  [ "$5" -eq 0 ] || { health_flags=""; return 0; }
-  health_branch_state "$1" "$2" "$3" "$4"
-  if [ -n "$health_flags" ]; then
-    if health_changed "branch-$(item_slug "$1")" "$health_flags"; then
-      health_say "$1" "$(printf '%s' "$health_flags" | head -1)"
-      health_notify "$1: $(printf '%s' "$health_flags" | tr '\n' ' ')"
+  [ "$5" -eq 0 ] || { health_sync=""; return 0; }
+  health_branch_state "$1" "$2" "$3" "$4" "$6"
+  [ "$dry" -eq 1 ] || rm -f "$health_reports/health.md"
+  if [ -n "$health_sync" ]; then
+    if health_changed "branch-$(item_slug "$1")" "$health_sync"; then
+      health_say "$1" "$3 needs $(printf '%s' "$health_sync" | sed '$!s/$/ and/' | tr '\n' ' ')merged in, which the health job cannot do cleanly; the sync step does it on the item's next run"
     fi
-    [ "$dry" -eq 1 ] || { mkdir -p "$health_reports" && printf '%s' "$health_flags" > "$health_reports/health.md"; }
+    [ "$dry" -eq 1 ] || { mkdir -p "$health_reports" && printf '%s' "$health_sync" > "$health_reports/sync.md"; }
   else
     health_cleared "branch-$(item_slug "$1")"
-    [ "$dry" -eq 1 ] || rm -f "$health_reports/health.md"
+    [ "$dry" -eq 1 ] || rm -f "$health_reports/sync.md"
   fi
 }
 

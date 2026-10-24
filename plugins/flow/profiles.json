@@ -154,6 +154,12 @@
       "skill": "explain",
       "summary": "Plain-language HTML summary plus a short quiz the owner answers on the PR (flow:explain)."
     },
+    "sync": {
+      "agent": "implementer",
+      "worktree": true,
+      "skill": "implement",
+      "summary": "Merge the refs the health job could not merge cleanly into the task branch, resolve the conflicts, check and push; the item's own step follows (implementer). In no profile: next.sh runs it when the reports hold sync.md."
+    },
     "pr": {
       "agent": "pr-creator",
       "worktree": true,

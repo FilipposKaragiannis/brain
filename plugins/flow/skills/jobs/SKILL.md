@@ -45,7 +45,9 @@ Facts to answer with:
   no model while all is well: it clears a dead run's record, releases an empty claim, resumes
   cut-off work up to `jobs.health.max_resumes` times, then raises an escalation gate, syncs clean
   task branches (never rewriting history or resetting work; it pushes only with
-  `jobs.health.push: true`), reminds on gates older than
+  `jobs.health.push: true`), merges the base into a branch more than `jobs.health.behind_base`
+  commits behind it, with no PR and no gate, hands a merge that conflicts or a diverged branch to the
+  `sync` step of the item's next run, reminds on gates older than
   `jobs.health.gate_reminder` and says when the pool is full. `notify.health: false` mutes it.
 - A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
   still busy from the last schedule is skipped, which shows as `skipped`.

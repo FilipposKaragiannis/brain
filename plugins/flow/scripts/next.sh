@@ -118,6 +118,13 @@ else
   wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$base")"
 fi
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
+# A merge the health job could not make cleanly (sync.md, one ref per line) runs first as the sync
+# step. The item keeps its own step, which runs once the sync is done.
+own_step="$step"
+if [ "$(step_field "$step" worktree)" = "true" ] && [ -s "$reports/sync.md" ]; then
+  step=sync; agent="$(step_field sync agent)"; skill="$(step_field sync skill)"; summary="$(step_field sync summary)"
+  json_set "$claim" step "$(json_string sync)" > "$wt/.flow/claim.json"
+fi
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
 # script. The health job reads it to tell a live run from a dead one.
@@ -125,7 +132,7 @@ owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
   "started=$(now_iso)" ${owner:+"pid=$owner"} "touches:=$touches" > "$(run_file "$item")"
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
-adapter write-state "$item" "step=$step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
+adapter write-state "$item" "step=$own_step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock
 
 brief="$reports/brief-$step.md"
@@ -157,6 +164,24 @@ brief="$reports/brief-$step.md"
     asked="$(state_get "$data" asked)"
     [ -n "$asked" ] && { echo "Asked:"; echo; printf '%s\n' "$asked"; echo; }
     echo "Answer: $answer"
+    echo
+  fi
+  if [ "$step" = sync ]; then
+    echo "## The merge"
+    echo
+    echo "The health job could not bring \`$branch\` in step on its own. Merge each ref below into it, in this order:"
+    echo
+    sed 's/^/- `/; s/$/`/' "$reports/sync.md"
+    echo
+    echo "1. \`git fetch origin\`, then \`git merge <ref>\` for each. Never rebase, never reset, never force."
+    echo "2. Resolve each conflict so both sides keep their intent (your role's merge rules)."
+    echo "3. Build and run the tests the conflicted files touch. Fix what the merge broke."
+    echo "4. Commit each merge as \`chore: merge <ref> into $branch\`."
+    echo "5. When \`origin/$branch\` exists, push with \`git push origin HEAD:$branch\`. A merge always fast-forwards it."
+    echo
+    echo "Two intents that cannot both hold: \`git merge --abort\` and stop with status gate, gate ambiguity, each file and the choice in the message."
+    echo "Checks that stay red after the merge: stop with status fail, the merge committed but not pushed."
+    echo "Your own step is $own_step; it runs after this one. Do none of it here."
     echo
   fi
   if [ -s "$reports/health.md" ] || [ -s "$reports/resume.md" ]; then

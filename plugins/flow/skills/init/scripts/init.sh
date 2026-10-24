@@ -157,7 +157,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  # health:                   # what the health job does with a claim, and when it speaks up"
       echo "  #   grace: 10m              # a run record with no live process for this long is a dead run"
       echo "  #   max_resumes: 3          # resumes of a dead run in a row, while the step does not advance"
-      echo "  #   behind_base: 20         # a task branch this many commits behind the base is flagged"
+      echo "  #   behind_base: 20         # a task branch more commits behind the base gets the base merged in"
       echo "  #   gate_reminder: 24h      # a gate waiting this long gets one reminder per interval"
       echo "# The intake job files the notes in this file as items (jobs/intake.sh, nightly):"
       echo "# intake:"
