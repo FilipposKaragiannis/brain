@@ -66,6 +66,12 @@ test('FlowHome_GatesRunsClaimsEvents', async () => {
   assert.equal(facts.events[0]?.kind, 'comments', 'because events come newest first');
 });
 
+test('FlowHome_ClaimWithASyncNote_ReadsItsRefs', async () => {
+  const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  const pending = Object.fromEntries(facts.claims.map((claim) => [claim.item, claim.syncPending]));
+  assert.deepEqual(pending, { 'gh#7': ['origin/flow/gh-7', 'origin/main'], 'gh#9': null, 'gh#5': null }, "because the note lives in the claim's worktree under .flow/reports/<item>, and a claim without one has nothing pending");
+});
+
 test('FlowHome_GateQuestions_FromPluginList', async () => {
   const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
   assert.equal(facts.gates[0]?.questions?.[1]?.recommended, 'no, the plugin said so', 'because the plugin\'s parse of the message is the one the card shows');

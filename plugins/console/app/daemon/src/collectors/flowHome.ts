@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseEvents } from '../events.ts';
 import { EVENTS_KEPT } from '../snapshot.ts';
+import { readSyncNote } from '../syncNote.ts';
 import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
 import type { CommandRunner } from './exec.ts';
@@ -38,6 +39,8 @@ export type ClaimRecord = {
   step: string;
   claimedAt: string;
   host: string;
+  /** The refs the item's sync note names (`<worktree>/.flow/reports/<item>/sync.md`), or null with none. */
+  syncPending: string[] | null;
 };
 
 export type FlowHomeFacts = {
@@ -53,6 +56,12 @@ export type FlowHomeFacts = {
   pluginSource: PluginSource | null;
   /** Why `gate.sh list --json` gave no parse this read, or null when it was not needed or worked. */
   gateListError: string | null;
+  /**
+   * Whether each step of the plugin's step table (`steps.<step>.worktree` in its profiles.json,
+   * what next.sh's `step_field <step> worktree` reads) runs in a claimed worktree; null when the
+   * plugin or its table could not be read.
+   */
+  worktreeSteps: Record<string, boolean> | null;
 };
 
 const PLUGIN_LOOKUP_TIMEOUT_MS = 5000;
@@ -141,14 +150,16 @@ async function readClaims(paths: string[]): Promise<ClaimRecord[]> {
     if (source === null) continue;
     try {
       const value = JSON.parse(source) as Record<string, unknown>;
+      const item = text(value, 'item');
       claims.push({
         worktreePath,
-        item: text(value, 'item'),
+        item,
         branch: text(value, 'branch'),
         base: text(value, 'base'),
         step: text(value, 'step'),
         claimedAt: text(value, 'claimed_at'),
         host: text(value, 'host'),
+        syncPending: item === '' ? null : await readSyncNote(worktreePath, item),
       });
     } catch { continue; }
   }
@@ -291,5 +302,17 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
     return { ...gate, questions: cached !== undefined && cached.message === gate.message ? cached.questions : null };
   });
   const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
-  return { flowHome, config, gates, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError };
+  const worktreeSteps = pluginRoot === null ? null : await readWorktreeSteps(pluginRoot);
+  return { flowHome, config, gates, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, worktreeSteps };
+}
+
+/** The `worktree` flag of every step in the plugin's profiles.json, as next.sh's `step_field` reads it; null when unreadable. */
+export async function readWorktreeSteps(pluginRoot: string): Promise<Record<string, boolean> | null> {
+  const source = await readText(path.join(pluginRoot, 'profiles.json'));
+  if (source === null) return null;
+  try {
+    const steps = (JSON.parse(source) as { steps?: unknown }).steps;
+    if (typeof steps !== 'object' || steps === null) return null;
+    return Object.fromEntries(Object.entries(steps as Record<string, unknown>).map(([name, step]) => [name, (step as { worktree?: unknown } | null)?.worktree === true]));
+  } catch { return null; }
 }

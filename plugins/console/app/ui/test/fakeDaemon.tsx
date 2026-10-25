@@ -123,7 +123,7 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 2,
+    schema: 3,
     takenAt,
     project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', poolMax: 9 },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
@@ -143,7 +143,7 @@ export function actionRecord(id: string, state: ActionRecord['state'], args: Rec
   return {
     id, kind: 'job.run', args, state, command: ['sh', `${PLUGIN}/scripts/jobs.sh`, 'run', job], locks: [`job:${job}`],
     requestedAt: TAKEN_AT, startedAt: TAKEN_AT, endedAt: ended ? ENDED_AT : null,
-    exitCode: state === 'done' ? 0 : ended ? 1 : null, timedOut: false, outcome: state === 'done' ? 'started' : null, outputTail: '', outputBytes: 0, note: null,
+    exitCode: state === 'done' ? 0 : ended ? 1 : null, timedOut: false, outcome: state === 'done' ? 'started' : null, outputTail: '', outputBytes: 0, note: null, conflict: null,
   };
 }
 
@@ -165,7 +165,7 @@ export function boardItem(id: string, title: string): Item {
 export function poolWorktree(name: string): Worktree {
   return {
     name, path: `/p-wt/${name}`, role: 'pool', state: 'free', flags: [], branch: null, head: null, aheadOfBase: 0, behindBase: 0, dirtyFiles: 0,
-    lastCommitAt: null, claim: null, claimAgeSeconds: null, item: null, itemUrl: null, itemTitle: null, gate: null, staleReason: null, agents: [], sessions: [],
+    lastCommitAt: null, claim: null, claimAgeSeconds: null, item: null, itemUrl: null, itemTitle: null, gate: null, staleReason: null, agents: [], sessions: [], syncPending: null,
   };
 }
 

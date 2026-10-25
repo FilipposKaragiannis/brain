@@ -47,7 +47,7 @@ test('Snapshot_ServedWithToken', async () => {
   try {
     const response = await fetch(`${base}/api/projects/project/snapshot`, { headers: { authorization: 'Bearer tok' } });
     const picture = (await response.json()) as Snapshot;
-    assert.equal(picture.schema, 2, 'because readers pin the schema version');
+    assert.equal(picture.schema, 3, 'because readers pin the schema version');
     assert.equal(picture.counts.running, 1, 'because the fake process list has one agent in a pool worktree');
     assert.equal(picture.sources.board.ok, true, 'because the board was read');
     assert.equal(picture.items.length, 7, 'because the fake board lists six items and the gh#5 claim adds one the board never saw');
@@ -70,7 +70,7 @@ test('EventStream_SendsCurrentSnapshotFirst', async () => {
     const { value } = await reader.read();
     controller.abort();
     const text = new TextDecoder().decode(value);
-    assert.ok(text.startsWith('event: snapshot\ndata: {"schema":2'), 'because a new listener needs the picture before any change');
+    assert.ok(text.startsWith('event: snapshot\ndata: {"schema":3'), 'because a new listener needs the picture before any change');
   } finally { await close(); }
 });
 

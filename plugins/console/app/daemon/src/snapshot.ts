@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 2;
+export const SNAPSHOT_SCHEMA_VERSION = 3;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -150,6 +150,12 @@ export type Worktree = {
    * unattended agent, and never a host's own server (`codex app-server`, `claude daemon`).
    */
   sessions: ProcessInfo[];
+  /**
+   * The refs the flow's sync note for the claimed item names (`<worktree>/.flow/reports/<item>/sync.md`,
+   * one per line), which the item's next run merges first as the sync step; null with no claim or no note.
+   * The health job writes it for a merge it cannot make cleanly, `sync.handoff` for a conflicted sync.
+   */
+  syncPending: string[] | null;
 };
 
 export type Item = {
@@ -381,6 +387,7 @@ export type ActionKind =
   | 'worktree.claim'
   | 'worktree.release'
   | 'worktree.sync'
+  | 'sync.handoff'
   | 'steward.health'
   | 'jobs.install'
   | 'job.uninstall'
@@ -396,6 +403,9 @@ export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
  * attached action runs, and on a failed or rejected one.
  */
 export type ActionOutcome = 'started' | 'finished';
+
+/** How a `worktree.sync` conflicted: the refs still to merge (the conflicting one first, in the order sync.sh tries them) and the files git reported. */
+export type SyncConflict = { refs: string[]; files: string[] };
 
 export type ActionRecord = {
   id: string;
@@ -417,6 +427,8 @@ export type ActionRecord = {
   output?: string;
   /** What a finished action wants said beside its state, such as the jobs `jobs.sh install` left as they were; null for most. */
   note: string | null;
+  /** Set when a `worktree.sync` ended in a merge conflict, which it aborted; null for every other ending and kind. */
+  conflict: SyncConflict | null;
 };
 
 /*

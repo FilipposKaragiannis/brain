@@ -169,6 +169,7 @@ function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Wor
       staleReason: staleReason(context, flags, input.flow.config.base, now),
       agents: context.agents.map(processInfo),
       sessions: context.sessions.map(processInfo),
+      syncPending: context.claim?.syncPending ?? null,
     };
   });
 }
