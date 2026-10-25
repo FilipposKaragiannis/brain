@@ -80,17 +80,37 @@ function WorktreeRows({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
 
 function worktreeNote(worktree: Worktree, snapshot: Snapshot) {
   if (worktree.state === 'stale') {
-    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action">{staleWayOut(worktree, snapshot.project.base)}</span></>;
+    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action"><StaleWayOut worktree={worktree} snapshot={snapshot} /></span></>;
   }
   const session = worktree.sessions[0];
   if (worktree.state === 'free' && session !== undefined) return <FreeWithSession session={session} count={worktree.sessions.length} takenAt={snapshot.takenAt} />;
   return null;
 }
 
-function staleWayOut(worktree: Worktree, projectBase: string): string {
+/**
+ * Whether the console can merge the base in for you: the same checks the daemon makes before a
+ * `worktree.sync` (claimed, nothing uncommitted, no run record for its item, no agent in it).
+ */
+export function canSync(worktree: Worktree, snapshot: Snapshot): boolean {
+  const item = worktree.claim?.item ?? null;
+  return worktree.role === 'pool' && item !== null && worktree.dirtyFiles === 0 && worktree.agents.length === 0 && !snapshot.runs.some((run) => run.item === item);
+}
+
+/** The way out of a stale worktree: Merge <base> in as a button when the console can do it, else in words. */
+function StaleWayOut({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
+  const base = worktree.claim?.base || snapshot.project.base;
+  const behind = worktree.flags.includes('stale-branch');
+  const idle = worktree.flags.includes('idle');
+  if (behind && canSync(worktree, snapshot)) {
+    return <><ActionButton kind="worktree.sync" args={{ target: worktree.name }} label={`Merge ${base} in`} primary />{idle ? " and run the item's next step, or release the worktree." : ', or release the worktree.'}</>;
+  }
+  return <>{staleWayOut(behind, idle, base)}</>;
+}
+
+function staleWayOut(behind: boolean, idle: boolean, base: string): string {
   const steps: string[] = [];
-  if (worktree.flags.includes('stale-branch')) steps.push(`Merge ${worktree.claim?.base ?? projectBase} in`);
-  if (worktree.flags.includes('idle')) steps.push(steps.length === 0 ? "Run the item's next step" : "run the item's next step");
+  if (behind) steps.push(`Merge ${base} in`);
+  if (idle) steps.push(steps.length === 0 ? "Run the item's next step" : "run the item's next step");
   if (steps.length === 0) return 'Release the worktree, or look at why it stopped.';
   return `${steps.join(' and ')}, or release the worktree.`;
 }

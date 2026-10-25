@@ -177,6 +177,7 @@ on every state change and at most twice a second while output arrives.
 | `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
+| `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished` |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
 | `terminal.open` | `path`, `job?` | a terminal window in `path` (below) | none | `finished` |
@@ -188,6 +189,15 @@ second), `finished` means the work is over. It is null while an attached action 
 failed or rejected one. Every `jobs.sh run <job>` (`job.run`, `steward.health`, `run.start` without
 an item) also re-reads its sources a second time five seconds after it returns
 (`ActionPlan.refreshAgainMs`), so the run it started shows; a daemon that stops drops the wait.
+
+`worktree.sync` brings a claimed pool worktree up to date. The target is an item or a pool
+worktree's name, as for a release; the base is the claim's, else the project's. It is refused, each
+with its own reason, while the worktree has uncommitted files, a run record in `.flow/runs` names
+its item, or an unattended agent works in it. The script runs `git -C <worktree> fetch origin`,
+merges the branch's own upstream when that is ahead, then `origin/<base>` when it exists (else the
+local base), each with `merge --no-edit`; the output names every merge. A merge that conflicts is
+undone with `git merge --abort` and the action fails with the conflicting files in its output.
+When it ends `git` is read again.
 
 `terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, or the
 working directory of an agent or session the snapshot lists; any other path is refused with the
@@ -279,7 +289,9 @@ questions and recommendations as the plugin parses them on flow 1.18.0 and later
 matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`), Worktrees (the
 pool, then the worktrees outside it under their own heading; each row has its item's title, its
 agents and sessions with pid, host and age and the command on hover, why it is stale and the way
-out, a legend for dirty, agents and sessions; Open in Terminal on every row, the project root
+out (for a branch far behind, a "Merge <base> in" button that runs `worktree.sync` when the
+worktree is clean, has no run record and no agent, else the same words without the button), a
+legend for dirty, agents and sessions; Open in Terminal on every row, the project root
 included, Release, Health), Agents and jobs (Open in Terminal on every agent and session row, in
 its working directory; Run, Stop, Pause, Resume and Open in Terminal, which follows the job's log,
 on every job), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and

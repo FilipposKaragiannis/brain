@@ -349,6 +349,7 @@ export type ActionKind =
   | 'job.resume'
   | 'worktree.claim'
   | 'worktree.release'
+  | 'worktree.sync'
   | 'steward.health'
   | 'pr.merge'
   | 'terminal.open'

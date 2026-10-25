@@ -125,3 +125,14 @@ test('Monitor_BoardFailing_DisagreementShownWithTheBoardRed', async () => {
   await monitor.refresh('files');
   assert.deepEqual([gateVsLabels(monitor), monitor.snapshot?.sources.board.ok], [true, false], 'because a board that keeps failing would hold the row back for ever, and the red board on the sources strip says how far to trust it');
 });
+
+test('ActionContext_PoolWorktreesRunsAndProcessFolders_FromTheLatestRead', async () => {
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  await readEverySource(monitor);
+  const context = monitor.actionContext();
+  const wt3 = context.worktrees.find((worktree) => worktree.name === 'project-wt-3');
+  assert.deepEqual([wt3?.item, wt3?.dirtyFiles, wt3?.agentPids], ['gh#9', 2, [100]], 'because a sync is refused on what the console shows: the claim, the dirty files and the agent in it');
+  assert.deepEqual(context.runItems, ['gh#9'], 'because a run record holds its item against a merge');
+  assert.ok(context.processCwds.includes(path.join(FIXTURES, 'project-wt-2', 'src')), 'because a session row may open a terminal in its own folder');
+  monitor.stop();
+});

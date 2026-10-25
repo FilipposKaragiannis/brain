@@ -105,6 +105,12 @@ export class ProjectMonitor {
       jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
       processCwds: (this.facts.processes.facts?.agents ?? []).map((agent) => agent.cwd),
       terminal: null, installedTerminals: [],
+      base: flow?.config.base ?? 'main',
+      worktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role === 'pool').map((worktree) => ({
+        name: worktree.name, path: worktree.path, item: worktree.claim?.item ?? null, claimBase: worktree.claim?.base || null,
+        dirtyFiles: worktree.dirtyFiles, agentPids: worktree.agents.map((agent) => agent.pid),
+      })),
+      runItems: (flow?.runs ?? []).map((run) => run.item),
     };
   }
 
