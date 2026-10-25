@@ -1,7 +1,9 @@
 #!/bin/sh
 # Human gates.
 #   gate.sh raise <item> <gate> <message>   record the gate in the tracker, notify, stop the run
-#   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume
+#   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
+#                                           the decomposition gate on a task with open children
+#                                           splits it (steward.sh split)
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
 #                                           with the claimed worktree, the age and the questions
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
@@ -41,11 +43,17 @@ $message" >/dev/null
     item="$2"; message="${3:-cleared}"
     record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""
     [ -f "$record" ] && { asked="$(json_get "$(cat "$record")" message)"; gate="$(json_get "$(cat "$record")" gate)"; }
+    [ -n "$gate" ] || { gate="$(state_get "$(adapter read "$item" 2>/dev/null)" gate)"; [ "$gate" != none ] || gate=""; }
     # The question and the answer stay in the state, so the next step's brief carries them.
     adapter write-state "$item" "gate=none" "attempts=0" "answered=$gate" "asked=$asked" "answer=$message" \
       "last_event=$(now_iso) gate cleared: $message" >/dev/null
     adapter comment "$item" --body "Gate cleared: $message" >/dev/null
     rm -f "$home/gates/$(item_slug "$item").json"
+    # A task the plan split into tracker tasks is done planning: it waits on its children, and its
+    # worktree goes back to the pool (steward.sh split; a dirty one is kept and said).
+    if [ "$gate" = decomposition ] && split="$("$FLOW_PLUGIN/scripts/steward.sh" split "$item" 2>/dev/null)" && [ -n "$split" ]; then
+      echo "gate cleared on $item. $split"; exit 0
+    fi
     echo "gate cleared on $item; run next $item to continue" ;;
   list)
     case "$#:${2:-}" in
@@ -59,5 +67,5 @@ $message" >/dev/null
       c="$(cat "$f")"
       printf '%s\t%s\t%s\t%s\n' "$(json_get "$c" time)" "$(json_get "$c" item)" "$(json_get "$c" gate)" "$(json_get "$c" message | head -1)"
     done ;;
-  *) sed -n '2,9p' "$0"; exit 2 ;;
+  *) sed -n '2,11p' "$0"; exit 2 ;;
 esac

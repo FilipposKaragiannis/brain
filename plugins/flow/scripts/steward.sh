@@ -15,10 +15,15 @@
 #                                                worktree and every pool worktree
 #   steward.sh sweep [--dry-run]                 release each worktree whose work landed: its item
 #                                                is closed, or its PR is merged
+#   steward.sh split <item>                      a task split into tracker tasks waits on its
+#                                                children: step split, its worktree released
+#                                                (kept when dirty), its branch kept when it holds
+#                                                commits past the base
 #   steward.sh health [--dry-run] [--host H] [--wait]
 #                                                check every claim: clear a dead run, release an
-#                                                empty claim, resume cut-off work, sync branches,
-#                                                remind on old gates, say when the pool is stuck
+#                                                empty claim, finish a split, resume cut-off work,
+#                                                sync branches, remind on old gates, say when the
+#                                                pool is stuck
 # A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named
 # after the last pool entry (../app-wt-3 after ../app-wt-2). worktree_copy lists ignored paths
 # copied from the main worktree when the new one lacks them (.claude/settings.local.json);
@@ -136,6 +141,50 @@ cmd_release() {
     done
   fi
   return 0
+}
+
+# cmd_split <item>: the decomposition gate cleared on a task whose plan made tracker tasks of it.
+# Its step becomes split, which no profile runs and the board shows as waiting on its children,
+# and its worktree goes back to the pool, so its branch stops drifting and the pool does not
+# shrink. A worktree with uncommitted changes is kept and said; a run in flight keeps it too. The
+# branch is never forced: one with commits past the base is kept, and said, for a child that
+# needs them to merge in. Each change is one events.log line and one comment on the item; a call
+# that changes nothing (already split, worktree still dirty) is silent. An epic has nothing to
+# release. Leaves the message in $split_msg. Exit 1 when the item has no open children.
+cmd_split() {
+  sp_item="$1"; split_msg=""
+  sp_data="$(adapter read "$sp_item" 2>/dev/null)" || { echo "flow: cannot read $sp_item, so it is not split" >&2; return 1; }
+  [ "$(json_get "$sp_data" kind)" != epic ] || return 0
+  sp_kids="$(json_get "$sp_data" open_children)"
+  [ "${sp_kids:-0}" -gt 0 ] 2>/dev/null || { split_msg="$sp_item has no open children, so it is not split; its step stays $(state_get "$sp_data" step)"; echo "$split_msg"; return 1; }
+  sp_was="$(state_get "$sp_data" step)"
+  sp_said="split into $sp_kids open child item(s), it waits on them"
+  [ "$sp_was" = split ] || write_state "$sp_item" "step=split" "last_event=$(now_iso) $sp_said"
+  sp_path="$(cmd_find "$sp_item")"
+  if [ -z "$sp_path" ]; then
+    [ "$sp_was" = split ] || split_msg="$sp_said; it holds no worktree"
+  else
+    sp_name="$(basename "$sp_path")"; sp_claim="$(claim_of "$sp_path")"
+    sp_branch="$(json_get "$sp_claim" branch)"; sp_base="$(json_get "$sp_claim" base)"; [ -n "$sp_base" ] || sp_base="$base_branch"
+    if [ -f "$home/runs/$(item_slug "$sp_item").json" ]; then
+      [ "$sp_was" = split ] || split_msg="$sp_said; a run is in flight, so $sp_name is kept until it ends"
+    elif dirty "$sp_path"; then
+      [ "$sp_was" = split ] || split_msg="$sp_said; $sp_name has uncommitted changes, so it is kept: commit or stash them, then steward.sh release $sp_item"
+    else
+      sp_ahead="$(git -C "$sp_path" rev-list --count "$(base_ref "$sp_base")..HEAD" 2>/dev/null)"
+      if (cmd_release "$sp_path" >/dev/null 2>&1); then
+        split_msg="$sp_said; released $sp_name"
+        if [ "${sp_ahead:-0}" -gt 0 ] && git -C "$main" show-ref --verify --quiet "refs/heads/$sp_branch"; then
+          split_msg="$split_msg; $sp_branch keeps its $sp_ahead commit(s) past $sp_base for a child that needs them to merge in"
+        fi
+      else split_msg="$sp_said; could not release $sp_name"; fi
+    fi
+  fi
+  [ -n "$split_msg" ] || return 0
+  mkdir -p "$home"
+  printf '%s\t%s\tsplit\t%s\n' "$(now_iso)" "$sp_item" "$split_msg" >> "$home/events.log"
+  adapter comment "$sp_item" --body "Split: $split_msg." >/dev/null 2>&1 || true
+  echo "$sp_item: $split_msg"
 }
 
 # item_status <item>: open, closed, or nothing when no adapter owns the id or it cannot be read.
@@ -500,6 +549,21 @@ health_claim() {
   isdirty=0; dirty "$p" && isdirty=1
   claimed="$(hpy epoch "$(json_get "$c" claimed_at)")"
   quiet_for=$((now - last)); [ "$last" -gt "$claimed" ] || quiet_for=$((now - claimed))
+  # A split whose gate cleared before flow 1.19.0 (or whose release found the tree dirty) still
+  # holds its worktree: finish it here. Only for a step already split or the decomposition answer.
+  if [ -z "$health_gate" ] && { [ "$step" = split ] || [ "$(state_get "$data" answered)" = decomposition ]; } &&
+     [ "$(json_get "$data" kind)" != epic ] && [ "$(json_get "$data" open_children)" -gt 0 ] 2>/dev/null; then
+    if [ "$dry" -eq 1 ]; then
+      if [ "$isdirty" -eq 0 ]; then health_say "$it" "would finish the split: step split, release $name"; return 0; fi
+      [ "$step" = split ] || health_say "$it" "would mark it split; $name is kept, it has uncommitted changes"
+    else
+      cmd_split "$it" >/dev/null
+      [ -z "$split_msg" ] || { echo "$it: $split_msg"; facts=$((facts + 1)); }
+      if [ ! -f "$p/.flow/claim.json" ]; then claims=$((claims - 1)); claimable=$((claimable + 1)); return 0; fi
+    fi
+    holders="$holders$name $it split, kept: uncommitted changes
+"; return 0
+  fi
   if [ -z "$health_gate" ] && [ "$isdirty" -eq 0 ] && [ "$ahead" -eq 0 ] && [ -z "$results" ] && [ "$quiet_for" -gt "$grace" ]; then
     health_empty "$it" "$p" "$rec" "$last"; [ "$released" -eq 1 ] && return 0
   fi
@@ -640,7 +704,8 @@ case "$cmd" in
   setup) [ $# -ge 1 ] || die "usage: setup <path|item>" 2; cmd_setup "$1" ;;
   prune) cmd_prune "$@" ;;
   sweep) cmd_sweep "$@" ;;
+  split) [ $# -ge 1 ] || die "usage: split <item>" 2; cmd_split "$1" ;;
   health) cmd_health "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,21p' "$0"; exit 2 ;;
+  *) sed -n '2,26p' "$0"; exit 2 ;;
 esac

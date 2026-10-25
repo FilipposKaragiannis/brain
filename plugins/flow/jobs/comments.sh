@@ -6,9 +6,13 @@
 # worktree (the skill spawns the comment-addresser in the task's worktree). Before that, with no
 # model: a reviewer silent past reviews.chase_after is asked again (comments.sh chase), and a PR
 # that conflicts with its base is named in the brief so the skill merges the base in first.
-# A PR whose activity (last update, head commit, mergeable) matches the last pass's is skipped
-# with no model; a named PR always runs. A pass's own replies count as activity, so one quiet
-# pass follows each working one. Nothing open or nothing new: a quiet exit, no model spend.
+# A PR whose activity (last update, head commit, mergeable, unresolved threads and their
+# comments) matches the last pass's is skipped with no model, unless an unresolved thread's last
+# comment is not ours: that thread waits on a pass, so it always runs. A named PR always runs. A
+# pass's own replies count as activity, so one quiet pass follows each working one. A pass the
+# host cut short (a non-zero exit, a timeout, or the host stopping the addresser at its
+# background-task ceiling) is failed: its activity is not kept, the next run tries it again, and
+# the job exits 1. Nothing open or nothing new: a quiet exit, no model spend.
 # Cheap when quiet, so it can run every 5 or 10 minutes; the lock skips an overlap.
 set -u
 job=comments
@@ -49,28 +53,52 @@ prepare_pr() {
 chase_reviewers() { # chase_reviewers <target> <pr>
   "$FLOW_PLUGIN/scripts/comments.sh" chase "$2" 2>&1 | while IFS= read -r line; do job_say "$1: $line" >/dev/null; done
 }
-# activity <target>: one line that changes when anything lands on the PR, read after the chase.
+# activity <target>: one line that changes when anything lands on the PR, read after the chase,
+# and in $awaiting the unresolved threads whose last comment is not ours.
 activity() {
+  awaiting=0
   case "$1" in *#*|local:*) pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)" ;; *) pull="$1" ;; esac
-  [ -n "$pull" ] && state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pull" 2>/dev/null)" || return 0
-  printf '%s %s %s' "$(json_get "$state" updatedAt)" "$(json_get "$state" headRefOid)" "$(json_get "$state" mergeable)"
+  [ -n "$pull" ] && act="$("$FLOW_PLUGIN/scripts/comments.sh" activity "$pull" 2>/dev/null)" || return 0
+  awaiting="$(json_get "$act" awaiting)"
+  printf '%s %s %s threads:%s comments:%s' "$(json_get "$act" updatedAt)" "$(json_get "$act" headRefOid)" "$(json_get "$act" mergeable)" \
+    "$(json_get "$act" unresolved)" "$(json_get "$act" review_comments)"
 }
+# cut_short <output file>: the host's words when it stopped the pass's background work (Claude
+# prints this when a subagent outlives its ceiling after the last turn), or nothing.
+CUT_SHORT='Background tasks still running .*stopping them'
+cut_short() { grep -m1 -E "$CUT_SHORT" "$1" 2>/dev/null; }
 seen_file() { printf '%s/%s.seen/%s' "$(job_log_dir)" "$job" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
-addressed=0; unchanged=0
+addressed=0; unchanged=0; failed=""
+out="$(job_log_dir)/$job.out.$$"
 for t in $targets; do
   note="$(prepare_pr "$t")"
-  seen="$(activity "$t")"
+  activity "$t" > "$out"; seen="$(cat "$out")"
   if [ -z "$one" ] && [ -n "$seen" ] && [ "$seen" = "$(cat "$(seen_file "$t")" 2>/dev/null)" ]; then
-    job_say "$t: nothing new since the last pass, skipped" >/dev/null; unchanged=$((unchanged + 1)); continue
+    if [ "${awaiting:-0}" -eq 0 ] 2>/dev/null; then
+      job_say "$t: nothing new since the last pass, skipped" >/dev/null; unchanged=$((unchanged + 1)); continue
+    fi
+    job_say "$t: $awaiting open thread(s) still wait on a reply" >/dev/null
   fi
   job_say "addressing $t"
-  if host_run "$host" "$main" "$(host_skill_prompt "$host" flow comments "$t.$note Unattended: nobody answers questions; collect owner decisions in the report and stop.")" "$(job_model)" "$(job_effort)" \
-    >> "$(job_log_dir)/$job.log" 2>&1; then
+  host_run "$host" "$main" "$(host_skill_prompt "$host" flow comments "$t.$note Unattended: nobody answers questions; collect owner decisions in the report and stop.")" "$(job_model)" "$(job_effort)" \
+    > "$out" 2>&1
+  code=$?
+  cat "$out" >> "$(job_log_dir)/$job.log"
+  why=""
+  if [ "$code" -ne 0 ]; then why="host exit $code"
+  elif [ -n "$(cut_short "$out")" ]; then why="the host stopped the addresser before it finished"; fi
+  if [ -z "$why" ]; then
     [ -z "$seen" ] || { mkdir -p "$(dirname "$(seen_file "$t")")"; printf '%s\n' "$seen" > "$(seen_file "$t")"; }
   else
-    job_say "$t: host exit $?"
+    rm -f "$(seen_file "$t")"
+    job_say "$t: pass failed, $why; the next run tries it again"
+    failed="$failed $t"
   fi
   addressed=$((addressed + 1))
 done
+rm -f "$out"
 [ "$addressed" -gt 0 ] || { job_say "quiet: nothing new on $unchanged PR(s)"; exit 0; }
+if [ -n "$failed" ]; then
+  job_say "failed:$failed cut short or failed, of $addressed PR(s), $unchanged unchanged"; exit 1
+fi
 job_say "done: $addressed PR(s), $unchanged unchanged"

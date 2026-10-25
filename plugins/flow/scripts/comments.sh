@@ -6,6 +6,9 @@
 #   comments.sh issue-comments <pr>             plain PR comments as JSON (quiz answers live here)
 #   comments.sh ready <pr>                      mark a draft PR ready for review
 #   comments.sh state <pr>                      {state, isDraft, mergedAt, url, headRefName, headRefOid, baseRefName, mergeable, updatedAt}
+#   comments.sh activity <pr>                   what the comments job compares between passes: updatedAt, headRefOid,
+#                                               mergeable, unresolved threads, their comments, and awaiting: the
+#                                               unresolved threads whose last comment is not ours
 #   comments.sh reviewers                       the reviewers each round asks, one per line (reviews.reviewers)
 #   comments.sh request-review <pr> <ask>       ask each reviewer: a comment "@<reviewer> <ask>" each, copilot through the API
 #   comments.sh reviews <pr>                    each reviewer's last request: answered, waiting, chases (JSON lines)
@@ -136,5 +139,17 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
     status=$?; rm -rf "$scratch"; exit $status ;;
   chase)
     chase_pr "$(pr_number "$2")" ;;
-  *) sed -n '2,14p' "$0"; exit 2 ;;
+  activity)
+    pull="$(pr_number "$2")"
+    st="$(gh pr view "$pull" -R "$repo" --json updatedAt,headRefOid,mergeable)" &&
+      th="$("$0" threads "$pull")" && me="$(gh api user -q .login)" || exit 1
+    python3 -I -c '
+import json, sys
+state, threads, me = json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3]
+last = lambda t: (t["replies"][-1] if t["replies"] else t)["author"]
+print(json.dumps({"updatedAt": state.get("updatedAt", ""), "headRefOid": state.get("headRefOid", ""),
+                  "mergeable": state.get("mergeable", ""), "unresolved": len(threads),
+                  "review_comments": sum(1 + len(t["replies"]) for t in threads),
+                  "awaiting": sum(1 for t in threads if last(t) != me)}))' "$st" "$th" "$me" ;;
+  *) sed -n '2,16p' "$0"; exit 2 ;;
 esac

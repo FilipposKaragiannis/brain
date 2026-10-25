@@ -35,8 +35,9 @@ seam contention (append-order seams, shared goldens, vocabulary collisions) on b
 Present the list (title, size, blocked by, contends with, acceptance ownership) and finish with
 status `gate`, gate `decomposition`. On the next run, after the gate is cleared, create the
 items with `scripts/new.sh <kind> <title> --size S --blocked-by a,b --parent <epic>
---body-file <file>` (it picks the tracker for the kind; the body follows the `flow:new` shape), blockers before the slices they block, and verify every
-blocker edge came back from a `read`.
+--body-file <file>` (it picks the tracker for the kind; the body follows the `flow:new` shape;
+a child takes the parent's priority and area unless you pass `--priority` or `--area`), blockers
+before the slices they block, and verify every blocker edge came back from a `read`.
 
 ## Step `plan` (one task)
 1. Choose the decomposition mode and say why. **Local phases** (default): one task branch,
@@ -44,6 +45,11 @@ blocker edge came back from a `read`.
    implementer runs them in parallel temporary worktrees. **Tracker tasks**: when a phase
    would be a PR of its own; create the sub-items as in `tasks` with this item as parent, set
    this item's `blocked_by` to them, and stop with status `gate`, gate `decomposition`.
+   Clearing that gate splits this item: its step becomes `split`, it waits on its children and
+   its worktree goes back to the pool. The children start from the base and open their PRs
+   against it. When this branch holds commits a child needs (an ADR, a design doc), name the
+   branch in that child's `## Notes` ("Merge flow/gh-344 first: it holds ADR 0022") and block
+   the other children on it; its implementer merges the branch in, so its PR carries them.
 2. Write `<reports>/plan.md` from the template in the `flow:plan` skill: goal, non-goals,
    phases (each with concrete items, an autonomous verification with the expected result, its
    `touches` globs, and `independent: yes|no`), the test seams, the docs to update, risks.

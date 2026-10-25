@@ -1,5 +1,47 @@
 # flow
 
+## 1.19.0 (2026-10-25)
+
+- A comments pass the host cut short is failed, not done. A non-zero exit, a timeout, or Claude
+  stopping the addresser at its background-task ceiling ("Background tasks still running ...;
+  stopping them") keeps nothing of the pass: the job says `pass failed`, the run ends `failed:`
+  with exit 1, and the next run addresses the PR again. Before, such a pass counted as done and
+  the skip rule hid its open thread for good.
+- An open review thread is never "nothing new". The skip state now holds the unresolved thread
+  count and their comments as well as the last update, head commit and mergeable state. An
+  unresolved thread whose last comment is not ours runs a pass every time; one we answered last
+  waits on the reviewer and is skipped. `comments.sh activity <pr>` prints what is compared.
+  The first run after the upgrade addresses each open PR once, since the compared state changed:
+  a thread an earlier cut-short pass left open gets its pass then.
+- The comments skill waits for each addresser in the foreground and never ends its turn while
+  one runs.
+- Clearing the decomposition gate on a task whose plan made tracker tasks splits it
+  (`steward.sh split <item>`). Its step becomes `split`: no profile runs it, it is never ready,
+  the board shows `split, waiting on N children`, and `next.sh <item>` says it waits (exit 4),
+  or, once every child is closed, to close it (exit 6). Its worktree goes back to the pool
+  through the steward. A worktree with uncommitted changes is never reset: it stays claimed and
+  the event says so. Each split is one `split` line in `events.log` and a comment on the item.
+- The rule for a split parent's branch: it is kept whenever it holds commits past the base
+  (release never forces a delete), and the event names it with its commit count. The children
+  start from the base and open their PRs against it, since the parent no longer has a claimed
+  branch. A child that needs the parent's commits (an ADR, a design doc) names the parent's
+  branch in its `## Notes`, the other children block on it, and its implementer merges the
+  branch in, so its PR carries them. Delete the parent's branch once they have landed.
+- The health job finishes a split the gate clear could not: a task at step `split`, or whose
+  last answered gate is decomposition, that has open children and still holds a clean worktree
+  is released. So parents split before 1.19.0 free their worktrees on the first health run.
+- A child takes its parent's priority and area. `new.sh --parent` reads the parent and passes
+  its priority and area unless the child names its own, and says so on stderr. A child left
+  without the priority `github.ready_needs` asks for is said too, since it is never ready until
+  one is set. `new.sh` and both adapters' `create` take `--priority` (the
+  `github.fields.priority` field on GitHub, a `priority` key on a local item). Children made
+  before 1.19.0 keep no priority: set it on the tracker.
+- Items carry `area` (from `github.fields.area`) and `priority`, and local items carry
+  `open_children`, as GitHub items already did.
+- The gitignore block `flow:init` writes lists `.flow/*.lock/`, so the `answers`, `pick` and
+  `sweep` lock directories no longer show as untracked. `init --check` names each line the
+  project's block lacks; run `flow:init` to add it.
+
 ## 1.18.0 (2026-10-25)
 
 - `gate.sh list --json` prints the pending gates as one JSON array, oldest first. Each gate has

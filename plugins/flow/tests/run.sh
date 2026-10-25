@@ -381,6 +381,11 @@ epic="$("$P/scripts/new.sh" epic "Big")"
 check "gh create: an epic gets the Epic type, not the label" sh -c "'$P/adapters/github/read.sh' '$epic' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"type\"],i[\"kind\"],i[\"labels\"])==(\"Epic\",\"epic\",[])'"
 bots="$("$P/scripts/new.sh" task "Bot thing" --area Bots)"
 check "gh create: --area goes to the area field" sh -c "python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); i=[x for x in d[\"issues\"] if x[\"number\"]==int(sys.argv[2])][0]; assert i[\"fields\"].get(\"Area\")==\"Bots\", i' '$FAKE_GH_DIR/issues.json' '${bots#gh#}'"
+gpar="$("$P/scripts/new.sh" task "Parent with fields" --size M --priority P1 --area Bots)"
+gkid="$("$P/scripts/new.sh" task "Kid" --size S --parent "$gpar" 2>/dev/null)"
+check "gh create: a child takes the parent's priority and area fields" sh -c "'$P/adapters/github/read.sh' '$gkid' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"priority\"],i[\"area\"],i[\"parent\"])==(\"P1\",\"Bots\",\"$gpar\"), i'"
+"$P/scripts/new.sh" task "Orphan kid" --size S --parent "$bots" > /dev/null 2> "$work/orphan.err"
+check "gh create: a child left without the priority ready_needs asks for is said" grep -q 'has no priority and github.ready_needs asks for one' "$work/orphan.err"
 check "gh vocabulary: the issue types and the area options" sh -c "'$P/adapters/github/vocabulary.sh' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert \"Chore\" in v[\"types\"] and v[\"areas\"]==[\"Bots\",\"Debugging & Observability\"], v'"
 picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
@@ -544,6 +549,36 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a pass the host failed is tried again" grep -q 'comments gh#21' "$HOST_LOG"
+check "comments job: a failed pass is recorded as failed, not done" sh -c "grep -q 'gh#21: pass failed, host exit 1; the next run tries it again' .flow/log/comments.log && grep -q '\"exit\":1,\"result\":\"failed: gh#21 cut short or failed' .flow/log/runs.jsonl"
+# The host stopping the addresser at its background-task ceiling exits 0, and is still a failed pass.
+printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\necho "Background tasks still running 10m after the last turn (subagent \\"Address review thread\\"); stopping them. Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely."\necho "The addresser is working on the one open thread."\n' > "$work/bin/claude"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['updatedAt']='2026-10-24T16:40:00Z'; json.dump(d, open(p,'w'))"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null; code=$?
+check "comments job: a pass the host cut short at its background ceiling is failed, exit 1" sh -c "[ $code -eq 1 ] && grep -q 'gh#21: pass failed, the host stopped the addresser before it finished' .flow/log/comments.log && tail -1 .flow/log/comments.log | grep -q 'failed: gh#21'"
+printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a cut-short pass is tried again with nothing new" grep -q 'comments gh#21' "$HOST_LOG"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: the retry that finished is the last pass, so the next run is quiet" [ ! -s "$HOST_LOG" ]
+# An unresolved thread whose last word is the reviewer's is never nothing new.
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY3'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["threads"] = [{"id": "T_9", "isResolved": False, "isOutdated": False, "path": "src/R.cs", "line": 7,
+                 "comments": {"nodes": [{"databaseId": 901, "body": "This drops the slide.", "author": {"login": "chatgpt-codex-connector"}, "createdAt": "t"}]}}]
+json.dump(d, open(sys.argv[1], "w"))
+PY3
+check "activity: counts the unresolved threads, their comments and the ones awaiting us" sh -c "'$P/scripts/comments.sh' activity 90 | python3 -c 'import json,sys; a=json.load(sys.stdin); assert (a[\"unresolved\"],a[\"review_comments\"],a[\"awaiting\"])==(1,1,1), a'"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a new review thread starts a pass" grep -q 'comments gh#21' "$HOST_LOG"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: an open thread awaiting a reply runs again, never skipped" sh -c "grep -q 'comments gh#21' '$HOST_LOG' && grep -q 'gh#21: 1 open thread(s) still wait on a reply' .flow/log/comments.log"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].append({'databaseId': 902, 'body': 'Kept: the owner decides.', 'author': {'login': 'owner'}, 'createdAt': 't'}); json.dump(d, open(p,'w'))"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: our reply on the thread counts as new once" grep -q 'comments gh#21' "$HOST_LOG"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a thread whose last comment is ours waits on the reviewer, skipped" sh -c "[ ! -s '$HOST_LOG' ] && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 1 PR(s)'"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads']=[]; json.dump(d, open(p,'w'))"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['mergeable']='CONFLICTING'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a PR that conflicts with its base is named in the brief" grep -q 'gh#21. The PR conflicts with its base main: run the Conflicts step first.' "$HOST_LOG"
@@ -1194,6 +1229,12 @@ mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config 
 check "init: a fresh install writes the stamp" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '^source	' .flow/stamp && grep -q '	.codex/rules/flow.rules' .flow/stamp && ! grep -q 'notify.sh' .flow/stamp"
 check "init: --check is clean after install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 check "init: installs the health job wrapper, its default schedule and its state folder in the gitignore" sh -c "[ -x .flow/jobs/health.sh ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.schedule.health)\" = 'every 15m' ] && grep -q '^.flow/health/' .gitignore && grep -q 'health: true' .flow/config.yaml"
+mkdir -p .flow/answers.lock && echo $$ > .flow/answers.lock/pid
+check "init: the gitignore block covers the lock directories, so answers.lock is not untracked" sh -c "grep -qxF '.flow/*.lock/' .gitignore && [ -z \"\$(git status --porcelain --untracked-files=all -- .flow/answers.lock)\" ]"
+rm -rf .flow/answers.lock
+sed -i.bak '/^\.flow\/\*\.lock\/$/d' .gitignore && rm -f .gitignore.bak
+check "init: --check names a flow block that lacks the lock directories" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'drift: .gitignore: the flow block lacks .flow/\*.lock/'"
+check "init: a refresh adds the lock line back" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -qxF '.flow/*.lock/' .gitignore && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 check "init: the fresh config asks codex and claude for reviews" [ "$(FLOW_PLUGIN="$plugin_copy" "$plugin_copy/scripts/comments.sh" reviewers | tr '\n' ' ')" = "codex claude " ]
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 printf '# mine\n' >> .flow/notify.sh
@@ -1254,6 +1295,66 @@ printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop
 : > "$work/curl.log"
 PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
 check "notify: the variable alone is enough, with no URL in the config" sh -c "grep -q 'env.example/hook' '$work/curl.log'"
+
+echo "decomposition: a split parent and its children"
+mkdir -p "$work/split" && cd "$work/split" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init
+for n in 1 2 3; do git worktree add -q --detach "../app-wt-$n"; done
+mkdir -p .flow && printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\n  - ../app-wt-2\n  - ../app-wt-3\nnotify:\n  desktop: false\n' > .flow/config.yaml
+sread() { "$P/adapters/local/read.sh" "$1" | jget "$2"; }
+par="$("$P/scripts/new.sh" task "Split me" --size M --priority P1 --area Bots --body x)"
+"$P/adapters/local/write-state.sh" "$par" step=plan
+wp="$("$P/scripts/steward.sh" claim "$par")"
+printf 'adr\n' > "$wp/adr.md" && git -C "$wp" add adr.md && git -C "$wp" commit -qm "docs: the ADR the children need"
+k1="$("$P/scripts/new.sh" task "Child one" --size S --parent "$par" --body x 2>"$work/split.err")"
+k2="$("$P/scripts/new.sh" task "Child two" --size S --priority P0 --parent "$par" --body x 2>/dev/null)"
+check "new: a child takes its parent's priority and area" [ "$(sread "$k1" priority) $(sread "$k1" area)" = "P1 Bots" ]
+check "new: the inheritance is said on stderr" grep -q "$k1 takes priority P1, area Bots from its parent $par" "$work/split.err"
+check "new: a child that names its own priority keeps it, and still takes the area" [ "$(sread "$k2" priority) $(sread "$k2" area)" = "P0 Bots" ]
+check "local: an item counts its open children" [ "$(sread "$par" open_children)" = 2 ]
+"$P/scripts/gate.sh" raise "$par" decomposition "Two children." >/dev/null 2>&1
+"$P/scripts/gate.sh" clear "$par" "go" > "$work/split.out" 2>&1
+check "split: clearing the decomposition gate makes the step split" [ "$(sread "$par" state.step)" = split ]
+check "split: the parent's clean worktree goes back to the pool" sh -c "[ ! -f '$wp/.flow/claim.json' ] && [ -z \"\$('$P/scripts/steward.sh' find '$par')\" ] && [ -z \"\$('$P/adapters/local/read.sh' '$par' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"worktree\"])')\" ]"
+check "split: a branch with commits past the base is kept, and the event says so" sh -c "git show-ref --verify --quiet refs/heads/flow/local-task-1 && grep -q '	$par	split	.*released app-wt-1; flow/local-task-1 keeps its 1 commit(s) past main' .flow/events.log && grep -q 'released app-wt-1' '$work/split.out'"
+check "split: the parent is commented on" grep -q 'Split: split into 2 open child item(s)' .flow/items/task/1.md
+"$P/scripts/next.sh" "$par" > /dev/null 2> "$work/split.err"; code=$?
+check "split: next on the parent waits on its children (exit 4)" sh -c "[ $code -eq 4 ] && grep -q 'is split and waits on its 2 open child item(s)' '$work/split.err'"
+check "split: the parent is never ready, the children are" sh -c "'$P/adapters/local/list-ready.sh' | python3 -c 'import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)]; assert \"$par\" not in ids and \"$k1\" in ids and \"$k2\" in ids, ids'"
+check "board: a split parent shows it waits on its children, not plan" sh -c "'$P/scripts/board.sh' | grep -q '| $par | task | P1 | M | Split me | split, waiting on 2 children |'"
+"$P/adapters/local/close.sh" "$k1" >/dev/null; "$P/adapters/local/close.sh" "$k2" >/dev/null
+"$P/scripts/next.sh" "$par" > /dev/null 2> "$work/split.err"; code=$?
+check "split: once every child is closed, next says to close the parent (exit 6)" sh -c "[ $code -eq 6 ] && grep -q 'every child is closed' '$work/split.err'"
+# A dirty worktree is never reset: it stays claimed and the event says why.
+dp="$("$P/scripts/new.sh" task "Dirty split" --size M --body x)"; "$P/adapters/local/write-state.sh" "$dp" step=plan
+wd="$("$P/scripts/steward.sh" claim "$dp")"; printf 'wip\n' > "$wd/wip.txt"
+"$P/scripts/new.sh" task "Dirty child" --size S --parent "$dp" --body x >/dev/null 2>&1
+"$P/scripts/gate.sh" raise "$dp" decomposition "One child." >/dev/null 2>&1
+"$P/scripts/gate.sh" clear "$dp" "go" > "$work/split.out" 2>&1
+check "split: a dirty worktree is kept, its change untouched, and said" sh -c "[ -f '$wd/.flow/claim.json' ] && [ -f '$wd/wip.txt' ] && [ \"\$('$P/adapters/local/read.sh' '$dp' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = split ] && grep -q '	$dp	split	.*has uncommitted changes, so it is kept' .flow/events.log"
+lines="$(grep -c "	$dp	split	" .flow/events.log)"
+"$P/scripts/steward.sh" split "$dp" >/dev/null
+check "split: asking again while still dirty says nothing new" [ "$(grep -c "	$dp	split	" .flow/events.log)" = "$lines" ]
+rm "$wd/wip.txt"
+export FLOW_HEALTH_PROCS="$work/split.procs"; : > "$FLOW_HEALTH_PROCS"
+"$P/scripts/steward.sh" health > "$work/split.out" 2>&1
+check "health: a split whose worktree is clean now is released" sh -c "[ ! -f '$wd/.flow/claim.json' ] && grep -q '$dp: split into 1 open child item(s), it waits on them; released' '$work/split.out'"
+# A parent split before 1.19.0: step plan, the decomposition gate answered, still claimed.
+op="$("$P/scripts/new.sh" task "Old split" --size M --body x)"; wo="$("$P/scripts/steward.sh" claim "$op")"
+"$P/scripts/new.sh" task "Old child" --size S --parent "$op" --body x >/dev/null 2>&1
+"$P/adapters/local/write-state.sh" "$op" step=plan gate=none answered=decomposition
+"$P/scripts/steward.sh" health > "$work/split.out" 2>&1
+check "health: a parent split before 1.19.0 is finished: step split, worktree released" sh -c "[ ! -f '$wo/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$op' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = split ]"
+# A task with a child it made for a follow-up, and no decomposition answer, keeps its worktree.
+fp="$("$P/scripts/new.sh" task "Has a follow-up" --size M --body x)"; wf="$("$P/scripts/steward.sh" claim "$fp")"
+"$P/adapters/local/write-state.sh" "$fp" step=implement
+"$P/scripts/new.sh" task "Follow-up" --size S --parent "$fp" --body x >/dev/null 2>&1
+"$P/scripts/steward.sh" health > "$work/split.out" 2>&1
+check "health: an item with children but no decomposition answer is not split" sh -c "[ -f '$wf/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$fp' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = implement ]"
+nc="$("$P/scripts/new.sh" task "No children" --size M --body x)"; "$P/adapters/local/write-state.sh" "$nc" step=plan
+"$P/scripts/gate.sh" raise "$nc" decomposition "None yet." >/dev/null 2>&1
+check "split: a decomposition gate cleared before any child exists leaves the step" sh -c "'$P/scripts/gate.sh' clear '$nc' 'do not split' | grep -q 'run next' && [ \"\$('$P/adapters/local/read.sh' '$nc' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = plan ]"
+unset FLOW_HEALTH_PROCS
 
 echo "gate list --json"
 mkdir -p "$work/gates" && cd "$work/gates" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init

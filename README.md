@@ -60,12 +60,14 @@ step of an item in a fresh subagent; `advance.sh` applies the step's result file
 the run and notify. `flow:board` shows the pool, items, gates and overlaps; `flow:steward`
 claims and releases pool worktrees and never resets uncommitted work; a claim with no free
 worktree grows the pool up to `pool_max` (the entry is appended to the config, the ignored files
-copied, the setup commands run). `flow:new` creates an epic, task or bug in the tracker. `flow:do` takes a plain sentence and routes it to the right skill; `flow:help` is the manual (`help <skill>`, `help lines`, `help gates`); `flow:gate` lists and answers the gates; `auto_gates` in the config lets the flow clear `plan-approval` itself for chosen sizes. `claude --worktree gh-310`
+copied, the setup commands run). `flow:new` creates an epic, task or bug in the tracker; a child takes its parent's priority and area. Clearing the decomposition gate on a task splits it: step `split`, its worktree back to the pool. `flow:do` takes a plain sentence and routes it to the right skill; `flow:help` is the manual (`help <skill>`, `help lines`, `help gates`); `flow:gate` lists and answers the gates; `auto_gates` in the config lets the flow clear `plan-approval` itself for chosen sizes. `claude --worktree gh-310`
 lands in the pool through the project hook `init` prints. The step skills `plan`, `implement`,
 `test`, `review`, `verify`, `pr`, `comments` and `explain` run one step on demand with the same
 agents and briefs `next` uses; `scripts/verify.sh` is the one verify run, `scripts/comments.sh`
 the PR thread plumbing. Unattended: `.flow/run-unattended.sh claude|codex`. Scheduled jobs
-(`jobs/`, installed as `.flow/jobs/*.sh`): `comments` every 30 minutes while PRs are open,
+(`jobs/`, installed as `.flow/jobs/*.sh`): `comments` every 5 or 10 minutes while PRs are open
+(a PR with nothing new costs no model; an open thread awaiting a reply, or a pass the host cut
+short, runs again),
 `next` at a chosen cadence (`--workers N` runs N items in parallel, capped by the pool;
 `notify.idle` says once when nothing is ready), `retro` weekly, `health` every 15 minutes
 (`steward.sh health`: clears a dead run, releases an empty claim, resumes cut-off work, syncs clean

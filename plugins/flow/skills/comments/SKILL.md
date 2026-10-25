@@ -38,6 +38,9 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 5. **Spawn `comment-addresser`** once per thread, in order of file, in the claimed worktree
    (`"$P/scripts/steward.sh" find <item>`, claim when released). One at a time: each commits
    or replies, resolves when done, pushes. A `gate` result means the owner decides; collect it.
+   Wait for each addresser in the foreground and never end the turn while one runs: an
+   unattended host stops background work after the last turn, and the comments job then counts
+   the pass as failed and runs it again.
 6. **Quiz**: when the PR is a draft and a comment carries `<!-- flow:quiz -->`, look for the
    owner's answer comment after it. Grade against the answer key in `<reports>/quiz.md`: every
    question right → `comments.sh ready <pr>` and reply "quiz passed"; otherwise reply with the
