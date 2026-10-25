@@ -127,6 +127,8 @@ export class ProjectMonitor {
         name: worktree.name, path: worktree.path, item: worktree.claim?.item ?? null, claimBase: worktree.claim?.base || null,
         dirtyFiles: worktree.dirtyFiles, behindBase: worktree.behindBase, agentPids: worktree.agents.map((agent) => agent.pid),
         step: (this.current?.items ?? []).find((item) => item.id === worktree.claim?.item)?.step || worktree.claim?.step || '',
+        claimStep: worktree.claim?.step ?? '',
+        trackerStep: (this.facts.board.facts?.items ?? []).find((item) => item.id === worktree.claim?.item)?.state.step ?? '',
       })),
       runItems: (flow?.runs ?? []).map((run) => run.item),
       // A gate record, or the tracker's gate field (what next.sh reads), whichever shows first.

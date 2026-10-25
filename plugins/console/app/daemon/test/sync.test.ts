@@ -114,7 +114,7 @@ test('SyncRefs_TheRefsTheScriptWouldMerge_WithoutMerging', async () => {
 async function runnerOver(worktree: string, dir: string, log: Logger, spawner = childProcessSpawner) {
   const context: ActionContext = {
     root: path.join(dir, 'main'), pluginRoot: path.join(dir, 'plugin'), repo: null, jobsHost: 'claude', pool: [worktree], outsideWorktrees: [], processCwds: [], sessions: [], terminal: null, installedTerminals: [], base: 'main',
-    worktrees: [{ name: 'wt', path: worktree, item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 1, agentPids: [], step: 'implement' }], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true }, nextJob: null,
+    worktrees: [{ name: 'wt', path: worktree, item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 1, agentPids: [], step: 'implement', claimStep: 'implement', trackerStep: 'implement' }], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true }, nextJob: null,
   };
   const events: ActionRecord[] = [];
   const actions = new ActionRunner({ projectId: 'p', context: () => context, spawner, scheduler: realScheduler, clock: () => new Date(), log, stateDir: path.join(dir, 'state'), onRefresh: () => {} });

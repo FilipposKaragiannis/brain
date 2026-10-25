@@ -458,9 +458,26 @@ test('Disagreement_PullsUnreadDoneItem_NoMergeButton', async () => {
   assert.deepEqual([found?.item, found?.action], ['gh#20', null], 'because without pull requests read nothing says the named PR is open, green or even in this repository, so the row shows but no button merges it');
 });
 
-test('Disagreement_ClaimStepVsIssue_NoAction', async () => {
-  const found = disagreementOf(reconcile(withBoardItem(await input(), 'gh#9', { step: 'review' })), 'claim vs issue state');
-  assert.equal(found?.action, null, 'because no button can tell which step is true; a person looks');
+/** gh#9 (claimed in project-wt-3 at step implement) with the issue at step review and no run of it going. */
+async function stepMismatchNoRun(): Promise<ReconcileInput> {
+  const facts = withBoardItem(await input(), 'gh#9', { step: 'review' });
+  facts.flow.runs = [];
+  facts.processes = { agents: [] };
+  return facts;
+}
+const stepMismatchOf = (picture: Snapshot) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === 'claim vs issue state' && entry.message.includes('the claim says step'));
+
+test('Disagreement_ClaimStepVsIssue_ActionSetsTheIssueStep', async () => {
+  const found = stepMismatchOf(reconcile(await stepMismatchNoRun()));
+  assert.deepEqual(found?.action, { kind: 'item.step-sync', args: { item: 'gh#9' }, label: "Set the issue's step to the claim's" }, "because with no run going the claim is the agent's last word on the step, and the issue can be set to it");
+  assert.equal(found?.explain, "The claim in project-wt-3 says gh#9 is at step implement, while the issue says review; the claim is usually right, because it is the agent's own record and is written first, and the button writes step implement to the issue as the flow does at a step change.", 'because the owner must know which store to trust and what the button does');
+});
+
+test('Disagreement_ClaimAtSyncStep_NoAction', async () => {
+  const facts = await stepMismatchNoRun();
+  facts.flow.claims = facts.flow.claims.map((claim) => (claim.item === 'gh#9' ? { ...claim, step: 'sync' } : claim));
+  const found = stepMismatchOf(reconcile(facts));
+  assert.deepEqual([found?.item, found?.action], ['gh#9', null], "because the sync step runs ahead of the item's own step and never moves it, so writing sync to the issue would be wrong");
 });
 
 test('Disagreement_DeadRun_ActionRunsHealth', async () => {

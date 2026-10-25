@@ -197,7 +197,7 @@ test('TerminalOpen_CustomCommandWithCmd_GetsTheQuotedLine', () => {
   assert.equal(plan.args.at(-1), `cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'`, 'because {cmd} is the line to run, quoted for sh');
 });
 
-const CLEAN: SyncFacts = { name: 'app-wt-2', path: '/p/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 27, agentPids: [], step: 'implement' };
+const CLEAN: SyncFacts = { name: 'app-wt-2', path: '/p/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 27, agentPids: [], step: 'implement', claimStep: 'implement', trackerStep: 'implement' };
 const SYNC: ActionContext = { ...CONTEXT, worktrees: [CLEAN, { ...CLEAN, name: 'app-wt-3', path: '/p/app-wt-3', item: 'gh#9', claimBase: 'epic/gh-300' }] };
 
 test('WorktreeSync_ByName_MergesTheProjectBaseWithTheSyncScript', () => {
@@ -335,4 +335,54 @@ test('JobUninstall_RunsJobsShUninstallForThatJob', () => {
   const plan = planned('job.uninstall', { job: 'retro' });
   assert.deepEqual([plan.args.slice(1), plan.locks, plan.refresh], [['uninstall', 'retro'], ['job:retro'], ['jobs']], 'because a job whose schedule left the config is unloaded on its own; install never touches it again');
   assert.equal(planAction('job.uninstall', { job: 'all' }, CONTEXT).ok, false, 'because the console unloads one named job, never every job at once');
+});
+
+/** gh#7 claimed in app-wt-2 at step review while the issue says implement, with no run of it going. */
+const STEP_SYNC: ActionContext = { ...CONTEXT, worktrees: [{ ...CLEAN, claimStep: 'review', trackerStep: 'implement', step: 'review' }] };
+const stepSyncError = (context: ActionContext, item = 'gh#7'): string => { const result = planAction('item.step-sync', { item }, context); return result.ok ? '' : result.error; };
+
+test('StepSync_GithubItem_WritesTheClaimsStepThroughTheAdapter', () => {
+  const plan = planned('item.step-sync', { item: 'gh#7' }, STEP_SYNC);
+  assert.deepEqual([plan.command, ...plan.args.slice(0, 3)], ['sh', '/plugins/flow/1.17.0/adapters/github/write-state.sh', 'gh#7', 'step=review'], "because `adapter write-state` runs the item's adapter's write-state.sh with the item first, as advance.sh calls it");
+  assert.match(plan.args[3] ?? '', /^last_event=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ step implement -> review, set by the console from the claim in app-wt-2$/, 'because advance.sh writes last_event with every step change, and this one must say the console set it');
+  assert.deepEqual([plan.cwd, plan.locks, plan.refresh, plan.outcome, plan.detach], ['/p/app', ['item:gh#7'], ['board', 'files'], 'finished', false], 'because the write holds the item, is over when the script ends, and changes the tracker');
+});
+
+test('StepSync_LocalItem_UsesTheLocalAdapter', () => {
+  const context: ActionContext = { ...CONTEXT, worktrees: [{ ...CLEAN, item: 'local:task/7', claimStep: 'review', trackerStep: 'implement' }] };
+  assert.equal(planned('item.step-sync', { item: 'local:task/7' }, context).args[0], '/plugins/flow/1.17.0/adapters/local/write-state.sh', "because lib/flow.sh's adapter_for picks the adapter from the id's prefix");
+});
+
+test('StepSync_Prepare_OutputNamesOldAndNewStep', async () => {
+  const prepared = await planned('item.step-sync', { item: 'gh#7' }, STEP_SYNC).prepare?.();
+  assert.match(prepared?.output ?? '', /from implement to review/, 'because the owner must see which step was replaced by which');
+  assert.deepEqual(prepared?.event, { name: 'item.step-sync', fields: { item: 'gh#7', worktree: '/p/app-wt-2', from: 'implement', to: 'review' } }, 'because the change is one log line');
+});
+
+test('StepSync_RunRecordNamesTheItem_Refused', () => {
+  assert.match(stepSyncError({ ...STEP_SYNC, runItems: ['gh#7'] }), /run record names gh#7/, 'because a going run moves the step itself');
+});
+
+test('StepSync_AgentInTheWorktree_Refused', () => {
+  assert.match(stepSyncError({ ...STEP_SYNC, worktrees: [{ ...STEP_SYNC.worktrees[0]!, agentPids: [100] }] }), /agent works in app-wt-2 \(pid 100\)/, 'because an agent at work moves the step itself');
+});
+
+test('StepSync_ClaimWithoutStep_Refused', () => {
+  assert.match(stepSyncError({ ...STEP_SYNC, worktrees: [{ ...STEP_SYNC.worktrees[0]!, claimStep: '' }] }), /records no step/, 'because there is nothing to set the issue to');
+});
+
+test('StepSync_ClaimAtSyncStep_Refused', () => {
+  assert.match(stepSyncError({ ...STEP_SYNC, worktrees: [{ ...STEP_SYNC.worktrees[0]!, claimStep: 'sync' }] }), /sync step/, "because the sync step runs ahead of the item's own step and never moves it");
+});
+
+test('StepSync_ClaimStepNotAStepName_Refused', () => {
+  assert.match(stepSyncError({ ...STEP_SYNC, worktrees: [{ ...STEP_SYNC.worktrees[0]!, claimStep: 'review gate=none' }] }), /not a step name/, 'because a claim file must not write other state fields into the tracker');
+});
+
+test('StepSync_UnclaimedOrBadItem_Refused', () => {
+  assert.deepEqual([stepSyncError(STEP_SYNC, 'gh#9') !== '', stepSyncError(STEP_SYNC, '7') !== ''], [true, true], 'because only an item claimed in the pool has a claim to take the step from');
+});
+
+test('StepSync_IssueAlreadyAgrees_Refused', () => {
+  assert.match(stepSyncError({ ...STEP_SYNC, worktrees: [{ ...STEP_SYNC.worktrees[0]!, trackerStep: 'review' }] }), /already says/, 'because there is nothing left to settle');
 });
