@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { CommandOutcome, LaunchdDependencies } from '../src/launchd.ts';
-import { flagsOfPlist, install, LAUNCHD_LABEL, plistPath, startFailure, status, uninstall } from '../src/launchd.ts';
+import { absoluteFlags, flagsOfPlist, install, LAUNCHD_LABEL, plistPath, startFailure, uninstall } from '../src/launchd.ts';
 import { FIXTURE_ROOT } from './fakeRunner.ts';
 
 const OK: CommandOutcome = { code: 0, stdout: '', stderr: '' };
@@ -104,22 +104,22 @@ test('Uninstall_Loaded_BootsOutAndRemovesThePlist', async () => {
   } finally { cleanup(); }
 });
 
-test('Status_Loaded_SaysThePidAndTheUrl', async () => {
-  const { deps, lines, state, cleanup } = fakeLaunchd(fresh());
+test('Install_Plist_RunsTheStartSubcommand', async () => {
+  const { deps, files, state, cleanup } = fakeLaunchd(fresh());
   try {
-    await install(['--project', FIXTURE_ROOT, '--port', '7480', '--state-dir', state], deps);
-    lines.length = 0;
-    deps.launchctl = async () => RUNNING;
-    assert.equal(await status(deps), 0, 'because the job is loaded');
-    assert.deepEqual(lines, [`${LAUNCHD_LABEL} is loaded, pid 4242`, 'http://127.0.0.1:7480/?token=tok'], 'because status says whether it runs and where to open it');
+    await install(['--project', FIXTURE_ROOT, '--state-dir', state], deps);
+    assert.ok((files.get(PLIST) ?? '').includes('<string>/work/brain/app/daemon/src/main.ts</string>\n    <string>start</string>'), 'because main.ts with no subcommand prints the help, so launchd must ask for start');
   } finally { cleanup(); }
 });
 
-test('Status_NotLoaded_SaysSo', async () => {
-  const { deps, lines, cleanup } = fakeLaunchd(fresh());
+test('Install_NoFlagsOverAWrittenAgent_KeepsItsFlags', async () => {
+  const { deps, files, lines, state, cleanup } = fakeLaunchd({ print: [FAILED, RUNNING, OK, RUNNING] });
   try {
-    assert.equal(await status(deps), 1, 'because nothing runs');
-    assert.match(lines[0] ?? '', /is not loaded/, 'because the owner hears it plainly');
+    await install(['--project', FIXTURE_ROOT, '--port', '7480', '--state-dir', state], deps);
+    lines.length = 0;
+    assert.equal(await install([], deps), 0, 'because the flags kept from the agent are valid');
+    assert.deepEqual(flagsOfPlist(files.get(PLIST) ?? ''), ['--project', FIXTURE_ROOT, '--port', '7480', '--state-dir', state], 'because installing a new version must not drop the port or the projects chosen before');
+    assert.match(lines[0] ?? '', /^keeping the flags of /, 'because the owner hears which flags the agent keeps');
   } finally { cleanup(); }
 });
 
@@ -159,6 +159,10 @@ test('Install_LoadedButNoPid_FailsPointingAtTheLog', async () => {
 });
 
 test('StartFailure_UnderLaunchd_SaysItWillBeRestarted', () => {
-  assert.match(startFailure('bad config', { BRAIN_CONSOLE_LAUNCHD: '1' }), /cannot start: bad config\n.*starts it again about every 10 s.*daemon:uninstall/, 'because KeepAlive restarts a daemon whose config went bad, and the log must say why it keeps stopping');
+  assert.match(startFailure('bad config', { BRAIN_CONSOLE_LAUNCHD: '1' }), /cannot start: bad config\n.*starts it again about every 10 s.*brain-console uninstall/, 'because KeepAlive restarts a daemon whose config went bad, and the log must say why it keeps stopping');
   assert.equal(startFailure('bad config', {}), 'brain-console: cannot start: bad config\n', 'because in a terminal the reason alone is enough');
+});
+
+test('AbsoluteFlags_RelativePaths_ResolvedFromHere', () => {
+  assert.deepEqual(absoluteFlags(['--state-dir', 'state', '--config', 'c.json', '--port', '7480']), ['--state-dir', path.resolve('state'), '--config', path.resolve('c.json'), '--port', '7480'], 'because the pid file and the plist replay these flags from another folder, so a relative path would move');
 });

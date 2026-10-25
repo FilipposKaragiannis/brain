@@ -9,6 +9,7 @@ plugins/
   flow/        the work flow: adapters (github, local), profiles, next, steward, board, gates
   craft/       codebase-design (with rule ids), improve
   meta/        write-a-skill (scaffolder), retro (lessons log), map (docs/map.html)
+  console/     the Brain Console: app/ (daemon and web UI, Node 24)
 shared/        sh/json.sh, copied into each plugin by the generator
 roster/        agents.json (every agent, model, effort, tier), briefs/<agent>.md, templates/
 tools/         generate.sh, lint.sh, test.sh, eval.sh, cost.sh, host-cleanup.sh, tests/
@@ -87,6 +88,20 @@ routes each lesson to a durable home, as a PR to this repo when a rule or skill 
 `meta:map` shows `docs/map.html`, the generated map of every plugin, skill, agent and hook
 (`tools/lib/map.py`; stale when the sources change, so `tools/lint.sh` fails until regenerated).
 Tests: `plugins/meta/tests/run.sh`. Evals: `tools/eval.sh craft`, `tools/eval.sh meta`.
+
+## Console plugin
+`console` is the Brain Console: a local daemon that watches every flow project on this machine and
+the web page over it (`plugins/console/app`, see its README). `console:install` puts it in
+`~/.local/share/brain-console/`, writes the `brain-console` command and starts it on login; the
+command starts, stops, opens, updates and edits the projects. Tests: `plugins/console/tests/run.sh`
+and `npm run check` in the app.
+
+## Install the console
+```bash
+claude plugin install console@brain-plugins   # then, in any Claude Code session:
+/console:install
+brain-console open
+```
 
 ## Install
 Claude: `claude plugin marketplace add /work/brain` once, then `claude plugin install <plugin>@brain-plugins`.

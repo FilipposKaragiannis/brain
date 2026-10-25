@@ -1,12 +1,12 @@
 {
   "name": "brain-console",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "private": true,
   "description": "The Brain Console: a local daemon that reconciles every flow project into one live snapshot, and the web UI over it.",
   "type": "module",
   "engines": { "node": ">=24" },
   "scripts": {
-    "start": "node daemon/src/main.ts",
+    "start": "node daemon/src/main.ts start",
     "daemon:install": "node daemon/src/main.ts install",
     "daemon:uninstall": "node daemon/src/main.ts uninstall",
     "daemon:status": "node daemon/src/main.ts status",

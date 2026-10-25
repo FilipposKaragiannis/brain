@@ -1,0 +1,31 @@
+{
+  "name": "console",
+  "version": "0.7.0",
+  "description": "The Brain Console: a local daemon and web page that show every flow project on this machine live and run its actions.",
+  "author": {
+    "name": "Filip Karagiannis"
+  },
+  "keywords": [
+    "console",
+    "dashboard",
+    "daemon",
+    "flow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Console",
+    "shortDescription": "See and drive every flow project",
+    "longDescription": "A local daemon that reconciles every flow project on this machine into one live snapshot, a web page over it, and the brain-console command that installs, starts and opens it.",
+    "developerName": "Filip Karagiannis",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Put the Brain Console on this machine"
+    ],
+    "brandColor": "#0F766E"
+  }
+}

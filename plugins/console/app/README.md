@@ -6,10 +6,16 @@ read that one shape. Node 24, TypeScript run as-is, no runtime dependencies.
 
 ## Run it
 ```bash
-cd app && npm install
-npm start -- --project /work/projects/foosbrawl            # one or more --project flags
-curl -s http://127.0.0.1:7474/api/projects/foosbrawl/snapshot | jq .counts
-curl -N http://127.0.0.1:7474/api/projects/foosbrawl/events  # server-sent events, one snapshot per change
+brain-console start --project /work/projects/foosbrawl   # one or more --project flags, else the settings file
+brain-console open                                         # the page, token included
+curl -s -H "Authorization: Bearer $(cat ~/.local/state/brain-console/token)" http://127.0.0.1:7474/api/projects/foosbrawl/snapshot | jq .counts
+```
+`brain-console` is the launcher `/console:install` writes (see the command, below). From a
+checkout, the developer path is the same daemon through npm:
+```bash
+cd plugins/console/app && npm install
+npm start -- --project /work/projects/foosbrawl            # node daemon/src/main.ts start …
+curl -N "http://127.0.0.1:7474/api/projects/foosbrawl/events?token=$(cat ~/.local/state/brain-console/token)"  # server-sent events, one snapshot per change
 ```
 To try a flow plugin that is not installed, such as a checkout of this repository, start with
 `FLOW_PLUGIN=/path/to/brain/plugins/flow`: every flow script the daemon runs gets it, and the
@@ -30,13 +36,15 @@ the console even from the owner's own browser.
 
 ## Run it on login
 ```bash
-cd app
-npm run daemon:install -- --project /work/projects/foosbrawl   # the same flags as npm start
-npm run daemon:status                                          # loaded or not, the pid and the URL
-npm run daemon:uninstall                                       # stop it and remove the agent
+brain-console install --project /work/projects/foosbrawl   # the same flags as start; none keeps the agent's
+brain-console status                                       # loaded or not, the pid, the port and the URL
+brain-console restart                                      # after an update, or a change of port
+brain-console uninstall                                    # stop it and remove the agent
 ```
 `install` checks the flags as a start would, then writes
-`~/Library/LaunchAgents/com.brain.console.plist`: the absolute `node` and `daemon/src/main.ts`,
+`~/Library/LaunchAgents/com.brain.console.plist`: the absolute `node` and `daemon/src/main.ts`
+(for an installed console the `~/.local/share/brain-console/current` link's path, never the
+version's folder or the plugin cache, so an update needs only `brain-console restart`), `start`,
 the flags with every path made absolute, `RunAtLoad` and `KeepAlive`, `PATH`, `HOME`,
 `BRAIN_CONSOLE_LAUNCHD=1` (and `FLOW_PLUGIN`, `BRAIN_CONSOLE_PROJECTS`, `BRAIN_CONSOLE_STATE` when
 set) in `EnvironmentVariables`, `Umask` 63 (077, so the log is the owner's alone), and stdout and
@@ -48,10 +56,51 @@ daemon; then it loads the plist with `launchctl bootstrap gui/$UID <plist>` (fal
 `launchctl print gui/$UID/com.brain.console` for the job's pid and reports it, and prints the URL
 with the token to the terminal. `KeepAlive` starts a daemon that exits again about every ten
 seconds, a bad config among the causes; such a daemon says in the log why it cannot start and that
-launchd will keep trying until it is fixed or `npm run daemon:uninstall` stops it. `uninstall` runs `launchctl bootout gui/$UID/com.brain.console` and removes the plist.
-`status` says whether launchd has the job and prints the URL from the plist's flags. Settings says
-whether the daemon runs under launchd. The scripts are `daemon:*`, not `install`: npm runs a
+launchd will keep trying until it is fixed or `brain-console uninstall` stops it. `uninstall` runs `launchctl bootout gui/$UID/com.brain.console` and removes the plist.
+`status` says whether launchd has the job and reads the port and files from the plist's flags.
+Settings says whether the daemon runs under launchd. In a checkout the same commands are the npm
+scripts `daemon:install`, `daemon:status` and `daemon:uninstall`, not `install`: npm runs a
 script named `install` on every `npm install`.
+
+## The brain-console command
+One command, `node daemon/src/main.ts <subcommand>` (the launcher `~/.local/bin/brain-console` once
+`/console:install` has run). With no subcommand it prints this list.
+
+| Subcommand | Does |
+|---|---|
+| `start [flags]` | runs the daemon here in the foreground, with the flags under Run it; writes `<state dir>/daemon.pid` (its pid, port, config and flags with every path absolute) while it runs, and refuses while that daemon still runs |
+| `stop` | boots the launchd job out when it is loaded, else sends SIGTERM to the pid in `daemon.pid` |
+| `restart` | `launchctl kickstart -k` for a loaded job, `bootstrap` for an agent on disk but not loaded, else stops the foreground daemon and starts it here with its flags |
+| `status` | loaded or not, the pid, the port, the URL without the token, the config file, the state dir and the version; exit 1 when nothing runs |
+| `open` | opens the URL with the token in the default browser (`open`) |
+| `url` | prints the URL with the token, for scripts; exit 1 when nothing runs |
+| `add <path>` | adds a project (a folder with `.flow/config.yaml`, relative to here or `~/`); through `PUT /api/settings` when the daemon runs, so it is watched at once, else into the config file with the same checks; refused when the launch agent names its projects with `--project` (`brain-console install --project …` changes those) |
+| `remove <path>` | drops a project the same way; the last one stays |
+| `logs [-f]` | the last 200 lines of `<state dir>/daemon.log` (the launchd daemon's), `-f` follows it |
+| `install [flags]` | the launch agent, as under Run it on login; with no flags over an agent already written, its flags are kept |
+| `uninstall` | boots the job out and removes the agent |
+| `update` | when the newest `console` in `$CLAUDE_CONFIG_DIR` (else `~/.claude`)`/plugins/cache/*/console/*/`, then `~/.codex`, is newer than this one: runs its `scripts/install.sh --no-launchd --keep-old`, restarts a loaded job, removes the old versions once the new pid holds the port, and points `current` back and restarts the old version when it does not; else says it is up to date |
+| `version` | the version |
+| `help` | the list |
+
+`/console:install` runs `../scripts/install.sh [--no-launchd] [--keep-old] [--project <root>]…`:
+it copies this folder (without `node_modules` or `ui/dist`, through an archive so a failed read
+fails) to `~/.local/share/brain-console/<version>/` (the version must be digits and dots), runs
+`npm ci` and the UI build in a staging folder beside it, moves a same-version copy aside before
+moving the new one in, points `current` at it, writes the launcher, adds each `--project`, runs
+`brain-console install` unless `--no-launchd`, and removes the other versions unless `--keep-old`.
+A step that fails after `current` moved points it back at the version before. Staging folders a
+killed run left are removed on the next run. Under `BRAIN_CONSOLE_HOME` the launcher exports it,
+so a later install or update from a plain shell stays in that home.
+
+`stop`, `restart`, `status`, `open`, `url`, `add`, `remove` and `logs` find the daemon from the
+launch agent's flags while launchd has it, else from `daemon.pid` in the state dir, which counts
+only while its pid holds its port or runs `main.ts` (a pid reused after a crash is never signalled,
+and the stale file is removed);
+`--state-dir`, `--config` and `--port` point them at another one. The environment overrides what
+a trial must not touch: `HOME` (the agent, the plugin cache, the default config and state),
+`BRAIN_CONSOLE_HOME` (where the console is installed, default `HOME`), `BRAIN_CONSOLE_STATE`,
+`BRAIN_CONSOLE_NODE` (the node the agent runs) and `BRAIN_CONSOLE_LAUNCHCTL` (the launchctl called).
 
 ## Settings
 `~/.config/brain-console/config.json` holds the settings, every field optional:
@@ -513,6 +562,7 @@ again. The action contract (`ActionKind`, `ActionRecord`) is the daemon's, in `s
 ```bash
 npm ci && npm --prefix ui ci
 npm run check      # daemon tsc and node --test, then the UI's tsc, vitest and build
+../tests/run.sh    # the plugin's installer and brain-console update, under a fake home with a fake npm
 ```
 Tests use a fixture flow home under `daemon/test/fixtures` and a fake command runner, so no shell,
 git or GitHub is touched, with one exception: the flow settings tests cut `yaml_get` out of

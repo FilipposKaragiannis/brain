@@ -1,0 +1,1 @@
+/console:install --no-launchd

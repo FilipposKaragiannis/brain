@@ -134,6 +134,29 @@ export function writeConfigFile(file: string, settings: ConfigFile): void {
   renameSync(temporary, file);
 }
 
+/** A new project list, checked as a settings change is: one or more roots, each holding a flow, no two with one id. */
+export function checkProjectList(roots: string[]): Checked<ProjectDefinition[]> {
+  const shape = checkConfigFile({ projects: roots.map((root) => ({ root })) });
+  if (!shape.ok) return shape;
+  if (roots.length === 0) return fail('keep at least one project: the daemon watches one or more');
+  return projectsFromRoots((shape.value.projects ?? []).map((entry) => entry.root));
+}
+
+/**
+ * Merges a checked change into the file as it is on disk now (an edit made by hand since the
+ * daemon started is kept; a file that no longer parses is refused, never overwritten) and writes it.
+ */
+export function saveSettings(paths: ConfigPaths, change: ConfigFile, clearTerminal = false): Checked<ConfigFile> {
+  const onDisk = readStoredSettings(paths);
+  if (!onDisk.ok) return fail(`not saved, so the file is not overwritten: ${onDisk.error}`);
+  const next: ConfigFile = { ...onDisk.value.file, ...change };
+  if (clearTerminal) delete next.terminal;
+  try { writeConfigFile(paths.configFile, next); } catch (error) {
+    return fail(`could not write ${paths.configFile}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { ok: true, value: next };
+}
+
 export type SettingsStoreDependencies = {
   config: DaemonConfig;
   /** The terminals installed now, first choice first; asked on every read, so a new install counts. */
@@ -206,19 +229,13 @@ export class SettingsStore {
     let projects: ProjectDefinition[] | null = null;
     if (change.projects !== undefined) {
       if (this.projectsFrom !== 'file') return fail(`projects cannot change here: ${PROJECT_NOTES[this.projectsFrom] ?? ''}`);
-      if (change.projects.length === 0) return fail('keep at least one project: the daemon watches one or more');
-      const found = projectsFromRoots(change.projects.map((entry) => entry.root));
+      const found = checkProjectList(change.projects.map((entry) => entry.root));
       if (!found.ok) return found;
       projects = found.value;
     }
-    // The file as it is now, not as it was at start: an edit made by hand since then is kept.
-    const onDisk = readStoredSettings(this.deps.config.paths);
-    if (!onDisk.ok) return fail(`not saved, so the file is not overwritten: ${onDisk.error}`);
-    const next: ConfigFile = { ...onDisk.value.file, ...change };
-    if (clearTerminal) delete next.terminal;
-    try { writeConfigFile(this.deps.config.paths.configFile, next); } catch (error) {
-      return fail(`could not write ${this.deps.config.paths.configFile}: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    const saved = saveSettings(this.deps.config.paths, change, clearTerminal);
+    if (!saved.ok) return saved;
+    const next = saved.value;
     this.file = next;
     this.legacy = false;
     if (projects !== null) {

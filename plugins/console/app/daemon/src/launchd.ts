@@ -12,7 +12,7 @@ const EXIT_BAD_CONFIG = 2;
 
 export type CommandOutcome = { code: number | null; stdout: string; stderr: string };
 
-/** Everything `install`, `uninstall` and `status` touch outside the process, so a test never reaches launchd or the disk. */
+/** Everything `install` and `uninstall` touch outside the process, so a test never reaches launchd or the disk. */
 export type LaunchdDependencies = {
   launchctl: (args: string[]) => Promise<CommandOutcome>;
   files: { write(file: string, text: string): void; remove(file: string): void; exists(file: string): boolean; read(file: string): string; mkdir(folder: string): void; privateFolder(folder: string): void };
@@ -24,7 +24,7 @@ export type LaunchdDependencies = {
   env: NodeJS.ProcessEnv;
   uid: number;
   home: string;
-  /** The absolute path of the node that runs this, and of the daemon's main.ts. */
+  /** The absolute path of the node the job runs, and of the daemon's main.ts (the `current` link once installed, see `daemonEntry`). */
   node: string;
   daemon: string;
   configPaths: ConfigPaths;
@@ -54,7 +54,7 @@ export function launchdEnvironment(env: NodeJS.ProcessEnv): Record<string, strin
 }
 
 /**
- * The launch agent: node running main.ts with the flags, kept alive, started at login, its output
+ * The launch agent: node running `main.ts start` with the flags, kept alive, started at login, its output
  * in <state dir>/daemon.log. Umask 63 (077) keeps every file it writes, the log among them, the
  * owner's alone.
  */
@@ -69,7 +69,7 @@ export function plistXml(options: { node: string; daemon: string; flags: string[
   <string>${LAUNCHD_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-${strings([options.node, options.daemon, ...options.flags], '    ')}
+${strings([options.node, options.daemon, 'start', ...options.flags], '    ')}
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -94,24 +94,28 @@ ${environment}
 export function flagsOfPlist(text: string): string[] {
   const array = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(text)?.[1] ?? '';
   const values = [...array.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((match) => (match[1] ?? '').replaceAll('&quot;', '"').replaceAll('&gt;', '>').replaceAll('&lt;', '<').replaceAll('&amp;', '&'));
-  return values.slice(2);
+  const after = values.slice(2);
+  return after[0] === 'start' ? after.slice(1) : after;
 }
 
 /**
  * `install [flags]`: checks the flags as a start would, writes the launch agent, loads it
  * (`launchctl bootstrap`, or `load -w` where bootstrap fails), waits for the port and prints the URL.
- * A loaded job is booted out first, so a second install picks up new flags.
+ * A loaded job is booted out first, so a second install picks up new flags; an install with no
+ * flags keeps the flags of the agent already written, so installing a new version changes nothing else.
  */
 export async function install(argv: string[], deps: LaunchdDependencies): Promise<number> {
   if (argv.includes('--token')) {
     deps.print('brain-console: install does not take --token, since the plist would keep the secret in a file others can read; the daemon reads <state dir>/token, made on the first start');
     return EXIT_BAD_CONFIG;
   }
-  const flags = absoluteFlags(argv);
+  const plist = plistPath(deps.home);
+  const kept = argv.length === 0 && deps.files.exists(plist) ? flagsOfPlist(deps.files.read(plist)) : [];
+  if (kept.length > 0) deps.print(`keeping the flags of ${plist}: ${kept.join(' ')}`);
+  const flags = kept.length > 0 ? kept : absoluteFlags(argv);
   const read = readConfig(flags, deps.env, deps.configPaths);
   if (!read.ok) { deps.print(`brain-console: ${read.error}`); return EXIT_BAD_CONFIG; }
   const { config } = read;
-  const plist = plistPath(deps.home);
   const log = path.join(config.stateDir, 'daemon.log');
   deps.files.mkdir(path.dirname(plist));
   deps.files.privateFolder(config.stateDir);
@@ -122,7 +126,7 @@ export async function install(argv: string[], deps: LaunchdDependencies): Promis
   // Another daemon (an npm start) on the port would answer for a job that only crash-loops beside it.
   const holder = await deps.portHolder(config.port);
   if (holder !== null) {
-    deps.print(`brain-console: port ${config.port} is held by ${holder}; stop it (Ctrl+C an npm start) or install with --port <another>`);
+    deps.print(`brain-console: port ${config.port} is held by ${holder}; stop it (brain-console stop, or Ctrl+C a brain-console start) or install with --port <another>`);
     return EXIT_FAILED;
   }
   const bootstrap = await deps.launchctl(['bootstrap', domain, plist]);
@@ -153,24 +157,8 @@ export async function uninstall(deps: LaunchdDependencies): Promise<number> {
   return EXIT_OK;
 }
 
-/** `status`: whether launchd has the job (and its pid), and the URL it serves, from the flags in the plist. */
-export async function status(deps: LaunchdDependencies): Promise<number> {
-  const plist = plistPath(deps.home);
-  const printed = await deps.launchctl(['print', `gui/${deps.uid}/${LAUNCHD_LABEL}`]);
-  if (printed.code !== 0) {
-    deps.print(`${LAUNCHD_LABEL} is not loaded${deps.files.exists(plist) ? ` (${plist} is there: npm run daemon:install loads it)` : ''}`);
-    return EXIT_FAILED;
-  }
-  const pid = pidOf(printed.stdout);
-  deps.print(`${LAUNCHD_LABEL} is loaded${pid === null ? ', not running now' : `, pid ${pid}`}`);
-  if (!deps.files.exists(plist)) return EXIT_OK;
-  const read = readConfig(flagsOfPlist(deps.files.read(plist)), { ...deps.env, ...launchdEnvironment(deps.env) }, deps.configPaths);
-  if (read.ok) deps.print(consoleUrl(read.config));
-  return EXIT_OK;
-}
-
 /** The pid `launchctl print` names for a running job, or null when it is not running. */
-function pidOf(printed: string): string | null {
+export function pidOf(printed: string): string | null {
   return /^\s*pid = (\d+)$/m.exec(printed)?.[1] ?? null;
 }
 
@@ -180,5 +168,5 @@ function pidOf(printed: string): string | null {
  */
 export function startFailure(error: string, env: NodeJS.ProcessEnv): string {
   const underLaunchd = env['BRAIN_CONSOLE_LAUNCHD'] === '1';
-  return `brain-console: cannot start: ${error}\n${underLaunchd ? `brain-console: launchd (${LAUNCHD_LABEL}) starts it again about every 10 s until this is fixed; npm run daemon:uninstall stops that\n` : ''}`;
+  return `brain-console: cannot start: ${error}\n${underLaunchd ? `brain-console: launchd (${LAUNCHD_LABEL}) starts it again about every 10 s until this is fixed; brain-console uninstall stops that\n` : ''}`;
 }

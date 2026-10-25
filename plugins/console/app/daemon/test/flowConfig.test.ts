@@ -22,7 +22,7 @@ const FOOSBRAWL = readFileSync(path.join(FIXTURES, 'flow-config', 'foosbrawl.yam
  * from steward.sh, cut out of the plugin in this repository and run with sh in a temp folder, so
  * a list the console writes is checked against the parser the flow scripts really use.
  */
-const PLUGIN = path.resolve(import.meta.dirname, '..', '..', '..', 'plugins', 'flow');
+const PLUGIN = path.resolve(import.meta.dirname, '..', '..', '..', '..', 'flow');
 function shellFunction(file: string, name: string): string {
   const source = readFileSync(path.join(PLUGIN, file), 'utf8');
   const start = source.indexOf(`${name}() {`);

@@ -5,6 +5,17 @@
   },
   "plugins": [
     {
+      "name": "console",
+      "source": {
+        "source": "local",
+        "path": "./plugins/console"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Developer Tools"
+    },
+    {
       "name": "craft",
       "source": {
         "source": "local",

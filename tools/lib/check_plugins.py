@@ -23,6 +23,8 @@ INSTALLER_VARS = r"\$\{?(?:CLAUDE_PLUGIN_ROOT|FLOW_PLUGIN|plugin)\}?"
 PATH_TAIL = r"\"?(/[A-Za-z0-9_.\-/]*)"
 OPEN_ENDED = "*?[%<{$|"
 SKIPPED_DIRS = ("evals", "tests")
+# The console app's installed and built files: never shipped from git, never ours to check.
+SKIPPED_PARTS = ("node_modules", "dist")
 
 
 def hook_findings(plugin_dir):
@@ -49,11 +51,14 @@ def hook_findings(plugin_dir):
 
 
 def shipped_files(plugin_dir):
-    for path in glob.glob(os.path.join(plugin_dir, "**", "*"), recursive=True):
-        relative = os.path.relpath(path, plugin_dir).split(os.sep)
-        if relative[0] in SKIPPED_DIRS or not os.path.isfile(path):
+    for folder, dirs, files in os.walk(plugin_dir):
+        relative = os.path.relpath(folder, plugin_dir).split(os.sep)
+        if relative[0] in SKIPPED_DIRS:
+            dirs[:] = []
             continue
-        yield path
+        dirs[:] = sorted(d for d in dirs if d not in SKIPPED_PARTS and not d.startswith("."))
+        for name in sorted(f for f in files if not f.startswith(".")):
+            yield os.path.join(folder, name)
 
 
 def path_findings(plugin_dir):

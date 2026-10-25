@@ -1,0 +1,6 @@
+interface:
+  display_name: "Console Install"
+  short_description: "Put the Brain Console on this machine and start it on login"
+  default_prompt: "Use $install to put the Brain Console on this machine and start it on login."
+policy:
+  allow_implicit_invocation: false

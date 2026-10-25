@@ -15,11 +15,11 @@ from playbooks import EXTRAS, PLAYBOOKS  # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plugins", "meta", "skills", "map", "scripts"))
 from project_map import EFFORT_RANK, MARK_COUNT, MARK_GROUP, MARK_LEGEND, agent_card, inject, load_roster, trigger_of  # noqa: E402,F401  (the plugin ships them)
 
-PLUGIN_ORDER = ["standards", "flow", "craft", "meta"]
+PLUGIN_ORDER = ["standards", "flow", "craft", "meta", "console"]
 MODEL_RANK = {"haiku": 1, "sonnet": 2, "opus": 3, "fable": 4}
 # The brand colours are made for a light ground; these tints carry the same hue on a dark one.
-DARK_TINT = {"standards": "#F2F2F2", "flow": "#C4C4C4", "craft": "#8E8E8E", "meta": "#5E5E5E"}
-LIGHT_TINT = {"standards": "#0E0E0E", "flow": "#4D4D4D", "craft": "#808080", "meta": "#ABABAB"}
+DARK_TINT = {"standards": "#F2F2F2", "flow": "#C4C4C4", "craft": "#8E8E8E", "meta": "#5E5E5E", "console": "#3A3A3A"}
+LIGHT_TINT = {"standards": "#0E0E0E", "flow": "#4D4D4D", "craft": "#808080", "meta": "#ABABAB", "console": "#C8C8C8"}
 # One colour per flow profile, light and dark ground. Used by the transit map and the playbooks.
 LINES = {"bugfix": ("#0E0E0E", "#F2F2F2"), "task-S": ("#4D4D4D", "#C4C4C4"), "task-M": ("#808080", "#8E8E8E"),
          "task-L": ("#ABABAB", "#5E5E5E"), "epic": ("#2B2B2B", "#DADADA")}
