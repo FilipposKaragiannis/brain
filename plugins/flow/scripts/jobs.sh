@@ -53,8 +53,13 @@ live() {
   done
   if loaded "$1"; then launchctl print "$domain/$(label "$1")" 2>/dev/null | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\)$/\1/p'; fi
 }
-# settings_ok: the jobs settings a run would refuse are refused here, before anything starts.
-settings_ok() { _bad="$(host_jobs_problems)"; [ -z "$_bad" ] || { printf '%s\n' "$_bad" | sed 's/^/flow: /' >&2; exit 2; }; }
+# settings_ok <job>...: the jobs settings a run would refuse are refused here, before anything
+# starts: jobs.host for every job, the host's model and effort for the jobs that start sessions.
+settings_ok() {
+  _bad="$(host_jobs_host_problem)"
+  if [ -z "$_bad" ]; then for _j in "$@"; do case "$_j" in comments|intake|retro) _bad="$(host_jobs_pair_problem "$host")"; break ;; esac; done; fi
+  [ -z "$_bad" ] || { printf 'flow: %s\n' "$_bad" >&2; exit 2; }
+}
 descendants() { for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
 
 cmd="${1:-status}"; [ $# -gt 0 ] && shift
@@ -73,7 +78,7 @@ case "$cmd" in
       echo "== $(basename "$f")"; tail -n "${2:-40}" "$f"
     done ;;
   run)
-    [ -n "${1:-}" ] || die "run <job>" 2; known "$1"; settings_ok
+    [ -n "${1:-}" ] || die "run <job>" 2; known "$1"; settings_ok "$1"
     [ -z "$(spec "$1")" ] || py args "$(spec "$1")" >/dev/null || exit 2
     [ -z "$(live "$1")" ] || { echo "$1 is running already: jobs.sh stop $1 ends it"; exit 0; }
     if loaded "$1"; then
@@ -101,7 +106,9 @@ case "$cmd" in
     if [ "$cmd" = pause ]; then echo "paused: $list. A running run finishes; stop ends it now."
     else echo "resumed: $list"; fi ;;
   install)
-    settings_ok; list="$(targets "${1:-all}")"
+    list="$(targets "${1:-all}")"
+    # shellcheck disable=SC2086
+    settings_ok $list
     [ -n "$list" ] || die "no job has a schedule: set jobs.schedule.<job> in .flow/config.yaml" 2
     mkdir -p "$log"
     for j in $list; do

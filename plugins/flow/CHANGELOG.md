@@ -14,8 +14,11 @@
   new keys. Migrate by moving the values under `jobs.claude` (as they were) and `jobs.codex`
   (with Codex names).
 - A bad value stops a job at its start with exit 2 and the line to fix: a `jobs.host` other
-  than claude or codex, a Claude effort other than low, medium, high, xhigh or max, a Codex
-  effort other than low, medium, high or xhigh. `jobs.sh run` and `install` refuse them too.
+  than claude or codex stops every job; a Claude effort other than low, medium, high, xhigh or
+  max, or a Codex effort other than low, medium, high or xhigh, stops only the jobs that read
+  the pair (comments, intake, retro; `next` and `health` never do), and is recorded as a failed
+  run in `runs.jsonl` and the job's log, so `jobs.sh status` shows it. `jobs.sh run` and
+  `install` refuse the same values for the same jobs.
 - `init` writes the new block, each key explained, in a fresh config. `init --check` reports a
   bad `jobs.host` or effort as a gap with its line, does not ask an existing project for the new
   keys, and says once that `jobs.model`/`jobs.effort` are deprecated when they are set.

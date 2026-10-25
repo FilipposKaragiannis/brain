@@ -56,10 +56,11 @@ Facts to answer with:
   `jobs.claude.effort` reach `claude` as `--model` and `--effort`; `jobs.codex.model` and
   `jobs.codex.effort` reach `codex exec` as `-m` and `model_reasoning_effort`. Each value goes as
   written, so it names a model that host knows; empty or missing is the host's default. A Claude
-  effort is low, medium, high, xhigh or max; a Codex one low, medium, high or xhigh. A bad value
-  or a `jobs.host` other than claude or codex stops the job at its start (exit 2, the line to fix
-  in the error); `run` and `install` refuse it too. `next` runs each step with the roster's
-  model and effort instead.
+  effort is low, medium, high, xhigh or max; a Codex one low, medium, high or xhigh. A `jobs.host`
+  other than claude or codex stops every job at its start (exit 2, the line to fix in the
+  error). A bad effort stops only comments, intake and retro, as a failed run that `status`
+  and `history` show; `run` and `install` refuse both. `next` runs each step with the roster's
+  model and effort instead, and so does the run `health` resumes, so neither reads the pair.
 - `jobs.model` and `jobs.effort` are deprecated (read only while the host has no `jobs.<host>`
   map, with the old name mapping for Codex and one warning in the job's log). To migrate, move
   them under `jobs.claude` and give `jobs.codex` Codex names.

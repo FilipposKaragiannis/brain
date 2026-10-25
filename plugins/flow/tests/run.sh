@@ -659,6 +659,8 @@ check "an empty jobs.claude pair is the host default: no --model, no --effort, n
 jobscfg '  codex:\n    effort: max\n'; : > "$HOST_LOG"
 "$P/jobs/comments.sh" codex 'gh#21' >/dev/null 2>"$work/job.err"; code=$?
 check "an effort codex does not take fails the job early, exit 2, naming the key and its line" sh -c "[ $code = 2 ] && grep -q 'flow: .flow/config.yaml:13: jobs.codex.effort is max; codex takes low, medium, high or xhigh' '$work/job.err' && [ ! -s '$HOST_LOG' ]"
+check "a refused effort is a failed run in runs.jsonl, so status shows it" sh -c "tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"comments\".*\"exit\":2,\"result\":\"error: .flow/config.yaml:13: jobs.codex.effort is max'"
+check "a refused effort leaves one line in the job log" [ "$(grep -c 'error: .flow/config.yaml:13: jobs.codex.effort is max' .flow/log/comments.log)" = 1 ]
 jobscfg '  claude:\n    effort: max\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
 check "max is a claude effort" grep -q 'gh#21.*--effort max' "$HOST_LOG"
 jobscfg '  host: vim\n'; : > "$HOST_LOG"
@@ -685,6 +687,13 @@ check "job lock: a pid a restart gave to another process is stale, and that proc
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null"
 home2="$work/home2"; mkdir -p "$home2"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    effort: bogus\n' > "$home2/config.yaml"
+check "next job: a bad jobs.claude.effort does not stop it, it never reads the pair" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'quiet: nothing ready'"
+check "health job: a bad jobs.claude.effort does not stop it either" sh -c "FLOW_HOME='$home2' '$P/jobs/health.sh' claude --dry-run >/dev/null 2>&1; [ \$? != 2 ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"job\":\"health\"' && ! tail -1 '$home2/log/runs.jsonl' | grep -q '\"exit\":2'"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  host: vim\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null 2>"$work/job.err"; code=$?
+check "next job: a bad jobs.host stops every job, exit 2" sh -c "[ $code = 2 ] && grep -q 'jobs.host is vim' '$work/job.err'"
+rm -rf "$home2/log"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > "$home2/config.yaml"
 check "next job: nothing ready is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'quiet: nothing ready'"
 check "next job: no idle notification unless notify.idle is on" sh -c "! grep -q '	idle	' '$home2/events.log' 2>/dev/null"

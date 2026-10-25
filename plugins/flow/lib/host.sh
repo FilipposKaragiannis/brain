@@ -61,21 +61,26 @@ host_jobs_pair() {
   fi
 }
 host_cfg_where() { _l="$(yaml_line "$(config_file)" "$1")"; printf '.flow/config.yaml%s' "${_l:+:$_l}"; }
-# host_jobs_problems [host]: one line per bad jobs value, with its line in the config: a
-# jobs.host other than claude or codex, an effort the host does not take. With a host, its pair
-# (or the fallback) only; without, every jobs.<host> map present and the jobs.host one.
-host_jobs_problems() {
-  _jh="$(cfg jobs.host)"; _hosts="${1:-}"
+# host_jobs_host_problem: a line when jobs.host is set to something other than claude or codex.
+host_jobs_host_problem() {
+  _jh="$(cfg jobs.host)"
   case "${_jh:-claude}" in claude|codex) ;; *)
-    printf '%s: jobs.host is %s; it must be claude or codex\n' "$(host_cfg_where jobs.host)" "$_jh"; _jh="" ;; esac
-  if [ -z "$_hosts" ]; then
-    _hosts="$(for _x in claude codex; do host_jobs_has_pair "$_x" && echo "$_x"; done; echo "${_jh:-claude}")"
-    _hosts="$(printf '%s\n' "$_hosts" | sort -u)"
-  fi
-  for _x in $_hosts; do
-    host_jobs_pair "$_x"
-    [ -n "$jobs_effort" ] || continue
-    case " $(host_efforts "$_x") " in *" $jobs_effort "*) continue ;; esac
-    printf '%s: %s.effort is %s; %s takes %s, or empty for its default\n' "$(host_cfg_where "$jobs_from.effort")" "$jobs_from" "$jobs_effort" "$_x" "$(host_efforts_said "$_x")"
+    printf '%s: jobs.host is %s; it must be claude or codex\n' "$(host_cfg_where jobs.host)" "$_jh" ;; esac
+}
+# host_jobs_pair_problem <host>: a line when the host's effort (or the fallback's) is one it
+# does not take.
+host_jobs_pair_problem() {
+  host_jobs_pair "$1"
+  [ -n "$jobs_effort" ] || return 0
+  case " $(host_efforts "$1") " in *" $jobs_effort "*) return 0 ;; esac
+  printf '%s: %s.effort is %s; %s takes %s, or empty for its default\n' "$(host_cfg_where "$jobs_from.effort")" "$jobs_from" "$jobs_effort" "$1" "$(host_efforts_said "$1")"
+}
+# host_jobs_problems: one line per bad jobs value, with its line in the config: jobs.host, then
+# the pair of every jobs.<host> map present and of the jobs.host one (the fallback when absent).
+host_jobs_problems() {
+  host_jobs_host_problem
+  _jh="$(cfg jobs.host)"; case "$_jh" in claude|codex) ;; *) _jh=claude ;; esac
+  for _x in $( (for _y in claude codex; do host_jobs_has_pair "$_y" && echo "$_y"; done; echo "$_jh") | sort -u); do
+    host_jobs_pair_problem "$_x"
   done
 }
