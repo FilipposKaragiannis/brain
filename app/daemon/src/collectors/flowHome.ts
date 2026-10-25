@@ -19,6 +19,8 @@ export type FlowConfig = {
   behindBase: number | null;
   /** jobs.host: the CLI the jobs run unattended, claude by default. */
   jobsHost: string;
+  /** What in the file the console read but the plugin no longer does, such as the old `health.behind_base`. */
+  deprecated: string[];
 };
 
 /**
@@ -83,7 +85,12 @@ function jobsHostOf(value: string | null): string {
 export function parseFlowConfig(source: string): FlowConfig {
   const map: YamlMap = parseYaml(source);
   const poolMax = yamlString(map, 'pool_max');
-  const behindBase = yamlString(map, 'health.behind_base');
+  // The plugin reads jobs.health.behind_base (steward.sh). Console 0.5 read health.behind_base;
+  // that still counts for one release, with a warning, when the new key is absent.
+  const current = yamlString(map, 'jobs.health.behind_base');
+  const legacy = yamlString(map, 'health.behind_base');
+  const behindBase = current ?? legacy;
+  const deprecated = current === null && legacy !== null ? ['health.behind_base is not read by the flow plugin; rename it to jobs.health.behind_base (the console reads the old key until 0.7.0)'] : [];
   const schedule: Record<string, string> = {};
   for (const [job, value] of Object.entries(yamlMap(map, 'jobs.schedule'))) {
     if (typeof value === 'string') schedule[job] = value;
@@ -97,6 +104,7 @@ export function parseFlowConfig(source: string): FlowConfig {
     schedule,
     behindBase: behindBase === null ? null : Number(behindBase),
     jobsHost: jobsHostOf(yamlString(map, 'jobs.host')),
+    deprecated,
   };
 }
 

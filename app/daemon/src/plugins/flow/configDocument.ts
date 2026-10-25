@@ -88,6 +88,7 @@ export function parseDocument(text: string): Parsed {
       if (KEY.test(split.value) && /:( |$)/.test(split.value) && !/^["']/.test(split.value)) return { ok: false, error: `${where}: a list of maps is not in the flat format` };
       const shape = checkValueShape(split.value, where);
       if (shape !== null) return { ok: false, error: shape };
+      if (split.value.includes('\t')) return { ok: false, error: `${where}: a tab in a list item; lib/flow.sh ends a value at a tab, so use spaces` };
       lines.push({ kind: 'item', index, indent, raw, value: split.value, parent: parent.path, head, tail: split.tail });
       continue;
     }
@@ -108,6 +109,7 @@ export function parseDocument(text: string): Parsed {
     if (!split.ok) return split;
     const shape = checkValueShape(split.value, where);
     if (shape !== null) return { ok: false, error: shape };
+    if (split.value.includes('\t') || /\t#/.test(split.tail)) return { ok: false, error: `${where}: a tab in the value of ${key}; lib/flow.sh ends a value at a tab, so use spaces` };
     lines.push({ kind: 'key', index, indent, raw, key, path, value: split.value, head, tail: split.tail });
     open.push({ indent, path, empty: split.value === '', children: 'none' });
   }
@@ -139,6 +141,8 @@ export function leafPaths(map: YamlMap, prefix = ''): string[] {
  */
 export function formatScalar(value: string): { ok: true; text: string } | { ok: false; error: string } {
   if (value.includes('\n')) return { ok: false, error: 'a value cannot span lines in the flat format' };
+  if (value.includes('\t')) return { ok: false, error: `"${value}" holds a tab, where lib/flow.sh ends a value; use spaces` };
+  if (/^\s*[[{]/.test(value)) return { ok: false, error: `"${value}" starts with [ or {, which lib/flow.sh reads as a list even in quotes; only a list key takes one` };
   if (value.includes(' #')) return { ok: false, error: `"${value}" holds " #", which the flow reads as the start of a comment` };
   if (value === '') return { ok: true, text: '""' };
   const plain = !/^[\s"'#[\]{}&*!|>%@`,-]/.test(value) && !/\s$/.test(value) && !value.includes(': ') && !value.endsWith(':') && !value.startsWith('- ');
@@ -181,21 +185,14 @@ function formatAll(values: string[]): { ok: true; texts: string[] } | { ok: fals
   return { ok: true, texts };
 }
 
-/** An inline list when every item can sit between commas, else null. */
-function inlineList(values: string[]): string | null {
-  const formatted = formatAll(values);
-  if (!formatted.ok || values.some((value) => value.includes(',') || value.includes(']'))) return null;
-  return `[${formatted.texts.join(', ')}]`;
-}
-
 /** The lines a new key and its value take, at `indent`. */
 function newLines(key: string, indent: number, shape: Shape, value: Exclude<FieldValue, null>): { ok: true; lines: string[] } | { ok: false; error: string } {
   const pad = ' '.repeat(indent);
   if (shape === 'list') {
-    const items = value as string[];
-    const inline = inlineList(items);
-    if (inline !== null) return { ok: true, lines: [`${pad}${key}: ${inline}`] };
-    const formatted = formatAll(items);
+    // Always the block form, an empty list a bare key: the steward's pool_add_entry appends
+    // `  - <path>` under the key line, and lib/flow.sh stops at an inline value, so an inline
+    // list would hide every entry appended after it.
+    const formatted = formatAll(value as string[]);
     if (!formatted.ok) return formatted;
     return { ok: true, lines: [`${pad}${key}:`, ...formatted.texts.map((text) => `${pad}  - ${text}`)] };
   }
@@ -267,27 +264,17 @@ export function applyChange(text: string, path: string, shape: Shape, value: Fie
   }
   if (shape === 'list') {
     if (children.some((line) => line.kind === 'key')) return { ok: false, error: `${path} is a map in the file; change it in Raw YAML` };
-    const items = value as string[];
-    const itemLines = children.filter((line): line is ItemLine => line.kind === 'item');
-    if (itemLines.length === 0) {
-      const inline = inlineList(items);
-      if (inline !== null) { next[key.index] = `${key.head} ${inline}${key.tail}`; return { ok: true, text: next.join('\n') }; }
-      const block = newLines(key.key, key.indent, 'list', items);
-      if (!block.ok) return block;
-      next.splice(key.index, 1, `${key.head}${key.tail}`, ...block.lines.slice(1));
-      return { ok: true, text: next.join('\n') };
-    }
-    if (items.length === 0) {
-      for (const line of [...itemLines].reverse()) next.splice(line.index, 1);
-      next[key.index] = `${key.head} []${key.tail}`;
-      return { ok: true, text: next.join('\n') };
-    }
-    const formatted = formatAll(items);
+    const formatted = formatAll(value as string[]);
     if (!formatted.ok) return formatted;
+    const itemLines = children.filter((line): line is ItemLine => line.kind === 'item');
+    // Block form always, an inline value (`[a, b]`, or one scalar) becomes a bare key with item
+    // lines under it; an empty list is the bare key alone, as flow:init writes an empty pool.
+    next[key.index] = `${key.head}${key.tail}`;
+    const head = itemLines[0]?.head ?? `${' '.repeat(key.indent + INDENT)}- `;
+    const at = itemLines[0]?.index ?? key.index + 1;
     // The item lines go, the new ones take the first one's place; comments between them stay.
-    const first = itemLines[0]!;
     for (const line of [...itemLines].reverse()) next.splice(line.index, 1);
-    next.splice(first.index, 0, ...formatted.texts.map((entry) => `${first.head}${entry}`));
+    next.splice(at, 0, ...formatted.texts.map((entry) => `${head}${entry}`));
     return { ok: true, text: next.join('\n') };
   }
   // A map: each child line keeps its place, its value rewritten; a child the change drops goes, a new one goes last.
@@ -322,5 +309,7 @@ export function readsBack(text: string, path: string, shape: Shape, value: Field
   const found = valueAt(parseYaml(text), path);
   if (value === null) return found === undefined;
   if (shape === 'scalar') return found === String(value);
+  // A bare key reads as an empty map: that is how the flat format writes an empty list.
+  if (shape === 'list' && Array.isArray(value) && value.length === 0) return found !== undefined && typeof found === 'object' && Object.keys(found).length === 0;
   return JSON.stringify(found) === JSON.stringify(value);
 }

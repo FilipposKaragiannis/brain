@@ -14,7 +14,7 @@ export type FieldGroup = (typeof FIELD_GROUPS)[number] | 'Other';
 export const OTHER_GROUP: FieldGroup = 'Other';
 
 /** What a change needs before it counts: an action to run (with its button), or only a note. */
-export type FollowUp = { note: string; action: { kind: ActionKind; label: string } | null };
+export type FollowUp = { note: string; action: { kind: ActionKind; label: string; args: Record<string, string> } | null };
 
 export type FieldSpec = {
   /** The dotted path, such as `jobs.schedule.next`. */
@@ -49,14 +49,15 @@ export type FlowConfigDocument = {
 };
 
 /** A PUT's answer: the new document, the paths whose value changed, and what those changes need next. */
-export type FlowConfigSaved = FlowConfigDocument & { saved: string[]; followUps: (FollowUp & { paths: string[] })[] };
+/** `notes`: what the save wants the owner to know, such as a file git does not track. */
+export type FlowConfigSaved = FlowConfigDocument & { saved: string[]; followUps: (FollowUp & { paths: string[] })[]; notes: string[] };
 
 const JOBS = ['next', 'comments', 'intake', 'retro', 'health'];
 const ADAPTERS = ['github', 'local'];
 
 const RELOAD_SCHEDULE: FollowUp = {
   note: 'The schedule launchd runs is written at install: run jobs.sh install to reload it.',
-  action: { kind: 'jobs.install', label: 'Reload the schedule' },
+  action: { kind: 'jobs.install', label: 'Reload the schedule', args: {} },
 };
 const NEXT_CLAIM: FollowUp = { note: 'The pool reads this at the next claim; nothing to restart.', action: null };
 
@@ -74,7 +75,7 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('github.fields', 'map', 'Tracker', 'Maps the flow\'s size, priority and area to the names of the organisation\'s issue fields.'),
   field('github.project', 'number', 'Tracker', 'The GitHub project number whose Status column the flow keeps in step; unset leaves projects alone.', { min: 1 }),
   field('github.status', 'map', 'Tracker', 'Renames the project Status options the flow moves items to (backlog, ready, gate, running, review).'),
-  field('github.answer_from', 'list', 'Tracker', 'The GitHub logins whose /answer comments clear a gate, besides the signed-in user.'),
+  field('github.answer_from', 'list', 'Tracker', 'The GitHub logins whose /answer comments clear a gate; empty, only the signed-in gh user\'s answers count.'),
   field('github.ready_needs', 'list', 'Readiness', 'The fields an unstarted item must have filled before the next job will take it.'),
   field('github.priority_order', 'list', 'Readiness', 'The priorities from most to least urgent; the next job takes ready items in this order.'),
   field('base', 'string', 'Worktree pool', 'The branch new task branches start from and pull requests merge into.'),
@@ -159,6 +160,7 @@ function inRange(spec: FieldSpec, value: number): Checked {
 /** A scalar as the file holds it (always text), checked against the field's type. An empty value means unset and always passes. */
 function checkText(spec: FieldSpec, text: string): Checked {
   if (text === '') return ok;
+  if (/^\s*[[{]/.test(text)) return fail(`${spec.path} starts with [ or {, which lib/flow.sh reads as a list even in quotes`);
   switch (spec.type) {
     case 'string': return ok;
     case 'number': return NUMBER.test(text) ? inRange(spec, Number(text)) : fail(`${spec.path} must be a whole number, not "${text}"`);
@@ -179,6 +181,8 @@ function checkText(spec: FieldSpec, text: string): Checked {
 export function checkFileValue(spec: FieldSpec, value: unknown): Checked {
   if (spec.type === 'list') {
     if (typeof value === 'string') return ok;
+    // A bare key with no items is how the flat format writes an empty list.
+    if (value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) return ok;
     return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? ok : fail(`${spec.path} must be a list of text`);
   }
   if (spec.type === 'map') {

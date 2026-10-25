@@ -27,17 +27,22 @@ export const diskSessionFiles: SessionFiles = {
 
 export type SessionLocatorDependencies = { home: string; clock: () => Date; files: SessionFiles };
 
-/** A process the locator looks a session up for: its host, working directory and age. */
-export type SessionProcess = { host: AgentHost; cwd: string; elapsedSeconds: number };
+/** A process the locator looks a session up for: its pid, host, working directory and age. */
+export type SessionProcess = { pid: number; host: AgentHost; cwd: string; elapsedSeconds: number };
 
 const MILLISECONDS_PER_SECOND = 1000;
 const MILLISECONDS_PER_DAY = 86400000;
 /** ps rounds the elapsed time down to the second, so a file written in the process's first second still counts. */
 const START_SLACK_MS = 2000;
-/** How far back the Codex day folders are searched for a process that has run for days. */
+/** A sessions file whose procStart is further than this from the process's start belongs to an earlier process with the same pid. */
+const SAME_PROCESS_MS = 10000;
+/** A process whose transcript the folder scan did not find is scanned again after this, not on every read. */
+const RESCAN_MS = 60000;
+/** How far back the Codex day folders are searched for a process that has run for days, and how long a read session file is remembered. */
 const CODEX_DAYS_BACK = 14;
 /** The session_meta line holds the base instructions, so it can be long; this much is read to find the cwd. */
 const CODEX_HEAD_BYTES = 256 * 1024;
+const SESSIONS_FILE_BYTES = 64 * 1024;
 const TRANSCRIPT_EXTENSION = '.jsonl';
 /** The ids the hosts write: a uuid. Anything else is not a session file of theirs, and never reaches a terminal. */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -77,26 +82,90 @@ export function codexMeta(head: string): { cwd: string; id: string } | null {
   }
 }
 
+/** `~/.claude/sessions/<pid>.json` as claude writes it for every running process. */
+export function claudeSessionsFile(text: string): { pid: number; sessionId: string; cwd: string; procStart: string | null } | null {
+  try {
+    const parsed = JSON.parse(text) as { pid?: unknown; sessionId?: unknown; cwd?: unknown; procStart?: unknown };
+    if (typeof parsed.pid !== 'number' || typeof parsed.sessionId !== 'string' || typeof parsed.cwd !== 'string') return null;
+    return { pid: parsed.pid, sessionId: parsed.sessionId, cwd: parsed.cwd, procStart: typeof parsed.procStart === 'string' ? parsed.procStart : null };
+  } catch { return null; }
+}
+
+type Found = { session: SessionRef | null; certain: boolean };
+type Remembered = { startedMs: number; session: SessionRef | null; scannedAt: number };
+
 /**
- * Finds the transcript a claude or codex process writes, so the console can hand the owner its
+ * Finds the session a claude or codex process writes, so the console can hand the owner its
  * session: a running `claude -p` cannot be attached to, but `claude --resume <id>` opens the
- * same session once it ends. The newest transcript written at or after the process started
- * wins. Codex's `session_index.jsonl` holds ids and thread names but no folder, so the session
- * files under `~/.codex/sessions/<day>/` are read instead: their first line names the cwd.
+ * same session once it ends.
+ *
+ * Claude writes `~/.claude/sessions/<pid>.json` (its sessionId, cwd and procStart) for every
+ * running process, so that answers first, checked against the process's folder and start. Only
+ * without it does the locator fall back to file times: the newest transcript in the folder
+ * written at or after the process started. Codex's `session_index.jsonl` holds ids and thread
+ * names but no folder, so its session files under `~/.codex/sessions/<day>/` are read instead:
+ * their first line names the cwd. A transcript never goes to two pids: the sessions file wins,
+ * then the first process listed; another claimant gets null. A scan's answer is kept for the
+ * life of the process (a miss is tried again a minute later), so a read costs one small file per
+ * claude process.
  */
 export class SessionLocator {
   private readonly deps: SessionLocatorDependencies;
-  /** A Codex session file's first line never changes: read once. */
-  private readonly codexMetas = new Map<string, { cwd: string; id: string } | null>();
+  /** A Codex session file's first line never changes: read once, forgotten after 14 days. */
+  private readonly codexMetas = new Map<string, { meta: { cwd: string; id: string } | null; modified: number }>();
+  /** What the folder scan found per pid, for the life of that process. */
+  private readonly scanned = new Map<number, Remembered>();
 
   constructor(dependencies: SessionLocatorDependencies) { this.deps = dependencies; }
 
-  async find(process: SessionProcess): Promise<SessionRef | null> {
-    const startedMs = this.deps.clock().getTime() - process.elapsedSeconds * MILLISECONDS_PER_SECOND - START_SLACK_MS;
-    return process.host === 'claude' ? this.claude(process.cwd, startedMs) : this.codex(process.cwd, startedMs);
+  /** The session of each process, in the same order; null where none was found or another process holds it. */
+  async assign(processes: SessionProcess[]): Promise<(SessionRef | null)[]> {
+    const now = this.deps.clock().getTime();
+    this.forget(processes, now);
+    const found: Found[] = [];
+    for (const process of processes) found.push(await this.find(process, now));
+    const claimed = new Set(found.flatMap((entry) => (entry.certain && entry.session !== null ? [entry.session.transcript] : [])));
+    return found.map((entry) => {
+      if (entry.session === null || entry.certain) return entry.session;
+      if (claimed.has(entry.session.transcript)) return null;
+      claimed.add(entry.session.transcript);
+      return entry.session;
+    });
   }
 
-  private async claude(cwd: string, startedMs: number): Promise<SessionRef | null> {
+  private forget(processes: SessionProcess[], now: number): void {
+    const live = new Set(processes.map((process) => process.pid));
+    for (const pid of [...this.scanned.keys()]) if (!live.has(pid)) this.scanned.delete(pid);
+    const oldest = now - CODEX_DAYS_BACK * MILLISECONDS_PER_DAY;
+    for (const [file, entry] of [...this.codexMetas]) if (entry.modified < oldest) this.codexMetas.delete(file);
+  }
+
+  private async find(process: SessionProcess, now: number): Promise<Found> {
+    const startedMs = now - process.elapsedSeconds * MILLISECONDS_PER_SECOND - START_SLACK_MS;
+    if (process.host === 'claude') {
+      const fromFile = await this.claudeFromSessionsFile(process, startedMs);
+      if (fromFile !== null) return { session: fromFile, certain: true };
+    }
+    const remembered = this.scanned.get(process.pid);
+    const same = remembered !== undefined && Math.abs(remembered.startedMs - startedMs) <= SAME_PROCESS_MS;
+    if (same && (remembered.session !== null || now - remembered.scannedAt < RESCAN_MS)) return { session: remembered.session, certain: false };
+    const session = process.host === 'claude' ? await this.claudeScan(process.cwd, startedMs) : await this.codexScan(process.cwd, startedMs, now);
+    this.scanned.set(process.pid, { startedMs, session, scannedAt: now });
+    return { session, certain: false };
+  }
+
+  private async claudeFromSessionsFile(process: SessionProcess, startedMs: number): Promise<SessionRef | null> {
+    const text = await this.deps.files.head(path.join(this.deps.home, '.claude', 'sessions', `${process.pid}.json`), SESSIONS_FILE_BYTES);
+    const entry = text === null ? null : claudeSessionsFile(text);
+    if (entry === null || entry.pid !== process.pid || !SESSION_ID.test(entry.sessionId) || path.resolve(entry.cwd) !== path.resolve(process.cwd)) return null;
+    // A file left by an earlier process that had the same pid starts somewhere else.
+    const started = entry.procStart === null ? Number.NaN : Date.parse(entry.procStart);
+    if (!Number.isNaN(started) && Math.abs(started - (startedMs + START_SLACK_MS)) > SAME_PROCESS_MS) return null;
+    const transcript = path.join(claudeProjectFolder(this.deps.home, process.cwd), `${entry.sessionId}${TRANSCRIPT_EXTENSION}`);
+    return { host: 'claude', id: entry.sessionId, transcript, resume: resumeCommand('claude', entry.sessionId) };
+  }
+
+  private async claudeScan(cwd: string, startedMs: number): Promise<SessionRef | null> {
     const folder = claudeProjectFolder(this.deps.home, cwd);
     let best: { file: string; modified: number } | null = null;
     for (const name of await this.deps.files.list(folder)) {
@@ -111,9 +180,8 @@ export class SessionLocator {
     return { host: 'claude', id, transcript: best.file, resume: resumeCommand('claude', id) };
   }
 
-  private async codex(cwd: string, startedMs: number): Promise<SessionRef | null> {
+  private async codexScan(cwd: string, startedMs: number, now: number): Promise<SessionRef | null> {
     const root = path.join(this.deps.home, '.codex', 'sessions');
-    const now = this.deps.clock().getTime();
     const from = Math.max(startedMs - MILLISECONDS_PER_DAY, now - CODEX_DAYS_BACK * MILLISECONDS_PER_DAY);
     const days = new Set<string>();
     for (let at = from; at <= now + MILLISECONDS_PER_DAY; at += MILLISECONDS_PER_DAY) days.add(dayFolder(new Date(at)));
@@ -125,7 +193,7 @@ export class SessionLocator {
         const file = path.join(folder, name);
         const modified = await this.deps.files.modifiedMs(file);
         if (modified === null || modified < startedMs || (best !== null && modified <= best.modified)) continue;
-        const meta = await this.meta(file);
+        const meta = await this.meta(file, modified);
         if (meta === null || !SESSION_ID.test(meta.id) || path.resolve(meta.cwd) !== path.resolve(cwd)) continue;
         best = { file, modified, id: meta.id };
       }
@@ -133,17 +201,25 @@ export class SessionLocator {
     return best === null ? null : { host: 'codex', id: best.id, transcript: best.file, resume: resumeCommand('codex', best.id) };
   }
 
-  private async meta(file: string): Promise<{ cwd: string; id: string } | null> {
-    if (this.codexMetas.has(file)) return this.codexMetas.get(file) ?? null;
+  private async meta(file: string, modified: number): Promise<{ cwd: string; id: string } | null> {
+    const kept = this.codexMetas.get(file);
+    if (kept !== undefined) { kept.modified = modified; return kept.meta; }
     const head = await this.deps.files.head(file, CODEX_HEAD_BYTES);
     const meta = head === null ? null : codexMeta(head);
-    this.codexMetas.set(file, meta);
+    this.codexMetas.set(file, { meta, modified });
     return meta;
   }
+
+  /** How many Codex session files are remembered; tests check the bound. */
+  get codexFilesKept(): number { return this.codexMetas.size; }
 }
 
 /** A locator that finds nothing, for a monitor built without one (tests that do not look at sessions). */
-export const noSessions: Pick<SessionLocator, 'find'> = { find: async () => null };
+export const noSessions: Pick<SessionLocator, 'assign'> = { assign: async (processes) => processes.map(() => null) };
+
+/** A user line that opens with a tag such as `<task-notification>` or `<local-command-stdout>` is the host's wrapper. */
+const WRAPPER_TAG = /^<[a-z][a-z0-9-]*[\s>/]/;
+const COMPACTION_SUMMARY = 'This session is being continued from a previous conversation';
 
 export const TRANSCRIPT_TURNS_DEFAULT = 20;
 export const TRANSCRIPT_TURNS_MAX = 200;
@@ -163,18 +239,21 @@ function textOf(content: unknown): string {
 /**
  * The last `limit` turns with text in a claude transcript (`*.jsonl`, one JSON object per line):
  * user and assistant lines, their `message.content` text parts, oldest first. Meta lines (a
- * command's caveat), side chains (a subagent's own talk) and turns with no text (a tool call, a
+ * command's caveat), the host's wrapper turns (a tag-wrapped notification, command or reminder,
+ * a compaction summary), side chains (a subagent's own talk) and turns with no text (a tool call, a
  * tool result) are left out; a line cut by the tail or not JSON is skipped.
  */
 export function parseTranscript(source: string, limit: number): TranscriptTurn[] {
   const turns: TranscriptTurn[] = [];
   for (const line of source.split('\n')) {
     if (line.trim() === '') continue;
-    let entry: { type?: unknown; isMeta?: unknown; isSidechain?: unknown; timestamp?: unknown; message?: { role?: unknown; content?: unknown } };
+    let entry: { type?: unknown; isMeta?: unknown; isSidechain?: unknown; isCompactSummary?: unknown; timestamp?: unknown; message?: { role?: unknown; content?: unknown } };
     try { entry = JSON.parse(line) as typeof entry; } catch { continue; }
-    if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isMeta === true || entry.isSidechain === true) continue;
+    if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isMeta === true || entry.isSidechain === true || entry.isCompactSummary === true) continue;
     const text = textOf(entry.message?.content).trim();
     if (text === '') continue;
+    // What the host wraps into a user line is not the owner talking: a task notification, a local command and its output, a reminder, a compaction summary.
+    if (entry.type === 'user' && (WRAPPER_TAG.test(text) || text.startsWith(COMPACTION_SUMMARY))) continue;
     turns.push({ at: typeof entry.timestamp === 'string' ? entry.timestamp : null, role: entry.type, text });
   }
   return turns.slice(-limit);

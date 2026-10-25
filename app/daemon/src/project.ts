@@ -55,7 +55,7 @@ export type ProjectMonitorDependencies = {
   log: Logger;
   cadence: Cadence;
   /** Finds each process's transcript; left out, no process has a session. */
-  sessions?: Pick<SessionLocator, 'find'>;
+  sessions?: Pick<SessionLocator, 'assign'>;
 };
 
 const unread = (): Freshness => ({ at: null, ageSeconds: null, ok: false, error: 'not read yet' });
@@ -70,7 +70,7 @@ export class ProjectMonitor {
   private readonly clock: () => Date;
   private readonly log: Logger;
   private readonly cadence: Cadence;
-  private readonly sessions: Pick<SessionLocator, 'find'>;
+  private readonly sessions: Pick<SessionLocator, 'assign'>;
   /** Processes with a session that left the list, newest first, so the owner can still open their session. */
   private ended: EndedProcess[] = [];
   private readonly facts: Facts = {
@@ -85,6 +85,8 @@ export class ProjectMonitor {
   private fingerprint = '';
   private readonly gateQuestions: GateQuestionCache = new Map();
   private gateListError: string | null = null;
+  /** The config's deprecation warnings last logged, so each is logged once per change. */
+  private deprecated = '';
   private current: Snapshot | null = null;
   /** Set by `stop`: a start still making its first reads schedules nothing after it. */
   private stopped = false;
@@ -202,12 +204,16 @@ export class ProjectMonitor {
           this.log.warn('gates.list.failed', { project: this.project.id, error: flowHome.gateListError });
         }
         this.gateListError = flowHome.gateListError;
+        const deprecated = flowHome.config.deprecated.join('; ');
+        if (deprecated !== '' && deprecated !== this.deprecated) this.log.warn('config.deprecated', { project: this.project.id, warning: deprecated });
+        this.deprecated = deprecated;
         return flowHome.gateListError === null ? null : `gate questions: ${flowHome.gateListError}`;
       }
       case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return null;
       case 'processes': {
         const listed = await readProcesses(this.runner);
-        const agents = await Promise.all(listed.agents.map(async (agent) => ({ ...agent, session: await this.sessions.find(agent) })));
+        const sessions = await this.sessions.assign(listed.agents);
+        const agents = listed.agents.map((agent, index) => ({ ...agent, session: sessions[index] ?? null }));
         this.noteEnded(agents);
         this.facts.processes.facts = { agents };
         return null;

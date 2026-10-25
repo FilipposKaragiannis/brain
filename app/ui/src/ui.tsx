@@ -91,6 +91,7 @@ export function ActionButton({ kind, args, label, primary, title }: { kind: Acti
       </button>
       {outcome?.kind === 'refused' && <span className="chip tone-failing" title={outcome.message}>{outcome.message}</span>}
       {outcome?.kind === 'started' && <Chip tone={actionRecordTone(outcome.record)}>{actionStateLabel(outcome.record)}{outcome.record.exitCode !== null && outcome.record.exitCode !== 0 ? ` (exit ${outcome.record.exitCode})` : ''}</Chip>}
+      {outcome?.kind === 'started' && outcome.record.note !== null && <span className="muted action-note">{outcome.record.note}</span>}
     </span>
   );
 }

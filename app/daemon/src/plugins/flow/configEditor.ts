@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { chmod, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { CommandRunner } from '../../collectors/exec.ts';
 import { scriptEnvironment } from '../../collectors/exec.ts';
@@ -15,7 +15,7 @@ export type FlowConfigEditorDependencies = {
   root: string;
   /** Asks git whether the file has uncommitted changes. Injected, so a test never runs git. */
   runner: CommandRunner;
-  /** Re-reads the `files` source, so the snapshot shows the saved file before the reply goes out. */
+  /** Re-reads the sources the file feeds (`files` and `jobs`), so the snapshot shows the saved file before the reply goes out. */
   refresh: () => Promise<void>;
   log: Logger;
 };
@@ -78,12 +78,38 @@ function changedPaths(before: YamlMap, after: YamlMap): string[] {
   return all.filter((leaf) => JSON.stringify(valueAt(before, leaf)) !== JSON.stringify(valueAt(after, leaf)));
 }
 
-/** What the changed keys need next, one entry per follow-up with the keys that need it. */
-function followUpsOf(paths: string[]): (FollowUp & { paths: string[] })[] {
+const SCHEDULE_PREFIX = 'jobs.schedule.';
+
+/** The jobs whose schedule the new file leaves out or empty, among the changed keys. */
+function unscheduled(paths: string[], after: YamlMap): string[] {
+  return paths.filter((changed) => changed.startsWith(SCHEDULE_PREFIX)).filter((changed) => {
+    const value = valueAt(after, changed);
+    return value === undefined || value === '';
+  }).map((changed) => changed.slice(SCHEDULE_PREFIX.length));
+}
+
+/**
+ * What the changed keys need next, one entry per follow-up with the keys that need it.
+ * `jobs.sh install` loads only jobs that still have a schedule (and exits 2 when none has), so a
+ * job whose schedule went gets its own `jobs.sh uninstall <job>`, and the install is offered only
+ * while some schedule is left.
+ */
+export function followUpsOf(paths: string[], after: YamlMap): (FollowUp & { paths: string[] })[] {
   const found = new Map<string, FollowUp & { paths: string[] }>();
+  const removed = unscheduled(paths, after);
+  for (const job of removed) {
+    found.set(`uninstall ${job}`, {
+      note: `jobs.sh install loads only jobs with a schedule, so ${job}'s launchd agent keeps running until jobs.sh uninstall ${job} unloads it.`,
+      action: { kind: 'job.uninstall', label: `Unload ${job}`, args: { job } }, paths: [`${SCHEDULE_PREFIX}${job}`],
+    });
+  }
+  const scheduled = Object.values((valueAt(after, 'jobs.schedule') ?? {}) as Record<string, unknown>).some((value) => typeof value === 'string' && value !== '');
   for (const changed of paths) {
+    // A schedule that went needs its uninstall above, not an install.
+    if (removed.some((job) => changed === `${SCHEDULE_PREFIX}${job}`)) continue;
     const followUp = (fieldAt(changed) ?? fieldCovering(changed))?.followUp ?? null;
     if (followUp === null) continue;
+    if (followUp.action?.kind === 'jobs.install' && !scheduled) continue;
     const entry = found.get(followUp.note) ?? { ...followUp, paths: [] };
     entry.paths.push(changed);
     found.set(followUp.note, entry);
@@ -131,6 +157,8 @@ function checkUnknown(change: FieldChange): string | null {
 export class FlowConfigEditor {
   private readonly deps: FlowConfigEditorDependencies;
   readonly file: string;
+  /** Saves run one at a time: each waits for the one before it has written. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(dependencies: FlowConfigEditorDependencies) {
     this.deps = dependencies;
@@ -143,7 +171,13 @@ export class FlowConfigEditor {
     return { status: HTTP_OK, body: describe(this.file, text) };
   }
 
-  async write(body: unknown): Promise<EditorReply> {
+  write(body: unknown): Promise<EditorReply> {
+    const turn = this.queue.then(() => this.writeNow(body));
+    this.queue = turn.catch(() => {});
+    return turn;
+  }
+
+  private async writeNow(body: unknown): Promise<EditorReply> {
     const request = readRequest(body);
     if (typeof request === 'string') return { status: HTTP_BAD_REQUEST, body: { error: request } };
     const current = await this.text();
@@ -153,20 +187,22 @@ export class FlowConfigEditor {
     if (contentHash(current) !== request.hash) {
       return { status: HTTP_CONFLICT, body: { reason: 'stale', error: `${CONFIG_FILE} changed on disk since it was read; reload it and make the change again` } };
     }
-    if (!request.force) {
-      const dirty = await this.uncommitted();
-      if (dirty !== null) return { status: HTTP_CONFLICT, body: { reason: 'dirty', error: dirty } };
-    }
+    const git = await this.gitState();
+    if (git.dirty !== null && !request.force) return { status: HTTP_CONFLICT, body: { reason: 'dirty', error: git.dirty } };
     const before = parseDocument(current).ok ? parseYaml(current) : {};
-    const saved = changedPaths(before, parseYaml(next.text));
+    const after = parseYaml(next.text);
+    const saved = changedPaths(before, after);
     if (next.text !== current) {
-      try { await writeFile(this.file, next.text); } catch (error) {
-        return { status: HTTP_BAD_REQUEST, body: { error: `could not write ${this.file}: ${error instanceof Error ? error.message : String(error)}` } };
+      // The git check can take seconds, and the steward may append to the pool meanwhile: read again just before writing.
+      if (contentHash((await this.text()) ?? '') !== request.hash) {
+        return { status: HTTP_CONFLICT, body: { reason: 'stale', error: `${CONFIG_FILE} changed on disk while the save was checked; reload it and make the change again` } };
       }
+      const written = await this.replace(next.text);
+      if (written !== null) return { status: HTTP_BAD_REQUEST, body: { error: written } };
       await this.deps.refresh();
       this.deps.log.info('flow.config.saved', { project: this.deps.projectId, file: this.file, keys: saved.join(','), raw: request.kind === 'text', force: request.force });
     }
-    const reply: FlowConfigSaved = { ...describe(this.file, next.text), saved, followUps: followUpsOf(saved) };
+    const reply: FlowConfigSaved = { ...describe(this.file, next.text), saved, followUps: followUpsOf(saved, after), notes: git.note === null ? [] : [git.note] };
     return { status: HTTP_OK, body: reply };
   }
 
@@ -205,11 +241,32 @@ export class FlowConfigEditor {
     return after.ok ? { ok: true, text } : { ok: false, error: `the edit left the file out of the flat format: ${after.error}` };
   }
 
-  /** Why the file must not be written over now, or null when git has it clean. */
-  private async uncommitted(): Promise<string | null> {
+  /**
+   * Whether git holds work in the file that a save would mix with: only a tracked file with
+   * changes is dirty. An untracked file, or a project that is not a git checkout, has no such
+   * work to lose and saves with a note.
+   */
+  private async gitState(): Promise<{ dirty: string | null; note: string | null }> {
     const result = await this.deps.runner({ command: 'git', args: ['status', '--porcelain', '--', CONFIG_FILE], cwd: this.deps.root, timeoutMs: GIT_TIMEOUT_MS, env: scriptEnvironment() });
-    if (result.code !== 0) return `git could not say whether ${CONFIG_FILE} has uncommitted changes (${result.stderr.trim().split('\n')[0] ?? 'no answer'}); save anyway only if you know it is safe`;
-    if (result.stdout.trim() !== '') return `${CONFIG_FILE} has uncommitted changes in git; commit or discard them there first, or save anyway to write over them`;
-    return null;
+    if (result.code !== 0) return { dirty: null, note: `git could not read the project (${result.stderr.trim().split('\n')[0] || 'no answer'}), so nothing tells whether ${CONFIG_FILE} holds uncommitted work` };
+    const status = result.stdout.trim();
+    if (status === '') return { dirty: null, note: null };
+    if (status.startsWith('??')) return { dirty: null, note: `${CONFIG_FILE} is not tracked by git: add and commit it to keep the change` };
+    return { dirty: `${CONFIG_FILE} has uncommitted changes in git; commit or discard them there first, or save anyway to write over them`, note: null };
+  }
+
+  /** Writes the new text whole: a temp file beside it with the old file's mode, renamed over it. Returns why it failed, or null. */
+  private async replace(text: string): Promise<string | null> {
+    const temporary = path.join(path.dirname(this.file), `.config.yaml.${process.pid}.tmp`);
+    try {
+      const { mode } = await stat(this.file);
+      await writeFile(temporary, text);
+      await chmod(temporary, mode & 0o7777);
+      await rename(temporary, this.file);
+      return null;
+    } catch (error) {
+      await rm(temporary, { force: true });
+      return `could not write ${this.file}: ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 }

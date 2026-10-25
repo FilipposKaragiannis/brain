@@ -63,13 +63,24 @@ export type ActionPlan = {
   refreshAgainMs: number | null;
   /** What a clean exit means: the work is over (`finished`) or was handed on and goes on (`started`). */
   outcome: ActionOutcome;
+  /** Reads the output of a finished process for a note on its record (the jobs an install skipped); absent for most plans. */
+  note?: (output: string) => string | null;
 };
+
+/**
+ * `jobs.sh install` leaves a running job as it is ("next: running now, left as it is; install it
+ * again after the run") and still exits 0, so the record says which jobs kept their old schedule.
+ */
+export function installNote(output: string): string | null {
+  const skipped = [...output.matchAll(/^([a-z][a-z0-9-]*): running now, left as it is/gm)].map((match) => match[1]!);
+  return skipped.length === 0 ? null : `skipped ${skipped.join(', ')}: running now, so ${skipped.length === 1 ? 'it keeps' : 'they keep'} the old schedule; install again after the run`;
+}
 
 export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: string };
 
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.stop', 'job.pause', 'job.resume',
-  'worktree.claim', 'worktree.release', 'worktree.sync', 'steward.health', 'jobs.install', 'pr.merge', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -82,6 +93,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'worktree.sync': ['target'],
   'steward.health': [],
   'jobs.install': [],
+  'job.uninstall': ['job'],
   'pr.merge': ['pr', 'method'],
   'terminal.open': ['path', 'job', 'session'],
   refresh: ['source'],
@@ -191,7 +203,16 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     }
     case 'steward.health': return handOn('health', ['job:health'], ['jobs', 'files', 'git']);
     // Writes and loads the schedule of every job jobs.schedule names: after a schedule or jobs.host change in .flow/config.yaml.
-    case 'jobs.install': return sh('jobs.sh', ['install'], FLOW_JOBS.map((job) => `job:${job}`), SCRIPT_TIMEOUT_MS, ['jobs']);
+    case 'jobs.install': {
+      const planned = sh('jobs.sh', ['install'], FLOW_JOBS.map((job) => `job:${job}`), SCRIPT_TIMEOUT_MS, ['jobs']);
+      return planned.ok ? { ok: true, plan: { ...planned.plan, note: installNote } } : planned;
+    }
+    // A job whose schedule left .flow/config.yaml: install never touches it again, so it is unloaded on its own.
+    case 'job.uninstall': {
+      const job = args['job'] ?? '';
+      if (!FLOW_JOBS.includes(job)) return fail(`job.uninstall needs one of ${FLOW_JOBS.join(', ')}`);
+      return sh('jobs.sh', ['uninstall', job], [`job:${job}`], SCRIPT_TIMEOUT_MS, ['jobs']);
+    }
     case 'pr.merge': {
       const pr = args['pr'] ?? '';
       const method = args['method'] ?? 'squash';

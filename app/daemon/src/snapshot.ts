@@ -383,6 +383,7 @@ export type ActionKind =
   | 'worktree.sync'
   | 'steward.health'
   | 'jobs.install'
+  | 'job.uninstall'
   | 'pr.merge'
   | 'terminal.open'
   | 'refresh';
@@ -414,6 +415,8 @@ export type ActionRecord = {
   outputTail: string;
   outputBytes: number;
   output?: string;
+  /** What a finished action wants said beside its state, such as the jobs `jobs.sh install` left as they were; null for most. */
+  note: string | null;
 };
 
 /*

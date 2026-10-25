@@ -101,7 +101,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings}` (below) |
 | `PUT /api/projects/<id>/plugins/flow/config` | change it, body `{"changes": [{"path", "value"}], "hash", "force"?}` or `{"text", "hash", "force"?}`; 200 with the new document plus `saved` and `followUps`, 400 with the reason, 409 with `reason: "stale"` or `"dirty"` |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
-| `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns: [{at, role, text}]}`: the last `n` turns with text (default 20, at most 200) of the claude transcript of an agent or session in `agents` or `ended`, oldest first; user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results; read from the last 4 MB of the file. 404 for a pid not listed or without a transcript, 400 for a codex session or a bad `lines` |
+| `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns: [{at, role, text}]}`: the last `n` turns with text (default 20, at most 200) of the claude transcript of an agent or session in `agents` or `ended`, oldest first; user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results, and without the host's wrapper turns (a user line that opens with a tag such as `<task-notification>`, `<local-command-stdout>` or `<command-name>`, and a compaction summary); read from the last 4 MB of the file. 404 for a pid not listed or without a transcript, 400 for a codex session or a bad `lines` |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
@@ -129,13 +129,22 @@ snapshots.
   without an item or before the board is read), and `staleReason`: "branch is 35 commits behind
   main (limit 20)", "claimed 6 days ago with no run, agent or gate", both joined with "; ", or null.
 - `session` (on those and on every entry of `agents`) is the process's transcript,
-  `{host, id, transcript, resume}`, or null when none was found. For claude it is the newest
-  `*.jsonl` in `~/.claude/projects/<cwd with every character but letters and digits made "-">/`
-  written at or after the process started (now minus its elapsed time, with two seconds for ps's
-  rounding); the id is the file name. For codex `~/.codex/session_index.jsonl` has ids and thread
+  `{host, id, transcript, resume}`, or null when none was found. For claude it is first
+  `~/.claude/sessions/<pid>.json`, which claude writes for every running process: its `sessionId`,
+  taken when its `cwd` is the process's and its `procStart` is within ten seconds of the process's
+  start (else it is a file an earlier process with that pid left); the transcript is
+  `~/.claude/projects/<cwd with every character but letters and digits made "-">/<id>.jsonl`. Only
+  without that file does it fall back to file times: the newest `*.jsonl` in that folder written
+  at or after the process started (now minus its elapsed time, with two seconds for ps's
+  rounding); the id is the file name. A transcript never goes to two pids: the sessions file
+  wins, then the first process listed, and another claimant gets null, so an agent in the root
+  never gets the owner's own session there. A scan's answer is kept per pid for the life of the
+  process (a miss is scanned again a minute later), so a read costs one small file per claude
+  process. For codex `~/.codex/session_index.jsonl` has ids and thread
   names but no folder, so the session files under `~/.codex/sessions/<yyyy>/<mm>/<dd>/` (the
   start's day back to fourteen days) are read instead: the newest written since the start whose
-  first line, `session_meta`, names the same cwd; the id is its `payload.id`. `resume` is the argv
+  first line, `session_meta`, names the same cwd; the id is its `payload.id`. Those first lines
+  are kept in memory and forgotten fourteen days after the file was last written. `resume` is the argv
   that opens it again: `["claude", "--resume", id]` or `["codex", "resume", id]`. The home folder
   and the clock are injected (`daemon/src/collectors/sessions.ts`).
 - `ended` lists the agents and sessions with a session that left the process list while the
@@ -230,7 +239,10 @@ with its values, `list` of text, `map` of name to text, `duration` like `1h`, `s
 `every 30m --workers 2`, `daily 02:00` or `weekly sun 07:00` with the args `jobs.sh` takes), one
 sentence on what changing it does, its group (Tracker, Readiness, Worktree pool, Gates and
 verification, Reviews, Notifications, Jobs, Intake) and its follow-up: `jobs.schedule.*` and
-`jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action);
+`jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action,
+offered only while some job keeps a schedule, since install exits 2 when none has); a job whose
+`jobs.schedule.<job>` is removed or emptied is never touched by install again, so it gets
+`jobs.sh uninstall <job>` (the `job.uninstall` action, one per job) instead;
 the pool keys (`pool`, `pool_max`, `worktree_copy`, `worktree_setup`) count at the next claim.
 
 `GET` reads the file. `values` is the file as the existing parser (`daemon/src/yaml.ts`) reads it,
@@ -245,16 +257,32 @@ of them as text (or a list of text). A known key whose value does not fit its ty
 `PUT` checks first and writes last. Each change is checked against its key's type, enum and range
 (an unknown key takes text, or a list of text; `null` takes a key out). The text is then rewritten
 in place: a known key changes only the value on its line (its trailing comment kept), a list only
-its item lines (an inline list stays inline), a map only its children's lines; a key not in the
+its item lines, a map only its children's lines. A list is always written as a block, `key:` with
+`  - item` lines under it (an inline `[a, b]` becomes one), and an empty list as a bare `key:`, as
+flow:init writes an empty pool: the steward's `pool_add_entry` appends `  - <path>` under the key
+line, and `yaml_get` in `lib/flow.sh` stops at an inline value, so an inline list would hide every
+worktree appended after it; a key not in the
 file goes under its section's last line, or at the end of the file; every comment, blank line and
-key order stays. A value holding ` #` is refused, since `lib/flow.sh` reads a comment there even in
-quotes. The result must parse again and read back to the values sent, or nothing is written. `{text}`
+key order stays. Where the two parsers would read a value differently it is refused with the
+rule: a value holding ` #` (`lib/flow.sh` reads a comment there even in quotes), a tab anywhere in
+a value (it ends the value there), and a value of a key that is not a list starting with `[` or
+`{` (`lib/flow.sh` strips the quotes and reads `"[wip]"` as the list `wip`). The result must parse again and read back to the values sent, or nothing is written. `{text}`
 saves the whole file, held to the same format and types. It is refused (409) when the file's hash is
 not the one sent (it changed on disk since the GET, force or not), and when
-`git status --porcelain -- .flow/config.yaml` lists it (uncommitted changes, or untracked) unless
-the body says `"force": true`. After a write the `files` source is read again before the reply,
-the daemon logs one `flow.config.saved` line with the keys that changed, and the reply carries
-`saved` (the leaf keys whose value changed) and `followUps` (`{note, action, paths}`).
+`git status --porcelain -- .flow/config.yaml` shows a tracked file with changes unless the body
+says `"force": true`. An untracked file saves with the note "not tracked by git", and a folder git
+cannot read (not a checkout) saves with a note saying so. Saves on one project run one at a time;
+just before writing the file is read and hashed again (the git check can take seconds, and the
+steward may append to the pool meanwhile), and a change since is refused as stale. The text goes
+to a temp file beside it with the old file's mode, renamed over the file in one step. After a
+write the `files` and `jobs` sources are read again before the reply, the daemon logs one
+`flow.config.saved` line with the keys that changed, and the reply carries `saved` (the leaf keys
+whose value changed), `followUps` (`{note, action: {kind, label, args}, paths}`) and `notes`.
+
+The `files` source reads the base merge limit from `jobs.health.behind_base`, the key `steward.sh`
+reads. Console 0.5 read `health.behind_base`, which the plugin never did; until 0.7.0 that key
+still counts when the new one is absent, and the daemon logs `config.deprecated` once saying to
+rename it.
 
 ## Actions
 An action is one flow script, run by path with argv and never through a shell, with every
@@ -271,12 +299,14 @@ on every state change and at most twice a second while output arrives.
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
 | `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished` |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
-| `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read |
+| `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
+| `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
 | `terminal.open` | `path`, `job?`, `session?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
-`ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
+`ActionRecord.note` is what a finished action wants said beside its state (null for most); the
+button and the drawer show it. `ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
 and goes on after the record (`jobs.sh run <job>` gives the job to launchd and returns in a
 second), `finished` means the work is over. It is null while an attached action runs and on a
 failed or rejected one. Every `jobs.sh run <job>` (`job.run`, `steward.health`, `run.start` without
@@ -330,8 +360,8 @@ at once. When an action ends the sources it changed are re-read.
 
 Every action is two lines in `~/.local/state/brain-console/<project>/actions.jsonl`, one at
 start and one at the end, with its full output in `actions/<id>.log` beside it (`--state-dir`
-or `BRAIN_CONSOLE_STATE` moves it). Nothing is written inside the project except what the
-scripts themselves write.
+or `BRAIN_CONSOLE_STATE` moves it). Inside the project the console writes only what the scripts
+themselves write and, from the flow settings editor, `.flow/config.yaml`.
 
 ## Reconciliation
 `daemon/src/reconcile.ts` is a pure function from the collected facts to the snapshot, with the
@@ -425,7 +455,9 @@ then a form per schema group (each field labelled by its key, the control for it
 for an enum or a boolean with "(not set)" to take the key out, a number or text box, a text area
 of one item or `name: value` per line for a list or a map; the help under it) with its own Save,
 disabled until something in the group changed. A save shows the keys written and each follow-up,
-with a "Reload the schedule" button (`jobs.install`) when a schedule or `jobs.host` changed; a
+with a "Reload the schedule" button (`jobs.install`) when a schedule or `jobs.host` changed and an
+"Unload <job>" button (`job.uninstall`) for each job whose schedule was removed, and any note (a
+file git does not track); a
 refusal shows the reason, with Save anyway for a file with uncommitted changes and Reload for one
 that changed on disk. A "Raw YAML" fold at the bottom holds the whole file in a text area with the
 same Save (open when the file is not in the flat format). Every item id opens its tracker
@@ -452,5 +484,7 @@ npm ci && npm --prefix ui ci
 npm run check      # daemon tsc and node --test, then the UI's tsc, vitest and build
 ```
 Tests use a fixture flow home under `daemon/test/fixtures` and a fake command runner, so no shell,
-git or GitHub is touched. Test names are behavioural sentences and every assertion carries its
+git or GitHub is touched, with one exception: the flow settings tests cut `yaml_get` out of
+`plugins/flow/lib/flow.sh` and `pool_add_entry` out of `steward.sh` and run them with `sh` on a
+temp file, so a list the console writes is checked against the reader the flow scripts use. Test names are behavioural sentences and every assertion carries its
 because-string, as the standards ask.

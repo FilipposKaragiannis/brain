@@ -9,6 +9,7 @@ import type { ActionContext } from '../src/actionPlan.ts';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
 import { claudeProjectFolder, codexMeta, diskSessionFiles, parseTranscript, SessionLocator } from '../src/collectors/sessions.ts';
+import type { SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
@@ -34,20 +35,31 @@ function written(file: string, text: string, modified: Date): void {
   utimesSync(file, modified, modified);
 }
 
-const locator = (dir: string) => new SessionLocator({ home: dir, clock: () => NOW, files: diskSessionFiles });
+const locator = (dir: string, files: SessionFiles = diskSessionFiles) => new SessionLocator({ home: dir, clock: () => NOW, files });
+
+/** The session the locator gives one process on its own. */
+async function one(found: SessionLocator, process: Omit<SessionProcess, 'pid'> & { pid?: number }) {
+  return (await found.assign([{ pid: 4242, ...process }]))[0] ?? null;
+}
+
+/** `~/.claude/sessions/<pid>.json` in the shape claude writes it (procStart as ps prints lstart, local time). */
+function sessionsFile(dir: string, pid: number, sessionId: string, cwd: string, startedAt: Date): void {
+  const procStart = startedAt.toString().replace(/^(\w{3}) (\w{3}) (\d{2}) (\d{4}) ([\d:]{8}).*$/, (_all, day, month, date, year, clock) => `${day} ${month} ${Number(date)} ${clock} ${year}`);
+  written(path.join(dir, '.claude', 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId, cwd, startedAt: startedAt.getTime(), procStart, kind: 'interactive', entrypoint: 'cli' }), NOW);
+}
 
 test('ClaudeFolder_EveryNonAlphanumericBecomesADash', () => {
   assert.equal(path.basename(claudeProjectFolder('/h', '/work/projects/foosbrawl-wt-3')), '-work-projects-foosbrawl-wt-3', 'because claude names a folder\'s transcripts after its path that way');
 });
 
-test('ClaudeProcess_NewestTranscriptSinceItStarted_IsItsSession', async () => {
+test('ClaudeProcessWithoutASessionsFile_NewestTranscriptSinceItStarted_IsItsSession', async () => {
   const { dir, done } = home();
   try {
     const folder = claudeProjectFolder(dir, '/p/app-wt-2');
     written(path.join(folder, 'older-before-start.jsonl'), '{}\n', new Date(NOW.getTime() - 60 * MINUTE_MS));
     written(path.join(folder, 'aaaa-1111.jsonl'), '{}\n', new Date(NOW.getTime() - 5 * MINUTE_MS));
     written(path.join(folder, 'bbbb-2222.jsonl'), '{}\n', new Date(NOW.getTime() - MINUTE_MS));
-    const session = await locator(dir).find({ host: 'claude', cwd: '/p/app-wt-2', elapsedSeconds: 600 });
+    const session = await one(locator(dir), { host: 'claude', cwd: '/p/app-wt-2', elapsedSeconds: 600 });
     assert.deepEqual(session, { host: 'claude', id: 'bbbb-2222', transcript: path.join(folder, 'bbbb-2222.jsonl'), resume: ['claude', '--resume', 'bbbb-2222'] }, 'because the newest transcript written since the process started is the one it writes, and its name is the id claude --resume takes');
   } finally { done(); }
 });
@@ -56,7 +68,56 @@ test('ClaudeProcess_OnlyTranscriptsOlderThanIt_NoSession', async () => {
   const { dir, done } = home();
   try {
     written(path.join(claudeProjectFolder(dir, '/p/app-wt-2'), 'old.jsonl'), '{}\n', new Date(NOW.getTime() - 60 * MINUTE_MS));
-    assert.equal(await locator(dir).find({ host: 'claude', cwd: '/p/app-wt-2', elapsedSeconds: 60 }), null, 'because a transcript from before the process started belongs to an earlier run');
+    assert.equal(await one(locator(dir), { host: 'claude', cwd: '/p/app-wt-2', elapsedSeconds: 60 }), null, 'because a transcript from before the process started belongs to an earlier run');
+  } finally { done(); }
+});
+
+test('ClaudeProcessWithASessionsFile_ItsSessionIdWinsOverFileTimes', async () => {
+  const { dir, done } = home();
+  try {
+    const folder = claudeProjectFolder(dir, '/p/app');
+    written(path.join(folder, 'mine-1111.jsonl'), '{}\n', new Date(NOW.getTime() - 5 * MINUTE_MS));
+    written(path.join(folder, 'owners-2222.jsonl'), '{}\n', new Date(NOW.getTime() - MINUTE_MS));
+    sessionsFile(dir, 100, 'mine-1111', '/p/app', new Date(NOW.getTime() - 600 * 1000));
+    const session = await one(locator(dir), { pid: 100, host: 'claude', cwd: '/p/app', elapsedSeconds: 600 });
+    assert.deepEqual([session?.id, session?.transcript], ['mine-1111', path.join(folder, 'mine-1111.jsonl')], 'because claude names the session of each pid itself, and a newer transcript in the same folder may be the owner\'s own');
+  } finally { done(); }
+});
+
+test('SessionsFileFromAnEarlierProcessWithThePid_Ignored', async () => {
+  const { dir, done } = home();
+  try {
+    sessionsFile(dir, 100, 'earlier-1', '/p/app', new Date(NOW.getTime() - 5 * 3600 * 1000));
+    assert.equal(await one(locator(dir), { pid: 100, host: 'claude', cwd: '/p/app', elapsedSeconds: 60 }), null, 'because a pid reused since names another process, whose session is not this one');
+  } finally { done(); }
+});
+
+test('TwoClaudeProcessesInOneFolder_OneTranscriptNeverGoesToBoth', async () => {
+  const { dir, done } = home();
+  try {
+    const folder = claudeProjectFolder(dir, '/p/app');
+    written(path.join(folder, 'owners-2222.jsonl'), '{}\n', new Date(NOW.getTime() - MINUTE_MS));
+    sessionsFile(dir, 300, 'owners-2222', '/p/app', new Date(NOW.getTime() - 3600 * 1000));
+    const sessions = await locator(dir).assign([
+      { pid: 100, host: 'claude', cwd: '/p/app', elapsedSeconds: 600 },
+      { pid: 300, host: 'claude', cwd: '/p/app', elapsedSeconds: 3600 },
+      { pid: 101, host: 'claude', cwd: '/p/app', elapsedSeconds: 600 },
+    ]);
+    assert.deepEqual(sessions.map((session) => session?.id ?? null), [null, 'owners-2222', null], 'because Open session on the agent must never resume the owner\'s live session, which its sessions file names');
+  } finally { done(); }
+});
+
+test('FolderScan_DoneOncePerProcess', async () => {
+  const { dir, done } = home();
+  try {
+    written(path.join(claudeProjectFolder(dir, '/p/app'), 'run-1.jsonl'), '{}\n', new Date(NOW.getTime() - MINUTE_MS));
+    let listed = 0;
+    const counting: SessionFiles = { ...diskSessionFiles, list: async (folder) => { listed += 1; return diskSessionFiles.list(folder); } };
+    const found = locator(dir, counting);
+    const process = { pid: 100, host: 'claude' as const, cwd: '/p/app', elapsedSeconds: 600 };
+    await found.assign([process]);
+    const again = await found.assign([process]);
+    assert.deepEqual([listed, again[0]?.id], [1, 'run-1'], 'because the folder can hold hundreds of transcripts and the processes source reads every ten seconds');
   } finally { done(); }
 });
 
@@ -69,9 +130,24 @@ test('CodexProcess_SessionFileWithItsCwd_IsItsSession', async () => {
     written(path.join(day, 'rollout-a-019c-mine.jsonl'), `${meta('019c-mine', '/p/app-wt-3')}\n{"type":"event_msg"}\n`, new Date(NOW.getTime() - 2 * MINUTE_MS));
     written(path.join(day, 'rollout-b-019c-other.jsonl'), `${meta('019c-other', '/elsewhere')}\n`, new Date(NOW.getTime() - MINUTE_MS));
     written(path.join(dir, '.codex', 'session_index.jsonl'), '{"id":"019c-mine","thread_name":"Fix nine","updated_at":"2026-10-24T18:14:00Z"}\n', NOW);
-    const session = await locator(dir).find({ host: 'codex', cwd: '/p/app-wt-3', elapsedSeconds: 600 });
+    const session = await one(locator(dir), { host: 'codex', cwd: '/p/app-wt-3', elapsedSeconds: 600 });
     assert.deepEqual(session?.id, '019c-mine', 'because the newer file belongs to another folder, and the first line of a session file names its cwd');
     assert.deepEqual(session?.resume, ['codex', 'resume', '019c-mine'], 'because codex resume takes the session id');
+  } finally { done(); }
+});
+
+test('CodexSessionFilesRemembered_ForgottenAfterFourteenDays', async () => {
+  const { dir, done } = home();
+  try {
+    const day = path.join(dir, '.codex', 'sessions', String(NOW.getFullYear()), String(NOW.getMonth() + 1).padStart(2, '0'), String(NOW.getDate()).padStart(2, '0'));
+    written(path.join(day, 'rollout-a-019c-mine.jsonl'), `${meta('019c-mine', '/p/app-wt-3')}\n`, new Date(NOW.getTime() - MINUTE_MS));
+    let now = NOW;
+    const found = new SessionLocator({ home: dir, clock: () => now, files: diskSessionFiles });
+    await found.assign([{ pid: 7, host: 'codex', cwd: '/p/app-wt-3', elapsedSeconds: 600 }]);
+    assert.equal(found.codexFilesKept, 1, 'because a session file\'s first line is read once');
+    now = new Date(NOW.getTime() + 15 * 86400000);
+    await found.assign([]);
+    assert.equal(found.codexFilesKept, 0, 'because the memory of session files must not grow for as long as the daemon runs');
   } finally { done(); }
 });
 
@@ -86,11 +162,12 @@ test('Transcript_TextTurnsOfUserAndAssistant_OldestFirst', () => {
     { at: '2026-10-24T17:00:01.000Z', role: 'user', text: '/flow:next gh#9' },
     { at: '2026-10-24T17:00:05.000Z', role: 'assistant', text: 'Starting gh#9 at the implement step.' },
     { at: '2026-10-24T17:00:09.000Z', role: 'assistant', text: 'The tree is clean.\nWriting the test first.' },
-  ], 'because meta lines, tool calls, tool results, thinking and a subagent\'s side chain carry no turn the owner reads');
+    { at: '2026-10-24T17:00:15.000Z', role: 'user', text: 'Keep going, and use <b> tags in the docs.' },
+  ], 'because meta lines, tool calls, tool results, thinking, a subagent\'s side chain and the host\'s wrapper turns (task notifications, local commands, compaction summaries) carry no turn the owner reads');
 });
 
 test('Transcript_Limit_KeepsTheLastTurns', () => {
-  assert.deepEqual(parseTranscript(readFileSync(TRANSCRIPT, 'utf8'), 1).map((turn) => turn.text), ['The tree is clean.\nWriting the test first.'], 'because the fold shows where the run is now');
+  assert.deepEqual(parseTranscript(readFileSync(TRANSCRIPT, 'utf8'), 1).map((turn) => turn.text), ['Keep going, and use <b> tags in the docs.'], 'because the fold shows where the run is now');
 });
 
 const SESSION: SessionRef = { host: 'claude', id: '8f3c2a10-5b7e-4c1d-9a0b-1e2f3a4b5c6d', transcript: TRANSCRIPT, resume: ['claude', '--resume', '8f3c2a10-5b7e-4c1d-9a0b-1e2f3a4b5c6d'] };
@@ -146,7 +223,7 @@ function changingProcesses(): { runner: CommandRunner; drop: (pid: number) => vo
   return { runner, drop: (pid) => dropped.add(pid) };
 }
 
-const sessionsByPid = { find: async (process: { host: string }) => (process.host === 'claude' ? SESSION : null) };
+const sessionsByPid = { assign: async (processes: { host: string }[]) => processes.map((process) => (process.host === 'claude' ? SESSION : null)) };
 
 test('AgentWithATranscript_SnapshotCarriesItsSession', async () => {
   const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid });
@@ -188,7 +265,7 @@ test('TranscriptRoute_LastTurnsOfTheAgentsClaudeSession', async () => {
     const response = await fetch(`${base}/api/projects/project/agents/100/transcript?lines=2`, { headers: { authorization: 'Bearer tok' } });
     const body = (await response.json()) as { turns: TranscriptTurn[] };
     assert.equal(response.status, 200, 'because pid 100 is a listed agent with a claude transcript');
-    assert.deepEqual(body.turns.map((turn) => turn.text), ['Starting gh#9 at the implement step.', 'The tree is clean.\nWriting the test first.'], 'because lines asks for the last two turns with text');
+    assert.deepEqual(body.turns.map((turn) => turn.text), ['The tree is clean.\nWriting the test first.', 'Keep going, and use <b> tags in the docs.'], 'because lines asks for the last two turns with text, the wrapper turns between them left out');
   } finally { await close(); }
 });
 

@@ -32,7 +32,7 @@ function group(name: string): HTMLElement {
   return screen.getByRole('form', { name });
 }
 
-const saved = (saved: Partial<FlowConfigSaved>): FlowConfigSaved => ({ ...DOCUMENT, hash: 'h2', saved: [], followUps: [], ...saved });
+const saved = (saved: Partial<FlowConfigSaved>): FlowConfigSaved => ({ ...DOCUMENT, hash: 'h2', saved: [], followUps: [], notes: [], ...saved });
 
 test('FlowSettings_Read_TitledForTheProjectWithTheTrackedNote', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }));
@@ -58,7 +58,7 @@ test('FlowSettings_NothingChanged_SaveDisabled', async () => {
 });
 
 test('FlowSettings_ScheduleChanged_SavesItAndOffersTheReload', async () => {
-  const followUps = [{ note: 'The schedule launchd runs is written at install: run jobs.sh install to reload it.', action: { kind: 'jobs.install' as const, label: 'Reload the schedule' }, paths: ['jobs.schedule.next'] }];
+  const followUps = [{ note: 'The schedule launchd runs is written at install: run jobs.sh install to reload it.', action: { kind: 'jobs.install' as const, label: 'Reload the schedule', args: {} }, paths: ['jobs.schedule.next'] }];
   const { puts, posts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.schedule.next'], followUps }) }));
   fireEvent.change(within(group('Jobs')).getByLabelText('jobs.schedule.next'), { target: { value: 'every 20m --workers 2' } });
   await act(async () => { fireEvent.click(within(group('Jobs')).getByRole('button', { name: 'Save' })); });
@@ -96,4 +96,21 @@ test('FlowSettings_RawYaml_SavesTheWholeText', async () => {
   fireEvent.change(raw, { target: { value: TEXT.replace('base: main', 'base: dev') } });
   await act(async () => { fireEvent.click(within(raw.closest('form')!).getByRole('button', { name: 'Save' })); });
   expect(puts, 'because Raw YAML writes the file as typed, checked like the form').toEqual([{ text: TEXT.replace('base: main', 'base: dev'), hash: 'h1' }]);
+});
+
+test('FlowSettings_ScheduleRemoved_OffersToUnloadThatJob', async () => {
+  const followUps = [{ note: "jobs.sh install loads only jobs with a schedule, so retro's launchd agent keeps running until jobs.sh uninstall retro unloads it.", action: { kind: 'job.uninstall' as const, label: 'Unload retro', args: { job: 'retro' } }, paths: ['jobs.schedule.retro'] }];
+  const { posts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.schedule.retro'], followUps }) }));
+  fireEvent.change(within(group('Jobs')).getByLabelText('jobs.schedule.next'), { target: { value: '' } });
+  await act(async () => { fireEvent.click(within(group('Jobs')).getByRole('button', { name: 'Save' })); });
+  expect(within(group('Jobs')).getByRole('status').textContent, 'because the owner must hear that install alone leaves the job running').toMatch(/keeps running until jobs\.sh uninstall retro/);
+  await act(async () => { fireEvent.click(within(group('Jobs')).getByRole('button', { name: 'Unload retro' })); });
+  expect(posts, 'because the button unloads that one job').toEqual([{ kind: 'job.uninstall', args: { job: 'retro' } }]);
+});
+
+test('FlowSettings_UntrackedFile_SavedWithTheNote', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['base'], notes: ['.flow/config.yaml is not tracked by git: add and commit it to keep the change'] }) }));
+  fireEvent.change(within(group('Worktree pool')).getByLabelText('base'), { target: { value: 'dev' } });
+  await act(async () => { fireEvent.click(within(group('Worktree pool')).getByRole('button', { name: 'Save' })); });
+  expect(within(group('Worktree pool')).getByRole('status').textContent, 'because an untracked file saves without Save anyway, but the owner should know git does not keep it').toMatch(/not tracked by git/);
 });

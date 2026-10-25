@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { CommandRequest, CommandResult } from '../src/collectors/exec.ts';
 import { silentLogger } from '../src/log.ts';
 import { applyChange, parseDocument, valueAt } from '../src/plugins/flow/configDocument.ts';
-import { contentHash, describe, FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
+import { contentHash, describe, FlowConfigEditor, followUpsOf } from '../src/plugins/flow/configEditor.ts';
 import type { FlowConfigDocument, FlowConfigSaved } from '../src/plugins/flow/schema.ts';
 import { checkFileValue, checkSchedule, FLOW_CONFIG_SCHEMA } from '../src/plugins/flow/schema.ts';
 import { parseYaml } from '../src/yaml.ts';
@@ -14,6 +15,32 @@ import { FIXTURES } from './fakeRunner.ts';
 
 /** foosbrawl's .flow/config.yaml as it was on 2026-10-25, copied so the test never reads the project. */
 const FOOSBRAWL = readFileSync(path.join(FIXTURES, 'flow-config', 'foosbrawl.yaml'), 'utf8');
+
+/**
+ * The plugin's own readers, run on the text: `yaml_get` from lib/flow.sh and `pool_add_entry`
+ * from steward.sh, cut out of the plugin in this repository and run with sh in a temp folder, so
+ * a list the console writes is checked against the parser the flow scripts really use.
+ */
+const PLUGIN = path.resolve(import.meta.dirname, '..', '..', '..', 'plugins', 'flow');
+function shellFunction(file: string, name: string): string {
+  const source = readFileSync(path.join(PLUGIN, file), 'utf8');
+  const start = source.indexOf(`${name}() {`);
+  assert.ok(start >= 0, `because ${file} defines ${name}`);
+  return source.slice(start, source.indexOf('\n}\n', start) + 2);
+}
+function inTemp<T>(text: string, body: (file: string) => T): T {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-yaml-get-'));
+  try { const file = path.join(dir, 'config.yaml'); writeFileSync(file, text); return body(file); } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+function yamlGet(text: string, key: string): string[] {
+  return inTemp(text, (file) => execFileSync('sh', ['-c', `${shellFunction('lib/flow.sh', 'yaml_get')}\nyaml_get "$1" "$2"`, 'sh', file, key], { encoding: 'utf8' }).split('\n').filter((line) => line !== ''));
+}
+function poolAddEntry(text: string, entry: string): string {
+  return inTemp(text, (file) => {
+    execFileSync('sh', ['-c', `config_file() { printf %s "$1"; }\n${shellFunction('scripts/steward.sh', 'pool_add_entry').replace('f="$(config_file)"', 'f="$CONFIG"')}\npool_add_entry "$1"`, 'sh', entry], { env: { ...process.env, CONFIG: file } });
+    return readFileSync(file, 'utf8');
+  });
+}
 
 /** The lines of `after` that differ from `before`, by position, when both have the same number of lines. */
 function changedLines(before: string, after: string): string[] {
@@ -29,29 +56,39 @@ function edited(text: string, pathName: string, shape: 'scalar' | 'list' | 'map'
   return result.ok ? result.text : '';
 }
 
-test('FoosbrawlConfig_ParsesInTheFlatFormat', () => {
+test('FoosbrawlConfig_Parsed_InTheFlatFormat', () => {
   const parsed = parseDocument(FOOSBRAWL);
   assert.ok(parsed.ok, `because the real file is in the format its header names: ${parsed.ok ? '' : parsed.error}`);
 });
 
-test('ScalarChange_RewritesOnlyItsValueAndKeepsTheComment', () => {
+test('ScalarKey_Changed_OnlyItsValueMovesAndTheCommentStays', () => {
   const after = edited(FOOSBRAWL, 'notify.desktop', 'scalar', true);
   assert.deepEqual(changedLines(FOOSBRAWL, after), ['  desktop: true   # Slack carries every notification; the macOS one is a truncated Script Editor banner'], 'because only the value moves, the comment after it stays where it was');
   assert.equal(valueAt(parseYaml(after), 'notify.desktop'), 'true', 'because the flow reads the new value back');
 });
 
-test('ScheduleChange_RewritesOneLineAndEveryCommentStays', () => {
+test('ScheduleKey_Changed_OneLineRewrittenAndEveryCommentStays', () => {
   const after = edited(FOOSBRAWL, 'jobs.schedule.next', 'scalar', 'every 20m --workers 3 --max-steps 15');
   assert.deepEqual(changedLines(FOOSBRAWL, after), ['    next: every 20m --workers 3 --max-steps 15'], 'because a change touches its own line only');
   assert.equal(after.split('\n').filter((line) => line.trim().startsWith('#')).length, FOOSBRAWL.split('\n').filter((line) => line.trim().startsWith('#')).length, 'because no comment is lost');
 });
 
-test('InlineListChange_StaysInline', () => {
+test('InlineList_Changed_WrittenAsABlock', () => {
   const after = edited(FOOSBRAWL, 'reviews.reviewers', 'list', ['codex', 'copilot']);
-  assert.deepEqual(changedLines(FOOSBRAWL, after), ['  reviewers: [codex, copilot]'], 'because a list written inline stays inline');
+  const lines = after.split('\n');
+  const at = lines.indexOf('  reviewers:');
+  assert.deepEqual(lines.slice(at, at + 3), ['  reviewers:', '    - codex', '    - copilot'], 'because the steward appends `  - item` under a list key, and lib/flow.sh stops at an inline value, so every list is written as a block');
 });
 
-test('BlockListChange_ReplacesTheItemLinesInPlace', () => {
+test('List_Cleared_LeftAsABareKey', () => {
+  const after = edited(FOOSBRAWL, 'pool', 'list', []);
+  const lines = after.split('\n');
+  const at = lines.indexOf('pool:');
+  assert.equal(lines[at + 1], 'pool_max: 9', 'because flow:init writes an empty pool as a bare pool: line, never pool: []');
+  assert.deepEqual(yamlGet(after, 'pool'), [], 'because the plugin reads no entry');
+});
+
+test('BlockList_Changed_ItemLinesReplacedInPlace', () => {
   const pool = ['../foosbrawl-wt-2', '../foosbrawl-wt-3'];
   const after = edited(FOOSBRAWL, 'pool', 'list', pool);
   const lines = after.split('\n');
@@ -61,7 +98,7 @@ test('BlockListChange_ReplacesTheItemLinesInPlace', () => {
   assert.equal(lines[at - 1], '# while the pool is below pool_max, and the steward appends it here. 0 never adds.', 'because the comment above the pool stays');
 });
 
-test('NewKey_GoesUnderItsSectionsLastLine', () => {
+test('NewKey_Added_GoesUnderItsSectionsLastLine', () => {
   const after = edited(FOOSBRAWL, 'notify.idle', 'scalar', true);
   const lines = after.split('\n');
   const webhook = lines.findIndex((line) => line.startsWith('  slack_webhook:'));
@@ -69,7 +106,7 @@ test('NewKey_GoesUnderItsSectionsLastLine', () => {
   assert.equal(after.split('\n').length, FOOSBRAWL.split('\n').length + 1, 'because one line is added and nothing else');
 });
 
-test('NewKeyUnderAMapHoldingOnlyAComment_GoesAfterTheComment', () => {
+test('NewKeyUnderAMapHoldingOnlyAComment_Added_GoesAfterTheComment', () => {
   const after = edited(FOOSBRAWL, 'auto_gates.plan-approval', 'scalar', 'S,M');
   const lines = after.split('\n');
   const at = lines.indexOf('auto_gates:');
@@ -77,36 +114,65 @@ test('NewKeyUnderAMapHoldingOnlyAComment_GoesAfterTheComment', () => {
   assert.equal(valueAt(parseYaml(after), 'auto_gates.plan-approval'), 'S,M', 'because the flow reads the sizes');
 });
 
-test('NewTopLevelKey_GoesAtTheEnd', () => {
+test('NewTopLevelKey_Added_GoesAtTheEnd', () => {
   const after = edited(FOOSBRAWL, 'retro.commit', 'scalar', false);
   assert.ok(after.endsWith('retro:\n  commit: false\n'), 'because a key with no section yet is appended at the end, the final newline kept');
 });
 
-test('MapChange_RewritesChangedChildrenAndAddsNewOnes', () => {
+test('MapKey_Changed_ChangedChildrenRewrittenAndNewOnesAdded', () => {
   const after = edited(FOOSBRAWL, 'gates', 'map', { goldens: 'dotnet run --project src/Foosbrawl.Harness -c Release -- verify-all', lint: 'tools/lint.sh' });
   const lines = after.split('\n');
   const at = lines.indexOf('gates:');
   assert.deepEqual(lines.slice(at, at + 3), ['gates:', '  goldens: dotnet run --project src/Foosbrawl.Harness -c Release -- verify-all', '  lint: tools/lint.sh'], 'because an unchanged gate keeps its line and a new one goes last in the map');
 });
 
-test('RemovedKey_TakesItsLineOut', () => {
+test('Key_SetToNull_ItsLineTakenOut', () => {
   const after = edited(FOOSBRAWL, 'reviews.max_chases', 'scalar', null);
   assert.equal(valueAt(parseYaml(after), 'reviews.max_chases'), undefined, 'because null takes the key out of the file');
   assert.equal(after.split('\n').length, FOOSBRAWL.split('\n').length - 1, 'because only its line goes');
 });
 
-test('ValueThatNeedsQuotes_Quoted', () => {
+test('ValueWithColonSpace_Written_Quoted', () => {
   const after = edited(FOOSBRAWL, 'jobs.model', 'scalar', 'opus: fast');
   assert.ok(after.includes('  model: "opus: fast"'), 'because a colon and a space would read as a nested key without quotes');
   assert.equal(valueAt(parseYaml(after), 'jobs.model'), 'opus: fast', 'because the quotes come off when the flow reads it');
 });
 
-test('ValueWithSpaceHash_Refused', () => {
+test('ValueWithSpaceHash_Written_Refused', () => {
   const result = applyChange(FOOSBRAWL, 'jobs.model', 'scalar', 'opus #1');
   assert.equal(result.ok, false, 'because lib/flow.sh cuts a line at " #", so the value would not read back');
 });
 
-test('EveryFixtureKeyInTheSchema_ParsesToItsType', () => {
+test('ListWrittenByTheConsole_ReadByThePluginsYamlGet_SameItems', () => {
+  const pool = ['../foosbrawl-wt-2', '../foosbrawl-wt-3'];
+  const after = edited(FOOSBRAWL.replace(/^pool:\n(  - .*\n)+/m, 'pool: [../foosbrawl-wt-9]\n'), 'pool', 'list', pool);
+  assert.deepEqual(yamlGet(after, 'pool'), pool, 'because the flow scripts read the pool with lib/flow.sh, not with the console');
+  assert.deepEqual(valueAt(parseYaml(after), 'pool'), pool, 'because the console reads the same list');
+});
+
+test('StewardAppendsAfterAConsoleWrite_BothParsers_ReadTheWholePool', () => {
+  for (const start of [['../foosbrawl-wt-2'], []]) {
+    const written = edited(FOOSBRAWL, 'pool', 'list', start);
+    const appended = poolAddEntry(written, '../foosbrawl-wt-11');
+    const want = [...start, '../foosbrawl-wt-11'];
+    assert.deepEqual(yamlGet(appended, 'pool'), want, `because grow_pool's new worktree must join the pool the plugin reads (pool of ${start.length})`);
+    assert.ok(parseDocument(appended).ok, 'because the console must still parse the file the steward wrote');
+    assert.deepEqual(valueAt(parseYaml(appended), 'pool'), want, 'because the console reads the same pool');
+  }
+});
+
+test('ScalarStartingWithABracket_Written_Refused', () => {
+  const result = applyChange(FOOSBRAWL, 'jobs.model', 'scalar', '[wip]');
+  assert.ok(!result.ok && /starts with \[ or \{/.test(result.error), 'because lib/flow.sh strips the quotes and then reads [wip] as the list wip');
+});
+
+test('ValueWithATab_ParsedOrWritten_Refused', () => {
+  const parsed = parseDocument('jobs:\n  model: opus\t# fast\n');
+  assert.ok(!parsed.ok && /a tab in the value of model/.test(parsed.error), 'because lib/flow.sh ends the value at a tab before #, and the console would read "opus\t# fast"');
+  assert.equal(applyChange(FOOSBRAWL, 'jobs.model', 'scalar', 'opus\tfast').ok, false, 'because a tab never reads back the same in both parsers');
+});
+
+test('FixtureKeysInTheSchema_Parsed_EachFitsItsType', () => {
   const values = parseYaml(FOOSBRAWL);
   const present = FLOW_CONFIG_SCHEMA.filter((spec) => valueAt(values, spec.path) !== undefined);
   assert.ok(present.length >= 25, `because the schema covers the keys the real file sets (found ${present.length})`);
@@ -117,17 +183,17 @@ test('EveryFixtureKeyInTheSchema_ParsesToItsType', () => {
   assert.deepEqual(describe('/p/.flow/config.yaml', FOOSBRAWL).warnings, [], 'because nothing in the real file is out of type');
 });
 
-test('FoosbrawlConfig_NoKeyLeftForOther', () => {
+test('FoosbrawlConfig_Described_NoKeyLeftForOther', () => {
   const sections = describe('/p/.flow/config.yaml', FOOSBRAWL).sections;
   assert.equal(sections.find((section) => section.group === 'Other'), undefined, 'because the schema knows every key foosbrawl sets');
 });
 
-test('UnknownKey_ShowsInOther', () => {
+test('UnknownKey_Described_ShowsInOther', () => {
   const sections = describe('/p/.flow/config.yaml', `${FOOSBRAWL}experiments:\n  fast_lane: on\n`).sections;
   assert.deepEqual(sections.find((section) => section.group === 'Other')?.fields.map((spec) => [spec.path, spec.type]), [['experiments.fast_lane', 'string']], 'because a key the schema does not know is still editable, as text');
 });
 
-test('NotTheFlatFormat_RefusedWithTheLine', () => {
+test('TextOutsideTheFlatFormat_Parsed_RefusedWithTheLine', () => {
   const cases: [string, RegExp][] = [
     ['base: main\nalias: &a x\n', /line 2: an anchor/],
     ['jobs:\n\tmodel: x\n', /line 2: a tab/],
@@ -142,7 +208,7 @@ test('NotTheFlatFormat_RefusedWithTheLine', () => {
   }
 });
 
-test('Schedule_TheFormsJobsShTakes', () => {
+test('Schedule_Checked_TakesTheFormsJobsShTakes', () => {
   for (const good of ['every 30m --workers 2 --max-steps 15', 'every 2h', 'daily 02:00', 'weekly sun 07:00']) assert.ok(checkSchedule(good).ok, `because jobs.sh installs "${good}"`);
   for (const bad of ['every 0m', 'hourly', 'daily 25:00', 'weekly someday 07:00', 'every 10m $(rm -rf ~)']) assert.equal(checkSchedule(bad).ok, false, `because jobs.sh refuses "${bad}"`);
 });
@@ -168,7 +234,7 @@ async function readDocument(editor: FlowConfigEditor): Promise<FlowConfigDocumen
   return reply.body as FlowConfigDocument;
 }
 
-test('ScheduleChangeSaved_FileRewrittenAndTheInstallActionOffered', async () => {
+test('ScheduleChange_Saved_FileRewrittenAndTheInstallActionOffered', async () => {
   const fixture = project();
   try {
     const { hash } = await readDocument(fixture.editor);
@@ -183,7 +249,7 @@ test('ScheduleChangeSaved_FileRewrittenAndTheInstallActionOffered', async () => 
   } finally { fixture.done(); }
 });
 
-test('PoolChangeSaved_SaysItCountsAtTheNextClaim', async () => {
+test('PoolChange_Saved_SaysItCountsAtTheNextClaim', async () => {
   const fixture = project();
   try {
     const { hash } = await readDocument(fixture.editor);
@@ -192,7 +258,7 @@ test('PoolChangeSaved_SaysItCountsAtTheNextClaim', async () => {
   } finally { fixture.done(); }
 });
 
-test('DirtyFile_RefusedUnlessForced', async () => {
+test('ModifiedTrackedFile_Saved_RefusedUnlessForced', async () => {
   const fixture = project({ code: 0, stdout: ' M .flow/config.yaml\n', stderr: '', timedOut: false });
   try {
     const { hash } = await readDocument(fixture.editor);
@@ -205,7 +271,67 @@ test('DirtyFile_RefusedUnlessForced', async () => {
   } finally { fixture.done(); }
 });
 
-test('FileChangedSinceTheRead_Refused', async () => {
+test('UntrackedFile_Saved_WrittenWithANote', async () => {
+  const fixture = project({ code: 0, stdout: '?? .flow/config.yaml\n', stderr: '', timedOut: false });
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const reply = await fixture.editor.write({ changes: [{ path: 'reviews.max_chases', value: 3 }], hash });
+    assert.deepEqual([reply.status, (reply.body as FlowConfigSaved).notes], [200, ['.flow/config.yaml is not tracked by git: add and commit it to keep the change']], 'because an untracked file holds no committed work to mix with, but git will not keep the change either');
+  } finally { fixture.done(); }
+});
+
+test('ProjectNotAGitCheckout_Saved_WrittenWithANote', async () => {
+  const fixture = project({ code: 128, stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories): .git\n', timedOut: false });
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const reply = await fixture.editor.write({ changes: [{ path: 'reviews.max_chases', value: 3 }], hash });
+    assert.equal(reply.status, 200, 'because only a modified tracked file is refused');
+    assert.match((reply.body as FlowConfigSaved).notes[0] ?? '', /git could not read the project \(fatal: not a git repository/, 'because the owner hears why nothing checked for uncommitted work');
+  } finally { fixture.done(); }
+});
+
+test('FileChangedWhileGitWasAsked_Saved_RefusedAsStale', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const stewardEdit = FOOSBRAWL.replace('  - ../foosbrawl-wt-10\n', '  - ../foosbrawl-wt-10\n  - ../foosbrawl-wt-11\n');
+    const racing = new FlowConfigEditor({
+      projectId: 'foosbrawl', root: fixture.root, log: silentLogger, refresh: async () => {},
+      runner: async () => { writeFileSync(fixture.file, stewardEdit); return { code: 0, stdout: '', stderr: '', timedOut: false }; },
+    });
+    const reply = await racing.write({ changes: [{ path: 'reviews.max_chases', value: 3 }], hash });
+    assert.deepEqual([reply.status, (reply.body as { reason: string }).reason], [409, 'stale'], 'because the steward appended to the pool during the git check, and a write from the old text would drop it');
+    assert.equal(readFileSync(fixture.file, 'utf8'), stewardEdit, 'because the steward\'s entry stays');
+  } finally { fixture.done(); }
+});
+
+test('Save_Written_KeepsTheFileModeAndLeavesNoTempFile', async () => {
+  const fixture = project();
+  try {
+    chmodSync(fixture.file, 0o640);
+    const { hash } = await readDocument(fixture.editor);
+    await fixture.editor.write({ changes: [{ path: 'reviews.max_chases', value: 3 }], hash });
+    assert.equal(statSync(fixture.file).mode & 0o777, 0o640, 'because the file is renamed over from a temp copy, which takes the old mode');
+    assert.deepEqual(readdirSync(path.dirname(fixture.file)), ['config.yaml'], 'because the temp file is renamed, not left beside it');
+  } finally { fixture.done(); }
+});
+
+test('ScheduleRemoved_Saved_UninstallOfferedForThatJob', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const saved = (await fixture.editor.write({ changes: [{ path: 'jobs.schedule.retro', value: null }], hash })).body as FlowConfigSaved;
+    assert.deepEqual(saved.followUps.map((followUp) => [followUp.action?.kind, followUp.action?.args]), [['job.uninstall', { job: 'retro' }]], 'because jobs.sh install never touches a job without a schedule, so retro\'s launchd agent would keep running');
+  } finally { fixture.done(); }
+});
+
+test('EverySchedule_Removed_NoInstallOffered', () => {
+  const after = parseYaml('jobs:\n  schedule:\n    next: ""\n');
+  const kinds = followUpsOf(['jobs.schedule.next', 'jobs.schedule.health'], after).map((followUp) => followUp.action?.args['job']);
+  assert.deepEqual(kinds, ['next', 'health'], 'because jobs.sh install exits 2 when no job has a schedule; each job is unloaded instead');
+});
+
+test('FileChangedSinceTheRead_Saved_RefusedAsStale', async () => {
   const fixture = project();
   try {
     const { hash } = await readDocument(fixture.editor);
@@ -216,7 +342,7 @@ test('FileChangedSinceTheRead_Refused', async () => {
   } finally { fixture.done(); }
 });
 
-test('ValueOutOfType_RefusedWithTheReason', async () => {
+test('ValueOutOfType_Saved_RefusedWithTheReason', async () => {
   const fixture = project();
   try {
     const { hash } = await readDocument(fixture.editor);
@@ -235,7 +361,7 @@ test('ValueOutOfType_RefusedWithTheReason', async () => {
   } finally { fixture.done(); }
 });
 
-test('RawText_SavedWhole', async () => {
+test('RawText_Saved_WrittenWhole', async () => {
   const fixture = project();
   try {
     const { hash } = await readDocument(fixture.editor);
@@ -246,7 +372,7 @@ test('RawText_SavedWhole', async () => {
   } finally { fixture.done(); }
 });
 
-test('RawTextOutOfFormat_Refused', async () => {
+test('RawTextOutOfFormat_Saved_Refused', async () => {
   const fixture = project();
   try {
     const { hash } = await readDocument(fixture.editor);
@@ -257,7 +383,7 @@ test('RawTextOutOfFormat_Refused', async () => {
   } finally { fixture.done(); }
 });
 
-test('Read_CarriesTheHashOfTheText', async () => {
+test('Document_Read_CarriesTheHashOfTheText', async () => {
   const fixture = project();
   try {
     const document = await readDocument(fixture.editor);

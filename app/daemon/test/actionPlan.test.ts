@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { HANDED_ON_REFRESH_MS, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
+import { HANDED_ON_REFRESH_MS, installNote, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
@@ -254,4 +254,17 @@ test('JobsInstall_RunsJobsShInstallHoldingEveryJobLock', () => {
 
 test('JobsInstall_WithAJob_Refused', () => {
   assert.equal(planAction('jobs.install', { job: 'next' }, CONTEXT).ok, false, 'because the console reloads the whole schedule, never one job of it');
+});
+
+test('JobsInstall_ARunningJobLeftAsItIs_TheNoteNamesIt', () => {
+  const plan = planned('jobs.install', {});
+  const output = 'next: running now, left as it is; install it again after the run\ncomments: every 10m, as com.app.flow.comments\n';
+  assert.equal(plan.note?.(output), 'skipped next: running now, so it keeps the old schedule; install again after the run', 'because jobs.sh exits 0 when it skips a running job, and done alone would say the schedule was reloaded');
+  assert.equal(installNote('comments: every 10m, as com.app.flow.comments\n'), null, 'because a clean install needs no note');
+});
+
+test('JobUninstall_RunsJobsShUninstallForThatJob', () => {
+  const plan = planned('job.uninstall', { job: 'retro' });
+  assert.deepEqual([plan.args.slice(1), plan.locks, plan.refresh], [['uninstall', 'retro'], ['job:retro'], ['jobs']], 'because a job whose schedule left the config is unloaded on its own; install never touches it again');
+  assert.equal(planAction('job.uninstall', { job: 'all' }, CONTEXT).ok, false, 'because the console unloads one named job, never every job at once');
 });

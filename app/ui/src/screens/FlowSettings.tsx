@@ -100,7 +100,8 @@ function nested(value: unknown): boolean {
 /** The text a control starts with, from the file's value. */
 export function textOf(spec: FieldSpec, value: unknown): string {
   if (value === undefined || value === null) return '';
-  if (spec.type === 'list') return (Array.isArray(value) ? value : [value]).map(String).join('\n');
+  // A bare list key reads as an empty map.
+  if (spec.type === 'list') return Array.isArray(value) ? value.map(String).join('\n') : typeof value === 'string' ? value : '';
   if (spec.type === 'map') return typeof value === 'object' ? Object.entries(value as Record<string, unknown>).map(([key, entry]) => `${key}: ${String(entry)}`).join('\n') : String(value);
   return String(value);
 }
@@ -208,10 +209,11 @@ function SaveResult({ result, retry, reload }: { result: Result | null; retry: (
   return (
     <span className="flow-result" role="status">
       <span>{saved.saved.length === 0 ? 'Nothing changed.' : `Saved ${saved.saved.join(', ')}.`}</span>
+      {saved.notes.map((note) => <span key={note} className="muted">{note}.</span>)}
       {saved.followUps.map((followUp) => (
         <span key={followUp.note} className="flow-follow-up">
           {followUp.note}
-          {followUp.action !== null && <ActionButton kind={followUp.action.kind} args={{}} label={followUp.action.label} primary />}
+          {followUp.action !== null && <ActionButton kind={followUp.action.kind} args={followUp.action.args} label={followUp.action.label} primary />}
         </span>
       ))}
     </span>
