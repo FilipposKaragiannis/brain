@@ -4,9 +4,15 @@
 
 - `gate.sh list --json` prints the pending gates as one JSON array, oldest first. Each gate has
   its item, gate, message, time and host, the claimed pool worktree (or null), its age in
-  seconds and its questions: each numbered line with the text under it and the `Recommended`
-  line as the recommended answer. The plugin is now the one place that parses a gate message.
-- `FLOW_NOW` (an ISO time) stands in for the clock in the age, for tests.
+  seconds and its questions. A numbered line opens a question; `Recommended:` (on that line or
+  the next, `**Recommended:**` and `- Recommended:` too) starts its recommended answer, which
+  runs to the next numbered line. The console will switch to it, so a gate message is parsed in
+  one place.
+- An empty `questions` means the message is not numbered questions (a plan-approval or merge
+  gate, say): the reader shows `message` itself.
+- A gate record that is not JSON is skipped with a warning naming the file; the others still list.
+  `gate.sh list` with an unknown argument exits 2 with the usage.
+- `FLOW_NOW` (an ISO time) stands in for the clock in the age. It exists for tests.
 - `gate.sh list` without `--json` prints as before.
 
 ## 1.17.0 (2026-10-24)
