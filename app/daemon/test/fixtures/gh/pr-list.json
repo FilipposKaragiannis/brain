@@ -1,0 +1,238 @@
+[
+  {
+    "author": {
+      "id": "MDQ6VXNlcjU3ODQzNTcx",
+      "is_bot": false,
+      "login": "FilipposKaragiannis",
+      "name": "Filip Karagiannis"
+    },
+    "baseRefName": "main",
+    "createdAt": "2026-10-24T13:50:09Z",
+    "headRefName": "flow/gh-310",
+    "headRefOid": "9fedc7e446f79c62a900df9e9a76efb9c522e60c",
+    "isDraft": false,
+    "latestReviews": [
+      {
+        "id": "",
+        "author": {
+          "login": "chatgpt-codex-connector"
+        },
+        "authorAssociation": "NONE",
+        "body": "Codex review receipt",
+        "submittedAt": "2026-10-24T13:52:43Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "COMMENTED",
+        "commit": {
+          "oid": ""
+        }
+      }
+    ],
+    "mergeStateStatus": "UNSTABLE",
+    "mergeable": "MERGEABLE",
+    "number": 560,
+    "reviewDecision": "",
+    "reviewRequests": [],
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:12Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330325/job/121022349533",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-24T23:50:10Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:56:00Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330325/job/121022349533",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-24T23:55:00Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:15Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144334403/job/121022361884",
+        "name": "Foosbrawl.Common.Game.Domain.Tests",
+        "startedAt": "2026-10-24T23:50:13Z",
+        "status": "COMPLETED",
+        "workflowName": "Domain Tests"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:12Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330316/job/121022349504",
+        "name": "Foosbrawl.Common.Game.Domain.Tests",
+        "startedAt": "2026-10-24T23:50:10Z",
+        "status": "COMPLETED",
+        "workflowName": "Domain Tests"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:52:47Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144502007/job/121022869443",
+        "name": "claude",
+        "startedAt": "2026-10-24T23:52:53Z",
+        "status": "COMPLETED",
+        "workflowName": "Claude"
+      }
+    ],
+    "title": "fix(bots): walk the carry onto the ball's lane through the pin recapture",
+    "updatedAt": "2026-10-24T13:52:47Z",
+    "url": "https://github.com/FJ2K/foosbrawl/pull/560"
+  },
+  {
+    "author": {
+      "id": "U_1",
+      "is_bot": false,
+      "login": "FilipposKaragiannis",
+      "name": "Filip Karagiannis"
+    },
+    "baseRefName": "main",
+    "isDraft": false,
+    "latestReviews": [
+      {
+        "id": "R_1",
+        "author": {
+          "login": "codex"
+        },
+        "authorAssociation": "NONE",
+        "body": "lgtm",
+        "submittedAt": "2026-10-24T12:00:00Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "APPROVED",
+        "commit": {
+          "oid": "2020202"
+        }
+      }
+    ],
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "APPROVED",
+    "reviewRequests": [],
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T11:00:00Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://example/runs/1",
+        "name": "Domain",
+        "startedAt": "2026-10-24T11:00:00Z",
+        "status": "COMPLETED",
+        "workflowName": "Domain Tests"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T11:00:00Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://example/runs/1",
+        "name": "Full sweep",
+        "startedAt": "2026-10-24T11:00:00Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      }
+    ],
+    "number": 20,
+    "title": "Twenty",
+    "url": "https://example/pull/20",
+    "headRefName": "flow/gh-20",
+    "headRefOid": "2020202",
+    "createdAt": "2026-10-20T10:00:00Z",
+    "updatedAt": "2026-10-24T12:00:00Z"
+  },
+  {
+    "author": {
+      "id": "U_1",
+      "is_bot": false,
+      "login": "FilipposKaragiannis",
+      "name": "Filip Karagiannis"
+    },
+    "baseRefName": "main",
+    "isDraft": false,
+    "latestReviews": [
+      {
+        "id": "R_2",
+        "author": {
+          "login": "claude"
+        },
+        "authorAssociation": "NONE",
+        "body": "two issues",
+        "submittedAt": "2026-10-24T17:30:00Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "CHANGES_REQUESTED",
+        "commit": {
+          "oid": "2121212"
+        }
+      }
+    ],
+    "mergeStateStatus": "BLOCKED",
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "CHANGES_REQUESTED",
+    "reviewRequests": [
+      {
+        "__typename": "User",
+        "login": "codex"
+      }
+    ],
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://example/runs/1",
+        "name": "Domain",
+        "startedAt": "2026-10-24T18:00:00Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "Domain Tests"
+      }
+    ],
+    "number": 21,
+    "title": "Nine's fix",
+    "url": "https://example/pull/21",
+    "headRefName": "flow/gh-9",
+    "headRefOid": "2121212",
+    "createdAt": "2026-10-24T09:00:00Z",
+    "updatedAt": "2026-10-24T18:00:00Z"
+  },
+  {
+    "author": {
+      "id": "U_1",
+      "is_bot": false,
+      "login": "FilipposKaragiannis",
+      "name": "Filip Karagiannis"
+    },
+    "baseRefName": "main",
+    "isDraft": true,
+    "latestReviews": [],
+    "mergeStateStatus": "DRAFT",
+    "mergeable": "UNKNOWN",
+    "reviewDecision": "",
+    "reviewRequests": [],
+    "statusCheckRollup": [
+      {
+        "__typename": "StatusContext",
+        "context": "ci/legacy",
+        "state": "PENDING",
+        "startedAt": "2026-10-23T09:00:00Z",
+        "targetUrl": "https://example/ci"
+      }
+    ],
+    "number": 22,
+    "title": "Spike",
+    "url": "https://example/pull/22",
+    "headRefName": "spike/rope",
+    "headRefOid": "2222222",
+    "createdAt": "2026-10-23T09:00:00Z",
+    "updatedAt": "2026-10-23T09:30:00Z"
+  }
+]

@@ -23,12 +23,12 @@ Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 | `GET /api/projects` | every project with its counts |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, a heartbeat every 15s |
-| `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board>` | re-read one source now (all when omitted) |
+| `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
 
 ## The snapshot
 `daemon/src/snapshot.ts` is the contract. One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `attention` (what needs a human,
-oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `jobs`, `events` and
+oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `jobs`, `pulls`, `events` and
 `disagreements`. Timestamps are ISO UTC; every age is seconds at `takenAt`, so a reader keeps
 counting on its own clock between snapshots.
 
@@ -47,6 +47,24 @@ Flags add detail without changing the state: `dirty`, `behind`, `stale-branch`, 
 `dead-run` (a run record with no process), `agent-without-claim`, `session` (someone's interactive
 host is open in the folder).
 
+Every open pull request carries one state, the first that holds:
+
+| PR state | Meaning |
+|---|---|
+| `draft` | a draft PR |
+| `conflicts` | GitHub says it does not merge cleanly (`CONFLICTING`) |
+| `checks-failing` | a check failed (each check counted once, by its latest run) |
+| `changes-requested` | the review decision, or with no required review the latest reviews, ask for changes |
+| `checks-pending` | a check is still queued or running |
+| `review-pending` | no approval yet |
+| `approved` | approved, but a review thread is unresolved or GitHub has not said it merges |
+| `mergeable` | approved, checks green, no unresolved thread, mergeable: ready to merge |
+
+A PR belongs to the item whose `pr` field names it (number or URL), else to the item claimed on
+its head branch, and that gives its worktree. `checks-failing`, `changes-requested` and `mergeable`
+each add an attention row (`pr-failing`, `pr-changes-requested`, `pr-mergeable`), and `counts`
+carries `prsFailing`, `prsChangesRequested` and `prsMergeable`.
+
 ## Sources and cadence
 | Source | How | Every |
 |---|---|---|
@@ -55,6 +73,7 @@ host is open in the folder).
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
+| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads; a project not on the github adapter reports a freshness error instead | 60s |
 
 The daemon never writes to a project. The next slice adds actions: every button in the UI runs a
 flow script through the daemon, which streams its output and logs it.
@@ -65,7 +84,7 @@ clock injected. It derives states, ages, the attention list and the disagreement
 places flow state lives (claims, gate records, run records, the process list, issue labels and
 state, the project card): a run record with no process, an agent in a worktree without a claim,
 a claim whose step differs from the issue, a gate record the labels do not show, an item at step
-done with an open PR and no merge gate.
+done whose PR is ready to merge (state `mergeable`) with no merge gate.
 
 ## Develop
 ```bash

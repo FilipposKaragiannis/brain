@@ -7,7 +7,7 @@ import type { SourceName } from './snapshot.ts';
 export type ServerOptions = { host: string; port: number; token: string | null; log: Logger };
 
 const HEARTBEAT_MS = 15000;
-const SOURCES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board'];
+const SOURCES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board', 'pulls'];
 const HTTP_OK = 200;
 const HTTP_NO_CONTENT = 204;
 const HTTP_ACCEPTED = 202;

@@ -23,8 +23,14 @@ export type JobState = 'running' | 'due' | 'scheduled' | 'paused' | 'not-install
 export type AgentHost = 'claude' | 'codex';
 /** An agent is a run the flow started unattended; a session is a person's interactive host in that folder. */
 export type AgentKind = 'agent' | 'session';
-export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board';
-export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed';
+export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board' | 'pulls';
+export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable';
+/**
+ * Where an open pull request stands, the first that holds: a draft, merge conflicts, a failing
+ * check, changes requested, a check still running, no approval yet, approved with checks or
+ * threads not yet clean, and last ready to merge.
+ */
+export type PullState = 'draft' | 'conflicts' | 'checks-failing' | 'checks-pending' | 'changes-requested' | 'review-pending' | 'approved' | 'mergeable';
 
 /** When a source was last read, how old that is, and whether the read worked. */
 export type Freshness = {
@@ -136,6 +142,27 @@ export type Agent = {
   command: string;
 };
 
+export type PullRequest = {
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  base: string;
+  author: string;
+  draft: boolean;
+  state: PullState;
+  checks: { passed: number; failed: number; pending: number };
+  reviewDecision: string | null;
+  unresolvedThreads: number;
+  mergeable: string | null;
+  item: string | null;
+  worktree: string | null;
+  createdAt: string;
+  updatedAt: string;
+  ageSeconds: number;
+  idleSeconds: number;
+};
+
 export type JobRun = {
   at: string;
   seconds: number;
@@ -196,6 +223,9 @@ export type Counts = {
   itemsBacklog: number;
   itemsDone: number;
   disagreements: number;
+  prsMergeable: number;
+  prsFailing: number;
+  prsChangesRequested: number;
 };
 
 export type Snapshot = {
@@ -211,6 +241,7 @@ export type Snapshot = {
   runs: Run[];
   agents: Agent[];
   jobs: Job[];
+  pulls: PullRequest[];
   events: FlowEvent[];
   disagreements: Disagreement[];
 };

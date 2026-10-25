@@ -5,12 +5,13 @@ import { poolPaths } from './collectors/flowHome.ts';
 import type { GitFacts, GitWorktree } from './collectors/git.ts';
 import type { JobFacts, JobStatusRow } from './collectors/jobs.ts';
 import type { AgentProcess, ProcessFacts } from './collectors/processes.ts';
+import type { PullFact, PullFacts } from './collectors/pulls.ts';
 import { parseGateQuestions } from './gateMessage.ts';
 import {
   GATE_OVERDUE_HOURS, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, Claim, Counts, Disagreement, Freshness, Gate, Item, ItemState, Job, JobState, Run,
+  Agent, AttentionRow, Claim, Counts, Disagreement, Freshness, Gate, Item, ItemState, Job, JobState, PullRequest, PullState, Run,
   Snapshot, SourceName, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
@@ -22,12 +23,17 @@ export type ReconcileInput = {
   processes: ProcessFacts | null;
   jobs: JobFacts | null;
   board: BoardFacts | null;
+  pulls: PullFacts | null;
   sources: Record<SourceName, Freshness>;
 };
 
 const MILLISECONDS_PER_SECOND = 1000;
 const SECONDS_PER_HOUR = 3600;
 const UNRANKED = 999;
+/** The merge gate: the one gate that asks a person to merge a ready pull request. */
+const MERGE_GATE = 'merge';
+const PULL_URL = /^(https?:\/\/[^\s#?]+\/pull\/\d+)/;
+const PULL_NUMBER = /^#?(\d+)$/;
 const STATE_ORDER: Record<ItemState, number> = {
   'needs-you': 0, running: 1, stale: 2, claimed: 3, ready: 4, blocked: 5, backlog: 6, done: 7,
 };
@@ -230,7 +236,58 @@ function buildJobs(input: ReconcileInput): Job[] {
   }));
 }
 
-function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], items: Item[]): Disagreement[] {
+function approved(pull: PullFact): boolean {
+  if (pull.reviewDecision !== null) return pull.reviewDecision === 'APPROVED';
+  return pull.approvals > 0 && pull.changesRequested === 0;
+}
+
+function changesRequested(pull: PullFact): boolean {
+  if (pull.reviewDecision !== null) return pull.reviewDecision === 'CHANGES_REQUESTED';
+  return pull.changesRequested > 0;
+}
+
+export function pullState(pull: PullFact): PullState {
+  if (pull.draft) return 'draft';
+  if (pull.mergeable === 'CONFLICTING') return 'conflicts';
+  if (pull.checks.failed > 0) return 'checks-failing';
+  if (changesRequested(pull)) return 'changes-requested';
+  if (pull.checks.pending > 0) return 'checks-pending';
+  if (!approved(pull)) return 'review-pending';
+  if (pull.unresolvedThreads > 0 || pull.mergeable !== 'MERGEABLE') return 'approved';
+  return 'mergeable';
+}
+
+/** An item's `pr` field names its pull by number (`560`, `#560`) or by URL. */
+function namesPull(field: string | null, pull: PullFact): boolean {
+  if (field === null) return false;
+  const value = field.trim();
+  const url = PULL_URL.exec(value);
+  if (url !== null) return url[1] === pull.url;
+  const pullNumber = PULL_NUMBER.exec(value);
+  return pullNumber !== null && Number(pullNumber[1]) === pull.number;
+}
+
+type PullLink = { item: string | null; worktree: string | null };
+
+function linkPull(pull: PullFact, items: Item[], contexts: WorktreeContext[]): PullLink {
+  const named = items.find((item) => namesPull(item.pr, pull));
+  if (named !== undefined) return { item: named.id, worktree: named.worktree };
+  const claimed = contexts.find((context) => context.claim !== null && context.claim.branch === pull.branch);
+  if (claimed !== undefined) return { item: claimed.claim?.item ?? null, worktree: claimed.name };
+  return { item: null, worktree: null };
+}
+
+function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeContext[]): PullRequest[] {
+  return (input.pulls?.pulls ?? []).map((pull) => ({
+    number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
+    draft: pull.draft, state: pullState(pull), checks: pull.checks, reviewDecision: pull.reviewDecision,
+    unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, ...linkPull(pull, items, contexts),
+    createdAt: pull.createdAt, updatedAt: pull.updatedAt,
+    ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
+  }));
+}
+
+function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], items: Item[], pulls: PullRequest[]): Disagreement[] {
   const out: Disagreement[] = [];
   const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
   for (const context of contexts) {
@@ -254,14 +311,30 @@ function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], 
       out.push({ item: gate.item, worktree: null, sources: ['gate record', 'issue labels'], message: `${gate.item}: the gate record says ${gate.gate}, the issue labels say ${item.state.gate}.` });
     }
   }
-  for (const item of items) {
-    const open = item.status === 'open' && item.pr !== null && item.step === 'done' && item.gate === 'none';
-    if (open) out.push({ item: item.id, worktree: item.worktree, sources: ['issue state', 'pull request'], message: `${item.id} is at step done with an open PR and no gate. Nothing asks you to merge it.` });
+  for (const item of items.filter((entry) => entry.step === 'done' && entry.gate !== MERGE_GATE)) {
+    const ready = pulls.find((pull) => pull.item === item.id && pull.state === 'mergeable');
+    if (ready !== undefined) out.push({ item: item.id, worktree: item.worktree, sources: ['issue state', 'pull request'], message: `${item.id} is at step done and #${ready.number} is ready to merge, but no merge gate asks you to merge it.` });
   }
   return out;
 }
 
-function buildAttention(gates: Gate[], worktrees: Worktree[], runs: Run[], jobs: Job[], disagreements: Disagreement[], now: Date): AttentionRow[] {
+const PULL_ATTENTION: Partial<Record<PullState, { kind: AttentionRow['kind']; title: string }>> = {
+  'checks-failing': { kind: 'pr-failing', title: 'checks failing' },
+  'changes-requested': { kind: 'pr-changes-requested', title: 'changes requested' },
+  mergeable: { kind: 'pr-mergeable', title: 'ready to merge' },
+};
+
+function pullAttention(pulls: PullRequest[]): AttentionRow[] {
+  return pulls.flatMap((pull) => {
+    const row = PULL_ATTENTION[pull.state];
+    if (row === undefined) return [];
+    return [{ kind: row.kind, id: pull.item ?? `#${pull.number}`, title: `#${pull.number} ${row.title}`, detail: pull.title, worktree: pull.worktree, sinceAt: pull.updatedAt, ageSeconds: pull.idleSeconds }];
+  });
+}
+
+type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[] };
+
+function buildAttention({ gates, worktrees, runs, jobs, pulls, disagreements }: AttentionSources, now: Date): AttentionRow[] {
   const rows: AttentionRow[] = [];
   for (const gate of gates) {
     rows.push({ kind: 'gate', id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds });
@@ -276,21 +349,26 @@ function buildAttention(gates: Gate[], worktrees: Worktree[], runs: Run[], jobs:
   for (const job of jobs.filter((entry) => entry.last !== null && entry.last.exit !== null && entry.last.exit !== 0)) {
     rows.push({ kind: 'job-failed', id: job.name, title: `${job.name} job failed`, detail: job.last?.result ?? '', worktree: null, sinceAt: job.last?.at ?? null, ageSeconds: ageSeconds(job.last?.at ?? null, now) });
   }
+  rows.push(...pullAttention(pulls));
   for (const disagreement of disagreements) {
     rows.push({ kind: 'disagreement', id: disagreement.item ?? disagreement.worktree ?? 'project', title: disagreement.sources.join(' vs '), detail: disagreement.message, worktree: disagreement.worktree, sinceAt: null, ageSeconds: null });
   }
   return rows.sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
 
-function buildCounts(worktrees: Worktree[], items: Item[], agents: Agent[], jobs: Job[], gates: Gate[], disagreements: Disagreement[]): Counts {
+type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; pulls: PullRequest[]; disagreements: Disagreement[] };
+
+function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }: CountSources): Counts {
   const pool = worktrees.filter((entry) => entry.role === 'pool');
   const count = (state: WorktreeState): number => pool.filter((entry) => entry.state === state).length;
   const itemCount = (state: ItemState): number => items.filter((entry) => entry.state === state).length;
+  const pullCount = (state: PullState): number => pulls.filter((entry) => entry.state === state).length;
   return {
     needsYou: gates.length, running: count('running'), stale: count('stale'), claimed: count('claimed'), free: count('free'),
     agents: agents.filter((entry) => entry.kind === 'agent').length, jobsRunning: jobs.filter((entry) => entry.state === 'running').length,
     itemsReady: itemCount('ready'), itemsBlocked: itemCount('blocked'), itemsBacklog: itemCount('backlog'), itemsDone: itemCount('done'),
     disagreements: disagreements.length,
+    prsMergeable: pullCount('mergeable'), prsFailing: pullCount('checks-failing'), prsChangesRequested: pullCount('changes-requested'),
   };
 }
 
@@ -302,7 +380,8 @@ export function reconcile(input: ReconcileInput): Snapshot {
   const runs = buildRuns(input, contexts);
   const agents = buildAgents(input, contexts);
   const jobs = buildJobs(input);
-  const disagreements = buildDisagreements(input, contexts, items);
+  const pulls = buildPulls(input, items, contexts);
+  const disagreements = buildDisagreements(input, contexts, items, pulls);
   return {
     schema: SNAPSHOT_SCHEMA_VERSION,
     takenAt: input.now.toISOString(),
@@ -312,9 +391,9 @@ export function reconcile(input: ReconcileInput): Snapshot {
       pluginVersion: input.flow.pluginVersion, poolMax: input.flow.config.poolMax,
     },
     sources: input.sources,
-    counts: buildCounts(worktrees, items, agents, jobs, gates, disagreements),
-    attention: buildAttention(gates, worktrees, runs, jobs, disagreements, input.now),
-    worktrees, items, gates, runs, agents, jobs,
+    counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }),
+    attention: buildAttention({ gates, worktrees, runs, jobs, pulls, disagreements }, input.now),
+    worktrees, items, gates, runs, agents, jobs, pulls,
     events: input.flow.events,
     disagreements,
   };

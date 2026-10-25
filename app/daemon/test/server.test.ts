@@ -8,7 +8,7 @@ import type { Snapshot } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
-const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000 };
+const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
 
 async function started(): Promise<{ monitor: ProjectMonitor; base: string; close: () => Promise<void> }> {
   const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
