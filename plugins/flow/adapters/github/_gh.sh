@@ -20,10 +20,10 @@ issue_number() {
 # name org issue fields (the size field replaces the size: labels), github.priority_order ranks the
 # priority options, github.ready_needs lists the fields an unstarted item needs before it is ready,
 # github.project numbers the project whose Status the adapter keeps in step.
-GH_SIZE_FIELD="$(cfg github.fields.size)"; GH_PRIORITY_FIELD="$(cfg github.fields.priority)"
+GH_SIZE_FIELD="$(cfg github.fields.size)"; GH_PRIORITY_FIELD="$(cfg github.fields.priority)"; GH_AREA_FIELD="$(cfg github.fields.area)"
 GH_PRIORITY_ORDER="$(cfg github.priority_order | paste -sd, -)"; GH_READY_NEEDS="$(cfg github.ready_needs | paste -sd, -)"
 GH_PROJECT="$(cfg github.project)"
-export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_PRIORITY_ORDER GH_READY_NEEDS GH_PROJECT
+export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PRIORITY_ORDER GH_READY_NEEDS GH_PROJECT
 for _need in $(printf '%s' "$GH_READY_NEEDS" | tr , ' '); do
   case "$_need" in priority|size) ;; *) echo "flow: github.ready_needs knows priority and size, not $_need" >&2 ;; esac
 done
@@ -66,6 +66,8 @@ size = (fields.get(size_field) or "") if size_field else ""
 size = size or labelled("size:", state.get("size", ""))
 state["size"] = size
 priority = (fields.get(priority_field) or "") if priority_field else ""
+area_field = os.environ.get("GH_AREA_FIELD", "")
+area = (fields.get(area_field) or "") if area_field else ""
 order = [p for p in os.environ.get("GH_PRIORITY_ORDER", "").split(",") if p]
 rank = 999 if not priority else order.index(priority) if priority in order else len(order)
 m = re.search(r"(?im)^Parent:? #(\d+)", raw.get("body", "") or "")
@@ -83,7 +85,7 @@ project = os.environ.get("GH_PROJECT", "")
 item = next((p for p in raw.get("project_items", []) if project and str(p["project"]) == project), None)
 print(json.dumps({
     "id": "gh#%d" % raw["number"], "kind": kind, "type": raw.get("type") or "", "title": raw.get("title", ""), "size": size,
-    "priority": priority, "rank": rank, "needs": needs,
+    "priority": priority, "area": area, "rank": rank, "needs": needs,
     "status": "open" if is_open else "closed",
     "labels": labels, "blocked_by": ["gh#%d" % b["number"] for b in raw.get("blocked_by", [])],
     "open_blockers": ["gh#%d" % b["number"] for b in raw.get("blocked_by", []) if b.get("state", "open") != "closed"],

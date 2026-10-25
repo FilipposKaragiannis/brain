@@ -4,8 +4,8 @@
 # claim. Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
-# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate · 5 nothing
-# ready · 6 item is done · 7 the item has a run in flight, or another run held the pick lock.
+# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, or split
+# and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A pick whose claim finds the pool full skips that item and tries the next ready one: one that
 # already holds a claim, or whose step needs no worktree. It exits 3 when every ready item left
 # needs a new worktree. The retry re-runs this script with exec, so it keeps the pid; the skip
@@ -89,6 +89,12 @@ fi
 step="$(state_get "$data" step)"
 [ -n "$step" ] || step="$(profile_steps "$profile" | head -1)"
 [ "$step" = "done" ] && { echo "$item is done (every step ran). Merge or close it." >&2; exit 6; }
+# A split item (steward.sh split) runs no step: its children do the work.
+if [ "$step" = split ]; then
+  kids="$(json_get "$data" open_children)"
+  [ "${kids:-0}" -gt 0 ] 2>/dev/null && { echo "$item is split and waits on its $kids open child item(s)" >&2; exit 4; }
+  echo "$item is split and every child is closed. Close it." >&2; exit 6
+fi
 json_get "$profiles" "steps.$step" >/dev/null 2>&1 || die "unknown step '$step' for $item"
 if [ -f "$(run_file "$item")" ]; then
   echo "$item already has a run in flight: $(cat "$(run_file "$item")"). Finish it with advance.sh, or delete the run file if that session died." >&2; exit 7

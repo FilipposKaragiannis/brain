@@ -1,5 +1,103 @@
 # flow
 
+## 1.19.0 (2026-10-25)
+
+- A comments pass the host cut short is failed, not done. A non-zero exit, or Claude stopping
+  the addresser at its background-task ceiling (a line near the end of the output that opens
+  with "Background tasks still running" and ends "; stopping them."; the model quoting it does
+  not count), keeps nothing of the pass: the job says `pass failed`, the run ends `failed:` with
+  exit 1, and the next run addresses the PR again. Before, such a pass counted as done and the
+  skip rule hid its open thread for good. After `jobs.comments.max_failures` (3) failed passes in
+  a row, whatever they changed on the PR, the job stops trying it and the owner is told once; a
+  pass run by hand that completes lets the job try it again.
+- A failed or cut-short pass leaves `comments-resume.md` in the item's reports, in the shape of
+  the health job's `resume.md`: when it was cut short, that the worktree may hold its
+  uncommitted work, and to read `git status` and `git diff`, continue from there, build and test
+  before committing, and discard nothing without saying so in the reply. The next pass's prompt
+  names it, the comments skill and the comment-addresser read it, and a completed pass removes
+  it once the claimed worktree is clean. A dirty worktree with that note is no reason for the pass to stop. A claimed worktree
+  found dirty with no note (a pass cut off before 1.19.0) gets one before the pass, but only when
+  the worktree's claim names the item.
+- The host's output goes to `comments.log` as the pass runs, so a pass killed half way keeps
+  what it said. There is still no timeout on a pass.
+- An open review thread is never hidden by the skip rule. The skip state now holds the
+  unresolved thread count, their comments, and the last comment ids of the threads still
+  awaiting a reply, as well as the last update, head commit and mergeable state. A thread awaits
+  a reply when its last comment does not carry `<!-- flow:reply -->`, the marker
+  `comments.sh reply` now adds, so a thread the owner answered under the flow's own login still
+  counts. In a thread with no marker at all, a last reply by the flow's login is taken as ours, so
+  replies posted before 1.19.0 do not count as waiting; the login is read once per run, and only
+  when such a thread exists. Threads still awaiting after a pass get one more pass, then wait until something
+  changes, and the owner is told once. `comments.sh activity <pr>` prints what is compared.
+  The first run after the upgrade addresses each open PR once, since the compared state changed:
+  a thread an earlier cut-short pass left open gets its pass then.
+- The comments job skips an item waiting at a gate other than merge: the pass would stop at it
+  again. A named PR still runs.
+- The comments skill waits for each addresser in the foreground and never ends its turn while
+  one runs.
+- A plan step that makes tracker tasks of a task splits it. When the plan step ends done or at
+  the decomposition gate (not an ambiguity or plan-approval gate: the plan is not settled) with `plan.md` saying `Decomposition: tracker tasks` and children open, `advance.sh`
+  runs `steward.sh split <item>`: its step becomes `split`, no profile runs it, it is never
+  ready, the board shows `split, waiting on N children`, and `next.sh <item>` says it waits
+  (exit 4), or, once every child is closed, to close it (exit 6; the next job says so and the
+  health job notifies once). Its worktree goes back to the pool through the steward. It stays,
+  with the claim's step set to `split`, while it has uncommitted changes, a run is in flight, or
+  a live session works in it; the event says which. Each split is one `split` line in
+  `events.log` and a comment on the item.
+- Clearing the decomposition gate never splits by itself, whatever children exist: a plan in
+  local phases, or a child filed by hand, is left alone. The decomposition gate of a split item
+  says how to keep it whole: close the children, then clear the gate, and the plan step runs
+  again. The choice is kept (`<flow home>/kept-whole/<slug>`, `steward.sh keep-whole`): until the
+  plan step rewrites `plan.md`, neither `advance.sh` nor the health job splits the item, whatever
+  children turn up.
+- The implement step of a task in tracker-tasks mode with children still open runs
+  `steward.sh split` and stops; `advance.sh` keeps an item split during its step split, and
+  frees the worktree once the run ends. With every child closed it checks their PRs merged, else
+  stops at an ambiguity gate.
+- The rule for a split parent's branch: it is kept whenever it holds commits past the base
+  (release never forces a delete), and the event names it with its commit count. `release` now
+  deletes a branch only when the base holds all of it: `git branch -d` alone also deleted one
+  merged into its upstream but ahead of the base. The children
+  start from the base and open their PRs against it, since the parent no longer has a claimed
+  branch. A child that needs the parent's commits (an ADR, a design doc) names the parent's
+  branch in its `## Notes`, the other children block on it, and its implementer merges the
+  branch in, so its PR carries them. Delete the parent's branch once they have landed.
+- The health job finishes a split the plan step could not: a task at step `plan` or `split`
+  whose `plan.md` says tracker tasks, with open children, no gate and no live run, after a dead
+  run had its resume. So parents split before 1.19.0 free their clean worktrees on the first
+  health run. An item at any other step is never split by the health job.
+- The health job looks under a gate. A claimed item waiting at a gate whose worktree has
+  uncommitted changes is said and notified once ("an interrupted run left them"); at the merge
+  gate, review threads on its PR still awaiting a reply are said and notified once, since the
+  comments job addresses them next. Nothing is touched.
+- A child takes its parent's priority and area. `new.sh --parent` reads the parent and passes
+  its priority and area unless the child names its own, and says so on stderr; a parent it
+  cannot read is warned about and the child is made without them. A child left without the
+  priority `github.ready_needs` asks for is said too, since it is never ready until one is set.
+  `new.sh` and both adapters' `create` take `--priority` (the `github.fields.priority` field on
+  GitHub, a `priority` key on a local item). Children made before 1.19.0 keep no priority: set
+  it on the tracker.
+- Items carry `area` (from `github.fields.area`) and `priority`, and local items carry
+  `open_children`, as GitHub items already did.
+- The gitignore block `flow:init` writes lists `.flow/*.lock/`, so the `answers`, `pick` and
+  `sweep` lock directories no longer show as untracked. `init --check` names each line the
+  project's block lacks and exits 1; run `flow:init` to add it.
+
+## 1.18.0 (2026-10-25)
+
+- `gate.sh list --json` prints the pending gates as one JSON array, oldest first. Each gate has
+  its item, gate, message, time and host, the claimed pool worktree (or null), its age in
+  seconds and its questions. A numbered line opens a question; `Recommended:` (on that line or
+  the next, `**Recommended:**` and `- Recommended:` too) starts its recommended answer, which
+  runs to the next numbered line. The console will switch to it, so a gate message is parsed in
+  one place.
+- An empty `questions` means the message is not numbered questions (a plan-approval or merge
+  gate, say): the reader shows `message` itself.
+- A gate record that is not JSON is skipped with a warning naming the file; the others still list.
+  `gate.sh list` with an unknown argument exits 2 with the usage.
+- `FLOW_NOW` (an ISO time) stands in for the clock in the age. It exists for tests.
+- `gate.sh list` without `--json` prints as before.
+
 ## 1.17.0 (2026-10-24)
 
 - The comments job skips a PR with nothing new. Before a pass it reads the PR's last update,

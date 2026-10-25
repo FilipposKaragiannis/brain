@@ -49,10 +49,16 @@ for p in pool:
 print("\n## Items")
 print("| item | kind | priority | size | title | step | gate | worktree | blocked by |")
 print("|---|---|---|---|---|---|---|---|---|")
+def step_of(i):
+    step = i["state"].get("step") or "-"
+    if step == "split":
+        kids = i.get("open_children", 0)
+        return "split, waiting on %d child%s" % (kids, "" if kids == 1 else "ren") if kids else "split, every child closed"
+    return step
 for i in sorted(items, key=lambda i: i.get("rank", 999)):
     s = i["state"]
     print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (i["id"], i["kind"], i.get("priority", ""), i.get("size") or s.get("size", ""), i["title"][:50],
-          s.get("step") or "-", s.get("gate") or "none", s.get("worktree") or "-", ", ".join(i.get("blocked_by", [])) or "-"))
+          step_of(i), s.get("gate") or "none", s.get("worktree") or "-", ", ".join(i.get("blocked_by", [])) or "-"))
 if gates:
     print("\n## Waiting on you")
     for g in gates:

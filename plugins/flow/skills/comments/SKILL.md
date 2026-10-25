@@ -27,6 +27,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    choice; abort the merge and stop. A dirty tree or a failing verify → abort or leave the merge
    unpushed, report it, stop. `UNKNOWN` means GitHub is still computing: skip, the next pass sees
    it.
+   **Interrupted work**: when `<reports>/comments-resume.md` exists, the last pass was cut short
+   and the claimed worktree may hold its uncommitted work. Read the note, `git status` and
+   `git diff` there. That dirty tree is not a reason to stop: give the note and the diff to the
+   addresser of the thread the changes belong to (step 5), which continues from them.
 3. **Threads**: `comments.sh threads <pr>` lists the unresolved review threads. None, no new
    plain comment since the last pass (`comments.sh issue-comments`, compare with
    `<reports>/comments.json`) and no merge in step 2 → stop, "quiet".
@@ -38,6 +42,9 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 5. **Spawn `comment-addresser`** once per thread, in order of file, in the claimed worktree
    (`"$P/scripts/steward.sh" find <item>`, claim when released). One at a time: each commits
    or replies, resolves when done, pushes. A `gate` result means the owner decides; collect it.
+   Wait for each addresser in the foreground and never end the turn while one runs: an
+   unattended host stops background work after the last turn, and the comments job then counts
+   the pass as failed and runs it again.
 6. **Quiz**: when the PR is a draft and a comment carries `<!-- flow:quiz -->`, look for the
    owner's answer comment after it. Grade against the answer key in `<reports>/quiz.md`: every
    question right → `comments.sh ready <pr>` and reply "quiz passed"; otherwise reply with the
@@ -46,7 +53,9 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    `"$P/scripts/comments.sh" request-review <pr> "<ask>"`, the ask naming the new commits and
    what changed. It asks each reviewer in `reviews.reviewers`, one comment each. Never tag a
    reviewer by hand. A reviewer that stays silent is chased by the comments job, not here.
-8. Report once: the conflict merge, threads addressed (valid, nit, wrong counts), commits, the owner's decisions
+8. Delete `<reports>/comments-resume.md` once every thread of this pass is addressed or replied
+   to, and the interrupted work is committed or named in a reply.
+9. Report once: the conflict merge, threads addressed (valid, nit, wrong counts), commits, the owner's decisions
    pending, the quiz state.
 
 Never batch threads into one commit. Never resolve a thread without a reply. Never mark the
