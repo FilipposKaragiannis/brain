@@ -437,8 +437,32 @@ function waitsOnField(item: Item): boolean {
   return item.kind !== EPIC && item.status === 'open' && item.needs.length > 0 && item.step === '' && item.openBlockers.length === 0;
 }
 
+/** Work has started on the item: it has a step, a worktree, a pull request or a gate. */
+function inProgress(item: Item): boolean {
+  return item.step !== '' || item.worktree !== null || item.pr !== null || (item.gate !== '' && item.gate !== 'none');
+}
+
+function finished(item: Item): boolean {
+  return item.status !== 'open' || item.step === 'done';
+}
+
+/**
+ * An item waiting on a field that is the next step of work already under way: its parent has
+ * started, a sibling under the same parent has started or is done, or it blocks an item that has
+ * started. The rest of the items waiting on a field are backlog.
+ */
+function nextInLine(item: Item, items: Item[]): boolean {
+  if (item.state !== 'backlog' || !waitsOnField(item)) return false;
+  if (item.parent !== null) {
+    const parent = items.find((entry) => entry.id === item.parent);
+    if (parent !== undefined && inProgress(parent)) return true;
+    if (items.some((entry) => entry.id !== item.id && entry.parent === item.parent && (inProgress(entry) || finished(entry)))) return true;
+  }
+  return items.some((entry) => entry.blockedBy.includes(item.id) && inProgress(entry));
+}
+
 function needsFieldAttention(items: Item[]): AttentionRow[] {
-  return items.filter(waitsOnField).map((item) => ({
+  return items.filter((item) => nextInLine(item, items)).map((item) => ({
     kind: 'needs-field' as const, id: item.id, title: item.title || item.id, detail: `needs ${item.needs.join(' and ')}`,
     worktree: item.worktree, sinceAt: null, ageSeconds: null,
   }));
@@ -481,7 +505,7 @@ function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreemen
     itemsReady: itemCount('ready'), itemsBlocked: itemCount('blocked'), itemsBacklog: itemCount('backlog'), itemsDone: itemCount('done'),
     disagreements: disagreements.length,
     pullsMergeable: pullCount('mergeable'), pullsFailing: pullCount('checks-failing'), pullsChangesRequested: pullCount('changes-requested'),
-    needsField: items.filter(waitsOnField).length,
+    needsField: items.filter((item) => nextInLine(item, items)).length,
   };
 }
 
@@ -491,6 +515,7 @@ function buildReadiness(items: Item[]): Readiness {
   return {
     ready: open.filter((item) => item.state === 'ready').length,
     waitingOnField: open.filter((item) => item.state === 'backlog' && waitsOnField(item)).length,
+    nextInLineMissingField: open.filter((item) => nextInLine(item, items)).length,
     blocked: open.filter((item) => item.state === 'blocked').length,
     gated: open.filter((item) => item.state === 'needs-you').length,
   };

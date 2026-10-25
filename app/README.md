@@ -54,14 +54,20 @@ snapshots.
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
   or null. A merge gate whose PR still
   has an unresolved thread shows it there.
-- `readiness` is `{ready, waitingOnField, blocked, gated}` over open items that are not epics, each
-  item in one bucket at most: the next job can take it, only an empty field stops it, an open item
-  blocks it, it waits at a gate. Running, claimed and stale items count in none, so the Overview can
-  say in one line why nothing runs.
-- `counts.needsField` counts the `needs-field` attention rows: an open item, not an epic, with no step and no
-  open blocker (the head of its chain) whose `needs` is not empty, that is a field
-  `ready_needs` asks for (priority, size) is empty, so the next job refuses it. The row's
-  `detail` names the fields: "needs priority", "needs priority and size".
+- `readiness` is `{ready, waitingOnField, blocked, gated, nextInLineMissingField}` over open
+  items that are not epics. The first four are buckets, each item in one at most: the next job can
+  take it, only an empty field stops it (the whole backlog of such items), an open item blocks it,
+  it waits at a gate. Running, claimed and stale items count in none, so the Overview can say in
+  one line why nothing runs. `nextInLineMissingField` is the part of `waitingOnField` that is the
+  next step of work already under way, so the UI can say "164 backlog items lack a field; 4 of
+  them are the next step of work in progress".
+- A `needs-field` attention row (and `counts.needsField`, equal to `nextInLineMissingField`) is
+  kept for those next-in-line items only: open, not an epic, no step, no open blocker, a `needs`
+  that is not empty (a field `ready_needs` asks for, such as priority or size, is empty, so the
+  next job refuses it), and either its parent has started (a step, a worktree, a PR or a gate), a
+  sibling under the same parent has started or is done, or it blocks an item that has started.
+  Every other item waiting on a field is backlog and gets no row. The row's `detail` names the
+  fields: "needs priority", "needs priority and size".
 
 One status language, used by worktrees and items alike:
 
@@ -208,7 +214,7 @@ person has to look:
 | agent | an unattended claude or codex the flow started (`claude -p`, `codex exec`) with its working directory in the worktree |
 | session | an interactive claude or codex whose working directory is in the worktree, yours or an app's (such as the Claude desktop app), not an unattended agent; a host's own background server (the Codex desktop app's `app-server`) is neither |
 | disagreement | two places flow state lives say different things, and kept saying it after both were read again |
-| needs-field | an item that could start but for an empty field the tracker asks for (`ready_needs`, such as priority), so the next job passes it over |
+| needs-field | an item that is the next step of work already under way (its parent or a sibling has started, or it blocks started work) but lacks a field the tracker asks for (`ready_needs`, such as priority), so the next job passes it over |
 
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
