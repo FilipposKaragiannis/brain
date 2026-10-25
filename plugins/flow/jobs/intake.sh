@@ -31,7 +31,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$batch" in ''|*[!0-9]*|0) die "--batch takes a number from 1" 2 ;; esac
-job_start "$host"
+job_start "$host" model
 [ -n "$notes" ] || die "no notes file: set intake.notes in .flow/config.yaml or pass --notes"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 resolve() { case "$1" in "~/"*) printf '%s' "$HOME/${1#\~/}" ;; /*) printf '%s' "$1" ;; *) printf '%s/%s' "$main" "$1" ;; esac; }
@@ -57,7 +57,7 @@ words="$(adapter_for_kind task)"
 for id in $(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json" "$run" "$run/vocabulary.json" "$rules"); do
   # The ledger as it is now, so a note links the notes filed before it in this run.
   python3 -I "$FLOW_PLUGIN/scripts/_intake.py" refresh "$run/$id/notes.json" "$ledger" 2>>"$(job_log_dir)/$job.log" || job_say "$id: could not refresh its related notes"
-  host_run "$host" "$main" "$(host_skill_prompt "$host" flow intake "on $run/$id/notes.json and write $run/$id/results.json. Unattended: nobody answers questions; a note that needs the owner is filed and gated, never parked.")" "$(job_model)" "$(job_effort)" \
+  job_host_run "$main" "$(host_skill_prompt "$host" flow intake "on $run/$id/notes.json and write $run/$id/results.json. Unattended: nobody answers questions; a note that needs the owner is filed and gated, never parked.")" \
     >> "$(job_log_dir)/$job.log" 2>&1 || job_say "$id: host exit $?"
   if [ -f "$run/$id/results.json" ]; then
     python3 -I "$FLOW_PLUGIN/scripts/_intake.py" apply "$notes" "$ledger" "$run/$id/notes.json" "$run/$id/results.json" "$keep" "$answers" "$dropped" \

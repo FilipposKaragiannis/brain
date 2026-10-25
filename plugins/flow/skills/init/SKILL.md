@@ -29,7 +29,7 @@ Install the flow plugin into the current repository, or refresh it after a plugi
    runs; scripts under `tools/` or `scripts/` named check, lint or verify; a gate that only
    matters for some files takes `command` and `paths`), `feel_test_paths`
    (the client or UI folders), `auto_gates` (leave `plan-approval` empty unless the owner says items are
-   grilled and defined before they enter the backlog; then recommend `S,M`), `notify.idle` (true: the scheduled `next` job says once when nothing is ready), `notify.slack_webhook` (prefer the `FLOW_SLACK_WEBHOOK` environment variable on the session or the scheduler, so the URL stays out of the repository). `reviews.reviewers` (who each review round asks: `codex`, `claude`, `copilot` or a login; recommend only the reviewers that answer on this repo). Never hold the report back for the
+   grilled and defined before they enter the backlog; then recommend `S,M`), `notify.idle` (true: the scheduled `next` job says once when nothing is ready), `notify.slack_webhook` (prefer the `FLOW_SLACK_WEBHOOK` environment variable on the session or the scheduler, so the URL stays out of the repository). `reviews.reviewers` (who each review round asks: `codex`, `claude`, `copilot` or a login; recommend only the reviewers that answer on this repo), `jobs.claude.model`/`jobs.claude.effort` and `jobs.codex.model`/`jobs.codex.effort` (the model and effort of the sessions the scheduled jobs start, one pair per host, passed as written; empty is the host's default; a Claude effort is low, medium, high, xhigh or max, a Codex one low, medium, high or xhigh). Never hold the report back for the
    answers. When the owner answers, write the accepted values into `.flow/config.yaml`, then run
    `init --check` and show that the gaps are closed.
 
@@ -37,7 +37,7 @@ Install the flow plugin into the current repository, or refresh it after a plugi
 
 | Target | Content | Re-run |
 |---|---|---|
-| `.flow/config.yaml` | adapters, base, github repo, pool and `pool_max`, `worktree_copy` and `worktree_setup`, `auto_gates`, gates, feel-test paths, notify, reviews | written once, never overwritten; `--check` reports a gap when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist, an `auto_gates` entry other than `plan-approval`) |
+| `.flow/config.yaml` | adapters, base, github repo, pool and `pool_max`, `worktree_copy` and `worktree_setup`, `auto_gates`, gates, feel-test paths, notify, reviews, jobs (`jobs.claude` and `jobs.codex`: model and effort per host) | written once, never overwritten; `--check` reports a gap with its line when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist, an `auto_gates` entry other than `plan-approval`, a `jobs.host` other than claude or codex, an effort the host does not take). It does not ask an existing config for `jobs.claude` or `jobs.codex`, and notes once that `jobs.model`/`jobs.effort` are deprecated when they are set |
 | `.flow/plugin.sh` | finds the installed plugin when a wrapper runs: `$FLOW_PLUGIN`, else the newest flow in the Claude plugin cache, else the Codex one | replaced |
 | `.flow/notify.sh` | wrapper around the plugin notify script | replaced |
 | `.flow/run-unattended.sh` | the unattended loop for `claude` or `codex` | replaced |

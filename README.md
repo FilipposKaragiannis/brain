@@ -72,7 +72,9 @@ host cut short is retried up to three times; the owner is told once when either 
 `notify.idle` says once when nothing is ready), `retro` weekly, `health` every 15 minutes
 (`steward.sh health`: clears a dead run, releases an empty claim, resumes cut-off work, syncs clean
 task branches, reminds on old gates, says when the pool is full; no model while all is well); each takes the host as its first
-argument, locks against overlap and logs to `.flow/log/`. Scheduling is the host's job (Claude
+argument (`jobs.host`), locks against overlap and logs to `.flow/log/`; the sessions a job starts
+take the model and effort of that host's pair, `jobs.claude.model`/`jobs.claude.effort` or
+`jobs.codex.model`/`jobs.codex.effort`, passed as written (empty is the host's default). Scheduling is the host's job (Claude
 Desktop tasks or launchd); `flow:do` sets one up from "run a repeating unattended flow".
 Tests: `plugins/flow/tests/run.sh`. Evals: `tools/eval.sh flow`.
 

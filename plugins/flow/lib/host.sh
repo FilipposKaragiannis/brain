@@ -1,12 +1,13 @@
 #!/bin/sh
 # One way to run a host CLI unattended, shared by the unattended loop and the jobs.
-#   host_run <claude|codex> <dir> <prompt> [model] [effort]
+#   host_run <claude|codex> <dir> <prompt> [model] [effort] [roster|as-is]
 # Claude: -p with jobs.permission_mode from .flow/config.yaml: dontAsk (the default) denies a
 # tool outside the allow list instead of asking; auto lets the classifier allow the safe ones,
 # so a run can edit files without an allow list. FLOW_PERMISSION_MODE overrides it. Codex: exec
 # with workspace-write and the plugin hooks trusted for this invocation; the project rules
 # file lets git and gh run outside the sandbox. The model names are the roster's (Claude
-# names); host_codex_model maps them for Codex. Stdin is closed so a prompt never waits.
+# names) and host_codex_model maps them for Codex, unless the last argument is as-is: the jobs
+# pass the host's own names from jobs.<host>.model. Stdin is closed so a prompt never waits.
 host_check() {
   case "${1:-}" in claude|codex) command -v "$1" >/dev/null 2>&1 || { echo "flow: $1 is not installed" >&2; return 1; } ;;
     *) echo "flow: host must be claude or codex" >&2; return 2 ;; esac
@@ -28,15 +29,53 @@ host_skill_prompt() {
 }
 host_codex_model() { printf '%s' "$1" | sed 's/^sonnet$/gpt-6-luna/; s/^opus$/gpt-6-sol/; s/^fable$/gpt-6-astra/; s/^haiku$/gpt-6-luna/'; }
 host_run() {
-  host="$1"; dir="$2"; prompt="$3"; model="${4:-}"; effort="${5:-}"
+  host="$1"; dir="$2"; prompt="$3"; model="${4:-}"; effort="${5:-}"; names="${6:-roster}"
   case "$host" in
     claude)
       mode="$(host_permission_mode)" || return 2
       (cd "$dir" && claude -p "$prompt" --permission-mode "$mode" ${model:+--model "$model"} ${effort:+--effort "$effort"} < /dev/null) ;;
     codex)
-      cmodel="$(host_codex_model "$model")"
+      cmodel="$model"; [ "$names" = as-is ] || cmodel="$(host_codex_model "$model")"
       codex exec -C "$dir" -s workspace-write --dangerously-bypass-hook-trust -c 'approval_policy="never"' \
         ${cmodel:+-m "$cmodel"} ${effort:+-c "model_reasoning_effort=\"$effort\""} "$prompt" < /dev/null ;;
     *) echo "flow: host must be claude or codex" >&2; return 2 ;;
   esac
+}
+
+# The jobs' model and effort, per host, from .flow/config.yaml: jobs.<host>.model and
+# jobs.<host>.effort, passed to the host as is; empty is the host's own default (no flag). A
+# config with no jobs.<host> map falls back to jobs.model and jobs.effort (deprecated in 1.20.0,
+# read for one release), whose roster names host_codex_model maps for Codex.
+host_efforts() { case "$1" in claude) printf 'low medium high xhigh max' ;; codex) printf 'low medium high xhigh' ;; esac; }
+host_efforts_said() { case "$1" in claude) printf 'low, medium, high, xhigh or max' ;; codex) printf 'low, medium, high or xhigh' ;; esac; }
+host_jobs_has_pair() { yaml_keys "$(config_file)" jobs | grep -qx "$1"; }
+host_jobs_legacy() { [ -n "$(cfg jobs.model)$(cfg jobs.effort)" ]; }
+# host_jobs_pair <host>: sets jobs_model and jobs_effort for the host, and jobs_from, the key
+# prefix they came from (jobs.<host>, or jobs for the fallback).
+host_jobs_pair() {
+  if host_jobs_has_pair "$1"; then
+    jobs_from="jobs.$1"; jobs_model="$(cfg "jobs.$1.model")"; jobs_effort="$(cfg "jobs.$1.effort")"
+  else
+    jobs_from=jobs; jobs_model="$(cfg jobs.model)"; jobs_effort="$(cfg jobs.effort)"
+    [ "$1" != codex ] || jobs_model="$(host_codex_model "$jobs_model")"
+  fi
+}
+host_cfg_where() { _l="$(yaml_line "$(config_file)" "$1")"; printf '.flow/config.yaml%s' "${_l:+:$_l}"; }
+# host_jobs_problems [host]: one line per bad jobs value, with its line in the config: a
+# jobs.host other than claude or codex, an effort the host does not take. With a host, its pair
+# (or the fallback) only; without, every jobs.<host> map present and the jobs.host one.
+host_jobs_problems() {
+  _jh="$(cfg jobs.host)"; _hosts="${1:-}"
+  case "${_jh:-claude}" in claude|codex) ;; *)
+    printf '%s: jobs.host is %s; it must be claude or codex\n' "$(host_cfg_where jobs.host)" "$_jh"; _jh="" ;; esac
+  if [ -z "$_hosts" ]; then
+    _hosts="$(for _x in claude codex; do host_jobs_has_pair "$_x" && echo "$_x"; done; echo "${_jh:-claude}")"
+    _hosts="$(printf '%s\n' "$_hosts" | sort -u)"
+  fi
+  for _x in $_hosts; do
+    host_jobs_pair "$_x"
+    [ -n "$jobs_effort" ] || continue
+    case " $(host_efforts "$_x") " in *" $jobs_effort "*) continue ;; esac
+    printf '%s: %s.effort is %s; %s takes %s, or empty for its default\n' "$(host_cfg_where "$jobs_from.effort")" "$jobs_from" "$jobs_effort" "$_x" "$(host_efforts_said "$_x")"
+  done
 }

@@ -23,6 +23,7 @@ while [ $# -gt 0 ]; do
 done
 FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/flow.sh"
+. "$plugin/lib/host.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
@@ -137,14 +138,20 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  reviewers: [codex, claude]"
       echo "  # chase_after: 1h         # a request with no answer this long is asked again"
       echo "  # max_chases: 2           # asks again per request before the owner hears of it"
-      echo "# Scheduled jobs (.flow/jobs/*.sh): the orchestrating session's model and effort, empty for"
-      echo "# the host default; the marketplace checkout the weekly retro opens its PR from."
+      echo "# Scheduled jobs (.flow/jobs/*.sh)."
       echo "jobs:"
-      echo "  model: \"\""
-      echo "  effort: \"\""
-      echo "  marketplace: \"\""
+      echo "  # host: claude             # the host the scheduled jobs run on: claude (the default) or codex"
+      echo "  # The model and effort of the session a job starts (comments, intake, retro), one pair per"
+      echo "  # host: a job reads the pair of the host it runs on. Each value goes to that host as written,"
+      echo "  # so name a model the host knows. Empty means the host's own default: no flag is passed."
+      echo "  claude:"
+      echo "    model: \"\"                # a Claude model or alias, e.g. opus or sonnet (claude --model)"
+      echo "    effort: \"\"               # low, medium, high, xhigh or max (claude --effort)"
+      echo "  codex:"
+      echo "    model: \"\"                # a Codex model, e.g. gpt-6-sol (codex exec -m)"
+      echo "    effort: \"\"               # low, medium, high or xhigh (model_reasoning_effort)"
+      echo "  marketplace: \"\"            # the marketplace checkout the weekly retro opens its PR from"
       echo "  # permission_mode: auto    # dontAsk (default) denies edits without an allow list; auto lets the classifier decide"
-      echo "  # host: claude             # the host the scheduled jobs run on"
       echo "  # The jobs' schedule on this machine: flow:jobs install loads it (launchd on macOS)."
       echo "  # The health job checks the worktree pool and the gates and spends no model while all is well,"
       echo "  # so it is the one schedule set here:"
@@ -242,6 +249,12 @@ if [ -f .flow/config.yaml ]; then
   bad_auto="$(sed -n '/^auto_gates:/,/^[^ #]/p' .flow/config.yaml | grep -E '^  [A-Za-z]' | grep -v '^  plan-approval:' | sed 's/:.*//; s/^ *//' | head -1)"
   [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"
   a="$(cfg_or adapters.default local)"; [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.default names $a, not an adapter"
+  # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;
+  # the old jobs.model and jobs.effort still work for one release, with a note.
+  while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
+$(host_jobs_problems)
+EOF_JOBS
+  host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
 [ -d .claude ] && [ "$settings_has_hook" -eq 0 ] && gap ".claude/settings.json: no WorktreeCreate and WorktreeRemove hooks, so claude --worktree lands outside the pool (init prints the entry under Next)"
 

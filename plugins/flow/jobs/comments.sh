@@ -20,7 +20,7 @@ set -u
 job=comments
 . "$(dirname "$0")/_job.sh"
 host="${1:-}"; one="${2:-}"
-job_start "$host"
+job_start "$host" model
 out="$(job_log_dir)/$job.out.$$"
 trap 'c=$?; rm -f "$out" "$out.code" "$out.login"; job_end $c' EXIT
 command -v gh >/dev/null 2>&1 || die "gh is not installed"
@@ -144,7 +144,7 @@ for t in $targets; do
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
   job_say "addressing $t"
   # The output goes to the log as it comes, so a pass killed half way keeps what it said.
-  { host_run "$host" "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$rnote Unattended: nobody answers questions; collect owner decisions in the report and stop.")" "$(job_model)" "$(job_effort)" 2>&1
+  { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$rnote Unattended: nobody answers questions; collect owner decisions in the report and stop.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
   why=""

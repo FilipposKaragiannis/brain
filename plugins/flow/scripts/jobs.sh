@@ -10,11 +10,14 @@
 #   install [job|all]     write and load the schedule of each job jobs.schedule names
 #   uninstall [job|all]   unload it and remove its schedule file
 # The schedule lives in .flow/config.yaml: jobs.schedule.<job> is "every 30m [args]", "daily
-# 02:00 [args]" or "weekly sun 03:00 [args]"; jobs.host picks claude or codex (default claude).
+# 02:00 [args]" or "weekly sun 03:00 [args]"; jobs.host picks claude or codex (default claude),
+# and jobs.<host>.model and jobs.<host>.effort set the model and effort of the sessions it starts.
+# run and install refuse a bad jobs.host or effort (exit 2), naming its line in the config.
 # On macOS a job is a launchd agent, com.<repo>.flow.<job>, loaded at login: it runs while you
 # are logged in and the Mac is awake. Elsewhere install prints the crontab lines to add.
 set -u
 . "$(dirname "$0")/../lib/flow.sh"
+. "$FLOW_PLUGIN/lib/host.sh"
 JOBS="next comments intake retro health"
 log="$(flow_home)/log"; main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 agents="${FLOW_LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}"
@@ -50,6 +53,8 @@ live() {
   done
   if loaded "$1"; then launchctl print "$domain/$(label "$1")" 2>/dev/null | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\)$/\1/p'; fi
 }
+# settings_ok: the jobs settings a run would refuse are refused here, before anything starts.
+settings_ok() { _bad="$(host_jobs_problems)"; [ -z "$_bad" ] || { printf '%s\n' "$_bad" | sed 's/^/flow: /' >&2; exit 2; }; }
 descendants() { for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
 
 cmd="${1:-status}"; [ $# -gt 0 ] && shift
@@ -68,7 +73,7 @@ case "$cmd" in
       echo "== $(basename "$f")"; tail -n "${2:-40}" "$f"
     done ;;
   run)
-    [ -n "${1:-}" ] || die "run <job>" 2; known "$1"
+    [ -n "${1:-}" ] || die "run <job>" 2; known "$1"; settings_ok
     [ -z "$(spec "$1")" ] || py args "$(spec "$1")" >/dev/null || exit 2
     [ -z "$(live "$1")" ] || { echo "$1 is running already: jobs.sh stop $1 ends it"; exit 0; }
     if loaded "$1"; then
@@ -96,7 +101,7 @@ case "$cmd" in
     if [ "$cmd" = pause ]; then echo "paused: $list. A running run finishes; stop ends it now."
     else echo "resumed: $list"; fi ;;
   install)
-    list="$(targets "${1:-all}")"
+    settings_ok; list="$(targets "${1:-all}")"
     [ -n "$list" ] || die "no job has a schedule: set jobs.schedule.<job> in .flow/config.yaml" 2
     mkdir -p "$log"
     for j in $list; do

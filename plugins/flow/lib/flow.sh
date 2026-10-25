@@ -224,6 +224,25 @@ yaml_keys() {
     }' "$1"
 }
 
+# yaml_line <file> <dotted.path>: the line number of the key, empty when it is absent. For
+# messages that point the owner at the line to fix.
+yaml_line() {
+  [ -f "$1" ] || return 0
+  awk -v want="$2" '
+    BEGIN { n = split(want, keys, "."); depth = 0 }
+    /^[ \t]*(#|$)/ { next }
+    {
+      match($0, /^ */); indent = RLENGTH / 2
+      body = substr($0, RLENGTH + 1); sub(/[ \t]+#.*$/, "", body)
+      if (body ~ /^- /) next
+      key = body; sub(/:.*$/, "", key); sub(/^[ \t]+/, "", key); sub(/[ \t]+$/, "", key)
+      if (indent != depth) { if (indent < depth) exit; next }
+      if (key != keys[depth + 1]) next
+      depth = indent + 1
+      if (depth == n) { print NR; exit }
+    }' "$1"
+}
+
 # json_set <json> <key> <value-json>: set one top-level key. Needs jq or python3.
 json_set() {
   if command -v jq >/dev/null 2>&1; then

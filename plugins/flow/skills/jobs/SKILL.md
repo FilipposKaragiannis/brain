@@ -51,4 +51,16 @@ Facts to answer with:
   `jobs.health.gate_reminder` and says when the pool is full. `notify.health: false` mutes it.
 - A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
   still busy from the last schedule is skipped, which shows as `skipped`.
+- The host is `jobs.host` (claude, the default, or codex). The sessions a job starts (comments,
+  intake, retro) take the model and effort of that host's pair: `jobs.claude.model` and
+  `jobs.claude.effort` reach `claude` as `--model` and `--effort`; `jobs.codex.model` and
+  `jobs.codex.effort` reach `codex exec` as `-m` and `model_reasoning_effort`. Each value goes as
+  written, so it names a model that host knows; empty or missing is the host's default. A Claude
+  effort is low, medium, high, xhigh or max; a Codex one low, medium, high or xhigh. A bad value
+  or a `jobs.host` other than claude or codex stops the job at its start (exit 2, the line to fix
+  in the error); `run` and `install` refuse it too. `next` runs each step with the roster's
+  model and effort instead.
+- `jobs.model` and `jobs.effort` are deprecated (read only while the host has no `jobs.<host>`
+  map, with the old name mapping for Codex and one warning in the job's log). To migrate, move
+  them under `jobs.claude` and give `jobs.codex` Codex names.
 - Never claim a schedule exists unless `status` shows it `scheduled`.

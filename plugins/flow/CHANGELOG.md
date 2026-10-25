@@ -1,5 +1,27 @@
 # flow
 
+## 1.20.0 (2026-10-25)
+
+- The jobs' model and effort are set per host. New keys in `.flow/config.yaml`:
+  `jobs.claude.model`, `jobs.claude.effort`, `jobs.codex.model` and `jobs.codex.effort`. A job
+  (comments, intake, retro) reads the pair of the host it runs on (`jobs.host`, default claude)
+  and passes each value to that host as written: `--model` and `--effort` to `claude`, `-m` and
+  `model_reasoning_effort` to `codex exec`, with no name mapping. Empty or missing is the host's
+  own default: no flag is passed.
+- `jobs.model` and `jobs.effort` are deprecated and read for this release only, when the job's
+  host has no `jobs.<host>` map: the old mapping still applies for Codex (opus to gpt-6-sol,
+  sonnet and haiku to gpt-6-luna, fable to gpt-6-astra), and the run logs one warning naming the
+  new keys. Migrate by moving the values under `jobs.claude` (as they were) and `jobs.codex`
+  (with Codex names).
+- A bad value stops a job at its start with exit 2 and the line to fix: a `jobs.host` other
+  than claude or codex, a Claude effort other than low, medium, high, xhigh or max, a Codex
+  effort other than low, medium, high or xhigh. `jobs.sh run` and `install` refuse them too.
+- `init` writes the new block, each key explained, in a fresh config. `init --check` reports a
+  bad `jobs.host` or effort as a gap with its line, does not ask an existing project for the new
+  keys, and says once that `jobs.model`/`jobs.effort` are deprecated when they are set.
+- The unattended loop still passes the roster's names, mapped for Codex (`host_run` takes
+  `as-is` as a sixth argument for the jobs).
+
 ## 1.19.0 (2026-10-25)
 
 - A comments pass the host cut short is failed, not done. A non-zero exit, or Claude stopping
