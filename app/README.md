@@ -67,9 +67,31 @@ state, the project card): a run record with no process, an agent in a worktree w
 a claim whose step differs from the issue, a gate record the labels do not show, an item at step
 done with an open PR and no merge gate.
 
+## The UI
+`ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
+the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
+imports). Five screens, routed by hash (`#/<project>/<screen>/<detail>`): Overview (five tiles,
+the needs-you table oldest first, the 3x3 pool map, the sources strip and the latest 30 events),
+Gates (a decision card per gate, recommendations filled in, Answer runs `gate.clear`), Worktrees
+(Release, Health), Agents and jobs (Run, Stop, Pause, Resume) and Pull requests. Every module is
+a title row, a body and a footer saying how fresh its source is; every age is a live counter
+driven by one shared clock.
+
+```bash
+cd ui && npm install
+npm run dev        # Vite on :5173, proxies /api and /healthz to 127.0.0.1:7474 (BRAIN_CONSOLE_DAEMON overrides)
+npm run build      # writes ui/dist, which daemon/src/static.ts serves
+```
+Open it with `?token=<t>` when the daemon has a token: the page keeps it in memory, sends it as
+a bearer header on fetches and as `?token=` on the event stream. One event stream per project
+carries snapshots and action updates; when it drops the page reads `/snapshot` every 30 s and
+tries the stream again. The action contract (`ActionKind`, `ActionRecord`) lives in
+`ui/src/actions.ts` until it joins the daemon's.
+
 ## Develop
 ```bash
-npm run check      # tsc, then node --test
+npm ci && npm --prefix ui ci
+npm run check      # daemon tsc and node --test, then the UI's tsc, vitest and build
 ```
 Tests use a fixture flow home under `daemon/test/fixtures` and a fake command runner, so no shell,
 git or GitHub is touched. Test names are behavioural sentences and every assertion carries its

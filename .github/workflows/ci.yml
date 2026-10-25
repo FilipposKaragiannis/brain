@@ -23,8 +23,12 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-          cache-dependency-path: app/package-lock.json
+          cache-dependency-path: |
+            app/package-lock.json
+            app/ui/package-lock.json
       - run: npm ci
+      - run: npm ci
+        working-directory: app/ui
       - run: npm run check
   # The standards plugin's composite action must load and run; this repo has no
   # .standards/config.json, so every commit is skipped and the step only proves the wiring.
