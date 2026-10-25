@@ -5,12 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { childProcessRunner } from './collectors/exec.ts';
+import { diskSessionFiles, SessionLocator } from './collectors/sessions.ts';
 import { privateFolder, readConfig, startReport } from './config.ts';
 import { install, startFailure, status, uninstall } from './launchd.ts';
 import type { LaunchdDependencies } from './launchd.ts';
 import { stderrLogger } from './log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
 import type { ProjectDefinition } from './project.ts';
+import { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import { ProjectRegistry } from './registry.ts';
 import { closeConsoleServer, createConsoleServer } from './server.ts';
 import { DEFAULT_CONFIG_PATHS, SettingsStore } from './settings.ts';
@@ -74,16 +76,19 @@ if (!configuration.ok) {
 }
 const { config } = configuration;
 const installed = () => installedTerminals(existsSync, os.homedir());
+/** One locator for every project: it caches what it read of the Codex session files. */
+const sessions = new SessionLocator({ home: os.homedir(), clock, files: diskSessionFiles });
 
 /** A project's monitor and runner. The runner reads the terminal setting at request time, so a change in Settings counts at once. */
 const serve = (project: ProjectDefinition) => {
-  const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE, sessions });
   const actions = new ActionRunner({
     projectId: project.id, context: () => ({ ...monitor.actionContext(), terminal: settings.terminal(), installedTerminals: installed() }), spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
     onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },
   });
   monitor.onChange((snapshot) => log.info('snapshot', { project: project.id, needsYou: snapshot.counts.needsYou, running: snapshot.counts.running, stale: snapshot.counts.stale, free: snapshot.counts.free, disagreements: snapshot.counts.disagreements }));
-  return { monitor, actions };
+  const flowConfig = new FlowConfigEditor({ projectId: project.id, root: project.root, runner: childProcessRunner, refresh: async () => { await Promise.all([monitor.refresh('files'), monitor.refresh('jobs')]); }, log });
+  return { monitor, actions, flowConfig };
 };
 const registry = new ProjectRegistry(serve, log);
 const settings = new SettingsStore({ config, installed, applyProjects: (projects) => { void registry.apply(projects); } });

@@ -10,8 +10,10 @@ import type { GitFacts } from './collectors/git.ts';
 import { readGit } from './collectors/git.ts';
 import type { JobFacts } from './collectors/jobs.ts';
 import { readJobs } from './collectors/jobs.ts';
-import type { ProcessFacts } from './collectors/processes.ts';
+import type { EndedProcess, ProcessFacts } from './collectors/processes.ts';
 import { readProcesses } from './collectors/processes.ts';
+import type { SessionLocator } from './collectors/sessions.ts';
+import { noSessions } from './collectors/sessions.ts';
 import type { ActionContext } from './actionPlan.ts';
 import type { PullFacts } from './collectors/pulls.ts';
 import { readPulls } from './collectors/pulls.ts';
@@ -20,6 +22,7 @@ import { ageSeconds, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
 import type { Freshness, Snapshot, SourceName } from './snapshot.ts';
+import { ENDED_KEPT } from './snapshot.ts';
 
 /** How often each source is re-read, in milliseconds. File changes also trigger `files` and `git` at once. */
 export type Cadence = { filesMs: number; gitMs: number; processesMs: number; jobsMs: number; boardMs: number; pullsMs: number };
@@ -51,6 +54,8 @@ export type ProjectMonitorDependencies = {
   clock: () => Date;
   log: Logger;
   cadence: Cadence;
+  /** Finds each process's transcript; left out, no process has a session. */
+  sessions?: Pick<SessionLocator, 'assign'>;
 };
 
 const unread = (): Freshness => ({ at: null, ageSeconds: null, ok: false, error: 'not read yet' });
@@ -65,6 +70,9 @@ export class ProjectMonitor {
   private readonly clock: () => Date;
   private readonly log: Logger;
   private readonly cadence: Cadence;
+  private readonly sessions: Pick<SessionLocator, 'assign'>;
+  /** Processes with a session that left the list, newest first, so the owner can still open their session. */
+  private ended: EndedProcess[] = [];
   private readonly facts: Facts = {
     files: { facts: null, freshness: unread() }, git: { facts: null, freshness: unread() }, processes: { facts: null, freshness: unread() },
     jobs: { facts: null, freshness: unread() }, board: { facts: null, freshness: unread() }, pulls: { facts: null, freshness: unread() },
@@ -77,6 +85,8 @@ export class ProjectMonitor {
   private fingerprint = '';
   private readonly gateQuestions: GateQuestionCache = new Map();
   private gateListError: string | null = null;
+  /** The config's deprecation warnings last logged, so each is logged once per change. */
+  private deprecated = '';
   private current: Snapshot | null = null;
   /** Set by `stop`: a start still making its first reads schedules nothing after it. */
   private stopped = false;
@@ -93,6 +103,7 @@ export class ProjectMonitor {
     this.clock = dependencies.clock;
     this.log = dependencies.log;
     this.cadence = dependencies.cadence;
+    this.sessions = dependencies.sessions ?? noSessions;
   }
 
   get snapshot(): Snapshot | null { return this.current; }
@@ -106,6 +117,10 @@ export class ProjectMonitor {
       outsideWorktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role !== 'pool').map((worktree) => worktree.path),
       // The snapshot's agents, not the raw process list: only processes in this project's worktrees.
       processCwds: (this.current?.agents ?? []).map((agent) => agent.cwd),
+      sessions: [
+        ...(this.current?.agents ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: true }])),
+        ...(this.current?.ended ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: false }])),
+      ],
       terminal: null, installedTerminals: [],
       base: flow?.config.base ?? 'main',
       worktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role === 'pool').map((worktree) => ({
@@ -189,10 +204,20 @@ export class ProjectMonitor {
           this.log.warn('gates.list.failed', { project: this.project.id, error: flowHome.gateListError });
         }
         this.gateListError = flowHome.gateListError;
+        const deprecated = flowHome.config.deprecated.join('; ');
+        if (deprecated !== '' && deprecated !== this.deprecated) this.log.warn('config.deprecated', { project: this.project.id, warning: deprecated });
+        this.deprecated = deprecated;
         return flowHome.gateListError === null ? null : `gate questions: ${flowHome.gateListError}`;
       }
       case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return null;
-      case 'processes': this.facts.processes.facts = await readProcesses(this.runner); return null;
+      case 'processes': {
+        const listed = await readProcesses(this.runner);
+        const sessions = await this.sessions.assign(listed.agents);
+        const agents = listed.agents.map((agent, index) => ({ ...agent, session: sessions[index] ?? null }));
+        this.noteEnded(agents);
+        this.facts.processes.facts = { agents };
+        return null;
+      }
       case 'jobs':
         if (flow?.pluginRoot == null) throw new Error('no flow plugin found for the project');
         this.facts.jobs.facts = await readJobs(root, flow.pluginRoot, this.runner); return null;
@@ -219,7 +244,7 @@ export class ProjectMonitor {
       }),
     ) as Record<SourceName, Freshness>;
     this.current = reconcile({
-      now, project: this.project, flow, git: this.facts.git.facts, processes: this.facts.processes.facts,
+      now, project: this.project, flow, git: this.facts.git.facts, processes: this.facts.processes.facts, ended: this.ended,
       jobs: this.facts.jobs.facts, board: this.facts.board.facts, pulls: this.facts.pulls.facts, sources,
       settle: (found) => this.settler.settle(found, this.reads),
     });
@@ -231,10 +256,19 @@ export class ProjectMonitor {
 
   /** What counts as a change: the facts and the disagreements that settled, without the counters that move on every read. */
   private fingerprintOf(): string {
-    const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd }) => ({ pid, host, cwd }));
+    const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd, session }) => ({ pid, host, cwd, session: session?.id ?? null }));
+    const ended = this.ended.map(({ pid, endedAt }) => [pid, endedAt]);
     const errors = (Object.keys(this.facts) as SourceName[]).map((name) => this.facts[name].freshness.error);
     const disagreements = (this.current?.disagreements ?? []).map(disagreementKey);
-    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements]);
+    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, ended, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements]);
+  }
+
+  /** A process with a session that was listed last time and is gone now has ended; one listed again is not. */
+  private noteEnded(agents: ProcessFacts['agents']): void {
+    const now = this.clock().toISOString();
+    const live = new Set(agents.map((agent) => agent.pid));
+    const gone = (this.facts.processes.facts?.agents ?? []).filter((agent) => agent.session !== null && !live.has(agent.pid));
+    this.ended = [...gone.map((agent) => ({ ...agent, endedAt: now })), ...this.ended.filter((agent) => !live.has(agent.pid))].slice(0, ENDED_KEPT * 2);
   }
 
   private watchFiles(): void {

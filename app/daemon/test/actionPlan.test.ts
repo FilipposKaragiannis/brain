@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { HANDED_ON_REFRESH_MS, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
+import { HANDED_ON_REFRESH_MS, installNote, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -243,4 +243,28 @@ test('TerminalOpen_WorktreeOutsideThePool_Allowed', () => {
 test('TerminalOpen_CustomCommandWithQpath_FolderQuotedForSh', () => {
   const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal: { command: ['sh', '-c', 'cd {qpath} && exec $SHELL'] } });
   assert.deepEqual(plan.args, ['-c', "cd '/p/app' && exec $SHELL"], 'because {qpath} is the folder quoted for an sh -c string, and the folder is not added again');
+});
+
+test('JobsInstall_RunsJobsShInstallHoldingEveryJobLock', () => {
+  const plan = planned('jobs.install', {});
+  assert.deepEqual([plan.command, ...plan.args], ['sh', '/plugins/flow/1.17.0/scripts/jobs.sh', 'install'], 'because install writes and loads the schedule of every job jobs.schedule names');
+  assert.deepEqual(plan.locks, ['job:next', 'job:comments', 'job:intake', 'job:retro', 'job:health'], 'because a reload must not race a run, stop or pause of any job');
+  assert.deepEqual([plan.outcome, plan.refresh], ['finished', ['jobs']], 'because the schedule is loaded when the script returns, and the jobs list shows it');
+});
+
+test('JobsInstall_WithAJob_Refused', () => {
+  assert.equal(planAction('jobs.install', { job: 'next' }, CONTEXT).ok, false, 'because the console reloads the whole schedule, never one job of it');
+});
+
+test('JobsInstall_ARunningJobLeftAsItIs_TheNoteNamesIt', () => {
+  const plan = planned('jobs.install', {});
+  const output = 'next: running now, left as it is; install it again after the run\ncomments: every 10m, as com.app.flow.comments\n';
+  assert.equal(plan.note?.(output), 'skipped next: running now, so it keeps the old schedule; install again after the run', 'because jobs.sh exits 0 when it skips a running job, and done alone would say the schedule was reloaded');
+  assert.equal(installNote('comments: every 10m, as com.app.flow.comments\n'), null, 'because a clean install needs no note');
+});
+
+test('JobUninstall_RunsJobsShUninstallForThatJob', () => {
+  const plan = planned('job.uninstall', { job: 'retro' });
+  assert.deepEqual([plan.args.slice(1), plan.locks, plan.refresh], [['uninstall', 'retro'], ['job:retro'], ['jobs']], 'because a job whose schedule left the config is unloaded on its own; install never touches it again');
+  assert.equal(planAction('job.uninstall', { job: 'all' }, CONTEXT).ok, false, 'because the console unloads one named job, never every job at once');
 });

@@ -7,8 +7,10 @@ import type { ProjectMonitor } from './project.ts';
 import type { ProjectRegistry, ServedProject } from './registry.ts';
 import type { SettingsStore } from './settings.ts';
 import { filterEvents } from './events.ts';
+import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import { serveStatic } from './static.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
+import { parseTranscript, readTranscriptTail, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX } from './collectors/sessions.ts';
 
 /** `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code. */
 export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger };
@@ -106,6 +108,20 @@ export function createConsoleServer(registry: ProjectRegistry, settings: Setting
     if (url.pathname === '/healthz') { sendJson(response, HTTP_OK, { ok: true, projects: registry.list().map(({ monitor }) => monitor.project.id) }); return; }
     if (url.pathname === '/api/projects') { sendJson(response, HTTP_OK, registry.summaries()); return; }
     if (url.pathname === '/api/settings') { void settingsRoute(settings, request, response); return; }
+    const plugin = /^\/api\/projects\/([^/]+)\/plugins\/flow\/config$/.exec(url.pathname);
+    if (plugin !== null) {
+      const owner = registry.get(decodeURIComponent(plugin[1]!));
+      if (owner === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: 'not found' }); return; }
+      void flowConfigRoute(owner.flowConfig, request, response);
+      return;
+    }
+    const transcript = /^\/api\/projects\/([^/]+)\/agents\/([^/]+)\/transcript$/.exec(url.pathname);
+    if (transcript !== null) {
+      const owner = registry.get(decodeURIComponent(transcript[1]!));
+      if (owner === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: 'not found' }); return; }
+      void transcriptRoute(owner.monitor, decodeURIComponent(transcript[2]!), request, response, url);
+      return;
+    }
     const match = /^\/api\/projects\/([^/]+)\/(snapshot|events|refresh|actions)(?:\/([^/]+))?$/.exec(url.pathname);
     const served = match === null ? undefined : registry.get(decodeURIComponent(match[1]!));
     if (match === null || served === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: 'not found' }); return; }
@@ -177,6 +193,40 @@ async function settingsRoute(settings: SettingsStore | null, request: IncomingMe
   if (!read.ok) { sendJson(response, read.status, { error: read.error }); return; }
   const updated = settings.update(read.body);
   if (updated.ok) sendJson(response, HTTP_OK, updated.value); else sendJson(response, HTTP_BAD_REQUEST, { error: updated.error });
+}
+
+/**
+ * The last turns with text of an agent's or session's claude transcript, `{turns: [{at, role,
+ * text}]}`: only for a pid the snapshot lists (running, or ended in the last day), so the file
+ * read is always one the daemon found itself. `lines` is how many turns, 20 by default, 200 at most.
+ */
+async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+  if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
+  const linesText = url.searchParams.get('lines') ?? String(TRANSCRIPT_TURNS_DEFAULT);
+  if (!LIMIT.test(linesText)) { sendJson(response, HTTP_BAD_REQUEST, { error: 'lines must be a positive whole number' }); return; }
+  const snapshot = monitor.snapshot;
+  const agent = [...(snapshot?.agents ?? []), ...(snapshot?.ended ?? [])].find((entry) => String(entry.pid) === pid);
+  if (agent === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: `no agent or session with pid ${pid} in this project` }); return; }
+  if (agent.session === null) { sendJson(response, HTTP_NOT_FOUND, { error: `no transcript found for pid ${pid}` }); return; }
+  if (agent.session.host !== 'claude') { sendJson(response, HTTP_BAD_REQUEST, { error: 'the console reads claude transcripts only' }); return; }
+  const source = await readTranscriptTail(agent.session.transcript);
+  if (source === null) { sendJson(response, HTTP_NOT_FOUND, { error: `${agent.session.transcript} cannot be read` }); return; }
+  sendJson(response, HTTP_OK, { session: agent.session.id, turns: parseTranscript(source, Math.min(Number(linesText), TRANSCRIPT_TURNS_MAX)) });
+}
+
+/**
+ * `GET` the project's .flow/config.yaml as the editor shows it; `PUT` changes to it (`{changes,
+ * hash, force?}` or `{text, hash, force?}`), refused with 409 when the file changed since the GET
+ * or has uncommitted changes in git without `force`.
+ */
+async function flowConfigRoute(editor: FlowConfigEditor, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method === 'GET') { const reply = await editor.read(); sendJson(response, reply.status, reply.body); return; }
+  if (request.method !== 'PUT') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET or PUT' }); return; }
+  if (!(request.headers['content-type'] ?? '').startsWith('application/json')) { sendJson(response, HTTP_UNSUPPORTED_MEDIA, { error: 'send application/json' }); return; }
+  const read = await readBody(request);
+  if (!read.ok) { sendJson(response, read.status, { error: read.error }); return; }
+  const reply = await editor.write(read.body);
+  sendJson(response, reply.status, reply.body);
 }
 
 /**

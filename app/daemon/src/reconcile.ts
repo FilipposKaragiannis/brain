@@ -4,14 +4,14 @@ import type { ClaimRecord, FlowHomeFacts, GateRecord, RunRecord } from './collec
 import { poolPaths } from './collectors/flowHome.ts';
 import type { GitFacts, GitWorktree } from './collectors/git.ts';
 import type { JobFacts, JobStatusRow } from './collectors/jobs.ts';
-import type { AgentProcess, ProcessFacts } from './collectors/processes.ts';
+import type { AgentProcess, EndedProcess, ProcessFacts } from './collectors/processes.ts';
 import type { PullFact, PullFacts } from './collectors/pulls.ts';
 import { parseGateQuestions } from './gateMessage.ts';
 import {
-  GATE_OVERDUE_HOURS, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
+  ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemState, Job, JobState, ProcessInfo,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemState, Job, JobState, ProcessInfo,
   ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
@@ -21,6 +21,8 @@ export type ReconcileInput = {
   flow: FlowHomeFacts;
   git: GitFacts | null;
   processes: ProcessFacts | null;
+  /** Processes that left the list while the daemon watched; only those with a session are kept. Left out, none. */
+  ended?: EndedProcess[];
   jobs: JobFacts | null;
   board: BoardFacts | null;
   pulls: PullFacts | null;
@@ -133,7 +135,7 @@ function staleReason(context: WorktreeContext, flags: WorktreeFlag[], base: stri
 }
 
 function processInfo(process: AgentProcess): ProcessInfo {
-  return { pid: process.pid, host: process.host, command: process.command, elapsedSeconds: process.elapsedSeconds };
+  return { pid: process.pid, host: process.host, command: process.command, elapsedSeconds: process.elapsedSeconds, session: process.session };
 }
 
 function toClaim(record: ClaimRecord): Claim {
@@ -250,9 +252,26 @@ function buildAgents(input: ReconcileInput, contexts: WorktreeContext[]): Agent[
     if (context === null) return [];
     return [{
       pid: agent.pid, host: agent.host, kind: agent.kind, cwd: agent.cwd, worktree: context.name, item: context.claim?.item ?? null,
-      elapsedSeconds: agent.elapsedSeconds, command: agent.command,
+      elapsedSeconds: agent.elapsedSeconds, command: agent.command, session: agent.session,
     }];
   });
+}
+
+/** The ended agents and sessions in this project's worktrees that left a session to resume: the last day's, newest first. */
+function buildEnded(input: ReconcileInput, contexts: WorktreeContext[]): EndedAgent[] {
+  const oldest = input.now.getTime() - ENDED_KEPT_HOURS * SECONDS_PER_HOUR * MILLISECONDS_PER_SECOND;
+  return (input.ended ?? [])
+    .filter((process) => process.session !== null && Date.parse(process.endedAt) >= oldest)
+    .sort((left, right) => Date.parse(right.endedAt) - Date.parse(left.endedAt))
+    .flatMap((process) => {
+      const context = contexts.find((entry) => under(process.cwd, entry.path)) ?? null;
+      if (context === null) return [];
+      return [{
+        pid: process.pid, host: process.host, kind: process.kind, cwd: process.cwd, worktree: context.name, item: context.claim?.item ?? null,
+        elapsedSeconds: process.elapsedSeconds, command: process.command, session: process.session, endedAt: process.endedAt,
+      }];
+    })
+    .slice(0, ENDED_KEPT);
 }
 
 function jobState(row: JobStatusRow): JobState {
@@ -528,7 +547,7 @@ function projectInfo(input: ReconcileInput): ProjectInfo {
     id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
     base: config.base, repo: config.repo, repoUrl,
     trackerUrl: config.adapter === GITHUB_ADAPTER && repoUrl !== null ? `${repoUrl}/issues` : null,
-    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, jobsHost: config.jobsHost, poolMax: config.poolMax,
+    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax,
   };
 }
 
@@ -538,6 +557,7 @@ export function reconcile(input: ReconcileInput): Snapshot {
   const items = buildItems(input, worktrees);
   const runs = buildRuns(input, contexts);
   const agents = buildAgents(input, contexts);
+  const ended = buildEnded(input, contexts);
   const jobs = buildJobs(input);
   const pulls = buildPulls(input, items, contexts);
   const gates = buildGates(input, contexts, items, pulls);
@@ -551,7 +571,7 @@ export function reconcile(input: ReconcileInput): Snapshot {
     counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }),
     readiness: buildReadiness(items),
     attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements }, input.now),
-    worktrees, items, gates, runs, agents, jobs, pulls,
+    worktrees, items, gates, runs, agents, ended, jobs, pulls,
     events: input.flow.events,
     disagreements,
   };

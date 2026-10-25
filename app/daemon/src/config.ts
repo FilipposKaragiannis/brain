@@ -38,7 +38,9 @@ export type ConfigResult = { ok: true; config: DaemonConfig } | { ok: false; err
  * else ~/.config/brain-console/config.json (or, while that is absent, the older projects.json).
  * The port is `--port`, else the file's, else 7474. Every root must hold a .flow/config.yaml: a
  * bad one stops the daemon before it serves anything. `--state-dir` (or BRAIN_CONSOLE_STATE)
- * moves the audit log. Every route needs the token: `--token` or BRAIN_CONSOLE_TOKEN, else the
+ * moves the audit log. `--config <file>` reads and writes the settings in that file instead (the
+ * old projects.json is then looked for beside it), so a second daemon never touches the owner's
+ * ~/.config/brain-console. Every route needs the token: `--token` or BRAIN_CONSOLE_TOKEN, else the
  * one in <state dir>/token, written on the first start (the folder kept 0700).
  */
 export function readConfig(argv: string[], env: NodeJS.ProcessEnv, paths: ConfigPaths = DEFAULT_CONFIG_PATHS): ConfigResult {
@@ -46,6 +48,7 @@ export function readConfig(argv: string[], env: NodeJS.ProcessEnv, paths: Config
   let flagPort: number | null = null;
   let token = env['BRAIN_CONSOLE_TOKEN'] ?? '';
   let stateDir = env['BRAIN_CONSOLE_STATE'] ?? DEFAULT_STATE_DIR;
+  let configPaths = paths;
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
     const value = argv[index + 1];
@@ -53,15 +56,21 @@ export function readConfig(argv: string[], env: NodeJS.ProcessEnv, paths: Config
     if (flag === '--port' && value !== undefined) { flagPort = Number(value); index += 1; continue; }
     if (flag === '--token' && value !== undefined) { token = value; index += 1; continue; }
     if (flag === '--state-dir' && value !== undefined) { stateDir = value; index += 1; continue; }
+    if (flag === '--config' && value !== undefined) {
+      const file = path.resolve(value);
+      configPaths = { configFile: file, legacyProjectsFile: path.join(path.dirname(file), 'projects.json') };
+      index += 1;
+      continue;
+    }
     return { ok: false, error: `unknown argument: ${flag}` };
   }
-  const stored = readStoredSettings(paths);
+  const stored = readStoredSettings(configPaths);
   if (!stored.ok) return stored;
   const { file } = stored.value;
   const envRoots = (env['BRAIN_CONSOLE_PROJECTS'] ?? '').split(':').filter((entry) => entry.length > 0);
   const fileRoots = (file.projects ?? []).map((entry) => entry.root);
   const [roots, projectsFrom]: [string[], SettingOrigin] = flagRoots.length > 0 ? [flagRoots, 'flag'] : envRoots.length > 0 ? [envRoots, 'environment'] : [fileRoots, 'file'];
-  if (roots.length === 0) return { ok: false, error: `no projects: pass --project <root>, set BRAIN_CONSOLE_PROJECTS or write ${paths.configFile}` };
+  if (roots.length === 0) return { ok: false, error: `no projects: pass --project <root>, set BRAIN_CONSOLE_PROJECTS or write ${configPaths.configFile}` };
   const [port, portFrom]: [number, SettingOrigin] = flagPort !== null ? [flagPort, 'flag'] : file.port !== undefined ? [file.port, 'file'] : [DEFAULT_PORT, 'default'];
   if (!Number.isInteger(port) || port <= 0) return { ok: false, error: `bad port: ${port}` };
   const projects = projectsFromRoots(roots);
@@ -71,7 +80,7 @@ export function readConfig(argv: string[], env: NodeJS.ProcessEnv, paths: Config
     ok: true,
     config: {
       projects: projects.value, host: LOCALHOST, port, token: token === '' ? storedToken(resolvedState) : token, stateDir: resolvedState,
-      paths, origins: { projects: projectsFrom, port: portFrom }, stored: stored.value, launchd: env['BRAIN_CONSOLE_LAUNCHD'] === '1',
+      paths: configPaths, origins: { projects: projectsFrom, port: portFrom }, stored: stored.value, launchd: env['BRAIN_CONSOLE_LAUNCHD'] === '1',
     },
   };
 }

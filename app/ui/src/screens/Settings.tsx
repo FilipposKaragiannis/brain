@@ -3,6 +3,7 @@ import type { SettingOrigin, SettingsView, TerminalName, TerminalSetting } from 
 import { unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
 import { Empty, Module } from '../ui.tsx';
+import { FlowSettingsList } from './FlowSettings.tsx';
 import { HTTP_OK } from '../useProject.ts';
 
 export const SETTINGS_PATH = '/api/settings';
@@ -85,6 +86,7 @@ export function Settings() {
           <dt>Runs under</dt><dd>{view.launchd ? 'launchd: it starts on login and comes back after a crash.' : <>a terminal: it stops when that terminal does. <span className="mono">npm run daemon:install</span> in <span className="mono">app</span> runs it on login.</>}</dd>
         </dl>
       </Module>
+      <FlowSettingsList />
     </div>
   );
 }

@@ -1,9 +1,12 @@
-import type { AgentHost, AgentKind } from '../snapshot.ts';
+import type { AgentHost, AgentKind, SessionRef } from '../snapshot.ts';
 import { PROCESS_COMMAND_CHARS } from '../snapshot.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
 
-export type AgentProcess = { pid: number; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; command: string };
+/** `session` is filled in by the monitor's session locator after the read; the process list alone never knows it. */
+export type AgentProcess = { pid: number; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; command: string; session: SessionRef | null };
+/** A process that was in one read and gone from the next, with when the read that missed it started. */
+export type EndedProcess = AgentProcess & { endedAt: string };
 export type ProcessFacts = { agents: AgentProcess[] };
 
 const PROCESS_TIMEOUT_MS = 10000;
@@ -121,7 +124,7 @@ export async function readProcesses(runner: CommandRunner): Promise<ProcessFacts
     agents: hosts.flatMap(({ row, host }) => {
       const cwd = directories.get(row.pid);
       if (cwd === undefined) return [];
-      return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, PROCESS_COMMAND_CHARS) }];
+      return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null }];
     }),
   };
 }

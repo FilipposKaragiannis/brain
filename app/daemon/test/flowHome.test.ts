@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import path from 'node:path';
 import type { CommandRequest, CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 import type { GateQuestionCache } from '../src/collectors/flowHome.ts';
-import { parseGateList, pluginHasGateJson, pluginVersionOf, readFlowHome } from '../src/collectors/flowHome.ts';
+import { parseFlowConfig, parseGateList, pluginHasGateJson, pluginVersionOf, readFlowHome } from '../src/collectors/flowHome.ts';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { FAKE_PLUGIN, FIXTURES, FIXTURE_ROOT, GATE_LIST_JSON, GATE_RECORD, fakeGateList, fakeRunner } from './fakeRunner.ts';
@@ -26,6 +26,23 @@ test('FlowHome_ConfigPoolAndPlugin', async () => {
   assert.equal(facts.config.pool.length, 3, 'because the fixture pool lists three worktrees');
   assert.equal(facts.pluginVersion, '9.9.9', 'because the plugin version is the last path segment plugin.sh resolves');
   assert.equal(facts.pluginRoot, FAKE_PLUGIN, 'because scripts run from the resolved plugin');
+});
+
+/** Runs `body` with FLOW_PLUGIN set as given (or unset), then puts the daemon's own value back. */
+async function withFlowPlugin<T>(value: string | undefined, body: () => Promise<T>): Promise<T> {
+  const kept = process.env['FLOW_PLUGIN'];
+  if (value === undefined) delete process.env['FLOW_PLUGIN']; else process.env['FLOW_PLUGIN'] = value;
+  try { return await body(); } finally { if (kept === undefined) delete process.env['FLOW_PLUGIN']; else process.env['FLOW_PLUGIN'] = kept; }
+}
+
+test('FlowPluginUnset_PluginSourceIsInstalled', async () => {
+  const facts = await withFlowPlugin(undefined, () => readFlowHome(FIXTURE_ROOT, fakeRunner));
+  assert.equal(facts.pluginSource, 'installed', 'because without FLOW_PLUGIN plugin.sh found the plugin in the cache');
+});
+
+test('FlowPluginSet_PluginSourceIsFlowPlugin', async () => {
+  const facts = await withFlowPlugin('/work/brain/plugins/flow', () => readFlowHome(FIXTURE_ROOT, fakeRunner));
+  assert.equal(facts.pluginSource, 'FLOW_PLUGIN', 'because FLOW_PLUGIN reaches plugin.sh, which takes it over the cache');
 });
 
 test('PluginVersion_FromTheManifest_WhenTheFolderIsACheckout', async () => {
@@ -127,4 +144,15 @@ test('ParseGateList_NotAnArray_Null', () => {
 
 test('FlowHome_ListJsonFixture_IsTheRealMessage', () => {
   assert.equal((JSON.parse(GATE_LIST_JSON) as { message: string }[])[0]?.message, GATE_RECORD.message, 'because the fake list must echo the record like the plugin does, or the pairing tests prove nothing');
+});
+
+test('BehindBase_ReadFromJobsHealthAsThePluginReadsIt', () => {
+  const config = parseFlowConfig('jobs:\n  health:\n    behind_base: 30\nhealth:\n  behind_base: 5\n');
+  assert.deepEqual([config.behindBase, config.deprecated], [30, []], 'because steward.sh reads jobs.health.behind_base, so that is the one that counts');
+});
+
+test('BehindBaseOnlyUnderTheOldKey_StillReadWithAWarning', () => {
+  const config = parseFlowConfig('health:\n  behind_base: 5\n');
+  assert.equal(config.behindBase, 5, 'because a file written for console 0.5 keeps working for one release');
+  assert.match(config.deprecated[0] ?? '', /rename it to jobs\.health\.behind_base/, 'because the owner is told the plugin never read that key');
 });

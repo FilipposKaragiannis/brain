@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import { silentLogger } from '../src/log.ts';
 import { ProjectMonitor } from '../src/project.ts';
+import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectRegistry } from '../src/registry.ts';
 import type { ProjectSummary } from '../src/registry.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
@@ -23,7 +24,7 @@ function registry() {
     const stop = monitor.stop.bind(monitor);
     monitor.stop = () => { stopped.push(project.id); stop(); };
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: os.tmpdir(), onRefresh: () => {} });
-    return { monitor, actions };
+    return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger }) };
   }, silentLogger);
   const heard: ProjectSummary[][] = [];
   projects.onChange((list) => heard.push(list));

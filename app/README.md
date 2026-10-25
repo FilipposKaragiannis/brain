@@ -14,7 +14,10 @@ curl -N http://127.0.0.1:7474/api/projects/foosbrawl/events  # server-sent event
 To try a flow plugin that is not installed, such as a checkout of this repository, start with
 `FLOW_PLUGIN=/path/to/brain/plugins/flow`: every flow script the daemon runs gets it, and the
 version shown comes from that plugin's own `plugin.json`.
-Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
+`--config <file>` reads and writes the settings (below) in that file instead of
+`~/.config/brain-console/config.json`, and looks for the old `projects.json` beside it, so a second
+daemon for a trial (`--port 7477 --state-dir /tmp/console-test --config /tmp/console-test/config.json`)
+never touches the owner's settings. Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
 second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 the settings file (below). Every root must hold a `.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
 the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
@@ -95,7 +98,10 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects` | every project with its counts |
 | `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon |
 | `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
+| `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings}` (below) |
+| `PUT /api/projects/<id>/plugins/flow/config` | change it, body `{"changes": [{"path", "value"}], "hash", "force"?}` or `{"text", "hash", "force"?}`; 200 with the new document plus `saved` and `followUps`, 400 with the reason, 409 with `reason: "stale"` or `"dirty"` |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
+| `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns: [{at, role, text}]}`: the last `n` turns with text (default 20, at most 200) of the claude transcript of an agent or session in `agents` or `ended`, oldest first; user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results, and without the host's wrapper turns (a user line that opens with a tag such as `<task-notification>`, `<local-command-stdout>` or `<command-name>`, and a compaction summary); read from the last 4 MB of the file. 404 for a pid not listed or without a transcript, 400 for a codex session or a bad `lines` |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
@@ -104,21 +110,46 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract. One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 2 since processes carry their
+session. One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
-a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `jobs`, `pulls`, `events`
+a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`) and `disagreements`. Timestamps are
 ISO UTC; every age is seconds at `takenAt`, so a reader keeps counting on its own clock between
 snapshots.
 
 - `project`: `id`, `name`, `root`, `flowHome`, `base` (the branch work merges into), `repo`
   (`github.repo`), `repoUrl` (`https://github.com/<repo>`, null without a repo), `trackerUrl` (the
-  issues page on the github adapter, null on local), `adapter`, `pluginVersion`, `jobsHost`
-  (`jobs.host`, the CLI the jobs run) and `poolMax`.
-- A worktree carries `agents` and `sessions`, each a list of `{pid, host, command, elapsedSeconds}`
-  (the command cut to 200 characters), `item`, `itemUrl` and `itemTitle` (from the board, null
+  issues page on the github adapter, null on local), `adapter`, `pluginVersion`, `pluginRoot`
+  (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
+  variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
+  `jobsHost` (`jobs.host`, the CLI the jobs run) and `poolMax`.
+- A worktree carries `agents` and `sessions`, each a list of `{pid, host, command, elapsedSeconds,
+  session}` (the command cut to 200 characters), `item`, `itemUrl` and `itemTitle` (from the board, null
   without an item or before the board is read), and `staleReason`: "branch is 35 commits behind
   main (limit 20)", "claimed 6 days ago with no run, agent or gate", both joined with "; ", or null.
+- `session` (on those and on every entry of `agents`) is the process's transcript,
+  `{host, id, transcript, resume}`, or null when none was found. For claude it is first
+  `~/.claude/sessions/<pid>.json`, which claude writes for every running process: its `sessionId`,
+  taken when its `cwd` is the process's and its `procStart` is within ten seconds of the process's
+  start (else it is a file an earlier process with that pid left); the transcript is
+  `~/.claude/projects/<cwd with every character but letters and digits made "-">/<id>.jsonl`. Only
+  without that file does it fall back to file times: the newest `*.jsonl` in that folder written
+  at or after the process started (now minus its elapsed time, with two seconds for ps's
+  rounding); the id is the file name. A transcript never goes to two pids: the sessions file
+  wins, then the first process listed, and another claimant gets null, so an agent in the root
+  never gets the owner's own session there. A scan's answer is kept per pid for the life of the
+  process (a miss is scanned again a minute later), so a read costs one small file per claude
+  process. For codex `~/.codex/session_index.jsonl` has ids and thread
+  names but no folder, so the session files under `~/.codex/sessions/<yyyy>/<mm>/<dd>/` (the
+  start's day back to fourteen days) are read instead: the newest written since the start whose
+  first line, `session_meta`, names the same cwd; the id is its `payload.id`. Those first lines
+  are kept in memory and forgotten fourteen days after the file was last written. `resume` is the argv
+  that opens it again: `["claude", "--resume", id]` or `["codex", "resume", id]`. The home folder
+  and the clock are injected (`daemon/src/collectors/sessions.ts`).
+- `ended` lists the agents and sessions with a session that left the process list while the
+  daemon watched, in the last 24 hours, at most 10, newest first: an `agents` entry plus `endedAt`
+  (when the read that missed it ran). It lives in the daemon's memory, so a restart empties it.
 - An item's `url` is its tracker page, from the board.
 - A gate carries `pull`: `{number, url, state, unresolvedThreads}` for its item's open PR (the one
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
@@ -197,7 +228,61 @@ costs no process after its first read. An older plugin is not asked. A list that
 `files` source (`ok` stays true) and logs `gates.list.failed` once. A message with no numbered line
 gets no questions from the plugin and shows as one question with no recommendation.
 
-The daemon itself never writes to a project. Every write goes through an action.
+The daemon itself never writes to a project but in one place, the flow settings editor below,
+which writes `.flow/config.yaml` when the owner saves. Every other write goes through an action.
+
+## Flow settings
+`daemon/src/plugins/flow/` edits the project's `.flow/config.yaml`. `schema.ts` is a fixed schema
+of every key the flow plugin reads (its scripts, `skills/init/SKILL.md` and the foosbrawl file):
+the dotted path, the type (`string`, `number` with a range where one is known, `boolean`, `enum`
+with its values, `list` of text, `map` of name to text, `duration` like `1h`, `schedule` like
+`every 30m --workers 2`, `daily 02:00` or `weekly sun 07:00` with the args `jobs.sh` takes), one
+sentence on what changing it does, its group (Tracker, Readiness, Worktree pool, Gates and
+verification, Reviews, Notifications, Jobs, Intake) and its follow-up: `jobs.schedule.*` and
+`jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action,
+offered only while some job keeps a schedule, since install exits 2 when none has); a job whose
+`jobs.schedule.<job>` is removed or emptied is never touched by install again, so it gets
+`jobs.sh uninstall <job>` (the `job.uninstall` action, one per job) instead;
+the pool keys (`pool`, `pool_max`, `worktree_copy`, `worktree_setup`) count at the next claim.
+
+`GET` reads the file. `values` is the file as the existing parser (`daemon/src/yaml.ts`) reads it,
+but only after `configDocument.ts` has checked that every line is in the flat format the file's
+header names (two-space indentation, `key: value`, nested maps, `- item` or `[a, b]`); a tab, an
+anchor or alias, a tag, a multi-line string, a flow map, a list of maps or a key set twice makes
+`values` null with the line in `warnings`, and only Raw YAML can change it. `sections` is the
+schema's groups in order plus, when the file has keys the schema does not know, an `Other` group
+of them as text (or a list of text). A known key whose value does not fit its type is a warning.
+`hash` is the sha256 of `text`.
+
+`PUT` checks first and writes last. Each change is checked against its key's type, enum and range
+(an unknown key takes text, or a list of text; `null` takes a key out). The text is then rewritten
+in place: a known key changes only the value on its line (its trailing comment kept), a list only
+its item lines, a map only its children's lines. A list is always written as a block, `key:` with
+`  - item` lines under it (an inline `[a, b]` becomes one), and an empty list as a bare `key:`, as
+flow:init writes an empty pool: the steward's `pool_add_entry` appends `  - <path>` under the key
+line, and `yaml_get` in `lib/flow.sh` stops at an inline value, so an inline list would hide every
+worktree appended after it; a key not in the
+file goes under its section's last line, or at the end of the file; every comment, blank line and
+key order stays. Where the two parsers would read a value differently it is refused with the
+rule: a value holding ` #` (`lib/flow.sh` reads a comment there even in quotes), a tab anywhere in
+a value (it ends the value there), and a value of a key that is not a list starting with `[` or
+`{` (`lib/flow.sh` strips the quotes and reads `"[wip]"` as the list `wip`). The result must parse again and read back to the values sent, or nothing is written. `{text}`
+saves the whole file, held to the same format and types. It is refused (409) when the file's hash is
+not the one sent (it changed on disk since the GET, force or not), and when
+`git status --porcelain -- .flow/config.yaml` shows a tracked file with changes unless the body
+says `"force": true`. An untracked file saves with the note "not tracked by git", and a folder git
+cannot read (not a checkout) saves with a note saying so. Saves on one project run one at a time;
+just before writing the file is read and hashed again (the git check can take seconds, and the
+steward may append to the pool meanwhile), and a change since is refused as stale. The text goes
+to a temp file beside it with the old file's mode, renamed over the file in one step. After a
+write the `files` and `jobs` sources are read again before the reply, the daemon logs one
+`flow.config.saved` line with the keys that changed, and the reply carries `saved` (the leaf keys
+whose value changed), `followUps` (`{note, action: {kind, label, args}, paths}`) and `notes`.
+
+The `files` source reads the base merge limit from `jobs.health.behind_base`, the key `steward.sh`
+reads. Console 0.5 read `health.behind_base`, which the plugin never did; until 0.7.0 that key
+still counts when the new one is absent, and the daemon logs `config.deprecated` once saying to
+rename it.
 
 ## Actions
 An action is one flow script, run by path with argv and never through a shell, with every
@@ -214,11 +299,14 @@ on every state change and at most twice a second while output arrives.
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
 | `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished` |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
+| `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
+| `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
-| `terminal.open` | `path`, `job?` | a terminal window in `path` (below) | none | `finished` |
+| `terminal.open` | `path`, `job?`, `session?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
-`ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
+`ActionRecord.note` is what a finished action wants said beside its state (null for most); the
+button and the drawer show it. `ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
 and goes on after the record (`jobs.sh run <job>` gives the job to launchd and returns in a
 second), `finished` means the work is over. It is null while an attached action runs and on a
 failed or rejected one. Every `jobs.sh run <job>` (`job.run`, `steward.health`, `run.start` without
@@ -249,6 +337,17 @@ through a shell or joins its `-e` words into one shell string; not tried on ever
 `cd <path> && tail -n 200 -f <log>` with every word quoted for sh and then for AppleScript, so a
 path with a space or a quote stays one word. Nothing is locked or re-read.
 
+With `session` (the pid of an agent or session in `agents` or `ended` whose transcript was found;
+`job` with it is refused) the window opens in the folder that process ran in (`path` must be it:
+`claude --resume` finds a session by its folder) with its resume command. A running `claude -p`
+or `codex exec` cannot be attached to, and a second writer on its session would mix with it, so
+while the process is alive the command waits for the owner: iTerm types it without pressing Enter
+(`write text "<cmd>" newline NO` after `write text "cd <path>"`, through `osascript`); Terminal
+cannot type without running, so `do script` prints it (`echo`) and leaves the shell; Ghostty does
+the same with the line after `-e`, then `exec "${SHELL:-/bin/sh}" -l` keeps a shell; a custom
+command gets that line in `{cmd}`. Once the process has ended the command runs at once in all of
+them.
+
 An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
 never changes what runs. A second action on a held lock is refused with 409 and recorded as
@@ -261,8 +360,8 @@ at once. When an action ends the sources it changed are re-read.
 
 Every action is two lines in `~/.local/state/brain-console/<project>/actions.jsonl`, one at
 start and one at the end, with its full output in `actions/<id>.log` beside it (`--state-dir`
-or `BRAIN_CONSOLE_STATE` moves it). Nothing is written inside the project except what the
-scripts themselves write.
+or `BRAIN_CONSOLE_STATE` moves it). Inside the project the console writes only what the scripts
+themselves write and, from the flow settings editor, `.flow/config.yaml`.
 
 ## Reconciliation
 `daemon/src/reconcile.ts` is a pure function from the collected facts to the snapshot, with the
@@ -332,16 +431,36 @@ worktree is clean, has no run record and no agent, else the same words without t
 legend for dirty, agents and sessions; Open in Terminal on every row, the project root
 included, Release, Health), Agents and jobs (Open in Terminal on every agent and session row, in
 its working directory; Run, Stop, Pause, Resume and Open in Terminal, which follows the job's log,
-on every job), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
+on every job; an agent or session whose transcript was found also gets Open session, which runs
+`terminal.open` with its pid, titled "Opens a terminal at the worktree with the resume command
+ready. The run is still going, so press Enter once it ends." while it runs, and a Transcript fold
+under a claude row with its last 20 turns, read when opened and again with each snapshot; a table
+"Ended in the last day" lists `ended` with Open session, titled "Opens a terminal at the worktree
+and resumes the session.", Open in Terminal and the Transcript fold), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
-10 s). A line above every screen names the project with links to its
-repository and tracker, its adapter, base branch, flow version and jobs host, and a
-Settings link. Settings (`#/settings`, linked from the top bar of every screen) lists the projects
+10 s). A row above every screen holds the project's fields, each a small uppercase label over its
+value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker
+("GitHub issues", linked to the issues page, on the github adapter; "local" on local), Base branch,
+Flow plugin (the version; its title says whether it is the installed plugin or the one
+`FLOW_PLUGIN` named, with its folder) and Jobs run on (`claude` or `codex`), with the Settings
+link at the far right. At phone width the fields wrap. Settings (`#/settings`, linked from the top bar of every screen) lists the projects
 with Add (a path) and Remove, or the note why they cannot change; the terminal as radio buttons
 (the first installed, iTerm, Terminal, Ghostty, a custom command as a JSON array, checked as you type); the port, read
 only, with the restart note; the config file, the state folder and whether the daemon runs under
-launchd. A refused save shows the daemon's reason. Every item id opens its tracker
+launchd. A refused save shows the daemon's reason. Under the console's own settings, one section
+per project, "flow settings for <project>", edits its `.flow/config.yaml`: the note "This edits
+.flow/config.yaml in the project. It is a tracked file: commit it there.", the file's warnings,
+then a form per schema group (each field labelled by its key, the control for its type: a select
+for an enum or a boolean with "(not set)" to take the key out, a number or text box, a text area
+of one item or `name: value` per line for a list or a map; the help under it) with its own Save,
+disabled until something in the group changed. A save shows the keys written and each follow-up,
+with a "Reload the schedule" button (`jobs.install`) when a schedule or `jobs.host` changed and an
+"Unload <job>" button (`job.uninstall`) for each job whose schedule was removed, and any note (a
+file git does not track); a
+refusal shows the reason, with Save anyway for a file with uncommitted changes and Reload for one
+that changed on disk. A "Raw YAML" fold at the bottom holds the whole file in a text area with the
+same Save (open when the file is not in the flat format). Every item id opens its tracker
 page in a new tab; a link from the snapshot that is not `http` or `https` shows as plain text. An action that handed its work on (`outcome: started`, such as `job.run`) shows
 "started", not "done", on its button and in the drawer. Every module is a title row, a body and a
 footer saying how fresh its source is; every age is a live counter driven by one shared clock.
@@ -365,5 +484,7 @@ npm ci && npm --prefix ui ci
 npm run check      # daemon tsc and node --test, then the UI's tsc, vitest and build
 ```
 Tests use a fixture flow home under `daemon/test/fixtures` and a fake command runner, so no shell,
-git or GitHub is touched. Test names are behavioural sentences and every assertion carries its
+git or GitHub is touched, with one exception: the flow settings tests cut `yaml_get` out of
+`plugins/flow/lib/flow.sh` and `pool_add_entry` out of `steward.sh` and run them with `sh` on a
+temp file, so a list the console writes is checked against the reader the flow scripts use. Test names are behavioural sentences and every assertion carries its
 because-string, as the standards ask.

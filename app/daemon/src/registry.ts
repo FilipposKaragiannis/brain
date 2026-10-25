@@ -1,10 +1,11 @@
 import type { ActionRunner } from './actions.ts';
 import type { Logger } from './log.ts';
+import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import type { ProjectDefinition, ProjectMonitor } from './project.ts';
 import type { Counts } from './snapshot.ts';
 
-/** One project as the server sees it: its live picture and the thing that runs its actions. */
-export type ServedProject = { monitor: ProjectMonitor; actions: ActionRunner };
+/** One project as the server sees it: its live picture, the thing that runs its actions, and the editor of its .flow/config.yaml. */
+export type ServedProject = { monitor: ProjectMonitor; actions: ActionRunner; flowConfig: FlowConfigEditor };
 
 /** A project in `GET /api/projects` and in the `projects` event: its definition and its counts. */
 export type ProjectSummary = ProjectDefinition & { counts: Counts | null; takenAt: string | null };

@@ -123,13 +123,13 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 1,
+    schema: 2,
     takenAt,
-    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', jobsHost: 'claude', poolMax: 9 },
+    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', poolMax: 9 },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
     counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0 },
     readiness: { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0 },
-    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], jobs: [], events: [], disagreements: [], pulls: [],
+    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], ended: [], jobs: [], events: [], disagreements: [], pulls: [],
   };
 }
 
@@ -143,7 +143,7 @@ export function actionRecord(id: string, state: ActionRecord['state'], args: Rec
   return {
     id, kind: 'job.run', args, state, command: ['sh', `${PLUGIN}/scripts/jobs.sh`, 'run', job], locks: [`job:${job}`],
     requestedAt: TAKEN_AT, startedAt: TAKEN_AT, endedAt: ended ? ENDED_AT : null,
-    exitCode: state === 'done' ? 0 : ended ? 1 : null, timedOut: false, outcome: state === 'done' ? 'started' : null, outputTail: '', outputBytes: 0,
+    exitCode: state === 'done' ? 0 : ended ? 1 : null, timedOut: false, outcome: state === 'done' ? 'started' : null, outputTail: '', outputBytes: 0, note: null,
   };
 }
 
@@ -170,7 +170,7 @@ export function poolWorktree(name: string): Worktree {
 }
 
 export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo {
-  return { pid, host: 'claude', command: `/Applications/Claude.app/claude --session ${pid}`, elapsedSeconds };
+  return { pid, host: 'claude', command: `/Applications/Claude.app/claude --session ${pid}`, elapsedSeconds, session: null };
 }
 
 export function waitingGate(item: string, gate: string): Gate {

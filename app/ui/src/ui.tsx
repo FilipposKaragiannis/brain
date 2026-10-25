@@ -67,18 +67,31 @@ export function TerminalButton({ path, job }: { path: string; job?: string }) {
   return <ActionButton kind="terminal.open" args={job === undefined ? { path } : { path, job }} label={OPEN_IN_TERMINAL} primary={false} />;
 }
 
+export const OPEN_SESSION = 'Open session';
+export const OPEN_SESSION_LIVE = 'Opens a terminal at the worktree with the resume command ready. The run is still going, so press Enter once it ends.';
+export const OPEN_SESSION_ENDED = 'Opens a terminal at the worktree and resumes the session.';
+
+/**
+ * Hands the owner an agent's session: a terminal in the folder it ran in with its resume command,
+ * typed but not run while the process still runs, run at once once it has ended.
+ */
+export function SessionButton({ path, pid, alive }: { path: string; pid: number; alive: boolean }) {
+  return <ActionButton kind="terminal.open" args={{ path, session: String(pid) }} label={OPEN_SESSION} primary title={alive ? OPEN_SESSION_LIVE : OPEN_SESSION_ENDED} />;
+}
+
 /** A button that runs one action, stays disabled while that action runs, and shows how it ended. */
-export function ActionButton({ kind, args, label, primary }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean }) {
+export function ActionButton({ kind, args, label, primary, title }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean; title?: string | undefined }) {
   const actions = useActionsView();
   const busy = actions.busy(kind, args);
   const outcome = actions.outcome(kind, args);
   return (
     <span className="action">
-      <button type="button" className={primary ? 'button primary' : 'button'} disabled={busy} onClick={() => { void actions.run(kind, args); }}>
+      <button type="button" className={primary ? 'button primary' : 'button'} disabled={busy} title={title} onClick={() => { void actions.run(kind, args); }}>
         {busy ? `${label}…` : label}
       </button>
       {outcome?.kind === 'refused' && <span className="chip tone-failing" title={outcome.message}>{outcome.message}</span>}
       {outcome?.kind === 'started' && <Chip tone={actionRecordTone(outcome.record)}>{actionStateLabel(outcome.record)}{outcome.record.exitCode !== null && outcome.record.exitCode !== 0 ? ` (exit ${outcome.record.exitCode})` : ''}</Chip>}
+      {outcome?.kind === 'started' && outcome.record.note !== null && <span className="muted action-note">{outcome.record.note}</span>}
     </span>
   );
 }

@@ -1,7 +1,7 @@
 import path from 'node:path';
-import type { ActionKind, ActionOutcome, TerminalName, TerminalSetting } from './snapshot.ts';
+import type { ActionKind, ActionOutcome, SessionRef, TerminalName, TerminalSetting } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
-import { terminalLaunch } from './terminal.ts';
+import { sessionLaunch, terminalLaunch } from './terminal.ts';
 
 /** What a sync needs to know of one pool worktree, from the latest snapshot. */
 export type SyncFacts = {
@@ -17,6 +17,9 @@ export type SyncFacts = {
   agentPids: number[];
 };
 
+/** A process's session as the snapshot lists it: where it ran, how to resume it, and whether the process still runs. */
+export type SessionFacts = { pid: number; cwd: string; session: SessionRef; alive: boolean };
+
 /** What an action needs from the project before it can be planned. */
 export type ActionContext = {
   root: string;
@@ -29,6 +32,8 @@ export type ActionContext = {
   outsideWorktrees: string[];
   /** The working directory of every agent and session the snapshot lists, so only those in this project's worktrees. */
   processCwds: string[];
+  /** The sessions of the agents and sessions the snapshot lists (alive) and of those that ended since (not alive). */
+  sessions: SessionFacts[];
   /** The terminal chosen in Settings, or null for the first installed one. */
   terminal: TerminalSetting | null;
   /** The terminals installed, first choice first. */
@@ -58,13 +63,24 @@ export type ActionPlan = {
   refreshAgainMs: number | null;
   /** What a clean exit means: the work is over (`finished`) or was handed on and goes on (`started`). */
   outcome: ActionOutcome;
+  /** Reads the output of a finished process for a note on its record (the jobs an install skipped); absent for most plans. */
+  note?: (output: string) => string | null;
 };
+
+/**
+ * `jobs.sh install` leaves a running job as it is ("next: running now, left as it is; install it
+ * again after the run") and still exits 0, so the record says which jobs kept their old schedule.
+ */
+export function installNote(output: string): string | null {
+  const skipped = [...output.matchAll(/^([a-z][a-z0-9-]*): running now, left as it is/gm)].map((match) => match[1]!);
+  return skipped.length === 0 ? null : `skipped ${skipped.join(', ')}: running now, so ${skipped.length === 1 ? 'it keeps' : 'they keep'} the old schedule; install again after the run`;
+}
 
 export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: string };
 
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.stop', 'job.pause', 'job.resume',
-  'worktree.claim', 'worktree.release', 'worktree.sync', 'steward.health', 'pr.merge', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -76,8 +92,10 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'worktree.release': ['target', 'force'],
   'worktree.sync': ['target'],
   'steward.health': [],
+  'jobs.install': [],
+  'job.uninstall': ['job'],
   'pr.merge': ['pr', 'method'],
-  'terminal.open': ['path', 'job'],
+  'terminal.open': ['path', 'job', 'session'],
   refresh: ['source'],
 };
 
@@ -92,11 +110,14 @@ const MERGE_TIMEOUT_MS = 180 * SECOND_MS;
 export const HANDED_ON_REFRESH_MS = 5 * SECOND_MS;
 /** The step budget of a run started from the console, the next job's own default. */
 const DEFAULT_MAX_STEPS = 15;
+/** The jobs `jobs.sh` knows; an install rewrites the schedule of every one, so it holds all their locks. */
+export const FLOW_JOBS = ['next', 'comments', 'intake', 'retro', 'health'];
 const MESSAGE_LIMIT_CHARS = 10000;
 /** The ids the adapters own: gh#12 on GitHub, local:task/7 in the local tracker. Nothing else reaches a script. */
 const ITEM_ID = /^(gh#[1-9][0-9]*|local:[a-z]+\/[1-9][0-9]*)$/;
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
+const PID = /^[1-9][0-9]*$/;
 const MAX_STEPS = /^[1-9][0-9]{0,2}$/;
 const MERGE_METHODS = ['squash', 'merge', 'rebase'];
 /** A branch name git takes without reading it as an option or a range. */
@@ -181,6 +202,17 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       return sh('steward.sh', ['release', target, ...force], ['pool', `${ITEM_ID.test(target) ? 'item' : 'worktree'}:${target}`], STEWARD_TIMEOUT_MS, ['files', 'git']);
     }
     case 'steward.health': return handOn('health', ['job:health'], ['jobs', 'files', 'git']);
+    // Writes and loads the schedule of every job jobs.schedule names: after a schedule or jobs.host change in .flow/config.yaml.
+    case 'jobs.install': {
+      const planned = sh('jobs.sh', ['install'], FLOW_JOBS.map((job) => `job:${job}`), SCRIPT_TIMEOUT_MS, ['jobs']);
+      return planned.ok ? { ok: true, plan: { ...planned.plan, note: installNote } } : planned;
+    }
+    // A job whose schedule left .flow/config.yaml: install never touches it again, so it is unloaded on its own.
+    case 'job.uninstall': {
+      const job = args['job'] ?? '';
+      if (!FLOW_JOBS.includes(job)) return fail(`job.uninstall needs one of ${FLOW_JOBS.join(', ')}`);
+      return sh('jobs.sh', ['uninstall', job], [`job:${job}`], SCRIPT_TIMEOUT_MS, ['jobs']);
+    }
     case 'pr.merge': {
       const pr = args['pr'] ?? '';
       const method = args['method'] ?? 'squash';
@@ -202,6 +234,8 @@ function planTerminal(args: Record<string, string>, context: ActionContext): Pla
   if (!path.isAbsolute(asked)) return fail('terminal.open needs an absolute path');
   const folder = path.resolve(asked);
   const allowed = [context.root, ...context.pool, ...context.outsideWorktrees, ...context.processCwds].map((entry) => path.resolve(entry));
+  const session = args['session'];
+  if (session !== undefined) return planSession(folder, session, args, context);
   if (!allowed.includes(folder)) return fail(`${folder} is not the project root, a worktree the console lists or the folder of a listed agent or session`);
   let run: string[] | null = null;
   const job = args['job'];
@@ -214,6 +248,23 @@ function planTerminal(args: Record<string, string>, context: ActionContext): Pla
     run = ['tail', '-n', LOG_LINES, '-f', log];
   }
   const launch = terminalLaunch(context.terminal, context.installedTerminals, folder, run);
+  if (!launch.ok) return launch;
+  return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
+}
+
+/**
+ * `terminal.open` with `session` (a pid): a terminal at the folder that process ran in, with its
+ * resume command typed but not run while the process still runs, or run at once once it ended.
+ * Only a session the snapshot lists, and only in its own folder: `claude --resume` finds a
+ * session by the folder it was started in.
+ */
+function planSession(folder: string, pid: string, args: Record<string, string>, context: ActionContext): PlanResult {
+  if (!PID.test(pid)) return fail('session must be the pid of an agent or session the console lists');
+  if (args['job'] !== undefined) return fail('terminal.open takes a job or a session, not both');
+  const found = context.sessions.find((entry) => String(entry.pid) === pid);
+  if (found === undefined) return fail(`the console knows no session for pid ${pid}: its transcript was not found, or it ended over a day ago`);
+  if (path.resolve(found.cwd) !== folder) return fail(`pid ${pid} ran in ${found.cwd}; its session opens there, not in ${folder}`);
+  const launch = sessionLaunch(context.terminal, context.installedTerminals, folder, found.session.resume, found.alive);
   if (!launch.ok) return launch;
   return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
 }

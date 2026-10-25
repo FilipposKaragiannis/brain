@@ -192,9 +192,14 @@ h1, h2 { margin: 0; }
 .terminal { flex: 1; margin: 0; overflow: auto; background: var(--terminal); color: var(--terminal-ink); border-radius: 10px; padding: 12px 14px; font: 12px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; }
 
 /* Project bar */
-.project-bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-size: 12px; color: var(--muted); }
-.project-name { font-size: 13px; font-weight: 700; color: var(--ink); }
-.project-note { flex-basis: 100%; font-size: 11px; }
+.project-bar { display: flex; align-items: flex-end; gap: 8px 18px; font-size: 13px; color: var(--ink-soft); }
+.project-fields { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0; flex: 1 1 auto; min-width: 0; }
+.project-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.project-field dt { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.project-field dd { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-name { font-weight: 700; color: var(--ink); }
+.project-settings { margin-left: auto; font-size: 12px; white-space: nowrap; }
+@media (max-width: 600px) { .project-bar { flex-wrap: wrap; } .project-fields { gap: 8px 16px; } }
 
 /* Help and legends */
 .readiness { margin: 0; padding: 10px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink-soft); font-weight: 500; }
@@ -276,3 +281,28 @@ a.button { color: inherit; text-decoration: none; display: inline-block; }
 .settings-facts dt { font-weight: 600; }
 .settings-facts dd { margin: 0; overflow-wrap: anywhere; }
 .settings-facts .module-help { margin: 2px 0 0; padding: 0; }
+
+/* Flow settings: one form per schema group, the help under each field */
+.flow-note { padding-bottom: 4px; }
+.flow-warnings { margin: 8px 16px 0; padding-left: 18px; font-size: 12px; }
+.flow-group { border-top: 1px solid var(--line-soft); margin-top: 10px; padding: 0 0 12px; }
+.flow-group .group-head { padding-left: 16px; }
+.flow-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px 20px; padding: 8px 16px 0; }
+.flow-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.flow-field .input { flex: 0 0 auto; width: 100%; box-sizing: border-box; }
+.flow-key { font-size: 12px; font-weight: 600; color: var(--ink-soft); overflow-wrap: anywhere; }
+.flow-help { padding: 0; }
+.flow-save { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 16px 0; font-size: 12px; }
+.flow-result, .flow-follow-up { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.flow-raw { border-top: 1px solid var(--line-soft); margin-top: 10px; padding: 10px 16px 12px; }
+.flow-raw summary { cursor: pointer; font-weight: 600; }
+.flow-raw textarea { width: 100%; box-sizing: border-box; margin-top: 8px; font-size: 12px; }
+.flow-raw .flow-save { padding: 8px 0 0; }
+
+/* An agent's transcript, folded under its row */
+.transcript summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+.transcript-turns { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; max-height: 360px; overflow-y: auto; }
+.turn { display: grid; gap: 2px; padding: 6px 10px; border-left: 2px solid var(--line); }
+.turn-assistant { border-left-color: var(--ink-soft); }
+.turn-meta { font-size: 11px; color: var(--muted); }
+.turn-text { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
