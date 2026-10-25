@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ProjectDefinition } from './project.ts';
@@ -23,6 +23,8 @@ export type DaemonConfig = {
 
 const TOKEN_BYTES = 24;
 const TOKEN_FILE_MODE = 0o600;
+/** The state dir holds the token, the audit log and the daemon's own log: the owner's alone. */
+const PRIVATE_FOLDER_MODE = 0o700;
 
 export const DEFAULT_PORT = 7474;
 export const LOCALHOST = '127.0.0.1';
@@ -37,7 +39,7 @@ export type ConfigResult = { ok: true; config: DaemonConfig } | { ok: false; err
  * The port is `--port`, else the file's, else 7474. Every root must hold a .flow/config.yaml: a
  * bad one stops the daemon before it serves anything. `--state-dir` (or BRAIN_CONSOLE_STATE)
  * moves the audit log. Every route needs the token: `--token` or BRAIN_CONSOLE_TOKEN, else the
- * one in <state dir>/token, written on the first start and printed with the URL.
+ * one in <state dir>/token, written on the first start (the folder kept 0700).
  */
 export function readConfig(argv: string[], env: NodeJS.ProcessEnv, paths: ConfigPaths = DEFAULT_CONFIG_PATHS): ConfigResult {
   const flagRoots: string[] = [];
@@ -82,7 +84,32 @@ function storedToken(stateDir: string): string {
     if (stored !== '') return stored;
   }
   const token = randomBytes(TOKEN_BYTES).toString('base64url');
-  mkdirSync(stateDir, { recursive: true });
+  privateFolder(stateDir);
   writeFileSync(file, token + '\n', { mode: TOKEN_FILE_MODE });
   return token;
+}
+
+/** Makes the folder if it is missing and closes it to everyone but the owner, whatever mode it had. */
+export function privateFolder(folder: string): void {
+  mkdirSync(folder, { recursive: true, mode: PRIVATE_FOLDER_MODE });
+  chmodSync(folder, PRIVATE_FOLDER_MODE);
+}
+
+/** The page to open, with the token in it: only ever printed to the owner's terminal, never logged. */
+export function consoleUrl(config: DaemonConfig): string {
+  return `http://${config.host}:${config.port}/?token=${config.token}`;
+}
+
+/**
+ * What the daemon says when it listens: the log line (no token, since under launchd the log is a
+ * file) and, when stderr is a terminal, the URL with the token for the owner to open.
+ */
+export function startReport(config: DaemonConfig, ui: string, interactive: boolean): { fields: Record<string, string>; terminal: string | null } {
+  return {
+    fields: {
+      url: `http://${config.host}:${config.port}/`, tokenFile: path.join(config.stateDir, 'token'), projects: config.projects.map((project) => project.id).join(','),
+      stateDir: config.stateDir, config: config.paths.configFile, ui,
+    },
+    terminal: interactive ? `brain-console: open ${consoleUrl(config)}` : null,
+  };
 }

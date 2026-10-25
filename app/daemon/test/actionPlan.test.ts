@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { HANDED_ON_REFRESH_MS, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], processCwds: ['/p/app-wt-2/src'], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -146,7 +146,7 @@ test('TerminalOpen_AnyOtherPath_RefusedWithTheReason', () => {
     assert.equal(result.ok, false, `because "${target}" is none of the folders the console lists`);
   }
   const result = planAction('terminal.open', { path: '/etc' }, CONTEXT);
-  assert.match(result.ok ? '' : result.error, /not the project root, a pool worktree or the folder of a listed agent or session/, 'because the owner hears which folders may open');
+  assert.match(result.ok ? '' : result.error, /not the project root, a worktree the console lists or the folder of a listed agent or session/, 'because the owner hears which folders may open');
 });
 
 test('TerminalOpen_EachNamedTerminal_ItsOwnCommand', () => {
@@ -171,13 +171,13 @@ test('TerminalOpen_NoTerminalInstalled_Refused', () => {
   assert.match(result.ok ? '' : result.error, /Settings/, 'because the owner must pick a terminal or a command there');
 });
 
-test('TerminalOpen_NeedsNoPlugin', () => {
+test('TerminalOpen_NoPlugin_StillPlanned', () => {
   assert.equal(planAction('terminal.open', { path: '/p/app' }, { ...CONTEXT, pluginRoot: null }).ok, true, 'because opening a folder runs no flow script');
 });
 
 test('TerminalOpen_Job_FollowsItsLogInTheProjectFlow', () => {
   const plan = planned('terminal.open', { path: '/p/app', job: 'next' }, { ...CONTEXT, terminal: 'ghostty' });
-  assert.deepEqual(plan.args, ['-na', 'Ghostty', '--args', '--working-directory=/p/app', '-e', 'tail', '-n', '200', '-f', '/p/app/.flow/log/next.log'], 'because a job row opens with the job\'s log followed, the file jobs.sh logs reads');
+  assert.deepEqual(plan.args, ['-na', 'Ghostty', '--args', '--working-directory=/p/app', '-e', "cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'"], 'because a job row follows the job\'s log, the file jobs.sh logs reads, as one shell line that reads the same whether Ghostty runs it through a shell or joins its -e words');
 });
 
 test('TerminalOpen_JobFromAWorktreeOrBadName_Refused', () => {
@@ -234,4 +234,13 @@ test('WorktreeSync_UnclaimedUnknownOrNotRead_Refused', () => {
 
 test('WorktreeSync_BaseThatLooksLikeAnOption_Refused', () => {
   assert.equal(planAction('worktree.sync', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, claimBase: '--abort' }] }).ok, false, 'because a claim file must not hand git an option');
+});
+
+test('TerminalOpen_WorktreeOutsideThePool_Allowed', () => {
+  assert.equal(planned('terminal.open', { path: '/p/app-side' }).args.at(-1), '/p/app-side', 'because the Worktrees screen shows a button on every outside row, and git lists that worktree for the project');
+});
+
+test('TerminalOpen_CustomCommandWithQpath_FolderQuotedForSh', () => {
+  const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal: { command: ['sh', '-c', 'cd {qpath} && exec $SHELL'] } });
+  assert.deepEqual(plan.args, ['-c', "cd '/p/app' && exec $SHELL"], 'because {qpath} is the folder quoted for an sh -c string, and the folder is not added again');
 });

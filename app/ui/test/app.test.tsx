@@ -62,7 +62,7 @@ const SETTINGS_VIEW = {
   port: { value: 7474, from: 'default', saved: null, note: 'The daemon listens on 7474; a new port takes a restart of the daemon.' },
 };
 
-test('SettingsHash_ShowsSettingsInTheShell', async () => {
+test('App_SettingsHash_ShowsSettingsInTheShell', async () => {
   window.location.hash = '#/settings';
   const daemon = new FakeDaemon();
   daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
@@ -73,7 +73,7 @@ test('SettingsHash_ShowsSettingsInTheShell', async () => {
   expect(window.location.hash, 'because settings need no project in the address').toBe('#/settings');
 });
 
-test('EveryScreen_LinksToSettingsInTheTopBar', async () => {
+test('App_AnyScreen_LinksToSettingsInTheTopBar', async () => {
   window.location.hash = '#/foosbrawl/agents';
   const daemon = new FakeDaemon();
   daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
@@ -82,7 +82,7 @@ test('EveryScreen_LinksToSettingsInTheTopBar', async () => {
   expect(screen.getAllByRole('link', { name: 'Settings' }).length, 'because Settings is one click away from any screen').toBeGreaterThan(0);
 });
 
-test('ProjectsEvent_TheSwitcherListsTheNewProject', async () => {
+test('App_ProjectsEvent_TheSwitcherListsTheNewProject', async () => {
   window.location.hash = '#/foosbrawl/overview';
   const daemon = new FakeDaemon();
   daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));

@@ -12,7 +12,7 @@ import { ProjectRegistry } from '../src/registry.ts';
 import { SettingsStore } from '../src/settings.ts';
 import { readConfig } from '../src/config.ts';
 import type { DaemonConfig } from '../src/config.ts';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { closeConsoleServer, createConsoleServer } from '../src/server.ts';
 import type { Snapshot } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
@@ -295,5 +295,22 @@ test('Settings_PutRemovesTheProject_ItsStreamEnds', async () => {
     for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) text += new TextDecoder().decode(chunk.value);
     assert.match(text, /event: projects/, 'because the page hears the new list before its stream ends');
     assert.equal((await fetch(`${base}/api/projects/project/snapshot?token=tok`)).status, 404, 'because a removed project is no longer served');
+  } finally { await close(); }
+});
+
+test('Settings_PutMovesTheIdToAnotherRoot_TheOldStreamEnds', async () => {
+  const moved = path.join(mkdtempSync(path.join(os.tmpdir(), 'console-moved-')), 'project');
+  mkdirSync(path.join(moved, '.flow'), { recursive: true });
+  copyFileSync(path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), path.join(moved, '.flow', 'config.yaml'));
+  const { base, close } = await started(fileSettings);
+  try {
+    const stream = await fetch(`${base}/api/projects/project/events?token=tok`, { signal: AbortSignal.timeout(5000) });
+    const reader = stream.body!.getReader();
+    const put = await fetch(`${base}/api/settings`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ projects: [{ root: moved }] }) });
+    assert.equal(put.status, 200, 'because the new root holds a flow');
+    const drained = (async (): Promise<string> => { for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) { /* read until the server ends it */ } return 'ended'; })();
+    const outcome = await Promise.race([drained, new Promise<string>((resolve) => setTimeout(() => resolve('still open'), 3000))]);
+    assert.equal(outcome, 'ended', 'because a stream on the stopped monitor would never carry another snapshot, so it ends and the page opens a new one');
+    if (outcome !== 'ended') await reader.cancel();
   } finally { await close(); }
 });

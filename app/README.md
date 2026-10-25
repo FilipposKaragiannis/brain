@@ -19,7 +19,9 @@ second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_P
 the settings file (below). Every root must hold a `.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
 the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
 else the one the daemon makes on first start and keeps in `~/.local/state/brain-console/token`.
-The start log prints the URL with the token in it. A request whose `Host` is not a loopback
+Started from a terminal, the daemon prints the URL with the token in it to that terminal; the
+structured log line names only the token file, so the token never lands in a log. The state dir is
+kept `0700` and the token file `0600`. A request whose `Host` is not a loopback
 name, or whose `Origin` is not a local page, gets 403, so a page on another site cannot drive
 the console even from the owner's own browser.
 
@@ -34,10 +36,16 @@ npm run daemon:uninstall                                       # stop it and rem
 `~/Library/LaunchAgents/com.brain.console.plist`: the absolute `node` and `daemon/src/main.ts`,
 the flags with every path made absolute, `RunAtLoad` and `KeepAlive`, `PATH`, `HOME`,
 `BRAIN_CONSOLE_LAUNCHD=1` (and `FLOW_PLUGIN`, `BRAIN_CONSOLE_PROJECTS`, `BRAIN_CONSOLE_STATE` when
-set) in `EnvironmentVariables`, and stdout and stderr to `<state dir>/daemon.log`. It loads it with
-`launchctl bootstrap gui/$UID <plist>` (booting a loaded one out first, and falling back to
-`launchctl load -w` when bootstrap fails), waits up to 15 s for the port and prints the URL with the
-token. `uninstall` runs `launchctl bootout gui/$UID/com.brain.console` and removes the plist.
+set) in `EnvironmentVariables`, `Umask` 63 (077, so the log is the owner's alone), and stdout and
+stderr to `<state dir>/daemon.log`; the state dir is closed to `0700`. It takes no `--token`: the
+plist would keep the secret, so the daemon reads `<state dir>/token`. After booting a loaded job
+out it refuses when something else holds the port and names it (`lsof`), such as an `npm start`
+daemon; then it loads the plist with `launchctl bootstrap gui/$UID <plist>` (falling back to
+`launchctl load -w` when bootstrap fails), waits up to 15 s for the port, asks
+`launchctl print gui/$UID/com.brain.console` for the job's pid and reports it, and prints the URL
+with the token to the terminal. `KeepAlive` starts a daemon that exits again about every ten
+seconds, a bad config among the causes; such a daemon says in the log why it cannot start and that
+launchd will keep trying until it is fixed or `npm run daemon:uninstall` stops it. `uninstall` runs `launchctl bootout gui/$UID/com.brain.console` and removes the plist.
 `status` says whether launchd has the job and prints the URL from the plist's flags. Settings says
 whether the daemon runs under launchd. The scripts are `daemon:*`, not `install`: npm runs a
 script named `install` on every `npm install`.
@@ -53,11 +61,16 @@ script named `install` on every `npm install`.
   then `BRAIN_CONSOLE_PROJECTS`, then the file; projects set by a flag or the environment show in
   Settings but cannot change there, with the note why.
 - `terminal`: what Open in Terminal opens, `"iterm"`, `"terminal"`, `"ghostty"` or
-  `{"command": ["open", "-a", "Warp", "{path}"]}` (run without a shell, `{path}` replaced in every
-  word, the path added last when no word has it). Unset, the console takes the first installed of
+  `{"command": ["open", "-a", "Warp", "{path}"]}`, run without a shell. In each word `{path}` is
+  the folder as it is (for a word of its own), `{qpath}` the folder quoted for sh and `{cmd}` the
+  command to run there (a job's log), quoted already: inside an `sh -c` string use `{qpath}` and
+  `{cmd}`, never `{path}`, or a folder with `$(…)` in its name would run. With neither path the
+  folder is added last. The Settings screen takes the command as a JSON array, so a word may hold a
+  space. Unset, the console takes the first installed of
   iTerm, Ghostty and Terminal (an app in `/Applications` or `~/Applications`, Terminal also in
   `/System/Applications/Utilities`).
-- `port`: the port to listen on when no `--port` is given (7474 by default). It takes a restart.
+- `port`: the port to listen on when no `--port` is given (7474 by default). It takes a restart,
+  and while `--port` sets the port a saved one has no effect at all; the note in Settings says so.
 
 While `config.json` is absent the daemon still reads the projects of the older
 `~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`); the first save from
@@ -67,10 +80,13 @@ not valid JSON, or holds a setting the daemon does not know, stops the daemon at
 `PUT /api/settings` (the Settings screen) changes the settings its body names and keeps the rest:
 the whole body is checked first (every root holds `.flow/config.yaml`, no two share a folder name,
 at least one stays, the terminal is a name or a non-empty command, `"terminal": null` goes back to
-the first installed), then the file is written in one step and applied. A changed project list
+the first installed), then merged into the file as it is on disk at that moment (a hand edit made
+while the daemon runs is kept; a file that no longer parses is refused with the reason, never
+overwritten), written in one step and applied. A changed project list
 applies at once: a new root gets its monitor started, a removed one is stopped and dropped (its
 attached actions get SIGTERM), and every open event stream carries `event: projects` with the new
-list. The terminal counts from the next Open in Terminal; the port only after a restart.
+list. A stream whose project was removed, or whose id now names another root, ends after that list.
+The terminal counts from the next Open in Terminal; the port only after a restart.
 
 ## Routes
 | Route | What |
@@ -216,17 +232,20 @@ its item, or an unattended agent works in it. The script runs `git -C <worktree>
 merges the branch's own upstream when that is ahead, then `origin/<base>` when it exists (else the
 local base), each with `merge --no-edit`; the output names every merge. A merge that conflicts is
 undone with `git merge --abort` and the action fails with the conflicting files in its output.
-When it ends `git` is read again.
+A TERM or INT (a timeout, a removed project, the daemon stopping) mid-merge aborts the merge too,
+so no `MERGE_HEAD` is left behind, and the script exits 143. When it ends `git` is read again.
 
-`terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, or the
-working directory of an agent or session the snapshot lists; any other path is refused with the
+`terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, another
+worktree git lists for the project (the outside rows), or the working directory of an agent or
+session the snapshot lists (so only processes in this project's worktrees); any other path is refused with the
 reason. The app is the `terminal` setting, else the first installed of iTerm, Ghostty, Terminal:
 `iterm` runs `open -a iTerm <path>`, `terminal` `open -a Terminal <path>`, `ghostty`
-`open -na Ghostty --args --working-directory=<path>`, a custom command its words with `{path}`
-replaced. With `job` (from the root only) the window follows `<root>/.flow/log/<job>.log`, the file
+`open -na Ghostty --args --working-directory=<path>`, a custom command its words with `{path}`,
+`{qpath}` replaced. With `job` (from the root only) the window follows `<root>/.flow/log/<job>.log`, the file
 `jobs.sh logs` reads, with `tail -n 200 -f`: iTerm through `osascript` (`create window with default
 profile command`, the line handed to `/bin/sh -c`), Terminal through `osascript` (`do script`),
-Ghostty with `-e tail …`, a custom command with `{cmd}` replaced by the line. The line is
+Ghostty with the line as the one word after `-e` (assumed to work whether Ghostty runs that word
+through a shell or joins its `-e` words into one shell string; not tried on every version), a custom command with `{cmd}` replaced by the line. The line is
 `cd <path> && tail -n 200 -f <log>` with every word quoted for sh and then for AppleScript, so a
 path with a space or a quote stays one word. Nothing is locked or re-read.
 
@@ -320,7 +339,7 @@ item with the filter box; a failed read shows a banner over the last events and 
 repository and tracker, its adapter, base branch, flow version and jobs host, and a
 Settings link. Settings (`#/settings`, linked from the top bar of every screen) lists the projects
 with Add (a path) and Remove, or the note why they cannot change; the terminal as radio buttons
-(the first installed, iTerm, Terminal, Ghostty, a custom command with its field); the port, read
+(the first installed, iTerm, Terminal, Ghostty, a custom command as a JSON array, checked as you type); the port, read
 only, with the restart note; the config file, the state folder and whether the daemon runs under
 launchd. A refused save shows the daemon's reason. Every item id opens its tracker
 page in a new tab; a link from the snapshot that is not `http` or `https` shows as plain text. An action that handed its work on (`outcome: started`, such as `job.run`) shows
@@ -332,7 +351,8 @@ cd ui && npm install
 npm run dev        # Vite on :5173, proxies /api and /healthz to 127.0.0.1:7474 (BRAIN_CONSOLE_DAEMON overrides)
 npm run build      # writes ui/dist; the daemon serves it at / when it exists
 ```
-The start log prints `http://127.0.0.1:7474/?token=<t>`: open that. The page takes the token
+The daemon prints `http://127.0.0.1:7474/?token=<t>` to the terminal it started in (and
+`daemon:install` and `daemon:status` print it too): open that. The page takes the token
 out of the address bar, keeps it in memory, sends it as a bearer header on fetches and as
 `?token=` on the event stream. The built files themselves need no token: they are public code,
 and every byte of state waits behind the API. One event stream per project carries snapshots

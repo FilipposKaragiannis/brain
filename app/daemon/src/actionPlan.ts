@@ -25,7 +25,9 @@ export type ActionContext = {
   jobsHost: string;
   /** The pool worktrees, as absolute paths. A release names one of these or an item. */
   pool: string[];
-  /** The working directory of every listed agent and session; a terminal may open there too. */
+  /** The worktrees outside the pool that git lists for the project (the main checkout among them); a terminal may open there. */
+  outsideWorktrees: string[];
+  /** The working directory of every agent and session the snapshot lists, so only those in this project's worktrees. */
   processCwds: string[];
   /** The terminal chosen in Settings, or null for the first installed one. */
   terminal: TerminalSetting | null;
@@ -191,16 +193,16 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
 }
 
 /**
- * `terminal.open`: a terminal window in the project root, a pool worktree or the folder of a
- * listed agent or session, nowhere else. With `job` (from the root only) the window follows that
+ * `terminal.open`: a terminal window in the project root, a pool worktree, another worktree git
+ * lists for the project, or the folder of an agent or session the snapshot lists, nowhere else. With `job` (from the root only) the window follows that
  * job's log, `<root>/.flow/log/<job>.log`. Nothing is locked or re-read: it only opens a window.
  */
 function planTerminal(args: Record<string, string>, context: ActionContext): PlanResult {
   const asked = args['path'] ?? '';
   if (!path.isAbsolute(asked)) return fail('terminal.open needs an absolute path');
   const folder = path.resolve(asked);
-  const allowed = [context.root, ...context.pool, ...context.processCwds].map((entry) => path.resolve(entry));
-  if (!allowed.includes(folder)) return fail(`${folder} is not the project root, a pool worktree or the folder of a listed agent or session`);
+  const allowed = [context.root, ...context.pool, ...context.outsideWorktrees, ...context.processCwds].map((entry) => path.resolve(entry));
+  if (!allowed.includes(folder)) return fail(`${folder} is not the project root, a worktree the console lists or the folder of a listed agent or session`);
   let run: string[] | null = null;
   const job = args['job'];
   if (job !== undefined) {

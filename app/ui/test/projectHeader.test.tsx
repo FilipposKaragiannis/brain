@@ -27,7 +27,7 @@ test('Header_SaysTheJobsHost', () => {
   expect(screen.getByLabelText('Project details').textContent, 'because which CLI runs the jobs changes what the agents can do').toMatch(/codex/);
 });
 
-test('Header_LinksToSettings', () => {
+test('Header_AnyProject_LinksToSettings', () => {
   render(<ProjectHeader project={PROJECT} />);
   expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href'), 'because projects are now added and removed there, not only at start').toBe('#/settings');
 });

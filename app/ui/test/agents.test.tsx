@@ -24,7 +24,7 @@ async function renderAgents(agents: Agent[], jobs: Job[]): Promise<unknown[]> {
   return posted;
 }
 
-test('AgentAndSessionRows_EachOpenTheirOwnFolder', async () => {
+test('AgentsScreen_AgentAndSessionRows_EachOpenTheirOwnFolder', async () => {
   const posted = await renderAgents([agent(100, 'agent', '/p-wt/wt-3'), agent(104, 'session', '/p-wt/wt-2/src')], []);
   const row = screen.getByRole('row', { name: /104/ });
   await act(async () => { fireEvent.click(within(row).getByRole('button', { name: 'Open in Terminal' })); });
@@ -32,7 +32,7 @@ test('AgentAndSessionRows_EachOpenTheirOwnFolder', async () => {
   expect(posted, 'because the terminal opens where that process works').toEqual([{ kind: 'terminal.open', args: { path: '/p-wt/wt-2/src' } }]);
 });
 
-test('JobRow_OpensTheRootFollowingTheJobsLog', async () => {
+test('AgentsScreen_JobRow_OpensTheRootFollowingTheJobsLog', async () => {
   const posted = await renderAgents([], [JOB]);
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open in Terminal' })); });
   expect(posted, 'because a job has no folder of its own: it opens the project root and follows its log').toEqual([{ kind: 'terminal.open', args: { path: '/p', job: 'next' } }]);

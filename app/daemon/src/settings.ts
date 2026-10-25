@@ -151,7 +151,8 @@ const PROJECT_NOTES: Record<SettingOrigin, string | null> = {
 
 /**
  * The daemon's settings while it runs: what `GET /api/settings` shows and what `PUT` changes.
- * A PUT is checked whole, written to the config file and then applied: a new project list at
+ * A PUT is checked whole, merged into the file as it is on disk then (a hand edit since the start
+ * is kept; a file that no longer parses is refused, never overwritten), written and applied: a new project list at
  * once (when the projects come from the file), the terminal on the next Open in Terminal, the
  * port only after a restart.
  */
@@ -185,7 +186,9 @@ export class SettingsStore {
       terminal: { value: this.terminal(), from: this.file.terminal === undefined ? 'default' : 'file', installed: this.deps.installed() },
       port: {
         value: config.port, from: config.origins.port, saved: this.file.port ?? null,
-        note: `The daemon listens on ${config.port}; a new port takes a restart of the daemon.`,
+        note: config.origins.port === 'flag'
+          ? `The daemon listens on ${config.port}, set by --port: a port saved here is used only when it starts without --port.`
+          : `The daemon listens on ${config.port}; a new port takes a restart of the daemon.`,
       },
     };
   }
@@ -208,7 +211,10 @@ export class SettingsStore {
       if (!found.ok) return found;
       projects = found.value;
     }
-    const next: ConfigFile = { ...this.file, ...change };
+    // The file as it is now, not as it was at start: an edit made by hand since then is kept.
+    const onDisk = readStoredSettings(this.deps.config.paths);
+    if (!onDisk.ok) return fail(`not saved, so the file is not overwritten: ${onDisk.error}`);
+    const next: ConfigFile = { ...onDisk.value.file, ...change };
     if (clearTerminal) delete next.terminal;
     try { writeConfigFile(this.deps.config.paths.configFile, next); } catch (error) {
       return fail(`could not write ${this.deps.config.paths.configFile}: ${error instanceof Error ? error.message : String(error)}`);

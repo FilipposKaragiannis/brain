@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { childProcessRunner } from './collectors/exec.ts';
-import { readConfig } from './config.ts';
-import { install, status, uninstall } from './launchd.ts';
+import { privateFolder, readConfig, startReport } from './config.ts';
+import { install, startFailure, status, uninstall } from './launchd.ts';
 import type { LaunchdDependencies } from './launchd.ts';
 import { stderrLogger } from './log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
@@ -37,14 +37,26 @@ function waitForPort(host: string, port: number, timeoutMs: number): Promise<boo
   });
 }
 
+/** The process listening on the port, from lsof, as "pid 4242 (node)"; null when none (or no lsof). */
+function portHolder(port: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-Fpc'], { encoding: 'utf8' }, (_error, stdout) => {
+      const pid = /^p(\d+)$/m.exec(stdout ?? '')?.[1];
+      const command = /^c(.+)$/m.exec(stdout ?? '')?.[1];
+      resolve(pid === undefined ? null : `pid ${pid}${command === undefined ? '' : ` (${command})`}`);
+    });
+  });
+}
+
 const launchd: LaunchdDependencies = {
   launchctl: (args) => new Promise((resolve) => {
     execFile('launchctl', args, { encoding: 'utf8' }, (error, stdout, stderr) => resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : 1, stdout, stderr }));
   }),
   files: {
     write: (file, text) => writeFileSync(file, text), remove: (file) => rmSync(file, { force: true }), exists: existsSync,
-    read: (file) => readFileSync(file, 'utf8'), mkdir: (folder) => { mkdirSync(folder, { recursive: true }); },
+    read: (file) => readFileSync(file, 'utf8'), mkdir: (folder) => { mkdirSync(folder, { recursive: true }); }, privateFolder,
   },
+  portHolder,
   waitForPort, print: (line) => process.stdout.write(`${line}\n`), env: process.env, uid: process.getuid?.() ?? 0, home: os.homedir(),
   node: process.execPath, daemon: path.resolve(import.meta.filename), configPaths: DEFAULT_CONFIG_PATHS,
 };
@@ -57,7 +69,7 @@ if (subcommand === 'status') process.exit(await status(launchd));
 
 const configuration = readConfig(process.argv.slice(2), process.env);
 if (!configuration.ok) {
-  process.stderr.write(`brain-console: ${configuration.error}\n`);
+  process.stderr.write(startFailure(configuration.error, process.env));
   process.exit(EXIT_BAD_CONFIG);
 }
 const { config } = configuration;
@@ -80,8 +92,16 @@ const uiDist = path.resolve(import.meta.dirname, '..', '..', 'ui', 'dist');
 const staticDir = existsSync(path.join(uiDist, 'index.html')) ? uiDist : null;
 const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log });
 
+privateFolder(config.stateDir);
+server.on('error', (error) => {
+  process.stderr.write(startFailure(`cannot listen on ${config.host}:${config.port}: ${error.message}`, process.env));
+  process.exit(EXIT_BAD_CONFIG);
+});
 server.listen(config.port, config.host, () => {
-  log.info('listening', { url: `http://${config.host}:${config.port}/?token=${config.token}`, projects: config.projects.map((project) => project.id).join(','), stateDir: config.stateDir, config: config.paths.configFile, ui: staticDir ?? 'none (run npm run build in app/ui)' });
+  // The log line names the token file, never the token: under launchd the log is a file on disk.
+  const report = startReport(config, staticDir ?? 'none (run npm run build in app/ui)', process.stderr.isTTY === true);
+  log.info('listening', report.fields);
+  if (report.terminal !== null) process.stderr.write(`${report.terminal}\n`);
 });
 await registry.apply(config.projects);
 

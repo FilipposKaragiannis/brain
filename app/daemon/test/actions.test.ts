@@ -14,7 +14,7 @@ import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 import { fakeScheduler, fakeSpawner, plainSpawner, settle, until } from './fakeSpawner.ts';
 import type { FakeSpawnerOptions } from './fakeSpawner.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], processCwds: ['/p/app-wt-2/src'], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
 const NOW = new Date('2026-10-25T09:00:00Z');
 const HTTP_ACCEPTED = 202;
 const HTTP_BAD_REQUEST = 400;
@@ -406,7 +406,7 @@ test('ActionFails_NoOutcome', async () => {
   } finally { await cleanup(); }
 });
 
-test('TerminalOpen_RunsWithoutALockAndRefreshesNothing', async () => {
+test('TerminalOpen_TwoAtOnce_NoLockAndNothingReRead', async () => {
   const { actions, processes, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
   try {
     const first = actionOf(actions.request('terminal.open', { path: '/p/app' }));

@@ -103,7 +103,9 @@ export class ProjectMonitor {
     return {
       root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, repo: flow?.config.repo ?? null,
       jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
-      processCwds: (this.facts.processes.facts?.agents ?? []).map((agent) => agent.cwd),
+      outsideWorktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role !== 'pool').map((worktree) => worktree.path),
+      // The snapshot's agents, not the raw process list: only processes in this project's worktrees.
+      processCwds: (this.current?.agents ?? []).map((agent) => agent.cwd),
       terminal: null, installedTerminals: [],
       base: flow?.config.base ?? 'main',
       worktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role === 'pool').map((worktree) => ({

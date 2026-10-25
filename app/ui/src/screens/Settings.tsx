@@ -20,9 +20,17 @@ function choiceOf(value: TerminalSetting | null): Choice {
   return typeof value === 'string' ? value : 'custom';
 }
 
-/** The words of a custom command, split on spaces, as the daemon stores them. */
-export function commandWords(text: string): string[] {
-  return text.split(/\s+/).filter((word) => word !== '');
+/**
+ * A custom command as typed: a JSON array of strings, so a word may hold a space (an app path
+ * such as "/Applications/My Term.app"). Returns the words, or why the text is not one.
+ */
+export function parseCommand(text: string): { ok: true; words: string[] } | { ok: false; error: string } {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return { ok: false, error: 'write the command as a JSON array, such as ["open", "-a", "Warp", "{path}"]' }; }
+  if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((word) => typeof word === 'string' && word !== '')) {
+    return { ok: false, error: 'the command must be a JSON array of non-empty strings' };
+  }
+  return { ok: true, words: parsed as string[] };
 }
 
 /**
@@ -111,7 +119,8 @@ function Projects({ view, saving, save }: Part) {
 function Terminal({ view, saving, save }: Part) {
   const current = view.terminal.value;
   const [choice, setChoice] = useState<Choice>(choiceOf(current));
-  const [command, setCommand] = useState(typeof current === 'object' && current !== null ? current.command.join(' ') : '');
+  const [command, setCommand] = useState(typeof current === 'object' && current !== null ? JSON.stringify(current.command) : '');
+  const parsed = parseCommand(command);
   const first = view.terminal.installed[0];
   const pick = (next: Choice): void => {
     setChoice(next);
@@ -127,10 +136,11 @@ function Terminal({ view, saving, save }: Part) {
       ))}
       <label><input type="radio" name="terminal" checked={choice === 'custom'} onChange={() => pick('custom')} /> Custom command</label>
       {choice === 'custom' && (
-        <form className="settings-add" onSubmit={(event) => { event.preventDefault(); void save({ terminal: { command: commandWords(command) } }); }}>
-          <input aria-label="Command words" className="input mono" placeholder="open -a Warp {path}" value={command} onChange={(event) => setCommand(event.target.value)} />
-          <button type="submit" className="button primary" disabled={commandWords(command).length === 0}>Save</button>
-          <p className="module-help">Words split on spaces. <span className="mono">{'{path}'}</span> becomes the folder and <span className="mono">{'{cmd}'}</span> the command to run in it (a job's log); without <span className="mono">{'{path}'}</span> the folder goes last.</p>
+        <form className="settings-add" onSubmit={(event) => { event.preventDefault(); if (parsed.ok) void save({ terminal: { command: parsed.words } }); }}>
+          <input aria-label="Command as a JSON array" className="input mono" placeholder='["open", "-a", "Warp", "{path}"]' value={command} onChange={(event) => setCommand(event.target.value)} aria-invalid={command !== '' && !parsed.ok} />
+          <button type="submit" className="button primary" disabled={!parsed.ok}>Save</button>
+          {command !== '' && !parsed.ok && <p className="module-help tone-failing" role="status">{parsed.error}</p>}
+          <p className="module-help">A JSON array of words, run without a shell. <span className="mono">{'{path}'}</span> is the folder as it is, for a word of its own; inside an <span className="mono">sh -c</span> string use <span className="mono">{'{qpath}'}</span>, the folder quoted for sh, and <span className="mono">{'{cmd}'}</span>, the command to run there (a job's log), quoted already. With neither path the folder goes last.</p>
         </form>
       )}
     </fieldset>

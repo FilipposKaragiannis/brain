@@ -27,7 +27,7 @@ function store(argv: string[], files: Record<string, unknown>) {
 
 const FILE_PROJECT = { 'config.json': { projects: [{ root: FIXTURE_ROOT }] } };
 
-test('View_EachSettingSaysWhereItCameFrom', () => {
+test('View_FileProjects_EachSettingSaysWhereItCameFrom', () => {
   const { settings, paths, cleanup } = store([], FILE_PROJECT);
   try {
     const view = settings.view();
@@ -37,7 +37,7 @@ test('View_EachSettingSaysWhereItCameFrom', () => {
   } finally { cleanup(); }
 });
 
-test('ProjectsFromAFlag_NotEditableWithTheReason', () => {
+test('Projects_FromAFlag_NotEditableWithTheReason', () => {
   const { settings, cleanup } = store(['--project', FIXTURE_ROOT], {});
   try {
     const view = settings.view();
@@ -48,7 +48,7 @@ test('ProjectsFromAFlag_NotEditableWithTheReason', () => {
   } finally { cleanup(); }
 });
 
-test('PutProjects_WrittenAndAppliedLive', () => {
+test('PutProjects_TwoValidRoots_WrittenAndAppliedLive', () => {
   const { settings, applied, written, cleanup } = store([], FILE_PROJECT);
   try {
     const result = settings.update({ projects: [{ root: FIXTURE_ROOT }, { root: LOCAL_ROOT }] });
@@ -58,7 +58,7 @@ test('PutProjects_WrittenAndAppliedLive', () => {
   } finally { cleanup(); }
 });
 
-test('PutRootWithoutFlow_RefusedAndNothingWritten', () => {
+test('PutProjects_RootWithoutFlow_RefusedAndNothingWritten', () => {
   const { settings, applied, paths, cleanup } = store([], FILE_PROJECT);
   try {
     const result = settings.update({ projects: [{ root: path.join(FIXTURES, 'project-wt-2') }] });
@@ -67,21 +67,21 @@ test('PutRootWithoutFlow_RefusedAndNothingWritten', () => {
   } finally { cleanup(); }
 });
 
-test('PutRelativeRoot_Refused', () => {
+test('PutProjects_RelativeRoot_Refused', () => {
   const { settings, cleanup } = store([], FILE_PROJECT);
   try {
     assert.equal(settings.update({ projects: [{ root: 'projects/foo' }] }).ok, false, 'because a relative root would depend on where the daemon was started');
   } finally { cleanup(); }
 });
 
-test('PutNoProjects_Refused', () => {
+test('PutProjects_EmptyList_Refused', () => {
   const { settings, cleanup } = store([], FILE_PROJECT);
   try {
     assert.equal(settings.update({ projects: [] }).ok, false, 'because a daemon that watches nothing could not start again');
   } finally { cleanup(); }
 });
 
-test('PutTerminal_NameOrCommandKeptOtherSettingsUntouched', () => {
+test('PutTerminal_Command_KeptOtherSettingsUntouched', () => {
   const { settings, written, cleanup } = store([], FILE_PROJECT);
   try {
     assert.ok(settings.update({ terminal: { command: ['open', '-a', 'Warp', '{path}'] } }).ok, 'because a non-empty command array is a terminal');
@@ -90,7 +90,7 @@ test('PutTerminal_NameOrCommandKeptOtherSettingsUntouched', () => {
   } finally { cleanup(); }
 });
 
-test('PutBadTerminal_Refused', () => {
+test('PutTerminal_BadValue_Refused', () => {
   const { settings, cleanup } = store([], FILE_PROJECT);
   try {
     for (const terminal of ['kitty', { command: [] }, { command: ['open', ''] }, ['open']]) {
@@ -99,7 +99,7 @@ test('PutBadTerminal_Refused', () => {
   } finally { cleanup(); }
 });
 
-test('PutTerminalNull_BackToTheFirstInstalled', () => {
+test('PutTerminal_Null_BackToTheFirstInstalled', () => {
   const { settings, written, cleanup } = store([], { 'config.json': { projects: [{ root: FIXTURE_ROOT }], terminal: 'iterm' } });
   try {
     settings.update({ terminal: null });
@@ -107,7 +107,7 @@ test('PutTerminalNull_BackToTheFirstInstalled', () => {
   } finally { cleanup(); }
 });
 
-test('PutPort_SavedButTheDaemonKeepsItsPort', () => {
+test('PutPort_NewPort_SavedButTheDaemonKeepsItsPort', () => {
   const { settings, cleanup } = store([], FILE_PROJECT);
   try {
     const result = settings.update({ port: 7480 });
@@ -117,18 +117,45 @@ test('PutPort_SavedButTheDaemonKeepsItsPort', () => {
   } finally { cleanup(); }
 });
 
-test('PutUnknownSetting_Refused', () => {
+test('Put_UnknownSetting_Refused', () => {
   const { settings, cleanup } = store([], FILE_PROJECT);
   try {
     assert.equal(settings.update({ temrinal: 'iterm' }).ok, false, 'because a typo must not be written and then ignored');
   } finally { cleanup(); }
 });
 
-test('LegacyProjectsFile_NotedUntilTheFirstWrite', () => {
+test('LegacyProjectsFile_OnlyFile_NotedUntilTheFirstWrite', () => {
   const { settings, written, cleanup } = store([], { 'projects.json': { projects: [{ root: FIXTURE_ROOT }] } });
   try {
     assert.match(settings.view().readFromLegacyFile ?? '', /projects\.json$/, 'because the screen says where the projects came from');
     settings.update({ terminal: 'ghostty' });
     assert.deepEqual([settings.view().readFromLegacyFile, written()], [null, { projects: [{ root: FIXTURE_ROOT }], terminal: 'ghostty' }], 'because the first save moves the projects into config.json');
+  } finally { cleanup(); }
+});
+
+test('Put_FileEditedByHandSinceTheStart_EditKept', () => {
+  const { settings, written, paths, cleanup } = store([], FILE_PROJECT);
+  try {
+    writeFileSync(paths.configFile, JSON.stringify({ projects: [{ root: FIXTURE_ROOT }], port: 7490 }));
+    settings.update({ terminal: 'ghostty' });
+    assert.deepEqual(written(), { projects: [{ root: FIXTURE_ROOT }], port: 7490, terminal: 'ghostty' }, 'because a save from the screen must not undo what the owner wrote in the file meanwhile');
+  } finally { cleanup(); }
+});
+
+test('Put_FileBrokenByHand_RefusedAndLeftAsItIs', () => {
+  const { settings, paths, cleanup } = store([], FILE_PROJECT);
+  try {
+    writeFileSync(paths.configFile, '{"projects": [');
+    const result = settings.update({ terminal: 'ghostty' });
+    assert.match(result.ok ? '' : result.error, /not valid JSON/, 'because the owner hears why nothing was saved');
+    assert.equal(readFileSync(paths.configFile, 'utf8'), '{"projects": [', 'because a half-written hand edit is the owner\'s to finish, not ours to overwrite');
+  } finally { cleanup(); }
+});
+
+test('PutPort_PortFromAFlag_NoteSaysTheFlagWins', () => {
+  const { settings, cleanup } = store(['--port', '7475'], FILE_PROJECT);
+  try {
+    const result = settings.update({ port: 7480 });
+    assert.match(result.ok ? result.value.port.note : '', /set by --port: a port saved here is used only when it starts without --port/, 'because a saved port has no effect while the flag sets it, and the owner must not wait for it');
   } finally { cleanup(); }
 });

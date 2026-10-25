@@ -48,16 +48,19 @@ export function shellLine(folder: string, run: string[]): string {
  * How to open `folder` in the chosen terminal, or in the first installed one when none is set.
  * With `run` (an argv such as `tail -n 200 -f <log>`) the new window runs it in that folder:
  * iTerm and Terminal through osascript with the line quoted for sh and then for AppleScript,
- * Ghostty with the argv after `-e`, a custom command with `{cmd}` replaced by the quoted line.
- * A custom command gets `{path}` replaced in every word, and the folder last when no word has it.
+ * Ghostty with the line as the one word after `-e` (whether Ghostty runs that word through a
+ * shell or joins its -e words into one, the line comes out the same), a custom command with
+ * `{cmd}` replaced by the line. In a custom command `{path}` is the folder as it is, for a word
+ * of its own in the argv; `{qpath}` is the folder quoted for sh, for use inside an `sh -c`
+ * string, as `{cmd}` already is. The folder goes last when no word names `{path}` or `{qpath}`.
  */
 export function terminalLaunch(setting: TerminalName | { command: string[] } | null, installed: TerminalName[], folder: string, run: string[] | null): LaunchResult {
   const chosen = setting ?? installed[0] ?? null;
   if (chosen === null) return { ok: false, error: 'no terminal app found (iTerm, Ghostty or Terminal); pick one or set a command in Settings' };
   const line = run === null ? null : shellLine(folder, run);
   if (typeof chosen === 'object') {
-    const words = chosen.command.map((word) => word.replaceAll('{path}', folder).replaceAll('{cmd}', line ?? ''));
-    const withPath = chosen.command.some((word) => word.includes('{path}')) ? words : [...words, folder];
+    const words = chosen.command.map((word) => word.replaceAll('{qpath}', shellQuote(folder)).replaceAll('{path}', folder).replaceAll('{cmd}', line ?? ''));
+    const withPath = chosen.command.some((word) => word.includes('{path}') || word.includes('{qpath}')) ? words : [...words, folder];
     const [command, ...args] = withPath;
     return { ok: true, launch: { command: command ?? '', args } };
   }
@@ -70,6 +73,6 @@ export function terminalLaunch(setting: TerminalName | { command: string[] } | n
       if (line === null) return { ok: true, launch: { command: 'open', args: ['-a', 'Terminal', folder] } };
       return { ok: true, launch: { command: 'osascript', args: ['-e', `tell application "Terminal" to do script ${appleScriptString(line)}`, '-e', 'tell application "Terminal" to activate'] } };
     case 'ghostty':
-      return { ok: true, launch: { command: 'open', args: ['-na', 'Ghostty', '--args', `--working-directory=${folder}`, ...(run === null ? [] : ['-e', ...run])] } };
+      return { ok: true, launch: { command: 'open', args: ['-na', 'Ghostty', '--args', `--working-directory=${folder}`, ...(line === null ? [] : ['-e', line])] } };
   }
 }

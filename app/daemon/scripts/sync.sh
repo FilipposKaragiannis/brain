@@ -3,13 +3,30 @@
 # Fetches origin, merges the branch's own upstream when it is ahead, then origin/<base> when it
 # exists (else the local <base>). A merge that conflicts is aborted and the conflicting files are
 # named; the worktree is left as it was before that merge. Every merge is --no-edit, never forced.
+# TERM or INT mid-merge aborts the merge too, and the script exits 143.
 set -u
 wt="$1"; base="$2"
 say() { printf 'console: %s\n' "$*"; }
+merging=""
+
+# A timeout or a removed project sends TERM (to the whole group, so git stops too and drops its
+# own lock files). A merge left half done is aborted, so the worktree never keeps a MERGE_HEAD.
+stopped() {
+  trap - TERM INT
+  if git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    git -C "$wt" merge --abort
+    say "stopped while merging ${merging:-the base}; the merge was aborted"
+  else
+    say "stopped before a merge was under way"
+  fi
+  exit 143
+}
+trap stopped TERM INT
 
 # merge <ref>: merge it, or abort a conflicting merge and stop with the files.
 merge() {
-  if git -C "$wt" merge --no-edit "$1"; then say "merged $1"; return 0; fi
+  merging="$1"
+  if git -C "$wt" merge --no-edit "$1"; then say "merged $1"; merging=""; return 0; fi
   if git -C "$wt" rev-parse -q --verify MERGE_HEAD >/dev/null; then
     files="$(git -C "$wt" diff --name-only --diff-filter=U)"
     git -C "$wt" merge --abort

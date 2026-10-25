@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -65,5 +65,31 @@ test('Sync_Conflict_AbortedAndTheFilesNamed', () => {
     assert.notEqual(run.status, 0, 'because a conflicting merge fails the action');
     assert.match(run.stdout, /conflicts, so the merge was aborted\. Conflicting files:\na\.txt/, 'because the owner needs to know which files to resolve by hand');
     assert.deepEqual([git(worktree, 'rev-parse', 'HEAD'), git(worktree, 'status', '--porcelain')], [head, ''], 'because an aborted merge leaves the worktree as it was');
+  } finally { cleanup(); }
+});
+
+test('Sync_TermMidMerge_MergeAbortedAndNonZero', async () => {
+  const { dir, git, main, worktree, commit, cleanup } = repos();
+  try {
+    commit(main, 'b.txt', 'two\n');
+    git(main, 'push', '-q', 'origin', 'HEAD:main');
+    commit(worktree, 'c.txt', 'branch\n');
+    const head = git(worktree, 'rev-parse', 'HEAD');
+    // A git that stops halfway through a merge: the merge is staged (MERGE_HEAD written), then it waits.
+    const bin = path.join(dir, 'bin');
+    const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    execFileSync('mkdir', [bin]);
+    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" merge --no-edit "*) "${real}" -c user.name=t -c user.email=t@t "$@" --no-commit --no-ff; touch "${dir}/mid-merge"; exec sleep 30 ;; esac\nexec "${real}" "$@"\n`, { mode: 0o755 });
+    const child = spawn('sh', [SYNC_SCRIPT, worktree, 'main'], { detached: true, env: { ...process.env, PATH: `${bin}:${process.env['PATH'] ?? ''}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+    while (!existsSync(path.join(dir, 'mid-merge'))) await new Promise((resolve) => setTimeout(resolve, 50));
+    const ended = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)));
+    process.kill(-child.pid!, 'SIGTERM');
+    const code = await ended;
+    assert.notEqual(code, 0, 'because a sync cut short did not bring the branch up to date');
+    assert.match(output, /stopped while merging origin\/main; the merge was aborted/, 'because the output says what was undone');
+    const gitPath = (name: string): string => path.resolve(worktree, git(worktree, 'rev-parse', '--git-path', name).trim());
+    assert.deepEqual([existsSync(gitPath('MERGE_HEAD')), existsSync(gitPath('index.lock')), git(worktree, 'rev-parse', 'HEAD'), git(worktree, 'status', '--porcelain')], [false, false, head, ''], 'because a timeout must not leave a half merge or a lock that blocks the next git command');
   } finally { cleanup(); }
 });

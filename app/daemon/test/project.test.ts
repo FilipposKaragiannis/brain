@@ -134,5 +134,7 @@ test('ActionContext_PoolWorktreesRunsAndProcessFolders_FromTheLatestRead', async
   assert.deepEqual([wt3?.item, wt3?.dirtyFiles, wt3?.agentPids], ['gh#9', 2, [100]], 'because a sync is refused on what the console shows: the claim, the dirty files and the agent in it');
   assert.deepEqual(context.runItems, ['gh#9'], 'because a run record holds its item against a merge');
   assert.ok(context.processCwds.includes(path.join(FIXTURES, 'project-wt-2', 'src')), 'because a session row may open a terminal in its own folder');
+  assert.equal(context.processCwds.includes('/elsewhere'), false, 'because a codex working in another folder on the machine is not this project\'s to open');
+  assert.deepEqual(context.outsideWorktrees.sort(), [FIXTURE_ROOT, path.join(FIXTURES, 'project-side')].sort(), 'because the main checkout and the side worktree git lists are rows with the button');
   monitor.stop();
 });

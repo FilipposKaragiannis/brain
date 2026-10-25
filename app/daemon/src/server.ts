@@ -181,8 +181,8 @@ async function settingsRoute(settings: SettingsStore | null, request: IncomingMe
 
 /**
  * One project's stream: its snapshots, its actions, and the project list whenever it changes, so
- * a page learns of a project added or removed in Settings. A stream whose project was removed
- * ends after that last list.
+ * a page learns of a project added or removed in Settings. A stream whose project was removed, or
+ * whose id now names another root, ends after that last list, so the page opens one on the new monitor.
  */
 function streamEvents(served: ServedProject, registry: ProjectRegistry, request: IncomingMessage, response: ServerResponse, log: Logger): void {
   const { monitor, actions: runner } = served;
@@ -193,7 +193,8 @@ function streamEvents(served: ServedProject, registry: ProjectRegistry, request:
   const unsubscribeActions = runner.onChange((record) => send('action', record));
   const unsubscribeProjects = registry.onChange((projects) => {
     send('projects', projects);
-    if (!projects.some((project) => project.id === monitor.project.id)) response.end();
+    // Removed, or replaced under the same id by a new root: this stream belongs to a monitor that stopped.
+    if (registry.get(monitor.project.id) !== served) response.end();
   });
   const heartbeat = setInterval(() => { response.write(': ping\n\n'); }, HEARTBEAT_MS);
   log.info('stream.open', { project: monitor.project.id });

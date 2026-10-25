@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readConfig } from './config.ts';
+import { consoleUrl, readConfig } from './config.ts';
 import type { ConfigPaths } from './settings.ts';
 
 /** The launchd job that runs the daemon on login. */
@@ -15,7 +15,9 @@ export type CommandOutcome = { code: number | null; stdout: string; stderr: stri
 /** Everything `install`, `uninstall` and `status` touch outside the process, so a test never reaches launchd or the disk. */
 export type LaunchdDependencies = {
   launchctl: (args: string[]) => Promise<CommandOutcome>;
-  files: { write(file: string, text: string): void; remove(file: string): void; exists(file: string): boolean; read(file: string): string; mkdir(folder: string): void };
+  files: { write(file: string, text: string): void; remove(file: string): void; exists(file: string): boolean; read(file: string): string; mkdir(folder: string): void; privateFolder(folder: string): void };
+  /** What listens on the port now, such as "pid 4242 (node)", or null when nothing does. */
+  portHolder: (port: number) => Promise<string | null>;
   /** Resolves true once something listens on the port, false when the wait ran out. */
   waitForPort: (host: string, port: number, timeoutMs: number) => Promise<boolean>;
   print: (line: string) => void;
@@ -51,7 +53,11 @@ export function launchdEnvironment(env: NodeJS.ProcessEnv): Record<string, strin
   return kept;
 }
 
-/** The launch agent: node running main.ts with the flags, kept alive, started at login, its output in <state dir>/daemon.log. */
+/**
+ * The launch agent: node running main.ts with the flags, kept alive, started at login, its output
+ * in <state dir>/daemon.log. Umask 63 (077) keeps every file it writes, the log among them, the
+ * owner's alone.
+ */
 export function plistXml(options: { node: string; daemon: string; flags: string[]; env: Record<string, string>; log: string }): string {
   const strings = (values: string[], indent: string): string => values.map((value) => `${indent}<string>${xml(value)}</string>`).join('\n');
   const environment = Object.entries(options.env).map(([key, value]) => `    <key>${xml(key)}</key>\n    <string>${xml(value)}</string>`).join('\n');
@@ -73,6 +79,8 @@ ${environment}
   <true/>
   <key>KeepAlive</key>
   <true/>
+  <key>Umask</key>
+  <integer>63</integer>
   <key>StandardOutPath</key>
   <string>${xml(options.log)}</string>
   <key>StandardErrorPath</key>
@@ -95,6 +103,10 @@ export function flagsOfPlist(text: string): string[] {
  * A loaded job is booted out first, so a second install picks up new flags.
  */
 export async function install(argv: string[], deps: LaunchdDependencies): Promise<number> {
+  if (argv.includes('--token')) {
+    deps.print('brain-console: install does not take --token, since the plist would keep the secret in a file others can read; the daemon reads <state dir>/token, made on the first start');
+    return EXIT_BAD_CONFIG;
+  }
   const flags = absoluteFlags(argv);
   const read = readConfig(flags, deps.env, deps.configPaths);
   if (!read.ok) { deps.print(`brain-console: ${read.error}`); return EXIT_BAD_CONFIG; }
@@ -102,11 +114,17 @@ export async function install(argv: string[], deps: LaunchdDependencies): Promis
   const plist = plistPath(deps.home);
   const log = path.join(config.stateDir, 'daemon.log');
   deps.files.mkdir(path.dirname(plist));
-  deps.files.mkdir(config.stateDir);
+  deps.files.privateFolder(config.stateDir);
   deps.files.write(plist, plistXml({ node: deps.node, daemon: deps.daemon, flags, env: launchdEnvironment(deps.env), log }));
   deps.print(`wrote ${plist}`);
   const domain = `gui/${deps.uid}`;
   if ((await deps.launchctl(['print', `${domain}/${LAUNCHD_LABEL}`])).code === 0) await deps.launchctl(['bootout', `${domain}/${LAUNCHD_LABEL}`]);
+  // Another daemon (an npm start) on the port would answer for a job that only crash-loops beside it.
+  const holder = await deps.portHolder(config.port);
+  if (holder !== null) {
+    deps.print(`brain-console: port ${config.port} is held by ${holder}; stop it (Ctrl+C an npm start) or install with --port <another>`);
+    return EXIT_FAILED;
+  }
   const bootstrap = await deps.launchctl(['bootstrap', domain, plist]);
   if (bootstrap.code !== 0) {
     const load = await deps.launchctl(['load', '-w', plist]);
@@ -116,8 +134,13 @@ export async function install(argv: string[], deps: LaunchdDependencies): Promis
     deps.print(`brain-console: loaded, but nothing listens on ${config.port} after ${PORT_WAIT_MS / 1000}s; see ${log}`);
     return EXIT_FAILED;
   }
-  deps.print(`running under launchd as ${LAUNCHD_LABEL}, on login and after a crash; output in ${log}`);
-  deps.print(`http://${config.host}:${config.port}/?token=${config.token}`);
+  const pid = pidOf((await deps.launchctl(['print', `${domain}/${LAUNCHD_LABEL}`])).stdout);
+  if (pid === null) {
+    deps.print(`brain-console: launchd has ${LAUNCHD_LABEL} but it is not running; see ${log}`);
+    return EXIT_FAILED;
+  }
+  deps.print(`running under launchd as ${LAUNCHD_LABEL}, pid ${pid}, on login and after a crash; output in ${log}`);
+  deps.print(consoleUrl(config));
   return EXIT_OK;
 }
 
@@ -138,10 +161,24 @@ export async function status(deps: LaunchdDependencies): Promise<number> {
     deps.print(`${LAUNCHD_LABEL} is not loaded${deps.files.exists(plist) ? ` (${plist} is there: npm run daemon:install loads it)` : ''}`);
     return EXIT_FAILED;
   }
-  const pid = /^\s*pid = (\d+)$/m.exec(printed.stdout)?.[1];
-  deps.print(`${LAUNCHD_LABEL} is loaded${pid === undefined ? ', not running now' : `, pid ${pid}`}`);
+  const pid = pidOf(printed.stdout);
+  deps.print(`${LAUNCHD_LABEL} is loaded${pid === null ? ', not running now' : `, pid ${pid}`}`);
   if (!deps.files.exists(plist)) return EXIT_OK;
   const read = readConfig(flagsOfPlist(deps.files.read(plist)), { ...deps.env, ...launchdEnvironment(deps.env) }, deps.configPaths);
-  if (read.ok) deps.print(`http://${read.config.host}:${read.config.port}/?token=${read.config.token}`);
+  if (read.ok) deps.print(consoleUrl(read.config));
   return EXIT_OK;
+}
+
+/** The pid `launchctl print` names for a running job, or null when it is not running. */
+function pidOf(printed: string): string | null {
+  return /^\s*pid = (\d+)$/m.exec(printed)?.[1] ?? null;
+}
+
+/**
+ * What a daemon that cannot start prints before it exits. Under launchd KeepAlive starts it again
+ * about every ten seconds, so the log says so and how to stop it.
+ */
+export function startFailure(error: string, env: NodeJS.ProcessEnv): string {
+  const underLaunchd = env['BRAIN_CONSOLE_LAUNCHD'] === '1';
+  return `brain-console: cannot start: ${error}\n${underLaunchd ? `brain-console: launchd (${LAUNCHD_LABEL}) starts it again about every 10 s until this is fixed; npm run daemon:uninstall stops that\n` : ''}`;
 }

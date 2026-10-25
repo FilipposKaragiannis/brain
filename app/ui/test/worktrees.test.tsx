@@ -79,7 +79,7 @@ test('FreeWorktreeWithASession_SaysTheSessionSitsThere', () => {
 
 const ACTIONS_PATH = '/api/projects/project/actions';
 
-test('EveryWorktree_OpenInTerminalOnItsPath', async () => {
+test('Worktrees_EveryRow_OpenInTerminalOnItsPath', async () => {
   const daemon = new FakeDaemon();
   const posted: unknown[] = [];
   daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('t1', 'done', {}), kind: 'terminal.open', args: { path: '/p' }, outcome: 'finished' } } }; });
@@ -94,7 +94,7 @@ test('EveryWorktree_OpenInTerminalOnItsPath', async () => {
 
 const BEHIND: Worktree = { ...poolWorktree('wt-7'), state: 'stale', flags: ['stale-branch'], claim: CLAIM, item: 'gh#344', staleReason: 'branch is 27 commits behind epic/gh-300 (limit 20)' };
 
-test('BranchFarBehindAndClean_MergeButtonSyncsTheWorktree', async () => {
+test('BranchFarBehind_Clean_MergeButtonSyncsTheWorktree', async () => {
   const daemon = new FakeDaemon();
   const posted: unknown[] = [];
   daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('s1', 'running', {}), kind: 'worktree.sync', args: { target: 'wt-7' } } } }; });
@@ -104,13 +104,13 @@ test('BranchFarBehindAndClean_MergeButtonSyncsTheWorktree', async () => {
   expect(posted, 'because the way out of a branch far behind is one press when nothing is in the way').toEqual([{ kind: 'worktree.sync', args: { target: 'wt-7' } }]);
 });
 
-test('BranchFarBehindButDirty_SaysItInWordsWithNoButton', () => {
+test('BranchFarBehind_Dirty_SaysItInWordsWithNoButton', () => {
   renderWorktrees([{ ...BEHIND, dirtyFiles: 2 }]);
   expect(screen.queryByRole('button', { name: /Merge/ }), 'because the daemon refuses a merge over uncommitted files, so the button would only fail').toBeNull();
   expect(screen.getByText(/or release the worktree/).textContent, 'because the way out is still said').toMatch(/Merge epic\/gh-300 in/);
 });
 
-test('BranchFarBehindWithARunRecord_NoMergeButton', () => {
+test('BranchFarBehind_RunRecord_NoMergeButton', () => {
   const Wrapper = new FakeDaemon().screenWrapper();
   const run = { item: 'gh#344', step: 'implement', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, alive: false };
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [BEHIND], runs: [run] }} /></Wrapper>);

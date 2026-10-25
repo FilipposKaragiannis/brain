@@ -42,11 +42,26 @@ test('TerminalLaunch_HostileFolderInTerminal_OneScriptThatRunsOnlyTail', () => {
   assert.deepEqual(wordsOf(line.replace(' && ', ' ')), ['cd', folder, 'tail', '-n', '200', '-f', `${folder}/.flow/log/next.log`], 'because the line Terminal runs is cd and tail with the folder as one word each time');
 });
 
-test('InstalledTerminals_FirstChoiceFirst', () => {
+test('InstalledTerminals_TwoFound_FirstChoiceFirst', () => {
   const present = new Set(['/Users/o/Applications/Ghostty.app', '/System/Applications/Utilities/Terminal.app']);
   assert.deepEqual(installedTerminals((file) => present.has(file), '/Users/o'), ['ghostty', 'terminal'], 'because iTerm comes first, then Ghostty, then Terminal, found in /Applications, ~/Applications or where macOS keeps Terminal');
 });
 
 test('InstalledTerminals_NoneThere_Empty', () => {
   assert.deepEqual(installedTerminals(() => false, '/Users/o'), [], 'because with no app found Open in Terminal must say so instead of guessing');
+});
+
+test('CustomCommand_HostileFolderThroughQpath_ReachesShByteForByte', () => {
+  for (const folder of HOSTILE) {
+    const launch = terminalLaunch({ command: ['sh', '-c', "printf '%s' {qpath}"] }, [], folder, null);
+    assert.ok(launch.ok, 'because a custom command is set');
+    if (!launch.ok) return;
+    const printed = execFileSync(launch.launch.command, launch.launch.args, { encoding: 'utf8' });
+    assert.equal(printed, folder, `because ${JSON.stringify(folder)} inside an sh -c string must run nothing and arrive whole`);
+  }
+});
+
+test('CustomCommand_PathWord_LeftRawForArgv', () => {
+  const launch = terminalLaunch({ command: ['wezterm', 'start', '--cwd', '{path}'] }, [], "/tmp/it's here", null);
+  assert.deepEqual(launch.ok ? launch.launch.args : [], ['start', '--cwd', "/tmp/it's here"], 'because a word of its own in the argv needs the folder as it is, never quoted');
 });
