@@ -12,16 +12,21 @@ import type { JobFacts } from './collectors/jobs.ts';
 import { readJobs } from './collectors/jobs.ts';
 import type { ProcessFacts } from './collectors/processes.ts';
 import { readProcesses } from './collectors/processes.ts';
+import type { ActionContext } from './actionPlan.ts';
+import type { PullFacts } from './collectors/pulls.ts';
+import { readPulls } from './collectors/pulls.ts';
 import type { Logger } from './log.ts';
 import { ageSeconds, reconcile } from './reconcile.ts';
 import type { Freshness, Snapshot, SourceName } from './snapshot.ts';
 
 /** How often each source is re-read, in milliseconds. File changes also trigger `files` and `git` at once. */
-export type Cadence = { filesMs: number; gitMs: number; processesMs: number; jobsMs: number; boardMs: number };
+export type Cadence = { filesMs: number; gitMs: number; processesMs: number; jobsMs: number; boardMs: number; pullsMs: number };
 
-export const DEFAULT_CADENCE: Cadence = { filesMs: 30000, gitMs: 30000, processesMs: 10000, jobsMs: 60000, boardMs: 120000 };
+export const DEFAULT_CADENCE: Cadence = { filesMs: 30000, gitMs: 30000, processesMs: 10000, jobsMs: 60000, boardMs: 120000, pullsMs: 60000 };
 
 const WATCH_DEBOUNCE_MS = 500;
+/** Pull requests are read from GitHub; a project on another tracker has none to show. */
+const PULLS_ADAPTER = 'github';
 /** Folders under the flow home whose churn never changes the snapshot. */
 const UNWATCHED_FOLDERS = ['log', 'tmp', 'reports', 'reviews', 'health'];
 
@@ -35,6 +40,7 @@ type Facts = {
   processes: Reading<ProcessFacts>;
   jobs: Reading<JobFacts>;
   board: Reading<BoardFacts>;
+  pulls: Reading<PullFacts>;
 };
 
 export type ProjectMonitorDependencies = {
@@ -59,7 +65,7 @@ export class ProjectMonitor {
   private readonly cadence: Cadence;
   private readonly facts: Facts = {
     files: { facts: null, freshness: unread() }, git: { facts: null, freshness: unread() }, processes: { facts: null, freshness: unread() },
-    jobs: { facts: null, freshness: unread() }, board: { facts: null, freshness: unread() },
+    jobs: { facts: null, freshness: unread() }, board: { facts: null, freshness: unread() }, pulls: { facts: null, freshness: unread() },
   };
   private readonly listeners = new Set<(snapshot: Snapshot) => void>();
   private readonly timers: NodeJS.Timeout[] = [];
@@ -79,6 +85,15 @@ export class ProjectMonitor {
 
   get snapshot(): Snapshot | null { return this.current; }
 
+  /** What an action needs to know about the project right now. */
+  actionContext(): ActionContext {
+    const flow = this.facts.files.facts;
+    return {
+      root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, repo: flow?.config.repo ?? null,
+      jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
+    };
+  }
+
   onChange(listener: (snapshot: Snapshot) => void): () => void {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
@@ -88,11 +103,13 @@ export class ProjectMonitor {
     await this.refresh('files');
     await Promise.all([this.refresh('git'), this.refresh('processes'), this.refresh('jobs')]);
     void this.refresh('board');
+    void this.refresh('pulls');
     this.schedule('files', this.cadence.filesMs);
     this.schedule('git', this.cadence.gitMs);
     this.schedule('processes', this.cadence.processesMs);
     this.schedule('jobs', this.cadence.jobsMs);
     this.schedule('board', this.cadence.boardMs);
+    this.schedule('pulls', this.cadence.pullsMs);
     this.watchFiles();
   }
 
@@ -104,6 +121,7 @@ export class ProjectMonitor {
 
   /** Re-reads one source now. Concurrent calls for the same source share one read. */
   refresh(source: SourceName): Promise<void> {
+    if (!(source in this.facts)) return Promise.resolve();
     const running = this.inFlight.get(source);
     if (running !== undefined) return running;
     const read = this.read(source).finally(() => { this.inFlight.delete(source); });
@@ -120,8 +138,8 @@ export class ProjectMonitor {
   private async read(source: SourceName): Promise<void> {
     const startedAt = this.clock();
     try {
-      await this.collect(source);
-      this.facts[source].freshness = { at: startedAt.toISOString(), ageSeconds: 0, ok: true, error: null };
+      const notApplicable = await this.collect(source);
+      this.facts[source].freshness = { at: startedAt.toISOString(), ageSeconds: 0, ok: true, error: notApplicable };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.facts[source].freshness = { ...this.facts[source].freshness, ok: false, error: message };
@@ -130,19 +148,26 @@ export class ProjectMonitor {
     this.rebuild();
   }
 
-  private async collect(source: SourceName): Promise<void> {
+  /** Reads one source into the facts. Returns why the source does not apply to this project, or null when it was read. */
+  private async collect(source: SourceName): Promise<string | null> {
     const root = this.project.root;
     const flow = this.facts.files.facts;
     switch (source) {
-      case 'files': this.facts.files.facts = await readFlowHome(root, this.runner); return;
-      case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return;
-      case 'processes': this.facts.processes.facts = await readProcesses(this.runner); return;
+      case 'files': this.facts.files.facts = await readFlowHome(root, this.runner); return null;
+      case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return null;
+      case 'processes': this.facts.processes.facts = await readProcesses(this.runner); return null;
       case 'jobs':
         if (flow?.pluginRoot == null) throw new Error('no flow plugin found for the project');
-        this.facts.jobs.facts = await readJobs(root, flow.pluginRoot, this.runner); return;
+        this.facts.jobs.facts = await readJobs(root, flow.pluginRoot, this.runner); return null;
       case 'board':
         if (flow?.pluginRoot == null) throw new Error('no flow plugin found for the project');
-        this.facts.board.facts = await readBoard(root, flow.pluginRoot, this.runner); return;
+        this.facts.board.facts = await readBoard(root, flow.pluginRoot, this.runner); return null;
+      case 'pulls':
+        if (flow === null) throw new Error('the flow files are not read yet');
+        this.facts.pulls.facts = null;
+        if (flow.config.adapter !== PULLS_ADAPTER) return `not applicable: adapter ${flow.config.adapter}`;
+        if (flow.config.repo === null) return 'not applicable: no github.repo in .flow/config.yaml';
+        this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return null;
     }
   }
 
@@ -158,7 +183,7 @@ export class ProjectMonitor {
     ) as Record<SourceName, Freshness>;
     this.current = reconcile({
       now, project: this.project, flow, git: this.facts.git.facts, processes: this.facts.processes.facts,
-      jobs: this.facts.jobs.facts, board: this.facts.board.facts, sources,
+      jobs: this.facts.jobs.facts, board: this.facts.board.facts, pulls: this.facts.pulls.facts, sources,
     });
     const fingerprint = this.fingerprintOf();
     if (fingerprint === this.fingerprint) return;
@@ -170,7 +195,7 @@ export class ProjectMonitor {
   private fingerprintOf(): string {
     const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd }) => ({ pid, host, cwd }));
     const errors = (Object.keys(this.facts) as SourceName[]).map((name) => this.facts[name].freshness.error);
-    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, this.facts.jobs.facts, this.facts.board.facts, errors]);
+    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors]);
   }
 
   private watchFiles(): void {

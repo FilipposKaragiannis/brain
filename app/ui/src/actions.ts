@@ -1,32 +1,7 @@
-/**
- * The action contract the daemon serves under `/api/projects/:id/actions`. It lives here until it
- * joins the snapshot contract in the daemon.
- */
-export type ActionKind =
-  | 'gate.clear' | 'run.start'
-  | 'job.run' | 'job.stop' | 'job.pause' | 'job.resume'
-  | 'worktree.claim' | 'worktree.release'
-  | 'steward.health'
-  | 'pr.merge' | 'refresh';
+/** The action contract is the daemon's; this module adds what the UI does with it. */
+import type { ActionKind, ActionRecord, ActionState } from '../../daemon/src/snapshot.ts';
 
-export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
-
-export type ActionRecord = {
-  id: string;
-  kind: ActionKind;
-  args: Record<string, string>;
-  state: ActionState;
-  command: string[];
-  lock: string | null;
-  requestedAt: string;
-  startedAt: string | null;
-  endedAt: string | null;
-  exitCode: number | null;
-  timedOut: boolean;
-  outputTail: string;
-  outputBytes: number;
-  output?: string;
-};
+export type { ActionKind, ActionRecord, ActionState };
 
 export const ACTIONS_KEPT = 50;
 

@@ -1,0 +1,4 @@
+# fixture flow config for a project on the local tracker
+adapters:
+  default: local
+base: main

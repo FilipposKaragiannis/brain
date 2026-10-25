@@ -52,7 +52,7 @@ function ActionOutput({ record, actions }: { record: ActionRecord; actions: Acti
       <div className="action-meta">
         <span className="mono">{record.command.join(' ')}</span>
         <span className="muted">
-          {record.exitCode !== null && `exit ${record.exitCode} · `}{record.timedOut && 'timed out · '}{record.lock !== null && `lock ${record.lock} · `}{record.outputBytes} bytes
+          {record.exitCode !== null && `exit ${record.exitCode} · `}{record.timedOut && 'timed out · '}{record.locks.length > 0 && `holds ${record.locks.join(', ')} · `}{record.outputBytes} bytes
         </span>
       </div>
       <pre className="terminal">{text === '' ? (isActive(record.state) ? 'waiting for output…' : 'no output') : text}</pre>

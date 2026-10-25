@@ -1,4 +1,4 @@
-import type { AttentionKind, Freshness, ItemState, Job, WorktreeState } from '../../daemon/src/snapshot.ts';
+import type { AttentionKind, Freshness, ItemState, Job, PullState, WorktreeState } from '../../daemon/src/snapshot.ts';
 import type { ActionState } from './actions.ts';
 
 /**
@@ -30,7 +30,17 @@ export function attentionTone(kind: AttentionKind): Tone {
   switch (kind) {
     case 'gate': return 'needs-you';
     case 'stale': return 'stale';
-    case 'dead-run': case 'disagreement': case 'job-failed': return 'failing';
+    case 'dead-run': case 'disagreement': case 'job-failed': case 'pr-failing': return 'failing';
+    case 'pr-changes-requested': case 'pr-mergeable': return 'needs-you';
+  }
+}
+
+export function pullTone(state: PullState): Tone {
+  switch (state) {
+    case 'mergeable': case 'changes-requested': return 'needs-you';
+    case 'checks-failing': case 'conflicts': return 'failing';
+    case 'checks-pending': case 'review-pending': return 'running';
+    case 'draft': case 'approved': return 'quiet';
   }
 }
 

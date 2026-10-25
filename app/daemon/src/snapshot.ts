@@ -23,8 +23,16 @@ export type JobState = 'running' | 'due' | 'scheduled' | 'paused' | 'not-install
 export type AgentHost = 'claude' | 'codex';
 /** An agent is a run the flow started unattended; a session is a person's interactive host in that folder. */
 export type AgentKind = 'agent' | 'session';
-export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board';
-export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed';
+export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board' | 'pulls';
+/** Every source, in the order the daemon reads them. The one list the routes and actions share. */
+export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board', 'pulls'];
+export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable';
+/**
+ * Where an open pull request stands, the first that holds: a draft, merge conflicts, a failing
+ * check, changes requested, a check still running, no approval yet, approved with checks or
+ * threads not yet clean, and last ready to merge.
+ */
+export type PullState = 'draft' | 'conflicts' | 'checks-failing' | 'checks-pending' | 'changes-requested' | 'review-pending' | 'approved' | 'mergeable';
 
 /** When a source was last read, how old that is, and whether the read worked. */
 export type Freshness = {
@@ -136,6 +144,27 @@ export type Agent = {
   command: string;
 };
 
+export type PullRequest = {
+  number: number;
+  title: string;
+  url: string;
+  branch: string;
+  base: string;
+  author: string;
+  draft: boolean;
+  state: PullState;
+  checks: { passed: number; failed: number; pending: number };
+  reviewDecision: string | null;
+  unresolvedThreads: number;
+  mergeable: string | null;
+  item: string | null;
+  worktree: string | null;
+  createdAt: string;
+  updatedAt: string;
+  ageSeconds: number;
+  idleSeconds: number;
+};
+
 export type JobRun = {
   at: string;
   seconds: number;
@@ -196,6 +225,9 @@ export type Counts = {
   itemsBacklog: number;
   itemsDone: number;
   disagreements: number;
+  pullsMergeable: number;
+  pullsFailing: number;
+  pullsChangesRequested: number;
 };
 
 export type Snapshot = {
@@ -211,6 +243,45 @@ export type Snapshot = {
   runs: Run[];
   agents: Agent[];
   jobs: Job[];
+  pulls: PullRequest[];
   events: FlowEvent[];
   disagreements: Disagreement[];
+};
+
+/*
+ * Actions: every write the console makes goes through a flow script that the daemon runs. The
+ * record below is what `POST /api/projects/<id>/actions` returns and what the `action` event on
+ * the stream carries. `outputTail` is the last few kilobytes; `GET .../actions/<id>` has it all.
+ */
+export type ActionKind =
+  | 'gate.clear'
+  | 'run.start'
+  | 'job.run'
+  | 'job.stop'
+  | 'job.pause'
+  | 'job.resume'
+  | 'worktree.claim'
+  | 'worktree.release'
+  | 'steward.health'
+  | 'pr.merge'
+  | 'refresh';
+export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
+
+export type ActionRecord = {
+  id: string;
+  kind: ActionKind;
+  args: Record<string, string>;
+  state: ActionState;
+  /** The program and its arguments as run, for the audit trail and the UI. */
+  command: string[];
+  /** What the action holds while it runs: an item, a worktree, a job, a PR, the pool. Two actions never share one. */
+  locks: string[];
+  requestedAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  exitCode: number | null;
+  timedOut: boolean;
+  outputTail: string;
+  outputBytes: number;
+  output?: string;
 };

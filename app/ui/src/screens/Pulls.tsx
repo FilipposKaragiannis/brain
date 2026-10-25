@@ -1,21 +1,53 @@
-import type { Snapshot } from '../../../daemon/src/snapshot.ts';
+import type { PullRequest, Snapshot } from '../../../daemon/src/snapshot.ts';
+import { Age } from '../clock.tsx';
 import { pullRowsFromItems } from '../pulls.ts';
 import type { PullRequestRow } from '../pulls.ts';
-import { itemTone } from '../status.ts';
-import { Chip, Empty, Module, SourceFreshness } from '../ui.tsx';
+import { itemTone, pullTone } from '../status.ts';
+import { ActionButton, Chip, Empty, Module, SourceFreshness } from '../ui.tsx';
 
+/**
+ * Open pull requests from the daemon's `pulls` source. Until that source has been read once, or
+ * on a project it does not apply to, the items that carry a PR stand in.
+ */
 export function Pulls({ snapshot }: { snapshot: Snapshot }) {
-  const rows = pullRowsFromItems(snapshot.items, snapshot.project.repo);
+  const pullsRead = snapshot.sources.pulls.at !== null && snapshot.sources.pulls.error === null;
+  const aside = <span className="muted">{pullsRead ? snapshot.pulls.length : pullRowsFromItems(snapshot.items, snapshot.project.repo).length} open</span>;
   return (
     <div className="screen">
-      <Module className="pulls" title="Pull requests" aside={<span className="muted">{rows.length} open</span>} footer={<SourceFreshness name="board" freshness={snapshot.sources.board} />}>
-        <PullRequestTable rows={rows} />
+      <Module className="pulls" title="Pull requests" aside={aside} footer={<SourceFreshness name="pulls" freshness={snapshot.sources.pulls} />}>
+        {pullsRead ? <PullTable pulls={snapshot.pulls} takenAt={snapshot.takenAt} /> : <PullRequestTable rows={pullRowsFromItems(snapshot.items, snapshot.project.repo)} />}
       </Module>
     </div>
   );
 }
 
-/** The pull request table; it renders any list of rows, whichever source built them. */
+function PullTable({ pulls, takenAt }: { pulls: PullRequest[]; takenAt: string }) {
+  if (pulls.length === 0) return <Empty>No open pull request.</Empty>;
+  return (
+    <div className="scroll">
+      <table className="table">
+        <thead><tr><th>PR</th><th>Title</th><th>State</th><th>Checks</th><th>Threads</th><th>Item</th><th>Worktree</th><th>Idle</th><th /></tr></thead>
+        <tbody>
+          {pulls.map((pull) => (
+            <tr key={pull.number}>
+              <td className="mono"><a href={pull.url} target="_blank" rel="noreferrer">#{pull.number}</a></td>
+              <td className="strong clip" title={pull.title}>{pull.title}</td>
+              <td><Chip tone={pullTone(pull.state)}>{pull.state}</Chip></td>
+              <td className="mono" title="passed / failed / pending">{pull.checks.passed} / {pull.checks.failed} / {pull.checks.pending}</td>
+              <td className="mono">{pull.unresolvedThreads}</td>
+              <td className="mono">{pull.item ?? '—'}</td>
+              <td className="mono">{pull.worktree ?? '—'}</td>
+              <td className="mono"><Age seconds={pull.idleSeconds} takenAt={takenAt} /></td>
+              <td>{pull.state === 'mergeable' && <ActionButton kind="pr.merge" args={{ pr: String(pull.number) }} label="Merge" primary={true} />}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** The fallback table from items; it renders any list of rows, whichever source built them. */
 export function PullRequestTable({ rows }: { rows: PullRequestRow[] }) {
   if (rows.length === 0) return <Empty>No item has a pull request.</Empty>;
   return (

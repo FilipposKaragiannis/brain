@@ -117,9 +117,9 @@ export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
     schema: 1,
     takenAt,
     project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', adapter: 'github', pluginVersion: '1.17.0', poolMax: 9 },
-    sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness },
-    counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0 },
-    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], jobs: [], events: [], disagreements: [],
+    sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
+    counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0 },
+    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], jobs: [], events: [], disagreements: [], pulls: [],
   };
 }
 
@@ -131,7 +131,7 @@ export function actionRecord(id: string, state: ActionRecord['state'], args: Rec
   const job = args.job ?? 'next';
   const ended = state !== 'running';
   return {
-    id, kind: 'job.run', args, state, command: ['sh', `${PLUGIN}/scripts/jobs.sh`, 'run', job], lock: `job:${job}`,
+    id, kind: 'job.run', args, state, command: ['sh', `${PLUGIN}/scripts/jobs.sh`, 'run', job], locks: [`job:${job}`],
     requestedAt: TAKEN_AT, startedAt: TAKEN_AT, endedAt: ended ? ENDED_AT : null,
     exitCode: state === 'done' ? 0 : ended ? 1 : null, timedOut: false, outputTail: '', outputBytes: 0,
   };

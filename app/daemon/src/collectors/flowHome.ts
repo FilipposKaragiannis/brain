@@ -17,6 +17,8 @@ export type FlowConfig = {
   poolMax: number | null;
   schedule: Record<string, string>;
   behindBase: number | null;
+  /** jobs.host: the CLI the jobs run unattended, claude by default. */
+  jobsHost: string;
 };
 
 export type GateRecord = { item: string; gate: string; message: string; time: string; host: string };
@@ -52,6 +54,12 @@ export function poolPaths(root: string, config: FlowConfig): string[] {
   return config.pool.map((entry) => path.resolve(root, entry));
 }
 
+const JOB_HOSTS = ['claude', 'codex'];
+
+function jobsHostOf(value: string | null): string {
+  return value !== null && JOB_HOSTS.includes(value) ? value : 'claude';
+}
+
 export function parseFlowConfig(source: string): FlowConfig {
   const map: YamlMap = parseYaml(source);
   const poolMax = yamlString(map, 'pool_max');
@@ -68,6 +76,7 @@ export function parseFlowConfig(source: string): FlowConfig {
     poolMax: poolMax === null ? null : Number(poolMax),
     schedule,
     behindBase: behindBase === null ? null : Number(behindBase),
+    jobsHost: jobsHostOf(yamlString(map, 'jobs.host')),
   };
 }
 
