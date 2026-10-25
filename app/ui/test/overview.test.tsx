@@ -3,7 +3,7 @@ import { afterEach, expect, test } from 'vitest';
 import type { AttentionRow, Snapshot } from '../../daemon/src/snapshot.ts';
 import { Overview } from '../src/screens/Overview.tsx';
 import { FIELD_ROWS_SHOWN } from '../src/screens/NeedsYou.tsx';
-import { boardDisagreement, boardItem, FakeDaemon, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { boardDisagreement, readiness, boardItem, FakeDaemon, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -21,12 +21,12 @@ function needsField(id: string): AttentionRow {
 test('ClaimedPoolCell_ShowsTheItemTitle', () => {
   const claimed = { ...poolWorktree('wt-2'), state: 'claimed' as const, item: 'gh#268', itemTitle: 'Preset retune: re-arm the ladder' };
   renderOverview({ ...snapshotAt(TAKEN_AT, 0), worktrees: [claimed] });
-  expect(screen.queryByTitle('Preset retune: re-arm the ladder'), 'because an id alone does not say what the worktree works on').not.toBeNull();
+  expect(screen.queryByText('Preset retune: re-arm the ladder'), 'because an id alone does not say what the worktree works on').not.toBeNull();
 });
 
 test('ReadinessLine_SaysWhyNothingRuns', () => {
-  renderOverview({ ...snapshotAt(TAKEN_AT, 0), readiness: { ready: 0, waitingOnField: 4, gated: 5, blocked: 12 } });
-  expect(screen.getByLabelText('Readiness').textContent, 'because the tiles alone do not say why the pool is idle').toMatch(/4 items wait on a field/);
+  renderOverview({ ...snapshotAt(TAKEN_AT, 0), readiness: readiness({ waitingOnField: 9, nextInLineMissingField: 4, gated: 5, blocked: 12 }) });
+  expect(screen.getByLabelText('Readiness').textContent, 'because the tiles alone do not say why the pool is idle').toMatch(/4 items that are next in line lack a field/);
 });
 
 test('ItemWaitingOnAField_ListedWithTheFieldNamed', () => {

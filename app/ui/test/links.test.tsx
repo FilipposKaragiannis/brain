@@ -26,3 +26,9 @@ test('NoPageKnown_PlainText', () => {
   render(<ItemLink id="local:task/7" pages={{ items: [], worktrees: [] }} />);
   expect(screen.queryByRole('link'), 'because a link with nowhere to go is a dead end').toBeNull();
 });
+
+test('ItemUrlWithJavascriptScheme_PlainText', () => {
+  const hostile = { ...boardItem('gh#5', 'Hostile'), url: 'javascript:alert(document.cookie)' };
+  render(<ItemLink id="gh#5" pages={{ items: [hostile], worktrees: [] }} />);
+  expect(screen.queryByRole('link'), 'because a tracker URL that is not http or https must never become something to click').toBeNull();
+});

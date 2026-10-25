@@ -32,7 +32,7 @@ export function NeedsYou({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
                 <tr>
                   <td colSpan={COLUMNS}>
                     <button type="button" className="row-link" onClick={() => setAllFields((shown) => !shown)}>
-                      {allFields ? 'Show fewer items that wait on a field' : `Show all ${fieldRows.length} items that wait on a field`}
+                      {allFields ? 'Show fewer next-in-line items that lack a field' : `Show all ${fieldRows.length} next-in-line items that lack a field`}
                     </button>
                   </td>
                 </tr>

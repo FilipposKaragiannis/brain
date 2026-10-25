@@ -1,6 +1,6 @@
 import type { PullRequest, Snapshot } from '../../../daemon/src/snapshot.ts';
 import { Age } from '../clock.tsx';
-import { ItemLink } from '../links.tsx';
+import { ExternalLink, ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
 import { pullRowsFromItems } from '../pulls.ts';
 import type { PullRequestRow } from '../pulls.ts';
@@ -32,7 +32,7 @@ function PullTable({ pulls, takenAt, pages }: { pulls: PullRequest[]; takenAt: s
         <tbody>
           {pulls.map((pull) => (
             <tr key={pull.number}>
-              <td className="mono"><a href={pull.url} target="_blank" rel="noreferrer">#{pull.number}</a></td>
+              <td><ExternalLink url={pull.url} className="mono">#{pull.number}</ExternalLink></td>
               <td className="strong clip" title={pull.title}>{pull.title}</td>
               <td><Chip tone={pullTone(pull.state)}>{pull.state}</Chip></td>
               <td className="mono" title="passed / failed / pending">{pull.checks.passed} / {pull.checks.failed} / {pull.checks.pending}</td>
@@ -60,7 +60,7 @@ export function PullRequestTable({ rows, pages }: { rows: PullRequestRow[]; page
           <tr key={`${row.item}:${row.pr}`}>
             <td><ItemLink id={row.item} pages={pages} /></td>
             <td className="strong">{row.title}</td>
-            <td className="mono">{row.url === null ? row.pr : <a href={row.url} target="_blank" rel="noreferrer">{row.pr}</a>}</td>
+            <td><ExternalLink url={row.url} className="mono">{row.pr}</ExternalLink></td>
             <td><Chip tone={itemTone(row.state)}>{row.state}</Chip></td>
             <td className="mono">{row.worktree ?? '—'}</td>
           </tr>

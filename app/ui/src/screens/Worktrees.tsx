@@ -77,11 +77,19 @@ function WorktreeRows({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
 
 function worktreeNote(worktree: Worktree, snapshot: Snapshot) {
   if (worktree.state === 'stale') {
-    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action">Merge {snapshot.project.base} in, or release the worktree.</span></>;
+    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action">{staleWayOut(worktree, snapshot.project.base)}</span></>;
   }
   const session = worktree.sessions[0];
   if (worktree.state === 'free' && session !== undefined) return <FreeWithSession session={session} count={worktree.sessions.length} takenAt={snapshot.takenAt} />;
   return null;
+}
+
+function staleWayOut(worktree: Worktree, projectBase: string): string {
+  const steps: string[] = [];
+  if (worktree.flags.includes('stale-branch')) steps.push(`Merge ${worktree.claim?.base ?? projectBase} in`);
+  if (worktree.flags.includes('idle')) steps.push(steps.length === 0 ? "Run the item's next step" : "run the item's next step");
+  if (steps.length === 0) return 'Release the worktree, or look at why it stopped.';
+  return `${steps.join(' and ')}, or release the worktree.`;
 }
 
 function FreeWithSession({ session, count, takenAt }: { session: ProcessInfo; count: number; takenAt: string }) {
@@ -95,7 +103,7 @@ function Processes({ processes, takenAt }: { processes: ProcessInfo[]; takenAt: 
   return (
     <ul className="process-list">
       {processes.map((process) => (
-        <li key={process.pid} title={process.command}><span className="mono">{process.pid}</span> {process.host}<span className="process-age"><Age seconds={process.elapsedSeconds} takenAt={takenAt} /></span></li>
+        <li key={process.pid} tabIndex={0} title={process.command}><span className="mono">{process.pid}</span> {process.host}<span className="process-age"><Age seconds={process.elapsedSeconds} takenAt={takenAt} /></span><span className="process-command mono">{process.command}</span></li>
       ))}
     </ul>
   );

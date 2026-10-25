@@ -220,8 +220,10 @@ person has to look:
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
 imports). Six screens, routed by hash (`#/<project>/<screen>/<detail>`): Overview (five tiles, a
-readiness line from `readiness` that says why nothing runs or what does, the needs-you table oldest
-first with the items that wait only on a field folded after five, the latest 30 events with Show
+readiness line from `readiness` that says what runs, or why nothing does: how many items the next
+job could take, how many next-in-line items lack a field and how many more in the backlog do, how
+many wait at gates and how many are blocked; the needs-you table oldest first with the next-in-line
+items that lack a field folded after five, the latest 30 events with Show
 all, the disagreements with what each store says and the button that settles it, the 3x3 pool map
 with each item's title, and the sources strip), Gates (a decision card per gate, one line on what
 its kind asks, the PR with its state and unresolved review threads when the item has one, the
@@ -232,10 +234,11 @@ agents and sessions with pid, host and age and the command on hover, why it is s
 out, a legend for dirty, agents and sessions; Release, Health), Agents and jobs (Run, Stop, Pause,
 Resume), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
-item with the filter box). A line above every screen names the project with links to its
+item with the filter box; a failed read shows a banner over the last events and is tried again every
+10 s). A line above every screen names the project with links to its
 repository and tracker, its adapter, base branch, flow version and jobs host; projects are set when
 the daemon starts (`--project`), and a Settings screen comes later. Every item id opens its tracker
-page in a new tab. An action that handed its work on (`outcome: started`, such as `job.run`) shows
+page in a new tab; a link from the snapshot that is not `http` or `https` shows as plain text. An action that handed its work on (`outcome: started`, such as `job.run`) shows
 "started", not "done", on its button and in the drawer. Every module is a title row, a body and a
 footer saying how fresh its source is; every age is a live counter driven by one shared clock.
 

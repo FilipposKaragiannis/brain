@@ -1,10 +1,12 @@
 import type { Counts, Readiness, Worktree } from '../../daemon/src/snapshot.ts';
 
-type Clause = { count: number; singular: string; plural: string };
+/** One part of the sentence after its number: how it reads first (naming the items) and later, for one and for many. */
+type Clause = { count: number; first: [string, string]; later: [string, string] };
 
 /**
  * One sentence on why open work does or does not run: what runs now, then how many items the
- * next job could take, wait on a field, wait at a gate, or are blocked. Empty buckets are left out.
+ * next job could take, are next in line but lack a field, lack one further back in the backlog,
+ * wait at a gate, or are blocked. Empty buckets are left out.
  */
 export function readinessSentence(readiness: Readiness, counts: Counts, worktrees: readonly Worktree[]): string {
   const waiting = waitingClauses(readiness);
@@ -22,15 +24,20 @@ function runningPart(counts: Counts, worktrees: readonly Worktree[]): string | n
 }
 
 function waitingClauses(readiness: Readiness): string {
+  const nextInLine = readiness.nextInLineMissingField;
+  const backlog = Math.max(0, readiness.waitingOnField - nextInLine);
+  const backlogClause: Clause = nextInLine > 0
+    ? { count: backlog, first: ['more in the backlog lacks one', 'more in the backlog lack one'], later: ['more in the backlog lacks one', 'more in the backlog lack one'] }
+    : { count: backlog, first: ['item in the backlog lacks a field', 'items in the backlog lack a field'], later: ['in the backlog lacks a field', 'in the backlog lack a field'] };
   const clauses: Clause[] = [
-    { count: readiness.ready, singular: 'is ready for the next job', plural: 'are ready for the next job' },
-    { count: readiness.waitingOnField, singular: 'waits on a field', plural: 'wait on a field' },
-    { count: readiness.gated, singular: 'waits at a gate', plural: 'wait at gates' },
-    { count: readiness.blocked, singular: 'is blocked', plural: 'are blocked' },
+    { count: readiness.ready, first: ['item is ready for the next job', 'items are ready for the next job'], later: ['is ready for the next job', 'are ready for the next job'] },
+    { count: nextInLine, first: ['item that is next in line lacks a field', 'items that are next in line lack a field'], later: ['next in line lacks a field', 'next in line lack a field'] },
+    backlogClause,
+    { count: readiness.gated, first: ['item waits at a gate', 'items wait at gates'], later: ['waits at a gate', 'wait at gates'] },
+    { count: readiness.blocked, first: ['item is blocked', 'items are blocked'], later: ['is blocked', 'are blocked'] },
   ];
   return clauses.filter((clause) => clause.count > 0).map((clause, index) => {
-    const verb = clause.count === 1 ? clause.singular : clause.plural;
-    if (index > 0) return `${clause.count} ${verb}`;
-    return `${clause.count} ${clause.count === 1 ? 'item' : 'items'} ${verb}`;
+    const forms = index === 0 ? clause.first : clause.later;
+    return `${clause.count} ${clause.count === 1 ? forms[0] : forms[1]}`;
   }).join(', ');
 }

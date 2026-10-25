@@ -72,7 +72,7 @@ function PoolCell({ worktree, pages, takenAt }: { worktree: Worktree; pages: Ite
       <span className="pool-name" title={`${worktree.name}: ${worktree.state}`}><span className="mono">{worktree.name}</span><Dot tone={tone} /></span>
       {worktree.item === null
         ? <span className="pool-item">{worktree.state}</span>
-        : <span className="pool-item"><ItemLink id={worktree.item} pages={pages} />{worktree.itemTitle !== null && <span className="pool-title" title={worktree.itemTitle}>{worktree.itemTitle}</span>}</span>}
+        : <span className="pool-item"><ItemLink id={worktree.item} pages={pages} />{worktree.itemTitle !== null && <span className="pool-title">{worktree.itemTitle}</span>}</span>}
       <span className="pool-note">{worktree.state}{worktree.claimAgeSeconds !== null && <> · <Age seconds={worktree.claimAgeSeconds} takenAt={takenAt} /></>}</span>
       <Flags flags={worktree.flags} />
     </div>

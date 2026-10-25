@@ -49,12 +49,30 @@ test('StaleWorktree_SaysWhy', () => {
   expect(screen.queryByText(/branch is 27 commits behind main/), 'because stale is only useful with its reason').not.toBeNull();
 });
 
-test('StaleWorktree_SaysWhatToDo', () => {
-  renderWorktrees([{ ...poolWorktree('wt-7'), state: 'stale', item: 'gh#344', staleReason: 'claimed 6 days ago with no run, agent or gate' }]);
-  expect(screen.queryByText('Merge main in, or release the worktree.'), 'because a stale card must point at the way out').not.toBeNull();
+const CLAIM = { item: 'gh#344', branch: 'flow/gh-344', base: 'epic/gh-300', step: 'implement', claimedAt: TAKEN_AT, host: 'claude' };
+
+test('BranchFarBehind_SaysMergeTheClaimsBaseIn', () => {
+  renderWorktrees([{ ...poolWorktree('wt-7'), state: 'stale', flags: ['stale-branch'], claim: CLAIM, item: 'gh#344', staleReason: 'branch is 27 commits behind epic/gh-300 (limit 20)' }]);
+  expect(screen.getByText(/or release the worktree/).textContent, 'because the branch catches up with the base it was claimed from, not the project default').toMatch(/Merge epic\/gh-300 in/);
+});
+
+test('IdleClaim_SaysRunTheNextStep', () => {
+  renderWorktrees([{ ...poolWorktree('wt-5'), state: 'stale', flags: ['idle'], claim: CLAIM, item: 'gh#341', staleReason: 'claimed 5 days ago with no run, agent or gate' }]);
+  expect(screen.getByText(/or release the worktree/).textContent, 'because an idle claim is not behind, so merging fixes nothing').toMatch(/next step/);
+});
+
+test('IdleClaim_DoesNotAskForAMerge', () => {
+  renderWorktrees([{ ...poolWorktree('wt-5'), state: 'stale', flags: ['idle'], claim: CLAIM, item: 'gh#341', staleReason: 'claimed 5 days ago with no run, agent or gate' }]);
+  expect(screen.getByText(/or release the worktree/).textContent, 'because a merge is the wrong way out for an idle claim').not.toMatch(/Merge/);
+});
+
+test('BehindAndIdle_SaysBoth', () => {
+  renderWorktrees([{ ...poolWorktree('wt-7'), state: 'stale', flags: ['stale-branch', 'idle'], claim: CLAIM, item: 'gh#344', staleReason: 'branch is 27 commits behind; claimed 5 days ago' }]);
+  expect(screen.getByText(/or release the worktree/).textContent, 'because each reason has its own way out').toMatch(/Merge epic\/gh-300 in and run the item's next step/);
 });
 
 test('FreeWorktreeWithASession_SaysTheSessionSitsThere', () => {
   renderWorktrees([{ ...poolWorktree('wt-10'), flags: ['session'], sessions: [claudeSession(62102, TWO_HOURS)] }]);
-  expect(screen.queryByText('Free. A claude session sits here (pid 62102, 2h 00m).'), 'because free next to a live session is confusing without a word').not.toBeNull();
+  const note = screen.getByText(/session sits here/);
+  expect(note.textContent, 'because free next to a live session is confusing without naming it').toMatch(/claude.*pid 62102/);
 });

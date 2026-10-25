@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Gate, Snapshot } from '../../../daemon/src/snapshot.ts';
-import { ItemLink } from '../links.tsx';
+import { ExternalLink, ItemLink } from '../links.tsx';
 import { Age } from '../clock.tsx';
 import { composeGateMessage, recommendedAnswers } from '../gateAnswer.ts';
 import type { GateAnswer } from '../gateAnswer.ts';
@@ -91,7 +91,7 @@ function GatePull({ pull }: { pull: NonNullable<Gate['pull']> }) {
   return (
     <div className="gate-pull">
       <div className="gate-pull-line">
-        <a className="mono" href={pull.url} target="_blank" rel="noreferrer">PR #{pull.number}</a>
+        <ExternalLink url={pull.url} className="mono">PR #{pull.number}</ExternalLink>
         <Chip tone={pullTone(pull.state)}>{pull.state}</Chip>
         <span className={threads > 0 ? 'tone-needs-you threads strong' : 'muted'}>{threads} unresolved review {threads === 1 ? 'thread' : 'threads'}</span>
       </div>

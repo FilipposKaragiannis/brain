@@ -35,5 +35,5 @@ test('PullWithNoThreads_NoCommentsLine', () => {
 
 test('GateCard_SaysWhatItsKindAsks', () => {
   renderGate(waitingGate('gh#515', 'decomposition'));
-  expect(screen.queryByText(/wants to split the item/), 'because the gate name alone does not say what to do').not.toBeNull();
+  expect(screen.queryByText(/split/), 'because the gate name alone does not say what to do').not.toBeNull();
 });

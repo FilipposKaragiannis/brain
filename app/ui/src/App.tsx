@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Counts, Snapshot } from '../../daemon/src/snapshot.ts';
 import { isActive } from './actions.ts';
 import { ActionsDrawer } from './ActionsDrawer.tsx';
+import { DAEMON_RETRY_MS, unreachableMessage } from './api.ts';
 import { useServices } from './console.tsx';
 import { clockTime, useNow } from './clock.tsx';
 import { parseRoute, routeHash, SCREENS } from './route.ts';
@@ -15,7 +16,6 @@ import { Pulls } from './screens/Pulls.tsx';
 import { Worktrees } from './screens/Worktrees.tsx';
 import { ActionsProvider, Dot, Empty } from './ui.tsx';
 import { useActions } from './useActions.ts';
-import { WORDS } from './words.ts';
 import { HTTP_OK, useProject } from './useProject.ts';
 import type { LinkState } from './stream.ts';
 
@@ -24,8 +24,7 @@ type ProjectSummary = { id: string; name: string; counts: Counts | null };
 /** The project list, or why it could not be read. */
 type ProjectList = { kind: 'loading' } | { kind: 'listed'; projects: ProjectSummary[] } | { kind: 'unreachable'; message: string };
 
-export const PROJECTS_RETRY_MS = 10000;
-const HTTP_UNAUTHORIZED = 401;
+export const PROJECTS_RETRY_MS = DAEMON_RETRY_MS;
 
 export function App() {
   const route = useRoute();
@@ -56,7 +55,7 @@ function Listed({ route, projects }: { route: Route; projects: ProjectSummary[] 
 
 function ProjectSwitcher({ projects, value, onPick }: { projects: ProjectSummary[]; value: string; onPick: (projectId: string) => void }) {
   return (
-    <select className="project-switcher" aria-label="Project" title={WORDS.projects} value={value} onChange={(event) => onPick(event.target.value)}>
+    <select className="project-switcher" aria-label="Project" value={value} onChange={(event) => onPick(event.target.value)}>
       {value === '' && <option value="" disabled>Pick a project</option>}
       {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
     </select>
@@ -83,7 +82,6 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
           ))}
           <div className="nav-foot">
             <LinkStatus link={link} />
-            <span>flow {snapshot?.project.pluginVersion ?? '?'}</span>
           </div>
         </nav>
         <main className="main">
@@ -163,10 +161,4 @@ function useProjects(): ProjectList {
     return () => { cancelled = true; if (retry !== null) clearTimeout(retry); };
   }, [api]);
   return list;
-}
-
-function unreachableMessage(status: number): string {
-  if (status === HTTP_UNAUTHORIZED) return 'Token needed: open the page with ?token=<token>';
-  if (status === 0) return 'Daemon not reachable';
-  return `The daemon answered ${status}`;
 }

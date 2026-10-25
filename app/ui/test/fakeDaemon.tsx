@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Disagreement, FlowEvent, Gate, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
+import type { Disagreement, Readiness, FlowEvent, Gate, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord } from '../src/actions.ts';
 import type { Api, ApiResponse, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
@@ -187,4 +187,9 @@ export function boardDisagreement(item: string): Disagreement {
 
 export function flowEvent(item: string | null, kind: string, message: string): FlowEvent {
   return { at: TAKEN_AT, item, kind, message };
+}
+
+/** Readiness with every bucket empty but the ones a test names. */
+export function readiness(buckets: Partial<Readiness>): Readiness {
+  return { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0, ...buckets };
 }

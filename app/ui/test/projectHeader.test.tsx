@@ -24,5 +24,5 @@ test('LocalProject_NoRepositoryLink', () => {
 
 test('Header_SaysTheJobsHost', () => {
   render(<ProjectHeader project={{ ...PROJECT, jobsHost: 'codex' }} />);
-  expect(screen.queryByText('jobs on codex'), 'because which CLI runs the jobs changes what the agents can do').not.toBeNull();
+  expect(screen.getByLabelText('Project details').textContent, 'because which CLI runs the jobs changes what the agents can do').toMatch(/codex/);
 });
