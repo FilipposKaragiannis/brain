@@ -1,15 +1,15 @@
 {
   "name": "brain-console",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
-  "description": "The Brain Console: a local daemon that reconciles every flow project into one live snapshot, and later the UI over it.",
+  "description": "The Brain Console: a local daemon that reconciles every flow project into one live snapshot, and the web UI over it.",
   "type": "module",
   "engines": { "node": ">=24" },
   "scripts": {
     "start": "node daemon/src/main.ts",
     "test": "node --test 'daemon/test/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test && npm --prefix ui run check"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

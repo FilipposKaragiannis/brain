@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { CommandRequest, CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 
@@ -21,9 +22,12 @@ const PROCESSES = [
   `  101 01-02:03:04 /Users/x/.local/bin/claude daemon run --origin transient`,
   `  102   00:09 /opt/codex app-server --listen unix://`,
   `  103   03:00 /opt/codex exec --cd somewhere`,
+  `  105 13:44:39 /Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex app-server --listen unix:// -c features.api_key_model_discovery=false`,
+  `  106 13:44:38 /Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex app-server daemon pid-update-loop`,
 ].join('\n');
 
-const CWDS = `p100\nfcwd\nn${FIXTURES}/project-wt-3\np103\nfcwd\nn/elsewhere\np104\nfcwd\nn${FIXTURES}/project-wt-2/src\n`;
+/** The Codex desktop app's server (105) and its pid loop (106) sit in project-wt-4, as they did on foosbrawl. */
+const CWDS = `p100\nfcwd\nn${FIXTURES}/project-wt-3\np103\nfcwd\nn/elsewhere\np104\nfcwd\nn${FIXTURES}/project-wt-2/src\np105\nfcwd\nn${FIXTURES}/project-wt-4\np106\nfcwd\nn${FIXTURES}/project-wt-4\n`;
 
 export const JOBS_JSON = JSON.stringify([
   { job: 'next', schedule: 'every 30m', args: '--workers 2', installed: true, paused: false, loaded: true, running: [], week: { work: 1, failed: 0 }, last: { at: '2026-10-24T17:44:00Z', seconds: 107, exit: 0, result: 'quiet', outcome: 'quiet' }, next: 'due' },
@@ -42,16 +46,51 @@ export const BOARD_JSON = JSON.stringify({
   ],
 });
 
+/**
+ * `gh pr list --json` shaped from real captures: #560 is an open pull as gh printed it, and #20
+ * carries the real check rollup of a merged pull whose domain tests failed on one run and passed
+ * on a later one (two job ids). #21, #22 and the fork #23 are built by hand in the same shape.
+ */
+export const PULL_LIST_JSON = readFileSync(path.join(FIXTURES, 'gh', 'pr-list.json'), 'utf8');
+export const REVIEW_THREADS_JSON = readFileSync(path.join(FIXTURES, 'gh', 'review-threads.json'), 'utf8');
+
+/** The fixture gate's record, so the fake list echoes the message the daemon read. */
+export const GATE_RECORD = JSON.parse(readFileSync(path.join(FIXTURE_ROOT, '.flow', 'gates', 'gh-7.json'), 'utf8')) as { message: string };
+
+/**
+ * `gate.sh list --json` for the fixture gate. The second recommendation differs from the message
+ * on purpose, so a test can tell the plugin's parse from the daemon's.
+ */
+export const GATE_LIST_JSON = JSON.stringify([
+  { item: 'gh#7', gate: 'ambiguity', message: GATE_RECORD.message, time: '2026-10-22T07:43:00Z', host: 'shell', worktree: `${FIXTURES}/project-wt-2`, age_seconds: 210000, questions: [
+    { number: 1, text: 'Keep the old name?', recommended: 'yes, because callers depend on it.' },
+    { number: 2, text: 'Split the type?', recommended: 'no, the plugin said so' },
+  ] },
+]);
+
+const usage = (what: string): CommandResult => ({ code: 2, stdout: '', stderr: `usage: ${what}`, timedOut: false });
+
+/** The fake `gate.sh`: the list, when called as the daemon must call it, from the project root. */
+export function fakeGateList(request: CommandRequest, stdout = GATE_LIST_JSON): CommandResult {
+  const asked = request.args.slice(1);
+  if (asked.length !== 2 || asked[0] !== 'list' || asked[1] !== '--json') return usage('gate.sh list [--json]');
+  if (request.cwd !== FIXTURE_ROOT) return { code: 2, stdout: '', stderr: `flow: no .flow in ${request.cwd}`, timedOut: false };
+  return ok(stdout);
+}
+
 /** Answers every command the collectors run against the fixture project, without a shell. */
 export const fakeRunner: CommandRunner = async (request: CommandRequest): Promise<CommandResult> => {
   const [first, second] = request.args;
   if (request.command === 'sh' && first === '-c') return ok(FAKE_PLUGIN);
   if (request.command === 'sh' && first?.endsWith('jobs.sh')) return ok(JOBS_JSON);
   if (request.command === 'sh' && first?.endsWith('board.sh')) return ok(BOARD_JSON);
+  if (request.command === 'sh' && first?.endsWith('gate.sh')) return fakeGateList(request);
   if (request.command === 'git' && first === 'worktree') return ok(WORKTREE_LIST);
   if (request.command === 'git' && first === 'rev-list') return ok(request.cwd.endsWith('project-wt-4') ? '35\t4\n' : '0\t2\n');
   if (request.command === 'git' && first === 'status') return ok(request.cwd.endsWith('project-wt-3') ? ' M a.cs\n?? b.cs\n' : '');
   if (request.command === 'git' && first === 'log') return ok('2026-10-24T18:10:00+01:00\n');
+  if (request.command === 'gh' && first === 'pr') return ok(PULL_LIST_JSON);
+  if (request.command === 'gh' && first === 'api') return ok(REVIEW_THREADS_JSON);
   if (request.command === 'ps') return ok(PROCESSES);
   if (request.command === 'lsof') return ok(CWDS);
   return { code: 1, stdout: '', stderr: `fake runner: unknown command ${request.command} ${first ?? ''} ${second ?? ''}`, timedOut: false };

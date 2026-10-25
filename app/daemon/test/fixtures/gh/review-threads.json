@@ -1,0 +1,49 @@
+{
+  "data": {
+    "repository": {
+      "pr560": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "isResolved": false
+            }
+          ]
+        }
+      },
+      "pr20": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "isResolved": true
+            }
+          ]
+        }
+      },
+      "pr21": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "isResolved": true
+            },
+            {
+              "isResolved": false
+            },
+            {
+              "isResolved": false
+            }
+          ]
+        }
+      },
+      "pr22": {
+        "reviewThreads": {
+          "nodes": []
+        }
+      },
+      "pr23": {
+        "reviewThreads": {
+          "nodes": []
+        }
+      }
+    }
+  }
+}

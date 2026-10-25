@@ -1,5 +1,5 @@
-import path from 'node:path';
 import type { AgentHost, AgentKind } from '../snapshot.ts';
+import { PROCESS_COMMAND_CHARS } from '../snapshot.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
 
@@ -7,15 +7,60 @@ export type AgentProcess = { pid: number; host: AgentHost; kind: AgentKind; cwd:
 export type ProcessFacts = { agents: AgentProcess[] };
 
 const PROCESS_TIMEOUT_MS = 10000;
-const COMMAND_PREVIEW_CHARS = 160;
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_DAY = 86400;
 /** How lib/host.sh starts an unattended run: `claude -p <prompt>` or `codex exec`. */
 const UNATTENDED_CLAUDE = / (-p|--print)( |$)/;
 const UNATTENDED_CODEX = / exec( |$)/;
-/** Host daemons and servers that are never an agent working in a worktree. */
-const NOT_AN_AGENT = [' daemon run', ' daemon ', 'app-server', 'exec-server', 'pid-update-loop'];
+/**
+ * Host daemons and servers that are never an agent or a session, wherever their cwd is: the
+ * Claude daemon (`claude daemon run`), and the Codex desktop app's `codex app-server --listen
+ * unix://…`, its `codex app-server daemon pid-update-loop` and its cloud `exec-server`. Matched
+ * only against the first words after the executable, so a prompt that mentions one is still an agent.
+ */
+const NOT_AN_AGENT = ['daemon', 'app-server', 'exec-server', 'pid-update-loop'];
+/** How many of the first words after the executable name a host's server. */
+const SUBCOMMAND_WORDS = 2;
+/** Options that take a value: `codex -c key=value app-server`. */
+const OPTIONS_WITH_VALUE = ['-c', '--config'];
+/**
+ * App bundles and the folder the Claude desktop app keeps its CLI in. The executable runs past a
+ * space only while the part beyond it is still one of these paths, so `sh /usr/local/bin/claude`
+ * or `node …/claude` is a wrapper, never the host.
+ */
+const PATH_WITH_SPACES = ['.app/', 'Application Support/'];
+const HOSTS: string[] = ['claude', 'codex'];
+
+/** The executable and its arguments. ps prints the command unquoted, so a path with spaces is rejoined. */
+function splitCommand(command: string): { executable: string; args: string[] } {
+  const tokens = command.split(' ').filter((token) => token.length > 0);
+  let executable = tokens[0] ?? '';
+  let next = 1;
+  while (next < tokens.length) {
+    const extended = `${executable} ${tokens[next]}`;
+    const spansTheSpace = PATH_WITH_SPACES.some((marker) => {
+      const at = extended.lastIndexOf(marker);
+      return at >= 0 && at + marker.length > executable.length + 1;
+    });
+    if (!spansTheSpace) break;
+    executable = extended;
+    next += 1;
+  }
+  return { executable, args: tokens.slice(next) };
+}
+
+/** The first words after the executable that are not options, such as `app-server daemon`. */
+function subcommands(args: string[]): string[] {
+  const words: string[] = [];
+  for (let index = 0; index < args.length && words.length < SUBCOMMAND_WORDS; index += 1) {
+    const arg = args[index]!;
+    if (OPTIONS_WITH_VALUE.includes(arg)) { index += 1; continue; }
+    if (arg.startsWith('-')) continue;
+    words.push(arg);
+  }
+  return words;
+}
 
 type ProcessRow = { pid: number; elapsedSeconds: number; command: string };
 
@@ -38,10 +83,11 @@ export function parseElapsed(elapsed: string): number {
 }
 
 export function hostOf(command: string): AgentHost | null {
-  const executable = path.basename(command.split(' ')[0] ?? '');
-  if (executable !== 'claude' && executable !== 'codex') return null;
-  if (NOT_AN_AGENT.some((marker) => command.includes(marker))) return null;
-  return executable;
+  const { executable, args } = splitCommand(command);
+  const name = executable.slice(executable.lastIndexOf('/') + 1);
+  if (!HOSTS.includes(name)) return null;
+  if (subcommands(args).some((word) => NOT_AN_AGENT.includes(word))) return null;
+  return name as AgentHost;
 }
 
 export function kindOf(host: AgentHost, command: string): AgentKind {
@@ -75,7 +121,7 @@ export async function readProcesses(runner: CommandRunner): Promise<ProcessFacts
     agents: hosts.flatMap(({ row, host }) => {
       const cwd = directories.get(row.pid);
       if (cwd === undefined) return [];
-      return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, COMMAND_PREVIEW_CHARS) }];
+      return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, PROCESS_COMMAND_CHARS) }];
     }),
   };
 }
