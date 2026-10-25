@@ -84,3 +84,12 @@ export function fakeScheduler(): { scheduler: Scheduler; fire(ms: number): numbe
 }
 
 export const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 10));
+
+/** Waits for a condition the runner reaches on its own clock, such as a detached run's end, which reads a file first. */
+export async function until(check: () => boolean, limitMs = 2000): Promise<void> {
+  const deadline = Date.now() + limitMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error(`because the condition did not hold within ${limitMs} ms`);
+    await settle();
+  }
+}

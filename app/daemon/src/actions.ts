@@ -121,7 +121,8 @@ export class ActionRunner {
   private readonly outputs = new Map<string, string>();
   private readonly live = new Map<string, Live>();
   private readonly listeners = new Set<(record: ActionRecord) => void>();
-  private readonly writes = new Set<Promise<void>>();
+  /** Audit writes land in order: each one starts when the one before it has finished. */
+  private writes: Promise<void> = Promise.resolve();
   /** Second reads waiting for a handed-on job to show; cancelled when the daemon stops. */
   private readonly refreshesAgain = new Set<object>();
   /** Set by `stopAll`: an action that ends after it schedules nothing more. */
@@ -183,7 +184,7 @@ export class ActionRunner {
 
   /** Every audit write so far has landed. Tests wait on this; the server never needs to. */
   async whenIdle(): Promise<void> {
-    await Promise.all([...this.writes]);
+    await this.writes;
   }
 
   private refreshNow(record: ActionRecord, wanted: string[]): ActionRecord {
@@ -303,8 +304,8 @@ export class ActionRunner {
 
   /** One JSON line per start and per end in <stateDir>/<project>/actions.jsonl, the output beside it. */
   private audit(record: ActionRecord, output: string | null): void {
-    const write = this.write({ ...record }, output).finally(() => { this.writes.delete(write); });
-    this.writes.add(write);
+    const copy = { ...record };
+    this.writes = this.writes.then(() => this.write(copy, output));
   }
 
   private async write(record: ActionRecord, output: string | null): Promise<void> {
