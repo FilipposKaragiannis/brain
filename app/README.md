@@ -16,21 +16,87 @@ To try a flow plugin that is not installed, such as a checkout of this repositor
 version shown comes from that plugin's own `plugin.json`.
 Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
 second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
-`~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`). Every root must hold a
-`.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
+the settings file (below). Every root must hold a `.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
 the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
 else the one the daemon makes on first start and keeps in `~/.local/state/brain-console/token`.
-The start log prints the URL with the token in it. A request whose `Host` is not a loopback
+Started from a terminal, the daemon prints the URL with the token in it to that terminal; the
+structured log line names only the token file, so the token never lands in a log. The state dir is
+kept `0700` and the token file `0600`. A request whose `Host` is not a loopback
 name, or whose `Origin` is not a local page, gets 403, so a page on another site cannot drive
 the console even from the owner's own browser.
+
+## Run it on login
+```bash
+cd app
+npm run daemon:install -- --project /work/projects/foosbrawl   # the same flags as npm start
+npm run daemon:status                                          # loaded or not, the pid and the URL
+npm run daemon:uninstall                                       # stop it and remove the agent
+```
+`install` checks the flags as a start would, then writes
+`~/Library/LaunchAgents/com.brain.console.plist`: the absolute `node` and `daemon/src/main.ts`,
+the flags with every path made absolute, `RunAtLoad` and `KeepAlive`, `PATH`, `HOME`,
+`BRAIN_CONSOLE_LAUNCHD=1` (and `FLOW_PLUGIN`, `BRAIN_CONSOLE_PROJECTS`, `BRAIN_CONSOLE_STATE` when
+set) in `EnvironmentVariables`, `Umask` 63 (077, so the log is the owner's alone), and stdout and
+stderr to `<state dir>/daemon.log`; the state dir is closed to `0700`. It takes no `--token`: the
+plist would keep the secret, so the daemon reads `<state dir>/token`. After booting a loaded job
+out it refuses when something else holds the port and names it (`lsof`), such as an `npm start`
+daemon; then it loads the plist with `launchctl bootstrap gui/$UID <plist>` (falling back to
+`launchctl load -w` when bootstrap fails), waits up to 15 s for the port, asks
+`launchctl print gui/$UID/com.brain.console` for the job's pid and reports it, and prints the URL
+with the token to the terminal. `KeepAlive` starts a daemon that exits again about every ten
+seconds, a bad config among the causes; such a daemon says in the log why it cannot start and that
+launchd will keep trying until it is fixed or `npm run daemon:uninstall` stops it. `uninstall` runs `launchctl bootout gui/$UID/com.brain.console` and removes the plist.
+`status` says whether launchd has the job and prints the URL from the plist's flags. Settings says
+whether the daemon runs under launchd. The scripts are `daemon:*`, not `install`: npm runs a
+script named `install` on every `npm install`.
+
+## Settings
+`~/.config/brain-console/config.json` holds the settings, every field optional:
+
+```json
+{ "projects": [{ "root": "/work/projects/foosbrawl" }], "terminal": "iterm", "port": 7474 }
+```
+
+- `projects`: the roots to watch, absolute (or starting `~/`). Precedence is `--project` flags,
+  then `BRAIN_CONSOLE_PROJECTS`, then the file; projects set by a flag or the environment show in
+  Settings but cannot change there, with the note why.
+- `terminal`: what Open in Terminal opens, `"iterm"`, `"terminal"`, `"ghostty"` or
+  `{"command": ["open", "-a", "Warp", "{path}"]}`, run without a shell. In each word `{path}` is
+  the folder as it is (for a word of its own), `{qpath}` the folder quoted for sh and `{cmd}` the
+  command to run there (a job's log), quoted already: inside an `sh -c` string use `{qpath}` and
+  `{cmd}`, never `{path}`, or a folder with `$(…)` in its name would run. With neither path the
+  folder is added last. The Settings screen takes the command as a JSON array, so a word may hold a
+  space. Unset, the console takes the first installed of
+  iTerm, Ghostty and Terminal (an app in `/Applications` or `~/Applications`, Terminal also in
+  `/System/Applications/Utilities`).
+- `port`: the port to listen on when no `--port` is given (7474 by default). It takes a restart,
+  and while `--port` sets the port a saved one has no effect at all; the note in Settings says so.
+
+While `config.json` is absent the daemon still reads the projects of the older
+`~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`); the first save from
+Settings writes `config.json` with them, and `projects.json` is then no longer read. A file that is
+not valid JSON, or holds a setting the daemon does not know, stops the daemon at start with the reason.
+
+`PUT /api/settings` (the Settings screen) changes the settings its body names and keeps the rest:
+the whole body is checked first (every root holds `.flow/config.yaml`, no two share a folder name,
+at least one stays, the terminal is a name or a non-empty command, `"terminal": null` goes back to
+the first installed), then merged into the file as it is on disk at that moment (a hand edit made
+while the daemon runs is kept; a file that no longer parses is refused with the reason, never
+overwritten), written in one step and applied. A changed project list
+applies at once: a new root gets its monitor started, a removed one is stopped and dropped (its
+attached actions get SIGTERM), and every open event stream carries `event: projects` with the new
+list. A stream whose project was removed, or whose id now names another root, ends after that list.
+The terminal counts from the next Open in Terminal; the port only after a restart.
 
 ## Routes
 | Route | What |
 |---|---|
 | `GET /healthz` | `{ok, projects}` |
 | `GET /api/projects` | every project with its counts |
+| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon |
+| `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
-| `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, a heartbeat every 15s |
+| `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
 | `POST /api/projects/<id>/actions` | run one action, body `{"kind","args"}`; 202 with the record, 400 on a bad request, 409 when its lock is held |
@@ -146,8 +212,10 @@ on every state change and at most twice a second while output arrives.
 | `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
+| `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished` |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
+| `terminal.open` | `path`, `job?` | a terminal window in `path` (below) | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
 `ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
@@ -156,6 +224,30 @@ second), `finished` means the work is over. It is null while an attached action 
 failed or rejected one. Every `jobs.sh run <job>` (`job.run`, `steward.health`, `run.start` without
 an item) also re-reads its sources a second time five seconds after it returns
 (`ActionPlan.refreshAgainMs`), so the run it started shows; a daemon that stops drops the wait.
+
+`worktree.sync` brings a claimed pool worktree up to date. The target is an item or a pool
+worktree's name, as for a release; the base is the claim's, else the project's. It is refused, each
+with its own reason, while the worktree has uncommitted files, a run record in `.flow/runs` names
+its item, or an unattended agent works in it. The script runs `git -C <worktree> fetch origin`,
+merges the branch's own upstream when that is ahead, then `origin/<base>` when it exists (else the
+local base), each with `merge --no-edit`; the output names every merge. A merge that conflicts is
+undone with `git merge --abort` and the action fails with the conflicting files in its output.
+A TERM or INT (a timeout, a removed project, the daemon stopping) mid-merge aborts the merge too,
+so no `MERGE_HEAD` is left behind, and the script exits 143. When it ends `git` is read again.
+
+`terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, another
+worktree git lists for the project (the outside rows), or the working directory of an agent or
+session the snapshot lists (so only processes in this project's worktrees); any other path is refused with the
+reason. The app is the `terminal` setting, else the first installed of iTerm, Ghostty, Terminal:
+`iterm` runs `open -a iTerm <path>`, `terminal` `open -a Terminal <path>`, `ghostty`
+`open -na Ghostty --args --working-directory=<path>`, a custom command its words with `{path}`,
+`{qpath}` replaced. With `job` (from the root only) the window follows `<root>/.flow/log/<job>.log`, the file
+`jobs.sh logs` reads, with `tail -n 200 -f`: iTerm through `osascript` (`create window with default
+profile command`, the line handed to `/bin/sh -c`), Terminal through `osascript` (`do script`),
+Ghostty with the line as the one word after `-e` (assumed to work whether Ghostty runs that word
+through a shell or joins its `-e` words into one shell string; not tried on every version), a custom command with `{cmd}` replaced by the line. The line is
+`cd <path> && tail -n 200 -f <log>` with every word quoted for sh and then for AppleScript, so a
+path with a space or a quote stays one word. Nothing is locked or re-read.
 
 An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
@@ -223,7 +315,7 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Six screens, routed by hash (`#/<project>/<screen>/<detail>`): Overview (five tiles, a
+imports). Six project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles, a
 readiness line from `readiness` that says what runs, or why nothing does: how many items the next
 job could take, how many next-in-line items lack a field and how many more in the backlog do, how
 many wait at gates and how many are blocked; the needs-you table oldest first with the next-in-line
@@ -235,13 +327,21 @@ questions and recommendations as the plugin parses them on flow 1.18.0 and later
 matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`), Worktrees (the
 pool, then the worktrees outside it under their own heading; each row has its item's title, its
 agents and sessions with pid, host and age and the command on hover, why it is stale and the way
-out, a legend for dirty, agents and sessions; Release, Health), Agents and jobs (Run, Stop, Pause,
-Resume), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
+out (for a branch far behind, a "Merge <base> in" button that runs `worktree.sync` when the
+worktree is clean, has no run record and no agent, else the same words without the button), a
+legend for dirty, agents and sessions; Open in Terminal on every row, the project root
+included, Release, Health), Agents and jobs (Open in Terminal on every agent and session row, in
+its working directory; Run, Stop, Pause, Resume and Open in Terminal, which follows the job's log,
+on every job), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s). A line above every screen names the project with links to its
-repository and tracker, its adapter, base branch, flow version and jobs host; projects are set when
-the daemon starts (`--project`), and a Settings screen comes later. Every item id opens its tracker
+repository and tracker, its adapter, base branch, flow version and jobs host, and a
+Settings link. Settings (`#/settings`, linked from the top bar of every screen) lists the projects
+with Add (a path) and Remove, or the note why they cannot change; the terminal as radio buttons
+(the first installed, iTerm, Terminal, Ghostty, a custom command as a JSON array, checked as you type); the port, read
+only, with the restart note; the config file, the state folder and whether the daemon runs under
+launchd. A refused save shows the daemon's reason. Every item id opens its tracker
 page in a new tab; a link from the snapshot that is not `http` or `https` shows as plain text. An action that handed its work on (`outcome: started`, such as `job.run`) shows
 "started", not "done", on its button and in the drawer. Every module is a title row, a body and a
 footer saying how fresh its source is; every age is a live counter driven by one shared clock.
@@ -251,7 +351,8 @@ cd ui && npm install
 npm run dev        # Vite on :5173, proxies /api and /healthz to 127.0.0.1:7474 (BRAIN_CONSOLE_DAEMON overrides)
 npm run build      # writes ui/dist; the daemon serves it at / when it exists
 ```
-The start log prints `http://127.0.0.1:7474/?token=<t>`: open that. The page takes the token
+The daemon prints `http://127.0.0.1:7474/?token=<t>` to the terminal it started in (and
+`daemon:install` and `daemon:status` print it too): open that. The page takes the token
 out of the address bar, keeps it in memory, sends it as a bearer header on fetches and as
 `?token=` on the event stream. The built files themselves need no token: they are public code,
 and every byte of state waits behind the API. One event stream per project carries snapshots

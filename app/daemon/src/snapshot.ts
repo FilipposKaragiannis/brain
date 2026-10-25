@@ -349,8 +349,10 @@ export type ActionKind =
   | 'job.resume'
   | 'worktree.claim'
   | 'worktree.release'
+  | 'worktree.sync'
   | 'steward.health'
   | 'pr.merge'
+  | 'terminal.open'
   | 'refresh';
 export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
 /**
@@ -381,3 +383,27 @@ export type ActionRecord = {
   outputBytes: number;
   output?: string;
 };
+
+/*
+ * Settings: what `GET /api/settings` returns and the Settings screen shows. The file behind them
+ * is ~/.config/brain-console/config.json; `daemon/src/settings.ts` reads, checks and writes it.
+ */
+export type TerminalName = 'iterm' | 'terminal' | 'ghostty';
+/** A terminal app the console knows by name, or the owner's own command with `{path}` (and `{cmd}`) in it. */
+export type TerminalSetting = TerminalName | { command: string[] };
+/** Where a setting came from: a start flag, the environment, the config file, or the daemon's default. */
+export type SettingOrigin = 'flag' | 'environment' | 'file' | 'default';
+
+/** The settings as `GET /api/settings` reports them: each value with where it came from. */
+export type SettingsView = {
+  configFile: string;
+  /** The old projects.json the projects were read from because config.json is absent, else null. */
+  readFromLegacyFile: string | null;
+  stateDir: string;
+  /** True when launchd started the daemon (`install`), so it comes back on login and after a crash. */
+  launchd: boolean;
+  projects: { roots: string[]; from: SettingOrigin; editable: boolean; note: string | null };
+  terminal: { value: TerminalSetting | null; from: SettingOrigin; installed: TerminalName[] };
+  port: { value: number; from: SettingOrigin; saved: number | null; note: string };
+};
+

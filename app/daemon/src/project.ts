@@ -78,6 +78,8 @@ export class ProjectMonitor {
   private readonly gateQuestions: GateQuestionCache = new Map();
   private gateListError: string | null = null;
   private current: Snapshot | null = null;
+  /** Set by `stop`: a start still making its first reads schedules nothing after it. */
+  private stopped = false;
   private readonly settler = new DisagreementSettler();
   private readonly reads: ReadMarks = {
     started: 0,
@@ -95,12 +97,22 @@ export class ProjectMonitor {
 
   get snapshot(): Snapshot | null { return this.current; }
 
-  /** What an action needs to know about the project right now. */
+  /** What an action needs to know about the project right now. The terminal comes from the settings, which the daemon adds. */
   actionContext(): ActionContext {
     const flow = this.facts.files.facts;
     return {
       root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, repo: flow?.config.repo ?? null,
       jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
+      outsideWorktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role !== 'pool').map((worktree) => worktree.path),
+      // The snapshot's agents, not the raw process list: only processes in this project's worktrees.
+      processCwds: (this.current?.agents ?? []).map((agent) => agent.cwd),
+      terminal: null, installedTerminals: [],
+      base: flow?.config.base ?? 'main',
+      worktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role === 'pool').map((worktree) => ({
+        name: worktree.name, path: worktree.path, item: worktree.claim?.item ?? null, claimBase: worktree.claim?.base || null,
+        dirtyFiles: worktree.dirtyFiles, agentPids: worktree.agents.map((agent) => agent.pid),
+      })),
+      runItems: (flow?.runs ?? []).map((run) => run.item),
     };
   }
 
@@ -112,6 +124,7 @@ export class ProjectMonitor {
   async start(): Promise<void> {
     await this.refresh('files');
     await Promise.all([this.refresh('git'), this.refresh('processes'), this.refresh('jobs')]);
+    if (this.stopped) return;
     void this.refresh('board');
     void this.refresh('pulls');
     this.schedule('files', this.cadence.filesMs);
@@ -124,6 +137,7 @@ export class ProjectMonitor {
   }
 
   stop(): void {
+    this.stopped = true;
     for (const timer of this.timers) clearInterval(timer);
     for (const watcher of this.watchers) watcher.close();
     if (this.debounce !== null) clearTimeout(this.debounce);

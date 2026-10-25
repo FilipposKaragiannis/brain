@@ -8,26 +8,37 @@ import path from 'node:path';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import { silentLogger } from '../src/log.ts';
 import { ProjectMonitor } from '../src/project.ts';
+import { ProjectRegistry } from '../src/registry.ts';
+import { SettingsStore } from '../src/settings.ts';
+import { readConfig } from '../src/config.ts';
+import type { DaemonConfig } from '../src/config.ts';
+import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { closeConsoleServer, createConsoleServer } from '../src/server.ts';
 import type { Snapshot } from '../src/snapshot.ts';
-import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
+import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
 import type { FakeProcess } from './fakeSpawner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
 
-async function started(): Promise<{ monitor: ProjectMonitor; processes: FakeProcess[]; base: string; close: () => Promise<void> }> {
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
+const PROJECT = { id: 'project', name: 'project', root: FIXTURE_ROOT };
+
+async function started(makeSettings: (registry: ProjectRegistry) => SettingsStore | null = () => null): Promise<{ monitor: ProjectMonitor; processes: FakeProcess[]; base: string; close: () => Promise<void> }> {
   const { spawner, processes } = plainSpawner();
   const stateDir = path.join(os.tmpdir(), `console-server-${process.pid}`);
-  const actions = new ActionRunner({ projectId: 'project', context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: () => {} });
-  const server = createConsoleServer([{ monitor, actions }], { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger });
+  const registry = new ProjectRegistry((project) => {
+    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
+    const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: () => {} });
+    return { monitor, actions };
+  }, silentLogger);
+  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  await monitor.start();
+  await registry.apply([PROJECT]);
+  const monitor = registry.get('project')!.monitor;
   await monitor.refresh('board');
   const { port } = server.address() as AddressInfo;
-  return { monitor, processes, base: `http://127.0.0.1:${port}`, close: async () => { monitor.stop(); await closeConsoleServer(server); await rm(stateDir, { recursive: true, force: true }); } };
+  return { monitor, processes, base: `http://127.0.0.1:${port}`, close: async () => { registry.stopAll(); await closeConsoleServer(server); await rm(stateDir, { recursive: true, force: true }); } };
 }
 
 test('Snapshot_ServedWithToken', async () => {
@@ -218,4 +229,88 @@ test('Close_WithAStreamOpen_FinishesWithoutWaitingForIt', async () => {
   await close();
   controller.abort();
   assert.ok(Date.now() - began < 2000, 'because a console tab left open must not keep Ctrl+C from stopping the daemon');
+});
+
+/** Settings over a fresh config folder whose file names the fixture project, applied to the server's registry. */
+function fileSettings(registry: ProjectRegistry): SettingsStore {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-server-settings-'));
+  writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ projects: [{ root: FIXTURE_ROOT }] }));
+  const read = readConfig([], { BRAIN_CONSOLE_TOKEN: 'tok', BRAIN_CONSOLE_STATE: dir }, { configFile: path.join(dir, 'config.json'), legacyProjectsFile: path.join(dir, 'projects.json') });
+  const config = (read as { config: DaemonConfig }).config;
+  return new SettingsStore({ config, installed: () => ['iterm'], applyProjects: (projects) => { void registry.apply(projects); } });
+}
+
+const LOCAL_ROOT = path.join(FIXTURES, 'project-local');
+
+test('Settings_GetWithToken_EffectiveSettingsAndOrigins', async () => {
+  const { base, close } = await started(fileSettings);
+  try {
+    const response = await fetch(`${base}/api/settings`, { headers: { authorization: 'Bearer tok' } });
+    const view = (await response.json()) as { projects: { from: string; roots: string[] }; terminal: { installed: string[] } };
+    assert.deepEqual([view.projects.from, view.projects.roots, view.terminal.installed], ['file', [FIXTURE_ROOT], ['iterm']], 'because the screen shows each setting with where it came from');
+    assert.equal((await fetch(`${base}/api/settings`)).status, 401, 'because the settings sit behind the token like every route');
+  } finally { await close(); }
+});
+
+test('Settings_PutBadRoot_BadRequestWithTheReason', async () => {
+  const { base, close } = await started(fileSettings);
+  try {
+    const response = await fetch(`${base}/api/settings`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ projects: [{ root: '/nowhere/at/all' }] }) });
+    assert.equal(response.status, 400, 'because a root without a flow is refused');
+    assert.match(((await response.json()) as { error: string }).error, /\.flow\/config\.yaml/, 'because the owner hears what is missing');
+  } finally { await close(); }
+});
+
+test('Settings_PutWithoutJson_Refused', async () => {
+  const { base, close } = await started(fileSettings);
+  try {
+    const response = await fetch(`${base}/api/settings`, { method: 'PUT', headers: { authorization: 'Bearer tok', 'content-type': 'text/plain' }, body: '{}' });
+    assert.equal(response.status, 415, 'because a cross-site form can send text/plain without a preflight');
+  } finally { await close(); }
+});
+
+test('Settings_PutNewProject_ListedAndAnnouncedOnTheStream', async () => {
+  const { base, close } = await started(fileSettings);
+  try {
+    const stream = await fetch(`${base}/api/projects/project/events?token=tok`, { signal: AbortSignal.timeout(5000) });
+    const reader = stream.body!.getReader();
+    const put = await fetch(`${base}/api/settings`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ projects: [{ root: FIXTURE_ROOT }, { root: LOCAL_ROOT }] }) });
+    assert.equal(put.status, 200, 'because both roots hold a flow');
+    let text = '';
+    while (!text.includes('event: projects')) text += new TextDecoder().decode((await reader.read()).value);
+    assert.match(text, /event: projects\ndata: \[[^\n]*"project-local"/, 'because an open page learns of the new project without a reload');
+    const listed = (await (await fetch(`${base}/api/projects`, { headers: { authorization: 'Bearer tok' } })).json()) as { id: string }[];
+    assert.deepEqual(listed.map((project) => project.id), ['project', 'project-local'], 'because the daemon watches the new root without a restart');
+    await reader.cancel();
+  } finally { await close(); }
+});
+
+test('Settings_PutRemovesTheProject_ItsStreamEnds', async () => {
+  const { base, close } = await started(fileSettings);
+  try {
+    const stream = await fetch(`${base}/api/projects/project/events?token=tok`, { signal: AbortSignal.timeout(5000) });
+    const reader = stream.body!.getReader();
+    await fetch(`${base}/api/settings`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ projects: [{ root: LOCAL_ROOT }] }) });
+    let text = '';
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) text += new TextDecoder().decode(chunk.value);
+    assert.match(text, /event: projects/, 'because the page hears the new list before its stream ends');
+    assert.equal((await fetch(`${base}/api/projects/project/snapshot?token=tok`)).status, 404, 'because a removed project is no longer served');
+  } finally { await close(); }
+});
+
+test('Settings_PutMovesTheIdToAnotherRoot_TheOldStreamEnds', async () => {
+  const moved = path.join(mkdtempSync(path.join(os.tmpdir(), 'console-moved-')), 'project');
+  mkdirSync(path.join(moved, '.flow'), { recursive: true });
+  copyFileSync(path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), path.join(moved, '.flow', 'config.yaml'));
+  const { base, close } = await started(fileSettings);
+  try {
+    const stream = await fetch(`${base}/api/projects/project/events?token=tok`, { signal: AbortSignal.timeout(5000) });
+    const reader = stream.body!.getReader();
+    const put = await fetch(`${base}/api/settings`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ projects: [{ root: moved }] }) });
+    assert.equal(put.status, 200, 'because the new root holds a flow');
+    const drained = (async (): Promise<string> => { for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) { /* read until the server ends it */ } return 'ended'; })();
+    const outcome = await Promise.race([drained, new Promise<string>((resolve) => setTimeout(() => resolve('still open'), 3000))]);
+    assert.equal(outcome, 'ended', 'because a stream on the stopped monitor would never carry another snapshot, so it ends and the page opens a new one');
+    if (outcome !== 'ended') await reader.cancel();
+  } finally { await close(); }
 });

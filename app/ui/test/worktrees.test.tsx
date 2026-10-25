@@ -1,8 +1,8 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { Worktree } from '../../daemon/src/snapshot.ts';
 import { Worktrees } from '../src/screens/Worktrees.tsx';
-import { claudeSession, FakeDaemon, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { actionRecord, claudeSession, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -75,4 +75,44 @@ test('FreeWorktreeWithASession_SaysTheSessionSitsThere', () => {
   renderWorktrees([{ ...poolWorktree('wt-10'), flags: ['session'], sessions: [claudeSession(62102, TWO_HOURS)] }]);
   const note = screen.getByText(/session sits here/);
   expect(note.textContent, 'because free next to a live session is confusing without naming it').toMatch(/claude.*pid 62102/);
+});
+
+const ACTIONS_PATH = '/api/projects/project/actions';
+
+test('Worktrees_EveryRow_OpenInTerminalOnItsPath', async () => {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('t1', 'done', {}), kind: 'terminal.open', args: { path: '/p' }, outcome: 'finished' } } }; });
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-2'), { ...poolWorktree('project'), path: '/p', role: 'main', state: 'outside' }] }} /></Wrapper>);
+  const buttons = screen.getAllByRole('button', { name: 'Open in Terminal' });
+  expect(buttons.length, 'because the pool rows and the project root outside it each open a terminal').toBe(2);
+  await act(async () => { fireEvent.click(buttons[1]!); });
+  expect(posted, 'because the button opens the folder the row shows').toEqual([{ kind: 'terminal.open', args: { path: '/p' } }]);
+  expect(screen.getByText('done'), 'because the button shows how its action ended, as every action button does').not.toBeNull();
+});
+
+const BEHIND: Worktree = { ...poolWorktree('wt-7'), state: 'stale', flags: ['stale-branch'], claim: CLAIM, item: 'gh#344', staleReason: 'branch is 27 commits behind epic/gh-300 (limit 20)' };
+
+test('BranchFarBehind_Clean_MergeButtonSyncsTheWorktree', async () => {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('s1', 'running', {}), kind: 'worktree.sync', args: { target: 'wt-7' } } } }; });
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [BEHIND] }} /></Wrapper>);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Merge epic/gh-300 in' })); });
+  expect(posted, 'because the way out of a branch far behind is one press when nothing is in the way').toEqual([{ kind: 'worktree.sync', args: { target: 'wt-7' } }]);
+});
+
+test('BranchFarBehind_Dirty_SaysItInWordsWithNoButton', () => {
+  renderWorktrees([{ ...BEHIND, dirtyFiles: 2 }]);
+  expect(screen.queryByRole('button', { name: /Merge/ }), 'because the daemon refuses a merge over uncommitted files, so the button would only fail').toBeNull();
+  expect(screen.getByText(/or release the worktree/).textContent, 'because the way out is still said').toMatch(/Merge epic\/gh-300 in/);
+});
+
+test('BranchFarBehind_RunRecord_NoMergeButton', () => {
+  const Wrapper = new FakeDaemon().screenWrapper();
+  const run = { item: 'gh#344', step: 'implement', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, alive: false };
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [BEHIND], runs: [run] }} /></Wrapper>);
+  expect(screen.queryByRole('button', { name: /Merge/ }), 'because a run record holds the item and the daemon would refuse').toBeNull();
 });

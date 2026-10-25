@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { Counts, Snapshot } from '../../daemon/src/snapshot.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Snapshot } from '../../daemon/src/snapshot.ts';
 import { isActive } from './actions.ts';
 import { ActionsDrawer } from './ActionsDrawer.tsx';
 import { DAEMON_RETRY_MS, unreachableMessage } from './api.ts';
 import { useServices } from './console.tsx';
 import { clockTime, useNow } from './clock.tsx';
-import { parseRoute, routeHash, SCREENS } from './route.ts';
+import { parseRoute, routeHash, SCREENS, screenLabel, SETTINGS_HASH } from './route.ts';
 import type { Route, Screen } from './route.ts';
 import { ProjectHeader } from './ProjectHeader.tsx';
 import { Activity } from './screens/Activity.tsx';
@@ -13,13 +13,12 @@ import { Agents } from './screens/Agents.tsx';
 import { Gates } from './screens/Gates.tsx';
 import { Overview } from './screens/Overview.tsx';
 import { Pulls } from './screens/Pulls.tsx';
+import { Settings } from './screens/Settings.tsx';
 import { Worktrees } from './screens/Worktrees.tsx';
 import { ActionsProvider, Dot, Empty } from './ui.tsx';
 import { useActions } from './useActions.ts';
 import { HTTP_OK, useProject } from './useProject.ts';
-import type { LinkState } from './stream.ts';
-
-type ProjectSummary = { id: string; name: string; counts: Counts | null };
+import type { LinkState, ProjectSummary } from './stream.ts';
 
 /** The project list, or why it could not be read. */
 type ProjectList = { kind: 'loading' } | { kind: 'listed'; projects: ProjectSummary[] } | { kind: 'unreachable'; message: string };
@@ -37,11 +36,16 @@ export function App() {
 const MILLISECONDS_PER_SECOND = 1000;
 
 function Listed({ route, projects }: { route: Route; projects: ProjectSummary[] }) {
-  const projectId = route.projectId ?? projects[0]?.id ?? null;
+  // Settings belong to the daemon, not a project: the page keeps the project it came from around them.
+  const lastProject = useRef<string | null>(null);
+  const settings = route.screen === 'settings';
+  const remembered = projects.some((project) => project.id === lastProject.current) ? lastProject.current : null;
+  const projectId = route.projectId ?? (settings ? remembered : null) ?? projects[0]?.id ?? null;
+  if (!settings) lastProject.current = projectId;
   useEffect(() => {
-    if (route.projectId === null && projectId !== null) window.location.replace(routeHash({ ...route, projectId }));
-  }, [route, projectId]);
-  if (projectId === null) return <div className="boot"><Empty>The daemon watches no project.</Empty></div>;
+    if (!settings && route.projectId === null && projectId !== null) window.location.replace(routeHash({ ...route, projectId }));
+  }, [route, projectId, settings]);
+  if (projectId === null) return <div className="boot">{settings ? <Settings /> : <Empty>The daemon watches no project. <a href={SETTINGS_HASH}>Settings</a></Empty>}</div>;
   if (!projects.some((project) => project.id === projectId)) {
     return (
       <div className="boot">
@@ -74,7 +78,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
       <div className="shell">
         <nav className="nav" aria-label="Main">
           <div className="brand"><span className="brand-mark">B</span>Brain Console</div>
-          <ProjectSwitcher projects={projects} value={projectId} onPick={(id) => go({ projectId: id, screen: route.screen, detail: null })} />
+          <ProjectSwitcher projects={projects} value={projectId} onPick={(id) => go({ projectId: id, screen: route.screen === 'settings' ? 'overview' : route.screen, detail: null })} />
           {SCREENS.map((entry) => (
             <a key={entry.screen} className={entry.screen === route.screen ? 'nav-link active' : 'nav-link'} href={routeHash({ projectId, screen: entry.screen, detail: null })}>
               <span>{entry.label}</span>{snapshot !== null && <NavBadge screen={entry.screen} snapshot={snapshot} />}
@@ -87,13 +91,14 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
         <main className="main">
           {snapshot !== null && <ProjectHeader project={snapshot.project} />}
           <header className="page-head">
-            <h1>{SCREENS.find((entry) => entry.screen === route.screen)?.label}</h1>
+            <h1>{screenLabel(route.screen)}</h1>
             <div className="page-tools">
+              <a className={route.screen === 'settings' ? 'button active' : 'button'} href={SETTINGS_HASH}>Settings</a>
               <button type="button" className="button" onClick={() => setDrawerOpen((open) => !open)}>Actions{running > 0 ? ` · ${running} running` : ''}</button>
               <WallClock />
             </div>
           </header>
-          {snapshot === null ? <Empty>Waiting for the first snapshot…</Empty> : <ScreenView route={route} snapshot={snapshot} go={go} />}
+          {route.screen === 'settings' ? <Settings /> : snapshot === null ? <Empty>Waiting for the first snapshot…</Empty> : <ScreenView route={route} snapshot={snapshot} go={go} />}
         </main>
         {drawerOpen && <ActionsDrawer actions={actions} close={closeDrawer} />}
       </div>
@@ -109,6 +114,7 @@ function ScreenView({ route, snapshot, go }: { route: Route; snapshot: Snapshot;
     case 'agents': return <Agents snapshot={snapshot} />;
     case 'pulls': return <Pulls snapshot={snapshot} />;
     case 'activity': return <Activity key={route.detail ?? ''} snapshot={snapshot} item={route.detail} go={go} />;
+    case 'settings': return <Settings />;
   }
 }
 
@@ -118,7 +124,7 @@ function NavBadge({ screen, snapshot }: { screen: Screen; snapshot: Snapshot }) 
     case 'gates': return snapshot.gates.length > 0 ? <span className="badge tone-needs-you">{snapshot.gates.length}</span> : null;
     case 'worktrees': return <span className="badge-plain">{pool.filter((worktree) => worktree.claim !== null).length} / {pool.length}</span>;
     case 'agents': return snapshot.counts.agents > 0 ? <span className="badge-plain tone-running"><Dot tone="running" />{snapshot.counts.agents} live</span> : null;
-    case 'overview': case 'pulls': case 'activity': return null;
+    case 'overview': case 'pulls': case 'activity': case 'settings': return null;
   }
 }
 
@@ -144,9 +150,11 @@ function useRoute(): Route {
   return parseRoute(hash);
 }
 
+/** The project list: read at start (and again until the daemon answers), then kept by the `projects` event when Settings change it. */
 function useProjects(): ProjectList {
-  const { api } = useServices();
+  const { api, hub } = useServices();
   const [list, setList] = useState<ProjectList>({ kind: 'loading' });
+  useEffect(() => hub.onProjects((projects) => setList({ kind: 'listed', projects })), [hub]);
   useEffect(() => {
     let cancelled = false;
     let retry: ReturnType<typeof setTimeout> | null = null;

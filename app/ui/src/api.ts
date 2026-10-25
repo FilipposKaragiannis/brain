@@ -13,8 +13,10 @@ export type StreamLike = {
 
 export type ApiResponse = { status: number; body: unknown };
 
+export type HttpMethod = 'GET' | 'POST' | 'PUT';
+
 export type Api = {
-  request(path: string, method: 'GET' | 'POST', body: unknown): Promise<ApiResponse>;
+  request(path: string, method: HttpMethod, body: unknown): Promise<ApiResponse>;
   openStream(path: string): StreamLike;
 };
 

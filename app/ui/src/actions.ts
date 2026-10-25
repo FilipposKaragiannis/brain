@@ -18,10 +18,18 @@ export function actionStateLabel(record: ActionRecord): string {
 /**
  * Whether an action is the one a button stands for: the same kind, and every argument the button
  * names has the same value. A gate's Answer button names the item, not the message it sends.
+ * Open in Terminal matches only the same arguments exactly.
  */
 export function matchesAction(kind: ActionKind, args: Record<string, string>, candidateKind: ActionKind, candidateArgs: Record<string, string>): boolean {
-  return kind === candidateKind && Object.entries(args).every(([name, value]) => candidateArgs[name] === value);
+  if (kind !== candidateKind) return false;
+  const named = Object.entries(args).every(([name, value]) => candidateArgs[name] === value);
+  // Open in Terminal on the root and a job's Open in Terminal (the root and a job) are two buttons: every argument must match.
+  if (kind === EXACT_KIND) return named && Object.keys(candidateArgs).length === Object.keys(args).length;
+  return named;
 }
+
+/** The kind whose buttons differ only by an extra argument, so a match takes them all. */
+const EXACT_KIND: ActionKind = 'terminal.open';
 
 /**
  * Puts a record into the newest-first list, replacing the older copy. Updates can arrive out of

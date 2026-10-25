@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { HANDED_ON_REFRESH_MS, planAction } from '../src/actionPlan.ts';
-import type { ActionContext } from '../src/actionPlan.ts';
+import { HANDED_ON_REFRESH_MS, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
+import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'] };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -127,4 +127,120 @@ test('StewardHealth_HandsTheHealthJobOn_StartedAndReadAgain', () => {
 test('JobStop_FinishedAndReadOnce', () => {
   const plan = planned('job.stop', { job: 'next' });
   assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['finished', null], 'because a stop is over when the script returns');
+});
+
+test('TerminalOpen_ProjectRoot_OpensItInTheFirstInstalledTerminal', () => {
+  const plan = planned('terminal.open', { path: '/p/app' });
+  assert.deepEqual([plan.command, ...plan.args], ['open', '-a', 'iTerm', '/p/app'], 'because with no terminal set the first installed one opens');
+  assert.deepEqual([plan.locks, plan.refresh, plan.detach, plan.outcome], [[], [], false, 'finished'], 'because opening a window touches no flow state and is over when open returns');
+});
+
+test('TerminalOpen_PoolWorktreeAndAgentFolder_Allowed', () => {
+  assert.equal(planned('terminal.open', { path: '/p/app-wt-3' }).args.at(-1), '/p/app-wt-3', 'because a pool worktree is a folder the console shows');
+  assert.equal(planned('terminal.open', { path: '/p/app-wt-2/src' }).args.at(-1), '/p/app-wt-2/src', 'because an agent or session row opens where that process works');
+});
+
+test('TerminalOpen_AnyOtherPath_RefusedWithTheReason', () => {
+  for (const target of ['/etc', '/p', '/p/app/../app-wt-9', 'p/app', '']) {
+    const result = planAction('terminal.open', { path: target }, CONTEXT);
+    assert.equal(result.ok, false, `because "${target}" is none of the folders the console lists`);
+  }
+  const result = planAction('terminal.open', { path: '/etc' }, CONTEXT);
+  assert.match(result.ok ? '' : result.error, /not the project root, a worktree the console lists or the folder of a listed agent or session/, 'because the owner hears which folders may open');
+});
+
+test('TerminalOpen_EachNamedTerminal_ItsOwnCommand', () => {
+  const opened = (terminal: 'iterm' | 'terminal' | 'ghostty') => { const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal }); return [plan.command, ...plan.args]; };
+  assert.deepEqual(opened('terminal'), ['open', '-a', 'Terminal', '/p/app'], 'because Terminal opens a folder given to open -a');
+  assert.deepEqual(opened('ghostty'), ['open', '-na', 'Ghostty', '--args', '--working-directory=/p/app'], 'because Ghostty takes the folder as an argument of a new instance');
+  assert.deepEqual(opened('iterm'), ['open', '-a', 'iTerm', '/p/app'], 'because iTerm opens a folder given to open -a');
+});
+
+test('TerminalOpen_CustomCommand_PathSubstitutedInEachWord', () => {
+  const plan = planned('terminal.open', { path: '/p/app-wt-2' }, { ...CONTEXT, terminal: { command: ['wezterm', 'start', '--cwd={path}'] } });
+  assert.deepEqual([plan.command, ...plan.args], ['wezterm', 'start', '--cwd=/p/app-wt-2'], 'because the owner\'s command runs as argv with the folder in place');
+});
+
+test('TerminalOpen_CustomCommandWithoutPath_FolderLast', () => {
+  const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal: { command: ['open', '-a', 'Warp'] } });
+  assert.deepEqual(plan.args, ['-a', 'Warp', '/p/app'], 'because a command that never names the folder would open the wrong place');
+});
+
+test('TerminalOpen_NoTerminalInstalled_Refused', () => {
+  const result = planAction('terminal.open', { path: '/p/app' }, { ...CONTEXT, installedTerminals: [] });
+  assert.match(result.ok ? '' : result.error, /Settings/, 'because the owner must pick a terminal or a command there');
+});
+
+test('TerminalOpen_NoPlugin_StillPlanned', () => {
+  assert.equal(planAction('terminal.open', { path: '/p/app' }, { ...CONTEXT, pluginRoot: null }).ok, true, 'because opening a folder runs no flow script');
+});
+
+test('TerminalOpen_Job_FollowsItsLogInTheProjectFlow', () => {
+  const plan = planned('terminal.open', { path: '/p/app', job: 'next' }, { ...CONTEXT, terminal: 'ghostty' });
+  assert.deepEqual(plan.args, ['-na', 'Ghostty', '--args', '--working-directory=/p/app', '-e', "cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'"], 'because a job row follows the job\'s log, the file jobs.sh logs reads, as one shell line that reads the same whether Ghostty runs it through a shell or joins its -e words');
+});
+
+test('TerminalOpen_JobFromAWorktreeOrBadName_Refused', () => {
+  assert.equal(planAction('terminal.open', { path: '/p/app-wt-2', job: 'next' }, CONTEXT).ok, false, "because a job's log belongs to the project root");
+  assert.equal(planAction('terminal.open', { path: '/p/app', job: '../../etc/passwd' }, CONTEXT).ok, false, 'because a job name never reaches outside .flow/log');
+});
+
+test('TerminalOpen_JobInITermAndTerminal_ThroughOsascript', () => {
+  const iterm = planned('terminal.open', { path: '/p/app', job: 'health' });
+  assert.deepEqual([iterm.command, iterm.args[1]], ['osascript', `tell application "iTerm" to create window with default profile command "/bin/sh -c 'cd '\\\\''/p/app'\\\\'' && '\\\\''tail'\\\\'' '\\\\''-n'\\\\'' '\\\\''200'\\\\'' '\\\\''-f'\\\\'' '\\\\''/p/app/.flow/log/health.log'\\\\'''"`], 'because iTerm runs its command without a shell, so the line goes to sh whole');
+  const terminal = planned('terminal.open', { path: '/p/app', job: 'health' }, { ...CONTEXT, terminal: 'terminal' });
+  assert.equal(terminal.args[1], `tell application "Terminal" to do script "cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/health.log'"`, 'because Terminal runs the line in its shell');
+});
+
+test('TerminalOpen_CustomCommandWithCmd_GetsTheQuotedLine', () => {
+  const plan = planned('terminal.open', { path: '/p/app', job: 'next' }, { ...CONTEXT, terminal: { command: ['kitty', '--directory', '{path}', 'sh', '-c', '{cmd}'] } });
+  assert.equal(plan.args.at(-1), `cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'`, 'because {cmd} is the line to run, quoted for sh');
+});
+
+const CLEAN: SyncFacts = { name: 'app-wt-2', path: '/p/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, agentPids: [] };
+const SYNC: ActionContext = { ...CONTEXT, worktrees: [CLEAN, { ...CLEAN, name: 'app-wt-3', path: '/p/app-wt-3', item: 'gh#9', claimBase: 'epic/gh-300' }] };
+
+test('WorktreeSync_ByName_MergesTheProjectBaseWithTheSyncScript', () => {
+  const plan = planned('worktree.sync', { target: 'app-wt-2' }, SYNC);
+  assert.deepEqual([plan.command, ...plan.args], ['sh', SYNC_SCRIPT, '/p/app-wt-2', 'main'], 'because the script fetches, merges the upstream and then the base, aborting on a conflict');
+  assert.deepEqual([plan.locks, plan.refresh, plan.outcome, plan.detach], [['item:gh#7', 'worktree:/p/app-wt-2'], ['git'], 'finished', false], 'because a merge holds the item against a release by item or by name, and changes only git');
+});
+
+test('WorktreeSync_ByItem_MergesTheClaimsBase', () => {
+  assert.deepEqual(planned('worktree.sync', { target: 'gh#9' }, SYNC).args.slice(1), ['/p/app-wt-3', 'epic/gh-300'], 'because the branch catches up with the base it was claimed from');
+});
+
+test('WorktreeSync_Dirty_RefusedWithItsReason', () => {
+  const result = planAction('worktree.sync', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, dirtyFiles: 3 }] });
+  assert.match(result.ok ? '' : result.error, /3 uncommitted files/, 'because a merge over uncommitted work could lose it');
+});
+
+test('WorktreeSync_RunRecordNamesTheItem_RefusedWithItsReason', () => {
+  const result = planAction('worktree.sync', { target: 'gh#7' }, { ...SYNC, runItems: ['gh#7'] });
+  assert.match(result.ok ? '' : result.error, /run record names gh#7/, 'because a run may be about to commit on that branch');
+});
+
+test('WorktreeSync_AgentInTheWorktree_RefusedWithItsReason', () => {
+  const result = planAction('worktree.sync', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, agentPids: [100] }] });
+  assert.match(result.ok ? '' : result.error, /agent works in app-wt-2 \(pid 100\)/, 'because an agent editing files there would see the merge land under it');
+});
+
+test('WorktreeSync_UnclaimedUnknownOrNotRead_Refused', () => {
+  assert.match((r => r.ok ? '' : r.error)(planAction('worktree.sync', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, item: null }] })), /not claimed/, 'because a free worktree has no branch to bring up to date');
+  assert.equal(planAction('worktree.sync', { target: 'app-wt-9' }, SYNC).ok, false, 'because only pool worktrees sync');
+  assert.equal(planAction('worktree.sync', { target: '/p/app' }, SYNC).ok, false, 'because a path is not a target');
+  assert.match((r => r.ok ? '' : r.error)(planAction('worktree.sync', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, dirtyFiles: null }] })), /not read/, 'because a worktree git has not read may be dirty');
+});
+
+test('WorktreeSync_BaseThatLooksLikeAnOption_Refused', () => {
+  assert.equal(planAction('worktree.sync', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, claimBase: '--abort' }] }).ok, false, 'because a claim file must not hand git an option');
+});
+
+test('TerminalOpen_WorktreeOutsideThePool_Allowed', () => {
+  assert.equal(planned('terminal.open', { path: '/p/app-side' }).args.at(-1), '/p/app-side', 'because the Worktrees screen shows a button on every outside row, and git lists that worktree for the project');
+});
+
+test('TerminalOpen_CustomCommandWithQpath_FolderQuotedForSh', () => {
+  const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal: { command: ['sh', '-c', 'cd {qpath} && exec $SHELL'] } });
+  assert.deepEqual(plan.args, ['-c', "cd '/p/app' && exec $SHELL"], 'because {qpath} is the folder quoted for an sh -c string, and the folder is not added again');
 });

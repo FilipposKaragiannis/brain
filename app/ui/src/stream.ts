@@ -1,4 +1,4 @@
-import type { Snapshot } from '../../daemon/src/snapshot.ts';
+import type { Counts, Snapshot } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord } from './actions.ts';
 import { projectPath, STREAM_CLOSED } from './api.ts';
 import type { Api, StreamLike } from './api.ts';
@@ -12,6 +12,9 @@ export type StreamListener = {
   link(state: LinkState): void;
 };
 
+/** A project as `/api/projects` and the `projects` event list it. */
+export type ProjectSummary = { id: string; name: string; root: string; counts: Counts | null; takenAt: string | null };
+
 type Channel = { stream: StreamLike | null; link: LinkState; listeners: Set<StreamListener> };
 
 /**
@@ -21,6 +24,7 @@ type Channel = { stream: StreamLike | null; link: LinkState; listeners: Set<Stre
  */
 export class StreamHub {
   private readonly channels = new Map<string, Channel>();
+  private readonly projectListeners = new Set<(projects: ProjectSummary[]) => void>();
   private readonly api: Api;
 
   constructor(api: Api) {
@@ -40,6 +44,12 @@ export class StreamHub {
       channel.stream?.close();
       this.channels.delete(projectId);
     };
+  }
+
+  /** Hears the project list whenever the daemon changes it (a project added or removed in Settings), on whichever stream is open. */
+  onProjects(listener: (projects: ProjectSummary[]) => void): () => void {
+    this.projectListeners.add(listener);
+    return () => { this.projectListeners.delete(listener); };
   }
 
   reconnect(projectId: string): void {
@@ -68,6 +78,10 @@ export class StreamHub {
     stream.addEventListener('action', (event) => {
       const action = parseEvent<ActionRecord>(event);
       if (action !== null) channel.listeners.forEach((listener) => listener.action(action));
+    });
+    stream.addEventListener('projects', (event) => {
+      const projects = parseEvent<ProjectSummary[]>(event);
+      if (Array.isArray(projects)) this.projectListeners.forEach((listener) => listener(projects));
     });
     stream.onopen = () => setLink(channel, 'open');
     stream.onerror = () => {

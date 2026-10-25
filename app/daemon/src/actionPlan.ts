@@ -1,6 +1,21 @@
 import path from 'node:path';
-import type { ActionKind, ActionOutcome } from './snapshot.ts';
+import type { ActionKind, ActionOutcome, TerminalName, TerminalSetting } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
+import { terminalLaunch } from './terminal.ts';
+
+/** What a sync needs to know of one pool worktree, from the latest snapshot. */
+export type SyncFacts = {
+  name: string;
+  path: string;
+  /** The claimed item, or null when nobody claimed it. */
+  item: string | null;
+  /** The base the claim was made from, or null to use the project's. */
+  claimBase: string | null;
+  /** Uncommitted files, or null before git was read. */
+  dirtyFiles: number | null;
+  /** The pids of the unattended agents working in it. */
+  agentPids: number[];
+};
 
 /** What an action needs from the project before it can be planned. */
 export type ActionContext = {
@@ -10,6 +25,20 @@ export type ActionContext = {
   jobsHost: string;
   /** The pool worktrees, as absolute paths. A release names one of these or an item. */
   pool: string[];
+  /** The worktrees outside the pool that git lists for the project (the main checkout among them); a terminal may open there. */
+  outsideWorktrees: string[];
+  /** The working directory of every agent and session the snapshot lists, so only those in this project's worktrees. */
+  processCwds: string[];
+  /** The terminal chosen in Settings, or null for the first installed one. */
+  terminal: TerminalSetting | null;
+  /** The terminals installed, first choice first. */
+  installedTerminals: TerminalName[];
+  /** The branch work merges into, `base` in .flow/config.yaml. */
+  base: string;
+  /** The pool worktrees as the latest snapshot shows them; empty before the first one. */
+  worktrees: SyncFacts[];
+  /** Every item a run record in .flow/runs names. */
+  runItems: string[];
 };
 
 /** One planned process. `detach` puts it in its own session so it outlives the daemon. */
@@ -35,7 +64,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.stop', 'job.pause', 'job.resume',
-  'worktree.claim', 'worktree.release', 'steward.health', 'pr.merge', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.sync', 'steward.health', 'pr.merge', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -45,8 +74,10 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'job.run': ['job'], 'job.stop': ['job'], 'job.pause': ['job'], 'job.resume': ['job'],
   'worktree.claim': ['item'],
   'worktree.release': ['target', 'force'],
+  'worktree.sync': ['target'],
   'steward.health': [],
   'pr.merge': ['pr', 'method'],
+  'terminal.open': ['path', 'job'],
   refresh: ['source'],
 };
 
@@ -68,6 +99,12 @@ const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
 const MAX_STEPS = /^[1-9][0-9]{0,2}$/;
 const MERGE_METHODS = ['squash', 'merge', 'rebase'];
+/** A branch name git takes without reading it as an option or a range. */
+const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+/** The console's own merge script: fetch, the upstream, then the base, aborting on a conflict. */
+export const SYNC_SCRIPT = path.resolve(import.meta.dirname, '..', 'scripts', 'sync.sh');
+/** How much of a job's log a terminal shows before it follows new lines. */
+const LOG_LINES = '200';
 
 const fail = (error: string): PlanResult => ({ ok: false, error });
 
@@ -94,6 +131,8 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     if (source !== '' && !(SOURCE_NAMES as string[]).includes(source)) return fail(`unknown source: ${source}`);
     return { ok: true, plan: { command: '', args: [], cwd: context.root, locks: [], timeoutMs: 0, detach: false, refresh: source === '' ? [...SOURCE_NAMES] : [source], refreshAgainMs: null, outcome: 'finished' } };
   }
+  if (kind === 'terminal.open') return planTerminal(args, context);
+  if (kind === 'worktree.sync') return planSync(args, context);
   if (context.pluginRoot === null) return fail('no flow plugin found for the project');
   const sh = (name: string, scriptArgs: string[], locks: string[], timeoutMs: number, refresh: string[]): PlanResult =>
     ({ ok: true, plan: { command: 'sh', args: [script(context, name), ...scriptArgs], cwd: context.root, locks, timeoutMs, detach: false, refresh, refreshAgainMs: null, outcome: 'finished' } });
@@ -151,4 +190,55 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
     }
   }
+}
+
+/**
+ * `terminal.open`: a terminal window in the project root, a pool worktree, another worktree git
+ * lists for the project, or the folder of an agent or session the snapshot lists, nowhere else. With `job` (from the root only) the window follows that
+ * job's log, `<root>/.flow/log/<job>.log`. Nothing is locked or re-read: it only opens a window.
+ */
+function planTerminal(args: Record<string, string>, context: ActionContext): PlanResult {
+  const asked = args['path'] ?? '';
+  if (!path.isAbsolute(asked)) return fail('terminal.open needs an absolute path');
+  const folder = path.resolve(asked);
+  const allowed = [context.root, ...context.pool, ...context.outsideWorktrees, ...context.processCwds].map((entry) => path.resolve(entry));
+  if (!allowed.includes(folder)) return fail(`${folder} is not the project root, a worktree the console lists or the folder of a listed agent or session`);
+  let run: string[] | null = null;
+  const job = args['job'];
+  if (job !== undefined) {
+    if (!JOB_NAME.test(job)) return fail('terminal.open needs a job name like next or health');
+    if (folder !== path.resolve(context.root)) return fail("a job's log opens from the project root");
+    const flowHome = path.join(path.resolve(context.root), '.flow');
+    const log = path.join(flowHome, 'log', `${job}.log`);
+    if (path.relative(flowHome, log).startsWith('..')) return fail("a job's log must be under the project's .flow");
+    run = ['tail', '-n', LOG_LINES, '-f', log];
+  }
+  const launch = terminalLaunch(context.terminal, context.installedTerminals, folder, run);
+  if (!launch.ok) return launch;
+  return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
+}
+
+/**
+ * `worktree.sync`: merge the base (and the branch's own upstream first, when it is ahead) into a
+ * claimed pool worktree. Refused while the worktree has uncommitted files, a run record names its
+ * item, or an agent works in it, each with its own reason, since a merge under any of those would
+ * mix with work in progress.
+ */
+function planSync(args: Record<string, string>, context: ActionContext): PlanResult {
+  const target = args['target'] ?? '';
+  const worktree = ITEM_ID.test(target)
+    ? context.worktrees.find((entry) => entry.item === target)
+    : context.worktrees.find((entry) => entry.name === target && context.pool.includes(entry.path));
+  if (worktree === undefined) return fail(`worktree.sync needs an item claimed in the pool or the name of a pool worktree; ${target === '' ? 'none given' : `${target} is neither`}`);
+  if (worktree.item === null) return fail(`${worktree.name} is not claimed, so it has no branch to bring up to date`);
+  if (worktree.dirtyFiles === null) return fail(`git has not read ${worktree.name} yet; try again in a moment`);
+  if (worktree.dirtyFiles > 0) return fail(`${worktree.name} has ${worktree.dirtyFiles} uncommitted file${worktree.dirtyFiles === 1 ? '' : 's'}; commit or stash them before merging`);
+  if (context.runItems.includes(worktree.item)) return fail(`a run record names ${worktree.item}; let the run end (or run the health check if it died) before merging`);
+  if (worktree.agentPids.length > 0) return fail(`an agent works in ${worktree.name} (pid ${worktree.agentPids.join(', ')}); merging under it would mix with its work`);
+  const base = worktree.claimBase ?? context.base;
+  if (!BRANCH.test(base) || base.includes('..')) return fail(`the base ${base} is not a branch name git can merge`);
+  return {
+    ok: true,
+    plan: { command: 'sh', args: [SYNC_SCRIPT, worktree.path, base], cwd: worktree.path, locks: [`item:${worktree.item}`, `worktree:${worktree.path}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['git'], refreshAgainMs: null, outcome: 'finished' },
+  };
 }
