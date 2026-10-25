@@ -32,7 +32,9 @@ const SECONDS_PER_HOUR = 3600;
 const UNRANKED = 999;
 /** The merge gate: the one gate that asks a person to merge a ready pull request. */
 const MERGE_GATE = 'merge';
-const PULL_URL = /^(https?:\/\/[^\s#?]+\/pull\/\d+)/;
+const PULL_PATH = /^(.*\/pull\/\d+)/;
+/** GitHub's merge states that let a merge through; UNSTABLE means only checks no rule requires are red. */
+const MERGE_READY_STATES = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE'];
 const PULL_NUMBER = /^#?(\d+)$/;
 const STATE_ORDER: Record<ItemState, number> = {
   'needs-you': 0, running: 1, stale: 2, claimed: 3, ready: 4, blocked: 5, backlog: 6, done: 7,
@@ -236,33 +238,45 @@ function buildJobs(input: ReconcileInput): Job[] {
   }));
 }
 
-function approved(pull: PullFact): boolean {
-  if (pull.reviewDecision !== null) return pull.reviewDecision === 'APPROVED';
-  return pull.approvals > 0 && pull.changesRequested === 0;
+/** With no review decision the repository requires no review, so approval is not needed. */
+function approvalSatisfied(pull: PullFact): boolean {
+  return pull.reviewDecision === null || pull.reviewDecision === 'APPROVED';
 }
 
 function changesRequested(pull: PullFact): boolean {
-  if (pull.reviewDecision !== null) return pull.reviewDecision === 'CHANGES_REQUESTED';
-  return pull.changesRequested > 0;
+  return pull.reviewDecision === 'CHANGES_REQUESTED' || (pull.reviewDecision === null && pull.changesRequested > 0);
+}
+
+function mergesCleanly(pull: PullFact): boolean {
+  return pull.unresolvedThreads === 0 && pull.mergeable === 'MERGEABLE' && MERGE_READY_STATES.includes(pull.mergeState ?? '');
 }
 
 export function pullState(pull: PullFact): PullState {
   if (pull.draft) return 'draft';
-  if (pull.mergeable === 'CONFLICTING') return 'conflicts';
+  if (pull.mergeable === 'CONFLICTING' || pull.mergeState === 'DIRTY') return 'conflicts';
   if (pull.checks.failed > 0) return 'checks-failing';
   if (changesRequested(pull)) return 'changes-requested';
   if (pull.checks.pending > 0) return 'checks-pending';
-  if (!approved(pull)) return 'review-pending';
-  if (pull.unresolvedThreads > 0 || pull.mergeable !== 'MERGEABLE') return 'approved';
+  if (!approvalSatisfied(pull)) return 'review-pending';
+  if (!mergesCleanly(pull)) return 'approved';
   return 'mergeable';
+}
+
+function pullPath(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    const found = PULL_PATH.exec(url.pathname.toLowerCase());
+    return found === null ? null : `${url.host.toLowerCase()}${found[1]}`;
+  } catch { return null; }
 }
 
 /** An item's `pr` field names its pull by number (`560`, `#560`) or by URL. */
 function namesPull(field: string | null, pull: PullFact): boolean {
   if (field === null) return false;
   const value = field.trim();
-  const url = PULL_URL.exec(value);
-  if (url !== null) return url[1] === pull.url;
+  const named = pullPath(value);
+  if (named !== null) return named === pullPath(pull.url);
   const pullNumber = PULL_NUMBER.exec(value);
   return pullNumber !== null && Number(pullNumber[1]) === pull.number;
 }
@@ -272,6 +286,7 @@ type PullLink = { item: string | null; worktree: string | null };
 function linkPull(pull: PullFact, items: Item[], contexts: WorktreeContext[]): PullLink {
   const named = items.find((item) => namesPull(item.pr, pull));
   if (named !== undefined) return { item: named.id, worktree: named.worktree };
+  if (pull.crossRepository) return { item: null, worktree: null };
   const claimed = contexts.find((context) => context.claim !== null && context.claim.branch === pull.branch);
   if (claimed !== undefined) return { item: claimed.claim?.item ?? null, worktree: claimed.name };
   return { item: null, worktree: null };
@@ -285,6 +300,16 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
   }));
+}
+
+/**
+ * What says a done item waits on a merge. With pull requests read, its PR must be ready to merge;
+ * without them (not read yet, or not on GitHub), the issue state naming a PR is all there is.
+ */
+function mergeEvidence(item: Item, pulls: PullRequest[] | null): string | null {
+  if (pulls === null) return item.pr === null ? null : `names the open PR ${item.pr}`;
+  const ready = pulls.find((pull) => pull.item === item.id && pull.state === 'mergeable');
+  return ready === undefined ? null : `#${ready.number} is ready to merge`;
 }
 
 function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], items: Item[], pulls: PullRequest[]): Disagreement[] {
@@ -311,9 +336,9 @@ function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], 
       out.push({ item: gate.item, worktree: null, sources: ['gate record', 'issue labels'], message: `${gate.item}: the gate record says ${gate.gate}, the issue labels say ${item.state.gate}.` });
     }
   }
-  for (const item of items.filter((entry) => entry.step === 'done' && entry.gate !== MERGE_GATE)) {
-    const ready = pulls.find((pull) => pull.item === item.id && pull.state === 'mergeable');
-    if (ready !== undefined) out.push({ item: item.id, worktree: item.worktree, sources: ['issue state', 'pull request'], message: `${item.id} is at step done and #${ready.number} is ready to merge, but no merge gate asks you to merge it.` });
+  for (const item of items.filter((entry) => entry.status === 'open' && entry.step === 'done' && entry.gate !== MERGE_GATE)) {
+    const evidence = mergeEvidence(item, input.pulls === null ? null : pulls);
+    if (evidence !== null) out.push({ item: item.id, worktree: item.worktree, sources: ['issue state', 'pull request'], message: `${item.id} is at step done and ${evidence}, but no merge gate asks you to merge it.` });
   }
   return out;
 }
@@ -368,7 +393,7 @@ function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreemen
     agents: agents.filter((entry) => entry.kind === 'agent').length, jobsRunning: jobs.filter((entry) => entry.state === 'running').length,
     itemsReady: itemCount('ready'), itemsBlocked: itemCount('blocked'), itemsBacklog: itemCount('backlog'), itemsDone: itemCount('done'),
     disagreements: disagreements.length,
-    prsMergeable: pullCount('mergeable'), prsFailing: pullCount('checks-failing'), prsChangesRequested: pullCount('changes-requested'),
+    pullsMergeable: pullCount('mergeable'), pullsFailing: pullCount('checks-failing'), pullsChangesRequested: pullCount('changes-requested'),
   };
 }
 

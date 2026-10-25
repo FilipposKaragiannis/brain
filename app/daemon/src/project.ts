@@ -127,8 +127,8 @@ export class ProjectMonitor {
   private async read(source: SourceName): Promise<void> {
     const startedAt = this.clock();
     try {
-      await this.collect(source);
-      this.facts[source].freshness = { at: startedAt.toISOString(), ageSeconds: 0, ok: true, error: null };
+      const notApplicable = await this.collect(source);
+      this.facts[source].freshness = { at: startedAt.toISOString(), ageSeconds: 0, ok: true, error: notApplicable };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.facts[source].freshness = { ...this.facts[source].freshness, ok: false, error: message };
@@ -137,24 +137,26 @@ export class ProjectMonitor {
     this.rebuild();
   }
 
-  private async collect(source: SourceName): Promise<void> {
+  /** Reads one source into the facts. Returns why the source does not apply to this project, or null when it was read. */
+  private async collect(source: SourceName): Promise<string | null> {
     const root = this.project.root;
     const flow = this.facts.files.facts;
     switch (source) {
-      case 'files': this.facts.files.facts = await readFlowHome(root, this.runner); return;
-      case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return;
-      case 'processes': this.facts.processes.facts = await readProcesses(this.runner); return;
+      case 'files': this.facts.files.facts = await readFlowHome(root, this.runner); return null;
+      case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return null;
+      case 'processes': this.facts.processes.facts = await readProcesses(this.runner); return null;
       case 'jobs':
         if (flow?.pluginRoot == null) throw new Error('no flow plugin found for the project');
-        this.facts.jobs.facts = await readJobs(root, flow.pluginRoot, this.runner); return;
+        this.facts.jobs.facts = await readJobs(root, flow.pluginRoot, this.runner); return null;
       case 'board':
         if (flow?.pluginRoot == null) throw new Error('no flow plugin found for the project');
-        this.facts.board.facts = await readBoard(root, flow.pluginRoot, this.runner); return;
+        this.facts.board.facts = await readBoard(root, flow.pluginRoot, this.runner); return null;
       case 'pulls':
         if (flow === null) throw new Error('the flow files are not read yet');
-        if (flow.config.adapter !== PULLS_ADAPTER) throw new Error(`pull requests need the github adapter; this project uses ${flow.config.adapter}`);
-        if (flow.config.repo === null) throw new Error('no github.repo in .flow/config.yaml');
-        this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return;
+        this.facts.pulls.facts = null;
+        if (flow.config.adapter !== PULLS_ADAPTER) return `not applicable: adapter ${flow.config.adapter}`;
+        if (flow.config.repo === null) return 'not applicable: no github.repo in .flow/config.yaml';
+        this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return null;
     }
   }
 

@@ -9,7 +9,6 @@
     "baseRefName": "main",
     "createdAt": "2026-10-24T13:50:09Z",
     "headRefName": "flow/gh-310",
-    "headRefOid": "9fedc7e446f79c62a900df9e9a76efb9c522e60c",
     "isDraft": false,
     "latestReviews": [
       {
@@ -32,8 +31,27 @@
     "mergeable": "MERGEABLE",
     "number": 560,
     "reviewDecision": "",
-    "reviewRequests": [],
     "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:15Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144334098/job/121022360938",
+        "name": "Bot-vs-bot untouched-ball probe (quarantined)",
+        "startedAt": "2026-10-24T23:50:13Z",
+        "status": "COMPLETED",
+        "workflowName": "Bot Untouched-Ball Probe"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:15Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144334126/job/121022361010",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-24T23:50:13Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
       {
         "__typename": "CheckRun",
         "completedAt": "2026-10-24T23:50:12Z",
@@ -41,16 +59,6 @@
         "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330325/job/121022349533",
         "name": "Smoke tier (per PR)",
         "startedAt": "2026-10-24T23:50:10Z",
-        "status": "COMPLETED",
-        "workflowName": "Calibration"
-      },
-      {
-        "__typename": "CheckRun",
-        "completedAt": "2026-10-24T23:56:00Z",
-        "conclusion": "SUCCESS",
-        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330325/job/121022349533",
-        "name": "Smoke tier (per PR)",
-        "startedAt": "2026-10-24T23:55:00Z",
         "status": "COMPLETED",
         "workflowName": "Calibration"
       },
@@ -83,11 +91,32 @@
         "startedAt": "2026-10-24T23:52:53Z",
         "status": "COMPLETED",
         "workflowName": "Claude"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:13Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144334126/job/121022362364",
+        "name": "Full sweep (nightly / on demand)",
+        "startedAt": "2026-10-24T23:50:13Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:09Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330325/job/121022350572",
+        "name": "Full sweep (nightly / on demand)",
+        "startedAt": "2026-10-24T23:50:10Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
       }
     ],
     "title": "fix(bots): walk the carry onto the ball's lane through the pin recapture",
     "updatedAt": "2026-10-24T13:52:47Z",
-    "url": "https://github.com/FJ2K/foosbrawl/pull/560"
+    "url": "https://github.com/FJ2K/foosbrawl/pull/560",
+    "isCrossRepository": false
   },
   {
     "author": {
@@ -118,25 +147,74 @@
     "mergeStateStatus": "CLEAN",
     "mergeable": "MERGEABLE",
     "reviewDecision": "APPROVED",
-    "reviewRequests": [],
     "statusCheckRollup": [
       {
         "__typename": "CheckRun",
-        "completedAt": "2026-10-24T11:00:00Z",
-        "conclusion": "SUCCESS",
-        "detailsUrl": "https://example/runs/1",
-        "name": "Domain",
-        "startedAt": "2026-10-24T11:00:00Z",
+        "completedAt": "2026-10-13T21:46:28Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472845926/job/115556079101",
+        "name": "Foosbrawl.Common.Game.Domain.Tests",
+        "startedAt": "2026-10-13T21:44:33Z",
         "status": "COMPLETED",
         "workflowName": "Domain Tests"
       },
       {
         "__typename": "CheckRun",
-        "completedAt": "2026-10-24T11:00:00Z",
+        "completedAt": "2026-10-13T21:46:30Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849369/job/115556092204",
+        "name": "Bot-vs-bot untouched-ball probe (quarantined)",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Bot Untouched-Ball Probe"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:45:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849351/job/115556091868",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:46:03Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472845938/job/115556079412",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-13T21:44:33Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:50:57Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849389/job/115556091708",
+        "name": "Foosbrawl.Common.Game.Domain.Tests",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Domain Tests"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:44:33Z",
         "conclusion": "SKIPPED",
-        "detailsUrl": "https://example/runs/1",
-        "name": "Full sweep",
-        "startedAt": "2026-10-24T11:00:00Z",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849351/job/115556094923",
+        "name": "Full sweep (nightly / on demand)",
+        "startedAt": "2026-10-13T21:44:33Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:44:31Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472845938/job/115556080976",
+        "name": "Full sweep (nightly / on demand)",
+        "startedAt": "2026-10-13T21:44:31Z",
         "status": "COMPLETED",
         "workflowName": "Calibration"
       }
@@ -145,9 +223,9 @@
     "title": "Twenty",
     "url": "https://example/pull/20",
     "headRefName": "flow/gh-20",
-    "headRefOid": "2020202",
     "createdAt": "2026-10-20T10:00:00Z",
-    "updatedAt": "2026-10-24T12:00:00Z"
+    "updatedAt": "2026-10-24T12:00:00Z",
+    "isCrossRepository": false
   },
   {
     "author": {
@@ -178,12 +256,6 @@
     "mergeStateStatus": "BLOCKED",
     "mergeable": "MERGEABLE",
     "reviewDecision": "CHANGES_REQUESTED",
-    "reviewRequests": [
-      {
-        "__typename": "User",
-        "login": "codex"
-      }
-    ],
     "statusCheckRollup": [
       {
         "__typename": "CheckRun",
@@ -200,9 +272,9 @@
     "title": "Nine's fix",
     "url": "https://example/pull/21",
     "headRefName": "flow/gh-9",
-    "headRefOid": "2121212",
     "createdAt": "2026-10-24T09:00:00Z",
-    "updatedAt": "2026-10-24T18:00:00Z"
+    "updatedAt": "2026-10-24T18:00:00Z",
+    "isCrossRepository": false
   },
   {
     "author": {
@@ -217,7 +289,6 @@
     "mergeStateStatus": "DRAFT",
     "mergeable": "UNKNOWN",
     "reviewDecision": "",
-    "reviewRequests": [],
     "statusCheckRollup": [
       {
         "__typename": "StatusContext",
@@ -231,8 +302,51 @@
     "title": "Spike",
     "url": "https://example/pull/22",
     "headRefName": "spike/rope",
-    "headRefOid": "2222222",
     "createdAt": "2026-10-23T09:00:00Z",
-    "updatedAt": "2026-10-23T09:30:00Z"
+    "updatedAt": "2026-10-23T09:30:00Z",
+    "isCrossRepository": false
+  },
+  {
+    "author": {
+      "id": "U_2",
+      "is_bot": false,
+      "login": "contributor",
+      "name": "A Contributor"
+    },
+    "baseRefName": "main",
+    "isDraft": false,
+    "latestReviews": [],
+    "mergeStateStatus": "BLOCKED",
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:46:30Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849369/job/115556092204",
+        "name": "Bot-vs-bot untouched-ball probe (quarantined)",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Bot Untouched-Ball Probe"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:45:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849351/job/115556091868",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      }
+    ],
+    "number": 23,
+    "title": "A contributor fork",
+    "url": "https://example/pull/23",
+    "headRefName": "flow/gh-7",
+    "createdAt": "2026-10-24T08:00:00Z",
+    "updatedAt": "2026-10-24T08:30:00Z",
+    "isCrossRepository": true
   }
 ]

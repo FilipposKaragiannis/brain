@@ -223,9 +223,9 @@ export type Counts = {
   itemsBacklog: number;
   itemsDone: number;
   disagreements: number;
-  prsMergeable: number;
-  prsFailing: number;
-  prsChangesRequested: number;
+  pullsMergeable: number;
+  pullsFailing: number;
+  pullsChangesRequested: number;
 };
 
 export type Snapshot = {

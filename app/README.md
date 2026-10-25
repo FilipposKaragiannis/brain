@@ -52,18 +52,19 @@ Every open pull request carries one state, the first that holds:
 | PR state | Meaning |
 |---|---|
 | `draft` | a draft PR |
-| `conflicts` | GitHub says it does not merge cleanly (`CONFLICTING`) |
-| `checks-failing` | a check failed (each check counted once, by its latest run) |
-| `changes-requested` | the review decision, or with no required review the latest reviews, ask for changes |
+| `conflicts` | GitHub says it does not merge cleanly (`mergeable` `CONFLICTING` or merge state `DIRTY`) |
+| `checks-failing` | a check failed: each check counted once, by its latest run (a queued re-run is the latest); a completed run counts as failed unless it ended `SUCCESS`, `NEUTRAL` or `SKIPPED` |
+| `changes-requested` | the review decision is `CHANGES_REQUESTED`, or, with no review required, a latest review asks for changes |
 | `checks-pending` | a check is still queued or running |
-| `review-pending` | no approval yet |
-| `approved` | approved, but a review thread is unresolved or GitHub has not said it merges |
-| `mergeable` | approved, checks green, no unresolved thread, mergeable: ready to merge |
+| `review-pending` | the repository requires an approval and has none yet |
+| `approved` | approval is satisfied (approved, or no review required) but a review thread is unresolved, or GitHub does not let it merge yet (merge state `BLOCKED`, `BEHIND`, `UNKNOWN`, or `mergeable` not `MERGEABLE`) |
+| `mergeable` | checks green, approval satisfied, no unresolved thread, `MERGEABLE`, merge state `CLEAN`, `HAS_HOOKS` or `UNSTABLE`: ready to merge |
 
-A PR belongs to the item whose `pr` field names it (number or URL), else to the item claimed on
-its head branch, and that gives its worktree. `checks-failing`, `changes-requested` and `mergeable`
-each add an attention row (`pr-failing`, `pr-changes-requested`, `pr-mergeable`), and `counts`
-carries `prsFailing`, `prsChangesRequested` and `prsMergeable`.
+A PR belongs to the item whose `pr` field names it (a number, or its URL compared without case or
+scheme), else to the item claimed on its head branch unless the PR comes from a fork, and that
+gives its worktree. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
+(`pr-failing`, `pr-changes-requested`, `pr-mergeable`), and `counts` carries `pullsFailing`,
+`pullsChangesRequested` and `pullsMergeable`.
 
 ## Sources and cadence
 | Source | How | Every |
@@ -73,18 +74,20 @@ carries `prsFailing`, `prsChangesRequested` and `prsMergeable`.
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
-| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads; a project not on the github adapter reports a freshness error instead | 60s |
+| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project not on the github adapter, or without `github.repo`, reports `ok` with `error: "not applicable: …"` and is never read | 60s |
 
 The daemon never writes to a project. The next slice adds actions: every button in the UI runs a
 flow script through the daemon, which streams its output and logs it.
 
 ## Reconciliation
 `daemon/src/reconcile.ts` is a pure function from the collected facts to the snapshot, with the
-clock injected. It derives states, ages, the attention list and the disagreements between the six
+clock injected. It derives states, ages, the attention list and the disagreements between the seven
 places flow state lives (claims, gate records, run records, the process list, issue labels and
-state, the project card): a run record with no process, an agent in a worktree without a claim,
-a claim whose step differs from the issue, a gate record the labels do not show, an item at step
-done whose PR is ready to merge (state `mergeable`) with no merge gate.
+state, the project card, pull requests): a run record with no process, an agent in a worktree
+without a claim, a claim whose step differs from the issue, a gate record the labels do not show,
+and an open item at step done that waits on a merge with no merge gate. That last rule takes the
+best evidence there is: with pull requests read, the item's PR is in state `mergeable`; when the
+`pulls` source was never read or does not apply, the issue state naming a PR is enough.
 
 ## Develop
 ```bash

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { BoardItem } from '../src/collectors/board.ts';
 import { parseBoard } from '../src/collectors/board.ts';
 import { readFlowHome } from '../src/collectors/flowHome.ts';
 import { readGit } from '../src/collectors/git.ts';
@@ -97,7 +98,7 @@ test('Items_BodyDropped', async () => {
 test('Disagreements_DeadRunGateLabelsAndMergeless', async () => {
   const messages = (await snapshot()).disagreements.map((entry) => entry.sources.join(' vs '));
   assert.ok(messages.includes('gate record vs issue labels'), 'because gh#7 has a gate record and the issue says none');
-  assert.ok(messages.includes('issue state vs pull request'), 'because gh#20 is done, its PR is ready to merge and no merge gate asks for it');
+  assert.ok(messages.includes('issue state vs pull request'), 'because gh#20 is done with an open PR and no merge gate');
   assert.equal(messages.includes('run record vs process list'), false, 'because gh#9 has both a record and a process');
 });
 
@@ -131,23 +132,40 @@ test('NoBoardYet_EngagedItemsStillListed', async () => {
 });
 
 const READY: PullFact = {
-  number: 30, title: 'Thirty', url: 'https://example/pull/30', branch: 'flow/gh-30', base: 'main', head: '3030303', author: 'someone',
-  draft: false, mergeable: 'MERGEABLE', mergeState: 'CLEAN', reviewDecision: 'APPROVED', approvals: 1, changesRequested: 0,
-  requestedReviewers: [], checks: { passed: 3, failed: 0, pending: 0 }, unresolvedThreads: 0,
+  number: 30, title: 'Thirty', url: 'https://example/pull/30', branch: 'flow/gh-30', base: 'main', author: 'someone',
+  draft: false, crossRepository: false, mergeable: 'MERGEABLE', mergeState: 'CLEAN', reviewDecision: 'APPROVED', changesRequested: 0,
+  checks: { passed: 3, failed: 0, pending: 0 }, unresolvedThreads: 0,
   createdAt: '2026-10-23T18:16:04Z', updatedAt: '2026-10-24T17:16:04Z',
 };
 const ready = (change: Partial<PullFact>): PullFact => ({ ...READY, ...change });
+const pullNumbered = (picture: Snapshot, pullNumber: number) => picture.pulls.find((pull) => pull.number === pullNumber);
+const withBoardItem = (facts: ReconcileInput, id: string, change: Partial<BoardItem['state']>): ReconcileInput => ({
+  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)) },
+});
+const mergeDisagreements = (picture: Snapshot) => picture.disagreements.filter((entry) => entry.sources.join(' vs ') === 'issue state vs pull request');
 
 test('PullState_ApprovedGreenCleanMergeable_Mergeable', () => {
   assert.equal(pullState(READY), 'mergeable', 'because nothing stands between the pull and a merge');
+});
+
+test('PullState_NoReviewRequiredGreenClean_Mergeable', () => {
+  assert.equal(pullState(ready({ reviewDecision: null })), 'mergeable', 'because a repository that requires no review needs no approval');
+});
+
+test('PullState_NoReviewRequiredUnstable_Mergeable', () => {
+  assert.equal(pullState(ready({ reviewDecision: null, mergeState: 'UNSTABLE' })), 'mergeable', 'because UNSTABLE only means a check no rule requires is red');
 });
 
 test('PullState_DraftWithEverythingWrong_Draft', () => {
   assert.equal(pullState(ready({ draft: true, mergeable: 'CONFLICTING', checks: { passed: 0, failed: 2, pending: 0 } })), 'draft', 'because a draft is not asking for anything yet');
 });
 
-test('PullState_ConflictsAndFailingChecks_Conflicts', () => {
+test('PullState_ConflictingWithFailingChecks_Conflicts', () => {
   assert.equal(pullState(ready({ mergeable: 'CONFLICTING', checks: { passed: 0, failed: 2, pending: 0 } })), 'conflicts', 'because checks on a conflicting head say little until the base is merged in');
+});
+
+test('PullState_MergeStateDirty_Conflicts', () => {
+  assert.equal(pullState(ready({ mergeable: 'UNKNOWN', mergeState: 'DIRTY' })), 'conflicts', 'because DIRTY is GitHub saying the merge commit cannot be made');
 });
 
 test('PullState_FailingChecksAndChangesRequested_ChecksFailing', () => {
@@ -158,20 +176,16 @@ test('PullState_ChangesRequestedWithPendingChecks_ChangesRequested', () => {
   assert.equal(pullState(ready({ reviewDecision: 'CHANGES_REQUESTED', checks: { passed: 1, failed: 0, pending: 1 } })), 'changes-requested', 'because a reviewer asked for changes whatever the running check says');
 });
 
-test('PullState_NoDecisionButRequestingReview_ChangesRequested', () => {
-  assert.equal(pullState(ready({ reviewDecision: null, approvals: 1, changesRequested: 1 })), 'changes-requested', 'because without a required review the latest reviews decide');
+test('PullState_NoDecisionWithChangesRequestedReview_ChangesRequested', () => {
+  assert.equal(pullState(ready({ reviewDecision: null, changesRequested: 1 })), 'changes-requested', 'because an explicit request for changes blocks even where no review is required');
 });
 
 test('PullState_PendingChecks_ChecksPending', () => {
   assert.equal(pullState(ready({ checks: { passed: 2, failed: 0, pending: 1 } })), 'checks-pending', 'because a check is still running');
 });
 
-test('PullState_GreenWithoutApproval_ReviewPending', () => {
-  assert.equal(pullState(ready({ reviewDecision: 'REVIEW_REQUIRED', approvals: 1 })), 'review-pending', 'because the repo still requires another approval');
-});
-
-test('PullState_NoDecisionNoReviews_ReviewPending', () => {
-  assert.equal(pullState(ready({ reviewDecision: null, approvals: 0 })), 'review-pending', 'because nobody approved yet');
+test('PullState_ReviewRequired_ReviewPending', () => {
+  assert.equal(pullState(ready({ reviewDecision: 'REVIEW_REQUIRED', mergeState: 'BLOCKED' })), 'review-pending', 'because the repository still requires an approval');
 });
 
 test('PullState_ApprovedWithUnresolvedThread_Approved', () => {
@@ -179,46 +193,58 @@ test('PullState_ApprovedWithUnresolvedThread_Approved', () => {
 });
 
 test('PullState_ApprovedButMergeabilityUnknown_Approved', () => {
-  assert.equal(pullState(ready({ mergeable: 'UNKNOWN' })), 'approved', 'because GitHub has not yet said the pull merges cleanly');
+  assert.equal(pullState(ready({ mergeable: 'UNKNOWN', mergeState: 'UNKNOWN' })), 'approved', 'because GitHub has not yet said the pull merges cleanly');
 });
 
-test('Pulls_FixtureStates', async () => {
+test('PullState_ApprovedButBlocked_Approved', () => {
+  assert.equal(pullState(ready({ mergeState: 'BLOCKED' })), 'approved', 'because a branch rule still stops the merge');
+});
+
+test('PullState_NoReviewRequiredButBehind_Approved', () => {
+  assert.equal(pullState(ready({ reviewDecision: null, mergeState: 'BEHIND' })), 'approved', 'because the branch must take the base before it can merge');
+});
+
+test('FixturePulls_EachStopsAtItsOwnState', async () => {
   const states = Object.fromEntries((await snapshot()).pulls.map((pull) => [pull.number, pull.state]));
-  assert.deepEqual(states, { 560: 'checks-failing', 20: 'mergeable', 21: 'changes-requested', 22: 'draft' }, 'because each fixture pull stops at a different step of the precedence');
+  assert.deepEqual(states, { 560: 'checks-failing', 20: 'mergeable', 21: 'changes-requested', 22: 'draft', 23: 'approved' }, 'because each fixture pull stops at a different step of the precedence');
 });
 
 test('Pulls_ItemPrUrl_LinksItem', async () => {
-  const twenty = (await snapshot()).pulls.find((pull) => pull.number === 20);
-  assert.equal(twenty?.item, 'gh#20', 'because the issue state names the pull by URL');
+  assert.equal(pullNumbered(await snapshot(), 20)?.item, 'gh#20', 'because the issue state names the pull by URL');
+});
+
+test('Pulls_ItemPrUrlOtherCaseAndScheme_LinksItem', async () => {
+  const facts = withBoardItem(await input(), 'gh#20', { pr: 'http://EXAMPLE/pull/20/' });
+  assert.equal(pullNumbered(reconcile(facts), 20)?.item, 'gh#20', 'because host and path compare without case and either scheme names the same pull');
 });
 
 test('Pulls_ItemPrNumber_LinksItemBeforeBranch', async () => {
-  const facts = await input();
-  facts.board = { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#12' ? { ...item, state: { ...item.state, pr: '#21' } } : item)) };
-  const twentyOne = reconcile(facts).pulls.find((pull) => pull.number === 21);
-  assert.equal(twentyOne?.item, 'gh#12', 'because the item that names the pull wins over a branch that happens to match');
+  const facts = withBoardItem(await input(), 'gh#12', { pr: '#21' });
+  assert.equal(pullNumbered(reconcile(facts), 21)?.item, 'gh#12', 'because the item that names the pull wins over a branch that happens to match');
 });
 
 test('Pulls_ItemPrUrlOfAnotherRepo_NoLink', async () => {
-  const facts = await input();
-  facts.board = { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#20' ? { ...item, state: { ...item.state, pr: 'https://elsewhere/pull/20' } } : item)) };
-  const twenty = reconcile(facts).pulls.find((pull) => pull.number === 20);
-  assert.equal(twenty?.item, null, 'because the same number in another repository is another pull');
+  const facts = withBoardItem(await input(), 'gh#20', { pr: 'https://elsewhere/pull/20' });
+  assert.equal(pullNumbered(reconcile(facts), 20)?.item, null, 'because the same number in another repository is another pull');
 });
 
 test('Pulls_ClaimBranch_LinksItemAndWorktree', async () => {
-  const twentyOne = (await snapshot()).pulls.find((pull) => pull.number === 21);
+  const twentyOne = pullNumbered(await snapshot(), 21);
   assert.deepEqual([twentyOne?.item, twentyOne?.worktree], ['gh#9', 'project-wt-3'], 'because the pull head is the branch claimed in project-wt-3');
 });
 
-test('Pulls_AgesFromCreatedAndUpdated', async () => {
-  const twenty = (await snapshot()).pulls.find((pull) => pull.number === 20);
+test('Pulls_ForkOnClaimedBranchName_NoLink', async () => {
+  assert.equal(pullNumbered(await snapshot(), 23)?.item, null, 'because a fork branch named like a claim is someone else\'s branch');
+});
+
+test('OpenedAndUpdatedTimes_GiveAgeAndIdleSeconds', async () => {
+  const twenty = pullNumbered(await snapshot(), 20);
   assert.deepEqual([twenty?.ageSeconds, twenty?.idleSeconds], [375364, 22564], 'because it was opened at 10:00 four days before now and last touched at noon today');
 });
 
 test('Attention_PullRows_FailingChangesRequestedMergeable', async () => {
   const rows = (await snapshot()).attention.filter((row) => row.kind.startsWith('pr-'));
-  assert.deepEqual(rows.map((row) => [row.kind, row.id]).sort(), [['pr-changes-requested', 'gh#9'], ['pr-failing', '#560'], ['pr-mergeable', 'gh#20']], 'because a draft asks for nothing and each other state names its item, or the pull when no item claims it');
+  assert.deepEqual(rows.map((row) => [row.kind, row.id]).sort(), [['pr-changes-requested', 'gh#9'], ['pr-failing', '#560'], ['pr-mergeable', 'gh#20']], 'because a draft or a blocked pull asks for nothing, and each other row names its item, or the pull when no item has it');
 });
 
 test('Attention_MergeablePull_ReadyToMerge', async () => {
@@ -226,21 +252,34 @@ test('Attention_MergeablePull_ReadyToMerge', async () => {
   assert.equal(row?.title, '#20 ready to merge', 'because the row tells you what to do');
 });
 
+test('Disagreement_DonePullMergeableNoMergeGate_Raised', async () => {
+  assert.equal(mergeDisagreements(await snapshot())[0]?.item, 'gh#20', 'because gh#20 is done and its PR is ready, yet no merge gate asks for it');
+});
+
 test('Disagreement_DonePullMergeableWithMergeGate_None', async () => {
-  const facts = await input();
-  facts.board = { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#20' ? { ...item, state: { ...item.state, gate: 'merge' } } : item)) };
-  const sources = reconcile(facts).disagreements.map((entry) => entry.sources.join(' vs '));
-  assert.equal(sources.includes('issue state vs pull request'), false, 'because the merge gate already asks you to merge it');
+  const facts = withBoardItem(await input(), 'gh#20', { gate: 'merge' });
+  assert.deepEqual(mergeDisagreements(reconcile(facts)), [], 'because the merge gate already asks you to merge it');
 });
 
 test('Disagreement_DonePullNotMergeable_None', async () => {
   const facts = await input();
   facts.pulls = { pulls: (facts.pulls?.pulls ?? []).map((pull) => (pull.number === 20 ? { ...pull, unresolvedThreads: 1 } : pull)) };
-  const sources = reconcile(facts).disagreements.map((entry) => entry.sources.join(' vs '));
-  assert.equal(sources.includes('issue state vs pull request'), false, 'because a pull with an open thread is not ready, so nothing is missing a merge gate');
+  assert.deepEqual(mergeDisagreements(reconcile(facts)), [], 'because a pull with an open thread is not ready, so nothing is missing a merge gate');
 });
 
-test('Counts_PullStates', async () => {
+test('Disagreement_PullsUnreadDoneItemNamesPr_Raised', async () => {
+  const facts = await input();
+  facts.pulls = null;
+  assert.equal(mergeDisagreements(reconcile(facts))[0]?.item, 'gh#20', 'because without pull requests the issue naming a PR is the evidence it waits on a merge');
+});
+
+test('Disagreement_PullsUnreadClosedItem_None', async () => {
+  const facts = await input();
+  facts.pulls = null;
+  assert.equal(mergeDisagreements(reconcile(facts)).some((entry) => entry.item === 'gh#2'), false, 'because a closed item has nothing left to merge');
+});
+
+test('FixturePulls_CountedByState', async () => {
   const { counts } = await snapshot();
-  assert.deepEqual([counts.prsMergeable, counts.prsFailing, counts.prsChangesRequested], [1, 1, 1], 'because the fixture holds one ready, one failing and one with changes requested');
+  assert.deepEqual([counts.pullsMergeable, counts.pullsFailing, counts.pullsChangesRequested], [1, 1, 1], 'because the fixture holds one ready, one failing and one with changes requested');
 });

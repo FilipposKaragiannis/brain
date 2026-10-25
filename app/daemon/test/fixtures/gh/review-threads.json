@@ -38,6 +38,11 @@
         "reviewThreads": {
           "nodes": []
         }
+      },
+      "pr23": {
+        "reviewThreads": {
+          "nodes": []
+        }
       }
     }
   }

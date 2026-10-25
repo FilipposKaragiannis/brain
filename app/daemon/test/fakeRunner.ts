@@ -43,7 +43,11 @@ export const BOARD_JSON = JSON.stringify({
   ],
 });
 
-/** A trimmed capture of `gh pr list --json` on a real repository, with three made-up pulls beside it. */
+/**
+ * `gh pr list --json` shaped from real captures: #560 is an open pull as gh printed it, and #20
+ * carries the real check rollup of a merged pull whose domain tests failed on one run and passed
+ * on a later one (two job ids). #21, #22 and the fork #23 are built by hand in the same shape.
+ */
 export const PULL_LIST_JSON = readFileSync(path.join(FIXTURES, 'gh', 'pr-list.json'), 'utf8');
 export const REVIEW_THREADS_JSON = readFileSync(path.join(FIXTURES, 'gh', 'review-threads.json'), 'utf8');
 
