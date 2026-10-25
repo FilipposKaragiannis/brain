@@ -9,6 +9,12 @@ export function isActive(state: ActionState): boolean {
   return state === 'running';
 }
 
+/** The word a record shows: `started` for one that handed its work on (a job given to launchd), else its state. */
+export function actionStateLabel(record: ActionRecord): string {
+  if (record.state === 'done' && record.outcome === 'started') return 'started';
+  return record.state;
+}
+
 /**
  * Whether an action is the one a button stands for: the same kind, and every argument the button
  * names has the same value. A gate's Answer button names the item, not the message it sends.

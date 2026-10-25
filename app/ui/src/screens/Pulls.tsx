@@ -1,5 +1,7 @@
 import type { PullRequest, Snapshot } from '../../../daemon/src/snapshot.ts';
 import { Age } from '../clock.tsx';
+import { ExternalLink, ItemLink } from '../links.tsx';
+import type { ItemPages } from '../links.tsx';
 import { pullRowsFromItems } from '../pulls.ts';
 import type { PullRequestRow } from '../pulls.ts';
 import { itemTone, pullTone } from '../status.ts';
@@ -15,13 +17,13 @@ export function Pulls({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div className="screen">
       <Module className="pulls" title="Pull requests" aside={aside} footer={<SourceFreshness name="pulls" freshness={snapshot.sources.pulls} />}>
-        {pullsRead ? <PullTable pulls={snapshot.pulls} takenAt={snapshot.takenAt} /> : <PullRequestTable rows={pullRowsFromItems(snapshot.items, snapshot.project.repo)} />}
+        {pullsRead ? <PullTable pulls={snapshot.pulls} takenAt={snapshot.takenAt} pages={snapshot} /> : <PullRequestTable rows={pullRowsFromItems(snapshot.items, snapshot.project.repo)} pages={snapshot} />}
       </Module>
     </div>
   );
 }
 
-function PullTable({ pulls, takenAt }: { pulls: PullRequest[]; takenAt: string }) {
+function PullTable({ pulls, takenAt, pages }: { pulls: PullRequest[]; takenAt: string; pages: ItemPages }) {
   if (pulls.length === 0) return <Empty>No open pull request.</Empty>;
   return (
     <div className="scroll">
@@ -30,12 +32,12 @@ function PullTable({ pulls, takenAt }: { pulls: PullRequest[]; takenAt: string }
         <tbody>
           {pulls.map((pull) => (
             <tr key={pull.number}>
-              <td className="mono"><a href={pull.url} target="_blank" rel="noreferrer">#{pull.number}</a></td>
+              <td><ExternalLink url={pull.url} className="mono">#{pull.number}</ExternalLink></td>
               <td className="strong clip" title={pull.title}>{pull.title}</td>
               <td><Chip tone={pullTone(pull.state)}>{pull.state}</Chip></td>
               <td className="mono" title="passed / failed / pending">{pull.checks.passed} / {pull.checks.failed} / {pull.checks.pending}</td>
               <td className="mono">{pull.unresolvedThreads}</td>
-              <td className="mono">{pull.item ?? '—'}</td>
+              <td>{pull.item === null ? '—' : <ItemLink id={pull.item} pages={pages} />}</td>
               <td className="mono">{pull.worktree ?? '—'}</td>
               <td className="mono"><Age seconds={pull.idleSeconds} takenAt={takenAt} /></td>
               <td>{pull.state === 'mergeable' && <ActionButton kind="pr.merge" args={{ pr: String(pull.number) }} label="Merge" primary={true} />}</td>
@@ -48,7 +50,7 @@ function PullTable({ pulls, takenAt }: { pulls: PullRequest[]; takenAt: string }
 }
 
 /** The fallback table from items; it renders any list of rows, whichever source built them. */
-export function PullRequestTable({ rows }: { rows: PullRequestRow[] }) {
+export function PullRequestTable({ rows, pages }: { rows: PullRequestRow[]; pages: ItemPages }) {
   if (rows.length === 0) return <Empty>No item has a pull request.</Empty>;
   return (
     <table className="table">
@@ -56,9 +58,9 @@ export function PullRequestTable({ rows }: { rows: PullRequestRow[] }) {
       <tbody>
         {rows.map((row) => (
           <tr key={`${row.item}:${row.pr}`}>
-            <td className="mono">{row.item}</td>
+            <td><ItemLink id={row.item} pages={pages} /></td>
             <td className="strong">{row.title}</td>
-            <td className="mono">{row.url === null ? row.pr : <a href={row.url} target="_blank" rel="noreferrer">{row.pr}</a>}</td>
+            <td><ExternalLink url={row.url} className="mono">{row.pr}</ExternalLink></td>
             <td><Chip tone={itemTone(row.state)}>{row.state}</Chip></td>
             <td className="mono">{row.worktree ?? '—'}</td>
           </tr>

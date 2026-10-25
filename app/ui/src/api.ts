@@ -60,3 +60,14 @@ function parseJson(text: string): unknown {
 export function projectPath(projectId: string, rest: string): string {
   return `/api/projects/${encodeURIComponent(projectId)}${rest}`;
 }
+
+/** How long the page waits before it asks a daemon that did not answer again. */
+export const DAEMON_RETRY_MS = 10000;
+const HTTP_UNAUTHORIZED = 401;
+
+/** What the page says when the daemon did not give it what it asked for, the same words on every screen. */
+export function unreachableMessage(status: number): string {
+  if (status === HTTP_UNAUTHORIZED) return 'Token needed: open the page with ?token=<token>';
+  if (status === 0) return 'Daemon not reachable';
+  return `The daemon answered ${status}`;
+}

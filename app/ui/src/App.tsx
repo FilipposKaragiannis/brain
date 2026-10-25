@@ -2,10 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Counts, Snapshot } from '../../daemon/src/snapshot.ts';
 import { isActive } from './actions.ts';
 import { ActionsDrawer } from './ActionsDrawer.tsx';
+import { DAEMON_RETRY_MS, unreachableMessage } from './api.ts';
 import { useServices } from './console.tsx';
 import { clockTime, useNow } from './clock.tsx';
 import { parseRoute, routeHash, SCREENS } from './route.ts';
 import type { Route, Screen } from './route.ts';
+import { ProjectHeader } from './ProjectHeader.tsx';
+import { Activity } from './screens/Activity.tsx';
 import { Agents } from './screens/Agents.tsx';
 import { Gates } from './screens/Gates.tsx';
 import { Overview } from './screens/Overview.tsx';
@@ -21,8 +24,7 @@ type ProjectSummary = { id: string; name: string; counts: Counts | null };
 /** The project list, or why it could not be read. */
 type ProjectList = { kind: 'loading' } | { kind: 'listed'; projects: ProjectSummary[] } | { kind: 'unreachable'; message: string };
 
-export const PROJECTS_RETRY_MS = 10000;
-const HTTP_UNAUTHORIZED = 401;
+export const PROJECTS_RETRY_MS = DAEMON_RETRY_MS;
 
 export function App() {
   const route = useRoute();
@@ -80,10 +82,10 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
           ))}
           <div className="nav-foot">
             <LinkStatus link={link} />
-            <span>flow {snapshot?.project.pluginVersion ?? '?'}</span>
           </div>
         </nav>
         <main className="main">
+          {snapshot !== null && <ProjectHeader project={snapshot.project} />}
           <header className="page-head">
             <h1>{SCREENS.find((entry) => entry.screen === route.screen)?.label}</h1>
             <div className="page-tools">
@@ -106,6 +108,7 @@ function ScreenView({ route, snapshot, go }: { route: Route; snapshot: Snapshot;
     case 'worktrees': return <Worktrees snapshot={snapshot} />;
     case 'agents': return <Agents snapshot={snapshot} />;
     case 'pulls': return <Pulls snapshot={snapshot} />;
+    case 'activity': return <Activity key={route.detail ?? ''} snapshot={snapshot} item={route.detail} go={go} />;
   }
 }
 
@@ -115,7 +118,7 @@ function NavBadge({ screen, snapshot }: { screen: Screen; snapshot: Snapshot }) 
     case 'gates': return snapshot.gates.length > 0 ? <span className="badge tone-needs-you">{snapshot.gates.length}</span> : null;
     case 'worktrees': return <span className="badge-plain">{pool.filter((worktree) => worktree.claim !== null).length} / {pool.length}</span>;
     case 'agents': return snapshot.counts.agents > 0 ? <span className="badge-plain tone-running"><Dot tone="running" />{snapshot.counts.agents} live</span> : null;
-    case 'overview': case 'pulls': return null;
+    case 'overview': case 'pulls': case 'activity': return null;
   }
 }
 
@@ -158,10 +161,4 @@ function useProjects(): ProjectList {
     return () => { cancelled = true; if (retry !== null) clearTimeout(retry); };
   }, [api]);
   return list;
-}
-
-function unreachableMessage(status: number): string {
-  if (status === HTTP_UNAUTHORIZED) return 'Token needed: open the page with ?token=<token>';
-  if (status === 0) return 'Daemon not reachable';
-  return `The daemon answered ${status}`;
 }

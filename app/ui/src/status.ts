@@ -1,5 +1,5 @@
 import type { AttentionKind, Freshness, ItemState, Job, PullState, WorktreeState } from '../../daemon/src/snapshot.ts';
-import type { ActionState } from './actions.ts';
+import type { ActionRecord, ActionState } from './actions.ts';
 
 /**
  * The console's one status language. Every state anywhere on the page maps to one of five tones:
@@ -57,6 +57,12 @@ export function actionTone(state: ActionState): Tone {
     case 'done': return 'quiet';
     case 'failed': case 'rejected': return 'failing';
   }
+}
+
+/** A record's tone: an action that started work elsewhere reads as live work, not as finished. */
+export function actionRecordTone(record: ActionRecord): Tone {
+  if (record.state === 'done' && record.outcome === 'started') return 'running';
+  return actionTone(record.state);
 }
 
 export function freshnessTone(freshness: Freshness): Tone {

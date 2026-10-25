@@ -1,9 +1,12 @@
 import type { ReactNode } from 'react';
-import type { Snapshot } from '../../daemon/src/snapshot.ts';
+import type { Disagreement, Readiness, FlowEvent, Gate, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord } from '../src/actions.ts';
 import type { Api, ApiResponse, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
+import { ClockProvider } from '../src/clock.tsx';
 import { ServicesProvider } from '../src/console.tsx';
+import { ActionsProvider } from '../src/ui.tsx';
+import { useActions } from '../src/useActions.ts';
 import { StreamHub } from '../src/stream.ts';
 
 export const HTTP_OK = 200;
@@ -101,6 +104,12 @@ export class FakeDaemon implements Api {
     return ({ children }) => <ServicesProvider services={services}>{children}</ServicesProvider>;
   }
 
+  /** What a screen sits in on the page: the services, a clock stopped at `TAKEN_AT`, and the project's actions. */
+  screenWrapper(): (props: { children: ReactNode }) => ReactNode {
+    const Services = this.wrapper();
+    return ({ children }) => <Services><ClockProvider clock={stoppedClock}><WithActions>{children}</WithActions></ClockProvider></Services>;
+  }
+
   private eventSent(): void {
     this.eventsSent += 1;
     const due = this.held.filter((entry) => entry.dueAt <= this.eventsSent);
@@ -136,4 +145,51 @@ export function actionRecord(id: string, state: ActionRecord['state'], args: Rec
     requestedAt: TAKEN_AT, startedAt: TAKEN_AT, endedAt: ended ? ENDED_AT : null,
     exitCode: state === 'done' ? 0 : ended ? 1 : null, timedOut: false, outcome: state === 'done' ? 'started' : null, outputTail: '', outputBytes: 0,
   };
+}
+
+const stoppedClock = (): number => Date.parse(TAKEN_AT);
+
+function WithActions({ children }: { children: ReactNode }) {
+  return <ActionsProvider actions={useActions('project')}>{children}</ActionsProvider>;
+}
+
+/** A board item with its tracker page. */
+export function boardItem(id: string, title: string): Item {
+  return {
+    id, title, kind: 'task', size: 'M', priority: 'P2', status: 'open', state: 'ready', step: '', gate: 'none', worktree: null, pr: null,
+    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null,
+  };
+}
+
+/** A free pool worktree; tests spread what they need over it. */
+export function poolWorktree(name: string): Worktree {
+  return {
+    name, path: `/p-wt/${name}`, role: 'pool', state: 'free', flags: [], branch: null, head: null, aheadOfBase: 0, behindBase: 0, dirtyFiles: 0,
+    lastCommitAt: null, claim: null, claimAgeSeconds: null, item: null, itemUrl: null, itemTitle: null, gate: null, staleReason: null, agents: [], sessions: [],
+  };
+}
+
+export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo {
+  return { pid, host: 'claude', command: `/Applications/Claude.app/claude --session ${pid}`, elapsedSeconds };
+}
+
+export function waitingGate(item: string, gate: string): Gate {
+  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null };
+}
+
+export function boardDisagreement(item: string): Disagreement {
+  return {
+    item, worktree: null, sources: ['gate record', 'issue labels'], message: `${item}: the gate record says merge, the labels say none.`,
+    explain: 'The gate record says merge while the labels show no gate; the gate record is usually right and the labels catch up.',
+    action: { kind: 'refresh', args: { source: 'board' }, label: 'Re-read the board' },
+  };
+}
+
+export function flowEvent(item: string | null, kind: string, message: string): FlowEvent {
+  return { at: TAKEN_AT, item, kind, message };
+}
+
+/** Readiness with every bucket empty but the ones a test names. */
+export function readiness(buckets: Partial<Readiness>): Readiness {
+  return { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0, ...buckets };
 }

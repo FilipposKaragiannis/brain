@@ -11,7 +11,7 @@ import type { ActionRecord } from '../src/snapshot.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
 import type { SourceName } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
-import { fakeScheduler, fakeSpawner, plainSpawner, settle } from './fakeSpawner.ts';
+import { fakeScheduler, fakeSpawner, plainSpawner, settle, until } from './fakeSpawner.ts';
 import type { FakeSpawnerOptions } from './fakeSpawner.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'] };
@@ -218,7 +218,7 @@ test('RunStart_Detached_HoldsTheLockUntilTheRunEnds', async () => {
     assert.equal(actions.get(record.id)?.state, 'running', 'because the run is still going');
     assert.equal(actions.request('worktree.release', { target: 'gh#9', force: 'true' }).status, HTTP_CONFLICT, 'because the item is held for the life of the run, so nobody resets its worktree under the agent');
     processes[0]!.exit(0, null);
-    await settle();
+    await until(() => actions.get(record.id)?.state !== 'running');
     const ended = actions.get(record.id)!;
     assert.equal(ended.state, 'done', 'because the run ended well');
     assert.match(ended.output ?? '', /started pid 4001/, 'because the pid lets the process list find it');
@@ -231,7 +231,7 @@ test('RunStart_Detached_AuditNeverOverwritesTheRunsFile', async () => {
   try {
     const record = actionOf(actions.request('run.start', { item: 'gh#9' }));
     processes[0]!.exit(0, null);
-    await settle();
+    await until(() => actions.get(record.id)?.state !== 'running');
     await auditLines();
     assert.equal(await readFile(path.join(stateDir, 'app', 'actions', `${record.id}.log`), 'utf8'), 'skipped: run 123 still going\n', 'because the file is the run\'s, the audit only reads it');
   } finally { await cleanup(); }

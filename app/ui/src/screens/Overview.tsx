@@ -1,13 +1,18 @@
-import type { AttentionRow, Snapshot, SourceName, Worktree } from '../../../daemon/src/snapshot.ts';
+import type { Snapshot, SourceName, Worktree } from '../../../daemon/src/snapshot.ts';
 import { Age, clockTime } from '../clock.tsx';
+import { ItemLink } from '../links.tsx';
+import type { ItemPages } from '../links.tsx';
+import { readinessSentence } from '../readiness.ts';
 import type { Route } from '../route.ts';
 import { routeHash } from '../route.ts';
-import { attentionTone, countTone, worktreeTone } from '../status.ts';
+import { countTone, worktreeTone } from '../status.ts';
 import type { Tone } from '../status.ts';
-import { Chip, Dot, Empty, Flags, Module, SourceFreshness } from '../ui.tsx';
+import { Dot, Empty, Flags, Module, SourceFreshness } from '../ui.tsx';
+import { Disagreements } from './Disagreements.tsx';
+import { NeedsYou } from './NeedsYou.tsx';
 
 const EVENTS_SHOWN = 30;
-const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board'];
+const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board', 'pulls'];
 
 /** A tile links to the screen that explains its count; `null` when no other screen does. */
 type Tile = { label: string; count: number; tone: Tone; screen: Route['screen'] | null };
@@ -22,11 +27,6 @@ export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
     { label: 'Free', count: counts.free, tone: 'quiet', screen: 'worktrees' },
     { label: 'Disagreements', count: counts.disagreements, tone: countTone(counts.disagreements, 'failing'), screen: null },
   ];
-  const rowTarget = (row: AttentionRow): Route | null => {
-    if (row.kind === 'gate') return { projectId, screen: 'gates', detail: row.id };
-    if (row.worktree !== null) return { projectId, screen: 'worktrees', detail: null };
-    return null;
-  };
   return (
     <div className="screen">
       <section className="tiles" aria-label="Status">
@@ -37,10 +37,12 @@ export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
             : <a key={tile.label} className={`tile tone-${tile.tone}`} href={routeHash({ projectId, screen: tile.screen, detail: null })}>{body}</a>;
         })}
       </section>
+      <p className="readiness" aria-label="Readiness">{readinessSentence(snapshot.readiness, counts, snapshot.worktrees)}</p>
       <div className="columns">
-        <NeedsYou snapshot={snapshot} target={rowTarget} go={go} />
+        <NeedsYou snapshot={snapshot} go={go} />
         <Events snapshot={snapshot} />
       </div>
+      <Disagreements snapshot={snapshot} />
       <Pool snapshot={snapshot} />
       <Module className="sources" title="Sources" aside={null} footer={<span>taken at {clockTime(snapshot.takenAt)} · <Age seconds={0} takenAt={snapshot.takenAt} /> ago</span>}>
         <ul className="source-strip">
@@ -51,56 +53,26 @@ export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
   );
 }
 
-function NeedsYou({ snapshot, target, go }: { snapshot: Snapshot; target: (row: AttentionRow) => Route | null; go: (route: Route) => void }) {
-  const rows = [...snapshot.attention].sort(oldestFirst);
-  return (
-    <Module className="needs-you" title="Needs you" aside={<span className="muted">oldest first</span>} footer={<SourceFreshness name="files" freshness={snapshot.sources.files} />}>
-      {rows.length === 0 ? <Empty>Nothing waits on you.</Empty> : (
-        <table className="table">
-          <thead><tr><th>Kind</th><th>Item</th><th>Title</th><th>Detail</th><th>Worktree</th><th>Age</th></tr></thead>
-          <tbody>
-            {rows.map((row) => {
-              const destination = target(row);
-              return (
-              <tr key={`${row.kind}:${row.id}:${row.worktree ?? ''}`}>
-                <td><Chip tone={attentionTone(row.kind)}>{row.kind}</Chip></td>
-                <td className="mono">{destination === null ? row.id : <button type="button" className="row-link" onClick={() => go(destination)}>{row.id}</button>}</td>
-                <td className="strong">{row.title}</td>
-                <td className="clip" title={row.detail}>{row.detail}</td>
-                <td className="mono">{row.worktree ?? '—'}</td>
-                <td className="mono"><Age seconds={row.ageSeconds} takenAt={snapshot.takenAt} /></td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </Module>
-  );
-}
-
-function oldestFirst(left: AttentionRow, right: AttentionRow): number {
-  return (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1);
-}
-
 function Pool({ snapshot }: { snapshot: Snapshot }) {
   const pool = snapshot.worktrees.filter((worktree) => worktree.role === 'pool');
   const max = snapshot.project.poolMax;
   return (
     <Module className="pool" title="Pool" aside={<span className="muted">{pool.length}{max === null ? '' : ` of ${max}`} · base {snapshot.project.base}</span>} footer={<SourceFreshness name="git" freshness={snapshot.sources.git} />}>
       {pool.length === 0 ? <Empty>No pool worktrees.</Empty> : (
-        <div className="pool-map">{pool.map((worktree) => <PoolCell key={worktree.name} worktree={worktree} takenAt={snapshot.takenAt} />)}</div>
+        <div className="pool-map">{pool.map((worktree) => <PoolCell key={worktree.name} worktree={worktree} pages={snapshot} takenAt={snapshot.takenAt} />)}</div>
       )}
     </Module>
   );
 }
 
-function PoolCell({ worktree, takenAt }: { worktree: Worktree; takenAt: string }) {
+function PoolCell({ worktree, pages, takenAt }: { worktree: Worktree; pages: ItemPages; takenAt: string }) {
   const tone = worktreeTone(worktree.state);
   return (
-    <div className={`pool-cell tone-${tone}`} title={`${worktree.name}: ${worktree.state}`}>
-      <span className="pool-name"><span className="mono">{worktree.name}</span><Dot tone={tone} /></span>
-      <span className="pool-item">{worktree.item ?? worktree.state}</span>
+    <div className={`pool-cell tone-${tone}`}>
+      <span className="pool-name" title={`${worktree.name}: ${worktree.state}`}><span className="mono">{worktree.name}</span><Dot tone={tone} /></span>
+      {worktree.item === null
+        ? <span className="pool-item">{worktree.state}</span>
+        : <span className="pool-item"><ItemLink id={worktree.item} pages={pages} />{worktree.itemTitle !== null && <span className="pool-title">{worktree.itemTitle}</span>}</span>}
       <span className="pool-note">{worktree.state}{worktree.claimAgeSeconds !== null && <> · <Age seconds={worktree.claimAgeSeconds} takenAt={takenAt} /></>}</span>
       <Flags flags={worktree.flags} />
     </div>
@@ -109,14 +81,15 @@ function PoolCell({ worktree, takenAt }: { worktree: Worktree; takenAt: string }
 
 function Events({ snapshot }: { snapshot: Snapshot }) {
   const events = snapshot.events.slice(0, EVENTS_SHOWN);
+  const all = routeHash({ projectId: snapshot.project.id, screen: 'activity', detail: null });
   return (
-    <Module className="events" title="Activity" aside={<span className="muted">latest {events.length}</span>} footer={<SourceFreshness name="files" freshness={snapshot.sources.files} />}>
+    <Module className="events" title="Activity" aside={<span className="muted">latest {events.length} · <a href={all}>Show all</a></span>} footer={<SourceFreshness name="files" freshness={snapshot.sources.files} />}>
       {events.length === 0 ? <Empty>No events yet.</Empty> : (
         <ol className="event-list">
           {events.map((event, index) => (
             <li key={`${event.at}:${index}`}>
               <span className="mono muted">{clockTime(event.at)}</span>
-              <span className="mono">{event.item ?? ''}</span>
+              <span>{event.item === null ? '' : <ItemLink id={event.item} pages={snapshot} />}</span>
               <span className="event-kind">{event.kind}</span>
               <span className="clip" title={event.message}>{event.message}</span>
             </li>

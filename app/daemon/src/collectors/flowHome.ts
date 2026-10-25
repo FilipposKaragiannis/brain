@@ -245,6 +245,21 @@ export async function findPluginRoot(root: string, runner: CommandRunner): Promi
   return result.code === 0 && found.length > 0 ? found : null;
 }
 
+/**
+ * The plugin's own version from its plugin.json, else the folder name. The installed cache names
+ * the folder after the version; a checkout pointed at by FLOW_PLUGIN does not.
+ */
+export async function pluginVersionOf(pluginRoot: string): Promise<string> {
+  const manifest = await readText(path.join(pluginRoot, '.claude-plugin', 'plugin.json'));
+  if (manifest !== null) {
+    try {
+      const version = (JSON.parse(manifest) as { version?: unknown }).version;
+      if (typeof version === 'string' && version.length > 0) return version;
+    } catch { /* an unreadable manifest falls back to the folder name */ }
+  }
+  return path.basename(pluginRoot);
+}
+
 export async function readFlowHome(root: string, runner: CommandRunner, cache: GateQuestionCache = new Map()): Promise<FlowHomeFacts> {
   const flowHome = flowHomeOf(root);
   const configSource = (await readText(path.join(flowHome, 'config.yaml'))) ?? '';
@@ -256,7 +271,7 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const claims = await readClaims([root, ...poolPaths(root, config)]);
   const events = parseEvents((await readText(path.join(flowHome, 'events.log'))) ?? '', EVENTS_KEPT);
   const pluginRoot = await findPluginRoot(root, runner);
-  const pluginVersion = pluginRoot === null ? null : path.basename(pluginRoot);
+  const pluginVersion = pluginRoot === null ? null : await pluginVersionOf(pluginRoot);
   const found = records.map(({ value }) => ({
     item: text(value, 'item'), gate: text(value, 'gate'), message: text(value, 'message'), time: text(value, 'time'), host: text(value, 'host'),
   }));

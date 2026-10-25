@@ -1,10 +1,13 @@
 import { useState } from 'react';
 import type { Gate, Snapshot } from '../../../daemon/src/snapshot.ts';
+import { ExternalLink, ItemLink } from '../links.tsx';
 import { Age } from '../clock.tsx';
 import { composeGateMessage, recommendedAnswers } from '../gateAnswer.ts';
 import type { GateAnswer } from '../gateAnswer.ts';
 import { routeHash } from '../route.ts';
-import { actionTone } from '../status.ts';
+import { actionStateLabel } from '../actions.ts';
+import { actionRecordTone, pullTone } from '../status.ts';
+import { GATE_KINDS } from '../words.ts';
 import { Chip, Empty, Module, SourceFreshness, useActionsView } from '../ui.tsx';
 
 export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: string | null }) {
@@ -52,9 +55,11 @@ export function DecisionCard({ gate, snapshot }: { gate: Gate; snapshot: Snapsho
   const answer = (): void => { void actions.run('gate.clear', { item: gate.item, message: composeGateMessage(answers, note) }); };
   const setAnswer = (number: number, text: string): void => setAnswers((current) => current.map((entry) => (entry.number === number ? { number, answer: text } : entry)));
   return (
-    <Module className="decision-card" title={<><Chip tone="needs-you">{gate.gate}</Chip> <span className="mono">{gate.item}</span> {title}</>}
+    <Module className="decision-card" title={<><Chip tone="needs-you">{gate.gate}</Chip> <ItemLink id={gate.item} pages={snapshot} /> {title}</>}
       aside={<span className={gate.overdue ? 'overdue' : 'muted'}>waiting <Age seconds={gate.ageSeconds} takenAt={snapshot.takenAt} />{gate.overdue ? ' · overdue' : ''}</span>}
       footer={<><span className="muted">{gate.worktree ?? 'no worktree'} · raised by {gate.host}</span><SourceFreshness name="files" freshness={snapshot.sources.files} /></>}>
+      {GATE_KINDS[gate.gate] !== undefined && <p className="module-help gate-kind">{GATE_KINDS[gate.gate]}</p>}
+      {gate.pull !== null && <GatePull pull={gate.pull} />}
       <form className="decision" onSubmit={(event) => { event.preventDefault(); answer(); }}>
         {gate.questions.map((question) => (
           <fieldset key={question.number} className="question">
@@ -73,10 +78,24 @@ export function DecisionCard({ gate, snapshot }: { gate: Gate; snapshot: Snapsho
         <div className="decision-actions">
           <button type="submit" className="button primary" disabled={busy}>{busy ? 'Answering…' : 'Answer'}</button>
           {outcome?.kind === 'refused' && <span className="chip tone-failing">{outcome.message}</span>}
-          {outcome?.kind === 'started' && <Chip tone={actionTone(outcome.record.state)}>{outcome.record.state}</Chip>}
+          {outcome?.kind === 'started' && <Chip tone={actionRecordTone(outcome.record)}>{actionStateLabel(outcome.record)}</Chip>}
           <span className="muted">gate.clear {gate.item}</span>
         </div>
       </form>
     </Module>
+  );
+}
+
+function GatePull({ pull }: { pull: NonNullable<Gate['pull']> }) {
+  const threads = pull.unresolvedThreads;
+  return (
+    <div className="gate-pull">
+      <div className="gate-pull-line">
+        <ExternalLink url={pull.url} className="mono">PR #{pull.number}</ExternalLink>
+        <Chip tone={pullTone(pull.state)}>{pull.state}</Chip>
+        <span className={threads > 0 ? 'tone-needs-you threads strong' : 'muted'}>{threads} unresolved review {threads === 1 ? 'thread' : 'threads'}</span>
+      </div>
+      {threads > 0 && <p className="muted">The comments job addresses threads; {threads === 1 ? 'this one is' : 'these are'} still open.</p>}
+    </div>
   );
 }

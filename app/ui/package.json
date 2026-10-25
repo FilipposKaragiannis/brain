@@ -2,7 +2,7 @@
   "name": "brain-console-ui",
   "version": "0.4.0",
   "private": true,
-  "description": "The Brain Console web UI: the daemon's snapshot as five screens, with every button an action.",
+  "description": "The Brain Console web UI: the daemon's snapshot as six screens, with every button an action.",
   "type": "module",
   "scripts": {
     "dev": "vite",
