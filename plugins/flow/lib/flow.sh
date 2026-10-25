@@ -189,15 +189,16 @@ profile_steps() { json_list "$(cat "$FLOW_PLUGIN/profiles.json")" "profiles.$1";
 
 step_field() { json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "steps.$1.$2"; }
 
-# json_obj key=value key:=raw ... : a flat JSON object. key=value writes a string (a plain
-# integer stays a number); key:=value writes the value as JSON as given (object, array, bool).
+# json_obj key=value key:=raw ... : a flat JSON object. key=value always writes a string, digits
+# too (a title 0451 stays "0451"); key:=value writes the value as JSON as given (number, object,
+# array, bool), so a number is key:=value and the caller makes sure it is one.
 json_obj() {
   out="{"; sep=""
   for kv in "$@"; do
     k="${kv%%=*}"; v="${kv#*=}"
     case "$k" in
       *:) k="${k%:}"; lit="$v" ;;
-      *) case "$v" in ''|*[!0-9]*) lit="$(json_string "$v")" ;; *) lit="$v" ;; esac ;;
+      *) lit="$(json_string "$v")" ;;
     esac
     out="$out$sep$(json_string "$k"):$lit"; sep=","
   done

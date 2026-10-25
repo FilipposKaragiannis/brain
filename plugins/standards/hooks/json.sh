@@ -50,10 +50,10 @@ json_length() {
 }
 
 json_string() {
-  # $1 text. Prints it as a JSON string literal.
+  # $1 text. Prints it as a JSON string literal; bytes that are not UTF-8 become U+FFFD.
   if command -v jq >/dev/null 2>&1; then
     printf '%s' "$1" | jq -Rs .
   else
-    printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'
+    printf '%s' "$1" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.buffer.read().decode("utf-8", "replace")))'
   fi
 }

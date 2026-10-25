@@ -1,6 +1,6 @@
 {
   "name": "standards",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Coding standards as enforceable rules: rule ids, a rules block for CLAUDE.md and AGENTS.md, commit hooks, a delivery gate and the two-axis review.",
   "keywords": [
     "coding-standards",

@@ -1,5 +1,11 @@
 # standards
 
+## 1.2.3 (2026-10-25)
+
+- `json_string` (the shared JSON helper in `hooks/json.sh`) no longer prints nothing for text
+  that is not UTF-8 when jq is missing: the python3 fallback replaces such bytes with U+FFFD, so
+  a hook's JSON stays valid.
+
 ## 1.2.2 (2026-10-19)
 
 - The eval runner puts git and python3 wrappers first on PATH, from `.standards/evals/.bin`

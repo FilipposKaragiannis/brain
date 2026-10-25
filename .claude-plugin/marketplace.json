@@ -21,7 +21,7 @@
       "name": "flow",
       "source": "./plugins/flow",
       "description": "The work flow: pick the next ready item, plan, implement, test, review, verify and open a PR, with agents in worktrees and human gates only where a human adds value.",
-      "version": "1.20.1"
+      "version": "1.20.2"
     },
     {
       "name": "meta",
@@ -33,7 +33,7 @@
       "name": "standards",
       "source": "./plugins/standards",
       "description": "Coding standards as enforceable rules: rule ids, a rules block for CLAUDE.md and AGENTS.md, commit hooks, a delivery gate and the two-axis review.",
-      "version": "1.2.2"
+      "version": "1.2.3"
     }
   ]
 }

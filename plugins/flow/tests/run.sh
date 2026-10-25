@@ -24,6 +24,11 @@ check() { # check <name> <condition command...>
   name="$1"; shift
   if "$@" >/dev/null 2>&1; then pass "$name"; else fail "$name"; fi
 }
+check_all() { # check_all <name> '<condition>': the condition is shell text run whole, so every
+  # part of an && or || chain or a pipe is tested, not only the part before the first operator.
+  name="$1"; shift
+  if eval "$1" >/dev/null 2>&1; then pass "$name"; else fail "$name"; fi
+}
 jget() { python3 -c 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
 print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
@@ -52,18 +57,18 @@ check "yaml scalar"       [ "$(yaml_get .flow/config.yaml base)" = "main" ]
 check "yaml nested"       [ "$(yaml_get .flow/config.yaml adapters.default)" = "local" ]
 check "yaml list"         [ "$(yaml_get .flow/config.yaml pool | wc -l | tr -d ' ')" = "2" ]
 check "yaml missing"      [ -z "$(yaml_get .flow/config.yaml nothing.here)" ]
-check "slug"              [ "$(item_slug 'gh#12')" = "gh-12" ] && [ "$(item_slug local:bug/3)" = "local-bug-3" ]
-check "profile select"    [ "$(profile_select task S)" = "task-S" ] && [ "$(profile_select bug M)" = "bugfix" ] && [ "$(profile_select task XL)" = "task-L" ]
+check_all "slug"              '[ "$(item_slug '\''gh#12'\'')" = "gh-12" ] && [ "$(item_slug local:bug/3)" = "local-bug-3" ]'
+check_all "profile select"    '[ "$(profile_select task S)" = "task-S" ] && [ "$(profile_select bug M)" = "bugfix" ] && [ "$(profile_select task XL)" = "task-L" ]'
 
 echo "local adapter"
 t1="$("$P/adapters/local/create.sh" task "First task" --size S --body "Do it.")"
 b1="$("$P/adapters/local/create.sh" bug "A bug" --blocked-by "$t1")"
 t2="$("$P/adapters/local/create.sh" task "Medium task")"
-check "create ids"        [ "$t1" = "local:task/1" ] && [ "$b1" = "local:bug/1" ] && [ "$t2" = "local:task/2" ]
+check_all "create ids"        '[ "$t1" = "local:task/1" ] && [ "$b1" = "local:bug/1" ] && [ "$t2" = "local:task/2" ]'
 check "read title"        [ "$("$P/adapters/local/read.sh" "$t1" | jget title)" = "First task" ]
 check "read default size" [ "$("$P/adapters/local/read.sh" "$t2" | jget size)" = "" ]
 "$P/adapters/local/write-state.sh" "$t1" step=implement attempts=2 touches=src/a/**,docs/*
-check "write-state"       [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "implement" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.touches)" = '["src/a/**", "docs/*"]' ]
+check_all "write-state"       '[ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "implement" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.touches)" = '\''["src/a/**", "docs/*"]'\'' ]'
 "$P/adapters/local/write-state.sh" "$t1" step= attempts=0 touches=
 printf 'hello: world\n' | "$P/adapters/local/comment.sh" "$t1"
 check "comment appended"  grep -q 'hello: world' .flow/items/task/1.md
@@ -83,23 +88,23 @@ check "claim again same"  [ "$("$P/scripts/steward.sh" claim "$t1")" = "$w1" ]
 check "find"              [ "$("$P/scripts/steward.sh" find "$t1")" = "$w1" ]
 printf 'x\n' > "$w1/dirty.txt"
 "$P/scripts/steward.sh" release "$t1" >/dev/null 2>&1; code=$?
-check "release refuses dirty (exit 3)" [ "$code" -eq 3 ] && [ -f "$w1/.flow/claim.json" ]
+check_all "release refuses dirty (exit 3)" '[ "$code" -eq 3 ] && [ -f "$w1/.flow/claim.json" ]'
 rm "$w1/dirty.txt"
 check "release clean"     "$P/scripts/steward.sh" release "$t1"
-check "released: detached, no claim, tracker cleared" [ ! -f "$w1/.flow/claim.json" ] && ! git -C "$w1" symbolic-ref -q HEAD && [ -z "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" ]
+check_all "released: detached, no claim, tracker cleared" '[ ! -f "$w1/.flow/claim.json" ] && ! git -C "$w1" symbolic-ref -q HEAD && [ -z "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" ]'
 check "pool table"        sh -c "'$P/scripts/steward.sh' pool | grep -q 'wt-2.*free'"
 
 echo "next and advance"
 out="$("$P/scripts/next.sh" --json)"; code=$?
-check "next picks first ready" [ "$code" -eq 0 ] && [ "$(printf '%s' "$out" | jget item)" = "$t1" ] && [ "$(printf '%s' "$out" | jget step)" = "implement" ]
+check_all "next picks first ready" '[ "$code" -eq 0 ] && [ "$(printf '\''%s'\'' "$out" | jget item)" = "$t1" ] && [ "$(printf '\''%s'\'' "$out" | jget step)" = "implement" ]'
 brief="$(printf '%s' "$out" | jget brief)"; reports="$(printf '%s' "$out" | jget reports)"
-check "brief written in the worktree" [ -f "$brief" ] && grep -q 'cd "' "$brief" && grep -q 'implement.json' "$brief"
+check_all "brief written in the worktree" '[ -f "$brief" ] && grep -q '\''cd "'\'' "$brief" && grep -q '\''implement.json'\'' "$brief"'
 check "run recorded"      [ -f .flow/runs/local-task-1.json ]
-check "state step"        [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "implement" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.profile)" = "task-S" ]
+check_all "state step"        '[ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "implement" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.profile)" = "task-S" ]'
 "$P/scripts/next.sh" "$t1" >/dev/null 2>&1; code=$?
 check "second next on a running item: exit 7" [ "$code" -eq 7 ]
 out2="$("$P/scripts/next.sh" --json)"
-check "next picks the other item in wt-2" [ "$(printf '%s' "$out2" | jget item)" = "$t2" ] && [ "$(printf '%s' "$out2" | jget step)" = "design" ] && [ "$(basename "$(printf '%s' "$out2" | jget worktree)")" = "wt-2" ]
+check_all "next picks the other item in wt-2" '[ "$(printf '\''%s'\'' "$out2" | jget item)" = "$t2" ] && [ "$(printf '\''%s'\'' "$out2" | jget step)" = "design" ] && [ "$(basename "$(printf '\''%s'\'' "$out2" | jget worktree)")" = "wt-2" ]'
 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "nothing ready: exit 5" [ "$code" -eq 5 ]
 "$P/scripts/advance.sh" "$t1" >/dev/null 2>&1; code=$?
@@ -110,15 +115,15 @@ check "touches stored"    [ "$("$P/adapters/local/read.sh" "$t1" | jget state.to
 check "run cleared"       [ ! -f .flow/runs/local-task-1.json ]
 "$P/scripts/next.sh" "$t1" >/dev/null
 "$P/scripts/advance.sh" "$t1" --status fail --summary "red" >/dev/null; "$P/scripts/next.sh" "$t1" >/dev/null
-check "fail: attempt 1, step test stays" [ "$("$P/adapters/local/read.sh" "$t1" | jget state.attempts)" = "1" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "test" ]
+check_all "fail: attempt 1, step test stays" '[ "$("$P/adapters/local/read.sh" "$t1" | jget state.attempts)" = "1" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "test" ]'
 "$P/scripts/advance.sh" "$t1" --status fail --summary "red again" >/dev/null; "$P/scripts/next.sh" "$t1" >/dev/null
 "$P/scripts/advance.sh" "$t1" --status fail --summary "still red" >/dev/null 2>&1; code=$?
-check "third fail: escalation gate (exit 4)" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "escalation" ] && [ -f .flow/gates/local-task-1.json ]
+check_all "third fail: escalation gate (exit 4)" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "escalation" ] && [ -f .flow/gates/local-task-1.json ]'
 "$P/scripts/next.sh" "$t1" >/dev/null 2>&1; code=$?
 check "next at a gate: exit 4" [ "$code" -eq 4 ]
 check "gate list"         sh -c "'$P/scripts/gate.sh' list | grep -q escalation"
 "$P/scripts/gate.sh" clear "$t1" "fixed" >/dev/null
-check "gate cleared"      [ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "none" ] && [ ! -f .flow/gates/local-task-1.json ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.attempts)" = "0" ]
+check_all "gate cleared"      '[ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "none" ] && [ ! -f .flow/gates/local-task-1.json ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.attempts)" = "0" ]'
 for s in test review; do "$P/scripts/next.sh" "$t1" >/dev/null; printf '{"status":"done"}\n' > "$reports/$s.json"; "$P/scripts/advance.sh" "$t1" >/dev/null; done
 "$P/scripts/next.sh" "$t1" >/dev/null
 printf '{"status":"fail","attempts":1,"checks":[{"name":"tests","status":"fail","summary":"1 failed"}]}\n' > "$reports/verify.json"
@@ -130,7 +135,7 @@ printf '{"status":"pass","attempts":2,"checks":[{"name":"tests","status":"pass",
 check "verify pass -> pr" sh -c "'$P/scripts/advance.sh' '$t1' --json | grep -q '\"next_step\":\"pr\"'"
 "$P/scripts/next.sh" "$t1" >/dev/null; printf '{"status":"done","summary":"PR open"}\n' > "$reports/pr.json"
 "$P/scripts/advance.sh" "$t1" >/dev/null 2>&1; code=$?
-check "pr done -> merge gate (exit 4), step done" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "merge" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "done" ]
+check_all "pr done -> merge gate (exit 4), step done" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "merge" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "done" ]'
 "$P/scripts/gate.sh" clear "$t1" merged >/dev/null
 "$P/scripts/next.sh" "$t1" >/dev/null 2>&1; code=$?
 check "next on a done item: exit 6" [ "$code" -eq 6 ]
@@ -139,19 +144,19 @@ echo "re-size and gates"
 r2="$(printf '%s' "$out2" | jget reports)"
 printf '{"status":"done","size":"L","summary":"bigger"}\n' > "$r2/design.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
-check "M -> L stops at plan-approval" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "plan-approval" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.size)" = "L" ]
+check_all "M -> L stops at plan-approval" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "plan-approval" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.size)" = "L" ]'
 "$P/scripts/gate.sh" clear "$t2" "replanned" >/dev/null
 "$P/scripts/next.sh" "$t2" >/dev/null; printf '{"status":"done"}\n' > "$r2/design.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1
-check "L profile after re-size" [ "$("$P/adapters/local/read.sh" "$t2" | jget state.profile)" = "task-L" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "plan" ]
+check_all "L profile after re-size" '[ "$("$P/adapters/local/read.sh" "$t2" | jget state.profile)" = "task-L" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "plan" ]'
 "$P/scripts/next.sh" "$t2" >/dev/null; printf '{"status":"done","summary":"planned"}\n' > "$r2/plan.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
-check "plan -> plan-approval gate, step implement" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "implement" ]
+check_all "plan -> plan-approval gate, step implement" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "implement" ]'
 "$P/scripts/gate.sh" clear "$t2" approved >/dev/null
 "$P/scripts/next.sh" "$t2" >/dev/null
 printf '{"status":"gate","gate":"ambiguity","message":"A or B?"}\n' > "$r2/implement.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
-check "agent raises ambiguity" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "ambiguity" ] && grep -q 'A or B' .flow/gates/local-task-2.json
+check_all "agent raises ambiguity" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "ambiguity" ] && grep -q '\''A or B'\'' .flow/gates/local-task-2.json'
 "$P/scripts/gate.sh" clear "$t2" "A" >/dev/null
 b2="$("$P/adapters/local/create.sh" bug "Small bug" --size S)"
 "$P/scripts/steward.sh" release "$t1" >/dev/null
@@ -223,6 +228,21 @@ check "hostile output: the report parses and the summary keeps quotes and backsl
 check "a summary of digits stays a string" [ "$(python3 -c 'import json,sys; print(repr([c for c in json.load(open(sys.argv[1]))["checks"] if c["name"]=="gate digits"][0]["summary"]))' "$rv/verify.json" 2>&1)" = "'007'" ]
 check "hostile output: verify.md has the row, one line" sh -c '[ "$(grep -c "^| gate noisy | fail |" "$1")" = 1 ]' _ "$rv/verify.md"
 check "hostile output: nothing on stderr" [ ! -s "$work/verify.err" ]
+osc="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _verify_report as v
+print(v.summary("see \x1b]8;;https://ci/run/7\x07the run\x1b]8;;\x07 and \x1b]8;id=1;https://ci/log\x1b\\the log\x1b]8;;\x1b\\ \x1b[31mred\x1b[0m"))' "$P/scripts" 2>&1)"
+check "a terminal hyperlink (OSC 8, either terminator) leaves only its text in the summary" [ "$osc" = "see the run and the log red" ]
+osc="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _verify_report as v
+print(v.summary("cut short at \x1b]8;;https://ci/run/7"))' "$P/scripts" 2>&1)"
+check "a hyperlink cut short with no terminator leaves no target in the summary" [ "$osc" = "cut short at" ]
+# dash runs no EXIT trap on a signal: a verify stopped by TERM must still remove its temp files.
+if command -v dash >/dev/null 2>&1; then
+  mkdir -p "$work/vtmp"
+  printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\ngates:\n  slow: sleep 2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+  (cd "$wv" && TMPDIR="$work/vtmp" exec dash "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1) & vp=$!
+  n=0; while [ -z "$(ls -A "$work/vtmp")" ] && [ "$n" -lt 100 ]; do n=$((n + 1)); sleep 0.1; done
+  kill -TERM "$vp" 2>/dev/null; wait "$vp"
+  check_all "verify under dash stopped by TERM leaves no temp file" '[ "$n" -lt 100 ] && [ -z "$(ls -A "$work/vtmp")" ]'
+fi
 # The write is atomic: a reader polling verify.json while verify runs never sees it empty, and
 # no temp file is left behind.
 : > "$work/reads.bad"
@@ -311,15 +331,15 @@ echo "worktree hooks"
 rm -f .flow/runs/*.json
 "$P/scripts/steward.sh" release "$t2" --force >/dev/null 2>&1
 path="$(printf '{"name":"local-task-2","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
-check "WorktreeCreate claims a pool path" [ -d "$path" ] && [ "$(jget item < "$path/.flow/claim.json")" = "$t2" ]
+check_all "WorktreeCreate claims a pool path" '[ -d "$path" ] && [ "$(jget item < "$path/.flow/claim.json")" = "$t2" ]'
 printf 'x\n' > "$path/keep.txt"
 printf '{"worktree_path":"%s","cwd":"%s"}' "$path" "$PWD" | "$P/hooks/worktree-remove.sh" >/dev/null 2>&1; code=$?
-check "WorktreeRemove keeps a dirty worktree (exit 3)" [ "$code" -eq 3 ] && [ -f "$path/keep.txt" ]
+check_all "WorktreeRemove keeps a dirty worktree (exit 3)" '[ "$code" -eq 3 ] && [ -f "$path/keep.txt" ]'
 rm "$path/keep.txt"
 printf '{"worktree_path":"%s","cwd":"%s"}' "$path" "$PWD" | "$P/hooks/worktree-remove.sh" >/dev/null 2>&1; code=$?
-check "WorktreeRemove releases a clean worktree" [ "$code" -eq 0 ] && [ ! -f "$path/.flow/claim.json" ]
+check_all "WorktreeRemove releases a clean worktree" '[ "$code" -eq 0 ] && [ ! -f "$path/.flow/claim.json" ]'
 adhoc="$(printf '{"name":"bold-oak","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
-check "WorktreeCreate ad hoc name" [ -d "$adhoc" ] && [ "$(jget item < "$adhoc/.flow/claim.json")" = "adhoc:bold-oak" ]
+check_all "WorktreeCreate ad hoc name" '[ -d "$adhoc" ] && [ "$(jget item < "$adhoc/.flow/claim.json")" = "adhoc:bold-oak" ]'
 "$P/scripts/steward.sh" release "$adhoc" --force >/dev/null 2>&1
 
 echo "github adapter (fake gh)"
@@ -336,14 +356,14 @@ mkdir -p "$work/bin" && ln -s "$P/tests/fake-gh.sh" "$work/bin/gh"
 export PATH="$work/bin:$PATH"
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
 item="$("$P/adapters/github/read.sh" 'gh#11')"
-check "gh read"           [ "$(printf '%s' "$item" | jget title)" = "Task one" ] && [ "$(printf '%s' "$item" | jget size)" = "S" ] && [ "$(printf '%s' "$item" | jget kind)" = "task" ]
+check_all "gh read"           '[ "$(printf '\''%s'\'' "$item" | jget title)" = "Task one" ] && [ "$(printf '\''%s'\'' "$item" | jget size)" = "S" ] && [ "$(printf '\''%s'\'' "$item" | jget kind)" = "task" ]'
 check "gh read epic kind" [ "$("$P/adapters/github/read.sh" 'gh#10' | jget kind)" = "epic" ]
 check "gh list open"      [ "$("$P/adapters/github/list.sh" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "3" ]
 check "gh list-ready excludes blocked" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#10,gh#11" ]
 "$P/adapters/github/write-state.sh" 'gh#11' step=implement worktree=wt-1 profile=task-S attempts=1 last_event="t start" touches=src/**
 check "gh labels mirrored" sh -c "grep -q 'issue edit 11 .*--add-label step:implement --add-label wt:wt-1 --add-label flow:task-S' '$FAKE_GH_DIR/calls.log'"
 item="$("$P/adapters/github/read.sh" 'gh#11')"
-check "gh state round trip" [ "$(printf '%s' "$item" | jget state.step)" = "implement" ] && [ "$(printf '%s' "$item" | jget state.attempts)" = "1" ] && [ "$(printf '%s' "$item" | jget state.worktree)" = "wt-1" ] && [ "$(printf '%s' "$item" | jget state.touches)" = '["src/**"]' ]
+check_all "gh state round trip" '[ "$(printf '\''%s'\'' "$item" | jget state.step)" = "implement" ] && [ "$(printf '\''%s'\'' "$item" | jget state.attempts)" = "1" ] && [ "$(printf '\''%s'\'' "$item" | jget state.worktree)" = "wt-1" ] && [ "$(printf '\''%s'\'' "$item" | jget state.touches)" = '\''["src/**"]'\'' ]'
 "$P/adapters/github/write-state.sh" 'gh#11' step=test gate=none
 check "gh label replaced" sh -c "grep -q 'add-label step:test --remove-label step:implement' '$FAKE_GH_DIR/calls.log'"
 check "gh one state comment" [ "$(python3 -c 'import json; print(len([c for c in json.load(open("'"$FAKE_GH_DIR"'/issues.json"))["issues"][1]["comments"] if "flow:state" in c["body"]]))')" = "1" ]
@@ -481,7 +501,7 @@ d["threads"] = [{"id": "T_1", "isResolved": False, "isOutdated": False, "path": 
 json.dump(d, open(sys.argv[1], "w"))
 PY2
 threads="$("$P/scripts/comments.sh" threads 90)"
-check "threads: unresolved only, with ids" [ "$(printf '%s' "$threads" | jget 0.thread_id)" = "T_1" ] && [ "$(printf '%s' "$threads" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "1" ]
+check_all "threads: unresolved only, with ids" '[ "$(printf '\''%s'\'' "$threads" | jget 0.thread_id)" = "T_1" ] && [ "$(printf '\''%s'\'' "$threads" | python3 -c '\''import json,sys; print(len(json.load(sys.stdin)))'\'')" = "1" ]'
 "$P/scripts/comments.sh" reply 90 501 "fixed in abc123"
 "$P/scripts/comments.sh" resolve T_1
 check "reply and resolve" sh -c "python3 -c \"import json; d=json.load(open('$FAKE_GH_DIR/issues.json')); t=d['threads'][0]; assert t['isResolved'] and 'abc123' in t['comments']['nodes'][1]['body']\""
@@ -1024,23 +1044,23 @@ printf 'hi\n' > README.md && printf 'local\n' > .gitignore && printf 'secret\n' 
 mkdir -p .flow
 printf 'adapters:\n  default: local\nbase: main\npool:\n  # - ../app-wt-1\npool_max: 2\nworktree_copy:\n  - local\nworktree_setup:\n  - printf ran > setup.txt\nnotify:\n  desktop: false\n' > .flow/config.yaml
 n1="$(printf '## Problem\nx\n## Acceptance\n- [ ] y\n' | "$P/scripts/new.sh" task "Grow the pool" --size S --body-file -)"
-check "new: creates through the kind's adapter" [ "$n1" = "local:task/1" ] && grep -q '^## Acceptance' .flow/items/task/1.md
+check_all "new: creates through the kind's adapter" '[ "$n1" = "local:task/1" ] && grep -q '\''^## Acceptance'\'' .flow/items/task/1.md'
 check "new: bad kind refused" sh -c "! '$P/scripts/new.sh' story 'x' 2>/dev/null"
 check "new: empty title refused" sh -c "! '$P/scripts/new.sh' task '' 2>/dev/null"
 g1="$("$P/scripts/steward.sh" claim "$n1" 2>/dev/null)"
-check "claim grows an empty pool" [ "$g1" = "$(cd ../app-wt-1 && pwd -P)" ] && [ "$(git -C "$g1" symbolic-ref --short HEAD)" = "flow/local-task-1" ]
-check "the pool entry is appended, placeholder dropped" [ "$(yaml_get .flow/config.yaml pool)" = ../app-wt-1 ] && ! grep -q '# - ../app-wt-1' .flow/config.yaml && [ "$(yaml_get .flow/config.yaml pool_max)" = 2 ]
-check "worktree_copy and worktree_setup ran" [ "$(cat "$g1/local")" = secret ] && [ "$(cat "$g1/setup.txt")" = ran ]
+check_all "claim grows an empty pool" '[ "$g1" = "$(cd ../app-wt-1 && pwd -P)" ] && [ "$(git -C "$g1" symbolic-ref --short HEAD)" = "flow/local-task-1" ]'
+check_all "the pool entry is appended, placeholder dropped" '[ "$(yaml_get .flow/config.yaml pool)" = ../app-wt-1 ] && ! grep -q '\''# - ../app-wt-1'\'' .flow/config.yaml && [ "$(yaml_get .flow/config.yaml pool_max)" = 2 ]'
+check_all "worktree_copy and worktree_setup ran" '[ "$(cat "$g1/local")" = secret ] && [ "$(cat "$g1/setup.txt")" = ran ]'
 n2="$("$P/scripts/new.sh" bug "Second")"
 g2="$("$P/scripts/steward.sh" claim "$n2" 2>/dev/null)"
-check "a second claim grows again, named after the last entry" [ "$g2" = "$(cd ../app-wt-2 && pwd -P)" ] && [ "$(yaml_get .flow/config.yaml pool | wc -l | tr -d ' ')" = 2 ]
+check_all "a second claim grows again, named after the last entry" '[ "$g2" = "$(cd ../app-wt-2 && pwd -P)" ] && [ "$(yaml_get .flow/config.yaml pool | wc -l | tr -d '\'' '\'')" = 2 ]'
 n3="$("$P/scripts/new.sh" task "Third")"
 "$P/scripts/steward.sh" claim "$n3" >/dev/null 2>&1; code=$?
-check "at pool_max the claim fails (exit 3)" [ "$code" -eq 3 ] && [ ! -d ../app-wt-3 ]
+check_all "at pool_max the claim fails (exit 3)" '[ "$code" -eq 3 ] && [ ! -d ../app-wt-3 ]'
 rm "$g2/setup.txt"
 check "setup re-runs on demand" sh -c "'$P/scripts/steward.sh' setup '$g2' >/dev/null && [ -f '$g2/setup.txt' ]"
 "$P/scripts/steward.sh" add >/dev/null 2>&1
-check "add without a path takes the next name" [ -d ../app-wt-3 ] && [ "$(yaml_get .flow/config.yaml pool | tail -1)" = ../app-wt-3 ]
+check_all "add without a path takes the next name" '[ -d ../app-wt-3 ] && [ "$(yaml_get .flow/config.yaml pool | tail -1)" = ../app-wt-3 ]'
 
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -1049,11 +1069,11 @@ printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 2\nauto_gates:
 a1="$("$P/scripts/new.sh" task "Auto plan" --size M --body "## Acceptance
 - [ ] x")"
 for s in design plan; do "$P/scripts/next.sh" "$a1" >/dev/null 2>&1; ra="$(cat .flow/runs/local-task-1.json | jget reports)"; printf '{"status":"done","summary":"planned"}\n' > "$ra/$s.json"; "$P/scripts/advance.sh" "$a1" >/dev/null 2>&1; code=$?; done
-check "plan-approval is auto-approved for a listed size" [ "$code" -eq 0 ] && [ "$("$P/adapters/local/read.sh" "$a1" | jget state.step)" = "implement" ] && [ "$("$P/adapters/local/read.sh" "$a1" | jget state.gate)" != "plan-approval" ] && grep -q 'auto-approved (size M)' .flow/events.log
+check_all "plan-approval is auto-approved for a listed size" '[ "$code" -eq 0 ] && [ "$("$P/adapters/local/read.sh" "$a1" | jget state.step)" = "implement" ] && [ "$("$P/adapters/local/read.sh" "$a1" | jget state.gate)" != "plan-approval" ] && grep -q '\''auto-approved (size M)'\'' .flow/events.log'
 a2="$("$P/scripts/new.sh" task "Big plan" --size L --body "## Acceptance
 - [ ] x")"
 for s in design plan; do "$P/scripts/next.sh" "$a2" >/dev/null 2>&1; rb2="$(cat .flow/runs/local-task-2.json | jget reports)"; printf '{"status":"done"}\n' > "$rb2/$s.json"; "$P/scripts/advance.sh" "$a2" >/dev/null 2>&1; code=$?; done
-check "an unlisted size still stops at plan-approval" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$a2" | jget state.gate)" = "plan-approval" ]
+check_all "an unlisted size still stops at plan-approval" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$a2" | jget state.gate)" = "plan-approval" ]'
 printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nauto_gates:\n  merge: S\n' > .flow/config.yaml
 check "init: --check flags an auto gate that is not allowed" sh -c "FLOW_PLUGIN='$P' '$P/skills/init/scripts/init.sh' --check | grep -q 'gap: .flow/config.yaml: auto_gates lists merge'"
 echo "a full pool: next skips what needs a new worktree"
@@ -1088,8 +1108,8 @@ for t in one two; do "$P/scripts/new.sh" task "Parallel $t" --size S --body "## 
 wait "$q1"; wait "$q2"
 i1="$(jget item < "$work/p1.json")"; i2="$(jget item < "$work/p2.json")"
 w1="$(jget worktree < "$work/p1.json")"; w2="$(jget worktree < "$work/p2.json")"
-check "two runs started together take two items" [ -n "$i1" ] && [ -n "$i2" ] && [ "$i1" != "$i2" ]
-check "...in two worktrees" [ -n "$w1" ] && [ "$w1" != "$w2" ]
+check_all "two runs started together take two items" '[ -n "$i1" ] && [ -n "$i2" ] && [ "$i1" != "$i2" ]'
+check_all "...in two worktrees" '[ -n "$w1" ] && [ "$w1" != "$w2" ]'
 check "the pick lock is released after the pick" [ ! -d .flow/pick.lock ]
 sleep 30 & held=$!
 mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
@@ -1099,11 +1119,11 @@ FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "a live holder makes the next pick wait, then exit 7 (quiet)" [ "$code" -eq 7 ]
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
-check "a stale lock (holder gone) is taken over" [ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]
+check_all "a stale lock (holder gone) is taken over" '[ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]'
 for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
 : > "$HOST_LOG"
 "$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1
-check "--workers 2: two loops, two logs" [ -f .flow/log/next-1.log ] && [ -f .flow/log/next-2.log ]
+check_all "--workers 2: two loops, two logs" '[ -f .flow/log/next-1.log ] && [ -f .flow/log/next-2.log ]'
 check "--workers 2: each worker ran a step in its own worktree" [ "$(cut -f2 "$HOST_LOG" | sort -u | grep -c .)" = 2 ]
 check "--workers with an item is refused" sh -c "! '$P/jobs/next.sh' claude local:task/1 --workers 2 2>/dev/null"
 check "--workers 0 is refused" sh -c "! '$P/jobs/next.sh' claude --workers 0 2>/dev/null"
@@ -1231,7 +1251,7 @@ check "health --dry-run: says what it would do and changes nothing" sh -c "grep 
 "$P/jobs/health.sh" claude >/dev/null
 check "health: a dead run's record is cleared and logged" sh -c "[ ! -f '$(rec "$a")' ] && grep -q \"$a: dead run of implement cleared\" .flow/log/health.log && grep -q \"$a	health	dead run of implement cleared\" .flow/events.log"
 check "health: an empty claim is released and the item is back with the tracker" sh -c "[ ! -f '$wa/.flow/claim.json' ] && [ -z \"\$('$P/adapters/local/read.sh' '$a' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"].get(\"worktree\",\"\"))')\" ] && ! git -C '$wa' symbolic-ref -q HEAD && grep -q 'released the empty claim' .flow/log/health.log"
-check "health job: a run that found something says so" tail -1 .flow/log/runs.jsonl | grep -q '"result":"done: '
+check_all "health job: a run that found something says so" 'tail -1 .flow/log/runs.jsonl | grep -q '\''"result":"done: '\'''
 
 b="$(hitem "Has commits")"; wb="$(hold "$b")"; commit_in "$wb" work >/dev/null
 age_run "$b"; stale_claim "$wb"; : > "$hroot/host.log"
@@ -1352,6 +1372,8 @@ check "health job: a paused job does nothing" [ ! -s .flow/events.log ]
 check "jobs: status lists the health job with its schedule" sh -c "'$P/scripts/jobs.sh' status | grep -q '^| health | every 15m'"
 check "jobs: cron gets the health line" sh -c "FLOW_SCHEDULER=cron '$P/scripts/jobs.sh' install health | grep -q '^\*/15 \* \* \* \* .*\.flow/jobs/health\.sh claude'"
 check "jobs: history and logs take the health job" sh -c "'$P/scripts/jobs.sh' history health 3 | grep -q 'quiet\|work' && '$P/scripts/jobs.sh' logs health 3 | grep -q 'health.log'"
+printf '{"job":"health","at":"2026-10-24T10:00:00Z","seconds":1,"exit":0,"result":42}\n' >> .flow/log/runs.jsonl
+check_all "jobs: a run recorded before 1.20.2 with a result of digits (a number) still shows in status and history" '"$P/scripts/jobs.sh" status >/dev/null && "$P/scripts/jobs.sh" status --json >/dev/null && "$P/scripts/jobs.sh" history health 3 | grep -q 42'
 unset FLOW_HEALTH_PROCS
 cd "$repo"
 
@@ -1619,6 +1641,7 @@ check "gate list: an unknown flag exits 2" [ "$code" -eq 2 ]
 "$P/scripts/gate.sh" list --json extra >/dev/null 2>&1; code=$?
 check "gate list: an extra argument exits 2" [ "$code" -eq 2 ]
 json_obj gate=escalation item=local:task/9 message=42 time=20261025 host=shell > .flow/gates/local-task-9.json
+cp .flow/gates/local-task-9.json "$work/gates/42.json"
 printf '{"gate":"merge","message":"Merge it.","time":"2026-10-25T07:00:00Z"}\n' > .flow/gates/no-item.json
 printf 'not json\n' > .flow/gates/broken.json
 gj="$(FLOW_NOW=2026-10-25T09:00:00Z "$P/scripts/gate.sh" list --json 2>"$work/gates/err")"; code=$?
@@ -1634,6 +1657,7 @@ check "gate json: the claimed pool worktree" [ "$(gq 2.worktree)" = "$(cd ../app
 check "gate json: no claim, worktree null" [ "$(gq 0.worktree)" = null ]
 check "gate json: no item, no worktree even beside a free one" [ "$(gq 1.worktree)" = null ]
 check "gate json: a digits-only message is a string" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(json.load(sys.stdin)[3]["message"] == "42")')" = True ]
+check "json_obj: a digits-only message is written as a string" [ "$(python3 -c 'import json,sys; print(repr(json.load(open(sys.argv[1]))["message"]))' "$work/gates/42.json")" = "'42'" ]
 check "gate json: a time that is no ISO time has no age" [ "$(gq 3.age_seconds)" = null ]
 check "gate json: one question per numbered line, dot or bracket" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(q["number"]) for q in json.load(sys.stdin)[2]["questions"]))')" = "1,2,3,4" ]
 check "gate json: an inline Recommended ends the question" [ "$(gq 2.questions.0.text)" = "Keep the old name?" ]
@@ -1646,6 +1670,44 @@ check "gate json: a listed Recommended line is the recommended answer" [ "$(gq 2
 check "gate json: no numbered line, no questions" [ "$(gq 0.questions)" = "[]" ]
 rm .flow/gates/*.json
 check "gate json: nothing pending, an empty array" [ "$("$P/scripts/gate.sh" list --json)" = "[]" ]
+
+echo "digits stay strings, numbers stay numbers"
+mkdir -p "$work/digits" && cd "$work/digits" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+git worktree add -q --detach ../01
+mkdir -p .flow && printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../01\nnotify:\n  desktop: false\n' > .flow/config.yaml
+jtype() { python3 -c 'import json,sys; v=json.load(sys.stdin)
+for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
+print(type(v).__name__, v)' "$1"; }
+d1="$("$P/scripts/new.sh" task '0451' --size S --body x 2>/dev/null)"
+dn="$(FLOW_RUN_PID=4242 "$P/scripts/next.sh" --json 2>/dev/null)"
+check "next --json: a title of digits with a leading zero is the string" [ "$(printf '%s' "$dn" | jtype title)" = "str 0451" ]
+check "next --json: the review depth is a string" [ "$(printf '%s' "$dn" | jtype depth)" = "str quick" ]
+check "claim.json: a pool folder named 01 is the string" [ "$(jtype name < ../01/.flow/claim.json)" = "str 01" ]
+check "the run record: pid is a number" [ "$(jtype pid < ".flow/runs/$(item_slug "$d1").json")" = "int 4242" ]
+printf '{"status":"done","summary":"ok"}\n' > "$(jget reports < ".flow/runs/$(item_slug "$d1").json")/implement.json"
+check "advance --json: attempts is a number" [ "$("$P/scripts/advance.sh" "$d1" --json 2>/dev/null | jtype attempts)" = "int 0" ]
+"$P/scripts/steward.sh" release "$d1" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+FLOW_RUN_PID=not-a-pid "$P/scripts/next.sh" --json >/dev/null 2>&1
+check "the run record: a pid that is no number is left out, the record still parses" [ "$(python3 -c 'import json,sys; print("pid" in json.load(sys.stdin))' < ".flow/runs/$(item_slug "$d1").json")" = False ]
+"$P/scripts/steward.sh" release "$d1" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+FLOW_RUN_PID=0042 "$P/scripts/next.sh" --json >/dev/null 2>&1
+check "the run record: a pid with leading zeros is the number without them, not octal" [ "$(jtype pid < ".flow/runs/$(item_slug "$d1").json")" = "int 42" ]
+"$P/scripts/gate.sh" raise "$d1" escalation 007 >/dev/null 2>&1
+check "a gate raised with the message 007: the record parses, the message the string" [ "$(jtype message < ".flow/gates/$(item_slug "$d1").json")" = "str 007" ]
+check "gate list --json: the message 007 is the string" [ "$("$P/scripts/gate.sh" list --json | jtype 0.message)" = "str 007" ]
+# Records from before 1.20.2: a digits message is a number, and one with a leading zero does not parse.
+printf '{"gate":"merge","item":"local:task/98","message":42,"time":"2026-10-24T10:00:00Z","host":"shell"}\n' > .flow/gates/local-task-98.json
+printf '{"gate":"merge","item":"local:task/99","message":007,"time":"2026-10-24T10:00:00Z","host":"shell"}\n' > .flow/gates/local-task-99.json
+check_all "board: an old gate with a number message shows, an old one that does not parse is skipped" 'b="$("$P/scripts/board.sh")" && printf "%s" "$b" | grep -q "local:task/98 (.*): 42" && printf "%s" "$b" | grep -q "escalation\*\* on $d1" && ! printf "%s" "$b" | grep -q "local:task/99"'
+rm -f .flow/gates/local-task-98.json .flow/gates/local-task-99.json
+"$P/scripts/lesson.sh" other "$d1" 12345 >/dev/null
+check "a lesson whose text is 12345 is the string" [ "$(tail -1 .flow/lessons.jsonl | jtype text)" = "str 12345" ]
+mkdir -p "$work/nojq" && ln -sf "$(command -v python3)" "$work/nojq/python3"
+nojq="$(PATH="$work/nojq"; json_obj "d=$(printf 'a\377b')" n:=1)"
+check "json_obj without jq: bytes that are not UTF-8 are replaced and the object parses" [ "$(printf '%s' "$nojq" | python3 -c 'import json,sys; print(json.load(sys.stdin)["d"] == "a\ufffdb")')" = True ]
+check_all "runs.jsonl: seconds and exit are numbers on every line, result a string" '[ -s "$home2/log/runs.jsonl" ] && python3 -c "import json,sys
+for l in open(sys.argv[1]):
+    r = json.loads(l); assert type(r[\"seconds\"]) is int and type(r[\"exit\"]) is int and type(r[\"result\"]) is str, l" "$home2/log/runs.jsonl"'
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1

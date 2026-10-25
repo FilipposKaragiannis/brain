@@ -1,5 +1,31 @@
 # flow
 
+## 1.20.2 (2026-10-25)
+
+- A plain `key=value` given to `json_obj` is always a JSON string. A value of digits only used to
+  become a number, so a gate message, a tracker title, a lesson text, a job's last words or a pool
+  folder of digits came back as a number, and one with a leading zero (`007`, a title `0451`, a
+  folder `01`) wrote invalid JSON. The fields that are numbers on purpose say so with `key:=value`:
+  `seconds` and `exit` in `runs.jsonl`, `pid` in the run record and `attempts` in
+  `advance.sh --json`. A `pid` that is not a whole number is left out of the run record, and an
+  `attempts` that is not one reads as 0, so neither can write invalid JSON. `depth` in
+  `next.sh --json` is the review depth (`quick`, `standard`, `deep`, `none`) and stays a string.
+  A `pid` or `attempts` with leading zeros is written without them (`0042` is 42, never octal).
+- Records written before 1.20.2 with a digits value that has a leading zero are invalid JSON and
+  are not rewritten; the readers (`jobs.sh`, `gate.sh list`, the health job, and now the board,
+  which used to stop on one) skip them. A digits-only value from before 1.20.2 is a number:
+  `jobs.sh status` and `history` read a `result` as text, and the board a gate `message`, instead
+  of crashing.
+- Without jq, `json_string` printed nothing for text that is not UTF-8, so `json_obj` wrote
+  `{"d":,...}`; the python3 fallback now replaces such bytes with U+FFFD.
+- The verify summary drops terminal hyperlinks (OSC 8, ended by BEL or ST, or cut short with no
+  end) and keeps the link's text; before, the link target was left in the summary.
+- `verify.sh` removes its temp files when it is stopped by INT or TERM: dash runs no EXIT trap on
+  a signal, so each signal's trap removes them and then re-raises the signal, so the parent still
+  sees verify killed by it.
+- The flow tests that chained a second condition after `check` with `&&` (38 of them) or piped its
+  output (one) tested only the first part; they now run whole inside `check_all`.
+
 ## 1.20.1 (2026-10-25)
 
 - The verify report is never empty. `verify.sh` built `verify.json` by gluing JSON strings

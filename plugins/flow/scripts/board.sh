@@ -25,6 +25,15 @@ reminder="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.gat
 procs="$(mktemp)"; trap 'rm -f "$procs"' EXIT
 python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$procs"
 runs="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" runs "$home/runs" "$procs" "$grace")"
-gates="$(for f in "$home"/gates/*.json; do [ -f "$f" ] && cat "$f" && echo; done | python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
+# A record that does not parse (one written before 1.20.2 with a value such as 007) is skipped.
+gates="$(for f in "$home"/gates/*.json; do [ -f "$f" ] && cat "$f" && echo; done | python3 -I -c '
+import json, sys
+out = []
+for l in sys.stdin:
+    try:
+        out.append(json.loads(l))
+    except ValueError:
+        pass
+print(json.dumps(out))')"
 pool="$("$FLOW_PLUGIN/scripts/steward.sh" pool 2>/dev/null | tail -n +2)"
 printf '%s\n%s\n%s\n' "$items" "$runs" "$gates" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder"

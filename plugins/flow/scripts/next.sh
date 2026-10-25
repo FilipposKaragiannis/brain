@@ -135,8 +135,10 @@ touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; pri
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
 # script. The health job reads it to tell a live run from a dead one.
 owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
+# A number in JSON has no leading zero, so the zeros go (never $((...)), which reads 0123 as octal).
+case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; owner="${owner:-0}" ;; esac
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
-  "started=$(now_iso)" ${owner:+"pid=$owner"} "touches:=$touches" > "$(run_file "$item")"
+  "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches" > "$(run_file "$item")"
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
 adapter write-state "$item" "step=$own_step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock

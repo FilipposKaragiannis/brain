@@ -91,7 +91,8 @@ def epoch(iso):
 
 
 def outcome(r):
-    text = r.get("result", "")
+    # str(): a record before 1.20.2 holds a result of digits as a number.
+    text = str(r.get("result", ""))
     if text.startswith("paused"):
         return "paused"
     if text.startswith("skipped"):
@@ -239,7 +240,7 @@ def schedule_cell(r):
 
 
 def cell(r):
-    text = r.get("result", "").replace("|", "/")
+    text = str(r.get("result", "")).replace("|", "/")
     text = text if len(text) <= 70 else text[:67] + "..."
     return "%s%s: %s" % (r["outcome"], " (%s)" % r["job"] if "-" in r.get("job", "") else "", text)
 
@@ -253,7 +254,7 @@ def history(log, base, n):
     print("|---|---|---|---|---|---|")
     for r in reversed(rows):
         print("| %s | %s | %s | %s | %s | %s |" % (local(epoch(r.get("at"))), r.get("job", ""), took(r.get("seconds", 0)),
-                                             r.get("exit", ""), outcome(r), r.get("result", "").replace("|", "/")))
+                                             r.get("exit", ""), outcome(r), str(r.get("result", "")).replace("|", "/")))
 
 
 def plist(label, workdir, command, spec, log, path):
