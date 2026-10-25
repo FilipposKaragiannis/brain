@@ -2,10 +2,28 @@
 # Human gates.
 #   gate.sh raise <item> <gate> <message>   record the gate in the tracker, notify, stop the run
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume
-#   gate.sh list                            pending gates
+#   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
+#                                           with the claimed worktree, the age and the questions
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
+# FLOW_NOW (an ISO time, 2026-10-25T09:00:00Z) stands in for the clock in the age. It exists for
+# tests, like FLOW_HOME.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
+
+# gates_json: each gate record with its claimed worktree (steward.sh find) or null, through
+# scripts/_gates.py, which adds the age and the parsed questions. A record that is not a JSON
+# object is skipped with a warning, so one bad file never hides the other gates.
+gates_json() {
+  for f in "$home"/gates/*.json; do
+    [ -f "$f" ] || continue
+    record="$(json_set "$(cat "$f")" worktree null 2>/dev/null)"
+    [ -n "$record" ] || { echo "flow: skipping $f, not a JSON gate record" >&2; continue; }
+    item="$(json_get "$record" item)"; worktree=""
+    [ -n "$item" ] && worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$item")"
+    if [ -n "$worktree" ]; then json_set "$record" worktree "$(json_string "$worktree")"; else printf '%s\n' "$record"; fi
+  done | python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
+}
+
 case "${1:-}" in
   raise)
     [ $# -ge 4 ] || die "usage: gate.sh raise <item> <gate> <message>" 2
@@ -30,11 +48,16 @@ $message" >/dev/null
     rm -f "$home/gates/$(item_slug "$item").json"
     echo "gate cleared on $item; run next $item to continue" ;;
   list)
+    case "$#:${2:-}" in
+      1:) ;;
+      2:--json) gates_json; exit ;;
+      *) die "usage: gate.sh list [--json]" 2 ;;
+    esac
     [ -d "$home/gates" ] || exit 0
     for f in "$home"/gates/*.json; do
       [ -f "$f" ] || continue
       c="$(cat "$f")"
       printf '%s\t%s\t%s\t%s\n' "$(json_get "$c" time)" "$(json_get "$c" item)" "$(json_get "$c" gate)" "$(json_get "$c" message | head -1)"
     done ;;
-  *) sed -n '2,6p' "$0"; exit 2 ;;
+  *) sed -n '2,9p' "$0"; exit 2 ;;
 esac

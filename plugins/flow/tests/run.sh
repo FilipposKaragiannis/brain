@@ -1255,5 +1255,57 @@ printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop
 PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
 check "notify: the variable alone is enough, with no URL in the config" sh -c "grep -q 'env.example/hook' '$work/curl.log'"
 
+echo "gate list --json"
+mkdir -p "$work/gates" && cd "$work/gates" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach ../app-wt-2
+mkdir -p .flow/gates ../app-wt-1/.flow
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\n  - ../app-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+printf '{"item":"local:task/7"}\n' > ../app-wt-1/.flow/claim.json
+json_obj gate=ambiguity item=local:task/7 "message=Two choices.
+1. Keep the old name? Recommended: yes, because callers depend on it.
+2) Same for the tap
+   and the depth pass?
+   **Recommended:** the same,
+   until a feel test says otherwise.
+3. Anything else?
+   Recommended reading is plan.md.
+4. Split the type?
+   - Recommended: no." time=2026-10-25T08:00:00Z host=claude > .flow/gates/local-task-7.json
+json_obj gate=plan-approval item=local:task/3 "message=The plan is ready.
+Read plan.md." time=2026-10-24T09:00:00Z host=shell > .flow/gates/local-task-3.json
+check "gate list: the plain output is unchanged" [ "$("$P/scripts/gate.sh" list)" = "$(printf '2026-10-24T09:00:00Z\tlocal:task/3\tplan-approval\tThe plan is ready.\n2026-10-25T08:00:00Z\tlocal:task/7\tambiguity\tTwo choices.')" ]
+"$P/scripts/gate.sh" list --bogus >/dev/null 2>&1; code=$?
+check "gate list: an unknown flag exits 2" [ "$code" -eq 2 ]
+"$P/scripts/gate.sh" list --json extra >/dev/null 2>&1; code=$?
+check "gate list: an extra argument exits 2" [ "$code" -eq 2 ]
+json_obj gate=escalation item=local:task/9 message=42 time=20261025 host=shell > .flow/gates/local-task-9.json
+printf '{"gate":"merge","message":"Merge it.","time":"2026-10-25T07:00:00Z"}\n' > .flow/gates/no-item.json
+printf 'not json\n' > .flow/gates/broken.json
+gj="$(FLOW_NOW=2026-10-25T09:00:00Z "$P/scripts/gate.sh" list --json 2>"$work/gates/err")"; code=$?
+gq() { printf '%s' "$gj" | jget "$1"; }
+check "gate json: exits 0 past a broken record" [ "$code" -eq 0 ]
+check "gate json: a broken record is named on stderr" grep -q 'broken.json' "$work/gates/err"
+check "gate json: every valid record is listed" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 4 ]
+check "gate json: each gate has the fields the console reads" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)[2]))')" = "item,gate,message,time,host,worktree,age_seconds,questions" ]
+check "gate json: oldest first" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(g["item"]) for g in json.load(sys.stdin)))')" = "local:task/3,None,local:task/7,local:task/9" ]
+check "gate json: the age of a day-old gate is against FLOW_NOW" [ "$(gq 0.age_seconds)" = 86400 ]
+check "gate json: the age of an hour-old gate is against FLOW_NOW" [ "$(gq 2.age_seconds)" = 3600 ]
+check "gate json: the claimed pool worktree" [ "$(gq 2.worktree)" = "$(cd ../app-wt-1 && pwd -P)" ]
+check "gate json: no claim, worktree null" [ "$(gq 0.worktree)" = null ]
+check "gate json: no item, no worktree even beside a free one" [ "$(gq 1.worktree)" = null ]
+check "gate json: a digits-only message is a string" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(json.load(sys.stdin)[3]["message"] == "42")')" = True ]
+check "gate json: a time that is no ISO time has no age" [ "$(gq 3.age_seconds)" = null ]
+check "gate json: one question per numbered line, dot or bracket" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(q["number"]) for q in json.load(sys.stdin)[2]["questions"]))')" = "1,2,3,4" ]
+check "gate json: an inline Recommended ends the question" [ "$(gq 2.questions.0.text)" = "Keep the old name?" ]
+check "gate json: an inline Recommended is the recommended answer" [ "$(gq 2.questions.0.recommended)" = "yes, because callers depend on it." ]
+check "gate json: a following line joins the question" [ "$(gq 2.questions.1.text)" = "Same for the tap and the depth pass?" ]
+check "gate json: a bold Recommended line, continued, is the recommended answer" [ "$(gq 2.questions.1.recommended)" = "the same, until a feel test says otherwise." ]
+check "gate json: Recommended without a colon is prose" [ "$(gq 2.questions.2.text)" = "Anything else? Recommended reading is plan.md." ]
+check "gate json: no Recommended line, recommended null" [ "$(gq 2.questions.2.recommended)" = null ]
+check "gate json: a listed Recommended line is the recommended answer" [ "$(gq 2.questions.3.recommended)" = "no." ]
+check "gate json: no numbered line, no questions" [ "$(gq 0.questions)" = "[]" ]
+rm .flow/gates/*.json
+check "gate json: nothing pending, an empty array" [ "$("$P/scripts/gate.sh" list --json)" = "[]" ]
+
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1

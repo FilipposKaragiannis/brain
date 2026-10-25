@@ -11,6 +11,9 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
 
 1. **No argument: list.** `gate.sh list` prints time, item, gate and the first line of what it
    asks. One line per gate: what the owner must decide. Nothing waiting: say so.
+   `gate.sh list --json` prints the same gates as one array, oldest first, each with its claimed
+   worktree (or null), its age in seconds and its numbered questions with their recommended
+   answers, parsed as in "Asking" below (empty when the message is not numbered questions).
 2. **`<item> <answer>`: clear.** Read the gate's message first (the item's last gate comment, or
    `/flow:board`), so the answer fits the question. Then:
    ```
