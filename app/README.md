@@ -11,7 +11,8 @@ npm start -- --project /work/projects/foosbrawl            # one or more --proje
 curl -s http://127.0.0.1:7474/api/projects/foosbrawl/snapshot | jq .counts
 curl -N http://127.0.0.1:7474/api/projects/foosbrawl/events  # server-sent events, one snapshot per change
 ```
-Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
+Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
+second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 `~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`). Every root must hold a
 `.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
 the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
