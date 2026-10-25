@@ -113,8 +113,10 @@ snapshots.
 
 - `project`: `id`, `name`, `root`, `flowHome`, `base` (the branch work merges into), `repo`
   (`github.repo`), `repoUrl` (`https://github.com/<repo>`, null without a repo), `trackerUrl` (the
-  issues page on the github adapter, null on local), `adapter`, `pluginVersion`, `jobsHost`
-  (`jobs.host`, the CLI the jobs run) and `poolMax`.
+  issues page on the github adapter, null on local), `adapter`, `pluginVersion`, `pluginRoot`
+  (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
+  variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
+  `jobsHost` (`jobs.host`, the CLI the jobs run) and `poolMax`.
 - A worktree carries `agents` and `sessions`, each a list of `{pid, host, command, elapsedSeconds}`
   (the command cut to 200 characters), `item`, `itemUrl` and `itemTitle` (from the board, null
   without an item or before the board is read), and `staleReason`: "branch is 35 commits behind
@@ -335,9 +337,12 @@ its working directory; Run, Stop, Pause, Resume and Open in Terminal, which foll
 on every job), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
-10 s). A line above every screen names the project with links to its
-repository and tracker, its adapter, base branch, flow version and jobs host, and a
-Settings link. Settings (`#/settings`, linked from the top bar of every screen) lists the projects
+10 s). A row above every screen holds the project's fields, each a small uppercase label over its
+value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker
+("GitHub issues", linked to the issues page, on the github adapter; "local" on local), Base branch,
+Flow plugin (the version; its title says whether it is the installed plugin or the one
+`FLOW_PLUGIN` named, with its folder) and Jobs run on (`claude` or `codex`), with the Settings
+link at the far right. At phone width the fields wrap. Settings (`#/settings`, linked from the top bar of every screen) lists the projects
 with Add (a path) and Remove, or the note why they cannot change; the terminal as radio buttons
 (the first installed, iTerm, Terminal, Ghostty, a custom command as a JSON array, checked as you type); the port, read
 only, with the restart note; the config file, the state folder and whether the daemon runs under

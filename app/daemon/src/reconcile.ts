@@ -528,7 +528,7 @@ function projectInfo(input: ReconcileInput): ProjectInfo {
     id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
     base: config.base, repo: config.repo, repoUrl,
     trackerUrl: config.adapter === GITHUB_ADAPTER && repoUrl !== null ? `${repoUrl}/issues` : null,
-    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, jobsHost: config.jobsHost, poolMax: config.poolMax,
+    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax,
   };
 }
 

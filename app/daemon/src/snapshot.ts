@@ -60,6 +60,9 @@ export type Freshness = {
   error: string | null;
 };
 
+/** How the project's flow plugin was found. */
+export type PluginSource = 'installed' | 'FLOW_PLUGIN';
+
 export type ProjectInfo = {
   id: string;
   name: string;
@@ -77,6 +80,13 @@ export type ProjectInfo = {
   adapter: string;
   /** The flow plugin's version the project resolves, or null when no plugin was found. */
   pluginVersion: string | null;
+  /** The folder of that plugin, or null when none was found. */
+  pluginRoot: string | null;
+  /**
+   * How the plugin was found: `FLOW_PLUGIN` when the daemon was started with that variable (it
+   * reaches every flow script), `installed` when .flow/plugin.sh found it in the plugin cache.
+   */
+  pluginSource: PluginSource | null;
   /** `jobs.host`: the CLI the scheduled jobs run unattended, `claude` or `codex`. */
   jobsHost: string;
   poolMax: number | null;

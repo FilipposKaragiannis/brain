@@ -28,6 +28,23 @@ test('FlowHome_ConfigPoolAndPlugin', async () => {
   assert.equal(facts.pluginRoot, FAKE_PLUGIN, 'because scripts run from the resolved plugin');
 });
 
+/** Runs `body` with FLOW_PLUGIN set as given (or unset), then puts the daemon's own value back. */
+async function withFlowPlugin<T>(value: string | undefined, body: () => Promise<T>): Promise<T> {
+  const kept = process.env['FLOW_PLUGIN'];
+  if (value === undefined) delete process.env['FLOW_PLUGIN']; else process.env['FLOW_PLUGIN'] = value;
+  try { return await body(); } finally { if (kept === undefined) delete process.env['FLOW_PLUGIN']; else process.env['FLOW_PLUGIN'] = kept; }
+}
+
+test('FlowPluginUnset_PluginSourceIsInstalled', async () => {
+  const facts = await withFlowPlugin(undefined, () => readFlowHome(FIXTURE_ROOT, fakeRunner));
+  assert.equal(facts.pluginSource, 'installed', 'because without FLOW_PLUGIN plugin.sh found the plugin in the cache');
+});
+
+test('FlowPluginSet_PluginSourceIsFlowPlugin', async () => {
+  const facts = await withFlowPlugin('/work/brain/plugins/flow', () => readFlowHome(FIXTURE_ROOT, fakeRunner));
+  assert.equal(facts.pluginSource, 'FLOW_PLUGIN', 'because FLOW_PLUGIN reaches plugin.sh, which takes it over the cache');
+});
+
 test('PluginVersion_FromTheManifest_WhenTheFolderIsACheckout', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'console-plugin-'));
   try {

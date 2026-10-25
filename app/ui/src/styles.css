@@ -192,9 +192,14 @@ h1, h2 { margin: 0; }
 .terminal { flex: 1; margin: 0; overflow: auto; background: var(--terminal); color: var(--terminal-ink); border-radius: 10px; padding: 12px 14px; font: 12px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word; }
 
 /* Project bar */
-.project-bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-size: 12px; color: var(--muted); }
-.project-name { font-size: 13px; font-weight: 700; color: var(--ink); }
-.project-note { flex-basis: 100%; font-size: 11px; }
+.project-bar { display: flex; align-items: flex-end; gap: 8px 18px; font-size: 13px; color: var(--ink-soft); }
+.project-fields { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0; flex: 1 1 auto; min-width: 0; }
+.project-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.project-field dt { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.project-field dd { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-name { font-weight: 700; color: var(--ink); }
+.project-settings { margin-left: auto; font-size: 12px; white-space: nowrap; }
+@media (max-width: 600px) { .project-bar { flex-wrap: wrap; } .project-fields { gap: 8px 16px; } }
 
 /* Help and legends */
 .readiness { margin: 0; padding: 10px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink-soft); font-weight: 500; }

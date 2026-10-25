@@ -6,7 +6,7 @@ import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
-import type { FlowEvent, GateQuestion } from '../snapshot.ts';
+import type { FlowEvent, GateQuestion, PluginSource } from '../snapshot.ts';
 
 /** The parts of .flow/config.yaml the snapshot needs. */
 export type FlowConfig = {
@@ -47,6 +47,8 @@ export type FlowHomeFacts = {
   events: FlowEvent[];
   pluginRoot: string | null;
   pluginVersion: string | null;
+  /** `FLOW_PLUGIN` when the daemon's environment names the plugin, `installed` when .flow/plugin.sh found it; null with no plugin. */
+  pluginSource: PluginSource | null;
   /** Why `gate.sh list --json` gave no parse this read, or null when it was not needed or worked. */
   gateListError: string | null;
 };
@@ -280,5 +282,6 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
     const cached = cache.get(gate.item);
     return { ...gate, questions: cached !== undefined && cached.message === gate.message ? cached.questions : null };
   });
-  return { flowHome, config, gates, runs, claims, events, pluginRoot, pluginVersion, gateListError };
+  const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
+  return { flowHome, config, gates, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError };
 }
