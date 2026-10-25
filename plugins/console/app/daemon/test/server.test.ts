@@ -325,7 +325,7 @@ test('FlowConfig_ServedWithItsHashAndSections', async () => {
     assert.equal(document.path, path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), 'because the editor names the file it edits');
     assert.match(document.hash, /^[0-9a-f]{64}$/, 'because a PUT must send the hash back');
     assert.deepEqual(document.sections.map((section) => section.group).slice(0, 2), ['Tracker', 'Readiness'], 'because the schema groups come in a fixed order');
-    assert.deepEqual(document.hostDefaults, { codex: { model: 'gpt-6-sol', effort: 'high' } }, 'because the UI names the codex default read from ~/.codex/config.toml');
+    assert.deepEqual(document.hostDefaults, { codex: { model: 'gpt-6-sol', effort: 'high', profile: null } }, 'because the UI names the codex default read from ~/.codex/config.toml');
   } finally { await close(); }
 });
 

@@ -12,7 +12,7 @@ const TEXT = 'base: main\njobs:\n  host: claude\n  schedule:\n    next: every 30
 const DOCUMENT: FlowConfigDocument = {
   path: '/p/.flow/config.yaml', text: TEXT, hash: 'h1',
   values: { base: 'main', jobs: { host: 'claude', schedule: { next: 'every 30m --workers 2' } }, reviews: { reviewers: ['codex'] } },
-  sections: schemaSections(), warnings: [], hostDefaults: { codex: { model: 'gpt-6-sol', effort: 'high' } },
+  sections: schemaSections(), warnings: [], hostDefaults: { codex: { model: 'gpt-6-sol', effort: 'high', profile: null } },
 };
 
 async function renderFlowSettings(onPut: (body: unknown) => { status: number; body: unknown }, document: FlowConfigDocument = DOCUMENT) {
@@ -128,7 +128,7 @@ test('JobsGroup_HostClaude_OnlyClaudesModelAndEffortShow', async () => {
   expect(within(jobs()).queryByLabelText('jobs.claude.model'), 'because the jobs run on claude, so its model is the one that counts').not.toBeNull();
   expect(within(jobs()).queryByLabelText('jobs.claude.effort'), 'because the effort goes with the model').not.toBeNull();
   expect([within(jobs()).queryByLabelText('jobs.codex.model'), within(jobs()).queryByLabelText('jobs.codex.effort')], 'because the other host\'s pair is hidden while the jobs do not run on it').toEqual([null, null]);
-  expect(optionsOf('jobs.claude.model'), 'because the dropdown lists the enum, with the empty value as the host\'s default').toEqual(['host default', 'opus', 'sonnet', 'haiku', 'fable']);
+  expect(optionsOf('jobs.claude.model'), 'because the dropdown lists the enum, with the empty value as the host\'s default').toEqual(['host default', 'opus', 'sonnet', 'haiku', 'fable', 'other…']);
   expect(within(jobs()).getByLabelText('jobs.claude.model').closest('.flow-field')!.textContent, 'because claude has no file that names its default').toMatch(/empty takes the Claude CLI's default/);
 });
 
@@ -148,7 +148,7 @@ test('JobsGroup_HiddenPairEdited_NotSent', async () => {
   fireEvent.change(within(jobs()).getByLabelText('jobs.host'), { target: { value: 'codex' } });
   fireEvent.change(within(jobs()).getByLabelText('jobs.codex.effort'), { target: { value: 'xhigh' } });
   await act(async () => { fireEvent.click(within(jobs()).getByRole('button', { name: 'Save' })); });
-  expect(puts, 'because a change to the pair the owner can no longer see must not be saved behind their back').toEqual([{ changes: [{ path: 'jobs.host', value: 'codex' }, { path: 'jobs.codex.effort', value: 'xhigh' }], hash: 'h1' }]);
+  expect(puts, 'because a change to the pair the owner can no longer see must not be saved behind their back, and the shown pair goes whole').toEqual([{ changes: [{ path: 'jobs.host', value: 'codex' }, { path: 'jobs.codex.model', value: '' }, { path: 'jobs.codex.effort', value: 'xhigh' }], hash: 'h1' }]);
 });
 
 test('JobsGroup_NoCodexConfig_HelpSaysCodexPicks', async () => {
@@ -165,9 +165,61 @@ test('DeprecatedJobsModel_Set_ReadOnlyWithTheNoteAndClearSendsNull', async () =>
   const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.model'] }) }), withJobs({ model: 'opus' }));
   const input = within(jobs()).getByLabelText('jobs.model') as HTMLInputElement;
   expect([input.value, input.readOnly], 'because the value shows, but is not edited here any more').toEqual(['opus', true]);
-  expect(input.closest('.flow-field')!.textContent, 'because the owner learns what replaced it').toMatch(/Deprecated: flow 1\.20\.0 reads jobs\.<host>\.model and jobs\.<host>\.effort\. Set those and clear these\./);
+  expect(input.closest('.flow-field')!.textContent, 'because the owner learns what replaced it').toMatch(/Deprecated: flow 1\.20\.0 reads jobs\.<host>\.model and jobs\.<host>\.effort, and this key only while jobs\.<host> is absent\. Set those and clear these\./);
   expect(within(jobs()).queryByLabelText('jobs.effort'), 'because only the deprecated key the file sets shows').toBeNull();
   await act(async () => { fireEvent.click(within(jobs()).getByRole('button', { name: 'Clear jobs.model' })); });
   expect(puts, 'because Clear takes the key out of the file').toEqual([{ changes: [{ path: 'jobs.model', value: null }], hash: 'h1' }]);
   expect(within(jobs()).getByRole('status').textContent, 'because the owner sees the key went').toMatch(/Saved jobs\.model\./);
+});
+
+test('JobsGroup_NoClaudeMapAndOldModelSet_ShowsWhatThePluginRunsAndHostDefaultWritesTheMap', async () => {
+  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.claude.model', 'jobs.claude.effort'] }) }), withJobs({ model: 'opus' }));
+  const model = within(jobs()).getByLabelText('jobs.claude.model') as HTMLSelectElement;
+  expect(model.value, 'because with no jobs.claude map the plugin falls back to jobs.model, so the jobs run opus').toBe('opus');
+  expect(model.closest('.flow-field')!.textContent, 'because the owner must see where that value comes from').toMatch(/now opus, from the deprecated jobs\.model/);
+  expect(within(jobs()).getByLabelText('jobs.claude.effort').closest('.flow-field')!.textContent, 'because jobs.effort is empty, so nothing is taken from it').not.toMatch(/from the deprecated/);
+  fireEvent.change(model, { target: { value: '' } });
+  await act(async () => { fireEvent.click(within(jobs()).getByRole('button', { name: 'Save' })); });
+  expect(puts, 'because host default is an empty line in a jobs.claude map, the one thing that ends the fallback').toEqual([{ changes: [{ path: 'jobs.claude.model', value: '' }, { path: 'jobs.claude.effort', value: '' }], hash: 'h1' }]);
+});
+
+test('JobsGroup_NoCodexMapAndOldModelSet_ShowsTheMappedName', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withJobs({ host: 'codex', model: 'opus', effort: 'max' }));
+  expect((within(jobs()).getByLabelText('jobs.codex.model') as HTMLSelectElement).value, 'because the plugin maps the roster name opus to gpt-6-sol for codex').toBe('gpt-6-sol');
+  expect(within(jobs()).getByLabelText('jobs.codex.model').closest('.flow-field')!.textContent, 'because the value comes from the old key').toMatch(/now gpt-6-sol, from the deprecated jobs\.model/);
+  expect(within(jobs()).getByLabelText('jobs.codex.effort').closest('.flow-field')!.textContent, 'because the old effort counts too, even one codex refuses').toMatch(/now max, from the deprecated jobs\.effort/);
+});
+
+test('JobsGroup_ClaudeMapPresent_OldModelIgnored', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withJobs({ model: 'opus', claude: { effort: 'low' } }));
+  const model = within(jobs()).getByLabelText('jobs.claude.model') as HTMLSelectElement;
+  expect([model.value, /from the deprecated/.test(model.closest('.flow-field')!.textContent ?? '')], 'because once jobs.claude is there the plugin reads only it, and its missing model is the host default').toEqual(['', false]);
+});
+
+test('JobsGroup_ModelNotInTheList_ShownInOtherAndAnyNameSaves', async () => {
+  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.claude.model'] }) }), withJobs({ claude: { model: 'claude-opus-x', effort: 'high' } }));
+  expect((within(jobs()).getByLabelText('jobs.claude.model') as HTMLSelectElement).selectedOptions[0]!.textContent, 'because the plugin passes any model name on, so one off the list is still a value').toBe('other…');
+  const text = within(jobs()).getByLabelText('jobs.claude.model, other') as HTMLInputElement;
+  expect(text.value, 'because the text field holds the name the file has').toBe('claude-opus-x');
+  fireEvent.change(text, { target: { value: 'claude-opus-y' } });
+  await act(async () => { fireEvent.click(within(jobs()).getByRole('button', { name: 'Save' })); });
+  expect(puts, 'because a free name saves as typed, with the effort of the pair').toEqual([{ changes: [{ path: 'jobs.claude.model', value: 'claude-opus-y' }, { path: 'jobs.claude.effort', value: 'high' }], hash: 'h1' }]);
+});
+
+test('JobsGroup_OtherPicked_RevealsTheTextFieldAndAListedPickHidesIt', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }));
+  const model = within(jobs()).getByLabelText('jobs.claude.model') as HTMLSelectElement;
+  expect(within(jobs()).queryByLabelText('jobs.claude.model, other'), 'because a listed value needs no text field').toBeNull();
+  fireEvent.change(model, { target: { value: [...model.options].find((option) => option.textContent === 'other…')!.value } });
+  expect(within(jobs()).queryByLabelText('jobs.claude.model, other'), 'because other… is for a name off the list').not.toBeNull();
+  fireEvent.change(model, { target: { value: 'sonnet' } });
+  expect([within(jobs()).queryByLabelText('jobs.claude.model, other'), model.value], 'because a listed pick closes it again').toEqual([null, 'sonnet']);
+});
+
+test('DeprecatedJobsModel_Cleared_TheGroupsOtherEditsStay', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.model'] }) }), withJobs({ model: 'opus' }));
+  fireEvent.change(within(jobs()).getByLabelText('jobs.marketplace'), { target: { value: '/work/other' } });
+  await act(async () => { fireEvent.click(within(jobs()).getByRole('button', { name: 'Clear jobs.model' })); });
+  expect((within(jobs()).getByLabelText('jobs.marketplace') as HTMLInputElement).value, 'because a Clear saves one key and must not throw away what else the owner typed').toBe('/work/other');
+  expect((within(jobs()).getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled, 'because that edit is still to be saved').toBe(false);
 });
