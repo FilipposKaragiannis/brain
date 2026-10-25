@@ -1,5 +1,22 @@
 # flow
 
+## 1.20.1 (2026-10-25)
+
+- The verify report is never empty. `verify.sh` built `verify.json` by gluing JSON strings
+  together in the shell, and a plain integer became a JSON number, so a short head sha of digits
+  with a leading zero (`0123456`, about one commit in 270) made invalid JSON; the pretty-print
+  failed and the redirect left an empty `verify.json` while verify still exited as if it had
+  written one. A command output that was not UTF-8 did the same without jq.
+- The checks are now recorded as NUL-delimited fields and the report is built from that data by
+  `scripts/_verify_report.py`: every value is a string where the schema says so (`head` too),
+  bytes that are not UTF-8 are replaced, and a summary is the last five non-empty lines on one
+  line, without control characters or terminal colours, cut to 400 characters. `verify.json` and
+  `verify.md` are written to a temp file and renamed into place, so a reader sees the old report
+  or the new one, never an empty or half-written one.
+- A report that cannot be built fails loudly: verify prints the cause on stderr, writes a
+  minimal valid `verify.json` with status `fail` and the cause as a `report` check summary, and a
+  `verify.md` saying so, and exits 1.
+
 ## 1.20.0 (2026-10-25)
 
 - The jobs' model and effort are set per host. New keys in `.flow/config.yaml`:

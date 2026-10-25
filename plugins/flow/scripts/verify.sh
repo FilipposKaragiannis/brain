@@ -9,7 +9,10 @@
 # files only, like a format command, and is skipped when none changed. A project gate is
 # `name: command` (always runs) or a map with `command:` and `paths:` (runs when a changed file
 # matches a glob; otherwise a skipped check). feel_test is true when a changed file matches
-# feel_test_paths in the flow config. Never edits anything.
+# feel_test_paths in the flow config. Never edits anything. The report is built from data by
+# scripts/_verify_report.py and renamed into place, so it is never empty or half written; when it
+# cannot be built, verify says why on stderr, writes a minimal report with status fail and the
+# cause as a check summary, and exits 1.
 . "$(dirname "$0")/../lib/flow.sh"
 [ $# -ge 1 ] || die "usage: verify.sh <item> [--base <ref>]" 2
 item="$1"; shift
@@ -27,11 +30,19 @@ reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"
 log="$reports/verify.log"; : > "$log"
 data="$(adapter read "$item" 2>/dev/null)" || data='{}'
 attempts="$(state_get "$data" attempts)"; attempts=$(( ${attempts:-0} + 1 ))
-checks=""; overall="pass"; sep=""
+overall="pass"
+records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+trap 'rm -f "$records" "$changed_list"' EXIT
 
+record() {
+  # record <name> <status> <command> <summary source>: one check, four NUL-terminated fields. The
+  # report builder turns the source into the summary; nothing here is JSON.
+  printf '%s\000%s\000%s\000%s\000' "$1" "$2" "$3" "$4" >> "$records"
+}
 skipped() {
   # skipped <name> <why>: a check that did not apply, kept in the report so the reader sees why.
-  checks="$checks$sep$(json_obj "name=$1" status=skipped command= "summary=$2")"; sep=","
+  record "$1" skipped "" "$2"
 }
 changed_matches() {
   # changed_matches <globs, one per line>: true when a changed file matches one of them.
@@ -56,15 +67,15 @@ run_check() {
   if out="$(sh -c "$cmd" 2>&1)"; then st="pass"; summary="ok"
   else
     st="fail"; [ "$kind" = "signal" ] && st="signal"
-    summary="$(printf '%s' "$out" | grep -v '^$' | tail -5 | tr '\n' ' ' | cut -c1-400)"
+    summary="$out"
   fi
   printf '%s\n' "$out" >> "$log"
   [ "$st" = "fail" ] && overall="fail"
-  checks="$checks$sep$(json_obj "name=$name" "status=$st" "command=$cmd" "summary=$summary")"; sep=","
+  record "$name" "$st" "$cmd" "$summary"
 }
 
 build="$(json_get "$std" build)"
-[ -n "$build" ] && run_check build "$build" gate || checks="$checks$sep$(json_obj name=build status=skipped command= "summary=no build command in .standards/config.json")" ; [ -n "$build" ] || sep=","
+if [ -n "$build" ]; then run_check build "$build" gate; else skipped build "no build command in .standards/config.json"; fi
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
   lang="$(json_get "$std" "languages.$i")"
@@ -78,9 +89,9 @@ while [ "$i" -lt "${nlang:-0}" ]; do
   done
   i=$((i + 1))
 done
-[ "$ran_format" -eq 1 ] || { checks="$checks$sep$(json_obj name=format status=skipped command= "summary=no changed source files under a format rule")"; sep=","; }
+[ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule"
 test_cmd="$(json_get "$std" test)"
-if [ -n "$test_cmd" ]; then run_check tests "$test_cmd" gate; else checks="$checks$sep$(json_obj name=tests status=skipped command= "summary=no test command in .standards/config.json")"; sep=","; fi
+if [ -n "$test_cmd" ]; then run_check tests "$test_cmd" gate; else skipped tests "no test command in .standards/config.json"; fi
 mutation="$(json_get "$std" mutation)"
 if [ -z "$mutation" ]; then skipped mutation "mutation is empty in .standards/config.json (off)"
 else
@@ -101,20 +112,22 @@ for g in $(cfg feel_test_paths); do
   printf '%s\n' "$changed" | while read -r f; do glob_match "$g" "$f" && exit 3; done
   [ $? -eq 3 ] && { feel=true; break; }
 done
-files_json="$(printf '%s\n' "$changed" | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
-json_obj "status=$overall" "checks:=[$checks]" "attempts=$attempts" "base=$base" "head=$(git rev-parse --short HEAD)" "changed_files:=$files_json" "feel_test:=$feel" \
-  | python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2))' > "$reports/verify.json"
-{
-  echo "## Verify: $overall (attempt $attempts)"
-  echo
-  echo "| check | status | summary |"; echo "|---|---|---|"
-  printf '%s' "[$checks]" | python3 -I -c '
-import json, sys
-for c in json.load(sys.stdin):
-    print("| %s | %s | %s |" % (c["name"], c["status"], c["summary"].replace("|", "\\|")[:200]))'
-  echo
-  echo "Base \`$base\` ($merge_base), head \`$(git rev-parse --short HEAD)\`, $(printf '%s\n' "$changed" | grep -c .) changed files. Log: \`$log\`."
-  [ "$feel" = true ] && echo "**Feel-test needed:** a changed file matches \`feel_test_paths\`."
-} > "$reports/verify.md"
+printf '%s\n' "$changed" > "$changed_list"
+head_sha="$(git rev-parse --short HEAD)"
+
+report_failed() {
+  # report_failed <cause>: the report builder failed. Say so, and leave a minimal report that
+  # still parses, with status fail and the cause, written without the builder and renamed in.
+  cause="$(printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' ' ' | LC_ALL=C tr -d '"\\' | cut -c1-400)"
+  safe() { printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-'; }
+  echo "verify: could not build the report: $cause" >&2
+  printf '{"status": "fail", "checks": [{"name": "report", "status": "fail", "command": "", "summary": "could not build the report: %s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false}\n' \
+    "$cause" "$attempts" "$(safe "$base")" "$(safe "$head_sha")" > "$reports/.verify.json.$$.tmp" && mv -f "$reports/.verify.json.$$.tmp" "$reports/verify.json"
+  printf '## Verify: fail (attempt %d)\n\nThe report could not be built: %s\n\nLog: `%s`.\n' "$attempts" "$cause" "$log" \
+    > "$reports/.verify.md.$$.tmp" && mv -f "$reports/.verify.md.$$.tmp" "$reports/verify.md"
+  exit 1
+}
+err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$merge_base" "$head_sha" "$feel" "$log" 2>&1 >/dev/null)" \
+  || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]
