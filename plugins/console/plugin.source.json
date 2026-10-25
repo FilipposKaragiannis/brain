@@ -23,5 +23,13 @@
     ],
     "brandColor": "#0F766E"
   },
-  "skills": []
+  "skills": [
+    {
+      "name": "install",
+      "invocation": "user",
+      "displayName": "Console Install",
+      "shortDescription": "Put the Brain Console on this machine and start it on login",
+      "defaultPrompt": "Use $install to put the Brain Console on this machine and start it on login."
+    }
+  ]
 }

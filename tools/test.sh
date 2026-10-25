@@ -11,6 +11,7 @@ clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG
 clean plugins/standards/hooks/tests/run.sh || status=1
 clean plugins/flow/tests/run.sh || status=1
 clean plugins/meta/tests/run.sh || status=1
+clean plugins/console/tests/run.sh || status=1
 clean tools/tests/run.sh || status=1
 # The console app (plugins/console/app): the daemon's type-check and suite, then the UI's, when Node 24 and both sets of dev dependencies are present.
 console=plugins/console/app
