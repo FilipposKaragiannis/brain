@@ -37,7 +37,7 @@ export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board' | 'pul
 /** Every source, in the order the daemon reads them. The one list the routes and actions share. */
 export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board', 'pulls'];
 /**
- * Why a row is on the needs-you list. `needs-field`: an open item with no step and no open
+ * Why a row is on the needs-you list. `needs-field`: an open item, not an epic, with no step and no open
  * blocker that the next job refuses because a field the tracker asks for (`ready_needs` in
  * .flow/config.yaml, such as priority or size) is empty.
  */

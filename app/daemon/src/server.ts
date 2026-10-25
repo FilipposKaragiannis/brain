@@ -117,6 +117,7 @@ export function createConsoleServer(projects: ServedProject[], options: ServerOp
     if (route === 'snapshot') { sendJson(response, HTTP_OK, served.monitor.snapshot); return; }
     if (route === 'refresh') { refresh(served.monitor, request, response, url); return; }
     if (route === 'actions') { void actions(served.actions, request, response, actionId); return; }
+    if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
     if (wantsEventList(request, url)) { eventList(served.monitor, response, url); return; }
     streamEvents(served, request, response, options.log);
   });

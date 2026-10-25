@@ -8,7 +8,10 @@ import { HANDED_ON_REFRESH_MS, SCRIPT_TIMEOUT_MS } from '../src/actionPlan.ts';
 import type { ActionContext } from '../src/actionPlan.ts';
 import { silentLogger } from '../src/log.ts';
 import type { ActionRecord } from '../src/snapshot.ts';
-import { fakeScheduler, fakeSpawner, settle } from './fakeSpawner.ts';
+import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
+import type { SourceName } from '../src/snapshot.ts';
+import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
+import { fakeScheduler, fakeSpawner, plainSpawner, settle } from './fakeSpawner.ts';
 import type { FakeSpawnerOptions } from './fakeSpawner.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'] };
@@ -276,26 +279,84 @@ test('StopAll_EndsAttachedActionsOnly', async () => {
   } finally { await cleanup(); }
 });
 
-test('JobRunEnds_SourcesReadNowAndAgainAfterTheDelay', async () => {
-  const { actions, processes, timers, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
+/**
+ * A runner wired to a real monitor over the fixture project, as main.ts wires them, with a clock
+ * the test moves: when a source was last read is the monitor's own state, not a recorder.
+ */
+async function wiredToMonitor() {
+  const clock = { now: new Date('2026-10-25T09:00:00Z') };
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => clock.now, log: silentLogger, cadence: DEFAULT_CADENCE });
+  await monitor.refresh('files');
+  await monitor.refresh('jobs');
+  const stateDir = await mkdtemp(path.join(os.tmpdir(), 'console-actions-'));
+  const { spawner, processes } = plainSpawner();
+  const timers = fakeScheduler();
+  const actions = new ActionRunner({
+    projectId: 'project', context: () => monitor.actionContext(), spawner, scheduler: timers.scheduler, clock: () => clock.now, log: silentLogger, stateDir,
+    onRefresh: (sources) => { for (const source of sources) void monitor.refresh(source as SourceName); },
+  });
+  const jobsReadAt = (): string | null => monitor.snapshot?.sources.jobs.at ?? null;
+  const later = (seconds: number): string => { clock.now = new Date(clock.now.getTime() + seconds * 1000); return clock.now.toISOString(); };
+  const cleanup = async (): Promise<void> => { await settle(); await actions.whenIdle(); await rm(stateDir, { recursive: true, force: true }); };
+  return { actions, processes, timers, jobsReadAt, later, cleanup };
+}
+
+test('JobRunEnds_JobsReadAgainAfterTheDelay', async () => {
+  const { actions, processes, timers, jobsReadAt, later, cleanup } = await wiredToMonitor();
   try {
     actions.request('job.run', { job: 'comments' });
+    later(1);
     processes[0]!.exit(0, null);
     await settle();
+    const fiveSecondsOn = later(5);
     timers.fire(HANDED_ON_REFRESH_MS);
-    assert.deepEqual(refreshed, [['jobs', 'processes'], ['jobs', 'processes']], 'because the job launchd started shows in its status only a few seconds after jobs.sh returns');
+    await settle();
+    assert.equal(jobsReadAt(), fiveSecondsOn, 'because the job launchd started shows in its status only a few seconds after jobs.sh returns, so the jobs are read again then');
   } finally { await cleanup(); }
 });
 
 test('StopAll_SecondReadWaiting_Dropped', async () => {
-  const { actions, processes, timers, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
+  const { actions, processes, timers, jobsReadAt, later, cleanup } = await wiredToMonitor();
   try {
     actions.request('job.run', { job: 'comments' });
+    const ended = later(1);
     processes[0]!.exit(0, null);
     await settle();
     actions.stopAll();
+    later(5);
     timers.fire(HANDED_ON_REFRESH_MS);
-    assert.equal(refreshed.length, 1, 'because a daemon shutting down must not read sources after it stopped');
+    await settle();
+    assert.equal(jobsReadAt(), ended, 'because a daemon shutting down must not read sources after it stopped');
+  } finally { await cleanup(); }
+});
+
+test('StopAll_HandOffEndsWellAfterTheStop_NoSecondRead', async () => {
+  const { actions, processes, timers, jobsReadAt, later, cleanup } = await wiredToMonitor();
+  try {
+    actions.request('job.run', { job: 'comments' });
+    processes[0]!.ignoresTerm = true;
+    actions.stopAll();
+    const ended = later(1);
+    processes[0]!.exit(0, null);
+    await settle();
+    later(5);
+    timers.fire(HANDED_ON_REFRESH_MS);
+    await settle();
+    assert.equal(jobsReadAt(), ended, 'because an action that ends after the stop must not start a read behind a stopped daemon');
+  } finally { await cleanup(); }
+});
+
+test('JobRunFails_NoSecondRead', async () => {
+  const { actions, processes, timers, jobsReadAt, later, cleanup } = await wiredToMonitor();
+  try {
+    actions.request('job.run', { job: 'comments' });
+    const ended = later(1);
+    processes[0]!.exit(1, null);
+    await settle();
+    later(5);
+    timers.fire(HANDED_ON_REFRESH_MS);
+    await settle();
+    assert.equal(jobsReadAt(), ended, 'because a hand-off that failed started no job, so there is nothing to wait for');
   } finally { await cleanup(); }
 });
 

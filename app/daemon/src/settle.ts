@@ -11,8 +11,15 @@ export const STORE_SOURCES: Record<string, SourceName> = {
   'pull request': 'pulls',
 };
 
-/** How many times each source has been read, so far. */
-export type ReadCounts = Record<SourceName, number>;
+/**
+ * Where the reads stand. Every read takes the next number when it starts. `started` is the last
+ * number handed out; `completed` is, per source, the start number of the latest read that
+ * finished and worked (0 before any). A failed read never counts: it says nothing new. `failing`
+ * names the sources whose latest read failed: waiting on them could take forever, so a
+ * disagreement naming one is not held back on its account, and the red source on the strip says
+ * how far to trust it.
+ */
+export type ReadMarks = { started: number; completed: Record<SourceName, number>; failing: Record<SourceName, boolean> };
 
 export function disagreementKey(disagreement: Disagreement): string {
   return [disagreement.sources.join('|'), disagreement.item ?? '', disagreement.worktree ?? '', disagreement.message].join('\u0000');
@@ -25,19 +32,23 @@ export function disagreementKey(disagreement: Disagreement): string {
  * read again; that is lag, not a disagreement. One per project, owned by its monitor.
  */
 export class DisagreementSettler {
-  /** Each disagreement still waiting, with the read counts when it was first seen. */
-  private readonly pending = new Map<string, ReadCounts>();
+  /** Each disagreement still waiting, with the last read number handed out when it was first seen. */
+  private readonly pending = new Map<string, number>();
 
-  /** The disagreements found in this rebuild that have settled. Forgets any that went away. */
-  settle(found: Disagreement[], reads: ReadCounts): Disagreement[] {
+  /**
+   * The disagreements found in this rebuild that have settled: every store they name was read
+   * by a read that started after they were first seen, so a read already in flight then (and
+   * holding the old answer) never counts. Forgets any that went away.
+   */
+  settle(found: Disagreement[], reads: ReadMarks): Disagreement[] {
     const present = new Set<string>();
     const settled: Disagreement[] = [];
     for (const disagreement of found) {
       const key = disagreementKey(disagreement);
       present.add(key);
       const firstSeen = this.pending.get(key);
-      if (firstSeen === undefined) { this.pending.set(key, { ...reads }); continue; }
-      if (sourcesOf(disagreement).every((source) => reads[source] > firstSeen[source])) settled.push(disagreement);
+      if (firstSeen === undefined) { this.pending.set(key, reads.started); continue; }
+      if (sourcesOf(disagreement).every((source) => reads.failing[source] || reads.completed[source] > firstSeen)) settled.push(disagreement);
     }
     for (const key of [...this.pending.keys()]) if (!present.has(key)) this.pending.delete(key);
     return settled;

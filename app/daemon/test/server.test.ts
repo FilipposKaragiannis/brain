@@ -190,3 +190,21 @@ test('Events_BadLimit_BadRequest', async () => {
     assert.equal((await fetch(`${base}/api/projects/project/events?limit=-1&token=tok`)).status, 400, 'because a limit is a positive whole number');
   } finally { await close(); }
 });
+
+test('Events_NoQuery_StillTheStream', async () => {
+  const { base, close } = await started();
+  try {
+    const controller = new AbortController();
+    const response = await fetch(`${base}/api/projects/project/events?token=tok`, { signal: controller.signal });
+    const type = response.headers.get('content-type');
+    controller.abort();
+    assert.equal(type, 'text/event-stream', 'because an EventSource asks with no query and must get the live stream, not the JSON list');
+  } finally { await close(); }
+});
+
+test('Events_Post_MethodNotAllowed', async () => {
+  const { base, close } = await started();
+  try {
+    assert.equal((await fetch(`${base}/api/projects/project/events?item=gh%23213&token=tok`, { method: 'POST' })).status, 405, 'because the events are only ever read');
+  } finally { await close(); }
+});

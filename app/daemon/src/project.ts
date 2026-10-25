@@ -18,7 +18,7 @@ import { readPulls } from './collectors/pulls.ts';
 import type { Logger } from './log.ts';
 import { ageSeconds, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
-import type { ReadCounts } from './settle.ts';
+import type { ReadMarks } from './settle.ts';
 import type { Freshness, Snapshot, SourceName } from './snapshot.ts';
 
 /** How often each source is re-read, in milliseconds. File changes also trigger `files` and `git` at once. */
@@ -79,7 +79,11 @@ export class ProjectMonitor {
   private gateListError: string | null = null;
   private current: Snapshot | null = null;
   private readonly settler = new DisagreementSettler();
-  private readonly reads: ReadCounts = { files: 0, git: 0, processes: 0, jobs: 0, board: 0, pulls: 0 };
+  private readonly reads: ReadMarks = {
+    started: 0,
+    completed: { files: 0, git: 0, processes: 0, jobs: 0, board: 0, pulls: 0 },
+    failing: { files: false, git: false, processes: false, jobs: false, board: false, pulls: false },
+  };
 
   constructor(dependencies: ProjectMonitorDependencies) {
     this.project = dependencies.project;
@@ -143,15 +147,19 @@ export class ProjectMonitor {
 
   private async read(source: SourceName): Promise<void> {
     const startedAt = this.clock();
+    this.reads.started += 1;
+    const sequence = this.reads.started;
     try {
       const notApplicable = await this.collect(source);
       this.facts[source].freshness = { at: startedAt.toISOString(), ageSeconds: 0, ok: true, error: notApplicable };
+      this.reads.completed[source] = Math.max(this.reads.completed[source], sequence);
+      this.reads.failing[source] = false;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.facts[source].freshness = { ...this.facts[source].freshness, ok: false, error: message };
+      this.reads.failing[source] = true;
       this.log.warn('collect.failed', { project: this.project.id, source, error: message });
     }
-    this.reads[source] += 1;
     this.rebuild();
   }
 

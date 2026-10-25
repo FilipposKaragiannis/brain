@@ -212,12 +212,15 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[]): Item[] {
   return items.sort((left, right) => STATE_ORDER[left.state] - STATE_ORDER[right.state] || left.rank - right.rank || left.id.localeCompare(right.id));
 }
 
-function gatePull(item: string, pulls: PullRequest[]): Gate['pull'] {
-  const pull = pulls.find((entry) => entry.item === item);
+/** The gate item's open pull: the one its `pr` field names first, else the one on its claimed branch. */
+function gatePull(id: string, items: Item[], pulls: PullRequest[]): Gate['pull'] {
+  const candidates = pulls.filter((entry) => entry.item === id);
+  const named = items.find((item) => item.id === id)?.pr ?? null;
+  const pull = candidates.find((entry) => namesPull(named, entry)) ?? candidates[0];
   return pull === undefined ? null : { number: pull.number, url: pull.url, state: pull.state, unresolvedThreads: pull.unresolvedThreads };
 }
 
-function buildGates(input: ReconcileInput, contexts: WorktreeContext[], pulls: PullRequest[]): Gate[] {
+function buildGates(input: ReconcileInput, contexts: WorktreeContext[], items: Item[], pulls: PullRequest[]): Gate[] {
   return input.flow.gates
     .map((gate) => ({
       item: gate.item, gate: gate.gate, message: gate.message, raisedAt: gate.time,
@@ -226,7 +229,7 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[], pulls: P
       host: gate.host,
       worktree: contexts.find((context) => context.claim?.item === gate.item)?.name ?? null,
       questions: gate.questions !== null && gate.questions.length > 0 ? gate.questions : parseGateQuestions(gate.message),
-      pull: gatePull(gate.item, pulls),
+      pull: gatePull(gate.item, items, pulls),
     }))
     .sort((left, right) => right.ageSeconds - left.ageSeconds);
 }
@@ -309,7 +312,7 @@ function pullPath(value: string): string | null {
 }
 
 /** An item's `pr` field names its pull by number (`560`, `#560`) or by URL. */
-function namesPull(field: string | null, pull: PullFact): boolean {
+function namesPull(field: string | null, pull: { number: number; url: string }): boolean {
   if (field === null) return false;
   const value = field.trim();
   const named = pullPath(value);
@@ -340,22 +343,15 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
 }
 
 /**
- * What says a done item waits on a merge. With pull requests read, its PR must be ready to merge;
- * without them (not read yet, or not on GitHub), the issue state naming a PR is all there is.
+ * What says a done item waits on a merge, and the pull a merge button may merge. With pull
+ * requests read, its PR must be ready to merge, and that PR is the one to merge. Without them
+ * (not read yet, failed, or not on GitHub), the issue state naming a PR is evidence enough to
+ * raise it, but nothing says that PR is open, green or even ours, so no button merges it.
  */
 function mergeEvidence(item: Item, pulls: PullRequest[] | null): { text: string; pull: number | null } | null {
-  if (pulls === null) return item.pr === null ? null : { text: `names the open PR ${item.pr}`, pull: pullNumberOf(item.pr) };
+  if (pulls === null) return item.pr === null ? null : { text: `names the open PR ${item.pr}`, pull: null };
   const ready = pulls.find((pull) => pull.item === item.id && pull.state === 'mergeable');
   return ready === undefined ? null : { text: `#${ready.number} is ready to merge`, pull: ready.number };
-}
-
-/** The number in a `pr` field: `560`, `#560` or a pull URL. */
-function pullNumberOf(field: string): number | null {
-  const value = field.trim();
-  const fromUrl = /\/pull\/(\d+)/.exec(value);
-  const plain = PULL_NUMBER.exec(value);
-  const found = fromUrl?.[1] ?? plain?.[1];
-  return found === undefined ? null : Number(found);
 }
 
 const REREAD_BOARD: DisagreementAction = { kind: 'refresh', args: { source: 'board' }, label: 'Re-read the board' };
@@ -433,12 +429,12 @@ function pullAttention(pulls: PullRequest[]): AttentionRow[] {
 }
 
 /**
- * Open items the next job refuses only because a field is empty: no step yet, nothing open blocks
+ * Open items, not epics, the next job refuses only because a field is empty: no step yet, nothing open blocks
  * them, and `needs` (the `ready_needs` fields they lack) is not empty. They are the heads of their
  * chains, so filling the field is what starts the chain.
  */
 function waitsOnField(item: Item): boolean {
-  return item.status === 'open' && item.needs.length > 0 && item.step === '' && item.openBlockers.length === 0;
+  return item.kind !== EPIC && item.status === 'open' && item.needs.length > 0 && item.step === '' && item.openBlockers.length === 0;
 }
 
 function needsFieldAttention(items: Item[]): AttentionRow[] {
@@ -519,7 +515,7 @@ export function reconcile(input: ReconcileInput): Snapshot {
   const agents = buildAgents(input, contexts);
   const jobs = buildJobs(input);
   const pulls = buildPulls(input, items, contexts);
-  const gates = buildGates(input, contexts, pulls);
+  const gates = buildGates(input, contexts, items, pulls);
   const found = buildDisagreements(input, contexts, items, pulls);
   const disagreements = input.settle === undefined ? found : input.settle(found);
   return {

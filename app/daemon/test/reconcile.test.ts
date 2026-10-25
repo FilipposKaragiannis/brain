@@ -371,6 +371,10 @@ test('Readiness_ItemWaitingOnField_Counted', async () => {
   assert.equal(reconcile(withExtraBoardItem(await input(), {})).readiness.waitingOnField, 1, 'because gh#14 can start once it has a priority');
 });
 
+test('NeedsField_Epic_NoRow', async () => {
+  assert.equal(reconcile(withExtraBoardItem(await input(), { kind: 'epic' })).counts.needsField, 0, 'because the next job takes an epic\'s tasks, never the epic, so its empty field stops nothing');
+});
+
 test('Readiness_Epic_NotCounted', async () => {
   assert.equal(reconcile(withExtraBoardItem(await input(), { kind: 'epic' })).readiness.waitingOnField, 0, 'because the next job takes an epic\'s tasks, never the epic');
 });
@@ -378,6 +382,17 @@ test('Readiness_Epic_NotCounted', async () => {
 test('Gate_ItemNamesAnOpenPull_PullWithThreads', async () => {
   const gate = reconcile(withBoardItem(await input(), 'gh#7', { pr: '560' })).gates[0];
   assert.deepEqual(gate?.pull, { number: 560, url: 'https://github.com/FJ2K/foosbrawl/pull/560', state: 'checks-failing', unresolvedThreads: 1 }, 'because the card shows the review thread the merge still waits on');
+});
+
+const gateOn = (facts: ReconcileInput, item: string): ReconcileInput => ({ ...facts, flow: { ...facts.flow, gates: facts.flow.gates.map((gate) => ({ ...gate, item })) } });
+
+test('Gate_PullOnlyOnTheClaimedBranch_ThatPull', async () => {
+  assert.equal(reconcile(gateOn(await input(), 'gh#9')).gates[0]?.pull?.number, 21, 'because gh#9 names no pull and #21 is open on its claimed branch');
+});
+
+test('Gate_NamedPullAndBranchPull_TheNamedOne', async () => {
+  const facts = withBoardItem(gateOn(await input(), 'gh#9'), 'gh#9', { pr: '#22' });
+  assert.equal(reconcile(facts).gates[0]?.pull?.number, 22, 'because the pull the item names wins over one that happens to sit on its branch, even when the branch pull is listed first');
 });
 
 test('Gate_ItemWithoutPull_NoPull', async () => {
@@ -405,10 +420,11 @@ test('Disagreement_DoneAndMergeable_ActionMergesThePull', async () => {
   assert.deepEqual(disagreementOf(await snapshot(), 'issue state vs pull request')?.action, { kind: 'pr.merge', args: { pr: '20' }, label: 'Merge #20' }, 'because the only thing left is the merge');
 });
 
-test('Disagreement_PullsUnreadDoneItem_ActionMergesTheNamedPull', async () => {
+test('Disagreement_PullsUnreadDoneItem_NoMergeButton', async () => {
   const facts = await input();
   facts.pulls = null;
-  assert.deepEqual(disagreementOf(reconcile(facts), 'issue state vs pull request')?.action?.args, { pr: '20' }, 'because the issue names the pull by URL');
+  const found = disagreementOf(reconcile(facts), 'issue state vs pull request');
+  assert.deepEqual([found?.item, found?.action], ['gh#20', null], 'because without pull requests read nothing says the named PR is open, green or even in this repository, so the row shows but no button merges it');
 });
 
 test('Disagreement_ClaimStepVsIssue_NoAction', async () => {

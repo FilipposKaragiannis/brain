@@ -124,6 +124,8 @@ export class ActionRunner {
   private readonly writes = new Set<Promise<void>>();
   /** Second reads waiting for a handed-on job to show; cancelled when the daemon stops. */
   private readonly refreshesAgain = new Set<object>();
+  /** Set by `stopAll`: an action that ends after it schedules nothing more. */
+  private stopped = false;
 
   constructor(dependencies: ActionRunnerDependencies) { this.deps = dependencies; }
 
@@ -174,6 +176,7 @@ export class ActionRunner {
   /** Ends every attached action and drops the second reads still waiting; the daemon is shutting down. Detached runs keep going by design. */
   stopAll(): void {
     for (const entry of this.live.values()) if (!entry.plan.detach) entry.handle?.kill('SIGTERM');
+    this.stopped = true;
     for (const handle of this.refreshesAgain) this.deps.scheduler.cancel(handle);
     this.refreshesAgain.clear();
   }
@@ -259,14 +262,17 @@ export class ActionRunner {
     this.outputs.set(record.id, entry.output);
     this.emit(record);
     this.deps.log.info('action.end', { project: this.deps.projectId, id: record.id, kind: record.kind, state: record.state, exit: record.exitCode, timedOut: record.timedOut });
-    if (entry.plan.refresh.length > 0) this.refreshAfter(entry.plan);
+    if (entry.plan.refresh.length > 0) this.refreshAfter(entry.plan, record.state === 'done');
     this.audit(record, entry.plan.detach ? null : entry.output);
   }
 
-  /** Re-reads what the plan changed now, and once more after `refreshAgainMs` for work that was handed on. */
-  private refreshAfter(plan: ActionPlan): void {
+  /**
+   * Re-reads what the plan changed now, and once more after `refreshAgainMs` for work that was
+   * handed on. A hand-off that failed handed nothing on, and a stopped runner waits for nothing.
+   */
+  private refreshAfter(plan: ActionPlan, succeeded: boolean): void {
     this.deps.onRefresh(plan.refresh);
-    if (plan.refreshAgainMs === null) return;
+    if (plan.refreshAgainMs === null || !succeeded || this.stopped) return;
     const handle = this.deps.scheduler.after(plan.refreshAgainMs, () => { this.refreshesAgain.delete(handle); this.deps.onRefresh(plan.refresh); });
     this.refreshesAgain.add(handle);
   }
