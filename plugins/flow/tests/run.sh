@@ -644,6 +644,31 @@ check "the unattended loop starts a skill step as typed" grep -q 'host_skill_pro
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "jobs.model and jobs.effort reach the host" sh -c "grep -q 'gh#21.*--model haiku --effort low' '$HOST_LOG'"
+check "the old jobs.model and jobs.effort are a fallback, with one deprecation warning naming the new keys" sh -c "[ \"\$(grep -c 'jobs.model and jobs.effort are deprecated: set jobs.claude.model and jobs.claude.effort' .flow/log/comments.log)\" = 1 ]"
+jobscfg() { printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n%b' "$1" > .flow/config.yaml; }
+deprecated() { grep -c 'jobs.model and jobs.effort are deprecated' .flow/log/comments.log; }
+jobscfg '  model: opus\n  effort: high\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" codex 'gh#21' >/dev/null
+check "the fallback maps the old model for codex: opus is gpt-6-sol" sh -c "grep -q 'exec .*-m gpt-6-sol -c model_reasoning_effort=\"high\"' '$HOST_LOG'"
+jobscfg '  model: haiku\n  effort: low\n  claude:\n    model: claude-opus-x\n    effort: xhigh\n'; : > "$HOST_LOG"; before="$(deprecated)"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
+check "jobs.claude.model and jobs.claude.effort reach claude as --model and --effort, as is" sh -c "grep -q 'gh#21.*--model claude-opus-x --effort xhigh' '$HOST_LOG'"
+check "with jobs.claude set, the old keys are not read and no warning is logged" [ "$(deprecated)" = "$before" ]
+jobscfg '  codex:\n    model: opus\n    effort: xhigh\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" codex 'gh#21' >/dev/null
+check "jobs.codex.model and jobs.codex.effort reach codex exec as -m and model_reasoning_effort, unmapped" sh -c "grep -q 'exec .*-m opus -c model_reasoning_effort=\"xhigh\"' '$HOST_LOG'"
+jobscfg '  model: haiku\n  effort: low\n  claude:\n    model: ""\n    effort: ""\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
+check "an empty jobs.claude pair is the host default: no --model, no --effort, no fallback" sh -c "grep -q 'gh#21' '$HOST_LOG' && ! grep -q -- '--model\|--effort' '$HOST_LOG'"
+jobscfg '  codex:\n    effort: max\n'; : > "$HOST_LOG"
+"$P/jobs/comments.sh" codex 'gh#21' >/dev/null 2>"$work/job.err"; code=$?
+check "an effort codex does not take fails the job early, exit 2, naming the key and its line" sh -c "[ $code = 2 ] && grep -q 'flow: .flow/config.yaml:13: jobs.codex.effort is max; codex takes low, medium, high or xhigh' '$work/job.err' && [ ! -s '$HOST_LOG' ]"
+check "a refused effort is a failed run in runs.jsonl, so status shows it" sh -c "tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"comments\".*\"exit\":2,\"result\":\"error: .flow/config.yaml:13: jobs.codex.effort is max'"
+check "a refused effort leaves one line in the job log" [ "$(grep -c 'error: .flow/config.yaml:13: jobs.codex.effort is max' .flow/log/comments.log)" = 1 ]
+jobscfg '  claude:\n    effort: max\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
+check "max is a claude effort" grep -q 'gh#21.*--effort max' "$HOST_LOG"
+jobscfg '  host: vim\n'; : > "$HOST_LOG"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>"$work/job.err"; code=$?
+check "a jobs.host other than claude or codex fails the job early, exit 2" sh -c "[ $code = 2 ] && grep -q 'jobs.host is vim; it must be claude or codex' '$work/job.err' && [ ! -s '$HOST_LOG' ]"
+check "jobs.sh run refuses a bad jobs.host, exit 2" sh -c "'$P/scripts/jobs.sh' run comments 2>&1; [ \$? = 2 ]"
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
+check "the unattended loop keeps mapping the roster's names for codex" sh -c "FLOW_PLUGIN='$P' sh -c '. \"$P/lib/flow.sh\"; . \"$P/lib/host.sh\"; host_run codex . hi opus high' && grep -q 'exec .*-m gpt-6-sol' '$HOST_LOG'"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude >/dev/null
@@ -662,6 +687,13 @@ check "job lock: a pid a restart gave to another process is stale, and that proc
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null"
 home2="$work/home2"; mkdir -p "$home2"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    effort: bogus\n' > "$home2/config.yaml"
+check "next job: a bad jobs.claude.effort does not stop it, it never reads the pair" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'quiet: nothing ready'"
+check "health job: a bad jobs.claude.effort does not stop it either" sh -c "FLOW_HOME='$home2' '$P/jobs/health.sh' claude --dry-run >/dev/null 2>&1; [ \$? != 2 ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"job\":\"health\"' && ! tail -1 '$home2/log/runs.jsonl' | grep -q '\"exit\":2'"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  host: vim\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null 2>"$work/job.err"; code=$?
+check "next job: a bad jobs.host stops every job, exit 2" sh -c "[ $code = 2 ] && grep -q 'jobs.host is vim' '$work/job.err'"
+rm -rf "$home2/log"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > "$home2/config.yaml"
 check "next job: nothing ready is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'quiet: nothing ready'"
 check "next job: no idle notification unless notify.idle is on" sh -c "! grep -q '	idle	' '$home2/events.log' 2>/dev/null"
@@ -1278,6 +1310,18 @@ init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/sessi
 mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 check "init: a fresh install writes the stamp" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '^source	' .flow/stamp && grep -q '	.codex/rules/flow.rules' .flow/stamp && ! grep -q 'notify.sh' .flow/stamp"
 check "init: --check is clean after install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+check "init: the fresh config has an empty model and effort pair per host, and no old jobs.model" sh -c "for k in claude.model claude.effort codex.model codex.effort; do grep -q \"^  \${k%%.*}:\" .flow/config.yaml || exit 1; [ -z \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.\$k)\" ] || exit 1; done; ! grep -q '^  model:' .flow/config.yaml && grep -q 'Empty means the host.s own default' .flow/config.yaml"
+cp .flow/config.yaml "$work/fresh.config"
+sed -i.bak '/^  claude:$/,/^    effort:/d; /^  codex:$/,/^    effort:/d' .flow/config.yaml && rm -f .flow/config.yaml.bak
+check "init: --check does not ask for the jobs.<host> keys on an existing project" sh -c "! grep -q '^  claude:' .flow/config.yaml && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+awk '{ print } /^jobs:$/ { print "  host: vim"; print "  model: opus"; print "  effort: high" }' .flow/config.yaml > "$work/cfg.tmp" && cp "$work/cfg.tmp" .flow/config.yaml
+hostline="$(grep -n '^  host: vim' .flow/config.yaml | cut -d: -f1)"
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init.out" 2>&1; code=$?
+check "init: --check flags a jobs.host other than claude or codex as drift, with its line" sh -c "[ $code = 1 ] && grep -q 'gap: .flow/config.yaml:$hostline: jobs.host is vim; it must be claude or codex' '$work/init.out'"
+check "init: --check says once that jobs.model and jobs.effort are deprecated" [ "$(grep -c 'jobs.model and jobs.effort are deprecated' "$work/init.out")" = 1 ]
+sed -i.bak 's/^  host: vim$/  host: codex/; s/^  effort: high$/  effort: max/' .flow/config.yaml && rm -f .flow/config.yaml.bak
+check "init: --check flags an effort the jobs host does not take" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .flow/config.yaml:[0-9]*: jobs.effort is max; codex takes low, medium, high or xhigh'"
+cp "$work/fresh.config" .flow/config.yaml
 check "init: installs the health job wrapper, its default schedule and its state folder in the gitignore" sh -c "[ -x .flow/jobs/health.sh ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.schedule.health)\" = 'every 15m' ] && grep -q '^.flow/health/' .gitignore && grep -q 'health: true' .flow/config.yaml"
 mkdir -p .flow/answers.lock && echo $$ > .flow/answers.lock/pid
 check "init: the gitignore block covers the lock directories, so answers.lock is not untracked" sh -c "grep -qxF '.flow/*.lock/' .gitignore && [ -z \"\$(git status --porcelain --untracked-files=all -- .flow/answers.lock)\" ]"

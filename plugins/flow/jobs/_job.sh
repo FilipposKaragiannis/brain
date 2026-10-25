@@ -45,17 +45,36 @@ job_lock() {
   trap 'exit 143' TERM
 }
 job_end() { rm -rf "$d"; job_record "$1"; }
+# job_start <host> [model]: checks the host and jobs.host (a bad one ends the run here, exit 2),
+# then the pause, the lock and the log. With model, the job starts host sessions: their model and
+# effort are read once, from jobs.<host>, or from the deprecated jobs.model and jobs.effort with
+# one warning; an effort the host does not take ends the run, exit 2, recorded in runs.jsonl and
+# the job log so status shows it. Jobs without model never read the pair, so it never stops them.
 job_start() {
   host="$1"
   host_check "$host" || exit 2
+  _bad="$(host_jobs_host_problem)"
+  [ -z "$_bad" ] || { printf 'flow: %s\n' "$_bad" >&2; exit 2; }
   job_clock
   job_skip_if_paused
+  if [ "${2:-}" = model ]; then
+    _bad="$(host_jobs_pair_problem "$host")"
+    if [ -n "$_bad" ]; then
+      printf 'flow: %s\n' "$_bad" >&2; job_say "error: $_bad" >/dev/null; job_record 2; exit 2
+    fi
+    host_jobs_pair "$host"; job_m="$jobs_model"; job_e="$jobs_effort"
+  fi
   job_lock
   job_say "start on $host in $(flow_home)"
+  if [ "${2:-}" = model ] && [ "$jobs_from" = jobs ] && host_jobs_legacy; then
+    job_say "jobs.model and jobs.effort are deprecated: set jobs.$host.model and jobs.$host.effort in .flow/config.yaml (passed to $host as is; empty is its default)"
+  fi
 }
-# job_model / job_effort: the orchestrating session's model from jobs.model / jobs.effort, if set.
-job_model() { cfg jobs.model; }
-job_effort() { cfg jobs.effort; }
+# job_model / job_effort: the model and effort job_start read for the host; empty is its default.
+job_model() { printf '%s' "${job_m:-}"; }
+job_effort() { printf '%s' "${job_e:-}"; }
+# job_host_run <dir> <prompt>: one host session with the jobs' model and effort, names as is.
+job_host_run() { host_run "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is; }
 # job_commit <what> <noun> <message> <file>...: commit the files alone on the base branch in the
 # main worktree ($main) and push, when the base's unpushed changes are only these files. A file
 # outside the main worktree or missing is skipped; one git ignores is left out, and said.
