@@ -11,6 +11,7 @@ import type { LaunchdDependencies } from './launchd.ts';
 import { stderrLogger } from './log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
 import type { ProjectDefinition } from './project.ts';
+import { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import { ProjectRegistry } from './registry.ts';
 import { closeConsoleServer, createConsoleServer } from './server.ts';
 import { DEFAULT_CONFIG_PATHS, SettingsStore } from './settings.ts';
@@ -83,7 +84,8 @@ const serve = (project: ProjectDefinition) => {
     onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },
   });
   monitor.onChange((snapshot) => log.info('snapshot', { project: project.id, needsYou: snapshot.counts.needsYou, running: snapshot.counts.running, stale: snapshot.counts.stale, free: snapshot.counts.free, disagreements: snapshot.counts.disagreements }));
-  return { monitor, actions };
+  const flowConfig = new FlowConfigEditor({ projectId: project.id, root: project.root, runner: childProcessRunner, refresh: () => monitor.refresh('files'), log });
+  return { monitor, actions, flowConfig };
 };
 const registry = new ProjectRegistry(serve, log);
 const settings = new SettingsStore({ config, installed, applyProjects: (projects) => { void registry.apply(projects); } });

@@ -143,3 +143,16 @@ test('StateDir_MadeOnFirstStart_ClosedToTheOwner', () => {
     assert.equal(statSync(stateDir).mode & 0o777, 0o700, 'because the folder holds the token, the audit log and the daemon log');
   } finally { rmSync(parent, { recursive: true, force: true }); }
 });
+
+test('ConfigFlag_ReadsThatFileAndNotTheDefaultOne', () => {
+  const folder = mkdtempSync(path.join(os.tmpdir(), 'console-config-flag-'));
+  try {
+    const file = path.join(folder, 'other.json');
+    writeFileSync(file, JSON.stringify({ projects: [{ root: FIXTURE_ROOT }], port: 7477 }));
+    const result = readConfig(['--config', file, '--state-dir', folder], {}, NO_FILES);
+    assert.ok(result.ok, 'because the file names a project that holds a flow');
+    if (!result.ok) return;
+    assert.deepEqual([result.config.paths.configFile, result.config.paths.legacyProjectsFile], [file, path.join(folder, 'projects.json')], 'because a second daemon must read and write its own settings, never the owner\'s ~/.config/brain-console');
+    assert.deepEqual([result.config.projects[0]?.root, result.config.port], [FIXTURE_ROOT, 7477], 'because the projects and the port come from the file the flag names');
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});

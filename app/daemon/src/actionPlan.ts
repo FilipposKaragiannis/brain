@@ -64,7 +64,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.stop', 'job.pause', 'job.resume',
-  'worktree.claim', 'worktree.release', 'worktree.sync', 'steward.health', 'pr.merge', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.sync', 'steward.health', 'jobs.install', 'pr.merge', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -76,6 +76,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'worktree.release': ['target', 'force'],
   'worktree.sync': ['target'],
   'steward.health': [],
+  'jobs.install': [],
   'pr.merge': ['pr', 'method'],
   'terminal.open': ['path', 'job'],
   refresh: ['source'],
@@ -92,6 +93,8 @@ const MERGE_TIMEOUT_MS = 180 * SECOND_MS;
 export const HANDED_ON_REFRESH_MS = 5 * SECOND_MS;
 /** The step budget of a run started from the console, the next job's own default. */
 const DEFAULT_MAX_STEPS = 15;
+/** The jobs `jobs.sh` knows; an install rewrites the schedule of every one, so it holds all their locks. */
+export const FLOW_JOBS = ['next', 'comments', 'intake', 'retro', 'health'];
 const MESSAGE_LIMIT_CHARS = 10000;
 /** The ids the adapters own: gh#12 on GitHub, local:task/7 in the local tracker. Nothing else reaches a script. */
 const ITEM_ID = /^(gh#[1-9][0-9]*|local:[a-z]+\/[1-9][0-9]*)$/;
@@ -181,6 +184,8 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       return sh('steward.sh', ['release', target, ...force], ['pool', `${ITEM_ID.test(target) ? 'item' : 'worktree'}:${target}`], STEWARD_TIMEOUT_MS, ['files', 'git']);
     }
     case 'steward.health': return handOn('health', ['job:health'], ['jobs', 'files', 'git']);
+    // Writes and loads the schedule of every job jobs.schedule names: after a schedule or jobs.host change in .flow/config.yaml.
+    case 'jobs.install': return sh('jobs.sh', ['install'], FLOW_JOBS.map((job) => `job:${job}`), SCRIPT_TIMEOUT_MS, ['jobs']);
     case 'pr.merge': {
       const pr = args['pr'] ?? '';
       const method = args['method'] ?? 'squash';

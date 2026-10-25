@@ -361,6 +361,7 @@ export type ActionKind =
   | 'worktree.release'
   | 'worktree.sync'
   | 'steward.health'
+  | 'jobs.install'
   | 'pr.merge'
   | 'terminal.open'
   | 'refresh';

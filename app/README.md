@@ -14,7 +14,10 @@ curl -N http://127.0.0.1:7474/api/projects/foosbrawl/events  # server-sent event
 To try a flow plugin that is not installed, such as a checkout of this repository, start with
 `FLOW_PLUGIN=/path/to/brain/plugins/flow`: every flow script the daemon runs gets it, and the
 version shown comes from that plugin's own `plugin.json`.
-Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
+`--config <file>` reads and writes the settings (below) in that file instead of
+`~/.config/brain-console/config.json`, and looks for the old `projects.json` beside it, so a second
+daemon for a trial (`--port 7477 --state-dir /tmp/console-test --config /tmp/console-test/config.json`)
+never touches the owner's settings. Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
 second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 the settings file (below). Every root must hold a `.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
 the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
@@ -95,6 +98,8 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects` | every project with its counts |
 | `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon |
 | `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
+| `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings}` (below) |
+| `PUT /api/projects/<id>/plugins/flow/config` | change it, body `{"changes": [{"path", "value"}], "hash", "force"?}` or `{"text", "hash", "force"?}`; 200 with the new document plus `saved` and `followUps`, 400 with the reason, 409 with `reason: "stale"` or `"dirty"` |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
@@ -199,7 +204,42 @@ costs no process after its first read. An older plugin is not asked. A list that
 `files` source (`ok` stays true) and logs `gates.list.failed` once. A message with no numbered line
 gets no questions from the plugin and shows as one question with no recommendation.
 
-The daemon itself never writes to a project. Every write goes through an action.
+The daemon itself never writes to a project but in one place, the flow settings editor below,
+which writes `.flow/config.yaml` when the owner saves. Every other write goes through an action.
+
+## Flow settings
+`daemon/src/plugins/flow/` edits the project's `.flow/config.yaml`. `schema.ts` is a fixed schema
+of every key the flow plugin reads (its scripts, `skills/init/SKILL.md` and the foosbrawl file):
+the dotted path, the type (`string`, `number` with a range where one is known, `boolean`, `enum`
+with its values, `list` of text, `map` of name to text, `duration` like `1h`, `schedule` like
+`every 30m --workers 2`, `daily 02:00` or `weekly sun 07:00` with the args `jobs.sh` takes), one
+sentence on what changing it does, its group (Tracker, Readiness, Worktree pool, Gates and
+verification, Reviews, Notifications, Jobs, Intake) and its follow-up: `jobs.schedule.*` and
+`jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action);
+the pool keys (`pool`, `pool_max`, `worktree_copy`, `worktree_setup`) count at the next claim.
+
+`GET` reads the file. `values` is the file as the existing parser (`daemon/src/yaml.ts`) reads it,
+but only after `configDocument.ts` has checked that every line is in the flat format the file's
+header names (two-space indentation, `key: value`, nested maps, `- item` or `[a, b]`); a tab, an
+anchor or alias, a tag, a multi-line string, a flow map, a list of maps or a key set twice makes
+`values` null with the line in `warnings`, and only Raw YAML can change it. `sections` is the
+schema's groups in order plus, when the file has keys the schema does not know, an `Other` group
+of them as text (or a list of text). A known key whose value does not fit its type is a warning.
+`hash` is the sha256 of `text`.
+
+`PUT` checks first and writes last. Each change is checked against its key's type, enum and range
+(an unknown key takes text, or a list of text; `null` takes a key out). The text is then rewritten
+in place: a known key changes only the value on its line (its trailing comment kept), a list only
+its item lines (an inline list stays inline), a map only its children's lines; a key not in the
+file goes under its section's last line, or at the end of the file; every comment, blank line and
+key order stays. A value holding ` #` is refused, since `lib/flow.sh` reads a comment there even in
+quotes. The result must parse again and read back to the values sent, or nothing is written. `{text}`
+saves the whole file, held to the same format and types. It is refused (409) when the file's hash is
+not the one sent (it changed on disk since the GET, force or not), and when
+`git status --porcelain -- .flow/config.yaml` lists it (uncommitted changes, or untracked) unless
+the body says `"force": true`. After a write the `files` source is read again before the reply,
+the daemon logs one `flow.config.saved` line with the keys that changed, and the reply carries
+`saved` (the leaf keys whose value changed) and `followUps` (`{note, action, paths}`).
 
 ## Actions
 An action is one flow script, run by path with argv and never through a shell, with every
@@ -216,6 +256,7 @@ on every state change and at most twice a second while output arrives.
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
 | `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished` |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
+| `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
 | `terminal.open` | `path`, `job?` | a terminal window in `path` (below) | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
@@ -346,7 +387,17 @@ link at the far right. At phone width the fields wrap. Settings (`#/settings`, l
 with Add (a path) and Remove, or the note why they cannot change; the terminal as radio buttons
 (the first installed, iTerm, Terminal, Ghostty, a custom command as a JSON array, checked as you type); the port, read
 only, with the restart note; the config file, the state folder and whether the daemon runs under
-launchd. A refused save shows the daemon's reason. Every item id opens its tracker
+launchd. A refused save shows the daemon's reason. Under the console's own settings, one section
+per project, "flow settings for <project>", edits its `.flow/config.yaml`: the note "This edits
+.flow/config.yaml in the project. It is a tracked file: commit it there.", the file's warnings,
+then a form per schema group (each field labelled by its key, the control for its type: a select
+for an enum or a boolean with "(not set)" to take the key out, a number or text box, a text area
+of one item or `name: value` per line for a list or a map; the help under it) with its own Save,
+disabled until something in the group changed. A save shows the keys written and each follow-up,
+with a "Reload the schedule" button (`jobs.install`) when a schedule or `jobs.host` changed; a
+refusal shows the reason, with Save anyway for a file with uncommitted changes and Reload for one
+that changed on disk. A "Raw YAML" fold at the bottom holds the whole file in a text area with the
+same Save (open when the file is not in the flat format). Every item id opens its tracker
 page in a new tab; a link from the snapshot that is not `http` or `https` shows as plain text. An action that handed its work on (`outcome: started`, such as `job.run`) shows
 "started", not "done", on its button and in the drawer. Every module is a title row, a body and a
 footer saying how fresh its source is; every age is a live counter driven by one shared clock.

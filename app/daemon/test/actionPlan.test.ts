@@ -244,3 +244,14 @@ test('TerminalOpen_CustomCommandWithQpath_FolderQuotedForSh', () => {
   const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal: { command: ['sh', '-c', 'cd {qpath} && exec $SHELL'] } });
   assert.deepEqual(plan.args, ['-c', "cd '/p/app' && exec $SHELL"], 'because {qpath} is the folder quoted for an sh -c string, and the folder is not added again');
 });
+
+test('JobsInstall_RunsJobsShInstallHoldingEveryJobLock', () => {
+  const plan = planned('jobs.install', {});
+  assert.deepEqual([plan.command, ...plan.args], ['sh', '/plugins/flow/1.17.0/scripts/jobs.sh', 'install'], 'because install writes and loads the schedule of every job jobs.schedule names');
+  assert.deepEqual(plan.locks, ['job:next', 'job:comments', 'job:intake', 'job:retro', 'job:health'], 'because a reload must not race a run, stop or pause of any job');
+  assert.deepEqual([plan.outcome, plan.refresh], ['finished', ['jobs']], 'because the schedule is loaded when the script returns, and the jobs list shows it');
+});
+
+test('JobsInstall_WithAJob_Refused', () => {
+  assert.equal(planAction('jobs.install', { job: 'next' }, CONTEXT).ok, false, 'because the console reloads the whole schedule, never one job of it');
+});

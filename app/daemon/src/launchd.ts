@@ -40,7 +40,7 @@ function xml(text: string): string {
 
 /** The flags as given, with every path made absolute: launchd starts the daemon from `/`. */
 export function absoluteFlags(argv: string[]): string[] {
-  return argv.map((value, index) => (['--project', '--state-dir'].includes(argv[index - 1] ?? '') ? path.resolve(value) : value));
+  return argv.map((value, index) => (['--project', '--state-dir', '--config'].includes(argv[index - 1] ?? '') ? path.resolve(value) : value));
 }
 
 /** The variables the daemon gets under launchd: PATH and HOME, the marker Settings reads, and the ones that change what it runs. */

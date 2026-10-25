@@ -8,6 +8,7 @@ import path from 'node:path';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import { silentLogger } from '../src/log.ts';
 import { ProjectMonitor } from '../src/project.ts';
+import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectRegistry } from '../src/registry.ts';
 import { SettingsStore } from '../src/settings.ts';
 import { readConfig } from '../src/config.ts';
@@ -30,7 +31,7 @@ async function started(makeSettings: (registry: ProjectRegistry) => SettingsStor
   const registry = new ProjectRegistry((project) => {
     const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: () => {} });
-    return { monitor, actions };
+    return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger }) };
   }, silentLogger);
   const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -312,5 +313,25 @@ test('Settings_PutMovesTheIdToAnotherRoot_TheOldStreamEnds', async () => {
     const outcome = await Promise.race([drained, new Promise<string>((resolve) => setTimeout(() => resolve('still open'), 3000))]);
     assert.equal(outcome, 'ended', 'because a stream on the stopped monitor would never carry another snapshot, so it ends and the page opens a new one');
     if (outcome !== 'ended') await reader.cancel();
+  } finally { await close(); }
+});
+
+test('FlowConfig_ServedWithItsHashAndSections', async () => {
+  const { base, close } = await started();
+  try {
+    const response = await fetch(`${base}/api/projects/project/plugins/flow/config`, { headers: { authorization: 'Bearer tok' } });
+    const document = (await response.json()) as { path: string; hash: string; sections: { group: string }[] };
+    assert.equal(response.status, 200, 'because the fixture project has a .flow/config.yaml');
+    assert.equal(document.path, path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), 'because the editor names the file it edits');
+    assert.match(document.hash, /^[0-9a-f]{64}$/, 'because a PUT must send the hash back');
+    assert.deepEqual(document.sections.map((section) => section.group).slice(0, 2), ['Tracker', 'Readiness'], 'because the schema groups come in a fixed order');
+  } finally { await close(); }
+});
+
+test('FlowConfigPut_WithoutJson_Refused', async () => {
+  const { base, close } = await started();
+  try {
+    const response = await fetch(`${base}/api/projects/project/plugins/flow/config`, { method: 'PUT', headers: { authorization: 'Bearer tok' }, body: 'base: dev' });
+    assert.equal(response.status, 415, 'because the body is JSON with the hash, never a bare file');
   } finally { await close(); }
 });

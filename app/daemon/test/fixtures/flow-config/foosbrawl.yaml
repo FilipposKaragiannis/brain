@@ -1,0 +1,78 @@
+# flow configuration. Read by every flow script on both hosts. Keep it flat: key: value,
+# nested maps, lists as '- item' or [a, b]. No anchors, no multi-line strings.
+adapters:
+  default: github
+  # bug: local    # keep bugs out of GitHub
+base: main
+# Gates the flow clears itself, by item size. Only plan-approval can be listed. Merge, interview,
+# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined.
+auto_gates:
+  # plan-approval: S,M
+github:
+  repo: FJ2K/foosbrawl
+  limit: 500
+  # Issue types, the org issue fields and the Foosbrawl project's Status (flow 1.5.0):
+  types: true
+  fields:
+    size: Size
+    priority: Priority
+    area: Area
+  priority_order: [P0, P1, P2, P3]
+  ready_needs: [priority, size]   # an unstarted item without these is not ready
+  project: 1
+# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism.
+# A claim with no free worktree adds one (named after the last entry, ../foosbrawl-wt-<n>)
+# while the pool is below pool_max, and the steward appends it here. 0 never adds.
+pool:
+  - ../foosbrawl-wt-2
+  - ../foosbrawl-wt-3
+  - ../foosbrawl-wt-4
+  - ../foosbrawl-wt-5
+  - ../foosbrawl-wt-6
+  - ../foosbrawl-wt-7
+  - ../foosbrawl-wt-8
+  - ../foosbrawl-wt-9
+  - ../foosbrawl-wt-10
+pool_max: 9
+# Git-ignored files a new worktree gets from the main worktree when it lacks them, and
+# commands run in a new worktree after that (steward.sh setup <path> re-runs both).
+worktree_copy:
+  - .claude/settings.local.json
+worktree_setup:
+  - dotnet restore src/Foosbrawl.sln
+  - dotnet restore axiom/Axiom.sln
+# Project gates the verifier runs after build, format and tests: name: command, run from the root.
+gates:
+  goldens: dotnet run --project src/Foosbrawl.Harness -c Release -- verify-all
+# Changed files matching these globs raise the feel-test gate after verify passes.
+feel_test_paths:
+  - client/unity/**
+notify:
+  desktop: false   # Slack carries every notification; the macOS one is a truncated Script Editor banner
+  slack_webhook: ""   # Slack incoming webhook URL; empty disables
+# Who each review round asks: codex, claude, copilot or a GitHub login. The comments job asks
+# a silent reviewer again after chase_after, max_chases times, then tells you.
+reviews:
+  reviewers: [codex]
+  chase_after: 1h
+  max_chases: 2
+# Scheduled jobs (.flow/jobs/*.sh): the orchestrating session's model and effort, empty for
+# the host default; the marketplace checkout the weekly retro opens its PR from.
+jobs:
+  model: ""
+  effort: ""
+  marketplace: /work/brain
+  permission_mode: auto   # unattended sessions: the classifier allows safe tools; dontAsk denies every edit here
+  # The jobs' schedule on this machine: flow:jobs install loads it (launchd on macOS).
+  schedule:
+    next: every 30m --workers 2 --max-steps 15
+    comments: every 10m
+    intake: daily 02:00
+    retro: weekly sun 07:00
+    health: every 15m
+# The intake job files the notes in this file as GitHub issues (.flow/jobs/intake.sh, nightly),
+# then commits and pushes the file so cloud sessions read the same notes.
+intake:
+  notes: docs/backlog/notes.md
+  batch: 10
+  rules: .flow/intake.md   # how a note becomes an item: outcomes, type, area, priority
