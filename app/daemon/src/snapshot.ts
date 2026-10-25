@@ -24,6 +24,8 @@ export type AgentHost = 'claude' | 'codex';
 /** An agent is a run the flow started unattended; a session is a person's interactive host in that folder. */
 export type AgentKind = 'agent' | 'session';
 export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board';
+/** Every source, in the order the daemon reads them. The one list the routes and actions share. */
+export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board'];
 export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed';
 
 /** When a source was last read, how old that is, and whether the read worked. */
@@ -229,11 +231,10 @@ export type ActionKind =
   | 'job.resume'
   | 'worktree.claim'
   | 'worktree.release'
-  | 'steward.sweep'
   | 'steward.health'
   | 'pr.merge'
   | 'refresh';
-export type ActionState = 'queued' | 'running' | 'done' | 'failed' | 'rejected';
+export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
 
 export type ActionRecord = {
   id: string;
@@ -242,8 +243,8 @@ export type ActionRecord = {
   state: ActionState;
   /** The program and its arguments as run, for the audit trail and the UI. */
   command: string[];
-  /** What the action holds while it runs: an item, a worktree, a job, a PR or the pool. */
-  lock: string | null;
+  /** What the action holds while it runs: an item, a worktree, a job, a PR, the pool. Two actions never share one. */
+  locks: string[];
   requestedAt: string;
   startedAt: string | null;
   endedAt: string | null;

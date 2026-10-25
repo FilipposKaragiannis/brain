@@ -3,139 +3,275 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { ActionRunner } from '../src/actions.ts';
+import { ActionRunner, KILL_GRACE_MS, OUTPUT_TAIL_CHARS } from '../src/actions.ts';
+import { SCRIPT_TIMEOUT_MS } from '../src/actionPlan.ts';
 import type { ActionContext } from '../src/actionPlan.ts';
 import { silentLogger } from '../src/log.ts';
 import type { ActionRecord } from '../src/snapshot.ts';
-import { fakeSpawner, settle } from './fakeSpawner.ts';
+import { fakeScheduler, fakeSpawner, settle } from './fakeSpawner.ts';
+import type { FakeSpawnerOptions } from './fakeSpawner.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude' };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'] };
 const NOW = new Date('2026-10-25T09:00:00Z');
+const HTTP_ACCEPTED = 202;
+const HTTP_BAD_REQUEST = 400;
+const HTTP_CONFLICT = 409;
+const SIGNAL_EXIT = 128;
+const PLAIN: FakeSpawnerOptions = { failWith: null, detachedOutput: '' };
 
-async function runner(context: ActionContext = CONTEXT) {
+const actionOf = (outcome: { body: { action: ActionRecord } }): ActionRecord => outcome.body.action;
+
+async function runner(context: ActionContext, options: FakeSpawnerOptions) {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), 'console-actions-'));
-  const { spawner, processes } = fakeSpawner();
+  const { spawner, processes } = fakeSpawner(options);
+  const timers = fakeScheduler();
   const refreshed: string[][] = [];
   const events: ActionRecord[] = [];
-  const actions = new ActionRunner({ projectId: 'app', context: () => context, spawner, clock: () => NOW, log: silentLogger, stateDir, onRefresh: (sources) => refreshed.push(sources) });
+  const actions = new ActionRunner({ projectId: 'app', context: () => context, spawner, scheduler: timers.scheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: (sources) => refreshed.push(sources) });
   actions.onChange((record) => events.push(record));
-  return { actions, processes, refreshed, events, stateDir, cleanup: () => rm(stateDir, { recursive: true, force: true }) };
+  const auditLines = async (): Promise<ActionRecord[]> => { await actions.whenIdle(); return (await readFile(path.join(stateDir, 'app', 'actions.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as ActionRecord); };
+  const cleanup = async (): Promise<void> => { await settle(); await actions.whenIdle(); await rm(stateDir, { recursive: true, force: true }); };
+  return { actions, processes, timers, refreshed, events, stateDir, auditLines, cleanup };
 }
 
-test('Request_StartsTheProcessAndStreamsItsOutput', async () => {
-  const { actions, processes, events, refreshed, stateDir, cleanup } = await runner();
+test('Request_Accepted_ProcessStartsAtOnce', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
   try {
     const outcome = actions.request('gate.clear', { item: 'gh#268', message: 'yes' });
-    assert.equal(outcome.status, 202, 'because a valid action is accepted at once');
-    const record = (outcome.body as { action: ActionRecord }).action;
-    assert.equal(record.state, 'running', 'because the process is already started when the reply leaves');
-    assert.deepEqual(record.command, ['sh', '/plugins/flow/1.17.0/scripts/gate.sh', 'clear', 'gh#268', 'yes'], 'because the record shows what ran');
-    assert.equal(processes[0]?.env['LANG'], 'C', 'because scripts run in the minimal environment');
+    assert.equal(outcome.status, HTTP_ACCEPTED, 'because a valid action is accepted at once');
+    assert.equal(actionOf(outcome).state, 'running', 'because the process is already started when the reply leaves');
+    assert.deepEqual(processes[0]?.plan.args, ['/plugins/flow/1.17.0/scripts/gate.sh', 'clear', 'gh#268', 'yes'], 'because the planned argv is what runs');
+  } finally { await cleanup(); }
+});
+
+test('Request_ScriptEnvironment_MinimalAndLangC', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    actions.request('gate.clear', { item: 'gh#268' });
+    assert.equal(processes[0]?.env['LANG'], 'C', 'because scripts run in the minimal environment the collectors use');
+  } finally { await cleanup(); }
+});
+
+test('ProcessExitsZero_Done_WithFullOutputBehindGet', async () => {
+  const { actions, processes, events, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#268', message: 'yes' }));
     processes[0]!.stdout.write('gate cleared on gh#268\n');
-    processes[0]!.exit(0);
+    processes[0]!.exit(0, null);
     await settle();
-    await actions.whenIdle();
     const done = actions.get(record.id)!;
     assert.equal(done.state, 'done', 'because exit 0 is done');
-    assert.equal(done.exitCode, 0, 'because the exit code is kept');
     assert.equal(done.output, 'gate cleared on gh#268\n', 'because the detail route carries the whole output');
-    assert.equal(done.outputBytes, 23, 'because the byte count is exact');
-    assert.deepEqual(refreshed, [['files', 'board']], 'because the sources the action changed are re-read once');
     assert.equal(events.at(-1)?.state, 'done', 'because listeners hear the end');
-    const audit = await readFile(path.join(stateDir, 'app', 'actions.jsonl'), 'utf8');
-    assert.match(audit, /"kind":"gate.clear"/, 'because every finished action lands in the audit log');
-    assert.equal(audit.includes('outputTail'), false, 'because the audit line keeps the record, not the output');
-    assert.equal(await readFile(path.join(stateDir, 'app', 'actions', `${record.id}.log`), 'utf8'), 'gate cleared on gh#268\n', 'because the output sits beside the log');
   } finally { await cleanup(); }
 });
 
-test('Request_NonZeroExit_Failed', async () => {
-  const { actions, processes, cleanup } = await runner();
+test('ProcessEnds_SourcesItChanged_RefreshedOnce', async () => {
+  const { actions, processes, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
   try {
-    const record = (actions.request('steward.sweep', {}).body as { action: ActionRecord }).action;
-    processes[0]!.stderr.write('flow: pool is busy\n');
-    processes[0]!.exit(3);
+    actions.request('gate.clear', { item: 'gh#268' });
+    processes[0]!.exit(0, null);
     await settle();
-    assert.equal(actions.get(record.id)?.state, 'failed', 'because a non-zero exit is a failure');
-    assert.equal(actions.get(record.id)?.exitCode, 3, 'because the steward exit codes carry meaning');
-    assert.match(actions.get(record.id)?.output ?? '', /pool is busy/, 'because stderr joins the output');
+    assert.deepEqual(refreshed, [['files', 'board']], 'because a cleared gate changes the gate records and the tracker');
   } finally { await cleanup(); }
 });
 
-test('Request_WhileLockHeld_Conflict', async () => {
-  const { actions, processes, cleanup } = await runner();
+test('Action_AuditedAtStartAndAtEnd', async () => {
+  const { actions, processes, stateDir, auditLines, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#268' }));
+    processes[0]!.stdout.write('cleared\n');
+    processes[0]!.exit(0, null);
+    await settle();
+    const lines = await auditLines();
+    assert.deepEqual(lines.map((line) => line.state), ['running', 'done'], 'because a daemon that dies mid-action still leaves the start line');
+    assert.equal('outputTail' in lines[1]!, false, 'because the audit line keeps the record, not the output');
+    assert.equal(await readFile(path.join(stateDir, 'app', 'actions', `${record.id}.log`), 'utf8'), 'cleared\n', 'because the output sits beside the log');
+  } finally { await cleanup(); }
+});
+
+test('OutputAfterExitBeforeClose_Kept', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#268' }));
+    processes[0]!.lateOutput('from a grandchild\n');
+    processes[0]!.exit(0, null);
+    await settle();
+    assert.equal(actions.get(record.id)?.output, 'from a grandchild\n', 'because the runner waits for close, not exit, so a grandchild\'s last words land');
+  } finally { await cleanup(); }
+});
+
+test('ProcessExitsNonZero_Failed_WithStderrInOutput', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('worktree.release', { target: 'gh#5' }));
+    processes[0]!.stderr.write('flow: no claimed worktree for gh#5\n');
+    processes[0]!.exit(2, null);
+    await settle();
+    const ended = actions.get(record.id)!;
+    assert.equal(ended.state, 'failed', 'because a non-zero exit is a failure');
+    assert.equal(ended.exitCode, 2, 'because the steward exit codes carry meaning');
+    assert.match(ended.output ?? '', /no claimed worktree/, 'because stderr joins the output');
+  } finally { await cleanup(); }
+});
+
+test('LockHeld_SecondRequest_Conflict', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
   try {
     actions.request('gate.clear', { item: 'gh#1' });
     const second = actions.request('run.start', { item: 'gh#1' });
-    assert.equal(second.status, 409, 'because gh#1 is held by the running gate.clear');
-    assert.equal((second.body as { action: ActionRecord }).action.state, 'rejected', 'because the refused request is recorded too');
-    const other = actions.request('gate.clear', { item: 'gh#2' });
-    assert.equal(other.status, 202, 'because another item is free');
-    processes[0]!.exit(0);
+    assert.equal(second.status, HTTP_CONFLICT, 'because gh#1 is held by the running gate.clear');
+    assert.equal(actionOf(second).state, 'rejected', 'because the refused request is recorded too');
+  } finally { await cleanup(); }
+});
+
+test('LockHeld_OtherItem_Accepted', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    actions.request('gate.clear', { item: 'gh#1' });
+    assert.equal(actions.request('gate.clear', { item: 'gh#2' }).status, HTTP_ACCEPTED, 'because another item is free');
+  } finally { await cleanup(); }
+});
+
+test('ProcessEnds_LockReleased', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    actions.request('gate.clear', { item: 'gh#1' });
+    processes[0]!.exit(0, null);
     await settle();
-    assert.equal(actions.request('gate.clear', { item: 'gh#1' }).status, 202, 'because the lock is released when the action ends');
+    assert.equal(actions.request('gate.clear', { item: 'gh#1' }).status, HTTP_ACCEPTED, 'because the lock goes when the action ends');
   } finally { await cleanup(); }
 });
 
-test('Request_UnknownKindOrBadArgs_BadRequest', async () => {
-  const { actions, cleanup } = await runner();
+test('UnknownKind_BadRequest', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
   try {
-    assert.equal(actions.request('rm.rf', {}).status, 400, 'because only the allow-listed kinds run');
-    assert.equal(actions.request('gate.clear', { item: 5 }).status, 400, 'because args are strings');
-    assert.equal(actions.request('gate.clear', { item: '' }).status, 400, 'because the planner refused it');
-    assert.equal(actions.list().filter((record) => record.state === 'rejected').length, 1, 'because an unknown kind is dropped before a record exists and bad args make no plan, but a planned refusal is recorded');
+    assert.equal(actions.request('rm.rf', {}).status, HTTP_BAD_REQUEST, 'because only the allow-listed kinds run');
   } finally { await cleanup(); }
 });
 
-test('Request_Timeout_KillsAndMarks', async () => {
-  const { actions, processes, cleanup } = await runner();
+test('NonStringArgs_BadRequest', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
   try {
-    const record = (actions.request('job.stop', { job: 'next' }).body as { action: ActionRecord }).action;
-    const timer = processes[0]!.plan.timeoutMs;
-    assert.equal(timer, 120000, 'because a script gets two minutes');
-    processes[0]!.exit(null, 'SIGTERM');
+    assert.equal(actions.request('gate.clear', { item: 5 }).status, HTTP_BAD_REQUEST, 'because args are strings');
+  } finally { await cleanup(); }
+});
+
+test('RefusedByPlanner_RecordedAsRejected', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const outcome = actions.request('gate.clear', { item: '' });
+    assert.equal(outcome.status, HTTP_BAD_REQUEST, 'because the planner refused it');
+    assert.equal(actions.list()[0]?.state, 'rejected', 'because a refused request still shows in the list');
+  } finally { await cleanup(); }
+});
+
+test('Timeout_TermThenKill_Failed', async () => {
+  const { actions, processes, timers, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('job.stop', { job: 'next' }));
+    processes[0]!.ignoresTerm = true;
+    assert.equal(timers.fire(SCRIPT_TIMEOUT_MS), 1, 'because a script carries the script timeout');
+    assert.deepEqual(processes[0]!.signals, ['SIGTERM'], 'because the first attempt is polite');
+    assert.equal(actions.get(record.id)?.state, 'running', 'because a shell with a trap may ignore SIGTERM');
+    assert.equal(timers.fire(KILL_GRACE_MS), 1, 'because a grace timer follows the TERM');
     await settle();
     const ended = actions.get(record.id)!;
-    assert.equal(ended.state, 'failed', 'because a signal is not success');
-    assert.equal(ended.exitCode, 128, 'because a signal exit is reported as 128');
-    assert.match(ended.output ?? '', /SIGTERM/, 'because the output says what ended it');
+    assert.deepEqual(processes[0]!.signals, ['SIGTERM', 'SIGKILL'], 'because the process group is killed after the grace');
+    assert.equal(ended.state, 'failed', 'because a timed out action never counts as done');
+    assert.equal(ended.timedOut, true, 'because the record says why');
+    assert.equal(ended.exitCode, SIGNAL_EXIT, 'because a signal exit is reported as 128');
   } finally { await cleanup(); }
 });
 
-test('RunStart_Detached_DoneAtOnceWithThePid', async () => {
-  const { actions, processes, refreshed, cleanup } = await runner();
+test('TimeoutThenExitZero_StillFailed', async () => {
+  const { actions, processes, timers, cleanup } = await runner(CONTEXT, PLAIN);
   try {
-    const record = (actions.request('run.start', { item: 'gh#9' }).body as { action: ActionRecord }).action;
+    const record = actionOf(actions.request('job.stop', { job: 'next' }));
+    processes[0]!.ignoresTerm = true;
+    timers.fire(SCRIPT_TIMEOUT_MS);
+    processes[0]!.exit(0, null);
     await settle();
-    assert.equal(processes[0]?.plan.detach, true, 'because the run outlives the request');
-    assert.equal(actions.get(record.id)?.state, 'done', 'because starting it is the whole action');
-    assert.match(actions.get(record.id)?.output ?? '', /started pid 4001/, 'because the pid lets the process list find it');
-    assert.deepEqual(refreshed, [['files', 'processes']], 'because the run record and the process list change');
+    assert.equal(actions.get(record.id)?.state, 'failed', 'because finishing late is not finishing');
   } finally { await cleanup(); }
 });
 
-test('Refresh_AsksTheMonitorAndNeedsNoProcess', async () => {
-  const { actions, processes, refreshed, cleanup } = await runner({ ...CONTEXT, pluginRoot: null });
+test('SpawnThrows_FailedWithReason', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, { failWith: 'spawn sh ENOENT', detachedOutput: '' });
+  try {
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#1' }));
+    await settle();
+    assert.equal(actions.get(record.id)?.state, 'failed', 'because a process that never started did nothing');
+    assert.match(actions.get(record.id)?.output ?? '', /could not start: spawn sh ENOENT/, 'because the reason is in the output');
+    assert.equal(actions.request('gate.clear', { item: 'gh#1' }).status, HTTP_ACCEPTED, 'because the lock was released');
+  } finally { await cleanup(); }
+});
+
+test('RunStart_Detached_HoldsTheLockUntilTheRunEnds', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, { failWith: null, detachedOutput: 'step 1 done\nstep 2 done\n' });
+  try {
+    const record = actionOf(actions.request('run.start', { item: 'gh#9' }));
+    assert.equal(processes[0]?.plan.detach, true, 'because the run outlives the daemon');
+    assert.equal(actions.get(record.id)?.state, 'running', 'because the run is still going');
+    assert.equal(actions.request('worktree.release', { target: 'gh#9', force: 'true' }).status, HTTP_CONFLICT, 'because the item is held for the life of the run, so nobody resets its worktree under the agent');
+    processes[0]!.exit(0, null);
+    await settle();
+    const ended = actions.get(record.id)!;
+    assert.equal(ended.state, 'done', 'because the run ended well');
+    assert.match(ended.output ?? '', /started pid 4001/, 'because the pid lets the process list find it');
+    assert.match(ended.output ?? '', /step 2 done/, 'because the run wrote its own file and the record reads it back');
+  } finally { await cleanup(); }
+});
+
+test('RunStart_Detached_AuditNeverOverwritesTheRunsFile', async () => {
+  const { actions, processes, stateDir, auditLines, cleanup } = await runner(CONTEXT, { failWith: null, detachedOutput: 'skipped: run 123 still going\n' });
+  try {
+    const record = actionOf(actions.request('run.start', { item: 'gh#9' }));
+    processes[0]!.exit(0, null);
+    await settle();
+    await auditLines();
+    assert.equal(await readFile(path.join(stateDir, 'app', 'actions', `${record.id}.log`), 'utf8'), 'skipped: run 123 still going\n', 'because the file is the run\'s, the audit only reads it');
+  } finally { await cleanup(); }
+});
+
+test('Refresh_AsksTheMonitorWithoutAProcess', async () => {
+  const { actions, processes, refreshed, cleanup } = await runner({ ...CONTEXT, pluginRoot: null }, PLAIN);
   try {
     const outcome = actions.request('refresh', { source: 'git' });
-    assert.equal(outcome.status, 202, 'because refresh works without a plugin');
+    assert.equal(outcome.status, HTTP_ACCEPTED, 'because refresh works without a plugin');
     assert.deepEqual(refreshed, [['git']], 'because one source was named');
     assert.equal(processes.length, 0, 'because nothing was spawned');
-    assert.equal(actions.request('refresh', { source: 'moon' }).status, 400, 'because an unknown source is refused');
   } finally { await cleanup(); }
 });
 
-test('List_NewestFirstWithoutOutput', async () => {
-  const { actions, processes, cleanup } = await runner();
+test('Refresh_UnknownSource_BadRequest', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    assert.equal(actions.request('refresh', { source: 'moon' }).status, HTTP_BAD_REQUEST, 'because an unknown source is refused');
+  } finally { await cleanup(); }
+});
+
+test('List_NewestFirst_TailOnly', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
   try {
     actions.request('gate.clear', { item: 'gh#1' });
     actions.request('gate.clear', { item: 'gh#2' });
-    processes[0]!.stdout.write('x'.repeat(5000));
-    processes[0]!.exit(0);
+    processes[0]!.stdout.write('x'.repeat(OUTPUT_TAIL_CHARS + 1000));
+    processes[0]!.exit(0, null);
     await settle();
     const listed = actions.list();
     assert.equal(listed[0]?.args['item'], 'gh#2', 'because the newest request comes first');
-    assert.equal(listed[1]?.outputTail.length, 4096, 'because the list carries the tail only');
+    assert.equal(listed[1]?.outputTail.length, OUTPUT_TAIL_CHARS, 'because the list carries the tail only');
     assert.equal('output' in listed[1]!, false, 'because the full output waits behind the detail route');
+  } finally { await cleanup(); }
+});
+
+test('StopAll_EndsAttachedActionsOnly', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    actions.request('gate.clear', { item: 'gh#1' });
+    actions.request('run.start', { item: 'gh#2' });
+    actions.stopAll();
+    assert.deepEqual(processes.map((entry) => entry.signals), [['SIGTERM'], []], 'because a detached run must survive a daemon restart');
   } finally { await cleanup(); }
 });

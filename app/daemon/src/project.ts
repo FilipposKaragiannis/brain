@@ -83,7 +83,10 @@ export class ProjectMonitor {
   /** What an action needs to know about the project right now. */
   actionContext(): ActionContext {
     const flow = this.facts.files.facts;
-    return { root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, repo: flow?.config.repo ?? null, jobsHost: flow?.config.jobsHost ?? 'claude' };
+    return {
+      root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, repo: flow?.config.repo ?? null,
+      jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
+    };
   }
 
   onChange(listener: (snapshot: Snapshot) => void): () => void {

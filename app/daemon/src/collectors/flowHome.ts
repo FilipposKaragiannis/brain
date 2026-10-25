@@ -54,6 +54,12 @@ export function poolPaths(root: string, config: FlowConfig): string[] {
   return config.pool.map((entry) => path.resolve(root, entry));
 }
 
+const JOB_HOSTS = ['claude', 'codex'];
+
+function jobsHostOf(value: string | null): string {
+  return value !== null && JOB_HOSTS.includes(value) ? value : 'claude';
+}
+
 export function parseFlowConfig(source: string): FlowConfig {
   const map: YamlMap = parseYaml(source);
   const poolMax = yamlString(map, 'pool_max');
@@ -70,7 +76,7 @@ export function parseFlowConfig(source: string): FlowConfig {
     poolMax: poolMax === null ? null : Number(poolMax),
     schedule,
     behindBase: behindBase === null ? null : Number(behindBase),
-    jobsHost: yamlString(map, 'jobs.host') ?? 'claude',
+    jobsHost: jobsHostOf(yamlString(map, 'jobs.host')),
   };
 }
 

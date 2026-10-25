@@ -13,8 +13,12 @@ curl -N http://127.0.0.1:7474/api/projects/foosbrawl/events  # server-sent event
 ```
 Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 `~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`). Every root must hold a
-`.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only; `--token <t>` (or
-`BRAIN_CONSOLE_TOKEN`) guards every route with `Authorization: Bearer <t>` or `?token=<t>`.
+`.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
+the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
+else the one the daemon makes on first start and keeps in `~/.local/state/brain-console/token`.
+The start log prints the URL with the token in it. A request whose `Host` is not a loopback
+name, or whose `Origin` is not a local page, gets 403, so a page on another site cannot drive
+the console even from the owner's own browser.
 
 ## Routes
 | Route | What |
@@ -69,21 +73,28 @@ on every state change and at most twice a second while output arrives.
 | Kind | Args | Runs | Lock |
 |---|---|---|---|
 | `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item |
-| `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item, or the next job |
+| `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item and the next job |
 | `job.run` `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job |
-| `worktree.claim` | `item` | `steward.sh claim <item>` | the pool |
-| `worktree.release` | `target`, `force?` | `steward.sh release <target> [--force]` | the pool |
-| `steward.sweep` `steward.health` | | `steward.sh sweep` / `health` | the pool |
+| `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item |
+| `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree |
+| `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR |
 | `refresh` | `source?` | re-reads the sources in the daemon | none |
 
-A second action on a held lock is refused with 409 and recorded as `rejected`. At most four run
-at once. Scripts get two minutes, the steward ten, a merge three; a run started with `run.start`
-is detached and never killed. When an action ends the sources it changed are re-read.
+An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
+which the daemon turns into its path. An argument the kind does not take is refused, so a typo
+never changes what runs. A second action on a held lock is refused with 409 and recorded as
+`rejected`. At most four run at once. Scripts get two minutes, a merge three; a process that
+ignores SIGTERM is killed with its group ten seconds later, and a timed-out action is `failed`
+whatever its exit code. A run started with `run.start` is detached, writes its own output file,
+holds its item for as long as it runs and is never killed by the console. `jobs/next.sh` takes
+the next job's lock, so a console run while the scheduled job is busy prints "skipped" and ends
+at once. When an action ends the sources it changed are re-read.
 
-Every finished action is one line in `~/.local/state/brain-console/<project>/actions.jsonl`,
-with its full output in `actions/<id>.log` beside it (`--state-dir` or `BRAIN_CONSOLE_STATE`
-moves it). Nothing is written inside the project except what the scripts themselves write.
+Every action is two lines in `~/.local/state/brain-console/<project>/actions.jsonl`, one at
+start and one at the end, with its full output in `actions/<id>.log` beside it (`--state-dir`
+or `BRAIN_CONSOLE_STATE` moves it). Nothing is written inside the project except what the
+scripts themselves write.
 
 ## Reconciliation
 `daemon/src/reconcile.ts` is a pure function from the collected facts to the snapshot, with the

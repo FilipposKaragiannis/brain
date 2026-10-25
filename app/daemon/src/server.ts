@@ -1,36 +1,66 @@
+import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ActionRunner } from './actions.ts';
 import type { Logger } from './log.ts';
 import type { ProjectMonitor } from './project.ts';
-import type { SourceName } from './snapshot.ts';
+import { SOURCE_NAMES } from './snapshot.ts';
 
-export type ServerOptions = { host: string; port: number; token: string | null; log: Logger };
+export type ServerOptions = { host: string; port: number; token: string; log: Logger };
 
 /** One project as the server sees it: its live picture and the thing that runs its actions. */
 export type ServedProject = { monitor: ProjectMonitor; actions: ActionRunner };
 
 const HEARTBEAT_MS = 15000;
-const SOURCES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board'];
 const BODY_LIMIT_BYTES = 64 * 1024;
 const HTTP_OK = 200;
 const HTTP_NO_CONTENT = 204;
 const HTTP_ACCEPTED = 202;
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNAUTHORIZED = 401;
+const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 const HTTP_METHOD_NOT_ALLOWED = 405;
 const HTTP_TOO_LARGE = 413;
+const HTTP_UNSUPPORTED_MEDIA = 415;
+/** The hosts a browser may name for this server: its own loopback address and localhost. */
+const LOCAL_HOSTS = ['127.0.0.1', 'localhost', '[::1]'];
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   response.end(JSON.stringify(body));
 }
 
-function authorized(request: IncomingMessage, url: URL, token: string | null): boolean {
-  if (token === null) return true;
+function sameSecret(given: string, token: string): boolean {
+  const a = Buffer.from(given);
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function authorized(request: IncomingMessage, url: URL, token: string): boolean {
   const header = request.headers.authorization ?? '';
-  return header === `Bearer ${token}` || url.searchParams.get('token') === token;
+  const bearer = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '';
+  return sameSecret(bearer, token) || sameSecret(url.searchParams.get('token') ?? '', token);
+}
+
+/** The hostname of a Host header or an Origin, without the port. */
+function hostnameOf(value: string): string | null {
+  try { return new URL(value.includes('://') ? value : `http://${value}`).hostname; } catch { return null; }
+}
+
+/**
+ * A browser must only reach this server as itself: the Host header names a loopback address (so
+ * a DNS rebinding attack, whose Host is the attacker's name, is refused) and an Origin, when a
+ * page sends one, is a loopback page too (so a page on another site cannot post an action).
+ */
+function localCaller(request: IncomingMessage): { ok: true; origin: string | null } | { ok: false; error: string } {
+  const host = hostnameOf(request.headers.host ?? '');
+  if (host === null || !LOCAL_HOSTS.includes(host.startsWith('[') ? host : host.replace(/^\[|\]$/g, ''))) return { ok: false, error: 'host must be 127.0.0.1 or localhost' };
+  const origin = request.headers.origin ?? null;
+  if (origin === null) return { ok: true, origin: null };
+  const originHost = hostnameOf(origin);
+  if (originHost === null || !LOCAL_HOSTS.includes(originHost)) return { ok: false, error: 'origin must be a local page' };
+  return { ok: true, origin };
 }
 
 function readBody(request: IncomingMessage): Promise<{ ok: true; body: unknown } | { ok: false; status: number; error: string }> {
@@ -39,7 +69,7 @@ function readBody(request: IncomingMessage): Promise<{ ok: true; body: unknown }
     let size = 0;
     request.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > BODY_LIMIT_BYTES) { resolve({ ok: false, status: HTTP_TOO_LARGE, error: 'body too large' }); request.destroy(); return; }
+      if (size > BODY_LIMIT_BYTES) { resolve({ ok: false, status: HTTP_TOO_LARGE, error: 'body too large' }); request.removeAllListeners('data'); request.resume(); return; }
       chunks.push(chunk);
     });
     request.on('end', () => {
@@ -59,9 +89,14 @@ export function createConsoleServer(projects: ServedProject[], options: ServerOp
   const byId = new Map(projects.map((served) => [served.monitor.project.id, served]));
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', `http://${options.host}:${options.port}`);
-    response.setHeader('access-control-allow-origin', '*');
-    response.setHeader('access-control-allow-headers', 'authorization, content-type');
-    response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+    const caller = localCaller(request);
+    if (!caller.ok) { sendJson(response, HTTP_FORBIDDEN, { error: caller.error }); return; }
+    if (caller.origin !== null) {
+      response.setHeader('access-control-allow-origin', caller.origin);
+      response.setHeader('access-control-allow-headers', 'authorization, content-type');
+      response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+      response.setHeader('vary', 'origin');
+    }
     if (request.method === 'OPTIONS') { response.writeHead(HTTP_NO_CONTENT); response.end(); return; }
     if (!authorized(request, url, options.token)) { sendJson(response, HTTP_UNAUTHORIZED, { error: 'token required' }); return; }
     if (url.pathname === '/healthz') { sendJson(response, HTTP_OK, { ok: true, projects: [...byId.keys()] }); return; }
@@ -86,7 +121,7 @@ export function createConsoleServer(projects: ServedProject[], options: ServerOp
 function refresh(monitor: ProjectMonitor, request: IncomingMessage, response: ServerResponse, url: URL): void {
   if (request.method !== 'POST') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'POST only' }); return; }
   const wanted = url.searchParams.get('source');
-  const sources = SOURCES.filter((source) => wanted === null || source === wanted);
+  const sources = SOURCE_NAMES.filter((source) => wanted === null || source === wanted);
   void Promise.all(sources.map((source) => monitor.refresh(source)));
   sendJson(response, HTTP_ACCEPTED, { refreshing: sources });
 }
@@ -99,6 +134,7 @@ async function actions(runner: ActionRunner, request: IncomingMessage, response:
   }
   if (request.method === 'GET') { sendJson(response, HTTP_OK, { actions: runner.list() }); return; }
   if (request.method !== 'POST' || actionId !== undefined) { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET or POST' }); return; }
+  if (!(request.headers['content-type'] ?? '').startsWith('application/json')) { sendJson(response, HTTP_UNSUPPORTED_MEDIA, { error: 'send application/json' }); return; }
   const read = await readBody(request);
   if (!read.ok) { sendJson(response, read.status, { error: read.error }); return; }
   const body = (typeof read.body === 'object' && read.body !== null ? read.body : {}) as { kind?: unknown; args?: unknown };

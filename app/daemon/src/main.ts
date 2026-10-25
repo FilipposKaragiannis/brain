@@ -1,4 +1,4 @@
-import { ActionRunner, childProcessSpawner } from './actions.ts';
+import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { childProcessRunner } from './collectors/exec.ts';
 import { readConfig } from './config.ts';
 import { stderrLogger } from './log.ts';
@@ -6,6 +6,7 @@ import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
 import { createConsoleServer } from './server.ts';
 import type { ServedProject } from './server.ts';
 import type { SourceName } from './snapshot.ts';
+import { SOURCE_NAMES } from './snapshot.ts';
 
 const EXIT_BAD_CONFIG = 2;
 const clock = (): Date => new Date();
@@ -21,8 +22,8 @@ const { config } = configuration;
 const served: ServedProject[] = config.projects.map((project) => {
   const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE });
   const actions = new ActionRunner({
-    projectId: project.id, context: () => monitor.actionContext(), spawner: childProcessSpawner, clock, log, stateDir: config.stateDir,
-    onRefresh: (sources) => { for (const source of sources) void monitor.refresh(source as SourceName); },
+    projectId: project.id, context: () => monitor.actionContext(), spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
+    onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },
   });
   return { monitor, actions };
 });
@@ -34,7 +35,7 @@ for (const monitor of monitors) {
 }
 
 server.listen(config.port, config.host, () => {
-  log.info('listening', { url: `http://${config.host}:${config.port}`, projects: config.projects.map((project) => project.id).join(','), token: config.token !== null, stateDir: config.stateDir });
+  log.info('listening', { url: `http://${config.host}:${config.port}/?token=${config.token}`, projects: config.projects.map((project) => project.id).join(','), stateDir: config.stateDir });
 });
 await Promise.all(monitors.map((monitor) => monitor.start()));
 
