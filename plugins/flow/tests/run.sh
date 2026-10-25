@@ -231,6 +231,9 @@ check "hostile output: nothing on stderr" [ ! -s "$work/verify.err" ]
 osc="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _verify_report as v
 print(v.summary("see \x1b]8;;https://ci/run/7\x07the run\x1b]8;;\x07 and \x1b]8;id=1;https://ci/log\x1b\\the log\x1b]8;;\x1b\\ \x1b[31mred\x1b[0m"))' "$P/scripts" 2>&1)"
 check "a terminal hyperlink (OSC 8, either terminator) leaves only its text in the summary" [ "$osc" = "see the run and the log red" ]
+osc="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _verify_report as v
+print(v.summary("cut short at \x1b]8;;https://ci/run/7"))' "$P/scripts" 2>&1)"
+check "a hyperlink cut short with no terminator leaves no target in the summary" [ "$osc" = "cut short at" ]
 # dash runs no EXIT trap on a signal: a verify stopped by TERM must still remove its temp files.
 if command -v dash >/dev/null 2>&1; then
   mkdir -p "$work/vtmp"
@@ -1369,6 +1372,8 @@ check "health job: a paused job does nothing" [ ! -s .flow/events.log ]
 check "jobs: status lists the health job with its schedule" sh -c "'$P/scripts/jobs.sh' status | grep -q '^| health | every 15m'"
 check "jobs: cron gets the health line" sh -c "FLOW_SCHEDULER=cron '$P/scripts/jobs.sh' install health | grep -q '^\*/15 \* \* \* \* .*\.flow/jobs/health\.sh claude'"
 check "jobs: history and logs take the health job" sh -c "'$P/scripts/jobs.sh' history health 3 | grep -q 'quiet\|work' && '$P/scripts/jobs.sh' logs health 3 | grep -q 'health.log'"
+printf '{"job":"health","at":"2026-10-24T10:00:00Z","seconds":1,"exit":0,"result":42}\n' >> .flow/log/runs.jsonl
+check_all "jobs: a run recorded before 1.20.2 with a result of digits (a number) still shows in status and history" '"$P/scripts/jobs.sh" status >/dev/null && "$P/scripts/jobs.sh" status --json >/dev/null && "$P/scripts/jobs.sh" history health 3 | grep -q 42'
 unset FLOW_HEALTH_PROCS
 cd "$repo"
 
@@ -1684,11 +1689,22 @@ check "advance --json: attempts is a number" [ "$("$P/scripts/advance.sh" "$d1" 
 "$P/scripts/steward.sh" release "$d1" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
 FLOW_RUN_PID=not-a-pid "$P/scripts/next.sh" --json >/dev/null 2>&1
 check "the run record: a pid that is no number is left out, the record still parses" [ "$(python3 -c 'import json,sys; print("pid" in json.load(sys.stdin))' < ".flow/runs/$(item_slug "$d1").json")" = False ]
+"$P/scripts/steward.sh" release "$d1" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+FLOW_RUN_PID=0042 "$P/scripts/next.sh" --json >/dev/null 2>&1
+check "the run record: a pid with leading zeros is the number without them, not octal" [ "$(jtype pid < ".flow/runs/$(item_slug "$d1").json")" = "int 42" ]
 "$P/scripts/gate.sh" raise "$d1" escalation 007 >/dev/null 2>&1
 check "a gate raised with the message 007: the record parses, the message the string" [ "$(jtype message < ".flow/gates/$(item_slug "$d1").json")" = "str 007" ]
 check "gate list --json: the message 007 is the string" [ "$("$P/scripts/gate.sh" list --json | jtype 0.message)" = "str 007" ]
+# Records from before 1.20.2: a digits message is a number, and one with a leading zero does not parse.
+printf '{"gate":"merge","item":"local:task/98","message":42,"time":"2026-10-24T10:00:00Z","host":"shell"}\n' > .flow/gates/local-task-98.json
+printf '{"gate":"merge","item":"local:task/99","message":007,"time":"2026-10-24T10:00:00Z","host":"shell"}\n' > .flow/gates/local-task-99.json
+check_all "board: an old gate with a number message shows, an old one that does not parse is skipped" 'b="$("$P/scripts/board.sh")" && printf "%s" "$b" | grep -q "local:task/98 (.*): 42" && printf "%s" "$b" | grep -q "escalation\*\* on $d1" && ! printf "%s" "$b" | grep -q "local:task/99"'
+rm -f .flow/gates/local-task-98.json .flow/gates/local-task-99.json
 "$P/scripts/lesson.sh" other "$d1" 12345 >/dev/null
 check "a lesson whose text is 12345 is the string" [ "$(tail -1 .flow/lessons.jsonl | jtype text)" = "str 12345" ]
+mkdir -p "$work/nojq" && ln -sf "$(command -v python3)" "$work/nojq/python3"
+nojq="$(PATH="$work/nojq"; json_obj "d=$(printf 'a\377b')" n:=1)"
+check "json_obj without jq: bytes that are not UTF-8 are replaced and the object parses" [ "$(printf '%s' "$nojq" | python3 -c 'import json,sys; print(json.load(sys.stdin)["d"] == "a\ufffdb")')" = True ]
 check_all "runs.jsonl: seconds and exit are numbers on every line, result a string" '[ -s "$home2/log/runs.jsonl" ] && python3 -c "import json,sys
 for l in open(sys.argv[1]):
     r = json.loads(l); assert type(r[\"seconds\"]) is int and type(r[\"exit\"]) is int and type(r[\"result\"]) is str, l" "$home2/log/runs.jsonl"'

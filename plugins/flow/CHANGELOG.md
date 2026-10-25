@@ -10,10 +10,19 @@
   `advance.sh --json`. A `pid` that is not a whole number is left out of the run record, and an
   `attempts` that is not one reads as 0, so neither can write invalid JSON. `depth` in
   `next.sh --json` is the review depth (`quick`, `standard`, `deep`, `none`) and stays a string.
-- The verify summary drops terminal hyperlinks (OSC 8, ended by BEL or ST) and keeps the link's
-  text; before, the link target was left in the summary.
+  A `pid` or `attempts` with leading zeros is written without them (`0042` is 42, never octal).
+- Records written before 1.20.2 with a digits value that has a leading zero are invalid JSON and
+  are not rewritten; the readers (`jobs.sh`, `gate.sh list`, the health job, and now the board,
+  which used to stop on one) skip them. A digits-only value from before 1.20.2 is a number:
+  `jobs.sh status` and `history` read a `result` as text, and the board a gate `message`, instead
+  of crashing.
+- Without jq, `json_string` printed nothing for text that is not UTF-8, so `json_obj` wrote
+  `{"d":,...}`; the python3 fallback now replaces such bytes with U+FFFD.
+- The verify summary drops terminal hyperlinks (OSC 8, ended by BEL or ST, or cut short with no
+  end) and keeps the link's text; before, the link target was left in the summary.
 - `verify.sh` removes its temp files when it is stopped by INT or TERM: dash runs no EXIT trap on
-  a signal, so the signals now exit through it.
+  a signal, so each signal's trap removes them and then re-raises the signal, so the parent still
+  sees verify killed by it.
 - The flow tests that chained a second condition after `check` with `&&` (38 of them) or piped its
   output (one) tested only the first part; they now run whole inside `check_all`.
 

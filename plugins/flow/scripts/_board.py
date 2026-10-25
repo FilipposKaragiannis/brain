@@ -62,7 +62,7 @@ for i in sorted(items, key=lambda i: i.get("rank", 999)):
 if gates:
     print("\n## Waiting on you")
     for g in gates:
-        print("- **%s** on %s (%s): %s" % (g["gate"], g["item"], g["time"], g["message"].splitlines()[0] if g["message"] else ""))
+        print("- **%s** on %s (%s): %s" % (g["gate"], g["item"], g["time"], str(g["message"]).splitlines()[0] if g["message"] != "" else ""))
 now = time.time()
 waiting = [g for g in gates if now - epoch(g["time"]) > reminder]
 dead = [r for r in runs if not r["alive"] and not r["starting"]]

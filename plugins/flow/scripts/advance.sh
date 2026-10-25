@@ -42,7 +42,7 @@ fi
 [ -n "$status" ] || die "no result for step $step: write $reports/$step.json or pass --status" 2
 
 data="$(adapter read "$item")" || die "cannot read $item"
-attempts="$(state_get "$data" attempts)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; esac
+attempts="$(state_get "$data" attempts)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; 0*) attempts="${attempts#"${attempts%%[!0]*}"}"; attempts="${attempts:-0}" ;; esac
 size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
 kind="$(json_get "$data" kind)"
 
