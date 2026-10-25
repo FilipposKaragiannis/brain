@@ -1,5 +1,11 @@
 # flow
 
+## 1.20.3 (2026-10-25)
+
+- The test writer splits a test whose assertions can fail independently before it commits, and
+  never uses a call count on a double as a setup guard. Seven review blockers in twelve lessons
+  were T-09 and T-08 on tests the writer had just committed. From the weekly retro, PR #40.
+
 ## 1.20.2 (2026-10-25)
 
 - A plain `key=value` given to `json_obj` is always a JSON string. A value of digits only used to
