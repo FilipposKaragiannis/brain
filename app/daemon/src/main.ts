@@ -5,7 +5,7 @@ import { childProcessRunner } from './collectors/exec.ts';
 import { readConfig } from './config.ts';
 import { stderrLogger } from './log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
-import { createConsoleServer } from './server.ts';
+import { closeConsoleServer, createConsoleServer } from './server.ts';
 import type { ServedProject } from './server.ts';
 import type { SourceName } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
@@ -44,9 +44,16 @@ server.listen(config.port, config.host, () => {
 });
 await Promise.all(monitors.map((monitor) => monitor.start()));
 
-const shutdown = (): void => {
+/** How long a stop may take before the process ends anyway, streams or not. */
+const SHUTDOWN_GRACE_MS = 3000;
+let stopping = false;
+const shutdown = (signal: string): void => {
+  if (stopping) { log.warn('shutdown.forced', { signal }); process.exit(130); }
+  stopping = true;
+  log.info('shutdown', { signal });
   for (const { monitor, actions } of served) { actions.stopAll(); monitor.stop(); }
-  server.close(() => process.exit(0));
+  void closeConsoleServer(server).then(() => process.exit(0));
+  setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();
 };
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

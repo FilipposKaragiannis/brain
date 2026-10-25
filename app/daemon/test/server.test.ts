@@ -8,7 +8,7 @@ import path from 'node:path';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import { silentLogger } from '../src/log.ts';
 import { ProjectMonitor } from '../src/project.ts';
-import { createConsoleServer } from '../src/server.ts';
+import { closeConsoleServer, createConsoleServer } from '../src/server.ts';
 import type { Snapshot } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
@@ -27,7 +27,7 @@ async function started(): Promise<{ monitor: ProjectMonitor; processes: FakeProc
   await monitor.start();
   await monitor.refresh('board');
   const { port } = server.address() as AddressInfo;
-  return { monitor, processes, base: `http://127.0.0.1:${port}`, close: async () => { monitor.stop(); await new Promise<void>((resolve) => server.close(() => resolve())); await rm(stateDir, { recursive: true, force: true }); } };
+  return { monitor, processes, base: `http://127.0.0.1:${port}`, close: async () => { monitor.stop(); await closeConsoleServer(server); await rm(stateDir, { recursive: true, force: true }); } };
 }
 
 test('Snapshot_ServedWithToken', async () => {
@@ -207,4 +207,15 @@ test('Events_Post_MethodNotAllowed', async () => {
   try {
     assert.equal((await fetch(`${base}/api/projects/project/events?item=gh%23213&token=tok`, { method: 'POST' })).status, 405, 'because the events are only ever read');
   } finally { await close(); }
+});
+
+test('Close_WithAStreamOpen_FinishesWithoutWaitingForIt', async () => {
+  const { base, close } = await started();
+  const controller = new AbortController();
+  const stream = fetch(`${base}/api/projects/project/events?token=tok`, { signal: controller.signal });
+  await stream.then((response) => response.body?.getReader().read());
+  const began = Date.now();
+  await close();
+  controller.abort();
+  assert.ok(Date.now() - began < 2000, 'because a console tab left open must not keep Ctrl+C from stopping the daemon');
 });

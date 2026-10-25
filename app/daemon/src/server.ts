@@ -177,3 +177,16 @@ function streamEvents(served: ServedProject, request: IncomingMessage, response:
   log.info('stream.open', { project: monitor.project.id });
   request.on('close', () => { unsubscribeSnapshots(); unsubscribeActions(); clearInterval(heartbeat); log.info('stream.close', { project: monitor.project.id }); });
 }
+
+/**
+ * Stops the server for good. `server.close` alone waits for every open stream to end, and a
+ * console tab holds its stream open for as long as it is on screen, so Ctrl+C would never return.
+ * The open connections are cut once the listener is closed, and the promise settles when the
+ * server has let go.
+ */
+export function closeConsoleServer(server: Server): Promise<void> {
+  return new Promise((resolve) => {
+    server.close(() => resolve());
+    server.closeAllConnections();
+  });
+}
