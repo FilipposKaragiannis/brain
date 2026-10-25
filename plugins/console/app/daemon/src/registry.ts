@@ -78,4 +78,9 @@ export class ProjectRegistry {
   stopAll(): void {
     for (const { monitor, actions } of this.served.values()) { actions.stopAll(); monitor.stop(); }
   }
+
+  /** Every project's pending audit writes have landed. Shutdown and tests wait on this before touching the state dir. */
+  async whenIdle(): Promise<void> {
+    await Promise.all([...this.served.values()].map(({ actions }) => actions.whenIdle()));
+  }
 }

@@ -79,7 +79,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv): Promise
     log.info('shutdown', { signal });
     if (!config.launchd) removePidFile(config.stateDir, process.pid);
     registry.stopAll();
-    void closeConsoleServer(server).then(() => process.exit(0));
+    void Promise.all([closeConsoleServer(server), registry.whenIdle()]).then(() => process.exit(0));
     setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();
   };
   process.on('SIGINT', () => shutdown('SIGINT'));

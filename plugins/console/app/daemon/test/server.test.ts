@@ -39,7 +39,7 @@ async function started(makeSettings: (registry: ProjectRegistry) => SettingsStor
   const monitor = registry.get('project')!.monitor;
   await monitor.refresh('board');
   const { port } = server.address() as AddressInfo;
-  return { monitor, processes, base: `http://127.0.0.1:${port}`, close: async () => { registry.stopAll(); await closeConsoleServer(server); await rm(stateDir, { recursive: true, force: true }); } };
+  return { monitor, processes, base: `http://127.0.0.1:${port}`, close: async () => { registry.stopAll(); await registry.whenIdle(); await closeConsoleServer(server); await rm(stateDir, { recursive: true, force: true }); } };
 }
 
 test('Snapshot_ServedWithToken', async () => {
