@@ -10,7 +10,7 @@ import { applyChange, parseDocument, valueAt } from '../src/plugins/flow/configD
 import { contentHash, describe, FlowConfigEditor, followUpsOf } from '../src/plugins/flow/configEditor.ts';
 import { codexDefaults, readHostDefaults } from '../src/plugins/flow/hostDefaults.ts';
 import type { FlowConfigDocument, FlowConfigSaved } from '../src/plugins/flow/schema.ts';
-import { checkChange, checkFileValue, checkSchedule, fieldAt, FLOW_CONFIG_SCHEMA } from '../src/plugins/flow/schema.ts';
+import { checkChange, checkFileValue, checkSchedule, fieldAt, FLOW_CONFIG_SCHEMA, legacyJobsSetting } from '../src/plugins/flow/schema.ts';
 import { parseYaml } from '../src/yaml.ts';
 import { FIXTURES } from './fakeRunner.ts';
 
@@ -396,20 +396,23 @@ test('Document_Read_CarriesTheHashOfTheText', async () => {
 });
 
 test('JobsHostKeys_InTheSchema_EnumsInTheJobsGroupWithNoFollowUp', () => {
-  const expected: [string, string[]][] = [
-    ['jobs.claude.model', ['opus', 'sonnet', 'haiku', 'fable']],
-    ['jobs.claude.effort', ['low', 'medium', 'high', 'xhigh', 'max']],
-    ['jobs.codex.model', ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']],
-    ['jobs.codex.effort', ['low', 'medium', 'high', 'xhigh']],
+  const expected: [string, string, string[]][] = [
+    ['jobs.claude.model', 'enumOrText', ['opus', 'sonnet', 'haiku', 'fable']],
+    ['jobs.claude.effort', 'enum', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['jobs.codex.model', 'enumOrText', ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']],
+    ['jobs.codex.effort', 'enum', ['low', 'medium', 'high', 'xhigh']],
   ];
-  for (const [key, values] of expected) {
+  for (const [key, type, values] of expected) {
     const spec = fieldAt(key);
-    assert.deepEqual([spec?.type, spec?.group, spec?.values, spec?.followUp], ['enum', 'Jobs', values, null], `because ${key} is picked from the host's own list and the next job run reads it from the file`);
+    assert.deepEqual([spec?.type, spec?.group, spec?.values, spec?.followUp], [type, 'Jobs', values, null], `because ${key} is picked from the host's own list and the next job run reads it from the file`);
     assert.ok(checkChange(spec!, values[0]!).ok && checkChange(spec!, '').ok && checkChange(spec!, null).ok, `because ${key} takes its values, and empty or unset for the host's default`);
     assert.match(spec!.help, /empty takes the (Claude|Codex) CLI's default/, `because the help of ${key} says what empty means`);
   }
   assert.equal(fieldAt('jobs.host')?.help, 'Which CLI runs the scheduled jobs. The workers inside a run keep their own models.', 'because the host picks the jobs\' CLI, not the workers\' models');
-  assert.deepEqual(['jobs.model', 'jobs.effort'].map((key) => fieldAt(key)?.deprecated), Array(2).fill('Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort. Set those and clear these.'), 'because flow 1.20.0 stopped reading the old keys');
+  assert.deepEqual(['jobs.model', 'jobs.effort'].map((key) => fieldAt(key)?.deprecated), Array(2).fill('Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort, and this key only while jobs.<host> is absent. Set those and clear these.'), 'because flow 1.20.0 reads the old keys only as a fallback');
+  for (const key of ['jobs.claude.model', 'jobs.codex.model']) {
+    assert.ok(checkChange(fieldAt(key)!, 'claude-opus-x').ok && checkFileValue(fieldAt(key)!, 'claude-opus-x').ok, `because the plugin passes any ${key} on as is, so a name off the list is no error`);
+  }
 });
 
 test('JobsHostEffort_OutOfItsEnum_RefusedOnPutWithTheRule', async () => {
@@ -441,9 +444,9 @@ test('CodexModel_Saved_NestedUnderJobsAsABlockWithTheCommentsKept', async () => 
 });
 
 test('CodexConfig_Read_TopLevelModelAndEffortOnly', async () => {
-  assert.deepEqual(await readHostDefaults(HOME), { codex: { model: 'gpt-6-sol', effort: 'high' } }, 'because the top-level lines are codex\'s defaults, and a profile\'s lines below a table are not');
-  assert.deepEqual(codexDefaults('approval_policy = "never"\n[profiles.x]\nmodel = "gpt-6-luna"\n'), { model: null, effort: null }, 'because a file that sets neither at the top names no default');
-  assert.deepEqual(codexDefaults('model = gpt-6-sol\nmodel_reasoning_effort = "low"\n'), { model: null, effort: 'low' }, 'because only simple key = "value" lines are read, anything else is skipped rather than guessed at');
+  assert.deepEqual(await readHostDefaults(HOME), { codex: { model: 'gpt-6-sol', effort: 'high', profile: null } }, 'because the top-level lines are codex\'s defaults, and a profile\'s lines below a table are not');
+  assert.deepEqual(codexDefaults('approval_policy = "never"\n[profiles.x]\nmodel = "gpt-6-luna"\n'), { model: null, effort: null, profile: null }, 'because a file that sets neither at the top names no default');
+  assert.deepEqual(codexDefaults('model = gpt-6-sol\nmodel_reasoning_effort = "low"\n'), { model: null, effort: 'low', profile: null }, 'because only simple key = "value" lines are read, anything else is skipped rather than guessed at');
 });
 
 test('CodexConfig_Missing_NoCodexDefaults', async () => {
@@ -457,8 +460,38 @@ test('Document_ReadAndSaved_CarriesTheHostDefaults', async () => {
   const fixture = project();
   try {
     const document = await readDocument(fixture.editor);
-    assert.deepEqual(document.hostDefaults, { codex: { model: 'gpt-6-sol', effort: 'high' } }, 'because the help of the codex model and effort names this machine\'s default');
+    assert.deepEqual(document.hostDefaults, { codex: { model: 'gpt-6-sol', effort: 'high', profile: null } }, 'because the help of the codex model and effort names this machine\'s default');
     const saved = (await fixture.editor.write({ changes: [{ path: 'jobs.codex.model', value: 'gpt-6-luna' }], hash: document.hash })).body as FlowConfigSaved;
     assert.deepEqual(saved.hostDefaults, document.hostDefaults, 'because a save replaces the document the form shows, defaults included');
+  } finally { fixture.done(); }
+});
+
+test('CodexConfigWithAProfile_Read_TheProfilesValuesFirstThenTheTopLevel', async () => {
+  assert.deepEqual(await readHostDefaults(path.join(FIXTURES, 'home-profile')), { codex: { model: 'gpt-6-astra', effort: 'low', profile: 'deep' } }, 'because codex runs the picked profile\'s model, takes the top-level effort the profile does not set, and a single-quoted value is a literal string');
+  assert.deepEqual(codexDefaults('profile = "gone"\nmodel = "gpt-6-sol"\n'), { model: 'gpt-6-sol', effort: null, profile: 'gone' }, 'because a profile with no table leaves the top level in charge');
+  assert.deepEqual(codexDefaults("profile = 'q'\n[profiles.\"q\"]\nmodel_reasoning_effort = 'xhigh'\n"), { model: null, effort: 'xhigh', profile: 'q' }, 'because a quoted table name is the same profile');
+});
+
+test('LegacyJobsSetting_HostMapAbsentOrPresent_FollowsThePluginsFallback', () => {
+  assert.deepEqual(legacyJobsSetting({ jobs: { model: 'opus' } }, 'claude', 'model'), { value: 'opus', from: 'jobs.model' }, 'because with no jobs.claude the plugin runs the old jobs.model');
+  assert.deepEqual(legacyJobsSetting({ jobs: { model: 'fable' } }, 'codex', 'model'), { value: 'gpt-6-astra', from: 'jobs.model' }, 'because host_codex_model maps the roster names for codex');
+  assert.equal(legacyJobsSetting({ jobs: { model: 'opus', claude: {} } }, 'claude', 'model'), null, 'because a jobs.claude map, even an empty one, ends the fallback');
+  assert.equal(legacyJobsSetting({ jobs: { model: '' } }, 'claude', 'model'), null, 'because an empty old key gives nothing to fall back to');
+});
+
+test('HostDefaultPair_SavedOverAnOldModel_WritesTheMapThePluginReadsAsDefault', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const start = await fixture.editor.write({ changes: [{ path: 'jobs.model', value: 'opus' }], hash });
+    const reply = await fixture.editor.write({ changes: [{ path: 'jobs.claude.model', value: '' }, { path: 'jobs.claude.effort', value: '' }], hash: (start.body as FlowConfigSaved).hash });
+    assert.equal(reply.status, 200, `because empty is the host default: ${JSON.stringify(reply.body)}`);
+    const text = readFileSync(fixture.file, 'utf8');
+    const lines = text.split('\n');
+    const at = lines.indexOf('  claude:');
+    assert.deepEqual(lines.slice(at, at + 3), ['  claude:', '    model: ""', '    effort: ""'], 'because the pair is written as a map with empty lines');
+    const keys = inTemp(text, (file) => execFileSync('sh', ['-c', `${shellFunction('lib/flow.sh', 'yaml_keys')}\nyaml_keys "$1" jobs`, 'sh', file], { encoding: 'utf8' }).split('\n'));
+    assert.ok(keys.includes('claude'), 'because the plugin\'s host_jobs_has_pair looks for claude among the keys of jobs, which ends the fallback to jobs.model');
+    assert.deepEqual(yamlGet(text, 'jobs.claude.model'), [], 'because lib/flow.sh reads the empty line as no model, the host default');
   } finally { fixture.done(); }
 });

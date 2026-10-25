@@ -6,7 +6,8 @@
  */
 import type { ActionKind } from '../../snapshot.ts';
 
-export type FieldType = 'string' | 'number' | 'boolean' | 'enum' | 'list' | 'map' | 'duration' | 'schedule';
+/** `enumOrText`: the known values to pick from, but any text passes (the plugin passes a model name on as is). */
+export type FieldType = 'string' | 'number' | 'boolean' | 'enum' | 'enumOrText' | 'list' | 'map' | 'duration' | 'schedule';
 
 export const FIELD_GROUPS = ['Tracker', 'Readiness', 'Worktree pool', 'Gates and verification', 'Reviews', 'Notifications', 'Jobs', 'Intake'] as const;
 export type FieldGroup = (typeof FIELD_GROUPS)[number] | 'Other';
@@ -22,7 +23,7 @@ export type FieldSpec = {
   type: FieldType;
   help: string;
   group: FieldGroup;
-  /** The allowed values of an enum. */
+  /** The allowed values of an enum, or the known ones of an enumOrText. */
   values?: string[];
   min?: number;
   max?: number;
@@ -32,7 +33,7 @@ export type FieldSpec = {
    * `jobs.host` names that host, and its empty value is the host's default.
    */
   host?: { host: JobsHost; setting: 'model' | 'effort' };
-  /** A key the flow no longer reads: shown only when the file sets it, read-only with this note and a Clear. */
+  /** A key on its way out: shown only when the file sets it, read-only with this note and a Clear. */
   deprecated?: string;
 };
 
@@ -45,7 +46,26 @@ export const DEFAULT_JOBS_HOST: JobsHost = 'claude';
  * The model and effort a host takes when the file leaves them empty, as far as this machine says:
  * codex from `~/.codex/config.toml` (null when there is no such file), claude has no such file.
  */
-export type HostDefaults = { codex: { model: string | null; effort: string | null } | null };
+export type HostDefaults = { codex: { model: string | null; effort: string | null; profile: string | null } | null };
+
+/** The roster's Claude names as codex takes them, as `host_codex_model` in the plugin's lib/host.sh maps them. */
+const CODEX_FROM_ROSTER: Record<string, string> = { sonnet: 'gpt-6-luna', opus: 'gpt-6-sol', fable: 'gpt-6-astra', haiku: 'gpt-6-luna' };
+
+/**
+ * What the plugin (flow 1.20.0, `host_jobs_pair` in lib/host.sh) still takes from the deprecated
+ * `jobs.model` or `jobs.effort` for a host whose `jobs.<host>` map is absent: the value it runs
+ * with and the key it came from, or null when the host's own map is there or the old key is
+ * empty. A codex model there is a roster name, mapped the way the plugin maps it.
+ */
+export function legacyJobsSetting(values: Record<string, unknown>, host: JobsHost, setting: 'model' | 'effort'): { value: string; from: string } | null {
+  const jobs = values['jobs'];
+  if (jobs === null || typeof jobs !== 'object' || Array.isArray(jobs)) return null;
+  const map = jobs as Record<string, unknown>;
+  if (map[host] !== undefined) return null;
+  const old = map[setting];
+  if (typeof old !== 'string' || old === '') return null;
+  return { value: host === 'codex' && setting === 'model' ? CODEX_FROM_ROSTER[old] ?? old : old, from: `jobs.${setting}` };
+}
 
 /** A change to one key: the new value, or null to take the key out of the file. */
 export type FieldValue = string | number | boolean | string[] | Record<string, string> | null;
@@ -85,7 +105,7 @@ const HOST_SETTINGS: Record<JobsHost, { model: string[]; effort: string[]; cli: 
   claude: { model: ['opus', 'sonnet', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'], cli: 'Claude' },
   codex: { model: ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'], effort: ['low', 'medium', 'high', 'xhigh'], cli: 'Codex' },
 };
-const DEPRECATED_JOBS = 'Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort. Set those and clear these.';
+const DEPRECATED_JOBS = 'Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort, and this key only while jobs.<host> is absent. Set those and clear these.';
 
 const field = (path: string, type: FieldType, group: FieldGroup, help: string, extra: Partial<FieldSpec> = {}): FieldSpec =>
   ({ path, type, group, help, followUp: null, ...extra });
@@ -122,7 +142,7 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('jobs.host', 'enum', 'Jobs', 'Which CLI runs the scheduled jobs. The workers inside a run keep their own models.', { values: [...JOBS_HOSTS], followUp: RELOAD_SCHEDULE }),
   // The next job run reads these from the file, so a change needs nothing after it.
   ...JOBS_HOSTS.flatMap((host) => [
-    field(`jobs.${host}.model`, 'enum', 'Jobs', `The model the scheduled jobs' orchestrating session uses when they run on ${host}; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].model, host: { host, setting: 'model' } }),
+    field(`jobs.${host}.model`, 'enumOrText', 'Jobs', `The model the scheduled jobs' orchestrating session uses when they run on ${host}, a known one or any name the ${HOST_SETTINGS[host].cli} CLI takes; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].model, host: { host, setting: 'model' } }),
     field(`jobs.${host}.effort`, 'enum', 'Jobs', `The reasoning effort the scheduled jobs' orchestrating session uses when they run on ${host}; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].effort, host: { host, setting: 'effort' } }),
   ]),
   field('jobs.model', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),
@@ -197,6 +217,7 @@ function checkText(spec: FieldSpec, text: string): Checked {
     case 'number': return NUMBER.test(text) ? inRange(spec, Number(text)) : fail(`${spec.path} must be a whole number, not "${text}"`);
     case 'boolean': return text === 'true' || text === 'false' ? ok : fail(`${spec.path} must be true or false, not "${text}"`);
     case 'enum': return spec.values?.includes(text) === true ? ok : fail(`${spec.path} must be one of ${(spec.values ?? []).join(', ')}, not "${text}"`);
+    case 'enumOrText': return ok;
     case 'duration': return DURATION.test(text) ? ok : fail(`${spec.path} must be a number with s, m, h or d, like 10m or 24h, not "${text}"`);
     case 'schedule': { const checked = checkSchedule(text); return checked.ok ? ok : fail(`${spec.path}: ${checked.error}`); }
     case 'list': return ok;
@@ -236,7 +257,7 @@ export function checkChange(spec: FieldSpec, value: FieldValue): Checked {
     case 'map':
       return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.entries(value).every(([key, entry]) => /^[A-Za-z0-9_-]+$/.test(key) && typeof entry === 'string')
         ? ok : fail(`${spec.path} must be a map of names (letters, digits, - and _) to text`);
-    case 'string': case 'enum': case 'duration': case 'schedule':
+    case 'string': case 'enum': case 'enumOrText': case 'duration': case 'schedule':
       return typeof value === 'string' ? checkText(spec, value) : fail(`${spec.path} must be text`);
   }
 }

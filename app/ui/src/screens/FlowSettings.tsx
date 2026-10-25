@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FieldChange, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, HostDefaults, Section } from '../../../daemon/src/plugins/flow/schema.ts';
-import { DEFAULT_JOBS_HOST } from '../../../daemon/src/plugins/flow/schema.ts';
+import { DEFAULT_JOBS_HOST, legacyJobsSetting } from '../../../daemon/src/plugins/flow/schema.ts';
 import { projectPath, unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
 import { ActionButton, ActionsProvider, Empty, Module } from '../ui.tsx';
@@ -16,6 +16,9 @@ const UNSET = '';
 const HOST_PATH = 'jobs.host';
 /** The label of the empty option of a host's model or effort: the host picks. */
 export const HOST_DEFAULT = 'host default';
+/** The select option of a known-or-free-text value that opens the text field. */
+export const OTHER = 'other…';
+const OTHER_VALUE = '\u0000other';
 
 /** The flow settings of every project the daemon watches, one section each. */
 export function FlowSettingsList() {
@@ -119,7 +122,9 @@ export function valueOf(spec: FieldSpec, text: string): { ok: true; value: Field
       return Number.isInteger(number) ? { ok: true, value: number } : { ok: false, error: 'a whole number' };
     }
     case 'boolean': return { ok: true, value: text === UNSET ? null : text === 'true' };
-    case 'enum': return { ok: true, value: text === UNSET ? null : text };
+    // A host's own model or effort is always written, empty for the host's default: a present
+    // jobs.<host> map is what stops the plugin falling back to the deprecated jobs.model.
+    case 'enum': case 'enumOrText': return { ok: true, value: spec.host !== undefined ? text.trim() : text === UNSET ? null : text };
     case 'list': return { ok: true, value: text.split('\n').map((line) => line.trim()).filter((line) => line !== '') };
     case 'map': {
       const entries: Record<string, string> = {};
@@ -141,19 +146,26 @@ function isSet(value: unknown): boolean {
   return value !== undefined && value !== null && value !== '';
 }
 
+/** What the plugin runs a host's model or effort with while its jobs.<host> map is absent: the deprecated key's value, or null. */
+function legacyOf(spec: FieldSpec, values: Record<string, unknown>): { value: string; from: string } | null {
+  return spec.host === undefined ? null : legacyJobsSetting(values, spec.host.host, spec.host.setting);
+}
+
 /**
  * One group of the schema: its fields, and a Save that sends only what changed in it. A host's
  * own model and effort show only while the host control (as edited, before any save) names that
- * host; the other host's pair is hidden, its values kept and never sent. A deprecated key shows
+ * host; the other host's pair is hidden, its values kept and never sent. While the host's map is
+ * absent and a deprecated key is set, the pair starts at what the plugin really runs with, and a
+ * save of either sends both, so the map is written and the fallback ends. A deprecated key shows
  * only when the file sets it, with a Clear that saves it as null at once.
  */
 function GroupForm({ section, values, hash, hostDefaults, save, reload }: GroupProps) {
-  const initial = Object.fromEntries(section.fields.map((spec) => [spec.path, textOf(spec, valueAt(values, spec.path))]));
+  const initial = Object.fromEntries(section.fields.map((spec) => [spec.path, legacyOf(spec, values)?.value ?? textOf(spec, valueAt(values, spec.path))]));
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   /** What the last save sent, so Save anyway sends the same again with force. */
-  const [sent, setSent] = useState<FieldChange[]>([]);
+  const [sent, setSent] = useState<{ changes: FieldChange[]; only: string | null }>({ changes: [], only: null });
   const host = (drafts[HOST_PATH] ?? initial[HOST_PATH] ?? '') || DEFAULT_JOBS_HOST;
   const visible = (spec: FieldSpec): boolean => {
     if (spec.host !== undefined) return spec.host.host === host;
@@ -161,16 +173,21 @@ function GroupForm({ section, values, hash, hostDefaults, save, reload }: GroupP
     return true;
   };
   const shown = section.fields.filter(visible);
-  const edited = shown.filter((spec) => spec.deprecated === undefined && drafts[spec.path] !== undefined && drafts[spec.path] !== initial[spec.path]);
-  const parsed = edited.map((spec) => ({ spec, parsed: valueOf(spec, drafts[spec.path]!) }));
+  const changed = (spec: FieldSpec): boolean => spec.deprecated === undefined && drafts[spec.path] !== undefined && drafts[spec.path] !== initial[spec.path];
+  const pairChanged = shown.some((spec) => spec.host !== undefined && changed(spec));
+  const edited = shown.filter((spec) => changed(spec) || (pairChanged && spec.host !== undefined));
+  const parsed = edited.map((spec) => ({ spec, parsed: valueOf(spec, drafts[spec.path] ?? initial[spec.path] ?? '') }));
   const invalid = parsed.find((entry) => !entry.parsed.ok);
-  const submit = async (changes: FieldChange[], force: boolean): Promise<void> => {
+  /** `only`: the one key a Clear saves, whose draft alone goes after it; the group's other edits stay. */
+  const submit = async (changes: FieldChange[], force: boolean, only: string | null = null): Promise<void> => {
     setBusy(true);
-    setSent(changes);
+    setSent({ changes, only });
     const outcome = await save({ changes, hash, ...(force ? { force: true } : {}) });
     setBusy(false);
     setResult(outcome);
-    if (outcome.kind === 'saved') setDrafts({});
+    if (outcome.kind !== 'saved') return;
+    if (only === null) setDrafts({});
+    else setDrafts((current) => Object.fromEntries(Object.entries(current).filter(([key]) => key !== only)));
   };
   const editedChanges = (): FieldChange[] => parsed.flatMap(({ spec, parsed: entry }) => (entry.ok ? [{ path: spec.path, value: entry.value }] : []));
   return (
@@ -178,20 +195,20 @@ function GroupForm({ section, values, hash, hostDefaults, save, reload }: GroupP
       <h3 className="group-head">{section.group}</h3>
       <div className="flow-fields">
         {shown.map((spec) => (spec.deprecated !== undefined
-          ? <DeprecatedField key={spec.path} spec={spec} fileValue={valueAt(values, spec.path)} busy={busy} clear={() => { void submit([{ path: spec.path, value: null }], false); }} />
-          : <FieldControl key={spec.path} spec={spec} fileValue={valueAt(values, spec.path)} hostDefaults={hostDefaults} text={drafts[spec.path] ?? initial[spec.path] ?? ''} onChange={(text) => { setDrafts((current) => ({ ...current, [spec.path]: text })); setResult(null); }} />
+          ? <DeprecatedField key={spec.path} spec={spec} fileValue={valueAt(values, spec.path)} busy={busy} clear={() => { void submit([{ path: spec.path, value: null }], false, spec.path); }} />
+          : <FieldControl key={spec.path} spec={spec} fileValue={valueAt(values, spec.path)} legacy={legacyOf(spec, values)} hostDefaults={hostDefaults} text={drafts[spec.path] ?? initial[spec.path] ?? ''} onChange={(text) => { setDrafts((current) => ({ ...current, [spec.path]: text })); setResult(null); }} />
         ))}
       </div>
       <div className="flow-save">
         <button type="submit" className="button primary" disabled={busy || edited.length === 0 || invalid !== undefined}>{busy ? 'Saving…' : 'Save'}</button>
         {invalid !== undefined && !invalid.parsed.ok && <span className="muted" role="status">{invalid.spec.path} needs {invalid.parsed.error}</span>}
-        <SaveResult result={result} retry={() => { void submit(sent, true); }} reload={reload} />
+        <SaveResult result={result} retry={() => { void submit(sent.changes, true, sent.only); }} reload={reload} />
       </div>
     </form>
   );
 }
 
-/** A key the flow no longer reads: its value read-only, the note, and Clear. */
+/** A deprecated key: its value read-only, the note, and Clear. */
 function DeprecatedField({ spec, fileValue, busy, clear }: { spec: FieldSpec; fileValue: unknown; busy: boolean; clear: () => void }) {
   const id = `flow-${spec.path}`;
   return (
@@ -213,11 +230,16 @@ export function hostDefaultHelp(spec: FieldSpec, hostDefaults: HostDefaults): st
   if (codex === null) return ' This machine has no ~/.codex/config.toml, so Codex picks its built-in default.';
   const value = spec.host.setting === 'model' ? codex.model : codex.effort;
   const key = spec.host.setting === 'model' ? 'model' : 'model_reasoning_effort';
-  return value === null ? ` ~/.codex/config.toml sets no ${key}, so Codex picks its built-in default.` : ` On this machine that is ${value} (${key} in ~/.codex/config.toml).`;
+  return value === null ? ` ~/.codex/config.toml sets no ${key}, so Codex picks its built-in default.` : ` On this machine that is ${value} (${key}${codex.profile === null ? '' : ` of profile ${codex.profile}`} in ~/.codex/config.toml).`;
 }
 
-function FieldControl({ spec, fileValue, hostDefaults, text, onChange }: { spec: FieldSpec; fileValue: unknown; hostDefaults: HostDefaults; text: string; onChange: (text: string) => void }) {
+type FieldProps = { spec: FieldSpec; fileValue: unknown; legacy: { value: string; from: string } | null; hostDefaults: HostDefaults; text: string; onChange: (text: string) => void };
+
+function FieldControl({ spec, fileValue, legacy, hostDefaults, text, onChange }: FieldProps) {
   const id = `flow-${spec.path}`;
+  const known = spec.values ?? [];
+  // A value not in the list opens the text field; so does picking "other…", until a listed value is picked.
+  const [other, setOther] = useState(spec.type === 'enumOrText' && text !== '' && !known.includes(text));
   let control;
   if (spec.type === 'map' && nested(fileValue)) {
     control = <p className="muted" id={id}>Holds entries with lines under them (such as command and paths): change it in Raw YAML.</p>;
@@ -229,6 +251,22 @@ function FieldControl({ spec, fileValue, hostDefaults, text, onChange }: { spec:
         {options.map((option) => <option key={option} value={option}>{option}</option>)}
       </select>
     );
+  } else if (spec.type === 'enumOrText') {
+    control = (
+      <>
+        <select id={id} className="input" aria-label={spec.path} value={other ? OTHER_VALUE : text} onChange={(event) => {
+          const picked = event.target.value;
+          if (picked === OTHER_VALUE) { setOther(true); return; }
+          setOther(false);
+          onChange(picked);
+        }}>
+          <option value={UNSET}>{spec.host !== undefined ? HOST_DEFAULT : '(not set)'}</option>
+          {known.map((option) => <option key={option} value={option}>{option}</option>)}
+          <option value={OTHER_VALUE}>{OTHER}</option>
+        </select>
+        {other && <input className="input mono" aria-label={`${spec.path}, other`} type="text" value={text} placeholder="any name the CLI takes" onChange={(event) => onChange(event.target.value)} />}
+      </>
+    );
   } else if (spec.type === 'list' || spec.type === 'map') {
     control = <textarea id={id} className="input mono" aria-label={spec.path} rows={Math.max(2, text.split('\n').length)} value={text} placeholder={spec.type === 'list' ? 'one per line' : 'name: value, one per line'} onChange={(event) => onChange(event.target.value)} />;
   } else {
@@ -238,6 +276,7 @@ function FieldControl({ spec, fileValue, hostDefaults, text, onChange }: { spec:
     <div className="flow-field">
       <label className="mono flow-key" htmlFor={id}>{spec.path}</label>
       {control}
+      {legacy !== null && <p className="module-help flow-help flow-legacy">now {legacy.value}, from the deprecated {legacy.from}</p>}
       <p className="module-help flow-help">{spec.help}{hostDefaultHelp(spec, hostDefaults)}{spec.type === 'list' ? ' One per line.' : spec.type === 'map' ? ' One name: value per line.' : ''}</p>
     </div>
   );
