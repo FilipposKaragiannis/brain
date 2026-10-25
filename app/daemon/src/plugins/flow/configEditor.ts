@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { chmod, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import type { CommandRunner } from '../../collectors/exec.ts';
 import { scriptEnvironment } from '../../collectors/exec.ts';
@@ -7,7 +8,8 @@ import type { Logger } from '../../log.ts';
 import { parseYaml } from '../../yaml.ts';
 import type { YamlMap } from '../../yaml.ts';
 import { applyChange, leafPaths, parseDocument, readsBack, valueAt } from './configDocument.ts';
-import type { FieldChange, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, FollowUp, Section } from './schema.ts';
+import { readHostDefaults } from './hostDefaults.ts';
+import type { FieldChange, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, FollowUp, HostDefaults, Section } from './schema.ts';
 import { checkChange, checkFileValue, fieldAt, fieldCovering, FLOW_CONFIG_SCHEMA, OTHER_GROUP, schemaSections } from './schema.ts';
 
 export type FlowConfigEditorDependencies = {
@@ -18,6 +20,8 @@ export type FlowConfigEditorDependencies = {
   /** Re-reads the sources the file feeds (`files` and `jobs`), so the snapshot shows the saved file before the reply goes out. */
   refresh: () => Promise<void>;
   log: Logger;
+  /** The home folder `~/.codex/config.toml` is read from, for the hosts' defaults; the user's own when omitted. */
+  home?: string;
 };
 
 export type EditorReply = { status: number; body: unknown };
@@ -56,11 +60,13 @@ function otherFields(values: YamlMap): FieldSpec[] {
   });
 }
 
-/** The file as the editor shows it: its text and hash, the values, the schema's sections plus Other, and what does not fit. */
-export function describe(file: string, text: string): FlowConfigDocument {
+const NO_HOST_DEFAULTS: HostDefaults = { codex: null };
+
+/** The file as the editor shows it: its text and hash, the values, the schema's sections plus Other, what does not fit, and the hosts' defaults given. */
+export function describe(file: string, text: string, hostDefaults: HostDefaults = NO_HOST_DEFAULTS): FlowConfigDocument {
   const parsed = parseDocument(text);
   const sections: Section[] = schemaSections();
-  if (!parsed.ok) return { path: file, text, hash: contentHash(text), values: null, sections, warnings: [`not in the flat format, so only Raw YAML can change it: ${parsed.error}`] };
+  if (!parsed.ok) return { path: file, text, hash: contentHash(text), values: null, sections, warnings: [`not in the flat format, so only Raw YAML can change it: ${parsed.error}`], hostDefaults };
   const values = parseYaml(text);
   const warnings = FLOW_CONFIG_SCHEMA.flatMap((spec) => {
     const value = valueAt(values, spec.path);
@@ -69,7 +75,7 @@ export function describe(file: string, text: string): FlowConfigDocument {
     return checked.ok ? [] : [checked.error];
   });
   const other = otherFields(values);
-  return { path: file, text, hash: contentHash(text), values, sections: other.length > 0 ? [...sections, { group: OTHER_GROUP, fields: other }] : sections, warnings };
+  return { path: file, text, hash: contentHash(text), values, sections: other.length > 0 ? [...sections, { group: OTHER_GROUP, fields: other }] : sections, warnings, hostDefaults };
 }
 
 /** The leaf paths whose value differs between two versions of the file. */
@@ -168,7 +174,7 @@ export class FlowConfigEditor {
   async read(): Promise<EditorReply> {
     const text = await this.text();
     if (text === null) return { status: HTTP_NOT_FOUND, body: { error: `${this.file} is missing` } };
-    return { status: HTTP_OK, body: describe(this.file, text) };
+    return { status: HTTP_OK, body: describe(this.file, text, await this.hostDefaults()) };
   }
 
   write(body: unknown): Promise<EditorReply> {
@@ -202,8 +208,13 @@ export class FlowConfigEditor {
       await this.deps.refresh();
       this.deps.log.info('flow.config.saved', { project: this.deps.projectId, file: this.file, keys: saved.join(','), raw: request.kind === 'text', force: request.force });
     }
-    const reply: FlowConfigSaved = { ...describe(this.file, next.text), saved, followUps: followUpsOf(saved, after), notes: git.note === null ? [] : [git.note] };
+    const reply: FlowConfigSaved = { ...describe(this.file, next.text, await this.hostDefaults()), saved, followUps: followUpsOf(saved, after), notes: git.note === null ? [] : [git.note] };
     return { status: HTTP_OK, body: reply };
+  }
+
+  /** Read on every GET and save, so a codex default changed since shows without a restart. */
+  private hostDefaults(): Promise<HostDefaults> {
+    return readHostDefaults(this.deps.home ?? os.homedir());
   }
 
   private async text(): Promise<string | null> {

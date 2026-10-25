@@ -1,0 +1,10 @@
+# A codex config with a profile picked at the top, and single-quoted literal strings.
+profile = 'deep'
+model = 'gpt-6-luna'
+model_reasoning_effort = "low"
+
+[profiles.fast]
+model = "gpt-6-luna"
+
+[profiles.deep]
+model = 'gpt-6-astra'   # the profile's model wins over the top level

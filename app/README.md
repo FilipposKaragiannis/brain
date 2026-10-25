@@ -98,7 +98,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects` | every project with its counts |
 | `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon |
 | `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
-| `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings}` (below) |
+| `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings, hostDefaults}` (below) |
 | `PUT /api/projects/<id>/plugins/flow/config` | change it, body `{"changes": [{"path", "value"}], "hash", "force"?}` or `{"text", "hash", "force"?}`; 200 with the new document plus `saved` and `followUps`, 400 with the reason, 409 with `reason: "stale"` or `"dirty"` |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
 | `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns: [{at, role, text}]}`: the last `n` turns with text (default 20, at most 200) of the claude transcript of an agent or session in `agents` or `ended`, oldest first; user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results, and without the host's wrapper turns (a user line that opens with a tag such as `<task-notification>`, `<local-command-stdout>` or `<command-name>`, and a compaction summary); read from the last 4 MB of the file. 404 for a pid not listed or without a transcript, 400 for a codex session or a bad `lines` |
@@ -235,7 +235,7 @@ which writes `.flow/config.yaml` when the owner saves. Every other write goes th
 `daemon/src/plugins/flow/` edits the project's `.flow/config.yaml`. `schema.ts` is a fixed schema
 of every key the flow plugin reads (its scripts, `skills/init/SKILL.md` and the foosbrawl file):
 the dotted path, the type (`string`, `number` with a range where one is known, `boolean`, `enum`
-with its values, `list` of text, `map` of name to text, `duration` like `1h`, `schedule` like
+with its values, `enumOrText` with its known values but any text allowed, `list` of text, `map` of name to text, `duration` like `1h`, `schedule` like
 `every 30m --workers 2`, `daily 02:00` or `weekly sun 07:00` with the args `jobs.sh` takes), one
 sentence on what changing it does, its group (Tracker, Readiness, Worktree pool, Gates and
 verification, Reviews, Notifications, Jobs, Intake) and its follow-up: `jobs.schedule.*` and
@@ -245,6 +245,21 @@ offered only while some job keeps a schedule, since install exits 2 when none ha
 `jobs.sh uninstall <job>` (the `job.uninstall` action, one per job) instead;
 the pool keys (`pool`, `pool_max`, `worktree_copy`, `worktree_setup`) count at the next claim.
 
+The Jobs group holds the jobs' host and, per host, the model and effort of the jobs'
+orchestrating session (flow 1.20.0): `jobs.host` (`claude` or `codex`, claude when unset; the
+workers inside a run keep their own models), then `jobs.claude.model` (opus, sonnet, haiku,
+fable), `jobs.claude.effort` (low, medium, high, xhigh, max), `jobs.codex.model` (gpt-6-astra,
+gpt-6-sol, gpt-6-luna) and `jobs.codex.effort` (low, medium, high, xhigh), where empty or unset
+takes the host's own default; they need no follow-up, the next job run reads the file. The two
+models are `enumOrText`, since the plugin passes any model name on and checks only the efforts
+and the host. The old `jobs.model` and `jobs.effort` are deprecated: the plugin still reads them
+for a host whose `jobs.<host>` map is absent (a codex model there is a roster name, mapped as
+`host_codex_model` maps it; `legacyJobsSetting` in `schema.ts` mirrors that). The form shows them
+only while the file sets them to something, read-only, with the note "Deprecated: flow 1.20.0
+reads jobs.<host>.model and jobs.<host>.effort, and this key only while jobs.<host> is absent. Set
+those and clear these." and a Clear that saves that one key as null (the group's other unsaved
+edits stay).
+
 `GET` reads the file. `values` is the file as the existing parser (`daemon/src/yaml.ts`) reads it,
 but only after `configDocument.ts` has checked that every line is in the flat format the file's
 header names (two-space indentation, `key: value`, nested maps, `- item` or `[a, b]`); a tab, an
@@ -253,6 +268,13 @@ anchor or alias, a tag, a multi-line string, a flow map, a list of maps or a key
 schema's groups in order plus, when the file has keys the schema does not know, an `Other` group
 of them as text (or a list of text). A known key whose value does not fit its type is a warning.
 `hash` is the sha256 of `text`.
+`hostDefaults` is `{codex: {model, effort, profile} | null}`: `model` and `model_reasoning_effort`
+from `~/.codex/config.toml` on every GET and save, as codex picks them: from `[profiles.<profile>]`
+when a top-level `profile` names one, else from the top level (only `key = "value"` and
+`key = 'value'` lines are read; either is null when the file does not set it), and `codex: null`
+when there is no such file. Claude has no file that reliably names its default, so it has no entry and its help
+says "the Claude CLI's default". The home folder is injectable (`home` in the editor's
+dependencies), so the tests read a fixture.
 
 `PUT` checks first and writes last. Each change is checked against its key's type, enum and range
 (an unknown key takes text, or a list of text; `null` takes a key out). The text is then rewritten
@@ -454,7 +476,16 @@ per project, "flow settings for <project>", edits its `.flow/config.yaml`: the n
 then a form per schema group (each field labelled by its key, the control for its type: a select
 for an enum or a boolean with "(not set)" to take the key out, a number or text box, a text area
 of one item or `name: value` per line for a list or a map; the help under it) with its own Save,
-disabled until something in the group changed. A save shows the keys written and each follow-up,
+disabled until something in the group changed. In Jobs, `jobs.host` is a dropdown and only the
+picked host's model and effort dropdowns show under it, each listing its values and "host default"
+for empty and, for a model, "other…" that opens a text field (a name off the list starts there),
+the help under it naming the default (for codex the one `hostDefaults` read, "On this machine
+that is gpt-6-sol"); changing the host switches the pair before any save, and the other host's
+pair is hidden with its saved values kept and never sent. While the picked host has no map and a
+deprecated key is set, its dropdown starts at what the jobs really run with, under it "now opus,
+from the deprecated jobs.model". A save of either of the pair writes both, "host default" as an
+empty line, so the `jobs.<host>` map is there and the fallback ends. A deprecated `jobs.model` or
+`jobs.effort` the file sets shows read-only with its note and a Clear button. A save shows the keys written and each follow-up,
 with a "Reload the schedule" button (`jobs.install`) when a schedule or `jobs.host` changed and an
 "Unload <job>" button (`job.uninstall`) for each job whose schedule was removed, and any note (a
 file git does not track); a
