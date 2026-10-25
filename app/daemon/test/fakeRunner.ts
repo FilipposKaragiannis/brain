@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { CommandRequest, CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 
@@ -42,6 +43,14 @@ export const BOARD_JSON = JSON.stringify({
   ],
 });
 
+/**
+ * `gh pr list --json` shaped from real captures: #560 is an open pull as gh printed it, and #20
+ * carries the real check rollup of a merged pull whose domain tests failed on one run and passed
+ * on a later one (two job ids). #21, #22 and the fork #23 are built by hand in the same shape.
+ */
+export const PULL_LIST_JSON = readFileSync(path.join(FIXTURES, 'gh', 'pr-list.json'), 'utf8');
+export const REVIEW_THREADS_JSON = readFileSync(path.join(FIXTURES, 'gh', 'review-threads.json'), 'utf8');
+
 /** Answers every command the collectors run against the fixture project, without a shell. */
 export const fakeRunner: CommandRunner = async (request: CommandRequest): Promise<CommandResult> => {
   const [first, second] = request.args;
@@ -52,6 +61,8 @@ export const fakeRunner: CommandRunner = async (request: CommandRequest): Promis
   if (request.command === 'git' && first === 'rev-list') return ok(request.cwd.endsWith('project-wt-4') ? '35\t4\n' : '0\t2\n');
   if (request.command === 'git' && first === 'status') return ok(request.cwd.endsWith('project-wt-3') ? ' M a.cs\n?? b.cs\n' : '');
   if (request.command === 'git' && first === 'log') return ok('2026-10-24T18:10:00+01:00\n');
+  if (request.command === 'gh' && first === 'pr') return ok(PULL_LIST_JSON);
+  if (request.command === 'gh' && first === 'api') return ok(REVIEW_THREADS_JSON);
   if (request.command === 'ps') return ok(PROCESSES);
   if (request.command === 'lsof') return ok(CWDS);
   return { code: 1, stdout: '', stderr: `fake runner: unknown command ${request.command} ${first ?? ''} ${second ?? ''}`, timedOut: false };

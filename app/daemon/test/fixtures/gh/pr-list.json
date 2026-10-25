@@ -1,0 +1,352 @@
+[
+  {
+    "author": {
+      "id": "MDQ6VXNlcjU3ODQzNTcx",
+      "is_bot": false,
+      "login": "FilipposKaragiannis",
+      "name": "Filip Karagiannis"
+    },
+    "baseRefName": "main",
+    "createdAt": "2026-10-24T13:50:09Z",
+    "headRefName": "flow/gh-310",
+    "isDraft": false,
+    "latestReviews": [
+      {
+        "id": "",
+        "author": {
+          "login": "chatgpt-codex-connector"
+        },
+        "authorAssociation": "NONE",
+        "body": "Codex review receipt",
+        "submittedAt": "2026-10-24T13:52:43Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "COMMENTED",
+        "commit": {
+          "oid": ""
+        }
+      }
+    ],
+    "mergeStateStatus": "UNSTABLE",
+    "mergeable": "MERGEABLE",
+    "number": 560,
+    "reviewDecision": "",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:15Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144334098/job/121022360938",
+        "name": "Bot-vs-bot untouched-ball probe (quarantined)",
+        "startedAt": "2026-10-24T23:50:13Z",
+        "status": "COMPLETED",
+        "workflowName": "Bot Untouched-Ball Probe"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:15Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144334126/job/121022361010",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-24T23:50:13Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:12Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330325/job/121022349533",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-24T23:50:10Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:15Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144334403/job/121022361884",
+        "name": "Foosbrawl.Common.Game.Domain.Tests",
+        "startedAt": "2026-10-24T23:50:13Z",
+        "status": "COMPLETED",
+        "workflowName": "Domain Tests"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:12Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330316/job/121022349504",
+        "name": "Foosbrawl.Common.Game.Domain.Tests",
+        "startedAt": "2026-10-24T23:50:10Z",
+        "status": "COMPLETED",
+        "workflowName": "Domain Tests"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:52:47Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144502007/job/121022869443",
+        "name": "claude",
+        "startedAt": "2026-10-24T23:52:53Z",
+        "status": "COMPLETED",
+        "workflowName": "Claude"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:13Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144334126/job/121022362364",
+        "name": "Full sweep (nightly / on demand)",
+        "startedAt": "2026-10-24T23:50:13Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-24T23:50:09Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/40144330325/job/121022350572",
+        "name": "Full sweep (nightly / on demand)",
+        "startedAt": "2026-10-24T23:50:10Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      }
+    ],
+    "title": "fix(bots): walk the carry onto the ball's lane through the pin recapture",
+    "updatedAt": "2026-10-24T13:52:47Z",
+    "url": "https://github.com/FJ2K/foosbrawl/pull/560",
+    "isCrossRepository": false
+  },
+  {
+    "author": {
+      "id": "U_1",
+      "is_bot": false,
+      "login": "FilipposKaragiannis",
+      "name": "Filip Karagiannis"
+    },
+    "baseRefName": "main",
+    "isDraft": false,
+    "latestReviews": [
+      {
+        "id": "R_1",
+        "author": {
+          "login": "codex"
+        },
+        "authorAssociation": "NONE",
+        "body": "lgtm",
+        "submittedAt": "2026-10-24T12:00:00Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "APPROVED",
+        "commit": {
+          "oid": "2020202"
+        }
+      }
+    ],
+    "mergeStateStatus": "CLEAN",
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "APPROVED",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:46:28Z",
+        "conclusion": "FAILURE",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472845926/job/115556079101",
+        "name": "Foosbrawl.Common.Game.Domain.Tests",
+        "startedAt": "2026-10-13T21:44:33Z",
+        "status": "COMPLETED",
+        "workflowName": "Domain Tests"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:46:30Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849369/job/115556092204",
+        "name": "Bot-vs-bot untouched-ball probe (quarantined)",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Bot Untouched-Ball Probe"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:45:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849351/job/115556091868",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:46:03Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472845938/job/115556079412",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-13T21:44:33Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:50:57Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849389/job/115556091708",
+        "name": "Foosbrawl.Common.Game.Domain.Tests",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Domain Tests"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:44:33Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849351/job/115556094923",
+        "name": "Full sweep (nightly / on demand)",
+        "startedAt": "2026-10-13T21:44:33Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:44:31Z",
+        "conclusion": "SKIPPED",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472845938/job/115556080976",
+        "name": "Full sweep (nightly / on demand)",
+        "startedAt": "2026-10-13T21:44:31Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      }
+    ],
+    "number": 20,
+    "title": "Twenty",
+    "url": "https://example/pull/20",
+    "headRefName": "flow/gh-20",
+    "createdAt": "2026-10-20T10:00:00Z",
+    "updatedAt": "2026-10-24T12:00:00Z",
+    "isCrossRepository": false
+  },
+  {
+    "author": {
+      "id": "U_1",
+      "is_bot": false,
+      "login": "FilipposKaragiannis",
+      "name": "Filip Karagiannis"
+    },
+    "baseRefName": "main",
+    "isDraft": false,
+    "latestReviews": [
+      {
+        "id": "R_2",
+        "author": {
+          "login": "claude"
+        },
+        "authorAssociation": "NONE",
+        "body": "two issues",
+        "submittedAt": "2026-10-24T17:30:00Z",
+        "includesCreatedEdit": false,
+        "reactionGroups": [],
+        "state": "CHANGES_REQUESTED",
+        "commit": {
+          "oid": "2121212"
+        }
+      }
+    ],
+    "mergeStateStatus": "BLOCKED",
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "CHANGES_REQUESTED",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "detailsUrl": "https://example/runs/1",
+        "name": "Domain",
+        "startedAt": "2026-10-24T18:00:00Z",
+        "status": "IN_PROGRESS",
+        "workflowName": "Domain Tests"
+      }
+    ],
+    "number": 21,
+    "title": "Nine's fix",
+    "url": "https://example/pull/21",
+    "headRefName": "flow/gh-9",
+    "createdAt": "2026-10-24T09:00:00Z",
+    "updatedAt": "2026-10-24T18:00:00Z",
+    "isCrossRepository": false
+  },
+  {
+    "author": {
+      "id": "U_1",
+      "is_bot": false,
+      "login": "FilipposKaragiannis",
+      "name": "Filip Karagiannis"
+    },
+    "baseRefName": "main",
+    "isDraft": true,
+    "latestReviews": [],
+    "mergeStateStatus": "DRAFT",
+    "mergeable": "UNKNOWN",
+    "reviewDecision": "",
+    "statusCheckRollup": [
+      {
+        "__typename": "StatusContext",
+        "context": "ci/legacy",
+        "state": "PENDING",
+        "startedAt": "2026-10-23T09:00:00Z",
+        "targetUrl": "https://example/ci"
+      }
+    ],
+    "number": 22,
+    "title": "Spike",
+    "url": "https://example/pull/22",
+    "headRefName": "spike/rope",
+    "createdAt": "2026-10-23T09:00:00Z",
+    "updatedAt": "2026-10-23T09:30:00Z",
+    "isCrossRepository": false
+  },
+  {
+    "author": {
+      "id": "U_2",
+      "is_bot": false,
+      "login": "contributor",
+      "name": "A Contributor"
+    },
+    "baseRefName": "main",
+    "isDraft": false,
+    "latestReviews": [],
+    "mergeStateStatus": "BLOCKED",
+    "mergeable": "MERGEABLE",
+    "reviewDecision": "",
+    "statusCheckRollup": [
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:46:30Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849369/job/115556092204",
+        "name": "Bot-vs-bot untouched-ball probe (quarantined)",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Bot Untouched-Ball Probe"
+      },
+      {
+        "__typename": "CheckRun",
+        "completedAt": "2026-10-13T21:45:58Z",
+        "conclusion": "SUCCESS",
+        "detailsUrl": "https://github.com/FJ2K/foosbrawl/actions/runs/38472849351/job/115556091868",
+        "name": "Smoke tier (per PR)",
+        "startedAt": "2026-10-13T21:44:35Z",
+        "status": "COMPLETED",
+        "workflowName": "Calibration"
+      }
+    ],
+    "number": 23,
+    "title": "A contributor fork",
+    "url": "https://example/pull/23",
+    "headRefName": "flow/gh-7",
+    "createdAt": "2026-10-24T08:00:00Z",
+    "updatedAt": "2026-10-24T08:30:00Z",
+    "isCrossRepository": true
+  }
+]
