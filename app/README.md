@@ -76,12 +76,18 @@ gives its worktree. `checks-failing`, `changes-requested` and `mergeable` each a
 ## Sources and cadence
 | Source | How | Every |
 |---|---|---|
-| `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, the plugin `.flow/plugin.sh` resolves, and when gates wait, `gate.sh list --json` for their questions (flow 1.18.0 and later; an older plugin, a failed list or a message with no numbered line falls back to the daemon's own parse) | 30s, and at once on any change under `.flow` |
+| `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
 | `git` | `git worktree list`, per worktree ahead/behind the base, dirty files, last commit | 30s, and after a file change |
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
 | `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project not on the github adapter, or without `github.repo`, reports `ok` with `error: "not applicable: …"` and is never read | 60s |
+
+¹ Flow 1.18.0 and later. The parse is kept per gate until its message changes, so a waiting gate
+costs no process after its first read. An older plugin is not asked. A list that fails, times out
+(10s) or prints no JSON leaves the gate in place with the daemon's own parse, puts the reason on the
+`files` source (`ok` stays true) and logs `gates.list.failed` once. A message with no numbered line
+gets no questions from the plugin and shows as one question with no recommendation.
 
 The daemon itself never writes to a project. Every write goes through an action.
 
@@ -131,8 +137,9 @@ best evidence there is: with pull requests read, the item's PR is in state `merg
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
 imports). Five screens, routed by hash (`#/<project>/<screen>/<detail>`): Overview (five tiles,
 the needs-you table oldest first, the 3x3 pool map, the sources strip and the latest 30 events),
-Gates (a decision card per gate, the questions and recommendations as the plugin parses them, so
-the card matches the Slack message, Answer runs `gate.clear`), Worktrees
+Gates (a decision card per gate, the questions and recommendations as the plugin parses them on
+flow 1.18.0 and later, so the card matches the Slack message, else the daemon's own parse, Answer
+runs `gate.clear`), Worktrees
 (Release, Health), Agents and jobs (Run, Stop, Pause, Resume) and Pull requests (from the `pulls`
 source, with Merge on a PR in state `mergeable`). Every module is
 a title row, a body and a footer saying how fresh its source is; every age is a live counter

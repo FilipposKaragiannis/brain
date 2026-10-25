@@ -51,16 +51,29 @@ export const BOARD_JSON = JSON.stringify({
 export const PULL_LIST_JSON = readFileSync(path.join(FIXTURES, 'gh', 'pr-list.json'), 'utf8');
 export const REVIEW_THREADS_JSON = readFileSync(path.join(FIXTURES, 'gh', 'review-threads.json'), 'utf8');
 
+/** The fixture gate's record, so the fake list echoes the message the daemon read. */
+export const GATE_RECORD = JSON.parse(readFileSync(path.join(FIXTURE_ROOT, '.flow', 'gates', 'gh-7.json'), 'utf8')) as { message: string };
+
 /**
  * `gate.sh list --json` for the fixture gate. The second recommendation differs from the message
  * on purpose, so a test can tell the plugin's parse from the daemon's.
  */
 export const GATE_LIST_JSON = JSON.stringify([
-  { item: 'gh#7', gate: 'ambiguity', message: 'unused here', time: '2026-10-22T07:43:00Z', host: 'shell', worktree: `${FIXTURES}/project-wt-2`, age_seconds: 210000, questions: [
+  { item: 'gh#7', gate: 'ambiguity', message: GATE_RECORD.message, time: '2026-10-22T07:43:00Z', host: 'shell', worktree: `${FIXTURES}/project-wt-2`, age_seconds: 210000, questions: [
     { number: 1, text: 'Keep the old name?', recommended: 'yes, because callers depend on it.' },
     { number: 2, text: 'Split the type?', recommended: 'no, the plugin said so' },
   ] },
 ]);
+
+const usage = (what: string): CommandResult => ({ code: 2, stdout: '', stderr: `usage: ${what}`, timedOut: false });
+
+/** The fake `gate.sh`: the list, when called as the daemon must call it, from the project root. */
+export function fakeGateList(request: CommandRequest, stdout = GATE_LIST_JSON): CommandResult {
+  const asked = request.args.slice(1);
+  if (asked.length !== 2 || asked[0] !== 'list' || asked[1] !== '--json') return usage('gate.sh list [--json]');
+  if (request.cwd !== FIXTURE_ROOT) return { code: 2, stdout: '', stderr: `flow: no .flow in ${request.cwd}`, timedOut: false };
+  return ok(stdout);
+}
 
 /** Answers every command the collectors run against the fixture project, without a shell. */
 export const fakeRunner: CommandRunner = async (request: CommandRequest): Promise<CommandResult> => {
@@ -68,7 +81,7 @@ export const fakeRunner: CommandRunner = async (request: CommandRequest): Promis
   if (request.command === 'sh' && first === '-c') return ok(FAKE_PLUGIN);
   if (request.command === 'sh' && first?.endsWith('jobs.sh')) return ok(JOBS_JSON);
   if (request.command === 'sh' && first?.endsWith('board.sh')) return ok(BOARD_JSON);
-  if (request.command === 'sh' && first?.endsWith('gate.sh')) return ok(GATE_LIST_JSON);
+  if (request.command === 'sh' && first?.endsWith('gate.sh')) return fakeGateList(request);
   if (request.command === 'git' && first === 'worktree') return ok(WORKTREE_LIST);
   if (request.command === 'git' && first === 'rev-list') return ok(request.cwd.endsWith('project-wt-4') ? '35\t4\n' : '0\t2\n');
   if (request.command === 'git' && first === 'status') return ok(request.cwd.endsWith('project-wt-3') ? ' M a.cs\n?? b.cs\n' : '');

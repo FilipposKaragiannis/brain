@@ -4,7 +4,8 @@ import { test } from 'node:test';
 import type { Logger } from '../src/log.ts';
 import { silentLogger } from '../src/log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
-import { FIXTURES, fakeRunner } from './fakeRunner.ts';
+import type { CommandRunner } from '../src/collectors/exec.ts';
+import { FIXTURES, FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const LOCAL_ROOT = path.join(FIXTURES, 'project-local');
@@ -27,4 +28,18 @@ test('LocalAdapter_PullsRead_NothingWarned', async () => {
   await monitor.refresh('pulls');
   await monitor.refresh('pulls');
   assert.deepEqual(warnings, [], 'because a source that does not apply must not fill the log every minute');
+});
+
+const gateListDown: CommandRunner = async (request) =>
+  request.command === 'sh' && request.args[0]?.endsWith('gate.sh') ? { code: 1, stdout: '', stderr: 'python3: command not found', timedOut: false } : fakeRunner(request);
+
+test('GateListFails_FilesStayOkWithTheReason_WarnedOnce', async () => {
+  const warnings: string[] = [];
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: gateListDown, clock: () => NOW, log: { ...silentLogger, warn: (event) => { warnings.push(event); } }, cadence: DEFAULT_CADENCE });
+  await monitor.refresh('files');
+  await monitor.refresh('files');
+  assert.equal(monitor.snapshot?.sources.files.ok, true, 'because the gates, runs and claims were read; only the plugin\'s parse is missing');
+  assert.equal(monitor.snapshot?.sources.files.error, 'gate questions: gate.sh list --json exited 1: python3: command not found', 'because the sources strip is where the owner learns why the card differs from Slack');
+  assert.deepEqual(warnings, ['gates.list.failed'], 'because the same failure every 30 seconds must not fill the log');
+  assert.equal(monitor.snapshot?.gates[0]?.questions.length, 2, 'because the daemon\'s own parse fills the card meanwhile');
 });

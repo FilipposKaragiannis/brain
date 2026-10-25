@@ -47,12 +47,22 @@ export type FlowHomeFacts = {
   events: FlowEvent[];
   pluginRoot: string | null;
   pluginVersion: string | null;
+  /** Why `gate.sh list --json` gave no parse this read, or null when it was not needed or worked. */
+  gateListError: string | null;
 };
 
 const PLUGIN_LOOKUP_TIMEOUT_MS = 5000;
-const GATE_LIST_TIMEOUT_MS = 30000;
+/** Short on purpose: the list only improves the parse, and the whole files source waits for it. */
+const GATE_LIST_TIMEOUT_MS = 10000;
 /** The first flow version whose `gate.sh list --json` exists. */
 export const GATE_JSON_SINCE = '1.18.0';
+
+/**
+ * The plugin's parse per gate item, with the message it parsed. The list is asked only for a
+ * gate whose message is not here yet, so a waiting gate costs no process after its first read.
+ * One per project, owned by its monitor.
+ */
+export type GateQuestionCache = Map<string, { message: string; questions: GateQuestion[] }>;
 
 export function flowHomeOf(root: string): string {
   return path.join(root, '.flow');
@@ -137,7 +147,8 @@ async function readClaims(paths: string[]): Promise<ClaimRecord[]> {
 
 /**
  * Whether the plugin at `version` answers `gate.sh list --json`. A version that is not three
- * numbers (a dev checkout, say) is tried: the call fails cleanly when the flag is unknown.
+ * numbers (a dev checkout, say) is tried. An older plugin ignores the flag and prints its text
+ * list with exit 0, which the reader reports as "printed no JSON array".
  */
 export function pluginHasGateJson(version: string | null): boolean {
   const parts = version?.match(/^(\d+)\.(\d+)\.(\d+)$/);
@@ -159,22 +170,30 @@ function gateQuestion(value: unknown): GateQuestion | null {
   return { number: record['number'], text: record['text'], recommended: recommended ?? null };
 }
 
-/** The questions per item out of `gate.sh list --json`. Anything that is not in shape is left out. */
-export function parseGateList(source: string): Map<string, GateQuestion[]> {
-  const questions = new Map<string, GateQuestion[]>();
+export type GateListEntry = { message: string; questions: GateQuestion[] };
+
+/**
+ * The questions per item out of `gate.sh list --json`, with the message they were parsed from.
+ * A malformed question or entry is left out; output that is not a JSON array is null.
+ */
+export function parseGateList(source: string): Map<string, GateListEntry> | null {
   let parsed: unknown;
-  try { parsed = JSON.parse(source); } catch { return questions; }
-  if (!Array.isArray(parsed)) return questions;
+  try { parsed = JSON.parse(source); } catch { return null; }
+  if (!Array.isArray(parsed)) return null;
+  const entries = new Map<string, GateListEntry>();
   for (const entry of parsed as unknown[]) {
     if (typeof entry !== 'object' || entry === null) continue;
     const record = entry as Record<string, unknown>;
-    if (typeof record['item'] !== 'string' || !Array.isArray(record['questions'])) continue;
-    questions.set(record['item'], (record['questions'] as unknown[]).map(gateQuestion).filter((question): question is GateQuestion => question !== null));
+    if (typeof record['item'] !== 'string' || typeof record['message'] !== 'string' || !Array.isArray(record['questions'])) continue;
+    const questions = (record['questions'] as unknown[]).map(gateQuestion).filter((question): question is GateQuestion => question !== null);
+    entries.set(record['item'], { message: record['message'], questions });
   }
-  return questions;
+  return entries;
 }
 
-async function readGateQuestions(root: string, pluginRoot: string, runner: CommandRunner): Promise<Map<string, GateQuestion[]> | null> {
+type GateListResult = { ok: true; entries: Map<string, GateListEntry> } | { ok: false; error: string };
+
+async function readGateList(root: string, pluginRoot: string, runner: CommandRunner): Promise<GateListResult> {
   const result = await runner({
     command: 'sh',
     args: [path.join(pluginRoot, 'scripts', 'gate.sh'), 'list', '--json'],
@@ -182,7 +201,35 @@ async function readGateQuestions(root: string, pluginRoot: string, runner: Comma
     timeoutMs: GATE_LIST_TIMEOUT_MS,
     env: scriptEnvironment(),
   });
-  return result.code === 0 ? parseGateList(result.stdout) : null;
+  const said = result.stderr.trim().split('\n')[0] ?? '';
+  if (result.timedOut) return { ok: false, error: `gate.sh list --json timed out after ${GATE_LIST_TIMEOUT_MS / 1000}s` };
+  if (result.code !== 0) return { ok: false, error: `gate.sh list --json exited ${result.code}${said ? `: ${said}` : ''}` };
+  const entries = parseGateList(result.stdout);
+  if (entries === null) return { ok: false, error: 'gate.sh list --json printed no JSON array (a flow before 1.18.0 prints its text list)' };
+  return { ok: true, entries };
+}
+
+/**
+ * Fills `cache` for every record whose message it does not hold yet, and prunes the gates that
+ * are gone. A list entry is paired with a record only when its message is the record's, so a
+ * gate cleared and raised again between the two reads never shows the old text with new questions.
+ */
+async function fillGateQuestions(
+  root: string, pluginRoot: string | null, pluginVersion: string | null, records: { item: string; message: string }[],
+  runner: CommandRunner, cache: GateQuestionCache,
+): Promise<string | null> {
+  for (const item of [...cache.keys()]) {
+    if (!records.some((record) => record.item === item)) cache.delete(item);
+  }
+  const missing = records.filter((record) => cache.get(record.item)?.message !== record.message);
+  if (missing.length === 0 || pluginRoot === null || !pluginHasGateJson(pluginVersion)) return null;
+  const list = await readGateList(root, pluginRoot, runner);
+  if (!list.ok) return list.error;
+  for (const record of missing) {
+    const entry = list.entries.get(record.item);
+    if (entry !== undefined && entry.message === record.message) cache.set(record.item, entry);
+  }
+  return null;
 }
 
 /** The installed flow plugin the project uses, as .flow/plugin.sh resolves it. */
@@ -198,7 +245,7 @@ export async function findPluginRoot(root: string, runner: CommandRunner): Promi
   return result.code === 0 && found.length > 0 ? found : null;
 }
 
-export async function readFlowHome(root: string, runner: CommandRunner): Promise<FlowHomeFacts> {
+export async function readFlowHome(root: string, runner: CommandRunner, cache: GateQuestionCache = new Map()): Promise<FlowHomeFacts> {
   const flowHome = flowHomeOf(root);
   const configSource = (await readText(path.join(flowHome, 'config.yaml'))) ?? '';
   const config = parseFlowConfig(configSource);
@@ -210,11 +257,13 @@ export async function readFlowHome(root: string, runner: CommandRunner): Promise
   const events = parseEvents((await readText(path.join(flowHome, 'events.log'))) ?? '', EVENTS_KEPT);
   const pluginRoot = await findPluginRoot(root, runner);
   const pluginVersion = pluginRoot === null ? null : path.basename(pluginRoot);
-  const askPlugin = records.length > 0 && pluginRoot !== null && pluginHasGateJson(pluginVersion);
-  const questions = askPlugin ? await readGateQuestions(root, pluginRoot, runner) : null;
-  const gates: GateRecord[] = records.map(({ value }) => ({
+  const found = records.map(({ value }) => ({
     item: text(value, 'item'), gate: text(value, 'gate'), message: text(value, 'message'), time: text(value, 'time'), host: text(value, 'host'),
-    questions: questions?.get(text(value, 'item')) ?? null,
   }));
-  return { flowHome, config, gates, runs, claims, events, pluginRoot, pluginVersion };
+  const gateListError = await fillGateQuestions(root, pluginRoot, pluginVersion, found, runner, cache);
+  const gates: GateRecord[] = found.map((gate) => {
+    const cached = cache.get(gate.item);
+    return { ...gate, questions: cached !== undefined && cached.message === gate.message ? cached.questions : null };
+  });
+  return { flowHome, config, gates, runs, claims, events, pluginRoot, pluginVersion, gateListError };
 }

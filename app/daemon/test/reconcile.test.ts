@@ -68,11 +68,18 @@ test('Counts_FollowPoolStates', async () => {
   assert.deepEqual([counts.needsYou, counts.running, counts.stale, counts.free], [1, 1, 1, 0], 'because the pool holds one of each and nothing free');
 });
 
-test('Gate_PluginQuestionsWin_DaemonParsesWhenEmpty', async () => {
+test('Gate_PluginQuestions_Shown', async () => {
+  assert.equal((await snapshot()).gates[0]?.questions[1]?.recommended, 'no, the plugin said so', 'because the plugin parsed the message, so the card matches Slack');
+});
+
+test('Gate_EmptyPluginQuestions_DaemonParses', async () => {
   const facts = await input();
-  assert.equal(reconcile(facts).gates[0]?.questions[1]?.recommended, 'no, the plugin said so', 'because the plugin parsed the message, so the card matches Slack');
   facts.flow.gates[0]!.questions = [];
-  assert.equal(reconcile(facts).gates[0]?.questions[1]?.recommended, 'no.', 'because an empty plugin parse falls back to the daemon\'s');
+  assert.equal(reconcile(facts).gates[0]?.questions[1]?.recommended, 'no.', 'because the plugin gives no questions for some messages and the card still needs one');
+});
+
+test('Gate_NoPluginQuestions_DaemonParses', async () => {
+  const facts = await input();
   facts.flow.gates[0]!.questions = null;
   assert.equal(reconcile(facts).gates[0]?.questions.length, 2, 'because an older plugin gives no parse and the daemon reads the message');
 });
@@ -81,7 +88,7 @@ test('Gate_AgeOverdueWorktreeAndQuestions', async () => {
   const [gate] = (await snapshot()).gates;
   assert.equal(gate?.worktree, 'project-wt-2', 'because the claim links the gate to its worktree');
   assert.equal(gate?.overdue, true, 'because it was raised more than 24 hours before now');
-  assert.equal(gate?.questions.length, 2, 'because the message numbers two questions');
+  assert.equal(gate?.questions.length, 2, 'because the plugin lists two questions for the gate');
 });
 
 test('Items_StateFromEngagementThenBoard', async () => {

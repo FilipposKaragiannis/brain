@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { BoardFacts } from './collectors/board.ts';
 import { readBoard } from './collectors/board.ts';
 import type { CommandRunner } from './collectors/exec.ts';
-import type { FlowHomeFacts } from './collectors/flowHome.ts';
+import type { FlowHomeFacts, GateQuestionCache } from './collectors/flowHome.ts';
 import { flowHomeOf, poolPaths, readFlowHome } from './collectors/flowHome.ts';
 import type { GitFacts } from './collectors/git.ts';
 import { readGit } from './collectors/git.ts';
@@ -73,6 +73,8 @@ export class ProjectMonitor {
   private readonly inFlight = new Map<SourceName, Promise<void>>();
   private debounce: NodeJS.Timeout | null = null;
   private fingerprint = '';
+  private readonly gateQuestions: GateQuestionCache = new Map();
+  private gateListError: string | null = null;
   private current: Snapshot | null = null;
 
   constructor(dependencies: ProjectMonitorDependencies) {
@@ -153,7 +155,15 @@ export class ProjectMonitor {
     const root = this.project.root;
     const flow = this.facts.files.facts;
     switch (source) {
-      case 'files': this.facts.files.facts = await readFlowHome(root, this.runner); return null;
+      case 'files': {
+        const flowHome = await readFlowHome(root, this.runner, this.gateQuestions);
+        this.facts.files.facts = flowHome;
+        if (flowHome.gateListError !== null && flowHome.gateListError !== this.gateListError) {
+          this.log.warn('gates.list.failed', { project: this.project.id, error: flowHome.gateListError });
+        }
+        this.gateListError = flowHome.gateListError;
+        return flowHome.gateListError === null ? null : `gate questions: ${flowHome.gateListError}`;
+      }
       case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return null;
       case 'processes': this.facts.processes.facts = await readProcesses(this.runner); return null;
       case 'jobs':
