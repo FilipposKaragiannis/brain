@@ -23,6 +23,25 @@ The start log prints the URL with the token in it. A request whose `Host` is not
 name, or whose `Origin` is not a local page, gets 403, so a page on another site cannot drive
 the console even from the owner's own browser.
 
+## Run it on login
+```bash
+cd app
+npm run daemon:install -- --project /work/projects/foosbrawl   # the same flags as npm start
+npm run daemon:status                                          # loaded or not, the pid and the URL
+npm run daemon:uninstall                                       # stop it and remove the agent
+```
+`install` checks the flags as a start would, then writes
+`~/Library/LaunchAgents/com.brain.console.plist`: the absolute `node` and `daemon/src/main.ts`,
+the flags with every path made absolute, `RunAtLoad` and `KeepAlive`, `PATH`, `HOME`,
+`BRAIN_CONSOLE_LAUNCHD=1` (and `FLOW_PLUGIN`, `BRAIN_CONSOLE_PROJECTS`, `BRAIN_CONSOLE_STATE` when
+set) in `EnvironmentVariables`, and stdout and stderr to `<state dir>/daemon.log`. It loads it with
+`launchctl bootstrap gui/$UID <plist>` (booting a loaded one out first, and falling back to
+`launchctl load -w` when bootstrap fails), waits up to 15 s for the port and prints the URL with the
+token. `uninstall` runs `launchctl bootout gui/$UID/com.brain.console` and removes the plist.
+`status` says whether launchd has the job and prints the URL from the plist's flags. Settings says
+whether the daemon runs under launchd. The scripts are `daemon:*`, not `install`: npm runs a
+script named `install` on every `npm install`.
+
 ## Settings
 `~/.config/brain-console/config.json` holds the settings, every field optional:
 

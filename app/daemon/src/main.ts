@@ -1,15 +1,19 @@
-import { existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { connect } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { childProcessRunner } from './collectors/exec.ts';
 import { readConfig } from './config.ts';
+import { install, status, uninstall } from './launchd.ts';
+import type { LaunchdDependencies } from './launchd.ts';
 import { stderrLogger } from './log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
 import type { ProjectDefinition } from './project.ts';
 import { ProjectRegistry } from './registry.ts';
 import { closeConsoleServer, createConsoleServer } from './server.ts';
-import { SettingsStore } from './settings.ts';
+import { DEFAULT_CONFIG_PATHS, SettingsStore } from './settings.ts';
 import type { SourceName } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
 import { installedTerminals } from './terminal.ts';
@@ -17,6 +21,39 @@ import { installedTerminals } from './terminal.ts';
 const EXIT_BAD_CONFIG = 2;
 const clock = (): Date => new Date();
 const log = stderrLogger(clock);
+
+const PORT_POLL_MS = 250;
+
+/** Something accepts connections on the port, tried every quarter second until the time runs out. */
+function waitForPort(host: string, port: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const attempt = (): void => {
+      const socket = connect(port, host);
+      socket.once('connect', () => { socket.end(); resolve(true); });
+      socket.once('error', () => { socket.destroy(); if (Date.now() > deadline) resolve(false); else setTimeout(attempt, PORT_POLL_MS); });
+    };
+    attempt();
+  });
+}
+
+const launchd: LaunchdDependencies = {
+  launchctl: (args) => new Promise((resolve) => {
+    execFile('launchctl', args, { encoding: 'utf8' }, (error, stdout, stderr) => resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : 1, stdout, stderr }));
+  }),
+  files: {
+    write: (file, text) => writeFileSync(file, text), remove: (file) => rmSync(file, { force: true }), exists: existsSync,
+    read: (file) => readFileSync(file, 'utf8'), mkdir: (folder) => { mkdirSync(folder, { recursive: true }); },
+  },
+  waitForPort, print: (line) => process.stdout.write(`${line}\n`), env: process.env, uid: process.getuid?.() ?? 0, home: os.homedir(),
+  node: process.execPath, daemon: path.resolve(import.meta.filename), configPaths: DEFAULT_CONFIG_PATHS,
+};
+
+/** `install`, `uninstall` and `status` manage the launchd job and exit; anything else starts the daemon. */
+const [subcommand, ...subcommandArgs] = process.argv.slice(2);
+if (subcommand === 'install') process.exit(await install(subcommandArgs, launchd));
+if (subcommand === 'uninstall') process.exit(await uninstall(launchd));
+if (subcommand === 'status') process.exit(await status(launchd));
 
 const configuration = readConfig(process.argv.slice(2), process.env);
 if (!configuration.ok) {

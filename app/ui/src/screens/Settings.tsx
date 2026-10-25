@@ -74,7 +74,7 @@ export function Settings() {
           <dt>Config file</dt><dd className="mono">{view.configFile}</dd>
           {view.readFromLegacyFile !== null && <><dt>Projects read from</dt><dd><span className="mono">{view.readFromLegacyFile}</span> <span className="muted">(config.json is absent; the first save writes it)</span></dd></>}
           <dt>State folder</dt><dd className="mono" title="The audit log, the action output and the token">{view.stateDir}</dd>
-          <dt>Runs under</dt><dd>{view.launchd ? 'launchd: it starts on login and comes back after a crash.' : 'a terminal: it stops when that terminal does.'}</dd>
+          <dt>Runs under</dt><dd>{view.launchd ? 'launchd: it starts on login and comes back after a crash.' : <>a terminal: it stops when that terminal does. <span className="mono">npm run daemon:install</span> in <span className="mono">app</span> runs it on login.</>}</dd>
         </dl>
       </Module>
     </div>
