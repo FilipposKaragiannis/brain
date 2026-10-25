@@ -5,9 +5,9 @@ export type PullRequestRow = { item: string; title: string; pr: string; url: str
 
 const PR_NUMBER = /(\d+)\s*$/;
 
-/** Rows from the items that carry a PR. The snapshot's own pull request list will replace this source. */
+/** Rows from the open items that carry a PR; a done item's PR is merged. The snapshot's own pull request list will replace this source. */
 export function pullRowsFromItems(items: Item[], repo: string | null): PullRequestRow[] {
-  return items.filter((item) => item.pr !== null && item.pr !== '').map((item) => ({
+  return items.filter((item) => item.pr !== null && item.pr !== '' && item.state !== 'done').map((item) => ({
     item: item.id,
     title: item.title,
     pr: pullLabel(item.pr ?? ''),

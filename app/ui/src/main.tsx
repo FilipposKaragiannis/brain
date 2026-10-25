@@ -7,7 +7,13 @@ import { ServicesProvider } from './console.tsx';
 import { StreamHub } from './stream.ts';
 import './styles.css';
 
-const api = browserApi(readToken(window.location.search));
+const token = readToken(window.location.search);
+if (token !== null) {
+  const withoutToken = new URL(window.location.href);
+  withoutToken.searchParams.delete('token');
+  window.history.replaceState(window.history.state, '', withoutToken.toString());
+}
+const api = browserApi(token);
 const services = { api, hub: new StreamHub(api) };
 const systemClock = (): number => Date.now();
 const root = document.getElementById('root');

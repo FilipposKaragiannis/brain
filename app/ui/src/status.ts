@@ -44,7 +44,7 @@ export function jobTone(job: Job): Tone {
 export function actionTone(state: ActionState): Tone {
   switch (state) {
     case 'running': return 'running';
-    case 'queued': case 'done': return 'quiet';
+    case 'done': return 'quiet';
     case 'failed': case 'rejected': return 'failing';
   }
 }

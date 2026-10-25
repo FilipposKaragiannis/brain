@@ -58,7 +58,7 @@ export function useActionsView(): ActionsView {
   return actions;
 }
 
-/** A button that runs one action, stays disabled while that action is queued or running, and shows how it ended. */
+/** A button that runs one action, stays disabled while that action runs, and shows how it ended. */
 export function ActionButton({ kind, args, label, primary }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean }) {
   const actions = useActionsView();
   const busy = actions.busy(kind, args);

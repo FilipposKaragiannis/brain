@@ -31,9 +31,12 @@ export class StreamHub {
     const channel = this.channelFor(projectId);
     channel.listeners.add(listener);
     listener.link(channel.link);
+    let subscribed = true;
     return () => {
+      if (!subscribed) return;
+      subscribed = false;
       channel.listeners.delete(listener);
-      if (channel.listeners.size > 0) return;
+      if (channel.listeners.size > 0 || this.channels.get(projectId) !== channel) return;
       channel.stream?.close();
       this.channels.delete(projectId);
     };

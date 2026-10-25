@@ -1,13 +1,14 @@
 import type { Snapshot, Worktree } from '../../../daemon/src/snapshot.ts';
 import { Age } from '../clock.tsx';
 import { worktreeTone } from '../status.ts';
-import { ActionButton, Chip, Flags, Module, SourceFreshness } from '../ui.tsx';
+import { ActionButton, Chip, Empty, Flags, Module, SourceFreshness } from '../ui.tsx';
 
 export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
   return (
     <div className="screen">
       <Module className="worktrees" title="Worktrees" aside={<ActionButton kind="steward.health" args={{}} label="Health" primary={false} />}
         footer={<><SourceFreshness name="git" freshness={snapshot.sources.git} /><SourceFreshness name="processes" freshness={snapshot.sources.processes} /></>}>
+        {snapshot.worktrees.length === 0 ? <Empty>No worktree found.</Empty> : (
         <div className="scroll">
           <table className="table">
             <thead>
@@ -16,6 +17,7 @@ export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
             <tbody>{snapshot.worktrees.map((worktree) => <WorktreeRow key={worktree.name} worktree={worktree} takenAt={snapshot.takenAt} />)}</tbody>
           </table>
         </div>
+        )}
       </Module>
     </div>
   );

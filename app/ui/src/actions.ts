@@ -6,10 +6,10 @@ export type ActionKind =
   | 'gate.clear' | 'run.start'
   | 'job.run' | 'job.stop' | 'job.pause' | 'job.resume'
   | 'worktree.claim' | 'worktree.release'
-  | 'steward.sweep' | 'steward.health'
+  | 'steward.health'
   | 'pr.merge' | 'refresh';
 
-export type ActionState = 'queued' | 'running' | 'done' | 'failed' | 'rejected';
+export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
 
 export type ActionRecord = {
   id: string;
@@ -31,7 +31,7 @@ export type ActionRecord = {
 export const ACTIONS_KEPT = 50;
 
 export function isActive(state: ActionState): boolean {
-  return state === 'queued' || state === 'running';
+  return state === 'running';
 }
 
 /**
@@ -42,14 +42,38 @@ export function matchesAction(kind: ActionKind, args: Record<string, string>, ca
   return kind === candidateKind && Object.entries(args).every(([name, value]) => candidateArgs[name] === value);
 }
 
-/** Puts a record into the newest-first list, replacing the older copy and keeping full output already fetched. */
+/**
+ * Puts a record into the newest-first list, replacing the older copy. Updates can arrive out of
+ * order (a late POST reply after the stream already said done), so a record never moves from a
+ * final state back to running, and of two final copies the later `endedAt` wins. Full output
+ * already fetched is kept.
+ */
 export function upsertAction(records: ActionRecord[], incoming: ActionRecord): ActionRecord[] {
   const previous = records.find((record) => record.id === incoming.id);
-  const merged: ActionRecord = previous?.output !== undefined && incoming.output === undefined && !isActive(incoming.state)
-    ? { ...incoming, output: previous.output }
-    : incoming;
+  const winner = previous === undefined || isNewer(incoming, previous) ? incoming : previous;
+  const merged: ActionRecord = winner.output === undefined && previous?.output !== undefined && !isActive(winner.state)
+    ? { ...winner, output: previous.output }
+    : winner;
   const others = records.filter((record) => record.id !== incoming.id);
   return [merged, ...others].sort(newestFirst).slice(0, ACTIONS_KEPT);
+}
+
+function isNewer(incoming: ActionRecord, previous: ActionRecord): boolean {
+  if (isActive(previous.state)) return true;
+  if (isActive(incoming.state)) return false;
+  if (incoming.endedAt === null || previous.endedAt === null) return true;
+  return Date.parse(incoming.endedAt) >= Date.parse(previous.endedAt);
+}
+
+/**
+ * The list after a reconnect: the daemon's fresh list, merged in. A record still running here but
+ * missing from the daemon's list ended while the stream was down, or died with a daemon restart
+ * (records live in its memory only), so it no longer counts as running and is dropped.
+ */
+export function reconcileActions(records: ActionRecord[], fresh: ActionRecord[]): ActionRecord[] {
+  const known = new Set(fresh.map((record) => record.id));
+  const kept = records.filter((record) => known.has(record.id) || !isActive(record.state));
+  return fresh.reduce((merged, record) => upsertAction(merged, record), kept);
 }
 
 function newestFirst(left: ActionRecord, right: ActionRecord): number {

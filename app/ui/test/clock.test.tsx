@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { Age, ClockProvider, formatDuration, liveSeconds, TICK_MS } from '../src/clock.tsx';
 
@@ -9,7 +9,7 @@ const SECONDS_SINCE_SNAPSHOT = 7;
 const MILLISECONDS_PER_SECOND = 1000;
 
 beforeEach(() => { vi.useFakeTimers(); });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 test('AgeAtSnapshot_KeepsCountingOnTheReadersClock', () => {
   const seconds = liveSeconds(AGE_AT_SNAPSHOT, TAKEN_AT, TAKEN_AT_MS + SECONDS_SINCE_SNAPSHOT * MILLISECONDS_PER_SECOND);

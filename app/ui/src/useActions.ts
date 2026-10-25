@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isActive, matchesAction, upsertAction } from './actions.ts';
+import { isActive, matchesAction, reconcileActions, upsertAction } from './actions.ts';
 import type { ActionKind, ActionRecord } from './actions.ts';
 import { projectPath } from './api.ts';
 import { useServices } from './console.tsx';
@@ -27,12 +27,16 @@ export type ActionsView = {
 
 type Press = { id: number; kind: ActionKind; args: Record<string, string>; result: { started: string } | { refused: number; message: string } | null };
 
+type Merge = (current: ActionRecord[], listed: ActionRecord[]) => ActionRecord[];
+
 const PRESSES_KEPT = 50;
+const mergeAll: Merge = (current, listed) => listed.reduce((merged, record) => upsertAction(merged, record), current);
 const ignore = (): void => {};
 
 /**
  * The project's recent actions, kept live from the `action` events on the shared stream, and a
- * `run` that posts a new one. A button is busy from the press until its action is done.
+ * `run` that posts a new one. A button is busy from the press until its action is done. After
+ * the stream comes back the list is read again, so an action that ended unseen frees its button.
  */
 export function useActions(projectId: string): ActionsView {
   const { api, hub } = useServices();
@@ -41,23 +45,31 @@ export function useActions(projectId: string): ActionsView {
   const [link, setLink] = useState<LinkState>('connecting');
   const pressCount = useRef(0);
 
-  const load = useCallback(async (): Promise<void> => {
+  const lastLink = useRef<LinkState>('connecting');
+
+  const load = useCallback(async (merge: Merge): Promise<void> => {
     const response = await api.request(projectPath(projectId, '/actions'), 'GET', null);
     const listed = (response.body as { actions?: unknown } | null)?.actions;
     if (response.status !== HTTP_OK || !Array.isArray(listed)) return;
-    setRecords((current) => (listed as ActionRecord[]).reduce((merged, record) => upsertAction(merged, record), current));
+    setRecords((current) => merge(current, listed as ActionRecord[]));
   }, [api, projectId]);
 
   useEffect(() => {
     setRecords([]);
     setPresses([]);
-    void load();
+    void load(mergeAll);
     return hub.subscribe(projectId, { snapshot: ignore, action: (record) => setRecords((current) => upsertAction(current, record)), link: setLink });
   }, [hub, projectId, load]);
 
   useEffect(() => {
+    const previous = lastLink.current;
+    lastLink.current = link;
+    if (previous === 'down' && link === 'open') void load(reconcileActions);
+  }, [link, load]);
+
+  useEffect(() => {
     if (link !== 'down') return;
-    const timer = setInterval(() => { void load(); }, POLL_MS);
+    const timer = setInterval(() => { void load(mergeAll); }, POLL_MS);
     return () => clearInterval(timer);
   }, [link, load]);
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ActionRecord } from './actions.ts';
 import { isActive } from './actions.ts';
 import { clockTime } from './clock.tsx';
@@ -10,9 +10,17 @@ import type { ActionsView } from './useActions.ts';
 export function ActionsDrawer({ actions, close }: { actions: ActionsView; close: () => void }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = actions.records.find((record) => record.id === selectedId) ?? actions.records[0] ?? null;
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButton.current?.focus();
+    const onKey = (event: KeyboardEvent): void => { if (event.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('keydown', onKey); opener?.focus(); };
+  }, [close]);
   return (
-    <aside className="drawer" aria-label="Actions">
-      <header className="module-head"><h2>Actions</h2><button type="button" className="button" onClick={close}>Close</button></header>
+    <aside className="drawer" role="dialog" aria-modal="true" aria-labelledby="actions-title">
+      <header className="module-head"><h2 id="actions-title">Actions</h2><button ref={closeButton} type="button" className="button" onClick={close}>Close</button></header>
       {actions.records.length === 0 ? <Empty>No action has run yet.</Empty> : (
         <div className="drawer-body">
           <ul className="list action-list">
@@ -35,7 +43,7 @@ export function ActionsDrawer({ actions, close }: { actions: ActionsView; close:
 }
 
 function ActionOutput({ record, actions }: { record: ActionRecord; actions: ActionsView }) {
-  const needsFull = !isActive(record.state) && record.output === undefined && record.outputBytes > record.outputTail.length;
+  const needsFull = !isActive(record.state) && record.output === undefined && record.outputBytes > byteLength(record.outputTail);
   const { detail } = actions;
   useEffect(() => { if (needsFull) void detail(record.id); }, [needsFull, detail, record.id]);
   const text = record.output ?? record.outputTail;
@@ -50,6 +58,10 @@ function ActionOutput({ record, actions }: { record: ActionRecord; actions: Acti
       <pre className="terminal">{text === '' ? (isActive(record.state) ? 'waiting for output…' : 'no output') : text}</pre>
     </div>
   );
+}
+
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 function describeArgs(args: Record<string, string>): string {

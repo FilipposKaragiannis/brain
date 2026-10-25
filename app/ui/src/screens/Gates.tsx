@@ -9,7 +9,7 @@ import { Chip, Empty, Module, SourceFreshness, useActionsView } from '../ui.tsx'
 
 export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: string | null }) {
   const gates = [...snapshot.gates].sort((left, right) => right.ageSeconds - left.ageSeconds);
-  const current = gates.find((gate) => gate.item === selected) ?? gates[0];
+  const current = selected === null ? gates[0] : gates.find((gate) => gate.item === selected);
   const projectId = snapshot.project.id;
   return (
     <div className="screen">
@@ -22,7 +22,7 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
                   <a className={gate.item === current?.item ? 'list-row selected' : 'list-row'} href={routeHash({ projectId, screen: 'gates', detail: gate.item })}>
                     <Chip tone="needs-you">{gate.gate}</Chip>
                     <span className="mono">{gate.item}</span>
-                    <span className={gate.overdue ? 'age-cell overdue' : 'age-cell'}><Age seconds={gate.ageSeconds} takenAt={snapshot.takenAt} /></span>
+                    <span className={gate.overdue ? 'age-cell overdue' : 'age-cell'}><Age seconds={gate.ageSeconds} takenAt={snapshot.takenAt} />{gate.overdue ? ' · overdue' : ''}</span>
                   </a>
                 </li>
               ))}
@@ -30,6 +30,11 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
           )}
         </Module>
         {current !== undefined && <DecisionCard key={`${current.item}:${current.raisedAt}`} gate={current} snapshot={snapshot} />}
+        {current === undefined && selected !== null && (
+          <Module className="decision-card" title={<span className="mono">{selected}</span>} aside={null} footer={<SourceFreshness name="files" freshness={snapshot.sources.files} />}>
+            <Empty>That gate was cleared. {gates.length > 0 ? 'Pick another from the list.' : 'Nothing else waits on you.'}</Empty>
+          </Module>
+        )}
       </div>
     </div>
   );

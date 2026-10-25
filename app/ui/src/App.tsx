@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { Counts, Snapshot } from '../../daemon/src/snapshot.ts';
 import { isActive } from './actions.ts';
 import { ActionsDrawer } from './ActionsDrawer.tsx';
@@ -18,22 +18,53 @@ import type { LinkState } from './stream.ts';
 
 type ProjectSummary = { id: string; name: string; counts: Counts | null };
 
+/** The project list, or why it could not be read. */
+type ProjectList = { kind: 'loading' } | { kind: 'listed'; projects: ProjectSummary[] } | { kind: 'unreachable'; message: string };
+
+export const PROJECTS_RETRY_MS = 10000;
+const HTTP_UNAUTHORIZED = 401;
+
 export function App() {
   const route = useRoute();
-  const projects = useProjects();
-  const projectId = route.projectId ?? projects?.[0]?.id ?? null;
+  const list = useProjects();
+  if (list.kind === 'loading') return <div className="boot"><Empty>Connecting to the daemon…</Empty></div>;
+  if (list.kind === 'unreachable') return <div className="boot"><Empty>{list.message}. Trying again every {PROJECTS_RETRY_MS / MILLISECONDS_PER_SECOND} s.</Empty></div>;
+  return <Listed route={route} projects={list.projects} />;
+}
+
+const MILLISECONDS_PER_SECOND = 1000;
+
+function Listed({ route, projects }: { route: Route; projects: ProjectSummary[] }) {
+  const projectId = route.projectId ?? projects[0]?.id ?? null;
   useEffect(() => {
     if (route.projectId === null && projectId !== null) window.location.replace(routeHash({ ...route, projectId }));
   }, [route, projectId]);
-  if (projects === null) return <div className="boot"><Empty>Connecting to the daemon…</Empty></div>;
   if (projectId === null) return <div className="boot"><Empty>The daemon watches no project.</Empty></div>;
+  if (!projects.some((project) => project.id === projectId)) {
+    return (
+      <div className="boot">
+        <Empty>No project {projectId}.</Empty>
+        <ProjectSwitcher projects={projects} value="" onPick={(id) => { window.location.hash = routeHash({ projectId: id, screen: route.screen, detail: null }); }} />
+      </div>
+    );
+  }
   return <ProjectShell key={projectId} route={{ ...route, projectId }} projectId={projectId} projects={projects} />;
+}
+
+function ProjectSwitcher({ projects, value, onPick }: { projects: ProjectSummary[]; value: string; onPick: (projectId: string) => void }) {
+  return (
+    <select className="project-switcher" aria-label="Project" value={value} onChange={(event) => onPick(event.target.value)}>
+      {value === '' && <option value="" disabled>Pick a project</option>}
+      {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+    </select>
+  );
 }
 
 function ProjectShell({ route, projectId, projects }: { route: Route; projectId: string; projects: ProjectSummary[] }) {
   const { snapshot, link } = useProject(projectId);
   const actions = useActions(projectId);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const go = (next: Route): void => { window.location.hash = routeHash(next); };
   const running = actions.records.filter((record) => isActive(record.state)).length;
   return (
@@ -41,9 +72,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
       <div className="shell">
         <nav className="nav" aria-label="Main">
           <div className="brand"><span className="brand-mark">B</span>Brain Console</div>
-          <select className="project-switcher" aria-label="Project" value={projectId} onChange={(event) => go({ projectId: event.target.value, screen: route.screen, detail: null })}>
-            {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
+          <ProjectSwitcher projects={projects} value={projectId} onPick={(id) => go({ projectId: id, screen: route.screen, detail: null })} />
           {SCREENS.map((entry) => (
             <a key={entry.screen} className={entry.screen === route.screen ? 'nav-link active' : 'nav-link'} href={routeHash({ projectId, screen: entry.screen, detail: null })}>
               <span>{entry.label}</span>{snapshot !== null && <NavBadge screen={entry.screen} snapshot={snapshot} />}
@@ -64,7 +93,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
           </header>
           {snapshot === null ? <Empty>Waiting for the first snapshot…</Empty> : <ScreenView route={route} snapshot={snapshot} go={go} />}
         </main>
-        {drawerOpen && <ActionsDrawer actions={actions} close={() => setDrawerOpen(false)} />}
+        {drawerOpen && <ActionsDrawer actions={actions} close={closeDrawer} />}
       </div>
     </ActionsProvider>
   );
@@ -112,16 +141,27 @@ function useRoute(): Route {
   return parseRoute(hash);
 }
 
-function useProjects(): ProjectSummary[] | null {
+function useProjects(): ProjectList {
   const { api } = useServices();
-  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [list, setList] = useState<ProjectList>({ kind: 'loading' });
   useEffect(() => {
     let cancelled = false;
-    void api.request('/api/projects', 'GET', null).then((response) => {
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    const read = async (): Promise<void> => {
+      const response = await api.request('/api/projects', 'GET', null);
       if (cancelled) return;
-      setProjects(response.status === HTTP_OK && Array.isArray(response.body) ? (response.body as ProjectSummary[]) : []);
-    });
-    return () => { cancelled = true; };
+      if (response.status === HTTP_OK && Array.isArray(response.body)) { setList({ kind: 'listed', projects: response.body as ProjectSummary[] }); return; }
+      setList({ kind: 'unreachable', message: unreachableMessage(response.status) });
+      retry = setTimeout(() => { void read(); }, PROJECTS_RETRY_MS);
+    };
+    void read();
+    return () => { cancelled = true; if (retry !== null) clearTimeout(retry); };
   }, [api]);
-  return projects;
+  return list;
+}
+
+function unreachableMessage(status: number): string {
+  if (status === HTTP_UNAUTHORIZED) return 'Token needed: open the page with ?token=<token>';
+  if (status === 0) return 'Daemon not reachable';
+  return `The daemon answered ${status}`;
 }

@@ -9,7 +9,8 @@ import { Chip, Dot, Empty, Flags, Module, SourceFreshness } from '../ui.tsx';
 const EVENTS_SHOWN = 30;
 const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board'];
 
-type Tile = { label: string; count: number; tone: Tone; screen: Route['screen'] };
+/** A tile links to the screen that explains its count; `null` when no other screen does. */
+type Tile = { label: string; count: number; tone: Tone; screen: Route['screen'] | null };
 
 export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Route) => void }) {
   const projectId = snapshot.project.id;
@@ -19,24 +20,25 @@ export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
     { label: 'Running', count: counts.running, tone: countTone(counts.running, 'running'), screen: 'agents' },
     { label: 'Stale', count: counts.stale, tone: countTone(counts.stale, 'stale'), screen: 'worktrees' },
     { label: 'Free', count: counts.free, tone: 'quiet', screen: 'worktrees' },
-    { label: 'Disagreements', count: counts.disagreements, tone: countTone(counts.disagreements, 'failing'), screen: 'overview' },
+    { label: 'Disagreements', count: counts.disagreements, tone: countTone(counts.disagreements, 'failing'), screen: null },
   ];
-  const openRow = (row: AttentionRow): void => {
-    if (row.kind === 'gate') go({ projectId, screen: 'gates', detail: row.id });
-    else if (row.worktree !== null) go({ projectId, screen: 'worktrees', detail: null });
+  const rowTarget = (row: AttentionRow): Route | null => {
+    if (row.kind === 'gate') return { projectId, screen: 'gates', detail: row.id };
+    if (row.worktree !== null) return { projectId, screen: 'worktrees', detail: null };
+    return null;
   };
   return (
     <div className="screen">
       <section className="tiles" aria-label="Status">
-        {tiles.map((tile) => (
-          <a key={tile.label} className={`tile tone-${tile.tone}`} href={routeHash({ projectId, screen: tile.screen, detail: null })}>
-            <span className="tile-label">{tile.label}<Dot tone={tile.tone} /></span>
-            <span className="tile-count">{tile.count}</span>
-          </a>
-        ))}
+        {tiles.map((tile) => {
+          const body = <><span className="tile-label">{tile.label}<Dot tone={tile.tone} /></span><span className="tile-count">{tile.count}</span></>;
+          return tile.screen === null
+            ? <div key={tile.label} className={`tile tone-${tile.tone}`}>{body}</div>
+            : <a key={tile.label} className={`tile tone-${tile.tone}`} href={routeHash({ projectId, screen: tile.screen, detail: null })}>{body}</a>;
+        })}
       </section>
       <div className="columns">
-        <NeedsYou snapshot={snapshot} open={openRow} />
+        <NeedsYou snapshot={snapshot} target={rowTarget} go={go} />
         <Events snapshot={snapshot} />
       </div>
       <Pool snapshot={snapshot} />
@@ -49,24 +51,27 @@ export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
   );
 }
 
-function NeedsYou({ snapshot, open }: { snapshot: Snapshot; open: (row: AttentionRow) => void }) {
+function NeedsYou({ snapshot, target, go }: { snapshot: Snapshot; target: (row: AttentionRow) => Route | null; go: (route: Route) => void }) {
   const rows = [...snapshot.attention].sort(oldestFirst);
   return (
     <Module className="needs-you" title="Needs you" aside={<span className="muted">oldest first</span>} footer={<SourceFreshness name="files" freshness={snapshot.sources.files} />}>
       {rows.length === 0 ? <Empty>Nothing waits on you.</Empty> : (
-        <table className="table clickable">
+        <table className="table">
           <thead><tr><th>Kind</th><th>Item</th><th>Title</th><th>Detail</th><th>Worktree</th><th>Age</th></tr></thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={`${row.kind}:${row.id}:${row.worktree ?? ''}`} onClick={() => open(row)} tabIndex={0} onKeyDown={(event) => { if (event.key === 'Enter') open(row); }}>
+            {rows.map((row) => {
+              const destination = target(row);
+              return (
+              <tr key={`${row.kind}:${row.id}:${row.worktree ?? ''}`}>
                 <td><Chip tone={attentionTone(row.kind)}>{row.kind}</Chip></td>
-                <td className="mono">{row.id}</td>
+                <td className="mono">{destination === null ? row.id : <button type="button" className="row-link" onClick={() => go(destination)}>{row.id}</button>}</td>
                 <td className="strong">{row.title}</td>
                 <td className="clip" title={row.detail}>{row.detail}</td>
                 <td className="mono">{row.worktree ?? '—'}</td>
                 <td className="mono"><Age seconds={row.ageSeconds} takenAt={snapshot.takenAt} /></td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}
