@@ -31,6 +31,13 @@ T-13), and the public interfaces the plan names.
    it is red for the right reason, commit it.
 7. Run the suite with the guide's command. Commit with a conventional message naming the item.
 8. Ask of every test: would it reveal a bug a sibling would not? Delete it when the answer is no.
+9. Before committing, read each test's assertions and split it when two of them can fail
+   independently (a state and a position, a release and a placement, a verdict and a null on
+   another object). A bound pair that brackets one value stays one test; an outcome assertion
+   added to it is a second test. Names with "And" or a test with more than three assertions are
+   the usual offenders.
+10. A double that counts calls may drive a loop, never an assertion, and never a setup guard
+    (T-08). The outcome assertions already fail when the call is missing.
 
 ## Output
 Tests committed, `<reports>/tests.md` with the behaviour list and which test pins each line,
