@@ -302,8 +302,14 @@ test('FixturePulls_CountedByState', async () => {
 
 const withExtraBoardItem = (facts: ReconcileInput, change: Partial<BoardItem>): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', ...change }] } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }] } };
 };
+/** Adds board items made from gh#12's shape, one per change. */
+const withBoardItems = (facts: ReconcileInput, changes: Partial<BoardItem>[]): ReconcileInput => {
+  const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))] } };
+};
+const needsFieldIds = (picture: Snapshot): string[] => picture.attention.filter((row) => row.kind === 'needs-field').map((row) => row.id);
 const disagreementOf = (picture: Snapshot, sources: string) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === sources);
 
 test('Worktree_CodexDesktopServerInIt_NoSession', async () => {
@@ -349,6 +355,31 @@ test('NeedsField_TwoFields_BothNamed', async () => {
   assert.equal(row?.detail, 'needs priority and size', 'because the owner fills every missing field in one visit');
 });
 
+test('NeedsField_ChildOfASplitParentWithADoneSibling_Row', async () => {
+  const facts = withBoardItems(await input(), [
+    { id: 'gh#341', kind: 'task', title: 'Split parent', needs: [], parent: '' },
+    { id: 'gh#544', title: 'First half', status: 'closed', parent: 'gh#341', state: { step: 'done', gate: 'none', worktree: '', pr: '', last_event: '', profile: '', attempts: 0 } },
+    { id: 'gh#545', title: 'Second half', priority: '', needs: ['priority'], parent: 'gh#341' },
+  ]);
+  assert.deepEqual(needsFieldIds(reconcile(facts)), ['gh#545'], 'because its sibling is done, so this is the next step of work already under way and only the missing priority stops it');
+});
+
+test('NeedsField_BlocksAnItemInProgress_Row', async () => {
+  const facts = withBoardItems(withBoardItem(await input(), 'gh#9', {}), [{ id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], parent: '' }]);
+  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)) } };
+  assert.deepEqual(needsFieldIds(reconcile(blocking)), ['gh#14'], 'because gh#9 is being worked and waits on it');
+});
+
+test('NeedsField_BacklogWithNoWorkUnderWay_NoRowButCountedAsWaitingOnField', async () => {
+  const picture = reconcile(withExtraBoardItem(await input(), { parent: '' }));
+  assert.deepEqual([needsFieldIds(picture), picture.readiness.waitingOnField, picture.readiness.nextInLineMissingField, picture.counts.needsField], [[], 1, 0, 0], 'because a backlog item lacking a priority is not news; only the ones that hold up started work get a row');
+});
+
+test('Readiness_NextInLine_CountedInBoth', async () => {
+  const { readiness } = reconcile(withExtraBoardItem(await input(), {}));
+  assert.deepEqual([readiness.waitingOnField, readiness.nextInLineMissingField], [1, 1], 'because the child of started work is both backlog lacking a field and the next step of that work');
+});
+
 test('NeedsField_BlockedItem_NoRow', async () => {
   const { attention } = await snapshot();
   assert.equal(attention.some((entry) => entry.kind === 'needs-field'), false, 'because gh#13 lacks a size but waits on gh#12 first, so only the head of its chain asks');
@@ -364,7 +395,7 @@ test('NeedsField_Counted', async () => {
 });
 
 test('Readiness_Fixture_OneBucketPerOpenItem', async () => {
-  assert.deepEqual((await snapshot()).readiness, { ready: 2, waitingOnField: 0, blocked: 1, gated: 1 }, 'because gh#12 and gh#20 are ready, gh#13 is blocked, gh#7 waits at a gate and the running and stale items are in none');
+  assert.deepEqual((await snapshot()).readiness, { ready: 2, waitingOnField: 0, blocked: 1, gated: 1, nextInLineMissingField: 0 }, 'because gh#12 and gh#20 are ready, gh#13 is blocked, gh#7 waits at a gate and the running and stale items are in none');
 });
 
 test('Readiness_ItemWaitingOnField_Counted', async () => {

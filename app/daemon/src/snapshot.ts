@@ -37,9 +37,12 @@ export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board' | 'pul
 /** Every source, in the order the daemon reads them. The one list the routes and actions share. */
 export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board', 'pulls'];
 /**
- * Why a row is on the needs-you list. `needs-field`: an open item, not an epic, with no step and no open
- * blocker that the next job refuses because a field the tracker asks for (`ready_needs` in
- * .flow/config.yaml, such as priority or size) is empty.
+ * Why a row is on the needs-you list. `needs-field`: an item that is the next step of work already
+ * under way but that the next job refuses because a field the tracker asks for (`ready_needs` in
+ * .flow/config.yaml, such as priority or size) is empty: open, not an epic, no step, no open
+ * blocker, and either its parent has started (a step, a worktree, a PR or a gate), a sibling
+ * under the same parent has started or is done, or it blocks an item that has started. Other
+ * items waiting on a field are backlog and get no row.
  */
 export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable' | 'needs-field';
 /**
@@ -292,21 +295,25 @@ export type Counts = {
   pullsMergeable: number;
   pullsFailing: number;
   pullsChangesRequested: number;
-  /** Items that wait on a field the tracker asks for: the `needs-field` attention rows. */
+  /** The `needs-field` attention rows: items next in line for work under way that lack a field. Same as `readiness.nextInLineMissingField`. */
   needsField: number;
 };
 
 /**
- * Why open work does or does not run, over open items that are not epics, each in one bucket at
- * most: `ready` the next job can take it; `waitingOnField` nothing blocks it but a field it needs
- * is empty; `blocked` an open item blocks it; `gated` it waits on you at a gate. Items already
- * running, claimed or stale are in none.
+ * Why open work does or does not run, over open items that are not epics. The first four are
+ * buckets, each item in one at most: `ready` the next job can take it; `waitingOnField` nothing
+ * blocks it but a field it needs is empty (the whole backlog of them); `blocked` an open item
+ * blocks it; `gated` it waits on you at a gate. Items already running, claimed or stale are in
+ * none. `nextInLineMissingField` is the part of `waitingOnField` that is the next step of work
+ * already under way (the `needs-field` rows), so a reader can say "164 backlog items lack a
+ * field; 4 of them are the next step of work in progress".
  */
 export type Readiness = {
   ready: number;
   waitingOnField: number;
   blocked: number;
   gated: number;
+  nextInLineMissingField: number;
 };
 
 export type Snapshot = {
