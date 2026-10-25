@@ -25,6 +25,9 @@ function repos() {
   const worktree = path.join(dir, 'wt');
   git(dir, 'init', '-q', '--bare', remote);
   git(dir, 'clone', '-q', remote, main);
+  // The runner gives scripts a minimal environment, so the identity a merge needs lives in the repository (CI has no global one).
+  git(main, 'config', 'user.name', 't');
+  git(main, 'config', 'user.email', 't@t');
   const commit = (cwd: string, file: string, text: string): void => { writeFileSync(path.join(cwd, file), text); git(cwd, 'add', file); git(cwd, 'commit', '-q', '-m', `${file}: ${text}`); };
   commit(main, 'a.txt', 'one\n');
   git(main, 'push', '-q', 'origin', 'HEAD:main');
