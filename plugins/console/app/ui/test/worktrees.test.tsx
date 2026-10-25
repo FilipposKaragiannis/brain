@@ -116,3 +116,52 @@ test('BranchFarBehind_RunRecord_NoMergeButton', () => {
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [BEHIND], runs: [run] }} /></Wrapper>);
   expect(screen.queryByRole('button', { name: /Merge/ }), 'because a run record holds the item and the daemon would refuse').toBeNull();
 });
+
+const FILES = ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts'];
+const conflictedSync = (files: string[]) => ({ ...actionRecord('s9', 'failed', {}), kind: 'worktree.sync' as const, args: { target: 'wt-7' }, outcome: null, conflict: { refs: ['origin/flow/gh-344', 'origin/epic/gh-300'], files } });
+
+/** The Worktrees screen with the daemon listing `records` as its recent actions. */
+async function renderWithActions(worktrees: Worktree[], records: unknown[], extra: Partial<ReturnType<typeof snapshotAt>> = {}) {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('GET', ACTIONS_PATH, () => ({ status: 200, body: { actions: records } }));
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('h1', 'running', {}), kind: 'sync.handoff', args: { target: 'wt-7' } } } }; });
+  const Wrapper = daemon.screenWrapper();
+  await act(async () => { render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees, ...extra }} /></Wrapper>); });
+  return { posted };
+}
+
+test('SyncConflicted_ListsTheFilesFoldedAfterFive', async () => {
+  await renderWithActions([BEHIND], [conflictedSync(FILES)]);
+  const list = screen.getByRole('list', { name: 'Conflicting files' });
+  expect(list.textContent, 'because the first five files say where the conflict is without burying the row').toBe('a.tsb.tsc.tsd.tse.ts');
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Show all 7 files' })); });
+  expect(screen.getByRole('list', { name: 'Conflicting files' }).textContent, 'because every file is one press away').toMatch(/g\.ts$/);
+});
+
+test('SyncConflicted_HandToTheFlow_PostsTheHandoffWithTheRefs', async () => {
+  const { posted } = await renderWithActions([BEHIND], [conflictedSync(['a.ts'])]);
+  const button = screen.getByRole('button', { name: 'Hand to the flow' });
+  expect(button.getAttribute('title'), 'because the owner must know the press starts a run').toBe("Writes the sync note and starts the item's run. The flow's sync step merges, resolves what it can, and raises an escalation gate if a choice is yours.");
+  await act(async () => { fireEvent.click(button); });
+  expect(posted, 'because the note names the refs the sync still had to merge, one per line').toEqual([{ kind: 'sync.handoff', args: { target: 'wt-7', refs: 'origin/flow/gh-344\norigin/epic/gh-300' } }]);
+});
+
+test('SyncConflicted_RunGoingAndNoteThere_SaysTheSyncRunsFirst', async () => {
+  const run = { item: 'gh#344', step: 'sync', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, alive: true };
+  await renderWithActions([{ ...BEHIND, syncPending: ['origin/epic/gh-300'] }], [conflictedSync(['a.ts'])], { runs: [run] });
+  expect(screen.queryByRole('button', { name: 'Hand to the flow' }), 'because a second run would be refused while one goes').toBeNull();
+  expect(screen.queryByText('A run is going; the sync step runs first when it starts'), 'because the note is already there for the run').not.toBeNull();
+});
+
+test('SyncPending_ShownOnTheCardWithoutAConflict', async () => {
+  await renderWithActions([{ ...BEHIND, syncPending: ['origin/flow/gh-344', 'origin/main'] }], []);
+  expect(screen.getByText(/sync pending:/).textContent, 'because a note the health job wrote must show too').toBe('sync pending: origin/flow/gh-344, origin/main');
+  expect(screen.queryByRole('button', { name: 'Hand to the flow' }), 'because without a conflict there is nothing the console holds to hand on').toBeNull();
+});
+
+test('SyncConflicted_ThenACleanSync_ConflictGone', async () => {
+  const clean = { ...actionRecord('s10', 'done', {}), kind: 'worktree.sync' as const, args: { target: 'gh#344' }, outcome: 'finished' as const, requestedAt: '2026-10-24T18:17:00Z' };
+  await renderWithActions([BEHIND], [clean, conflictedSync(['a.ts'])]);
+  expect(screen.queryByRole('list', { name: 'Conflicting files' }), 'because the last sync is the one that counts').toBeNull();
+});

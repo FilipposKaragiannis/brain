@@ -159,8 +159,8 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 2 since processes carry their
-session. One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 3 since worktrees carry
+`syncPending` (and action records `conflict`). One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`) and `disagreements`. Timestamps are
@@ -177,6 +177,11 @@ snapshots.
   session}` (the command cut to 200 characters), `item`, `itemUrl` and `itemTitle` (from the board, null
   without an item or before the board is read), and `staleReason`: "branch is 35 commits behind
   main (limit 20)", "claimed 6 days ago with no run, agent or gate", both joined with "; ", or null.
+  `syncPending` is the refs the flow's sync note for the claimed item names, one per line in
+  `<worktree>/.flow/reports/<item slug>/sync.md` (the flow's `reports_dir` for a work step, the
+  slug being the id with `:`, `/` and `#` made `-`), read by the `files` source with the claim; null
+  with no claim, no note or an empty one. The health job writes the note for a merge it cannot make
+  cleanly and `sync.handoff` for a conflicted sync; the item's next run merges it first.
 - `session` (on those and on every entry of `agents`) is the process's transcript,
   `{host, id, transcript, resume}`, or null when none was found. For claude it is first
   `~/.claude/sessions/<pid>.json`, which claude writes for every running process: its `sessionId`,
@@ -277,8 +282,9 @@ costs no process after its first read. An older plugin is not asked. A list that
 `files` source (`ok` stays true) and logs `gates.list.failed` once. A message with no numbered line
 gets no questions from the plugin and shows as one question with no recommendation.
 
-The daemon itself never writes to a project but in one place, the flow settings editor below,
-which writes `.flow/config.yaml` when the owner saves. Every other write goes through an action.
+The daemon itself never writes to a project but in two places: the flow settings editor below,
+which writes `.flow/config.yaml` when the owner saves, and `sync.handoff`, which writes the item's
+sync note. Every other write goes through an action's script.
 
 ## Flow settings
 `daemon/src/plugins/flow/` edits the project's `.flow/config.yaml`. `schema.ts` is a fixed schema
@@ -368,7 +374,8 @@ on every state change and at most twice a second while output arrives.
 | `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
-| `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished` |
+| `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished`; on a conflict the record's `conflict` |
+| `sync.handoff` | `target`, `refs?` | writes the item's sync note, then `jobs/next.sh` as `run.start` with the item (below) | the item and the next job | `started` while the run goes, `finished` once it ends well |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
 | `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
@@ -377,7 +384,10 @@ on every state change and at most twice a second while output arrives.
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
 `ActionRecord.note` is what a finished action wants said beside its state (null for most); the
-button and the drawer show it. `ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
+button and the drawer show it. `ActionRecord.conflict` is `{refs, files}` when a `worktree.sync`
+ended in a merge conflict, null otherwise: `refs` the refs still to merge, the conflicting one
+first and then any the script did not reach, in the order sync.sh tries them; `files` the files git
+reported. Its `outcome` stays null, as for any failed action. `ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
 and goes on after the record (`jobs.sh run <job>` gives the job to launchd and returns in a
 second), `finished` means the work is over. It is null while an attached action runs and on a
 failed or rejected one. Every `jobs.sh run <job>` (`job.run`, `steward.health`, `run.start` without
@@ -390,9 +400,34 @@ with its own reason, while the worktree has uncommitted files, a run record in `
 its item, or an unattended agent works in it. The script runs `git -C <worktree> fetch origin`,
 merges the branch's own upstream when that is ahead, then `origin/<base>` when it exists (else the
 local base), each with `merge --no-edit`; the output names every merge. A merge that conflicts is
-undone with `git merge --abort` and the action fails with the conflicting files in its output.
+undone with `git merge --abort` and the action fails with the conflicting files in its output,
+then `console: still to merge: <ref> …`, which the record's `conflict` is read from.
 A TERM or INT (a timeout, a removed project, the daemon stopping) mid-merge aborts the merge too,
 so no `MERGE_HEAD` is left behind, and the script exits 143. When it ends `git` is read again.
+`sync.sh --refs <worktree> <base>` prints the refs a sync would merge, one per line, without
+fetching or merging.
+
+`sync.handoff` gives the merge to the flow's sync step. The target resolves as for
+`worktree.sync`. It is refused, each with its own reason, while git has not read the worktree,
+when the worktree is clean and has every commit of its base (nothing to hand off), while a run
+record names the item, or while an agent works in the worktree. `refs` is newline separated (the
+UI passes the conflict record's); without it the refs are `sync.sh --refs`'s. Once its locks are
+held the daemon writes them to `<claim's worktree>/.flow/reports/<item slug>/sync.md`, one per line
+with a newline after each, the bytes `steward.sh`'s `health_branch_notes` writes; a note already
+there with the same refs is left alone, and one with other refs is replaced with the old refs
+named in the output. A note it cannot write fails the action before anything runs. Then the
+item's run starts exactly as `run.start` with that item starts it (detached, the same locks and
+re-reads), and `next.sh` finds the note (`[ -s … ]`) and runs the sync step first, keeping the
+item's own step for afterwards. The output opens with what was written and that the run's first
+step is sync, and the daemon logs one `sync.handoff` line with the item, worktree, refs and the
+refs it replaced.
+
+### Sync
+"Merge <base> in" ends one of three ways. Merged: every ref went in cleanly, the action is `done`
+and the stale reason goes with the next git read. Conflict: the merge is aborted, the action is
+`failed` with `conflict`, and the card lists the files with "Hand to the flow". Handed to the flow:
+that button runs `sync.handoff`, the card shows "sync pending: <refs>" until the sync step merges
+them (and drops the note), and a choice only the owner can make comes back as an escalation gate.
 
 `terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, another
 worktree git lists for the project (the outside rows), or the working directory of an agent or
@@ -432,7 +467,8 @@ at once. When an action ends the sources it changed are re-read.
 Every action is two lines in `~/.local/state/brain-console/<project>/actions.jsonl`, one at
 start and one at the end, with its full output in `actions/<id>.log` beside it (`--state-dir`
 or `BRAIN_CONSOLE_STATE` moves it). Inside the project the console writes only what the scripts
-themselves write and, from the flow settings editor, `.flow/config.yaml`.
+themselves write, the sync note `sync.handoff` writes and, from the flow settings editor,
+`.flow/config.yaml`.
 
 ## Reconciliation
 `daemon/src/reconcile.ts` is a pure function from the collected facts to the snapshot, with the
@@ -498,7 +534,11 @@ matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`
 pool, then the worktrees outside it under their own heading; each row has its item's title, its
 agents and sessions with pid, host and age and the command on hover, why it is stale and the way
 out (for a branch far behind, a "Merge <base> in" button that runs `worktree.sync` when the
-worktree is clean, has no run record and no agent, else the same words without the button), a
+worktree is clean, has no run record and no agent, else the same words without the button;
+after a sync that conflicted, the conflicting files folded after five and "Hand to the flow",
+which runs `sync.handoff` with the conflict's refs, or while a run record names the item and its
+note is there "A run is going; the sync step runs first when it starts"; and "sync pending:
+<refs>" whenever `syncPending` is set, so a note the health job wrote shows too), a
 legend for dirty, agents and sessions; Open in Terminal on every row, the project root
 included, Release, Health), Agents and jobs (Open in Terminal on every agent and session row, in
 its working directory; Run, Stop, Pause, Resume and Open in Terminal, which follows the job's log,
@@ -567,5 +607,8 @@ npm run check      # daemon tsc and node --test, then the UI's tsc, vitest and b
 Tests use a fixture flow home under `daemon/test/fixtures` and a fake command runner, so no shell,
 git or GitHub is touched, with one exception: the flow settings tests cut `yaml_get` out of
 `plugins/flow/lib/flow.sh` and `pool_add_entry` out of `steward.sh` and run them with `sh` on a
-temp file, so a list the console writes is checked against the reader the flow scripts use. Test names are behavioural sentences and every assertion carries its
+temp file, so a list the console writes is checked against the reader the flow scripts use; the
+sync note tests do the same with `health_branch_notes`, `reports_dir` and `item_slug`, and the
+`-s` test and brief line of `next.sh`. The sync tests run `sync.sh` and the actions over it
+against real git in a temp folder. Test names are behavioural sentences and every assertion carries its
 because-string, as the standards ask.

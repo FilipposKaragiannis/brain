@@ -473,3 +473,8 @@ test('Settle_HoldsBack_NotInListCountOrAttention', async () => {
   const picture = reconcile({ ...(await input()), settle: () => [] });
   assert.deepEqual([picture.disagreements, picture.counts.disagreements, picture.attention.some((row) => row.kind === 'disagreement')], [[], 0, false], 'because a disagreement held back is not shown anywhere yet');
 });
+
+test('Worktree_SyncNoteOfItsClaim_ShownAsSyncPending', async () => {
+  const picture = await snapshot();
+  assert.deepEqual([worktree(picture, 'project-wt-2')?.syncPending, worktree(picture, 'project-wt-3')?.syncPending], [['origin/flow/gh-7', 'origin/main'], null], 'because a note the health job wrote must show on the card, not only one the console wrote');
+});

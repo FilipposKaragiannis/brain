@@ -417,3 +417,27 @@ test('TerminalOpen_TwoAtOnce_NoLockAndNothingReRead', async () => {
     assert.deepEqual([actions.get(first.id)?.state, actions.get(first.id)?.outcome, refreshed], ['done', 'finished', []], 'because opening a window changes no source');
   } finally { await cleanup(); }
 });
+
+test('SyncHandoff_NoteCannotBeWritten_FailsAndTheRunNeverStarts', async () => {
+  const unwritable = { ...CONTEXT, worktrees: [{ name: 'app-wt-2', path: '/nonexistent-root/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 3, agentPids: [] }], pool: ['/nonexistent-root/app-wt-2'] };
+  const { actions, processes, cleanup } = await runner(unwritable, PLAIN);
+  try {
+    const record = actionOf(actions.request('sync.handoff', { target: 'gh#7', refs: 'origin/main' }));
+    await settle();
+    const ended = actions.get(record.id)!;
+    assert.equal(ended.state, 'failed', 'because a hand-off without its note would start a run that never syncs');
+    assert.equal(processes.length, 0, 'because the run starts only once the note is written');
+    assert.match(ended.output ?? '', /^console: /m, 'because the output says why');
+  } finally { await cleanup(); }
+});
+
+test('ActionRecord_NotASync_ConflictIsNull', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#268' }));
+    processes[0]!.stdout.write('console: merging origin/main conflicts, so the merge was aborted. Conflicting files:\na.txt\nconsole: still to merge: origin/main\n');
+    processes[0]!.exit(1, null);
+    await settle();
+    assert.equal(actions.get(record.id)!.conflict, null, 'because only a worktree.sync reads its output for a conflict');
+  } finally { await cleanup(); }
+});

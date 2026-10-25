@@ -1,6 +1,7 @@
 import path from 'node:path';
-import type { ActionKind, ActionOutcome, SessionRef, TerminalName, TerminalSetting } from './snapshot.ts';
+import type { ActionKind, ActionOutcome, SessionRef, SyncConflict, TerminalName, TerminalSetting } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
+import { syncConflict, syncRefs, writeSyncNote } from './syncNote.ts';
 import { sessionLaunch, terminalLaunch } from './terminal.ts';
 
 /** What a sync needs to know of one pool worktree, from the latest snapshot. */
@@ -13,6 +14,8 @@ export type SyncFacts = {
   claimBase: string | null;
   /** Uncommitted files, or null before git was read. */
   dirtyFiles: number | null;
+  /** Commits the branch lacks of its base, or null before git was read. */
+  behindBase: number | null;
   /** The pids of the unattended agents working in it. */
   agentPids: number[];
 };
@@ -65,6 +68,14 @@ export type ActionPlan = {
   outcome: ActionOutcome;
   /** Reads the output of a finished process for a note on its record (the jobs an install skipped); absent for most plans. */
   note?: (output: string) => string | null;
+  /** Reads the output of a finished process for the merge conflict it ended in (`worktree.sync`); absent for most plans. */
+  conflict?: (output: string) => SyncConflict | null;
+  /**
+   * Runs in the daemon once the locks are held and before the process starts (`sync.handoff`
+   * writes the sync note here): its output opens the action's and its event is logged. A throw
+   * fails the action and the process never starts.
+   */
+  prepare?: () => { output: string; event: { name: string; fields: Record<string, unknown> } };
 };
 
 /**
@@ -80,7 +91,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.stop', 'job.pause', 'job.resume',
-  'worktree.claim', 'worktree.release', 'worktree.sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.sync', 'sync.handoff', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -91,6 +102,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'worktree.claim': ['item'],
   'worktree.release': ['target', 'force'],
   'worktree.sync': ['target'],
+  'sync.handoff': ['target', 'refs'],
   'steward.health': [],
   'jobs.install': [],
   'job.uninstall': ['job'],
@@ -155,6 +167,7 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
   if (kind === 'terminal.open') return planTerminal(args, context);
   if (kind === 'worktree.sync') return planSync(args, context);
   if (context.pluginRoot === null) return fail('no flow plugin found for the project');
+  if (kind === 'sync.handoff') return planHandoff(args, context);
   const sh = (name: string, scriptArgs: string[], locks: string[], timeoutMs: number, refresh: string[]): PlanResult =>
     ({ ok: true, plan: { command: 'sh', args: [script(context, name), ...scriptArgs], cwd: context.root, locks, timeoutMs, detach: false, refresh, refreshAgainMs: null, outcome: 'finished' } });
   /** `jobs.sh run <job>`: launchd runs the job, the script only starts it. */
@@ -275,21 +288,81 @@ function planSession(folder: string, pid: string, args: Record<string, string>, 
  * item, or an agent works in it, each with its own reason, since a merge under any of those would
  * mix with work in progress.
  */
-function planSync(args: Record<string, string>, context: ActionContext): PlanResult {
-  const target = args['target'] ?? '';
+/** The pool worktree a sync or a hand-off names: an item claimed in the pool, or a pool worktree's name. */
+function syncTarget(kind: ActionKind, target: string, context: ActionContext): { ok: true; worktree: SyncFacts & { item: string } } | { ok: false; error: string } {
   const worktree = ITEM_ID.test(target)
     ? context.worktrees.find((entry) => entry.item === target)
     : context.worktrees.find((entry) => entry.name === target && context.pool.includes(entry.path));
-  if (worktree === undefined) return fail(`worktree.sync needs an item claimed in the pool or the name of a pool worktree; ${target === '' ? 'none given' : `${target} is neither`}`);
-  if (worktree.item === null) return fail(`${worktree.name} is not claimed, so it has no branch to bring up to date`);
+  if (worktree === undefined) return { ok: false, error: `${kind} needs an item claimed in the pool or the name of a pool worktree; ${target === '' ? 'none given' : `${target} is neither`}` };
+  if (worktree.item === null) return { ok: false, error: `${worktree.name} is not claimed, so it has no branch to bring up to date` };
+  return { ok: true, worktree: { ...worktree, item: worktree.item } };
+}
+
+/**
+ * `worktree.sync`: merge the base (and the branch's own upstream first, when it is ahead) into a
+ * claimed pool worktree. Refused while the worktree has uncommitted files, a run record names its
+ * item, or an agent works in it, each with its own reason, since a merge under any of those would
+ * mix with work in progress.
+ */
+function planSync(args: Record<string, string>, context: ActionContext): PlanResult {
+  const found = syncTarget('worktree.sync', args['target'] ?? '', context);
+  if (!found.ok) return found;
+  const { worktree } = found;
   if (worktree.dirtyFiles === null) return fail(`git has not read ${worktree.name} yet; try again in a moment`);
   if (worktree.dirtyFiles > 0) return fail(`${worktree.name} has ${worktree.dirtyFiles} uncommitted file${worktree.dirtyFiles === 1 ? '' : 's'}; commit or stash them before merging`);
   if (context.runItems.includes(worktree.item)) return fail(`a run record names ${worktree.item}; let the run end (or run the health check if it died) before merging`);
   if (worktree.agentPids.length > 0) return fail(`an agent works in ${worktree.name} (pid ${worktree.agentPids.join(', ')}); merging under it would mix with its work`);
   const base = worktree.claimBase ?? context.base;
-  if (!BRANCH.test(base) || base.includes('..')) return fail(`the base ${base} is not a branch name git can merge`);
+  if (!isBranch(base)) return fail(`the base ${base} is not a branch name git can merge`);
   return {
     ok: true,
-    plan: { command: 'sh', args: [SYNC_SCRIPT, worktree.path, base], cwd: worktree.path, locks: [`item:${worktree.item}`, `worktree:${worktree.path}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['git'], refreshAgainMs: null, outcome: 'finished' },
+    plan: { command: 'sh', args: [SYNC_SCRIPT, worktree.path, base], cwd: worktree.path, locks: [`item:${worktree.item}`, `worktree:${worktree.path}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['git'], refreshAgainMs: null, outcome: 'finished', conflict: syncConflict },
   };
+}
+
+function isBranch(ref: string): boolean {
+  return BRANCH.test(ref) && !ref.includes('..');
+}
+
+/** The most refs a hand-off takes: sync.sh tries two at most, the health job two. */
+const HANDOFF_REFS_MAX = 10;
+
+/**
+ * `sync.handoff`: give a merge the console could not make to the flow's sync step. Writes the
+ * item's sync note (`<claim's worktree>/.flow/reports/<item>/sync.md`, one ref per line, as the
+ * health job writes it) with `refs` (newline separated, from the conflict record) or else the
+ * refs sync.sh would merge, then starts the item's run exactly as `run.start` does, so next.sh
+ * finds the note and runs the sync step first. Refused when there is nothing to hand off, a run
+ * record names the item, or an agent works in the worktree, each with its own reason.
+ */
+function planHandoff(args: Record<string, string>, context: ActionContext): PlanResult {
+  const found = syncTarget('sync.handoff', args['target'] ?? '', context);
+  if (!found.ok) return found;
+  const { worktree } = found;
+  if (worktree.dirtyFiles === null || worktree.behindBase === null) return fail(`git has not read ${worktree.name} yet; try again in a moment`);
+  if (worktree.dirtyFiles === 0 && worktree.behindBase === 0) return fail(`${worktree.name} is clean and has every commit of its base, so there is no merge to hand off`);
+  if (context.runItems.includes(worktree.item)) return fail(`a run record names ${worktree.item}; its run is going, and its next run starts with the sync step once a note is there`);
+  if (worktree.agentPids.length > 0) return fail(`an agent works in ${worktree.name} (pid ${worktree.agentPids.join(', ')}); a second run there would mix with its work`);
+  const base = worktree.claimBase ?? context.base;
+  if (!isBranch(base)) return fail(`the base ${base} is not a branch name git can merge`);
+  const given = args['refs'] === undefined ? null : args['refs'].split('\n').map((ref) => ref.trim()).filter((ref) => ref !== '');
+  if (given !== null) {
+    if (given.length === 0) return fail('refs is empty; leave it out to merge what sync.sh would');
+    if (given.length > HANDOFF_REFS_MAX) return fail(`at most ${HANDOFF_REFS_MAX} refs`);
+    const bad = given.find((ref) => !isBranch(ref));
+    if (bad !== undefined) return fail(`${bad} is not a ref git can merge`);
+  }
+  const started = planAction('run.start', { item: worktree.item }, context);
+  if (!started.ok) return started;
+  const { path: folder, item } = worktree;
+  const prepare = (): ReturnType<NonNullable<ActionPlan['prepare']>> => {
+    const refs = given ?? syncRefs(SYNC_SCRIPT, folder, base);
+    if (refs.length === 0) throw new Error(`sync.sh names no ref to merge into ${folder}`);
+    const written = writeSyncNote(folder, item, refs);
+    return {
+      output: `${written.output}console: starting the run for ${item}; its first step is sync, which merges these, resolves what it can and raises an escalation gate if a choice is yours\n`,
+      event: { name: 'sync.handoff', fields: { item, worktree: folder, refs, replaced: written.replaced } },
+    };
+  };
+  return { ok: true, plan: { ...started.plan, prepare } };
 }

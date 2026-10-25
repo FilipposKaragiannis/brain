@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseEvents } from '../events.ts';
 import { EVENTS_KEPT } from '../snapshot.ts';
+import { readSyncNote } from '../syncNote.ts';
 import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
 import type { CommandRunner } from './exec.ts';
@@ -38,6 +39,8 @@ export type ClaimRecord = {
   step: string;
   claimedAt: string;
   host: string;
+  /** The refs the item's sync note names (`<worktree>/.flow/reports/<item>/sync.md`), or null with none. */
+  syncPending: string[] | null;
 };
 
 export type FlowHomeFacts = {
@@ -141,14 +144,16 @@ async function readClaims(paths: string[]): Promise<ClaimRecord[]> {
     if (source === null) continue;
     try {
       const value = JSON.parse(source) as Record<string, unknown>;
+      const item = text(value, 'item');
       claims.push({
         worktreePath,
-        item: text(value, 'item'),
+        item,
         branch: text(value, 'branch'),
         base: text(value, 'base'),
         step: text(value, 'step'),
         claimedAt: text(value, 'claimed_at'),
         host: text(value, 'host'),
+        syncPending: item === '' ? null : await readSyncNote(worktreePath, item),
       });
     } catch { continue; }
   }

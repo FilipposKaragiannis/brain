@@ -150,7 +150,7 @@ export class ActionRunner {
     const now = this.deps.clock().toISOString();
     const record: ActionRecord = {
       id: randomUUID().replaceAll('-', '').slice(0, ID_CHARS), kind: 'refresh', args: {}, state: 'running', command: [], locks: [],
-      requestedAt: now, startedAt: null, endedAt: null, exitCode: null, timedOut: false, outcome: null, outputTail: '', outputBytes: 0, note: null,
+      requestedAt: now, startedAt: null, endedAt: null, exitCode: null, timedOut: false, outcome: null, outputTail: '', outputBytes: 0, note: null, conflict: null,
     };
     if (!isActionKind(kind)) return { status: HTTP_BAD_REQUEST, body: { error: `unknown action kind: ${String(kind)}`, action: this.reject(record, 'unknown kind') } };
     record.kind = kind;
@@ -213,6 +213,7 @@ export class ActionRunner {
     const entry: Live = { record, plan, output: '', handle: null, timeout: null, grace: null, notify: null };
     this.live.set(record.id, entry);
     record.startedAt = this.deps.clock().toISOString();
+    if (plan.prepare !== undefined && !this.prepare(entry, plan.prepare)) return;
     try {
       entry.handle = this.deps.spawner(plan, scriptEnvironment(), this.outputFile(record.id));
     } catch (error) {
@@ -240,6 +241,24 @@ export class ActionRunner {
     }
   }
 
+  /**
+   * Runs a plan's daemon-side step once its locks are held, before its process: its output opens
+   * the action's, and its event goes to the log. A step that throws fails the action, and the
+   * process never starts.
+   */
+  private prepare(entry: Live, step: NonNullable<ActionPlan['prepare']>): boolean {
+    try {
+      const prepared = step();
+      this.append(entry, prepared.output);
+      this.deps.log.info(prepared.event.name, { project: this.deps.projectId, id: entry.record.id, ...prepared.event.fields });
+      return true;
+    } catch (error) {
+      this.append(entry, `console: ${error instanceof Error ? error.message : String(error)}\n`);
+      void this.finish(entry, null, null);
+      return false;
+    }
+  }
+
   private append(entry: Live, text: string): void {
     const { record } = entry;
     record.outputBytes += Buffer.byteLength(text);
@@ -261,6 +280,7 @@ export class ActionRunner {
     record.state = code === 0 && !record.timedOut ? 'done' : 'failed';
     record.outcome = record.state === 'done' ? entry.plan.outcome : null;
     record.note = entry.plan.note?.(entry.output) ?? null;
+    record.conflict = entry.plan.conflict?.(entry.output) ?? null;
     this.outputs.set(record.id, entry.output);
     this.emit(record);
     this.deps.log.info('action.end', { project: this.deps.projectId, id: record.id, kind: record.kind, state: record.state, exit: record.exitCode, timedOut: record.timedOut });

@@ -1,10 +1,17 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { SYNC_SCRIPT } from '../src/actionPlan.ts';
+import type { ActionContext } from '../src/actionPlan.ts';
+import { ActionRunner, childProcessSpawner, realScheduler } from '../src/actions.ts';
+import type { Logger } from '../src/log.ts';
+import { silentLogger } from '../src/log.ts';
+import type { ActionRecord } from '../src/snapshot.ts';
+import { syncConflict, syncNotePath, syncRefs } from '../src/syncNote.ts';
+import { fakeSpawner, settle, until } from './fakeSpawner.ts';
 
 /**
  * The sync script against real git in a temporary folder: a remote, a main checkout that pushes
@@ -65,6 +72,87 @@ test('Sync_Conflict_AbortedAndTheFilesNamed', () => {
     assert.notEqual(run.status, 0, 'because a conflicting merge fails the action');
     assert.match(run.stdout, /conflicts, so the merge was aborted\. Conflicting files:\na\.txt/, 'because the owner needs to know which files to resolve by hand');
     assert.deepEqual([git(worktree, 'rev-parse', 'HEAD'), git(worktree, 'status', '--porcelain')], [head, ''], 'because an aborted merge leaves the worktree as it was');
+    assert.deepEqual(syncConflict(run.stdout), { refs: ['origin/main'], files: ['a.txt'] }, 'because the record carries what to hand to the flow');
+  } finally { cleanup(); }
+});
+
+test('Sync_UpstreamConflicts_EveryRefStillToMergeNamed', () => {
+  const { dir, git, main, worktree, commit, sync, cleanup } = repos();
+  try {
+    const other = path.join(dir, 'other');
+    git(dir, 'clone', '-q', '-b', 'flow/gh-7', path.join(dir, 'remote.git'), other);
+    commit(other, 'a.txt', 'pushed from elsewhere\n');
+    git(other, 'push', '-q', 'origin', 'flow/gh-7');
+    commit(main, 'b.txt', 'two\n');
+    git(main, 'push', '-q', 'origin', 'HEAD:main');
+    commit(worktree, 'a.txt', 'branch says\n');
+    const run = sync();
+    assert.deepEqual(syncConflict(run.stdout), { refs: ['origin/flow/gh-7', 'origin/main'], files: ['a.txt'] }, 'because the base the script never reached still needs merging, after the upstream, as the health job orders a diverged branch');
+  } finally { cleanup(); }
+});
+
+test('SyncRefs_TheRefsTheScriptWouldMerge_WithoutMerging', () => {
+  const { dir, git, main, worktree, commit, cleanup } = repos();
+  try {
+    const other = path.join(dir, 'other');
+    git(dir, 'clone', '-q', '-b', 'flow/gh-7', path.join(dir, 'remote.git'), other);
+    commit(other, 'c.txt', 'from elsewhere\n');
+    git(other, 'push', '-q', 'origin', 'flow/gh-7');
+    commit(main, 'b.txt', 'two\n');
+    git(main, 'push', '-q', 'origin', 'HEAD:main');
+    git(worktree, 'fetch', '-q', 'origin');
+    const head = git(worktree, 'rev-parse', 'HEAD');
+    assert.deepEqual(syncRefs(SYNC_SCRIPT, worktree, 'main'), ['origin/flow/gh-7', 'origin/main'], 'because a hand-off with no conflict record merges what sync.sh would, in its order');
+    assert.equal(git(worktree, 'rev-parse', 'HEAD'), head, 'because listing the refs merges nothing');
+  } finally { cleanup(); }
+});
+
+/** An action runner over the temp repos: the worktree is pool slot wt, claimed for gh#7. */
+async function runnerOver(worktree: string, dir: string, log: Logger, spawner = childProcessSpawner) {
+  const context: ActionContext = {
+    root: path.join(dir, 'main'), pluginRoot: path.join(dir, 'plugin'), repo: null, jobsHost: 'claude', pool: [worktree], outsideWorktrees: [], processCwds: [], sessions: [], terminal: null, installedTerminals: [], base: 'main',
+    worktrees: [{ name: 'wt', path: worktree, item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 1, agentPids: [] }], runItems: [],
+  };
+  const events: ActionRecord[] = [];
+  const actions = new ActionRunner({ projectId: 'p', context: () => context, spawner, scheduler: realScheduler, clock: () => new Date(), log, stateDir: path.join(dir, 'state'), onRefresh: () => {} });
+  actions.onChange((record) => events.push(record));
+  return { actions, events };
+}
+
+test('WorktreeSyncAction_RealConflict_RecordCarriesTheConflict', async () => {
+  const { dir, git, main, worktree, commit, cleanup } = repos();
+  try {
+    commit(main, 'a.txt', 'main says\n');
+    git(main, 'push', '-q', 'origin', 'HEAD:main');
+    commit(worktree, 'a.txt', 'branch says\n');
+    const { actions, events } = await runnerOver(worktree, dir, silentLogger);
+    const started = actions.request('worktree.sync', { target: 'wt' });
+    const id = (started.body as { action: ActionRecord }).action.id;
+    await until(() => events.some((record) => record.id === id && record.state !== 'running'), 20000);
+    const record = actions.get(id)!;
+    assert.deepEqual([record.state, record.outcome, record.conflict], ['failed', null, { refs: ['origin/main'], files: ['a.txt'] }], 'because a conflicted sync failed, did nothing, and says what to hand to the flow');
+    await actions.whenIdle();
+  } finally { cleanup(); }
+});
+
+test('SyncHandoffAction_NoRefsGiven_WritesWhatSyncWouldMergeThenStartsTheRun', async () => {
+  const { dir, git, main, worktree, commit, cleanup } = repos();
+  try {
+    commit(main, 'b.txt', 'two\n');
+    git(main, 'push', '-q', 'origin', 'HEAD:main');
+    git(worktree, 'fetch', '-q', 'origin');
+    const logged: [string, Record<string, unknown>][] = [];
+    const log: Logger = { ...silentLogger, info: (event, fields) => { logged.push([event, fields ?? {}]); } };
+    const fake = fakeSpawner({ failWith: null, detachedOutput: '' });
+    const { actions } = await runnerOver(worktree, dir, log, fake.spawner);
+    const outcome = actions.request('sync.handoff', { target: 'gh#7' });
+    assert.equal(outcome.status, 202, `because a branch behind its base with nothing running has a merge to hand on: ${JSON.stringify(outcome.body)}`);
+    assert.equal(readFileSync(syncNotePath(worktree, 'gh#7'), 'utf8'), 'origin/main\n', 'because the note names what sync.sh would merge, one ref per line');
+    assert.deepEqual(fake.processes[0]?.plan.args.slice(1), ['claude', 'gh#7', '--max-steps', '15'], "because the run starts as run.start starts the item's run");
+    assert.match((outcome.body as { action: ActionRecord }).action.outputTail, /wrote .*sync\.md[\s\S]*its first step is sync/, 'because the output says what was written and what runs first');
+    assert.deepEqual(logged.filter(([event]) => event === 'sync.handoff').map(([, fields]) => fields['refs']), [['origin/main']], 'because the hand-off is one log line with its refs');
+    await settle();
+    await actions.whenIdle();
   } finally { cleanup(); }
 });
 

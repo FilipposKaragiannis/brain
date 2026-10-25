@@ -197,7 +197,7 @@ test('TerminalOpen_CustomCommandWithCmd_GetsTheQuotedLine', () => {
   assert.equal(plan.args.at(-1), `cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'`, 'because {cmd} is the line to run, quoted for sh');
 });
 
-const CLEAN: SyncFacts = { name: 'app-wt-2', path: '/p/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, agentPids: [] };
+const CLEAN: SyncFacts = { name: 'app-wt-2', path: '/p/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 27, agentPids: [] };
 const SYNC: ActionContext = { ...CONTEXT, worktrees: [CLEAN, { ...CLEAN, name: 'app-wt-3', path: '/p/app-wt-3', item: 'gh#9', claimBase: 'epic/gh-300' }] };
 
 test('WorktreeSync_ByName_MergesTheProjectBaseWithTheSyncScript', () => {
@@ -234,6 +234,48 @@ test('WorktreeSync_UnclaimedUnknownOrNotRead_Refused', () => {
 
 test('WorktreeSync_BaseThatLooksLikeAnOption_Refused', () => {
   assert.equal(planAction('worktree.sync', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, claimBase: '--abort' }] }).ok, false, 'because a claim file must not hand git an option');
+});
+
+const refusal = (result: ReturnType<typeof planAction>): string => (result.ok ? '' : result.error);
+
+test('SyncHandoff_StartsTheItemsRunAsRunStartDoes', () => {
+  const plan = planned('sync.handoff', { target: 'app-wt-2', refs: 'origin/main' }, SYNC);
+  const { prepare, ...rest } = plan;
+  assert.deepEqual(rest, planned('run.start', { item: 'gh#7' }, SYNC), 'because the run is the one run.start starts for the item: detached, the item and next-job locks, the same re-reads');
+  assert.equal(typeof prepare, 'function', 'because the note is written in the daemon once the locks are held, before the run starts');
+});
+
+test('SyncHandoff_CleanAndUpToDate_RefusedNothingToHandOff', () => {
+  const result = planAction('sync.handoff', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, behindBase: 0 }] });
+  assert.match(refusal(result), /no merge to hand off/, 'because a sync step with nothing to merge would only spend a run');
+});
+
+test('SyncHandoff_RunRecordNamesTheItem_RefusedWithItsReason', () => {
+  const result = planAction('sync.handoff', { target: 'gh#7', refs: 'origin/main' }, { ...SYNC, runItems: ['gh#7'] });
+  assert.match(refusal(result), /run record names gh#7; its run is going/, 'because a second run of the item would race the first');
+});
+
+test('SyncHandoff_AgentInTheWorktree_RefusedWithItsReason', () => {
+  const result = planAction('sync.handoff', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, agentPids: [100] }] });
+  assert.match(refusal(result), /agent works in app-wt-2 \(pid 100\)/, 'because a run started under a working agent would mix with its work');
+});
+
+test('SyncHandoff_BadTargetOrRefs_Refused', () => {
+  assert.match(refusal(planAction('sync.handoff', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, item: null }] })), /not claimed/, 'because a free worktree has no item to run');
+  assert.match(refusal(planAction('sync.handoff', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, behindBase: null }] })), /not read/, 'because a worktree git has not read may have nothing to merge');
+  for (const refs of ['--abort', 'origin/main\n../x', 'a b', '']) {
+    assert.equal(planAction('sync.handoff', { target: 'app-wt-2', refs }, SYNC).ok, false, `because ${JSON.stringify(refs)} is not a list of refs git can merge`);
+  }
+  assert.equal(planAction('sync.handoff', { target: 'app-wt-2' }, { ...SYNC, pluginRoot: null }).ok, false, 'because without the plugin there is no run to start');
+});
+
+test('SyncHandoff_RefsOnePerLine_Accepted', () => {
+  assert.equal(planAction('sync.handoff', { target: 'app-wt-2', refs: 'origin/flow/gh-7\norigin/main\n' }, SYNC).ok, true, 'because the UI passes the conflict record\'s refs one per line, as the note holds them');
+});
+
+test('WorktreeSync_ReadsTheConflictFromItsOutput', () => {
+  const plan = planned('worktree.sync', { target: 'app-wt-2' }, SYNC);
+  assert.deepEqual(plan.conflict?.('console: merging origin/main conflicts, so the merge was aborted. Conflicting files:\na.txt\nconsole: still to merge: origin/main\n'), { refs: ['origin/main'], files: ['a.txt'] }, 'because the record carries the conflict for the hand-off');
 });
 
 test('TerminalOpen_WorktreeOutsideThePool_Allowed', () => {
