@@ -1,5 +1,17 @@
 # flow
 
+## 1.20.4 (2026-10-25)
+
+- The health job removes a sync note (`sync.md` in the item's reports) only once every ref it
+  names is merged into the task branch. Before, it removed the note whenever its own check found
+  nothing to sync (the branch has a PR, is close to its base, or waits at a gate), so a note
+  another writer left, such as the Brain Console handing a conflicted merge to the flow, was gone
+  within one cycle without a word. A note whose refs are all merged is removed and said once; one
+  with a ref not merged yet is kept and nothing new is said; one with a ref that does not resolve
+  is kept and said once, and the sync step escalates on it. When the health job writes its own
+  refs, the note keeps the refs already there that are not merged yet. `--dry-run` still changes
+  nothing.
+
 ## 1.20.3 (2026-10-25)
 
 - The test writer splits a test whose assertions can fail independently before it commits, and

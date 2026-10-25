@@ -662,20 +662,50 @@ health_at_gate() {
 # health_branch_notes <item> <path> <branch> <base> <dirty> <pr>: the branch sync for a worktree
 # with no live run and a clean tree. A merge only an agent can make goes in sync.md in the item's
 # reports, where next.sh finds it and runs the sync step before the item's own step. No
-# notification: the sync step raises a gate when the owner has to choose.
+# notification: the sync step raises a gate when the owner has to choose. A sync note can also come
+# from elsewhere (the Brain Console hands a conflicted merge to the flow the same way), so the
+# health job removes one only once every ref it names is merged into the branch, and a rewrite
+# keeps the refs already in the note that are not merged yet (or do not resolve).
 health_branch_notes() {
   [ "$5" -eq 0 ] || { health_sync=""; return 0; }
   health_branch_state "$1" "$2" "$3" "$4" "$6"
   [ "$dry" -eq 1 ] || rm -f "$health_reports/health.md"
+  hn_slug="$(item_slug "$1")"
+  health_note_refs "$2" "$3"
   if [ -n "$health_sync" ]; then
-    if health_changed "branch-$(item_slug "$1")" "$health_sync"; then
+    if health_changed "branch-$hn_slug" "$health_sync"; then
       health_say "$1" "$3 needs $(printf '%s' "$health_sync" | sed '$!s/$/ and/' | tr '\n' ' ')merged in, which the health job cannot do cleanly; the sync step does it on the item's next run"
     fi
-    [ "$dry" -eq 1 ] || { mkdir -p "$health_reports" && printf '%s' "$health_sync" > "$health_reports/sync.md"; }
-  else
-    health_cleared "branch-$(item_slug "$1")"
-    [ "$dry" -eq 1 ] || rm -f "$health_reports/sync.md"
+    hn_all="$health_sync"
+    for hn_ref in $hn_open $hn_bad; do
+      printf '%s' "$hn_all" | grep -qxF -- "$hn_ref" || hn_all="$hn_all$hn_ref
+"
+    done
+    [ "$dry" -eq 1 ] || { mkdir -p "$health_reports" && printf '%s' "$hn_all" > "$health_reports/sync.md"; }
+    return 0
   fi
+  health_cleared "branch-$hn_slug"
+  [ -f "$health_reports/sync.md" ] || { health_cleared "syncnote-$hn_slug"; return 0; }
+  if [ -n "$hn_bad" ]; then
+    if health_changed "syncnote-$hn_slug" "$hn_bad"; then
+      health_say "$1" "the sync note for $3 names $(printf '%s' "$hn_bad" | tr ' ' '\n' | grep . | sed '$!s/$/ and/' | tr '\n' ' ')which does not resolve; it is kept, and the sync step escalates on it"
+    fi
+  elif [ -z "$hn_open" ]; then
+    health_cleared "syncnote-$hn_slug"
+    if [ "$dry" -eq 1 ]; then health_say "$1" "would clear the sync note for $3: every ref it names is merged in"
+    else rm -f "$health_reports/sync.md"; health_say "$1" "cleared the sync note for $3: every ref it names is merged in"; fi
+  else health_cleared "syncnote-$hn_slug"; fi
+}
+
+# health_note_refs <path> <branch>: read the item's sync.md into hn_open (refs that resolve and are
+# not merged into the branch yet) and hn_bad (refs that do not resolve), space-separated.
+health_note_refs() {
+  hn_open=""; hn_bad=""
+  [ -f "$health_reports/sync.md" ] || return 0
+  for hn_ref in $(cat "$health_reports/sync.md"); do
+    if ! git -C "$1" rev-parse -q --verify "$hn_ref^{commit}" >/dev/null 2>&1; then hn_bad="$hn_bad $hn_ref"
+    elif ! git -C "$1" merge-base --is-ancestor "$hn_ref" "refs/heads/$2" 2>/dev/null; then hn_open="$hn_open $hn_ref"; fi
+  done
 }
 
 # health_empty <item> <path> <record> <last activity>: release a claim that holds nothing, under

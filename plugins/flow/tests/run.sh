@@ -1319,6 +1319,9 @@ commit_in "$wd" l2 >/dev/null; remote_commit "$bd" r2
 local_tip="$(git -C "$wd" rev-parse HEAD)"; remote_tip="$(git --git-dir="$hroot/origin.git" rev-parse "refs/heads/$bd")"
 hs > "$hroot/out" 2>&1
 check "health: a diverged branch goes to the sync step with its remote first, and its history is left alone" sh -c "[ \"\$(head -1 '$dr/sync.md')\" = 'origin/$bd' ] && [ \"\$(tail -1 '$dr/sync.md')\" = origin/main ] && [ \"\$(git -C '$wd' rev-parse HEAD)\" = '$local_tip' ] && [ \"\$(git --git-dir='$hroot/origin.git' rev-parse refs/heads/$bd)\" = '$remote_tip' ]"
+side="$(git -C "$wd" commit-tree "HEAD^{tree}" -p HEAD -m side)"; printf '%s\n' "$side" >> "$dr/sync.md"
+hs > "$hroot/out" 2>&1
+check "health: a rewritten sync note keeps a ref another writer put there that is not merged yet" sh -c "[ \"\$(cat '$dr/sync.md')\" = \"\$(printf 'origin/$bd\norigin/main\n$side')\" ]"
 
 python3 -c '
 import json, sys, time
@@ -1337,6 +1340,19 @@ hs > "$hroot/out" 2>&1
 check "health: a task branch with no remote counterpart is never pushed" sh -c "[ -z \"\$(git ls-remote --heads origin 'flow/$(item_slug "$e")')\" ] && [ -f '$we/.flow/claim.json' ]"
 hs > "$hroot/out" 2>&1
 check "health: a state it already said is not said again" grep -q 'nothing to do' "$hroot/out"
+der="$we/.flow/reports/$(item_slug "$e")"; mkdir -p "$der"
+git -C "$we" rev-parse HEAD~1 > "$der/sync.md"
+hs --dry-run > "$hroot/out" 2>&1
+check "health --dry-run: a sync note whose refs are merged is only said, and kept" sh -c "[ -f '$der/sync.md' ] && grep -q 'would clear the sync note' '$hroot/out'"
+hs > "$hroot/out" 2>&1
+check "health: a sync note written by another hand whose refs are all merged is removed, and said" sh -c "[ ! -f '$der/sync.md' ] && grep -q \"$e: cleared the sync note for flow/$(item_slug "$e"): every ref it names is merged in\" '$hroot/out'"
+git -C "$we" commit-tree "HEAD^{tree}" -p HEAD -m side > "$der/sync.md"; cp "$der/sync.md" "$hroot/note"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a sync note with a ref not merged yet is kept across runs, and nothing is said" sh -c "cmp -s '$der/sync.md' '$hroot/note' && ! grep -q 'sync note' '$hroot/out' '$hroot/out2'"
+printf 'console/gone\n' > "$der/sync.md"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a sync note with a ref that does not resolve is kept and said once" sh -c "[ \"\$(cat '$der/sync.md')\" = console/gone ] && grep -q 'names console/gone which does not resolve' '$hroot/out' && ! grep -q 'sync note' '$hroot/out2'"
+rm -f "$der/sync.md"
 "$P/scripts/next.sh" "$e" >/dev/null; age_run "$e" -
 printf '4242\t\tclaude -p Follow the brief. Work in %s.\n' "$we" > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
