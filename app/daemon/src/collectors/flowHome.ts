@@ -17,6 +17,8 @@ export type FlowConfig = {
   poolMax: number | null;
   schedule: Record<string, string>;
   behindBase: number | null;
+  /** jobs.host: the CLI the jobs run unattended, claude by default. */
+  jobsHost: string;
 };
 
 export type GateRecord = { item: string; gate: string; message: string; time: string; host: string };
@@ -68,6 +70,7 @@ export function parseFlowConfig(source: string): FlowConfig {
     poolMax: poolMax === null ? null : Number(poolMax),
     schedule,
     behindBase: behindBase === null ? null : Number(behindBase),
+    jobsHost: yamlString(map, 'jobs.host') ?? 'claude',
   };
 }
 

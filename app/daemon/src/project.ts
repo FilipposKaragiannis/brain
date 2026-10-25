@@ -12,6 +12,7 @@ import type { JobFacts } from './collectors/jobs.ts';
 import { readJobs } from './collectors/jobs.ts';
 import type { ProcessFacts } from './collectors/processes.ts';
 import { readProcesses } from './collectors/processes.ts';
+import type { ActionContext } from './actionPlan.ts';
 import type { Logger } from './log.ts';
 import { ageSeconds, reconcile } from './reconcile.ts';
 import type { Freshness, Snapshot, SourceName } from './snapshot.ts';
@@ -79,6 +80,12 @@ export class ProjectMonitor {
 
   get snapshot(): Snapshot | null { return this.current; }
 
+  /** What an action needs to know about the project right now. */
+  actionContext(): ActionContext {
+    const flow = this.facts.files.facts;
+    return { root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, repo: flow?.config.repo ?? null, jobsHost: flow?.config.jobsHost ?? 'claude' };
+  }
+
   onChange(listener: (snapshot: Snapshot) => void): () => void {
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
@@ -104,6 +111,7 @@ export class ProjectMonitor {
 
   /** Re-reads one source now. Concurrent calls for the same source share one read. */
   refresh(source: SourceName): Promise<void> {
+    if (!(source in this.facts)) return Promise.resolve();
     const running = this.inFlight.get(source);
     if (running !== undefined) return running;
     const read = this.read(source).finally(() => { this.inFlight.delete(source); });

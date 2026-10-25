@@ -1,8 +1,11 @@
+import { ActionRunner, childProcessSpawner } from './actions.ts';
 import { childProcessRunner } from './collectors/exec.ts';
 import { readConfig } from './config.ts';
 import { stderrLogger } from './log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
 import { createConsoleServer } from './server.ts';
+import type { ServedProject } from './server.ts';
+import type { SourceName } from './snapshot.ts';
 
 const EXIT_BAD_CONFIG = 2;
 const clock = (): Date => new Date();
@@ -15,20 +18,28 @@ if (!configuration.ok) {
 }
 const { config } = configuration;
 
-const monitors = config.projects.map((project) => new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE }));
-const server = createConsoleServer(monitors, { host: config.host, port: config.port, token: config.token, log });
+const served: ServedProject[] = config.projects.map((project) => {
+  const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE });
+  const actions = new ActionRunner({
+    projectId: project.id, context: () => monitor.actionContext(), spawner: childProcessSpawner, clock, log, stateDir: config.stateDir,
+    onRefresh: (sources) => { for (const source of sources) void monitor.refresh(source as SourceName); },
+  });
+  return { monitor, actions };
+});
+const monitors = served.map((entry) => entry.monitor);
+const server = createConsoleServer(served, { host: config.host, port: config.port, token: config.token, log });
 
 for (const monitor of monitors) {
   monitor.onChange((snapshot) => log.info('snapshot', { project: monitor.project.id, needsYou: snapshot.counts.needsYou, running: snapshot.counts.running, stale: snapshot.counts.stale, free: snapshot.counts.free, disagreements: snapshot.counts.disagreements }));
 }
 
 server.listen(config.port, config.host, () => {
-  log.info('listening', { url: `http://${config.host}:${config.port}`, projects: config.projects.map((project) => project.id).join(','), token: config.token !== null });
+  log.info('listening', { url: `http://${config.host}:${config.port}`, projects: config.projects.map((project) => project.id).join(','), token: config.token !== null, stateDir: config.stateDir });
 });
 await Promise.all(monitors.map((monitor) => monitor.start()));
 
 const shutdown = (): void => {
-  for (const monitor of monitors) monitor.stop();
+  for (const { monitor, actions } of served) { actions.stopAll(); monitor.stop(); }
   server.close(() => process.exit(0));
 };
 process.on('SIGINT', shutdown);

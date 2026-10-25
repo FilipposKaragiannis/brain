@@ -24,6 +24,9 @@ Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, a heartbeat every 15s |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board>` | re-read one source now (all when omitted) |
+| `POST /api/projects/<id>/actions` | run one action, body `{"kind","args"}`; 202 with the record, 400 on a bad request, 409 when its lock is held |
+| `GET /api/projects/<id>/actions` | the recent 50 actions, newest first, with the output tail |
+| `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
 `daemon/src/snapshot.ts` is the contract. One `Snapshot` per project: `project`, `sources`
@@ -56,8 +59,31 @@ host is open in the folder).
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
 
-The daemon never writes to a project. The next slice adds actions: every button in the UI runs a
-flow script through the daemon, which streams its output and logs it.
+The daemon itself never writes to a project. Every write goes through an action.
+
+## Actions
+An action is one flow script, run by path with argv and never through a shell, with every
+argument checked against a shape first. The event stream carries `event: action` with the record
+on every state change and at most twice a second while output arrives.
+
+| Kind | Args | Runs | Lock |
+|---|---|---|---|
+| `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item |
+| `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item, or the next job |
+| `job.run` `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job |
+| `worktree.claim` | `item` | `steward.sh claim <item>` | the pool |
+| `worktree.release` | `target`, `force?` | `steward.sh release <target> [--force]` | the pool |
+| `steward.sweep` `steward.health` | | `steward.sh sweep` / `health` | the pool |
+| `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR |
+| `refresh` | `source?` | re-reads the sources in the daemon | none |
+
+A second action on a held lock is refused with 409 and recorded as `rejected`. At most four run
+at once. Scripts get two minutes, the steward ten, a merge three; a run started with `run.start`
+is detached and never killed. When an action ends the sources it changed are re-read.
+
+Every finished action is one line in `~/.local/state/brain-console/<project>/actions.jsonl`,
+with its full output in `actions/<id>.log` beside it (`--state-dir` or `BRAIN_CONSOLE_STATE`
+moves it). Nothing is written inside the project except what the scripts themselves write.
 
 ## Reconciliation
 `daemon/src/reconcile.ts` is a pure function from the collected facts to the snapshot, with the

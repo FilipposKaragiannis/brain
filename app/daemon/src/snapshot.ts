@@ -214,3 +214,42 @@ export type Snapshot = {
   events: FlowEvent[];
   disagreements: Disagreement[];
 };
+
+/*
+ * Actions: every write the console makes goes through a flow script that the daemon runs. The
+ * record below is what `POST /api/projects/<id>/actions` returns and what the `action` event on
+ * the stream carries. `outputTail` is the last few kilobytes; `GET .../actions/<id>` has it all.
+ */
+export type ActionKind =
+  | 'gate.clear'
+  | 'run.start'
+  | 'job.run'
+  | 'job.stop'
+  | 'job.pause'
+  | 'job.resume'
+  | 'worktree.claim'
+  | 'worktree.release'
+  | 'steward.sweep'
+  | 'steward.health'
+  | 'pr.merge'
+  | 'refresh';
+export type ActionState = 'queued' | 'running' | 'done' | 'failed' | 'rejected';
+
+export type ActionRecord = {
+  id: string;
+  kind: ActionKind;
+  args: Record<string, string>;
+  state: ActionState;
+  /** The program and its arguments as run, for the audit trail and the UI. */
+  command: string[];
+  /** What the action holds while it runs: an item, a worktree, a job, a PR or the pool. */
+  lock: string | null;
+  requestedAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  exitCode: number | null;
+  timedOut: boolean;
+  outputTail: string;
+  outputBytes: number;
+  output?: string;
+};
