@@ -298,3 +298,11 @@ a.button { color: inherit; text-decoration: none; display: inline-block; }
 .flow-raw summary { cursor: pointer; font-weight: 600; }
 .flow-raw textarea { width: 100%; box-sizing: border-box; margin-top: 8px; font-size: 12px; }
 .flow-raw .flow-save { padding: 8px 0 0; }
+
+/* An agent's transcript, folded under its row */
+.transcript summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+.transcript-turns { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; max-height: 360px; overflow-y: auto; }
+.turn { display: grid; gap: 2px; padding: 6px 10px; border-left: 2px solid var(--line); }
+.turn-assistant { border-left-color: var(--ink-soft); }
+.turn-meta { font-size: 11px; color: var(--muted); }
+.turn-text { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }

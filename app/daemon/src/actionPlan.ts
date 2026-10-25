@@ -1,7 +1,7 @@
 import path from 'node:path';
-import type { ActionKind, ActionOutcome, TerminalName, TerminalSetting } from './snapshot.ts';
+import type { ActionKind, ActionOutcome, SessionRef, TerminalName, TerminalSetting } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
-import { terminalLaunch } from './terminal.ts';
+import { sessionLaunch, terminalLaunch } from './terminal.ts';
 
 /** What a sync needs to know of one pool worktree, from the latest snapshot. */
 export type SyncFacts = {
@@ -17,6 +17,9 @@ export type SyncFacts = {
   agentPids: number[];
 };
 
+/** A process's session as the snapshot lists it: where it ran, how to resume it, and whether the process still runs. */
+export type SessionFacts = { pid: number; cwd: string; session: SessionRef; alive: boolean };
+
 /** What an action needs from the project before it can be planned. */
 export type ActionContext = {
   root: string;
@@ -29,6 +32,8 @@ export type ActionContext = {
   outsideWorktrees: string[];
   /** The working directory of every agent and session the snapshot lists, so only those in this project's worktrees. */
   processCwds: string[];
+  /** The sessions of the agents and sessions the snapshot lists (alive) and of those that ended since (not alive). */
+  sessions: SessionFacts[];
   /** The terminal chosen in Settings, or null for the first installed one. */
   terminal: TerminalSetting | null;
   /** The terminals installed, first choice first. */
@@ -78,7 +83,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'steward.health': [],
   'jobs.install': [],
   'pr.merge': ['pr', 'method'],
-  'terminal.open': ['path', 'job'],
+  'terminal.open': ['path', 'job', 'session'],
   refresh: ['source'],
 };
 
@@ -100,6 +105,7 @@ const MESSAGE_LIMIT_CHARS = 10000;
 const ITEM_ID = /^(gh#[1-9][0-9]*|local:[a-z]+\/[1-9][0-9]*)$/;
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
+const PID = /^[1-9][0-9]*$/;
 const MAX_STEPS = /^[1-9][0-9]{0,2}$/;
 const MERGE_METHODS = ['squash', 'merge', 'rebase'];
 /** A branch name git takes without reading it as an option or a range. */
@@ -207,6 +213,8 @@ function planTerminal(args: Record<string, string>, context: ActionContext): Pla
   if (!path.isAbsolute(asked)) return fail('terminal.open needs an absolute path');
   const folder = path.resolve(asked);
   const allowed = [context.root, ...context.pool, ...context.outsideWorktrees, ...context.processCwds].map((entry) => path.resolve(entry));
+  const session = args['session'];
+  if (session !== undefined) return planSession(folder, session, args, context);
   if (!allowed.includes(folder)) return fail(`${folder} is not the project root, a worktree the console lists or the folder of a listed agent or session`);
   let run: string[] | null = null;
   const job = args['job'];
@@ -219,6 +227,23 @@ function planTerminal(args: Record<string, string>, context: ActionContext): Pla
     run = ['tail', '-n', LOG_LINES, '-f', log];
   }
   const launch = terminalLaunch(context.terminal, context.installedTerminals, folder, run);
+  if (!launch.ok) return launch;
+  return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
+}
+
+/**
+ * `terminal.open` with `session` (a pid): a terminal at the folder that process ran in, with its
+ * resume command typed but not run while the process still runs, or run at once once it ended.
+ * Only a session the snapshot lists, and only in its own folder: `claude --resume` finds a
+ * session by the folder it was started in.
+ */
+function planSession(folder: string, pid: string, args: Record<string, string>, context: ActionContext): PlanResult {
+  if (!PID.test(pid)) return fail('session must be the pid of an agent or session the console lists');
+  if (args['job'] !== undefined) return fail('terminal.open takes a job or a session, not both');
+  const found = context.sessions.find((entry) => String(entry.pid) === pid);
+  if (found === undefined) return fail(`the console knows no session for pid ${pid}: its transcript was not found, or it ended over a day ago`);
+  if (path.resolve(found.cwd) !== folder) return fail(`pid ${pid} ran in ${found.cwd}; its session opens there, not in ${folder}`);
+  const launch = sessionLaunch(context.terminal, context.installedTerminals, folder, found.session.resume, found.alive);
   if (!launch.ok) return launch;
   return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
 }

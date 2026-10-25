@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 1;
+export const SNAPSHOT_SCHEMA_VERSION = 2;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -102,10 +102,20 @@ export type Claim = {
 };
 
 /**
- * A claude or codex process with its working directory in a worktree. The command is trimmed to
- * `PROCESS_COMMAND_CHARS`.
+ * The session a claude or codex process writes: its id, the transcript file, and the argv that
+ * opens it again (`claude --resume <id>`, `codex resume <id>`). A running `claude -p` cannot be
+ * attached to; once it ends, the resume command picks the session up where it stopped.
  */
-export type ProcessInfo = { pid: number; host: AgentHost; command: string; elapsedSeconds: number };
+export type SessionRef = { host: AgentHost; id: string; transcript: string; resume: string[] };
+
+/** One turn of a transcript with text in it, as `GET .../agents/<pid>/transcript` returns it. */
+export type TranscriptTurn = { at: string | null; role: 'user' | 'assistant'; text: string };
+
+/**
+ * A claude or codex process with its working directory in a worktree. The command is trimmed to
+ * `PROCESS_COMMAND_CHARS`. `session` is its transcript, or null when none was found (yet).
+ */
+export type ProcessInfo = { pid: number; host: AgentHost; command: string; elapsedSeconds: number; session: SessionRef | null };
 
 /** How much of a process's command line the snapshot carries. */
 export const PROCESS_COMMAND_CHARS = 200;
@@ -207,7 +217,16 @@ export type Agent = {
   item: string | null;
   elapsedSeconds: number;
   command: string;
+  /** Its transcript and how to resume it, or null when none was found. */
+  session: SessionRef | null;
 };
+
+/** An agent or session that ended while the daemon watched, kept so its session can still be opened. */
+export type EndedAgent = Agent & { endedAt: string };
+
+/** How many ended agents and sessions the snapshot keeps, and for how long. */
+export const ENDED_KEPT = 10;
+export const ENDED_KEPT_HOURS = 24;
 
 export type PullRequest = {
   number: number;
@@ -339,6 +358,8 @@ export type Snapshot = {
   gates: Gate[];
   runs: Run[];
   agents: Agent[];
+  /** Agents and sessions with a transcript that ended in the last day while the daemon watched, newest first. */
+  ended: EndedAgent[];
   jobs: Job[];
   pulls: PullRequest[];
   events: FlowEvent[];

@@ -101,6 +101,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings}` (below) |
 | `PUT /api/projects/<id>/plugins/flow/config` | change it, body `{"changes": [{"path", "value"}], "hash", "force"?}` or `{"text", "hash", "force"?}`; 200 with the new document plus `saved` and `followUps`, 400 with the reason, 409 with `reason: "stale"` or `"dirty"` |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
+| `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns: [{at, role, text}]}`: the last `n` turns with text (default 20, at most 200) of the claude transcript of an agent or session in `agents` or `ended`, oldest first; user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results; read from the last 4 MB of the file. 404 for a pid not listed or without a transcript, 400 for a codex session or a bad `lines` |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
@@ -109,9 +110,10 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract. One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 2 since processes carry their
+session. One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
-a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `jobs`, `pulls`, `events`
+a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`) and `disagreements`. Timestamps are
 ISO UTC; every age is seconds at `takenAt`, so a reader keeps counting on its own clock between
 snapshots.
@@ -122,10 +124,23 @@ snapshots.
   (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
   variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
   `jobsHost` (`jobs.host`, the CLI the jobs run) and `poolMax`.
-- A worktree carries `agents` and `sessions`, each a list of `{pid, host, command, elapsedSeconds}`
-  (the command cut to 200 characters), `item`, `itemUrl` and `itemTitle` (from the board, null
+- A worktree carries `agents` and `sessions`, each a list of `{pid, host, command, elapsedSeconds,
+  session}` (the command cut to 200 characters), `item`, `itemUrl` and `itemTitle` (from the board, null
   without an item or before the board is read), and `staleReason`: "branch is 35 commits behind
   main (limit 20)", "claimed 6 days ago with no run, agent or gate", both joined with "; ", or null.
+- `session` (on those and on every entry of `agents`) is the process's transcript,
+  `{host, id, transcript, resume}`, or null when none was found. For claude it is the newest
+  `*.jsonl` in `~/.claude/projects/<cwd with every character but letters and digits made "-">/`
+  written at or after the process started (now minus its elapsed time, with two seconds for ps's
+  rounding); the id is the file name. For codex `~/.codex/session_index.jsonl` has ids and thread
+  names but no folder, so the session files under `~/.codex/sessions/<yyyy>/<mm>/<dd>/` (the
+  start's day back to fourteen days) are read instead: the newest written since the start whose
+  first line, `session_meta`, names the same cwd; the id is its `payload.id`. `resume` is the argv
+  that opens it again: `["claude", "--resume", id]` or `["codex", "resume", id]`. The home folder
+  and the clock are injected (`daemon/src/collectors/sessions.ts`).
+- `ended` lists the agents and sessions with a session that left the process list while the
+  daemon watched, in the last 24 hours, at most 10, newest first: an `agents` entry plus `endedAt`
+  (when the read that missed it ran). It lives in the daemon's memory, so a restart empties it.
 - An item's `url` is its tracker page, from the board.
 - A gate carries `pull`: `{number, url, state, unresolvedThreads}` for its item's open PR (the one
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
@@ -258,7 +273,7 @@ on every state change and at most twice a second while output arrives.
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
 | `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
-| `terminal.open` | `path`, `job?` | a terminal window in `path` (below) | none | `finished` |
+| `terminal.open` | `path`, `job?`, `session?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
 `ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
@@ -291,6 +306,17 @@ Ghostty with the line as the one word after `-e` (assumed to work whether Ghostt
 through a shell or joins its `-e` words into one shell string; not tried on every version), a custom command with `{cmd}` replaced by the line. The line is
 `cd <path> && tail -n 200 -f <log>` with every word quoted for sh and then for AppleScript, so a
 path with a space or a quote stays one word. Nothing is locked or re-read.
+
+With `session` (the pid of an agent or session in `agents` or `ended` whose transcript was found;
+`job` with it is refused) the window opens in the folder that process ran in (`path` must be it:
+`claude --resume` finds a session by its folder) with its resume command. A running `claude -p`
+or `codex exec` cannot be attached to, and a second writer on its session would mix with it, so
+while the process is alive the command waits for the owner: iTerm types it without pressing Enter
+(`write text "<cmd>" newline NO` after `write text "cd <path>"`, through `osascript`); Terminal
+cannot type without running, so `do script` prints it (`echo`) and leaves the shell; Ghostty does
+the same with the line after `-e`, then `exec "${SHELL:-/bin/sh}" -l` keeps a shell; a custom
+command gets that line in `{cmd}`. Once the process has ended the command runs at once in all of
+them.
 
 An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
@@ -375,7 +401,12 @@ worktree is clean, has no run record and no agent, else the same words without t
 legend for dirty, agents and sessions; Open in Terminal on every row, the project root
 included, Release, Health), Agents and jobs (Open in Terminal on every agent and session row, in
 its working directory; Run, Stop, Pause, Resume and Open in Terminal, which follows the job's log,
-on every job), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
+on every job; an agent or session whose transcript was found also gets Open session, which runs
+`terminal.open` with its pid, titled "Opens a terminal at the worktree with the resume command
+ready. The run is still going, so press Enter once it ends." while it runs, and a Transcript fold
+under a claude row with its last 20 turns, read when opened and again with each snapshot; a table
+"Ended in the last day" lists `ended` with Open session, titled "Opens a terminal at the worktree
+and resumes the session.", Open in Terminal and the Transcript fold), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s). A row above every screen holds the project's fields, each a small uppercase label over its

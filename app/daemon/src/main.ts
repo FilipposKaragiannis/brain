@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { childProcessRunner } from './collectors/exec.ts';
+import { diskSessionFiles, SessionLocator } from './collectors/sessions.ts';
 import { privateFolder, readConfig, startReport } from './config.ts';
 import { install, startFailure, status, uninstall } from './launchd.ts';
 import type { LaunchdDependencies } from './launchd.ts';
@@ -75,10 +76,12 @@ if (!configuration.ok) {
 }
 const { config } = configuration;
 const installed = () => installedTerminals(existsSync, os.homedir());
+/** One locator for every project: it caches what it read of the Codex session files. */
+const sessions = new SessionLocator({ home: os.homedir(), clock, files: diskSessionFiles });
 
 /** A project's monitor and runner. The runner reads the terminal setting at request time, so a change in Settings counts at once. */
 const serve = (project: ProjectDefinition) => {
-  const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE, sessions });
   const actions = new ActionRunner({
     projectId: project.id, context: () => ({ ...monitor.actionContext(), terminal: settings.terminal(), installedTerminals: installed() }), spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
     onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },

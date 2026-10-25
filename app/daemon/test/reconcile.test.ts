@@ -319,7 +319,7 @@ test('Worktree_CodexDesktopServerInIt_NoSession', async () => {
 
 test('Worktree_Agent_PidHostCommandAndElapsed', async () => {
   const [agent] = worktree(await snapshot(), 'project-wt-3')?.agents ?? [];
-  assert.deepEqual(agent, { pid: 100, host: 'claude', command: '/usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto', elapsedSeconds: 942 }, 'because the card says which host runs, what it was asked and for how long');
+  assert.deepEqual(agent, { pid: 100, host: 'claude', command: '/usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto', elapsedSeconds: 942, session: null }, 'because the card says which host runs, what it was asked and for how long, and no transcript is found without a session locator');
 });
 
 test('Worktree_BehindAndIdle_StaleReasonNamesBoth', async () => {

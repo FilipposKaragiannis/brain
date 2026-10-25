@@ -76,3 +76,56 @@ export function terminalLaunch(setting: TerminalName | { command: string[] } | n
       return { ok: true, launch: { command: 'open', args: ['-na', 'Ghostty', '--args', `--working-directory=${folder}`, ...(line === null ? [] : ['-e', line])] } };
   }
 }
+
+/** A word a person can read and type: plain when sh would read it back whole, else quoted. */
+function typedWord(word: string): string {
+  return /^[A-Za-z0-9_./:=@%+,-]+$/.test(word) ? word : shellQuote(word);
+}
+
+/** The resume command as the owner would type it, such as `claude --resume 8f3c…`. */
+export function commandText(argv: string[]): string {
+  return argv.map(typedWord).join(' ');
+}
+
+/** After the line, the window keeps a shell, so Ghostty and a custom command do not close when the command ends. */
+const KEEP_SHELL = 'exec "${SHELL:-/bin/sh}" -l';
+
+/**
+ * How to hand the owner a session: a terminal at `folder` with its resume command. While the
+ * process still runs (`alive`) the command must not run yet (two writers on one session), so
+ * iTerm types it without pressing Enter (`write text … newline NO`); Terminal and Ghostty cannot
+ * type without running, so they print it with `echo` and leave the shell. Once the process has
+ * ended the command runs at once. A custom command gets the same line as Terminal in `{cmd}`.
+ */
+export function sessionLaunch(setting: TerminalName | { command: string[] } | null, installed: TerminalName[], folder: string, resume: string[], alive: boolean): LaunchResult {
+  const chosen = setting ?? installed[0] ?? null;
+  if (chosen === null) return { ok: false, error: 'no terminal app found (iTerm, Ghostty or Terminal); pick one or set a command in Settings' };
+  const typed = commandText(resume);
+  const printed = `echo ${shellQuote('The run is still going. Once it ends, resume its session with:')} && echo ${shellQuote(typed)}`;
+  const line = `cd ${shellQuote(folder)} && ${alive ? printed : typed}`;
+  if (typeof chosen === 'object') {
+    const words = chosen.command.map((word) => word.replaceAll('{qpath}', shellQuote(folder)).replaceAll('{path}', folder).replaceAll('{cmd}', `${line}; ${KEEP_SHELL}`));
+    const withPath = chosen.command.some((word) => word.includes('{path}') || word.includes('{qpath}')) ? words : [...words, folder];
+    const [command, ...args] = withPath;
+    return { ok: true, launch: { command: command ?? '', args } };
+  }
+  switch (chosen) {
+    case 'iterm': {
+      const script = [
+        'tell application "iTerm"',
+        'activate',
+        'set sessionWindow to (create window with default profile)',
+        'tell current session of sessionWindow',
+        `write text ${appleScriptString(`cd ${shellQuote(folder)}`)}`,
+        `write text ${appleScriptString(typed)}${alive ? ' newline NO' : ''}`,
+        'end tell',
+        'end tell',
+      ];
+      return { ok: true, launch: { command: 'osascript', args: script.flatMap((statement) => ['-e', statement]) } };
+    }
+    case 'terminal':
+      return { ok: true, launch: { command: 'osascript', args: ['-e', `tell application "Terminal" to do script ${appleScriptString(line)}`, '-e', 'tell application "Terminal" to activate'] } };
+    case 'ghostty':
+      return { ok: true, launch: { command: 'open', args: ['-na', 'Ghostty', '--args', `--working-directory=${folder}`, '-e', `${line}; ${KEEP_SHELL}`] } };
+  }
+}
