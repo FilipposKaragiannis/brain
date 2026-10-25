@@ -515,6 +515,10 @@ process list from `processes`, issue state and labels from `board`, pull request
 real disagreement can therefore take up to one board cycle, about two minutes, to show. One that
 goes away in between starts over. A source whose latest read failed does not hold a disagreement
 back: it may show, and the source's red light on the strip says how far to trust it.
+A claim whose step differs from the issue's is not shown at all while a run of the item goes (a
+run record names it or an agent works in its worktree), since the run moves the step itself, and
+once the run has ended it shows only after a board read that started after the end, on top of
+that rule.
 
 Every disagreement carries `explain`, one plain sentence saying what each store says and which is
 usually right, and `action`, the button that settles it (`{kind, args, label}`) or null when a

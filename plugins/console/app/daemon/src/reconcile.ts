@@ -380,9 +380,21 @@ const SYNC_STEP = 'sync';
 const RUN_HEALTH: DisagreementAction = { kind: 'steward.health', args: {}, label: 'Run the health check' };
 
 /**
+ * Whether a run of the item goes: a run record names it, or an agent process sits in its
+ * worktree. next.sh writes the claim's step before the tracker's, so while a run goes a step
+ * mismatch is lag, not a disagreement, and it is not found at all. That is the whole rule:
+ * a disagreement that is not found is forgotten by the settler, so once the run ends (the
+ * rebuild in which the run record and the agent are gone) it is first seen afresh and shows
+ * only after a board read that started after that rebuild, on top of the usual settle rule.
+ */
+function runLive(input: ReconcileInput, context: WorktreeContext, item: string): boolean {
+  return context.agents.length > 0 || input.flow.runs.some((run) => run.item === item);
+}
+
+/**
  * The claim's step differs from the tracker's. The button writes the claim's step to the
  * tracker, as advance.sh does at a step change; not for the sync step, which runs ahead of the
- * item's own step and never moves it.
+ * item's own step and never moves it. Found only while no run of the item goes (`runLive`).
  */
 function stepMismatch(claim: ClaimRecord, worktree: string, trackerStep: string): Disagreement {
   const says = `The claim in ${worktree} says ${claim.item} is at step ${claim.step}, while the issue says ${trackerStep}`;
@@ -415,7 +427,7 @@ function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], 
       });
     }
     const claimed = context.claim === null ? null : board.get(context.claim.item) ?? null;
-    if (context.claim !== null && claimed !== null && claimed.state.step !== '' && claimed.state.step !== context.claim.step) {
+    if (context.claim !== null && claimed !== null && claimed.state.step !== '' && claimed.state.step !== context.claim.step && !runLive(input, context, context.claim.item)) {
       out.push(stepMismatch(context.claim, context.name, claimed.state.step));
     }
     if (context.claim !== null && claimed !== null && claimed.state.worktree !== '' && claimed.state.worktree !== context.name) {
