@@ -66,7 +66,9 @@ job_start "$host"
 idle="$(job_log_dir)/next.idle"   # shared by the workers: one notice, not one per worker
 case "$code" in 0|4|6) rm -f "$idle" ;; esac
 case "$code" in
-  0|6) job_say "done" ;;
+  0) job_say "done" ;;
+  6) said="$(tail -n 5 "$(job_log_dir)/$job.log" | grep 'is split and every child is closed' | tail -1)"
+     job_say "${said:-done}" ;;
   4) job_say "stopped at a gate (see $(flow_home)/gates)" ;;
   5) job_say "quiet: nothing ready"
      if [ "$(cfg notify.idle)" = "true" ] && (set -C; : > "$idle") 2>/dev/null; then

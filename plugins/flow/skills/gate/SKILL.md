@@ -27,7 +27,7 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
 | gate | the owner confirms |
 |---|---|
 | `interview` | the recap of the spec is right, or says what to change |
-| `decomposition` | the task list, sizes and blockers, before the sub-items are created |
+| `decomposition` | the task list, sizes and blockers. A task whose plan made tracker tasks is already split (step `split`, its worktree back to the pool); to keep it whole, close its children, then clear: the plan step runs again |
 | `plan-approval` | `plan.md`, or sends it back with the change |
 | `feel-test` | they launched it and it feels right |
 | `merge` | the PR is merged; the next `next` job clears it and frees the worktree (`steward.sh sweep`), or run the sweep now |

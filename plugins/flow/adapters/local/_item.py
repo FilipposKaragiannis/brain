@@ -9,7 +9,9 @@ Usage (always from the shell scripts):
   _item.py write-state <home> <id> key=value...
   _item.py comment <home> <id> <text>
   _item.py close <home> <id> [<text>]
-  _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME]
+  _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME]
+
+An item's open_children counts the open items whose parent it is.
 """
 import glob
 import json
@@ -100,7 +102,16 @@ def item_path(home, item_id):
     return os.path.join(home, "items", kind, n + ".md")
 
 
-def to_json(path, meta, body):
+def open_children(home):
+    counts = {}
+    for path in glob.glob(os.path.join(home, "items", "*", "*.md")):
+        meta, _ = parse(path)
+        if meta.get("parent") and meta.get("status", "open") == "open":
+            counts[meta["parent"]] = counts.get(meta["parent"], 0) + 1
+    return counts
+
+
+def to_json(path, meta, body, children=None):
     state = {k: meta.get(k, [] if k == "touches" else (0 if k == "attempts" else "")) for k in STATE_KEYS}
     if not state["gate"]:
         state["gate"] = "none"
@@ -113,6 +124,9 @@ def to_json(path, meta, body):
         "labels": meta.get("labels", []),
         "blocked_by": meta.get("blocked_by", []),
         "parent": meta.get("parent", ""),
+        "priority": meta.get("priority", ""),
+        "area": meta.get("area", ""),
+        "open_children": (children or {}).get(meta.get("id", ""), 0),
         "state": state,
         "url": path,
         "body": body,
@@ -122,14 +136,14 @@ def to_json(path, meta, body):
 def cmd_list(home, args):
     want_all = "--all" in args
     kind = args[args.index("--kind") + 1] if "--kind" in args else None
-    items = []
+    items, children = [], open_children(home)
     for path in sorted(glob.glob(os.path.join(home, "items", "*", "*.md")), key=natural_key):
         meta, body = parse(path)
         if kind and meta.get("kind") != kind:
             continue
         if not want_all and meta.get("status", "open") != "open":
             continue
-        items.append(to_json(path, meta, body))
+        items.append(to_json(path, meta, body, children))
     print(json.dumps(items))
 
 
@@ -144,7 +158,7 @@ def cmd_read(home, args):
     if not os.path.exists(path):
         raise SystemExit("flow: no such item %s" % args[0])
     meta, body = parse(path)
-    print(json.dumps(to_json(path, meta, body)))
+    print(json.dumps(to_json(path, meta, body, open_children(home))))
 
 
 def cmd_write_state(home, args):
@@ -191,7 +205,7 @@ def cmd_close(home, args):
 
 def cmd_create(home, args):
     kind, title, rest = args[0], args[1], args[2:]
-    opt = {"size": "", "blocked_by": [], "body": "", "labels": [], "parent": "", "area": ""}
+    opt = {"size": "", "blocked_by": [], "body": "", "labels": [], "parent": "", "area": "", "priority": ""}
     i = 0
     while i < len(rest):
         if rest[i] == "--size":
@@ -206,6 +220,8 @@ def cmd_create(home, args):
             opt["parent"] = rest[i + 1]; i += 2
         elif rest[i] == "--area":
             opt["area"] = rest[i + 1]; i += 2
+        elif rest[i] == "--priority":
+            opt["priority"] = rest[i + 1]; i += 2
         else:
             raise SystemExit("flow: unknown option %s" % rest[i])
     folder = os.path.join(home, "items", kind)
@@ -218,8 +234,9 @@ def cmd_create(home, args):
             "blocked_by": opt["blocked_by"], "labels": opt["labels"], "parent": opt["parent"], "step": "", "profile": "",
             "worktree": "", "attempts": 0, "gate": "none", "last_event": "", "pr": "", "touches": [],
             "created": now()}
-    if opt["area"]:
-        meta["area"] = opt["area"]
+    for key in ("area", "priority"):
+        if opt[key]:
+            meta[key] = opt[key]
     dump(os.path.join(folder, "%d.md" % n), meta, "# %s\n\n%s\n" % (title, opt["body"]))
     print(item_id)
 

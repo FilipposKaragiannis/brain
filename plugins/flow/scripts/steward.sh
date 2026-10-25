@@ -15,10 +15,17 @@
 #                                                worktree and every pool worktree
 #   steward.sh sweep [--dry-run]                 release each worktree whose work landed: its item
 #                                                is closed, or its PR is merged
+#   steward.sh split <item>                      a task split into tracker tasks waits on its
+#                                                children: step split, its worktree released
+#                                                (kept when dirty), its branch kept when it holds
+#                                                commits past the base
+#   steward.sh keep-whole <item>                 the owner kept it whole: no split until its plan
+#                                                step rewrites plan.md (kept-whole <item> asks)
 #   steward.sh health [--dry-run] [--host H] [--wait]
 #                                                check every claim: clear a dead run, release an
-#                                                empty claim, resume cut-off work, sync branches,
-#                                                remind on old gates, say when the pool is stuck
+#                                                empty claim, finish a split, resume cut-off work,
+#                                                sync branches, remind on old gates, say when the
+#                                                pool is stuck
 # A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named
 # after the last pool entry (../app-wt-3 after ../app-wt-2). worktree_copy lists ignored paths
 # copied from the main worktree when the new one lacks them (.claude/settings.local.json);
@@ -122,9 +129,12 @@ cmd_release() {
     die "$p has uncommitted changes. Not resetting. Commit or stash them, then release again (escalation)." 3
   fi
   git -C "$p" switch -q --detach "$(base_ref "$base")" || die "cannot detach $p at $(base_ref "$base")"
+  # The branch goes only when the base holds every commit of it: git branch -d alone would also
+  # delete one that is merged into its upstream but ahead of the base.
   if [ -n "$branch" ] && git -C "$p" show-ref --verify --quiet "refs/heads/$branch"; then
     if [ "$force" -eq 1 ]; then git -C "$p" branch -q -D "$branch"
-    elif ! git -C "$p" branch -q -d "$branch" 2>/dev/null; then echo "flow: $branch is not merged; kept. Use --force to delete it." >&2; fi
+    elif ! git -C "$p" merge-base --is-ancestor "refs/heads/$branch" "$(base_ref "$base")" 2>/dev/null ||
+         ! git -C "$p" branch -q -d "$branch" 2>/dev/null; then echo "flow: $branch is not merged into $(base_ref "$base"); kept. Use --force to delete it." >&2; fi
   fi
   rm -f "$p/.flow/claim.json"
   [ -n "$item" ] && write_state "$item" "worktree=" "last_event=$(now_iso) released $(basename "$p")"
@@ -136,6 +146,101 @@ cmd_release() {
     done
   fi
   return 0
+}
+
+# plan_file <item>: the item's plan.md: in the claimed worktree's reports, else where a released
+# item left them. Nothing when there is none.
+plan_file() {
+  pf_slug="$(item_slug "$1")"; pf_wt="$(cmd_find "$1")"
+  for pf_root in $pf_wt $(pool_paths) "$main"; do
+    [ -f "$pf_root/.flow/reports/$pf_slug/plan.md" ] && { printf '%s' "$pf_root/.flow/reports/$pf_slug/plan.md"; return 0; }
+  done
+  return 1
+}
+# plan_tracker_tasks <item>: the item's plan.md says its decomposition is tracker tasks.
+plan_tracker_tasks() {
+  ptt_plan="$(plan_file "$1")" || return 1
+  grep -qiE '^Decomposition:[[:space:]]*tracker tasks' "$ptt_plan"
+}
+# The owner kept an item whole (closed its children, cleared the decomposition gate). The mark,
+# <flow home>/kept-whole/<slug>, holds the hash of the plan.md that was set aside: until the plan
+# step rewrites plan.md, no split happens, whatever children turn up. cmd_keep_whole <item>
+# records it; kept_whole <item> is true while it holds and drops a mark the plan outgrew.
+kept_mark() { printf '%s/kept-whole/%s' "$home" "$(item_slug "$1")"; }
+cmd_keep_whole() {
+  kw_plan="$(plan_file "$1")" || kw_plan=""
+  mkdir -p "$home/kept-whole"
+  if [ -n "$kw_plan" ]; then hash_file "$kw_plan"; else echo none; fi > "$(kept_mark "$1")"
+  echo "$1 is kept whole until its plan step rewrites plan.md"
+}
+kept_whole() {
+  [ -f "$(kept_mark "$1")" ] || return 1
+  kw_plan="$(plan_file "$1")" && kw_now="$(hash_file "$kw_plan")" || kw_now=none
+  [ "$kw_now" = "$(cat "$(kept_mark "$1")")" ] && return 0
+  rm -f "$(kept_mark "$1")"; return 1
+}
+
+# cmd_split <item>: a task whose plan made tracker tasks of it, with children open, waits on them.
+# advance.sh calls it when the plan step ends that way; the implement step and the health job call
+# it for a split that could not finish. The step becomes split, which no profile runs and the
+# board shows as waiting on its children, and the worktree goes back to the pool, so its branch
+# stops drifting and the pool does not shrink. The worktree is kept, and the claim's step set to
+# split, when it has uncommitted changes, a run is in flight, or a live session works in it (the
+# health job's process check). The branch is never forced: one with commits past the base is
+# kept, and said, for a child that needs them to merge in. Each change is one events.log line and
+# one comment on the item; a call that changes nothing is silent. Leaves the message in $split_msg
+# and, when the worktree stays, why in $split_kept. Exit 1, changing nothing, when the item is an
+# epic, has no open children, or its plan.md does not say tracker tasks.
+cmd_split() {
+  sp_item="$1"; split_msg=""; split_kept=""
+  sp_data="$(adapter read "$sp_item" 2>/dev/null)" || { echo "flow: cannot read $sp_item, so it is not split" >&2; return 1; }
+  [ "$(json_get "$sp_data" kind)" != epic ] || { echo "$sp_item is an epic: its tasks are its children, nothing to split"; return 1; }
+  sp_kids="$(json_get "$sp_data" open_children)"
+  [ "${sp_kids:-0}" -gt 0 ] 2>/dev/null || { echo "$sp_item has no open children, so it is not split"; return 1; }
+  plan_tracker_tasks "$sp_item" || { echo "$sp_item: plan.md does not say tracker tasks, so it is not split"; return 1; }
+  ! kept_whole "$sp_item" || { echo "$sp_item: the owner kept it whole, so it is not split until its plan step rewrites plan.md"; return 1; }
+  sp_was="$(state_get "$sp_data" step)"
+  sp_said="split into $sp_kids open child item(s), it waits on them"
+  [ "$sp_was" = split ] || write_state "$sp_item" "step=split" "last_event=$(now_iso) $sp_said"
+  sp_path="$(cmd_find "$sp_item")"
+  if [ -z "$sp_path" ]; then
+    [ "$sp_was" = split ] || split_msg="$sp_said; it holds no worktree"
+  else
+    sp_name="$(basename "$sp_path")"; sp_claim="$(claim_of "$sp_path")"
+    sp_branch="$(json_get "$sp_claim" branch)"; sp_base="$(json_get "$sp_claim" base)"; [ -n "$sp_base" ] || sp_base="$base_branch"
+    sp_procs="${procs:-${FLOW_HEALTH_PROCS:-}}"; sp_tmp=""
+    if [ -z "$sp_procs" ]; then
+      sp_tmp="$(mktemp)"; sp_procs="$sp_tmp"
+      python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$sp_tmp" 2>/dev/null || : > "$sp_tmp.failed"
+    fi
+    if [ -f "$home/runs/$(item_slug "$sp_item").json" ]; then split_kept="a run is in flight"
+    elif dirty "$sp_path"; then split_kept="it has uncommitted changes: commit or stash them; the health job then releases it"
+    elif [ -n "$sp_tmp" ] && [ -f "$sp_tmp.failed" ]; then split_kept="the processes cannot be listed, so a session may be working in it"
+    else
+      sp_live="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$sp_procs" "$sp_item" "$sp_path" "" 2>/dev/null)"
+      [ -z "$sp_live" ] || split_kept="a session works in it ($sp_live)"
+    fi
+    [ -z "$sp_tmp" ] || rm -f "$sp_tmp" "$sp_tmp.failed"
+    if [ -n "$split_kept" ]; then
+      # Through a temp file beside it: a failed write never leaves an empty claim (a free look).
+      sp_new="$sp_path/.flow/claim.json.tmp.$$"
+      if json_set "$sp_claim" step "$(json_string split)" > "$sp_new" && [ -s "$sp_new" ]; then mv "$sp_new" "$sp_path/.flow/claim.json"; else rm -f "$sp_new"; fi
+      [ "$sp_was" = split ] && [ "$(json_get "$sp_claim" step)" = split ] || split_msg="$sp_said; $sp_name is kept: $split_kept"
+    else
+      sp_ahead="$(git -C "$sp_path" rev-list --count "$(base_ref "$sp_base")..refs/heads/$sp_branch" 2>/dev/null)"
+      if (cmd_release "$sp_path" >/dev/null 2>&1); then
+        split_msg="$sp_said; released $sp_name"
+        if [ "${sp_ahead:-0}" -gt 0 ] && git -C "$main" show-ref --verify --quiet "refs/heads/$sp_branch"; then
+          split_msg="$split_msg; $sp_branch keeps its $sp_ahead commit(s) past $sp_base for a child that needs them to merge in"
+        fi
+      else split_kept="the release failed"; split_msg="$sp_said; $sp_name is kept: $split_kept"; fi
+    fi
+  fi
+  [ -n "$split_msg" ] || return 0
+  mkdir -p "$home"
+  printf '%s\t%s\tsplit\t%s\n' "$(now_iso)" "$sp_item" "$split_msg" >> "$home/events.log"
+  adapter comment "$sp_item" --body "Split: $split_msg." >/dev/null 2>&1 || true
+  echo "$sp_item: $split_msg"
 }
 
 # item_status <item>: open, closed, or nothing when no adapter owns the id or it cannot be read.
@@ -498,6 +603,7 @@ health_claim() {
   ahead="$(git -C "$p" rev-list --count "$(base_ref "$bs")..HEAD" 2>/dev/null)"; ahead="${ahead:-0}"
   results="$(ls "$health_reports"/*.json 2>/dev/null | head -1)"
   isdirty=0; dirty "$p" && isdirty=1
+  [ -z "$health_gate" ] || health_at_gate "$it" "$p" "$isdirty" "$(state_get "$data" pr)"
   claimed="$(hpy epoch "$(json_get "$c" claimed_at)")"
   quiet_for=$((now - last)); [ "$last" -gt "$claimed" ] || quiet_for=$((now - claimed))
   if [ -z "$health_gate" ] && [ "$isdirty" -eq 0 ] && [ "$ahead" -eq 0 ] && [ -z "$results" ] && [ "$quiet_for" -gt "$grace" ]; then
@@ -511,9 +617,46 @@ health_claim() {
     holders="$holders$name $it dead run, resumed
 "; return 0
   fi
+  # A split the plan step could not finish (made before flow 1.19.0, or kept for uncommitted
+  # changes or a live session) still holds its worktree: finish it here, after a dead run had its
+  # resume. Only at step plan or split, with open children and a plan.md that says tracker tasks.
+  if [ -z "$health_gate" ] && { [ "$step" = plan ] || [ "$step" = split ]; } && [ "$(json_get "$data" kind)" != epic ] &&
+     [ "$(json_get "$data" open_children)" -gt 0 ] 2>/dev/null && plan_tracker_tasks "$it" && ! kept_whole "$it"; then
+    if [ "$dry" -eq 1 ]; then health_say "$it" "would finish the split: step split, release $name unless it must stay"; return 0; fi
+    cmd_split "$it" >/dev/null
+    [ -z "$split_msg" ] || { echo "$it: $split_msg"; facts=$((facts + 1)); }
+    if [ ! -f "$p/.flow/claim.json" ]; then claims=$((claims - 1)); claimable=$((claimable + 1)); return 0; fi
+    holders="$holders$name $it split, kept: ${split_kept:-see events.log}
+"; return 0
+  fi
   [ -n "$health_gate" ] || holders="$holders$name $it $([ "$isdirty" -eq 1 ] && echo "uncommitted changes" || echo "no run; the next job continues it")
 "
   health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty" "$(state_get "$data" pr)"
+}
+
+# health_at_gate <item> <path> <dirty> <pr>: a gate is the owner's, but two things under it are
+# not theirs to find alone, each said and notified once while it holds. Uncommitted changes in
+# the worktree (an interrupted run left them), and, at the merge gate, review threads on the PR
+# still awaiting a reply (comments.sh activity), which the comments job addresses next.
+health_at_gate() {
+  hg_slug="$(item_slug "$1")"; hg_name="$(basename "$2")"
+  if [ "$3" -eq 1 ]; then
+    if health_changed "gate-dirty-$hg_slug" "$health_gate"; then
+      health_say "$1" "waits at the $health_gate gate with uncommitted changes in $hg_name: an interrupted run left them; the next comments pass continues from them, or commit or discard them yourself"
+      health_notify "$1 waits at the $health_gate gate with uncommitted changes in $hg_name: an interrupted run left them. The next comments pass continues from them, or commit or discard them yourself."
+    fi
+  else health_cleared "gate-dirty-$hg_slug"; fi
+  hg_wait=""
+  if [ "$health_gate" = merge ] && [ -n "$4" ]; then
+    hg_act="$("$FLOW_PLUGIN/scripts/comments.sh" activity "$4" 2>/dev/null)" && hg_wait="$(json_list "$hg_act" awaiting | tr '\n' ' ' | sed 's/ $//')"
+  fi
+  if [ -n "$hg_wait" ]; then
+    hg_n="$(printf '%s\n' $hg_wait | grep -c .)"; hg_pr="${4##*/}"
+    if health_changed "gate-awaiting-$hg_slug" "$hg_wait"; then
+      health_say "$1" "PR #$hg_pr has $hg_n unresolved review thread(s) awaiting a reply while $1 waits at the merge gate; the comments job addresses them next pass"
+      health_notify "PR #$hg_pr has $hg_n unresolved review thread(s) awaiting a reply while $1 waits at the merge gate. The comments job addresses them next pass."
+    fi
+  else health_cleared "gate-awaiting-$hg_slug"; fi
 }
 
 # health_branch_notes <item> <path> <branch> <base> <dirty> <pr>: the branch sync for a worktree
@@ -572,6 +715,22 @@ health_gates() {
   done
 }
 
+# health_splits: a split item whose children are all closed has nothing left to run: say it once
+# and notify, so the owner closes it.
+health_splits() {
+  hs_ids="$(for a in $(adapters_configured); do adapter list "$a" 2>/dev/null; echo; done | python3 -I -c '
+import json, sys
+for line in sys.stdin:
+    if line.strip():
+        for i in json.loads(line):
+            if (i.get("state") or {}).get("step") == "split" and not i.get("open_children"): print(i["id"])')"
+  for hs_id in $hs_ids; do
+    health_changed "split-done-$(item_slug "$hs_id")" closed || continue
+    health_say "$hs_id" "split, and every child is closed: close it"
+    health_notify "$hs_id is split and every child is closed. Close it."
+  done
+}
+
 # health_pressure: every worktree is claimed and the last next run could not start; say who holds
 # each one and why, once until the pool has room again.
 health_pressure() {
@@ -624,6 +783,7 @@ cmd_health() {
     else health_claim "$p"; fi
   done
   health_gates
+  health_splits
   health_pressure
   [ "${FLOW_HEALTH_PROCS:-}" = "$procs" ] || rm -f "$procs"
   echo "health: $claims claimed ($running running, $gated at a gate), $claimable free, $waiting gate(s) waiting; $([ "$facts" -eq 0 ] && echo "nothing to do" || echo "$facts finding(s)")"
@@ -640,7 +800,10 @@ case "$cmd" in
   setup) [ $# -ge 1 ] || die "usage: setup <path|item>" 2; cmd_setup "$1" ;;
   prune) cmd_prune "$@" ;;
   sweep) cmd_sweep "$@" ;;
+  split) [ $# -ge 1 ] || die "usage: split <item>" 2; cmd_split "$1" ;;
+  keep-whole) [ $# -ge 1 ] || die "usage: keep-whole <item>" 2; cmd_keep_whole "$1" ;;
+  kept-whole) [ $# -ge 1 ] || die "usage: kept-whole <item>" 2; kept_whole "$1" ;;
   health) cmd_health "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,21p' "$0"; exit 2 ;;
+  *) sed -n '2,28p' "$0"; exit 2 ;;
 esac

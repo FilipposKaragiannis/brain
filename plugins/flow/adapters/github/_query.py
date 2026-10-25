@@ -6,14 +6,14 @@
 One paged query returns each issue with its labels, type, native parent, blockers, open sub-issue
 count, issue field
 values and project items, so a list costs one call per page, not one per issue. The field values
-are asked for only when GH_SIZE_FIELD or GH_PRIORITY_FIELD is set, and the project items only when
+are asked for only when GH_SIZE_FIELD, GH_PRIORITY_FIELD or GH_AREA_FIELD is set, and the project items only when
 GH_PROJECT is set, because they need the read:project scope a default login lacks. The state
 comment is read for a single issue, and in a list only for issues that carry a flow label: an
 unstarted item keeps the last gate's answer there with no label. Prints one JSON object per
 line. FLOW_GH_PAGE sets the page size (tests)."""
 import json, os, re, subprocess, sys
 
-WANT_FIELDS = bool(os.environ.get("GH_SIZE_FIELD") or os.environ.get("GH_PRIORITY_FIELD"))
+WANT_FIELDS = bool(os.environ.get("GH_SIZE_FIELD") or os.environ.get("GH_PRIORITY_FIELD") or os.environ.get("GH_AREA_FIELD"))
 WANT_PROJECT = bool(os.environ.get("GH_PROJECT"))
 BASE = """
   number title body state url

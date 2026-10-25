@@ -39,10 +39,13 @@ the path `codex plugin list` prints for `flow`).
    For a bug, `## Problem` holds the steps to see it and what happens instead.
 4. **Create it:**
    ```
-   "$P/scripts/new.sh" <kind> "<title>" [--size S|M|L] [--type NAME] [--blocked-by gh#a,gh#b] [--parent gh#N] --body-file <file>
+   "$P/scripts/new.sh" <kind> "<title>" [--size S|M|L] [--type NAME] [--priority NAME] [--area NAME] [--blocked-by gh#a,gh#b] [--parent gh#N] --body-file <file>
    ```
    Write the body to a file first (`--body-file -` reads stdin). `--parent` makes a sub-item of
-   an epic; `--blocked-by` records the dependency edges. The title is a sentence of under ten
+   an epic or a split task, and the child takes the parent's priority and area unless
+   `--priority` or `--area` names its own; `--blocked-by` records the dependency edges. A child
+   left without a priority that `github.ready_needs` asks for is said: tell the owner, it is not
+   ready until one is set. The title is a sentence of under ten
    words that names the outcome, not the work ("Bots never stall", not "Fix bot stalling").
 5. **Report** the id and the title in one line. Nothing else changes: no claim, no worktree, no
    plan. `flow:next` picks the item up when it is ready.

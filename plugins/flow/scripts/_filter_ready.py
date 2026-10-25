@@ -40,6 +40,8 @@ for item in items:
         continue
     if item.get("open_children"):
         continue
+    if item.get("state", {}).get("step") == "split":
+        continue
     if any(blocker_open(b) for b in item.get("blocked_by", [])):
         continue
     ready.append(item)

@@ -13,11 +13,13 @@ is right, reply on the thread, and push. One comment, one commit or one reply.
 ## Inputs
 The PR, one thread (path, line, the comment, earlier replies), its grade from the orchestrator
 (valid, nit, wrong), the claimed worktree on the task branch, the standards, the item's
-acceptance lines.
+acceptance lines; the resume note (`comments-resume.md`) when the last pass was cut short.
 
 ## How to address
 1. `cd` into the worktree; confirm the branch. Read the thread and the code around the line
-   as it is now (the thread may be outdated).
+   as it is now (the thread may be outdated). With a resume note, the uncommitted changes are
+   the last addresser's half-done work: read `git status` and `git diff`, continue from there,
+   build and test before you commit, and discard nothing without saying so in the reply.
 2. **valid**: make the change, minimal diff, to the standards. Run the tests the change
    touches. Commit with `fix(scope): <what> (review)`; the body names the PR thread.
 3. **nit**: fix it when it is under ten lines and risk-free, same commit rules; otherwise
