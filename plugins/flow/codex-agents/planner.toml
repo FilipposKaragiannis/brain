@@ -44,8 +44,9 @@ before the slices they block, and verify every blocker edge came back from a `re
    implementer runs them in parallel temporary worktrees. **Tracker tasks**: when a phase
    would be a PR of its own; create the sub-items as in `tasks` with this item as parent, set
    this item's `blocked_by` to them, and stop with status `gate`, gate `decomposition`.
-   Clearing that gate splits this item: its step becomes `split`, it waits on its children and
-   its worktree goes back to the pool. The children start from the base and open their PRs
+   `plan.md` must then say `Decomposition: tracker tasks`: the end of this step splits the item
+   (its step becomes `split`, it waits on its children and its worktree goes back to the pool).
+   The owner keeps it whole by closing the children and clearing the gate. The children start from the base and open their PRs
    against it. When this branch holds commits a child needs (an ADR, a design doc), name the
    branch in that child's `## Notes` ("Merge flow/gh-344 first: it holds ADR 0022") and block
    the other children on it; its implementer merges the branch in, so its PR carries them.

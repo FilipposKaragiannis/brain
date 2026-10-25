@@ -225,9 +225,12 @@ tmp="$scratch/gitignore"
 } > "$tmp"
 if [ "$check" -eq 1 ]; then
   block="$( [ -f .gitignore ] && awk '/^# flow:begin/{on=1; next} /^# flow:end/{on=0} on' .gitignore)"
-  printf '%s\n' "$ignored" | while IFS= read -r p; do
-    printf '%s\n' "$block" | grep -qxF -- "$p" || echo "init: drift: .gitignore: the flow block lacks $p"
-  done
+  # Fed by a here-document, not a pipe, so the loop runs in this shell and drifted sets drift.
+  while IFS= read -r p; do
+    printf '%s\n' "$block" | grep -qxF -- "$p" || drifted ".gitignore: the flow block lacks $p"
+  done <<EOF_IGNORED
+$ignored
+EOF_IGNORED
 fi
 install_file "$tmp" .gitignore
 

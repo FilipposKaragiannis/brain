@@ -2,8 +2,8 @@
 # Human gates.
 #   gate.sh raise <item> <gate> <message>   record the gate in the tracker, notify, stop the run
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
-#                                           the decomposition gate on a task with open children
-#                                           splits it (steward.sh split)
+#                                           on the decomposition gate of a split task whose
+#                                           children are all closed, the plan step runs again
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
 #                                           with the claimed worktree, the age and the questions
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
@@ -49,10 +49,14 @@ $message" >/dev/null
       "last_event=$(now_iso) gate cleared: $message" >/dev/null
     adapter comment "$item" --body "Gate cleared: $message" >/dev/null
     rm -f "$home/gates/$(item_slug "$item").json"
-    # A task the plan split into tracker tasks is done planning: it waits on its children, and its
-    # worktree goes back to the pool (steward.sh split; a dirty one is kept and said).
-    if [ "$gate" = decomposition ] && split="$("$FLOW_PLUGIN/scripts/steward.sh" split "$item" 2>/dev/null)" && [ -n "$split" ]; then
-      echo "gate cleared on $item. $split"; exit 0
+    # The split happened when the plan step ended (advance.sh). Clearing the gate never splits; an
+    # owner who closed the children to keep the item whole gets its plan step back.
+    if [ "$gate" = decomposition ]; then
+      data="$(adapter read "$item" 2>/dev/null)"
+      if [ "$(state_get "$data" step)" = split ] && [ "$(json_get "$data" open_children)" = 0 ]; then
+        adapter write-state "$item" "step=plan" "last_event=$(now_iso) kept whole: the children are closed, the plan step runs again" >/dev/null
+        echo "gate cleared on $item; its children are closed, so it is whole again: next $item runs the plan step"; exit 0
+      fi
     fi
     echo "gate cleared on $item; run next $item to continue" ;;
   list)

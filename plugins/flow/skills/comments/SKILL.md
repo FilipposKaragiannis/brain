@@ -27,6 +27,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    choice; abort the merge and stop. A dirty tree or a failing verify → abort or leave the merge
    unpushed, report it, stop. `UNKNOWN` means GitHub is still computing: skip, the next pass sees
    it.
+   **Interrupted work**: when `<reports>/comments-resume.md` exists, the last pass was cut short
+   and the claimed worktree may hold its uncommitted work. Read the note, `git status` and
+   `git diff` there. That dirty tree is not a reason to stop: give the note and the diff to the
+   addresser of the thread the changes belong to (step 5), which continues from them.
 3. **Threads**: `comments.sh threads <pr>` lists the unresolved review threads. None, no new
    plain comment since the last pass (`comments.sh issue-comments`, compare with
    `<reports>/comments.json`) and no merge in step 2 → stop, "quiet".
@@ -49,7 +53,9 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    `"$P/scripts/comments.sh" request-review <pr> "<ask>"`, the ask naming the new commits and
    what changed. It asks each reviewer in `reviews.reviewers`, one comment each. Never tag a
    reviewer by hand. A reviewer that stays silent is chased by the comments job, not here.
-8. Report once: the conflict merge, threads addressed (valid, nit, wrong counts), commits, the owner's decisions
+8. Delete `<reports>/comments-resume.md` once every thread of this pass is addressed or replied
+   to, and the interrupted work is committed or named in a reply.
+9. Report once: the conflict merge, threads addressed (valid, nit, wrong counts), commits, the owner's decisions
    pending, the quiz state.
 
 Never batch threads into one commit. Never resolve a thread without a reply. Never mark the

@@ -4,7 +4,8 @@
 # Applies a finished step: reads <reports>/<step>.json (flags override), updates attempts, size
 # and touches, moves the state to the next step, raises the gate the profile puts there, and
 # clears the run (a plan-approval gate listed in auto_gates for the item's size is not raised).
-# Exit codes: 0 next step ready · 4 waiting at a gate · 6 done.
+# A plan step that ends in tracker-tasks mode with children open splits the item (steward.sh split).
+# Exit codes: 0 next step ready · 4 waiting at a gate, or split and waiting on its children · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
@@ -77,6 +78,29 @@ if [ "$step" = sync ]; then
       report 4 "" escalation ;;
     *) die "unknown status '$status' (done, fail or gate)" 2 ;;
   esac
+fi
+
+# A step the item was split during (the implement step found open children and ran steward.sh
+# split) does not move it: it waits on its children. The split finishes now the run is gone.
+if [ "$step" != sync ] && [ "$(state_get "$data" step)" = split ]; then
+  finish_run
+  "$FLOW_PLUGIN/scripts/steward.sh" split "$item" >/dev/null 2>&1 || true
+  report 4 split ""
+fi
+# A plan step that made tracker tasks of the item (plan.md says so) and left children open ends
+# with the split: step split, the worktree back to the pool (steward.sh split). A gate it asks
+# for is raised first; on the decomposition gate the owner can still keep it whole.
+if [ "$step" = plan ] && [ "$status" != fail ] && [ "$(json_get "$data" open_children)" -gt 0 ] 2>/dev/null &&
+   grep -qiE '^Decomposition:[[:space:]]*tracker tasks' "$reports/plan.md" 2>/dev/null; then
+  if [ "$status" = gate ]; then
+    [ -n "$gate" ] || gate="decomposition"
+    hint=""; [ "$gate" != decomposition ] || hint=" To keep it whole instead, close its children, then clear the gate: the plan step runs again."
+    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$gate" "${message:-$summary}$hint" >/dev/null
+  else
+    gate=""; finish_run
+  fi
+  "$FLOW_PLUGIN/scripts/steward.sh" split "$item" >/dev/null 2>&1 || true
+  report 4 split "$gate"
 fi
 
 case "$status" in

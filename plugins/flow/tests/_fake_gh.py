@@ -163,7 +163,7 @@ elif args[0] == "api":
     if m:
         for th in data.get("threads", []):
             if th["comments"]["nodes"][0]["databaseId"] == int(m.group(1)):
-                th["comments"]["nodes"].append({"databaseId": 9000, "body": sys.stdin.read(), "author": {"login": "bot"}, "createdAt": "t"})
+                th["comments"]["nodes"].append({"databaseId": 9000 + len(th["comments"]["nodes"]), "body": sys.stdin.read(), "author": {"login": "bot"}, "createdAt": "t"})
         save(); print("{}"); sys.exit()
     pages = (lambda entries: [entries]) if "--slurp" in args else (lambda entries: entries)
     if re.match(r"repos/[^/]+/[^/]+/issues/\d+/timeline", path):

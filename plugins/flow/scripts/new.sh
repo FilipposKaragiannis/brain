@@ -30,9 +30,11 @@ while [ $# -gt 0 ]; do
 done
 inherited=""
 if [ -n "$parent" ] && { [ -z "$priority" ] || [ -z "$area" ]; }; then
-  pdata="$(adapter read "$parent" 2>/dev/null)" || die "cannot read the parent $parent" 2
-  [ -n "$priority" ] || { priority="$(json_get "$pdata" priority)"; [ -z "$priority" ] || inherited="$inherited priority $priority"; }
-  [ -n "$area" ] || { area="$(json_get "$pdata" area)"; [ -z "$area" ] || inherited="$inherited, area $area"; }
+  pdata="$(adapter read "$parent" 2>/dev/null)" || { echo "flow: cannot read the parent $parent, so the child takes neither its priority nor its area" >&2; pdata=""; }
+  if [ -n "$pdata" ]; then
+    [ -n "$priority" ] || { priority="$(json_get "$pdata" priority)"; [ -z "$priority" ] || inherited="$inherited priority $priority"; }
+    [ -n "$area" ] || { area="$(json_get "$pdata" area)"; [ -z "$area" ] || inherited="$inherited, area $area"; }
+  fi
 fi
 name="$(adapter_for_kind "$kind")"
 set --

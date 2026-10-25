@@ -43,11 +43,18 @@ test from the `reproduce` step; the implementer runs it red, then green.
 
 ## 4. Tracker-tasks mode
 
-When `plan.md` says the decomposition is tracker tasks, the children carry the work. Clearing
-the decomposition gate splits the item (`steward.sh split`): its step becomes `split`, its
-worktree goes back to the pool, and `next.sh` runs no step on it; it says to close it once every
-child is closed. A child that needs the parent's commits names the parent's branch in its
-`## Notes`: merge that branch into the child's branch first (never a rebase).
+When `plan.md` says the decomposition is tracker tasks, the children carry the work. The plan
+step normally ends with the split (`advance.sh` runs `steward.sh split`: step `split`, the worktree
+back to the pool), so this step runs only when that could not happen.
+- Children still open: run `"$P/scripts/steward.sh" split <item>` and stop with status `done`,
+  the summary naming the open children; the item then waits on them. When the steward refuses,
+  stop with status `gate`, gate `ambiguity`, naming the open children.
+- Every child closed: check each child's PR is merged (into the base, or into this branch when
+  the plan says so). One that is not: stop with status `gate`, gate `ambiguity`, naming it.
+  All merged: nothing to implement here; status `done`.
+
+A child that needs the parent's commits names the parent's branch in its `## Notes`: merge that
+branch into the child's branch first (never a rebase).
 
 ## 5. Finish
 
