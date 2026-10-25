@@ -27,6 +27,7 @@ the console even from the owner's own browser.
 | `GET /api/projects` | every project with its counts |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, a heartbeat every 15s |
+| `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many matched before the limit. Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400 |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
 | `POST /api/projects/<id>/actions` | run one action, body `{"kind","args"}`; 202 with the record, 400 on a bad request, 409 when its lock is held |
 | `GET /api/projects/<id>/actions` | the recent 50 actions, newest first, with the output tail |
@@ -34,10 +35,32 @@ the console even from the owner's own browser.
 
 ## The snapshot
 `daemon/src/snapshot.ts` is the contract. One `Snapshot` per project: `project`, `sources`
-(when each source was read and whether it worked), `counts`, `attention` (what needs a human,
-oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `jobs`, `pulls`, `events` and
-`disagreements`. Timestamps are ISO UTC; every age is seconds at `takenAt`, so a reader keeps
-counting on its own clock between snapshots.
+(when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
+a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `jobs`, `pulls`, `events`
+(the latest 200, each with `at`, `item`, `kind` and `message`) and `disagreements`. Timestamps are
+ISO UTC; every age is seconds at `takenAt`, so a reader keeps counting on its own clock between
+snapshots.
+
+- `project`: `id`, `name`, `root`, `flowHome`, `base` (the branch work merges into), `repo`
+  (`github.repo`), `repoUrl` (`https://github.com/<repo>`, null without a repo), `trackerUrl` (the
+  issues page on the github adapter, null on local), `adapter`, `pluginVersion`, `jobsHost`
+  (`jobs.host`, the CLI the jobs run) and `poolMax`.
+- A worktree carries `agents` and `sessions`, each a list of `{pid, host, command, elapsedSeconds}`
+  (the command cut to 200 characters), `item`, `itemUrl` and `itemTitle` (from the board, null
+  without an item or before the board is read), and `staleReason`: "branch is 35 commits behind
+  main (limit 20)", "claimed 6 days ago with no run, agent or gate", both joined with "; ", or null.
+- An item's `url` is its tracker page, from the board.
+- A gate carries `pull`: `{number, url, state, unresolvedThreads}` for its item's open PR (the one
+  its `pr` field names, else the one on its claimed branch), or null. A merge gate whose PR still
+  has an unresolved thread shows it there.
+- `readiness` is `{ready, waitingOnField, blocked, gated}` over open items that are not epics, each
+  item in one bucket at most: the next job can take it, only an empty field stops it, an open item
+  blocks it, it waits at a gate. Running, claimed and stale items count in none, so the Overview can
+  say in one line why nothing runs.
+- `counts.needsField` counts the `needs-field` attention rows: an open item with no step and no
+  open blocker (the head of its chain) whose `needs` is not empty, that is a field
+  `ready_needs` asks for (priority, size) is empty, so the next job refuses it. The row's
+  `detail` names the fields: "needs priority", "needs priority and size".
 
 One status language, used by worktrees and items alike:
 
@@ -50,9 +73,17 @@ One status language, used by worktrees and items alike:
 | `free` | no claim |
 | `outside` | the main worktree or one not in the pool |
 
-Flags add detail without changing the state: `dirty`, `behind`, `stale-branch`, `idle`,
-`dead-run` (a run record with no process), `agent-without-claim`, `session` (someone's interactive
-host is open in the folder).
+Flags add detail without changing the state:
+
+| Flag | Meaning |
+|---|---|
+| `dirty` | the worktree has uncommitted files, changed or untracked |
+| `behind` | its branch is at least one commit behind the base |
+| `stale-branch` | a claimed branch is 20 or more commits behind the base, so it needs the base merged in |
+| `idle` | claimed for 72h or more with no run, no agent and no gate |
+| `dead-run` | a run record names it but no agent process is in it |
+| `agent-without-claim` | an unattended agent works in a pool worktree nobody claimed |
+| `session` | an interactive session is open in the folder (see below) |
 
 Every open pull request carries one state, the first that holds:
 
@@ -78,7 +109,7 @@ gives its worktree. `checks-failing`, `changes-requested` and `mergeable` each a
 |---|---|---|
 | `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
 | `git` | `git worktree list`, per worktree ahead/behind the base, dirty files, last commit | 30s, and after a file change |
-| `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd | 10s |
+| `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd; the executable may sit in a folder with spaces (the Claude desktop app's), a wrapper such as `sh -c …/claude` is not the host, and a host's own servers never count (`claude daemon`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `exec-server`) | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
 | `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project not on the github adapter, or without `github.repo`, reports `ok` with `error: "not applicable: …"` and is never read | 60s |
@@ -96,23 +127,31 @@ An action is one flow script, run by path with argv and never through a shell, w
 argument checked against a shape first. The event stream carries `event: action` with the record
 on every state change and at most twice a second while output arrives.
 
-| Kind | Args | Runs | Lock |
-|---|---|---|---|
-| `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item |
-| `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item and the next job |
-| `job.run` `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job |
-| `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item |
-| `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree |
-| `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job |
-| `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR |
-| `refresh` | `source?` | re-reads the sources in the daemon | none |
+| Kind | Args | Runs | Lock | Outcome when done |
+|---|---|---|---|---|
+| `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item | `finished` |
+| `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item and the next job | with an item `started` while the run goes, `finished` once it ends well; without one `started` |
+| `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
+| `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
+| `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
+| `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
+| `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
+| `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
+| `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
+
+`ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
+and goes on after the record (`jobs.sh run <job>` gives the job to launchd and returns in a
+second), `finished` means the work is over. It is null while an attached action runs and on a
+failed or rejected one. Every `jobs.sh run <job>` (`job.run`, `steward.health`, `run.start` without
+an item) also re-reads its sources a second time five seconds after it returns
+(`ActionPlan.refreshAgainMs`), so the run it started shows; a daemon that stops drops the wait.
 
 An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
 never changes what runs. A second action on a held lock is refused with 409 and recorded as
 `rejected`. At most four run at once. Scripts get two minutes, a merge three; a process that
 ignores SIGTERM is killed with its group ten seconds later, and a timed-out action is `failed`
-whatever its exit code. A run started with `run.start` is detached, writes its own output file,
+whatever its exit code. A run started with `run.start` and an item is detached, writes its own output file,
 holds its item for as long as it runs and is never killed by the console. `jobs/next.sh` takes
 the next job's lock, so a console run while the scheduled job is busy prints "skipped" and ends
 at once. When an action ends the sources it changed are re-read.
@@ -131,6 +170,40 @@ without a claim, a claim whose step differs from the issue, a gate record the la
 and an open item at step done that waits on a merge with no merge gate. That last rule takes the
 best evidence there is: with pull requests read, the item's PR is in state `mergeable`; when the
 `pulls` source was never read or does not apply, the issue state naming a PR is enough.
+
+The sources run on different clocks (files every 30s, the board every 120s), so a claim or gate
+that just changed disagrees with the labels until the board is read again. That is lag, so a
+disagreement enters the snapshot only when the same one (stores, item, worktree, message) is still
+there after every store it names was read again (`daemon/src/settle.ts`): the claim, gate and run
+records come from `files`, the process list from `processes`, issue state and labels from `board`,
+pull requests from `pulls`. One that goes away in between starts over.
+
+Every disagreement carries `explain`, one plain sentence saying what each store says and which is
+usually right, and `action`, the button that settles it (`{kind, args, label}`) or null when a
+person has to look:
+
+| Stores | Usually right | Action |
+|---|---|---|
+| run record vs process list | the process list: the run ended or crashed | `steward.health`, "Run the health check" |
+| process list vs claim | the process list: something runs there unclaimed | none |
+| claim vs issue state (step or worktree) | the claim: the agent writes it first | none |
+| gate record vs issue labels | the gate record: the labels catch up | `refresh` with `source: board`, "Re-read the board" |
+| issue state vs pull request | the pull request: only the merge is left | `pr.merge` with the PR number, "Merge #N" (none when the `pr` field names no number) |
+
+## What the words mean
+| Word | Meaning |
+|---|---|
+| free | a pool worktree nobody has claimed; the next job may take it |
+| claimed | a pool worktree holds an item (its `.flow/claim.json`), but nothing runs and nothing waits on you |
+| running | an unattended agent works in the worktree, or a live run record says one does |
+| needs-you | the item waits at a gate: a question only you can answer, or a merge only you can make |
+| stale | claimed, but its branch is 20 or more commits behind the base, or nothing has happened in it for 72 hours; `staleReason` says which |
+| outside | a worktree that is not in the pool: the main checkout or one git knows of elsewhere |
+| dirty | the worktree has files that are not committed |
+| agent | an unattended claude or codex the flow started (`claude -p`, `codex exec`) with its working directory in the worktree |
+| session | an interactive claude or codex whose working directory is in the worktree, yours or an app's (such as the Claude desktop app), not an unattended agent; a host's own background server (the Codex desktop app's `app-server`) is neither |
+| disagreement | two places flow state lives say different things, and kept saying it after both were read again |
+| needs-field | an item that could start but for an empty field the tracker asks for (`ready_needs`, such as priority), so the next job passes it over |
 
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
