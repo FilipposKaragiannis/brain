@@ -186,11 +186,62 @@ v1="$("$P/adapters/local/create.sh" task "Verify me" --size S)"
 printf 'echo ok\n' > "$wv/tool.sh"; mkdir -p "$wv/ui"; printf 'x\n' > "$wv/ui/panel.txt"; git -C "$wv" add -A >/dev/null; git -C "$wv" commit -qm "feat: tool" >/dev/null
 (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
 rv="$wv/.flow/reports/local-task-$(printf '%s' "$v1" | sed 's|.*/||')"
-check "verify fails on the broken gate (exit 1)" [ "$code" -eq 1 ] && [ "$(jget status < "$rv/verify.json")" = "fail" ]
+check "verify fails on the broken gate (exit 1)" sh -c '[ "$1" -eq 1 ] && [ "$2" = fail ]' _ "$code" "$(jget status < "$rv/verify.json" 2>/dev/null)"
 check "verify checks: build, format, tests, mutation signal, two gates" [ "$(python3 -c 'import json; cs=json.load(open("'"$rv"'/verify.json"))["checks"]; print(",".join(c["name"]+":"+c["status"] for c in cs))')" = "build:pass,format:pass,tests:pass,mutation:signal,gate determinism:pass,gate harness:fail" ]
 check "verify summary carries the error text" sh -c "grep -q 'harness broke' '$rv/verify.json'"
 check "verify feel_test from changed ui file" [ "$(jget feel_test < "$rv/verify.json")" = "true" ]
 check "verify.md twin" sh -c "grep -q 'Feel-test needed' '$rv/verify.md' && grep -q '| build | pass' '$rv/verify.md'"
+echo "verify: the report is never empty"
+# The CI flake: a short head sha of digits with a leading zero went into the report as a number
+# (0123456 is not JSON), the pretty-print failed and the redirect left verify.json empty.
+# Find such a commit object (same tree, the head as parent) and make it the worktree's head.
+whead="$(git -C "$wv" rev-parse HEAD)"
+zsha="$(python3 - "$(git -C "$wv" rev-parse 'HEAD^{tree}')" "$whead" <<'PY'
+import hashlib, re, sys
+tree, parent = sys.argv[1:3]
+for n in range(10 ** 6):
+    body = ("tree %s\nparent %s\nauthor t <t@t> 0 +0000\ncommitter t <t@t> 0 +0000\n\nzero %d\n" % (tree, parent, n)).encode()
+    sha = hashlib.sha1(b"commit %d\0" % len(body) + body).hexdigest()
+    if re.match(r"0[0-9]{11}", sha):
+        sys.stdout.buffer.write(body); break
+PY
+)"
+zsha="$(printf '%s\n' "$zsha" | git -C "$wv" hash-object -t commit -w --stdin)"
+git -C "$wv" reset -q "$zsha"
+(cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
+zhead="$(jget head < "$rv/verify.json" 2>/dev/null)"
+check "a head sha of digits with a leading zero: the report parses, head is the string" sh -c '[ "$1" -eq 1 ] && [ "$2" = "$3" ]' _ "$code" "$zhead" "$(git -C "$wv" rev-parse --short HEAD)"
+git -C "$wv" reset -q "$whead"
+# A gate whose output is hostile to hand-built JSON: quotes, backslashes, newlines, control
+# characters, a byte that is not UTF-8, a summary of digits only and a very long line.
+printf '%s\n' '#!/bin/sh' "printf 'say \"hi\" and C:\\\\dir\\\\n\\n\\tline\\001two\\033[0m\\n\\377\\376 bad bytes\\n'" "python3 -c 'print(\"y\" * 5000)'" 'echo "$1"; exit 1' > "$work/noisy.sh"
+cp .flow/config.yaml "$work/config.keep"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\ngates:\n  noisy: '"'"'sh %s/noisy.sh last'"'"'\n  digits: '"'"'sh -c "echo 007; exit 1"'"'"'\nnotify:\n  desktop: false\n' "$work" > .flow/config.yaml
+(cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>"$work/verify.err"); code=$?
+noisy="$(python3 -c 'import json,sys; c=[c for c in json.load(open(sys.argv[1]))["checks"] if c["name"]=="gate noisy"][0]; print(c["status"], len(c["summary"]) <= 400, "\"hi\"" in c["summary"], "C:\\dir" in c["summary"])' "$rv/verify.json" 2>&1)"
+check "hostile output: the report parses and the summary keeps quotes and backslashes, cut to 400" sh -c '[ "$1" -eq 1 ] && [ "$2" = "fail True True True" ]' _ "$code" "$noisy"
+check "a summary of digits stays a string" [ "$(python3 -c 'import json,sys; print(repr([c for c in json.load(open(sys.argv[1]))["checks"] if c["name"]=="gate digits"][0]["summary"]))' "$rv/verify.json" 2>&1)" = "'007'" ]
+check "hostile output: verify.md has the row, one line" sh -c '[ "$(grep -c "^| gate noisy | fail |" "$1")" = 1 ]' _ "$rv/verify.md"
+check "hostile output: nothing on stderr" [ ! -s "$work/verify.err" ]
+# The write is atomic: a reader polling verify.json while verify runs never sees it empty, and
+# no temp file is left behind.
+: > "$work/reads.bad"
+(for _ in 1 2 3; do (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); done; : > "$work/verify.done") &
+vpid=$!
+while [ ! -f "$work/verify.done" ]; do [ -e "$rv/verify.json" ] && [ ! -s "$rv/verify.json" ] && echo empty >> "$work/reads.bad"; done
+wait "$vpid"; rm -f "$work/verify.done"
+check "a reader never sees verify.json empty" [ ! -s "$work/reads.bad" ]
+check "no temp file left in the reports folder" [ -z "$(ls -A "$rv" | grep -i -e tmp -e '^\.verify')" ]
+# A report that cannot be built fails loudly: a message on stderr, a minimal valid report with
+# status fail and the cause as a check summary, a non-zero exit.
+mkdir -p "$work/badpy"
+printf '#!/bin/sh\ncase "$*" in *_verify_report.py*) echo "boom: report builder broke" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$(command -v python3)" > "$work/badpy/python3"; chmod +x "$work/badpy/python3"
+(cd "$wv" && PATH="$work/badpy:$PATH" "$P/scripts/verify.sh" "$v1" >/dev/null 2>"$work/verify.err"); code=$?
+bad="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["status"], any("boom" in c["summary"] for c in d["checks"]))' "$rv/verify.json" 2>&1)"
+check "a report that cannot be built: exit non-zero, the cause on stderr" sh -c '[ "$1" -ne 0 ] && grep -q "boom" "$2"' _ "$code" "$work/verify.err"
+check "a report that cannot be built: a valid report, status fail, the cause as a summary" [ "$bad" = "fail True" ]
+check "a report that cannot be built: verify.md says so" grep -q "boom" "$rv/verify.md"
+cp "$work/config.keep" .flow/config.yaml
 echo "verify: gate paths and the mutation switch"
 cat > .flow/config.yaml <<'YAML'
 adapters:
@@ -213,11 +264,11 @@ notify:
 YAML
 (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
 vchecks() { python3 -c 'import json; cs=json.load(open("'"$rv"'/verify.json"))["checks"]; print(",".join(c["name"]+":"+c["status"] for c in cs))'; }
-check "gate with paths: skipped when no changed file matches, runs when one does" [ "$(vchecks | sed 's/.*mutation:[a-z]*,//')" = "gate flat:pass,gate server-only:skipped,gate tools:pass" ] && [ "$code" -eq 0 ]
+check "gate with paths: skipped when no changed file matches, runs when one does" sh -c '[ "$1" = "gate flat:pass,gate server-only:skipped,gate tools:pass" ] && [ "$2" -eq 0 ]' _ "$(vchecks 2>/dev/null | sed 's/.*mutation:[a-z]*,//')" "$code"
 check "a skipped gate says why" sh -c "grep -q 'no changed file under its paths' '$rv/verify.json'"
 mkdir -p "$wv/server"; printf 'x\n' > "$wv/server/a.txt"
 (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
-check "gate with paths: runs and fails once a changed file matches" [ "$code" -eq 1 ] && [ "$(vchecks | grep -o 'gate server-only:[a-z]*')" = "gate server-only:fail" ]
+check "gate with paths: runs and fails once a changed file matches" sh -c '[ "$1" -eq 1 ] && [ "$2" = "gate server-only:fail" ]' _ "$code" "$(vchecks 2>/dev/null | grep -o 'gate server-only:[a-z]*')"
 std="$wv/.standards/config.json"
 setstd() { python3 - "$std" "$1" "$2" <<'PY'
 import json, sys
@@ -241,9 +292,9 @@ git -C "$wv" checkout -q .standards/config.json; rm -r "$wv/server"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\ngates:\n  determinism: '"'"'sh -c "exit 0"'"'"'\nfeel_test_paths:\n  - ui/**\nnotify:\n  desktop: false\n' > .flow/config.yaml
 for s in implement test review; do printf '{"status":"done"}\n' > "$rv/$s.json"; "$P/scripts/advance.sh" "$v1" >/dev/null 2>&1; "$P/scripts/next.sh" "$v1" >/dev/null 2>&1; done
 (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
-check "verify passes without the broken gate" [ "$code" -eq 0 ] && [ "$(jget status < "$rv/verify.json")" = "pass" ]
+check "verify passes without the broken gate" sh -c '[ "$1" -eq 0 ] && [ "$2" = pass ]' _ "$code" "$(jget status < "$rv/verify.json" 2>/dev/null)"
 "$P/scripts/advance.sh" "$v1" >/dev/null 2>&1; code=$?
-check "passing verify with feel_test raises the feel-test gate, step pr" [ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$v1" | jget state.gate)" = "feel-test" ] && [ "$("$P/adapters/local/read.sh" "$v1" | jget state.step)" = "pr" ]
+check "passing verify with feel_test raises the feel-test gate, step pr" sh -c '[ "$1" -eq 4 ] && [ "$2" = feel-test ] && [ "$3" = pr ]' _ "$code" "$("$P/adapters/local/read.sh" "$v1" | jget state.gate)" "$("$P/adapters/local/read.sh" "$v1" | jget state.step)"
 "$P/scripts/gate.sh" clear "$v1" "looks right" >/dev/null
 "$P/scripts/steward.sh" release "$v1" --force >/dev/null 2>&1
 
