@@ -1,5 +1,11 @@
 # flow
 
+## 1.17.1 (2026-10-25)
+
+- The test writer splits a test whose assertions can fail independently before it commits, and
+  never uses a call count on a double as a setup guard. Seven review blockers in twelve lessons
+  were T-09 and T-08 on tests the writer had just committed.
+
 ## 1.17.0 (2026-10-24)
 
 - The comments job skips a PR with nothing new. Before a pass it reads the PR's last update,
