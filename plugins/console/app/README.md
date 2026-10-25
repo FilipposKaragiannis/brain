@@ -53,6 +53,34 @@ launchd will keep trying until it is fixed or `npm run daemon:uninstall` stops i
 whether the daemon runs under launchd. The scripts are `daemon:*`, not `install`: npm runs a
 script named `install` on every `npm install`.
 
+## The brain-console command
+One command, `node daemon/src/main.ts <subcommand>` (the launcher `~/.local/bin/brain-console` once
+`/console:install` has run). With no subcommand it prints this list.
+
+| Subcommand | Does |
+|---|---|
+| `start [flags]` | runs the daemon here in the foreground, with the flags under Run it; writes `<state dir>/daemon.pid` while it runs and refuses when that pid still runs |
+| `stop` | boots the launchd job out when it is loaded, else sends SIGTERM to the pid in `daemon.pid` |
+| `restart` | `launchctl kickstart -k` for a loaded job, `bootstrap` for an agent on disk but not loaded, else stops the foreground daemon and starts it here with its flags |
+| `status` | loaded or not, the pid, the port, the URL without the token, the config file, the state dir and the version; exit 1 when nothing runs |
+| `open` | opens the URL with the token in the default browser (`open`) |
+| `url` | prints the URL with the token, for scripts |
+| `add <path>` | adds a project (a folder with `.flow/config.yaml`, relative to here or `~/`); through `PUT /api/settings` when the daemon runs, so it is watched at once, else into the config file with the same checks |
+| `remove <path>` | drops a project the same way; the last one stays |
+| `logs [-f]` | the last 200 lines of `<state dir>/daemon.log` (the launchd daemon's), `-f` follows it |
+| `install [flags]` | the launch agent, as under Run it on login; with no flags over an agent already written, its flags are kept |
+| `uninstall` | boots the job out and removes the agent |
+| `update` | runs `scripts/install.sh --no-launchd` of the newest `console` in `~/.claude/plugins/cache/*/console/*/` (then `~/.codex`), then restarts a loaded job |
+| `version` | the version |
+| `help` | the list |
+
+`stop`, `restart`, `status`, `open`, `url`, `add`, `remove` and `logs` find the daemon from the
+launch agent's flags while launchd has it, else from `daemon.pid` in the state dir;
+`--state-dir`, `--config` and `--port` point them at another one. The environment overrides what
+a trial must not touch: `HOME` (the agent, the plugin cache, the default config and state),
+`BRAIN_CONSOLE_HOME` (where the console is installed, default `HOME`), `BRAIN_CONSOLE_STATE`,
+`BRAIN_CONSOLE_NODE` (the node the agent runs) and `BRAIN_CONSOLE_LAUNCHCTL` (the launchctl called).
+
 ## Settings
 `~/.config/brain-console/config.json` holds the settings, every field optional:
 
