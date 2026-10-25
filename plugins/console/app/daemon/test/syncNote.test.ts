@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { readWorktreeSteps } from '../src/collectors/flowHome.ts';
 import { parseSyncNote, readSyncNote, reportsDir, syncConflict, syncNotePath, syncNoteText, writeSyncNote } from '../src/syncNote.ts';
 
 /**
@@ -25,6 +26,10 @@ function inTemp<T>(body: (dir: string) => T): T {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'console-sync-note-'));
   try { return body(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
 }
+async function inTempAsync(body: (dir: string) => Promise<void>): Promise<void> {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-sync-note-'));
+  try { await body(dir); } finally { rmSync(dir, { recursive: true, force: true }); }
+}
 
 /**
  * `health_branch_notes` with what it calls stubbed: `health_branch_state` builds `health_sync` the
@@ -41,7 +46,7 @@ function healthNote(dir: string, branch: string, base: string): string {
   return readFileSync(path.join(reports, 'sync.md'), 'utf8');
 }
 
-test('SyncNote_SameBytesAsTheHealthJobWrites', () => {
+test('SyncNote_ConsoleRefs_SameBytesAsTheHealthJobWrites', () => {
   inTemp((dir) => {
     const written = healthNote(dir, 'flow/gh-7', 'origin/main');
     assert.equal(written, 'origin/flow/gh-7\norigin/main\n', 'because the stub must build the note as steward.sh does, or this test checks nothing');
@@ -49,7 +54,7 @@ test('SyncNote_SameBytesAsTheHealthJobWrites', () => {
   });
 });
 
-test('SyncNote_NextShFindsItAndListsEveryRef', () => {
+test('SyncNote_ConsoleWritten_NextShFindsItAndListsEveryRef', () => {
   inTemp((dir) => {
     const reports = path.join(dir, 'reports');
     mkdirSync(reports);
@@ -65,14 +70,14 @@ test('SyncNote_NextShFindsItAndListsEveryRef', () => {
   });
 });
 
-test('ReportsDir_MirrorsTheFlowsReportsDir', () => {
+test('ReportsDir_GithubAndLocalItems_MirrorsTheFlowsReportsDir', () => {
   for (const item of ['gh#12', 'local:task/7']) {
     const flow = execFileSync('sh', ['-c', `${shellFunction('lib/flow.sh', 'item_slug')}${shellFunction('lib/flow.sh', 'reports_dir')}\nreports_dir "$1" "$2"`, 'sh', item, '/p/app-wt-2'], { encoding: 'utf8' });
     assert.equal(reportsDir('/p/app-wt-2', item), flow, `because next.sh looks for ${item}'s note where reports_dir puts it`);
   }
 });
 
-test('SyncConflict_ReadsTheFilesAndTheRefsStillToMerge', () => {
+test('SyncConflict_ConflictOutput_FilesAndRefsStillToMerge', () => {
   const output = 'Auto-merging a.txt\nCONFLICT (content): Merge conflict in a.txt\nconsole: merging origin/flow/gh-7 conflicts, so the merge was aborted. Conflicting files:\na.txt\nsrc/b c.ts\nconsole: still to merge: origin/flow/gh-7 origin/main\n';
   assert.deepEqual(syncConflict(output), { refs: ['origin/flow/gh-7', 'origin/main'], files: ['a.txt', 'src/b c.ts'] }, 'because the hand-off needs the refs left and the owner the files to look at');
 });
@@ -83,28 +88,29 @@ test('SyncConflict_OtherEndings_Null', () => {
   }
 });
 
-test('WriteSyncNote_NoNote_WritesItAndSaysWhere', () => {
-  inTemp((dir) => {
-    const written = writeSyncNote(dir, 'gh#7', ['origin/main']);
+test('WriteSyncNote_NoNote_WritesItAndSaysWhere', async () => {
+  await inTempAsync(async (dir) => {
+    const written = await writeSyncNote(dir, 'gh#7', ['origin/main']);
     assert.equal(readFileSync(syncNotePath(dir, 'gh#7'), 'utf8'), 'origin/main\n', 'because the note is one ref per line');
     assert.match(written.output, /wrote .*\.flow\/reports\/gh-7\/sync\.md with the refs to merge:\n {2}origin\/main\n/, 'because the output says what was written and where');
     assert.equal(written.replaced, null, 'because nothing was there before');
+    assert.deepEqual(readdirSync(path.dirname(syncNotePath(dir, 'gh#7'))), ['sync.md'], 'because the temp file it wrote first was renamed over the note, so next.sh never reads a half-written one');
   });
 });
 
-test('WriteSyncNote_SameNote_LeftAndSaid', () => {
-  inTemp((dir) => {
-    writeSyncNote(dir, 'gh#7', ['origin/main']);
-    const again = writeSyncNote(dir, 'gh#7', ['origin/main']);
+test('WriteSyncNote_SameNote_LeftAndSaid', async () => {
+  await inTempAsync(async (dir) => {
+    await writeSyncNote(dir, 'gh#7', ['origin/main']);
+    const again = await writeSyncNote(dir, 'gh#7', ['origin/main']);
     assert.match(again.output, /already names these refs/, 'because a note the health job wrote with the same refs needs no write');
   });
 });
 
-test('WriteSyncNote_OtherNote_ReplacedAndTheOldRefsNamed', () => {
-  inTemp((dir) => {
+test('WriteSyncNote_OtherNote_ReplacedAndTheOldRefsNamed', async () => {
+  await inTempAsync(async (dir) => {
     mkdirSync(path.dirname(syncNotePath(dir, 'gh#7')), { recursive: true });
     writeFileSync(syncNotePath(dir, 'gh#7'), 'origin/flow/gh-7\norigin/main\n');
-    const written = writeSyncNote(dir, 'gh#7', ['origin/main']);
+    const written = await writeSyncNote(dir, 'gh#7', ['origin/main']);
     assert.match(written.output, /named origin\/flow\/gh-7, origin\/main; replaced it/, 'because a note with other refs is never overwritten unseen');
     assert.deepEqual(written.replaced, ['origin/flow/gh-7', 'origin/main'], 'because the log names what was replaced');
   });
@@ -113,4 +119,10 @@ test('WriteSyncNote_OtherNote_ReplacedAndTheOldRefsNamed', () => {
 test('ReadSyncNote_EmptyOrMissing_Null', async () => {
   assert.equal(parseSyncNote(''), null, 'because next.sh tests -s, so an empty note orders nothing');
   assert.equal(await readSyncNote('/nonexistent', 'gh#7'), null, 'because no note is no pending sync');
+});
+
+test('WorktreeSteps_FlowsStepTable_ReadsEachStepsWorktreeFlag', async () => {
+  const steps = await readWorktreeSteps(PLUGIN);
+  assert.deepEqual([steps?.['implement'], steps?.['sync'], steps?.['grill']], [true, true, false], "because next.sh runs the sync step only ahead of a step whose step_field worktree is true");
+  assert.equal(await readWorktreeSteps('/nonexistent'), null, 'because an unreadable table is unknown, not every step outside the worktree');
 });

@@ -21,7 +21,7 @@ import type { Logger } from './log.ts';
 import { ageSeconds, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
-import type { Freshness, Snapshot, SourceName } from './snapshot.ts';
+import type { Freshness, Job, Snapshot, SourceName } from './snapshot.ts';
 import { ENDED_KEPT } from './snapshot.ts';
 
 /** How often each source is re-read, in milliseconds. File changes also trigger `files` and `git` at once. */
@@ -126,8 +126,16 @@ export class ProjectMonitor {
       worktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role === 'pool').map((worktree) => ({
         name: worktree.name, path: worktree.path, item: worktree.claim?.item ?? null, claimBase: worktree.claim?.base || null,
         dirtyFiles: worktree.dirtyFiles, behindBase: worktree.behindBase, agentPids: worktree.agents.map((agent) => agent.pid),
+        step: (this.current?.items ?? []).find((item) => item.id === worktree.claim?.item)?.step || worktree.claim?.step || '',
       })),
       runItems: (flow?.runs ?? []).map((run) => run.item),
+      // A gate record, or the tracker's gate field (what next.sh reads), whichever shows first.
+      gateItems: [
+        ...(flow?.gates ?? []).map((gate) => gate.item),
+        ...(this.current?.items ?? []).filter((item) => item.gate !== '' && item.gate !== 'none').map((item) => item.id),
+      ],
+      worktreeSteps: flow?.worktreeSteps ?? null,
+      nextJob: nextJobOf(this.current?.jobs ?? []),
     };
   }
 
@@ -294,4 +302,10 @@ export class ProjectMonitor {
       this.log.warn('watch.failed', { project: this.project.id, target, error: error instanceof Error ? error.message : String(error) });
     }
   }
+}
+
+/** The next job's pause and run, as `jobs.sh status` reported them; null before the jobs source listed it. */
+function nextJobOf(jobs: Job[]): { paused: boolean; running: boolean } | null {
+  const next = jobs.find((job) => job.name === 'next');
+  return next === undefined ? null : { paused: next.paused, running: next.state === 'running' || next.running.length > 0 };
 }

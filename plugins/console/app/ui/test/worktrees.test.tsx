@@ -165,3 +165,19 @@ test('SyncConflicted_ThenACleanSync_ConflictGone', async () => {
   await renderWithActions([BEHIND], [clean, conflictedSync(['a.ts'])]);
   expect(screen.queryByRole('list', { name: 'Conflicting files' }), 'because the last sync is the one that counts').toBeNull();
 });
+
+const handoff = { ...actionRecord('h2', 'done', {}), kind: 'sync.handoff' as const, args: { target: 'wt-7', refs: 'origin/flow/gh-344\norigin/epic/gh-300' }, outcome: 'started' as const, requestedAt: '2026-10-24T18:17:00Z', startedAt: '2026-10-24T18:17:00Z' };
+
+test('SyncHandedOff_NoteNotReadYet_ConflictStaysAsHandingOff', async () => {
+  await renderWithActions([BEHIND], [handoff, conflictedSync(['a.ts'])]);
+  expect(screen.queryByRole('list', { name: 'Conflicting files' }), 'because the note is written but the files source has not read it, so nothing else would show the merge is owed').not.toBeNull();
+  expect(screen.queryByText(/Handing off to the flow/), 'because the button was pressed and must not be offered again').not.toBeNull();
+  expect(screen.queryByRole('button', { name: 'Hand to the flow' }), 'because a second hand-off would race the first').toBeNull();
+});
+
+test('SyncHandedOff_ReadSinceWithNoNote_ConflictGone', async () => {
+  const snapshot = snapshotAt(TAKEN_AT, 0);
+  const files = { ...snapshot.sources.files, at: '2026-10-24T18:30:00Z' };
+  await renderWithActions([BEHIND], [handoff, conflictedSync(['a.ts'])], { sources: { ...snapshot.sources, files } });
+  expect(screen.queryByRole('list', { name: 'Conflicting files' }), 'because a read after the hand-off found no note: the sync step merged and dropped it').toBeNull();
+});

@@ -91,7 +91,7 @@ test('Sync_UpstreamConflicts_EveryRefStillToMergeNamed', () => {
   } finally { cleanup(); }
 });
 
-test('SyncRefs_TheRefsTheScriptWouldMerge_WithoutMerging', () => {
+test('SyncRefs_TheRefsTheScriptWouldMerge_WithoutMerging', async () => {
   const { dir, git, main, worktree, commit, cleanup } = repos();
   try {
     const other = path.join(dir, 'other');
@@ -102,7 +102,7 @@ test('SyncRefs_TheRefsTheScriptWouldMerge_WithoutMerging', () => {
     git(main, 'push', '-q', 'origin', 'HEAD:main');
     git(worktree, 'fetch', '-q', 'origin');
     const head = git(worktree, 'rev-parse', 'HEAD');
-    assert.deepEqual(syncRefs(SYNC_SCRIPT, worktree, 'main'), ['origin/flow/gh-7', 'origin/main'], 'because a hand-off with no conflict record merges what sync.sh would, in its order');
+    assert.deepEqual(await syncRefs(SYNC_SCRIPT, worktree, 'main'), ['origin/flow/gh-7', 'origin/main'], 'because a hand-off with no conflict record merges what sync.sh would, in its order');
     assert.equal(git(worktree, 'rev-parse', 'HEAD'), head, 'because listing the refs merges nothing');
   } finally { cleanup(); }
 });
@@ -111,7 +111,7 @@ test('SyncRefs_TheRefsTheScriptWouldMerge_WithoutMerging', () => {
 async function runnerOver(worktree: string, dir: string, log: Logger, spawner = childProcessSpawner) {
   const context: ActionContext = {
     root: path.join(dir, 'main'), pluginRoot: path.join(dir, 'plugin'), repo: null, jobsHost: 'claude', pool: [worktree], outsideWorktrees: [], processCwds: [], sessions: [], terminal: null, installedTerminals: [], base: 'main',
-    worktrees: [{ name: 'wt', path: worktree, item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 1, agentPids: [] }], runItems: [],
+    worktrees: [{ name: 'wt', path: worktree, item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 1, agentPids: [], step: 'implement' }], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true }, nextJob: null,
   };
   const events: ActionRecord[] = [];
   const actions = new ActionRunner({ projectId: 'p', context: () => context, spawner, scheduler: realScheduler, clock: () => new Date(), log, stateDir: path.join(dir, 'state'), onRefresh: () => {} });
@@ -147,9 +147,11 @@ test('SyncHandoffAction_NoRefsGiven_WritesWhatSyncWouldMergeThenStartsTheRun', a
     const { actions } = await runnerOver(worktree, dir, log, fake.spawner);
     const outcome = actions.request('sync.handoff', { target: 'gh#7' });
     assert.equal(outcome.status, 202, `because a branch behind its base with nothing running has a merge to hand on: ${JSON.stringify(outcome.body)}`);
+    await until(() => fake.processes.length > 0, 10000);
     assert.equal(readFileSync(syncNotePath(worktree, 'gh#7'), 'utf8'), 'origin/main\n', 'because the note names what sync.sh would merge, one ref per line');
     assert.deepEqual(fake.processes[0]?.plan.args.slice(1), ['claude', 'gh#7', '--max-steps', '15'], "because the run starts as run.start starts the item's run");
-    assert.match((outcome.body as { action: ActionRecord }).action.outputTail, /wrote .*sync\.md[\s\S]*its first step is sync/, 'because the output says what was written and what runs first');
+    const record = actions.get((outcome.body as { action: ActionRecord }).action.id)!;
+    assert.match(record.output ?? '', /from what the last fetch of origin left[\s\S]*wrote .*sync\.md[\s\S]*its first step is sync/, 'because the output says where the refs came from, what was written and what runs first');
     assert.deepEqual(logged.filter(([event]) => event === 'sync.handoff').map(([, fields]) => fields['refs']), [['origin/main']], 'because the hand-off is one log line with its refs');
     await settle();
     await actions.whenIdle();

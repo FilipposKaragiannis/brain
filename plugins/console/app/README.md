@@ -408,14 +408,27 @@ so no `MERGE_HEAD` is left behind, and the script exits 143. When it ends `git` 
 fetching or merging.
 
 `sync.handoff` gives the merge to the flow's sync step. The target resolves as for
-`worktree.sync`. It is refused, each with its own reason, while git has not read the worktree,
-when the worktree is clean and has every commit of its base (nothing to hand off), while a run
-record names the item, or while an agent works in the worktree. `refs` is newline separated (the
-UI passes the conflict record's); without it the refs are `sync.sh --refs`'s. Once its locks are
-held the daemon writes them to `<claim's worktree>/.flow/reports/<item slug>/sync.md`, one per line
-with a newline after each, the bytes `steward.sh`'s `health_branch_notes` writes; a note already
-there with the same refs is left alone, and one with other refs is replaced with the old refs
-named in the output. A note it cannot write fails the action before anything runs. Then the
+`worktree.sync`. `refs` is newline separated (the UI passes the conflict record's); without it
+the refs are `sync.sh --refs`'s, which come from what the last fetch of origin left (the output
+says so; the sync step fetches before it merges). It is refused, each with its own reason, while
+git has not read the worktree; while it has uncommitted files (as `worktree.sync` is); without
+`refs` when the branch has every commit of its base (nothing to hand off; with `refs` a conflict
+with the branch's own upstream is owed even then); while a run record names the item or an agent
+works in the worktree; and wherever `next.sh` would pass the note over, since the health job
+then drops it: while the item waits at a gate (a record in `.flow/gates` or the tracker's gate
+field), while the item's step (the tracker's, else the claim's) is not a worktree step in the
+plugin's step table (`steps.<step>.worktree` in its `profiles.json`, which `step_field` reads;
+the `files` source reads it with the plugin, and an unreadable table refuses), and while the next
+job is paused or a run of it goes (`jobs.sh status`). Once its locks are held the daemon, off its
+event loop, writes the refs to `<claim's worktree>/.flow/reports/<item slug>/sync.md`, one per line
+with a newline after each, the bytes `steward.sh`'s `health_branch_notes` writes, through a temp
+file beside it renamed over it, so `next.sh`'s `-s` test never sees a half-written note; a note
+already there with the same refs is left alone, and one with other refs is replaced with the old
+refs named in the output. A note it cannot write fails the action before anything runs, and so
+does a daemon that began stopping meanwhile. Until flow 1.20.4 the health job removes `sync.md`
+whenever its own check finds nothing to merge (the branch has a PR, is at most `behind_base`
+commits behind, or waits at a gate), so a note it did not write may be gone within one health
+cycle if the run has not taken it by then. Then the
 item's run starts exactly as `run.start` with that item starts it (detached, the same locks and
 re-reads), and `next.sh` finds the note (`[ -s … ]`) and runs the sync step first, keeping the
 item's own step for afterwards. The output opens with what was written and that the run's first
@@ -426,8 +439,8 @@ refs it replaced.
 "Merge <base> in" ends one of three ways. Merged: every ref went in cleanly, the action is `done`
 and the stale reason goes with the next git read. Conflict: the merge is aborted, the action is
 `failed` with `conflict`, and the card lists the files with "Hand to the flow". Handed to the flow:
-that button runs `sync.handoff`, the card shows "sync pending: <refs>" until the sync step merges
-them (and drops the note), and a choice only the owner can make comes back as an escalation gate.
+that button runs `sync.handoff`; the card says it is handing off until the files source reads
+the note, then shows "sync pending: <refs>" until the sync step merges them (and drops the note), and a choice only the owner can make comes back as an escalation gate.
 
 `terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, another
 worktree git lists for the project (the outside rows), or the working directory of an agent or
@@ -537,7 +550,8 @@ out (for a branch far behind, a "Merge <base> in" button that runs `worktree.syn
 worktree is clean, has no run record and no agent, else the same words without the button;
 after a sync that conflicted, the conflicting files folded after five and "Hand to the flow",
 which runs `sync.handoff` with the conflict's refs, or while a run record names the item and its
-note is there "A run is going; the sync step runs first when it starts"; and "sync pending:
+note is there "A run is going; the sync step runs first when it starts", and between an accepted
+hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
 <refs>" whenever `syncPending` is set, so a note the health job wrote shows too), a
 legend for dirty, agents and sessions; Open in Terminal on every row, the project root
 included, Release, Health), Agents and jobs (Open in Terminal on every agent and session row, in

@@ -174,7 +174,7 @@ const SESSION: SessionRef = { host: 'claude', id: '8f3c2a10-5b7e-4c1d-9a0b-1e2f3
 const CONTEXT: ActionContext = {
   root: '/p/app', pluginRoot: '/plugins/flow/1.19.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2'], outsideWorktrees: [], processCwds: ['/p/app-wt-2'],
   sessions: [{ pid: 100, cwd: '/p/app-wt-2', session: SESSION, alive: true }, { pid: 200, cwd: '/p/app-wt-2', session: { ...SESSION, id: 'ended-1', resume: ['claude', '--resume', 'ended-1'] }, alive: false }],
-  terminal: 'iterm', installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [],
+  terminal: 'iterm', installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: null, nextJob: null,
 };
 
 function launch(args: Record<string, string>, context: ActionContext = CONTEXT): string[] {

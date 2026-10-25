@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { HANDED_ON_REFRESH_MS, installNote, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -197,7 +197,7 @@ test('TerminalOpen_CustomCommandWithCmd_GetsTheQuotedLine', () => {
   assert.equal(plan.args.at(-1), `cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'`, 'because {cmd} is the line to run, quoted for sh');
 });
 
-const CLEAN: SyncFacts = { name: 'app-wt-2', path: '/p/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 27, agentPids: [] };
+const CLEAN: SyncFacts = { name: 'app-wt-2', path: '/p/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 27, agentPids: [], step: 'implement' };
 const SYNC: ActionContext = { ...CONTEXT, worktrees: [CLEAN, { ...CLEAN, name: 'app-wt-3', path: '/p/app-wt-3', item: 'gh#9', claimBase: 'epic/gh-300' }] };
 
 test('WorktreeSync_ByName_MergesTheProjectBaseWithTheSyncScript', () => {
@@ -238,16 +238,42 @@ test('WorktreeSync_BaseThatLooksLikeAnOption_Refused', () => {
 
 const refusal = (result: ReturnType<typeof planAction>): string => (result.ok ? '' : result.error);
 
-test('SyncHandoff_StartsTheItemsRunAsRunStartDoes', () => {
+test('SyncHandoff_ValidTarget_StartsTheItemsRunAsRunStartDoes', () => {
   const plan = planned('sync.handoff', { target: 'app-wt-2', refs: 'origin/main' }, SYNC);
   const { prepare, ...rest } = plan;
   assert.deepEqual(rest, planned('run.start', { item: 'gh#7' }, SYNC), 'because the run is the one run.start starts for the item: detached, the item and next-job locks, the same re-reads');
   assert.equal(typeof prepare, 'function', 'because the note is written in the daemon once the locks are held, before the run starts');
 });
 
-test('SyncHandoff_CleanAndUpToDate_RefusedNothingToHandOff', () => {
+test('SyncHandoff_UpToDateWithoutRefs_RefusedNothingToHandOff', () => {
   const result = planAction('sync.handoff', { target: 'app-wt-2' }, { ...SYNC, worktrees: [{ ...CLEAN, behindBase: 0 }] });
   assert.match(refusal(result), /no merge to hand off/, 'because a sync step with nothing to merge would only spend a run');
+});
+
+test('SyncHandoff_UpToDateWithRefs_Accepted', () => {
+  const result = planAction('sync.handoff', { target: 'app-wt-2', refs: 'origin/flow/gh-7' }, { ...SYNC, worktrees: [{ ...CLEAN, behindBase: 0 }] });
+  assert.equal(result.ok, true, "because a conflict with the branch's own upstream is owed even when the base is merged");
+});
+
+test('SyncHandoff_DirtyWorktree_RefusedAsSyncIs', () => {
+  const result = planAction('sync.handoff', { target: 'app-wt-2', refs: 'origin/main' }, { ...SYNC, worktrees: [{ ...CLEAN, dirtyFiles: 2 }] });
+  assert.match(refusal(result), /has 2 uncommitted files; commit or stash them before merging/, 'because the sync step would merge over uncommitted work, and the health job drops a note for a dirty tree');
+});
+
+test('SyncHandoff_ItemAtAGate_RefusedWithItsReason', () => {
+  const result = planAction('sync.handoff', { target: 'gh#7', refs: 'origin/main' }, { ...SYNC, gateItems: ['gh#7'] });
+  assert.match(refusal(result), /gh#7 waits at a gate/, 'because next.sh exits at a gate before any step, and the health job then drops the note');
+});
+
+test('SyncHandoff_StepOutsideTheWorktree_RefusedWithItsReason', () => {
+  const result = planAction('sync.handoff', { target: 'app-wt-2', refs: 'origin/main' }, { ...SYNC, worktrees: [{ ...CLEAN, step: 'grill' }] });
+  assert.match(refusal(result), /step grill, which runs outside the worktree/, 'because next.sh runs the sync step only ahead of a worktree step');
+  assert.match(refusal(planAction('sync.handoff', { target: 'app-wt-2', refs: 'origin/main' }, { ...SYNC, worktreeSteps: null })), /step table could not be read/, 'because an unknown step table cannot say the sync runs first');
+});
+
+test('SyncHandoff_NextJobPausedOrRunning_RefusedWithItsReason', () => {
+  assert.match(refusal(planAction('sync.handoff', { target: 'app-wt-2', refs: 'origin/main' }, { ...SYNC, nextJob: { paused: true, running: false } })), /next job is paused/, 'because a paused next job exits at once and the note would wait unread');
+  assert.match(refusal(planAction('sync.handoff', { target: 'app-wt-2', refs: 'origin/main' }, { ...SYNC, nextJob: { paused: false, running: true } })), /next job run is going/, 'because a run while the next job holds its lock is skipped');
 });
 
 test('SyncHandoff_RunRecordNamesTheItem_RefusedWithItsReason', () => {
@@ -273,7 +299,7 @@ test('SyncHandoff_RefsOnePerLine_Accepted', () => {
   assert.equal(planAction('sync.handoff', { target: 'app-wt-2', refs: 'origin/flow/gh-7\norigin/main\n' }, SYNC).ok, true, 'because the UI passes the conflict record\'s refs one per line, as the note holds them');
 });
 
-test('WorktreeSync_ReadsTheConflictFromItsOutput', () => {
+test('WorktreeSync_ConflictOutput_RecordCarriesTheConflict', () => {
   const plan = planned('worktree.sync', { target: 'app-wt-2' }, SYNC);
   assert.deepEqual(plan.conflict?.('console: merging origin/main conflicts, so the merge was aborted. Conflicting files:\na.txt\nconsole: still to merge: origin/main\n'), { refs: ['origin/main'], files: ['a.txt'] }, 'because the record carries the conflict for the hand-off');
 });

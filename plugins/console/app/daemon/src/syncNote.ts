@@ -1,7 +1,8 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import type { SyncConflict } from './snapshot.ts';
 
 /*
@@ -67,10 +68,12 @@ export function syncConflict(output: string): SyncConflict | null {
 /** How long the console waits for `sync.sh --refs`: three local git reads, no fetch. */
 const REFS_TIMEOUT_MS = 10000;
 
-/** The refs `sync.sh` would merge into the worktree, in its order, from what the last fetch left. */
-export function syncRefs(script: string, worktree: string, base: string): string[] {
-  const output = execFileSync('sh', [script, '--refs', worktree, base], { encoding: 'utf8', timeout: REFS_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'] });
-  return output.split('\n').map((line) => line.trim()).filter((line) => line !== '');
+const run = promisify(execFile);
+
+/** The refs `sync.sh` would merge into the worktree, in its order, from what the last fetch left. Off the event loop. */
+export async function syncRefs(script: string, worktree: string, base: string): Promise<string[]> {
+  const { stdout } = await run('sh', [script, '--refs', worktree, base], { encoding: 'utf8', timeout: REFS_TIMEOUT_MS });
+  return stdout.split('\n').map((line) => line.trim()).filter((line) => line !== '');
 }
 
 /**
@@ -78,14 +81,22 @@ export function syncRefs(script: string, worktree: string, base: string): string
  * there with the same refs is left alone; one with other refs is replaced, and the output names
  * what it said before, so a note the health job wrote is never overwritten unseen.
  */
-export function writeSyncNote(worktree: string, item: string, refs: string[]): { output: string; replaced: string[] | null } {
+export async function writeSyncNote(worktree: string, item: string, refs: string[]): Promise<{ output: string; replaced: string[] | null }> {
   const file = syncNotePath(worktree, item);
   const text = syncNoteText(refs);
-  const before = existsSync(file) ? readFileSync(file, 'utf8') : null;
+  const before = await readFile(file, 'utf8').catch(() => null);
   const listed = refs.map((ref) => `  ${ref}\n`).join('');
   if (before === text) return { output: `console: ${file} already names these refs, so it was left as it is:\n${listed}`, replaced: null };
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, text);
+  await mkdir(path.dirname(file), { recursive: true });
+  // A temp file beside it, renamed over it in one step: next.sh's -s test never sees a half note.
+  const temp = path.join(path.dirname(file), `.sync.md.${randomUUID()}`);
+  try {
+    await writeFile(temp, text);
+    await rename(temp, file);
+  } catch (error) {
+    await rm(temp, { force: true });
+    throw error;
+  }
   if (before === null) return { output: `console: wrote ${file} with the refs to merge:\n${listed}`, replaced: null };
   const old = parseSyncNote(before) ?? [];
   return { output: `console: ${file} named ${old.length === 0 ? 'nothing (it was empty)' : old.join(', ')}; replaced it with the refs to merge:\n${listed}`, replaced: old };

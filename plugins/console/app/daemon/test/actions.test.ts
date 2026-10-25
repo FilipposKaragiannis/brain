@@ -14,7 +14,7 @@ import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 import { fakeScheduler, fakeSpawner, plainSpawner, settle, until } from './fakeSpawner.ts';
 import type { FakeSpawnerOptions } from './fakeSpawner.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [] };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 const NOW = new Date('2026-10-25T09:00:00Z');
 const HTTP_ACCEPTED = 202;
 const HTTP_BAD_REQUEST = 400;
@@ -419,7 +419,7 @@ test('TerminalOpen_TwoAtOnce_NoLockAndNothingReRead', async () => {
 });
 
 test('SyncHandoff_NoteCannotBeWritten_FailsAndTheRunNeverStarts', async () => {
-  const unwritable = { ...CONTEXT, worktrees: [{ name: 'app-wt-2', path: '/nonexistent-root/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 3, agentPids: [] }], pool: ['/nonexistent-root/app-wt-2'] };
+  const unwritable = { ...CONTEXT, worktrees: [{ name: 'app-wt-2', path: '/nonexistent-root/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 3, agentPids: [], step: 'implement' }], pool: ['/nonexistent-root/app-wt-2'] };
   const { actions, processes, cleanup } = await runner(unwritable, PLAIN);
   try {
     const record = actionOf(actions.request('sync.handoff', { target: 'gh#7', refs: 'origin/main' }));

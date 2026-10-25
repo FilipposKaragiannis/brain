@@ -18,6 +18,8 @@ export type SyncFacts = {
   behindBase: number | null;
   /** The pids of the unattended agents working in it. */
   agentPids: number[];
+  /** The claimed item's step: the tracker's when the board was read, else the claim's; empty when neither says. */
+  step: string;
 };
 
 /** A process's session as the snapshot lists it: where it ran, how to resume it, and whether the process still runs. */
@@ -47,6 +49,12 @@ export type ActionContext = {
   worktrees: SyncFacts[];
   /** Every item a run record in .flow/runs names. */
   runItems: string[];
+  /** Every item waiting at a gate: a record in .flow/gates, or a gate the tracker's state names. */
+  gateItems: string[];
+  /** Whether each step runs in a worktree, from the plugin's step table; null when it could not be read. */
+  worktreeSteps: Record<string, boolean> | null;
+  /** The next job as `jobs.sh status` reports it: paused, and whether a run of it goes now; null before jobs was read. */
+  nextJob: { paused: boolean; running: boolean } | null;
 };
 
 /** One planned process. `detach` puts it in its own session so it outlives the daemon. */
@@ -75,7 +83,7 @@ export type ActionPlan = {
    * writes the sync note here): its output opens the action's and its event is logged. A throw
    * fails the action and the process never starts.
    */
-  prepare?: () => { output: string; event: { name: string; fields: Record<string, unknown> } };
+  prepare?: () => Promise<{ output: string; event: { name: string; fields: Record<string, unknown> } }>;
 };
 
 /**
@@ -339,12 +347,6 @@ function planHandoff(args: Record<string, string>, context: ActionContext): Plan
   const found = syncTarget('sync.handoff', args['target'] ?? '', context);
   if (!found.ok) return found;
   const { worktree } = found;
-  if (worktree.dirtyFiles === null || worktree.behindBase === null) return fail(`git has not read ${worktree.name} yet; try again in a moment`);
-  if (worktree.dirtyFiles === 0 && worktree.behindBase === 0) return fail(`${worktree.name} is clean and has every commit of its base, so there is no merge to hand off`);
-  if (context.runItems.includes(worktree.item)) return fail(`a run record names ${worktree.item}; its run is going, and its next run starts with the sync step once a note is there`);
-  if (worktree.agentPids.length > 0) return fail(`an agent works in ${worktree.name} (pid ${worktree.agentPids.join(', ')}); a second run there would mix with its work`);
-  const base = worktree.claimBase ?? context.base;
-  if (!isBranch(base)) return fail(`the base ${base} is not a branch name git can merge`);
   const given = args['refs'] === undefined ? null : args['refs'].split('\n').map((ref) => ref.trim()).filter((ref) => ref !== '');
   if (given !== null) {
     if (given.length === 0) return fail('refs is empty; leave it out to merge what sync.sh would');
@@ -352,15 +354,31 @@ function planHandoff(args: Record<string, string>, context: ActionContext): Plan
     const bad = given.find((ref) => !isBranch(ref));
     if (bad !== undefined) return fail(`${bad} is not a ref git can merge`);
   }
+  if (worktree.dirtyFiles === null || worktree.behindBase === null) return fail(`git has not read ${worktree.name} yet; try again in a moment`);
+  if (worktree.dirtyFiles > 0) return fail(`${worktree.name} has ${worktree.dirtyFiles} uncommitted file${worktree.dirtyFiles === 1 ? '' : 's'}; commit or stash them before merging`);
+  // With refs from a conflict record the merge is known to be owed, the branch's own upstream among them.
+  if (given === null && worktree.behindBase === 0) return fail(`${worktree.name} has every commit of its base, so there is no merge to hand off`);
+  if (context.runItems.includes(worktree.item)) return fail(`a run record names ${worktree.item}; its run is going, and its next run starts with the sync step once a note is there`);
+  if (worktree.agentPids.length > 0) return fail(`an agent works in ${worktree.name} (pid ${worktree.agentPids.join(', ')}); a second run there would mix with its work`);
+  // next.sh exits 4 at a gate and runs the sync step only ahead of a worktree step; the health job
+  // drops a note no run takes, so a note the run would pass over is never written.
+  if (context.gateItems.includes(worktree.item)) return fail(`${worktree.item} waits at a gate, so its run would stop there before the sync step; answer the gate first`);
+  if (context.worktreeSteps === null) return fail("the flow plugin's step table could not be read, so the console cannot tell whether the item's step runs the sync step first");
+  if (worktree.step !== '' && context.worktreeSteps[worktree.step] !== true) return fail(`${worktree.item} is at step ${worktree.step}, which runs outside the worktree, so next.sh would not run the sync step first`);
+  if (context.nextJob?.paused === true) return fail('the next job is paused, so the run would exit at once; resume it first');
+  if (context.nextJob?.running === true) return fail('a next job run is going and holds its lock, so this run would be skipped; try again when it ends');
+  const base = worktree.claimBase ?? context.base;
+  if (!isBranch(base)) return fail(`the base ${base} is not a branch name git can merge`);
   const started = planAction('run.start', { item: worktree.item }, context);
   if (!started.ok) return started;
   const { path: folder, item } = worktree;
-  const prepare = (): ReturnType<NonNullable<ActionPlan['prepare']>> => {
-    const refs = given ?? syncRefs(SYNC_SCRIPT, folder, base);
+  const prepare = async (): Promise<Awaited<ReturnType<NonNullable<ActionPlan['prepare']>>>> => {
+    const refs = given ?? await syncRefs(SYNC_SCRIPT, folder, base);
     if (refs.length === 0) throw new Error(`sync.sh names no ref to merge into ${folder}`);
-    const written = writeSyncNote(folder, item, refs);
+    const written = await writeSyncNote(folder, item, refs);
+    const source = given === null ? 'console: the refs are the ones sync.sh --refs picks from what the last fetch of origin left; the sync step fetches before it merges\n' : '';
     return {
-      output: `${written.output}console: starting the run for ${item}; its first step is sync, which merges these, resolves what it can and raises an escalation gate if a choice is yours\n`,
+      output: `${source}${written.output}console: starting the run for ${item}; its first step is sync, which merges these, resolves what it can and raises an escalation gate if a choice is yours\n`,
       event: { name: 'sync.handoff', fields: { item, worktree: folder, refs, replaced: written.replaced } },
     };
   };

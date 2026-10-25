@@ -12,6 +12,7 @@ export const CONFLICT_FILES_SHOWN = 5;
 export const HAND_TO_THE_FLOW = 'Hand to the flow';
 export const HAND_TO_THE_FLOW_TITLE = "Writes the sync note and starts the item's run. The flow's sync step merges, resolves what it can, and raises an escalation gate if a choice is yours.";
 export const RUN_GOING_SYNC_FIRST = 'A run is going; the sync step runs first when it starts';
+export const HANDING_OFF = 'Handing off to the flow: the sync note shows here once it is read';
 
 /** The pool first, then the worktrees outside it under their own heading, then what the columns mean. */
 export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
@@ -59,7 +60,7 @@ function WorktreeTable({ worktrees, snapshot, label }: { worktrees: Worktree[]; 
 function WorktreeRows({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
   const note = worktreeNote(worktree, snapshot);
   const { records } = useActionsView();
-  const conflict = openConflict(records, worktree);
+  const open = openConflict(records, worktree, snapshot.sources.files.at);
   return (
     <tbody className={worktree.state === 'stale' ? 'worktree-rows hatched' : 'worktree-rows'}>
       <tr>
@@ -82,7 +83,7 @@ function WorktreeRows({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
         </td>
       </tr>
       {note !== null && <tr className="note-row"><td colSpan={COLUMNS}>{note}</td></tr>}
-      {(conflict !== null || worktree.syncPending !== null) && <tr className="note-row"><td colSpan={COLUMNS}><SyncNote worktree={worktree} snapshot={snapshot} conflict={conflict} /></td></tr>}
+      {(open !== null || worktree.syncPending !== null) && <tr className="note-row"><td colSpan={COLUMNS}><SyncNote worktree={worktree} snapshot={snapshot} open={open} /></td></tr>}
     </tbody>
   );
 }
@@ -130,27 +131,34 @@ function namesWorktree(record: ActionRecord, worktree: Worktree): boolean {
   return target === worktree.name || (worktree.item !== null && target === worktree.item);
 }
 
+/** A sync conflict still owed, and whether a hand-off of it was accepted but its note not read back yet. */
+export type OpenConflict = { conflict: SyncConflict; handingOff: boolean };
+
 /**
- * The conflict the last `worktree.sync` of this worktree ended in, while it is still open: not
- * when a later sync ran, nor once a hand-off after it went through and its note is gone (the
- * flow's sync step merged it). Records are newest first.
+ * The conflict the last `worktree.sync` of this worktree ended in, while it is still open. A later
+ * sync closes it. So does an accepted hand-off after it, but only once the files source has read
+ * the worktree since the hand-off began and found no note (the flow's sync step merged and dropped
+ * it); until that read it shows as handing off. Records are newest first.
  */
-export function openConflict(records: ActionRecord[], worktree: Worktree): SyncConflict | null {
+export function openConflict(records: ActionRecord[], worktree: Worktree, filesReadAt: string | null): OpenConflict | null {
   const syncAt = records.findIndex((record) => record.kind === 'worktree.sync' && namesWorktree(record, worktree));
   const conflict = syncAt < 0 ? null : records[syncAt]!.conflict;
   if (conflict === null) return null;
-  const handedOn = records.slice(0, syncAt).some((record) => record.kind === 'sync.handoff' && namesWorktree(record, worktree) && record.state !== 'failed' && record.state !== 'rejected');
-  return handedOn && worktree.syncPending === null ? null : conflict;
+  const handoff = records.slice(0, syncAt).find((record) => record.kind === 'sync.handoff' && namesWorktree(record, worktree) && record.state !== 'failed' && record.state !== 'rejected');
+  if (handoff === undefined || worktree.syncPending !== null) return { conflict, handingOff: false };
+  const readSince = filesReadAt !== null && Date.parse(filesReadAt) > Date.parse(handoff.startedAt ?? handoff.requestedAt);
+  return readSince ? null : { conflict, handingOff: true };
 }
 
 /**
  * The merge the flow still owes the branch: the refs its sync note names, and, after a
  * `worktree.sync` that conflicted, the files and the hand-off to the flow's sync step.
  */
-function SyncNote({ worktree, snapshot, conflict }: { worktree: Worktree; snapshot: Snapshot; conflict: SyncConflict | null }) {
+function SyncNote({ worktree, snapshot, open }: { worktree: Worktree; snapshot: Snapshot; open: OpenConflict | null }) {
   const [allFiles, setAllFiles] = useState(false);
   const running = worktree.item !== null && snapshot.runs.some((run) => run.item === worktree.item);
   const pending = worktree.syncPending;
+  const conflict = open?.conflict ?? null;
   const files = conflict === null ? [] : allFiles ? conflict.files : conflict.files.slice(0, CONFLICT_FILES_SHOWN);
   return (
     <div className="sync-note">
@@ -163,8 +171,7 @@ function SyncNote({ worktree, snapshot, conflict }: { worktree: Worktree; snapsh
             <button type="button" className="row-link" onClick={() => setAllFiles((shown) => !shown)}>{allFiles ? 'Show fewer files' : `Show all ${conflict.files.length} files`}</button>
           )}
           <span className="call-to-action">
-            {!running && <ActionButton kind="sync.handoff" args={{ target: worktree.name, refs: conflict.refs.join('\n') }} label={HAND_TO_THE_FLOW} primary title={HAND_TO_THE_FLOW_TITLE} />}
-            {running && (pending !== null ? RUN_GOING_SYNC_FIRST : 'A run is going; hand the merge to the flow once it ends')}
+            {open?.handingOff === true ? HANDING_OFF : running ? (pending !== null ? RUN_GOING_SYNC_FIRST : 'A run is going; hand the merge to the flow once it ends') : <ActionButton kind="sync.handoff" args={{ target: worktree.name, refs: conflict.refs.join('\n') }} label={HAND_TO_THE_FLOW} primary title={HAND_TO_THE_FLOW_TITLE} />}
           </span>
         </>
       )}
