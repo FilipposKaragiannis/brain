@@ -6,6 +6,8 @@ import { useServices } from './console.tsx';
 import { clockTime, useNow } from './clock.tsx';
 import { parseRoute, routeHash, SCREENS } from './route.ts';
 import type { Route, Screen } from './route.ts';
+import { ProjectHeader } from './ProjectHeader.tsx';
+import { Activity } from './screens/Activity.tsx';
 import { Agents } from './screens/Agents.tsx';
 import { Gates } from './screens/Gates.tsx';
 import { Overview } from './screens/Overview.tsx';
@@ -13,6 +15,7 @@ import { Pulls } from './screens/Pulls.tsx';
 import { Worktrees } from './screens/Worktrees.tsx';
 import { ActionsProvider, Dot, Empty } from './ui.tsx';
 import { useActions } from './useActions.ts';
+import { WORDS } from './words.ts';
 import { HTTP_OK, useProject } from './useProject.ts';
 import type { LinkState } from './stream.ts';
 
@@ -53,7 +56,7 @@ function Listed({ route, projects }: { route: Route; projects: ProjectSummary[] 
 
 function ProjectSwitcher({ projects, value, onPick }: { projects: ProjectSummary[]; value: string; onPick: (projectId: string) => void }) {
   return (
-    <select className="project-switcher" aria-label="Project" value={value} onChange={(event) => onPick(event.target.value)}>
+    <select className="project-switcher" aria-label="Project" title={WORDS.projects} value={value} onChange={(event) => onPick(event.target.value)}>
       {value === '' && <option value="" disabled>Pick a project</option>}
       {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
     </select>
@@ -84,6 +87,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
           </div>
         </nav>
         <main className="main">
+          {snapshot !== null && <ProjectHeader project={snapshot.project} />}
           <header className="page-head">
             <h1>{SCREENS.find((entry) => entry.screen === route.screen)?.label}</h1>
             <div className="page-tools">
@@ -106,6 +110,7 @@ function ScreenView({ route, snapshot, go }: { route: Route; snapshot: Snapshot;
     case 'worktrees': return <Worktrees snapshot={snapshot} />;
     case 'agents': return <Agents snapshot={snapshot} />;
     case 'pulls': return <Pulls snapshot={snapshot} />;
+    case 'activity': return <Activity key={route.detail ?? ''} snapshot={snapshot} item={route.detail} go={go} />;
   }
 }
 
@@ -115,7 +120,7 @@ function NavBadge({ screen, snapshot }: { screen: Screen; snapshot: Snapshot }) 
     case 'gates': return snapshot.gates.length > 0 ? <span className="badge tone-needs-you">{snapshot.gates.length}</span> : null;
     case 'worktrees': return <span className="badge-plain">{pool.filter((worktree) => worktree.claim !== null).length} / {pool.length}</span>;
     case 'agents': return snapshot.counts.agents > 0 ? <span className="badge-plain tone-running"><Dot tone="running" />{snapshot.counts.agents} live</span> : null;
-    case 'overview': case 'pulls': return null;
+    case 'overview': case 'pulls': case 'activity': return null;
   }
 }
 

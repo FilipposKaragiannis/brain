@@ -13,3 +13,7 @@ test('RouteToHashAndBack_RoundTrips', () => {
   const route = { projectId: 'my project', screen: 'gates' as const, detail: 'gh#7' };
   expect(parseRoute(routeHash(route)), 'because links the page writes must parse back to the same place').toEqual(route);
 });
+
+test('ActivityHashWithAnItem_NarrowsToThatItem', () => {
+  expect(parseRoute('#/foosbrawl/activity/gh%23515'), 'because the activity screen links straight to one item\'s events').toEqual({ projectId: 'foosbrawl', screen: 'activity', detail: 'gh#515' });
+});

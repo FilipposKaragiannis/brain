@@ -1,4 +1,4 @@
-export type Screen = 'overview' | 'gates' | 'worktrees' | 'agents' | 'pulls';
+export type Screen = 'overview' | 'gates' | 'worktrees' | 'agents' | 'pulls' | 'activity';
 
 export const SCREENS: { screen: Screen; label: string }[] = [
   { screen: 'overview', label: 'Overview' },
@@ -6,6 +6,7 @@ export const SCREENS: { screen: Screen; label: string }[] = [
   { screen: 'worktrees', label: 'Worktrees' },
   { screen: 'agents', label: 'Agents and jobs' },
   { screen: 'pulls', label: 'Pull requests' },
+  { screen: 'activity', label: 'Activity' },
 ];
 
 /** Where the page is: `#/<project>/<screen>/<detail>`, every part optional. */

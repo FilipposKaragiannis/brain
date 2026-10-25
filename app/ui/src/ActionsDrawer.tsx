@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ActionRecord } from './actions.ts';
-import { isActive } from './actions.ts';
+import { actionStateLabel, isActive } from './actions.ts';
 import { clockTime } from './clock.tsx';
-import { actionTone } from './status.ts';
+import { actionRecordTone } from './status.ts';
 import { Chip, Empty } from './ui.tsx';
 import type { ActionsView } from './useActions.ts';
 
@@ -27,7 +27,7 @@ export function ActionsDrawer({ actions, close }: { actions: ActionsView; close:
             {actions.records.map((record) => (
               <li key={record.id}>
                 <button type="button" className={record.id === selected?.id ? 'list-row selected' : 'list-row'} onClick={() => setSelectedId(record.id)}>
-                  <Chip tone={actionTone(record.state)}>{record.state}</Chip>
+                  <Chip tone={actionRecordTone(record)}>{actionStateLabel(record)}</Chip>
                   <span className="mono">{record.kind}</span>
                   <span className="muted clip">{describeArgs(record.args)}</span>
                   <span className="mono muted">{clockTime(record.requestedAt)}</span>
@@ -52,7 +52,7 @@ function ActionOutput({ record, actions }: { record: ActionRecord; actions: Acti
       <div className="action-meta">
         <span className="mono">{record.command.join(' ')}</span>
         <span className="muted">
-          {record.exitCode !== null && `exit ${record.exitCode} · `}{record.timedOut && 'timed out · '}{record.locks.length > 0 && `holds ${record.locks.join(', ')} · `}{record.outputBytes} bytes
+          {record.state === 'done' && record.outcome === 'started' && 'started: the work goes on after this record · '}{record.exitCode !== null && `exit ${record.exitCode} · `}{record.timedOut && 'timed out · '}{record.locks.length > 0 && `holds ${record.locks.join(', ')} · `}{record.outputBytes} bytes
         </span>
       </div>
       <pre className="terminal">{text === '' ? (isActive(record.state) ? 'waiting for output…' : 'no output') : text}</pre>

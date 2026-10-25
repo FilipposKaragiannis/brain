@@ -1,42 +1,102 @@
-import type { Snapshot, Worktree } from '../../../daemon/src/snapshot.ts';
-import { Age } from '../clock.tsx';
+import type { ProcessInfo, Snapshot, Worktree } from '../../../daemon/src/snapshot.ts';
+import { Age, formatDuration, useLiveSeconds } from '../clock.tsx';
+import { ItemLink } from '../links.tsx';
 import { worktreeTone } from '../status.ts';
 import { ActionButton, Chip, Empty, Flags, Module, SourceFreshness } from '../ui.tsx';
+import { WORDS } from '../words.ts';
 
+const COLUMNS = 11;
+
+/** The pool first, then the worktrees outside it under their own heading, then what the columns mean. */
 export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
+  const pool = snapshot.worktrees.filter((worktree) => worktree.role === 'pool');
+  const outside = snapshot.worktrees.filter((worktree) => worktree.role !== 'pool');
   return (
     <div className="screen">
       <Module className="worktrees" title="Worktrees" aside={<ActionButton kind="steward.health" args={{}} label="Health" primary={false} />}
         footer={<><SourceFreshness name="git" freshness={snapshot.sources.git} /><SourceFreshness name="processes" freshness={snapshot.sources.processes} /></>}>
         {snapshot.worktrees.length === 0 ? <Empty>No worktree found.</Empty> : (
-        <div className="scroll">
-          <table className="table">
-            <thead>
-              <tr><th>Worktree</th><th>State</th><th>Flags</th><th>Branch</th><th>Ahead / behind</th><th>Dirty</th><th>Claim age</th><th>Item</th><th>Agents</th><th>Sessions</th><th /></tr>
-            </thead>
-            <tbody>{snapshot.worktrees.map((worktree) => <WorktreeRow key={worktree.name} worktree={worktree} takenAt={snapshot.takenAt} />)}</tbody>
-          </table>
-        </div>
+          <>
+            <WorktreeTable worktrees={pool} snapshot={snapshot} label="Pool" />
+            {outside.length > 0 && (
+              <section className="worktree-group" aria-labelledby="outside-heading">
+                <h3 id="outside-heading" className="group-head">Outside the pool</h3>
+                <p className="module-help">{WORDS.outside}</p>
+                <WorktreeTable worktrees={outside} snapshot={snapshot} label="Outside the pool" />
+              </section>
+            )}
+            <p className="legend"><strong>Dirty</strong> {WORDS.dirty} <strong>Agents</strong> {WORDS.agents} <strong>Sessions</strong> {WORDS.sessions}</p>
+          </>
         )}
       </Module>
     </div>
   );
 }
 
-function WorktreeRow({ worktree, takenAt }: { worktree: Worktree; takenAt: string }) {
+function WorktreeTable({ worktrees, snapshot, label }: { worktrees: Worktree[]; snapshot: Snapshot; label: string }) {
   return (
-    <tr className={worktree.state === 'stale' ? 'hatched' : ''}>
-      <td className="mono strong" title={worktree.path}>{worktree.name}</td>
-      <td><Chip tone={worktreeTone(worktree.state)}>{worktree.state}</Chip></td>
-      <td><Flags flags={worktree.flags} /></td>
-      <td className="mono clip" title={worktree.branch ?? ''}>{worktree.branch ?? '—'}</td>
-      <td className="mono">{worktree.aheadOfBase ?? '—'} / {worktree.behindBase ?? '—'}</td>
-      <td className="mono">{worktree.dirtyFiles ?? '—'}</td>
-      <td className="mono"><Age seconds={worktree.claimAgeSeconds} takenAt={takenAt} /></td>
-      <td className="mono">{worktree.item ?? '—'}</td>
-      <td className="mono">{worktree.agents.map((agent) => agent.pid).join(', ') || '—'}</td>
-      <td className="mono">{worktree.sessions.map((session) => session.pid).join(', ') || '—'}</td>
-      <td>{worktree.role === 'pool' && worktree.claim !== null && <ActionButton kind="worktree.release" args={{ target: worktree.name }} label="Release" primary={false} />}</td>
-    </tr>
+    <div className="scroll">
+      <table className="table" aria-label={label}>
+        <thead>
+          <tr>
+            <th>Worktree</th><th>State</th><th>Flags</th><th>Branch</th><th title="Commits ahead of and behind the base">Ahead / behind</th>
+            <th title={WORDS.dirty}>Dirty</th><th>Claim age</th><th>Item</th>
+            <th title={WORDS.agents}>Agents</th><th title={WORDS.sessions}>Sessions</th><th />
+          </tr>
+        </thead>
+        {worktrees.map((worktree) => <WorktreeRows key={worktree.name} worktree={worktree} snapshot={snapshot} />)}
+      </table>
+    </div>
+  );
+}
+
+function WorktreeRows({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
+  const note = worktreeNote(worktree, snapshot);
+  return (
+    <tbody className={worktree.state === 'stale' ? 'worktree-rows hatched' : 'worktree-rows'}>
+      <tr>
+        <td className="mono strong nowrap" title={worktree.path}>{worktree.name}</td>
+        <td><Chip tone={worktreeTone(worktree.state)}>{worktree.state}</Chip></td>
+        <td><Flags flags={worktree.flags} /></td>
+        <td className="mono clip" title={worktree.branch ?? ''}>{worktree.branch ?? '—'}</td>
+        <td className="mono">{worktree.aheadOfBase ?? '—'} / {worktree.behindBase ?? '—'}</td>
+        <td className="mono">{worktree.dirtyFiles ?? '—'}</td>
+        <td className="mono"><Age seconds={worktree.claimAgeSeconds} takenAt={snapshot.takenAt} /></td>
+        <td className="item-cell">
+          {worktree.item === null ? '—' : <ItemLink id={worktree.item} pages={snapshot} />}
+          {worktree.itemTitle !== null && <span className="item-title clip" title={worktree.itemTitle}>{worktree.itemTitle}</span>}
+        </td>
+        <td><Processes processes={worktree.agents} takenAt={snapshot.takenAt} /></td>
+        <td><Processes processes={worktree.sessions} takenAt={snapshot.takenAt} /></td>
+        <td>{worktree.role === 'pool' && worktree.claim !== null && <ActionButton kind="worktree.release" args={{ target: worktree.name }} label="Release" primary={false} />}</td>
+      </tr>
+      {note !== null && <tr className="note-row"><td colSpan={COLUMNS}>{note}</td></tr>}
+    </tbody>
+  );
+}
+
+function worktreeNote(worktree: Worktree, snapshot: Snapshot) {
+  if (worktree.state === 'stale') {
+    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action">Merge {snapshot.project.base} in, or release the worktree.</span></>;
+  }
+  const session = worktree.sessions[0];
+  if (worktree.state === 'free' && session !== undefined) return <FreeWithSession session={session} count={worktree.sessions.length} takenAt={snapshot.takenAt} />;
+  return null;
+}
+
+function FreeWithSession({ session, count, takenAt }: { session: ProcessInfo; count: number; takenAt: string }) {
+  const elapsed = useLiveSeconds(session.elapsedSeconds, takenAt);
+  const others = count > 1 ? ` and ${count - 1} more` : '';
+  return <span>Free. A {session.host} session sits here (pid {session.pid}, {formatDuration(elapsed)}){others}.</span>;
+}
+
+function Processes({ processes, takenAt }: { processes: ProcessInfo[]; takenAt: string }) {
+  if (processes.length === 0) return <span className="muted">—</span>;
+  return (
+    <ul className="process-list">
+      {processes.map((process) => (
+        <li key={process.pid} title={process.command}><span className="mono">{process.pid}</span> {process.host}<span className="process-age"><Age seconds={process.elapsedSeconds} takenAt={takenAt} /></span></li>
+      ))}
+    </ul>
   );
 }

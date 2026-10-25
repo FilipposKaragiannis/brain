@@ -213,15 +213,25 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Five screens, routed by hash (`#/<project>/<screen>/<detail>`): Overview (five tiles,
-the needs-you table oldest first, the 3x3 pool map, the sources strip and the latest 30 events),
-Gates (a decision card per gate, the questions and recommendations as the plugin parses them on
-flow 1.18.0 and later, so the card matches the Slack message, else the daemon's own parse, Answer
-runs `gate.clear`), Worktrees
-(Release, Health), Agents and jobs (Run, Stop, Pause, Resume) and Pull requests (from the `pulls`
-source, with Merge on a PR in state `mergeable`). Every module is
-a title row, a body and a footer saying how fresh its source is; every age is a live counter
-driven by one shared clock.
+imports). Six screens, routed by hash (`#/<project>/<screen>/<detail>`): Overview (five tiles, a
+readiness line from `readiness` that says why nothing runs or what does, the needs-you table oldest
+first with the items that wait only on a field folded after five, the latest 30 events with Show
+all, the disagreements with what each store says and the button that settles it, the 3x3 pool map
+with each item's title, and the sources strip), Gates (a decision card per gate, one line on what
+its kind asks, the PR with its state and unresolved review threads when the item has one, the
+questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
+matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`), Worktrees (the
+pool, then the worktrees outside it under their own heading; each row has its item's title, its
+agents and sessions with pid, host and age and the command on hover, why it is stale and the way
+out, a legend for dirty, agents and sessions; Release, Health), Agents and jobs (Run, Stop, Pause,
+Resume), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
+Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
+item with the filter box). A line above every screen names the project with links to its
+repository and tracker, its adapter, base branch, flow version and jobs host; projects are set when
+the daemon starts (`--project`), and a Settings screen comes later. Every item id opens its tracker
+page in a new tab. An action that handed its work on (`outcome: started`, such as `job.run`) shows
+"started", not "done", on its button and in the drawer. Every module is a title row, a body and a
+footer saying how fresh its source is; every age is a live counter driven by one shared clock.
 
 ```bash
 cd ui && npm install

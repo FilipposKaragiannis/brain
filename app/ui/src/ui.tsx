@@ -2,8 +2,9 @@ import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { Freshness, SourceName } from '../../daemon/src/snapshot.ts';
 import type { ActionKind } from './actions.ts';
+import { actionStateLabel } from './actions.ts';
 import { Since } from './clock.tsx';
-import { actionTone, freshnessTone } from './status.ts';
+import { actionRecordTone, freshnessTone } from './status.ts';
 import type { Tone } from './status.ts';
 import type { ActionsView } from './useActions.ts';
 
@@ -69,7 +70,7 @@ export function ActionButton({ kind, args, label, primary }: { kind: ActionKind;
         {busy ? `${label}…` : label}
       </button>
       {outcome?.kind === 'refused' && <span className="chip tone-failing" title={outcome.message}>{outcome.message}</span>}
-      {outcome?.kind === 'started' && <Chip tone={actionTone(outcome.record.state)}>{outcome.record.state}{outcome.record.exitCode !== null && outcome.record.exitCode !== 0 ? ` (exit ${outcome.record.exitCode})` : ''}</Chip>}
+      {outcome?.kind === 'started' && <Chip tone={actionRecordTone(outcome.record)}>{actionStateLabel(outcome.record)}{outcome.record.exitCode !== null && outcome.record.exitCode !== 0 ? ` (exit ${outcome.record.exitCode})` : ''}</Chip>}
     </span>
   );
 }
