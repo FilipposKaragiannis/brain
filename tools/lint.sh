@@ -12,11 +12,12 @@ for f in $(find . -name '*.json' -not -path './.git/*' -not -path '*/node_module
   python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f" 2>/dev/null || fail "invalid JSON: $f"
 done
 
-for f in $(find tools plugins shared -name '*.sh') plugins/*/hooks/git/*; do
+# node_modules and ui/dist are the console app's installed and built files, not ours to lint.
+for f in $(find tools plugins shared -name '*.sh' -not -path '*/node_modules/*' -not -path '*/dist/*') plugins/*/hooks/git/*; do
   [ -f "$f" ] || continue
   sh -n "$f" || fail "shell syntax: $f"
 done
-for f in $(find tools plugins -name '*.py' -not -path '*/evals/results/*'); do
+for f in $(find tools plugins -name '*.py' -not -path '*/evals/results/*' -not -path '*/node_modules/*'); do
   python3 -m py_compile "$f" 2>/dev/null || fail "python syntax: $f"
 done
 rm -rf tools/lib/__pycache__ plugins/*/*/__pycache__ plugins/*/*/*/__pycache__
@@ -53,7 +54,7 @@ python3 - <<'PY2' || status=1
 import glob, os, re, sys
 bad = 0
 for md in glob.glob("plugins/*/**/*.md", recursive=True):
-    if "/evals/results/" in md:
+    if "/evals/results/" in md or "/node_modules/" in md or "/dist/" in md:
         continue
     plugin = os.path.normpath(md).split(os.sep)[1]
     for target in re.findall(r"\]\(([^)#\s]+\.md)(?:#[^)]*)?\)", open(md, encoding="utf-8").read()):

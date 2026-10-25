@@ -12,11 +12,12 @@ clean plugins/standards/hooks/tests/run.sh || status=1
 clean plugins/flow/tests/run.sh || status=1
 clean plugins/meta/tests/run.sh || status=1
 clean tools/tests/run.sh || status=1
-# The console (app/): the daemon's type-check and suite, then the UI's, when Node 24 and both sets of dev dependencies are present.
-if command -v node >/dev/null 2>&1 && [ -d app/node_modules ] && [ -d app/ui/node_modules ]; then
-  (cd app && npm run --silent check) || status=1
+# The console app (plugins/console/app): the daemon's type-check and suite, then the UI's, when Node 24 and both sets of dev dependencies are present.
+console=plugins/console/app
+if command -v node >/dev/null 2>&1 && [ -d $console/node_modules ] && [ -d $console/ui/node_modules ]; then
+  (cd $console && npm run --silent check) || status=1
 else
-  echo "test: node, app/node_modules or app/ui/node_modules missing, skipping the console suite"
+  echo "test: node, $console/node_modules or $console/ui/node_modules missing, skipping the console app suite"
 fi
 if command -v claude >/dev/null 2>&1; then
   for dir in plugins/*/; do

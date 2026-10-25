@@ -6,7 +6,7 @@ read that one shape. Node 24, TypeScript run as-is, no runtime dependencies.
 
 ## Run it
 ```bash
-cd app && npm install
+cd plugins/console/app && npm install
 npm start -- --project /work/projects/foosbrawl            # one or more --project flags
 curl -s http://127.0.0.1:7474/api/projects/foosbrawl/snapshot | jq .counts
 curl -N http://127.0.0.1:7474/api/projects/foosbrawl/events  # server-sent events, one snapshot per change
@@ -30,7 +30,7 @@ the console even from the owner's own browser.
 
 ## Run it on login
 ```bash
-cd app
+cd plugins/console/app
 npm run daemon:install -- --project /work/projects/foosbrawl   # the same flags as npm start
 npm run daemon:status                                          # loaded or not, the pid and the URL
 npm run daemon:uninstall                                       # stop it and remove the agent

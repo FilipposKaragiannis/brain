@@ -27,7 +27,7 @@ AGENT_TEMPLATES_DIR = "plugins/standards/templates/agents"
 # shared/sh/*.sh is copied into every plugin that runs shell: plugins cannot read each other.
 SHARED_SH_DIRS = ["plugins/standards/hooks", "plugins/flow/lib"]
 MARKETPLACE_NAME = "brain-plugins"
-MARKETPLACE_DESCRIPTION = "Filip Karagiannis's Claude Code and Codex plugins: standards, flow, craft, meta."
+MARKETPLACE_DESCRIPTION = "Filip Karagiannis's Claude Code and Codex plugins: standards, flow, craft, meta, console."
 
 
 def read_json(path):

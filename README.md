@@ -9,6 +9,7 @@ plugins/
   flow/        the work flow: adapters (github, local), profiles, next, steward, board, gates
   craft/       codebase-design (with rule ids), improve
   meta/        write-a-skill (scaffolder), retro (lessons log), map (docs/map.html)
+  console/     the Brain Console: app/ (daemon and web UI, Node 24)
 shared/        sh/json.sh, copied into each plugin by the generator
 roster/        agents.json (every agent, model, effort, tier), briefs/<agent>.md, templates/
 tools/         generate.sh, lint.sh, test.sh, eval.sh, cost.sh, host-cleanup.sh, tests/
