@@ -8,8 +8,9 @@ import type { CommandRequest, CommandResult } from '../src/collectors/exec.ts';
 import { silentLogger } from '../src/log.ts';
 import { applyChange, parseDocument, valueAt } from '../src/plugins/flow/configDocument.ts';
 import { contentHash, describe, FlowConfigEditor, followUpsOf } from '../src/plugins/flow/configEditor.ts';
+import { codexDefaults, readHostDefaults } from '../src/plugins/flow/hostDefaults.ts';
 import type { FlowConfigDocument, FlowConfigSaved } from '../src/plugins/flow/schema.ts';
-import { checkFileValue, checkSchedule, FLOW_CONFIG_SCHEMA } from '../src/plugins/flow/schema.ts';
+import { checkChange, checkFileValue, checkSchedule, fieldAt, FLOW_CONFIG_SCHEMA } from '../src/plugins/flow/schema.ts';
 import { parseYaml } from '../src/yaml.ts';
 import { FIXTURES } from './fakeRunner.ts';
 
@@ -213,6 +214,9 @@ test('Schedule_Checked_TakesTheFormsJobsShTakes', () => {
   for (const bad of ['every 0m', 'hourly', 'daily 25:00', 'weekly someday 07:00', 'every 10m $(rm -rf ~)']) assert.equal(checkSchedule(bad).ok, false, `because jobs.sh refuses "${bad}"`);
 });
 
+/** A home folder whose ~/.codex/config.toml sets gpt-6-sol and high. */
+const HOME = path.join(FIXTURES, 'home');
+
 /** A project in a temp folder holding the foosbrawl config, with git answering as told. */
 function project(gitStatus: CommandResult = { code: 0, stdout: '', stderr: '', timedOut: false }) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'console-flow-config-'));
@@ -222,7 +226,7 @@ function project(gitStatus: CommandResult = { code: 0, stdout: '', stderr: '', t
   const asked: CommandRequest[] = [];
   let refreshed = 0;
   const editor = new FlowConfigEditor({
-    projectId: 'foosbrawl', root, log: silentLogger, refresh: async () => { refreshed += 1; },
+    projectId: 'foosbrawl', root, log: silentLogger, refresh: async () => { refreshed += 1; }, home: HOME,
     runner: async (request) => { asked.push(request); return gitStatus; },
   });
   return { root, file, editor, asked, refreshed: () => refreshed, done: () => rmSync(root, { recursive: true, force: true }) };
@@ -388,5 +392,73 @@ test('Document_Read_CarriesTheHashOfTheText', async () => {
   try {
     const document = await readDocument(fixture.editor);
     assert.deepEqual([document.path, document.hash, document.text === FOOSBRAWL], [fixture.file, contentHash(FOOSBRAWL), true], 'because the PUT sends that hash back to prove it saw this text');
+  } finally { fixture.done(); }
+});
+
+test('JobsHostKeys_InTheSchema_EnumsInTheJobsGroupWithNoFollowUp', () => {
+  const expected: [string, string[]][] = [
+    ['jobs.claude.model', ['opus', 'sonnet', 'haiku', 'fable']],
+    ['jobs.claude.effort', ['low', 'medium', 'high', 'xhigh', 'max']],
+    ['jobs.codex.model', ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']],
+    ['jobs.codex.effort', ['low', 'medium', 'high', 'xhigh']],
+  ];
+  for (const [key, values] of expected) {
+    const spec = fieldAt(key);
+    assert.deepEqual([spec?.type, spec?.group, spec?.values, spec?.followUp], ['enum', 'Jobs', values, null], `because ${key} is picked from the host's own list and the next job run reads it from the file`);
+    assert.ok(checkChange(spec!, values[0]!).ok && checkChange(spec!, '').ok && checkChange(spec!, null).ok, `because ${key} takes its values, and empty or unset for the host's default`);
+    assert.match(spec!.help, /empty takes the (Claude|Codex) CLI's default/, `because the help of ${key} says what empty means`);
+  }
+  assert.equal(fieldAt('jobs.host')?.help, 'Which CLI runs the scheduled jobs. The workers inside a run keep their own models.', 'because the host picks the jobs\' CLI, not the workers\' models');
+  assert.deepEqual(['jobs.model', 'jobs.effort'].map((key) => fieldAt(key)?.deprecated), Array(2).fill('Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort. Set those and clear these.'), 'because flow 1.20.0 stopped reading the old keys');
+});
+
+test('JobsHostEffort_OutOfItsEnum_RefusedOnPutWithTheRule', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const reply = await fixture.editor.write({ changes: [{ path: 'jobs.codex.effort', value: 'max' }], hash });
+    assert.deepEqual([reply.status, (reply.body as { error: string }).error], [400, 'jobs.codex.effort must be one of low, medium, high, xhigh, not "max"'], 'because codex has no max effort, and the reason names the allowed ones');
+    assert.equal(readFileSync(fixture.file, 'utf8'), FOOSBRAWL, 'because nothing refused reaches the file');
+  } finally { fixture.done(); }
+});
+
+test('CodexModel_Saved_NestedUnderJobsAsABlockWithTheCommentsKept', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const reply = await fixture.editor.write({ changes: [{ path: 'jobs.codex.model', value: 'gpt-6-astra' }, { path: 'jobs.codex.effort', value: 'xhigh' }, { path: 'jobs.host', value: 'codex' }], hash });
+    assert.equal(reply.status, 200, `because both are in codex's lists: ${JSON.stringify(reply.body)}`);
+    const text = readFileSync(fixture.file, 'utf8');
+    const lines = text.split('\n');
+    const at = lines.indexOf('  codex:');
+    assert.deepEqual(lines.slice(at, at + 3), ['  codex:', '    model: gpt-6-astra', '    effort: xhigh'], 'because a new nested key goes under jobs: as a block, two spaces a level');
+    assert.ok(at > lines.indexOf('jobs:') && at < lines.indexOf('intake:'), 'because the codex block belongs to the jobs section');
+    assert.deepEqual(['jobs.codex.model', 'jobs.codex.effort', 'jobs.host'].map((key) => yamlGet(text, key)), [['gpt-6-astra'], ['xhigh'], ['codex']], 'because lib/flow.sh reads the nested keys back the way the console wrote them');
+    assert.equal(text.split('\n').filter((line) => line.trim().startsWith('#')).length, FOOSBRAWL.split('\n').filter((line) => line.trim().startsWith('#')).length, 'because no comment is lost');
+    assert.ok(text.includes('  permission_mode: auto   # unattended sessions'), 'because a trailing comment on another key stays');
+    assert.deepEqual((reply.body as FlowConfigSaved).saved.toSorted(), ['jobs.codex.effort', 'jobs.codex.model', 'jobs.host'], 'because those are the keys whose value changed');
+  } finally { fixture.done(); }
+});
+
+test('CodexConfig_Read_TopLevelModelAndEffortOnly', async () => {
+  assert.deepEqual(await readHostDefaults(HOME), { codex: { model: 'gpt-6-sol', effort: 'high' } }, 'because the top-level lines are codex\'s defaults, and a profile\'s lines below a table are not');
+  assert.deepEqual(codexDefaults('approval_policy = "never"\n[profiles.x]\nmodel = "gpt-6-luna"\n'), { model: null, effort: null }, 'because a file that sets neither at the top names no default');
+  assert.deepEqual(codexDefaults('model = gpt-6-sol\nmodel_reasoning_effort = "low"\n'), { model: null, effort: 'low' }, 'because only simple key = "value" lines are read, anything else is skipped rather than guessed at');
+});
+
+test('CodexConfig_Missing_NoCodexDefaults', async () => {
+  const empty = mkdtempSync(path.join(os.tmpdir(), 'console-home-'));
+  try {
+    assert.deepEqual(await readHostDefaults(empty), { codex: null }, 'because without ~/.codex/config.toml the console cannot name a default');
+  } finally { rmSync(empty, { recursive: true, force: true }); }
+});
+
+test('Document_ReadAndSaved_CarriesTheHostDefaults', async () => {
+  const fixture = project();
+  try {
+    const document = await readDocument(fixture.editor);
+    assert.deepEqual(document.hostDefaults, { codex: { model: 'gpt-6-sol', effort: 'high' } }, 'because the help of the codex model and effort names this machine\'s default');
+    const saved = (await fixture.editor.write({ changes: [{ path: 'jobs.codex.model', value: 'gpt-6-luna' }], hash: document.hash })).body as FlowConfigSaved;
+    assert.deepEqual(saved.hostDefaults, document.hostDefaults, 'because a save replaces the document the form shows, defaults included');
   } finally { fixture.done(); }
 });

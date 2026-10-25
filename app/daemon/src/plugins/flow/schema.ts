@@ -27,7 +27,25 @@ export type FieldSpec = {
   min?: number;
   max?: number;
   followUp: FollowUp | null;
+  /**
+   * One host's own setting (`jobs.<host>.model` or `.effort`): the form shows it only while
+   * `jobs.host` names that host, and its empty value is the host's default.
+   */
+  host?: { host: JobsHost; setting: 'model' | 'effort' };
+  /** A key the flow no longer reads: shown only when the file sets it, read-only with this note and a Clear. */
+  deprecated?: string;
 };
+
+export const JOBS_HOSTS = ['claude', 'codex'] as const;
+export type JobsHost = (typeof JOBS_HOSTS)[number];
+/** What the flow runs the jobs on when `jobs.host` is not set. */
+export const DEFAULT_JOBS_HOST: JobsHost = 'claude';
+
+/**
+ * The model and effort a host takes when the file leaves them empty, as far as this machine says:
+ * codex from `~/.codex/config.toml` (null when there is no such file), claude has no such file.
+ */
+export type HostDefaults = { codex: { model: string | null; effort: string | null } | null };
 
 /** A change to one key: the new value, or null to take the key out of the file. */
 export type FieldValue = string | number | boolean | string[] | Record<string, string> | null;
@@ -46,6 +64,8 @@ export type FlowConfigDocument = {
   sections: Section[];
   /** What in the file does not fit the schema, and why the file did not parse. */
   warnings: string[];
+  /** The hosts' own defaults on this machine, for the help of `jobs.<host>.model` and `.effort`. */
+  hostDefaults: HostDefaults;
 };
 
 /** A PUT's answer: the new document, the paths whose value changed, and what those changes need next. */
@@ -60,6 +80,12 @@ const RELOAD_SCHEDULE: FollowUp = {
   action: { kind: 'jobs.install', label: 'Reload the schedule', args: {} },
 };
 const NEXT_CLAIM: FollowUp = { note: 'The pool reads this at the next claim; nothing to restart.', action: null };
+
+const HOST_SETTINGS: Record<JobsHost, { model: string[]; effort: string[]; cli: string }> = {
+  claude: { model: ['opus', 'sonnet', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'], cli: 'Claude' },
+  codex: { model: ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'], effort: ['low', 'medium', 'high', 'xhigh'], cli: 'Codex' },
+};
+const DEPRECATED_JOBS = 'Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort. Set those and clear these.';
 
 const field = (path: string, type: FieldType, group: FieldGroup, help: string, extra: Partial<FieldSpec> = {}): FieldSpec =>
   ({ path, type, group, help, followUp: null, ...extra });
@@ -93,9 +119,14 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('notify.slack_webhook', 'string', 'Notifications', 'The Slack incoming webhook notifications go to; empty sends none (FLOW_SLACK_WEBHOOK keeps the URL out of the repository).'),
   field('notify.idle', 'boolean', 'Notifications', 'When on, the scheduled next job tells you once when it finds nothing ready.'),
   field('notify.health', 'boolean', 'Notifications', 'When off, the health job stops notifying about old gates, diverged branches and a full pool.'),
-  field('jobs.host', 'enum', 'Jobs', 'Which CLI the scheduled jobs run unattended.', { values: ['claude', 'codex'], followUp: RELOAD_SCHEDULE }),
-  field('jobs.model', 'string', 'Jobs', 'The model the jobs\' orchestrating session uses; empty takes the host\'s default.'),
-  field('jobs.effort', 'string', 'Jobs', 'The reasoning effort the jobs\' orchestrating session uses; empty takes the host\'s default.'),
+  field('jobs.host', 'enum', 'Jobs', 'Which CLI runs the scheduled jobs. The workers inside a run keep their own models.', { values: [...JOBS_HOSTS], followUp: RELOAD_SCHEDULE }),
+  // The next job run reads these from the file, so a change needs nothing after it.
+  ...JOBS_HOSTS.flatMap((host) => [
+    field(`jobs.${host}.model`, 'enum', 'Jobs', `The model the scheduled jobs' orchestrating session uses when they run on ${host}; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].model, host: { host, setting: 'model' } }),
+    field(`jobs.${host}.effort`, 'enum', 'Jobs', `The reasoning effort the scheduled jobs' orchestrating session uses when they run on ${host}; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].effort, host: { host, setting: 'effort' } }),
+  ]),
+  field('jobs.model', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),
+  field('jobs.effort', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),
   field('jobs.permission_mode', 'enum', 'Jobs', 'How unattended Claude sessions ask for tools: dontAsk denies every edit not allowed already, auto lets the classifier allow safe ones.', { values: ['dontAsk', 'auto'] }),
   field('jobs.marketplace', 'string', 'Jobs', 'The marketplace checkout the weekly retro opens its pull request from.'),
   ...JOBS.map((job) => field(`jobs.schedule.${job}`, 'schedule', 'Jobs', `When the ${job} job runs on this machine: every 30m, daily 02:00 or weekly sun 07:00, then its options.`, { followUp: RELOAD_SCHEDULE })),

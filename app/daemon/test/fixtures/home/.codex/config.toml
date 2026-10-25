@@ -1,0 +1,9 @@
+# A codex config as the CLI writes it: top-level defaults, then tables.
+model = "gpt-6-sol"   # the default model
+model_reasoning_effort = "high"
+approval_policy = 'never'
+notify = ["say", "done"]
+
+[profiles.fast]
+model = "gpt-6-luna"
+model_reasoning_effort = "low"

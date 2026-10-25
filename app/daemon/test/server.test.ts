@@ -31,7 +31,7 @@ async function started(makeSettings: (registry: ProjectRegistry) => SettingsStor
   const registry = new ProjectRegistry((project) => {
     const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: () => {} });
-    return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger }) };
+    return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
   }, silentLogger);
   const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -320,11 +320,12 @@ test('FlowConfig_ServedWithItsHashAndSections', async () => {
   const { base, close } = await started();
   try {
     const response = await fetch(`${base}/api/projects/project/plugins/flow/config`, { headers: { authorization: 'Bearer tok' } });
-    const document = (await response.json()) as { path: string; hash: string; sections: { group: string }[] };
+    const document = (await response.json()) as { path: string; hash: string; sections: { group: string }[]; hostDefaults: unknown };
     assert.equal(response.status, 200, 'because the fixture project has a .flow/config.yaml');
     assert.equal(document.path, path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), 'because the editor names the file it edits');
     assert.match(document.hash, /^[0-9a-f]{64}$/, 'because a PUT must send the hash back');
     assert.deepEqual(document.sections.map((section) => section.group).slice(0, 2), ['Tracker', 'Readiness'], 'because the schema groups come in a fixed order');
+    assert.deepEqual(document.hostDefaults, { codex: { model: 'gpt-6-sol', effort: 'high' } }, 'because the UI names the codex default read from ~/.codex/config.toml');
   } finally { await close(); }
 });
 

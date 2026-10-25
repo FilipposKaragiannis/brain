@@ -12,14 +12,14 @@ const TEXT = 'base: main\njobs:\n  host: claude\n  schedule:\n    next: every 30
 const DOCUMENT: FlowConfigDocument = {
   path: '/p/.flow/config.yaml', text: TEXT, hash: 'h1',
   values: { base: 'main', jobs: { host: 'claude', schedule: { next: 'every 30m --workers 2' } }, reviews: { reviewers: ['codex'] } },
-  sections: schemaSections(), warnings: [],
+  sections: schemaSections(), warnings: [], hostDefaults: { codex: { model: 'gpt-6-sol', effort: 'high' } },
 };
 
-async function renderFlowSettings(onPut: (body: unknown) => { status: number; body: unknown }) {
+async function renderFlowSettings(onPut: (body: unknown) => { status: number; body: unknown }, document: FlowConfigDocument = DOCUMENT) {
   const daemon = new FakeDaemon();
   const puts: unknown[] = [];
   const posts: unknown[] = [];
-  daemon.answer('GET', CONFIG, () => ({ status: HTTP_OK, body: DOCUMENT }));
+  daemon.answer('GET', CONFIG, () => ({ status: HTTP_OK, body: document }));
   daemon.answer('PUT', CONFIG, (body) => { puts.push(body); return onPut(body); });
   daemon.answer('POST', '/api/projects/project/actions', (body) => { posts.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('a1', 'running', {}), kind: 'jobs.install' } } }; });
   const Wrapper = daemon.screenWrapper();
@@ -48,7 +48,7 @@ test('FlowSettings_Read_OneFormPerSchemaGroup', async () => {
 test('FlowSettings_Field_LabelledByItsKeyWithTheHelpUnderIt', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }));
   const field = within(group('Jobs')).getByLabelText('jobs.host').closest('.flow-field')!;
-  expect(field.textContent, 'because the help says what changing the key does').toMatch(/Which CLI the scheduled jobs run unattended/);
+  expect(field.textContent, 'because the help says what changing the key does').toMatch(/Which CLI runs the scheduled jobs\. The workers inside a run keep their own models\./);
   expect((within(group('Jobs')).getByLabelText('jobs.host') as HTMLSelectElement).value, 'because the control starts at the file\'s value').toBe('claude');
 });
 
@@ -113,4 +113,61 @@ test('FlowSettings_UntrackedFile_SavedWithTheNote', async () => {
   fireEvent.change(within(group('Worktree pool')).getByLabelText('base'), { target: { value: 'dev' } });
   await act(async () => { fireEvent.click(within(group('Worktree pool')).getByRole('button', { name: 'Save' })); });
   expect(within(group('Worktree pool')).getByRole('status').textContent, 'because an untracked file saves without Save anyway, but the owner should know git does not keep it').toMatch(/not tracked by git/);
+});
+
+function jobs(): HTMLElement {
+  return group('Jobs');
+}
+function optionsOf(label: string): string[] {
+  return [...(within(jobs()).getByLabelText(label) as HTMLSelectElement).options].map((option) => option.textContent ?? '');
+}
+const withJobs = (extra: Record<string, unknown>): FlowConfigDocument => ({ ...DOCUMENT, values: { ...DOCUMENT.values, jobs: { host: 'claude', schedule: { next: 'every 30m --workers 2' }, ...extra } } });
+
+test('JobsGroup_HostClaude_OnlyClaudesModelAndEffortShow', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withJobs({ codex: { model: 'gpt-6-luna' } }));
+  expect(within(jobs()).queryByLabelText('jobs.claude.model'), 'because the jobs run on claude, so its model is the one that counts').not.toBeNull();
+  expect(within(jobs()).queryByLabelText('jobs.claude.effort'), 'because the effort goes with the model').not.toBeNull();
+  expect([within(jobs()).queryByLabelText('jobs.codex.model'), within(jobs()).queryByLabelText('jobs.codex.effort')], 'because the other host\'s pair is hidden while the jobs do not run on it').toEqual([null, null]);
+  expect(optionsOf('jobs.claude.model'), 'because the dropdown lists the enum, with the empty value as the host\'s default').toEqual(['host default', 'opus', 'sonnet', 'haiku', 'fable']);
+  expect(within(jobs()).getByLabelText('jobs.claude.model').closest('.flow-field')!.textContent, 'because claude has no file that names its default').toMatch(/empty takes the Claude CLI's default/);
+});
+
+test('JobsGroup_HostSwitchedToCodex_CodexPairShowsWithThisMachinesDefault', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withJobs({ codex: { model: 'gpt-6-luna' } }));
+  fireEvent.change(within(jobs()).getByLabelText('jobs.host'), { target: { value: 'codex' } });
+  expect(within(jobs()).queryByLabelText('jobs.claude.model'), 'because the pair follows the host as picked, before any save').toBeNull();
+  expect((within(jobs()).getByLabelText('jobs.codex.model') as HTMLSelectElement).value, 'because the hidden pair kept its saved value').toBe('gpt-6-luna');
+  expect(optionsOf('jobs.codex.effort'), 'because codex takes no max effort').toEqual(['host default', 'low', 'medium', 'high', 'xhigh']);
+  expect(within(jobs()).getByLabelText('jobs.codex.model').closest('.flow-field')!.textContent, 'because the daemon read the default from ~/.codex/config.toml').toMatch(/On this machine that is gpt-6-sol/);
+  expect(within(jobs()).getByLabelText('jobs.codex.effort').closest('.flow-field')!.textContent, 'because the effort default comes from model_reasoning_effort').toMatch(/On this machine that is high/);
+});
+
+test('JobsGroup_HiddenPairEdited_NotSent', async () => {
+  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.codex.effort', 'jobs.host'] }) }));
+  fireEvent.change(within(jobs()).getByLabelText('jobs.claude.model'), { target: { value: 'opus' } });
+  fireEvent.change(within(jobs()).getByLabelText('jobs.host'), { target: { value: 'codex' } });
+  fireEvent.change(within(jobs()).getByLabelText('jobs.codex.effort'), { target: { value: 'xhigh' } });
+  await act(async () => { fireEvent.click(within(jobs()).getByRole('button', { name: 'Save' })); });
+  expect(puts, 'because a change to the pair the owner can no longer see must not be saved behind their back').toEqual([{ changes: [{ path: 'jobs.host', value: 'codex' }, { path: 'jobs.codex.effort', value: 'xhigh' }], hash: 'h1' }]);
+});
+
+test('JobsGroup_NoCodexConfig_HelpSaysCodexPicks', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), { ...withJobs({ host: 'codex' }), hostDefaults: { codex: null } });
+  expect(within(jobs()).getByLabelText('jobs.codex.model').closest('.flow-field')!.textContent, 'because without the file the console cannot name the default').toMatch(/no ~\/\.codex\/config\.toml/);
+});
+
+test('DeprecatedJobsModel_NotSet_Hidden', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withJobs({ model: '', effort: '' }));
+  expect([within(jobs()).queryByLabelText('jobs.model'), within(jobs()).queryByLabelText('jobs.effort')], 'because a key the flow no longer reads is only worth showing when the file still sets it').toEqual([null, null]);
+});
+
+test('DeprecatedJobsModel_Set_ReadOnlyWithTheNoteAndClearSendsNull', async () => {
+  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.model'] }) }), withJobs({ model: 'opus' }));
+  const input = within(jobs()).getByLabelText('jobs.model') as HTMLInputElement;
+  expect([input.value, input.readOnly], 'because the value shows, but is not edited here any more').toEqual(['opus', true]);
+  expect(input.closest('.flow-field')!.textContent, 'because the owner learns what replaced it').toMatch(/Deprecated: flow 1\.20\.0 reads jobs\.<host>\.model and jobs\.<host>\.effort\. Set those and clear these\./);
+  expect(within(jobs()).queryByLabelText('jobs.effort'), 'because only the deprecated key the file sets shows').toBeNull();
+  await act(async () => { fireEvent.click(within(jobs()).getByRole('button', { name: 'Clear jobs.model' })); });
+  expect(puts, 'because Clear takes the key out of the file').toEqual([{ changes: [{ path: 'jobs.model', value: null }], hash: 'h1' }]);
+  expect(within(jobs()).getByRole('status').textContent, 'because the owner sees the key went').toMatch(/Saved jobs\.model\./);
 });
