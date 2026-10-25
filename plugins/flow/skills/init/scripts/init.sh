@@ -202,14 +202,36 @@ settings_has_hook=0; claude_hooks_present && settings_has_hook=1
 install_file "$plugin/templates/flow.rules" .codex/rules/flow.rules "" guard
 for src in "$plugin"/codex-agents/*.toml; do install_file "$src" ".codex/agents/$(basename "$src")" "" guard; done
 
-# 5. .gitignore block.
+# 5. .gitignore block. .flow/*.lock/ covers the locks flow_lock takes in the flow home (pick,
+# answers, sweep). Under --check each line the project's block lacks is named.
+# One per line and read with read, so the lock pattern is never expanded by the shell.
+ignored=".flow/items/
+.flow/reports/
+.flow/runs/
+.flow/gates/
+.flow/health/
+.flow/tmp/
+.flow/log/
+.flow/*.lock/
+.flow/claim.json
+.flow/events.log
+.flow/.init-tmp/"
 tmp="$scratch/gitignore"
 {
   [ -f .gitignore ] && awk '/^# flow:begin/{skip=1} !skip{print} /^# flow:end/{skip=0}' .gitignore
   echo "# flow:begin (written by flow:init; state that stays on this machine)"
-  for p in .flow/items/ .flow/reports/ .flow/runs/ .flow/gates/ .flow/health/ .flow/tmp/ .flow/log/ .flow/claim.json .flow/events.log .flow/.init-tmp/; do echo "$p"; done
+  printf '%s\n' "$ignored"
   echo "# flow:end"
 } > "$tmp"
+if [ "$check" -eq 1 ]; then
+  block="$( [ -f .gitignore ] && awk '/^# flow:begin/{on=1; next} /^# flow:end/{on=0} on' .gitignore)"
+  # Fed by a here-document, not a pipe, so the loop runs in this shell and drifted sets drift.
+  while IFS= read -r p; do
+    printf '%s\n' "$block" | grep -qxF -- "$p" || drifted ".gitignore: the flow block lacks $p"
+  done <<EOF_IGNORED
+$ignored
+EOF_IGNORED
+fi
 install_file "$tmp" .gitignore
 
 # 6. Gaps: config values the flow cannot run without. Reported every run; drift under --check.
