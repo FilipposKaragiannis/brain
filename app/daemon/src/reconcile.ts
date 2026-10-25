@@ -189,7 +189,7 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[]): Gate[] 
       overdue: (ageSeconds(gate.time, input.now) ?? 0) >= GATE_OVERDUE_HOURS * SECONDS_PER_HOUR,
       host: gate.host,
       worktree: contexts.find((context) => context.claim?.item === gate.item)?.name ?? null,
-      questions: parseGateQuestions(gate.message),
+      questions: gate.questions !== null && gate.questions.length > 0 ? gate.questions : parseGateQuestions(gate.message),
     }))
     .sort((left, right) => right.ageSeconds - left.ageSeconds);
 }

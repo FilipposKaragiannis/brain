@@ -2,8 +2,10 @@ import type { GateQuestion } from './snapshot.ts';
 
 /**
  * Gate messages from the agents list numbered questions, each followed by `Recommended: ...`.
- * The parser turns that shape into decision-card questions. A message without numbering is one
- * question with no recommendation. Nothing is lost: the raw message stays on the gate.
+ * The plugin parses them itself from flow 1.18.0 (`gate.sh list --json`, read in flowHome.ts) and
+ * that parse wins. This one is the fallback: an older plugin, a failed list, or a message with no
+ * numbered line, which the plugin gives no questions for and this turns into one question with no
+ * recommendation. Nothing is lost: the raw message stays on the gate.
  */
 const QUESTION_START = /(?:^|\n)\s*(\d+)\.\s+/g;
 const RECOMMENDED = /\n?\s*Recommended:\s*/i;

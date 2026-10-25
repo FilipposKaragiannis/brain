@@ -130,7 +130,7 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       if (!PR_NUMBER.test(pr)) return fail('pr.merge needs a PR number');
       if (!MERGE_METHODS.includes(method)) return fail(`method must be one of ${MERGE_METHODS.join(', ')}`);
       if (context.repo === null) return fail('pr.merge needs github.repo in .flow/config.yaml');
-      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git'] } };
+      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'] } };
     }
   }
 }

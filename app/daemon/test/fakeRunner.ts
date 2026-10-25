@@ -51,12 +51,24 @@ export const BOARD_JSON = JSON.stringify({
 export const PULL_LIST_JSON = readFileSync(path.join(FIXTURES, 'gh', 'pr-list.json'), 'utf8');
 export const REVIEW_THREADS_JSON = readFileSync(path.join(FIXTURES, 'gh', 'review-threads.json'), 'utf8');
 
+/**
+ * `gate.sh list --json` for the fixture gate. The second recommendation differs from the message
+ * on purpose, so a test can tell the plugin's parse from the daemon's.
+ */
+export const GATE_LIST_JSON = JSON.stringify([
+  { item: 'gh#7', gate: 'ambiguity', message: 'unused here', time: '2026-10-22T07:43:00Z', host: 'shell', worktree: `${FIXTURES}/project-wt-2`, age_seconds: 210000, questions: [
+    { number: 1, text: 'Keep the old name?', recommended: 'yes, because callers depend on it.' },
+    { number: 2, text: 'Split the type?', recommended: 'no, the plugin said so' },
+  ] },
+]);
+
 /** Answers every command the collectors run against the fixture project, without a shell. */
 export const fakeRunner: CommandRunner = async (request: CommandRequest): Promise<CommandResult> => {
   const [first, second] = request.args;
   if (request.command === 'sh' && first === '-c') return ok(FAKE_PLUGIN);
   if (request.command === 'sh' && first?.endsWith('jobs.sh')) return ok(JOBS_JSON);
   if (request.command === 'sh' && first?.endsWith('board.sh')) return ok(BOARD_JSON);
+  if (request.command === 'sh' && first?.endsWith('gate.sh')) return ok(GATE_LIST_JSON);
   if (request.command === 'git' && first === 'worktree') return ok(WORKTREE_LIST);
   if (request.command === 'git' && first === 'rev-list') return ok(request.cwd.endsWith('project-wt-4') ? '35\t4\n' : '0\t2\n');
   if (request.command === 'git' && first === 'status') return ok(request.cwd.endsWith('project-wt-3') ? ' M a.cs\n?? b.cs\n' : '');
