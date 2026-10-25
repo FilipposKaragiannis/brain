@@ -3,7 +3,7 @@ import { Age, clockTime } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
 import { jobTone } from '../status.ts';
-import { ActionButton, Chip, Empty, Module, SourceFreshness } from '../ui.tsx';
+import { ActionButton, Chip, Empty, Module, SourceFreshness, TerminalButton } from '../ui.tsx';
 
 export function Agents({ snapshot }: { snapshot: Snapshot }) {
   return (
@@ -12,7 +12,7 @@ export function Agents({ snapshot }: { snapshot: Snapshot }) {
         {snapshot.agents.length === 0 ? <Empty>No agent is running.</Empty> : (
           <div className="scroll">
             <table className="table">
-              <thead><tr><th>Kind</th><th>Pid</th><th>Host</th><th>Worktree</th><th>Item</th><th>Elapsed</th><th>Command</th></tr></thead>
+              <thead><tr><th>Kind</th><th>Pid</th><th>Host</th><th>Worktree</th><th>Item</th><th>Elapsed</th><th>Command</th><th /></tr></thead>
               <tbody>{snapshot.agents.map((agent) => <AgentRow key={agent.pid} agent={agent} takenAt={snapshot.takenAt} pages={snapshot} />)}</tbody>
             </table>
           </div>
@@ -23,7 +23,7 @@ export function Agents({ snapshot }: { snapshot: Snapshot }) {
           <div className="scroll">
             <table className="table">
               <thead><tr><th>Job</th><th>State</th><th>Schedule</th><th>Last run</th><th>Next</th><th>This week</th><th /></tr></thead>
-              <tbody>{snapshot.jobs.map((job) => <JobRow key={job.name} job={job} />)}</tbody>
+              <tbody>{snapshot.jobs.map((job) => <JobRow key={job.name} job={job} root={snapshot.project.root} />)}</tbody>
             </table>
           </div>
         )}
@@ -42,11 +42,12 @@ function AgentRow({ agent, takenAt, pages }: { agent: Agent; takenAt: string; pa
       <td>{agent.item === null ? '—' : <ItemLink id={agent.item} pages={pages} />}</td>
       <td className="mono strong"><Age seconds={agent.elapsedSeconds} takenAt={takenAt} /></td>
       <td className="mono clip" title={agent.command}>{agent.command}</td>
+      <td title={agent.cwd}><TerminalButton path={agent.cwd} /></td>
     </tr>
   );
 }
 
-function JobRow({ job }: { job: Job }) {
+function JobRow({ job, root }: { job: Job; root: string }) {
   const args = { job: job.name };
   return (
     <tr>
@@ -62,6 +63,7 @@ function JobRow({ job }: { job: Job }) {
         {job.paused
           ? <ActionButton kind="job.resume" args={args} label="Resume" primary={false} />
           : <ActionButton kind="job.pause" args={args} label="Pause" primary={false} />}
+        <TerminalButton path={root} job={job.name} />
       </td>
     </tr>
   );

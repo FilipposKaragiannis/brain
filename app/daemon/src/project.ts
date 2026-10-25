@@ -97,12 +97,14 @@ export class ProjectMonitor {
 
   get snapshot(): Snapshot | null { return this.current; }
 
-  /** What an action needs to know about the project right now. */
+  /** What an action needs to know about the project right now. The terminal comes from the settings, which the daemon adds. */
   actionContext(): ActionContext {
     const flow = this.facts.files.facts;
     return {
       root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, repo: flow?.config.repo ?? null,
       jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
+      processCwds: (this.facts.processes.facts?.agents ?? []).map((agent) => agent.cwd),
+      terminal: null, installedTerminals: [],
     };
   }
 

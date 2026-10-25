@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { HANDED_ON_REFRESH_MS, planAction } from '../src/actionPlan.ts';
 import type { ActionContext } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'] };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], processCwds: ['/p/app-wt-2/src'], terminal: null, installedTerminals: ['iterm'] };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -127,4 +127,72 @@ test('StewardHealth_HandsTheHealthJobOn_StartedAndReadAgain', () => {
 test('JobStop_FinishedAndReadOnce', () => {
   const plan = planned('job.stop', { job: 'next' });
   assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['finished', null], 'because a stop is over when the script returns');
+});
+
+test('TerminalOpen_ProjectRoot_OpensItInTheFirstInstalledTerminal', () => {
+  const plan = planned('terminal.open', { path: '/p/app' });
+  assert.deepEqual([plan.command, ...plan.args], ['open', '-a', 'iTerm', '/p/app'], 'because with no terminal set the first installed one opens');
+  assert.deepEqual([plan.locks, plan.refresh, plan.detach, plan.outcome], [[], [], false, 'finished'], 'because opening a window touches no flow state and is over when open returns');
+});
+
+test('TerminalOpen_PoolWorktreeAndAgentFolder_Allowed', () => {
+  assert.equal(planned('terminal.open', { path: '/p/app-wt-3' }).args.at(-1), '/p/app-wt-3', 'because a pool worktree is a folder the console shows');
+  assert.equal(planned('terminal.open', { path: '/p/app-wt-2/src' }).args.at(-1), '/p/app-wt-2/src', 'because an agent or session row opens where that process works');
+});
+
+test('TerminalOpen_AnyOtherPath_RefusedWithTheReason', () => {
+  for (const target of ['/etc', '/p', '/p/app/../app-wt-9', 'p/app', '']) {
+    const result = planAction('terminal.open', { path: target }, CONTEXT);
+    assert.equal(result.ok, false, `because "${target}" is none of the folders the console lists`);
+  }
+  const result = planAction('terminal.open', { path: '/etc' }, CONTEXT);
+  assert.match(result.ok ? '' : result.error, /not the project root, a pool worktree or the folder of a listed agent or session/, 'because the owner hears which folders may open');
+});
+
+test('TerminalOpen_EachNamedTerminal_ItsOwnCommand', () => {
+  const opened = (terminal: 'iterm' | 'terminal' | 'ghostty') => { const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal }); return [plan.command, ...plan.args]; };
+  assert.deepEqual(opened('terminal'), ['open', '-a', 'Terminal', '/p/app'], 'because Terminal opens a folder given to open -a');
+  assert.deepEqual(opened('ghostty'), ['open', '-na', 'Ghostty', '--args', '--working-directory=/p/app'], 'because Ghostty takes the folder as an argument of a new instance');
+  assert.deepEqual(opened('iterm'), ['open', '-a', 'iTerm', '/p/app'], 'because iTerm opens a folder given to open -a');
+});
+
+test('TerminalOpen_CustomCommand_PathSubstitutedInEachWord', () => {
+  const plan = planned('terminal.open', { path: '/p/app-wt-2' }, { ...CONTEXT, terminal: { command: ['wezterm', 'start', '--cwd={path}'] } });
+  assert.deepEqual([plan.command, ...plan.args], ['wezterm', 'start', '--cwd=/p/app-wt-2'], 'because the owner\'s command runs as argv with the folder in place');
+});
+
+test('TerminalOpen_CustomCommandWithoutPath_FolderLast', () => {
+  const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal: { command: ['open', '-a', 'Warp'] } });
+  assert.deepEqual(plan.args, ['-a', 'Warp', '/p/app'], 'because a command that never names the folder would open the wrong place');
+});
+
+test('TerminalOpen_NoTerminalInstalled_Refused', () => {
+  const result = planAction('terminal.open', { path: '/p/app' }, { ...CONTEXT, installedTerminals: [] });
+  assert.match(result.ok ? '' : result.error, /Settings/, 'because the owner must pick a terminal or a command there');
+});
+
+test('TerminalOpen_NeedsNoPlugin', () => {
+  assert.equal(planAction('terminal.open', { path: '/p/app' }, { ...CONTEXT, pluginRoot: null }).ok, true, 'because opening a folder runs no flow script');
+});
+
+test('TerminalOpen_Job_FollowsItsLogInTheProjectFlow', () => {
+  const plan = planned('terminal.open', { path: '/p/app', job: 'next' }, { ...CONTEXT, terminal: 'ghostty' });
+  assert.deepEqual(plan.args, ['-na', 'Ghostty', '--args', '--working-directory=/p/app', '-e', 'tail', '-n', '200', '-f', '/p/app/.flow/log/next.log'], 'because a job row opens with the job\'s log followed, the file jobs.sh logs reads');
+});
+
+test('TerminalOpen_JobFromAWorktreeOrBadName_Refused', () => {
+  assert.equal(planAction('terminal.open', { path: '/p/app-wt-2', job: 'next' }, CONTEXT).ok, false, "because a job's log belongs to the project root");
+  assert.equal(planAction('terminal.open', { path: '/p/app', job: '../../etc/passwd' }, CONTEXT).ok, false, 'because a job name never reaches outside .flow/log');
+});
+
+test('TerminalOpen_JobInITermAndTerminal_ThroughOsascript', () => {
+  const iterm = planned('terminal.open', { path: '/p/app', job: 'health' });
+  assert.deepEqual([iterm.command, iterm.args[1]], ['osascript', `tell application "iTerm" to create window with default profile command "/bin/sh -c 'cd '\\\\''/p/app'\\\\'' && '\\\\''tail'\\\\'' '\\\\''-n'\\\\'' '\\\\''200'\\\\'' '\\\\''-f'\\\\'' '\\\\''/p/app/.flow/log/health.log'\\\\'''"`], 'because iTerm runs its command without a shell, so the line goes to sh whole');
+  const terminal = planned('terminal.open', { path: '/p/app', job: 'health' }, { ...CONTEXT, terminal: 'terminal' });
+  assert.equal(terminal.args[1], `tell application "Terminal" to do script "cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/health.log'"`, 'because Terminal runs the line in its shell');
+});
+
+test('TerminalOpen_CustomCommandWithCmd_GetsTheQuotedLine', () => {
+  const plan = planned('terminal.open', { path: '/p/app', job: 'next' }, { ...CONTEXT, terminal: { command: ['kitty', '--directory', '{path}', 'sh', '-c', '{cmd}'] } });
+  assert.equal(plan.args.at(-1), `cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'`, 'because {cmd} is the line to run, quoted for sh');
 });

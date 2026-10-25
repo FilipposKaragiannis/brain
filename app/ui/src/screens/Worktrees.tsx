@@ -2,7 +2,7 @@ import type { ProcessInfo, Snapshot, Worktree } from '../../../daemon/src/snapsh
 import { Age, formatDuration, useLiveSeconds } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import { worktreeTone } from '../status.ts';
-import { ActionButton, Chip, Empty, Flags, Module, SourceFreshness } from '../ui.tsx';
+import { ActionButton, Chip, Empty, Flags, Module, SourceFreshness, TerminalButton } from '../ui.tsx';
 import { WORDS } from '../words.ts';
 
 const COLUMNS = 11;
@@ -68,7 +68,10 @@ function WorktreeRows({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
         </td>
         <td><Processes processes={worktree.agents} takenAt={snapshot.takenAt} /></td>
         <td><Processes processes={worktree.sessions} takenAt={snapshot.takenAt} /></td>
-        <td>{worktree.role === 'pool' && worktree.claim !== null && <ActionButton kind="worktree.release" args={{ target: worktree.name }} label="Release" primary={false} />}</td>
+        <td className="buttons">
+          <TerminalButton path={worktree.path} />
+          {worktree.role === 'pool' && worktree.claim !== null && <ActionButton kind="worktree.release" args={{ target: worktree.name }} label="Release" primary={false} />}
+        </td>
       </tr>
       {note !== null && <tr className="note-row"><td colSpan={COLUMNS}>{note}</td></tr>}
     </tbody>

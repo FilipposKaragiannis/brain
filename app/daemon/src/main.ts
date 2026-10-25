@@ -30,7 +30,7 @@ const installed = () => installedTerminals(existsSync, os.homedir());
 const serve = (project: ProjectDefinition) => {
   const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE });
   const actions = new ActionRunner({
-    projectId: project.id, context: () => monitor.actionContext(), spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
+    projectId: project.id, context: () => ({ ...monitor.actionContext(), terminal: settings.terminal(), installedTerminals: installed() }), spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
     onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },
   });
   monitor.onChange((snapshot) => log.info('snapshot', { project: project.id, needsYou: snapshot.counts.needsYou, running: snapshot.counts.running, stale: snapshot.counts.stale, free: snapshot.counts.free, disagreements: snapshot.counts.disagreements }));

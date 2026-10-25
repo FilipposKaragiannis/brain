@@ -59,6 +59,14 @@ export function useActionsView(): ActionsView {
   return actions;
 }
 
+/** The label every Open in Terminal button carries. */
+export const OPEN_IN_TERMINAL = 'Open in Terminal';
+
+/** Opens a terminal in a folder the snapshot lists, or, with a job, follows that job's log from the project root. */
+export function TerminalButton({ path, job }: { path: string; job?: string }) {
+  return <ActionButton kind="terminal.open" args={job === undefined ? { path } : { path, job }} label={OPEN_IN_TERMINAL} primary={false} />;
+}
+
 /** A button that runs one action, stays disabled while that action runs, and shows how it ended. */
 export function ActionButton({ kind, args, label, primary }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean }) {
   const actions = useActionsView();

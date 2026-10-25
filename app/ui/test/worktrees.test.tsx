@@ -1,8 +1,8 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { Worktree } from '../../daemon/src/snapshot.ts';
 import { Worktrees } from '../src/screens/Worktrees.tsx';
-import { claudeSession, FakeDaemon, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { actionRecord, claudeSession, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -75,4 +75,19 @@ test('FreeWorktreeWithASession_SaysTheSessionSitsThere', () => {
   renderWorktrees([{ ...poolWorktree('wt-10'), flags: ['session'], sessions: [claudeSession(62102, TWO_HOURS)] }]);
   const note = screen.getByText(/session sits here/);
   expect(note.textContent, 'because free next to a live session is confusing without naming it').toMatch(/claude.*pid 62102/);
+});
+
+const ACTIONS_PATH = '/api/projects/project/actions';
+
+test('EveryWorktree_OpenInTerminalOnItsPath', async () => {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('t1', 'done', {}), kind: 'terminal.open', args: { path: '/p' }, outcome: 'finished' } } }; });
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-2'), { ...poolWorktree('project'), path: '/p', role: 'main', state: 'outside' }] }} /></Wrapper>);
+  const buttons = screen.getAllByRole('button', { name: 'Open in Terminal' });
+  expect(buttons.length, 'because the pool rows and the project root outside it each open a terminal').toBe(2);
+  await act(async () => { fireEvent.click(buttons[1]!); });
+  expect(posted, 'because the button opens the folder the row shows').toEqual([{ kind: 'terminal.open', args: { path: '/p' } }]);
+  expect(screen.getByText('done'), 'because the button shows how its action ended, as every action button does').not.toBeNull();
 });

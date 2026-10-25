@@ -351,6 +351,7 @@ export type ActionKind =
   | 'worktree.release'
   | 'steward.health'
   | 'pr.merge'
+  | 'terminal.open'
   | 'refresh';
 export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
 /**

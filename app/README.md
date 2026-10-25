@@ -179,6 +179,7 @@ on every state change and at most twice a second while output arrives.
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
+| `terminal.open` | `path`, `job?` | a terminal window in `path` (below) | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
 `ActionRecord.outcome` says what a successful action did: `started` means the work was handed on
@@ -187,6 +188,18 @@ second), `finished` means the work is over. It is null while an attached action 
 failed or rejected one. Every `jobs.sh run <job>` (`job.run`, `steward.health`, `run.start` without
 an item) also re-reads its sources a second time five seconds after it returns
 (`ActionPlan.refreshAgainMs`), so the run it started shows; a daemon that stops drops the wait.
+
+`terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, or the
+working directory of an agent or session the snapshot lists; any other path is refused with the
+reason. The app is the `terminal` setting, else the first installed of iTerm, Ghostty, Terminal:
+`iterm` runs `open -a iTerm <path>`, `terminal` `open -a Terminal <path>`, `ghostty`
+`open -na Ghostty --args --working-directory=<path>`, a custom command its words with `{path}`
+replaced. With `job` (from the root only) the window follows `<root>/.flow/log/<job>.log`, the file
+`jobs.sh logs` reads, with `tail -n 200 -f`: iTerm through `osascript` (`create window with default
+profile command`, the line handed to `/bin/sh -c`), Terminal through `osascript` (`do script`),
+Ghostty with `-e tail …`, a custom command with `{cmd}` replaced by the line. The line is
+`cd <path> && tail -n 200 -f <log>` with every word quoted for sh and then for AppleScript, so a
+path with a space or a quote stays one word. Nothing is locked or re-read.
 
 An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
@@ -266,8 +279,10 @@ questions and recommendations as the plugin parses them on flow 1.18.0 and later
 matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`), Worktrees (the
 pool, then the worktrees outside it under their own heading; each row has its item's title, its
 agents and sessions with pid, host and age and the command on hover, why it is stale and the way
-out, a legend for dirty, agents and sessions; Release, Health), Agents and jobs (Run, Stop, Pause,
-Resume), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
+out, a legend for dirty, agents and sessions; Open in Terminal on every row, the project root
+included, Release, Health), Agents and jobs (Open in Terminal on every agent and session row, in
+its working directory; Run, Stop, Pause, Resume and Open in Terminal, which follows the job's log,
+on every job), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s). A line above every screen names the project with links to its

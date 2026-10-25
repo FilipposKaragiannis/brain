@@ -14,7 +14,7 @@ import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 import { fakeScheduler, fakeSpawner, plainSpawner, settle, until } from './fakeSpawner.ts';
 import type { FakeSpawnerOptions } from './fakeSpawner.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'] };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], processCwds: ['/p/app-wt-2/src'], terminal: null, installedTerminals: ['iterm'] };
 const NOW = new Date('2026-10-25T09:00:00Z');
 const HTTP_ACCEPTED = 202;
 const HTTP_BAD_REQUEST = 400;
@@ -403,5 +403,17 @@ test('ActionFails_NoOutcome', async () => {
     processes[0]!.exit(1, null);
     await settle();
     assert.equal(actions.get(record.id)?.outcome, null, 'because a failed hand-off started nothing');
+  } finally { await cleanup(); }
+});
+
+test('TerminalOpen_RunsWithoutALockAndRefreshesNothing', async () => {
+  const { actions, processes, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const first = actionOf(actions.request('terminal.open', { path: '/p/app' }));
+    const second = actions.request('terminal.open', { path: '/p/app' });
+    assert.equal(second.status, HTTP_ACCEPTED, 'because two windows on one folder hold nothing against each other');
+    processes[0]!.exit(0, null);
+    await settle();
+    assert.deepEqual([actions.get(first.id)?.state, actions.get(first.id)?.outcome, refreshed], ['done', 'finished', []], 'because opening a window changes no source');
   } finally { await cleanup(); }
 });
