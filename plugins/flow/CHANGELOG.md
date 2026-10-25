@@ -1,5 +1,14 @@
 # flow
 
+## 1.18.0 (2026-10-25)
+
+- `gate.sh list --json` prints the pending gates as one JSON array, oldest first. Each gate has
+  its item, gate, message, time and host, the claimed pool worktree (or null), its age in
+  seconds and its questions: each numbered line with the text under it and the `Recommended`
+  line as the recommended answer. The plugin is now the one place that parses a gate message.
+- `FLOW_NOW` (an ISO time) stands in for the clock in the age, for tests.
+- `gate.sh list` without `--json` prints as before.
+
 ## 1.17.0 (2026-10-24)
 
 - The comments job skips a PR with nothing new. Before a pass it reads the PR's last update,
