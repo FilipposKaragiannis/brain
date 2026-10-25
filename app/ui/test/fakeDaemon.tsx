@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Disagreement, Readiness, FlowEvent, Gate, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord } from '../src/actions.ts';
-import type { Api, ApiResponse, StreamLike } from '../src/api.ts';
+import type { Api, ApiResponse, HttpMethod, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
 import { ClockProvider } from '../src/clock.tsx';
 import { ServicesProvider } from '../src/console.tsx';
@@ -51,7 +51,7 @@ export class FakeStream implements StreamLike {
   /** The browser gave up (a non-stream answer): closed for good. */
   fail(): void { this.readyState = STREAM_CLOSED; this.onerror?.(new Event('error')); }
 
-  send(type: 'snapshot' | 'action', data: Snapshot | ActionRecord): void {
+  send(type: 'snapshot' | 'action' | 'projects', data: Snapshot | ActionRecord | unknown[]): void {
     const event = new MessageEvent<string>(type, { data: JSON.stringify(data) });
     (this.listeners.get(type) ?? []).forEach((listener) => listener(event));
     this.sent();
@@ -68,16 +68,16 @@ export class FakeDaemon implements Api {
   private held: Held[] = [];
   private eventsSent = 0;
 
-  answer(method: 'GET' | 'POST', path: string, route: Route): void {
+  answer(method: HttpMethod, path: string, route: Route): void {
     this.routes.set(`${method} ${path}`, { route, afterEvents: 0 });
   }
 
   /** Answers only once this many stream events went out after the request arrived: a slow reply. */
-  answerAfterEvents(method: 'GET' | 'POST', path: string, events: number, route: Route): void {
+  answerAfterEvents(method: HttpMethod, path: string, events: number, route: Route): void {
     this.routes.set(`${method} ${path}`, { route, afterEvents: events });
   }
 
-  async request(path: string, method: 'GET' | 'POST', body: unknown): Promise<ApiResponse> {
+  async request(path: string, method: HttpMethod, body: unknown): Promise<ApiResponse> {
     const entry = this.routes.get(`${method} ${path}`);
     if (entry === undefined) return { status: HTTP_NOT_FOUND, body: { error: 'not found' } };
     if (entry.afterEvents > 0) {

@@ -78,6 +78,8 @@ export class ProjectMonitor {
   private readonly gateQuestions: GateQuestionCache = new Map();
   private gateListError: string | null = null;
   private current: Snapshot | null = null;
+  /** Set by `stop`: a start still making its first reads schedules nothing after it. */
+  private stopped = false;
   private readonly settler = new DisagreementSettler();
   private readonly reads: ReadMarks = {
     started: 0,
@@ -112,6 +114,7 @@ export class ProjectMonitor {
   async start(): Promise<void> {
     await this.refresh('files');
     await Promise.all([this.refresh('git'), this.refresh('processes'), this.refresh('jobs')]);
+    if (this.stopped) return;
     void this.refresh('board');
     void this.refresh('pulls');
     this.schedule('files', this.cadence.filesMs);
@@ -124,6 +127,7 @@ export class ProjectMonitor {
   }
 
   stop(): void {
+    this.stopped = true;
     for (const timer of this.timers) clearInterval(timer);
     for (const watcher of this.watchers) watcher.close();
     if (this.debounce !== null) clearTimeout(this.debounce);

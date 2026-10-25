@@ -19,10 +19,15 @@ test('ProjectWithATracker_LinksIt', () => {
 
 test('LocalProject_NoRepositoryLink', () => {
   render(<ProjectHeader project={{ ...PROJECT, repo: null, repoUrl: null, trackerUrl: null, adapter: 'local' }} />);
-  expect(screen.queryByRole('link'), 'because a local project has no page to open').toBeNull();
+  expect(screen.queryAllByRole('link').map((link) => link.textContent), 'because a local project has no repository or tracker page to open, only the Settings link').toEqual(['Settings']);
 });
 
 test('Header_SaysTheJobsHost', () => {
   render(<ProjectHeader project={{ ...PROJECT, jobsHost: 'codex' }} />);
   expect(screen.getByLabelText('Project details').textContent, 'because which CLI runs the jobs changes what the agents can do').toMatch(/codex/);
+});
+
+test('Header_LinksToSettings', () => {
+  render(<ProjectHeader project={PROJECT} />);
+  expect(screen.getByRole('link', { name: 'Settings' }).getAttribute('href'), 'because projects are now added and removed there, not only at start').toBe('#/settings');
 });

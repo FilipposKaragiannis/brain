@@ -17,3 +17,11 @@ test('RouteToHashAndBack_RoundTrips', () => {
 test('ActivityHashWithAnItem_NarrowsToThatItem', () => {
   expect(parseRoute('#/foosbrawl/activity/gh%23515'), 'because the activity screen links straight to one item\'s events').toEqual({ projectId: 'foosbrawl', screen: 'activity', detail: 'gh#515' });
 });
+
+test('SettingsHash_IsTheSettingsScreen', () => {
+  expect(parseRoute('#/settings'), 'because the settings belong to the daemon, not to one project').toEqual({ projectId: null, screen: 'settings', detail: null });
+});
+
+test('SettingsRoute_WritesTheSettingsHash', () => {
+  expect(routeHash({ projectId: 'foosbrawl', screen: 'settings', detail: null }), 'because every Settings link lands on the one page whatever project was open').toBe('#/settings');
+});

@@ -16,21 +16,52 @@ To try a flow plugin that is not installed, such as a checkout of this repositor
 version shown comes from that plugin's own `plugin.json`.
 Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
 second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
-`~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`). Every root must hold a
-`.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
+the settings file (below). Every root must hold a `.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
 the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
 else the one the daemon makes on first start and keeps in `~/.local/state/brain-console/token`.
 The start log prints the URL with the token in it. A request whose `Host` is not a loopback
 name, or whose `Origin` is not a local page, gets 403, so a page on another site cannot drive
 the console even from the owner's own browser.
 
+## Settings
+`~/.config/brain-console/config.json` holds the settings, every field optional:
+
+```json
+{ "projects": [{ "root": "/work/projects/foosbrawl" }], "terminal": "iterm", "port": 7474 }
+```
+
+- `projects`: the roots to watch, absolute (or starting `~/`). Precedence is `--project` flags,
+  then `BRAIN_CONSOLE_PROJECTS`, then the file; projects set by a flag or the environment show in
+  Settings but cannot change there, with the note why.
+- `terminal`: what Open in Terminal opens, `"iterm"`, `"terminal"`, `"ghostty"` or
+  `{"command": ["open", "-a", "Warp", "{path}"]}` (run without a shell, `{path}` replaced in every
+  word, the path added last when no word has it). Unset, the console takes the first installed of
+  iTerm, Ghostty and Terminal (an app in `/Applications` or `~/Applications`, Terminal also in
+  `/System/Applications/Utilities`).
+- `port`: the port to listen on when no `--port` is given (7474 by default). It takes a restart.
+
+While `config.json` is absent the daemon still reads the projects of the older
+`~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`); the first save from
+Settings writes `config.json` with them, and `projects.json` is then no longer read. A file that is
+not valid JSON, or holds a setting the daemon does not know, stops the daemon at start with the reason.
+
+`PUT /api/settings` (the Settings screen) changes the settings its body names and keeps the rest:
+the whole body is checked first (every root holds `.flow/config.yaml`, no two share a folder name,
+at least one stays, the terminal is a name or a non-empty command, `"terminal": null` goes back to
+the first installed), then the file is written in one step and applied. A changed project list
+applies at once: a new root gets its monitor started, a removed one is stopped and dropped (its
+attached actions get SIGTERM), and every open event stream carries `event: projects` with the new
+list. The terminal counts from the next Open in Terminal; the port only after a restart.
+
 ## Routes
 | Route | What |
 |---|---|
 | `GET /healthz` | `{ok, projects}` |
 | `GET /api/projects` | every project with its counts |
+| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon |
+| `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
-| `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, a heartbeat every 15s |
+| `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
 | `POST /api/projects/<id>/actions` | run one action, body `{"kind","args"}`; 202 with the record, 400 on a bad request, 409 when its lock is held |
@@ -223,7 +254,7 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Six screens, routed by hash (`#/<project>/<screen>/<detail>`): Overview (five tiles, a
+imports). Six project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles, a
 readiness line from `readiness` that says what runs, or why nothing does: how many items the next
 job could take, how many next-in-line items lack a field and how many more in the backlog do, how
 many wait at gates and how many are blocked; the needs-you table oldest first with the next-in-line
@@ -240,8 +271,12 @@ Resume), Pull requests (from the `pulls` source, with Merge on a PR in state `me
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s). A line above every screen names the project with links to its
-repository and tracker, its adapter, base branch, flow version and jobs host; projects are set when
-the daemon starts (`--project`), and a Settings screen comes later. Every item id opens its tracker
+repository and tracker, its adapter, base branch, flow version and jobs host, and a
+Settings link. Settings (`#/settings`, linked from the top bar of every screen) lists the projects
+with Add (a path) and Remove, or the note why they cannot change; the terminal as radio buttons
+(the first installed, iTerm, Terminal, Ghostty, a custom command with its field); the port, read
+only, with the restart note; the config file, the state folder and whether the daemon runs under
+launchd. A refused save shows the daemon's reason. Every item id opens its tracker
 page in a new tab; a link from the snapshot that is not `http` or `https` shows as plain text. An action that handed its work on (`outcome: started`, such as `job.run`) shows
 "started", not "done", on its button and in the drawer. Every module is a title row, a body and a
 footer saying how fresh its source is; every age is a live counter driven by one shared clock.

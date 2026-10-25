@@ -5,7 +5,7 @@ export const WORDS = {
   sessions: 'Interactive claude or codex someone is typing into (you, or an app such as the Claude desktop app), with its working directory here. Not an agent.',
   outside: 'Not in the pool: the main checkout, or another worktree git knows of. The flow never claims or releases these.',
   disagreement: 'Two places flow state lives say different things. A row shows only once both stores were read again and still disagree, so a store that merely lags never shows here.',
-  projects: 'Projects are set when the daemon starts (--project); a Settings screen comes later.',
+  projects: 'The projects the daemon watches, the terminal it opens and its port: add or remove a project there without a restart.',
 } as const;
 
 /** What each gate asks of you, in one sentence; the flow's own help says the same. */

@@ -1,14 +1,18 @@
 import { existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { childProcessRunner } from './collectors/exec.ts';
 import { readConfig } from './config.ts';
 import { stderrLogger } from './log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
+import type { ProjectDefinition } from './project.ts';
+import { ProjectRegistry } from './registry.ts';
 import { closeConsoleServer, createConsoleServer } from './server.ts';
-import type { ServedProject } from './server.ts';
+import { SettingsStore } from './settings.ts';
 import type { SourceName } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
+import { installedTerminals } from './terminal.ts';
 
 const EXIT_BAD_CONFIG = 2;
 const clock = (): Date => new Date();
@@ -20,29 +24,29 @@ if (!configuration.ok) {
   process.exit(EXIT_BAD_CONFIG);
 }
 const { config } = configuration;
+const installed = () => installedTerminals(existsSync, os.homedir());
 
-const served: ServedProject[] = config.projects.map((project) => {
+/** A project's monitor and runner. The runner reads the terminal setting at request time, so a change in Settings counts at once. */
+const serve = (project: ProjectDefinition) => {
   const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE });
   const actions = new ActionRunner({
     projectId: project.id, context: () => monitor.actionContext(), spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
     onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },
   });
+  monitor.onChange((snapshot) => log.info('snapshot', { project: project.id, needsYou: snapshot.counts.needsYou, running: snapshot.counts.running, stale: snapshot.counts.stale, free: snapshot.counts.free, disagreements: snapshot.counts.disagreements }));
   return { monitor, actions };
-});
-const monitors = served.map((entry) => entry.monitor);
+};
+const registry = new ProjectRegistry(serve, log);
+const settings = new SettingsStore({ config, installed, applyProjects: (projects) => { void registry.apply(projects); } });
 /** The UI as `npm run build` in app/ui leaves it. Without it the daemon is API only. */
 const uiDist = path.resolve(import.meta.dirname, '..', '..', 'ui', 'dist');
 const staticDir = existsSync(path.join(uiDist, 'index.html')) ? uiDist : null;
-const server = createConsoleServer(served, { host: config.host, port: config.port, token: config.token, staticDir, log });
-
-for (const monitor of monitors) {
-  monitor.onChange((snapshot) => log.info('snapshot', { project: monitor.project.id, needsYou: snapshot.counts.needsYou, running: snapshot.counts.running, stale: snapshot.counts.stale, free: snapshot.counts.free, disagreements: snapshot.counts.disagreements }));
-}
+const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log });
 
 server.listen(config.port, config.host, () => {
-  log.info('listening', { url: `http://${config.host}:${config.port}/?token=${config.token}`, projects: config.projects.map((project) => project.id).join(','), stateDir: config.stateDir, ui: staticDir ?? 'none (run npm run build in app/ui)' });
+  log.info('listening', { url: `http://${config.host}:${config.port}/?token=${config.token}`, projects: config.projects.map((project) => project.id).join(','), stateDir: config.stateDir, config: config.paths.configFile, ui: staticDir ?? 'none (run npm run build in app/ui)' });
 });
-await Promise.all(monitors.map((monitor) => monitor.start()));
+await registry.apply(config.projects);
 
 /** How long a stop may take before the process ends anyway, streams or not. */
 const SHUTDOWN_GRACE_MS = 3000;
@@ -51,7 +55,7 @@ const shutdown = (signal: string): void => {
   if (stopping) { log.warn('shutdown.forced', { signal }); process.exit(130); }
   stopping = true;
   log.info('shutdown', { signal });
-  for (const { monitor, actions } of served) { actions.stopAll(); monitor.stop(); }
+  registry.stopAll();
   void closeConsoleServer(server).then(() => process.exit(0));
   setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();
 };

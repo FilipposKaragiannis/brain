@@ -4,6 +4,8 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ActionRunner } from './actions.ts';
 import type { Logger } from './log.ts';
 import type { ProjectMonitor } from './project.ts';
+import type { ProjectRegistry, ServedProject } from './registry.ts';
+import type { SettingsStore } from './settings.ts';
 import { filterEvents } from './events.ts';
 import { serveStatic } from './static.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
@@ -11,8 +13,7 @@ import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
 /** `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code. */
 export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger };
 
-/** One project as the server sees it: its live picture and the thing that runs its actions. */
-export type ServedProject = { monitor: ProjectMonitor; actions: ActionRunner };
+export type { ServedProject } from './registry.ts';
 
 const HEARTBEAT_MS = 15000;
 const BODY_LIMIT_BYTES = 64 * 1024;
@@ -88,8 +89,7 @@ function readBody(request: IncomingMessage): Promise<{ ok: true; body: unknown }
  * The daemon's HTTP face: the built UI at `/`, snapshots and actions over JSON, and one
  * server-sent event stream per project that carries both `snapshot` and `action` events.
  */
-export function createConsoleServer(projects: ServedProject[], options: ServerOptions): Server {
-  const byId = new Map(projects.map((served) => [served.monitor.project.id, served]));
+export function createConsoleServer(registry: ProjectRegistry, settings: SettingsStore | null, options: ServerOptions): Server {
   const server = createServer((request, response) => {
     const url = new URL(request.url ?? '/', `http://${options.host}:${options.port}`);
     const caller = localCaller(request);
@@ -97,19 +97,17 @@ export function createConsoleServer(projects: ServedProject[], options: ServerOp
     if (caller.origin !== null) {
       response.setHeader('access-control-allow-origin', caller.origin);
       response.setHeader('access-control-allow-headers', 'authorization, content-type');
-      response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+      response.setHeader('access-control-allow-methods', 'GET, POST, PUT, OPTIONS');
       response.setHeader('vary', 'origin');
     }
     if (request.method === 'OPTIONS') { response.writeHead(HTTP_NO_CONTENT); response.end(); return; }
     if (options.staticDir !== null && serveStatic(request, response, options.staticDir)) return;
     if (!authorized(request, url, options.token)) { sendJson(response, HTTP_UNAUTHORIZED, { error: 'token required' }); return; }
-    if (url.pathname === '/healthz') { sendJson(response, HTTP_OK, { ok: true, projects: [...byId.keys()] }); return; }
-    if (url.pathname === '/api/projects') {
-      sendJson(response, HTTP_OK, projects.map(({ monitor }) => ({ ...monitor.project, counts: monitor.snapshot?.counts ?? null, takenAt: monitor.snapshot?.takenAt ?? null })));
-      return;
-    }
+    if (url.pathname === '/healthz') { sendJson(response, HTTP_OK, { ok: true, projects: registry.list().map(({ monitor }) => monitor.project.id) }); return; }
+    if (url.pathname === '/api/projects') { sendJson(response, HTTP_OK, registry.summaries()); return; }
+    if (url.pathname === '/api/settings') { void settingsRoute(settings, request, response); return; }
     const match = /^\/api\/projects\/([^/]+)\/(snapshot|events|refresh|actions)(?:\/([^/]+))?$/.exec(url.pathname);
-    const served = match === null ? undefined : byId.get(decodeURIComponent(match[1]!));
+    const served = match === null ? undefined : registry.get(decodeURIComponent(match[1]!));
     if (match === null || served === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: 'not found' }); return; }
     const route = match[2];
     const actionId = match[3];
@@ -119,7 +117,7 @@ export function createConsoleServer(projects: ServedProject[], options: ServerOp
     if (route === 'actions') { void actions(served.actions, request, response, actionId); return; }
     if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
     if (wantsEventList(request, url)) { eventList(served.monitor, response, url); return; }
-    streamEvents(served, request, response, options.log);
+    streamEvents(served, registry, request, response, options.log);
   });
   return server;
 }
@@ -166,16 +164,40 @@ async function actions(runner: ActionRunner, request: IncomingMessage, response:
   sendJson(response, outcome.status, outcome.body);
 }
 
-function streamEvents(served: ServedProject, request: IncomingMessage, response: ServerResponse, log: Logger): void {
+/**
+ * `GET` the effective settings, each with where it came from; `PUT` a JSON object of the ones to
+ * change, which is checked whole, written to the config file and applied.
+ */
+async function settingsRoute(settings: SettingsStore | null, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (settings === null) { sendJson(response, HTTP_NOT_FOUND, { error: 'no settings in this daemon' }); return; }
+  if (request.method === 'GET') { sendJson(response, HTTP_OK, settings.view()); return; }
+  if (request.method !== 'PUT') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET or PUT' }); return; }
+  if (!(request.headers['content-type'] ?? '').startsWith('application/json')) { sendJson(response, HTTP_UNSUPPORTED_MEDIA, { error: 'send application/json' }); return; }
+  const read = await readBody(request);
+  if (!read.ok) { sendJson(response, read.status, { error: read.error }); return; }
+  const updated = settings.update(read.body);
+  if (updated.ok) sendJson(response, HTTP_OK, updated.value); else sendJson(response, HTTP_BAD_REQUEST, { error: updated.error });
+}
+
+/**
+ * One project's stream: its snapshots, its actions, and the project list whenever it changes, so
+ * a page learns of a project added or removed in Settings. A stream whose project was removed
+ * ends after that last list.
+ */
+function streamEvents(served: ServedProject, registry: ProjectRegistry, request: IncomingMessage, response: ServerResponse, log: Logger): void {
   const { monitor, actions: runner } = served;
   response.writeHead(HTTP_OK, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
   const send = (event: string, data: unknown): void => { response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
   if (monitor.snapshot !== null) send('snapshot', monitor.snapshot);
   const unsubscribeSnapshots = monitor.onChange((snapshot) => send('snapshot', snapshot));
   const unsubscribeActions = runner.onChange((record) => send('action', record));
+  const unsubscribeProjects = registry.onChange((projects) => {
+    send('projects', projects);
+    if (!projects.some((project) => project.id === monitor.project.id)) response.end();
+  });
   const heartbeat = setInterval(() => { response.write(': ping\n\n'); }, HEARTBEAT_MS);
   log.info('stream.open', { project: monitor.project.id });
-  request.on('close', () => { unsubscribeSnapshots(); unsubscribeActions(); clearInterval(heartbeat); log.info('stream.close', { project: monitor.project.id }); });
+  request.on('close', () => { unsubscribeSnapshots(); unsubscribeActions(); unsubscribeProjects(); clearInterval(heartbeat); log.info('stream.close', { project: monitor.project.id }); });
 }
 
 /**
