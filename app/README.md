@@ -11,6 +11,9 @@ npm start -- --project /work/projects/foosbrawl            # one or more --proje
 curl -s http://127.0.0.1:7474/api/projects/foosbrawl/snapshot | jq .counts
 curl -N http://127.0.0.1:7474/api/projects/foosbrawl/events  # server-sent events, one snapshot per change
 ```
+To try a flow plugin that is not installed, such as a checkout of this repository, start with
+`FLOW_PLUGIN=/path/to/brain/plugins/flow`: every flow script the daemon runs gets it, and the
+version shown comes from that plugin's own `plugin.json`.
 Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
 second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 `~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`). Every root must hold a
