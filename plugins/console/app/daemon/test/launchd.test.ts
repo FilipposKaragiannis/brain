@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { CommandOutcome, LaunchdDependencies } from '../src/launchd.ts';
-import { flagsOfPlist, install, LAUNCHD_LABEL, plistPath, startFailure, uninstall } from '../src/launchd.ts';
+import { absoluteFlags, flagsOfPlist, install, LAUNCHD_LABEL, plistPath, startFailure, uninstall } from '../src/launchd.ts';
 import { FIXTURE_ROOT } from './fakeRunner.ts';
 
 const OK: CommandOutcome = { code: 0, stdout: '', stderr: '' };
@@ -161,4 +161,8 @@ test('Install_LoadedButNoPid_FailsPointingAtTheLog', async () => {
 test('StartFailure_UnderLaunchd_SaysItWillBeRestarted', () => {
   assert.match(startFailure('bad config', { BRAIN_CONSOLE_LAUNCHD: '1' }), /cannot start: bad config\n.*starts it again about every 10 s.*brain-console uninstall/, 'because KeepAlive restarts a daemon whose config went bad, and the log must say why it keeps stopping');
   assert.equal(startFailure('bad config', {}), 'brain-console: cannot start: bad config\n', 'because in a terminal the reason alone is enough');
+});
+
+test('AbsoluteFlags_RelativePaths_ResolvedFromHere', () => {
+  assert.deepEqual(absoluteFlags(['--state-dir', 'state', '--config', 'c.json', '--port', '7480']), ['--state-dir', path.resolve('state'), '--config', path.resolve('c.json'), '--port', '7480'], 'because the pid file and the plist replay these flags from another folder, so a relative path would move');
 });

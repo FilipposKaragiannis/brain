@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -17,6 +17,7 @@ const RUNNING: CommandOutcome = { code: 0, stdout: `gui/501/${LAUNCHD_LABEL} = {
 
 type Fake = {
   deps: CliDependencies; dir: string; home: string; state: string; config: string; lines: string[]; calls: string[]; alive: Set<number>; killed: number[];
+  commands: Map<number, string>;
   requests: { method: string; url: string; body: unknown }[]; opened: string[]; tailed: [string, boolean][]; scripts: [string, string[]][]; started: string[][];
   cleanup: () => void;
 };
@@ -25,7 +26,7 @@ type Fake = {
  * A home, a state dir and a config file in a temp folder, launchd answering as `loaded` says,
  * and every browser, tail, script, signal and request recorded instead of made.
  */
-function fake(options: { loaded?: boolean; answers?: Record<string, CommandOutcome>; http?: (method: string, body: unknown) => HttpAnswer } = {}): Fake {
+function fake(options: { loaded?: boolean; answers?: Record<string, CommandOutcome>; http?: (method: string, body: unknown) => HttpAnswer; holder?: () => string | null } = {}): Fake {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'console-cli-'));
   const home = path.join(dir, 'home');
   const state = path.join(dir, 'state');
@@ -35,6 +36,8 @@ function fake(options: { loaded?: boolean; answers?: Record<string, CommandOutco
   const calls: string[] = [];
   const alive = new Set<number>();
   const killed: number[] = [];
+  /** The command line `ps` gives for each pid the test makes alive. */
+  const commands = new Map<number, string>();
   const recorded: Pick<Fake, 'requests' | 'opened' | 'tailed' | 'scripts' | 'started'> = { requests: [], opened: [], tailed: [], scripts: [], started: [] };
   const deps: CliDependencies = {
     launchd: {
@@ -48,7 +51,7 @@ function fake(options: { loaded?: boolean; answers?: Record<string, CommandOutco
         write: (file, text) => writeFileSync(file, text), remove: (file) => rmSync(file, { force: true }), exists: existsSync,
         read: (file) => readFileSync(file, 'utf8'), mkdir: (folder) => { mkdirSync(folder, { recursive: true }); }, privateFolder: (folder) => { mkdirSync(folder, { recursive: true }); },
       },
-      portHolder: async () => null, waitForPort: async () => true, print: (line) => lines.push(line),
+      portHolder: async () => options.holder?.() ?? null, waitForPort: async () => true, print: (line) => lines.push(line),
       env: { PATH: '/usr/bin:/bin', HOME: home }, uid: 501, home, node: '/opt/node/bin/node', daemon: path.join(home, '.local/share/brain-console/current/daemon/src/main.ts'),
       configPaths: { configFile: config, legacyProjectsFile: path.join(dir, 'projects.json') },
     },
@@ -56,6 +59,7 @@ function fake(options: { loaded?: boolean; answers?: Record<string, CommandOutco
     defaultStateDir: state,
     cwd: dir,
     isAlive: (pid) => alive.has(pid),
+    processCommand: async (pid) => commands.get(pid) ?? null,
     kill: (pid) => { killed.push(pid); alive.delete(pid); },
     sleep: async () => {},
     http: async (url, method, _token, body) => { recorded.requests.push({ method, url, body }); return options.http?.(method, body) ?? { status: 500, body: null }; },
@@ -64,8 +68,13 @@ function fake(options: { loaded?: boolean; answers?: Record<string, CommandOutco
     runScript: async (file, args) => { recorded.scripts.push([file, args]); return 0; },
     startDaemon: async (argv) => { recorded.started.push(argv); return 0; },
     listDirs: (folder) => { try { return readdirSync(folder, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name); } catch { return []; } },
+    tree: {
+      readLink: (file) => { try { return readlinkSync(file); } catch { return null; } },
+      link: (target, file) => { rmSync(`${file}.tmp`, { force: true }); symlinkSync(target, `${file}.tmp`); renameSync(`${file}.tmp`, file); },
+      remove: (folder) => rmSync(folder, { recursive: true, force: true }),
+    },
   };
-  return { deps, dir, home, state, config, lines, calls, alive, killed, ...recorded, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  return { deps, dir, home, state, config, lines, calls, alive, killed, commands, ...recorded, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 /** A token in the state dir, as the daemon leaves it on its first start. */
@@ -74,11 +83,12 @@ function withToken(f: Fake): void {
   writeFileSync(path.join(f.state, 'token'), 's3cr3t\n');
 }
 
-/** A foreground daemon's pid file, its pid alive. */
+/** A foreground daemon's pid file, its pid alive and running main.ts. */
 function foreground(f: Fake, pid: number, port: number, argv: string[] = []): void {
   mkdirSync(f.state, { recursive: true });
   writeFileSync(pidFilePath(f.state), JSON.stringify({ pid, port, config: f.config, argv }));
   f.alive.add(pid);
+  f.commands.set(pid, `/opt/node/bin/node ${f.deps.launchd.daemon} start`);
 }
 
 /** The launch agent `install` would have written, with these start flags. */
@@ -205,20 +215,80 @@ test('Restart_AgentWrittenButNotLoaded_BootstrapsIt', async () => {
   } finally { f.cleanup(); }
 });
 
-test('Url_WithAToken_PrintsItWithTheToken', async () => {
+test('Url_Running_PrintsItWithTheToken', async () => {
   const f = fake();
   try {
     withToken(f);
-    assert.equal(await runCli(['url', '--port', '7480'], f.deps), 0, 'because the token is there');
+    foreground(f, 77, 7480);
+    assert.equal(await runCli(['url'], f.deps), 0, 'because the daemon runs and the token is there');
     assert.deepEqual(f.lines, ['http://127.0.0.1:7480/?token=s3cr3t'], 'because scripts need the whole address and nothing else');
   } finally { f.cleanup(); }
 });
 
-test('Url_NoTokenYet_FailsSayingWhy', async () => {
+test('Url_NotRunning_FailsWithoutTheToken', async () => {
   const f = fake();
   try {
+    withToken(f);
+    assert.equal(await runCli(['url'], f.deps), 1, 'because no daemon answers on that address');
+    assert.equal(f.lines.join('\n').includes('s3cr3t'), false, 'because a URL for a stopped daemon is no use to a script');
+  } finally { f.cleanup(); }
+});
+
+test('Url_NoTokenYet_FailsSayingWhy', async () => {
+  const f = fake({ loaded: true });
+  try {
     assert.equal(await runCli(['url'], f.deps), 1, 'because there is no address to give');
-    assert.match(f.lines[0] ?? '', /no token/, 'because the owner hears the daemon has not started yet');
+    assert.match(f.lines[0] ?? '', /no token/, 'because the owner hears the daemon has not made one yet');
+  } finally { f.cleanup(); }
+});
+
+test('Status_PidReusedByAnotherProcess_NotRunningAndTheFileRemoved', async () => {
+  const f = fake();
+  try {
+    foreground(f, 77, 7481);
+    f.commands.set(77, 'sleep 600');
+    assert.equal(await runCli(['status'], f.deps), 1, 'because pid 77 is not a console daemon any more');
+    assert.match(f.lines[1] ?? '', /^daemon: not running/, 'because a reused pid neither holds the port nor runs main.ts');
+    assert.equal(existsSync(pidFilePath(f.state)), false, 'because the stale file is removed');
+  } finally { f.cleanup(); }
+});
+
+test('Stop_PidReusedByAnotherProcess_NothingSignalled', async () => {
+  const f = fake();
+  try {
+    foreground(f, 77, 7481);
+    f.commands.set(77, 'sleep 600');
+    assert.equal(await runCli(['stop'], f.deps), 0, 'because there is nothing of ours to stop');
+    assert.deepEqual(f.killed, [], 'because SIGTERM to a stranger is the one thing stop must never do');
+  } finally { f.cleanup(); }
+});
+
+test('Start_StalePidFileOfADeadPid_StartsAndRemovesIt', async () => {
+  const f = fake();
+  try {
+    foreground(f, 77, 7481);
+    f.alive.delete(77);
+    await runCli(['start'], f.deps);
+    assert.deepEqual([f.started.length, existsSync(pidFilePath(f.state))], [1, false], 'because a crash leaves the file behind and must not block the next start');
+  } finally { f.cleanup(); }
+});
+
+test('Status_PidHoldsThePort_Running', async () => {
+  const f = fake({ holder: () => 'pid 77 (node)' });
+  try {
+    foreground(f, 77, 7481);
+    f.commands.delete(77);
+    assert.equal(await runCli(['status'], f.deps), 0, 'because the pid holds the record\'s port, whatever ps says');
+  } finally { f.cleanup(); }
+});
+
+test('Add_AgentWithProjectFlags_RefusedPointingAtInstall', async () => {
+  const f = fake();
+  try {
+    agent(f, ['--project', FIXTURE_ROOT, '--state-dir', f.state]);
+    assert.equal(await runCli(['add', LOCAL_ROOT], f.deps), 2, 'because the daemon would ignore a config file the agent overrides');
+    assert.match(f.lines[0] ?? '', /launch agent's --project flags; run brain-console install --project/, 'because the owner hears where the projects really come from');
+    assert.equal(existsSync(f.config), false, 'because nothing is written');
   } finally { f.cleanup(); }
 });
 
@@ -379,33 +449,87 @@ function cached(f: Fake, marketplace: string, version: string, script = true): s
   return dir;
 }
 
-test('Update_SeveralCachedVersions_RunsTheNewestInstallScriptWithoutLaunchd', async () => {
+/** The install tree with these versions and current at the first; the fake install script adds `next` and points current at it. */
+function installed(f: Fake, versions: string[], next: string): string {
+  const root = path.join(f.home, '.local', 'share', 'brain-console');
+  for (const version of versions) mkdirSync(path.join(root, version), { recursive: true });
+  symlinkSync(versions[0] ?? '', path.join(root, 'current'));
+  f.deps.runScript = async (file, args) => {
+    f.scripts.push([file, args]);
+    mkdirSync(path.join(root, next), { recursive: true });
+    f.deps.tree.link(next, path.join(root, 'current'));
+    return 0;
+  };
+  return root;
+}
+
+test('Update_SeveralCachedVersions_RunsTheNewestInstallScriptKeepingTheOld', async () => {
   const f = fake();
   try {
     cached(f, 'brain-plugins', '0.9.0');
     const newest = cached(f, 'brain-plugins', '0.10.0');
     cached(f, 'brain-plugins', '0.11.0', false);
+    const root = installed(f, ['0.7.0'], '0.10.0');
     assert.equal(await runCli(['update'], f.deps), 0, 'because the script succeeded');
-    assert.deepEqual(f.scripts, [[path.join(newest, 'scripts', 'install.sh'), ['--no-launchd']]], 'because 0.10.0 is newer than 0.9.0 by number, and a folder with no install script is not a plugin to install');
-    assert.equal(f.calls.some((call) => call.startsWith('kickstart')), false, 'because no job is loaded to restart');
+    assert.deepEqual(f.scripts, [[path.join(newest, 'scripts', 'install.sh'), ['--no-launchd', '--keep-old']]], 'because 0.10.0 is newer than 0.9.0 by number, a folder with no install script is not a plugin, and update prunes itself');
+    assert.deepEqual(readdirSync(root).sort(), ['0.10.0', 'current'], 'because with no job running the old version goes at once');
   } finally { f.cleanup(); }
 });
 
-test('Update_JobLoaded_RestartsItAfterTheInstall', async () => {
-  const f = fake({ loaded: true });
-  try {
-    cached(f, 'brain-plugins', '0.7.0');
-    await runCli(['update'], f.deps);
-    assert.ok(f.calls.includes(`kickstart -k gui/501/${LAUNCHD_LABEL}`), 'because the agent runs the current link, so a restart runs the new version');
-  } finally { f.cleanup(); }
-});
-
-test('Update_NothingCached_SaysHowToInstallThePlugin', async () => {
+test('Update_CacheNotNewer_AlreadyUpToDate', async () => {
   const f = fake();
   try {
+    cached(f, 'brain-plugins', '0.7.0');
+    cached(f, 'brain-plugins', '0.6.1');
+    assert.equal(await runCli(['update'], f.deps), 0, 'because being current is not an error');
+    assert.match(f.lines[0] ?? '', /already up to date/, 'because the owner hears nothing needed doing');
+    assert.deepEqual(f.scripts, [], 'because neither an older copy nor the same version is installed over the running one');
+  } finally { f.cleanup(); }
+});
+
+test('Update_JobLoaded_PrunesOnlyAfterTheNewPidHoldsThePort', async () => {
+  const f = fake({ loaded: true, holder: () => 'pid 4242 (node)' });
+  try {
+    cached(f, 'brain-plugins', '0.8.0');
+    const root = installed(f, ['0.7.0'], '0.8.0');
+    assert.equal(await runCli(['update'], f.deps), 0, 'because the new version came up');
+    assert.ok(f.calls.includes(`kickstart -k gui/501/${LAUNCHD_LABEL}`), 'because the agent runs the current link, so a restart runs the new version');
+    assert.deepEqual(readdirSync(root).sort(), ['0.8.0', 'current'], 'because the old version goes once the new pid holds the port');
+  } finally { f.cleanup(); }
+});
+
+test('Update_RestartFails_CurrentBackAtTheVersionBefore', async () => {
+  const f = fake({ loaded: true, holder: () => null });
+  try {
+    cached(f, 'brain-plugins', '0.8.0');
+    const root = installed(f, ['0.7.0'], '0.8.0');
+    assert.equal(await runCli(['update'], f.deps), 1, 'because the new version never held the port');
+    assert.equal(readlinkSync(path.join(root, 'current')), '0.7.0', 'because the job must come back on the version that worked');
+    assert.ok(existsSync(path.join(root, '0.7.0')), 'because nothing is pruned after a failed restart');
+    assert.match(f.lines.join('\n'), /current points back at 0\.7\.0/, 'because the owner hears what happened');
+    assert.equal(f.calls.filter((call) => call.startsWith('kickstart')).length, 2, 'because the old version is restarted after the link moves back');
+  } finally { f.cleanup(); }
+});
+
+test('Update_NothingCached_NamesBothCaches', async () => {
+  const f = fake();
+  try {
+    f.deps.launchd.env['CLAUDE_CONFIG_DIR'] = path.join(f.dir, 'claude-config');
     assert.equal(await runCli(['update'], f.deps), 1, 'because there is nothing to install');
-    assert.match(f.lines[0] ?? '', /claude plugin install console@brain-plugins/, 'because the owner hears the one command that fixes it');
+    assert.match(f.lines[0] ?? '', new RegExp(`${path.join(f.dir, 'claude-config', 'plugins', 'cache')} or .*\\.codex/plugins/cache.*claude plugin install console@brain-plugins`), 'because the owner hears where it looked and the one command that fixes it');
     assert.equal(newestCachedPlugin(f.home, f.deps), null, 'because an empty cache has no plugin');
+  } finally { f.cleanup(); }
+});
+
+test('Update_ClaudeConfigDir_LooksThere', async () => {
+  const f = fake();
+  try {
+    const config = path.join(f.dir, 'claude-config');
+    f.deps.launchd.env['CLAUDE_CONFIG_DIR'] = config;
+    const dir = path.join(config, 'plugins', 'cache', 'brain-plugins', 'console', '0.9.0');
+    mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+    writeFileSync(path.join(dir, 'scripts', 'install.sh'), '#!/bin/sh\n');
+    assert.deepEqual(newestCachedPlugin(f.home, f.deps), { dir, version: '0.9.0' }, 'because Claude keeps its plugins under CLAUDE_CONFIG_DIR when it is set');
   } finally { f.cleanup(); }
 });
 

@@ -5,7 +5,7 @@ import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { childProcessRunner } from './collectors/exec.ts';
 import { diskSessionFiles, SessionLocator } from './collectors/sessions.ts';
 import { privateFolder, readConfig, startReport } from './config.ts';
-import { startFailure } from './launchd.ts';
+import { absoluteFlags, startFailure } from './launchd.ts';
 import { stderrLogger } from './log.ts';
 import { removePidFile, writePidFile } from './pidFile.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
@@ -68,7 +68,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv): Promise
     const report = startReport(config, staticDir ?? `none (run npm run build in ${path.dirname(uiDist)})`, process.stderr.isTTY === true);
     log.info('listening', report.fields);
     if (report.terminal !== null) process.stderr.write(`${report.terminal}\n`);
-    if (!config.launchd) writePidFile(config.stateDir, { pid: process.pid, port: config.port, config: config.paths.configFile, argv });
+    if (!config.launchd) writePidFile(config.stateDir, { pid: process.pid, port: config.port, config: config.paths.configFile, argv: absoluteFlags(argv) });
   });
   await registry.apply(config.projects);
 

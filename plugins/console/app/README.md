@@ -68,23 +68,35 @@ One command, `node daemon/src/main.ts <subcommand>` (the launcher `~/.local/bin/
 
 | Subcommand | Does |
 |---|---|
-| `start [flags]` | runs the daemon here in the foreground, with the flags under Run it; writes `<state dir>/daemon.pid` while it runs and refuses when that pid still runs |
+| `start [flags]` | runs the daemon here in the foreground, with the flags under Run it; writes `<state dir>/daemon.pid` (its pid, port, config and flags with every path absolute) while it runs, and refuses while that daemon still runs |
 | `stop` | boots the launchd job out when it is loaded, else sends SIGTERM to the pid in `daemon.pid` |
 | `restart` | `launchctl kickstart -k` for a loaded job, `bootstrap` for an agent on disk but not loaded, else stops the foreground daemon and starts it here with its flags |
 | `status` | loaded or not, the pid, the port, the URL without the token, the config file, the state dir and the version; exit 1 when nothing runs |
 | `open` | opens the URL with the token in the default browser (`open`) |
-| `url` | prints the URL with the token, for scripts |
-| `add <path>` | adds a project (a folder with `.flow/config.yaml`, relative to here or `~/`); through `PUT /api/settings` when the daemon runs, so it is watched at once, else into the config file with the same checks |
+| `url` | prints the URL with the token, for scripts; exit 1 when nothing runs |
+| `add <path>` | adds a project (a folder with `.flow/config.yaml`, relative to here or `~/`); through `PUT /api/settings` when the daemon runs, so it is watched at once, else into the config file with the same checks; refused when the launch agent names its projects with `--project` (`brain-console install --project …` changes those) |
 | `remove <path>` | drops a project the same way; the last one stays |
 | `logs [-f]` | the last 200 lines of `<state dir>/daemon.log` (the launchd daemon's), `-f` follows it |
 | `install [flags]` | the launch agent, as under Run it on login; with no flags over an agent already written, its flags are kept |
 | `uninstall` | boots the job out and removes the agent |
-| `update` | runs `scripts/install.sh --no-launchd` of the newest `console` in `~/.claude/plugins/cache/*/console/*/` (then `~/.codex`), then restarts a loaded job |
+| `update` | when the newest `console` in `$CLAUDE_CONFIG_DIR` (else `~/.claude`)`/plugins/cache/*/console/*/`, then `~/.codex`, is newer than this one: runs its `scripts/install.sh --no-launchd --keep-old`, restarts a loaded job, removes the old versions once the new pid holds the port, and points `current` back and restarts the old version when it does not; else says it is up to date |
 | `version` | the version |
 | `help` | the list |
 
+`/console:install` runs `../scripts/install.sh [--no-launchd] [--keep-old] [--project <root>]…`:
+it copies this folder (without `node_modules` or `ui/dist`, through an archive so a failed read
+fails) to `~/.local/share/brain-console/<version>/` (the version must be digits and dots), runs
+`npm ci` and the UI build in a staging folder beside it, moves a same-version copy aside before
+moving the new one in, points `current` at it, writes the launcher, adds each `--project`, runs
+`brain-console install` unless `--no-launchd`, and removes the other versions unless `--keep-old`.
+A step that fails after `current` moved points it back at the version before. Staging folders a
+killed run left are removed on the next run. Under `BRAIN_CONSOLE_HOME` the launcher exports it,
+so a later install or update from a plain shell stays in that home.
+
 `stop`, `restart`, `status`, `open`, `url`, `add`, `remove` and `logs` find the daemon from the
-launch agent's flags while launchd has it, else from `daemon.pid` in the state dir;
+launch agent's flags while launchd has it, else from `daemon.pid` in the state dir, which counts
+only while its pid holds its port or runs `main.ts` (a pid reused after a crash is never signalled,
+and the stale file is removed);
 `--state-dir`, `--config` and `--port` point them at another one. The environment overrides what
 a trial must not touch: `HOME` (the agent, the plugin cache, the default config and state),
 `BRAIN_CONSOLE_HOME` (where the console is installed, default `HOME`), `BRAIN_CONSOLE_STATE`,

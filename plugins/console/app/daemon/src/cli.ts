@@ -39,6 +39,8 @@ export type CliDependencies = {
   defaultStateDir: string;
   cwd: string;
   isAlive: (pid: number) => boolean;
+  /** The command line of a running pid (`ps -o command= -p`), or null when none runs. */
+  processCommand: (pid: number) => Promise<string | null>;
   kill: (pid: number, signal: 'SIGTERM') => void;
   sleep: (ms: number) => Promise<void>;
   /** A request to the running daemon with the token as a bearer header. */
@@ -53,6 +55,8 @@ export type CliDependencies = {
   startDaemon: (argv: string[]) => Promise<number>;
   /** The folders in a folder, by name; empty when it is missing. */
   listDirs: (folder: string) => string[];
+  /** The install tree: where a link points (null when it is not one), relinking it in one step, removing a folder. */
+  tree: { readLink(file: string): string | null; link(target: string, file: string): void; remove(folder: string): void };
 };
 
 /** The one line per subcommand that `help` prints. */
@@ -68,7 +72,7 @@ export const HELP = `brain-console: the Brain Console daemon and its page
   logs [-f]           the launchd daemon's log in the state dir; -f follows it
   install [flags]     run the daemon on login under launchd (the flags of start, but no --token)
   uninstall           stop the launchd job and remove it
-  update              install the newest console plugin in the Claude plugin cache, then restart
+  update              install a newer console plugin from the Claude plugin cache, then restart
   version             print the version
   help                this list
 stop, restart, status, open, url, add, remove and logs take --state-dir <d>, --config <file> and --port <n> to reach a daemon started with them.`;
@@ -125,7 +129,30 @@ type Target = {
   paths: ConfigPaths;
   token: string | null;
   record: PidRecord | null;
+  /** The launch agent on disk names its projects with --project, so the config file's do not count for it. */
+  agentProjects: boolean;
 };
+
+/**
+ * Whether a pid file's record is a daemon that still runs: its pid is alive and either holds the
+ * record's port or runs main.ts. A pid reused after a crash is neither, so it is never signalled.
+ */
+async function ownsRecord(record: PidRecord, deps: CliDependencies): Promise<boolean> {
+  if (!deps.isAlive(record.pid)) return false;
+  const holder = await deps.launchd.portHolder(record.port);
+  if (holder !== null && new RegExp(`^pid ${record.pid}\\b`).test(holder)) return true;
+  return (await deps.processCommand(record.pid))?.includes('main.ts') === true;
+}
+
+/** The running daemon of the pid file in a state dir, or null; a stale file (dead or reused pid) is removed. */
+async function liveRecord(stateDir: string, deps: CliDependencies): Promise<PidRecord | null> {
+  const file = pidFilePath(stateDir);
+  if (!deps.launchd.files.exists(file)) return null;
+  const record = parsePidRecord(deps.launchd.files.read(file));
+  if (record !== null && await ownsRecord(record, deps)) return record;
+  deps.launchd.files.remove(file);
+  return null;
+}
 
 function configPathsFor(file: string | null, fallback: ConfigPaths, cwd: string): ConfigPaths {
   if (file === null) return fallback;
@@ -146,12 +173,11 @@ async function locate(deps: CliDependencies, given: Locating): Promise<Target> {
   const plistWritten = launchd.files.exists(plist);
   const none: Locating = { stateDir: null, config: null, port: null };
   const env = loaded ? { ...launchd.env, ...launchdEnvironment(launchd.env) } : launchd.env;
-  const agent = plistWritten && given.stateDir === null && given.config === null ? locatingOfStartFlags(flagsOfPlist(launchd.files.read(plist))) : none;
+  const agentFlags = plistWritten ? flagsOfPlist(launchd.files.read(plist)) : [];
+  const agent = given.stateDir === null && given.config === null ? locatingOfStartFlags(agentFlags) : none;
   const stateDirOf = (named: string | null): string => path.resolve(deps.cwd, given.stateDir ?? named ?? env['BRAIN_CONSOLE_STATE'] ?? deps.defaultStateDir);
   const searched = stateDirOf(loaded ? agent.stateDir : null);
-  const pidFile = pidFilePath(searched);
-  const record = !loaded && launchd.files.exists(pidFile) ? parsePidRecord(launchd.files.read(pidFile)) : null;
-  const running = record !== null && deps.isAlive(record.pid) ? record : null;
+  const running = loaded ? null : await liveRecord(searched, deps);
   const fromRecord = running === null ? none : { ...locatingOfStartFlags(running.argv), config: running.config, port: running.port };
   const fromPlist = running === null ? agent : none;
   const stateDir = running === null ? stateDirOf(agent.stateDir) : searched;
@@ -161,7 +187,7 @@ async function locate(deps: CliDependencies, given: Locating): Promise<Target> {
   const tokenFile = path.join(stateDir, 'token');
   const token = launchd.env['BRAIN_CONSOLE_TOKEN'] ?? (launchd.files.exists(tokenFile) ? launchd.files.read(tokenFile).trim() || null : null);
   const mode = loaded ? 'launchd' : running !== null ? 'foreground' : 'stopped';
-  return { mode, pid: loaded ? numberOrNull(pidOf(printed.stdout)) : running?.pid ?? null, loaded, plistWritten, port, stateDir, paths, token, record: running };
+  return { mode, pid: loaded ? numberOrNull(pidOf(printed.stdout)) : running?.pid ?? null, loaded, plistWritten, port, stateDir, paths, token, record: running, agentProjects: agentFlags.includes('--project') };
 }
 
 function numberOrNull(text: string | null): number | null {
@@ -210,9 +236,8 @@ export async function runCli(argv: string[], deps: CliDependencies): Promise<num
 
 async function start(args: string[], deps: CliDependencies): Promise<number> {
   const stateDir = path.resolve(deps.cwd, locatingOfStartFlags(args).stateDir ?? deps.launchd.env['BRAIN_CONSOLE_STATE'] ?? deps.defaultStateDir);
-  const pidFile = pidFilePath(stateDir);
-  const record = deps.launchd.files.exists(pidFile) ? parsePidRecord(deps.launchd.files.read(pidFile)) : null;
-  if (record !== null && deps.isAlive(record.pid)) {
+  const record = await liveRecord(stateDir, deps);
+  if (record !== null) {
     deps.launchd.print(`brain-console: already running in the foreground, pid ${record.pid} on port ${record.port}; brain-console stop ends it`);
     return EXIT_FAILED;
   }
@@ -303,6 +328,7 @@ async function restart(target: Target, args: string[], deps: CliDependencies): P
 }
 
 function url(target: Target, deps: CliDependencies): number {
+  if (target.mode === 'stopped') { deps.launchd.print('brain-console: not running; brain-console start runs it here, brain-console install on login'); return EXIT_FAILED; }
   if (target.token === null) { deps.launchd.print(`brain-console: no token in ${target.stateDir} yet; the daemon makes it on its first start`); return EXIT_FAILED; }
   deps.launchd.print(pageUrl(target, true));
   return EXIT_OK;
@@ -311,6 +337,7 @@ function url(target: Target, deps: CliDependencies): number {
 async function open(target: Target, deps: CliDependencies): Promise<number> {
   if (target.mode === 'stopped') { deps.launchd.print('brain-console: not running; brain-console start runs it here, brain-console install on login'); return EXIT_FAILED; }
   if (target.token === null) return url(target, deps);
+
   const code = await deps.openUrl(pageUrl(target, true));
   if (code !== 0) deps.launchd.print('brain-console: could not open the browser; brain-console url prints the address');
   return code === 0 ? EXIT_OK : EXIT_FAILED;
@@ -363,6 +390,10 @@ async function changeProjects(word: 'add' | 'remove', typed: string, target: Tar
     print(`${word === 'add' ? 'watching' : 'stopped watching'} ${root}; the running daemon picked it up (${next.roots.length} project${next.roots.length === 1 ? '' : 's'})`);
     return EXIT_OK;
   }
+  if (target.agentProjects) {
+    print("brain-console: projects come from the launch agent's --project flags; run brain-console install --project … to change them");
+    return EXIT_USAGE;
+  }
   const stored = readStoredSettings(target.paths);
   if (!stored.ok) { print(`brain-console: ${stored.error}`); return EXIT_USAGE; }
   const next = nextRoots(word, (stored.value.file.projects ?? []).map((entry) => entry.root), root);
@@ -387,32 +418,83 @@ export function compareVersions(left: string, right: string): number {
   return 0;
 }
 
-/** The newest console plugin in the Claude plugin cache (then the Codex one) with an install script, or null. */
-export function newestCachedPlugin(home: string, deps: Pick<CliDependencies, 'listDirs' | 'launchd'>): string | null {
-  for (const cache of [path.join(home, '.claude', 'plugins', 'cache'), path.join(home, '.codex', 'plugins', 'cache')]) {
+/** The plugin caches `update` looks in, first to last: Claude's (CLAUDE_CONFIG_DIR, else ~/.claude), then Codex's. */
+export function pluginCaches(home: string, env: NodeJS.ProcessEnv): string[] {
+  const claude = env['CLAUDE_CONFIG_DIR'] ?? path.join(home, '.claude');
+  return [path.join(claude, 'plugins', 'cache'), path.join(home, '.codex', 'plugins', 'cache')];
+}
+
+/** The newest console plugin in the first cache that has one with an install script, or null. */
+export function newestCachedPlugin(home: string, deps: Pick<CliDependencies, 'listDirs' | 'launchd'>): { dir: string; version: string } | null {
+  for (const cache of pluginCaches(home, deps.launchd.env)) {
     const found = deps.listDirs(cache).flatMap((marketplace) => deps.listDirs(path.join(cache, marketplace, 'console')).map((version) => ({ version, dir: path.join(cache, marketplace, 'console', version) })))
       .filter((entry) => /^\d+(\.\d+)*$/.test(entry.version) && deps.launchd.files.exists(path.join(entry.dir, 'scripts', 'install.sh')))
       .sort((left, right) => compareVersions(left.version, right.version));
     const newest = found.at(-1);
-    if (newest !== undefined) return newest.dir;
+    if (newest !== undefined) return newest;
   }
   return null;
 }
 
+/** The versions under the install root other than the one kept and the current link, removed. */
+function pruneVersions(root: string, keep: string, deps: CliDependencies): void {
+  for (const name of deps.listDirs(root)) {
+    if (name === keep || name === 'current') continue;
+    deps.tree.remove(path.join(root, name));
+    deps.launchd.print(`brain-console: removed ${name}`);
+  }
+}
+
+/** Kickstarts the job and resolves to its new pid once that pid holds the port; null when it does not in time. */
+async function restartConfirmed(target: Target, deps: CliDependencies): Promise<number | null> {
+  const { launchd } = deps;
+  const job = `gui/${launchd.uid}/${LAUNCHD_LABEL}`;
+  if ((await launchd.launchctl(['kickstart', '-k', job])).code !== 0) return null;
+  if (!(await launchd.waitForPort(LOCALHOST, target.port, PORT_WAIT_MS))) return null;
+  const pid = pidOf((await launchd.launchctl(['print', job])).stdout);
+  const holder = await launchd.portHolder(target.port);
+  return pid !== null && holder !== null && new RegExp(`^pid ${pid}\\b`).test(holder) ? Number(pid) : null;
+}
+
 /**
- * `update`: runs the install script of the newest console plugin in the cache without touching
- * launchd (the agent runs the `current` link), then restarts the job when launchd has it.
+ * `update`: when the cache has a newer console than this one, runs its install script without
+ * touching launchd and without removing the old versions (the agent runs the `current` link).
+ * A loaded job is then restarted; the old versions go only once the new pid holds the port, and
+ * a restart that fails points `current` back at the version before and restarts that. With no
+ * job loaded the old versions go at once, unless a foreground daemon still runs from one.
  */
 async function update(args: string[], deps: CliDependencies): Promise<number> {
   const print = deps.launchd.print;
   if (args.length > 0) { print(`brain-console: update takes no ${args[0]}`); return EXIT_USAGE; }
+  const caches = pluginCaches(deps.launchd.home, deps.launchd.env);
   const plugin = newestCachedPlugin(deps.launchd.home, deps);
-  if (plugin === null) { print('brain-console: no console plugin in ~/.claude/plugins/cache; run: claude plugin install console@brain-plugins'); return EXIT_FAILED; }
-  print(`brain-console: updating from ${plugin}`);
-  const installed = await deps.runScript(path.join(plugin, 'scripts', 'install.sh'), ['--no-launchd']);
+  if (plugin === null) { print(`brain-console: no console plugin in ${caches.join(' or ')}; run: claude plugin install console@brain-plugins`); return EXIT_FAILED; }
+  if (compareVersions(plugin.version, deps.version) <= 0) { print(`brain-console: already up to date (${deps.version}; the newest in the cache is ${plugin.version})`); return EXIT_OK; }
+  const root = installRoot(deps.launchd.env['BRAIN_CONSOLE_HOME'] ?? deps.launchd.home);
+  const current = path.join(root, 'current');
+  const previous = deps.tree.readLink(current);
+  print(`brain-console: updating ${deps.version} to ${plugin.version} from ${plugin.dir}`);
+  const installed = await deps.runScript(path.join(plugin.dir, 'scripts', 'install.sh'), ['--no-launchd', '--keep-old']);
   if (installed !== EXIT_OK) return installed;
   const target = await locate(deps, { stateDir: null, config: null, port: null });
-  if (target.mode === 'launchd') return restart(target, [], deps);
-  if (target.mode === 'foreground') print(`brain-console: the foreground daemon, pid ${target.pid ?? '?'}, still runs the old version; brain-console restart starts the new one`);
+  if (target.mode === 'foreground') {
+    print(`brain-console: the foreground daemon, pid ${target.pid ?? '?'}, still runs ${deps.version}; brain-console restart starts ${plugin.version}, and the next update removes the old version`);
+    return EXIT_OK;
+  }
+  if (target.mode === 'launchd') {
+    const pid = await restartConfirmed(target, deps);
+    if (pid === null) {
+      if (previous !== null && previous !== plugin.version) {
+        deps.tree.link(previous, current);
+        print(`brain-console: ${plugin.version} did not come up on port ${target.port}; current points back at ${previous}; see ${path.join(target.stateDir, 'daemon.log')}`);
+        await restartConfirmed(target, deps);
+      } else {
+        print(`brain-console: ${plugin.version} did not come up on port ${target.port}; see ${path.join(target.stateDir, 'daemon.log')}`);
+      }
+      return EXIT_FAILED;
+    }
+    print(`restarted ${LAUNCHD_LABEL} on ${plugin.version}, pid ${pid}, on ${pageUrl(target, false)}`);
+  }
+  pruneVersions(root, plugin.version, deps);
   return EXIT_OK;
 }

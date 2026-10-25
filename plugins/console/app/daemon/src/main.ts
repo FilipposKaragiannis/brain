@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -81,6 +81,9 @@ const deps: CliDependencies = {
   defaultStateDir: DEFAULT_STATE_DIR,
   cwd: process.cwd(),
   isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; } },
+  processCommand: (pid) => new Promise((resolve) => {
+    execFile('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }, (error, stdout) => resolve(error === null && stdout.trim() !== '' ? stdout.trim() : null));
+  }),
   kill: (pid, signal) => { try { process.kill(pid, signal); } catch { /* gone already */ } },
   sleep: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
   http: async (url, method, token, body) => {
@@ -95,6 +98,12 @@ const deps: CliDependencies = {
   runScript: (file, args) => inherit('sh', [file, ...args]),
   // The daemon keeps this process alive; it exits on its own, so this never resolves.
   startDaemon: async (argv) => { await runDaemon(argv, env); return new Promise<number>(() => {}); },
+  tree: {
+    readLink: (file) => { try { return readlinkSync(file); } catch { return null; } },
+    // A new link beside the old, renamed over it: the link is never missing.
+    link: (target, file) => { const temporary = `${file}.${process.pid}.tmp`; rmSync(temporary, { force: true }); symlinkSync(target, temporary); renameSync(temporary, file); },
+    remove: (folder) => rmSync(folder, { recursive: true, force: true }),
+  },
   listDirs: (folder) => { try { return readdirSync(folder, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name); } catch { return []; } },
 };
 
