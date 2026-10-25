@@ -33,7 +33,10 @@ attempts="$(state_get "$data" attempts)"; attempts=$(( ${attempts:-0} + 1 ))
 overall="pass"
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+# dash runs no EXIT trap on a signal, so INT and TERM exit through it.
 trap 'rm -f "$records" "$changed_list"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 record() {
   # record <name> <status> <command> <summary source>: one check, four NUL-terminated fields. The

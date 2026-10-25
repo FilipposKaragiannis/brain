@@ -1,5 +1,22 @@
 # flow
 
+## 1.20.2 (2026-10-25)
+
+- A plain `key=value` given to `json_obj` is always a JSON string. A value of digits only used to
+  become a number, so a gate message, a tracker title, a lesson text, a job's last words or a pool
+  folder of digits came back as a number, and one with a leading zero (`007`, a title `0451`, a
+  folder `01`) wrote invalid JSON. The fields that are numbers on purpose say so with `key:=value`:
+  `seconds` and `exit` in `runs.jsonl`, `pid` in the run record and `attempts` in
+  `advance.sh --json`. A `pid` that is not a whole number is left out of the run record, and an
+  `attempts` that is not one reads as 0, so neither can write invalid JSON. `depth` in
+  `next.sh --json` is the review depth (`quick`, `standard`, `deep`, `none`) and stays a string.
+- The verify summary drops terminal hyperlinks (OSC 8, ended by BEL or ST) and keeps the link's
+  text; before, the link target was left in the summary.
+- `verify.sh` removes its temp files when it is stopped by INT or TERM: dash runs no EXIT trap on
+  a signal, so the signals now exit through it.
+- The flow tests that chained a second condition after `check` with `&&` (38 of them) or piped its
+  output (one) tested only the first part; they now run whole inside `check_all`.
+
 ## 1.20.1 (2026-10-25)
 
 - The verify report is never empty. `verify.sh` built `verify.json` by gluing JSON strings

@@ -17,7 +17,7 @@ job_base() { printf '%s' "${job%-[0-9]*}"; }
 # at once; a worker that finds it held leaves the trim to the holder.
 job_record() {
   _runs="$(job_log_dir)/runs.jsonl"; _end="$(date +%s)"
-  { json_obj job="$job" at="${job_at:-$(now_iso)}" seconds="$((_end - ${job_t0:-$_end}))" exit="$1" result="${job_last:-}"; echo; } >> "$_runs"
+  { json_obj job="$job" at="${job_at:-$(now_iso)}" seconds:="$((_end - ${job_t0:-$_end}))" exit:="$1" result="${job_last:-}"; echo; } >> "$_runs"
   [ "$(wc -l < "$_runs")" -ge 4000 ] && mkdir "$_runs.trim" 2>/dev/null || return 0
   if [ "$(wc -l 2>/dev/null < "$_runs" || echo 0)" -ge 4000 ]; then mv "$_runs" "$(job_log_dir)/runs.1.jsonl"; fi
   rmdir "$_runs.trim"

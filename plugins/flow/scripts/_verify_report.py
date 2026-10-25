@@ -7,8 +7,9 @@
 the summary source (the command's whole output for a failed check, a fixed sentence otherwise).
 <changed> holds the changed files, one per line. Bytes that are not UTF-8 are replaced, never
 fatal. The summary is the last five non-empty lines of its source on one line, without control
-characters or terminal colours, cut to 400 characters. Writes verify.json and verify.md through
-a temp file and a rename each, so a reader sees the old report or the new one, never a part.
+characters, terminal colours or terminal hyperlinks (OSC 8: the target goes, the link's text
+stays), cut to 400 characters. Writes verify.json and verify.md through a temp file and a rename
+each, so a reader sees the old report or the new one, never a part.
 """
 import json
 import os
@@ -18,6 +19,7 @@ import sys
 SUMMARY_MAX = 400
 MD_SUMMARY_MAX = 200
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -26,7 +28,7 @@ def text(raw):
 
 
 def one_line(s):
-    return " ".join(_CONTROL.sub(" ", _ANSI.sub("", s)).split())
+    return " ".join(_CONTROL.sub(" ", _ANSI.sub("", _OSC.sub("", s))).split())
 
 
 def summary(source):

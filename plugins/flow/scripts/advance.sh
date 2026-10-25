@@ -42,7 +42,7 @@ fi
 [ -n "$status" ] || die "no result for step $step: write $reports/$step.json or pass --status" 2
 
 data="$(adapter read "$item")" || die "cannot read $item"
-attempts="$(state_get "$data" attempts)"; attempts="${attempts:-0}"
+attempts="$(state_get "$data" attempts)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; esac
 size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
 kind="$(json_get "$data" kind)"
 
@@ -53,7 +53,7 @@ size_index() { i=0; for s in $(json_list "$profiles" sizes); do [ "$s" = "$1" ] 
 report() {
   # report <exit> <next-step> <gate>
   [ -n "$touches" ] && adapter write-state "$item" "touches=$touches" >/dev/null
-  if [ "$as_json" -eq 1 ]; then json_obj "item=$item" "step=$step" "status=$status" "next_step=$2" "gate=$3" "profile=$profile" "size=$size" "attempts=$attempts"; echo
+  if [ "$as_json" -eq 1 ]; then json_obj "item=$item" "step=$step" "status=$status" "next_step=$2" "gate=$3" "profile=$profile" "size=$size" "attempts:=$attempts"; echo
   else echo "advance: $item - $step $status -> ${2:-$3}"; fi
   exit "$1"
 }
