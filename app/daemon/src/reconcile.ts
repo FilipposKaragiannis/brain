@@ -11,8 +11,8 @@ import {
   GATE_OVERDUE_HOURS, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, Claim, Counts, Disagreement, Freshness, Gate, Item, ItemState, Job, JobState, PullRequest, PullState, Run,
-  Snapshot, SourceName, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
+  Agent, AttentionRow, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemState, Job, JobState, ProcessInfo,
+  ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
 export type ReconcileInput = {
@@ -25,10 +25,20 @@ export type ReconcileInput = {
   board: BoardFacts | null;
   pulls: PullFacts | null;
   sources: Record<SourceName, Freshness>;
+  /**
+   * Which of the disagreements found this time go into the snapshot. The monitor holds back the
+   * ones that may be a store lagging a read (see `DisagreementSettler`); left out, all of them do.
+   */
+  settle?: (found: Disagreement[]) => Disagreement[];
 };
 
 const MILLISECONDS_PER_SECOND = 1000;
 const SECONDS_PER_HOUR = 3600;
+const SECONDS_PER_DAY = 86400;
+const GITHUB = 'https://github.com';
+const GITHUB_ADAPTER = 'github';
+/** Items the next job never takes on their own; readiness counts the work under them. */
+const EPIC = 'epic';
 const UNRANKED = 999;
 /** The merge gate: the one gate that asks a person to merge a ready pull request. */
 const MERGE_GATE = 'merge';
@@ -111,13 +121,31 @@ function worktreeFlags(context: WorktreeContext, now: Date): WorktreeFlag[] {
   return flags;
 }
 
+/** Why a worktree is stale, in the words the card shows, or null when it is not. */
+function staleReason(context: WorktreeContext, flags: WorktreeFlag[], base: string, now: Date): string | null {
+  const reasons: string[] = [];
+  if (flags.includes('stale-branch')) reasons.push(`branch is ${context.git?.behindBase ?? 0} commits behind ${context.claim?.base || base} (limit ${STALE_BEHIND_BASE_COMMITS})`);
+  if (flags.includes('idle')) {
+    const days = Math.floor((ageSeconds(context.claim?.claimedAt ?? null, now) ?? 0) / SECONDS_PER_DAY);
+    reasons.push(`claimed ${days} ${days === 1 ? 'day' : 'days'} ago with no run, agent or gate`);
+  }
+  return reasons.length === 0 ? null : reasons.join('; ');
+}
+
+function processInfo(process: AgentProcess): ProcessInfo {
+  return { pid: process.pid, host: process.host, command: process.command, elapsedSeconds: process.elapsedSeconds };
+}
+
 function toClaim(record: ClaimRecord): Claim {
   return { item: record.item, branch: record.branch, base: record.base, step: record.step, claimedAt: record.claimedAt, host: record.host };
 }
 
-function buildWorktrees(contexts: WorktreeContext[], now: Date): Worktree[] {
+function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Worktree[] {
+  const { now } = input;
+  const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
   return contexts.map((context) => {
     const flags = worktreeFlags(context, now);
+    const boardItem = context.claim === null ? undefined : board.get(context.claim.item);
     return {
       name: context.name,
       path: context.path,
@@ -133,9 +161,12 @@ function buildWorktrees(contexts: WorktreeContext[], now: Date): Worktree[] {
       claim: context.claim === null ? null : toClaim(context.claim),
       claimAgeSeconds: context.claim === null ? null : ageSeconds(context.claim.claimedAt, now),
       item: context.claim?.item ?? null,
+      itemUrl: boardItem?.url || null,
+      itemTitle: boardItem?.title || null,
       gate: context.gate?.gate ?? null,
-      agentPids: context.agents.map((agent) => agent.pid),
-      sessionPids: context.sessions.map((session) => session.pid),
+      staleReason: staleReason(context, flags, input.flow.config.base, now),
+      agents: context.agents.map(processInfo),
+      sessions: context.sessions.map(processInfo),
     };
   });
 }
@@ -181,7 +212,12 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[]): Item[] {
   return items.sort((left, right) => STATE_ORDER[left.state] - STATE_ORDER[right.state] || left.rank - right.rank || left.id.localeCompare(right.id));
 }
 
-function buildGates(input: ReconcileInput, contexts: WorktreeContext[]): Gate[] {
+function gatePull(item: string, pulls: PullRequest[]): Gate['pull'] {
+  const pull = pulls.find((entry) => entry.item === item);
+  return pull === undefined ? null : { number: pull.number, url: pull.url, state: pull.state, unresolvedThreads: pull.unresolvedThreads };
+}
+
+function buildGates(input: ReconcileInput, contexts: WorktreeContext[], pulls: PullRequest[]): Gate[] {
   return input.flow.gates
     .map((gate) => ({
       item: gate.item, gate: gate.gate, message: gate.message, raisedAt: gate.time,
@@ -190,6 +226,7 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[]): Gate[] 
       host: gate.host,
       worktree: contexts.find((context) => context.claim?.item === gate.item)?.name ?? null,
       questions: gate.questions !== null && gate.questions.length > 0 ? gate.questions : parseGateQuestions(gate.message),
+      pull: gatePull(gate.item, pulls),
     }))
     .sort((left, right) => right.ageSeconds - left.ageSeconds);
 }
@@ -306,39 +343,77 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
  * What says a done item waits on a merge. With pull requests read, its PR must be ready to merge;
  * without them (not read yet, or not on GitHub), the issue state naming a PR is all there is.
  */
-function mergeEvidence(item: Item, pulls: PullRequest[] | null): string | null {
-  if (pulls === null) return item.pr === null ? null : `names the open PR ${item.pr}`;
+function mergeEvidence(item: Item, pulls: PullRequest[] | null): { text: string; pull: number | null } | null {
+  if (pulls === null) return item.pr === null ? null : { text: `names the open PR ${item.pr}`, pull: pullNumberOf(item.pr) };
   const ready = pulls.find((pull) => pull.item === item.id && pull.state === 'mergeable');
-  return ready === undefined ? null : `#${ready.number} is ready to merge`;
+  return ready === undefined ? null : { text: `#${ready.number} is ready to merge`, pull: ready.number };
 }
+
+/** The number in a `pr` field: `560`, `#560` or a pull URL. */
+function pullNumberOf(field: string): number | null {
+  const value = field.trim();
+  const fromUrl = /\/pull\/(\d+)/.exec(value);
+  const plain = PULL_NUMBER.exec(value);
+  const found = fromUrl?.[1] ?? plain?.[1];
+  return found === undefined ? null : Number(found);
+}
+
+const REREAD_BOARD: DisagreementAction = { kind: 'refresh', args: { source: 'board' }, label: 'Re-read the board' };
+const RUN_HEALTH: DisagreementAction = { kind: 'steward.health', args: {}, label: 'Run the health check' };
 
 function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], items: Item[], pulls: PullRequest[]): Disagreement[] {
   const out: Disagreement[] = [];
   const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
   for (const context of contexts) {
     if (context.run !== null && context.agents.length === 0) {
-      out.push({ item: context.run.item, worktree: context.name, sources: ['run record', 'process list'], message: `${context.run.item} has a run record in ${context.name} but no agent process. The health job clears it after the grace.` });
+      out.push({
+        item: context.run.item, worktree: context.name, sources: ['run record', 'process list'],
+        message: `${context.run.item} has a run record in ${context.name} but no agent process. The health job clears it after the grace.`,
+        explain: `The run record says an agent is working on ${context.run.item} in ${context.name}, but no claude or codex process is running there; the process list is usually right, so the run has ended or crashed and the health job will clear the record.`,
+        action: RUN_HEALTH,
+      });
     }
     if (context.role === 'pool' && context.claim === null && context.agents.length > 0) {
-      out.push({ item: null, worktree: context.name, sources: ['process list', 'claim'], message: `An agent runs in ${context.name} but the worktree has no claim.` });
+      out.push({
+        item: null, worktree: context.name, sources: ['process list', 'claim'], message: `An agent runs in ${context.name} but the worktree has no claim.`,
+        explain: `The process list shows an agent working in ${context.name}, but the worktree has no claim, so the pool counts it as free; the process list is right that something runs there, and whoever started it skipped the claim.`,
+        action: null,
+      });
     }
     const claimed = context.claim === null ? null : board.get(context.claim.item) ?? null;
     if (context.claim !== null && claimed !== null && claimed.state.step !== '' && claimed.state.step !== context.claim.step) {
-      out.push({ item: context.claim.item, worktree: context.name, sources: ['claim', 'issue state'], message: `${context.claim.item}: the claim says step ${context.claim.step}, the issue says ${claimed.state.step}.` });
+      out.push({
+        item: context.claim.item, worktree: context.name, sources: ['claim', 'issue state'], message: `${context.claim.item}: the claim says step ${context.claim.step}, the issue says ${claimed.state.step}.`,
+        explain: `The claim in ${context.name} says ${context.claim.item} is at step ${context.claim.step}, while the issue says ${claimed.state.step}; the claim is usually right, because the agent writes it first and the issue catches up.`,
+        action: null,
+      });
     }
     if (context.claim !== null && claimed !== null && claimed.state.worktree !== '' && claimed.state.worktree !== context.name) {
-      out.push({ item: context.claim.item, worktree: context.name, sources: ['claim', 'issue state'], message: `${context.claim.item} is claimed in ${context.name}, the issue names ${claimed.state.worktree}.` });
+      out.push({
+        item: context.claim.item, worktree: context.name, sources: ['claim', 'issue state'], message: `${context.claim.item} is claimed in ${context.name}, the issue names ${claimed.state.worktree}.`,
+        explain: `The claim file puts ${context.claim.item} in ${context.name}, while the issue says it is in ${claimed.state.worktree}; the claim is usually right, because it lives in the worktree itself.`,
+        action: null,
+      });
     }
   }
   for (const gate of input.flow.gates) {
     const item = board.get(gate.item);
     if (item !== undefined && item.state.gate !== gate.gate) {
-      out.push({ item: gate.item, worktree: null, sources: ['gate record', 'issue labels'], message: `${gate.item}: the gate record says ${gate.gate}, the issue labels say ${item.state.gate}.` });
+      out.push({
+        item: gate.item, worktree: null, sources: ['gate record', 'issue labels'], message: `${gate.item}: the gate record says ${gate.gate}, the issue labels say ${item.state.gate}.`,
+        explain: `A gate record says ${gate.item} waits on you at the ${gate.gate} gate, while the issue labels show ${item.state.gate === 'none' || item.state.gate === '' ? 'no gate' : `the ${item.state.gate} gate`}; the gate record is usually right, and the labels catch up when the board is read again.`,
+        action: REREAD_BOARD,
+      });
     }
   }
   for (const item of items.filter((entry) => entry.status === 'open' && entry.step === 'done' && entry.gate !== MERGE_GATE)) {
     const evidence = mergeEvidence(item, input.pulls === null ? null : pulls);
-    if (evidence !== null) out.push({ item: item.id, worktree: item.worktree, sources: ['issue state', 'pull request'], message: `${item.id} is at step done and ${evidence}, but no merge gate asks you to merge it.` });
+    if (evidence === null) continue;
+    out.push({
+      item: item.id, worktree: item.worktree, sources: ['issue state', 'pull request'], message: `${item.id} is at step done and ${evidence.text}, but no merge gate asks you to merge it.`,
+      explain: `The issue says ${item.id} is done and its pull request waits to be merged, but no merge gate asks you to; the pull request is usually right, so the work is finished and only the merge is left.`,
+      action: evidence.pull === null ? null : { kind: 'pr.merge', args: { pr: String(evidence.pull) }, label: `Merge #${evidence.pull}` },
+    });
   }
   return out;
 }
@@ -357,9 +432,25 @@ function pullAttention(pulls: PullRequest[]): AttentionRow[] {
   });
 }
 
-type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[] };
+/**
+ * Open items the next job refuses only because a field is empty: no step yet, nothing open blocks
+ * them, and `needs` (the `ready_needs` fields they lack) is not empty. They are the heads of their
+ * chains, so filling the field is what starts the chain.
+ */
+function waitsOnField(item: Item): boolean {
+  return item.status === 'open' && item.needs.length > 0 && item.step === '' && item.openBlockers.length === 0;
+}
 
-function buildAttention({ gates, worktrees, runs, jobs, pulls, disagreements }: AttentionSources, now: Date): AttentionRow[] {
+function needsFieldAttention(items: Item[]): AttentionRow[] {
+  return items.filter(waitsOnField).map((item) => ({
+    kind: 'needs-field' as const, id: item.id, title: item.title || item.id, detail: `needs ${item.needs.join(' and ')}`,
+    worktree: item.worktree, sinceAt: null, ageSeconds: null,
+  }));
+}
+
+type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[] };
+
+function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements }: AttentionSources, now: Date): AttentionRow[] {
   const rows: AttentionRow[] = [];
   for (const gate of gates) {
     rows.push({ kind: 'gate', id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds });
@@ -368,13 +459,13 @@ function buildAttention({ gates, worktrees, runs, jobs, pulls, disagreements }: 
     rows.push({ kind: 'dead-run', id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now) });
   }
   for (const worktree of worktrees.filter((entry) => entry.flags.includes('stale-branch') || entry.flags.includes('idle'))) {
-    const reason = worktree.flags.includes('stale-branch') ? `${worktree.behindBase} commits behind ${worktree.claim?.base ?? 'base'}` : 'no run, agent or gate for days';
-    rows.push({ kind: 'stale', id: worktree.item ?? worktree.name, title: `${worktree.name} is stale`, detail: reason, worktree: worktree.name, sinceAt: worktree.claim?.claimedAt ?? null, ageSeconds: worktree.claimAgeSeconds });
+    rows.push({ kind: 'stale', id: worktree.item ?? worktree.name, title: `${worktree.name} is stale`, detail: worktree.staleReason ?? '', worktree: worktree.name, sinceAt: worktree.claim?.claimedAt ?? null, ageSeconds: worktree.claimAgeSeconds });
   }
   for (const job of jobs.filter((entry) => entry.last !== null && entry.last.exit !== null && entry.last.exit !== 0)) {
     rows.push({ kind: 'job-failed', id: job.name, title: `${job.name} job failed`, detail: job.last?.result ?? '', worktree: null, sinceAt: job.last?.at ?? null, ageSeconds: ageSeconds(job.last?.at ?? null, now) });
   }
   rows.push(...pullAttention(pulls));
+  rows.push(...needsFieldAttention(items));
   for (const disagreement of disagreements) {
     rows.push({ kind: 'disagreement', id: disagreement.item ?? disagreement.worktree ?? 'project', title: disagreement.sources.join(' vs '), detail: disagreement.message, worktree: disagreement.worktree, sinceAt: null, ageSeconds: null });
   }
@@ -394,30 +485,51 @@ function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreemen
     itemsReady: itemCount('ready'), itemsBlocked: itemCount('blocked'), itemsBacklog: itemCount('backlog'), itemsDone: itemCount('done'),
     disagreements: disagreements.length,
     pullsMergeable: pullCount('mergeable'), pullsFailing: pullCount('checks-failing'), pullsChangesRequested: pullCount('changes-requested'),
+    needsField: items.filter(waitsOnField).length,
+  };
+}
+
+/** Over open items that are not epics, the one reason each does or does not run; engaged items count in none. */
+function buildReadiness(items: Item[]): Readiness {
+  const open = items.filter((item) => item.status === 'open' && item.kind !== EPIC);
+  return {
+    ready: open.filter((item) => item.state === 'ready').length,
+    waitingOnField: open.filter((item) => item.state === 'backlog' && waitsOnField(item)).length,
+    blocked: open.filter((item) => item.state === 'blocked').length,
+    gated: open.filter((item) => item.state === 'needs-you').length,
+  };
+}
+
+function projectInfo(input: ReconcileInput): ProjectInfo {
+  const { config } = input.flow;
+  const repoUrl = config.repo === null ? null : `${GITHUB}/${config.repo}`;
+  return {
+    id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
+    base: config.base, repo: config.repo, repoUrl,
+    trackerUrl: config.adapter === GITHUB_ADAPTER && repoUrl !== null ? `${repoUrl}/issues` : null,
+    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, jobsHost: config.jobsHost, poolMax: config.poolMax,
   };
 }
 
 export function reconcile(input: ReconcileInput): Snapshot {
   const contexts = worktreeContexts(input);
-  const worktrees = buildWorktrees(contexts, input.now);
+  const worktrees = buildWorktrees(contexts, input);
   const items = buildItems(input, worktrees);
-  const gates = buildGates(input, contexts);
   const runs = buildRuns(input, contexts);
   const agents = buildAgents(input, contexts);
   const jobs = buildJobs(input);
   const pulls = buildPulls(input, items, contexts);
-  const disagreements = buildDisagreements(input, contexts, items, pulls);
+  const gates = buildGates(input, contexts, pulls);
+  const found = buildDisagreements(input, contexts, items, pulls);
+  const disagreements = input.settle === undefined ? found : input.settle(found);
   return {
     schema: SNAPSHOT_SCHEMA_VERSION,
     takenAt: input.now.toISOString(),
-    project: {
-      id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
-      base: input.flow.config.base, repo: input.flow.config.repo, adapter: input.flow.config.adapter,
-      pluginVersion: input.flow.pluginVersion, poolMax: input.flow.config.poolMax,
-    },
+    project: projectInfo(input),
     sources: input.sources,
     counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }),
-    attention: buildAttention({ gates, worktrees, runs, jobs, pulls, disagreements }, input.now),
+    readiness: buildReadiness(items),
+    attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements }, input.now),
     worktrees, items, gates, runs, agents, jobs, pulls,
     events: input.flow.events,
     disagreements,

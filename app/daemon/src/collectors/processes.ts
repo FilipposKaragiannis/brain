@@ -1,5 +1,5 @@
-import path from 'node:path';
 import type { AgentHost, AgentKind } from '../snapshot.ts';
+import { PROCESS_COMMAND_CHARS } from '../snapshot.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
 
@@ -7,15 +7,24 @@ export type AgentProcess = { pid: number; host: AgentHost; kind: AgentKind; cwd:
 export type ProcessFacts = { agents: AgentProcess[] };
 
 const PROCESS_TIMEOUT_MS = 10000;
-const COMMAND_PREVIEW_CHARS = 160;
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_DAY = 86400;
 /** How lib/host.sh starts an unattended run: `claude -p <prompt>` or `codex exec`. */
 const UNATTENDED_CLAUDE = / (-p|--print)( |$)/;
 const UNATTENDED_CODEX = / exec( |$)/;
-/** Host daemons and servers that are never an agent working in a worktree. */
+/**
+ * Host daemons and servers that are never an agent or a session, wherever their cwd is: the
+ * Claude daemon, and the Codex desktop app's `codex app-server --listen unix://…`, its
+ * `codex app-server daemon pid-update-loop` and its cloud `exec-server`.
+ */
 const NOT_AN_AGENT = [' daemon run', ' daemon ', 'app-server', 'exec-server', 'pid-update-loop'];
+/**
+ * The executable is the first `…/claude` or `…/codex` path before any argument. Its folder may
+ * hold spaces (the Claude desktop app keeps its CLI under `Application Support`), but a wrapper
+ * such as `sh -c …/claude` has an argument before it and is not the host.
+ */
+const EXECUTABLE = /^((?:[^ ]| (?!-))*?\/)?(claude|codex)(?= |$)/;
 
 type ProcessRow = { pid: number; elapsedSeconds: number; command: string };
 
@@ -38,7 +47,7 @@ export function parseElapsed(elapsed: string): number {
 }
 
 export function hostOf(command: string): AgentHost | null {
-  const executable = path.basename(command.split(' ')[0] ?? '');
+  const executable = EXECUTABLE.exec(command)?.[2];
   if (executable !== 'claude' && executable !== 'codex') return null;
   if (NOT_AN_AGENT.some((marker) => command.includes(marker))) return null;
   return executable;
@@ -75,7 +84,7 @@ export async function readProcesses(runner: CommandRunner): Promise<ProcessFacts
     agents: hosts.flatMap(({ row, host }) => {
       const cwd = directories.get(row.pid);
       if (cwd === undefined) return [];
-      return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, COMMAND_PREVIEW_CHARS) }];
+      return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, PROCESS_COMMAND_CHARS) }];
     }),
   };
 }

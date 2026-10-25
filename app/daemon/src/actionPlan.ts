@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { ActionKind } from './snapshot.ts';
+import type { ActionKind, ActionOutcome } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
 
 /** What an action needs from the project before it can be planned. */
@@ -22,6 +22,13 @@ export type ActionPlan = {
   detach: boolean;
   /** Sources to re-read once the process ends. */
   refresh: string[];
+  /**
+   * Re-read the `refresh` sources once more this long after the process ends, for a script that
+   * hands its work on and returns before the work shows; null when once is enough.
+   */
+  refreshAgainMs: number | null;
+  /** What a clean exit means: the work is over (`finished`) or was handed on and goes on (`started`). */
+  outcome: ActionOutcome;
 };
 
 export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: string };
@@ -47,6 +54,11 @@ const SECOND_MS = 1000;
 export const SCRIPT_TIMEOUT_MS = 120 * SECOND_MS;
 const STEWARD_TIMEOUT_MS = 600 * SECOND_MS;
 const MERGE_TIMEOUT_MS = 180 * SECOND_MS;
+/**
+ * `jobs.sh run <job>` hands the job to launchd and returns in a second; the job's own run shows
+ * in `jobs.sh status` a few seconds later, so its sources are read again after this.
+ */
+export const HANDED_ON_REFRESH_MS = 5 * SECOND_MS;
 /** The step budget of a run started from the console, the next job's own default. */
 const DEFAULT_MAX_STEPS = 15;
 const MESSAGE_LIMIT_CHARS = 10000;
@@ -80,11 +92,16 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
   if (kind === 'refresh') {
     const source = args['source'] ?? '';
     if (source !== '' && !(SOURCE_NAMES as string[]).includes(source)) return fail(`unknown source: ${source}`);
-    return { ok: true, plan: { command: '', args: [], cwd: context.root, locks: [], timeoutMs: 0, detach: false, refresh: source === '' ? [...SOURCE_NAMES] : [source] } };
+    return { ok: true, plan: { command: '', args: [], cwd: context.root, locks: [], timeoutMs: 0, detach: false, refresh: source === '' ? [...SOURCE_NAMES] : [source], refreshAgainMs: null, outcome: 'finished' } };
   }
   if (context.pluginRoot === null) return fail('no flow plugin found for the project');
   const sh = (name: string, scriptArgs: string[], locks: string[], timeoutMs: number, refresh: string[]): PlanResult =>
-    ({ ok: true, plan: { command: 'sh', args: [script(context, name), ...scriptArgs], cwd: context.root, locks, timeoutMs, detach: false, refresh } });
+    ({ ok: true, plan: { command: 'sh', args: [script(context, name), ...scriptArgs], cwd: context.root, locks, timeoutMs, detach: false, refresh, refreshAgainMs: null, outcome: 'finished' } });
+  /** `jobs.sh run <job>`: launchd runs the job, the script only starts it. */
+  const handOn = (job: string, locks: string[], refresh: string[]): PlanResult => {
+    const planned = sh('jobs.sh', ['run', job], locks, SCRIPT_TIMEOUT_MS, refresh);
+    return planned.ok ? { ok: true, plan: { ...planned.plan, refreshAgainMs: HANDED_ON_REFRESH_MS, outcome: 'started' } } : planned;
+  };
   switch (kind) {
     case 'gate.clear': {
       const item = args['item'] ?? '';
@@ -100,16 +117,17 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       if (!MAX_STEPS.test(maxSteps)) return fail('maxSteps must be a number from 1 to 999');
       if (item === '') {
         if (args['maxSteps'] !== undefined) return fail('maxSteps needs an item; the scheduled next job has its own');
-        return sh('jobs.sh', ['run', 'next'], ['job:next'], SCRIPT_TIMEOUT_MS, ['jobs', 'processes']);
+        return handOn('next', ['job:next'], ['jobs', 'processes']);
       }
       // jobs/next.sh with an item takes the next job's own lock, so the console mirrors it: a
       // scheduled next run and a console run never both believe they hold the queue.
       const job = path.join(context.pluginRoot, 'jobs', 'next.sh');
-      return { ok: true, plan: { command: 'sh', args: [job, context.jobsHost, item, '--max-steps', maxSteps], cwd: context.root, locks: [`item:${item}`, 'job:next'], timeoutMs: 0, detach: true, refresh: ['files', 'processes', 'board'] } };
+      return { ok: true, plan: { command: 'sh', args: [job, context.jobsHost, item, '--max-steps', maxSteps], cwd: context.root, locks: [`item:${item}`, 'job:next'], timeoutMs: 0, detach: true, refresh: ['files', 'processes', 'board'], refreshAgainMs: null, outcome: 'finished' } };
     }
     case 'job.run': case 'job.stop': case 'job.pause': case 'job.resume': {
       const job = args['job'] ?? '';
       if (!JOB_NAME.test(job)) return fail(`${kind} needs a job name`);
+      if (kind === 'job.run') return handOn(job, [`job:${job}`], ['jobs', 'processes']);
       return sh('jobs.sh', [kind.slice('job.'.length), job], [`job:${job}`], SCRIPT_TIMEOUT_MS, ['jobs', 'processes']);
     }
     case 'worktree.claim': {
@@ -123,14 +141,14 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       const force = args['force'] === 'true' ? ['--force'] : [];
       return sh('steward.sh', ['release', target, ...force], ['pool', `${ITEM_ID.test(target) ? 'item' : 'worktree'}:${target}`], STEWARD_TIMEOUT_MS, ['files', 'git']);
     }
-    case 'steward.health': return sh('jobs.sh', ['run', 'health'], ['job:health'], SCRIPT_TIMEOUT_MS, ['jobs', 'files', 'git']);
+    case 'steward.health': return handOn('health', ['job:health'], ['jobs', 'files', 'git']);
     case 'pr.merge': {
       const pr = args['pr'] ?? '';
       const method = args['method'] ?? 'squash';
       if (!PR_NUMBER.test(pr)) return fail('pr.merge needs a PR number');
       if (!MERGE_METHODS.includes(method)) return fail(`method must be one of ${MERGE_METHODS.join(', ')}`);
       if (context.repo === null) return fail('pr.merge needs github.repo in .flow/config.yaml');
-      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'] } };
+      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
     }
   }
 }

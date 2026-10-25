@@ -43,3 +43,36 @@ test('GateListFails_FilesStayOkWithTheReason_WarnedOnce', async () => {
   assert.deepEqual(warnings, ['gates.list.failed'], 'because the same failure every 30 seconds must not fill the log');
   assert.equal(monitor.snapshot?.gates[0]?.questions.length, 2, 'because the daemon\'s own parse fills the card meanwhile');
 });
+
+function fixtureMonitor(): ProjectMonitor {
+  return new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+}
+
+const gateVsLabels = (monitor: ProjectMonitor): boolean =>
+  (monitor.snapshot?.disagreements ?? []).some((entry) => entry.sources.join(' vs ') === 'gate record vs issue labels');
+
+async function readEverySource(monitor: ProjectMonitor): Promise<void> {
+  for (const source of ['files', 'git', 'processes', 'jobs', 'board', 'pulls'] as const) await monitor.refresh(source);
+}
+
+test('Monitor_DisagreementJustFound_HeldBack', async () => {
+  const monitor = fixtureMonitor();
+  await readEverySource(monitor);
+  assert.equal(gateVsLabels(monitor), false, 'because the labels came from the board just now and the gate file may be newer than the last board read');
+});
+
+test('Monitor_DisagreementOnlyFasterSourcesRead_StillHeldBack', async () => {
+  const monitor = fixtureMonitor();
+  await readEverySource(monitor);
+  await monitor.refresh('processes');
+  await monitor.refresh('files');
+  assert.equal(gateVsLabels(monitor), false, 'because the board has not been read again, so the labels may only be late');
+});
+
+test('Monitor_DisagreementHeldAfterBothStoresRead_Shown', async () => {
+  const monitor = fixtureMonitor();
+  await readEverySource(monitor);
+  await monitor.refresh('files');
+  await monitor.refresh('board');
+  assert.equal(gateVsLabels(monitor), true, 'because the gate file and the labels were both read again and still disagree');
+});

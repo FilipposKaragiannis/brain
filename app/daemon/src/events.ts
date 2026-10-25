@@ -17,3 +17,9 @@ export function parseEvents(source: string, keep: number): FlowEvent[] {
   }
   return events.reverse().slice(0, keep);
 }
+
+/** The kept events of one item (or all, with no item), newest first, at most `limit`, and how many matched. */
+export function filterEvents(events: FlowEvent[], item: string | null, limit: number): { events: FlowEvent[]; total: number } {
+  const matched = item === null ? events : events.filter((event) => event.item === item);
+  return { events: matched.slice(0, limit), total: matched.length };
+}

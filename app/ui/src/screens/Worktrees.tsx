@@ -34,8 +34,8 @@ function WorktreeRow({ worktree, takenAt }: { worktree: Worktree; takenAt: strin
       <td className="mono">{worktree.dirtyFiles ?? '—'}</td>
       <td className="mono"><Age seconds={worktree.claimAgeSeconds} takenAt={takenAt} /></td>
       <td className="mono">{worktree.item ?? '—'}</td>
-      <td className="mono">{worktree.agentPids.join(', ') || '—'}</td>
-      <td className="mono">{worktree.sessionPids.join(', ') || '—'}</td>
+      <td className="mono">{worktree.agents.map((agent) => agent.pid).join(', ') || '—'}</td>
+      <td className="mono">{worktree.sessions.map((session) => session.pid).join(', ') || '—'}</td>
       <td>{worktree.role === 'pool' && worktree.claim !== null && <ActionButton kind="worktree.release" args={{ target: worktree.name }} label="Release" primary={false} />}</td>
     </tr>
   );

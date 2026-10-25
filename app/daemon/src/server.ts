@@ -4,8 +4,9 @@ import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ActionRunner } from './actions.ts';
 import type { Logger } from './log.ts';
 import type { ProjectMonitor } from './project.ts';
+import { filterEvents } from './events.ts';
 import { serveStatic } from './static.ts';
-import { SOURCE_NAMES } from './snapshot.ts';
+import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
 
 /** `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code. */
 export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger };
@@ -116,9 +117,28 @@ export function createConsoleServer(projects: ServedProject[], options: ServerOp
     if (route === 'snapshot') { sendJson(response, HTTP_OK, served.monitor.snapshot); return; }
     if (route === 'refresh') { refresh(served.monitor, request, response, url); return; }
     if (route === 'actions') { void actions(served.actions, request, response, actionId); return; }
+    if (wantsEventList(request, url)) { eventList(served.monitor, response, url); return; }
     streamEvents(served, request, response, options.log);
   });
   return server;
+}
+
+/**
+ * `/events` is the live stream, unless the caller asks for the kept events as JSON: with `item`
+ * or `limit` in the query, or `Accept: application/json`. An EventSource never sends either.
+ */
+function wantsEventList(request: IncomingMessage, url: URL): boolean {
+  return url.searchParams.has('item') || url.searchParams.has('limit') || (request.headers.accept ?? '').includes('application/json');
+}
+
+const LIMIT = /^[1-9][0-9]*$/;
+
+function eventList(monitor: ProjectMonitor, response: ServerResponse, url: URL): void {
+  const item = url.searchParams.get('item') || null;
+  const limitText = url.searchParams.get('limit') ?? String(EVENTS_KEPT);
+  if (!LIMIT.test(limitText)) { sendJson(response, HTTP_BAD_REQUEST, { error: 'limit must be a positive whole number' }); return; }
+  const limit = Math.min(Number(limitText), EVENTS_KEPT);
+  sendJson(response, HTTP_OK, { ...filterEvents(monitor.snapshot?.events ?? [], item, limit), kept: EVENTS_KEPT });
 }
 
 function refresh(monitor: ProjectMonitor, request: IncomingMessage, response: ServerResponse, url: URL): void {

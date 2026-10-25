@@ -116,9 +116,10 @@ export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   return {
     schema: 1,
     takenAt,
-    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', adapter: 'github', pluginVersion: '1.17.0', poolMax: 9 },
+    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', jobsHost: 'claude', poolMax: 9 },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
-    counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0 },
+    counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0 },
+    readiness: { ready: 0, waitingOnField: 0, blocked: 0, gated: 0 },
     attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], jobs: [], events: [], disagreements: [], pulls: [],
   };
 }
@@ -133,6 +134,6 @@ export function actionRecord(id: string, state: ActionRecord['state'], args: Rec
   return {
     id, kind: 'job.run', args, state, command: ['sh', `${PLUGIN}/scripts/jobs.sh`, 'run', job], locks: [`job:${job}`],
     requestedAt: TAKEN_AT, startedAt: TAKEN_AT, endedAt: ended ? ENDED_AT : null,
-    exitCode: state === 'done' ? 0 : ended ? 1 : null, timedOut: false, outputTail: '', outputBytes: 0,
+    exitCode: state === 'done' ? 0 : ended ? 1 : null, timedOut: false, outcome: state === 'done' ? 'started' : null, outputTail: '', outputBytes: 0,
   };
 }

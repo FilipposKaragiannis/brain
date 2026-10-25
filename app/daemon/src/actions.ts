@@ -122,6 +122,8 @@ export class ActionRunner {
   private readonly live = new Map<string, Live>();
   private readonly listeners = new Set<(record: ActionRecord) => void>();
   private readonly writes = new Set<Promise<void>>();
+  /** Second reads waiting for a handed-on job to show; cancelled when the daemon stops. */
+  private readonly refreshesAgain = new Set<object>();
 
   constructor(dependencies: ActionRunnerDependencies) { this.deps = dependencies; }
 
@@ -145,7 +147,7 @@ export class ActionRunner {
     const now = this.deps.clock().toISOString();
     const record: ActionRecord = {
       id: randomUUID().replaceAll('-', '').slice(0, ID_CHARS), kind: 'refresh', args: {}, state: 'running', command: [], locks: [],
-      requestedAt: now, startedAt: null, endedAt: null, exitCode: null, timedOut: false, outputTail: '', outputBytes: 0,
+      requestedAt: now, startedAt: null, endedAt: null, exitCode: null, timedOut: false, outcome: null, outputTail: '', outputBytes: 0,
     };
     if (!isActionKind(kind)) return { status: HTTP_BAD_REQUEST, body: { error: `unknown action kind: ${String(kind)}`, action: this.reject(record, 'unknown kind') } };
     record.kind = kind;
@@ -169,9 +171,11 @@ export class ActionRunner {
     return { status: HTTP_ACCEPTED, body: { action: { ...record } } };
   }
 
-  /** Ends every attached action; the daemon is shutting down. Detached runs keep going by design. */
+  /** Ends every attached action and drops the second reads still waiting; the daemon is shutting down. Detached runs keep going by design. */
   stopAll(): void {
     for (const entry of this.live.values()) if (!entry.plan.detach) entry.handle?.kill('SIGTERM');
+    for (const handle of this.refreshesAgain) this.deps.scheduler.cancel(handle);
+    this.refreshesAgain.clear();
   }
 
   /** Every audit write so far has landed. Tests wait on this; the server never needs to. */
@@ -182,7 +186,7 @@ export class ActionRunner {
   private refreshNow(record: ActionRecord, wanted: string[]): ActionRecord {
     const now = this.deps.clock().toISOString();
     const text = `refreshing ${wanted.join(', ')}\n`;
-    Object.assign(record, { state: 'done', startedAt: now, endedAt: now, exitCode: 0, outputTail: text, outputBytes: Buffer.byteLength(text) });
+    Object.assign(record, { state: 'done', outcome: 'finished', startedAt: now, endedAt: now, exitCode: 0, outputTail: text, outputBytes: Buffer.byteLength(text) });
     this.remember(record);
     this.outputs.set(record.id, text);
     this.deps.onRefresh(wanted);
@@ -214,7 +218,10 @@ export class ActionRunner {
     }
     this.deps.log.info('action.start', { project: this.deps.projectId, id: record.id, kind: record.kind, pid: entry.handle.pid, command: record.command.join(' ') });
     this.audit(record, null);
-    if (plan.detach) this.append(entry, `started pid ${entry.handle.pid ?? '?'}; output in ${this.outputFile(record.id)}\n`);
+    if (plan.detach) {
+      record.outcome = 'started';
+      this.append(entry, `started pid ${entry.handle.pid ?? '?'}; output in ${this.outputFile(record.id)}\n`);
+    }
     this.emit(record);
     entry.handle.stdout?.on('data', (chunk: Buffer | string) => this.append(entry, chunk.toString()));
     entry.handle.stderr?.on('data', (chunk: Buffer | string) => this.append(entry, chunk.toString()));
@@ -248,11 +255,20 @@ export class ActionRunner {
     record.endedAt = this.deps.clock().toISOString();
     record.exitCode = code ?? (signal === null ? null : SIGNAL_EXIT);
     record.state = code === 0 && !record.timedOut ? 'done' : 'failed';
+    record.outcome = record.state === 'done' ? entry.plan.outcome : null;
     this.outputs.set(record.id, entry.output);
     this.emit(record);
     this.deps.log.info('action.end', { project: this.deps.projectId, id: record.id, kind: record.kind, state: record.state, exit: record.exitCode, timedOut: record.timedOut });
-    if (entry.plan.refresh.length > 0) this.deps.onRefresh(entry.plan.refresh);
+    if (entry.plan.refresh.length > 0) this.refreshAfter(entry.plan);
     this.audit(record, entry.plan.detach ? null : entry.output);
+  }
+
+  /** Re-reads what the plan changed now, and once more after `refreshAgainMs` for work that was handed on. */
+  private refreshAfter(plan: ActionPlan): void {
+    this.deps.onRefresh(plan.refresh);
+    if (plan.refreshAgainMs === null) return;
+    const handle = this.deps.scheduler.after(plan.refreshAgainMs, () => { this.refreshesAgain.delete(handle); this.deps.onRefresh(plan.refresh); });
+    this.refreshesAgain.add(handle);
   }
 
   /** A detached run wrote its own file; the record keeps the start line and the file's tail. */

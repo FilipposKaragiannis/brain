@@ -17,6 +17,8 @@ import type { PullFacts } from './collectors/pulls.ts';
 import { readPulls } from './collectors/pulls.ts';
 import type { Logger } from './log.ts';
 import { ageSeconds, reconcile } from './reconcile.ts';
+import { DisagreementSettler, disagreementKey } from './settle.ts';
+import type { ReadCounts } from './settle.ts';
 import type { Freshness, Snapshot, SourceName } from './snapshot.ts';
 
 /** How often each source is re-read, in milliseconds. File changes also trigger `files` and `git` at once. */
@@ -76,6 +78,8 @@ export class ProjectMonitor {
   private readonly gateQuestions: GateQuestionCache = new Map();
   private gateListError: string | null = null;
   private current: Snapshot | null = null;
+  private readonly settler = new DisagreementSettler();
+  private readonly reads: ReadCounts = { files: 0, git: 0, processes: 0, jobs: 0, board: 0, pulls: 0 };
 
   constructor(dependencies: ProjectMonitorDependencies) {
     this.project = dependencies.project;
@@ -147,6 +151,7 @@ export class ProjectMonitor {
       this.facts[source].freshness = { ...this.facts[source].freshness, ok: false, error: message };
       this.log.warn('collect.failed', { project: this.project.id, source, error: message });
     }
+    this.reads[source] += 1;
     this.rebuild();
   }
 
@@ -194,6 +199,7 @@ export class ProjectMonitor {
     this.current = reconcile({
       now, project: this.project, flow, git: this.facts.git.facts, processes: this.facts.processes.facts,
       jobs: this.facts.jobs.facts, board: this.facts.board.facts, pulls: this.facts.pulls.facts, sources,
+      settle: (found) => this.settler.settle(found, this.reads),
     });
     const fingerprint = this.fingerprintOf();
     if (fingerprint === this.fingerprint) return;
@@ -201,11 +207,12 @@ export class ProjectMonitor {
     for (const listener of this.listeners) listener(this.current);
   }
 
-  /** What counts as a change: the facts, without the counters that move on every read. */
+  /** What counts as a change: the facts and the disagreements that settled, without the counters that move on every read. */
   private fingerprintOf(): string {
     const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd }) => ({ pid, host, cwd }));
     const errors = (Object.keys(this.facts) as SourceName[]).map((name) => this.facts[name].freshness.error);
-    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors]);
+    const disagreements = (this.current?.disagreements ?? []).map(disagreementKey);
+    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements]);
   }
 
   private watchFiles(): void {

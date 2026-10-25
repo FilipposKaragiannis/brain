@@ -31,7 +31,7 @@ export function attentionTone(kind: AttentionKind): Tone {
     case 'gate': return 'needs-you';
     case 'stale': return 'stale';
     case 'dead-run': case 'disagreement': case 'job-failed': case 'pr-failing': return 'failing';
-    case 'pr-changes-requested': case 'pr-mergeable': return 'needs-you';
+    case 'pr-changes-requested': case 'pr-mergeable': case 'needs-field': return 'needs-you';
   }
 }
 

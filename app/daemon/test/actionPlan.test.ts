@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { planAction } from '../src/actionPlan.ts';
+import { HANDED_ON_REFRESH_MS, planAction } from '../src/actionPlan.ts';
 import type { ActionContext } from '../src/actionPlan.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'] };
@@ -112,4 +112,19 @@ test('AnyScriptAction_WithoutPlugin_Rejected', () => {
 test('Refresh_NeedsNoPluginAndNoProcess', () => {
   const plan = planned('refresh', { source: 'git' }, { ...CONTEXT, pluginRoot: null });
   assert.equal(plan.command, '', 'because refresh is handled inside the daemon');
+});
+
+test('JobRun_HandsTheJobOn_StartedAndReadAgainAfterFiveSeconds', () => {
+  const plan = planned('job.run', { job: 'comments' });
+  assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['started', HANDED_ON_REFRESH_MS], 'because jobs.sh run returns once launchd has the job, and its run only shows a few seconds later');
+});
+
+test('StewardHealth_HandsTheHealthJobOn_StartedAndReadAgain', () => {
+  const plan = planned('steward.health', {});
+  assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['started', HANDED_ON_REFRESH_MS], 'because it is jobs.sh run health, the same hand-off as job.run');
+});
+
+test('JobStop_FinishedAndReadOnce', () => {
+  const plan = planned('job.stop', { job: 'next' });
+  assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['finished', null], 'because a stop is over when the script returns');
 });

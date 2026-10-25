@@ -166,3 +166,27 @@ test('BodyOverLimit_TooLarge', async () => {
     assert.equal(big.status, 413, 'because the body limit protects the daemon and the client hears why');
   } finally { await close(); }
 });
+
+test('Events_ItemAndLimit_KeptEventsAsJson', async () => {
+  const { base, close } = await started();
+  try {
+    const response = await fetch(`${base}/api/projects/project/events?item=${encodeURIComponent('gh#213')}&limit=1&token=tok`);
+    const body = (await response.json()) as { events: { item: string; kind: string }[]; total: number; kept: number };
+    assert.deepEqual([body.events.map((event) => [event.item, event.kind]), body.total], [[['gh#213', 'comments']], 2], 'because an Activity screen asks for one item\'s events, newest first, and learns there are more');
+  } finally { await close(); }
+});
+
+test('Events_AcceptJson_AllKeptEvents', async () => {
+  const { base, close } = await started();
+  try {
+    const response = await fetch(`${base}/api/projects/project/events`, { headers: { authorization: 'Bearer tok', accept: 'application/json' } });
+    assert.equal(((await response.json()) as { total: number }).total, 3, 'because a JSON caller gets every kept event, not the stream');
+  } finally { await close(); }
+});
+
+test('Events_BadLimit_BadRequest', async () => {
+  const { base, close } = await started();
+  try {
+    assert.equal((await fetch(`${base}/api/projects/project/events?limit=-1&token=tok`)).status, 400, 'because a limit is a positive whole number');
+  } finally { await close(); }
+});

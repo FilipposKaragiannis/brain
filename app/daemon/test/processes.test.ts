@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { hostOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories } from '../src/collectors/processes.ts';
+import type { CommandRunner } from '../src/collectors/exec.ts';
+import { hostOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories, readProcesses } from '../src/collectors/processes.ts';
+import { PROCESS_COMMAND_CHARS } from '../src/snapshot.ts';
 
 test('Elapsed_DaysHoursMinutesSeconds', () => {
   assert.equal(parseElapsed('01-02:03:04'), 93784, 'because 1 day, 2 hours, 3 minutes and 4 seconds is 93784 seconds');
@@ -30,4 +32,27 @@ test('ProcessList_PidElapsedCommand', () => {
 test('WorkingDirectories_PairPidWithPath', () => {
   const directories = parseWorkingDirectories('p100\nfcwd\nn/work/a\np200\nfcwd\nn/work/b\n');
   assert.equal(directories.get(200), '/work/b', 'because lsof -F groups the n line under its p line');
+});
+
+test('HostOf_CodexDesktopAppServerAndPidLoop_Never', () => {
+  const release = '/Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex';
+  assert.equal(hostOf(`${release} app-server --listen unix:// -c features.api_key_model_discovery=false`), null, 'because the Codex desktop app\'s server is not a person typing in the folder');
+  assert.equal(hostOf(`${release} app-server daemon pid-update-loop`), null, 'because its pid loop is not one either');
+});
+
+test('HostOf_ClaudeUnderAFolderWithSpaces_Claude', () => {
+  const desktop = '/Users/x/Library/Application Support/Claude/claude-code/2.1.308/a93ded4b1b47/claude.app/Contents/MacOS/claude --output-format stream-json --input-format stream-json';
+  assert.equal(hostOf(desktop), 'claude', 'because the Claude desktop app keeps its CLI under Application Support, and that session is an app\'s');
+});
+
+test('HostOf_WrapperBeforeTheHost_Never', () => {
+  assert.equal(hostOf('/Applications/Claude.app/Contents/Helpers/disclaimer --pgroup -- /Users/x/claude --output-format stream-json'), null, 'because the wrapper is not the host, and the host itself has its own row');
+});
+
+test('ReadProcesses_LongCommand_TrimmedTo200', async () => {
+  const runner: CommandRunner = async (request) => request.command === 'ps'
+    ? { code: 0, stdout: `  100 00:10 /usr/local/bin/claude -p ${'x'.repeat(400)}\n`, stderr: '', timedOut: false }
+    : { code: 0, stdout: 'p100\nfcwd\nn/w\n', stderr: '', timedOut: false };
+  const { agents } = await readProcesses(runner);
+  assert.equal(agents[0]?.command.length, PROCESS_COMMAND_CHARS, 'because a prompt can be pages long and the card needs the start of it');
 });

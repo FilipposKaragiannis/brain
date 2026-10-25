@@ -37,7 +37,7 @@ const worktree = (picture: Snapshot, name: string) => picture.worktrees.find((en
 test('WorktreeWithAgentProcess_IsRunning', async () => {
   const running = worktree(await snapshot(), 'project-wt-3');
   assert.equal(running?.state, 'running', 'because a claude process has its cwd in the worktree');
-  assert.deepEqual(running?.agentPids, [100], 'because that process is the agent');
+  assert.deepEqual(running?.agents.map((agent) => agent.pid), [100], 'because that process is the agent');
   assert.ok(running?.flags.includes('dirty'), 'because git status lists two files');
 });
 
@@ -45,7 +45,7 @@ test('WorktreeWithGateRecord_NeedsYou', async () => {
   const gated = worktree(await snapshot(), 'project-wt-2');
   assert.equal(gated?.state, 'needs-you', 'because its item has a gate record and no agent process');
   assert.ok(gated?.flags.includes('session'), 'because an interactive claude sits in a folder under the worktree');
-  assert.deepEqual(gated?.sessionPids, [104], 'because the card shows who else is in there');
+  assert.deepEqual(gated?.sessions.map((session) => session.pid), [104], 'because the card shows who else is in there');
   assert.equal(gated?.gate, 'ambiguity', 'because the gate kind is shown on the card');
 });
 
@@ -298,4 +298,131 @@ test('Disagreement_PullsUnreadClosedItem_None', async () => {
 test('FixturePulls_CountedByState', async () => {
   const { counts } = await snapshot();
   assert.deepEqual([counts.pullsMergeable, counts.pullsFailing, counts.pullsChangesRequested], [1, 1, 1], 'because the fixture holds one ready, one failing and one with changes requested');
+});
+
+const withExtraBoardItem = (facts: ReconcileInput, change: Partial<BoardItem>): ReconcileInput => {
+  const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', ...change }] } };
+};
+const disagreementOf = (picture: Snapshot, sources: string) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === sources);
+
+test('Worktree_CodexDesktopServerInIt_NoSession', async () => {
+  const stale = worktree(await snapshot(), 'project-wt-4');
+  assert.deepEqual([stale?.sessions, stale?.flags.includes('session')], [[], false], 'because the Codex app-server and its pid loop sit in the folder but nobody types into them');
+});
+
+test('Worktree_Agent_PidHostCommandAndElapsed', async () => {
+  const [agent] = worktree(await snapshot(), 'project-wt-3')?.agents ?? [];
+  assert.deepEqual(agent, { pid: 100, host: 'claude', command: '/usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto', elapsedSeconds: 942 }, 'because the card says which host runs, what it was asked and for how long');
+});
+
+test('Worktree_BehindAndIdle_StaleReasonNamesBoth', async () => {
+  assert.equal(worktree(await snapshot(), 'project-wt-4')?.staleReason, 'branch is 35 commits behind main (limit 20); claimed 6 days ago with no run, agent or gate', 'because the owner must see why the worktree is stale before acting on it');
+});
+
+test('Worktree_NotStale_NoReason', async () => {
+  assert.equal(worktree(await snapshot(), 'project-wt-3')?.staleReason, null, 'because a running worktree has nothing to explain');
+});
+
+test('Attention_StaleRow_CarriesTheReason', async () => {
+  const row = (await snapshot()).attention.find((entry) => entry.kind === 'stale');
+  assert.equal(row?.detail, worktree(await snapshot(), 'project-wt-4')?.staleReason, 'because the needs-you list and the card give the same reason');
+});
+
+test('Worktree_ItemOnBoard_ItemUrlAndTitle', async () => {
+  const gated = worktree(await snapshot(), 'project-wt-2');
+  assert.deepEqual([gated?.itemUrl, gated?.itemTitle], ['https://example/7', 'Seven'], 'because the pool map links and names the item without a lookup');
+});
+
+test('Worktree_ItemNotOnBoard_NoUrlOrTitle', async () => {
+  const stale = worktree(await snapshot(), 'project-wt-4');
+  assert.deepEqual([stale?.itemUrl, stale?.itemTitle], [null, null], 'because the board never listed gh#5, so nothing is known about it');
+});
+
+test('NeedsField_OpenUnstartedUnblocked_AttentionRow', async () => {
+  const row = reconcile(withExtraBoardItem(await input(), {})).attention.find((entry) => entry.kind === 'needs-field');
+  assert.deepEqual([row?.id, row?.detail], ['gh#14', 'needs priority'], 'because the next job refuses an item with no priority and nobody would know why it sits');
+});
+
+test('NeedsField_TwoFields_BothNamed', async () => {
+  const row = reconcile(withExtraBoardItem(await input(), { needs: ['priority', 'size'] })).attention.find((entry) => entry.kind === 'needs-field');
+  assert.equal(row?.detail, 'needs priority and size', 'because the owner fills every missing field in one visit');
+});
+
+test('NeedsField_BlockedItem_NoRow', async () => {
+  const { attention } = await snapshot();
+  assert.equal(attention.some((entry) => entry.kind === 'needs-field'), false, 'because gh#13 lacks a size but waits on gh#12 first, so only the head of its chain asks');
+});
+
+test('NeedsField_ItemWithAStep_NoRow', async () => {
+  const facts = withExtraBoardItem(await input(), { state: { step: 'plan', gate: 'none', worktree: '', pr: '', last_event: '', profile: '', attempts: 0 } });
+  assert.equal(reconcile(facts).counts.needsField, 0, 'because a started item is past the ready check');
+});
+
+test('NeedsField_Counted', async () => {
+  assert.equal(reconcile(withExtraBoardItem(await input(), {})).counts.needsField, 1, 'because the tile counts the rows');
+});
+
+test('Readiness_Fixture_OneBucketPerOpenItem', async () => {
+  assert.deepEqual((await snapshot()).readiness, { ready: 2, waitingOnField: 0, blocked: 1, gated: 1 }, 'because gh#12 and gh#20 are ready, gh#13 is blocked, gh#7 waits at a gate and the running and stale items are in none');
+});
+
+test('Readiness_ItemWaitingOnField_Counted', async () => {
+  assert.equal(reconcile(withExtraBoardItem(await input(), {})).readiness.waitingOnField, 1, 'because gh#14 can start once it has a priority');
+});
+
+test('Readiness_Epic_NotCounted', async () => {
+  assert.equal(reconcile(withExtraBoardItem(await input(), { kind: 'epic' })).readiness.waitingOnField, 0, 'because the next job takes an epic\'s tasks, never the epic');
+});
+
+test('Gate_ItemNamesAnOpenPull_PullWithThreads', async () => {
+  const gate = reconcile(withBoardItem(await input(), 'gh#7', { pr: '560' })).gates[0];
+  assert.deepEqual(gate?.pull, { number: 560, url: 'https://github.com/FJ2K/foosbrawl/pull/560', state: 'checks-failing', unresolvedThreads: 1 }, 'because the card shows the review thread the merge still waits on');
+});
+
+test('Gate_ItemWithoutPull_NoPull', async () => {
+  assert.equal((await snapshot()).gates[0]?.pull, null, 'because gh#7 names no pull and no pull is on its branch');
+});
+
+test('Project_GithubAdapter_RepoAndIssuesUrls', async () => {
+  const { project } = await snapshot();
+  assert.deepEqual([project.repoUrl, project.trackerUrl, project.jobsHost], ['https://github.com/example/fixture', 'https://github.com/example/fixture/issues', 'claude'], 'because the header links the repository and the tracker and says which CLI the jobs run');
+});
+
+test('Project_LocalAdapter_NoTrackerUrl', async () => {
+  const facts = await input();
+  facts.flow.config.adapter = 'local';
+  assert.equal(reconcile(facts).project.trackerUrl, null, 'because the local tracker has no page to open');
+});
+
+test('Disagreement_GateVsLabels_ExplainedWithReReadTheBoard', async () => {
+  const found = disagreementOf(await snapshot(), 'gate record vs issue labels');
+  assert.equal(found?.explain, 'A gate record says gh#7 waits on you at the ambiguity gate, while the issue labels show no gate; the gate record is usually right, and the labels catch up when the board is read again.', 'because the owner needs to know which store to trust');
+  assert.deepEqual(found?.action, { kind: 'refresh', args: { source: 'board' }, label: 'Re-read the board' }, 'because the labels are usually only late');
+});
+
+test('Disagreement_DoneAndMergeable_ActionMergesThePull', async () => {
+  assert.deepEqual(disagreementOf(await snapshot(), 'issue state vs pull request')?.action, { kind: 'pr.merge', args: { pr: '20' }, label: 'Merge #20' }, 'because the only thing left is the merge');
+});
+
+test('Disagreement_PullsUnreadDoneItem_ActionMergesTheNamedPull', async () => {
+  const facts = await input();
+  facts.pulls = null;
+  assert.deepEqual(disagreementOf(reconcile(facts), 'issue state vs pull request')?.action?.args, { pr: '20' }, 'because the issue names the pull by URL');
+});
+
+test('Disagreement_ClaimStepVsIssue_NoAction', async () => {
+  const found = disagreementOf(reconcile(withBoardItem(await input(), 'gh#9', { step: 'review' })), 'claim vs issue state');
+  assert.equal(found?.action, null, 'because no button can tell which step is true; a person looks');
+});
+
+test('Disagreement_DeadRun_ActionRunsHealth', async () => {
+  const facts = await input();
+  facts.processes = { agents: [] };
+  assert.equal(disagreementOf(reconcile(facts), 'run record vs process list')?.action?.kind, 'steward.health', 'because the health job clears a run record whose process is gone');
+});
+
+test('Settle_HoldsBack_NotInListCountOrAttention', async () => {
+  const picture = reconcile({ ...(await input()), settle: () => [] });
+  assert.deepEqual([picture.disagreements, picture.counts.disagreements, picture.attention.some((row) => row.kind === 'disagreement')], [[], 0, false], 'because a disagreement held back is not shown anywhere yet');
 });

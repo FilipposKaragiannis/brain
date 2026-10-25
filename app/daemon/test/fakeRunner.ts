@@ -22,9 +22,12 @@ const PROCESSES = [
   `  101 01-02:03:04 /Users/x/.local/bin/claude daemon run --origin transient`,
   `  102   00:09 /opt/codex app-server --listen unix://`,
   `  103   03:00 /opt/codex exec --cd somewhere`,
+  `  105 13:44:39 /Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex app-server --listen unix:// -c features.api_key_model_discovery=false`,
+  `  106 13:44:38 /Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex app-server daemon pid-update-loop`,
 ].join('\n');
 
-const CWDS = `p100\nfcwd\nn${FIXTURES}/project-wt-3\np103\nfcwd\nn/elsewhere\np104\nfcwd\nn${FIXTURES}/project-wt-2/src\n`;
+/** The Codex desktop app's server (105) and its pid loop (106) sit in project-wt-4, as they did on foosbrawl. */
+const CWDS = `p100\nfcwd\nn${FIXTURES}/project-wt-3\np103\nfcwd\nn/elsewhere\np104\nfcwd\nn${FIXTURES}/project-wt-2/src\np105\nfcwd\nn${FIXTURES}/project-wt-4\np106\nfcwd\nn${FIXTURES}/project-wt-4\n`;
 
 export const JOBS_JSON = JSON.stringify([
   { job: 'next', schedule: 'every 30m', args: '--workers 2', installed: true, paused: false, loaded: true, running: [], week: { work: 1, failed: 0 }, last: { at: '2026-10-24T17:44:00Z', seconds: 107, exit: 0, result: 'quiet', outcome: 'quiet' }, next: 'due' },

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { ActionRunner, KILL_GRACE_MS, OUTPUT_TAIL_CHARS } from '../src/actions.ts';
-import { SCRIPT_TIMEOUT_MS } from '../src/actionPlan.ts';
+import { HANDED_ON_REFRESH_MS, SCRIPT_TIMEOUT_MS } from '../src/actionPlan.ts';
 import type { ActionContext } from '../src/actionPlan.ts';
 import { silentLogger } from '../src/log.ts';
 import type { ActionRecord } from '../src/snapshot.ts';
@@ -273,5 +273,74 @@ test('StopAll_EndsAttachedActionsOnly', async () => {
     actions.request('run.start', { item: 'gh#2' });
     actions.stopAll();
     assert.deepEqual(processes.map((entry) => entry.signals), [['SIGTERM'], []], 'because a detached run must survive a daemon restart');
+  } finally { await cleanup(); }
+});
+
+test('JobRunEnds_SourcesReadNowAndAgainAfterTheDelay', async () => {
+  const { actions, processes, timers, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    actions.request('job.run', { job: 'comments' });
+    processes[0]!.exit(0, null);
+    await settle();
+    timers.fire(HANDED_ON_REFRESH_MS);
+    assert.deepEqual(refreshed, [['jobs', 'processes'], ['jobs', 'processes']], 'because the job launchd started shows in its status only a few seconds after jobs.sh returns');
+  } finally { await cleanup(); }
+});
+
+test('StopAll_SecondReadWaiting_Dropped', async () => {
+  const { actions, processes, timers, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    actions.request('job.run', { job: 'comments' });
+    processes[0]!.exit(0, null);
+    await settle();
+    actions.stopAll();
+    timers.fire(HANDED_ON_REFRESH_MS);
+    assert.equal(refreshed.length, 1, 'because a daemon shutting down must not read sources after it stopped');
+  } finally { await cleanup(); }
+});
+
+test('JobRunExitsZero_DoneAndStarted', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('job.run', { job: 'comments' }));
+    processes[0]!.exit(0, null);
+    await settle();
+    assert.equal(actions.get(record.id)?.outcome, 'started', 'because the job itself still runs under launchd, so done means started, not finished');
+  } finally { await cleanup(); }
+});
+
+test('GateClearExitsZero_DoneAndFinished', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#1' }));
+    processes[0]!.exit(0, null);
+    await settle();
+    assert.equal(actions.get(record.id)?.outcome, 'finished', 'because the gate is cleared when the script returns');
+  } finally { await cleanup(); }
+});
+
+test('RunStartDetached_StartedWhileItRuns', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('run.start', { item: 'gh#9' }));
+    assert.equal(actions.get(record.id)?.outcome, 'started', 'because the run goes on by itself from the moment its process exists');
+  } finally { await cleanup(); }
+});
+
+test('ActionRunning_NoOutcomeYet', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#1' }));
+    assert.equal(actions.get(record.id)?.outcome, null, 'because an attached action has done nothing yet while it runs');
+  } finally { await cleanup(); }
+});
+
+test('ActionFails_NoOutcome', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('job.run', { job: 'comments' }));
+    processes[0]!.exit(1, null);
+    await settle();
+    assert.equal(actions.get(record.id)?.outcome, null, 'because a failed hand-off started nothing');
   } finally { await cleanup(); }
 });
