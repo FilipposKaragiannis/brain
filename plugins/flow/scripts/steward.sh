@@ -19,6 +19,8 @@
 #                                                children: step split, its worktree released
 #                                                (kept when dirty), its branch kept when it holds
 #                                                commits past the base
+#   steward.sh keep-whole <item>                 the owner kept it whole: no split until its plan
+#                                                step rewrites plan.md (kept-whole <item> asks)
 #   steward.sh health [--dry-run] [--host H] [--wait]
 #                                                check every claim: clear a dead run, release an
 #                                                empty claim, finish a split, resume cut-off work,
@@ -127,9 +129,12 @@ cmd_release() {
     die "$p has uncommitted changes. Not resetting. Commit or stash them, then release again (escalation)." 3
   fi
   git -C "$p" switch -q --detach "$(base_ref "$base")" || die "cannot detach $p at $(base_ref "$base")"
+  # The branch goes only when the base holds every commit of it: git branch -d alone would also
+  # delete one that is merged into its upstream but ahead of the base.
   if [ -n "$branch" ] && git -C "$p" show-ref --verify --quiet "refs/heads/$branch"; then
     if [ "$force" -eq 1 ]; then git -C "$p" branch -q -D "$branch"
-    elif ! git -C "$p" branch -q -d "$branch" 2>/dev/null; then echo "flow: $branch is not merged; kept. Use --force to delete it." >&2; fi
+    elif ! git -C "$p" merge-base --is-ancestor "refs/heads/$branch" "$(base_ref "$base")" 2>/dev/null ||
+         ! git -C "$p" branch -q -d "$branch" 2>/dev/null; then echo "flow: $branch is not merged into $(base_ref "$base"); kept. Use --force to delete it." >&2; fi
   fi
   rm -f "$p/.flow/claim.json"
   [ -n "$item" ] && write_state "$item" "worktree=" "last_event=$(now_iso) released $(basename "$p")"
@@ -143,16 +148,36 @@ cmd_release() {
   return 0
 }
 
-# plan_tracker_tasks <item>: the item's plan.md says its decomposition is tracker tasks. The plan
-# lives in the claimed worktree's reports, else where a released item left them.
-plan_tracker_tasks() {
-  ptt_slug="$(item_slug "$1")"; ptt_wt="$(cmd_find "$1")"
-  for ptt_root in $ptt_wt $(pool_paths) "$main"; do
-    ptt_plan="$ptt_root/.flow/reports/$ptt_slug/plan.md"
-    [ -f "$ptt_plan" ] || continue
-    grep -qiE '^Decomposition:[[:space:]]*tracker tasks' "$ptt_plan"; return
+# plan_file <item>: the item's plan.md: in the claimed worktree's reports, else where a released
+# item left them. Nothing when there is none.
+plan_file() {
+  pf_slug="$(item_slug "$1")"; pf_wt="$(cmd_find "$1")"
+  for pf_root in $pf_wt $(pool_paths) "$main"; do
+    [ -f "$pf_root/.flow/reports/$pf_slug/plan.md" ] && { printf '%s' "$pf_root/.flow/reports/$pf_slug/plan.md"; return 0; }
   done
   return 1
+}
+# plan_tracker_tasks <item>: the item's plan.md says its decomposition is tracker tasks.
+plan_tracker_tasks() {
+  ptt_plan="$(plan_file "$1")" || return 1
+  grep -qiE '^Decomposition:[[:space:]]*tracker tasks' "$ptt_plan"
+}
+# The owner kept an item whole (closed its children, cleared the decomposition gate). The mark,
+# <flow home>/kept-whole/<slug>, holds the hash of the plan.md that was set aside: until the plan
+# step rewrites plan.md, no split happens, whatever children turn up. cmd_keep_whole <item>
+# records it; kept_whole <item> is true while it holds and drops a mark the plan outgrew.
+kept_mark() { printf '%s/kept-whole/%s' "$home" "$(item_slug "$1")"; }
+cmd_keep_whole() {
+  kw_plan="$(plan_file "$1")" || kw_plan=""
+  mkdir -p "$home/kept-whole"
+  if [ -n "$kw_plan" ]; then hash_file "$kw_plan"; else echo none; fi > "$(kept_mark "$1")"
+  echo "$1 is kept whole until its plan step rewrites plan.md"
+}
+kept_whole() {
+  [ -f "$(kept_mark "$1")" ] || return 1
+  kw_plan="$(plan_file "$1")" && kw_now="$(hash_file "$kw_plan")" || kw_now=none
+  [ "$kw_now" = "$(cat "$(kept_mark "$1")")" ] && return 0
+  rm -f "$(kept_mark "$1")"; return 1
 }
 
 # cmd_split <item>: a task whose plan made tracker tasks of it, with children open, waits on them.
@@ -173,6 +198,7 @@ cmd_split() {
   sp_kids="$(json_get "$sp_data" open_children)"
   [ "${sp_kids:-0}" -gt 0 ] 2>/dev/null || { echo "$sp_item has no open children, so it is not split"; return 1; }
   plan_tracker_tasks "$sp_item" || { echo "$sp_item: plan.md does not say tracker tasks, so it is not split"; return 1; }
+  ! kept_whole "$sp_item" || { echo "$sp_item: the owner kept it whole, so it is not split until its plan step rewrites plan.md"; return 1; }
   sp_was="$(state_get "$sp_data" step)"
   sp_said="split into $sp_kids open child item(s), it waits on them"
   [ "$sp_was" = split ] || write_state "$sp_item" "step=split" "last_event=$(now_iso) $sp_said"
@@ -196,7 +222,9 @@ cmd_split() {
     fi
     [ -z "$sp_tmp" ] || rm -f "$sp_tmp" "$sp_tmp.failed"
     if [ -n "$split_kept" ]; then
-      json_set "$sp_claim" step "$(json_string split)" > "$sp_path/.flow/claim.json"
+      # Through a temp file beside it: a failed write never leaves an empty claim (a free look).
+      sp_new="$sp_path/.flow/claim.json.tmp.$$"
+      if json_set "$sp_claim" step "$(json_string split)" > "$sp_new" && [ -s "$sp_new" ]; then mv "$sp_new" "$sp_path/.flow/claim.json"; else rm -f "$sp_new"; fi
       [ "$sp_was" = split ] && [ "$(json_get "$sp_claim" step)" = split ] || split_msg="$sp_said; $sp_name is kept: $split_kept"
     else
       sp_ahead="$(git -C "$sp_path" rev-list --count "$(base_ref "$sp_base")..refs/heads/$sp_branch" 2>/dev/null)"
@@ -593,7 +621,7 @@ health_claim() {
   # changes or a live session) still holds its worktree: finish it here, after a dead run had its
   # resume. Only at step plan or split, with open children and a plan.md that says tracker tasks.
   if [ -z "$health_gate" ] && { [ "$step" = plan ] || [ "$step" = split ]; } && [ "$(json_get "$data" kind)" != epic ] &&
-     [ "$(json_get "$data" open_children)" -gt 0 ] 2>/dev/null && plan_tracker_tasks "$it"; then
+     [ "$(json_get "$data" open_children)" -gt 0 ] 2>/dev/null && plan_tracker_tasks "$it" && ! kept_whole "$it"; then
     if [ "$dry" -eq 1 ]; then health_say "$it" "would finish the split: step split, release $name unless it must stay"; return 0; fi
     cmd_split "$it" >/dev/null
     [ -z "$split_msg" ] || { echo "$it: $split_msg"; facts=$((facts + 1)); }
@@ -773,7 +801,9 @@ case "$cmd" in
   prune) cmd_prune "$@" ;;
   sweep) cmd_sweep "$@" ;;
   split) [ $# -ge 1 ] || die "usage: split <item>" 2; cmd_split "$1" ;;
+  keep-whole) [ $# -ge 1 ] || die "usage: keep-whole <item>" 2; cmd_keep_whole "$1" ;;
+  kept-whole) [ $# -ge 1 ] || die "usage: kept-whole <item>" 2; kept_whole "$1" ;;
   health) cmd_health "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,26p' "$0"; exit 2 ;;
+  *) sed -n '2,28p' "$0"; exit 2 ;;
 esac

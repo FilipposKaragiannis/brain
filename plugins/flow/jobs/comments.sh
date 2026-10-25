@@ -13,8 +13,8 @@
 # replies count as activity, so one quiet pass follows each working one. A pass the host cut short
 # (a non-zero exit, or the host stopping the addresser at its background-task ceiling) is failed:
 # its activity is not kept, the next run tries it again, and the job exits 1; after
-# jobs.comments.max_failures (3) in a row with nothing changed, the PR waits until it moves and
-# the owner is told once. Nothing open or nothing new: a quiet exit, no model spend.
+# jobs.comments.max_failures (3) in a row the job stops trying the PR and the owner is told
+# once, until a pass run by hand completes. Nothing open or nothing new: a quiet exit, no model spend.
 # Cheap when quiet, so it can run every 5 or 10 minutes; the lock skips an overlap.
 set -u
 job=comments
@@ -22,7 +22,7 @@ job=comments
 host="${1:-}"; one="${2:-}"
 job_start "$host"
 out="$(job_log_dir)/$job.out.$$"
-trap 'c=$?; rm -f "$out" "$out.code"; job_end $c' EXIT
+trap 'c=$?; rm -f "$out" "$out.code" "$out.login"; job_end $c' EXIT
 command -v gh >/dev/null 2>&1 || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 targets=""
@@ -76,7 +76,9 @@ activity() {
 CUT_SHORT='^Background tasks still running .*; stopping them\.'
 cut_short() { tail -n 20 "$1" 2>/dev/null | grep -m1 -E "$CUT_SHORT"; }
 # Per PR, beside the last good pass's activity (<pr>): <pr>.forced, the awaiting set a pass was
-# forced for; <pr>.fails, "<count> <activity>" of the failed passes in a row; <pr>.told and
+# forced for; <pr>.fails, the count of failed passes in a row, whatever they changed (a pass cut
+# short after one reply changes the activity each time), cleared only by a pass that completes;
+# <pr>.told and
 # <pr>.told-fails, what the owner was last told. Each is said once.
 seen_file() { printf '%s/%s.seen/%s' "$(job_log_dir)" "$job" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
 max_fails="$(cfg_or jobs.comments.max_failures 3)"
@@ -95,17 +97,25 @@ print("gh#" + m.group(1) if m else "")' 2>/dev/null)" ;;
   rn_dir="$("$FLOW_PLUGIN/scripts/steward.sh" reports "$rn_item" 2>/dev/null)" || return 1
   printf '%s/comments-resume.md' "$rn_dir"
 }
+# claimed_by <worktree> <item>: the worktree's claim names the item, so its changes are this
+# item's. A released item's reports can sit in a pool worktree another item now holds.
+claimed_by() { [ "$(json_get "$(cat "$1/.flow/claim.json" 2>/dev/null)" item)" = "$2" ]; }
+# dirty_tree <worktree>: uncommitted changes outside .flow.
+dirty_tree() { [ -n "$(git -C "$1" status --porcelain -- . ':!.flow' 2>/dev/null)" ]; }
+# The flow's GitHub login, read at most once per run and only when a thread lacks the reply
+# marker (a reply from before 1.19.0): comments.sh activity reads this cache.
+FLOW_GH_LOGIN_CACHE="$out.login"; export FLOW_GH_LOGIN_CACHE
 # once <file> <value>: true the first time <value> is seen for <file>, and records it.
 once() { [ "$(cat "$1" 2>/dev/null)" != "$2" ] && printf '%s\n' "$2" > "$1"; }
 addressed=0; unchanged=0; failed=""
 for t in $targets; do
   note="$(prepare_pr "$t")"
   activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$t")"; mkdir -p "$(dirname "$f")"
-  fails=0; failed_on=""
-  [ -f "$f.fails" ] && { read -r fails failed_on < "$f.fails"; case "$fails" in ''|*[!0-9]*) fails=0 ;; esac; }
-  if [ -z "$one" ] && [ -n "$seen" ] && [ "$fails" -ge "$max_fails" ] && [ "$seen" = "$failed_on" ]; then
-    job_say "$t: $fails passes in a row failed and nothing changed since, skipped until the PR moves" >/dev/null
-    once "$f.told-fails" "$seen" && tell "$t: the comments pass failed $fails times in a row on $pull. It waits until the PR changes; read $(job_log_dir)/$job.log, or run it by hand: jobs/comments.sh <host> $t."
+  fails=0
+  [ -f "$f.fails" ] && { read -r fails _ < "$f.fails"; case "$fails" in ''|*[!0-9]*) fails=0 ;; esac; }
+  if [ -z "$one" ] && [ "$fails" -ge "$max_fails" ]; then
+    job_say "$t: $fails passes in a row failed, skipped until a pass run by hand completes" >/dev/null
+    once "$f.told-fails" "$fails" && tell "$t: the comments pass failed $fails times in a row on $pull, so the job stops trying it. Read $(job_log_dir)/$job.log, then run it by hand: jobs/comments.sh <host> $t. A pass that completes lets the job try it again."
     unchanged=$((unchanged + 1)); continue
   fi
   if [ -z "$one" ] && [ -n "$seen" ] && [ "$seen" = "$(cat "$f" 2>/dev/null)" ]; then
@@ -120,12 +130,12 @@ for t in $targets; do
     printf '%s\n' "$awaiting" > "$f.forced"
     job_say "$t: open thread(s) $awaiting still wait on a reply, one more pass" >/dev/null
   fi
-  resume="$(resume_note "$t")"; rnote=""
+  rn_item=""; resume=""; rnote=""; resume_note "$t" > "$out" && resume="$(cat "$out")"
   # Uncommitted changes in the claimed worktree with no note: a run before this one was cut off
   # (before flow 1.19.0 no note was left). Say so, so the pass continues from them.
   if [ -n "$resume" ] && [ ! -s "$resume" ]; then
     rwt="${resume%/.flow/reports/*}"
-    if [ -d "$rwt" ] && [ "$(cd "$rwt" && pwd -P)" != "$(cd "$main" && pwd -P)" ] && [ -n "$(git -C "$rwt" status --porcelain -- . ':!.flow' 2>/dev/null)" ]; then
+    if [ -d "$rwt" ] && claimed_by "$rwt" "$rn_item" && dirty_tree "$rwt"; then
       printf 'An earlier run on PR #%s left uncommitted changes in %s (found by the comments job at %s). Read git status and git diff, continue from there, build and test before you commit, discard nothing without saying so in the reply.\n' \
         "${pull##*/}" "$rwt" "$(now_iso)" > "$resume"
       job_say "$t: $rwt holds uncommitted changes from an earlier run; the pass continues from them" >/dev/null
@@ -143,10 +153,14 @@ for t in $targets; do
   if [ -z "$why" ]; then
     [ -z "$seen" ] || printf '%s\n' "$seen" > "$f"
     rm -f "$f.fails" "$f.told-fails"
-    [ -z "$resume" ] || rm -f "$resume"
+    # The note goes once the work it names is gone from the tree: an addresser that stopped
+    # cleanly on a failing build leaves the changes, and the note stays for the next pass.
+    if [ -n "$resume" ]; then
+      rwt="${resume%/.flow/reports/*}"
+      { claimed_by "$rwt" "$rn_item" && dirty_tree "$rwt"; } || rm -f "$resume"
+    fi
   else
     rm -f "$f"
-    [ "$seen" = "$failed_on" ] || fails=0
     printf '%s %s\n' "$((fails + 1))" "$seen" > "$f.fails"
     job_say "$t: pass failed, $why; the next run tries it again"
     if [ -n "$resume" ]; then

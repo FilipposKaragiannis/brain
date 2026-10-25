@@ -576,10 +576,12 @@ printf '#!/bin/sh\nexit 1\n' > "$work/bin/claude"; bump 2026-10-24T16:50:00Z
 for n in 1 2 3; do "$P/jobs/comments.sh" claude >/dev/null; done
 printf "$okhost" > "$work/bin/claude"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null; "$P/jobs/comments.sh" claude >/dev/null
-check "comments job: after three failed passes in a row the PR waits until it changes" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: 3 passes in a row failed and nothing changed since, skipped' .flow/log/comments.log"
+check "comments job: after three failed passes in a row the job stops trying the PR" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: 3 passes in a row failed, skipped until a pass run by hand completes' .flow/log/comments.log"
 check "comments job: the owner is told once about the failing PR" [ "$(grep -c 'comments	gh#21: the comments pass failed 3 times in a row' .flow/events.log)" = 1 ]
 bump 2026-10-24T16:55:00Z; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
-check "comments job: a PR that moves after failing gets a pass again" grep -q 'comments gh#21' "$HOST_LOG"
+check "comments job: activity a cut-short pass may have made does not restart the retries" [ ! -s "$HOST_LOG" ]
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a pass run by hand that completes lets the job try the PR again" sh -c "[ \"\$(grep -c 'comments gh#21' '$HOST_LOG')\" = 1 ] && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new'"
 # An unresolved thread whose last word is not the flow's reply waits on a pass.
 python3 - "$FAKE_GH_DIR/issues.json" <<'PY3'
 import json, sys
@@ -595,16 +597,26 @@ check "comments job: a new review thread starts a pass" grep -q 'comments gh#21'
 check "comments job: a thread still awaiting a reply gets one more pass" sh -c "grep -q 'comments gh#21' '$HOST_LOG' && grep -q 'gh#21: open thread(s) 901 still wait on a reply, one more pass' .flow/log/comments.log"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: then the same awaiting threads are skipped, and the owner told once" sh -c "[ ! -s '$HOST_LOG' ] && [ \"\$(grep -c 'comments	gh#21: review thread(s) on .* still wait on a reply after two passes' .flow/events.log)\" = 1 ]"
-python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].append({'databaseId': 902, 'body': 'Keep it: I want the slide.', 'author': {'login': 'owner'}, 'createdAt': 't'}); json.dump(d, open(p,'w'))"
-check "activity: the owner's reply under the flow's login still awaits a reply" sh -c "'$P/scripts/comments.sh' activity 90 | grep -q '\"awaiting\": \[902\]'"
-: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
-check "comments job: the owner's answer on the thread starts a pass" grep -q 'comments gh#21' "$HOST_LOG"
+check "activity: a reply from before 1.19.0 (no marker) by the flow's login is ours" sh -c "python3 - '$FAKE_GH_DIR/issues.json' <<'PY5'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d['threads'].append({'id': 'T_10', 'isResolved': False, 'isOutdated': False, 'path': 'src/S.cs', 'line': 1,
+                     'comments': {'nodes': [{'databaseId': 1001, 'body': 'Rename this.', 'author': {'login': 'chatgpt-codex-connector'}, 'createdAt': 't'},
+                                            {'databaseId': 1002, 'body': 'Renamed in abc.', 'author': {'login': 'owner'}, 'createdAt': 't'}]}})
+json.dump(d, open(sys.argv[1], 'w'))
+PY5
+'$P/scripts/comments.sh' activity 90 | grep -q '\"awaiting\": \[901\]'"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads']=d['threads'][:1]; json.dump(d, open(p,'w'))"
 "$P/scripts/comments.sh" reply 90 901 "Kept the slide, as the owner asked."
 check "reply: the flow's reply carries its marker" sh -c "python3 -c \"import json; d=json.load(open('$FAKE_GH_DIR/issues.json')); assert '<!-- flow:reply -->' in d['threads'][0]['comments']['nodes'][-1]['body']\""
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: our reply on the thread counts as new once" grep -q 'comments gh#21' "$HOST_LOG"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a thread whose last word is the flow's reply waits on the reviewer, skipped" sh -c "[ ! -s '$HOST_LOG' ] && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 1 PR(s)'"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].append({'databaseId': 902, 'body': 'Keep it: I want the slide.', 'author': {'login': 'owner'}, 'createdAt': 't'}); json.dump(d, open(p,'w'))"
+check "activity: the owner's reply under the flow's login, after a marked reply, awaits a reply" sh -c "'$P/scripts/comments.sh' activity 90 | grep -q '\"awaiting\": \[902\]'"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: the owner's answer on the thread starts a pass" grep -q 'comments gh#21' "$HOST_LOG"
 # An item at a gate (not merge) is the owner's: no pass, even with a thread awaiting.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].append({'databaseId': 903, 'body': 'And this?', 'author': {'login': 'chatgpt-codex-connector'}, 'createdAt': 't'}); json.dump(d, open(p,'w'))"
 "$P/adapters/github/write-state.sh" 'gh#21' gate=ambiguity
@@ -1385,6 +1397,20 @@ plan_step "$wh" "tracker tasks" '{"status":"gate","gate":"decomposition","messag
 "$P/scripts/advance.sh" "$wh" >/dev/null 2>&1
 "$P/adapters/local/close.sh" "$(grep -l 'title: Whole child' .flow/items/task/*.md | sed 's|.*/\([0-9]*\)\.md|local:task/\1|')" >/dev/null
 check "split: an owner who closed the children and cleared the gate gets the plan step back" sh -c "'$P/scripts/gate.sh' clear '$wh' 'keep it whole' | grep -q 'whole again' && [ \"\$('$P/adapters/local/read.sh' '$wh' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = plan ]"
+wwh="$("$P/scripts/steward.sh" claim "$wh")"
+"$P/scripts/new.sh" task "Follow-up of a whole item" --size S --parent "$wh" --body x >/dev/null 2>&1
+"$P/scripts/steward.sh" health >/dev/null 2>&1
+check "split: a kept-whole item with its old tracker-tasks plan and a new child is not split again" sh -c "[ -f '$wwh/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$wh' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = plan ] && '$P/scripts/steward.sh' split '$wh' | grep -q 'the owner kept it whole'"
+wout="$("$P/scripts/next.sh" "$wh" --json)"; wrep="$(printf '%s' "$wout" | jget reports)"
+printf '# plan\nDecomposition: tracker tasks (rewritten after the owner kept it whole)\n' > "$wrep/plan.md"
+printf '{"status":"done","summary":"two PRs after all"}\n' > "$wrep/plan.json"
+"$P/scripts/advance.sh" "$wh" >/dev/null 2>&1
+check "split: once the plan step rewrites plan.md the mark is gone and the split stands" [ "$(sread "$wh" state.step)" = split ]
+am="$("$P/scripts/new.sh" task "Asks first" --size M --body x)"
+wam="$(plan_step "$am" "tracker tasks" '{"status":"gate","gate":"ambiguity","message":"1. Which base?"}' "Asking child")"
+"$P/scripts/advance.sh" "$am" >/dev/null 2>&1
+check "split: a plan step stopping at an ambiguity gate does not split" sh -c "[ -f '$wam/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$am' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; print(s[\"step\"], s[\"gate\"])')\" = 'plan ambiguity' ]"
+"$P/scripts/gate.sh" clear "$am" "main" >/dev/null 2>&1; "$P/scripts/steward.sh" release "$am" --force >/dev/null 2>&1
 # A child filed by hand and a plan in local phases (the gate raised before the planner made any):
 # the owner's answer "keep it whole" never splits it.
 lp="$("$P/scripts/new.sh" task "Local phases" --size M --body x)"
@@ -1456,7 +1482,21 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 mkdir -p "$wm/.flow/reports" && printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "%s/host77.log"\n' "$work" > "$work/bin/claude"; chmod +x "$work/bin/claude"
 "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
-check "comments job: uncommitted changes with no note get one, and the pass is told to read it" sh -c "grep -q '90: .*holds uncommitted changes from an earlier run' .flow/log/comments.log && grep -q 'An earlier pass was cut short: read .*gh-77/comments-resume.md first' '$work/host77.log' && [ ! -f '$wm/.flow/reports/gh-77/comments-resume.md' ]"
+check "comments job: uncommitted changes with no note get one, and the pass is told to read it" sh -c "grep -q '90: .*holds uncommitted changes from an earlier run' .flow/log/comments.log && grep -q 'An earlier pass was cut short: read .*gh-77/comments-resume.md first' '$work/host77.log' && [ -f '$wm/.flow/reports/gh-77/comments-resume.md' ]"
+check "comments job: a pass that completes with the tree still dirty keeps the note" [ -f "$wm/.flow/reports/gh-77/comments-resume.md" ]
+rm "$wm/half.txt"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: a pass that completes with a clean tree removes the note" [ ! -f "$wm/.flow/reports/gh-77/comments-resume.md" ]
+# P2-7: a reports folder in a worktree another item holds gets no dirty-tree note.
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-78', updatedAt='2026-10-25T02:00:00Z'); json.dump(d, open(p,'w'))"
+mkdir -p "$wm/.flow/reports/gh-78" && printf 'other work\n' > "$wm/other.txt"
+"$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: no dirty-tree note when the worktree's claim names another item" sh -c "[ ! -f '$wm/.flow/reports/gh-78/comments-resume.md' ] && ! grep -q 'gh-78/comments-resume.md' '$work/host77.log'"
+rm -f "$wm/other.txt"
+git init -q --bare "$work/split-origin.git" && git remote add origin "$work/split-origin.git" && git push -q origin main 2>/dev/null
+up="$("$P/scripts/new.sh" task "Pushed branch" --size S --body x)"; wu="$("$P/scripts/steward.sh" claim "$up")"; bu="$(git -C "$wu" symbolic-ref --short HEAD)"
+printf 'x\n' > "$wu/x.txt" && git -C "$wu" add x.txt && git -C "$wu" commit -qm x && git -C "$wu" push -q -u origin "$bu" 2>/dev/null
+"$P/scripts/steward.sh" release "$up" > /dev/null 2> "$work/split.err"
+check "release: a branch merged into its upstream but ahead of the base is kept" sh -c "git show-ref --verify --quiet 'refs/heads/$bu' && grep -q 'is not merged into origin/main; kept' '$work/split.err'"
 check "new: an unreadable parent is warned about, and the child is still made" sh -c "'$P/scripts/new.sh' task 'Orphan' --size S --parent local:task/999 --body x 2>'$work/split.err' | grep -q '^local:task/' && grep -q 'cannot read the parent local:task/999' '$work/split.err'"
 unset FLOW_HEALTH_PROCS
 

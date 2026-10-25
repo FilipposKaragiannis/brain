@@ -9,7 +9,8 @@
 #   comments.sh activity <pr>                   what the comments job compares between passes: updatedAt, headRefOid,
 #                                               mergeable, unresolved threads, their comments, and awaiting: the
 #                                               last comment ids of the unresolved threads whose last comment does
-#                                               not carry the reply marker
+#                                               not carry the reply marker (in a thread with no marker at all, a
+#                                               last reply by the flow's login is ours: replies before 1.19.0)
 #   comments.sh reviewers                       the reviewers each round asks, one per line (reviews.reviewers)
 #   comments.sh request-review <pr> <ask>       ask each reviewer: a comment "@<reviewer> <ask>" each, copilot through the API
 #   comments.sh reviews <pr>                    each reviewer's last request: answered, waiting, chases (JSON lines)
@@ -147,14 +148,31 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
     pull="$(pr_number "$2")"
     st="$(gh pr view "$pull" -R "$repo" --json updatedAt,headRefOid,mergeable)" &&
       th="$("$0" threads "$pull")" || exit 1
+    # A thread with no marker anywhere may hold a reply from before 1.19.0: there the flow's login
+    # speaks for it. Read once, only then, through the job's per-run cache when it gives one.
+    me=""
+    if printf '%s' "$th" | python3 -I -c '
+import json, sys
+marker = sys.argv[1]
+sys.exit(0 if any(marker not in "".join([t["body"] or ""] + [r["body"] or "" for r in t["replies"]]) for t in json.load(sys.stdin)) else 1)' "$REPLY_MARKER"; then
+      cache="${FLOW_GH_LOGIN_CACHE:-}"
+      if [ -n "$cache" ] && [ -f "$cache" ]; then me="$(cat "$cache")"
+      else me="$(gh api user -q .login 2>/dev/null)" || me=""; [ -z "$cache" ] || printf '%s' "$me" > "$cache"; fi
+    fi
     python3 -I -c '
 import json, sys
-state, threads, marker = json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3]
-last = lambda t: t["replies"][-1] if t["replies"] else {"id": t["comment_id"], "body": t["body"]}
-waiting = [last(t)["id"] for t in threads if marker not in (last(t)["body"] or "")]
+state, threads, marker, me = json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3], sys.argv[4]
+def last(t):
+    return t["replies"][-1] if t["replies"] else {"id": t["comment_id"], "body": t["body"], "author": t["author"]}
+def ours(t):
+    if marker in (last(t)["body"] or ""):
+        return True
+    marked = any(marker in (c["body"] or "") for c in [t] + t["replies"])
+    return bool(t["replies"]) and not marked and bool(me) and last(t).get("author") == me
+waiting = [last(t)["id"] for t in threads if not ours(t)]
 print(json.dumps({"updatedAt": state.get("updatedAt", ""), "headRefOid": state.get("headRefOid", ""),
                   "mergeable": state.get("mergeable", ""), "unresolved": len(threads),
                   "review_comments": sum(1 + len(t["replies"]) for t in threads),
-                  "awaiting": waiting}))' "$st" "$th" "$REPLY_MARKER" ;;
-  *) sed -n '2,17p' "$0"; exit 2 ;;
+                  "awaiting": waiting}))' "$st" "$th" "$REPLY_MARKER" "$me" ;;
+  *) sed -n '2,18p' "$0"; exit 2 ;;
 esac

@@ -89,12 +89,15 @@ if [ "$step" != sync ] && [ "$(state_get "$data" step)" = split ]; then
 fi
 # A plan step that made tracker tasks of the item (plan.md says so) and left children open ends
 # with the split: step split, the worktree back to the pool (steward.sh split). A gate it asks
-# for is raised first; on the decomposition gate the owner can still keep it whole.
-if [ "$step" = plan ] && [ "$status" != fail ] && [ "$(json_get "$data" open_children)" -gt 0 ] 2>/dev/null &&
-   grep -qiE '^Decomposition:[[:space:]]*tracker tasks' "$reports/plan.md" 2>/dev/null; then
+# for is raised first; on the decomposition gate the owner can still keep it whole. Only a step
+# done or at the decomposition gate splits: an ambiguity or plan-approval gate means the plan is
+# not settled. An item the owner kept whole stays whole until the plan is rewritten.
+if [ "$step" = plan ] && { [ "$status" = done ] || { [ "$status" = gate ] && [ "$gate" = decomposition ]; }; } &&
+   [ "$(json_get "$data" open_children)" -gt 0 ] 2>/dev/null &&
+   grep -qiE '^Decomposition:[[:space:]]*tracker tasks' "$reports/plan.md" 2>/dev/null &&
+   ! "$FLOW_PLUGIN/scripts/steward.sh" kept-whole "$item" 2>/dev/null; then
   if [ "$status" = gate ]; then
-    [ -n "$gate" ] || gate="decomposition"
-    hint=""; [ "$gate" != decomposition ] || hint=" To keep it whole instead, close its children, then clear the gate: the plan step runs again."
+    hint=" To keep it whole instead, close its children, then clear the gate: the plan step runs again."
     "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$gate" "${message:-$summary}$hint" >/dev/null
   else
     gate=""; finish_run

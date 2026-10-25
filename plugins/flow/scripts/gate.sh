@@ -55,6 +55,7 @@ $message" >/dev/null
       data="$(adapter read "$item" 2>/dev/null)"
       if [ "$(state_get "$data" step)" = split ] && [ "$(json_get "$data" open_children)" = 0 ]; then
         adapter write-state "$item" "step=plan" "last_event=$(now_iso) kept whole: the children are closed, the plan step runs again" >/dev/null
+        "$FLOW_PLUGIN/scripts/steward.sh" keep-whole "$item" >/dev/null
         echo "gate cleared on $item; its children are closed, so it is whole again: next $item runs the plan step"; exit 0
       fi
     fi
