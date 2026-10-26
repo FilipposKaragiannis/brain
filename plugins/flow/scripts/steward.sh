@@ -807,7 +807,7 @@ health_next_runs() {
     hn_keys="$hn_keys next-$hn_kind-$hn_job"
     health_changed "next-$hn_kind-$hn_job" streak || continue
     if [ "$hn_kind" = lock ]; then
-      hn_msg="$hn_job waited out the pick lock on its last $hn_n runs in a row: another worker holds the pick for over ${FLOW_LOCK_WAIT:-60}s each time, so the tracker listing is slow or a pick is stuck"
+      hn_msg="$hn_job waited out the pick lock on its last $hn_n runs in a row: another worker held the pick for longer than the lock wait each time, so the tracker listing is slow or a pick is stuck"
     else
       hn_msg="$hn_job ended without running a step on its last $hn_n runs in a row (last: $hn_text)"
     fi

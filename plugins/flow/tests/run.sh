@@ -1354,11 +1354,14 @@ hs > "$hroot/out" 2>&1
 check "health: one run that waited out the pick lock is not a streak" sh -c "! grep -q 'waited out the pick lock' '$hroot/out'"
 printf '{"job":"next-2","at":"2026-10-20T10:30:00Z","seconds":1,"exit":0,"result":"skipped: run 1 still going"}\n{"job":"next-2","at":"2026-10-20T11:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n{"job":"next-1","at":"2026-10-20T11:00:00Z","seconds":3,"exit":0,"result":"stopped: no step ran (exit 6: gh#9 is done (every step ran). Merge or close it.)"}\n{"job":"next-1","at":"2026-10-20T11:30:00Z","seconds":3,"exit":0,"result":"stopped: no step ran (exit 6: gh#9 is done (every step ran). Merge or close it.)"}\n' >> .flow/log/runs.jsonl
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
-check "health: a worker that waited out the pick lock twice in a row is said once, a skipped run between does not break the streak" sh -c "grep -q 'next-2 waited out the pick lock on its last 2 runs in a row: another worker holds the pick for over 60s' '$hroot/out' && ! grep -q 'waited out the pick lock' '$hroot/out2'"
+check "health: a worker that waited out the pick lock twice in a row is said once, a skipped run between does not break the streak" sh -c "grep -q 'next-2 waited out the pick lock on its last 2 runs in a row: another worker held the pick for longer than the lock wait' '$hroot/out' && ! grep -q 'waited out the pick lock' '$hroot/out2'"
 check "health: a worker that twice ended without running a step is said once, with its last word" sh -c "grep -q 'next-1 ended without running a step on its last 2 runs in a row (last: stopped: no step ran (exit 6: gh#9 is done' '$hroot/out' && ! grep -q 'without running a step' '$hroot/out2'"
-printf '{"job":"next-2","at":"2026-10-20T11:30:00Z","seconds":300,"exit":0,"result":"done, 3 steps"}\n{"job":"next-2","at":"2026-10-20T12:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n{"job":"next-2","at":"2026-10-20T12:30:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n' >> .flow/log/runs.jsonl
+printf '{"job":"next-2","at":"2026-10-20T11:30:00Z","seconds":300,"exit":0,"result":"done, 3 steps"}\n' >> .flow/log/runs.jsonl
 hs > "$hroot/out" 2>&1
-check "health: a run that did work ends the streak, and a new streak is said again" grep -q 'next-2 waited out the pick lock on its last 2 runs in a row' "$hroot/out"
+check "health: a run that did work ends the streak, and it is forgotten" sh -c "! grep -q 'waited out the pick lock' '$hroot/out' && [ ! -f .flow/health/next-lock-next-2.seen ]"
+printf '{"job":"next-2","at":"2026-10-20T12:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n{"job":"next-2","at":"2026-10-20T12:30:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n' >> .flow/log/runs.jsonl
+hs > "$hroot/out" 2>&1
+check "health: a new streak after that is said again" grep -q 'next-2 waited out the pick lock on its last 2 runs in a row' "$hroot/out"
 
 bd="flow/$(item_slug "$d")"
 git -C "$wd" push -q origin "$bd"; remote_commit "$bd" r1
