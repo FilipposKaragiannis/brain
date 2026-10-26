@@ -23,7 +23,7 @@ host="${1:-}"; one="${2:-}"
 job_start "$host" model
 out="$(job_log_dir)/$job.out.$$"
 trap 'c=$?; rm -f "$out" "$out.code" "$out.login"; job_end $c' EXIT
-command -v gh >/dev/null 2>&1 || die "gh is not installed"
+(unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 targets=""
 if [ -n "$one" ]; then

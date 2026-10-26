@@ -35,12 +35,16 @@ done
 # shellcheck disable=SC2086
 if [ -n "$add$remove" ]; then gh issue edit "$n" -R "$repo" $add $remove >/dev/null || die "cannot write the labels of gh#$n"; fi
 body="$(printf '%s\nFlow state, written by the flow plugin. Do not edit by hand.\n\n```json\n%s\n```\n' "$STATE_MARKER" "$(printf '%s' "$merged" | python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2, sort_keys=True))')")"
-cid="$(printf '%s' "$current" | python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")')"
-if [ -n "$cid" ]; then
-  printf '%s' "$body" | gh api -X PATCH "repos/$repo/issues/comments/$cid" -F body=@- >/dev/null || die "cannot write the state of gh#$n"
-else
-  printf '%s' "$body" | gh api "repos/$repo/issues/$n/comments" -F body=@- >/dev/null || die "cannot write the state of gh#$n"
+comment_id() { python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")'; }
+patch_state() { printf '%s' "$body" | gh api -X PATCH "repos/$repo/issues/comments/$1" -F body=@- >/dev/null; }
+cid="$(printf '%s' "$current" | comment_id)"
+if [ -z "$cid" ] && ! printf '%s' "$body" | gh_once api "repos/$repo/issues/$n/comments" -F body=@- >/dev/null; then
+  # The first state comment is a create, tried once: the answer can be lost after the comment
+  # landed, and a second try would make a second comment. So look, and patch what landed.
+  again="$(state_comment "$repo" "$n")" || die "cannot write the state of gh#$n"
+  cid="$(printf '%s' "$again" | comment_id)"; [ -n "$cid" ] || die "cannot write the state of gh#$n"
 fi
+if [ -n "$cid" ]; then patch_state "$cid" || die "cannot write the state of gh#$n"; fi
 if [ -n "$GH_SIZE_FIELD" ]; then
   for kv in "$@"; do
     case "$kv" in size=?*) python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "${kv#size=}" \

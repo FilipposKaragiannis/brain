@@ -36,7 +36,7 @@ Parent #$(issue_number "$parent")"
 [ -n "$blocked" ] && tail="$tail
 Blocked by $(printf '%s\n' "$blocked" | tr ',' '\n' | while read -r b; do [ -n "$b" ] && printf '#%s ' "$(issue_number "$b")"; done)"
 [ -n "$labels" ] && set -- --label "$labels" || set --
-url="$(printf '%s\n%s\n' "$body" "$tail" | gh issue create -R "$repo" --title "$title" --body-file - "$@")" || die "cannot create the issue"
+url="$(printf '%s\n%s\n' "$body" "$tail" | gh_once issue create -R "$repo" --title "$title" --body-file - "$@")" || die "cannot create the issue"
 n="${url##*/}"
 [ -n "$type" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" type "$repo" "$n" "$type" || echo "flow: could not set gh#$n to type $type" >&2; }
 [ -n "$size" ] && [ -n "$GH_SIZE_FIELD" ] && { python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "$size" || echo "flow: could not set the size of gh#$n" >&2; }

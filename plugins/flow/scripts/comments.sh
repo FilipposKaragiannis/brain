@@ -17,7 +17,7 @@
 #   comments.sh chase <pr>                      ask again a reviewer silent past reviews.chase_after, at most
 #                                               reviews.max_chases times per request, then tell the owner once
 . "$(dirname "$0")/../lib/flow.sh"
-command -v gh >/dev/null 2>&1 || die "gh is not installed"
+(unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 repo="$(cfg github.repo)"; [ -n "$repo" ] || repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" || die "not a GitHub repository"
 owner="${repo%%/*}"; name="${repo#*/}"
 # Every reply the flow posts carries this marker, so a thread whose last word is ours is told from

@@ -69,8 +69,12 @@ def state_comment(repo, issue, marker, always=False):
     comments = gh("api", "repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"]))
     if comments is None:
         # Without the comment the item would read as unstarted, with no attempts, no PR and no
-        # touches: a wrong answer, so no answer.
-        sys.exit("flow: cannot read the comments of gh#%d" % issue["number"])
+        # touches: a wrong answer, so no answer. A read ends; a list leaves the issue out (it
+        # carries a flow label, so it is in flight and not a pick) and goes on.
+        if always:
+            sys.exit("flow: cannot read the comments of gh#%d" % issue["number"])
+        sys.stderr.write("flow: cannot read the comments of gh#%d, so the list leaves it out\n" % issue["number"])
+        return None
     for c in comments:
         if marker in c.get("body", ""):
             m = re.search(r"```json\n(.*?)\n```", c["body"], re.S)
@@ -101,7 +105,7 @@ def raw(repo, node, marker, always=False):
                           for p in (node.get("projectItems") or {}).get("nodes", [])],
     }
     issue["state_comment"] = state_comment(repo, issue, marker, always)
-    return issue
+    return None if issue["state_comment"] is None else issue
 
 
 def main():
@@ -123,7 +127,9 @@ def main():
             sys.exit(1)
         issues = data["data"]["repository"]["issues"]
         for node in issues["nodes"]:
-            print(json.dumps(raw(repo, node, marker)))
+            issue = raw(repo, node, marker)
+            if issue is not None:
+                print(json.dumps(issue))
             seen += 1
         if not issues["pageInfo"]["hasNextPage"]:
             return

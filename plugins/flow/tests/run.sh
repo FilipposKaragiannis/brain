@@ -387,14 +387,20 @@ check_all "gh read: a 404 is final at once" '! "$P/adapters/github/read.sh" "gh#
 printf '9\ngh: HTTP 504: 504 Gateway Timeout\n' > "$FAKE_GH_DIR/fail"; : > "$FAKE_GH_DIR/calls.log"
 check_all "gh read: three 5xx end it with a word, not a traceback" '! "$P/adapters/github/read.sh" "gh#10" >/dev/null 2>"$work/gh-err" && grep -q "cannot read gh#10" "$work/gh-err" && ! grep -q Traceback "$work/gh-err" && [ "$(grep -c "^api graphql" "$FAKE_GH_DIR/calls.log")" -eq 3 ]'
 printf '1\ngh: HTTP 503\n' > "$FAKE_GH_DIR/fail"
-"$P/adapters/github/comment.sh" 'gh#10' --body "after the blip" 2>/dev/null
-check "gh comment: a body from stdin survives a retry" sh -c "python3 -c 'import json; cs=[c[\"body\"] for c in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"][0].get(\"comments\",[])]; assert \"after the blip\" in cs, cs'"
-"$P/adapters/github/write-state.sh" 'gh#10' step=design attempts=2 2>/dev/null
-printf '9\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
+"$P/adapters/github/comment.sh" 'gh#10' --body "after the blip" 2>"$work/gh-err"
+check_all "gh comment: a body from stdin survives a retry, once" 'grep -q "trying again" "$work/gh-err" && python3 -c "import json; cs=[c[\"body\"] for c in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"][0].get(\"comments\",[])]; assert cs.count(\"after the blip\") == 1, cs"'
+printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
+check_all "gh write-state: only the good try'\''s stdout is read (the 502 body is not)" '"$P/adapters/github/write-state.sh" "gh#10" step=design attempts=2 2>"$work/gh-err" && grep -q "trying again" "$work/gh-err" && [ "$("$P/adapters/github/read.sh" "gh#10" | jget state.attempts)" = "2" ]'
+printf '3\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
 check_all "gh write-state: an unreadable state comment stops the write, so no second comment starts from nothing" '! "$P/adapters/github/write-state.sh" "gh#10" step=implement >/dev/null 2>"$work/gh-err" && grep -q "cannot read the comments of gh#10" "$work/gh-err"'
 rm -f "$FAKE_GH_DIR/fail"
 item="$("$P/adapters/github/read.sh" 'gh#10')"
 check_all "gh write-state: the state before the blip stands, in one comment" '[ "$(printf '\''%s'\'' "$item" | jget state.step)" = "design" ] && [ "$(printf '\''%s'\'' "$item" | jget state.attempts)" = "2" ] && [ "$(python3 -c "import json; print(len([c for c in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"][0][\"comments\"] if \"flow:state\" in c[\"body\"]]))")" = "1" ]'
+printf '1\ngh: HTTP 502\nissues/12/comments -F\nlanded\n' > "$FAKE_GH_DIR/fail"
+check_all "gh write-state: a first state comment whose answer was lost after it landed is found and patched, not made twice" '"$P/adapters/github/write-state.sh" "gh#12" step=design >/dev/null 2>"$work/gh-err" && [ "$("$P/adapters/github/read.sh" "gh#12" | jget state.step)" = "design" ] && [ "$(python3 -c "import json; print(len([c for c in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"][2].get(\"comments\",[]) if \"flow:state\" in c[\"body\"]]))")" = "1" ]'
+printf '9\ngh: HTTP 502\nissue create\n' > "$FAKE_GH_DIR/fail"
+check_all "gh create: an issue is made once, never on a second try" '! "$P/adapters/github/create.sh" task "Twice?" >/dev/null 2>"$work/gh-err" && ! grep -q "trying again" "$work/gh-err" && [ "$(grep -c "^issue create" "$FAKE_GH_DIR/calls.log")" -eq 1 ]'
+rm -f "$FAKE_GH_DIR/fail"
 
 printf '{"issues": [{"number": 20, "title": "Epic", "body": "", "state": "OPEN", "labels": ["epic"], "url": "https://gh/20", "id": 1020, "node": "I_20"}]}' > "$FAKE_GH_DIR/issues.json"
 child="$("$P/adapters/github/create.sh" task "Slice one" --size S --parent 'gh#20' --body "## What
