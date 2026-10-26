@@ -179,7 +179,7 @@ elif args[0] == "api":
             i.setdefault("comments", []).append({"id": i["number"] * 100 + len(i.get("comments", [])) + 1, "body": sys.stdin.read(),
                                                  "user": {"login": os.environ.get("FAKE_GH_USER", "owner")}}); save(); print("{}")
         else:
-            print(json.dumps(i.get("comments", [])))
+            print(json.dumps(pages(i.get("comments", []))))
         sys.exit()
     if path == "user":
         print("owner" if "-q" in args else json.dumps({"login": "owner"})); sys.exit()

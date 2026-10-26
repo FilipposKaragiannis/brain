@@ -3,7 +3,8 @@
 # as labels (step:*, gate:*, wt:*, flow:*, and size:* unless github.fields.size names a field) and
 # kept in full in one issue comment marked <!-- flow:state -->.
 . "$(dirname "$0")/../../lib/flow.sh"
-command -v gh >/dev/null 2>&1 || die "gh is not installed"
+# lib/flow.sh wraps gh in a function, so the check looks past it to the command.
+(unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 STATE_MARKER="<!-- flow:state -->"
 
 gh_repo() {
@@ -47,7 +48,10 @@ project_sync() {
 issue_to_item() {
   python3 -I -c '
 import json, os, re, sys
-raw = json.load(sys.stdin)
+text = sys.stdin.read()
+if not text.strip():
+    sys.exit(1)  # the read before this failed and said why
+raw = json.loads(text)
 labels = [l["name"] for l in raw.get("labels", [])]
 fields = raw.get("fields") or {}
 state = dict(raw.get("state_comment") or {})
@@ -94,13 +98,16 @@ print(json.dumps({
 }))'
 }
 
-# state_comment <repo> <number>: the JSON inside the flow state comment, or {}; sets STATE_COMMENT_ID.
+# state_comment <repo> <number>: the JSON inside the flow state comment, or {}, with the
+# comment's id. A failed read returns 1, and the caller must stop: taken for "no comment yet",
+# it would make write-state start a second state comment from an empty state, dropping the
+# attempts, the PR and the touches.
 state_comment() {
-  comments="$(gh api "repos/$1/issues/$2/comments?per_page=100" 2>/dev/null || echo '[]')"
+  comments="$(gh api --paginate --slurp "repos/$1/issues/$2/comments?per_page=100")" || return 1
   printf '%s' "$comments" | python3 -I -c '
 import json, sys, re
 marker = sys.argv[1]
-for c in json.load(sys.stdin):
+for c in [c for page in json.load(sys.stdin) for c in page]:
     body = c.get("body", "")
     if marker in body:
         m = re.search(r"```json\n(.*?)\n```", body, re.S)

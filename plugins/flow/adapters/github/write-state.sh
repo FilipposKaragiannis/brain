@@ -5,8 +5,11 @@
 . "$(dirname "$0")/_gh.sh"
 [ $# -ge 2 ] || die "usage: write-state <id> key=value..." 2
 repo="$(gh_repo)"; n="$(issue_number "$1")"; shift
-current="$(state_comment "$repo" "$n")"
-labels="$(gh issue view "$n" -R "$repo" --json labels -q '.labels[].name')"
+# Every GitHub call here must land or the write stops and says so (the labels go first, the
+# comment second, so a stop between them leaves new labels over the older comment, and labels win
+# in issue_to_item). The callers in advance.sh and next.sh go on either way, with that state.
+current="$(state_comment "$repo" "$n")" || die "cannot read the comments of gh#$n"
+labels="$(gh issue view "$n" -R "$repo" --json labels -q '.labels[].name')" || die "cannot read the labels of gh#$n"
 merged="$(printf '%s' "$current" | python3 -I -c '
 import json, sys
 data = json.load(sys.stdin)["data"]
@@ -32,14 +35,23 @@ for key in $label_keys; do
   done
 done
 # shellcheck disable=SC2086
-[ -n "$add$remove" ] && gh issue edit "$n" -R "$repo" $add $remove >/dev/null
+if [ -n "$add$remove" ]; then gh issue edit "$n" -R "$repo" $add $remove >/dev/null || die "cannot write the labels of gh#$n"; fi
 body="$(printf '%s\nFlow state, written by the flow plugin. Do not edit by hand.\n\n```json\n%s\n```\n' "$STATE_MARKER" "$(printf '%s' "$merged" | python3 -I -c 'import json,sys; print(json.dumps(json.load(sys.stdin), indent=2, sort_keys=True))')")"
-cid="$(printf '%s' "$current" | python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")')"
-if [ -n "$cid" ]; then
-  printf '%s' "$body" | gh api -X PATCH "repos/$repo/issues/comments/$cid" -F body=@- >/dev/null
-else
-  printf '%s' "$body" | gh api "repos/$repo/issues/$n/comments" -F body=@- >/dev/null
-fi
+comment_id() { python3 -I -c 'import json,sys; v=json.load(sys.stdin)["id"]; print(v if v else "")'; }
+patch_state() { printf '%s' "$body" | gh api -X PATCH "repos/$repo/issues/comments/$1" -F body=@- >/dev/null; }
+post_state() { printf '%s' "$body" | gh_once api "repos/$repo/issues/$n/comments" -F body=@- >/dev/null; }
+cid="$(printf '%s' "$current" | comment_id)"
+# The first state comment is a create: the answer can be lost after the comment landed, and a
+# plain second try would make a second comment. So after a failed post, look; patch what landed,
+# post once more when nothing did, and stop after that.
+posts=0
+while [ -z "$cid" ] && ! post_state; do
+  posts=$((posts + 1))
+  found="$(state_comment "$repo" "$n")" || die "cannot write the state of gh#$n"
+  cid="$(printf '%s' "$found" | comment_id)"
+  [ -n "$cid" ] || [ "$posts" -lt 2 ] || die "cannot write the state of gh#$n"
+done
+if [ -n "$cid" ]; then patch_state "$cid" || die "cannot write the state of gh#$n"; fi
 if [ -n "$GH_SIZE_FIELD" ]; then
   for kv in "$@"; do
     case "$kv" in size=?*) python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" field "$repo" "$n" "$GH_SIZE_FIELD" "${kv#size=}" \

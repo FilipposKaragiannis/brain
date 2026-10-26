@@ -17,7 +17,7 @@
 #   comments.sh chase <pr>                      ask again a reviewer silent past reviews.chase_after, at most
 #                                               reviews.max_chases times per request, then tell the owner once
 . "$(dirname "$0")/../lib/flow.sh"
-command -v gh >/dev/null 2>&1 || die "gh is not installed"
+(unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 repo="$(cfg github.repo)"; [ -n "$repo" ] || repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" || die "not a GitHub repository"
 owner="${repo%%/*}"; name="${repo#*/}"
 # Every reply the flow posts carries this marker, so a thread whose last word is ours is told from
@@ -42,7 +42,8 @@ ask_reviewer() { # ask_reviewer <pr> <reviewer> <ask>
   if [ "$2" = "copilot" ]; then
     gh pr edit "$1" -R "$repo" --add-reviewer @copilot >/dev/null
   else
-    printf '@%s %s\n\n<!-- flow:review-request %s -->\n' "$2" "$(plain_ask "$3")" "$2" | gh pr comment "$1" -R "$repo" --body-file - >/dev/null
+    # Once: a ping whose answer was lost after it landed would start a second review; the chase covers a lost one.
+    printf '@%s %s\n\n<!-- flow:review-request %s -->\n' "$2" "$(plain_ask "$3")" "$2" | gh_once pr comment "$1" -R "$repo" --body-file - >/dev/null
   fi
 }
 # Re-adding a Copilot request that is still pending may leave no timeline event, so each chase
@@ -61,7 +62,7 @@ chase_copilot() { # chase_copilot <pr> <round> <chase number>
 }
 chase_mention() { # chase_mention <pr> <reviewer> <ago> <head sha>
   printf '@%s review\n\nThe review asked %s ago has no answer yet. Please review %s again: the diff line by line for correctness, and against the acceptance lines of the item.\n\n<!-- flow:chase %s -->\n' \
-    "$2" "$3" "$(printf '%s' "$4" | cut -c1-$SHORT_SHA)" "$2" | gh pr comment "$1" -R "$repo" --body-file - >/dev/null
+    "$2" "$3" "$(printf '%s' "$4" | cut -c1-$SHORT_SHA)" "$2" | gh_once pr comment "$1" -R "$repo" --body-file - >/dev/null
 }
 report_stalled() { # report_stalled <pr> <reviewer> <request id> <ago> <max>: once per request
   marker="$home/reviews/$1-$2"
