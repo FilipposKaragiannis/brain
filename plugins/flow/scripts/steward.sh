@@ -745,19 +745,29 @@ health_gates() {
   done
 }
 
-# health_splits: a split item whose children are all closed has nothing left to run: say it once
-# and notify, so the owner closes it.
+# health_splits: an open item with nothing left to run is the owner's to close: a split item whose
+# children are all closed, or one whose every step ran and that waits at no gate (its PR was merged
+# by hand, or its merge gate cleared without the sweep closing it). Say each once and notify.
 health_splits() {
-  hs_ids="$(for a in $(adapters_configured); do adapter list "$a" 2>/dev/null; echo; done | python3 -I -c '
+  hs_rows="$(for a in $(adapters_configured); do adapter list "$a" 2>/dev/null; echo; done | python3 -I -c '
 import json, sys
 for line in sys.stdin:
     if line.strip():
         for i in json.loads(line):
-            if (i.get("state") or {}).get("step") == "split" and not i.get("open_children"): print(i["id"])')"
-  for hs_id in $hs_ids; do
-    health_changed "split-done-$(item_slug "$hs_id")" closed || continue
-    health_say "$hs_id" "split, and every child is closed: close it"
-    health_notify "$hs_id is split and every child is closed. Close it."
+            s = i.get("state") or {}
+            if s.get("step") == "split" and not i.get("open_children"): print("split=" + i["id"])
+            elif s.get("step") == "done" and s.get("gate", "none") in ("", "none"): print("done=" + i["id"])')"
+  for hs_row in $hs_rows; do   # no pipe: health_say counts a finding in this shell
+    hs_why="${hs_row%%=*}"; hs_id="${hs_row#*=}"
+    if [ "$hs_why" = split ]; then
+      health_changed "split-done-$(item_slug "$hs_id")" closed || continue
+      health_say "$hs_id" "split, and every child is closed: close it"
+      health_notify "$hs_id is split and every child is closed. Close it."
+    else
+      health_changed "step-done-$(item_slug "$hs_id")" open || continue
+      health_say "$hs_id" "done (every step ran) and still open: merge or close it"
+      health_notify "$hs_id is done (every step ran) and still open. Merge or close it."
+    fi
   done
 }
 
