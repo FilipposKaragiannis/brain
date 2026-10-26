@@ -1489,6 +1489,8 @@ check "jobs: cron gets the health line" sh -c "FLOW_SCHEDULER=cron '$P/scripts/j
 check "jobs: history and logs take the health job" sh -c "'$P/scripts/jobs.sh' history health 3 | grep -q 'quiet\|work' && '$P/scripts/jobs.sh' logs health 3 | grep -q 'health.log'"
 printf '{"job":"health","at":"2026-10-24T10:00:00Z","seconds":1,"exit":0,"result":42}\n' >> .flow/log/runs.jsonl
 check_all "jobs: a run recorded before 1.20.2 with a result of digits (a number) still shows in status and history" '"$P/scripts/jobs.sh" status >/dev/null && "$P/scripts/jobs.sh" status --json >/dev/null && "$P/scripts/jobs.sh" history health 3 | grep -q 42'
+printf '[1]\n{"job":null,"result":7}\n' >> .flow/log/runs.jsonl
+check "jobs: a line in the run history that is not a record is skipped by status and history, not a crash" sh -c "'$P/scripts/jobs.sh' status | grep -q '^| health ' && '$P/scripts/jobs.sh' history health | grep -q health"
 unset FLOW_HEALTH_PROCS
 cd "$repo"
 

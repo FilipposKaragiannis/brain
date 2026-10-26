@@ -16,7 +16,10 @@
   "stopped: no step ran" with the reason from the log, so a stall is a word, not "done".
 - The health job says once, and notifies, when a next worker's last two or more runs in a row all
   waited out the pick lock, or all ended without running a step. Both stalls of 1.20.5 and 1.20.6
-  showed only as quiet runs in the history; now they are a finding.
+  showed only as quiet runs in the history; now they are a finding, and `jobs status` counts a
+  run that stopped without a step as failed, not as work.
+- A line in `runs.jsonl` that is not a run record (not an object, or no job name) is skipped by
+  `jobs status`, `jobs history` and the health job, instead of stopping them with a traceback.
 
 ## 1.20.5 (2026-10-26)
 

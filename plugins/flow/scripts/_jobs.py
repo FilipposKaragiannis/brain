@@ -81,7 +81,10 @@ def runs(log, base=None):
                 r = json.loads(line)
             except ValueError:
                 continue
-            if base is None or r.get("job") == base or re.fullmatch(re.escape(base) + r"-\d+", r.get("job", "")):
+            # A line that is not a record (not an object, or no job name) is skipped, not a crash.
+            if not isinstance(r, dict) or not isinstance(r.get("job"), str):
+                continue
+            if base is None or r["job"] == base or re.fullmatch(re.escape(base) + r"-\d+", r["job"]):
                 out.append(r)
     return out
 
