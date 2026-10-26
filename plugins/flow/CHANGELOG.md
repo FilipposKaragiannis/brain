@@ -12,9 +12,9 @@
   a ready list older than the item's state, passes over it (closed, at a gate, done, or split),
   says why, and tries the next ready item; it exits 3 only when a claim found the pool full,
   else 5. Exit codes 4 and 6 are a named item's. The health job says once, and notifies, when an
-  open item's every step ran and it waits at no gate: merge or close it. The next job's last word
-  for exit 6 on a named item is the reason ("is done", "is closed", "every child is closed"),
-  not "done".
+  open item's every step ran and it waits at no gate: merge or close it; an item sent back to a
+  step and done again is said again, and so is a split parent. The next job's last word for exit 6
+  on a named item is the reason ("is done", "is closed", "every child is closed"), not "done".
 
 ## 1.20.4 (2026-10-25)
 

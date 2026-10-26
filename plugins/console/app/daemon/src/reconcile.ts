@@ -179,6 +179,10 @@ function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate:
   if (gate !== null) return 'needs-you';
   if (boardItem === null) return 'claimed';
   if (boardItem.status !== 'open') return 'done';
+  // The flow's ready list leaves these out: every step ran, or the item is split. The owner
+  // merges or closes a done item and a split one whose children are closed; open children block.
+  if (boardItem.state.step === 'done') return 'needs-you';
+  if (boardItem.state.step === 'split') return boardItem.open_children > 0 ? 'blocked' : 'needs-you';
   if (boardItem.open_blockers.length > 0) return 'blocked';
   if (boardItem.needs.length > 0) return 'backlog';
   return 'ready';

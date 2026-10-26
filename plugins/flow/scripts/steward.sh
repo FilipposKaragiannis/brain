@@ -757,17 +757,26 @@ for line in sys.stdin:
             s = i.get("state") or {}
             if s.get("step") == "split" and not i.get("open_children"): print("split=" + i["id"])
             elif s.get("step") == "done" and s.get("gate", "none") in ("", "none"): print("done=" + i["id"])')"
+  hs_keys=""
   for hs_row in $hs_rows; do   # no pipe: health_say counts a finding in this shell
     hs_why="${hs_row%%=*}"; hs_id="${hs_row#*=}"
     if [ "$hs_why" = split ]; then
-      health_changed "split-done-$(item_slug "$hs_id")" closed || continue
+      hs_key="split-done-$(item_slug "$hs_id")"; hs_keys="$hs_keys $hs_key"
+      health_changed "$hs_key" closed || continue
       health_say "$hs_id" "split, and every child is closed: close it"
       health_notify "$hs_id is split and every child is closed. Close it."
     else
-      health_changed "step-done-$(item_slug "$hs_id")" open || continue
+      hs_key="step-done-$(item_slug "$hs_id")"; hs_keys="$hs_keys $hs_key"
+      health_changed "$hs_key" open || continue
       health_say "$hs_id" "done (every step ran) and still open: merge or close it"
       health_notify "$hs_id is done (every step ran) and still open. Merge or close it."
     fi
+  done
+  # An item that left the state (closed, or sent back to a step) is forgotten, so it is said
+  # again if it comes back.
+  for hs_f in "$home"/health/split-done-*.seen "$home"/health/step-done-*.seen; do
+    [ -f "$hs_f" ] || continue
+    case " $hs_keys " in *" $(basename "$hs_f" .seen) "*) ;; *) health_cleared "$(basename "$hs_f" .seen)" ;; esac
   done
 }
 

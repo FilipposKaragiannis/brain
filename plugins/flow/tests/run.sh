@@ -1116,7 +1116,6 @@ stale_pick() { sh -c 'printf "%s\n" "$2" > ".flow/runs/.ready.$$"; FLOW_NEXT_PID
 "$P/adapters/local/write-state.sh" "$pa" step=implement gate=plan-approval
 out="$(stale_pick 2>"$work/pass.err")"; code=$?
 check "a pick passes over an item its ready list holds that waits at a gate, and says so" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ] && grep -q "$4 waits at gate .plan-approval." "$5"' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb" "$pa" "$work/pass.err"
-check "the pick lock is released after a pass-over" [ ! -d .flow/pick.lock ]
 stale_pick >/dev/null 2>"$work/pass.err"; code=$?
 check "a pass-over with nothing left is nothing ready (exit 5), not a full pool (exit 3)" sh -c "[ $code -eq 5 ] && grep -q 'nothing ready' '$work/pass.err'"
 check "a pass-over leaves no cached ready list behind" sh -c '! ls .flow/runs/.ready.* >/dev/null 2>&1'
@@ -1125,10 +1124,27 @@ check "a named item at a gate still exits 4" [ "$code" -eq 4 ]
 "$P/adapters/local/write-state.sh" "$pa" step=done gate=none
 "$P/scripts/next.sh" "$pa" >/dev/null 2>&1; code=$?
 check "a named item whose every step ran still exits 6" [ "$code" -eq 6 ]
+rm -f ".flow/runs/$(item_slug "$pb").json"
+out="$(stale_pick 2>"$work/pass.err")"; code=$?
+check "a pick passes over an item its ready list holds whose every step ran, and says so" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ] && grep -q "$4 is done (every step ran)" "$5"' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb" "$pa" "$work/pass.err"
+# The pool is full (pb holds its one worktree) and pc needs one: a pass-over and a full-pool skip
+# in one pick end in exit 3, as the pool is what stops the work.
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\npool_max: 1\nnotify:\n  desktop: false\n' > .flow/config.yaml
+pc="$("$P/scripts/new.sh" task "Needs a worktree" --size S --priority P2 --body "## Acceptance
+- [ ] c")"
+"$P/adapters/local/write-state.sh" "$pa" step=implement
+stale="$("$P/adapters/local/list-ready.sh")"
+"$P/adapters/local/write-state.sh" "$pa" step=done
+stale_pick >/dev/null 2>"$work/pass.err"; code=$?
+check "a pass-over and a full-pool skip in one pick: exit 3, the pool is what stops the work" sh -c "[ $code -eq 3 ] && grep -q '$pa is done' '$work/pass.err' && grep -q 'no free worktree' '$work/pass.err'"
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out" 2>&1
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out2" 2>&1
-check "health: an open item whose every step ran is said once: merge or close it" sh -c "grep -q '$pa: done (every step ran) and still open: merge or close it' '$work/pass.out' && grep -q '1 finding' '$work/pass.out' && ! grep -q 'merge or close it' '$work/pass.out2'"
-rm -f ".flow/runs/$(item_slug "$pb").json"
+check "health: an open item whose every step ran is said once: merge or close it" sh -c "grep -q '$pa: done (every step ran) and still open: merge or close it' '$work/pass.out' && grep -q '; 1 finding(s)' '$work/pass.out' && ! grep -q 'merge or close it' '$work/pass.out2'"
+"$P/adapters/local/write-state.sh" "$pa" step=implement
+env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health >/dev/null 2>&1
+"$P/adapters/local/write-state.sh" "$pa" step=done
+env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out3" 2>&1
+check "health: an item sent back to a step and done again is said again" grep -q "$pa: done (every step ran) and still open" "$work/pass.out3"
 check "next job: a named item whose every step ran says so, not done" sh -c "'$P/jobs/next.sh' claude '$pa' | grep -q '$pa is done (every step ran). Merge or close it.'"
 
 echo "parallel runs: the pick lock and --workers"

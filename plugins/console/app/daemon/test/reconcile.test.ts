@@ -103,9 +103,21 @@ test('Items_StateFromEngagementThenBoard', async () => {
   assert.equal(states['gh#2'], 'done', 'because it is closed');
 });
 
+test('Items_NothingLeftToRun_NotReady', async () => {
+  const facts = withBoardItems(await input(), [
+    { id: 'gh#40', state: { step: 'done', gate: 'none', worktree: '', pr: '', last_event: '', profile: 'task-S', attempts: 0 } },
+    { id: 'gh#41', state: { step: 'split', gate: 'none', worktree: '', pr: '', last_event: '', profile: 'task-M', attempts: 0 }, open_children: 2 },
+    { id: 'gh#42', state: { step: 'split', gate: 'none', worktree: '', pr: '', last_event: '', profile: 'task-M', attempts: 0 }, open_children: 0 },
+  ]);
+  const states = Object.fromEntries(reconcile(facts).items.map((item) => [item.id, item.state]));
+  assert.equal(states['gh#40'], 'needs-you', 'because every step ran and the owner merges or closes it; the next job never takes it');
+  assert.equal(states['gh#41'], 'blocked', 'because a split item waits on its open children');
+  assert.equal(states['gh#42'], 'needs-you', 'because a split item whose children are closed is the owner\'s to close');
+});
+
 test('Items_EngagedFirstThenRank', async () => {
   const ids = (await snapshot()).items.map((item) => item.id);
-  assert.deepEqual(ids.slice(0, 3), ['gh#7', 'gh#9', 'gh#5'], 'because what needs you comes before what runs, then stale, before the backlog');
+  assert.deepEqual(ids.slice(0, 4), ['gh#7', 'gh#20', 'gh#9', 'gh#5'], 'because what needs you (a gate, or every step ran with nobody to merge or close it) comes before what runs, then stale, before the backlog');
 });
 
 test('Items_BodyDropped', async () => {
@@ -397,7 +409,7 @@ test('NeedsField_Counted', async () => {
 });
 
 test('Readiness_Fixture_OneBucketPerOpenItem', async () => {
-  assert.deepEqual((await snapshot()).readiness, { ready: 2, waitingOnField: 0, blocked: 1, gated: 1, nextInLineMissingField: 0 }, 'because gh#12 and gh#20 are ready, gh#13 is blocked, gh#7 waits at a gate and the running and stale items are in none');
+  assert.deepEqual((await snapshot()).readiness, { ready: 1, waitingOnField: 0, blocked: 1, gated: 2, nextInLineMissingField: 0 }, 'because gh#12 is ready, gh#13 is blocked, gh#7 waits at a gate, gh#20 ran every step and waits on its owner, and the running and stale items are in none');
 });
 
 test('Readiness_ItemWaitingOnField_Counted', async () => {
