@@ -419,7 +419,7 @@ test('TerminalOpen_TwoAtOnce_NoLockAndNothingReRead', async () => {
 });
 
 test('SyncHandoff_NoteCannotBeWritten_FailsAndTheRunNeverStarts', async () => {
-  const unwritable = { ...CONTEXT, worktrees: [{ name: 'app-wt-2', path: '/nonexistent-root/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 3, agentPids: [], step: 'implement' }], pool: ['/nonexistent-root/app-wt-2'] };
+  const unwritable = { ...CONTEXT, worktrees: [{ name: 'app-wt-2', path: '/nonexistent-root/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 3, agentPids: [], step: 'implement', claimStep: 'implement', trackerStep: 'implement' }], pool: ['/nonexistent-root/app-wt-2'] };
   const { actions, processes, cleanup } = await runner(unwritable, PLAIN);
   try {
     const record = actionOf(actions.request('sync.handoff', { target: 'gh#7', refs: 'origin/main' }));

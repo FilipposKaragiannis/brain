@@ -376,6 +376,7 @@ on every state change and at most twice a second while output arrives.
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
 | `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished`; on a conflict the record's `conflict` |
 | `sync.handoff` | `target`, `refs?` | writes the item's sync note, then `jobs/next.sh` as `run.start` with the item (below) | the item and the next job | `started` while the run goes, `finished` once it ends well |
+| `item.step-sync` | `item` | `adapters/<adapter>/write-state.sh <item> step=<claim's step> last_event=<when> step <old> -> <new>, set by the console from the claim in <worktree>` (below) | the item | `finished`; `board` and `files` are re-read |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
 | `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
@@ -435,6 +436,17 @@ item's own step for afterwards. The output opens with what was written and that 
 step is sync, and the daemon logs one `sync.handoff` line with the item, worktree, refs and the
 refs it replaced.
 
+`item.step-sync` settles a claim whose step differs from the tracker's by writing the claim's step
+to the tracker, the claim being the agent's own record. It runs what `adapter write-state` in
+`lib/flow.sh` runs, `<plugin>/adapters/<adapter>/write-state.sh` (the adapter from the id's
+prefix, `gh#` github, `local:` local) with the item first, and writes the fields advance.sh writes
+at every step change: `step`, and `last_event` saying the console set it. It is refused, each with
+its own reason, when no pool worktree claims the item; while a run record names the item or an
+agent works in its worktree, since the run moves the step itself; when the claim records no step,
+or one that is not a step name; when it records the sync step, which runs ahead of the item's own
+step and never moves it; and when the tracker already says the claim's step. The output opens
+with the old and the new step, and the daemon logs one `item.step-sync` line.
+
 ### Sync
 "Merge <base> in" ends one of three ways. Merged: every ref went in cleanly, the action is `done`
 and the stale reason goes with the next git read. Conflict: the merge is aborted, the action is
@@ -480,7 +492,7 @@ at once. When an action ends the sources it changed are re-read.
 Every action is two lines in `~/.local/state/brain-console/<project>/actions.jsonl`, one at
 start and one at the end, with its full output in `actions/<id>.log` beside it (`--state-dir`
 or `BRAIN_CONSOLE_STATE` moves it). Inside the project the console writes only what the scripts
-themselves write, the sync note `sync.handoff` writes and, from the flow settings editor,
+themselves write (`item.step-sync` through the flow's own adapter), the sync note `sync.handoff` writes and, from the flow settings editor,
 `.flow/config.yaml`.
 
 ## Reconciliation
@@ -503,6 +515,10 @@ process list from `processes`, issue state and labels from `board`, pull request
 real disagreement can therefore take up to one board cycle, about two minutes, to show. One that
 goes away in between starts over. A source whose latest read failed does not hold a disagreement
 back: it may show, and the source's red light on the strip says how far to trust it.
+A claim whose step differs from the issue's is not shown at all while a run of the item goes (a
+run record names it or an agent works in its worktree), since the run moves the step itself, and
+once the run has ended it shows only after a board read that started after the end, on top of
+that rule.
 
 Every disagreement carries `explain`, one plain sentence saying what each store says and which is
 usually right, and `action`, the button that settles it (`{kind, args, label}`) or null when a
@@ -512,7 +528,8 @@ person has to look:
 |---|---|---|
 | run record vs process list | the process list: the run ended or crashed | `steward.health`, "Run the health check" |
 | process list vs claim | the process list: something runs there unclaimed | none |
-| claim vs issue state (step or worktree) | the claim: the agent writes it first | none |
+| claim vs issue state (step) | the claim: it is the agent's own record, written first | `item.step-sync` with the item, "Set the issue's step to the claim's"; none when the claim names the sync step, which leaves the issue at the item's own step |
+| claim vs issue state (worktree) | the claim: it lives in the worktree itself | none |
 | gate record vs issue labels | the gate record: the labels catch up | `refresh` with `source: board`, "Re-read the board" |
 | issue state vs pull request | the pull request: only the merge is left | `pr.merge` with the PR number, "Merge #N", only when the `pulls` source was read and that PR, open in `github.repo`, is `mergeable`; with pulls unread (not yet, failed, or not on GitHub) the row shows with no action, since nothing says the named PR is open, green or in this repository |
 

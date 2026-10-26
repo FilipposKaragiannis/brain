@@ -388,6 +388,7 @@ export type ActionKind =
   | 'worktree.release'
   | 'worktree.sync'
   | 'sync.handoff'
+  | 'item.step-sync'
   | 'steward.health'
   | 'jobs.install'
   | 'job.uninstall'

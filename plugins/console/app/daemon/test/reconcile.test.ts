@@ -10,6 +10,8 @@ import type { PullFact } from '../src/collectors/pulls.ts';
 import { readPulls } from '../src/collectors/pulls.ts';
 import { pullState, reconcile } from '../src/reconcile.ts';
 import type { ReconcileInput } from '../src/reconcile.ts';
+import { DisagreementSettler } from '../src/settle.ts';
+import type { ReadMarks } from '../src/settle.ts';
 import type { Freshness, Snapshot } from '../src/snapshot.ts';
 import { BOARD_JSON, FIXTURE_ROOT, JOBS_JSON, fakeRunner } from './fakeRunner.ts';
 
@@ -458,9 +460,62 @@ test('Disagreement_PullsUnreadDoneItem_NoMergeButton', async () => {
   assert.deepEqual([found?.item, found?.action], ['gh#20', null], 'because without pull requests read nothing says the named PR is open, green or even in this repository, so the row shows but no button merges it');
 });
 
-test('Disagreement_ClaimStepVsIssue_NoAction', async () => {
-  const found = disagreementOf(reconcile(withBoardItem(await input(), 'gh#9', { step: 'review' })), 'claim vs issue state');
-  assert.equal(found?.action, null, 'because no button can tell which step is true; a person looks');
+/** gh#9 (claimed in project-wt-3 at step implement) with the issue at step review and no run of it going. */
+async function stepMismatchNoRun(): Promise<ReconcileInput> {
+  const facts = withBoardItem(await input(), 'gh#9', { step: 'review' });
+  facts.flow.runs = [];
+  facts.processes = { agents: [] };
+  return facts;
+}
+const stepMismatchOf = (picture: Snapshot) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === 'claim vs issue state' && entry.message.includes('the claim says step'));
+
+test('Disagreement_ClaimStepVsIssue_ActionSetsTheIssueStep', async () => {
+  const found = stepMismatchOf(reconcile(await stepMismatchNoRun()));
+  assert.deepEqual(found?.action, { kind: 'item.step-sync', args: { item: 'gh#9' }, label: "Set the issue's step to the claim's" }, "because with no run going the claim is the agent's last word on the step, and the issue can be set to it");
+  assert.equal(found?.explain, "The claim in project-wt-3 says gh#9 is at step implement, while the issue says review; the claim is usually right, because it is the agent's own record and is written first, and the button writes step implement to the issue as the flow does at a step change.", 'because the owner must know which store to trust and what the button does');
+});
+
+test('Disagreement_ClaimAtSyncStep_NoAction', async () => {
+  const facts = await stepMismatchNoRun();
+  facts.flow.claims = facts.flow.claims.map((claim) => (claim.item === 'gh#9' ? { ...claim, step: 'sync' } : claim));
+  const found = stepMismatchOf(reconcile(facts));
+  assert.deepEqual([found?.item, found?.action], ['gh#9', null], "because the sync step runs ahead of the item's own step and never moves it, so writing sync to the issue would be wrong");
+});
+
+/** Read marks: `started` reads handed out, with the files' and the board's latest good reads having started at the numbers given. */
+const readMarks = (started: number, files: number, board: number): ReadMarks => ({
+  started, completed: { files, git: started, processes: started, jobs: started, board, pulls: started },
+  failing: { files: false, git: false, processes: false, jobs: false, board: false, pulls: false },
+});
+const settledWith = (settler: DisagreementSettler, facts: ReconcileInput, marks: ReadMarks): Snapshot => reconcile({ ...facts, settle: (found) => settler.settle(found, marks) });
+
+test('Lag_StepMismatchWhileARunGoes_Hidden', async () => {
+  const live = withBoardItem(await input(), 'gh#9', { step: 'review' });
+  const recordOnly = { ...live, processes: { agents: [] } };
+  const processOnly = { ...live, flow: { ...live.flow, runs: [] } };
+  for (const [facts, because] of [[live, 'a run record and an agent'], [recordOnly, 'a run record'], [processOnly, 'an agent in its worktree']] as const) {
+    const settler = new DisagreementSettler();
+    settledWith(settler, facts, readMarks(10, 10, 9));
+    assert.equal(stepMismatchOf(settledWith(settler, facts, readMarks(20, 20, 20))), undefined, `because with ${because} the run moves the step itself and the issue lags it`);
+  }
+});
+
+test('Lag_RunEnded_HiddenUntilABoardReadStartedAfterTheEnd', async () => {
+  const live = withBoardItem(await input(), 'gh#9', { step: 'review' });
+  const ended = await stepMismatchNoRun();
+  const settler = new DisagreementSettler();
+  settledWith(settler, live, readMarks(10, 10, 9));
+  settledWith(settler, live, readMarks(11, 11, 10));
+  assert.equal(stepMismatchOf(settledWith(settler, ended, readMarks(12, 12, 10))), undefined, 'because the run just ended and the issue may not have caught up');
+  assert.equal(stepMismatchOf(settledWith(settler, ended, readMarks(14, 14, 11))), undefined, 'because the board read that finished started (as read 11) before the run was seen to end, so it may hold the old step');
+  assert.equal(stepMismatchOf(settledWith(settler, ended, readMarks(15, 15, 13)))?.action?.kind, 'item.step-sync', 'because a board read that started after the run ended still says the other step, so it is a disagreement');
+});
+
+test('Lag_StepMismatchWithoutAnyRun_FollowsTheSettleRule', async () => {
+  const facts = await stepMismatchNoRun();
+  const settler = new DisagreementSettler();
+  assert.equal(stepMismatchOf(settledWith(settler, facts, readMarks(6, 6, 5))), undefined, 'because one picture cannot tell it from a board that lags a read');
+  assert.equal(stepMismatchOf(settledWith(settler, facts, readMarks(8, 7, 8)))?.item, 'gh#9', 'because the claim and the issue were both read again after it appeared and still disagree');
 });
 
 test('Disagreement_DeadRun_ActionRunsHealth', async () => {

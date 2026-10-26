@@ -20,6 +20,10 @@ export type SyncFacts = {
   agentPids: number[];
   /** The claimed item's step: the tracker's when the board was read, else the claim's; empty when neither says. */
   step: string;
+  /** The step the claim file records; empty when it records none. */
+  claimStep: string;
+  /** The step the tracker records, from the latest board read; empty before the board was read or when it says none. */
+  trackerStep: string;
 };
 
 /** A process's session as the snapshot lists it: where it ran, how to resume it, and whether the process still runs. */
@@ -99,7 +103,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.stop', 'job.pause', 'job.resume',
-  'worktree.claim', 'worktree.release', 'worktree.sync', 'sync.handoff', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -111,6 +115,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'worktree.release': ['target', 'force'],
   'worktree.sync': ['target'],
   'sync.handoff': ['target', 'refs'],
+  'item.step-sync': ['item'],
   'steward.health': [],
   'jobs.install': [],
   'job.uninstall': ['job'],
@@ -147,6 +152,11 @@ export const SYNC_SCRIPT = path.resolve(import.meta.dirname, '..', 'scripts', 's
 /** How much of a job's log a terminal shows before it follows new lines. */
 const LOG_LINES = '200';
 
+/** A step name as profiles.json spells them; anything else in a claim file never reaches the tracker. */
+const STEP = /^[a-z][a-z0-9-]*$/;
+/** The adapter that owns an item, from its id's prefix, as lib/flow.sh's `adapter_for` says. */
+const ADAPTER_OF_PREFIX: [string, string][] = [['gh#', 'github'], ['local:', 'local']];
+
 const fail = (error: string): PlanResult => ({ ok: false, error });
 
 function script(context: ActionContext, name: string): string {
@@ -176,6 +186,7 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
   if (kind === 'worktree.sync') return planSync(args, context);
   if (context.pluginRoot === null) return fail('no flow plugin found for the project');
   if (kind === 'sync.handoff') return planHandoff(args, context);
+  if (kind === 'item.step-sync') return planStepSync(args, context);
   const sh = (name: string, scriptArgs: string[], locks: string[], timeoutMs: number, refresh: string[]): PlanResult =>
     ({ ok: true, plan: { command: 'sh', args: [script(context, name), ...scriptArgs], cwd: context.root, locks, timeoutMs, detach: false, refresh, refreshAgainMs: null, outcome: 'finished' } });
   /** `jobs.sh run <job>`: launchd runs the job, the script only starts it. */
@@ -383,4 +394,43 @@ function planHandoff(args: Record<string, string>, context: ActionContext): Plan
     };
   };
   return { ok: true, plan: { ...started.plan, prepare } };
+}
+
+/** now_iso in lib/flow.sh: UTC to the second. */
+function nowIso(now: Date): string {
+  return now.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+/**
+ * `item.step-sync`: write the claim's step to the tracker, the way advance.sh moves an item on:
+ * `adapter write-state <item> step=<step> last_event=<when> <what>`, which `adapter` in
+ * lib/flow.sh runs as `<plugin>/adapters/<adapter>/write-state.sh` with the item first. Refused
+ * while a run of the item goes (a run record names it, or an agent works in its worktree), since
+ * the run moves the step itself; when the claim records no step; when it records the sync step,
+ * which runs ahead of the item's own step and never moves it; and when the tracker already agrees.
+ */
+function planStepSync(args: Record<string, string>, context: ActionContext): PlanResult {
+  const item = args['item'] ?? '';
+  if (!ITEM_ID.test(item)) return fail('item.step-sync needs an item id like gh#12 or local:task/7');
+  const worktree = context.worktrees.find((entry) => entry.item === item);
+  if (worktree === undefined) return fail(`no pool worktree claims ${item}, so there is no claim to take the step from`);
+  if (context.runItems.includes(item)) return fail(`a run record names ${item}; its run moves the step itself, so let it end first`);
+  if (worktree.agentPids.length > 0) return fail(`an agent works in ${worktree.name} (pid ${worktree.agentPids.join(', ')}); its run moves the step itself, so let it end first`);
+  const step = worktree.claimStep;
+  if (step === '') return fail(`the claim in ${worktree.name} records no step, so there is nothing to set the issue to`);
+  if (!STEP.test(step)) return fail(`the claim in ${worktree.name} records the step ${step}, which is not a step name`);
+  if (step === 'sync') return fail(`the claim in ${worktree.name} names the sync step, which runs ahead of ${item}'s own step and never moves it`);
+  if (worktree.trackerStep === step) return fail(`the issue already says ${item} is at step ${step}`);
+  const adapter = ADAPTER_OF_PREFIX.find(([prefix]) => item.startsWith(prefix))?.[1] ?? '';
+  const old = worktree.trackerStep === '' ? 'none' : worktree.trackerStep;
+  const writeState = path.join(context.pluginRoot ?? '', 'adapters', adapter, 'write-state.sh');
+  const lastEvent = `last_event=${nowIso(new Date())} step ${old} -> ${step}, set by the console from the claim in ${worktree.name}`;
+  const prepare = async (): Promise<Awaited<ReturnType<NonNullable<ActionPlan['prepare']>>>> => ({
+    output: `console: setting the step of ${item} from ${old} to ${step}, the step the claim in ${worktree.name} records\n`,
+    event: { name: 'item.step-sync', fields: { item, worktree: worktree.path, from: old, to: step } },
+  });
+  return {
+    ok: true,
+    plan: { command: 'sh', args: [writeState, item, `step=${step}`, lastEvent], cwd: context.root, locks: [`item:${item}`], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: ['board', 'files'], refreshAgainMs: null, outcome: 'finished', prepare },
+  };
 }

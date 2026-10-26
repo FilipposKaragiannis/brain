@@ -375,7 +375,37 @@ function mergeEvidence(item: Item, pulls: PullRequest[] | null): { text: string;
 }
 
 const REREAD_BOARD: DisagreementAction = { kind: 'refresh', args: { source: 'board' }, label: 'Re-read the board' };
+/** The flow's sync step (next.sh writes it to the claim when a sync note waits); the tracker keeps the item's own step meanwhile. */
+const SYNC_STEP = 'sync';
 const RUN_HEALTH: DisagreementAction = { kind: 'steward.health', args: {}, label: 'Run the health check' };
+
+/**
+ * Whether a run of the item goes: a run record names it, or an agent process sits in its
+ * worktree. next.sh writes the claim's step before the tracker's, so while a run goes a step
+ * mismatch is lag, not a disagreement, and it is not found at all. That is the whole rule:
+ * a disagreement that is not found is forgotten by the settler, so once the run ends (the
+ * rebuild in which the run record and the agent are gone) it is first seen afresh and shows
+ * only after a board read that started after that rebuild, on top of the usual settle rule.
+ */
+function runLive(input: ReconcileInput, context: WorktreeContext, item: string): boolean {
+  return context.agents.length > 0 || input.flow.runs.some((run) => run.item === item);
+}
+
+/**
+ * The claim's step differs from the tracker's. The button writes the claim's step to the
+ * tracker, as advance.sh does at a step change; not for the sync step, which runs ahead of the
+ * item's own step and never moves it. Found only while no run of the item goes (`runLive`).
+ */
+function stepMismatch(claim: ClaimRecord, worktree: string, trackerStep: string): Disagreement {
+  const says = `The claim in ${worktree} says ${claim.item} is at step ${claim.step}, while the issue says ${trackerStep}`;
+  return {
+    item: claim.item, worktree, sources: ['claim', 'issue state'], message: `${claim.item}: the claim says step ${claim.step}, the issue says ${trackerStep}.`,
+    explain: claim.step === SYNC_STEP
+      ? `${says}; the sync step runs ahead of the item's own step and leaves the issue at it, so nothing needs setting, and the next run writes the claim again.`
+      : `${says}; the claim is usually right, because it is the agent's own record and is written first, and the button writes step ${claim.step} to the issue as the flow does at a step change.`,
+    action: claim.step === SYNC_STEP ? null : { kind: 'item.step-sync', args: { item: claim.item }, label: "Set the issue's step to the claim's" },
+  };
+}
 
 function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], items: Item[], pulls: PullRequest[]): Disagreement[] {
   const out: Disagreement[] = [];
@@ -397,12 +427,8 @@ function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], 
       });
     }
     const claimed = context.claim === null ? null : board.get(context.claim.item) ?? null;
-    if (context.claim !== null && claimed !== null && claimed.state.step !== '' && claimed.state.step !== context.claim.step) {
-      out.push({
-        item: context.claim.item, worktree: context.name, sources: ['claim', 'issue state'], message: `${context.claim.item}: the claim says step ${context.claim.step}, the issue says ${claimed.state.step}.`,
-        explain: `The claim in ${context.name} says ${context.claim.item} is at step ${context.claim.step}, while the issue says ${claimed.state.step}; the claim is usually right, because the agent writes it first and the issue catches up.`,
-        action: null,
-      });
+    if (context.claim !== null && claimed !== null && claimed.state.step !== '' && claimed.state.step !== context.claim.step && !runLive(input, context, context.claim.item)) {
+      out.push(stepMismatch(context.claim, context.name, claimed.state.step));
     }
     if (context.claim !== null && claimed !== null && claimed.state.worktree !== '' && claimed.state.worktree !== context.name) {
       out.push({
