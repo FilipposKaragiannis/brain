@@ -10,8 +10,12 @@ are asked for only when GH_SIZE_FIELD, GH_PRIORITY_FIELD or GH_AREA_FIELD is set
 GH_PROJECT is set, because they need the read:project scope a default login lacks. The state
 comment is read for a single issue, and in a list only for issues that carry a flow label: an
 unstarted item keeps the last gate's answer there with no label. Prints one JSON object per
-line. FLOW_GH_PAGE sets the page size (tests)."""
-import json, os, re, subprocess, sys
+line. FLOW_GH_PAGE sets the page size (tests). A call GitHub fails with a 5xx is tried again
+(_call.py); a call that still fails ends the read with a message, never with half an item."""
+import json, os, re, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _call  # noqa: E402
 
 WANT_FIELDS = bool(os.environ.get("GH_SIZE_FIELD") or os.environ.get("GH_PRIORITY_FIELD") or os.environ.get("GH_AREA_FIELD"))
 WANT_PROJECT = bool(os.environ.get("GH_PROJECT"))
@@ -43,7 +47,7 @@ READ = """query($owner: String!, $name: String!, $number: Int!) {
 
 
 def gh(*args):
-    out = subprocess.run(["gh", *args], capture_output=True, text=True)
+    out = _call.gh(args)
     if out.returncode != 0:
         sys.stderr.write(out.stderr)
         return None
@@ -62,7 +66,12 @@ def graphql(query, **variables):
 def state_comment(repo, issue, marker, always=False):
     if not always and not any(l["name"].split(":")[0] in ("step", "gate", "wt", "flow") for l in issue["labels"]):
         return {}
-    for c in gh("api", "repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"])) or []:
+    comments = gh("api", "repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"]))
+    if comments is None:
+        # Without the comment the item would read as unstarted, with no attempts, no PR and no
+        # touches: a wrong answer, so no answer.
+        sys.exit("flow: cannot read the comments of gh#%d" % issue["number"])
+    for c in comments:
         if marker in c.get("body", ""):
             m = re.search(r"```json\n(.*?)\n```", c["body"], re.S)
             try:

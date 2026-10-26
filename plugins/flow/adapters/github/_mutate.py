@@ -10,17 +10,20 @@ gate is the gate status (the merge gate is the review status), a started step or
 open sub-issues is the running status, an unstarted item with no missing field and no open blocker is the ready status, any
 other is the backlog status. Closed items are left to the project's own workflows. The status
 names come from GH_STATUS_<KEY>; an item already at its status costs no write."""
-import json, os, subprocess, sys
+import json, os, sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _call  # noqa: E402
 
 STATUS = {key: os.environ.get("GH_STATUS_" + key.upper(), default) for key, default in (
     ("backlog", "Backlog"), ("ready", "Ready"), ("gate", "Needs you"), ("running", "In progress"), ("review", "In review"))}
 
 
 def graphql(query, **variables):
-    args = ["gh", "api", "graphql", "-f", "query=" + query]
+    args = ["api", "graphql", "-f", "query=" + query]
     for key, value in variables.items():
         args += ["-F" if isinstance(value, int) else "-f", "%s=%s" % (key, value)]
-    out = subprocess.run(args, capture_output=True, text=True)
+    out = _call.gh(args)
     if out.returncode != 0:
         sys.exit("flow: " + (out.stderr.strip() or "graphql call failed"))
     return json.loads(out.stdout)["data"]

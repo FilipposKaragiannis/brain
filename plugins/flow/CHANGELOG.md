@@ -1,5 +1,19 @@
 # flow
 
+## 1.20.7 (2026-10-26)
+
+- A GitHub call that fails with a 5xx answer or a dropped connection is tried again, up to three
+  times, after 2 and then 5 seconds (`FLOW_GH_RETRY_WAIT`), and says so on stderr. The shell
+  side is a `gh` function in `lib/flow.sh` that every flow script gets; the adapter's Python
+  goes through `_call.py` with the same test and waits. A body the call reads from stdin is
+  kept in a file first, so a second try sends it too. Any other failure is final at once. On
+  foosbrawl, one `HTTP 502` while the run read the item after a step ended the run with exit 1
+  and left the step's gate unapplied until the health job re-ran it 13 minutes later.
+- A read whose comments call still fails after the retries ends with "cannot read the comments
+  of gh#N" instead of answering an item with an empty state (no attempts, no PR, no touches),
+  and `write-state` stops there instead of starting a second state comment from nothing, which
+  dropped those fields. An empty answer no longer ends `read.sh` with a Python traceback.
+
 ## 1.20.6 (2026-10-26)
 
 - `next.sh` reads the ready list before it takes the pick lock. Listing a tracker can take a

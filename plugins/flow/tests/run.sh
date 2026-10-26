@@ -377,6 +377,25 @@ check "gh close"          [ "$("$P/adapters/github/read.sh" 'gh#11' | jget statu
 check "gh next.sh end to end" sh -c "'$P/scripts/next.sh' --json | grep -q '\"item\":\"gh#10\"'"
 check "cross-tracker blocker: local waits on gh" sh -c "'$P/adapters/local/create.sh' task Cross --blocked-by 'gh#12' >/dev/null && ! '$P/adapters/local/list-ready.sh' | grep -q Cross"
 
+echo "github blips (fake gh)"
+# $FAKE_GH_DIR/fail makes the next N gh calls fail with a message; the waits are zero here.
+export FLOW_GH_RETRY_WAIT="0 0"
+printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
+check_all "gh read survives one 502 and says so" '[ "$("$P/adapters/github/read.sh" "gh#10" 2>"$work/gh-err" | jget title)" = "Epic" ] && grep -q "flow: gh: gh: HTTP 502; trying again in 0s" "$work/gh-err"'
+printf '1\ngh: HTTP 404: Not Found\n' > "$FAKE_GH_DIR/fail"
+check_all "gh read: a 404 is final at once" '! "$P/adapters/github/read.sh" "gh#10" >/dev/null 2>"$work/gh-err" && ! grep -q "trying again" "$work/gh-err" && grep -q "cannot read gh#10" "$work/gh-err"'
+printf '9\ngh: HTTP 504: 504 Gateway Timeout\n' > "$FAKE_GH_DIR/fail"; : > "$FAKE_GH_DIR/calls.log"
+check_all "gh read: three 5xx end it with a word, not a traceback" '! "$P/adapters/github/read.sh" "gh#10" >/dev/null 2>"$work/gh-err" && grep -q "cannot read gh#10" "$work/gh-err" && ! grep -q Traceback "$work/gh-err" && [ "$(grep -c "^api graphql" "$FAKE_GH_DIR/calls.log")" -eq 3 ]'
+printf '1\ngh: HTTP 503\n' > "$FAKE_GH_DIR/fail"
+"$P/adapters/github/comment.sh" 'gh#10' --body "after the blip" 2>/dev/null
+check "gh comment: a body from stdin survives a retry" sh -c "python3 -c 'import json; cs=[c[\"body\"] for c in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"][0].get(\"comments\",[])]; assert \"after the blip\" in cs, cs'"
+"$P/adapters/github/write-state.sh" 'gh#10' step=design attempts=2 2>/dev/null
+printf '9\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
+check_all "gh write-state: an unreadable state comment stops the write, so no second comment starts from nothing" '! "$P/adapters/github/write-state.sh" "gh#10" step=implement >/dev/null 2>"$work/gh-err" && grep -q "cannot read the comments of gh#10" "$work/gh-err"'
+rm -f "$FAKE_GH_DIR/fail"
+item="$("$P/adapters/github/read.sh" 'gh#10')"
+check_all "gh write-state: the state before the blip stands, in one comment" '[ "$(printf '\''%s'\'' "$item" | jget state.step)" = "design" ] && [ "$(printf '\''%s'\'' "$item" | jget state.attempts)" = "2" ] && [ "$(python3 -c "import json; print(len([c for c in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"][0][\"comments\"] if \"flow:state\" in c[\"body\"]]))")" = "1" ]'
+
 printf '{"issues": [{"number": 20, "title": "Epic", "body": "", "state": "OPEN", "labels": ["epic"], "url": "https://gh/20", "id": 1020, "node": "I_20"}]}' > "$FAKE_GH_DIR/issues.json"
 child="$("$P/adapters/github/create.sh" task "Slice one" --size S --parent 'gh#20' --body "## What
 x")"
@@ -438,6 +457,10 @@ check "gh list stops at the limit and says so" sh -c "[ \"\$('$P/adapters/github
 status_of() { python3 -c "import json; print(next(i.get('project_status','') for i in json.load(open('$FAKE_GH_DIR/issues.json'))['issues'] if i['number']==$1))"; }
 check "gh sync: triaged and unblocked items are Ready" [ "$(status_of 30)$(status_of 32)" = "ReadyReady" ]
 check "gh sync: a missing field or an open blocker is Backlog" [ "$(status_of 33)$(status_of 34)$(status_of 35)" = "BacklogBacklogBacklog" ]
+printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"
+python3 -I "$P/adapters/github/_mutate.py" field acme/widgets 36 Size M 2>"$work/gh-err"
+check_all "gh field write survives one 502" '[ "$(python3 -c "import json; print(next(i[\"fields\"].get(\"Size\",\"\") for i in json.load(open(\"$FAKE_GH_DIR/issues.json\"))[\"issues\"] if i[\"number\"]==36))")" = "M" ] && grep -q "trying again" "$work/gh-err"'
+rm -f "$FAKE_GH_DIR/fail"
 check "gh sync: a started step is In progress, a gate Needs you, the merge gate In review" [ "$(status_of 36)|$(status_of 37)|$(status_of 38)" = "In progress|Needs you|In review" ]
 check "gh sync: a card already at its status costs no write" sh -c "! grep -q 'i=PI_31' '$FAKE_GH_DIR/calls.log' && ! grep -q '^gh#31' '$work/sync.out'"
 check "gh sync: a card missing from the project is added" sh -c "grep -q addProjectV2ItemById '$FAKE_GH_DIR/calls.log'"

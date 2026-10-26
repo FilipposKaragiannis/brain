@@ -19,6 +19,31 @@ fi
 
 die() { echo "flow: $1" >&2; exit "${2:-1}"; }
 
+# gh: the GitHub CLI, called again when it fails with a 5xx answer or a dropped connection, up
+# to three times, after the waits in FLOW_GH_RETRY_WAIT (seconds, default "2 5"). GitHub's API
+# has such minutes most days and one of them should not end a run or lose a write. A body the
+# call reads from stdin (a `-` or `@-` argument) is kept in a file first, so every try sends it.
+# Any other failure is final at once. _call.py does the same for the adapter's Python.
+gh() {
+  _gh_in=""
+  for _gh_a in "$@"; do
+    case "$_gh_a" in -|*=@-) _gh_in="$(mktemp "${TMPDIR:-/tmp}/flow-gh.XXXXXX")" && cat > "$_gh_in"; break ;; esac
+  done
+  _gh_err="$(mktemp "${TMPDIR:-/tmp}/flow-gh.XXXXXX")" || _gh_err=/dev/null
+  for _gh_wait in ${FLOW_GH_RETRY_WAIT:-2 5} end; do
+    if [ -n "$_gh_in" ]; then command gh "$@" < "$_gh_in" 2> "$_gh_err"; else command gh "$@" 2> "$_gh_err"; fi
+    _gh_code=$?
+    [ "$_gh_code" -ne 0 ] && [ "$_gh_wait" != end ] && gh_blip "$_gh_err" || break
+    echo "flow: gh: $(head -n 1 "$_gh_err"); trying again in ${_gh_wait}s" >&2
+    sleep "$_gh_wait"
+  done
+  [ "$_gh_err" = /dev/null ] || { cat "$_gh_err" >&2; rm -f "$_gh_err"; }
+  [ -z "$_gh_in" ] || rm -f "$_gh_in"
+  return "$_gh_code"
+}
+# gh_blip <stderr file>: true when gh's error is GitHub's or the network's, not the call's.
+gh_blip() { grep -Eqi 'HTTP 5[0-9][0-9]|connection reset|error connecting|timeout|unexpected EOF|temporarily unavailable' "$1"; }
+
 repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 
 # The install set of plugin <root>: every file whose content init copies into a project, plus
