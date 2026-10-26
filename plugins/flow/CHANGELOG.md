@@ -1,5 +1,21 @@
 # flow
 
+## 1.20.5 (2026-10-26)
+
+- The next job no longer stalls on an item that has nothing left to run. The ready list offered
+  an open item whose every step ran (step `done`, no gate: its PR merged by hand, or its merge
+  gate cleared without the sweep closing it) first by rank, and `next.sh` answered "is done
+  (every step ran). Merge or close it." with exit 6 for every worker on every schedule, while the
+  job logged "done" and the ready items behind it waited. On foosbrawl gh#239 held the queue from
+  12:55 to 14:00 and gh#515 after it. Now the ready filter leaves out an item at step `done`, as
+  it does a split one. A pick (no item named) that still reads an item with nothing to run, from
+  a ready list older than the item's state, passes over it (closed, at a gate, done, or split),
+  says why, and tries the next ready item; it exits 3 only when a claim found the pool full,
+  else 5. Exit codes 4 and 6 are a named item's. The health job says once, and notifies, when an
+  open item's every step ran and it waits at no gate: merge or close it; an item sent back to a
+  step and done again is said again, and so is a split parent. The next job's last word for exit 6
+  on a named item is the reason ("is done", "is closed", "every child is closed"), not "done".
+
 ## 1.20.4 (2026-10-25)
 
 - The health job removes a sync note (`sync.md` in the item's reports) only once every ref it

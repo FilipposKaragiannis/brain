@@ -67,7 +67,8 @@ idle="$(job_log_dir)/next.idle"   # shared by the workers: one notice, not one p
 case "$code" in 0|4|6) rm -f "$idle" ;; esac
 case "$code" in
   0) job_say "done" ;;
-  6) said="$(tail -n 5 "$(job_log_dir)/$job.log" | grep 'is split and every child is closed' | tail -1)"
+  6) # the reason is the line next.sh wrote just before the loop reported its exit
+     said="$(grep -B1 'run-unattended: next.sh exit 6$' "$(job_log_dir)/$job.log" | tail -n 2 | head -n 1 | grep -e 'is split and every child is closed' -e 'is done (every step ran)' -e 'is closed$')"
      job_say "${said:-done}" ;;
   4) job_say "stopped at a gate (see $(flow_home)/gates)" ;;
   5) job_say "quiet: nothing ready"
