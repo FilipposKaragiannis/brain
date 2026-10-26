@@ -64,9 +64,10 @@ job_start "$host"
 n0="$(wc -l < "$(job_log_dir)/$job.log" 2>/dev/null | tr -d ' ')"; n0="${n0:-0}"
 # shellcheck disable=SC2086
 "$FLOW_PLUGIN/templates/run-unattended.sh" "$host" $item $pass >> "$(job_log_dir)/$job.log" 2>&1; code=$?
-# The steps this run made, from its own lines of the log, so the last word carries the count and
-# a run that ended as if done without one step says so (health counts those).
-steps="$(tail -n +"$((n0 + 1))" "$(job_log_dir)/$job.log" | grep -c '^run-unattended: .* step .* in ')"
+# The steps this run made, from its own lines of the log (the step line is not anchored: a host
+# whose last output has no newline glues it), so the last word carries the count and a run that
+# ended as if done without one step says so (health counts those).
+steps="$(tail -n +"$((n0 + 1))" "$(job_log_dir)/$job.log" | grep -c 'run-unattended: [^ ]* step [^ ]* in /')"
 ran() { case "$steps" in 0) ;; 1) echo ", 1 step" ;; *) echo ", $steps steps" ;; esac; }
 idle="$(job_log_dir)/next.idle"   # shared by the workers: one notice, not one per worker
 case "$code" in 0|4|6) rm -f "$idle" ;; esac

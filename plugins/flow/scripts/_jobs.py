@@ -97,7 +97,7 @@ def outcome(r):
         return "paused"
     if text.startswith("skipped"):
         return "skipped"
-    if r.get("exit", 0) != 0 or text.startswith("error"):
+    if r.get("exit", 0) != 0 or text.startswith("error") or text.startswith("stopped: no step ran"):
         return "failed"
     if text.startswith("quiet"):
         return "quiet"

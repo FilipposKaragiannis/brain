@@ -801,7 +801,7 @@ health_pressure() {
 # streak, from two runs on, and forget it once a run ends another way.
 health_next_runs() {
   hn_keys=""
-  hpy next-streaks "$home/log" > "$home/health/.next-streaks"
+  hpy next-streaks "$home/log" > "$home/health/.next-streaks.$$"
   while IFS="$(printf '\t')" read -r hn_job hn_kind hn_n hn_text; do
     [ "${hn_n:-0}" -ge 2 ] 2>/dev/null || continue
     hn_keys="$hn_keys next-$hn_kind-$hn_job"
@@ -813,8 +813,8 @@ health_next_runs() {
     fi
     health_say pool "$hn_msg"
     health_notify "$hn_msg"
-  done < "$home/health/.next-streaks"
-  rm -f "$home/health/.next-streaks"
+  done < "$home/health/.next-streaks.$$"
+  rm -f "$home/health/.next-streaks.$$"
   for hn_f in "$home"/health/next-lock-*.seen "$home"/health/next-nostep-*.seen; do
     [ -f "$hn_f" ] || continue
     case " $hn_keys " in *" $(basename "$hn_f" .seen) "*) ;; *) health_cleared "$(basename "$hn_f" .seen)" ;; esac
