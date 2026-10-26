@@ -61,16 +61,26 @@ if [ "$workers" -gt 1 ] && [ -z "$worker" ]; then
 fi
 [ -n "$worker" ] && job="next-$worker"
 job_start "$host"
+n0="$(wc -l < "$(job_log_dir)/$job.log" 2>/dev/null | tr -d ' ')"; n0="${n0:-0}"
 # shellcheck disable=SC2086
 "$FLOW_PLUGIN/templates/run-unattended.sh" "$host" $item $pass >> "$(job_log_dir)/$job.log" 2>&1; code=$?
+# The steps this run made, from its own lines of the log, so the last word carries the count and
+# a run that ended as if done without one step says so (health counts those).
+steps="$(tail -n +"$((n0 + 1))" "$(job_log_dir)/$job.log" | grep -c '^run-unattended: .* step .* in ')"
+ran() { case "$steps" in 0) ;; 1) echo ", 1 step" ;; *) echo ", $steps steps" ;; esac; }
 idle="$(job_log_dir)/next.idle"   # shared by the workers: one notice, not one per worker
 case "$code" in 0|4|6) rm -f "$idle" ;; esac
+if [ "$steps" -eq 0 ] && [ -z "$item" ] && case "$code" in 0|4|6) true ;; *) false ;; esac; then
+  why="$(tail -n +"$((n0 + 1))" "$(job_log_dir)/$job.log" | grep -v -e '^run-unattended: next.sh exit ' -e '^run-unattended: stopped (exit ' | tail -n 1)"
+  job_say "stopped: no step ran (exit $code: ${why:-no reason in the log})"
+  exit 0
+fi
 case "$code" in
-  0) job_say "done" ;;
+  0) job_say "done$(ran)" ;;
   6) # the reason is the line next.sh wrote just before the loop reported its exit
      said="$(grep -B1 'run-unattended: next.sh exit 6$' "$(job_log_dir)/$job.log" | tail -n 2 | head -n 1 | grep -e 'is split and every child is closed' -e 'is done (every step ran)' -e 'is closed$')"
-     job_say "${said:-done}" ;;
-  4) job_say "stopped at a gate (see $(flow_home)/gates)" ;;
+     job_say "${said:-done}$(ran)" ;;
+  4) job_say "stopped at a gate (see $(flow_home)/gates)$(ran)" ;;
   5) job_say "quiet: nothing ready"
      if [ "$(cfg notify.idle)" = "true" ] && (set -C; : > "$idle") 2>/dev/null; then
        "$FLOW_PLUGIN/scripts/notify.sh" --event idle "The $host job found nothing ready. File or unblock items, or answer the gates on the board." >/dev/null 2>&1 || true

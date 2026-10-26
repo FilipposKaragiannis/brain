@@ -1148,6 +1148,7 @@ env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health >/dev/null 2>&1
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out3" 2>&1
 check "health: an item sent back to a step and done again is said again" grep -q "$pa: done (every step ran) and still open" "$work/pass.out3"
 check "next job: a named item whose every step ran says so, not done" sh -c "'$P/jobs/next.sh' claude '$pa' | grep -q '$pa is done (every step ran). Merge or close it.'"
+check "next job: a pick that ran no step says so, with the reason, instead of done" sh -c "'$P/jobs/next.sh' claude --max-steps 0 | grep -q 'stopped: no step ran (exit 0: run-unattended: step budget 0 reached)'"
 
 echo "parallel runs: the pick lock and --workers"
 mkdir -p "$work/par" && cd "$work/par" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -1346,6 +1347,18 @@ printf '{"job":"next","at":"2026-10-20T10:00:00Z","seconds":1,"exit":0,"result":
 : > "$work/offline.log"
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
 check "health: a full pool that next cannot start in is said once, with who holds each worktree and why" sh -c "[ \$(grep -c 'the pool is full' .flow/events.log) = 1 ] && [ \$(grep -c 'flow: health' '$work/offline.log') = 1 ] && grep -q 'wt-1 holds $b: waiting at the escalation gate' '$hroot/out' && grep -q 'holds $c: .*dead run, resumed\\|holds $c: running' '$hroot/out' && grep -q 'holds $d: no run' '$hroot/out' && ! grep -q 'the pool is full' '$hroot/out2'"
+# A worker whose last runs in a row all waited out the pick lock, or ended as if done without a
+# step, is said once per streak, from two runs on, and forgotten once a run ends another way.
+printf '{"job":"next-2","at":"2026-10-20T10:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n' >> .flow/log/runs.jsonl
+hs > "$hroot/out" 2>&1
+check "health: one run that waited out the pick lock is not a streak" sh -c "! grep -q 'waited out the pick lock' '$hroot/out'"
+printf '{"job":"next-2","at":"2026-10-20T10:30:00Z","seconds":1,"exit":0,"result":"skipped: run 1 still going"}\n{"job":"next-2","at":"2026-10-20T11:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n{"job":"next-1","at":"2026-10-20T11:00:00Z","seconds":3,"exit":0,"result":"stopped: no step ran (exit 6: gh#9 is done (every step ran). Merge or close it.)"}\n{"job":"next-1","at":"2026-10-20T11:30:00Z","seconds":3,"exit":0,"result":"stopped: no step ran (exit 6: gh#9 is done (every step ran). Merge or close it.)"}\n' >> .flow/log/runs.jsonl
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a worker that waited out the pick lock twice in a row is said once, a skipped run between does not break the streak" sh -c "grep -q 'next-2 waited out the pick lock on its last 2 runs in a row: another worker holds the pick for over 60s' '$hroot/out' && ! grep -q 'waited out the pick lock' '$hroot/out2'"
+check "health: a worker that twice ended without running a step is said once, with its last word" sh -c "grep -q 'next-1 ended without running a step on its last 2 runs in a row (last: stopped: no step ran (exit 6: gh#9 is done' '$hroot/out' && ! grep -q 'without running a step' '$hroot/out2'"
+printf '{"job":"next-2","at":"2026-10-20T11:30:00Z","seconds":300,"exit":0,"result":"done, 3 steps"}\n{"job":"next-2","at":"2026-10-20T12:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n{"job":"next-2","at":"2026-10-20T12:30:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n' >> .flow/log/runs.jsonl
+hs > "$hroot/out" 2>&1
+check "health: a run that did work ends the streak, and a new streak is said again" grep -q 'next-2 waited out the pick lock on its last 2 runs in a row' "$hroot/out"
 
 bd="flow/$(item_slug "$d")"
 git -C "$wd" push -q origin "$bd"; remote_commit "$bd" r1
