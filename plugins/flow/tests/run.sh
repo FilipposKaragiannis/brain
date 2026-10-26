@@ -73,6 +73,8 @@ check_all "write-state"       '[ "$("$P/adapters/local/read.sh" "$t1" | jget sta
 printf 'hello: world\n' | "$P/adapters/local/comment.sh" "$t1"
 check "comment appended"  grep -q 'hello: world' .flow/items/task/1.md
 check "list open"         [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
+printf '[{"id":"local:task/90","status":"open","state":{"gate":"none"},"blocked_by":["gh#999999"],"open_blockers":[]},{"id":"local:task/91","status":"open","state":{"gate":"none"},"blocked_by":[],"open_blockers":["gh#1"]}]' | "$P/scripts/filter-ready.sh" > "$work/ready.out"
+check "ready: an item that lists its open blockers is judged by that list, with no read per blocker" sh -c "grep -q 'local:task/90' '$work/ready.out' && ! grep -q 'local:task/91' '$work/ready.out'"
 check "ready excludes blocked" [ "$("$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "local:task/1,local:task/2" ]
 "$P/adapters/local/link-pr.sh" "$t2" https://example/pr/1
 check "link-pr"           [ "$("$P/adapters/local/read.sh" "$t2" | jget state.pr)" = "https://example/pr/1" ]
@@ -1171,9 +1173,25 @@ kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check_all "a stale lock (holder gone) is taken over" '[ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]'
 for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
+# A plugin copy whose local list-ready ends the lock holder before it lists: a pick that lists
+# before it locks then finds the lock stale and takes it; one that locks first waits and gives up.
+slow="$work/plugin-slow"; cp -R "$P" "$slow"; rm -rf "$slow/evals/results"
+printf '#!/bin/sh\nkill "$(cat .flow/pick.lock/pid)" 2>/dev/null; sleep 2; exec "%s/adapters/local/list-ready.sh" "$@"\n' "$P" > "$slow/adapters/local/list-ready.sh"
+"$P/scripts/new.sh" task "Parallel four" --size S --body "## Acceptance
+- [ ] four" >/dev/null
+sleep 30 & held=$!
+mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
+FLOW_PLUGIN="$slow" FLOW_LOCK_WAIT=1 "$slow/scripts/next.sh" >/dev/null 2>&1; code=$?
+check "the ready list is read before the pick lock, so a slow listing never counts against the lock wait" [ "$code" -eq 0 ]
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
+for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
 : > "$HOST_LOG"
 "$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1
 check_all "--workers 2: two loops, two logs" '[ -f .flow/log/next-1.log ] && [ -f .flow/log/next-2.log ]'
+sleep 30 & held=$!
+mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
+check "next job: a worker that waited out the pick lock says so, not that a run is in flight" sh -c "FLOW_LOCK_WAIT=1 '$P/jobs/next.sh' claude --max-steps 1 | grep -q 'quiet: another worker held the pick for over 1s'"
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null; rm -rf .flow/pick.lock
 check "--workers 2: each worker ran a step in its own worktree" [ "$(cut -f2 "$HOST_LOG" | sort -u | grep -c .)" = 2 ]
 check "--workers with an item is refused" sh -c "! '$P/jobs/next.sh' claude local:task/1 --workers 2 2>/dev/null"
 check "--workers 0 is refused" sh -c "! '$P/jobs/next.sh' claude --workers 0 2>/dev/null"

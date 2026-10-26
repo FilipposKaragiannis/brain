@@ -42,7 +42,12 @@ for item in items:
         continue
     if item.get("state", {}).get("step") in ("split", "done"):
         continue
-    if any(blocker_open(b) for b in item.get("blocked_by", [])):
+    # An adapter that knows its blockers' states lists the open ones (the GitHub one does); only
+    # without that is each blocker read through its adapter, one call apiece.
+    if "open_blockers" in item:
+        if item["open_blockers"]:
+            continue
+    elif any(blocker_open(b) for b in item.get("blocked_by", [])):
         continue
     ready.append(item)
 ready.sort(key=lambda i: i.get("rank", 999))

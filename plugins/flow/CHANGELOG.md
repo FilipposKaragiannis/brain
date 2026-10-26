@@ -1,5 +1,18 @@
 # flow
 
+## 1.20.6 (2026-10-26)
+
+- `next.sh` reads the ready list before it takes the pick lock. Listing a tracker can take a
+  minute (on foosbrawl, 66 seconds: the issues, then one read per blocker not in the list), and
+  the lock wait is 60 seconds, so with two workers the second gave up every schedule with "a run
+  is in flight" and only one item ran per half hour. The lock still covers what must not race:
+  the run records, the claim and the item's state, all read under it.
+- The ready filter judges an item that lists its open blockers (`open_blockers`, which the
+  GitHub adapter fills from the same query) by that list, instead of reading every blocker
+  through its adapter, one call apiece. On foosbrawl that is 83 blocker reads fewer per pick.
+- The next job's last word for a worker that waited out the pick lock names that ("another
+  worker held the pick for over 60s"), not "a run is in flight".
+
 ## 1.20.5 (2026-10-26)
 
 - The next job no longer stalls on an item that has nothing left to run. The ready list offered

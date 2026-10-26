@@ -75,7 +75,9 @@ case "$code" in
      if [ "$(cfg notify.idle)" = "true" ] && (set -C; : > "$idle") 2>/dev/null; then
        "$FLOW_PLUGIN/scripts/notify.sh" --event idle "The $host job found nothing ready. File or unblock items, or answer the gates on the board." >/dev/null 2>&1 || true
      fi ;;
-  7) job_say "quiet: a run is in flight" ;;
+  7) # the reason is the line next.sh wrote just before the loop reported its exit, as for 6
+     if grep -B1 'run-unattended: next.sh exit 7$' "$(job_log_dir)/$job.log" | tail -n 2 | head -n 1 | grep -q 'another run is picking an item'; then job_say "quiet: another worker held the pick for over ${FLOW_LOCK_WAIT:-60}s"
+     else job_say "quiet: a run is in flight"; fi ;;
   3) job_say "quiet: no free worktree (the pool is at pool_max)" ;;
   *) job_say "stopped: exit $code"; exit "$code" ;;
 esac
