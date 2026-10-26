@@ -796,6 +796,31 @@ health_pressure() {
   fi
 }
 
+# health_next_runs: a next worker whose last runs in a row all waited out the pick lock, or all
+# ended as if done without one step, is doing no work and saying nothing loud: say it once per
+# streak, from two runs on, and forget it once a run ends another way.
+health_next_runs() {
+  hn_keys=""
+  hpy next-streaks "$home/log" > "$home/health/.next-streaks.$$"
+  while IFS="$(printf '\t')" read -r hn_job hn_kind hn_n hn_text; do
+    [ "${hn_n:-0}" -ge 2 ] 2>/dev/null || continue
+    hn_keys="$hn_keys next-$hn_kind-$hn_job"
+    health_changed "next-$hn_kind-$hn_job" streak || continue
+    if [ "$hn_kind" = lock ]; then
+      hn_msg="$hn_job waited out the pick lock on its last $hn_n runs in a row: another worker held the pick for longer than the lock wait each time, so the tracker listing is slow or a pick is stuck"
+    else
+      hn_msg="$hn_job ended without running a step on its last $hn_n runs in a row (last: $hn_text)"
+    fi
+    health_say pool "$hn_msg"
+    health_notify "$hn_msg"
+  done < "$home/health/.next-streaks.$$"
+  rm -f "$home/health/.next-streaks.$$"
+  for hn_f in "$home"/health/next-lock-*.seen "$home"/health/next-nostep-*.seen; do
+    [ -f "$hn_f" ] || continue
+    case " $hn_keys " in *" $(basename "$hn_f" .seen) "*) ;; *) health_cleared "$(basename "$hn_f" .seen)" ;; esac
+  done
+}
+
 cmd_health() {
   dry=0; wait_for_resume=0; resume_host="$(cfg_or jobs.host claude)"
   while [ $# -gt 0 ]; do
@@ -834,6 +859,7 @@ cmd_health() {
   health_gates
   health_splits
   health_pressure
+  health_next_runs
   [ "${FLOW_HEALTH_PROCS:-}" = "$procs" ] || rm -f "$procs"
   echo "health: $claims claimed ($running running, $gated at a gate), $claimable free, $waiting gate(s) waiting; $([ "$facts" -eq 0 ] && echo "nothing to do" || echo "$facts finding(s)")"
 }

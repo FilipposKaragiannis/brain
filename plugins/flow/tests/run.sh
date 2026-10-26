@@ -73,6 +73,8 @@ check_all "write-state"       '[ "$("$P/adapters/local/read.sh" "$t1" | jget sta
 printf 'hello: world\n' | "$P/adapters/local/comment.sh" "$t1"
 check "comment appended"  grep -q 'hello: world' .flow/items/task/1.md
 check "list open"         [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
+printf '[{"id":"local:task/90","status":"open","state":{"gate":"none"},"blocked_by":["gh#999999"],"open_blockers":[]},{"id":"local:task/91","status":"open","state":{"gate":"none"},"blocked_by":[],"open_blockers":["gh#1"]}]' | "$P/scripts/filter-ready.sh" > "$work/ready.out"
+check "ready: an item that lists its open blockers is judged by that list, with no read per blocker" sh -c "grep -q 'local:task/90' '$work/ready.out' && ! grep -q 'local:task/91' '$work/ready.out'"
 check "ready excludes blocked" [ "$("$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "local:task/1,local:task/2" ]
 "$P/adapters/local/link-pr.sh" "$t2" https://example/pr/1
 check "link-pr"           [ "$("$P/adapters/local/read.sh" "$t2" | jget state.pr)" = "https://example/pr/1" ]
@@ -1146,6 +1148,21 @@ env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health >/dev/null 2>&1
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out3" 2>&1
 check "health: an item sent back to a step and done again is said again" grep -q "$pa: done (every step ran) and still open" "$work/pass.out3"
 check "next job: a named item whose every step ran says so, not done" sh -c "'$P/jobs/next.sh' claude '$pa' | grep -q '$pa is done (every step ran). Merge or close it.'"
+check "next job: a pick that ran no step says so, with the reason, instead of done" sh -c "'$P/jobs/next.sh' claude --max-steps 0 | grep -q 'stopped: no step ran (exit 0: run-unattended: step budget 0 reached)'"
+# A host stub that does the step: it writes the report the brief names, with no newline after
+# its own last line, so the step line that follows is glued to it in the log.
+mkdir -p "$work/dobin"
+cat > "$work/dobin/claude" <<'STUB'
+#!/bin/sh
+brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
+report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" | head -1)"
+mkdir -p "$(dirname "$report")" && printf '{"status":"done","summary":"stub"}\n' > "$report"
+printf 'did the step'
+STUB
+chmod +x "$work/dobin/claude"
+rm -f ".flow/runs/$(item_slug "$pb").json"
+check "next job: the last word counts the steps the run made, even after host output with no newline" sh -c "PATH='$work/dobin:$PATH' '$P/jobs/next.sh' claude --max-steps 1 | grep -q 'done, 1 step'"
+check "jobs: a run that stopped without a step counts as failed in the week, not as work" sh -c "'$P/scripts/jobs.sh' status | grep '^| next ' | grep -q '1 failed'"
 
 echo "parallel runs: the pick lock and --workers"
 mkdir -p "$work/par" && cd "$work/par" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -1171,9 +1188,25 @@ kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check_all "a stale lock (holder gone) is taken over" '[ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]'
 for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
+# A plugin copy whose local list-ready ends the lock holder before it lists: a pick that lists
+# before it locks then finds the lock stale and takes it; one that locks first waits and gives up.
+slow="$work/plugin-slow"; cp -R "$P" "$slow"; rm -rf "$slow/evals/results"
+printf '#!/bin/sh\nkill "$(cat .flow/pick.lock/pid)" 2>/dev/null; sleep 2; exec "%s/adapters/local/list-ready.sh" "$@"\n' "$P" > "$slow/adapters/local/list-ready.sh"
+"$P/scripts/new.sh" task "Parallel four" --size S --body "## Acceptance
+- [ ] four" >/dev/null
+sleep 30 & held=$!
+mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
+FLOW_PLUGIN="$slow" FLOW_LOCK_WAIT=1 "$slow/scripts/next.sh" >/dev/null 2>&1; code=$?
+check "the ready list is read before the pick lock, so a slow listing never counts against the lock wait" [ "$code" -eq 0 ]
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
+for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
 : > "$HOST_LOG"
 "$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1
 check_all "--workers 2: two loops, two logs" '[ -f .flow/log/next-1.log ] && [ -f .flow/log/next-2.log ]'
+sleep 30 & held=$!
+mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
+check "next job: a worker that waited out the pick lock says so, not that a run is in flight" sh -c "FLOW_LOCK_WAIT=1 '$P/jobs/next.sh' claude --max-steps 1 | grep -q 'quiet: another worker held the pick for over 1s'"
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null; rm -rf .flow/pick.lock
 check "--workers 2: each worker ran a step in its own worktree" [ "$(cut -f2 "$HOST_LOG" | sort -u | grep -c .)" = 2 ]
 check "--workers with an item is refused" sh -c "! '$P/jobs/next.sh' claude local:task/1 --workers 2 2>/dev/null"
 check "--workers 0 is refused" sh -c "! '$P/jobs/next.sh' claude --workers 0 2>/dev/null"
@@ -1328,6 +1361,22 @@ printf '{"job":"next","at":"2026-10-20T10:00:00Z","seconds":1,"exit":0,"result":
 : > "$work/offline.log"
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
 check "health: a full pool that next cannot start in is said once, with who holds each worktree and why" sh -c "[ \$(grep -c 'the pool is full' .flow/events.log) = 1 ] && [ \$(grep -c 'flow: health' '$work/offline.log') = 1 ] && grep -q 'wt-1 holds $b: waiting at the escalation gate' '$hroot/out' && grep -q 'holds $c: .*dead run, resumed\\|holds $c: running' '$hroot/out' && grep -q 'holds $d: no run' '$hroot/out' && ! grep -q 'the pool is full' '$hroot/out2'"
+# A worker whose last runs in a row all waited out the pick lock, or ended as if done without a
+# step, is said once per streak, from two runs on, and forgotten once a run ends another way.
+printf '{"job":"next-2","at":"2026-10-20T10:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n' >> .flow/log/runs.jsonl
+hs > "$hroot/out" 2>&1
+printf '[1]\n{"job":null,"result":7}\n' >> .flow/log/runs.jsonl
+check "health: one run that waited out the pick lock is not a streak, and a record that is not one is skipped" sh -c "! grep -q 'waited out the pick lock' '$hroot/out'"
+printf '{"job":"next-2","at":"2026-10-20T10:30:00Z","seconds":1,"exit":0,"result":"skipped: run 1 still going"}\n{"job":"next-2","at":"2026-10-20T11:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n{"job":"next-1","at":"2026-10-20T11:00:00Z","seconds":3,"exit":0,"result":"stopped: no step ran (exit 6: gh#9 is done (every step ran). Merge or close it.)"}\n{"job":"next-1","at":"2026-10-20T11:30:00Z","seconds":3,"exit":0,"result":"stopped: no step ran (exit 6: gh#9 is done (every step ran). Merge or close it.)"}\n' >> .flow/log/runs.jsonl
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a worker that waited out the pick lock twice in a row is said once, a skipped run between does not break the streak" sh -c "grep -q 'next-2 waited out the pick lock on its last 2 runs in a row: another worker held the pick for longer than the lock wait' '$hroot/out' && ! grep -q 'waited out the pick lock' '$hroot/out2'"
+check "health: a worker that twice ended without running a step is said once, with its last word" sh -c "grep -q 'next-1 ended without running a step on its last 2 runs in a row (last: stopped: no step ran (exit 6: gh#9 is done' '$hroot/out' && ! grep -q 'without running a step' '$hroot/out2'"
+printf '{"job":"next-2","at":"2026-10-20T11:30:00Z","seconds":300,"exit":0,"result":"done, 3 steps"}\n' >> .flow/log/runs.jsonl
+hs > "$hroot/out" 2>&1
+check "health: a run that did work ends the streak, and it is forgotten" sh -c "! grep -q 'waited out the pick lock' '$hroot/out' && [ ! -f .flow/health/next-lock-next-2.seen ]"
+printf '{"job":"next-2","at":"2026-10-20T12:00:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n{"job":"next-2","at":"2026-10-20T12:30:00Z","seconds":61,"exit":0,"result":"quiet: another worker held the pick for over 60s"}\n' >> .flow/log/runs.jsonl
+hs > "$hroot/out" 2>&1
+check "health: a new streak after that is said again" grep -q 'next-2 waited out the pick lock on its last 2 runs in a row' "$hroot/out"
 
 bd="flow/$(item_slug "$d")"
 git -C "$wd" push -q origin "$bd"; remote_commit "$bd" r1
@@ -1440,6 +1489,8 @@ check "jobs: cron gets the health line" sh -c "FLOW_SCHEDULER=cron '$P/scripts/j
 check "jobs: history and logs take the health job" sh -c "'$P/scripts/jobs.sh' history health 3 | grep -q 'quiet\|work' && '$P/scripts/jobs.sh' logs health 3 | grep -q 'health.log'"
 printf '{"job":"health","at":"2026-10-24T10:00:00Z","seconds":1,"exit":0,"result":42}\n' >> .flow/log/runs.jsonl
 check_all "jobs: a run recorded before 1.20.2 with a result of digits (a number) still shows in status and history" '"$P/scripts/jobs.sh" status >/dev/null && "$P/scripts/jobs.sh" status --json >/dev/null && "$P/scripts/jobs.sh" history health 3 | grep -q 42'
+printf '[1]\n{"job":null,"result":7}\n' >> .flow/log/runs.jsonl
+check "jobs: a line in the run history that is not a record is skipped by status and history, not a crash" sh -c "'$P/scripts/jobs.sh' status | grep -q '^| health ' && '$P/scripts/jobs.sh' history health | grep -q health"
 unset FLOW_HEALTH_PROCS
 cd "$repo"
 

@@ -41,10 +41,6 @@ pick_again() {
 # pass_over <message> <code>: a picked item has nothing to run; say why and pick again. A named
 # item exits with the code.
 pass_over() { echo "$1" >&2; [ -z "$named" ] || exit "$2"; pick_again; }
-# Two runs started together must not pick the same item or claim the same worktree: the pick, the
-# claim and the run record happen under one lock. The brief is written after it is released.
-flow_lock pick || { echo "another run is picking an item for over ${FLOW_LOCK_WAIT:-60}s; try again" >&2; exit 7; }
-
 run_file() { printf '%s/runs/%s.json' "$home" "$(item_slug "$1")"; }
 
 claimed_touches() {
@@ -57,6 +53,9 @@ claimed_touches() {
   done
 }
 
+# The ready list is read before the pick lock is taken: listing a tracker can take a minute, and
+# a worker that waits that long on the lock gives up. The lock covers what must not race: the
+# run records, the claim and the item's state, all read under it.
 if [ -z "$item" ] && [ -f "$ready_cache" ]; then
   ready="$(cat "$ready_cache")"; rm -f "$ready_cache"
 elif [ -z "$item" ]; then
@@ -72,6 +71,9 @@ for line in sys.stdin:
 out.sort(key=lambda i: i.get("rank", 999))
 print(json.dumps(out))')"
 fi
+# Two runs started together must not pick the same item or claim the same worktree: the pick, the
+# claim and the run record happen under one lock. The brief is written after it is released.
+flow_lock pick || { echo "another run is picking an item for over ${FLOW_LOCK_WAIT:-60}s; try again" >&2; exit 7; }
 if [ -z "$item" ]; then
   n="$(json_length "$ready" "")"
   i=0

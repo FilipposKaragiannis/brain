@@ -6,6 +6,7 @@
   _health.py activity <worktree> <reports dir> <events.log> <item>
   _health.py runs <runs dir> <procs file> <grace seconds>
   _health.py last-next <log dir>
+  _health.py next-streaks <log dir>
   _health.py epoch <iso time>
   _health.py seconds <config key> <duration>
   _health.py ago <epoch>
@@ -199,6 +200,14 @@ def runs(directory, path, grace):
 
 def last_next(log):
     result = ""
+    for r in next_runs(log):
+        result = r["result"]
+    print(result)
+
+
+def next_runs(log):
+    """The next job's records, oldest first, with job and result as strings; a line that is not a
+    record is skipped (a record before 1.20.2 may hold a result of digits as a number)."""
     for name in ("runs.1.jsonl", "runs.jsonl"):
         path = os.path.join(log, name)
         for line in open(path) if os.path.exists(path) else []:
@@ -206,9 +215,34 @@ def last_next(log):
                 r = json.loads(line)
             except ValueError:
                 continue
-            if re.fullmatch(r"next(-\d+)?", r.get("job", "")):
-                result = r.get("result", "")
-    print(result)
+            if not isinstance(r, dict):
+                continue
+            job = r.get("job")
+            if isinstance(job, str) and re.fullmatch(r"next(-\d+)?", job):
+                yield {**r, "job": job, "result": str(r.get("result") or "")}
+
+
+def next_streaks(log):
+    """For each next worker, how its last runs in a row ended, when they ended the same way: one
+    line per worker, job, kind and count, tab separated. The kinds: lock (the worker waited out the
+    pick lock) and nostep (the run ended as if done without one step). A paused or skipped run is
+    not a run and does not break a streak."""
+    last = {}
+    for r in next_runs(log):
+        text = r["result"]
+        if text.startswith(("skipped", "paused")):
+            continue
+        kind = "lock" if "held the pick" in text else "nostep" if text.startswith("stopped: no step ran") else ""
+        job = r["job"]
+        streak = last.get(job)
+        if kind and streak and streak[0] == kind:
+            last[job] = (kind, streak[1] + 1, text)
+        else:
+            last[job] = (kind, 1, text)
+    for job in sorted(last):
+        kind, n, text = last[job]
+        if kind:
+            print("%s\t%s\t%d\t%s" % (job, kind, n, text))
 
 
 def spawn(log, command):
@@ -231,6 +265,8 @@ def main():
         runs(args[0], args[1], int(args[2]))
     elif command == "last-next":
         last_next(args[0])
+    elif command == "next-streaks":
+        next_streaks(args[0])
     elif command == "epoch":
         print(epoch(args[0]))
     elif command == "seconds":
