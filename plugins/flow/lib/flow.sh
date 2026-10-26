@@ -24,7 +24,8 @@ die() { echo "flow: $1" >&2; exit "${2:-1}"; }
 # has such minutes most days and one of them should not end a run or lose a write. A body the
 # call reads from stdin (a `-` or `@-` argument) is kept in a file first, so every try sends it.
 # Only the last try's stdout reaches the caller: `gh api` prints the error body on a failure.
-# Any other failure is final at once. _call.py does the same for the adapter's Python.
+# Any other failure is final at once. _call.py does the same for the adapter's Python. A signal
+# during a try leaves the try's files in TMPDIR; no caller's trap knows their names.
 # gh_once: one try, for a call that creates something (an issue, a comment): a lost answer can
 # follow a write that landed, and a second try would make a second one.
 gh_once() { command gh "$@"; }
@@ -32,14 +33,15 @@ gh() {
   _gh_in=""
   for _gh_a in "$@"; do
     case "$_gh_a" in -|*=@-|--body-file=-|--input=-)
-      _gh_in="$(mktemp "${TMPDIR:-/tmp}/flow-gh.XXXXXX")" && cat > "$_gh_in" || { rm -f "$_gh_in"; echo "flow: gh: cannot keep the body for a second try" >&2; return 1; }
+      _gh_in="$(mktemp "${TMPDIR:-/tmp}/flow-gh.XXXXXX")" || { command gh "$@"; return; }  # no room: one plain try
+      cat > "$_gh_in" || { rm -f "$_gh_in"; echo "flow: gh: cannot keep the body for a second try" >&2; return 1; }
       break ;;
     esac
   done
   if ! { _gh_out="$(mktemp "${TMPDIR:-/tmp}/flow-gh.XXXXXX")" && _gh_err="$(mktemp "${TMPDIR:-/tmp}/flow-gh.XXXXXX")"; }; then
     # No room for the tries: one plain call, with the body it was given.
     if [ -n "$_gh_in" ]; then command gh "$@" < "$_gh_in"; else command gh "$@"; fi
-    _gh_code=$?; rm -f "$_gh_out" $_gh_in; return "$_gh_code"
+    _gh_code=$?; rm -f "$_gh_out" ${_gh_in:+"$_gh_in"}; return "$_gh_code"
   fi
   for _gh_wait in ${FLOW_GH_RETRY_WAIT:-2 5} end; do
     if [ -n "$_gh_in" ]; then command gh "$@" < "$_gh_in" > "$_gh_out" 2> "$_gh_err"; else command gh "$@" > "$_gh_out" 2> "$_gh_err"; fi
@@ -49,11 +51,12 @@ gh() {
     sleep "$_gh_wait"
   done
   cat "$_gh_out"; cat "$_gh_err" >&2
-  rm -f "$_gh_out" "$_gh_err" $_gh_in
+  rm -f "$_gh_out" "$_gh_err" ${_gh_in:+"$_gh_in"}
   return "$_gh_code"
 }
 # gh_blip <stderr file>: true when gh's error is GitHub's or the network's, not the call's.
-gh_blip() { grep -Eqi 'HTTP 5[0-9][0-9]|connection reset|error connecting|timeout|unexpected EOF|temporarily unavailable' "$1"; }
+# The same pattern as _call.py's BLIP; change both.
+gh_blip() { grep -Eqi 'HTTP 5[0-9][0-9]|connection reset|connection refused|error connecting|timeout|unexpected EOF|: EOF$|stream error|GOAWAY|temporarily unavailable' "$1"; }
 
 repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 

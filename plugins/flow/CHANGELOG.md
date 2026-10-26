@@ -11,16 +11,19 @@
   foosbrawl, one `HTTP 502` while the run read the item after a step ended the run with exit 1
   and left the step's gate unapplied until the health job re-ran it 13 minutes later.
 - A create is tried once: GitHub can take a write and lose the answer, and a second try would
-  make a second one. `create.sh` makes its issue once; `write-state` posts the first state
-  comment once and, when the answer is lost, looks for the comment and patches it. A comment
-  or a reviewer ping is still tried again, so a blip can repeat one of those; that is the
-  cheaper mistake.
+  make a second one. `create.sh` makes its issue once; a reviewer ping is sent once (the chase
+  covers a lost one); `write-state` posts the first state comment once and, when the answer is
+  lost, looks for the comment, patches it when it landed, posts once more when it did not, and
+  stops after that. A gate or PR comment and a review reply are still tried again, so a blip
+  can repeat one of those; that is the cheaper mistake.
 - A read whose comments call still fails after the tries ends with "cannot read the comments of
   gh#N" instead of answering an item with an empty state (no attempts, no PR, no touches); a
-  list says so and leaves that issue out (it carries a flow label, so it is in flight, not a
-  pick) and goes on. `write-state` stops on any failed call instead of starting a second state
-  comment from nothing, which dropped those fields. An empty answer no longer ends `read.sh`
-  with a Python traceback.
+  list says so on stderr and leaves that issue out, so it is not picked, shown or synced that
+  round, and goes on. `write-state` stops on any failed call instead of starting a second state
+  comment from nothing, which dropped those fields; its callers in `advance.sh` and `next.sh`
+  go on either way, as before. An empty answer no longer ends `read.sh` with a Python traceback.
+- The state comment is looked for in every comment of the issue, not the first 100. The board's
+  epic graph calls GitHub through the same retry.
 
 ## 1.20.6 (2026-10-26)
 

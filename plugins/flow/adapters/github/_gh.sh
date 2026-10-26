@@ -103,11 +103,11 @@ print(json.dumps({
 # it would make write-state start a second state comment from an empty state, dropping the
 # attempts, the PR and the touches.
 state_comment() {
-  comments="$(gh api "repos/$1/issues/$2/comments?per_page=100")" || return 1
+  comments="$(gh api --paginate --slurp "repos/$1/issues/$2/comments?per_page=100")" || return 1
   printf '%s' "$comments" | python3 -I -c '
 import json, sys, re
 marker = sys.argv[1]
-for c in json.load(sys.stdin):
+for c in [c for page in json.load(sys.stdin) for c in page]:
     body = c.get("body", "")
     if marker in body:
         m = re.search(r"```json\n(.*?)\n```", body, re.S)

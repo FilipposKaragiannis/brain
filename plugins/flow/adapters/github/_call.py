@@ -4,7 +4,8 @@ what counts as a blip. Any other failure is final at once. The calls here read, 
 value a second write leaves as it is; nothing is created, so a second try is safe."""
 import os, re, subprocess, sys, time
 
-BLIP = re.compile(r"HTTP 5[0-9][0-9]|connection reset|error connecting|timeout|unexpected EOF|temporarily unavailable", re.I)
+# The same pattern as lib/flow.sh's gh_blip; change both.
+BLIP = re.compile(r"HTTP 5[0-9][0-9]|connection reset|connection refused|error connecting|timeout|unexpected EOF|: EOF$|stream error|GOAWAY|temporarily unavailable", re.I | re.M)
 
 
 def gh(args, stdin=None):

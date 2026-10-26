@@ -42,7 +42,8 @@ ask_reviewer() { # ask_reviewer <pr> <reviewer> <ask>
   if [ "$2" = "copilot" ]; then
     gh pr edit "$1" -R "$repo" --add-reviewer @copilot >/dev/null
   else
-    printf '@%s %s\n\n<!-- flow:review-request %s -->\n' "$2" "$(plain_ask "$3")" "$2" | gh pr comment "$1" -R "$repo" --body-file - >/dev/null
+    # Once: a ping whose answer was lost after it landed would start a second review; the chase covers a lost one.
+    printf '@%s %s\n\n<!-- flow:review-request %s -->\n' "$2" "$(plain_ask "$3")" "$2" | gh_once pr comment "$1" -R "$repo" --body-file - >/dev/null
   fi
 }
 # Re-adding a Copilot request that is still pending may leave no timeline event, so each chase
@@ -61,7 +62,7 @@ chase_copilot() { # chase_copilot <pr> <round> <chase number>
 }
 chase_mention() { # chase_mention <pr> <reviewer> <ago> <head sha>
   printf '@%s review\n\nThe review asked %s ago has no answer yet. Please review %s again: the diff line by line for correctness, and against the acceptance lines of the item.\n\n<!-- flow:chase %s -->\n' \
-    "$2" "$3" "$(printf '%s' "$4" | cut -c1-$SHORT_SHA)" "$2" | gh pr comment "$1" -R "$repo" --body-file - >/dev/null
+    "$2" "$3" "$(printf '%s' "$4" | cut -c1-$SHORT_SHA)" "$2" | gh_once pr comment "$1" -R "$repo" --body-file - >/dev/null
 }
 report_stalled() { # report_stalled <pr> <reviewer> <request id> <ago> <max>: once per request
   marker="$home/reviews/$1-$2"

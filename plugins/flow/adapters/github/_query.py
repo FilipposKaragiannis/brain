@@ -66,16 +66,16 @@ def graphql(query, **variables):
 def state_comment(repo, issue, marker, always=False):
     if not always and not any(l["name"].split(":")[0] in ("step", "gate", "wt", "flow") for l in issue["labels"]):
         return {}
-    comments = gh("api", "repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"]))
-    if comments is None:
+    pages = gh("api", "--paginate", "--slurp", "repos/%s/issues/%d/comments?per_page=100" % (repo, issue["number"]))
+    if pages is None:
         # Without the comment the item would read as unstarted, with no attempts, no PR and no
-        # touches: a wrong answer, so no answer. A read ends; a list leaves the issue out (it
-        # carries a flow label, so it is in flight and not a pick) and goes on.
+        # touches: a wrong answer, so no answer. A read ends; a list leaves the issue out, so it
+        # is not picked, shown or synced this round, and goes on.
         if always:
             sys.exit("flow: cannot read the comments of gh#%d" % issue["number"])
         sys.stderr.write("flow: cannot read the comments of gh#%d, so the list leaves it out\n" % issue["number"])
         return None
-    for c in comments:
+    for c in [c for page in pages for c in page]:
         if marker in c.get("body", ""):
             m = re.search(r"```json\n(.*?)\n```", c["body"], re.S)
             try:

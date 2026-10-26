@@ -10,14 +10,20 @@ recompute waves or the critical path themselves. Two renderers, one model —
 that's the whole point.
 """
 import json
-import subprocess
+import os
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "adapters", "github"))
+import _call  # noqa: E402
 
 SIZE = {"size:S": 1, "size:M": 2, "size:L": 3}
 
 
 def gh(*args):
-    return json.loads(subprocess.check_output(["gh", *args]))
+    out = _call.gh(args)
+    if out.returncode != 0:
+        sys.exit(out.stderr.strip() or "flow: gh failed")
+    return json.loads(out.stdout)
 
 
 def main():
