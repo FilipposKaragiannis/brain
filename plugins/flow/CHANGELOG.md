@@ -1,5 +1,23 @@
 # flow
 
+## 1.21.0 (2026-10-27)
+
+- The board's graphs work with every adapter. `board.sh --graph <epic-id>` takes any item id
+  (`gh#12`, `local:epic/3`) and builds the dependency model from the items each adapter lists:
+  a child is an item whose parent is the id. Before, it took only `gh#N` and read GitHub's
+  sub-issues itself, so a project on the local adapter got "--graph takes a GitHub epic id" and
+  no graph. It also makes one list call per adapter instead of one GitHub call per child.
+- `board.sh --graph priorities` is new: every open item but epics, one column per priority,
+  highest first by the tracker's order, an edge per open blocker. An edge where a lower
+  priority item blocks a higher one is an inversion, listed in the model.
+- `--mermaid` prints either graph as a Mermaid flowchart, so the board skill shows the script's
+  drawing instead of writing one. Each item is filled by its priority, the same fill in both
+  graphs, and the epic's critical path has a thick red stroke. Titles are escaped, so a quote
+  or a `#12;` cannot break a label.
+- Blockers that form a cycle among an epic's children end the graph with a message naming them.
+  Before, the layering looped forever.
+- `scripts/epic_graph.py` is gone; `scripts/_graph.py` builds both graphs.
+
 ## 1.20.8 (2026-10-27)
 
 - The `health` job runs the sweep (`steward.sh sweep`) before its checks, as the `next` job

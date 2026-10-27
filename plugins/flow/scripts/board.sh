@@ -1,24 +1,32 @@
 #!/bin/sh
-# board.sh [--json] [--graph <epic-id>]: every adapter, every claim. The pool with item, step and
-# last event; open items with their state and blockers; pending gates; overlapping claims.
-# --graph prints the dependency model of a GitHub epic (scripts/epic_graph.py).
+# board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every adapter, every claim. The pool
+# with item, step and last event; open items with their state and blockers; pending gates;
+# overlapping claims. --graph prints a graph model built from every adapter's open items
+# (scripts/_graph.py): the dependency waves of one epic's children, or every open item by
+# priority. --mermaid prints it as a Mermaid flowchart instead of JSON.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
-as_json=0; graph=""
+as_json=0; graph=""; mermaid=""
 while [ $# -gt 0 ]; do
-  case "$1" in --json) as_json=1; shift ;; --graph) graph="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac
+  case "$1" in
+    --json) as_json=1; shift ;;
+    --graph) [ $# -ge 2 ] || die "--graph takes an epic id or priorities" 2; graph="$2"; shift 2 ;;
+    --mermaid) mermaid="--mermaid"; shift ;;
+    *) die "unknown option $1" 2 ;;
+  esac
 done
-if [ -n "$graph" ]; then
-  case "$graph" in gh#*) ;; *) die "--graph takes a GitHub epic id (gh#N)" 2 ;; esac
-  repo="$(cfg github.repo)"; [ -n "$repo" ] || repo="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-  exec python3 -I "$FLOW_PLUGIN/scripts/epic_graph.py" "$repo" "${graph#gh#}"
-fi
+[ -z "$mermaid" ] || [ -n "$graph" ] || die "--mermaid goes with --graph" 2
 items="$(for a in $(adapters_configured); do adapter list "$a" 2>/dev/null; done | python3 -I -c '
 import json, sys
 out = []
 for line in sys.stdin:
     if line.strip(): out.extend(json.loads(line))
 print(json.dumps(out))')"
+if [ -n "$graph" ]; then
+  case "$graph" in priorities) set -- priorities ;; *) set -- epic "$graph" ;; esac
+  printf '%s\n' "$items" | python3 -I "$FLOW_PLUGIN/scripts/_graph.py" "$@" $mermaid
+  exit
+fi
 # Each run record says whether a process still holds it: "running on shell" is only true then.
 grace="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
 reminder="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
