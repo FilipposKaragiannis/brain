@@ -9,8 +9,9 @@
   no graph. It also makes one list call per adapter instead of one GitHub call per child. Only
   direct children are nodes: a parent of epics shows its epics, not their children.
 - A graph lets each adapter's errors through and stops when a list fails, so a failed `gh` call
-  or a list cut at `github.limit` is said, never drawn as a smaller graph. The board itself
-  still shows what it can.
+  or a list cut at `github.limit` is said, never drawn as a smaller graph. A GitHub list fails
+  when cut only with `FLOW_LIST_WHOLE` set, which a graph sets. The board itself still shows
+  what it can.
 - `board.sh --graph priorities` is new: every open item but epics, one column per priority,
   highest first by the tracker's order, an edge per open blocker. An edge where a lower
   priority item blocks a higher one is an inversion, listed in the model.

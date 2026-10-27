@@ -22,10 +22,11 @@ out = []
 for line in sys.stdin:
     if line.strip(): out.extend(json.loads(line))
 print(json.dumps(out))'; }
-# A graph from a list that failed is wrong, so a graph lets the adapters' errors through (a
-# GitHub list cut at github.limit says so) and stops when one fails. The board shows what it can.
+# A graph from a list that failed or was cut short is wrong, so a graph lets the adapters' errors
+# through and stops when one fails. FLOW_LIST_WHOLE makes a list cut at its limit fail. The board
+# shows what it can.
 if [ -n "$graph" ]; then
-  lists="$(for a in $(adapters_configured); do adapter list "$a" || exit 1; done)" || die "an adapter could not list its items, so no graph" 1
+  lists="$(for a in $(adapters_configured); do FLOW_LIST_WHOLE=1 adapter list "$a" || exit 1; done)" || die "an adapter could not list its items, so no graph" 1
   case "$graph" in priorities) set -- priorities ;; *) set -- epic "$graph" ;; esac
   printf '%s\n' "$lists" | merge_lists | python3 -I "$FLOW_PLUGIN/scripts/_graph.py" "$@" $mermaid
   exit

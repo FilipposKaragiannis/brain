@@ -1,7 +1,7 @@
 #!/bin/sh
 # github list [--all] [--kind KIND] [--limit N]: open issues (all with --all) as adapter items.
 # One paged GraphQL query; the state comment is read only for issues that carry a flow label.
-# Stops at github.limit (default 500) and says so.
+# Stops at github.limit (default 500) and says so. With FLOW_LIST_WHOLE set, a cut list fails.
 . "$(dirname "$0")/_gh.sh"
 state="open"; kind=""; limit="$(cfg_or github.limit 500)"
 while [ $# -gt 0 ]; do

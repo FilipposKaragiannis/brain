@@ -10,7 +10,8 @@ are asked for only when GH_SIZE_FIELD, GH_PRIORITY_FIELD or GH_AREA_FIELD is set
 GH_PROJECT is set, because they need the read:project scope a default login lacks. The state
 comment is read for a single issue, and in a list only for issues that carry a flow label: an
 unstarted item keeps the last gate's answer there with no label. Prints one JSON object per
-line. FLOW_GH_PAGE sets the page size (tests). A call GitHub fails with a 5xx is tried again
+line. FLOW_GH_PAGE sets the page size (tests). A list cut at the limit says so and exits 0, or 1
+with FLOW_LIST_WHOLE set, for a caller that needs every item (a board graph). A call GitHub fails with a 5xx is tried again
 (_call.py); a call that still fails ends the read with a message, never with half an item."""
 import json, os, re, sys
 
@@ -135,6 +136,8 @@ def main():
             return
         after = issues["pageInfo"]["endCursor"]
     sys.stderr.write("flow: stopped at github.limit %d %s; raise it in .flow/config.yaml\n" % (limit, what))
+    if os.environ.get("FLOW_LIST_WHOLE"):
+        sys.exit(1)
 
 
 main()

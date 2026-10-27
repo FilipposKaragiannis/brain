@@ -20,7 +20,9 @@ path `codex plugin list` prints for `flow`). Call it `$P`.
      open item but epics, one column per priority (highest first), an edge per blocker. A dashed
      red `inversion` edge is a lower priority item blocking a higher one: say each in one line.
    Show the output as is in a fenced `mermaid` block. The script draws it; never redraw or
-   recompute it. Without `--mermaid` it prints the JSON model.
+   recompute it. Without `--mermaid` it prints the JSON model. When it stops with an error,
+   draw nothing and show the error as is. A list cut at `github.limit` is one: tell the user to
+   raise it in `.flow/config.yaml`.
 3. A `## Health` section appears when something is stale: a run record with no live process
    (the pool row says `dead run`, not `running on <host>`) or a gate waiting past the reminder.
    Say what it means in one line and that the `health` job clears and resumes it, or run

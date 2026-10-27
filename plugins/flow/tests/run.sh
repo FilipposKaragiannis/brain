@@ -518,6 +518,9 @@ check_all "graph priorities: GitHub columns follow github.priority_order, not th
 mv .flow/config.yaml.bak .flow/config.yaml
 printf '1\ngh: HTTP 401: Bad credentials\n' > "$FAKE_GH_DIR/fail"
 check_all "graph: a failed adapter list stops the graph and shows the error" '! "$P/scripts/board.sh" --graph gh#39 >/dev/null 2>"$work/graph.err" && grep -q "Bad credentials" "$work/graph.err" && grep -q "no graph" "$work/graph.err" && ! grep -q "not an open item" "$work/graph.err"'
+cp .flow/config.yaml .flow/config.yaml.bak && awk '{ print } /^  project: 1$/ { print "  limit: 3" }' .flow/config.yaml.bak > .flow/config.yaml
+check_all "graph: a GitHub list cut at github.limit stops the graph and says so" '! "$P/scripts/board.sh" --graph priorities >"$work/graph.out" 2>"$work/graph.err" && [ ! -s "$work/graph.out" ] && grep -q "stopped at github.limit 3" "$work/graph.err" && grep -q "no graph" "$work/graph.err"'
+mv .flow/config.yaml.bak .flow/config.yaml
 check "gh list pages through every issue" [ "$(FLOW_GH_PAGE=2 "$P/adapters/github/list.sh" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "11" ]
 check "gh list stops at the limit and says so" sh -c "[ \"\$('$P/adapters/github/list.sh' --limit 3 2>'$work/limit.err' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')\" = 3 ] && grep -q 'github.limit 3' '$work/limit.err'"
 : > "$FAKE_GH_DIR/calls.log"
