@@ -30,7 +30,7 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
 | `decomposition` | the task list, sizes and blockers. A task whose plan made tracker tasks is already split (step `split`, its worktree back to the pool); to keep it whole, close its children, then clear: the plan step runs again |
 | `plan-approval` | `plan.md`, or sends it back with the change |
 | `feel-test` | they launched it and it feels right |
-| `merge` | the PR is merged; the next `next` job clears it and frees the worktree (`steward.sh sweep`), or run the sweep now |
+| `merge` | the PR is merged; the next `health` or `next` job clears it and frees the worktree (`steward.sh sweep`), or run the sweep now |
 | `escalation`, `ambiguity` | the decision, or the fix, in a sentence |
 
 A gate nobody answers is not forgotten: the `health` job reminds once per `jobs.health.gate_reminder`
