@@ -6,17 +6,23 @@
   (`gh#12`, `local:epic/3`) and builds the dependency model from the items each adapter lists:
   a child is an item whose parent is the id. Before, it took only `gh#N` and read GitHub's
   sub-issues itself, so a project on the local adapter got "--graph takes a GitHub epic id" and
-  no graph. It also makes one list call per adapter instead of one GitHub call per child.
+  no graph. It also makes one list call per adapter instead of one GitHub call per child. Only
+  direct children are nodes: a parent of epics shows its epics, not their children.
+- A graph lets each adapter's errors through and stops when a list fails, so a failed `gh` call
+  or a list cut at `github.limit` is said, never drawn as a smaller graph. The board itself
+  still shows what it can.
 - `board.sh --graph priorities` is new: every open item but epics, one column per priority,
   highest first by the tracker's order, an edge per open blocker. An edge where a lower
   priority item blocks a higher one is an inversion, listed in the model.
 - `--mermaid` prints either graph as a Mermaid flowchart, so the board skill shows the script's
   drawing instead of writing one. Each item is filled by its priority, the same fill in both
-  graphs, and the epic's critical path has a thick red stroke. Titles are escaped, so a quote
+  graphs. The epic's critical path, its nodes and its edges, has a thick red stroke. Titles are escaped, so a quote
   or a `#12;` cannot break a label.
 - Blockers that form a cycle among an epic's children end the graph with a message naming them.
   Before, the layering looped forever.
-- `scripts/epic_graph.py` is gone; `scripts/_graph.py` builds both graphs.
+- `scripts/epic_graph.py` is gone; `scripts/_graph.py` builds both graphs. In the epic model a
+  node's closeout, enabler or behaviour is now `role`, not `kind`, since the priorities model
+  uses `kind` for the item's kind.
 
 ## 1.20.8 (2026-10-27)
 

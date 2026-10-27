@@ -14,7 +14,8 @@ path `codex plugin list` prints for `flow`). Call it `$P`.
 2. Two graphs, for every adapter (GitHub, local, any other), built from the items each lists:
    - Dependencies of one epic: `"$P/scripts/board.sh" --graph <epic-id> --mermaid`, for example
      `gh#12` or `local:epic/3`. One column per wave, an edge per blocker, the critical path in
-     a thick red stroke, each item filled by its priority.
+     a thick red stroke, each item filled by its priority. Only direct children are nodes: for
+     a parent of epics, say so and offer the graph of each child epic.
    - Priorities of the whole board: `"$P/scripts/board.sh" --graph priorities --mermaid`. Every
      open item but epics, one column per priority (highest first), an edge per blocker. A dashed
      red `inversion` edge is a lower priority item blocking a higher one: say each in one line.

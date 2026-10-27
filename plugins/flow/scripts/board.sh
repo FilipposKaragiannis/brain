@@ -16,17 +16,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -z "$mermaid" ] || [ -n "$graph" ] || die "--mermaid goes with --graph" 2
-items="$(for a in $(adapters_configured); do adapter list "$a" 2>/dev/null; done | python3 -I -c '
+merge_lists() { python3 -I -c '
 import json, sys
 out = []
 for line in sys.stdin:
     if line.strip(): out.extend(json.loads(line))
-print(json.dumps(out))')"
+print(json.dumps(out))'; }
+# A graph from a list that failed is wrong, so a graph lets the adapters' errors through (a
+# GitHub list cut at github.limit says so) and stops when one fails. The board shows what it can.
 if [ -n "$graph" ]; then
+  lists="$(for a in $(adapters_configured); do adapter list "$a" || exit 1; done)" || die "an adapter could not list its items, so no graph" 1
   case "$graph" in priorities) set -- priorities ;; *) set -- epic "$graph" ;; esac
-  printf '%s\n' "$items" | python3 -I "$FLOW_PLUGIN/scripts/_graph.py" "$@" $mermaid
+  printf '%s\n' "$lists" | merge_lists | python3 -I "$FLOW_PLUGIN/scripts/_graph.py" "$@" $mermaid
   exit
 fi
+items="$(for a in $(adapters_configured); do adapter list "$a" 2>/dev/null; done | merge_lists)"
 # Each run record says whether a process still holds it: "running on shell" is only true then.
 grace="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
 reminder="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
