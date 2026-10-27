@@ -1,8 +1,10 @@
 #!/bin/sh
 # Health job: check the worktree pool and the gates, with no model spend while all is well.
 #   jobs/health.sh <claude|codex> [--dry-run]
-# Runs `steward.sh health`: clears the run records whose process is gone, releases a claim that
-# holds nothing, resumes work a dead run cut off (the host runs only then, and only up to
+# First frees the worktrees whose PR was merged or whose item closed (`steward.sh sweep`, as the
+# next job does), so a merge clears its gate within one cycle even while a next run is busy.
+# Then runs `steward.sh health`: clears the run records whose process is gone, releases a claim
+# that holds nothing, resumes work a dead run cut off (the host runs only then, and only up to
 # jobs.health.max_resumes times before an escalation gate), brings clean task branches in step
 # with their remote (a push only with jobs.health.push: true) and with their base (a merge once
 # past jobs.health.behind_base; a conflict or a diverged branch goes to the sync step of the
@@ -22,13 +24,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 job_start "$host"
+swept=0
+# shellcheck disable=SC2086
+job_sweep $pass && swept=1
 out="$("$FLOW_PLUGIN/scripts/steward.sh" health --host "$host" $pass 2>&1)" || {
   printf '%s\n' "$out" | sed '$d' | while IFS= read -r line; do job_say "$line"; done
   job_say "error: steward.sh health stopped: $(printf '%s\n' "$out" | tail -1)"; exit 1
 }
 printf '%s\n' "$out" | sed '$d' | while IFS= read -r line; do job_say "$line"; done
 summary="$(printf '%s\n' "$out" | tail -1)"
+word=quiet; [ "$swept" -eq 0 ] || word=done
 case "$summary" in
-  *"nothing to do") job_say "quiet: ${summary#health: }" ;;
+  *"nothing to do") job_say "$word: ${summary#health: }" ;;
   *) job_say "done: ${summary#health: }" ;;
 esac

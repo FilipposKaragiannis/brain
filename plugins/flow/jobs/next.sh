@@ -1,6 +1,6 @@
 #!/bin/sh
 # Next job: run ready items unattended until a gate, nothing ready, or the step budget.
-#   jobs/next.sh <claude|codex> [item] [--max-steps N] [--workers N]
+#   jobs/next.sh <claude|codex> [item] [--max-steps N] [--workers N] [--wait]
 # The unattended loop (templates/run-unattended.sh) does the work; this adds the lock and the
 # log, and turns "nothing ready" (exit 5) and "gate" (exit 4) into quiet exits so a scheduler
 # does not flag them. Schedule it at the cadence you want new work picked up. With notify.idle
@@ -8,17 +8,21 @@
 # stays quiet until a run does work again, so a schedule does not repeat it every time.
 # --workers N starts N loops at once, each on its own ready item and worktree, each with its own
 # lock and log (next-1 ... next-N): a worker still busy from the last schedule is skipped, a free
-# one starts. The pool caps them: a worker with no worktree left stops quietly.
+# one starts. The pool caps them: a worker with no worktree left stops quietly. The job starts
+# the workers in their own session and ends, so one long worker never holds the next schedule
+# (launchd starts no run while the last is alive, and ends its process group when it exits);
+# --wait stays until every worker ends and exits with the first failure.
 set -u
 job=next
 . "$(dirname "$0")/_job.sh"
 host="${1:-}"; shift || true
-workers=1; worker=""; item=""; pass=""
+workers=1; worker=""; item=""; pass=""; wait_all=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --workers) workers="$2"; shift 2 ;;
     --worker) worker="$2"; shift 2 ;;
     --max-steps) pass="$pass --max-steps $2"; shift 2 ;;
+    --wait) wait_all=1; shift ;;
     -*) die "unknown option $1" 2 ;;
     *) item="$1"; shift ;;
   esac
@@ -38,10 +42,7 @@ if [ -z "$worker" ]; then
     done
     flow_unlock
   fi
-  if flow_lock sweep; then
-    "$FLOW_PLUGIN/scripts/steward.sh" sweep 2>/dev/null | while read -r line; do job_say "$line"; done
-    flow_unlock
-  fi
+  job_sweep || true
   for a in $(adapters_configured); do
     [ -x "$FLOW_PLUGIN/adapters/$a/sync.sh" ] && { adapter sync "$a" >/dev/null 2>&1 || true; }
   done
@@ -49,12 +50,26 @@ fi
 if [ "$workers" -gt 1 ] && [ -z "$worker" ]; then
   [ -z "$item" ] || die "--workers runs the queue; drop the item, or run one worker for it" 2
   host_check "$host" || exit 2
+  [ -x "$0" ] || die "$0 is not executable, so no worker can start" 2
+  # detached <log> <command...>: runs the command in its own session, outside the scheduler's
+  # process group; a command that cannot start is a line in <log>, as the worker would write it.
+  detached() { python3 -I -c 'import os, sys, time
+try: os.setsid()
+except OSError: pass
+try: os.execv(sys.argv[2], sys.argv[2:])
+except OSError as e:
+    with open(sys.argv[1], "a") as log: log.write("%s\tnext-%s\tstopped: cannot start: %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), sys.argv[5], e))
+    sys.exit(1)' "$@" </dev/null; }
   pids=""; k=1
   while [ "$k" -le "$workers" ]; do
     # shellcheck disable=SC2086
-    "$0" "$host" --worker "$k" $pass & pids="$pids $!"
+    if [ "$wait_all" -eq 1 ]; then "$0" "$host" --worker "$k" $pass &
+    else detached "$(job_log_dir)/next-$k.log" "$0" "$host" --worker "$k" $pass &
+    fi
+    pids="$pids $!"
     k=$((k + 1))
   done
+  [ "$wait_all" -eq 1 ] || exit 0
   rc=0
   for p in $pids; do wait "$p"; c=$?; [ "$c" -ne 0 ] && [ "$rc" -eq 0 ] && rc=$c; done
   exit "$rc"

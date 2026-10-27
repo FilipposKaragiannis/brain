@@ -1,5 +1,20 @@
 # flow
 
+## 1.20.8 (2026-10-27)
+
+- The `health` job runs the sweep (`steward.sh sweep`) before its checks, as the `next` job
+  does, so a merged PR clears its merge gate and frees its worktree within one health cycle.
+  Before, only the `next` job swept, once at the start of a run.
+- A `next` run with `--workers` starts the workers in their own session and ends; it no longer
+  waits for them. launchd starts no run while the last is alive, so one long worker held every
+  other worker and the sweep until it finished. On foosbrawl one 90-minute build kept three
+  merged PRs at the merge gate and five idle workers off the queue. A busy worker is still
+  skipped by its own lock. `--wait` keeps the old behaviour: stay until every worker ends and
+  exit with the first failure.
+- The sweep both jobs run is one helper, `job_sweep`. A held sweep lock and a failed sweep are
+  now a line in the job log; before, both were silent. A worker that cannot start is a line in
+  its own log.
+
 ## 1.20.7 (2026-10-26)
 
 - A GitHub call that fails with a 5xx answer or a dropped connection is tried again, up to three

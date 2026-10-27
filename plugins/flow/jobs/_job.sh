@@ -70,6 +70,18 @@ job_start() {
     job_say "jobs.model and jobs.effort are deprecated: set jobs.$host.model and jobs.$host.effort in .flow/config.yaml (passed to $host as is; empty is its default)"
   fi
 }
+# job_sweep [--dry-run]: frees the worktrees whose work landed (steward.sh sweep) under the sweep
+# lock, each line it prints in the job log. A held lock and a failed sweep are a line too.
+# Returns 0 when the sweep said something, 1 otherwise. A subshell, so the sweep lock's exit
+# trap never replaces the job lock's.
+job_sweep() (
+  if ! flow_lock sweep; then job_say "sweep skipped: the sweep lock is held"; exit 1; fi
+  _sweep_out="$("$FLOW_PLUGIN/scripts/steward.sh" sweep "$@" 2>&1)"; _sweep_code=$?
+  flow_unlock
+  [ -z "$_sweep_out" ] || printf '%s\n' "$_sweep_out" | while IFS= read -r _line; do job_say "$_line"; done
+  [ "$_sweep_code" -eq 0 ] || { job_say "sweep failed: exit $_sweep_code"; exit 1; }
+  [ -n "$_sweep_out" ]
+)
 # job_model / job_effort: the model and effort job_start read for the host; empty is its default.
 job_model() { printf '%s' "${job_m:-}"; }
 job_effort() { printf '%s' "${job_e:-}"; }
