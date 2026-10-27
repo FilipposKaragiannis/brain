@@ -42,10 +42,7 @@ if [ -z "$worker" ]; then
     done
     flow_unlock
   fi
-  if flow_lock sweep; then
-    "$FLOW_PLUGIN/scripts/steward.sh" sweep 2>/dev/null | while read -r line; do job_say "$line"; done
-    flow_unlock
-  fi
+  job_sweep || true
   for a in $(adapters_configured); do
     [ -x "$FLOW_PLUGIN/adapters/$a/sync.sh" ] && { adapter sync "$a" >/dev/null 2>&1 || true; }
   done
@@ -53,16 +50,23 @@ fi
 if [ "$workers" -gt 1 ] && [ -z "$worker" ]; then
   [ -z "$item" ] || die "--workers runs the queue; drop the item, or run one worker for it" 2
   host_check "$host" || exit 2
-  # detached <command...>: runs it in its own session, outside the scheduler's process group.
-  detached() { python3 -I -c 'import os, sys
+  [ -x "$0" ] || die "$0 is not executable, so no worker can start" 2
+  # detached <log> <command...>: runs the command in its own session, outside the scheduler's
+  # process group; a command that cannot start is a line in <log>, as the worker would write it.
+  detached() { python3 -I -c 'import os, sys, time
 try: os.setsid()
 except OSError: pass
-os.execv(sys.argv[1], sys.argv[1:])' "$@" </dev/null; }
-  launch=""; [ "$wait_all" -eq 1 ] || launch=detached
+try: os.execv(sys.argv[2], sys.argv[2:])
+except OSError as e:
+    with open(sys.argv[1], "a") as log: log.write("%s\tnext-%s\tstopped: cannot start: %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), sys.argv[5], e))
+    sys.exit(1)' "$@" </dev/null; }
   pids=""; k=1
   while [ "$k" -le "$workers" ]; do
     # shellcheck disable=SC2086
-    $launch "$0" "$host" --worker "$k" $pass & pids="$pids $!"
+    if [ "$wait_all" -eq 1 ]; then "$0" "$host" --worker "$k" $pass &
+    else detached "$(job_log_dir)/next-$k.log" "$0" "$host" --worker "$k" $pass &
+    fi
+    pids="$pids $!"
     k=$((k + 1))
   done
   [ "$wait_all" -eq 1 ] || exit 0

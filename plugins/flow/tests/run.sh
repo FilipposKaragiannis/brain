@@ -1238,19 +1238,30 @@ check "the ready list is read before the pick lock, so a slow listing never coun
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
 : > "$HOST_LOG"
-mkdir -p "$work/slow"; printf '#!/bin/sh\nsleep 2\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/slow/claude"; chmod +x "$work/slow/claude"
+# The slow host notes its process group, then holds until the test says go.
+mkdir -p "$work/slow"; rm -f "$work/slow.go" "$work/slow.groups"
+printf '#!/bin/sh\nps -o pgid= -p $$ >> "%s/slow.groups"\nn=0; while [ ! -f "%s/slow.go" ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n + 1)); done\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' "$work" "$work" > "$work/slow/claude"; chmod +x "$work/slow/claude"
 PATH="$work/slow:$PATH" "$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1; code=$?
 check_all "--workers: the job starts the workers and ends before they do" '[ "$code" -eq 0 ] && [ ! -s "$HOST_LOG" ]'
-n=0; while { [ "$(grep -c . "$HOST_LOG")" -lt 2 ] || ls -d .flow/log/next-[0-9]*.lock; } >/dev/null 2>&1 && [ "$n" -lt 60 ]; do sleep 1; n=$((n + 1)); done
+touch "$work/slow.go"
+waited=0; while { [ "$(grep -c . "$HOST_LOG")" -lt 2 ] || ls -d .flow/log/next-[0-9]*.lock; } >/dev/null 2>&1 && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
+check "--workers: the workers end within a minute" [ "$waited" -lt 60 ]
+[ "$waited" -lt 60 ] || for d in .flow/log/next-[0-9]*.lock; do kill "$(cat "$d/pid")" 2>/dev/null; rm -rf "$d"; done
+own_group="$(ps -o pgid= -p $$ | tr -d ' ')"
+check_all "--workers: each worker runs outside the job's process group, so the scheduler ending the job spares them" '[ "$(grep -c . "$work/slow.groups")" = 2 ] && ! tr -d " " < "$work/slow.groups" | grep -qx "$own_group"'
 check_all "--workers 2: two loops, two logs" '[ -f .flow/log/next-1.log ] && [ -f .flow/log/next-2.log ]'
 sleep 30 & held=$!
 mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
 check "next job: a worker that waited out the pick lock says so, not that a run is in flight" sh -c "FLOW_LOCK_WAIT=1 '$P/jobs/next.sh' claude --max-steps 1 | grep -q 'quiet: another worker held the pick for over 1s'"
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null; rm -rf .flow/pick.lock
 check "--workers 2: each worker ran a step in its own worktree" [ "$(cut -f2 "$HOST_LOG" | sort -u | grep -c .)" = 2 ]
-l1="$(grep -c . .flow/log/next-1.log)"; l2="$(grep -c . .flow/log/next-2.log)"
+log_lines_1="$(grep -c . .flow/log/next-1.log)"; log_lines_2="$(grep -c . .flow/log/next-2.log)"
 "$P/jobs/next.sh" claude --workers 2 --max-steps 1 --wait >/dev/null 2>&1
-check_all "--workers --wait: the job ends after every worker" '[ "$(grep -c . .flow/log/next-1.log)" -gt "$l1" ] && [ "$(grep -c . .flow/log/next-2.log)" -gt "$l2" ] && ! ls -d .flow/log/next-[0-9]*.lock'
+check_all "--workers --wait: the job ends after every worker" '[ "$(grep -c . .flow/log/next-1.log)" -gt "$log_lines_1" ] && [ "$(grep -c . .flow/log/next-2.log)" -gt "$log_lines_2" ] && ! ls -d .flow/log/next-[0-9]*.lock'
+failing="$work/plugin-failing"; cp -R "$P" "$failing"; rm -rf "$failing/evals/results"
+printf '#!/bin/sh\nexit 9\n' > "$failing/templates/run-unattended.sh"
+FLOW_PLUGIN="$failing" "$failing/jobs/next.sh" claude --workers 2 --max-steps 1 --wait >/dev/null 2>&1; code=$?
+check "--workers --wait: a worker's failure is the job's exit" [ "$code" -eq 9 ]
 check "--workers with an item is refused" sh -c "! '$P/jobs/next.sh' claude local:task/1 --workers 2 2>/dev/null"
 check "--workers 0 is refused" sh -c "! '$P/jobs/next.sh' claude --workers 0 2>/dev/null"
 cd "$repo"
@@ -1314,14 +1325,19 @@ merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 "$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "sweep: a commit after the merge keeps the branch" sh -c "[ ! -f '$wl/.flow/claim.json' ] && git -C '$wl' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sl")"
-sh_="$("$P/adapters/local/create.sh" task "Merged while a next run is busy")"; wh="$("$P/scripts/steward.sh" claim "$sh_")"
-"$P/adapters/local/link-pr.sh" "$sh_" https://gh/pull/90
-"$P/scripts/gate.sh" raise "$sh_" merge "Merge the PR." >/dev/null 2>&1
-fake_pr MERGED "$(git -C "$wh" rev-parse HEAD)"
-check "health job --dry-run: names the merged PR's worktree and keeps it" sh -c "'$P/jobs/health.sh' claude --dry-run | grep -q '$sh_: would release' && [ -f '$wh/.flow/claim.json' ]"
+merged_item="$("$P/adapters/local/create.sh" task "Merged PR, swept by the health job")"; merged_worktree="$("$P/scripts/steward.sh" claim "$merged_item")"
+"$P/adapters/local/link-pr.sh" "$merged_item" https://gh/pull/90
+"$P/scripts/gate.sh" raise "$merged_item" merge "Merge the PR." >/dev/null 2>&1
+fake_pr MERGED "$(git -C "$merged_worktree" rev-parse HEAD)"
+check "health job --dry-run: names the merged PR's worktree and keeps it" sh -c "'$P/jobs/health.sh' claude --dry-run | grep -q '$merged_item: would release' && [ -f '$merged_worktree/.flow/claim.json' ]"
+sleep 30 & held=$!
+mkdir -p .flow/sweep.lock && echo "$held" > .flow/sweep.lock/pid
+FLOW_LOCK_WAIT=1 "$P/jobs/health.sh" claude >/dev/null 2>&1; code=$?
+check_all "health job: a held sweep lock skips the sweep, says so, and the run still ends cleanly" '[ "$code" -eq 0 ] && [ -f "$merged_worktree/.flow/claim.json" ] && grep -q "sweep skipped: the sweep lock is held" .flow/log/health.log && [ ! -d .flow/log/health.lock ]'
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null; rm -rf .flow/sweep.lock
 "$P/jobs/health.sh" claude >/dev/null 2>&1
-check "health job: the sweep clears a merged PR's gate and frees its worktree" sh -c "[ ! -f '$wh/.flow/claim.json' ] && [ ! -f .flow/gates/$(item_slug "$sh_").json ] && grep -q '$sh_: released' .flow/log/health.log"
-check "health job: a run that swept is not quiet" sh -c "grep '\"job\":\"health\"' .flow/log/runs.jsonl | tail -1 | grep -q '\"result\":\"done'"
+check "health job: the sweep clears a merged PR's gate and frees its worktree" sh -c "[ ! -f '$merged_worktree/.flow/claim.json' ] && [ ! -f .flow/gates/$(item_slug "$merged_item").json ] && grep -q '$merged_item: released' .flow/log/health.log"
+check "health job: a run that swept says done and what it released" sh -c "grep '\"job\":\"health\"' .flow/log/runs.jsonl | tail -1 | grep -q '\"result\":\"done' && tail -n 3 .flow/log/health.log | grep -q '$merged_item: released'"
 fake_pr OPEN ""
 
 echo "health"

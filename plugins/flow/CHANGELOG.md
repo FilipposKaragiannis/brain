@@ -11,6 +11,9 @@
   merged PRs at the merge gate and five idle workers off the queue. A busy worker is still
   skipped by its own lock. `--wait` keeps the old behaviour: stay until every worker ends and
   exit with the first failure.
+- The sweep both jobs run is one helper, `job_sweep`. A held sweep lock and a failed sweep are
+  now a line in the job log; before, both were silent. A worker that cannot start is a line in
+  its own log.
 
 ## 1.20.7 (2026-10-26)
 
