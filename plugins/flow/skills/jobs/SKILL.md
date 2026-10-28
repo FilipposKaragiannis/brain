@@ -40,7 +40,9 @@ Facts to answer with:
   owner, within one health cycle.
 - A `next` run with `--workers` starts the workers and ends; it does not wait for them. A worker
   still busy is skipped by the next schedule, a free one starts, so one long build never holds
-  the others. `--wait` stays until every worker ends.
+  the others. `--wait` stays until every worker ends. The launchd agent needs
+  `AbandonProcessGroup`, or launchd ends the workers with the run; an agent installed before
+  1.21.1 lacks it, and `status` says `reinstall: jobs.sh install <job>` until it is reinstalled.
 - An idle run (nothing ready, no new notes, no open PR) ends at once and spends no model time.
 - Each `retro` run, quiet or not, commits `lessons.jsonl` and `retros.log` on the base branch and
   pushes them, as `intake` does the notes, so a cloud session reads the same lessons

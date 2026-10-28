@@ -1,5 +1,15 @@
 # flow
 
+## 1.21.1 (2026-10-28)
+
+- The launchd agent `jobs.sh install` writes sets `AbandonProcessGroup`. Since 1.20.8 a `next`
+  run with `--workers` starts its workers and exits, and launchd ended every process the run
+  had started when it did, even workers in their own session. On foosbrawl no scheduled worker
+  ran for about nine hours; each one logged a SIGTERM within seconds of starting. Reinstall the
+  jobs (`jobs.sh install`) to pick it up: `jobs.sh status` shows `reinstall: jobs.sh install
+  <job>` as the next run of every agent installed before.
+- A detached worker no longer leaves an idle shell waiting behind it.
+
 ## 1.21.0 (2026-10-27)
 
 - The board's graphs work with every adapter. `board.sh --graph <epic-id>` takes any item id
