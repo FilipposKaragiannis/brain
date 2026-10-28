@@ -13,7 +13,7 @@ Route one sentence to the flow skill that does it. You translate; the skills act
 
    | The user means | Skill |
    |---|---|
-   | what is going on, running, stuck, ready, blocked, waiting on me; a dependency graph | `board` |
+   | what is going on, running, stuck, ready, blocked, waiting on me; a dependency or priorities graph | `board` |
    | file, add, log, raise a bug, task or epic | `new` |
    | work on, start, continue, pick up, run, "the next one", "the bots bug" | `next` |
    | plan, grill, design, break down an item | `plan` |

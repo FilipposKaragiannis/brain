@@ -329,6 +329,54 @@ board="$("$P/scripts/board.sh")"
 check "board pool and items" sh -c "printf '%s' \"$board\" | grep -q '## Pool' && printf '%s' \"$board\" | grep -q 'local:task/2'"
 check "board json"        sh -c "'$P/scripts/board.sh' --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d[\"pool\"])==2 and d[\"items\"]'"
 
+echo "board graphs (local)"
+# Its own home, so these items never reach a later pick.
+gh_home="$work/graph-home"; mkdir -p "$gh_home"; printf 'adapters:\n  default: local\n' > "$gh_home/config.yaml"
+gr() { FLOW_HOME="$gh_home" "$@"; }
+# mmd_edges <file>: each Mermaid edge as "<from item> <arrow> <to item> red|plain", in order.
+mmd_edges() { python3 - "$1" <<'PY'
+import re, sys
+lines = open(sys.argv[1]).read().splitlines()
+ids = {m.group(1): m.group(2) for m in (re.match(r'\s+(n\d+)\["(\S+) ', l) for l in lines) if m}
+red = set()
+for l in lines:
+    m = re.match(r"\s+linkStyle ([\d,]+) stroke:#b91c1c", l)
+    if m: red |= set(m.group(1).split(","))
+edges = [l.split() for l in lines if re.match(r"\s+n\d+ (-->|==>|-\.)", l)]
+for n, e in enumerate(edges):
+    print(ids[e[0]], " ".join(e[1:-1]), ids[e[-1]], "red" if str(n) in red else "plain")
+PY
+}
+ge="$(gr "$P/adapters/local/create.sh" epic "Ship it" --priority P1)"
+ga="$(gr "$P/adapters/local/create.sh" task 'Schema "v2" #3;' --size M --priority P2 --parent "$ge")"
+gb="$(gr "$P/adapters/local/create.sh" task "API" --size L --priority P0 --parent "$ge" --blocked-by "$ga")"
+gc="$(gr "$P/adapters/local/create.sh" task "UI" --size S --parent "$ge" --blocked-by "$ga,$gb")"
+gd="$(gr "$P/adapters/local/create.sh" task "Elsewhere" --size S --priority P0)"
+gr "$P/scripts/board.sh" --graph "$ge" > "$work/graph.json"
+check_all "graph: a local epic layers its children in waves by longest path" '[ "$(jget waves < "$work/graph.json")" = "{\"1\": [\"$ga\"], \"2\": [\"$gb\"], \"3\": [\"$gc\"]}" ]'
+check_all "graph: the critical path is the size-weighted longest chain" '[ "$(jget criticalPath < "$work/graph.json")" = "[\"$ga\", \"$gb\", \"$gc\"]" ]'
+check_all "graph: only the epic's children are nodes, each with its priority" '[ "$(python3 -c "import json,sys; n=json.load(open(sys.argv[1]))[\"nodes\"]; print(sorted(n), n[sys.argv[2]][\"priority\"])" "$work/graph.json" "$gb")" = "[$(printf "'\''%s'\'', " "$ga" "$gb" "$gc" | sed "s/, $//")] P0" ]'
+gr "$P/scripts/board.sh" --graph "$ge" --mermaid > "$work/graph.mmd"
+check_all "graph --mermaid: a flowchart, one subgraph per wave" 'head -1 "$work/graph.mmd" | grep -qx "flowchart LR" && [ "$(grep -c "^  subgraph wave" "$work/graph.mmd")" = 3 ] && ! grep -q "^## Pool" "$work/graph.mmd"'
+check_all "graph --mermaid: only the critical path's edges are thick and red" '[ "$(mmd_edges "$work/graph.mmd")" = "$(printf "%s\n" "$ga ==> $gb red" "$ga --> $gc plain" "$gb ==> $gc red")" ]'
+check "graph --mermaid: a title cannot end its label or read as an entity" grep -q 'Schema #quot;v2#quot; #35;3;' "$work/graph.mmd"
+gr "$P/scripts/board.sh" --graph priorities > "$work/prio.json"
+check_all "graph priorities: one column per priority, highest first, each item in its own, no epics, no priority last" '[ "$(python3 -c "import json,sys; print(\" \".join((c[\"priority\"] or \"-\") + \":\" + \",\".join(c[\"items\"]) for c in json.load(open(sys.argv[1]))[\"columns\"]))" "$work/prio.json")" = "P0:$gb,$gd P2:$ga -:$gc" ] && ! grep -q "\"$ge\":" "$work/prio.json"'
+check_all "graph priorities: a lower priority item blocking a higher one is an inversion" '[ "$(jget inversions < "$work/prio.json")" = "[[\"$ga\", \"$gb\"]]" ]'
+gr "$P/scripts/board.sh" --graph priorities --mermaid > "$work/prio.mmd"
+check_all "graph priorities --mermaid: the inversion is the one dashed red edge" '[ "$(mmd_edges "$work/prio.mmd")" = "$(printf "%s\n" "$ga -. inversion .-> $gb red" "$ga --> $gc plain" "$gb --> $gc plain")" ]'
+check_all "graph: an id that is no open item says so" '! gr "$P/scripts/board.sh" --graph local:epic/99 2>"$work/graph.err" && grep -q "local:epic/99 is not an open item" "$work/graph.err"'
+# Two branches of two steps each: the heavier one is critical, though the lighter one is listed first.
+gf="$(gr "$P/adapters/local/create.sh" epic "Fork")"
+fr="$(gr "$P/adapters/local/create.sh" task "Root" --size S --parent "$gf")"
+fx="$(gr "$P/adapters/local/create.sh" task "Light" --size S --parent "$gf" --blocked-by "$fr")"
+fy="$(gr "$P/adapters/local/create.sh" task "Heavy" --size L --parent "$gf" --blocked-by "$fr")"
+fz="$(gr "$P/adapters/local/create.sh" task "Join" --size S --parent "$gf" --blocked-by "$fx,$fy")"
+check_all "graph: the critical path weighs size, not only steps" '[ "$(gr "$P/scripts/board.sh" --graph "$gf" | jget criticalPath)" = "[\"$fr\", \"$fy\", \"$fz\"]" ]'
+sed -i.bak "s|^blocked_by: .*|blocked_by: [$gc]|" "$gh_home/items/${ga#local:}.md"
+check_all "graph: blockers in a cycle end it with a word, not a hang" '! gr "$P/scripts/board.sh" --graph "$ge" 2>"$work/graph.err" && grep -q "form a cycle" "$work/graph.err"'
+check_all "graph: --mermaid alone is refused, and says why" '! gr "$P/scripts/board.sh" --mermaid 2>"$work/graph.err" && grep -q -- "--mermaid goes with --graph" "$work/graph.err"'
+
 echo "worktree hooks"
 rm -f .flow/runs/*.json
 "$P/scripts/steward.sh" release "$t2" --force >/dev/null 2>&1
@@ -464,6 +512,15 @@ check "gh an unstarted item lists the fields it lacks" sh -c "grep -qx 'gh#33 ta
 check "gh an epic needs no size" grep -qx 'gh#30 epic - P1 -' "$work/ghlist"
 check "gh a started item needs nothing" grep -qx 'gh#36 task S P2 -' "$work/ghlist"
 check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
+check_all "graph: a GitHub epic's children come from the item list, native parent or Parent: line" '[ "$("$P/scripts/board.sh" --graph gh#39 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#40'\'']" ] && [ "$("$P/scripts/board.sh" --graph gh#30 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#31'\'']" ]'
+sed -i.bak 's/^  priority_order: .*/  priority_order: [P2, P0, P1, P3]/' .flow/config.yaml
+check_all "graph priorities: GitHub columns follow github.priority_order, not the names" '[ "$("$P/scripts/board.sh" --graph priorities | python3 -c "import json,sys; print(\" \".join(c[\"priority\"] or \"-\" for c in json.load(sys.stdin)[\"columns\"]))")" = "P2 P0 P1 P3 -" ]'
+mv .flow/config.yaml.bak .flow/config.yaml
+printf '1\ngh: HTTP 401: Bad credentials\n' > "$FAKE_GH_DIR/fail"
+check_all "graph: a failed adapter list stops the graph and shows the error" '! "$P/scripts/board.sh" --graph gh#39 >/dev/null 2>"$work/graph.err" && grep -q "Bad credentials" "$work/graph.err" && grep -q "no graph" "$work/graph.err" && ! grep -q "not an open item" "$work/graph.err"'
+cp .flow/config.yaml .flow/config.yaml.bak && awk '{ print } /^  project: 1$/ { print "  limit: 3" }' .flow/config.yaml.bak > .flow/config.yaml
+check_all "graph: a GitHub list cut at github.limit stops the graph and says so" '! "$P/scripts/board.sh" --graph priorities >"$work/graph.out" 2>"$work/graph.err" && [ ! -s "$work/graph.out" ] && grep -q "stopped at github.limit 3" "$work/graph.err" && grep -q "no graph" "$work/graph.err"'
+mv .flow/config.yaml.bak .flow/config.yaml
 check "gh list pages through every issue" [ "$(FLOW_GH_PAGE=2 "$P/adapters/github/list.sh" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "11" ]
 check "gh list stops at the limit and says so" sh -c "[ \"\$('$P/adapters/github/list.sh' --limit 3 2>'$work/limit.err' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')\" = 3 ] && grep -q 'github.limit 3' '$work/limit.err'"
 : > "$FAKE_GH_DIR/calls.log"
