@@ -10,7 +10,8 @@
 # lock and log (next-1 ... next-N): a worker still busy from the last schedule is skipped, a free
 # one starts. The pool caps them: a worker with no worktree left stops quietly. The job starts
 # the workers in their own session and ends, so one long worker never holds the next schedule
-# (launchd starts no run while the last is alive, and ends its process group when it exits);
+# (launchd starts no run while the last is alive). The launchd agent abandons what its run
+# leaves behind (AbandonProcessGroup), or launchd would end every worker when the job exits.
 # --wait stays until every worker ends and exits with the first failure.
 set -u
 job=next
@@ -53,7 +54,7 @@ if [ "$workers" -gt 1 ] && [ -z "$worker" ]; then
   [ -x "$0" ] || die "$0 is not executable, so no worker can start" 2
   # detached <log> <command...>: runs the command in its own session, outside the scheduler's
   # process group; a command that cannot start is a line in <log>, as the worker would write it.
-  detached() { python3 -I -c 'import os, sys, time
+  detached() { exec python3 -I -c 'import os, sys, time
 try: os.setsid()
 except OSError: pass
 try: os.execv(sys.argv[2], sys.argv[2:])

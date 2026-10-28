@@ -163,6 +163,16 @@ def launchd(label):
     return info
 
 
+# abandons: the agent lets a run leave processes behind. One written before 1.21.1 does not, so
+# launchd ends the workers a next run started as soon as the run exits.
+def abandons(plist_path):
+    try:
+        with open(plist_path) as f:
+            return "<key>AbandonProcessGroup</key><true/>" in f.read()
+    except OSError:
+        return True
+
+
 def job_status(log, agents, prefix, name, spec, now):
     label = "%s.%s" % (prefix, name)
     try:
@@ -174,6 +184,7 @@ def job_status(log, agents, prefix, name, spec, now):
            "installed": os.path.exists(os.path.join(agents, label + ".plist")),
            "paused": os.path.exists(os.path.join(log, name + ".paused")),
            "running": running(log, name)}
+    row["stale"] = row["installed"] and not abandons(os.path.join(agents, label + ".plist"))
     info = launchd(label) if row["installed"] else None
     row["loaded"] = info is not None
     row["launchd"] = info or {}
@@ -198,6 +209,8 @@ def next_run(s, row, history, now):
         return "paused"
     if not row["loaded"]:
         return "not scheduled"
+    if row["stale"]:
+        return "reinstall: jobs.sh install %s" % row["job"]
     if "every" in s:
         last = max((epoch(r.get("at")) for r in history), default=0)
         if not last:
@@ -280,6 +293,7 @@ def plist(label, workdir, command, spec, log, path):
 %s  <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>%s</string></dict>
   <key>RunAtLoad</key><false/>
+  <key>AbandonProcessGroup</key><true/>
   <key>StandardOutPath</key><string>%s</string>
   <key>StandardErrorPath</key><string>%s</string>
 </dict>
