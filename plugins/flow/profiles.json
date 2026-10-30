@@ -1,5 +1,5 @@
 {
-  "_readme": "Flow profiles. kind + size pick a profile (select); a flow:<profile> label or the profile state field overrides it. A profile is an ordered list of steps; a step named gate:<name> stops the run and raises that human gate. steps maps a step to the agent that runs it (empty: the orchestrator invokes the flow:<skill> skill, which spawns what it needs), whether it needs the claimed worktree, and the skill that carries the procedure. review_depth feeds the review step.",
+  "_readme": "Flow profiles. kind + size pick a profile (select); a flow:<profile> label or the profile state field overrides it. A profile is an ordered list of steps; a step named gate:<name> stops the run and raises that human gate. steps maps a step to the agent that runs it (empty: the orchestrator invokes the flow:<skill> skill, which spawns what it needs), whether it needs the claimed worktree, and the skill that carries the procedure. review_depth feeds the review step. architect says per profile whether the design step runs the architect: only L tasks and epics, where its cost pays; off, the design step ends with the exploration and the planner designs from it.",
   "select": {
     "bug": "bugfix",
     "epic": "epic",
@@ -23,6 +23,13 @@
     "task-M": "standard",
     "task-L": "deep",
     "epic": "none"
+  },
+  "architect": {
+    "bugfix": false,
+    "task-S": false,
+    "task-M": false,
+    "task-L": true,
+    "epic": true
   },
   "profiles": {
     "bugfix": [
@@ -116,7 +123,7 @@
       "agent": "",
       "worktree": true,
       "skill": "plan",
-      "summary": "Explore, research and design: explorer, researcher when needed, architect; design.md in the reports (flow:plan)."
+      "summary": "Explore, research and design: explorer, researcher when needed, architect when the profile turns it on (architect); design.md in the reports (flow:plan)."
     },
     "plan": {
       "agent": "planner",

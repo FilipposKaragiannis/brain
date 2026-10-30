@@ -1,9 +1,10 @@
 #!/bin/sh
 # board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every adapter, every claim. The pool
 # with item, step and last event; open items with their state and blockers; pending gates;
-# overlapping claims. --graph prints a graph model built from every adapter's open items
-# (scripts/_graph.py): the dependency waves of one epic's children, or every open item by
-# priority. --mermaid prints it as a Mermaid flowchart instead of JSON.
+# overlapping claims; the spend per item, from the step sessions in log/runs.jsonl. --graph
+# prints a graph model built from every adapter's open items (scripts/_graph.py): the dependency
+# waves of one epic's children, or every open item by priority. --mermaid prints it as a Mermaid
+# flowchart instead of JSON.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 as_json=0; graph=""; mermaid=""
@@ -49,4 +50,4 @@ for l in sys.stdin:
         pass
 print(json.dumps(out))')"
 pool="$("$FLOW_PLUGIN/scripts/steward.sh" pool 2>/dev/null | tail -n +2)"
-printf '%s\n%s\n%s\n' "$items" "$runs" "$gates" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder"
+printf '%s\n%s\n%s\n' "$items" "$runs" "$gates" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"

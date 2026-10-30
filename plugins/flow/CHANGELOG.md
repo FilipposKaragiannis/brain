@@ -1,18 +1,48 @@
 # flow
 
-## 1.22.0 (2026-10-30)
+## 1.23.0 (2026-10-30)
 
 - A gate can send the work back. `gate.sh clear <item> --back "<what to change>"` runs the step
   that raised the gate again, with attempts at 0 and the owner's note in its brief, instead of
   continuing past it. A note is required. `gate.sh raise` takes the step to go back to as a
   fourth argument and keeps it as `gate_from`; a feel test goes back to the step that wrote the
-  code. A gate raised before 1.22.0 has no `gate_from` and says so.
+  code. A gate raised before 1.23.0 has no `gate_from` and says so.
 - Gate messages lead with the decision, in bold: each gate's `asks` in `profiles.json` (for
   example "Approve the plan, approve it with notes, or send it back."), then the step's summary.
   The brief asks agents for a markdown summary and a gate message that starts with a bold ask.
 - Every answer adds one `answered` line to `events.log`: the gate and the answer, or where it
   was sent back to. The console lists them as "Answered today".
 - The local adapter keeps `gate_from` in an item's state.
+
+## 1.22.0 (2026-10-30)
+
+Spend control for unattended runs (#65).
+
+- A step with no agent (design, implement, review, explain) runs on the jobs' pair for the
+  host, `jobs.<host>.model` and `jobs.<host>.effort` in `.flow/config.yaml`, on claude and on
+  codex. Before, it ran on the host's own default model and effort, whatever the config said.
+  Steps with an agent still take the roster's pair. `run-unattended.sh` and the `next` job
+  check the pair before they claim a step, so a bad effort stops the run, not the session.
+- The architect runs only for L tasks and epics. `profiles.json` has an `architect` switch per
+  profile; the design step's brief says `Architect: yes` or `no`, and on no the step ends with
+  the exploration and the planner designs from it.
+- Claude sessions use the 5-minute prompt cache. A subscription defaults to one hour, which
+  costs more to write (2x the input price, against 1.25x) and pays off only when a session
+  idles more than five minutes between turns; a step session does not.
+  `host_run` sets `CLAUDE_CODE_PROMPT_CACHE_TTL` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` to
+  `5m` unless the owner set them.
+- Each unattended step session is a line in `<flow home>/log/runs.jsonl`: the item, the step,
+  the host, the model, the effort, the seconds, the exit, the tokens and the cost where the host
+  reports it (claude does, codex reports tokens only). Claude runs with `--output-format json`
+  and codex with `--json`; `scripts/_host.py` reads the usage and passes the text on to the
+  log. A step line has no `job` key, so the job readers skip it.
+- The board has a spend section: cost, sessions and tokens per item, summed over its step
+  sessions.
+- A session that fails on a spend limit or an auth error stops the host. The run raises the
+  escalation gate on its item, naming the cause and the host's own words, and exits 4. No
+  session starts on that host, from any loop or job, until the owner clears the gate, or
+  `gate.sh clear <claude|codex>` for a stop outside an item's run. `gate.sh list` shows a
+  stopped host. Before, the loop went on to the next step and failed the same way on each one.
 
 ## 1.21.1 (2026-10-28)
 
