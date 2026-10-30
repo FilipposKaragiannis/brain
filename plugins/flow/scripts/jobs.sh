@@ -1,6 +1,7 @@
 #!/bin/sh
 # jobs.sh <command> [job]: run and watch the scheduled jobs on this machine.
-#   status [--json]       every job: schedule, state, last run and its result, next run, last 7 days
+#   status [--json]       every job: schedule, state, last run and its result, next run, last 7 days,
+#                         and each worker of next with its host
 #   history <job> [N]     the last N runs (default 10): start, length, exit, outcome, last line
 #   logs <job> [N]        the last N lines of the job's log and of each worker's (default 40)
 #   run <job>             start a run now, as the schedule would; a running job is left alone
@@ -12,12 +13,15 @@
 # The schedule lives in .flow/config.yaml: jobs.schedule.<job> is "every 30m [args]", "daily
 # 02:00 [args]" or "weekly sun 03:00 [args]"; jobs.host picks claude or codex (default claude),
 # and jobs.<host>.model and jobs.<host>.effort set the model and effort of the sessions it starts.
-# run and install refuse a bad jobs.host or effort (exit 2), naming its line in the config.
+# jobs.workers ({claude: 1, codex: 2}) starts next's workers on their own hosts instead.
+# run and install refuse a bad jobs.host, effort or jobs.workers (exit 2), naming its line in the
+# config, and a next schedule whose args set --workers while jobs.workers does too.
 # On macOS a job is a launchd agent, com.<repo>.flow.<job>, loaded at login: it runs while you
 # are logged in and the Mac is awake. Elsewhere install prints the crontab lines to add.
 set -u
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/host.sh"
+. "$FLOW_PLUGIN/lib/workers.sh"
 JOBS="next comments intake retro health"
 log="$(flow_home)/log"; main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 agents="${FLOW_LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}"
@@ -54,10 +58,17 @@ live() {
   if loaded "$1"; then launchctl print "$domain/$(label "$1")" 2>/dev/null | sed -n 's/^[[:space:]]*pid = \([0-9][0-9]*\)$/\1/p'; fi
 }
 # settings_ok <job>...: the jobs settings a run would refuse are refused here, before anything
-# starts: jobs.host for every job, the host's model and effort for the jobs that start sessions.
+# starts: jobs.host for every job, the host's model and effort for the jobs that start sessions,
+# jobs.workers for next, and a next schedule that sets --workers beside it.
 settings_ok() {
   _bad="$(host_jobs_host_problem)"
   if [ -z "$_bad" ]; then for _j in "$@"; do case "$_j" in comments|intake|retro) _bad="$(host_jobs_pair_problem "$host")"; break ;; esac; done; fi
+  if [ -z "$_bad" ]; then case " $* " in *" next "*)
+    if ! _plan="$(jobs_workers 2>&1)"; then _bad="${_plan#flow: }"
+    elif [ -n "$_plan" ]; then case " $(spec next) " in *" --workers "*)
+      _bad="$(host_cfg_where jobs.workers): jobs.workers and --workers in jobs.schedule.next both set the workers: keep one" ;; esac
+    fi ;; esac
+  fi
   [ -z "$_bad" ] || { printf 'flow: %s\n' "$_bad" >&2; exit 2; }
 }
 descendants() { for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
@@ -69,7 +80,7 @@ case "$cmd" in
     set --
     for j in $JOBS; do set -- "$@" "$j=$(spec "$j")"; done
     # shellcheck disable=SC2086
-    py status "$log" "$agents" "$prefix" $json "$@" ;;
+    py status "$log" "$agents" "$prefix" $json --host "$host" --workers "$(jobs_workers 2>/dev/null | tr '\n' ' ')" "$@" ;;
   history) [ -n "${1:-}" ] || die "history <job> [N]" 2; known "$1"; py history "$log" "$1" "${2:-10}" ;;
   logs)
     [ -n "${1:-}" ] || die "logs <job> [N]" 2; known "$1"

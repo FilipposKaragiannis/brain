@@ -141,6 +141,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "# Scheduled jobs (.flow/jobs/*.sh)."
       echo "jobs:"
       echo "  # host: claude             # the host the scheduled jobs run on: claude (the default) or codex"
+      echo "  # workers: {claude: 1, codex: 2}  # next's workers per host; drop --workers from schedule.next"
       echo "  # The model and effort of the session a job starts (comments, intake, retro), one pair per"
       echo "  # host: a job reads the pair of the host it runs on. Each value goes to that host as written,"
       echo "  # so name a model the host knows. Empty means the host's own default: no flag is passed."

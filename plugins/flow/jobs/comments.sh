@@ -6,9 +6,11 @@
 # worktree (the skill spawns the comment-addresser in the task's worktree). Before that, with no
 # model: a reviewer silent past reviews.chase_after is asked again (comments.sh chase), and a PR
 # that conflicts with its base is named in the brief so the skill merges the base in first.
-# An item waiting at a gate other than merge is skipped. A PR whose activity (last update, head
-# commit, mergeable, unresolved threads, their comments, and the threads whose last word is not
-# the flow's reply) matches the last pass's is skipped with no model. Threads still waiting on a
+# An item waiting at a gate other than merge is skipped, and so is an item whose worktree another
+# session works in (the health job's process scan), named or not: the pass would edit under it.
+# A PR whose activity (last update, head commit, mergeable, unresolved threads, their comments,
+# the threads whose last word is not the flow's reply, and the time the item's last gate was
+# cleared) matches the last pass's is skipped with no model. Threads still waiting on a
 # reply get one more pass, then the owner is told once. A named PR always runs. A pass's own
 # replies count as activity, so one quiet pass follows each working one. A pass the host cut short
 # (a non-zero exit, or the host stopping the addresser at its background-task ceiling) is failed:
@@ -22,7 +24,7 @@ job=comments
 host="${1:-}"; one="${2:-}"
 job_start "$host" model
 out="$(job_log_dir)/$job.out.$$"
-trap 'c=$?; rm -f "$out" "$out.code" "$out.login"; job_end $c' EXIT
+trap 'c=$?; rm -f "$out" "$out.code" "$out.login" "$out.procs" "$out.procs.failed"; job_end $c' EXIT
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 targets=""
@@ -61,14 +63,19 @@ chase_reviewers() { # chase_reviewers <target> <pr>
 }
 # activity <target>: one line that changes when anything lands on the PR, read after the chase.
 # $awaiting holds the last comment ids of the unresolved threads whose last word is not the
-# flow's reply, space separated, and they are part of the line.
+# flow's reply, space separated, and they are part of the line. So is the time the item's last
+# gate was cleared (gate.sh clear), once one was: a pass that stopped at a gate left the PR as it
+# was, and the owner's answer is what is new. A line with no clear is the line before 1.22.0.
 activity() {
-  awaiting=""
-  case "$1" in *#*|local:*) pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)" ;; *) pull="$1" ;; esac
+  awaiting=""; cleared=""
+  case "$1" in
+    *#*|local:*) data="$(adapter read "$1" 2>/dev/null)"; pull="$(json_get "$data" state.pr)"; cleared="$(json_get "$data" state.answered_at)" ;;
+    *) pull="$1" ;;
+  esac
   [ -n "$pull" ] && act="$("$FLOW_PLUGIN/scripts/comments.sh" activity "$pull" 2>/dev/null)" || return 0
   awaiting="$(json_list "$act" awaiting | tr '\n' ' ' | sed 's/ $//')"
-  printf '%s %s %s threads:%s comments:%s awaiting:%s' "$(json_get "$act" updatedAt)" "$(json_get "$act" headRefOid)" "$(json_get "$act" mergeable)" \
-    "$(json_get "$act" unresolved)" "$(json_get "$act" review_comments)" "$(printf '%s' "$awaiting" | tr ' ' ',')"
+  printf '%s %s %s threads:%s comments:%s awaiting:%s%s' "$(json_get "$act" updatedAt)" "$(json_get "$act" headRefOid)" "$(json_get "$act" mergeable)" \
+    "$(json_get "$act" unresolved)" "$(json_get "$act" review_comments)" "$(printf '%s' "$awaiting" | tr ' ' ',')" "${cleared:+ cleared:$cleared}"
 }
 # cut_short <output file>: the host's own line when it stopped the pass's background work (Claude
 # prints it when a subagent outlives its ceiling after the last turn), or nothing. Only a line that
@@ -84,15 +91,20 @@ seen_file() { printf '%s/%s.seen/%s' "$(job_log_dir)" "$job" "$(printf '%s' "$1"
 max_fails="$(cfg_or jobs.comments.max_failures 3)"
 case "$max_fails" in ''|*[!0-9]*) die "jobs.comments.max_failures takes a whole number" 2 ;; esac
 tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 || true; }
+# item_of <target>: the item a target names: the target itself, or for a PR number the item its
+# flow/gh-<n> branch names; nothing for a PR the flow did not open.
+item_of() {
+  case "$1" in *#*|local:*) printf '%s' "$1" ;;
+    *) "$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c '
+import json, re, sys
+m = re.match(r"flow/gh-(\d+)$", json.load(sys.stdin).get("headRefName", ""))
+print("gh#" + m.group(1) if m else "")' 2>/dev/null ;;
+  esac
+}
 # resume_note <target>: the item's comments-resume.md, the note a cut-short pass leaves for the
 # next one (the shape of the health job's resume.md), in the reports folder the steward names.
 resume_note() {
-  case "$1" in *#*|local:*) rn_item="$1" ;;
-    *) rn_item="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c '
-import json, re, sys
-m = re.match(r"flow/gh-(\d+)$", json.load(sys.stdin).get("headRefName", ""))
-print("gh#" + m.group(1) if m else "")' 2>/dev/null)" ;;
-  esac
+  rn_item="$(item_of "$1")"
   [ -n "$rn_item" ] || return 1
   rn_dir="$("$FLOW_PLUGIN/scripts/steward.sh" reports "$rn_item" 2>/dev/null)" || return 1
   printf '%s/comments-resume.md' "$rn_dir"
@@ -105,10 +117,28 @@ dirty_tree() { [ -n "$(git -C "$1" status --porcelain -- . ':!.flow' 2>/dev/null
 # The flow's GitHub login, read at most once per run and only when a thread lacks the reply
 # marker (a reply from before 1.19.0): comments.sh activity reads this cache.
 FLOW_GH_LOGIN_CACHE="$out.login"; export FLOW_GH_LOGIN_CACHE
+# in_use <target>: sets $in_use_why to why another session may be working in the worktree the
+# item holds, or to nothing. Not run in a subshell: the processes are listed once per run, the
+# first time a target holds a worktree (FLOW_HEALTH_PROCS names a list, as for the health job).
+# When they cannot be listed, every worktree counts as in use, as the steward counts it.
+in_use() {
+  in_use_why=""
+  iu_item="$(item_of "$1")"; [ -n "$iu_item" ] || return 0
+  iu_wt="$("$FLOW_PLUGIN/scripts/steward.sh" find "$iu_item" 2>/dev/null)"; [ -n "$iu_wt" ] || return 0
+  if [ -z "$procs" ]; then
+    procs="${FLOW_HEALTH_PROCS:-}"
+    [ -n "$procs" ] || { procs="$out.procs"; python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$procs" 2>/dev/null || : > "$procs.failed"; }
+  fi
+  if [ -f "$procs.failed" ]; then in_use_why="the processes cannot be listed, so a session may be working in $iu_wt"; return 0; fi
+  iu_how="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$procs" "$iu_item" "$iu_wt" "" 2>/dev/null)"
+  [ -z "$iu_how" ] || in_use_why="another session works in $iu_wt ($iu_how)"
+}
 # once <file> <value>: true the first time <value> is seen for <file>, and records it.
 once() { [ "$(cat "$1" 2>/dev/null)" != "$2" ] && printf '%s\n' "$2" > "$1"; }
-addressed=0; unchanged=0; failed=""
+addressed=0; unchanged=0; busy=0; failed=""; procs=""
 for t in $targets; do
+  in_use "$t"
+  if [ -n "$in_use_why" ]; then job_say "$t: $in_use_why, skipped" >/dev/null; busy=$((busy + 1)); continue; fi
   note="$(prepare_pr "$t")"
   activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$t")"; mkdir -p "$(dirname "$f")"
   fails=0
@@ -172,8 +202,9 @@ for t in $targets; do
   fi
   addressed=$((addressed + 1))
 done
-[ "$addressed" -gt 0 ] || { job_say "quiet: nothing new on $unchanged PR(s)"; exit 0; }
+in_use_said=""; [ "$busy" -eq 0 ] || in_use_said=", $busy in use by another session"
+[ "$addressed" -gt 0 ] || { job_say "quiet: nothing new on $unchanged PR(s)$in_use_said"; exit 0; }
 if [ -n "$failed" ]; then
-  job_say "failed:$failed cut short or failed, of $addressed PR(s), $unchanged unchanged"; exit 1
+  job_say "failed:$failed cut short or failed, of $addressed PR(s), $unchanged unchanged$in_use_said"; exit 1
 fi
-job_say "done: $addressed PR(s), $unchanged unchanged"
+job_say "done: $addressed PR(s), $unchanged unchanged$in_use_said"

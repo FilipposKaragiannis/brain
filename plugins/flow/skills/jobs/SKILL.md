@@ -29,7 +29,10 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
 3. `stop` ends the agent sessions mid-step. Confirm it first: the item stays where its last
    step left it, and the next run picks it up again.
 4. Pause is the safe hold: a paused job's runs exit at once and show as `paused`, the schedule
-   stays loaded, and a running run finishes.
+   stays loaded, and a running run finishes. Pausing `next` pauses every worker of it, a worker
+   started by hand included.
+5. To split `next`'s workers across hosts, set `jobs.workers` (`{claude: 1, codex: 2}`) and
+   drop `--workers` from `jobs.schedule.next`; `install` refuses the two together.
 
 Facts to answer with:
 - On macOS each job is a launchd agent that loads at login. It runs while the owner is logged in
@@ -56,8 +59,20 @@ Facts to answer with:
   `sync` step of the item's next run, reminds on gates older than
   `jobs.health.gate_reminder` and says when the pool is full. `notify.health: false` mutes it.
 - A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
-  still busy from the last schedule is skipped, which shows as `skipped`.
-- The host is `jobs.host` (claude, the default, or codex). The sessions a job starts (comments,
+  still busy from the last schedule is skipped, which shows as `skipped`. `--worker` takes only
+  a number, so every worker shows in `status` and obeys the pause.
+- `jobs.workers` in `.flow/config.yaml` (`{claude: 1, codex: 2}`, or one host per line under it)
+  starts each worker of a scheduled `next` run on its own host, numbered across the hosts,
+  claude first: `next-1` on claude, `next-2` and `next-3` on codex. `status` lists each worker
+  under the table with its host and its state or last run. `--workers N` given by hand still
+  starts N on the host named. A host other than claude or codex, or a count that is not a whole
+  number, stops the run (exit 2, recorded so `status` shows it); `run` and `install` refuse it.
+- `status --json` keeps `last` as the newest run that did something. `last_run` is the newest
+  run of any kind and `latest` the newest of each outcome (work, gate, quiet, skipped, paused,
+  failed), each with `reason`: why it ended so, such as the live run a skip found. Each run and
+  each worker carries the `host` it ran on.
+- The host is `jobs.host` (claude, the default, or codex), except for `next`'s workers when
+  `jobs.workers` is set. The sessions a job starts (comments,
   intake, retro) take the model and effort of that host's pair: `jobs.claude.model` and
   `jobs.claude.effort` reach `claude` as `--model` and `--effort`; `jobs.codex.model` and
   `jobs.codex.effort` reach `codex exec` as `-m` and `model_reasoning_effort`. Each value goes as

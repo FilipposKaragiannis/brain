@@ -7,17 +7,21 @@
 job_log_dir() { printf '%s/log' "$(flow_home)"; }
 job_say() { job_last="$*"; printf '%s\t%s\t%s\n' "$(now_iso)" "$job" "$*" | tee -a "$(job_log_dir)/$job.log"; }
 die() { job_last="error: $1"; echo "flow: $1" >&2; exit "${2:-1}"; }
-# job_base: the job a worker belongs to (next-2 is next). Pause and the schedule are per job.
-job_base() { printf '%s' "${job%-[0-9]*}"; }
+# job_base: the job a worker belongs to (next-2 is next): everything before the first dash, as no
+# job name holds one. Pause and the schedule are per job, so every worker of next obeys its pause.
+job_base() { printf '%s' "${job%%-*}"; }
 # job_record <exit>: one line per run in <flow home>/log/runs.jsonl, read by scripts/jobs.sh:
-# the job, its start, its length in seconds, the exit code and the last thing it said. A run that
+# the job, the host it ran on (empty for a run that stopped before it read one), its start, its
+# length in seconds, the exit code and the last thing it said. A run that
 # a pause or a live lock skips is a line too, so every scheduled start shows. At 4000 lines the
 # file moves to runs.1.jsonl, replacing the one before: a rename, so a line another worker appends
 # meanwhile lands in one file or the other, never lost. The trim lock stops two workers rotating
 # at once; a worker that finds it held leaves the trim to the holder.
 job_record() {
   _runs="$(job_log_dir)/runs.jsonl"; _end="$(date +%s)"
-  { json_obj job="$job" at="${job_at:-$(now_iso)}" seconds:="$((_end - ${job_t0:-$_end}))" exit:="$1" result="${job_last:-}"; echo; } >> "$_runs"
+  # One write per line: workers ending together would otherwise interleave a line and its newline.
+  _line="$(json_obj job="$job" host="${host:-}" at="${job_at:-$(now_iso)}" seconds:="$((_end - ${job_t0:-$_end}))" exit:="$1" result="${job_last:-}")"
+  printf '%s\n' "$_line" >> "$_runs"
   [ "$(wc -l < "$_runs")" -ge 4000 ] && mkdir "$_runs.trim" 2>/dev/null || return 0
   if [ "$(wc -l 2>/dev/null < "$_runs" || echo 0)" -ge 4000 ]; then mv "$_runs" "$(job_log_dir)/runs.1.jsonl"; fi
   rmdir "$_runs.trim"
@@ -39,7 +43,7 @@ job_lock() {
     if [ -n "$pid" ] && job_alive "$pid"; then job_say "skipped: run $pid still going"; job_record 0; exit 0; fi
     rm -rf "$d"; mkdir "$d" || die "cannot lock $d"
   fi
-  echo $$ > "$d/pid"; printf '%s' "$job_at" > "$d/at"
+  echo $$ > "$d/pid"; printf '%s' "$job_at" > "$d/at"; printf '%s' "$host" > "$d/host"
   trap 'job_end $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
