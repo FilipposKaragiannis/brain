@@ -315,9 +315,11 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
     const cached = cache.get(gate.item);
     return { ...gate, questions: cached !== undefined && cached.message === gate.message ? cached.questions : null, plan: null };
   });
+  // A split releases the item's worktree but leaves its plan there, so the pool comes after the claim, as steward.sh's plan_file looks.
+  const pool = poolPaths(root, config);
   for (const gate of gates) {
     const claimed = claims.find((claim) => claim.item === gate.item)?.worktreePath;
-    gate.plan = await readPlan(claimed === undefined ? [root] : [claimed, root], gate.item);
+    gate.plan = await readPlan([...new Set([...(claimed === undefined ? [] : [claimed]), ...pool, root])], gate.item);
   }
   const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
   const worktreeSteps = pluginRoot === null ? null : await readWorktreeSteps(pluginRoot);

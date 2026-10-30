@@ -171,6 +171,11 @@ test('InterviewGate_SaysConfirm', () => {
   expect(screen.queryByRole('button', { name: 'Confirm' }), 'because the owner confirms a spec recap, not a plan').not.toBeNull();
 });
 
+test('InterviewGateWithNumberedQuestions_QuestionsShown', () => {
+  renderGate({ ...waitingGate('gh#601', 'interview'), message: '**Confirm the spec recap, or say what to change.**\n\nOpen questions:\n1. Should the drill time out? Recommended: after 30s.', questions: [] });
+  expect(screen.queryByText(/Should the drill time out\?/), 'because a verdict gate has no question form, so dropping the list would hide what the owner confirms').not.toBeNull();
+});
+
 test('FeelTest_SignOff_PostsSignedOff', async () => {
   const { daemon, posted } = recordingDaemon();
   renderGate({ ...waitingGate('gh#577', 'feel-test'), questions: [] }, daemon);
@@ -210,6 +215,18 @@ test('Answering_StartsTheRunOnlyOnceTheGateCleared', async () => {
   expect(posted.map((action) => action.kind), 'because next.sh would find the gate still raised').toEqual(['gate.clear']);
   await clearEnds(daemon, 'done');
   expect(posted.at(-1), 'because the run continues the item the owner just unblocked').toEqual({ kind: 'run.start', args: { item: 'gh#514' } });
+});
+
+test('LeftGatesBeforeTheClearEnded_RunStillStarts', async () => {
+  const { daemon, posted } = recordingDaemon();
+  const Wrapper = daemon.screenWrapper();
+  const gates = <Gates snapshot={{ ...snapshotAt(TAKEN_AT, 1), gates: [PLAN_GATE] }} selected={PLAN_GATE.item} />;
+  const view = render(<Wrapper>{gates}</Wrapper>);
+  act(() => { daemon.latestStream().open(); });
+  await press('Approve');
+  view.rerender(<Wrapper>{null}</Wrapper>);
+  await clearEnds(daemon, 'done');
+  expect(posted.at(-1), 'because the owner may move on while the gate clears, and the item must not sit idle').toEqual({ kind: 'run.start', args: { item: 'gh#514' } });
 });
 
 test('RunRefusedForTheQueue_SaysTheScheduledRunPicksItUp', async () => {

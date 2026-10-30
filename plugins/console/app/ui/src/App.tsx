@@ -17,6 +17,7 @@ import { Settings } from './screens/Settings.tsx';
 import { Worktrees } from './screens/Worktrees.tsx';
 import { ThemeToggle } from './theme.tsx';
 import { ActionsProvider, Dot, Empty } from './ui.tsx';
+import { GateAnswersProvider } from './gateAnswers.tsx';
 import { useActions } from './useActions.ts';
 import { HTTP_OK, useProject } from './useProject.ts';
 import type { LinkState, ProjectSummary } from './stream.ts';
@@ -76,6 +77,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
   const running = actions.records.filter((record) => isActive(record.state)).length;
   return (
     <ActionsProvider actions={actions}>
+      <GateAnswersProvider>
       <div className="shell">
         <nav className="nav" aria-label="Main">
           <div className="brand"><span className="brand-mark">B</span>Brain Console</div>
@@ -104,6 +106,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
         </main>
         {drawerOpen && <ActionsDrawer actions={actions} close={closeDrawer} />}
       </div>
+      </GateAnswersProvider>
     </ActionsProvider>
   );
 }
