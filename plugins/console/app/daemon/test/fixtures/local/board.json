@@ -1,0 +1,99 @@
+{
+  "pool": [],
+  "items": [
+    {
+      "id": "local:task/1",
+      "kind": "task",
+      "title": "Fix the parser",
+      "size": "S",
+      "status": "open",
+      "labels": [],
+      "blocked_by": [],
+      "parent": "",
+      "priority": "P1",
+      "area": "",
+      "open_children": 0,
+      "state": {
+        "step": "",
+        "profile": "",
+        "size": "S",
+        "worktree": "",
+        "attempts": 0,
+        "gate": "none",
+        "last_event": "",
+        "pr": "",
+        "touches": [],
+        "answered": "",
+        "asked": "",
+        "answer": ""
+      },
+      "url": "/p/app/.flow/items/task/1.md",
+      "body": "# Fix the parser\n\n\n"
+    },
+    {
+      "id": "local:task/3",
+      "kind": "task",
+      "title": "Waits on the parser",
+      "size": "M",
+      "status": "open",
+      "labels": [],
+      "blocked_by": [
+        "local:task/1"
+      ],
+      "parent": "",
+      "priority": "",
+      "area": "",
+      "open_children": 0,
+      "state": {
+        "step": "",
+        "profile": "",
+        "size": "M",
+        "worktree": "",
+        "attempts": 0,
+        "gate": "none",
+        "last_event": "",
+        "pr": "",
+        "touches": [],
+        "answered": "",
+        "asked": "",
+        "answer": ""
+      },
+      "url": "/p/app/.flow/items/task/3.md",
+      "body": "# Waits on the parser\n\n\n"
+    },
+    {
+      "id": "local:task/4",
+      "kind": "task",
+      "title": "Waits on a closed item",
+      "size": "S",
+      "status": "open",
+      "labels": [],
+      "blocked_by": [
+        "local:task/2"
+      ],
+      "parent": "",
+      "priority": "",
+      "area": "",
+      "open_children": 0,
+      "state": {
+        "step": "",
+        "profile": "",
+        "size": "S",
+        "worktree": "",
+        "attempts": 0,
+        "gate": "none",
+        "last_event": "",
+        "pr": "",
+        "touches": [],
+        "answered": "",
+        "asked": "",
+        "answer": ""
+      },
+      "url": "/p/app/.flow/items/task/4.md",
+      "body": "# Waits on a closed item\n\n\n"
+    }
+  ],
+  "runs": [],
+  "gates": [],
+  "overlaps": []
+}
