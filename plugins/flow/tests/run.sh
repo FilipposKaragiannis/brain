@@ -1918,6 +1918,13 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 check "comments job: an item whose worktree another session works in is skipped, and the log says which" sh -c "[ ! -s '$work/host77.log' ] && grep -q '90: another session works in .*app-wt-.* (process 4242), skipped' .flow/log/comments.log && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 0 PR(s), 1 in use by another session'"
 : > "$FLOW_HEALTH_PROCS"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: once that session ends, the pass runs" grep -q 'comments 90' "$work/host77.log"
+# A PR from a local item's branch (flow/local-task-1) names its item too, so it is skipped the same way.
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/$(item_slug "$mg")', updatedAt='2026-10-25T01:45:00Z'); json.dump(d, open(p,'w'))"
+printf '{"item":"%s","branch":"flow/%s","base":"main"}\n' "$mg" "$(item_slug "$mg")" > "$wm/.flow/claim.json"
+printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"
+: > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: a PR from a local item's branch whose worktree another session works in is skipped" sh -c "[ ! -s '$work/host77.log' ] && tail -2 .flow/log/comments.log | grep -q '90: another session works in .*app-wt-.* (process 4242), skipped'"
+: > "$FLOW_HEALTH_PROCS"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 # P2-7: a reports folder in a worktree another item holds gets no dirty-tree note.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-78', updatedAt='2026-10-25T02:00:00Z'); json.dump(d, open(p,'w'))"
 mkdir -p "$wm/.flow/reports/gh-78" && printf 'other work\n' > "$wm/other.txt"

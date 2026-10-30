@@ -92,13 +92,15 @@ max_fails="$(cfg_or jobs.comments.max_failures 3)"
 case "$max_fails" in ''|*[!0-9]*) die "jobs.comments.max_failures takes a whole number" 2 ;; esac
 tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 || true; }
 # item_of <target>: the item a target names: the target itself, or for a PR number the item its
-# flow/gh-<n> branch names; nothing for a PR the flow did not open.
+# branch names, flow/<item slug> (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1);
+# nothing for a PR the flow did not open.
 item_of() {
   case "$1" in *#*|local:*) printf '%s' "$1" ;;
     *) "$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c '
 import json, re, sys
-m = re.match(r"flow/gh-(\d+)$", json.load(sys.stdin).get("headRefName", ""))
-print("gh#" + m.group(1) if m else "")' 2>/dev/null ;;
+head = json.load(sys.stdin).get("headRefName", "")
+gh, local = re.match(r"flow/gh-(\d+)$", head), re.match(r"flow/local-([a-z]+)-(\d+)$", head)
+print("gh#" + gh.group(1) if gh else "local:%s/%s" % local.groups() if local else "")' 2>/dev/null ;;
   esac
 }
 # resume_note <target>: the item's comments-resume.md, the note a cut-short pass leaves for the

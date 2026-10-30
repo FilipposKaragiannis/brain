@@ -21,7 +21,8 @@
 - The comments job skips an item whose worktree another session works in, named or not, found
   as the health job finds a live run: `<item>: another session works in <worktree>
   (process N), skipped`. A list of processes that cannot be read counts every worktree as in use
-  (#34).
+  (#34). A PR number finds its item from a local item's branch (`flow/local-task-1`) as well as
+  from `flow/gh-<n>`, so the check, and the resume note, cover local items too.
 - A cleared gate is new activity for the comments job. `gate.sh clear` records `answered_at` in
   the item's state, and the job's activity line carries it, so a PR whose pass stopped at a gate
   is picked up once the owner answers, without a run by hand. A line from before keeps its form,
