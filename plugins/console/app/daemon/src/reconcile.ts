@@ -330,6 +330,8 @@ export function pullState(pull: PullFact): PullState {
 
 /** The health job's review verdicts that keep a merge gate from the owner (flow's `_health.py review`). */
 const HELD_REVIEW_STATES = ['in-review', 'changes-requested'];
+/** Reviewers the flow asks through GitHub's reviewers API (`_reviews.py`), so the live pull shows their request. */
+const GITHUB_ASKED_REVIEWERS = ['copilot'];
 
 /** The pull number an item's `pr` field names, by number or by URL. */
 function namedPullNumber(field: string): number | null {
@@ -340,9 +342,11 @@ function namedPullNumber(field: string): number | null {
 /**
  * The items whose merge gate waits on reviewers, not on the owner: their open pull has changes
  * requested or a review still requested on GitHub, or the health job's record says a reviewer the
- * flow asked by a mention has not answered, or changes were requested. A required approval alone
- * does not hold the gate: at the merge gate that approval is the owner's. A gate whose pull is not
- * found is not held, so a gate is never hidden on a guess.
+ * flow asked by a mention has not answered. With the pull listed, GitHub's own review state is read
+ * live: the record is up to 15 minutes old and would hide a gate after an approval. Only with the
+ * pulls unread does the record's whole verdict stand. A required approval alone does not hold the
+ * gate: at the merge gate that approval is the owner's. A gate whose pull is not found is not
+ * held, so a gate is never hidden on a guess.
  */
 function heldMergeGates(input: ReconcileInput): Set<string> {
   const held = new Set<string>();
@@ -356,9 +360,10 @@ function heldMergeGates(input: ReconcileInput): Set<string> {
     const pullNumber = pull?.number ?? (input.pulls === null && named !== null ? namedPullNumber(named) : null);
     if (pullNumber === null) continue;
     const record = input.flow.reviews.find((entry) => entry.pr === pullNumber);
-    if ((pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0)) || (record !== undefined && HELD_REVIEW_STATES.includes(record.state))) {
-      held.add(gate.item);
-    }
+    const mentionWaiting = record !== undefined && record.waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+    const heldLive = pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting);
+    const heldByRecord = pull === undefined && record !== undefined && HELD_REVIEW_STATES.includes(record.state);
+    if (heldLive || heldByRecord) held.add(gate.item);
   }
   return held;
 }

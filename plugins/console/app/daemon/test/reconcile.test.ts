@@ -484,9 +484,20 @@ test('MergeGate_FlowReviewerYetToAnswer_NotShownAtTheGate', async () => {
   assert.deepEqual(shownAtMergeGate(picture), [false, false, false], 'because codex, asked by a mention GitHub does not track, has not answered, as the health job recorded');
 });
 
-test('MergeGate_FlowRecordChangesRequested_NotShownAtTheGate', async () => {
+test('MergeGate_StaleRecordChangesRequestedPullApproved_ShownAtTheGate', async () => {
   const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], at: '2026-10-24T18:00:00Z' }]));
-  assert.deepEqual(shownAtMergeGate(picture), [false, false, false], 'because the health job saw changes requested on the pull');
+  assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because the live pull says the reviewer approved since, and the health job\'s record is up to 15 minutes old');
+});
+
+test('MergeGate_RecordWaitingOnCopilotOnlyNoLiveRequest_ShownAtTheGate', async () => {
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['copilot'], at: '2026-10-24T18:00:00Z' }]));
+  assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because Copilot is asked through GitHub, whose live pull shows no request left, so the record is stale');
+});
+
+test('MergeGate_PullsUnreadRecordChangesRequested_NotShownAtTheGate', async () => {
+  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], at: '2026-10-24T18:00:00Z' }]);
+  facts.pulls = null;
+  assert.deepEqual(shownAtMergeGate(reconcile(facts)), [false, false, false], 'because without the live pull the health job\'s verdict is the best there is');
 });
 
 test('MergeGate_RequiredApprovalOnly_ShownAtTheGate', async () => {

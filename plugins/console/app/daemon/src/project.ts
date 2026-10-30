@@ -96,8 +96,8 @@ export class ProjectMonitor {
   /** Set by `stop`: a start still making its first reads schedules nothing after it. */
   private stopped = false;
   private readonly settler = new DisagreementSettler();
-  /** The merge gates already swept, by item and raise time, so each landed PR is swept once. */
-  private readonly swept = new Set<string>();
+  /** The merge gates whose sweep failed, by item and raise time, so a failing sweep is not run every minute. */
+  private readonly sweepFailed = new Set<string>();
   private readonly reads: ReadMarks = {
     started: 0,
     completed: { files: 0, git: 0, processes: 0, jobs: 0, board: 0, pulls: 0 },
@@ -212,24 +212,28 @@ export class ProjectMonitor {
 
   /**
    * Merging is the owner's answer to the merge gate, but only `steward.sh sweep` clears it, and
-   * only the next and health jobs run it. A gated PR that left the open list is swept here
-   * at once, one item at a time, then the files, git and board are read again to show it.
+   * only the next and health jobs run it. A gated PR that left the open list is swept here at
+   * once, one item at a time, then the files, git and board are read again to show it. A sweep
+   * can finish well and still keep the worktree (uncommitted changes, a run in flight); the gate
+   * and the claim then stay, so the next pulls read tries again, until a sweep frees it. A sweep
+   * that fails is not repeated: the health job sweeps on its own schedule.
    */
   private async sweepLanded(): Promise<void> {
     const flow = this.facts.files.facts;
     if (flow?.pluginRoot == null) return;
     const landed = landedMergeGates({ flow, board: this.facts.board.facts, pulls: this.facts.pulls.facts })
-      .filter((gate) => !this.swept.has(`${gate.item} ${gate.raisedAt}`));
+      .filter((gate) => !this.sweepFailed.has(`${gate.item} ${gate.raisedAt}`));
     if (landed.length === 0) return;
     for (const gate of landed) {
       const result = await this.runner({
         command: 'sh', args: [path.join(flow.pluginRoot, 'scripts', 'steward.sh'), 'sweep', '--lock', '--item', gate.item],
         cwd: this.project.root, timeoutMs: SWEEP_TIMEOUT_MS, env: scriptEnvironment(),
       });
-      if (result.code === SWEEP_LOCK_HELD) continue;
-      this.swept.add(`${gate.item} ${gate.raisedAt}`);
       if (result.code === 0) this.log.info('sweep.ran', { project: this.project.id, item: gate.item, output: result.stdout.trim() });
-      else this.log.warn('sweep.failed', { project: this.project.id, item: gate.item, code: result.code, error: result.stderr.trim() });
+      else if (result.code !== SWEEP_LOCK_HELD) {
+        this.sweepFailed.add(`${gate.item} ${gate.raisedAt}`);
+        this.log.warn('sweep.failed', { project: this.project.id, item: gate.item, code: result.code, error: result.stderr.trim() });
+      }
     }
     await this.refresh('files');
     await Promise.all([this.refresh('git'), this.refresh('board')]);

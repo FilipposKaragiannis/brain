@@ -143,9 +143,10 @@ test('ActionContext_PoolWorktreesRunsAndProcessFolders_FromTheLatestRead', async
 
 /**
  * A copy of the fixture project whose gh#7, claimed in project-wt-2, waits at the merge gate and
- * names the pull given. Every `steward.sh` call is kept and answered with the codes given in turn.
+ * names the pull given. Every `steward.sh` call is kept and answered with the codes given in turn;
+ * a sweep that exits 0 clears the gate unless `keeps` says the worktree had to stay.
  */
-function mergeGatedCopy(pr: string, codes: number[]): { monitor: ProjectMonitor; root: string; sweeps: string[][]; cleanUp: () => void } {
+function mergeGatedCopy(pr: string, codes: number[], keeps = false): { monitor: ProjectMonitor; root: string; sweeps: string[][]; cleanUp: () => void } {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'console-sweep-'));
   for (const name of ['project', 'project-wt-2']) cpSync(path.join(FIXTURES, name), path.join(dir, name), { recursive: true });
   const root = path.join(dir, 'project');
@@ -158,7 +159,9 @@ function mergeGatedCopy(pr: string, codes: number[]): { monitor: ProjectMonitor;
     const script = request.args[0] ?? '';
     if (request.command === 'sh' && script.endsWith('steward.sh')) {
       sweeps.push([request.cwd, ...request.args.slice(1)]);
-      return { code: codes.shift() ?? 0, stdout: 'gh#7: released project-wt-2 (#30 merged)\n', stderr: '', timedOut: false };
+      const code = codes.shift() ?? 0;
+      if (code === 0 && !keeps) rmSync(path.join(root, '.flow', 'gates', 'gh-7.json'));
+      return { code, stdout: 'gh#7: released project-wt-2 (#30 merged)\n', stderr: '', timedOut: false };
     }
     if (request.command === 'sh' && script.endsWith('gate.sh')) return { code: 0, stdout: '[]', stderr: '', timedOut: false };
     if (request.command === 'sh' && script.endsWith('board.sh')) return { code: 0, stdout: JSON.stringify(board), stderr: '', timedOut: false };
@@ -192,6 +195,15 @@ test('SweepLockHeld_SweptAgainOnTheNextPullsRead', async () => {
     await copy.monitor.refresh('pulls');
     await copy.monitor.refresh('pulls');
     assert.equal(copy.sweeps.length, 2, 'because a sweep already running may have passed the item before the merge, so the next read tries once more, then stops');
+  } finally { copy.cleanUp(); }
+});
+
+test('SweepKeptTheWorktree_SweptAgainOnTheNextPullsRead', async () => {
+  const copy = mergeGatedCopy('#30', [], true);
+  try {
+    await readEverySource(copy.monitor);
+    await copy.monitor.refresh('pulls');
+    assert.equal(copy.sweeps.length, 2, 'because a sweep that kept a dirty worktree left the gate, so once the worktree is clean a later sweep must still clear it');
   } finally { copy.cleanUp(); }
 });
 
