@@ -1,5 +1,30 @@
 # flow
 
+## 1.22.0 (2026-10-30)
+
+- A free worktree sits on its own idle branch, `<base>-wt-<n>` (`main-wt-2` for `../app-wt-2`),
+  not on a detached head. Git checks a branch out in one worktree only, so each worktree gets
+  its own. `release` and a new pool worktree put it there at the base's tip. The health job
+  moves a free worktree it finds detached onto it, fast-forwards one already on it, and says,
+  without moving it, one that sits on any other branch. An idle branch with commits the base
+  does not have is kept: the worktree stays detached and that is said.
+- At the merge gate the health job reads the PR's review. A PR with changes requested, a
+  reviewer GitHub still lists as requested, or a flow reviewer (codex, claude) yet to answer is
+  in review: it is not waiting at the merge gate, gets no merge reminder, and the summary counts
+  it `N in review`. The approval a repository requires is the owner's and does not hold it.
+  The verdict goes to `.flow/reviews/<n>.review.json` for the console, and goes when the gate
+  does.
+- A reviewer that replies it cannot review ("To use Codex here, create an environment for this
+  repo") is told to the owner once, as a health notification: who, what it said, and that the
+  PR waits at the merge gate without that review. `comments.sh reviews` carries the reply's
+  first line as `cannot`; the reply still answers, so it is not chased.
+- `comments.sh state` adds `reviewDecision`, `latestReviews` and `reviewRequests`.
+- `steward.sh sweep --item <id>` looks at that item's worktree only, and `--lock` takes the
+  sweep lock without waiting and exits 75 when it is held. The console (0.7.4) runs
+  `sweep --lock --item` once it sees a gated PR leave the open list, so the merge gate clears
+  within a minute of the merge, not at the next `next` or `health` run. The console also keeps
+  a PR in review off its merge gate, by GitHub's review state and the health job's record.
+
 ## 1.21.1 (2026-10-28)
 
 - The launchd agent `jobs.sh install` writes sets `AbandonProcessGroup`. Since 1.20.8 a `next`

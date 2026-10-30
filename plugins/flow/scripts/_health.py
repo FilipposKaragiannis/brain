@@ -11,6 +11,7 @@
   _health.py seconds <config key> <duration>
   _health.py ago <epoch>
   _health.py spawn <log> <command>...
+  _health.py review <state json> <review rows file> [<record path>]
 
 procs prints one line per process: pid, working directory (agent processes only) and command,
 tab separated, and fails when ps lists nothing, so a missing ps never reads as every run dead. A
@@ -18,7 +19,16 @@ run is alive when the pid its record names still runs an agent or the unattended
 any other process is an agent working in the worktree, or an agent or the loop names the worktree
 or the item in its command line. An editor, a tail or the claude daemon naming the worktree is
 not a run. A run record carries no pid when an older flow wrote it; the scan
-covers it. Times print in local time."""
+covers it. Times print in local time.
+
+review judges a PR waiting at the merge gate from comments.sh state (GitHub's review decision,
+latest reviews and pending review requests) and comments.sh reviews (the flow's own requests, one
+JSON row per reviewer). It prints `state<TAB>changes-requested|in-review|ready`, then
+`waiting<TAB><reviewers>` when a reviewer has not answered, then one `cannot<TAB><reviewer><TAB>
+<reply>` per reviewer that replied it cannot review. Changes requested wins; a pending request or
+an unanswered flow request is in review. A required approval alone is not: at the merge gate
+that approval is the owner's. With a record path it also writes {pr, state, waiting, cannot, at}
+there as JSON, for the console."""
 import calendar, glob, json, os, re, subprocess, sys, time
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
@@ -251,6 +261,31 @@ def spawn(log, command):
     print(p.pid)
 
 
+def review(state, rows, record=None):
+    decision = state.get("reviewDecision") or ""
+    latest = [r.get("state") for r in state.get("latestReviews") or []]
+    waiting = [r["reviewer"] for r in rows if not r.get("answered")]
+    cannot = [(r["reviewer"], r["cannot"]) for r in rows if r.get("cannot")]
+    if decision == "CHANGES_REQUESTED" or (not decision and "CHANGES_REQUESTED" in latest):
+        verdict = "changes-requested"
+    elif state.get("reviewRequests") or waiting:
+        verdict = "in-review"
+    else:
+        verdict = "ready"
+    print("state\t%s" % verdict)
+    if waiting:
+        print("waiting\t%s" % " ".join(waiting))
+    for reviewer, said in cannot:
+        print("cannot\t%s\t%s" % (reviewer, said.replace("\t", " ")))
+    if record:
+        out = {"pr": state.get("number"), "url": state.get("url", ""), "state": verdict, "waiting": waiting,
+               "cannot": [{"reviewer": reviewer, "said": said} for reviewer, said in cannot],
+               "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        with open(record + ".tmp", "w") as f:
+            json.dump(out, f)
+        os.replace(record + ".tmp", record)
+
+
 def main():
     command, args = sys.argv[1], sys.argv[2:]
     if command == "procs":
@@ -273,6 +308,9 @@ def main():
         print(seconds(*args))
     elif command == "ago":
         print(ago(int(args[0])))
+    elif command == "review":
+        rows = [json.loads(line) for line in open(args[1]) if line.strip()]
+        review(json.loads(args[0]), rows, args[2] if len(args) > 2 else None)
     elif command == "spawn":
         spawn(args[0], args[1:])
     else:

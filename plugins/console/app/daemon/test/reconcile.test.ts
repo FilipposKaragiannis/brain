@@ -8,7 +8,7 @@ import { parseJobStatus } from '../src/collectors/jobs.ts';
 import { readProcesses } from '../src/collectors/processes.ts';
 import type { PullFact } from '../src/collectors/pulls.ts';
 import { readPulls } from '../src/collectors/pulls.ts';
-import { pullState, reconcile } from '../src/reconcile.ts';
+import { landedMergeGates, pullState, reconcile } from '../src/reconcile.ts';
 import type { ReconcileInput } from '../src/reconcile.ts';
 import { DisagreementSettler } from '../src/settle.ts';
 import type { ReadMarks } from '../src/settle.ts';
@@ -163,7 +163,7 @@ test('NoBoardYet_EngagedItemsStillListed', async () => {
 
 const READY: PullFact = {
   number: 30, title: 'Thirty', url: 'https://example/pull/30', branch: 'flow/gh-30', base: 'main', author: 'someone',
-  draft: false, crossRepository: false, mergeable: 'MERGEABLE', mergeState: 'CLEAN', reviewDecision: 'APPROVED', changesRequested: 0,
+  draft: false, crossRepository: false, mergeable: 'MERGEABLE', mergeState: 'CLEAN', reviewDecision: 'APPROVED', changesRequested: 0, reviewsRequested: 0,
   checks: { passed: 3, failed: 0, pending: 0 }, unresolvedThreads: 0,
   createdAt: '2026-10-23T18:16:04Z', updatedAt: '2026-10-24T17:16:04Z',
 };
@@ -442,6 +442,109 @@ test('Gate_NamedPullAndBranchPull_TheNamedOne', async () => {
 
 test('Gate_ItemWithoutPull_NoPull', async () => {
   assert.equal((await snapshot()).gates[0]?.pull, null, 'because gh#7 names no pull and no pull is on its branch');
+});
+
+test('PullState_ReviewStillRequested_ReviewPending', () => {
+  assert.equal(pullState(ready({ reviewDecision: null, reviewsRequested: 1 })), 'review-pending', 'because a reviewer asked and not yet answered is a review in progress, not a pull ready to merge');
+});
+
+/** gh#20 at the merge gate: done, naming the open pull #20, with the pull and the health job's review records changed as given. */
+const mergeGateOn20 = async (pull: Partial<PullFact>, reviews: ReconcileInput['flow']['reviews'] = []): Promise<ReconcileInput> => {
+  const facts = withBoardItem(await input(), 'gh#20', { gate: 'merge' });
+  facts.flow = { ...facts.flow, reviews, gates: [{ item: 'gh#20', gate: 'merge', message: 'Merge #20', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null }] };
+  facts.pulls = { pulls: (facts.pulls?.pulls ?? []).map((entry) => (entry.number === 20 ? { ...entry, ...pull } : entry)) };
+  return facts;
+};
+const shownAtMergeGate = (picture: Snapshot): boolean[] => [
+  picture.gates.some((gate) => gate.item === 'gh#20'),
+  picture.items.find((item) => item.id === 'gh#20')?.state === 'needs-you',
+  picture.attention.some((row) => row.kind === 'gate' && row.id === 'gh#20'),
+];
+
+test('MergeGate_PullReadyAndReviewed_ShownAtTheGate', async () => {
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'ready', waiting: [], at: '2026-10-24T18:00:00Z' }]));
+  assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because only the merge is left, which is the owner\'s');
+  assert.equal(picture.counts.needsYou, 1, 'because the gate counts as needing you');
+});
+
+test('MergeGate_ChangesRequested_NotShownAtTheGate', async () => {
+  const picture = reconcile(await mergeGateOn20({ reviewDecision: 'CHANGES_REQUESTED' }));
+  assert.deepEqual(shownAtMergeGate(picture), [false, false, false], 'because a reviewer asked for changes, so the comments job works on the PR before anyone merges it');
+  assert.equal(picture.counts.needsYou, 0, 'because nothing waits on you yet');
+  assert.equal(pullNumbered(picture, 20)?.state, 'changes-requested', 'because the pull itself says where the review stands');
+});
+
+test('MergeGate_ReviewStillRequested_NotShownAtTheGate', async () => {
+  const picture = reconcile(await mergeGateOn20({ reviewDecision: null, reviewsRequested: 1 }));
+  assert.deepEqual(shownAtMergeGate(picture), [false, false, false], 'because a requested reviewer has not reviewed yet');
+});
+
+test('MergeGate_FlowReviewerYetToAnswer_NotShownAtTheGate', async () => {
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['codex'], at: '2026-10-24T18:00:00Z' }]));
+  assert.deepEqual(shownAtMergeGate(picture), [false, false, false], 'because codex, asked by a mention GitHub does not track, has not answered, as the health job recorded');
+});
+
+test('MergeGate_FlowRecordChangesRequested_NotShownAtTheGate', async () => {
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], at: '2026-10-24T18:00:00Z' }]));
+  assert.deepEqual(shownAtMergeGate(picture), [false, false, false], 'because the health job saw changes requested on the pull');
+});
+
+test('MergeGate_RequiredApprovalOnly_ShownAtTheGate', async () => {
+  const picture = reconcile(await mergeGateOn20({ reviewDecision: 'REVIEW_REQUIRED', mergeState: 'BLOCKED' }));
+  assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because at the merge gate the approval the repository requires is the owner\'s to give');
+});
+
+test('MergeGate_RecordForAnotherPull_ShownAtTheGate', async () => {
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 21, state: 'in-review', waiting: ['codex'], at: '2026-10-24T18:00:00Z' }]));
+  assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because the record is about another pull');
+});
+
+test('MergeGate_PullsUnreadRecordInReview_NotShownAtTheGate', async () => {
+  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['claude'], at: '2026-10-24T18:00:00Z' }]);
+  facts.pulls = null;
+  assert.deepEqual(shownAtMergeGate(reconcile(facts)), [false, false, false], 'because without pull requests the item still names #20, and the health job says it is in review');
+});
+
+test('OtherGate_PullInReview_StillShown', async () => {
+  const facts = await mergeGateOn20({ reviewDecision: 'CHANGES_REQUESTED' });
+  facts.flow.gates = facts.flow.gates.map((gate) => ({ ...gate, gate: 'escalation' }));
+  assert.equal(reconcile(facts).gates.length, 1, 'because only the merge gate waits on the review; every other gate is the owner\'s question');
+});
+
+/** gh#7, claimed in project-wt-2, at the merge gate and naming the pull given. */
+const mergeGateOn7 = async (pr: string): Promise<ReconcileInput> => {
+  const facts = withBoardItem(await input(), 'gh#7', { gate: 'merge', pr });
+  facts.flow = { ...facts.flow, gates: [{ item: 'gh#7', gate: 'merge', message: 'Merge it', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null }] };
+  return facts;
+};
+
+test('LandedMergeGates_NamedPullNotOpen_Listed', async () => {
+  assert.deepEqual(landedMergeGates(await mergeGateOn7('https://github.com/example/fixture/pull/30')), [{ item: 'gh#7', raisedAt: '2026-10-24T10:00:00Z' }], 'because #30 left the open list, so it was merged or closed and only a sweep clears its gate');
+});
+
+test('LandedMergeGates_NamedPullStillOpen_NotListed', async () => {
+  assert.deepEqual(landedMergeGates(await mergeGateOn7('#560')), [], 'because #560 is open, so the owner has not merged it yet');
+});
+
+test('LandedMergeGates_NoPullNamed_NotListed', async () => {
+  assert.deepEqual(landedMergeGates(await mergeGateOn7('')), [], 'because without a named pull nothing says a merge happened');
+});
+
+test('LandedMergeGates_PullsOrBoardUnread_NotListed', async () => {
+  const facts = await mergeGateOn7('#30');
+  assert.deepEqual([landedMergeGates({ ...facts, pulls: null }), landedMergeGates({ ...facts, board: null })], [[], []], 'because a list not read proves nothing about the pull');
+});
+
+test('LandedMergeGates_NoClaim_NotListed', async () => {
+  const facts = await mergeGateOn7('#30');
+  facts.flow = { ...facts.flow, claims: facts.flow.claims.filter((claim) => claim.item !== 'gh#7') };
+  assert.deepEqual(landedMergeGates(facts), [], 'because a sweep only frees claimed worktrees, so it would read the pull for nothing');
+});
+
+test('LandedMergeGates_OtherGate_NotListed', async () => {
+  const facts = await mergeGateOn7('#30');
+  facts.flow.gates = facts.flow.gates.map((gate) => ({ ...gate, gate: 'escalation' }));
+  assert.deepEqual(landedMergeGates(facts), [], 'because a merge answers only the merge gate');
 });
 
 test('Project_GithubAdapter_RepoAndIssuesUrls', async () => {

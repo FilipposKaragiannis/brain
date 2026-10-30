@@ -93,7 +93,8 @@ printf 'x\n' > "$w1/dirty.txt"
 check_all "release refuses dirty (exit 3)" '[ "$code" -eq 3 ] && [ -f "$w1/.flow/claim.json" ]'
 rm "$w1/dirty.txt"
 check "release clean"     "$P/scripts/steward.sh" release "$t1"
-check_all "released: detached, no claim, tracker cleared" '[ ! -f "$w1/.flow/claim.json" ] && ! git -C "$w1" symbolic-ref -q HEAD && [ -z "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" ]'
+check_all "released: on its idle branch main-wt-1 at main, no claim, tracker cleared" '[ ! -f "$w1/.flow/claim.json" ] && [ "$(git -C "$w1" symbolic-ref --short HEAD)" = main-wt-1 ] && [ "$(git -C "$w1" rev-parse HEAD)" = "$(git rev-parse main)" ] && [ -z "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" ]'
+check "pool table: a free worktree shows its idle branch" sh -c "'$P/scripts/steward.sh' pool | grep -q 'wt-1 *main-wt-1 .*free'"
 check "pool table"        sh -c "'$P/scripts/steward.sh' pool | grep -q 'wt-2.*free'"
 
 echo "next and advance"
@@ -654,6 +655,10 @@ seed 7200 running 0 reply "You have reached your Codex usage limit. Try again la
 check "reviews: a usage-limit reply is no answer" [ "$(answered)" = False ]
 seed 7200 running 0 reply "No issues found."
 check "reviews: a plain reply from the reviewer answers" [ "$(answered)" = True ]
+check "reviews: a plain reply carries no cannot" sh -c "! '$P/scripts/comments.sh' reviews 91 | grep -q cannot"
+seed 7200 running 0 reply "To use Codex here, create an environment for this repo.
+More text."
+check "reviews: a reply that it cannot review answers, and carries its first line as cannot" sh -c "[ '$(answered)' = True ] && '$P/scripts/comments.sh' reviews 91 | grep -q '\"cannot\": \"To use Codex here, create an environment for this repo.\"'"
 seed 7200 running 0 lookalike
 check "reviews: a person whose login holds the bot's name does not answer for it" [ "$(answered)" = False ]
 seed 7200 completed 0
@@ -1155,6 +1160,7 @@ check_all "the pool entry is appended, placeholder dropped" '[ "$(yaml_get .flow
 check_all "worktree_copy and worktree_setup ran" '[ "$(cat "$g1/local")" = secret ] && [ "$(cat "$g1/setup.txt")" = ran ]'
 n2="$("$P/scripts/new.sh" bug "Second")"
 g2="$("$P/scripts/steward.sh" claim "$n2" 2>/dev/null)"
+check_all "a grown worktree keeps its idle branch for when it is free" '[ "$(git rev-parse --verify -q refs/heads/main-wt-1)" = "$(git rev-parse main)" ]'
 check_all "a second claim grows again, named after the last entry" '[ "$g2" = "$(cd ../app-wt-2 && pwd -P)" ] && [ "$(yaml_get .flow/config.yaml pool | wc -l | tr -d '\'' '\'')" = 2 ]'
 n3="$("$P/scripts/new.sh" task "Third")"
 "$P/scripts/steward.sh" claim "$n3" >/dev/null 2>&1; code=$?
@@ -1388,6 +1394,16 @@ merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 "$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "sweep: a commit after the merge keeps the branch" sh -c "[ ! -f '$wl/.flow/claim.json' ] && git -C '$wl' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sl")"
+# The console sweeps one item once its gated PR leaves the open list; a sweep already running is enough.
+si="$("$P/adapters/local/create.sh" task "Swept alone")"; wi="$("$P/scripts/steward.sh" claim "$si")"
+"$P/adapters/local/close.sh" "$si" >/dev/null
+sleep 30 & held=$!
+mkdir -p .flow/sweep.lock && echo "$held" > .flow/sweep.lock/pid
+"$P/scripts/steward.sh" sweep --lock --item "$si" > "$work/sweep.out" 2>&1; code=$?
+check_all "sweep --lock: a held sweep lock exits 75 at once, says so, and keeps the worktree" '[ "$code" -eq 75 ] && grep -q "sweep skipped: the sweep lock is held" "$work/sweep.out" && [ -f "$wi/.flow/claim.json" ]'
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null; rm -rf .flow/sweep.lock
+check "sweep --item: another item's worktree is not looked at" sh -c "out=\"\$('$P/scripts/steward.sh' sweep --item local:task/999)\" && [ -z \"\$out\" ] && [ -f '$wi/.flow/claim.json' ]"
+check "sweep --lock --item: the item's worktree is released and the lock is let go" sh -c "'$P/scripts/steward.sh' sweep --lock --item '$si' | grep -q '$si: released' && [ ! -f '$wi/.flow/claim.json' ] && [ ! -d .flow/sweep.lock ]"
 merged_item="$("$P/adapters/local/create.sh" task "Merged PR, swept by the health job")"; merged_worktree="$("$P/scripts/steward.sh" claim "$merged_item")"
 "$P/adapters/local/link-pr.sh" "$merged_item" https://gh/pull/90
 "$P/scripts/gate.sh" raise "$merged_item" merge "Merge the PR." >/dev/null 2>&1
@@ -1411,7 +1427,7 @@ cd "$hroot/app" || exit 1
 git config user.email t@t && git config user.name t
 git symbolic-ref HEAD refs/heads/main
 printf 'hi\n' > README.md && git add -A && git commit -qm init && git push -q -u origin main
-for n in 1 2 3; do git worktree add -q --detach "../wt-$n"; done
+for n in 1 2 3; do git worktree add -q -b "main-wt-$n" "../wt-$n"; done
 mkdir -p .flow
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\n  - ../wt-3\npool_max: 3\nnotify:\n  desktop: true\njobs:\n  schedule:\n    health: every 15m\n  health:\n    behind_base: 2\n' > .flow/config.yaml
 git clone -q "$hroot/origin.git" "$hroot/other" 2>/dev/null
@@ -1447,6 +1463,13 @@ hs > "$hroot/out" 2>&1
 check "health: a free worktree follows the base branch tip" sh -c "[ \"\$(git -C ../wt-1 rev-parse HEAD)\" = \"\$(git rev-parse origin/main)\" ] && [ \"\$(git -C ../wt-3 rev-parse HEAD)\" = \"\$(git rev-parse origin/main)\" ] && grep -q 'fast-forwarded free wt-2' '$hroot/out'"
 hs > "$hroot/out" 2>&1
 check "health: a worktree already at the tip is not a finding" grep -q 'nothing to do' "$hroot/out"
+git -C ../wt-3 switch -q --detach origin/main~1
+hs > "$hroot/out" 2>&1
+check_all "health: a free worktree left detached moves onto its idle branch at the tip" '[ "$(git -C ../wt-3 symbolic-ref --short HEAD)" = main-wt-3 ] && [ "$(git -C ../wt-3 rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && grep -q "moved free wt-3 onto main-wt-3 at main" "$hroot/out"'
+git -C ../wt-3 switch -q -c side origin/main~1
+hs > "$hroot/out" 2>&1
+check_all "health: a free worktree on another branch is said, not moved" 'grep -q "wt-3 is free but on the branch side, so it is not moved" "$hroot/out" && [ "$(git -C ../wt-3 symbolic-ref --short HEAD)" = side ]'
+git -C ../wt-3 switch -q main-wt-3 && git -C ../wt-3 branch -q -D side && rm -f .flow/health/free-wt-3-branch.seen
 
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
@@ -1463,7 +1486,7 @@ hs --dry-run > "$hroot/out" 2>&1
 check "health --dry-run: says what it would do and changes nothing" sh -c "grep -q 'would clear the dead run' '$hroot/out' && grep -q 'would release the empty claim' '$hroot/out' && [ -f '$(rec "$a")' ] && [ -f '$wa/.flow/claim.json' ] && [ \"\$(wc -l < .flow/events.log | tr -d ' ')\" = $events_before ]"
 "$P/jobs/health.sh" claude >/dev/null
 check "health: a dead run's record is cleared and logged" sh -c "[ ! -f '$(rec "$a")' ] && grep -q \"$a: dead run of implement cleared\" .flow/log/health.log && grep -q \"$a	health	dead run of implement cleared\" .flow/events.log"
-check "health: an empty claim is released and the item is back with the tracker" sh -c "[ ! -f '$wa/.flow/claim.json' ] && [ -z \"\$('$P/adapters/local/read.sh' '$a' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"].get(\"worktree\",\"\"))')\" ] && ! git -C '$wa' symbolic-ref -q HEAD && grep -q 'released the empty claim' .flow/log/health.log"
+check "health: an empty claim is released and the item is back with the tracker" sh -c "[ ! -f '$wa/.flow/claim.json' ] && [ -z \"\$('$P/adapters/local/read.sh' '$a' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"].get(\"worktree\",\"\"))')\" ] && [ \"\$(git -C '$wa' symbolic-ref --short HEAD)\" = main-wt-1 ] && grep -q 'released the empty claim' .flow/log/health.log"
 check_all "health job: a run that found something says so" 'tail -1 .flow/log/runs.jsonl | grep -q '\''"result":"done: '\'''
 
 b="$(hitem "Has commits")"; wb="$(hold "$b")"; commit_in "$wb" work >/dev/null
@@ -1841,6 +1864,48 @@ PY4
 check "health: a gated item with uncommitted changes is said once, the changes untouched" sh -c "[ \"\$(grep -c '$mg: waits at the merge gate with uncommitted changes in app-wt-' '$work/split.out')\" = 1 ] && [ -f '$wm/half.txt' ]"
 check "health: threads awaiting a reply at the merge gate are said once" sh -c "[ \"\$(grep -c '$mg: PR #90 has 1 unresolved review thread(s) awaiting a reply while $mg waits at the merge gate' '$work/split.out')\" = 1 ]"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads']=[]; json.dump(d, open(p,'w'))"
+# At the merge gate, a PR still in review waits on its reviewers, not on the owner.
+mgate=".flow/gates/$(item_slug "$mg").json"
+printf '{"item":"%s","gate":"merge","message":"Merge the PR","time":"2026-10-01T00:00:00Z","host":"t"}\n' "$mg" > "$mgate"
+review_pr() { # review_pr <decision> <codex reply or -> [<latest review state>]: one @codex request two hours old
+  python3 - "$FAKE_GH_DIR/issues.json" "$@" <<'PY5'
+import json, sys, time
+p, decision, reply = sys.argv[1], sys.argv[2], sys.argv[3]
+iso = lambda t: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+asked = time.time() - 7200
+owner, codex = {"login": "owner", "type": "User"}, {"login": "chatgpt-codex-connector[bot]", "type": "Bot"}
+d = json.load(open(p)); pr = d["pr"]
+pr.update(reviewDecision=decision, latestReviews=[{"state": s} for s in sys.argv[4:]], reviewRequests=[], reviews=[], timeline=[])
+pr["rest_comments"] = [{"id": 7, "user": owner, "body": "@codex please review", "created_at": iso(asked), "updated_at": iso(asked), "reactions": {}}]
+if reply != "-":
+    pr["rest_comments"].append({"id": 8, "user": codex, "body": reply, "created_at": iso(asked + 60), "updated_at": iso(asked + 60), "reactions": {}})
+json.dump(d, open(p, "w"))
+PY5
+}
+review_pr "" -
+: > "$work/offline.log"
+"$P/scripts/steward.sh" health > "$work/review.out" 2>&1
+check "health: a PR at the merge gate with a reviewer yet to answer is in review, not at the gate" sh -c "grep -q '1 in review)' '$work/review.out' && grep -q '\"state\": \"in-review\"' .flow/reviews/90.review.json && grep -q '\"waiting\": \\[\"codex\"\\]' .flow/reviews/90.review.json"
+check "health: no merge reminder while the PR is in review" sh -c "! grep -q '$mg: waiting .* at the merge gate' '$work/review.out'"
+review_pr CHANGES_REQUESTED "No issues found."
+"$P/scripts/steward.sh" health > "$work/review.out" 2>&1
+check "health: a PR with changes requested is not at the merge gate" sh -c "grep -q '1 in review)' '$work/review.out' && grep -q '\"state\": \"changes-requested\"' .flow/reviews/90.review.json && ! grep -q '$mg: waiting .* at the merge gate' '$work/review.out'"
+review_pr "" "No issues found." CHANGES_REQUESTED
+"$P/scripts/steward.sh" health > "$work/review.out" 2>&1
+check "health: a latest review requesting changes counts when GitHub gives no decision" grep -q '"state": "changes-requested"' .flow/reviews/90.review.json
+review_pr "" "No issues found."
+"$P/scripts/steward.sh" health > "$work/review.out" 2>&1
+check "health: once every reviewer answered, the PR is at the merge gate and the owner is reminded" sh -c "! grep -q 'in review)' '$work/review.out' && grep -q '\"state\": \"ready\"' .flow/reviews/90.review.json && grep -q '$mg: waiting .* at the merge gate' '$work/review.out'"
+review_pr "" "To use Codex here, create an environment for this repo."
+rm -f .flow/health/*.remind; : > "$work/curl.log"
+for run in 1 2; do PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/steward.sh" health; done > "$work/review.out" 2>&1
+check "health: a reviewer that cannot review is told to the owner once, at the merge gate" sh -c "[ \"\$(grep -c '$mg: codex cannot review PR #90: it replied \"To use Codex here, create an environment for this repo.\"' '$work/review.out')\" = 1 ] && [ \"\$(grep -c 'cannot review PR' '$work/curl.log')\" = 1 ] && grep -q '$mg: waiting .* at the merge gate' '$work/review.out'"
+check "health: the review record names the reviewer that cannot review" grep -q '"cannot": \[{"reviewer": "codex"' .flow/reviews/90.review.json
+"$P/adapters/local/write-state.sh" "$mg" gate=none; rm -f "$mgate"
+"$P/scripts/steward.sh" health > "$work/review.out" 2>&1
+check "health: the review record goes once the PR leaves the merge gate" [ ! -f .flow/reviews/90.review.json ]
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [d['pr'].pop(k, None) for k in ('reviewDecision','latestReviews','reviewRequests','rest_comments','reviews','timeline')]; json.dump(d, open(p,'w'))"
+"$P/adapters/local/write-state.sh" "$mg" gate=merge
 # A worktree left dirty by a pass cut off before 1.19.0 (no note): the next pass is told to continue.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-77', updatedAt='2026-10-25T01:00:00Z'); json.dump(d, open(p,'w'))"
 mkdir -p "$wm/.flow/reports" && printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"

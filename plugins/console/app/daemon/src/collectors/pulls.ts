@@ -18,6 +18,8 @@ export type PullFact = {
   mergeState: string | null;
   reviewDecision: string | null;
   changesRequested: number;
+  /** Reviews asked and not given yet: a reviewer still requested on the pull. */
+  reviewsRequested: number;
   checks: CheckCounts;
   unresolvedThreads: number;
   createdAt: string;
@@ -32,7 +34,7 @@ const MILLISECONDS_PER_SECOND = 1000;
 const PAGE_SIZE = 100;
 const PULL_FIELDS = [
   'number', 'title', 'url', 'headRefName', 'baseRefName', 'isDraft', 'isCrossRepository', 'mergeable', 'mergeStateStatus',
-  'reviewDecision', 'statusCheckRollup', 'updatedAt', 'createdAt', 'author', 'latestReviews',
+  'reviewDecision', 'statusCheckRollup', 'updatedAt', 'createdAt', 'author', 'latestReviews', 'reviewRequests',
 ].join(',');
 const PASSED_CONCLUSIONS = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
 const PENDING_STATUSES = ['PENDING', 'EXPECTED'];
@@ -49,6 +51,7 @@ type ListedPull = {
   statusCheckRollup?: RollupEntry[] | null; createdAt?: string; updatedAt?: string;
   author?: { login?: string } | null;
   latestReviews?: { state?: string }[] | null;
+  reviewRequests?: unknown[] | null;
 };
 type ThreadsResponse = {
   data?: { repository?: Record<string, { reviewThreads?: { nodes?: { isResolved?: boolean }[] } } | null> | null };
@@ -104,6 +107,7 @@ function toPullFact(listed: ListedPull): PullFact {
     mergeState: orNull(listed.mergeStateStatus),
     reviewDecision: orNull(listed.reviewDecision),
     changesRequested: (listed.latestReviews ?? []).filter((review) => review.state === 'CHANGES_REQUESTED').length,
+    reviewsRequested: (listed.reviewRequests ?? []).length,
     checks: countChecks(listed.statusCheckRollup ?? []),
     unresolvedThreads: 0,
     createdAt: listed.createdAt ?? '',

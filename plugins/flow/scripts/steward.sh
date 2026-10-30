@@ -3,8 +3,9 @@
 #   steward.sh pool                              list the pool with claim, branch and dirt
 #   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
 #   steward.sh find <item>                       print the claimed path, or nothing
-#   steward.sh release <item|path> [--force]     reset to the base, delete the task branch, clear
-#                                                the claim; a closed item's reports go too
+#   steward.sh release <item|path> [--force]     back to its idle branch (<base>-wt-<n>) at the base
+#                                                tip, delete the task branch, clear the claim; a
+#                                                closed item's reports go too
 #   steward.sh reports <item>                    print (and create) the item's reports folder
 #   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
 #   steward.sh tmp remove <path>                 remove it and its branch
@@ -13,8 +14,11 @@
 #   steward.sh setup <path>                      run worktree_copy and worktree_setup there
 #   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
 #                                                worktree and every pool worktree
-#   steward.sh sweep [--dry-run]                 release each worktree whose work landed: its item
-#                                                is closed, or its PR is merged
+#   steward.sh sweep [--dry-run] [--lock] [--item <id>]
+#                                                release each worktree whose work landed: its item
+#                                                is closed, or its PR is merged. --item looks at
+#                                                that item's worktree only. --lock takes the sweep
+#                                                lock first and exits 75 when it is held
 #   steward.sh split <item>                      a task split into tracker tasks waits on its
 #                                                children: step split, its worktree released
 #                                                (kept when dirty), its branch kept when it holds
@@ -50,6 +54,26 @@ base_ref() {
 }
 
 claim_of() { [ -f "$1/.flow/claim.json" ] && cat "$1/.flow/claim.json"; }
+
+# idle_branch <path>: the branch a free pool worktree sits on, one per worktree, because git checks
+# a branch out in one worktree at a time: <base>-wt-<n> for ../app-wt-<n>, else <base>-<folder>.
+idle_branch() {
+  ib_name="$(basename "$1")"
+  case "$ib_name" in *-wt-*) printf '%s-wt-%s' "$base_branch" "${ib_name##*-wt-}" ;; *) printf '%s-%s' "$base_branch" "$ib_name" ;; esac
+}
+# idle_kept <branch>: true when the idle branch exists with commits the base tip lacks, so moving
+# it to the tip would drop them.
+idle_kept() {
+  git -C "$main" show-ref --verify --quiet "refs/heads/$1" && ! git -C "$main" merge-base --is-ancestor "refs/heads/$1" "$(base_ref)" 2>/dev/null
+}
+# park <path>: put a free worktree on its idle branch at the base tip. An idle branch with commits
+# of its own is kept: the worktree goes detached at the tip instead, and park returns 1. Returns 2
+# when git cannot move it.
+park() {
+  pk_branch="$(idle_branch "$1")"
+  if idle_kept "$pk_branch"; then git -C "$1" switch -q --detach "$(base_ref)" || return 2; return 1; fi
+  git -C "$1" switch -q --no-track -C "$pk_branch" "$(base_ref)" || return 2
+}
 
 # .flow/ holds the claim and the reports and is never part of the work.
 dirty() { [ -n "$(git -C "$1" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; }
@@ -128,13 +152,15 @@ cmd_release() {
   if dirty "$p"; then
     die "$p has uncommitted changes. Not resetting. Commit or stash them, then release again (escalation)." 3
   fi
-  git -C "$p" switch -q --detach "$(base_ref "$base")" || die "cannot detach $p at $(base_ref "$base")"
-  # The branch goes only when the base holds every commit of it: git branch -d alone would also
-  # delete one that is merged into its upstream but ahead of the base.
+  park "$p"; parked=$?
+  [ "$parked" -ne 2 ] || die "cannot move $p to $(idle_branch "$p") at $(base_ref)"
+  [ "$parked" -eq 0 ] || echo "flow: $(idle_branch "$p") has commits not in $(base_ref); kept, and $(basename "$p") left detached at $(base_ref)" >&2
+  # The branch goes only when the claim's base holds every commit of it: git branch -d would judge
+  # it against the idle branch's tip, or delete one merged into its upstream but ahead of the base.
   if [ -n "$branch" ] && git -C "$p" show-ref --verify --quiet "refs/heads/$branch"; then
     if [ "$force" -eq 1 ]; then git -C "$p" branch -q -D "$branch"
     elif ! git -C "$p" merge-base --is-ancestor "refs/heads/$branch" "$(base_ref "$base")" 2>/dev/null ||
-         ! git -C "$p" branch -q -d "$branch" 2>/dev/null; then echo "flow: $branch is not merged into $(base_ref "$base"); kept. Use --force to delete it." >&2; fi
+         ! git -C "$p" branch -q -D "$branch" 2>/dev/null; then echo "flow: $branch is not merged into $(base_ref "$base"); kept. Use --force to delete it." >&2; fi
   fi
   rm -f "$p/.flow/claim.json"
   [ -n "$item" ] && write_state "$item" "worktree=" "last_event=$(now_iso) released $(basename "$p")"
@@ -339,6 +365,16 @@ run_setup() {
   done
 }
 
+# pool_worktree_add <path>: a new pool worktree on its idle branch at the base tip (detached
+# when an idle branch of that name has commits of its own).
+pool_worktree_add() {
+  pa_branch="$(idle_branch "$1")"
+  if idle_kept "$pa_branch"; then
+    echo "flow: $pa_branch has commits not in $(base_ref); kept, and $(basename "$1") starts detached" >&2
+    git -C "$main" worktree add -q --detach "$1" "$(base_ref)"
+  else git -C "$main" worktree add -q --no-track -B "$pa_branch" "$1" "$(base_ref)"; fi
+}
+
 # grow_pool: add one worktree when the pool is below pool_max; print its path.
 grow_pool() {
   max="$(cfg_or pool_max 0)"
@@ -346,7 +382,7 @@ grow_pool() {
   [ "$max" -gt "$count" ] 2>/dev/null || return 1
   rel="$(next_pool_path)"
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
-  git -C "$main" worktree add -q --detach "$abs" "$(base_ref)" || return 1
+  pool_worktree_add "$abs" || return 1
   pool_add_entry "$rel"
   run_setup "$abs" >&2
   echo "flow: added $rel to the pool ($((count + 1)) of $max)" >&2
@@ -356,7 +392,7 @@ grow_pool() {
 cmd_add() {
   rel="${1:-$(next_pool_path)}"
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
-  git -C "$main" worktree add -q --detach "$abs" "$(base_ref)" || die "cannot add worktree $rel"
+  pool_worktree_add "$abs" || die "cannot add worktree $rel"
   pool_add_entry "$rel"
   run_setup "$abs"
   echo "added $rel to the pool in $(config_file)."
@@ -411,12 +447,21 @@ cmd_prune() {
 # branch does not close its issue), and the task branch goes even when squash-merged, but only
 # while its tip is the PR's head, so a commit made after the merge keeps it. A worktree with
 # uncommitted changes, a run in flight, or an item that cannot be read is left alone.
+# --item is for the console, which runs it once it sees a gated PR leave the open list: one
+# item's PR is read, not every claim's. --lock never waits: a sweep already running is enough.
 cmd_sweep() {
-  dry=0
-  while [ $# -gt 0 ]; do case "$1" in --dry-run) dry=1; shift ;; *) die "unknown option $1" 2 ;; esac; done
+  dry=0; only=""; lock=0
+  while [ $# -gt 0 ]; do case "$1" in
+    --dry-run) dry=1; shift ;;
+    --lock) lock=1; shift ;;
+    --item) [ $# -ge 2 ] || die "--item needs an item id" 2; only="$2"; shift 2 ;;
+    *) die "unknown option $1" 2 ;;
+  esac; done
+  [ "$lock" -eq 0 ] || FLOW_LOCK_WAIT=0 flow_lock sweep || die "sweep skipped: the sweep lock is held" 75
   for p in $(pool_paths); do
     [ -d "$p" ] || continue
     c="$(claim_of "$p")"; it="$(json_get "$c" item)"; br="$(json_get "$c" branch)"; name="$(basename "$p")"
+    [ -z "$only" ] || [ "$it" = "$only" ] || continue
     [ -n "$it" ] && adapter_for "$it" >/dev/null 2>&1 || continue
     data="$(adapter read "$it" 2>/dev/null)" || continue
     status="$(json_get "$data" status)"; gate="$(state_get "$data" gate)"; pr="$(state_get "$data" pr)"
@@ -517,7 +562,9 @@ health_branch_state() {
   flow_unlock
 }
 
-# health_free <path>: a free pool worktree follows the base branch tip; a dirty one is only said.
+# health_free <path>: a free pool worktree sits on its idle branch at the base branch tip; one
+# left detached (a pool from before 1.22.0) moves onto it. A dirty one, one on another branch and
+# one holding commits the base lacks are only said.
 health_free() {
   hf_name="$(basename "$1")"
   if dirty "$1"; then
@@ -525,12 +572,20 @@ health_free() {
     return 0
   fi
   health_cleared "free-$hf_name"
+  hf_idle="$(idle_branch "$1")"; hf_on="$(git -C "$1" symbolic-ref --short -q HEAD)"
   hf_tip="$(git -C "$1" rev-parse -q --verify "$(base_ref)" 2>/dev/null)"; hf_head="$(git -C "$1" rev-parse -q --verify HEAD 2>/dev/null)"
-  [ -n "$hf_tip" ] && [ "$hf_tip" != "$hf_head" ] || return 0
-  if git -C "$1" symbolic-ref -q HEAD >/dev/null 2>&1; then
-    health_changed "free-$hf_name-branch" on && health_say pool "$hf_name is free but on the branch $(git -C "$1" symbolic-ref --short HEAD), so it is not moved"
+  [ -n "$hf_tip" ] || return 0
+  [ "$hf_tip" != "$hf_head" ] || [ -z "$hf_on" ] || return 0
+  if [ -n "$hf_on" ] && [ "$hf_on" != "$hf_idle" ]; then
+    health_changed "free-$hf_name-branch" on && health_say pool "$hf_name is free but on the branch $hf_on, so it is not moved"
   elif ! git -C "$1" merge-base --is-ancestor "$hf_head" "$hf_tip" 2>/dev/null; then
     health_changed "free-$hf_name-branch" off && health_say pool "$hf_name is free but its commit is not in $base_branch, so it is not moved"
+  elif [ -z "$hf_on" ] && idle_kept "$hf_idle"; then
+    health_changed "free-$hf_name-branch" kept && health_say pool "$hf_name is free and detached, but $hf_idle has commits not in $base_branch, so it is not moved onto it"
+  elif [ -z "$hf_on" ]; then
+    if [ "$dry" -eq 1 ]; then health_say pool "would move free $hf_name onto $hf_idle at $base_branch"
+    elif park "$1"; then health_say pool "moved free $hf_name onto $hf_idle at $base_branch"
+    else health_say pool "could not move free $hf_name onto $hf_idle"; fi
   elif [ "$dry" -eq 1 ]; then health_say pool "would fast-forward free $hf_name to $base_branch"
   elif git -C "$1" merge -q --ff-only "$hf_tip" >/dev/null 2>&1; then health_say pool "fast-forwarded free $hf_name to $base_branch"
   else health_say pool "could not fast-forward free $hf_name"; fi
@@ -598,8 +653,12 @@ health_claim() {
       health_say "$it" "dead run of ${step:-?} cleared (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     fi
   fi
-  [ -z "$health_gate" ] || { gated=$((gated + 1)); holders="$holders$name $it waiting at the $health_gate gate
-"; }
+  health_held=""
+  [ "$health_gate" != merge ] || health_review "$it" "$(state_get "$data" pr)"
+  if [ -n "$health_held" ]; then reviewing=$((reviewing + 1)); holders="$holders$name $it its PR is $health_held, so the merge gate waits on the reviewers
+"
+  elif [ -n "$health_gate" ]; then gated=$((gated + 1)); holders="$holders$name $it waiting at the $health_gate gate
+"; fi
   ahead="$(git -C "$p" rev-list --count "$(base_ref "$bs")..HEAD" 2>/dev/null)"; ahead="${ahead:-0}"
   results="$(ls "$health_reports"/*.json 2>/dev/null | head -1)"
   isdirty=0; dirty "$p" && isdirty=1
@@ -657,6 +716,37 @@ health_at_gate() {
       health_notify "PR #$hg_pr has $hg_n unresolved review thread(s) awaiting a reply while $1 waits at the merge gate. The comments job addresses them next pass."
     fi
   else health_cleared "gate-awaiting-$hg_slug"; fi
+}
+
+# health_review <item> <pr>: a PR at the merge gate that is still in review is not the owner's to
+# merge yet: health_held says why ("in review", "changes requested"), empty when only the merge is
+# left. The verdict goes to <home>/reviews/<n>.review.json for the console. A reviewer that replied
+# it cannot review here (Codex with no environment for the repo) would leave the gate waiting on a
+# review that never comes, so the owner is told, once while it holds.
+health_review() {
+  hv_slug="$(item_slug "$1")"; hv_n="$(printf '%s' "$2" | sed 's|.*/||; s/^#//')"
+  [ -n "$hv_n" ] || return 0
+  hv_state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$2" 2>/dev/null)" || return 0
+  [ "$(json_get "$hv_state" state)" = OPEN ] || return 0
+  "$FLOW_PLUGIN/scripts/comments.sh" reviews "$2" > "$home/health/.reviews.$$" 2>/dev/null || : > "$home/health/.reviews.$$"
+  hv_record=""
+  if [ "$dry" -eq 0 ]; then mkdir -p "$home/reviews"; hv_record="$home/reviews/$hv_n.review.json"; health_records="$health_records $hv_n.review.json"; fi
+  hv_out="$(hpy review "$hv_state" "$home/health/.reviews.$$" ${hv_record:+"$hv_record"})"; rm -f "$home/health/.reviews.$$"
+  case "$(printf '%s\n' "$hv_out" | sed -n 's/^state	//p')" in
+    changes-requested) health_held="changes requested" ;;
+    in-review) health_held="in review"; hv_wait="$(printf '%s\n' "$hv_out" | sed -n 's/^waiting	//p')"; [ -z "$hv_wait" ] || health_held="in review (waiting on $hv_wait)" ;;
+  esac
+  [ -z "$health_held" ] || health_in_review="$health_in_review $hv_slug "
+  hv_cannot="$(printf '%s\n' "$hv_out" | sed -n 's/^cannot	//p')"
+  if [ -z "$hv_cannot" ]; then health_cleared "gate-cannot-$hv_slug"; return 0; fi
+  health_changed "gate-cannot-$hv_slug" "$hv_cannot" || return 0
+  while IFS="$(printf '\t')" read -r hv_who hv_said; do
+    hv_msg="$hv_who cannot review PR #$hv_n: it replied \"$hv_said\". $1 waits at the merge gate without that review; set $hv_who up for this repository, or drop it from reviews.reviewers, then merge or ask again"
+    health_say "$1" "$hv_msg"
+    health_notify "$hv_msg."
+  done <<HV
+$hv_cannot
+HV
 }
 
 # health_branch_notes <item> <path> <branch> <base> <dirty> <pr>: the branch sync for a worktree
@@ -729,6 +819,8 @@ health_gates() {
   for f in "$home"/gates/*.json; do
     [ -f "$f" ] || continue
     g="$(cat "$f")"; gi="$(json_get "$g" item)"; gt="$(json_get "$g" gate)"; since="$(hpy epoch "$(json_get "$g" time)")"
+    # A merge gate whose PR is still in review waits on the reviewers, not on the owner.
+    case "$health_in_review" in *" $(item_slug "$gi") "*) [ "$gt" = merge ] && continue ;; esac
     waiting=$((waiting + 1))
     [ $((now - since)) -gt "$reminder" ] || continue
     rf="$home/health/$(item_slug "$gi").remind"; sent=0; sent_gate=""
@@ -832,7 +924,8 @@ cmd_health() {
   max_resumes="$(cfg_or jobs.health.max_resumes 3)"; behind_base="$(cfg_or jobs.health.behind_base 20)"; push="$(cfg_or jobs.health.push false)"
   case "$max_resumes$behind_base" in *[!0-9]*) die "jobs.health.max_resumes and jobs.health.behind_base take whole numbers" 2 ;; esac
   FLOW_LOCK_WAIT="${FLOW_LOCK_WAIT:-10}"
-  now="$(date +%s)"; facts=0; claims=0; running=0; gated=0; waiting=0; claimable=0; released=0; holders=""
+  now="$(date +%s)"; facts=0; claims=0; running=0; gated=0; reviewing=0; waiting=0; claimable=0; released=0; holders=""
+  health_in_review=""; health_records=""
   mkdir -p "$home/health" "$home/log"
   procs="${FLOW_HEALTH_PROCS:-}"; procs_ok=1
   if [ -z "$procs" ]; then
@@ -856,12 +949,19 @@ cmd_health() {
       dirty "$p" || claimable=$((claimable + 1))
     else health_claim "$p"; fi
   done
+  # A review record of a PR no longer at the merge gate is stale: the console would trust it.
+  if [ "$dry" -eq 0 ]; then
+    for hv_f in "$home"/reviews/*.review.json; do
+      [ -f "$hv_f" ] || continue
+      case " $health_records " in *" $(basename "$hv_f") "*) ;; *) rm -f "$hv_f" ;; esac
+    done
+  fi
   health_gates
   health_splits
   health_pressure
   health_next_runs
   [ "${FLOW_HEALTH_PROCS:-}" = "$procs" ] || rm -f "$procs"
-  echo "health: $claims claimed ($running running, $gated at a gate), $claimable free, $waiting gate(s) waiting; $([ "$facts" -eq 0 ] && echo "nothing to do" || echo "$facts finding(s)")"
+  echo "health: $claims claimed ($running running, $gated at a gate$([ "$reviewing" -eq 0 ] || echo ", $reviewing in review")), $claimable free, $waiting gate(s) waiting; $([ "$facts" -eq 0 ] && echo "nothing to do" || echo "$facts finding(s)")"
 }
 
 cmd="${1:-}"; [ $# -gt 0 ] && shift
@@ -880,5 +980,5 @@ case "$cmd" in
   kept-whole) [ $# -ge 1 ] || die "usage: kept-whole <item>" 2; kept_whole "$1" ;;
   health) cmd_health "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,28p' "$0"; exit 2 ;;
+  *) sed -n '2,32p' "$0"; exit 2 ;;
 esac

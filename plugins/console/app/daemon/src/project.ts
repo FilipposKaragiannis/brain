@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { BoardFacts } from './collectors/board.ts';
 import { readBoard } from './collectors/board.ts';
 import type { CommandRunner } from './collectors/exec.ts';
+import { scriptEnvironment } from './collectors/exec.ts';
 import type { FlowHomeFacts, GateQuestionCache } from './collectors/flowHome.ts';
 import { flowHomeOf, poolPaths, readFlowHome } from './collectors/flowHome.ts';
 import type { GitFacts } from './collectors/git.ts';
@@ -18,7 +19,7 @@ import type { ActionContext } from './actionPlan.ts';
 import type { PullFacts } from './collectors/pulls.ts';
 import { readPulls } from './collectors/pulls.ts';
 import type { Logger } from './log.ts';
-import { ageSeconds, reconcile } from './reconcile.ts';
+import { ageSeconds, landedMergeGates, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
 import type { Freshness, Job, Snapshot, SourceName } from './snapshot.ts';
@@ -34,6 +35,10 @@ const WATCH_DEBOUNCE_MS = 500;
 const PULLS_ADAPTER = 'github';
 /** Folders under the flow home whose churn never changes the snapshot. */
 const UNWATCHED_FOLDERS = ['log', 'tmp', 'reports', 'reviews', 'health'];
+/** One item's sweep: one `gh pr view`, a gate clear and a release. */
+const SWEEP_TIMEOUT_MS = 120000;
+/** `steward.sh sweep --lock` exits so when a sweep already runs; the next pulls read tries again. */
+const SWEEP_LOCK_HELD = 75;
 
 export type ProjectDefinition = { id: string; name: string; root: string };
 
@@ -91,6 +96,8 @@ export class ProjectMonitor {
   /** Set by `stop`: a start still making its first reads schedules nothing after it. */
   private stopped = false;
   private readonly settler = new DisagreementSettler();
+  /** The merge gates already swept, by item and raise time, so each landed PR is swept once. */
+  private readonly swept = new Set<string>();
   private readonly reads: ReadMarks = {
     started: 0,
     completed: { files: 0, git: 0, processes: 0, jobs: 0, board: 0, pulls: 0 },
@@ -200,6 +207,32 @@ export class ProjectMonitor {
       this.log.warn('collect.failed', { project: this.project.id, source, error: message });
     }
     this.rebuild();
+    if (source === 'pulls' && this.facts.pulls.facts !== null) await this.sweepLanded();
+  }
+
+  /**
+   * Merging is the owner's answer to the merge gate, but only `steward.sh sweep` clears it, and
+   * only the next and health jobs run it. A gated PR that left the open list is swept here
+   * at once, one item at a time, then the files, git and board are read again to show it.
+   */
+  private async sweepLanded(): Promise<void> {
+    const flow = this.facts.files.facts;
+    if (flow?.pluginRoot == null) return;
+    const landed = landedMergeGates({ flow, board: this.facts.board.facts, pulls: this.facts.pulls.facts })
+      .filter((gate) => !this.swept.has(`${gate.item} ${gate.raisedAt}`));
+    if (landed.length === 0) return;
+    for (const gate of landed) {
+      const result = await this.runner({
+        command: 'sh', args: [path.join(flow.pluginRoot, 'scripts', 'steward.sh'), 'sweep', '--lock', '--item', gate.item],
+        cwd: this.project.root, timeoutMs: SWEEP_TIMEOUT_MS, env: scriptEnvironment(),
+      });
+      if (result.code === SWEEP_LOCK_HELD) continue;
+      this.swept.add(`${gate.item} ${gate.raisedAt}`);
+      if (result.code === 0) this.log.info('sweep.ran', { project: this.project.id, item: gate.item, output: result.stdout.trim() });
+      else this.log.warn('sweep.failed', { project: this.project.id, item: gate.item, code: result.code, error: result.stderr.trim() });
+    }
+    await this.refresh('files');
+    await Promise.all([this.refresh('git'), this.refresh('board')]);
   }
 
   /** Reads one source into the facts. Returns why the source does not apply to this project, or null when it was read. */
