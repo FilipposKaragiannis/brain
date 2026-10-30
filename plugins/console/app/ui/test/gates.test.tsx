@@ -262,6 +262,20 @@ test('ClearFailed_NoRunAndTheNotesComeBack', async () => {
   expect((screen.getByLabelText('What should change?') as HTMLTextAreaElement).value, 'because the owner should not retype a failed answer').toBe('Add a rollback phase.');
 });
 
+test('RetriedAnswer_ALaterGateOnTheItemStartsFresh', async () => {
+  const { daemon } = recordingDaemon();
+  const Wrapper = daemon.screenWrapper();
+  const view = render(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 1), gates: [PLAN_GATE] }} selected={PLAN_GATE.item} /></Wrapper>);
+  act(() => { daemon.latestStream().open(); });
+  await press('Approve');
+  await clearEnds(daemon, 'failed');
+  await press('Back to my answer');
+  const later: Gate = { ...ASKING, item: PLAN_GATE.item, raisedAt: '2026-10-22T09:00:00Z' };
+  view.rerender(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 2), gates: [later] }} selected={later.item} /></Wrapper>);
+  fireEvent.change(screen.getByLabelText('Your answer to question 2'), { target: { value: 'No.' } });
+  expect((screen.getByRole('button', { name: 'Send answers' }) as HTMLButtonElement).disabled, 'because the plan gate\'s draft has no choices for these questions and must not stick to a later gate').toBe(false);
+});
+
 test('MergeGateWithAMergeablePull_MergesItAndStartsNoRun', async () => {
   const { daemon, posted } = recordingDaemon();
   renderGate({ ...waitingGate('gh#310', 'merge'), pull: { ...PULL, state: 'mergeable', unresolvedThreads: 0 } }, daemon);

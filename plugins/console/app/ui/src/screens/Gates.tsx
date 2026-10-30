@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Agent, Gate, GateQuestion, Snapshot } from '../../../daemon/src/snapshot.ts';
 import { ExternalLink, trackerUrl } from '../links.tsx';
 import { Age, formatDuration } from '../clock.tsx';
-import { useGateAnswers } from '../gateAnswers.tsx';
+import { gateKey, useGateAnswers } from '../gateAnswers.tsx';
 import type { Answered, Decision, Draft, Said, Step } from '../gateAnswers.tsx';
 import { choiceAnswers, composeGateMessage, gateAsk, gateBrief, initialChoices, verdictMessage } from '../gateAnswer.ts';
 import type { GateChoice, Verdict } from '../gateAnswer.ts';
@@ -70,7 +70,7 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
           <AnsweredToday snapshot={snapshot} done={done} pick={pick} />
         </section>
         {current !== undefined && (
-          <DecisionCard key={`${current.item}:${current.raisedAt}`} gate={current} snapshot={snapshot} draft={drafts[current.item] ?? null}
+          <DecisionCard key={gateKey(current)} gate={current} snapshot={snapshot} draft={drafts[gateKey(current)] ?? null}
             onAnswer={(decision, draft) => answer(current, decision, draft)} />
         )}
         {answeredCurrent !== undefined && <AnsweredCard entry={answeredCurrent} snapshot={snapshot} nextGate={nextGate} onRetry={() => retry(answeredCurrent)} />}

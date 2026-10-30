@@ -23,8 +23,12 @@ export type Answered = { gate: Gate; at: Date; draft: Draft; said: Said; merge: 
 /** What the card sends: a gate clear with its message, or a merge. */
 export type Decision = { kind: 'clear'; message: string; back: boolean; said: Said } | { kind: 'merge'; pr: number; said: Said };
 
+/** One raising of a gate: a later gate on the same item is another instance, with no draft of its own. */
+export const gateKey = (gate: Gate): string => `${gate.item}:${gate.raisedAt}`;
+
 export type GateAnswers = {
   answered: Record<string, Answered>;
+  /** Answers brought back after a failed clear, by `gateKey`. */
   drafts: Record<string, Draft>;
   answer: (gate: Gate, decision: Decision, draft: Draft) => void;
   retry: (entry: Answered) => void;
@@ -50,6 +54,7 @@ export function GateAnswersProvider({ children }: { children: ReactNode }) {
 
   const answer = (gate: Gate, decision: Decision, draft: Draft): void => {
     runsAsked.current.delete(gate.item);
+    setDrafts((all) => Object.fromEntries(Object.entries(all).filter(([key]) => key !== gateKey(gate))));
     const merge = decision.kind === 'merge';
     const back = decision.kind === 'clear' && decision.back;
     setAnswered((all) => ({ ...all, [gate.item]: { gate, at: new Date(), draft, said: decision.said, merge, back, clear: { state: 'sending' }, run: merge ? null : { state: 'waiting' } } }));
@@ -60,7 +65,7 @@ export function GateAnswersProvider({ children }: { children: ReactNode }) {
   };
 
   const retry = (entry: Answered): void => {
-    setDrafts((all) => ({ ...all, [entry.gate.item]: entry.draft }));
+    setDrafts((all) => ({ ...all, [gateKey(entry.gate)]: entry.draft }));
     setAnswered((all) => Object.fromEntries(Object.entries(all).filter(([item]) => item !== entry.gate.item)));
   };
 
