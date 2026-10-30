@@ -218,7 +218,7 @@ export function DecisionCard({ gate, snapshot, draft, onAnswer }: { gate: Gate; 
         {lead === 'issue' && gate.body !== null && <GateDocument title="Spec" file={null} text={gate.body} open />}
         {lead !== 'plan' && gate.plan !== null && <GateDocument title="Plan" file={gate.plan.file} text={gate.plan.text} open={false} />}
         {lead !== 'issue' && gate.body !== null && gate.body.trim() !== '' && <GateDocument title="Issue" file={null} text={gate.body} open={false} />}
-        {(form === 'approval' || form === 'feel') && <VerdictForm gate={gate} ask={ask} form={form} draft={draft} onAnswer={onAnswer} />}
+        {(form === 'approval' || form === 'feel') && <VerdictForm gate={gate} ask={ask} form={form} split={isSplit(gate, snapshot)} draft={draft} onAnswer={onAnswer} />}
         {form === 'answers' && <AnswersForm gate={gate} questions={numbered ? gate.questions : []} draft={draft} onAnswer={onAnswer} />}
         {form === 'merge' && <MergeForm gate={gate} ask={ask} onAnswer={onAnswer} />}
         {session !== null && (
@@ -262,8 +262,19 @@ const VERBS: Record<Verdict, string> = {
   report: 'Problems reported',
 };
 
-/** Approve, approve with notes, or send back; or sign off, or report problems. Notes are asked for only when they are needed. */
-function VerdictForm({ gate, ask, form, draft, onAnswer }: { gate: Gate; ask: string; form: 'approval' | 'feel'; draft: Draft | null; onAnswer: (decision: Decision, draft: Draft) => void }) {
+/** A decomposition gate on an item already split into tracker tasks, which gate.sh will not send back. */
+function isSplit(gate: Gate, snapshot: Snapshot): boolean {
+  return gate.gate === 'decomposition' && snapshot.items.find((entry) => entry.id === gate.item)?.step === 'split';
+}
+
+/** What keeps a split item whole: gate.sh refuses to send it back, but clearing with its children closed runs the plan step again. */
+const KEEP_WHOLE_HELP = 'It is already split into tracker tasks, so it cannot be sent back. To keep it whole, close its child issues, then approve: the plan step runs again.';
+
+/**
+ * Approve, approve with notes, or send back; or sign off, or report problems. Notes are asked for
+ * only when they are needed. A split item has no send back.
+ */
+function VerdictForm({ gate, ask, form, split, draft, onAnswer }: { gate: Gate; ask: string; form: 'approval' | 'feel'; split: boolean; draft: Draft | null; onAnswer: (decision: Decision, draft: Draft) => void }) {
   const words = verdictWords(gate, form);
   const [mode, setMode] = useState<Verdict | null>(draft?.mode ?? null);
   const [notes, setNotes] = useState(draft?.note ?? '');
@@ -283,9 +294,9 @@ function VerdictForm({ gate, ask, form, draft, onAnswer }: { gate: Gate; ask: st
             <div className="decision-actions">
               <button type="button" className="button primary" onClick={() => send(words.yesVerdict)}>{words.yes}</button>
               {words.notes !== null && <button type="button" className="button" onClick={() => setMode('approve-notes')}>{words.notes}…</button>}
-              <button type="button" className="button" onClick={() => setMode(words.noVerdict)}>{words.no}…</button>
+              {!split && <button type="button" className="button" onClick={() => setMode(words.noVerdict)}>{words.no}…</button>}
             </div>
-            <p className="muted decision-help">{words.yes} continues the run. {back}</p>
+            <p className="muted decision-help">{words.yes} continues the run. {split ? KEEP_WHOLE_HELP : back}</p>
           </>
         ) : (
           <>

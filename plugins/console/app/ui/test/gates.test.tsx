@@ -3,7 +3,7 @@ import { afterEach, expect, test } from 'vitest';
 import type { EndedAgent, Gate, Job, Snapshot } from '../../daemon/src/snapshot.ts';
 import { Gates } from '../src/screens/Gates.tsx';
 import type { ActionRecord } from '../src/actions.ts';
-import { actionRecord, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, snapshotAt, TAKEN_AT, waitingGate } from './fakeDaemon.tsx';
+import { actionRecord, boardItem, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, snapshotAt, TAKEN_AT, waitingGate } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -174,6 +174,17 @@ test('InterviewGate_SaysConfirm', () => {
 test('InterviewGateWithNumberedQuestions_QuestionsShown', () => {
   renderGate({ ...waitingGate('gh#601', 'interview'), message: '**Confirm the spec recap, or say what to change.**\n\nOpen questions:\n1. Should the drill time out? Recommended: after 30s.', questions: [] });
   expect(screen.queryByText(/Should the drill time out\?/), 'because a verdict gate has no question form, so dropping the list would hide what the owner confirms').not.toBeNull();
+});
+
+test('DecompositionGateOnASplitItem_NoSendBackAndSaysHowToKeepItWhole', () => {
+  renderGate({ ...waitingGate('gh#610', 'decomposition'), questions: [] }, new FakeDaemon(), { items: [{ ...boardItem('gh#610', 'Split drills'), step: 'split' }] });
+  expect(screen.queryByRole('button', { name: 'Send back…' }), 'because gate.sh refuses to send back an item already split into tracker tasks').toBeNull();
+  expect(screen.queryByText(/close its child issues, then approve/), 'because closing the children and clearing is the way to keep it whole').not.toBeNull();
+});
+
+test('DecompositionGateNotYetSplit_OffersSendBack', () => {
+  renderGate({ ...waitingGate('gh#611', 'decomposition'), questions: [] }, new FakeDaemon(), { items: [{ ...boardItem('gh#611', 'Split drills'), step: 'plan' }] });
+  expect(screen.queryByRole('button', { name: 'Send back…' }), 'because a split planned but not made can still go back to the planner').not.toBeNull();
 });
 
 test('FeelTest_SignOff_PostsSignedOff', async () => {
