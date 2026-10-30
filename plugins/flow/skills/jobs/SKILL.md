@@ -64,9 +64,15 @@ Facts to answer with:
   written, so it names a model that host knows; empty or missing is the host's default. A Claude
   effort is low, medium, high, xhigh or max; a Codex one low, medium, high or xhigh. A `jobs.host`
   other than claude or codex stops every job at its start (exit 2, the line to fix in the
-  error). A bad effort stops only comments, intake and retro, as a failed run that `status`
-  and `history` show; `run` and `install` refuse both. `next` runs each step with the roster's
-  model and effort instead, and so does the run `health` resumes, so neither reads the pair.
+  error). A bad effort stops comments, intake and retro as a failed run that `status` and
+  `history` show, and `next` before it claims an item; `run` and `install` refuse both. `next`
+  (and the run `health` resumes) runs a step with an agent on the roster's model and effort, and
+  a step with none (design, implement, review, explain) on the host's pair.
+- Each step session of `next` is a line in `.flow/log/runs.jsonl` with its item, step, model,
+  effort, and the usage and cost the host reported. A session that fails on a spend limit or an
+  auth error raises the escalation gate on its item, naming the cause, and stops the host: no
+  job starts a session on it until that gate clears (`gate.sh clear <item>`, or
+  `gate.sh clear <host>` for a stop outside any item's run).
 - `jobs.model` and `jobs.effort` are deprecated (read only while the host has no `jobs.<host>`
   map, with the old name mapping for Codex and one warning in the job's log). To migrate, move
   them under `jobs.claude` and give `jobs.codex` Codex names.

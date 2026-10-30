@@ -3,7 +3,10 @@
 #   gate.sh raise <item> <gate> <message>   record the gate in the tracker, notify, stop the run
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
 #                                           on the decomposition gate of a split task whose
-#                                           children are all closed, the plan step runs again
+#                                           children are all closed, the plan step runs again;
+#                                           a host the gate stopped starts sessions again
+#   gate.sh clear <claude|codex>            start sessions on a host a spend limit or an auth
+#                                           error stopped outside any item's run
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
 #                                           with the claimed worktree, the age and the questions
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
@@ -41,6 +44,17 @@ $message" >/dev/null
   clear)
     [ $# -ge 2 ] || die "usage: gate.sh clear <item> [<message>]" 2
     item="$2"; message="${3:-cleared}"
+    # A host stopped on a spend limit or an auth error (lib/host.sh) starts sessions again when
+    # the gate that names it clears, or when the owner clears the host by name.
+    . "$FLOW_PLUGIN/lib/host.sh"
+    case "$item" in claude|codex)
+      [ -f "$(host_stop_file "$item")" ] || { echo "$item is not stopped"; exit 0; }
+      rm -f "$(host_stop_file "$item")"; echo "$item starts sessions again"; exit 0 ;;
+    esac
+    for h in claude codex; do
+      f="$(host_stop_file "$h")"
+      [ -f "$f" ] && [ "$(json_get "$(cat "$f")" item)" = "$item" ] && rm -f "$f" && echo "$h starts sessions again"
+    done
     record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""
     [ -f "$record" ] && { asked="$(json_get "$(cat "$record")" message)"; gate="$(json_get "$(cat "$record")" gate)"; }
     [ -n "$gate" ] || { gate="$(state_get "$(adapter read "$item" 2>/dev/null)" gate)"; [ "$gate" != none ] || gate=""; }
@@ -66,11 +80,16 @@ $message" >/dev/null
       2:--json) gates_json; exit ;;
       *) die "usage: gate.sh list [--json]" 2 ;;
     esac
-    [ -d "$home/gates" ] || exit 0
     for f in "$home"/gates/*.json; do
       [ -f "$f" ] || continue
       c="$(cat "$f")"
       printf '%s\t%s\t%s\t%s\n' "$(json_get "$c" time)" "$(json_get "$c" item)" "$(json_get "$c" gate)" "$(json_get "$c" message | head -1)"
+    done
+    # A stopped host is a line too: the host for the item, stopped for the gate.
+    for f in "$home"/log/claude.stopped "$home"/log/codex.stopped; do
+      [ -f "$f" ] || continue
+      c="$(cat "$f")"
+      printf '%s\t%s\tstopped\t%s: %s\n' "$(json_get "$c" at)" "$(json_get "$c" host)" "$(json_get "$c" cause)" "$(json_get "$c" said)"
     done ;;
-  *) sed -n '2,11p' "$0"; exit 2 ;;
+  *) sed -n '2,14p' "$0"; exit 2 ;;
 esac

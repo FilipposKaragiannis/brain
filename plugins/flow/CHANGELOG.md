@@ -1,5 +1,35 @@
 # flow
 
+## 1.22.0 (2026-10-30)
+
+Spend control for unattended runs (#65).
+
+- A step with no agent (design, implement, review, explain) runs on the jobs' pair for the
+  host, `jobs.<host>.model` and `jobs.<host>.effort` in `.flow/config.yaml`, on claude and on
+  codex. Before, it ran on the host's own default model and effort, whatever the config said.
+  Steps with an agent still take the roster's pair. `run-unattended.sh` and the `next` job
+  check the pair before they claim a step, so a bad effort stops the run, not the session.
+- The architect runs only for L tasks and epics. `profiles.json` has an `architect` switch per
+  profile; the design step's brief says `Architect: yes` or `no`, and on no the step ends with
+  the exploration and the planner designs from it.
+- Claude sessions use the 5-minute prompt cache. A subscription defaults to one hour, which
+  costs more to write (2x the input price, against 1.25x) and pays off only when a session
+  idles more than five minutes between turns; a step session does not.
+  `host_run` sets `CLAUDE_CODE_PROMPT_CACHE_TTL` and `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` to
+  `5m` unless the owner set them.
+- Each unattended step session is a line in `<flow home>/log/runs.jsonl`: the item, the step,
+  the host, the model, the effort, the seconds, the exit, the tokens and the cost where the host
+  reports it (claude does, codex reports tokens only). Claude runs with `--output-format json`
+  and codex with `--json`; `scripts/_host.py` reads the usage and passes the text on to the
+  log. A step line has no `job` key, so the job readers skip it.
+- The board has a spend section: cost, sessions and tokens per item, summed over its step
+  sessions.
+- A session that fails on a spend limit or an auth error stops the host. The run raises the
+  escalation gate on its item, naming the cause and the host's own words, and exits 4. No
+  session starts on that host, from any loop or job, until the owner clears the gate, or
+  `gate.sh clear <claude|codex>` for a stop outside an item's run. `gate.sh list` shows a
+  stopped host. Before, the loop went on to the next step and failed the same way on each one.
+
 ## 1.21.1 (2026-10-28)
 
 - The launchd agent `jobs.sh install` writes sets `AbandonProcessGroup`. Since 1.20.8 a `next`
