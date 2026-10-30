@@ -9,7 +9,7 @@
       "name": "console",
       "source": "./plugins/console",
       "description": "The Brain Console: a local daemon and web page that show every flow project on this machine live and run its actions.",
-      "version": "0.7.3"
+      "version": "0.7.4"
     },
     {
       "name": "craft",
@@ -21,7 +21,7 @@
       "name": "flow",
       "source": "./plugins/flow",
       "description": "The work flow: pick the next ready item, plan, implement, test, review, verify and open a PR, with agents in worktrees and human gates only where a human adds value.",
-      "version": "1.22.0"
+      "version": "1.23.0"
     },
     {
       "name": "meta",

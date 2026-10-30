@@ -120,6 +120,8 @@ fi
 attempts="$(state_get "$data" attempts)"; attempts="${attempts:-0}"; max_attempts="$(json_get "$profiles" max_attempts)"
 agent="$(step_field "$step" agent)"; skill="$(step_field "$step" skill)"; summary="$(step_field "$step" summary)"
 depth="$(json_get "$profiles" "review_depth.$profile")"
+# The architect runs where its cost pays: the profile's switch in profiles.json (architect).
+architect=no; [ "$(json_get "$profiles" "architect.$profile")" = true ] && architect=yes
 base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
   wt="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item" --base "$base")" || {
@@ -166,6 +168,10 @@ brief="$reports/brief-$step.md"
   echo "- Reports: \`$reports\` (earlier step results and the plan live here)"
   echo "- Plugin: \`$FLOW_PLUGIN\` (scripts: \`scripts/verify.sh\`, \`scripts/steward.sh\`, \`scripts/comments.sh\`, adapters under \`adapters/\`)"
   if [ -n "$agent" ]; then echo "- Agent: $agent (its brief is your role)"; else echo "- Skill: invoke \`flow:$skill $item\`; it spawns what the step needs"; fi
+  if [ "$step" = design ]; then
+    if [ "$architect" = yes ]; then echo "- Architect: yes (profile $profile): the architect writes design.md after the exploration"
+    else echo "- Architect: no (profile $profile): no architect; the step ends with the exploration, and the planner designs from it"; fi
+  fi
   echo
   echo "## When you finish"
   echo "Write \`$reports/$step.json\`:"
@@ -221,7 +227,7 @@ brief="$reports/brief-$step.md"
 rm -f "$reports/resume.md"
 
 out="$(json_obj "item=$item" "title=$(json_get "$data" title)" "kind=$kind" "size=$size" "profile=$profile" "depth=$depth" \
-  "step=$step" "agent=$agent" "skill=$skill" "worktree=$wt" "branch=$branch" "base=$base" "brief=$brief" "reports=$reports" \
+  "architect=$architect" "step=$step" "agent=$agent" "skill=$skill" "worktree=$wt" "branch=$branch" "base=$base" "brief=$brief" "reports=$reports" \
   "model=$(agent_model "$agent" 2>/dev/null)" "effort=$(agent_effort "$agent" 2>/dev/null)")"
 if [ "$as_json" -eq 1 ]; then printf '%s\n' "$out"; else
   echo "next: $item - $step ($profile, $size)"

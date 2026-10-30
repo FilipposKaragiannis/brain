@@ -23,13 +23,18 @@ on Codex the path `codex plugin list` prints for `flow`).
 | `grill` | interviewer, interactive with the owner | spec in the item; `interview.md` |
 | `epic` | planner | epic body in the item; `epic.md` |
 | `tasks` | planner, then epic-plan-reviewer on the list | the sub-items (after the decomposition gate) |
-| `design` | explorer; researcher only when the exploration or the spec names a question the repo cannot answer; architect | `explore.md`, `research.md`, `design.md` |
+| `design` | explorer; researcher only when the exploration or the spec names a question the repo cannot answer; architect only when the profile turns it on | `explore.md`, `research.md`, `design.md` with the architect |
 | `plan` | planner; epic-plan-reviewer on an L task | `plan.md`; sub-items in tracker-tasks mode |
 
 Spawn each subagent by its roster name with the step brief from `next.sh` when you have one,
 else a brief of the same shape: item, step, worktree, reports path, inputs, and the result
 file contract (`<reports>/<step>.json` with `status`, `summary`, `size`, `gate`, `message`,
 `touches`). Run them one at a time; the architect needs the explorer's report.
+
+The architect runs only where its cost pays: L tasks and epics. The brief's `Architect:` line
+says yes or no (`next.sh` reads `architect.<profile>` in `$P/profiles.json`; without a brief,
+read it there). On no, spawn no architect and write no `design.md`: the design step ends with the
+exploration, and the planner designs from `explore.md`.
 
 The epic-plan-reviewer reads the plan or the task list and returns Blocker, Risk, Gap and
 Nice-to-fix findings. Give every Blocker and Gap back to the planner for one more pass; then

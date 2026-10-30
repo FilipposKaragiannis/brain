@@ -65,7 +65,7 @@ chase_reviewers() { # chase_reviewers <target> <pr>
 # $awaiting holds the last comment ids of the unresolved threads whose last word is not the
 # flow's reply, space separated, and they are part of the line. So is the time the item's last
 # gate was cleared (gate.sh clear), once one was: a pass that stopped at a gate left the PR as it
-# was, and the owner's answer is what is new. A line with no clear is the line before 1.22.0.
+# was, and the owner's answer is what is new. A line with no clear is the line before 1.23.0.
 activity() {
   awaiting=""; cleared=""
   case "$1" in
