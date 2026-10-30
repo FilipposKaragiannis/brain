@@ -1973,6 +1973,7 @@ case "${FAKE_HOST:-ok}" in
   budget) echo '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 422 {\"type\":\"error\",\"error\":{\"type\":\"ExceededBudget\",\"message\":\"The seat reached its spend limit.\"}}","total_cost_usd":0}'; exit 1 ;;
   auth) echo '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}'; exit 1 ;;
   other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
+  errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
   quote) echo '{"type":"result","subtype":"success","is_error":false,"result":"Done. The old log said: Credit balance is too low."}'; exit 0 ;;
 esac
 brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
@@ -2025,7 +2026,7 @@ PATH="$cpath" "$P/templates/run-unattended.sh" codex "$lt" --max-steps 1 >/dev/n
 check "a step with no agent runs on jobs.codex.model and jobs.codex.effort, as written" grep -q 'codex		exec --json .*-m gpt-jobs-y -c model_reasoning_effort="medium"' "$COST_LOG"
 check_all "a codex step line sums the turn usage, with no cost" '[ "$(lastrun model)" = gpt-jobs-y ] && [ "$(lastrun usage.input_tokens)" = 50 ] && [ "$(lastrun usage.cached_input_tokens)" = 20 ] && [ "$(lastrun cost_usd)" = null ]'
 "$P/scripts/board.sh" > "$work/cost.board" 2>/dev/null
-check_all "board: the spend per item, summed over its step sessions" 'grep -qF "| $mt | \$0.50 | 2 | 2900 |" "$work/cost.board" && grep -qF "| $lt | \$0.00 | 1 | 75 |" "$work/cost.board" && [ "$("$P/scripts/board.sh" --json 2>/dev/null | jget "spend.$mt.sessions")" = 2 ]'
+check_all "board: the spend per item, summed over its step sessions, codex cached input counted once" 'grep -qF "| $mt | \$0.50 | 2 | 2900 |" "$work/cost.board" && grep -qF "| $lt | \$0.00 | 1 | 55 |" "$work/cost.board" && [ "$("$P/scripts/board.sh" --json 2>/dev/null | jget "spend.$mt.sessions")" = 2 ]'
 : > "$COST_LOG"
 PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; export CLAUDE_CODE_PROMPT_CACHE_TTL=1h; host_run claude . hi' >/dev/null 2>&1
 check "a prompt cache TTL the owner exported wins" grep -q 'claude	ttl=1h/5m' "$COST_LOG"
@@ -2062,6 +2063,9 @@ check_all "an auth error on codex outside any item stops codex and tells the own
 check "gate.sh clear <host> starts it again" sh -c "grep -q 'codex starts sessions again' '$work/cost.out' && [ ! -f .flow/log/codex.stopped ]"
 FAKE_HOST=auth PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check_all "a Claude login that does not work is an auth stop" '[ "$(jget cause < .flow/log/claude.stopped)" = auth ] && grep -q "Please run /login" .flow/log/claude.stopped'
+"$P/scripts/gate.sh" clear claude >/dev/null
+FAKE_HOST=errors PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' > "$work/cost.out" 2>/dev/null
+check_all "a Claude error result with its words in errors, not result, is logged and stops the host" 'grep -q "Credit balance is too low" "$work/cost.out" && [ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ]'
 "$P/scripts/gate.sh" clear claude >/dev/null
 FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1

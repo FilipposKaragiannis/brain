@@ -49,9 +49,12 @@ def claude(out, said):
         result = obj.get("result")
         if isinstance(result, str):
             text.append(result)
+        # An error_during_execution result has no result text: its words are in errors.
+        errors = [str(e) for e in obj["errors"] if e] if isinstance(obj.get("errors"), list) else []
+        text.extend(errors)
         if obj.get("is_error"):
             failed = True
-            said.append(str(result or obj.get("subtype") or ""))
+            said.extend(errors or [str(result or obj.get("subtype") or "")])
         usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else None
         cost = obj.get("total_cost_usd")
         models = sorted(obj["modelUsage"]) if isinstance(obj.get("modelUsage"), dict) else []

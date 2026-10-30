@@ -35,6 +35,10 @@ for n, a in enumerate(claimed):
             overlap.append((a["id"], b["id"]))
 # The spend per item: the step session lines in runs.jsonl (lib/host.sh host_record), the cost
 # the host reported summed, with the session count and the tokens. Codex reports no cost.
+# The fields that add up to a session's tokens, per host. Claude's four do not overlap. Codex's
+# cached input is part of its input, and its reasoning part of its output.
+TOKENS = {"claude": ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"),
+          "codex": ("input_tokens", "output_tokens")}
 spend = {}
 for name in ("runs.1.jsonl", "runs.jsonl"):
     path = os.path.join(log, name)
@@ -50,7 +54,7 @@ for name in ("runs.1.jsonl", "runs.jsonl"):
         if isinstance(r.get("cost_usd"), (int, float)):
             s["cost_usd"] = round(s["cost_usd"] + r["cost_usd"], 6)
         u = r.get("usage") if isinstance(r.get("usage"), dict) else {}
-        s["tokens"] += sum(v for k, v in u.items() if k.endswith("tokens") and isinstance(v, int))
+        s["tokens"] += sum(u.get(k) for k in TOKENS.get(r.get("host"), ()) if isinstance(u.get(k), int))
 if as_json:
     print(json.dumps({"pool": pool, "items": items, "runs": runs, "gates": gates,
                       "overlaps": [list(o) for o in overlap], "spend": spend}, indent=2)); sys.exit()
