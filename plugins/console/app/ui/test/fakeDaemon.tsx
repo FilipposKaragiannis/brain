@@ -174,7 +174,7 @@ export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo 
 }
 
 export function waitingGate(item: string, gate: string): Gate {
-  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null };
+  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null };
 }
 
 export function boardDisagreement(item: string): Disagreement {

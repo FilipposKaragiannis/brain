@@ -1,9 +1,14 @@
 #!/bin/sh
 # Human gates.
-#   gate.sh raise <item> <gate> <message>   record the gate in the tracker, notify, stop the run
+#   gate.sh raise <item> <gate> <message> [<from step>]
+#                                           record the gate in the tracker, notify, stop the run;
+#                                           <from step> is the step whose work the gate judges
+#                                           (default: the item's step now), where --back returns
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
 #                                           on the decomposition gate of a split task whose
 #                                           children are all closed, the plan step runs again
+#   gate.sh clear <item> --back <message>   the owner sends the work back: the gate's from step
+#                                           runs again, with the message in its brief
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
 #                                           with the claimed worktree, the age and the questions
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
@@ -28,10 +33,11 @@ gates_json() {
 
 case "${1:-}" in
   raise)
-    [ $# -ge 4 ] || die "usage: gate.sh raise <item> <gate> <message>" 2
-    item="$2"; gate="$3"; message="$4"
+    [ $# -ge 4 ] || die "usage: gate.sh raise <item> <gate> <message> [<from step>]" 2
+    item="$2"; gate="$3"; message="$4"; from="${5:-}"
     json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "gates.$gate" >/dev/null 2>&1 || true
-    adapter write-state "$item" "gate=$gate" "last_event=$(now_iso) gate $gate" >/dev/null
+    [ -n "$from" ] || from="$(state_get "$(adapter read "$item" 2>/dev/null)" step)"
+    adapter write-state "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" >/dev/null
     adapter comment "$item" --body "**Gate: $gate**
 
 $message" >/dev/null
@@ -39,15 +45,34 @@ $message" >/dev/null
     [ "$gate" = "escalation" ] && "$FLOW_PLUGIN/scripts/lesson.sh" escalation "$item" "$message" >/dev/null
     "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" ;;
   clear)
-    [ $# -ge 2 ] || die "usage: gate.sh clear <item> [<message>]" 2
-    item="$2"; message="${3:-cleared}"
+    [ $# -ge 2 ] || die "usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message>" 2
+    item="$2"; back=0
+    [ "${3:-}" = --back ] && { back=1; shift; }
+    message="${3:-cleared}"
+    [ "$back" -eq 0 ] || [ -n "${3:-}" ] || die "gate.sh clear --back needs a message: what to change" 2
     record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""
     [ -f "$record" ] && { asked="$(json_get "$(cat "$record")" message)"; gate="$(json_get "$(cat "$record")" gate)"; }
-    [ -n "$gate" ] || { gate="$(state_get "$(adapter read "$item" 2>/dev/null)" gate)"; [ "$gate" != none ] || gate=""; }
+    data="$(adapter read "$item" 2>/dev/null)"
+    [ -n "$gate" ] || { gate="$(state_get "$data" gate)"; [ "$gate" != none ] || gate=""; }
+    # One events.log line per answer, so the console can list what was answered today.
+    answered_event() { mkdir -p "$home"; printf '%s\t%s\tanswered\t%s\n' "$(now_iso)" "$item" "$(printf '%s' "$1" | tr '\n' ' ')" >> "$home/events.log"; }
+    if [ "$back" -eq 1 ]; then
+      from="$(state_get "$data" gate_from)"
+      [ -n "$from" ] || die "$item has no step to send back to (its gate predates gate_from); clear it with the change instead" 2
+      [ "$(state_get "$data" step)" != split ] || die "$item is already split into tracker tasks; close its children to keep it whole, then clear the gate" 2
+      # The question and the answer stay in the state, so the from step's brief carries them.
+      adapter write-state "$item" "gate=none" "gate_from=" "step=$from" "attempts=0" "answered=$gate, sent back" "asked=$asked" "answer=$message" \
+        "last_event=$(now_iso) gate sent back to $from: $message" >/dev/null
+      adapter comment "$item" --body "Gate sent back to $from: $message" >/dev/null
+      answered_event "${gate:-gate}, sent back to $from: $message"
+      rm -f "$record"
+      echo "gate sent back on $item; run next $item to run $from again"; exit 0
+    fi
     # The question and the answer stay in the state, so the next step's brief carries them.
-    adapter write-state "$item" "gate=none" "attempts=0" "answered=$gate" "asked=$asked" "answer=$message" \
+    adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate" "asked=$asked" "answer=$message" \
       "last_event=$(now_iso) gate cleared: $message" >/dev/null
     adapter comment "$item" --body "Gate cleared: $message" >/dev/null
+    answered_event "${gate:-gate}: $message"
     rm -f "$home/gates/$(item_slug "$item").json"
     # The split happened when the plan step ended (advance.sh). Clearing the gate never splits; an
     # owner who closed the children to keep the item whole gets its plan step back.
@@ -72,5 +97,5 @@ $message" >/dev/null
       c="$(cat "$f")"
       printf '%s\t%s\t%s\t%s\n' "$(json_get "$c" time)" "$(json_get "$c" item)" "$(json_get "$c" gate)" "$(json_get "$c" message | head -1)"
     done ;;
-  *) sed -n '2,11p' "$0"; exit 2 ;;
+  *) sed -n '2,17p' "$0"; exit 2 ;;
 esac

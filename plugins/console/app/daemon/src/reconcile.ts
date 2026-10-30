@@ -237,6 +237,8 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[], items: I
       worktree: contexts.find((context) => context.claim?.item === gate.item)?.name ?? null,
       questions: gate.questions !== null && gate.questions.length > 0 ? gate.questions : parseGateQuestions(gate.message),
       pull: gatePull(gate.item, items, pulls),
+      plan: gate.plan,
+      body: input.board?.bodies[gate.item] ?? null,
     }))
     .sort((left, right) => right.ageSeconds - left.ageSeconds);
 }

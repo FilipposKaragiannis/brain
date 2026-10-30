@@ -140,7 +140,9 @@ if [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
   adapter write-state "$item" "size=$new_size" >/dev/null
   if [ $((new_i - old_i)) -ge 2 ] || { [ "$new_size" = "L" ] && [ "$new_i" -gt "$old_i" ]; }; then
     adapter write-state "$item" "step=$step" "profile=$(profile_select "$kind" "$new_size")" >/dev/null
-    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" plan-approval "Re-sized $size -> $new_size at step $step: ${summary:-no summary}. Replan or split, then clear the gate." >/dev/null
+    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" plan-approval "**Re-sized $size -> $new_size at step $step. Replan or split, then clear the gate.**
+
+${summary:-No summary.}" >/dev/null
     size="$new_size"; report 4 "" plan-approval
   fi
   size="$new_size"
@@ -173,13 +175,20 @@ case "$following" in
       report 0 "$after" ""
     fi
     adapter write-state "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g" >/dev/null
-    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$g" "${summary:-$step done}. $(json_get "$profiles" "gates.$g.says")" >/dev/null
+    # The ask leads, in bold, so the owner reads the decision before the step's summary.
+    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$g" "**$(json_get "$profiles" "gates.$g.asks")**
+
+${summary:-$step done.}" "$step" >/dev/null
     report 4 "$after" "$g" ;;
   *)
     adapter write-state "$item" "step=$following" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done -> $following" >/dev/null
     adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Next: $following." >/dev/null
     if [ "$feel_test" -eq 1 ]; then
-      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" feel-test "Verify passed and the change touches rendered code. $(json_get "$profiles" "gates.feel-test.says"): see $reports/verify.md. Clear the gate to continue with $following." >/dev/null
+      # Problems the owner reports go back to the step that writes the code, not to verify.
+      back="$(json_get "$profiles" "fix_step.$step")"
+      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" feel-test "**$(json_get "$profiles" "gates.feel-test.asks")**
+
+Verify passed and the change touches rendered code. What to launch and what to look for: \`$reports/verify.md\`. Signing off continues with $following." "${back:-$step}" >/dev/null
       report 4 "$following" feel-test
     fi
     finish_run

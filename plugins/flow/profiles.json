@@ -169,30 +169,37 @@
   },
   "gates": {
     "interview": {
+      "asks": "Confirm the spec recap, or say what to change.",
       "raised_by": "interviewer",
       "says": "the open questions"
     },
     "plan-approval": {
+      "asks": "Approve the plan, approve it with notes, or send it back.",
       "raised_by": "planner",
       "says": "plan path and a one-paragraph summary"
     },
     "decomposition": {
+      "asks": "Approve the split, or send it back.",
       "raised_by": "planner",
       "says": "the task list, sizes and dependencies"
     },
     "feel-test": {
+      "asks": "Launch it and sign off, or report what feels wrong.",
       "raised_by": "verifier",
       "says": "what to launch and what to look for"
     },
     "merge": {
+      "asks": "Merge the pull request.",
       "raised_by": "pr-creator",
       "says": "PR URL and the verify summary"
     },
     "escalation": {
+      "asks": "Say what the agent should do.",
       "raised_by": "any step",
       "says": "error text, cause, attempts"
     },
     "ambiguity": {
+      "asks": "Answer the questions.",
       "raised_by": "any step",
       "says": "the question and the two readings"
     }

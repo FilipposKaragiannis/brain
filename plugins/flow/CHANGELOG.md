@@ -1,5 +1,19 @@
 # flow
 
+## 1.22.0 (2026-10-30)
+
+- A gate can send the work back. `gate.sh clear <item> --back "<what to change>"` runs the step
+  that raised the gate again, with attempts at 0 and the owner's note in its brief, instead of
+  continuing past it. A note is required. `gate.sh raise` takes the step to go back to as a
+  fourth argument and keeps it as `gate_from`; a feel test goes back to the step that wrote the
+  code. A gate raised before 1.22.0 has no `gate_from` and says so.
+- Gate messages lead with the decision, in bold: each gate's `asks` in `profiles.json` (for
+  example "Approve the plan, approve it with notes, or send it back."), then the step's summary.
+  The brief asks agents for a markdown summary and a gate message that starts with a bold ask.
+- Every answer adds one `answered` line to `events.log`: the gate and the answer, or where it
+  was sent back to. The console lists them as "Answered today".
+- The local adapter keeps `gate_from` in an item's state.
+
 ## 1.21.1 (2026-10-28)
 
 - The launchd agent `jobs.sh install` writes sets `AbandonProcessGroup`. Since 1.20.8 a `next`

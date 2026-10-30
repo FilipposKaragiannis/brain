@@ -154,7 +154,18 @@ check_all "L profile after re-size" '[ "$("$P/adapters/local/read.sh" "$t2" | jg
 "$P/scripts/next.sh" "$t2" >/dev/null; printf '{"status":"done","summary":"planned"}\n' > "$r2/plan.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
 check_all "plan -> plan-approval gate, step implement" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "implement" ]'
+check_all "plan-approval message leads with the ask in bold" 'jget message < .flow/gates/local-task-2.json | head -1 | grep -q "^\*\*Approve the plan"'
+check "send back with no message: refused, exit 2" sh -c "'$P/scripts/gate.sh' clear '$t2' --back; [ \$? -eq 2 ]"
+"$P/scripts/gate.sh" clear "$t2" --back "Add a rollback phase." >/dev/null
+check_all "send back: the plan step runs again, gate none, the note kept" '[ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "plan" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "none" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.answer)" = "Add a rollback phase." ] && [ ! -f .flow/gates/local-task-2.json ]'
+check_all "send back: one answered line in events.log, the note on one line" 'tail -1 .flow/events.log | grep -q "	$t2	answered	plan-approval, sent back to plan: Add a rollback phase.\$"'
+brief2="$("$P/scripts/next.sh" "$t2" 2>/dev/null | sed -n 's/^  brief: //p')"
+check_all "send back: the plan brief carries the note" '[ -n "$brief2" ] && grep -q "Add a rollback phase." "$brief2"'
+printf '{"status":"done","summary":"replanned"}\n' > "$r2/plan.json"
+"$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
+check_all "replanned -> plan-approval again" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "plan-approval" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "implement" ]'
 "$P/scripts/gate.sh" clear "$t2" approved >/dev/null
+check_all "clear: one answered line in events.log with the gate and the answer" 'tail -1 .flow/events.log | grep -q "	$t2	answered	plan-approval: approved\$"'
 "$P/scripts/next.sh" "$t2" >/dev/null
 printf '{"status":"gate","gate":"ambiguity","message":"A or B?"}\n' > "$r2/implement.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?

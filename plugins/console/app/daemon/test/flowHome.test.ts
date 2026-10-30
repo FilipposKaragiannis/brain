@@ -162,3 +162,8 @@ test('BehindBaseOnlyUnderTheOldKey_StillReadWithAWarning', () => {
   assert.equal(config.behindBase, 5, 'because a file written for console 0.5 keeps working for one release');
   assert.match(config.deprecated[0] ?? '', /rename it to jobs\.health\.behind_base/, 'because the owner is told the plugin never read that key');
 });
+
+test('GateWithAPlanInItsWorktree_ThatPlanWins', async () => {
+  const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.deepEqual(facts.gates.find((gate) => gate.item === 'gh#7')?.plan, { file: 'plan.md', text: '## Phase 1\nThe worktree plan.\n' }, 'because a work step writes its plan in the claimed worktree, which is newer than the main checkout\'s');
+});
