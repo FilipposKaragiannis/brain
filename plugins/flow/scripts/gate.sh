@@ -83,8 +83,10 @@ $message" >/dev/null
       echo "gate sent back on $item; run next $item to run $from again"; exit 0
     fi
     # The question and the answer stay in the state, so the next step's brief carries them.
+    # answered_at stays too: the comments job counts a clear as new activity on the item's PR.
+    cleared_at="$(now_iso)"
     adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate" "asked=$asked" "answer=$message" \
-      "last_event=$(now_iso) gate cleared: $message" >/dev/null
+      "answered_at=$cleared_at" "last_event=$cleared_at gate cleared: $message" >/dev/null
     adapter comment "$item" --body "Gate cleared: $message" >/dev/null
     answered_event "${gate:-gate}: $message"
     rm -f "$home/gates/$(item_slug "$item").json"

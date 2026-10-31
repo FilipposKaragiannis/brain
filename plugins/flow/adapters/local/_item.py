@@ -21,7 +21,7 @@ import sys
 from datetime import datetime, timezone
 
 STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_event", "pr", "touches",
-              "answered", "asked", "answer", "gate_from"]
+              "answered", "asked", "answer", "answered_at", "gate_from"]
 LIST_KEYS = {"blocked_by", "labels", "touches"}
 INT_KEYS = {"attempts"}
 

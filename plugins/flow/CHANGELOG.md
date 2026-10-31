@@ -1,18 +1,52 @@
 # flow
 
-## 1.23.0 (2026-10-30)
+## 1.24.0 (2026-10-31)
 
 - A gate can send the work back. `gate.sh clear <item> --back "<what to change>"` runs the step
   that raised the gate again, with attempts at 0 and the owner's note in its brief, instead of
   continuing past it. A note is required. `gate.sh raise` takes the step to go back to as a
   fourth argument and keeps it as `gate_from`; a feel test goes back to the step that wrote the
-  code. A gate raised before 1.23.0 has no `gate_from` and says so.
+  code. A gate raised before 1.24.0 has no `gate_from` and says so.
 - Gate messages lead with the decision, in bold: each gate's `asks` in `profiles.json` (for
   example "Approve the plan, approve it with notes, or send it back."), then the step's summary.
   The brief asks agents for a markdown summary and a gate message that starts with a bold ask.
 - Every answer adds one `answered` line to `events.log`: the gate and the answer, or where it
   was sent back to. The console lists them as "Answered today".
 - The local adapter keeps `gate_from` in an item's state.
+
+## 1.23.0 (2026-10-30)
+
+- `jobs.workers` in `.flow/config.yaml` splits the `next` job's workers across hosts:
+  `{claude: 1, codex: 2}`, or one host per line under it. A scheduled `next` run with no
+  `--workers` starts each worker on its own host, numbered across the hosts, claude first:
+  `next-1` on claude, `next-2` and `next-3` on codex. `jobs.sh status` lists each worker under
+  the table with its host, and `status --json` gives the next row a `workers` list (job, host,
+  running, last_run). `--workers N` given by hand still starts N on the host named. A host other
+  than claude or codex, or a count that is not a whole number, stops the run (exit 2, recorded
+  so `status` shows it), and `run` and `install` refuse it, as they refuse `jobs.workers` beside
+  `--workers` in `jobs.schedule.next` (#65, point 1).
+- Pausing `next` pauses every worker of it. A worker started by hand with a label that is not a
+  number (`--worker codex`) looked for its own pause file, so it ran through a pause, and
+  `status` never showed it. `--worker` now takes only a number, and a worker's pause is its
+  job's, whatever its label (#65, point 10).
+- An unset `reviews.chase_after` is the 1h default, silently. The default was applied with
+  `sed`, which never sees a line when the key is missing, so every chase stopped with
+  `reviews.chase_after is ''` (#65, point 6).
+- The comments job skips an item whose worktree another session works in, named or not, found
+  as the health job finds a live run: `<item>: another session works in <worktree>
+  (process N), skipped`. A list of processes that cannot be read counts every worktree as in use
+  (#34). A PR number finds its item from a local item's branch (`flow/local-task-1`) as well as
+  from `flow/gh-<n>`, so the check, and the resume note, cover local items too.
+- A cleared gate is new activity for the comments job. `gate.sh clear` records `answered_at` in
+  the item's state, and the job's activity line carries it, so a PR whose pass stopped at a gate
+  is picked up once the owner answers, without a run by hand. A line from before keeps its form,
+  so an upgrade starts no pass (#65, point 7; #34).
+- `jobs.sh status --json` keeps the runs a pause or a live lock ended at once. `last` is still
+  the newest run that did something. `last_run` is the newest run of any kind and `latest` the
+  newest of each outcome, each with `reason` (the live run a skip found, the pause, the error).
+  Each line of `runs.jsonl`, each running entry and each worker carries the `host` it ran on.
+- Each `runs.jsonl` line is one write. Workers that ended together could interleave a line and
+  its newline, so two runs shared a line that no reader could parse.
 
 ## 1.22.0 (2026-10-30)
 
