@@ -45,6 +45,7 @@ def gates():
            "ambiguity": "an agent needs a decision; give it"}
     for g, v in profiles["gates"].items():
         print("- **%s** (raised by %s): %s. Answer: `flow:gate <item> \"<answer>\"`." % (g, v["raised_by"], ask.get(g, v["says"])))
+    print("\nSend the work back instead: `gate.sh clear <item> --back \"<what to change>\"` runs the gate's step again with your note (interview, decomposition, plan-approval, feel-test).")
     print("\nConfig can clear `plan-approval` itself by item size (`auto_gates` in `.flow/config.yaml`). Nothing else is auto.")
 def one(name):
     s = next((x for x in skills if x["name"] == name), None)

@@ -25,6 +25,22 @@ test('GateClear_WithoutMessage_OmitsTheArgument', () => {
   assert.deepEqual(plan.args.slice(1), ['clear', 'gh#1'], 'because the script fills its own default message');
 });
 
+test('GateClear_SentBack_PassesBackFlagBeforeMessage', () => {
+  const plan = planned('gate.clear', { item: 'gh#268', message: 'split slice 2', back: 'true' });
+  assert.deepEqual(plan.args.slice(1), ['clear', 'gh#268', '--back', 'split slice 2'], 'because gate.sh reads --back as the second argument and the message after it');
+  assert.deepEqual(plan.locks, ['item:gh#268'], 'because sending back moves the item step like a clear does');
+});
+
+test('GateClear_SentBackWithoutMessage_Rejected', () => {
+  for (const message of ['', '  ']) {
+    assert.equal(planAction('gate.clear', { item: 'gh#268', message, back: 'true' }, CONTEXT).ok, false, 'because the step that runs again needs to know what to change');
+  }
+});
+
+test('GateClear_BackNotTrueOrFalse_Rejected', () => {
+  assert.equal(planAction('gate.clear', { item: 'gh#268', message: 'x', back: 'yes' }, CONTEXT).ok, false, 'because a loose flag must not decide between approving and sending back');
+});
+
 test('GateClear_WithBadItem_Rejected', () => {
   for (const item of ['', '-rf', 'gh#1 x', '$(x)', 'github', 'local/../../tmp/x', 'local:7', 'src', 'gh#0']) {
     assert.equal(planAction('gate.clear', { item }, CONTEXT).ok, false, `because "${item}" is not an id an adapter owns, and the adapter name comes from the id prefix`);

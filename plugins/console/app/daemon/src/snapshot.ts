@@ -202,7 +202,13 @@ export type Gate = {
    * open PR or pulls were not read.
    */
   pull: { number: number; url: string; state: PullState; unresolvedThreads: number } | null;
+  /** The item's plan, `plan.md` else `epic.md` in its reports (the claimed worktree's, else the main one's), or null with none. */
+  plan: GatePlan | null;
+  /** The item's issue body as the board last read it, or null before a board read. */
+  body: string | null;
 };
+
+export type GatePlan = { file: string; text: string };
 
 export type Run = {
   item: string;

@@ -167,3 +167,22 @@ test('BehindBaseOnlyUnderTheOldKey_StillReadWithAWarning', () => {
   assert.equal(config.behindBase, 5, 'because a file written for console 0.5 keeps working for one release');
   assert.match(config.deprecated[0] ?? '', /rename it to jobs\.health\.behind_base/, 'because the owner is told the plugin never read that key');
 });
+
+test('GateWithAPlanInItsWorktree_ThatPlanWins', async () => {
+  const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.deepEqual(facts.gates.find((gate) => gate.item === 'gh#7')?.plan, { file: 'plan.md', text: '## Phase 1\nThe worktree plan.\n' }, 'because a work step writes its plan in the claimed worktree, which is newer than the main checkout\'s');
+});
+
+test('SplitGateWithItsWorktreeReleased_PlanReadFromThePool', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-split-'));
+  try {
+    const root = path.join(dir, 'project');
+    mkdirSync(path.join(root, '.flow', 'gates'), { recursive: true });
+    writeFileSync(path.join(root, '.flow', 'config.yaml'), 'pool:\n  - ../project-wt-1\n');
+    writeFileSync(path.join(root, '.flow', 'gates', 'gh-12.json'), JSON.stringify({ gate: 'decomposition', item: 'gh#12', message: 'Approve the split.', time: '2026-10-22T07:43:00Z', host: 'shell' }));
+    mkdirSync(path.join(dir, 'project-wt-1', '.flow', 'reports', 'gh-12'), { recursive: true });
+    writeFileSync(path.join(dir, 'project-wt-1', '.flow', 'reports', 'gh-12', 'plan.md'), 'Decomposition: tracker tasks\n');
+    const facts = await readFlowHome(root, fakeRunner);
+    assert.deepEqual(facts.gates[0]?.plan, { file: 'plan.md', text: 'Decomposition: tracker tasks\n' }, 'because steward.sh split releases the claim but leaves the plan in that pool worktree');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

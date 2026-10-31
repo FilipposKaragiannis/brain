@@ -2,7 +2,7 @@ import path from 'node:path';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
 
-/** One item of `board.sh --json`, without its body. */
+/** One item of `board.sh --json`, without its body, which `BoardFacts.bodies` keeps apart. */
 export type BoardItem = {
   id: string;
   kind: string;
@@ -21,7 +21,8 @@ export type BoardItem = {
   state: { step: string; gate: string; worktree: string; pr: string; last_event: string; profile: string; attempts: number };
 };
 
-export type BoardFacts = { items: BoardItem[] };
+/** The items, and each item's body by id, kept apart so only the screens that show a body carry one. */
+export type BoardFacts = { items: BoardItem[]; bodies: Record<string, string> };
 
 /** The board asks the tracker for every item; on a GitHub project that takes tens of seconds. */
 const BOARD_TIMEOUT_MS = 180000;
@@ -39,6 +40,7 @@ type AdapterItem = Omit<BoardItem, 'rank' | 'needs' | 'open_blockers'> & Partial
 export function parseBoard(source: string): BoardFacts {
   const parsed = JSON.parse(source) as { items?: unknown };
   const items = Array.isArray(parsed.items) ? (parsed.items as AdapterItem[]) : [];
+  const bodies = Object.fromEntries(items.filter((item) => typeof item.body === 'string').map((item) => [item.id, item.body as string]));
   const open = new Set(items.filter((item) => item.status === 'open').map((item) => item.id));
   return {
     items: items.map(({ body: _body, rank, needs, open_blockers, ...item }) => ({
@@ -47,6 +49,7 @@ export function parseBoard(source: string): BoardFacts {
       needs: needs ?? [],
       open_blockers: open_blockers ?? item.blocked_by.filter((id) => open.has(id)),
     })),
+    bodies,
   };
 }
 

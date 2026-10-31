@@ -6,6 +6,7 @@ import { STREAM_CLOSED } from '../src/api.ts';
 import { ClockProvider } from '../src/clock.tsx';
 import { ServicesProvider } from '../src/console.tsx';
 import { ActionsProvider } from '../src/ui.tsx';
+import { GateAnswersProvider } from '../src/gateAnswers.tsx';
 import { useActions } from '../src/useActions.ts';
 import { StreamHub } from '../src/stream.ts';
 
@@ -150,7 +151,7 @@ export function actionRecord(id: string, state: ActionRecord['state'], args: Rec
 const stoppedClock = (): number => Date.parse(TAKEN_AT);
 
 function WithActions({ children }: { children: ReactNode }) {
-  return <ActionsProvider actions={useActions('project')}>{children}</ActionsProvider>;
+  return <ActionsProvider actions={useActions('project')}><GateAnswersProvider>{children}</GateAnswersProvider></ActionsProvider>;
 }
 
 /** A board item with its tracker page. */
@@ -174,7 +175,7 @@ export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo 
 }
 
 export function waitingGate(item: string, gate: string): Gate {
-  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null };
+  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null };
 }
 
 export function boardDisagreement(item: string): Disagreement {

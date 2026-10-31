@@ -5,7 +5,10 @@ import { App } from './App.tsx';
 import { ClockProvider } from './clock.tsx';
 import { ServicesProvider } from './console.tsx';
 import { StreamHub } from './stream.ts';
+import { applyTheme, storedTheme } from './theme.tsx';
 import './styles.css';
+
+applyTheme(storedTheme());
 
 const token = readToken(window.location.search);
 if (token !== null) {

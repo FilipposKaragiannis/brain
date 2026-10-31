@@ -10,12 +10,14 @@ import type { Route, Screen } from './route.ts';
 import { ProjectHeader } from './ProjectHeader.tsx';
 import { Activity } from './screens/Activity.tsx';
 import { Agents } from './screens/Agents.tsx';
-import { Gates } from './screens/Gates.tsx';
+import { Gates, GatesHeading } from './screens/Gates.tsx';
 import { Overview } from './screens/Overview.tsx';
 import { Pulls } from './screens/Pulls.tsx';
 import { Settings } from './screens/Settings.tsx';
 import { Worktrees } from './screens/Worktrees.tsx';
+import { ThemeToggle } from './theme.tsx';
 import { ActionsProvider, Dot, Empty } from './ui.tsx';
+import { GateAnswersProvider } from './gateAnswers.tsx';
 import { useActions } from './useActions.ts';
 import { HTTP_OK, useProject } from './useProject.ts';
 import type { LinkState, ProjectSummary } from './stream.ts';
@@ -75,6 +77,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
   const running = actions.records.filter((record) => isActive(record.state)).length;
   return (
     <ActionsProvider actions={actions}>
+      <GateAnswersProvider>
       <div className="shell">
         <nav className="nav" aria-label="Main">
           <div className="brand"><span className="brand-mark">B</span>Brain Console</div>
@@ -91,10 +94,11 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
         <main className="main">
           {snapshot !== null && <ProjectHeader project={snapshot.project} />}
           <header className="page-head">
-            <h1>{screenLabel(route.screen)}</h1>
+            <div className="page-title"><h1>{screenLabel(route.screen)}</h1>{route.screen === 'gates' && snapshot !== null && <GatesHeading snapshot={snapshot} />}</div>
             <div className="page-tools">
               <a className={route.screen === 'settings' ? 'button active' : 'button'} href={SETTINGS_HASH}>Settings</a>
               <button type="button" className="button" onClick={() => setDrawerOpen((open) => !open)}>Actions{running > 0 ? ` · ${running} running` : ''}</button>
+              <ThemeToggle />
               <WallClock />
             </div>
           </header>
@@ -102,6 +106,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
         </main>
         {drawerOpen && <ActionsDrawer actions={actions} close={closeDrawer} />}
       </div>
+      </GateAnswersProvider>
     </ActionsProvider>
   );
 }

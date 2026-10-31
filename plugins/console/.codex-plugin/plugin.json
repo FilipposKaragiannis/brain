@@ -1,6 +1,6 @@
 {
   "name": "console",
-  "version": "0.7.5",
+  "version": "0.8.0",
   "description": "The Brain Console: a local daemon and web page that show every flow project on this machine live and run its actions.",
   "author": {
     "name": "Filip Karagiannis"

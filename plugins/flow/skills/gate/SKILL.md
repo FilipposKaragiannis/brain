@@ -20,7 +20,18 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
    "$P/scripts/gate.sh" clear <item> "<answer>"
    ```
    The answer is the owner's words, recorded on the item. Do not write one for them.
-3. **Say what happens next**: `next <item>` continues from the step after the gate.
+   **Sent back**: when the owner wants the work redone, not continued:
+   ```
+   "$P/scripts/gate.sh" clear <item> --back "<what to change>"
+   ```
+   The step that raised the gate runs again, its brief carrying the owner's note. A note is
+   required. Works for `interview`, `decomposition`, `plan-approval` and `feel-test` (which goes
+   back to the step that wrote the code).
+3. **Say what happens next**: `next <item>` continues from the step after the gate, or runs the
+   sent-back step again.
+
+Each answer also leaves one `answered` line in `<flow home>/events.log`, which the console lists
+as "Answered today".
 
 ## Which answer each gate wants
 
@@ -28,8 +39,8 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
 |---|---|
 | `interview` | the recap of the spec is right, or says what to change |
 | `decomposition` | the task list, sizes and blockers. A task whose plan made tracker tasks is already split (step `split`, its worktree back to the pool); to keep it whole, close its children, then clear: the plan step runs again |
-| `plan-approval` | `plan.md`, or sends it back with the change |
-| `feel-test` | they launched it and it feels right |
+| `plan-approval` | `plan.md`, approves it with notes, or sends it back (`--back`) with the change |
+| `feel-test` | they launched it and it feels right, or report what is wrong (`--back`) |
 | `merge` | the PR is merged; the next `health` or `next` job clears it and frees the worktree (`steward.sh sweep`), or run the sweep now |
 | `escalation`, `ambiguity` | the decision, or the fix, in a sentence |
 
@@ -44,11 +55,12 @@ recommendations. The scheduled `next` job reads it, clears the gate with those w
 reacts +1, then picks the item up in the same run. Only the authenticated user's comments
 count, or the logins in `github.answer_from`. The merge gate is not answered this way.
 
-## Asking (agents raising `ambiguity`)
+## Asking (agents raising a gate)
 
-The message is numbered questions, one per line, each answerable in a sentence. Under each, a
-line `Recommended:` with the answer the agent would pick and why, in one clause, from the code
-or the spec. The owner can then reply "as recommended" or change one answer.
+The message is markdown. Its first line, in bold, is the decision the owner must make; short
+bullets of context follow. For `ambiguity`, the rest is numbered questions, one per line, each
+answerable in a sentence. Under each, a line `Recommended:` with the answer the agent would pick
+and why, in one clause, from the code or the spec. The owner can then reply "as recommended" or change one answer.
 
 ```
 1. Should the motion touch the ball, or stay visual only?
