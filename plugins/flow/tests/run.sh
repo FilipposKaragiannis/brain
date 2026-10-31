@@ -1896,6 +1896,10 @@ check "health: a latest review requesting changes counts when GitHub gives no de
 review_pr "" "No issues found."
 "$P/scripts/steward.sh" health > "$work/review.out" 2>&1
 check "health: once every reviewer answered, the PR is at the merge gate and the owner is reminded" sh -c "! grep -q 'in review)' '$work/review.out' && grep -q '\"state\": \"ready\"' .flow/reviews/90.review.json && grep -q '$mg: waiting .* at the merge gate' '$work/review.out'"
+# GitHub tracks a Copilot request, so the live request list decides; its timeline misses a removal.
+printf '{"reviewer": "copilot", "answered": false}\n{"reviewer": "codex", "answered": true}\n' > "$work/rows.jsonl"
+check "health: a Copilot request the owner removed does not hold the PR in review" sh -c "python3 '$P/scripts/_health.py' review '{\"reviewDecision\": \"\", \"reviewRequests\": []}' '$work/rows.jsonl' | grep -qx 'state	ready'"
+check "health: a live Copilot request holds the PR in review" sh -c "python3 '$P/scripts/_health.py' review '{\"reviewDecision\": \"\", \"reviewRequests\": [{\"login\": \"Copilot\"}]}' '$work/rows.jsonl' | grep -qx 'state	in-review'"
 review_pr "" "To use Codex here, create an environment for this repo."
 rm -f .flow/health/*.remind; : > "$work/curl.log"
 for run in 1 2; do PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/steward.sh" health; done > "$work/review.out" 2>&1

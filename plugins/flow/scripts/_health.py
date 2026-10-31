@@ -264,7 +264,9 @@ def spawn(log, command):
 def review(state, rows, record=None):
     decision = state.get("reviewDecision") or ""
     latest = [r.get("state") for r in state.get("latestReviews") or []]
-    waiting = [r["reviewer"] for r in rows if not r.get("answered")]
+    # GitHub tracks a Copilot request in reviewRequests, and its timeline misses a removed request,
+    # so only the reviewers asked by mention count here as waiting.
+    waiting = [r["reviewer"] for r in rows if not r.get("answered") and r["reviewer"] != "copilot"]
     cannot = [(r["reviewer"], r["cannot"]) for r in rows if r.get("cannot")]
     if decision == "CHANGES_REQUESTED" or (not decision and "CHANGES_REQUESTED" in latest):
         verdict = "changes-requested"
