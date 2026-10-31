@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { Logger } from '../src/log.ts';
 import { silentLogger } from '../src/log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
-import { FIXTURES, FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
+import { BOARD_JSON, FIXTURES, FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const LOCAL_ROOT = path.join(FIXTURES, 'project-local');
@@ -137,4 +139,79 @@ test('ActionContext_PoolWorktreesRunsAndProcessFolders_FromTheLatestRead', async
   assert.equal(context.processCwds.includes('/elsewhere'), false, 'because a codex working in another folder on the machine is not this project\'s to open');
   assert.deepEqual(context.outsideWorktrees.sort(), [FIXTURE_ROOT, path.join(FIXTURES, 'project-side')].sort(), 'because the main checkout and the side worktree git lists are rows with the button');
   monitor.stop();
+});
+
+/**
+ * A copy of the fixture project whose gh#7, claimed in project-wt-2, waits at the merge gate and
+ * names the pull given. Every `steward.sh` call is kept and answered with the codes given in turn;
+ * a sweep that exits 0 clears the gate unless `keeps` says the worktree had to stay.
+ */
+function mergeGatedCopy(pr: string, codes: number[], keeps = false): { monitor: ProjectMonitor; root: string; sweeps: string[][]; cleanUp: () => void } {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-sweep-'));
+  for (const name of ['project', 'project-wt-2']) cpSync(path.join(FIXTURES, name), path.join(dir, name), { recursive: true });
+  const root = path.join(dir, 'project');
+  rmSync(path.join(root, '.flow', 'gates', 'gh-7.json'));
+  writeFileSync(path.join(root, '.flow', 'gates', 'gh-7.json'), JSON.stringify({ gate: 'merge', item: 'gh#7', message: 'Merge it', time: '2026-10-24T10:00:00Z', host: 'shell' }));
+  const board = JSON.parse(BOARD_JSON) as { items: Array<{ id: string; state: Record<string, unknown> }> };
+  for (const item of board.items) if (item.id === 'gh#7') item.state = { ...item.state, gate: 'merge', pr };
+  const sweeps: string[][] = [];
+  const runner: CommandRunner = async (request) => {
+    const script = request.args[0] ?? '';
+    if (request.command === 'sh' && script.endsWith('steward.sh')) {
+      sweeps.push([request.cwd, ...request.args.slice(1)]);
+      const code = codes.shift() ?? 0;
+      if (code === 0 && !keeps) rmSync(path.join(root, '.flow', 'gates', 'gh-7.json'));
+      return { code, stdout: 'gh#7: released project-wt-2 (#30 merged)\n', stderr: '', timedOut: false };
+    }
+    if (request.command === 'sh' && script.endsWith('gate.sh')) return { code: 0, stdout: '[]', stderr: '', timedOut: false };
+    if (request.command === 'sh' && script.endsWith('board.sh')) return { code: 0, stdout: JSON.stringify(board), stderr: '', timedOut: false };
+    return fakeRunner(request);
+  };
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  return { monitor, root, sweeps, cleanUp: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('MergeGatedPullLeftTheOpenList_SweptOnceForThatItem', async () => {
+  const copy = mergeGatedCopy('https://github.com/example/fixture/pull/30', []);
+  try {
+    await readEverySource(copy.monitor);
+    await copy.monitor.refresh('pulls');
+    assert.deepEqual(copy.sweeps, [[copy.root, 'sweep', '--lock', '--item', 'gh#7']], 'because the merge is the owner\'s answer, so the gate clears within a pulls read, and once is enough');
+  } finally { copy.cleanUp(); }
+});
+
+test('MergeGatedPullStillOpen_NotSwept', async () => {
+  const copy = mergeGatedCopy('#560', []);
+  try {
+    await readEverySource(copy.monitor);
+    assert.deepEqual(copy.sweeps, [], 'because #560 is still open, so nothing was merged');
+  } finally { copy.cleanUp(); }
+});
+
+test('SweepLockHeld_SweptAgainOnTheNextPullsRead', async () => {
+  const copy = mergeGatedCopy('#30', [75]);
+  try {
+    await readEverySource(copy.monitor);
+    await copy.monitor.refresh('pulls');
+    await copy.monitor.refresh('pulls');
+    assert.equal(copy.sweeps.length, 2, 'because a sweep already running may have passed the item before the merge, so the next read tries once more, then stops');
+  } finally { copy.cleanUp(); }
+});
+
+test('SweepKeptTheWorktree_SweptAgainOnTheNextPullsRead', async () => {
+  const copy = mergeGatedCopy('#30', [], true);
+  try {
+    await readEverySource(copy.monitor);
+    await copy.monitor.refresh('pulls');
+    assert.equal(copy.sweeps.length, 2, 'because a sweep that kept a dirty worktree left the gate, so once the worktree is clean a later sweep must still clear it');
+  } finally { copy.cleanUp(); }
+});
+
+test('SweepFails_NotRunAgain', async () => {
+  const copy = mergeGatedCopy('#30', [1]);
+  try {
+    await readEverySource(copy.monitor);
+    await copy.monitor.refresh('pulls');
+    assert.equal(copy.sweeps.length, 1, 'because a sweep that fails would fail every minute; the health job sweeps again on its own schedule');
+  } finally { copy.cleanUp(); }
 });

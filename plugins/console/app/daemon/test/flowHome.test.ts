@@ -57,6 +57,11 @@ test('PluginVersion_FromTheManifest_WhenTheFolderIsACheckout', async () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('FlowHome_ReviewRecords_OnlyTheHealthJobsVerdicts', async () => {
+  const { reviews } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.deepEqual(reviews, [{ pr: 20, state: 'in-review', waiting: ['codex'], at: '2026-10-24T18:00:00Z' }], 'because only <n>.review.json files are verdicts; the chase counts and other files beside them are not');
+});
+
 test('FlowHome_GatesRunsClaimsEvents', async () => {
   const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
   assert.deepEqual(facts.gates.map((gate) => [gate.item, gate.gate]), [['gh#7', 'ambiguity']], 'because one gate record waits');

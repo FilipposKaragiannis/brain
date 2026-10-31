@@ -39,8 +39,10 @@ releases it through `WorktreeRemove` unless it holds uncommitted work. Codex has
   `pool:` and runs the copies and the setup. At `pool_max` the claim fails with exit 3: tell the
   owner, who raises `pool_max` or releases one. Never edit `pool:` by hand; `add` does it.
 - A release of a closed item also deletes its reports in every worktree.
-- A release leaves the worktree detached at the base branch with the task branch deleted when
-  merged; an unmerged branch is kept and named in the output.
+- A free worktree sits on its own idle branch at the base tip: `main-wt-2` for `../app-wt-2`
+  (git checks a branch out in one worktree only, so each has its own). A release moves it back
+  there and deletes the task branch when merged; an unmerged branch is kept and named in the
+  output. The health job moves a free worktree left detached onto its idle branch.
 
 ## Resolving a merge or rebase conflict
 

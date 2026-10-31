@@ -11,7 +11,9 @@ answered, how long it has waited and how many chases followed the first request 
 A request is a comment by <me> that opens with @<reviewer> or carries the request marker. A chase
 is a request with the chase marker. The reviewer answers with a review or a comment after the last
 request, a +1 on the request (Codex's "no findings"), or a finished Codex summary for the head
-commit. A Codex summary still running, or a usage-limit reply, is no answer. codex, claude and
+commit. A Codex summary still running, or a usage-limit reply, is no answer. A reply saying the
+reviewer cannot review here (Codex's "create an environment for this repo", a missing access) is
+an answer that brings no review: its row carries it as `cannot`, the reply's first line. codex, claude and
 copilot are GitHub apps: only a bot account whose login names them speaks for them. Copilot is
 asked through the reviewers API, so its requests are the timeline's review_requested events; a
 review by it after the last one answers, and every request after the first unanswered one is a
@@ -24,6 +26,9 @@ REQUEST = "<!-- flow:review-request %s -->"
 SUMMARY = "codex-pull-request-review-summary"
 STATE = re.compile(r"codex-review-state:v1 (\{.*?\}) -->")
 NOT_AN_ANSWER = re.compile(r"usage limit|rate limit", re.I)
+CANNOT = re.compile(r"create an environment for this repo|to use codex here"
+                    r"|\b(cannot|can not|can't|unable to|not able to) (review|access)\b"
+                    r"|(don't|do not) have access to (this|the) repo", re.I)
 APPS = ("codex", "claude", "copilot")
 
 
@@ -78,6 +83,14 @@ def answered(pull, reviewer, request):
                for comment in pull["comments"] if authored_by(comment["user"], reviewer))
 
 
+def cannot(pull, reviewer, request):
+    """The first line of the reviewer's last reply since the request that says it cannot review, or None."""
+    since = epoch(request["created_at"])
+    said = [comment.get("body") or "" for comment in pull["comments"]
+            if authored_by(comment["user"], reviewer) and epoch(comment["created_at"]) >= since and CANNOT.search(comment.get("body") or "")]
+    return next((line.strip() for line in said[-1].splitlines() if line.strip()), None) if said else None
+
+
 def copilot(pull):
     requests = [event for event in pull["timeline"] if event.get("event") == "review_requested"
                 and authored_by(event.get("requested_reviewer"), "copilot")]
@@ -102,9 +115,13 @@ def mentioned(pull, reviewer):
         if CHASE % reviewer not in (request.get("body") or ""):
             break
         chases += 1
-    return {"reviewer": reviewer, "asked_id": last["id"], "asked": last["created_at"],
-            "answered": answered(pull, reviewer, last), "waiting": pull["now"] - epoch(last["created_at"]),
-            "chases": chases}
+    row = {"reviewer": reviewer, "asked_id": last["id"], "asked": last["created_at"],
+           "answered": answered(pull, reviewer, last), "waiting": pull["now"] - epoch(last["created_at"]),
+           "chases": chases}
+    said = cannot(pull, reviewer, last)
+    if said:
+        row["cannot"] = said
+    return row
 
 
 def status(pull, reviewers):

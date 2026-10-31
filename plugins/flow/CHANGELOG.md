@@ -1,18 +1,46 @@
 # flow
 
-## 1.24.0 (2026-10-31)
+## 1.25.0 (2026-10-31)
 
 - A gate can send the work back. `gate.sh clear <item> --back "<what to change>"` runs the step
   that raised the gate again, with attempts at 0 and the owner's note in its brief, instead of
   continuing past it. A note is required. `gate.sh raise` takes the step to go back to as a
   fourth argument and keeps it as `gate_from`; a feel test goes back to the step that wrote the
-  code. A gate raised before 1.24.0 has no `gate_from` and says so.
+  code. A gate raised before 1.25.0 has no `gate_from` and says so.
 - Gate messages lead with the decision, in bold: each gate's `asks` in `profiles.json` (for
   example "Approve the plan, approve it with notes, or send it back."), then the step's summary.
   The brief asks agents for a markdown summary and a gate message that starts with a bold ask.
 - Every answer adds one `answered` line to `events.log`: the gate and the answer, or where it
   was sent back to. The console lists them as "Answered today".
 - The local adapter keeps `gate_from` in an item's state.
+
+## 1.24.0 (2026-10-31)
+
+- A free worktree sits on its own idle branch, `<base>-wt-<n>` (`main-wt-2` for `../app-wt-2`),
+  not on a detached head. Git checks a branch out in one worktree only, so each worktree gets
+  its own. `release` and a new pool worktree put it there at the base's tip. The health job
+  moves a free worktree it finds detached onto it, fast-forwards one already on it, and says,
+  without moving it, one that sits on any other branch. An idle branch with commits the base
+  does not have is kept: the worktree stays detached and that is said.
+- At the merge gate the health job reads the PR's review. A PR with changes requested, a
+  reviewer GitHub still lists as requested, or a flow reviewer (codex, claude) yet to answer is
+  in review: it is not waiting at the merge gate, gets no merge reminder, and the summary counts
+  it `N in review`. The approval a repository requires is the owner's and does not hold it.
+  The verdict goes to `.flow/reviews/<n>.review.json` for the console, and goes when the gate
+  does.
+- A reviewer that replies it cannot review ("To use Codex here, create an environment for this
+  repo") is told to the owner once, as a health notification: who, what it said, and that the
+  PR waits at the merge gate without that review. `comments.sh reviews` carries the reply's
+  first line as `cannot`; the reply still answers, so it is not chased.
+- `comments.sh state` adds `reviewDecision`, `latestReviews` and `reviewRequests`.
+- `steward.sh sweep --item <id>` looks at that item's worktree only, and `--lock` takes the
+  sweep lock without waiting and exits 75 when it is held. The console (0.7.5) runs
+  `sweep --lock --item` once it sees a gated PR leave the open list, so the merge gate clears
+  within a minute of the merge, not at the next `next` or `health` run. The console also keeps
+  a PR in review off its merge gate, by GitHub's review state and the health job's record.
+- The health job counts a Copilot review as waiting only while GitHub lists the request. Before,
+  a request the owner removed still held the PR in review, because the timeline does not show a
+  removal. Codex and Claude, asked by mention, still count from the comments.
 
 ## 1.23.0 (2026-10-30)
 

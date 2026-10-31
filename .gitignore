@@ -2,3 +2,16 @@
 plugins/*/evals/results/
 docs/rework-*.md
 tools/.eval-bin/
+# flow:begin (written by flow:init; state that stays on this machine)
+.flow/items/
+.flow/reports/
+.flow/runs/
+.flow/gates/
+.flow/health/
+.flow/tmp/
+.flow/log/
+.flow/*.lock/
+.flow/claim.json
+.flow/events.log
+.flow/.init-tmp/
+# flow:end

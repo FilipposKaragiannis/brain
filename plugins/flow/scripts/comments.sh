@@ -5,7 +5,8 @@
 #   comments.sh resolve <thread_id>             resolve a review thread
 #   comments.sh issue-comments <pr>             plain PR comments as JSON (quiz answers live here)
 #   comments.sh ready <pr>                      mark a draft PR ready for review
-#   comments.sh state <pr>                      {state, isDraft, mergedAt, url, headRefName, headRefOid, baseRefName, mergeable, updatedAt}
+#   comments.sh state <pr>                      {state, isDraft, mergedAt, url, headRefName, headRefOid, baseRefName, mergeable, updatedAt,
+#                                               reviewDecision, latestReviews, reviewRequests}
 #   comments.sh activity <pr>                   what the comments job compares between passes: updatedAt, headRefOid,
 #                                               mergeable, unresolved threads, their comments, and awaiting: the
 #                                               last comment ids of the unresolved threads whose last comment does
@@ -126,7 +127,7 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
   ready)
     gh pr ready "$(pr_number "$2")" -R "$repo" ;;
   state)
-    gh pr view "$(pr_number "$2")" -R "$repo" --json state,isDraft,mergedAt,url,headRefName,headRefOid,baseRefName,number,mergeable,updatedAt ;;
+    gh pr view "$(pr_number "$2")" -R "$repo" --json state,isDraft,mergedAt,url,headRefName,headRefOid,baseRefName,number,mergeable,updatedAt,reviewDecision,latestReviews,reviewRequests ;;
   reviewers)
     reviewers ;;
   request-review)
@@ -177,5 +178,5 @@ print(json.dumps({"updatedAt": state.get("updatedAt", ""), "headRefOid": state.g
                   "mergeable": state.get("mergeable", ""), "unresolved": len(threads),
                   "review_comments": sum(1 + len(t["replies"]) for t in threads),
                   "awaiting": waiting}))' "$st" "$th" "$REPLY_MARKER" "$me" ;;
-  *) sed -n '2,18p' "$0"; exit 2 ;;
+  *) sed -n '2,19p' "$0"; exit 2 ;;
 esac
