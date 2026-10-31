@@ -30,6 +30,12 @@ export type FlowConfig = {
  * It is null when the plugin is older or the list failed, and the daemon parses the message.
  */
 export type GateRecord = { item: string; gate: string; message: string; time: string; host: string; questions: GateQuestion[] | null };
+/**
+ * The health job's verdict on a PR waiting at the merge gate (`.flow/reviews/<n>.review.json`,
+ * flow 1.24.0 and later): `in-review` while a reviewer the flow asked has not answered, which
+ * GitHub cannot show for a reviewer asked by a mention, `changes-requested`, or `ready`.
+ */
+export type ReviewRecord = { pr: number; state: string; waiting: string[]; at: string };
 export type RunRecord = { item: string; step: string; profile: string; worktree: string; host: string; startedAt: string | null };
 export type ClaimRecord = {
   worktreePath: string;
@@ -47,6 +53,7 @@ export type FlowHomeFacts = {
   flowHome: string;
   config: FlowConfig;
   gates: GateRecord[];
+  reviews: ReviewRecord[];
   runs: RunRecord[];
   claims: ClaimRecord[];
   events: FlowEvent[];
@@ -289,6 +296,12 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const runs = (await readJsonFiles(path.join(flowHome, 'runs'))).map(({ value, modifiedAt }) => ({
     item: text(value, 'item'), step: text(value, 'step'), profile: text(value, 'profile'), worktree: text(value, 'worktree'), host: text(value, 'host'), startedAt: modifiedAt,
   }));
+  const reviews = (await readJsonFiles(path.join(flowHome, 'reviews')))
+    .filter(({ file }) => file.endsWith('.review.json'))
+    .flatMap(({ value }) => (typeof value['pr'] === 'number' ? [{
+      pr: value['pr'], state: text(value, 'state'), at: text(value, 'at'),
+      waiting: Array.isArray(value['waiting']) ? value['waiting'].filter((entry): entry is string => typeof entry === 'string') : [],
+    }] : []));
   const claims = await readClaims([root, ...poolPaths(root, config)]);
   const events = parseEvents((await readText(path.join(flowHome, 'events.log'))) ?? '', EVENTS_KEPT);
   const pluginRoot = await findPluginRoot(root, runner);
@@ -303,7 +316,7 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   });
   const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
   const worktreeSteps = pluginRoot === null ? null : await readWorktreeSteps(pluginRoot);
-  return { flowHome, config, gates, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, worktreeSteps };
+  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, worktreeSteps };
 }
 
 /** The `worktree` flag of every step in the plugin's profiles.json, as next.sh's `step_field` reads it; null when unreadable. */

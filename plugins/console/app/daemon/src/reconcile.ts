@@ -174,11 +174,13 @@ function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Wor
   });
 }
 
-function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate: GateRecord | null): ItemState {
+function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate: GateRecord | null, inReview = false): ItemState {
   if (worktree !== null && worktree.state !== 'free' && worktree.state !== 'outside') return worktree.state;
   if (gate !== null) return 'needs-you';
   if (boardItem === null) return 'claimed';
   if (boardItem.status !== 'open') return 'done';
+  // A done item whose merge gate waits on its reviewers is blocked on them, not on the owner.
+  if (inReview) return 'blocked';
   // The flow's ready list leaves these out: every step ran, or the item is split. The owner
   // merges or closes a done item and a split one whose children are closed; open children block.
   if (boardItem.state.step === 'done') return 'needs-you';
@@ -188,7 +190,7 @@ function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate:
   return 'ready';
 }
 
-function buildItems(input: ReconcileInput, worktrees: Worktree[]): Item[] {
+function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<string>): Item[] {
   const byItem = new Map(worktrees.filter((entry) => entry.item !== null).map((entry) => [entry.item as string, entry]));
   const boardItems = input.board?.items ?? [];
   const engagedIds = new Set([...byItem.keys(), ...input.flow.gates.map((gate) => gate.item)]);
@@ -200,7 +202,7 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[]): Item[] {
     const gate = input.flow.gates.find((entry) => entry.item === boardItem.id) ?? null;
     items.push({
       id: boardItem.id, title: boardItem.title, kind: boardItem.kind, size: boardItem.size, priority: boardItem.priority,
-      status: boardItem.status, state: itemState(boardItem, worktree, gate), step: worktree?.claim?.step ?? boardItem.state.step,
+      status: boardItem.status, state: itemState(boardItem, worktree, gate, held.has(boardItem.id)), step: worktree?.claim?.step ?? boardItem.state.step,
       gate: gate?.gate ?? boardItem.state.gate, worktree: worktree?.name ?? (boardItem.state.worktree || null),
       pr: boardItem.state.pr || null, url: boardItem.url || null, parent: boardItem.parent || null,
       blockedBy: boardItem.blocked_by, openBlockers: boardItem.open_blockers, openChildren: boardItem.open_children,
@@ -321,9 +323,68 @@ export function pullState(pull: PullFact): PullState {
   if (pull.checks.failed > 0) return 'checks-failing';
   if (changesRequested(pull)) return 'changes-requested';
   if (pull.checks.pending > 0) return 'checks-pending';
-  if (!approvalSatisfied(pull)) return 'review-pending';
+  if (!approvalSatisfied(pull) || pull.reviewsRequested > 0) return 'review-pending';
   if (!mergesCleanly(pull)) return 'approved';
   return 'mergeable';
+}
+
+/** The health job's review verdicts that keep a merge gate from the owner (flow's `_health.py review`). */
+const HELD_REVIEW_STATES = ['in-review', 'changes-requested'];
+/** Reviewers the flow asks through GitHub's reviewers API (`_reviews.py`), so the live pull shows their request. */
+const GITHUB_ASKED_REVIEWERS = ['copilot'];
+
+/** The pull number an item's `pr` field names, by number or by URL. */
+function namedPullNumber(field: string): number | null {
+  const found = PULL_NUMBER.exec(field.trim()) ?? /\/pull\/(\d+)/.exec(field);
+  return found === null ? null : Number(found[1]);
+}
+
+/**
+ * The items whose merge gate waits on reviewers, not on the owner: their open pull has changes
+ * requested or a review still requested on GitHub, or the health job's record says a reviewer the
+ * flow asked by a mention has not answered. With the pull listed, GitHub's own review state is read
+ * live: the record is up to 15 minutes old and would hide a gate after an approval. Only with the
+ * pulls unread does the record's whole verdict stand. A required approval alone does not hold the
+ * gate: at the merge gate that approval is the owner's. A gate whose pull is not found is not
+ * held, so a gate is never hidden on a guess.
+ */
+function heldMergeGates(input: ReconcileInput): Set<string> {
+  const held = new Set<string>();
+  const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
+  for (const gate of input.flow.gates.filter((entry) => entry.gate === MERGE_GATE)) {
+    const named = board.get(gate.item)?.state.pr || null;
+    const branch = input.flow.claims.find((claim) => claim.item === gate.item)?.branch ?? null;
+    const pulls = input.pulls?.pulls ?? [];
+    const pull = pulls.find((entry) => namesPull(named, entry))
+      ?? (named === null ? pulls.find((entry) => !entry.crossRepository && branch !== null && entry.branch === branch) : undefined);
+    const pullNumber = pull?.number ?? (input.pulls === null && named !== null ? namedPullNumber(named) : null);
+    if (pullNumber === null) continue;
+    const record = input.flow.reviews.find((entry) => entry.pr === pullNumber);
+    const mentionWaiting = record !== undefined && record.waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+    const heldLive = pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting);
+    const heldByRecord = pull === undefined && record !== undefined && HELD_REVIEW_STATES.includes(record.state);
+    if (heldLive || heldByRecord) held.add(gate.item);
+  }
+  return held;
+}
+
+/**
+ * The merge gates whose PR has left the open list: the item's `pr` names a pull that is not open
+ * any more, and a worktree still holds the claim. The PR was merged or closed, and only a sweep
+ * clears the gate and frees the worktree, so the monitor runs one for each. Empty until both the
+ * board and the pulls are read: a missing list proves nothing.
+ */
+export function landedMergeGates(input: Pick<ReconcileInput, 'flow' | 'board' | 'pulls'>): Array<{ item: string; raisedAt: string }> {
+  if (input.board === null || input.pulls === null) return [];
+  const board = new Map(input.board.items.map((item) => [item.id, item]));
+  const pulls = input.pulls.pulls;
+  return input.flow.gates
+    .filter((gate) => gate.gate === MERGE_GATE && input.flow.claims.some((claim) => claim.item === gate.item))
+    .filter((gate) => {
+      const named = board.get(gate.item)?.state.pr || null;
+      return named !== null && namedPullNumber(named) !== null && !pulls.some((pull) => namesPull(named, pull));
+    })
+    .map((gate) => ({ item: gate.item, raisedAt: gate.time }));
 }
 
 function pullPath(value: string): string | null {
@@ -582,10 +643,14 @@ function projectInfo(input: ReconcileInput): ProjectInfo {
   };
 }
 
-export function reconcile(input: ReconcileInput): Snapshot {
+export function reconcile(read: ReconcileInput): Snapshot {
+  // A merge gate whose PR is still in review is not the owner's yet, so it is not shown as one:
+  // its worktree is claimed, its item not needs-you, and its pull shows where the review stands.
+  const held = heldMergeGates(read);
+  const input = held.size === 0 ? read : { ...read, flow: { ...read.flow, gates: read.flow.gates.filter((gate) => !held.has(gate.item)) } };
   const contexts = worktreeContexts(input);
   const worktrees = buildWorktrees(contexts, input);
-  const items = buildItems(input, worktrees);
+  const items = buildItems(input, worktrees, held);
   const runs = buildRuns(input, contexts);
   const agents = buildAgents(input, contexts);
   const ended = buildEnded(input, contexts);

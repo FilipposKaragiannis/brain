@@ -14,6 +14,15 @@ const listThen = (threads: CommandResult): CommandRunner => async (request) => (
 const always = (answer: CommandResult): CommandRunner => async () => answer;
 const byNumber = (pullNumber: number) => parsePullList(PULL_LIST_JSON).find((pull) => pull.number === pullNumber);
 
+test('ListedPull_PendingReviewRequests_Counted', () => {
+  const [pull] = parsePullList(JSON.stringify([{ number: 7, reviewRequests: [{ login: 'someone' }, { __typename: 'Bot', login: 'copilot-pull-request-reviewer' }] }]));
+  assert.equal(pull?.reviewsRequested, 2, 'because each reviewer still requested is a review not given yet');
+});
+
+test('ListedPull_NoReviewRequests_Zero', () => {
+  assert.equal(byNumber(560)?.reviewsRequested, 0, 'because gh lists no request field for a pull nobody was asked to review');
+});
+
 test('CapturedPull_BranchIsHeadRef', () => {
   assert.equal(byNumber(560)?.branch, 'flow/gh-310', 'because the head branch links the pull to a claim');
 });
