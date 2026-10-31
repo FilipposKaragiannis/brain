@@ -4,11 +4,11 @@ import { Age } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import type { Route } from '../route.ts';
 import { attentionTone } from '../status.ts';
-import { Chip, Empty, Module, SourceFreshness } from '../ui.tsx';
+import { ActionButton, Chip, Empty, Module, SourceFreshness } from '../ui.tsx';
 
 /** How many items that wait on a field show before "Show all"; there can be hundreds. */
 export const FIELD_ROWS_SHOWN = 5;
-const COLUMNS = 6;
+const COLUMNS = 7;
 
 /**
  * What needs a human, oldest first. Items that wait only on an empty field come last and fold
@@ -25,7 +25,7 @@ export function NeedsYou({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
       {sorted.length === 0 ? <Empty>Nothing waits on you.</Empty> : (
         <div className="scroll">
           <table className="table">
-            <thead><tr><th>Kind</th><th>Item</th><th>Title</th><th>Detail</th><th>Worktree</th><th>Age</th></tr></thead>
+            <thead><tr><th>Kind</th><th>Item</th><th>Title</th><th>Detail</th><th>Worktree</th><th>Age</th><th /></tr></thead>
             <tbody>
               {[...others, ...shownFields].map((row) => <AttentionLine key={`${row.kind}:${row.id}:${row.worktree ?? ''}`} row={row} snapshot={snapshot} go={go} />)}
               {fieldRows.length > FIELD_ROWS_SHOWN && (
@@ -55,6 +55,7 @@ function AttentionLine({ row, snapshot, go }: { row: AttentionRow; snapshot: Sna
       <td className="clip" title={row.detail}>{row.detail}</td>
       <td className="mono">{row.worktree ?? '—'}</td>
       <td className="mono"><Age seconds={row.ageSeconds} takenAt={snapshot.takenAt} /></td>
+      <td className="buttons">{row.action !== null && <ActionButton kind={row.action.kind} args={row.action.args} label={row.action.label} primary />}</td>
     </tr>
   );
 }
@@ -62,6 +63,7 @@ function AttentionLine({ row, snapshot, go }: { row: AttentionRow; snapshot: Sna
 function rowTarget(row: AttentionRow, projectId: string): Route | null {
   if (row.kind === 'gate') return { projectId, screen: 'gates', detail: row.id };
   if (row.kind.startsWith('pr-')) return { projectId, screen: 'pulls', detail: null };
+  if (row.kind === 'host-stopped') return { projectId, screen: 'agents', detail: null };
   if (row.worktree !== null) return { projectId, screen: 'worktrees', detail: null };
   return null;
 }

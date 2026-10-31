@@ -441,3 +441,73 @@ test('ActionRecord_NotASync_ConflictIsNull', async () => {
     assert.equal(actions.get(record.id)!.conflict, null, 'because only a worktree.sync reads its output for a conflict');
   } finally { await cleanup(); }
 });
+
+/** A context whose config writer waits until the test lets it finish, and records each key it wrote. */
+function heldWriter(fail: string | null = null): { context: ActionContext; written: [string, string | null][]; release: () => void } {
+  const written: [string, string | null][] = [];
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const writeConfig = async (key: string, value: string | null): Promise<string> => {
+    await gate;
+    if (fail !== null) throw new Error(fail);
+    written.push([key, value]);
+    return `took ${key} out of .flow/config.yaml\n`;
+  };
+  return { context: { ...CONTEXT, writeConfig }, written, release: () => release() };
+}
+
+test('JobUnschedule_ExitZero_KeyTakenOutWhileTheLockStillHolds', async () => {
+  const writer = heldWriter();
+  const { actions, processes, refreshed, cleanup } = await runner(writer.context, PLAIN);
+  try {
+    const record = actionOf(actions.request('job.unschedule', { job: 'next-nightly' }));
+    processes[0]!.exit(0, null);
+    await settle();
+    assert.equal(actions.request('job.schedule', { job: 'next-nightly', schedule: 'every 30m' }).status, HTTP_CONFLICT, 'because the schedule stays locked until its key is out of the file');
+    assert.equal(actions.get(record.id)?.state, 'running', 'because the action ends once the file is written');
+    writer.release();
+    await settle();
+    const ended = actions.get(record.id)!;
+    assert.deepEqual([ended.state, writer.written, refreshed], ['done', [['jobs.schedule.next-nightly', null]], [['jobs', 'files']]], 'because the key comes out after launchd let go, then both sources are read again');
+    assert.match(ended.output ?? '', /console: took jobs\.schedule\.next-nightly out/, 'because the output says what changed in the file');
+  } finally { await cleanup(); }
+});
+
+test('JobUnschedule_UninstallFails_FileLeftAlone', async () => {
+  const writer = heldWriter();
+  writer.release();
+  const { actions, processes, cleanup } = await runner(writer.context, PLAIN);
+  try {
+    const record = actionOf(actions.request('job.unschedule', { job: 'next-nightly' }));
+    processes[0]!.exit(1, null);
+    await settle();
+    assert.deepEqual([actions.get(record.id)?.state, writer.written], ['failed', []], 'because a schedule launchd still runs must stay in the config that names it');
+  } finally { await cleanup(); }
+});
+
+test('JobUnschedule_KeyCannotBeTakenOut_Failed', async () => {
+  const writer = heldWriter('.flow/config.yaml changed on disk while the change was checked; try again');
+  writer.release();
+  const { actions, processes, cleanup } = await runner(writer.context, PLAIN);
+  try {
+    const record = actionOf(actions.request('job.unschedule', { job: 'next-nightly' }));
+    processes[0]!.exit(0, null);
+    await settle();
+    const ended = actions.get(record.id)!;
+    assert.equal(ended.state, 'failed', 'because the schedule is unloaded but the config still names it, so the owner must hear');
+    assert.match(ended.output ?? '', /^console: \.flow\/config\.yaml changed on disk/m, 'because the output says why');
+  } finally { await cleanup(); }
+});
+
+test('JobSchedule_KeyWrittenBeforeInstallStarts', async () => {
+  const writer = heldWriter();
+  const { actions, processes, cleanup } = await runner(writer.context, PLAIN);
+  try {
+    actions.request('job.schedule', { job: 'next-nightly', schedule: 'daily 02:00 gh#12' });
+    await settle();
+    assert.equal(processes.length, 0, 'because install would load the old schedule before the file holds the new one');
+    writer.release();
+    await settle();
+    assert.deepEqual([writer.written, processes[0]?.plan.args.slice(1)], [[['jobs.schedule.next-nightly', 'daily 02:00 gh#12']], ['install', 'next-nightly']], 'because the file is written, then install loads it');
+  } finally { await cleanup(); }
+});

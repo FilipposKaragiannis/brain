@@ -1,5 +1,40 @@
 # flow
 
+## 1.26.0 (2026-10-31)
+
+- Named schedules: one job can run on several schedules, each with its own args.
+  `jobs.schedule.<name>` takes a job (`next`) or a job, a dash and a label of a lowercase letter
+  then lowercase letters and digits (`next-codex`, `next-gh81`). Each schedule has its own launchd
+  agent (`com.<repo>.flow.<name>`), log, lock, pause, history and `runs.jsonl` name; the job
+  learns it from `--as <name>`, which the agent's command passes. A named `next` schedule's workers
+  are `<name>-<n>`. Two `next` schedules no longer skip each other on one lock, and the pick lock
+  still keeps them off the same item. `jobs.workers` stays the plain `next` schedule's: a named
+  one runs `--workers N` from its args, or one worker.
+- A schedule's args may begin with `claude` or `codex`: that schedule runs on that host instead
+  of `jobs.host` (`every 30m codex --max-steps 15`). Another plain word there is refused as a
+  misspelled host; item ids and options are args as before. An arg may hold a `#`, so a GitHub
+  item id (`gh#12`) can be one, but not as its first character, which YAML reads as a comment.
+- `jobs.sh` takes a schedule name in every command, and `all` covers every schedule the config
+  names. `install` refuses a bad schedule name, exit 2. `status --json` gives each row `name`,
+  `job` (the script it runs), `host`, and `configured`: false for a schedule installed here that
+  the config no longer names, which `status` lists and `uninstall <name>` removes.
+- `steward.sh stop <item>` ends an item's run (the process its record names and every session
+  under it), removes the record so the health job does not resume it, and keeps the claim, the
+  worktree and its changes. It writes a `stopped` line to `events.log` and the item's
+  `last_event`. Nothing running is said, exit 0; a malformed item exits 2.
+- `steward.sh resume <item> [--host H] [--wait]` starts a run whose process is gone again, as the
+  health job does: the same note in the step's brief, the same `jobs.health.max_resumes` count,
+  then the escalation gate (exit 4). A live run or no record is refused, exit 1. Its
+  `events.log` lines are of the kind `resume`.
+- The health job's streaks of `next` runs that did no work count the named schedules' runs too.
+- Every job takes `--model <name>` and `--effort <level>`, so each schedule can run on its own
+  pair (`jobs.schedule.intake: daily 02:00 codex --effort low`). They replace
+  `jobs.<host>.model` and `jobs.<host>.effort` for that run only: next for its steps with no
+  agent (on the host argument's run or workers), comments, intake and retro for their sessions,
+  health for the run it resumes. `run-unattended.sh` takes them too. An effort the host does not take fails the run
+  at its start, exit 2, recorded in `runs.jsonl`. `steward.sh health` and `steward.sh resume`
+  take them too.
+
 ## 1.25.0 (2026-10-31)
 
 - A gate can send the work back. `gate.sh clear <item> --back "<what to change>"` runs the step

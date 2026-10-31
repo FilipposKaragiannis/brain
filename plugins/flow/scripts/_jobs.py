@@ -1,31 +1,41 @@
 """The scheduled jobs on this machine, read side. See scripts/jobs.sh.
 
-  _jobs.py status <log dir> <launch agents dir> <prefix> [--json] [--host <host>] [--workers <plan>] <job>=<schedule>...
-  _jobs.py history <log dir> <job> <n>
+  _jobs.py status <log dir> <launch agents dir> <prefix> [--json] [--host <host>] [--jobs "<job>..."] [--workers <plan>]
+             <name>=<schedule>...
+  _jobs.py history <log dir> <name> <n>
   _jobs.py plist <label> <dir> <command> <schedule> <log> <path>
   _jobs.py cron <schedule> <dir> <command> <log>
   _jobs.py args <schedule>
+  _jobs.py host <schedule>
+  _jobs.py name <name> <job>...
   _jobs.py workers <where> <jobs.workers value> [<host>=<count>...]
 
 A schedule is "every 30m [args]", "every 2h [args]", "daily 02:00 [args]" or
-"weekly sun 03:00 [args]"; args prints its args checked and shell-quoted. The runs come from
-<log dir>/runs.1.jsonl and runs.jsonl, one line per run that the job library writes; launchd
-adds whether the job is loaded and its own run count. Times print in local time.
+"weekly sun 03:00 [args]"; args prints its args checked and shell-quoted. Args that begin with
+claude or codex run the schedule on that host: host prints it (nothing when the args name none),
+and args leaves it out. Another plain word there is refused, as a host misspelled; an item id or
+an option is an arg as before. A schedule's name is a job, or the job, a dash and a label of a
+lowercase letter then lowercase letters and digits (next-codex): name exits 2 saying why one is
+not. The runs come from <log dir>/runs.1.jsonl and runs.jsonl, one line per run that the job
+library writes; launchd adds whether the schedule is loaded and its own run count. Times print in
+local time.
 
 workers reads jobs.workers (lib/workers.sh passes it): a one-line map {claude: 1, codex: 2}, or
 the host=count pairs of a block map, and prints the plan, one host:count line per host with
 workers, claude first. A plan in status is those lines; without one, the next schedule's
 --workers N is N workers on --host."""
-import calendar, json, os, re, subprocess, sys, time
+import calendar, json, os, plistlib, re, subprocess, sys, time
 from datetime import datetime, timedelta
+from xml.parsers.expat import ExpatError
 from xml.sax.saxutils import escape
 
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 HOSTS = ["claude", "codex"]
 WEEK = 7 * 86400
 # The args go into a shell command, so each is one plain option or value: no spaces, quotes,
-# globs, redirections or substitutions.
-ARG = re.compile(r"[A-Za-z0-9_./:=@%+,-]+")
+# globs, redirections or substitutions. A hash is in, for an item id (gh#12), but never first:
+# YAML reads " #" as the start of a comment.
+ARG = re.compile(r"[A-Za-z0-9_./:=@%+,-][A-Za-z0-9_./:=@%+,#-]*")
 
 
 # parse: the schedule as a dict, or ValueError naming what is wrong with it.
@@ -44,8 +54,26 @@ def parse(spec):
         raise ValueError("cannot read the schedule %r: use every 30m, daily 02:00 or weekly sun 03:00" % spec)
     for a in s["args"]:
         if not ARG.fullmatch(a):
-            raise ValueError("the schedule %r has the arg %r: an arg is one option or value of letters, digits and _./:=@%%+,-" % (spec, a))
+            raise ValueError("the schedule %r has the arg %r: an arg is one option or value of letters, digits and _./:=@%%+,#-, not starting with #" % (spec, a))
+    # A leading host word is the schedule's host, not an arg. An item id holds a colon or a hash and
+    # an option a dash, so a word of letters alone there can only be a host.
+    s["host"] = ""
+    if s["args"] and s["args"][0] in HOSTS:
+        s["host"] = s["args"].pop(0)
+    elif s["args"] and re.fullmatch(r"[a-z]+", s["args"][0]):
+        raise ValueError("the schedule %r starts its args with %r: a leading word is the host, claude or codex" % (spec, s["args"][0]))
     return s
+
+
+# name_problem: why the name is no schedule name, or nothing. The label starts with a letter, so
+# next-codex never reads as a worker of next (next-1).
+def name_problem(name, jobs):
+    job, dash, label = name.partition("-")
+    if job not in jobs:
+        return "no job %s: a schedule is one of %s, or one of them, a dash and a label (next-codex)" % (name, " ".join(jobs))
+    if dash and not re.fullmatch(r"[a-z][a-z0-9]*", label):
+        return "the schedule name %s has the label %r: a label is a lowercase letter, then lowercase letters and digits (next-codex, next-gh81)" % (name, label)
+    return ""
 
 
 def clock(spec, at, s):
@@ -144,18 +172,20 @@ def took(seconds):
     return "%dh %02dm" % (seconds // 3600, seconds % 3600 // 60)
 
 
-# alive: the pid still runs jobs/<base>.sh. A lock left by a restart can name a reused pid.
-def alive(pid, base):
+# alive: the pid still runs jobs/<job>.sh. A lock left by a restart can name a reused pid.
+def alive(pid, job):
     if not pid.isdigit():
         return False
     try:
         p = subprocess.run(["ps", "-o", "command=", "-p", pid], capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return p.returncode == 0 and ("jobs/%s.sh" % base) in p.stdout
+    return p.returncode == 0 and ("jobs/%s.sh" % job) in p.stdout
 
 
-def running(log, base):
+# running: the live runs of a schedule and of its workers, from their locks; each pid must still
+# run the schedule's job script.
+def running(log, base, job):
     out = []
     for name in sorted(os.listdir(log)) if os.path.isdir(log) else []:
         m = re.fullmatch(re.escape(base) + r"(-\d+)?\.lock", name)
@@ -164,7 +194,7 @@ def running(log, base):
         d = os.path.join(log, name)
         pid, at, host = (open(os.path.join(d, f)).read().strip() if os.path.exists(os.path.join(d, f)) else ""
                          for f in ("pid", "at", "host"))
-        if alive(pid, base):
+        if alive(pid, job):
             out.append({"job": name[:-5], "pid": int(pid), "at": at, "host": host})
     return out
 
@@ -186,32 +216,38 @@ def launchd(label):
 
 
 # abandons: the agent lets a run leave processes behind. One written before 1.21.1 does not, so
-# launchd ends the workers a next run started as soon as the run exits.
+# launchd ends the workers a next run started as soon as the run exits. The plist is parsed, not
+# searched: install writes the key and its value on one line, while a plist macOS rewrites (or
+# plutil converts, or one in binary form) puts them on lines of their own. One that cannot be
+# read or parsed is taken as abandoning, so status never asks to reinstall on a guess.
 def abandons(plist_path):
     try:
-        with open(plist_path) as f:
-            return "<key>AbandonProcessGroup</key><true/>" in f.read()
-    except OSError:
+        with open(plist_path, "rb") as f:
+            data = plistlib.load(f)
+    except (OSError, ValueError, plistlib.InvalidFileException, ExpatError):
         return True
+    return not isinstance(data, dict) or data.get("AbandonProcessGroup") is True
 
 
-# plan_workers: [(job, host)] for the next job's workers: the jobs.workers plan, numbered across
-# its hosts in order, or the schedule's --workers N on the jobs host; none for a single run.
-def plan_workers(plan, s, host):
+# plan_workers: [(job, host)] for the workers of a next schedule: the jobs.workers plan, numbered
+# across its hosts in order, or the schedule's --workers N on its host; none for a single run.
+# They take the schedule's name: next-1, next-codex-1.
+def plan_workers(plan, s, host, name):
     pairs = [(h, int(n)) for h, n in (line.split(":", 1) for line in plan.split() if ":" in line)]
     if not pairs and s and "--workers" in s["args"][:-1]:
         n = s["args"][s["args"].index("--workers") + 1]
         pairs = [(host, int(n))] if n.isdigit() else []
     hosts = [h for h, n in pairs for _ in range(n)]
-    return [("next-%d" % k, h) for k, h in enumerate(hosts, 1)]
+    return [("%s-%d" % (name, k), h) for k, h in enumerate(hosts, 1)]
 
 
-# worker_rows: each worker of next with its host, its live run and its newest run of any kind; a
-# worker running that the plan does not name (one started by hand) is listed too.
+# worker_rows: each worker of a next schedule with its host, its live run and its newest run of any
+# kind; a worker running that the plan does not name (one started by hand) is listed too.
 def worker_rows(plan, s, host, row, history):
-    rows = [{"job": job, "host": h} for job, h in plan_workers(plan, s, host)]
+    name = row["name"]
+    rows = [{"job": job, "host": h} for job, h in plan_workers(plan, s, host, name)]
     named = {r["job"] for r in rows}
-    rows += [{"job": r["job"], "host": r["host"]} for r in row["running"] if r["job"] != "next" and r["job"] not in named]
+    rows += [{"job": r["job"], "host": r["host"]} for r in row["running"] if r["job"] != name and r["job"] not in named]
     for w in rows:
         live = [r for r in row["running"] if r["job"] == w["job"]]
         w["running"] = live[0] if live else None
@@ -221,17 +257,24 @@ def worker_rows(plan, s, host, row, history):
     return rows
 
 
-def job_status(log, agents, prefix, name, spec, now, host="claude", plan=""):
+# job_status: one schedule's row. name is the schedule, job the script it runs (next for
+# next-codex), host the host it runs on: its own host word, else jobs.host. configured is false for
+# a schedule installed here that the config no longer names, so it can be seen and uninstalled.
+# jobs.workers is the plain next schedule's alone.
+def job_status(log, agents, prefix, name, spec, now, host="claude", plan="", jobs=()):
     label = "%s.%s" % (prefix, name)
+    job = name.partition("-")[0]
     try:
-        s, error = (parse(spec) if spec else None), ""
+        error = name_problem(name, jobs) if jobs else ""
+        s = parse(spec) if spec else None
     except ValueError as e:
         s, error = None, str(e)
-    row = {"job": name, "label": label, "schedule": when(s) if s else "",
-           "args": " ".join(s["args"]) if s else "",
-           "installed": os.path.exists(os.path.join(agents, label + ".plist")),
+    installed = os.path.exists(os.path.join(agents, label + ".plist"))
+    row = {"name": name, "job": job, "host": (s and s["host"]) or host, "label": label,
+           "schedule": when(s) if s else "", "args": " ".join(s["args"]) if s else "",
+           "configured": bool(spec) or not installed, "installed": installed,
            "paused": os.path.exists(os.path.join(log, name + ".paused")),
-           "running": running(log, name)}
+           "running": running(log, name, job)}
     row["stale"] = row["installed"] and not abandons(os.path.join(agents, label + ".plist"))
     info = launchd(label) if row["installed"] else None
     row["loaded"] = info is not None
@@ -247,8 +290,8 @@ def job_status(log, agents, prefix, name, spec, now, host="claude", plan=""):
     # last scheduled starts did nothing.
     row["last_run"] = described(history[-1]) if history else None
     row["latest"] = {outcome(r): described(r) for r in history}
-    if name == "next":
-        row["workers"] = worker_rows(plan, s, host, row, history)
+    if job == "next":
+        row["workers"] = worker_rows(plan if name == "next" else "", s, row["host"], row, history)
     if error:
         row["error"] = error
     row["next"] = next_run(s, row, history, now)
@@ -265,7 +308,7 @@ def next_run(s, row, history, now):
     if not row["loaded"]:
         return "not scheduled"
     if row["stale"]:
-        return "reinstall: jobs.sh install %s" % row["job"]
+        return "reinstall: jobs.sh install %s" % row["name"]
     if "every" in s:
         last = max((epoch(r.get("at")) for r in history), default=0)
         if not last:
@@ -278,18 +321,20 @@ def next_run(s, row, history, now):
 def state(row, now):
     if row["running"]:
         since = min(epoch(r["at"]) for r in row["running"] if r["at"]) if any(r["at"] for r in row["running"]) else now
-        who = ", ".join(r["job"] for r in row["running"]) if len(row["running"]) > 1 or row["running"][0]["job"] != row["job"] else ""
+        who = ", ".join(r["job"] for r in row["running"]) if len(row["running"]) > 1 or row["running"][0]["job"] != row["name"] else ""
         return "running %s%s" % (took(now - since), " (%s)" % who if who else "")
     if row["paused"]:
         return "paused"
+    if not row["configured"]:
+        return "not in the config: jobs.sh uninstall %s" % row["name"]
     if not row["installed"]:
         return "not installed"
     return "scheduled" if row["loaded"] else "not loaded"
 
 
-def status(log, agents, prefix, as_json, pairs, host, plan):
+def status(log, agents, prefix, as_json, pairs, host, plan, jobs):
     now = time.time()
-    rows = [job_status(log, agents, prefix, name, spec, now, host, plan) for name, spec in pairs]
+    rows = [job_status(log, agents, prefix, name, spec, now, host, plan, jobs) for name, spec in pairs]
     if as_json:
         print(json.dumps(rows, indent=1))
         return
@@ -299,12 +344,12 @@ def status(log, agents, prefix, as_json, pairs, host, plan):
         last = r["last"]
         week = ", ".join("%d %s" % (v, k) for k, v in r["week"].items() if v) or "none"
         print("| %s | %s | %s | %s | %s | %s | %s | %s |" % (
-            r["job"], schedule_cell(r), state(r, now),
+            r["name"], schedule_cell(r, host), state(r, now),
             local(epoch(last["at"])) if last else "never", took(last["seconds"]) if last else "",
-            cell(last) if last else "", r["next"], week))
+            cell(last, r["name"]) if last else "", r["next"], week))
     for r in rows:
         if r.get("workers"):
-            print("\nWorkers of %s:" % r["job"])
+            print("\nWorkers of %s:" % r["name"])
             for w in r["workers"]:
                 print("- %s on %s: %s" % (w["job"], w["host"] or "an unknown host", worker_state(w, now)))
 
@@ -318,16 +363,22 @@ def worker_state(w, now):
     return "last %s %s: %s" % (last["outcome"], local(epoch(last["at"])), str(last.get("result", "")).replace("\n", " ")[:70])
 
 
-def schedule_cell(r):
+# schedule_cell: the schedule, the host when its own host word picks one other than jobs.host, and
+# the args.
+def schedule_cell(r, host):
     if r.get("error"):
         return "error: " + r["error"].replace("|", "/")
-    return (r["schedule"] + (" `%s`" % r["args"] if r["args"] else "")) or "none"
+    words = [r["schedule"]] if r["schedule"] else []
+    if r["schedule"] and r["host"] != host:
+        words.append("on " + r["host"])
+    return " ".join(words + ["`%s`" % r["args"]] if r["args"] else words) or "none"
 
 
-def cell(r):
+# cell: the run's outcome and what it said, naming the worker when a worker ran it.
+def cell(r, name):
     text = str(r.get("result", "")).replace("|", "/")
     text = text if len(text) <= 70 else text[:67] + "..."
-    return "%s%s: %s" % (r["outcome"], " (%s)" % r["job"] if "-" in r.get("job", "") else "", text)
+    return "%s%s: %s" % (r["outcome"], " (%s)" % r["job"] if r.get("job", name) != name else "", text)
 
 
 def history(log, base, n):
@@ -422,7 +473,7 @@ def main():
     if command == "status":
         as_json = "--json" in args
         args = [a for a in args if a != "--json"]
-        opts = {"--host": "claude", "--workers": ""}
+        opts = {"--host": "claude", "--workers": "", "--jobs": ""}
         rest = args[:3]
         it = iter(args[3:])
         for a in it:
@@ -430,7 +481,8 @@ def main():
                 opts[a] = next(it, "")
             else:
                 rest.append(a)
-        status(rest[0], rest[1], rest[2], as_json, [tuple(a.split("=", 1)) for a in rest[3:]], opts["--host"], opts["--workers"])
+        pairs = [tuple(a.split("=", 1)) for a in rest[3:]]
+        status(rest[0], rest[1], rest[2], as_json, pairs, opts["--host"], opts["--workers"], opts["--jobs"].split())
     elif command == "history":
         history(args[0], args[1], int(args[2]))
     elif command == "plist":
@@ -441,6 +493,13 @@ def main():
         workers(args[0], args[1] if len(args) > 1 else "", args[2:])
     elif command == "args":
         print(" ".join(sh(a) for a in read(args[0])["args"]))
+    elif command == "host":
+        print(read(args[0])["host"])
+    elif command == "name":
+        problem = name_problem(args[0], args[1:])
+        if problem:
+            print("flow: %s" % problem, file=sys.stderr)
+            sys.exit(2)
     else:
         sys.exit("flow: unknown command %s" % command)
 

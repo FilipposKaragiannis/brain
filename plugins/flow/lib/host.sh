@@ -157,13 +157,19 @@ host_jobs_host_problem() {
   case "${_jh:-claude}" in claude|codex) ;; *)
     printf '%s: jobs.host is %s; it must be claude or codex\n' "$(host_cfg_where jobs.host)" "$_jh" ;; esac
 }
+# host_effort_problem <host> <effort> <what>: a line when the host does not take the effort,
+# naming it as what (the config key, or the option it came from); empty takes the host's default.
+host_effort_problem() {
+  [ -n "$2" ] || return 0
+  case " $(host_efforts "$1") " in *" $2 "*) return 0 ;; esac
+  printf '%s is %s; %s takes %s, or empty for its default\n' "$3" "$2" "$1" "$(host_efforts_said "$1")"
+}
 # host_jobs_pair_problem <host>: a line when the host's effort (or the fallback's) is one it
 # does not take.
 host_jobs_pair_problem() {
   host_jobs_pair "$1"
-  [ -n "$jobs_effort" ] || return 0
-  case " $(host_efforts "$1") " in *" $jobs_effort "*) return 0 ;; esac
-  printf '%s: %s.effort is %s; %s takes %s, or empty for its default\n' "$(host_cfg_where "$jobs_from.effort")" "$jobs_from" "$jobs_effort" "$1" "$(host_efforts_said "$1")"
+  _p="$(host_effort_problem "$1" "$jobs_effort" "$jobs_from.effort")"
+  [ -z "$_p" ] || printf '%s: %s\n' "$(host_cfg_where "$jobs_from.effort")" "$_p"
 }
 # host_jobs_problems: one line per bad jobs value, with its line in the config: jobs.host, then
 # the pair of every jobs.<host> map present and of the jobs.host one (the fallback when absent).

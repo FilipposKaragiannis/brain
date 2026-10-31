@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { ActionKind, ActionOutcome, SessionRef, SyncConflict, TerminalName, TerminalSetting } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
+import { checkSchedule, FLOW_JOBS, SCHEDULE_NAME, scheduleJob } from './plugins/flow/schema.ts';
 import { syncConflict, syncRefs, writeSyncNote } from './syncNote.ts';
 import { sessionLaunch, terminalLaunch } from './terminal.ts';
 
@@ -59,6 +60,23 @@ export type ActionContext = {
   worktreeSteps: Record<string, boolean> | null;
   /** The next job as `jobs.sh status` reports it: paused, and whether a run of it goes now; null before jobs was read. */
   nextJob: { paused: boolean; running: boolean } | null;
+  /**
+   * Whether `jobs.workers` in .flow/config.yaml names a host, so a run of the queue started with
+   * no `--workers` hands its work to workers across the hosts and ends; left out, it does not.
+   */
+  jobsWorkers?: boolean;
+  /**
+   * The schedules `jobs.sh status` lists (`next`, `next-nightly`, an installed one the config no
+   * longer names), each with whether a run of it goes now (its own, or one of its workers');
+   * absent or empty before jobs was read.
+   */
+  schedules?: { name: string; running: boolean }[];
+  /**
+   * Writes one key of .flow/config.yaml through the flow config editor (null takes it out), comments
+   * and layout kept, and returns what to tell the owner; throws with the reason. Absent where no
+   * editor is wired, and then `job.schedule` and `job.unschedule` are refused.
+   */
+  writeConfig?: (key: string, value: string | null) => Promise<string>;
 };
 
 /** One planned process. `detach` puts it in its own session so it outlives the daemon. */
@@ -88,6 +106,12 @@ export type ActionPlan = {
    * fails the action and the process never starts.
    */
   prepare?: () => Promise<{ output: string; event: { name: string; fields: Record<string, unknown> } }>;
+  /**
+   * Runs in the daemon once the process exited 0 and before the record ends, its locks still held
+   * (`job.unschedule` takes the schedule out of .flow/config.yaml here, once launchd let go of
+   * it): its output closes the action's and its event is logged. A throw fails the action.
+   */
+  conclude?: () => Promise<{ output: string; event: { name: string; fields: Record<string, unknown> } }>;
 };
 
 /**
@@ -102,8 +126,9 @@ export function installNote(output: string): string | null {
 export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: string };
 
 export const ACTION_KINDS: ActionKind[] = [
-  'gate.clear', 'run.start', 'job.run', 'job.stop', 'job.pause', 'job.resume',
-  'worktree.claim', 'worktree.release', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'terminal.open', 'refresh',
+  'gate.clear', 'run.start', 'job.run', 'job.start', 'job.stop', 'job.pause', 'job.resume',
+  'job.schedule', 'job.unschedule', 'run.stop', 'run.resume',
+  'worktree.claim', 'worktree.release', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'host.clear', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -111,6 +136,10 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'gate.clear': ['item', 'message', 'back'],
   'run.start': ['item', 'maxSteps'],
   'job.run': ['job'], 'job.stop': ['job'], 'job.pause': ['job'], 'job.resume': ['job'],
+  'job.start': ['job', 'host', 'item', 'workers', 'maxSteps', 'model', 'effort'],
+  'job.schedule': ['job', 'schedule'],
+  'job.unschedule': ['job'],
+  'run.stop': ['item'], 'run.resume': ['item'],
   'worktree.claim': ['item'],
   'worktree.release': ['target', 'force'],
   'worktree.sync': ['target'],
@@ -120,6 +149,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'jobs.install': [],
   'job.uninstall': ['job'],
   'pr.merge': ['pr', 'method'],
+  'host.clear': ['host'],
   'terminal.open': ['path', 'job', 'session'],
   refresh: ['source'],
 };
@@ -135,16 +165,25 @@ const MERGE_TIMEOUT_MS = 180 * SECOND_MS;
 export const HANDED_ON_REFRESH_MS = 5 * SECOND_MS;
 /** The step budget of a run started from the console, the next job's own default. */
 const DEFAULT_MAX_STEPS = 15;
-/** The jobs `jobs.sh` knows; an install rewrites the schedule of every one, so it holds all their locks. */
-export const FLOW_JOBS = ['next', 'comments', 'intake', 'retro', 'health'];
+/** The jobs `jobs.sh` knows; an install rewrites the schedule of every one (and of every named schedule), so it holds all their locks. */
+export { FLOW_JOBS };
 const MESSAGE_LIMIT_CHARS = 10000;
 /** The ids the adapters own: gh#12 on GitHub, local:task/7 in the local tracker. Nothing else reaches a script. */
 const ITEM_ID = /^(gh#[1-9][0-9]*|local:[a-z]+\/[1-9][0-9]*)$/;
+/** A job's log name: a schedule (`next`, `next-nightly`) or one of its workers (`next-2`, `next-nightly-2`). */
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
 const PID = /^[1-9][0-9]*$/;
 const MAX_STEPS = /^[1-9][0-9]{0,2}$/;
 const MERGE_METHODS = ['squash', 'merge', 'rebase'];
+/** The hosts flow runs sessions on; `gate.sh clear` takes one by name, and `jobs/next.sh` one as its first argument. */
+const HOSTS = ['claude', 'codex'];
+/** The efforts each host takes, as flow's `host_efforts` in lib/host.sh lists them. */
+const HOST_EFFORTS: Record<string, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh'] };
+/** A model name passed to the host as is: letters, digits and `._:-`, never opening with `-`, so it is never read as an option. */
+const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+/** How many workers one custom run may start: the pool caps them anyway. */
+const WORKERS = /^[1-9][0-9]?$/;
 /** A branch name git takes without reading it as an option or a range. */
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 /** The console's own merge script: fetch, the upstream, then the base, aborting on a conflict. */
@@ -223,9 +262,18 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       const job = path.join(context.pluginRoot, 'jobs', 'next.sh');
       return { ok: true, plan: { command: 'sh', args: [job, context.jobsHost, item, '--max-steps', maxSteps], cwd: context.root, locks: [`item:${item}`, 'job:next'], timeoutMs: 0, detach: true, refresh: ['files', 'processes', 'board'], refreshAgainMs: null, outcome: 'finished' } };
     }
+    case 'job.start': return planJobStart(args, context);
+    case 'host.clear': {
+      const host = args['host'] ?? '';
+      if (!HOSTS.includes(host)) return fail(`host.clear needs a host: ${HOSTS.join(' or ')}`);
+      // gate.sh clear <host> removes <flow home>/log/<host>.stopped, which the files source reads with the gates.
+      return sh('gate.sh', ['clear', host], [`host:${host}`], SCRIPT_TIMEOUT_MS, ['files']);
+    }
     case 'job.run': case 'job.stop': case 'job.pause': case 'job.resume': {
       const job = args['job'] ?? '';
-      if (!JOB_NAME.test(job)) return fail(`${kind} needs a job name`);
+      // jobs.sh pauses and resumes every schedule at once with all.
+      const all = job === 'all' && (kind === 'job.pause' || kind === 'job.resume');
+      if (!SCHEDULE_NAME.test(job) && !all) return fail(`${kind} needs a schedule name: a job (${FLOW_JOBS.join(', ')}) or <job>-<label>, such as next-nightly`);
       if (kind === 'job.run') return handOn(job, [`job:${job}`], ['jobs', 'processes']);
       return sh('jobs.sh', [kind.slice('job.'.length), job], [`job:${job}`], SCRIPT_TIMEOUT_MS, ['jobs', 'processes']);
     }
@@ -243,14 +291,28 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     case 'steward.health': return handOn('health', ['job:health'], ['jobs', 'files', 'git']);
     // Writes and loads the schedule of every job jobs.schedule names: after a schedule or jobs.host change in .flow/config.yaml.
     case 'jobs.install': {
-      const planned = sh('jobs.sh', ['install'], FLOW_JOBS.map((job) => `job:${job}`), SCRIPT_TIMEOUT_MS, ['jobs']);
+      const names = [...new Set([...FLOW_JOBS, ...(context.schedules ?? []).map((schedule) => schedule.name)])];
+      const planned = sh('jobs.sh', ['install'], names.map((job) => `job:${job}`), SCRIPT_TIMEOUT_MS, ['jobs']);
       return planned.ok ? { ok: true, plan: { ...planned.plan, note: installNote } } : planned;
     }
     // A job whose schedule left .flow/config.yaml: install never touches it again, so it is unloaded on its own.
     case 'job.uninstall': {
       const job = args['job'] ?? '';
-      if (!FLOW_JOBS.includes(job)) return fail(`job.uninstall needs one of ${FLOW_JOBS.join(', ')}`);
+      if (!SCHEDULE_NAME.test(job)) return fail(`job.uninstall needs a schedule name: a job (${FLOW_JOBS.join(', ')}) or <job>-<label>`);
       return sh('jobs.sh', ['uninstall', job], [`job:${job}`], SCRIPT_TIMEOUT_MS, ['jobs']);
+    }
+    case 'job.schedule': return planSchedule(args, context);
+    case 'job.unschedule': return planUnschedule(args, context);
+    // steward.sh stop ends the run's process and removes its record, keeping the claim and the
+    // worktree; resume starts the step of a dead run again in the background, as health does.
+    case 'run.stop': case 'run.resume': {
+      const item = args['item'] ?? '';
+      if (!ITEM_ID.test(item)) return fail(`${kind} needs an item id like gh#12 or local:task/7`);
+      if (!context.runItems.includes(item)) return fail(`no run record names ${item}, so there is no run to ${kind === 'run.stop' ? 'stop' : 'resume'}`);
+      const planned = sh('steward.sh', [kind === 'run.stop' ? 'stop' : 'resume', item], [`item:${item}`], SCRIPT_TIMEOUT_MS, ['files', 'processes']);
+      if (!planned.ok || kind === 'run.stop') return planned;
+      // The resumed step's session shows in the process list a few seconds after the script returns.
+      return { ok: true, plan: { ...planned.plan, refreshAgainMs: HANDED_ON_REFRESH_MS, outcome: 'started' } };
     }
     case 'pr.merge': {
       const pr = args['pr'] ?? '';
@@ -261,6 +323,115 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
     }
   }
+}
+
+/**
+ * `job.start`: one custom run of a job, outside its schedules, on `host` (required) through the
+ * project's own `.flow/jobs/<job>.sh`, the script launchd runs, detached like `run.start` with an
+ * item, under the job's lock. Every job takes `model` and `effort` (`--model X --effort Y`, which
+ * replace jobs.<host>.model and .effort for that run); only next takes `item`, `workers` and
+ * `maxSteps`: `jobs/next.sh <host> [item] [--workers N] [--max-steps M]`, under the item's lock
+ * too. A next run of the queue that starts workers (`workers` above 1, or `jobs.workers` set and
+ * no `workers`) hands its work on and ends, so it is `started` and its sources are read again;
+ * a run in place is `finished` when it ends. Refused while the next job is paused, since next.sh
+ * would exit at once, and for an item with more than one worker, which next.sh refuses: workers
+ * run the queue. `job` may be left out for next.
+ */
+function planJobStart(args: Record<string, string>, context: ActionContext): PlanResult {
+  const job = args['job'] ?? 'next';
+  if (!FLOW_JOBS.includes(job)) return fail(`job.start runs one of ${FLOW_JOBS.join(', ')}${job === '' ? '' : `, not ${job}`}`);
+  if (job !== 'next') {
+    const extra = ['item', 'workers', 'maxSteps'].find((key) => args[key] !== undefined);
+    if (extra !== undefined) return fail(`${extra} is for the next job; ${job} takes a host, a model and an effort`);
+  }
+  const host = args['host'] ?? '';
+  if (!HOSTS.includes(host)) return fail(`job.start needs a host: ${HOSTS.join(' or ')}`);
+  const item = args['item'] ?? '';
+  if (item !== '' && !ITEM_ID.test(item)) return fail('job.start takes an item id like gh#12 or local:task/7, or none for the queue');
+  const { workers, maxSteps, model, effort } = args;
+  if (workers !== undefined && !WORKERS.test(workers)) return fail('workers must be a number from 1 to 99');
+  if (maxSteps !== undefined && !MAX_STEPS.test(maxSteps)) return fail('maxSteps must be a number from 1 to 999');
+  if (model !== undefined && !MODEL.test(model)) return fail('model must be a model name: letters, digits and . _ : -, not opening with -');
+  const efforts = HOST_EFFORTS[host] ?? [];
+  if (effort !== undefined && !efforts.includes(effort)) return fail(`effort on ${host} must be one of ${efforts.join(', ')}`);
+  const many = workers !== undefined && workers !== '1';
+  if (item !== '' && many) return fail('workers run the queue, each on its own ready item; drop the item, or run one worker for it');
+  if (job === 'next' && context.nextJob?.paused === true) return fail('the next job is paused, so the run would exit at once; resume it first');
+  const flags = [
+    ...(workers === undefined ? [] : ['--workers', workers]), ...(maxSteps === undefined ? [] : ['--max-steps', maxSteps]),
+    ...(model === undefined ? [] : ['--model', model]), ...(effort === undefined ? [] : ['--effort', effort]),
+  ];
+  const handsOn = job === 'next' && item === '' && (many || (workers === undefined && context.jobsWorkers === true));
+  const script = path.join(context.root, '.flow', 'jobs', `${job}.sh`);
+  return {
+    ok: true,
+    plan: {
+      command: 'sh', args: [script, host, ...(item === '' ? [] : [item]), ...flags], cwd: context.root,
+      locks: [...(item === '' ? [] : [`item:${item}`]), `job:${job}`], timeoutMs: 0, detach: true,
+      refresh: ['jobs', 'processes', 'files', 'board'], refreshAgainMs: handsOn ? HANDED_ON_REFRESH_MS : null, outcome: handsOn ? 'started' : 'finished',
+    },
+  };
+}
+
+/** A schedule a run of goes now, from the latest `jobs.sh status`; refused so, since install leaves a running job as it is and uninstall would cut it off. */
+function runningRefusal(name: string, context: ActionContext): string | null {
+  return context.schedules?.some((schedule) => schedule.name === name && schedule.running) === true ? `${name} is running now; stop it or let the run end first` : null;
+}
+
+/**
+ * `job.schedule`: set `jobs.schedule.<job>` in .flow/config.yaml to `schedule` (`every <n>m|h`,
+ * `daily HH:MM` or `weekly <day> HH:MM`, then plain args, as `_jobs.py` reads it) through the flow
+ * config editor, comments and layout kept, then `jobs.sh install <job>` to load it. `job` is a
+ * schedule name: a job, or `<job>-<label>` for another schedule of it. The file is written before
+ * the process starts, so a refused write never reaches launchd. Refused while that schedule runs,
+ * and for a next schedule that sets --workers while `jobs.workers` does too, which install refuses.
+ */
+function planSchedule(args: Record<string, string>, context: ActionContext): PlanResult {
+  const name = args['job'] ?? '';
+  if (!SCHEDULE_NAME.test(name)) return fail(`job.schedule needs a schedule name: a job (${FLOW_JOBS.join(', ')}) or <job>-<label>, the label a lower case word such as nightly`);
+  const words = (args['schedule'] ?? '').split(/\s+/).filter((word) => word !== '');
+  if (words.length === 0) return fail('job.schedule needs a schedule: every 30m, daily 02:00 or weekly sun 03:00, then its options');
+  const spec = words.join(' ');
+  const checked = checkSchedule(spec);
+  if (!checked.ok) return fail(checked.error);
+  if (scheduleJob(name) === 'next' && words.includes('--workers') && context.jobsWorkers === true) return fail('jobs.workers in .flow/config.yaml sets the workers already, and jobs.sh install refuses a next schedule that sets --workers beside it; drop --workers');
+  const running = runningRefusal(name, context);
+  if (running !== null) return fail(running);
+  const write = context.writeConfig;
+  if (write === undefined) return fail('the console cannot edit .flow/config.yaml for this project');
+  const key = `jobs.schedule.${name}`;
+  const prepare = async (): Promise<Awaited<ReturnType<NonNullable<ActionPlan['prepare']>>>> => ({
+    output: `console: ${await write(key, spec)}`.replace(/\n(?!$)/g, '\nconsole: '),
+    event: { name: 'job.schedule', fields: { job: name, schedule: spec } },
+  });
+  return {
+    ok: true,
+    plan: { command: 'sh', args: [script(context, 'jobs.sh'), 'install', name], cwd: context.root, locks: [`job:${name}`], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: ['jobs', 'files'], refreshAgainMs: null, outcome: 'finished', note: installNote, prepare },
+  };
+}
+
+/**
+ * `job.unschedule`: `jobs.sh uninstall <job>` unloads the schedule and removes its launchd file,
+ * then `jobs.schedule.<job>` comes out of .flow/config.yaml through the flow config editor. A key
+ * already gone is fine: an installed schedule the config no longer names (`configured: false`) is
+ * only unloaded. Refused while that schedule runs.
+ */
+function planUnschedule(args: Record<string, string>, context: ActionContext): PlanResult {
+  const name = args['job'] ?? '';
+  if (!SCHEDULE_NAME.test(name)) return fail(`job.unschedule needs a schedule name: a job (${FLOW_JOBS.join(', ')}) or <job>-<label>`);
+  const running = runningRefusal(name, context);
+  if (running !== null) return fail(running);
+  const write = context.writeConfig;
+  if (write === undefined) return fail('the console cannot edit .flow/config.yaml for this project');
+  const key = `jobs.schedule.${name}`;
+  const conclude = async (): Promise<Awaited<ReturnType<NonNullable<ActionPlan['conclude']>>>> => ({
+    output: `console: ${await write(key, null)}`.replace(/\n(?!$)/g, '\nconsole: '),
+    event: { name: 'job.unschedule', fields: { job: name } },
+  });
+  return {
+    ok: true,
+    plan: { command: 'sh', args: [script(context, 'jobs.sh'), 'uninstall', name], cwd: context.root, locks: [`job:${name}`], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: ['jobs', 'files'], refreshAgainMs: null, outcome: 'finished', conclude },
+  };
 }
 
 /**

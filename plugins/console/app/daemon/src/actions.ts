@@ -72,6 +72,8 @@ type Live = {
   timeout: object | null;
   grace: object | null;
   notify: object | null;
+  /** Set once the action began to end, so a second close never ends it twice while its conclusion runs. */
+  ending: boolean;
 };
 
 export const realScheduler: Scheduler = {
@@ -210,7 +212,7 @@ export class ActionRunner {
   }
 
   private start(record: ActionRecord, plan: ActionPlan): void {
-    const entry: Live = { record, plan, output: '', handle: null, timeout: null, grace: null, notify: null };
+    const entry: Live = { record, plan, output: '', handle: null, timeout: null, grace: null, notify: null, ending: false };
     this.live.set(record.id, entry);
     record.startedAt = this.deps.clock().toISOString();
     if (plan.prepare === undefined) this.launch(entry);
@@ -281,14 +283,19 @@ export class ActionRunner {
 
   private async finish(entry: Live, code: number | null, signal: string | null): Promise<void> {
     const { record } = entry;
-    if (!this.live.has(record.id)) return;
-    this.live.delete(record.id);
+    if (!this.live.has(record.id) || entry.ending) return;
+    entry.ending = true;
     for (const handle of [entry.timeout, entry.grace, entry.notify]) if (handle !== null) this.deps.scheduler.cancel(handle);
     if (signal !== null && code === null) this.append(entry, `\nconsole: ${signal}\n`);
     if (entry.plan.detach && entry.handle !== null) entry.output = await this.detachedOutput(record.id, entry.output);
+    let succeeded = code === 0 && !record.timedOut;
+    // The conclusion runs while the action is still live, so its locks hold until it is over.
+    if (succeeded && entry.plan.conclude !== undefined) succeeded = await this.conclude(entry, entry.plan.conclude);
+    this.live.delete(record.id);
+    if (entry.notify !== null) this.deps.scheduler.cancel(entry.notify);
     record.endedAt = this.deps.clock().toISOString();
     record.exitCode = code ?? (signal === null ? null : SIGNAL_EXIT);
-    record.state = code === 0 && !record.timedOut ? 'done' : 'failed';
+    record.state = succeeded ? 'done' : 'failed';
     record.outcome = record.state === 'done' ? entry.plan.outcome : null;
     record.note = entry.plan.note?.(entry.output) ?? null;
     record.conflict = entry.plan.conflict?.(entry.output) ?? null;
@@ -297,6 +304,19 @@ export class ActionRunner {
     this.deps.log.info('action.end', { project: this.deps.projectId, id: record.id, kind: record.kind, state: record.state, exit: record.exitCode, timedOut: record.timedOut });
     if (entry.plan.refresh.length > 0) this.refreshAfter(entry.plan, record.state === 'done');
     this.audit(record, entry.plan.detach ? null : entry.output);
+  }
+
+  /** Runs a plan's daemon-side step after its process exited 0; a throw is said in the output and fails the action. */
+  private async conclude(entry: Live, step: NonNullable<ActionPlan['conclude']>): Promise<boolean> {
+    try {
+      const concluded = await step();
+      this.append(entry, concluded.output);
+      this.deps.log.info(concluded.event.name, { project: this.deps.projectId, id: entry.record.id, ...concluded.event.fields });
+      return true;
+    } catch (error) {
+      this.append(entry, `console: ${error instanceof Error ? error.message : String(error)}\n`);
+      return false;
+    }
   }
 
   /**

@@ -863,6 +863,13 @@ check "a refused effort is a failed run in runs.jsonl, so status shows it" sh -c
 check "a refused effort leaves one line in the job log" [ "$(grep -c 'error: .flow/config.yaml:13: jobs.codex.effort is max' .flow/log/comments.log)" = 1 ]
 jobscfg '  claude:\n    effort: max\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
 check "max is a claude effort" grep -q 'gh#21.*--effort max' "$HOST_LOG"
+jobscfg '  claude:\n    model: claude-opus-x\n    effort: xhigh\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude 'gh#21' --model claude-sched-y --effort low >/dev/null 2>&1
+check "a job's --model and --effort win over jobs.<host> for that run, and are taken out of its args" sh -c "grep -q 'gh#21.*--model claude-sched-y --effort low' '$HOST_LOG' && ! grep -q claude-opus-x '$HOST_LOG' && grep -q 'model claude-sched-y, effort low' .flow/log/comments.log"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
+check "a job's --model and --effort hold for their run only: the next run is on jobs.claude again" grep -q 'gh#21.*--model claude-opus-x --effort xhigh' "$HOST_LOG"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" codex 'gh#21' --effort max >/dev/null 2>"$work/job.err"; code=$?
+check "a job's --effort the host does not take fails the run early, exit 2, as a failed run" sh -c "[ $code = 2 ] && grep -q 'flow: --effort is max; codex takes low, medium, high or xhigh' '$work/job.err' && [ ! -s '$HOST_LOG' ] && tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"comments\".*\"exit\":2'"
+check "a job's --model needs a value, exit 2" sh -c "'$P/jobs/comments.sh' claude --model 2>/dev/null; [ \$? = 2 ]"
 jobscfg '  host: vim\n'; : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>"$work/job.err"; code=$?
 check "a jobs.host other than claude or codex fails the job early, exit 2" sh -c "[ $code = 2 ] && grep -q 'jobs.host is vim; it must be claude or codex' '$work/job.err' && [ ! -s '$HOST_LOG' ]"
@@ -982,6 +989,10 @@ FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
 check "status: an agent from before AbandonProcessGroup says to reinstall it" sh -c "python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert n[\"stale\"] and n[\"next\"]==\"reinstall: jobs.sh install next\", n' '$work/status.json'"
 FLOW_HOME="$home2" "$J" install next > /dev/null; FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
 check "status: a reinstalled agent is not stale" sh -c "python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert not n[\"stale\"], n' '$work/status.json'"
+# The agent as macOS keeps it once rewritten: keys sorted, tab-indented, each value on its own line.
+python3 -c 'import plistlib,sys; d=plistlib.load(open(sys.argv[1],"rb")); plistlib.dump(d,open(sys.argv[1],"wb"))' "$work/agents/$lbl.next.plist"
+FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
+check "status: an agent with AbandonProcessGroup and its true on separate lines is not stale" sh -c "grep -q '<key>AbandonProcessGroup</key>\$' '$work/agents/$lbl.next.plist' && python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert not n[\"stale\"] and not n[\"next\"].startswith(\"reinstall\"), n' '$work/status.json'"
 check "status: the next schedule's --workers 2 is two workers on jobs.host" sh -c "python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert [(w[\"job\"],w[\"host\"]) for w in n[\"workers\"]]==[(\"next-1\",\"claude\"),(\"next-2\",\"claude\")], n[\"workers\"]' '$work/status.json'"
 check "status: last skips a paused run; last_run and latest keep it, with its reason" sh -c "python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"retro\"]; assert r[\"last_run\"][\"outcome\"]==\"paused\" and r[\"last_run\"][\"reason\"]==\"the job is paused\", r[\"last_run\"]; assert r[\"latest\"][\"paused\"]==r[\"last_run\"]; assert r[\"last\"] is None or r[\"last\"][\"outcome\"]!=\"paused\", r[\"last\"]' '$work/status.json'"
 printf '{"job":"comments","host":"claude","at":"%s","seconds":0,"exit":0,"result":"skipped: run 4242 still going"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$home2/log/runs.jsonl"
@@ -1038,6 +1049,40 @@ check "a lock whose pid now runs something else is not a running job" sh -c "FLO
 check "stop leaves that process alone" sh -c "FLOW_HOME='$home2' '$J' stop comments | grep -q 'not running' && kill -0 $other"
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 rm -rf "$home2/log/comments.lock"
+# Named schedules: one job on several schedules, each its own agent, name and host.
+printf 'jobs:\n  schedule:\n    next: every 30m --max-steps 15\n    next-codex: every 30m codex --workers 2 --max-steps 5\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install next-codex > "$work/install.out" 2>&1
+check "install: a named schedule is its own agent, running its job as that name (--as) on its host word" sh -c "grep -q 'next-codex: every 30m codex --workers 2 --max-steps 5, as $lbl.next-codex' '$work/install.out' && grep -q '<string>$lbl.next-codex</string>' '$work/agents/$lbl.next-codex.plist' && grep -q 'next.sh codex --as next-codex --workers 2 --max-steps 5<' '$work/agents/$lbl.next-codex.plist' && grep -q 'launchd-next-codex.log' '$work/agents/$lbl.next-codex.plist'"
+FLOW_HOME="$home2" "$J" install next >/dev/null 2>&1
+check "install: the host word is that schedule's alone, and the plain one has no --as" grep -q 'next.sh claude --max-steps 15<' "$work/agents/$lbl.next.plist"
+FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
+check "status --json: each row has its name, its job, its host and configured; a named next's workers are <name>-<n> on its host" sh -c "python3 -c 'import json,sys; r={x[\"name\"]:x for x in json.load(open(sys.argv[1]))}; c=r[\"next-codex\"]; n=r[\"next\"]; assert (c[\"job\"],c[\"host\"],c[\"configured\"],c[\"installed\"],c[\"args\"])==(\"next\",\"codex\",True,True,\"--workers 2 --max-steps 5\"), c; assert (n[\"job\"],n[\"host\"],n[\"configured\"])==(\"next\",\"claude\",True), n; assert [(w[\"job\"],w[\"host\"]) for w in c[\"workers\"]]==[(\"next-codex-1\",\"codex\"),(\"next-codex-2\",\"codex\")], c[\"workers\"]; assert (r[\"health\"][\"job\"],r[\"health\"][\"configured\"])==(\"health\",True)' '$work/status.json'"
+FLOW_HOME="$home2" "$J" pause next-codex >/dev/null
+check "pause takes a schedule name: next-codex holds, next does not" sh -c "[ -f '$home2/log/next-codex.paused' ] && [ ! -f '$home2/log/next.paused' ] && FLOW_HOME='$home2' '$J' status | grep -q '^| next-codex | every 30m on codex .--workers 2 --max-steps 5. | paused |'"
+FLOW_HOME="$home2" "$J" resume next-codex >/dev/null
+printf 'jobs:\n  schedule:\n    next: every 30m --max-steps 15\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
+check "status --json: a schedule installed here that the config no longer names is listed, configured false" sh -c "python3 -c 'import json,sys; r={x[\"name\"]:x for x in json.load(open(sys.argv[1]))}; c=r[\"next-codex\"]; assert (c[\"job\"],c[\"configured\"],c[\"installed\"])==(\"next\",False,True), c; assert r[\"next\"][\"configured\"] and r[\"health\"][\"configured\"]' '$work/status.json' && FLOW_HOME='$home2' '$J' status | grep -q '^| next-codex | none | not in the config: jobs.sh uninstall next-codex |'"
+FLOW_HOME="$home2" "$J" uninstall next-codex > "$work/uninstall.out" 2>&1
+check "uninstall takes a schedule the config no longer names, and status drops it" sh -c "grep -q '^next-codex: unscheduled' '$work/uninstall.out' && [ ! -f '$work/agents/$lbl.next-codex.plist' ] && grep -q 'bootout gui/.*/$lbl.next-codex' '$LAUNCH_LOG' && ! FLOW_HOME='$home2' '$J' status | grep -q next-codex"
+printf 'jobs:\n  schedule:\n    next_codex: every 30m\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install > "$work/install.out" 2>&1; code=$?
+check "install refuses a bad schedule name, exit 2, saying what a name is" sh -c "[ $code = 2 ] && grep -q 'flow: no job next_codex: a schedule is one of next comments intake retro health, or one of them, a dash and a label' '$work/install.out' && [ ! -f '$work/agents/$lbl.next_codex.plist' ]"
+printf 'jobs:\n  schedule:\n    next-1: every 30m\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install next-1 > "$work/install.out" 2>&1; code=$?
+check "install refuses a label that does not start with a letter: next-1 is a worker of next" sh -c "[ $code = 2 ] && grep -q \"the schedule name next-1 has the label '1'\" '$work/install.out' && [ ! -f '$work/agents/$lbl.next-1.plist' ]"
+printf 'jobs:\n  schedule:\n    next-x: every 30m gemini --max-steps 1\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install next-x > "$work/install.out" 2>&1; code=$?
+check "install refuses a leading word that is no host, exit 2" sh -c "[ $code = 2 ] && grep -q \"starts its args with 'gemini': a leading word is the host, claude or codex\" '$work/install.out' && [ ! -f '$work/agents/$lbl.next-x.plist' ]"
+printf 'jobs:\n  schedule:\n    next-x: every 30m local:task/3 --max-steps 1\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install next-x >/dev/null 2>&1
+check "install: an item id leading the args is an arg, on jobs.host" grep -q "next.sh claude --as next-x 'local:task/3' --max-steps 1<" "$work/agents/$lbl.next-x.plist"
+printf 'jobs:\n  schedule:\n    next-gh12: every 30m codex gh#12 --max-steps 1\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install next-gh12 >/dev/null 2>&1
+check "install: a GitHub item id in the args is one arg, quoted for the shell, after the host word" grep -q "next.sh codex --as next-gh12 'gh#12' --max-steps 1<" "$work/agents/$lbl.next-gh12.plist"
+check "args refuses an arg that starts with a hash, which YAML would read as a comment" sh -c "! python3 -I '$P/scripts/_jobs.py' args 'every 30m #12' 2>/dev/null && python3 -I '$P/scripts/_jobs.py' args 'every 30m #12' 2>&1 | grep -q 'not starting with #'"
+check "run refuses a named schedule the config does not name" sh -c "FLOW_HOME='$home2' '$J' run next-y 2>&1 | grep -q 'no schedule next-y: set jobs.schedule.next-y'; FLOW_HOME='$home2' '$J' run next-y >/dev/null 2>&1; [ \$? = 2 ]"
+printf 'jobs:\n  schedule:\n    next: every 30m\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" uninstall >/dev/null
 check "uninstall unloads and removes every agent" sh -c "[ -z \"\$(ls '$work/agents'/*.plist 2>/dev/null)\" ] && [ \$(grep -c bootout '$LAUNCH_LOG') -ge 5 ]"
 unset FLOW_LAUNCH_AGENTS FLOW_SCHEDULER
@@ -1389,15 +1434,32 @@ check "--workers with an item is refused" sh -c "! '$P/jobs/next.sh' claude loca
 check "--workers 0 is refused" sh -c "! '$P/jobs/next.sh' claude --workers 0 2>/dev/null"
 # A plugin copy whose loop only notes the host it was given: which worker ran where.
 hosted="$work/plugin-hosted"; cp -R "$P" "$hosted"; rm -rf "$hosted/evals/results"
-printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s/hosted.log"\n' "$work" > "$hosted/templates/run-unattended.sh"
+printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s/hosted.log"\nprintf "%%s\\n" "$*" >> "%s/hosted.args"\n' "$work" "$work" > "$hosted/templates/run-unattended.sh"
 cp .flow/config.yaml "$work/config.par"; printf 'jobs:\n  workers: {claude: 1, codex: 2}\n' >> .flow/config.yaml
 runs_before="$(wc -l < .flow/log/runs.jsonl | tr -d ' ')"
 : > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" claude --max-steps 1 --wait >/dev/null 2>&1; code=$?
 check "jobs.workers: one next run starts each worker on its host" sh -c "[ $code = 0 ] && [ \"\$(sort '$work/hosted.log' | tr '\\n' ' ')\" = 'claude codex codex ' ]"
 # Only this run's lines, each whole: three workers end at once, and each line is one write.
 check "jobs.workers: next-1 ran on claude, next-2 and next-3 on codex, as runs.jsonl says" sh -c "python3 -c 'import json,sys; new=[json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]; got={(r[\"job\"],r.get(\"host\")) for r in new}; assert {(\"next-1\",\"claude\"),(\"next-2\",\"codex\"),(\"next-3\",\"codex\")} <= got, new' .flow/log/runs.jsonl $runs_before"
+: > "$work/hosted.log"; : > "$work/hosted.args"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" claude --max-steps 1 --model claude-once-z --effort high --wait >/dev/null 2>&1
+check "jobs.workers: --model and --effort reach the workers on the host named; the others keep their pair" sh -c "grep -qx 'claude --max-steps 1 --model claude-once-z --effort high' '$work/hosted.args' && [ \"\$(grep -cx 'codex --max-steps 1' '$work/hosted.args')\" = 2 ]"
 : > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" codex --workers 2 --max-steps 1 --wait >/dev/null 2>&1
 check "jobs.workers: --workers N on the command line starts N on the host it names instead" [ "$(sort "$work/hosted.log" | tr '\n' ' ')" = 'codex codex ' ]
+runs_before="$(wc -l < .flow/log/runs.jsonl | tr -d ' ')"
+: > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" codex --as next-codex --workers 2 --max-steps 1 --wait >/dev/null 2>&1; code=$?
+check "a named next schedule's workers lock, log and record as <name>-<n>" sh -c "[ $code = 0 ] && [ \"\$(sort '$work/hosted.log' | tr '\\n' ' ')\" = 'codex codex ' ] && [ -f .flow/log/next-codex-1.log ] && [ -f .flow/log/next-codex-2.log ] && python3 -c 'import json,sys; new=[json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]; got={(r[\"job\"],r.get(\"host\")) for r in new}; assert got=={(\"next-codex-1\",\"codex\"),(\"next-codex-2\",\"codex\")}, new' .flow/log/runs.jsonl $runs_before"
+: > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" codex --as next-gh81 --max-steps 1 >/dev/null 2>&1
+check "a named next schedule leaves jobs.workers to the plain next: with no --workers it is one run" sh -c "[ \"\$(cat '$work/hosted.log')\" = codex ] && tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"next-gh81\",\"host\":\"codex\"'"
+FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" codex --as next-1 > "$work/hosted.out" 2>&1; code=$?
+check "--as refuses a name that is no schedule of the job" sh -c "[ $code = 2 ] && grep -q -- '--as next-1 is no schedule of next' '$work/hosted.out'"
+printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/next.sh"; chmod +x "$work/fake/jobs/next.sh"
+fakenext="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/next.sh")"
+mkdir -p .flow/log/next.lock && echo "$fakenext" > .flow/log/next.lock/pid
+: > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" claude local:task/1 --as next-codex --max-steps 1 >/dev/null 2>&1
+check "two next schedules hold separate locks: a live next does not skip next-codex" sh -c "[ \"\$(cat '$work/hosted.log')\" = claude ] && tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"next-codex\",\"host\":\"claude\".*\"result\":\"done'"
+: > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" claude local:task/1 --max-steps 1 >/dev/null 2>&1
+check "two next schedules hold separate locks: a second run of next itself is still skipped" sh -c "[ ! -s '$work/hosted.log' ] && tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"next\".*\"result\":\"skipped: run $fakenext still going'"
+pkill -P "$fakenext" 2>/dev/null; kill "$fakenext" 2>/dev/null; rm -rf .flow/log/next.lock
 : > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" claude local:task/1 --max-steps 1 >/dev/null 2>&1
 check "jobs.workers: a run for one item is one run on the host it names" [ "$(cat "$work/hosted.log")" = claude ]
 cp "$work/config.par" .flow/config.yaml; printf 'jobs:\n  workers: {claude: 1, gemini: 1}\n' >> .flow/config.yaml
@@ -1705,6 +1767,28 @@ mkdir -p "$work/nops"; printf '#!/bin/sh\nexit 1\n' > "$work/nops/ps"; chmod +x 
 PATH="$work/nops:$PATH" env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
 check "health: with no process list no run is judged dead and no claim is released" sh -c "[ -f '$(rec "$h")' ] && [ -f '$wh/.flow/claim.json' ] && grep -q 'cannot list processes' '$hroot/out' && ! grep -q 'dead run\\|released\\|resumed' '$hroot/out'"
 rm -f "$(rec "$h")"; "$P/scripts/steward.sh" release "$h" --force >/dev/null 2>&1
+# stop and resume: the owner's hand on one item's run.
+stoploop="$work/fake/stop/run-unattended.sh"; mkdir -p "$work/fake/stop"; printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$stoploop"; chmod +x "$stoploop"
+s="$(hitem "Stopped by hand")"; ws="$(hold "$s")"; printf 'kept\n' > "$ws/wip.txt"
+loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$stoploop")"; sleep 1; loopchild="$(pgrep -P "$loop")"
+age_run "$s" "$loop"; : > "$hroot/host.log"
+env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" resume "$s" > "$hroot/out" 2>&1; code=$?
+check "resume: a run whose process is alive is refused, exit 1, and left as it is" sh -c "[ $code = 1 ] && grep -q 'the run of implement is still alive (pid $loop): end it first with steward.sh stop $s' '$hroot/out' && [ -f '$(rec "$s")' ] && kill -0 $loop && [ ! -s '$hroot/host.log' ]"
+env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" stop "$s" > "$hroot/out" 2>&1; code=$?
+sleep 1
+check "stop: ends the run's process and every one under it, and removes its record" sh -c "[ $code = 0 ] && [ -n '$loopchild' ] && ! kill -0 $loop 2>/dev/null && ! kill -0 $loopchild 2>/dev/null && [ ! -f '$(rec "$s")' ] && grep -q '$s: run of implement stopped by the owner: 2 process(es) ended' '$hroot/out'"
+check "stop: keeps the claim, the worktree and its changes, and says so in events.log and last_event" sh -c "[ -f '$ws/.flow/claim.json' ] && [ \"\$(cat '$ws/wip.txt')\" = kept ] && grep -q '	$s	stopped	run of implement stopped by the owner\$' .flow/events.log && '$P/adapters/local/read.sh' '$s' | grep -q 'run of implement stopped by the owner'"
+wait "$loop" 2>/dev/null
+check "stop: an item with no run in flight is said, exit 0" sh -c "'$P/scripts/steward.sh' stop '$s' | grep -q '$s: no run in flight, nothing to stop'"
+check "stop: a malformed item is refused, exit 2" sh -c "'$P/scripts/steward.sh' stop 'gh#x' 2>/dev/null; [ \$? = 2 ]"
+check "resume: an item with no run record is refused, exit 1" sh -c "'$P/scripts/steward.sh' resume '$s' 2>&1 | grep -q '$s has no run record'; '$P/scripts/steward.sh' resume '$s' >/dev/null 2>&1; [ \$? = 1 ]"
+"$P/scripts/next.sh" "$s" >/dev/null; age_run "$s"; : > "$hroot/host.log"
+check "resume: an --effort the host does not take is refused, exit 2, and the record stays" sh -c "env -u FLOW_HEALTH_PROCS '$P/scripts/steward.sh' resume '$s' --host codex --effort max 2>&1 | grep -q 'codex takes low, medium, high or xhigh'; [ -f '$(rec "$s")' ] && [ ! -s '$hroot/host.log' ]"
+env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" resume "$s" --wait --model claude-resume-z --effort low > "$hroot/out" 2>&1; code=$?
+check "resume: --model and --effort reach the resumed step with no agent" grep -q -- '--model claude-resume-z --effort low' "$hroot/host.log"
+check "resume: a dead run is cleared and its step starts again, as the health job resumes one" sh -c "[ $code = 0 ] && grep -q '$s: resumed implement on claude (attempt 1 of 3)' '$hroot/out' && grep -q 'Follow the brief' '$hroot/host.log' && grep -q '^$ws	' '$hroot/host.log' && [ \"\$(cat .flow/health/$(item_slug "$s").resume)\" = '1 implement' ] && grep -q '	$s	resume	dead run of implement cleared by the owner' .flow/events.log"
+check "resume: the resumed step's brief carries the health job's note" grep -q 'The previous run of step implement died' "$ws/.flow/reports/$(item_slug "$s")/brief-implement.md"
+rm -f "$(rec "$s")" "$ws/wip.txt" ".flow/health/$(item_slug "$s").resume"; "$P/scripts/steward.sh" release "$s" --force >/dev/null 2>&1
 "$P/scripts/jobs.sh" pause health >/dev/null; : > .flow/events.log
 "$P/jobs/health.sh" claude | grep -q paused
 check "health job: a paused job does nothing" [ ! -s .flow/events.log ]
@@ -1712,6 +1796,7 @@ check "health job: a paused job does nothing" [ ! -s .flow/events.log ]
 check "jobs: status lists the health job with its schedule" sh -c "'$P/scripts/jobs.sh' status | grep -q '^| health | every 15m'"
 check "jobs: cron gets the health line" sh -c "FLOW_SCHEDULER=cron '$P/scripts/jobs.sh' install health | grep -q '^\*/15 \* \* \* \* .*\.flow/jobs/health\.sh claude'"
 check "jobs: history and logs take the health job" sh -c "'$P/scripts/jobs.sh' history health 3 | grep -q 'quiet\|work' && '$P/scripts/jobs.sh' logs health 3 | grep -q 'health.log'"
+check "health job: an --effort its host does not take is refused, exit 2" sh -c "'$P/jobs/health.sh' codex --effort max 2>/dev/null; [ \$? = 2 ]"
 printf '{"job":"health","at":"2026-10-24T10:00:00Z","seconds":1,"exit":0,"result":42}\n' >> .flow/log/runs.jsonl
 check_all "jobs: a run recorded before 1.20.2 with a result of digits (a number) still shows in status and history" '"$P/scripts/jobs.sh" status >/dev/null && "$P/scripts/jobs.sh" status --json >/dev/null && "$P/scripts/jobs.sh" history health 3 | grep -q 42'
 printf '[1]\n{"job":null,"result":7}\n' >> .flow/log/runs.jsonl
@@ -2190,6 +2275,28 @@ PATH="$cpath" "$P/templates/run-unattended.sh" claude --max-steps 1 > "$work/cos
 check "a jobs effort the host does not take stops the loop before it claims an item" sh -c "[ $code = 2 ] && grep -q 'jobs.claude.effort is bogus' '$work/cost.out' && [ -z \"\$(ls .flow/runs/*.json 2>/dev/null)\" ]"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ../cost-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
 for it in "$mt" "$lt"; do "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$it" >/dev/null 2>&1; done
+cp .flow/config.yaml "$work/config.cost"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ../cost-wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    model: claude-jobs-x\n    effort: low\n  codex:\n    model: gpt-jobs-y\n    effort: medium\n' > .flow/config.yaml
+steprun() { python3 -c 'import json,sys
+r=[json.loads(l) for l in open(".flow/log/runs.jsonl")]
+print([x for x in r if x.get("item")==sys.argv[1]][-1][sys.argv[2]])' "$1" "$2"; }
+ot="$("$P/scripts/new.sh" task "Once on another model" --size M --body "## Acceptance
+- [ ] o")"
+ou="$("$P/scripts/new.sh" task "Then on the pair" --size M --body "## Acceptance
+- [ ] u")"
+: > "$COST_LOG"
+PATH="$cpath" "$P/jobs/next.sh" claude "$ot" --max-steps 1 --model claude-once-z --effort high > "$work/cost.out" 2>&1
+check_all "next job: --model and --effort reach the host for a step with no agent, over jobs.claude" 'grep -q "^claude	.*--model claude-once-z --effort high" "$COST_LOG" && ! grep -q claude-jobs-x "$COST_LOG" && [ "$(steprun "$ot" step)" = design ] && [ "$(steprun "$ot" model)" = claude-once-z ] && [ "$(steprun "$ot" effort)" = high ]'
+: > "$COST_LOG"
+PATH="$cpath" "$P/jobs/next.sh" claude "$ou" --max-steps 1 >/dev/null 2>&1
+check "next job: --model and --effort hold for their run only: the next run is on jobs.claude again" grep -q "^claude	.*--model claude-jobs-x --effort low" "$COST_LOG"
+: > "$COST_LOG"; runs_before="$(wc -l < .flow/log/runs.jsonl | tr -d ' ')"; claims_before="$(ls .flow/runs)"
+PATH="$cpath" "$P/jobs/next.sh" claude --max-steps 1 --effort bogus > "$work/cost.out" 2>&1; code=$?
+check "next job: an --effort claude does not take is refused, exit 2, before the run touches the tracker" sh -c "[ $code = 2 ] && grep -q 'flow: --effort is bogus; claude takes low, medium, high, xhigh or max, or empty for its default' '$work/cost.out' && [ ! -s '$COST_LOG' ] && [ \"\$(wc -l < .flow/log/runs.jsonl | tr -d ' ')\" = $runs_before ] && [ \"\$(ls .flow/runs)\" = '$claims_before' ]"
+PATH="$cpath" "$P/jobs/next.sh" codex --max-steps 1 --effort max > "$work/cost.out" 2>&1; code=$?
+check "next job: --effort is checked for the host named: max is a claude effort, not a codex one" sh -c "[ $code = 2 ] && grep -q 'flow: --effort is max; codex takes low, medium, high or xhigh' '$work/cost.out' && [ ! -s '$COST_LOG' ] && [ \"\$(wc -l < .flow/log/runs.jsonl | tr -d ' ')\" = $runs_before ]"
+for it in "$ot" "$ou"; do "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$it" >/dev/null 2>&1; done
+cp "$work/config.cost" .flow/config.yaml
 st="$("$P/scripts/new.sh" task "Spends" --size S --body "## Acceptance
 - [ ] s")"
 : > "$COST_LOG"

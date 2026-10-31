@@ -35,6 +35,8 @@ const WATCH_DEBOUNCE_MS = 500;
 const PULLS_ADAPTER = 'github';
 /** Folders under the flow home whose churn never changes the snapshot. */
 const UNWATCHED_FOLDERS = ['log', 'tmp', 'reports', 'reviews', 'health'];
+/** The one kind of file in an unwatched folder that does: a host flow stopped (`log/<host>.stopped`), shown at once. */
+const STOPPED_FILE = /^log[/\\](claude|codex)\.stopped$/;
 /** One item's sweep: one `gh pr view`, a gate clear and a release. */
 const SWEEP_TIMEOUT_MS = 120000;
 /** `steward.sh sweep --lock` exits so when a sweep already runs; the next pulls read tries again. */
@@ -145,6 +147,8 @@ export class ProjectMonitor {
       ],
       worktreeSteps: flow?.worktreeSteps ?? null,
       nextJob: nextJobOf(this.current?.jobs ?? []),
+      jobsWorkers: flow?.config.jobsWorkers ?? false,
+      schedules: (this.current?.jobs ?? []).map((job) => ({ name: job.name, running: jobRunning(job) })),
     };
   }
 
@@ -324,7 +328,7 @@ export class ProjectMonitor {
     const flowHome = flowHomeOf(this.project.root);
     const onChange = (changed: string | null): void => {
       const top = changed === null ? '' : changed.split(path.sep)[0] ?? '';
-      if (UNWATCHED_FOLDERS.includes(top)) return;
+      if (UNWATCHED_FOLDERS.includes(top) && !STOPPED_FILE.test(changed ?? '')) return;
       if (this.debounce !== null) clearTimeout(this.debounce);
       this.debounce = setTimeout(() => { void this.refresh('files').then(() => this.refresh('git')); }, WATCH_DEBOUNCE_MS);
     };
@@ -341,6 +345,11 @@ export class ProjectMonitor {
       this.log.warn('watch.failed', { project: this.project.id, target, error: error instanceof Error ? error.message : String(error) });
     }
   }
+}
+
+/** Whether a run of the schedule goes now: its own, or one of its workers'. */
+function jobRunning(job: Job): boolean {
+  return job.state === 'running' || job.running.length > 0 || job.workers.some((worker) => worker.running !== null);
 }
 
 /** The next job's pause and run, as `jobs.sh status` reported them; null before the jobs source listed it. */

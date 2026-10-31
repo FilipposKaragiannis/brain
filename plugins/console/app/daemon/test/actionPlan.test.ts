@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { HANDED_ON_REFRESH_MS, installNote, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
+import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
@@ -401,4 +401,194 @@ test('StepSync_UnclaimedOrBadItem_Refused', () => {
 
 test('StepSync_IssueAlreadyAgrees_Refused', () => {
   assert.match(stepSyncError({ ...STEP_SYNC, worktrees: [{ ...STEP_SYNC.worktrees[0]!, trackerStep: 'review' }] }), /already says/, 'because there is nothing left to settle');
+});
+
+test('HostClear_RunsGateClearWithTheHost', () => {
+  const plan = planned('host.clear', { host: 'claude' });
+  assert.deepEqual(plan.args, ['/plugins/flow/1.17.0/scripts/gate.sh', 'clear', 'claude'], 'because gate.sh clear <host> removes <flow home>/log/<host>.stopped');
+  assert.deepEqual([plan.cwd, plan.locks, plan.refresh, plan.outcome], ['/p/app', ['host:claude'], ['files'], 'finished'], 'because two clears of one host must not race, and the files source reads the stopped hosts with the gates');
+});
+
+test('HostClear_NotAHost_Rejected', () => {
+  for (const host of ['', 'gh#7', 'Claude', 'shell', '-rf']) {
+    assert.equal(planAction('host.clear', { host }, CONTEXT).ok, false, `because "${host}" is not a host flow stops, and gate.sh clear would read an item id as a gate to clear`);
+  }
+});
+
+test('ActionKinds_JobStartAndHostClear_Accepted', () => {
+  assert.ok(ACTION_KINDS.includes('job.start') && ACTION_KINDS.includes('host.clear'), 'because the server refuses a kind the list does not hold');
+});
+
+test('JobStart_EveryOption_PassedToTheProjectsNextJobAndDetached', () => {
+  const plan = planned('job.start', { job: 'next', host: 'claude', workers: '3', maxSteps: '20', model: 'claude-opus-4-1', effort: 'max' });
+  assert.deepEqual(plan.args, ['/p/app/.flow/jobs/next.sh', 'claude', '--workers', '3', '--max-steps', '20', '--model', 'claude-opus-4-1', '--effort', 'max'], 'because next.sh takes the host first and the options as flags, each one argv entry');
+  assert.deepEqual([plan.command, plan.cwd, plan.detach, plan.timeoutMs], ['sh', '/p/app', true, 0], 'because a run lasts far longer than a request and is never killed by the console');
+  assert.deepEqual(plan.locks, ['job:next'], 'because the run takes the next job lock');
+  assert.deepEqual(plan.refresh, ['jobs', 'processes', 'files', 'board'], 'because a run changes the jobs, the agents, the run records and the tracker');
+});
+
+test('JobStartWithAnItem_ItemAfterTheHostAndLocked', () => {
+  const plan = planned('job.start', { job: 'next', host: 'codex', item: 'gh#12', effort: 'xhigh' });
+  assert.deepEqual(plan.args.slice(1), ['codex', 'gh#12', '--effort', 'xhigh'], 'because next.sh reads the item after the host');
+  assert.deepEqual(plan.locks, ['item:gh#12', 'job:next'], 'because the item is worked too, as run.start locks it');
+  assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['finished', null], 'because one session runs in the started process');
+});
+
+test('JobStartWithManyWorkers_HandedOnAndReadAgain', () => {
+  const plan = planned('job.start', { job: 'next', host: 'claude', workers: '2' });
+  assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['started', HANDED_ON_REFRESH_MS], 'because next.sh starts its workers detached and exits, so they only show a few seconds later');
+});
+
+test('JobStartWithoutWorkers_ConfiguredWorkerPlan_HandedOn', () => {
+  const plan = planned('job.start', { job: 'next', host: 'claude' }, { ...CONTEXT, jobsWorkers: true });
+  assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['started', HANDED_ON_REFRESH_MS], 'because next.sh on the queue follows jobs.workers when no --workers is given');
+  const single = planned('job.start', { job: 'next', host: 'claude', workers: '1' }, { ...CONTEXT, jobsWorkers: true });
+  assert.deepEqual([single.outcome, single.refreshAgainMs], ['finished', null], 'because --workers 1 overrides the plan with one session');
+});
+
+test('JobStartWithoutAJob_TheNextJob', () => {
+  assert.deepEqual(planned('job.start', { host: 'codex' }).args, ['/p/app/.flow/jobs/next.sh', 'codex'], 'because next is the job most runs start, so naming it is optional');
+});
+
+test('JobStart_OtherJob_RunsItsOwnScriptWithModelAndEffort', () => {
+  const plan = planned('job.start', { job: 'intake', host: 'codex', model: 'gpt-6-luna', effort: 'low' });
+  assert.deepEqual(plan.args, ['/p/app/.flow/jobs/intake.sh', 'codex', '--model', 'gpt-6-luna', '--effort', 'low'], 'because every job takes the host first and its own model and effort');
+  assert.deepEqual([plan.locks, plan.outcome], [['job:intake'], 'finished'], 'because the run takes that job\'s lock and ends in place');
+});
+
+test('JobStart_OtherJobWithNextOptions_Rejected', () => {
+  for (const key of ['item', 'workers', 'maxSteps']) {
+    const result = planAction('job.start', { job: 'health', host: 'claude', [key]: key === 'item' ? 'gh#1' : '2' }, CONTEXT);
+    assert.match(result.ok ? '' : result.error, /is for the next job/, `because only next.sh takes ${key}`);
+  }
+});
+
+test('JobStart_UnknownJob_Rejected', () => {
+  for (const job of ['', 'next-2', 'deploy']) {
+    assert.equal(planAction('job.start', { job, host: 'claude' }, CONTEXT).ok, false, `because "${job}" is not a job flow runs`);
+  }
+});
+
+test('JobStart_BadArguments_Rejected', () => {
+  const next = { job: 'next', host: 'claude' };
+  const cases: [Record<string, string>, string][] = [
+    [{ job: 'next' }, 'no host'], [{}, 'no host, the job left out'], [{ job: 'next', host: 'gemini' }, 'a host flow does not run'],
+    [{ ...next, item: 'gh#1 x' }, 'an item id with a space'], [{ ...next, item: '-x' }, 'an item that reads as a flag'],
+    [{ ...next, workers: '0' }, 'zero workers'], [{ ...next, workers: '100' }, 'a hundred workers'], [{ ...next, workers: '2x' }, 'workers not a number'],
+    [{ ...next, maxSteps: '0' }, 'zero steps'], [{ ...next, maxSteps: '1000' }, 'four-digit steps'],
+    [{ ...next, model: '-x' }, 'a model that reads as a flag'], [{ ...next, model: 'a b' }, 'a model with a space'], [{ ...next, model: '' }, 'an empty model'],
+    [{ ...next, effort: 'huge' }, 'an effort no host has'], [{ job: 'next', host: 'codex', effort: 'max' }, 'max, which codex does not take'],
+    [{ ...next, Workers: '2' }, 'a stray key'],
+  ];
+  for (const [args, what] of cases) assert.equal(planAction('job.start', args, CONTEXT).ok, false, `because ${what} is not a run next.sh can start`);
+});
+
+test('JobStartWithAnItemAndManyWorkers_RefusedWithTheReason', () => {
+  const result = planAction('job.start', { job: 'next', host: 'claude', item: 'gh#12', workers: '2' }, CONTEXT);
+  assert.match(result.ok ? '' : result.error, /workers run the queue/, 'because next.sh dies on --workers with an item, so the owner hears why before it runs');
+  assert.equal(planAction('job.start', { job: 'next', host: 'claude', item: 'gh#12', workers: '1' }, CONTEXT).ok, true, 'because one worker on one item is one session');
+});
+
+test('JobStart_NextJobPaused_RefusedWithTheReason', () => {
+  const result = planAction('job.start', { job: 'next', host: 'claude' }, { ...CONTEXT, nextJob: { paused: true, running: false } });
+  assert.match(result.ok ? '' : result.error, /paused/, 'because next.sh exits quietly on a paused job, which would look like a run that did nothing');
+});
+
+/** The context with a config writer that records the keys it was asked to write and answers as the editor does. */
+function writing(context: ActionContext = CONTEXT): { context: ActionContext; written: [string, string | null][] } {
+  const written: [string, string | null][] = [];
+  return { context: { ...context, writeConfig: async (key, value) => { written.push([key, value]); return `wrote ${key}\n`; } }, written };
+}
+const scheduleError = (args: Record<string, string>, context: ActionContext = writing().context): string => { const result = planAction('job.schedule', args, context); return result.ok ? '' : result.error; };
+
+test('JobSchedule_NamedScheduleWithAnItem_WritesTheKeyThenInstallsThatSchedule', async () => {
+  const { context, written } = writing();
+  const plan = planned('job.schedule', { job: 'next-nightly', schedule: ' daily 02:00  gh#12 --max-steps 5 ' }, context);
+  assert.deepEqual(plan.args, ['/plugins/flow/1.17.0/scripts/jobs.sh', 'install', 'next-nightly'], 'because jobs.sh install loads the one schedule named');
+  assert.deepEqual([plan.locks, plan.refresh, plan.outcome], [['job:next-nightly'], ['jobs', 'files'], 'finished'], 'because one schedule takes one action at a time, and both the file and launchd changed');
+  assert.equal(written.length, 0, 'because planning writes nothing; the file changes once the lock is held');
+  const prepared = await plan.prepare?.();
+  assert.deepEqual(written, [['jobs.schedule.next-nightly', 'daily 02:00 gh#12 --max-steps 5']], 'because the schedule goes to .flow/config.yaml first, its words as jobs.sh reads them, the item id among its args');
+  assert.equal(prepared?.output, 'console: wrote jobs.schedule.next-nightly\n', 'because the action says what it wrote before install runs');
+  assert.equal(plan.note?.('next-nightly: running now, left as it is; install it again after the run\n'), 'skipped next-nightly: running now, so it keeps the old schedule; install again after the run', 'because install still exits 0 when the schedule ran meanwhile');
+});
+
+test('JobSchedule_AJobsOwnName_Accepted', () => {
+  const plan = planned('job.schedule', { job: 'health', schedule: 'every 15m' }, writing().context);
+  assert.deepEqual(plan.args.slice(1), ['install', 'health'], 'because a job is the schedule of its own name');
+});
+
+test('JobSchedule_BadName_Refused', () => {
+  for (const job of ['', 'nightly', 'next-Nightly', 'next-2', 'next-', 'deploy-nightly', 'next-nightly-extra', 'all', '../next']) {
+    assert.match(scheduleError({ job, schedule: 'every 30m' }), /schedule name/, `because "${job}" is neither a job nor <job>-<label> with a label opening with a letter`);
+  }
+});
+
+test('JobSchedule_BadSpec_RefusedAsJobsShWould', () => {
+  for (const schedule of ['', 'hourly', 'daily 2:00', 'daily 24:00', 'every 0m', 'weekly someday 07:00', 'every 10m $(rm -rf ~)', "every 10m 'quoted'", 'every 10m a;b']) {
+    assert.notEqual(scheduleError({ job: 'next-nightly', schedule }), '', `because _jobs.py refuses "${schedule}", and the file would hold a schedule install cannot load`);
+  }
+  assert.match(scheduleError({ job: 'next-nightly', schedule: 'every 10m #12' }), /comment/, 'because .flow/config.yaml reads " #" as the start of a comment');
+  assert.equal(scheduleError({ job: 'next-nightly', schedule: 'every 30m local:task/5 --model=opus' }), '', 'because a local item id and an option with = are plain args');
+});
+
+test('JobSchedule_ScheduleRunning_Refused', () => {
+  const { context } = writing({ ...CONTEXT, schedules: [{ name: 'next-nightly', running: true }, { name: 'health', running: false }] });
+  assert.match(scheduleError({ job: 'next-nightly', schedule: 'every 30m' }, context), /running now/, 'because install leaves a running job as it is, so the new schedule would not load');
+  assert.equal(scheduleError({ job: 'health', schedule: 'every 30m' }, context), '', 'because another schedule running is no reason to wait');
+});
+
+test('JobSchedule_WorkersBesideJobsWorkers_Refused', () => {
+  const { context } = writing({ ...CONTEXT, jobsWorkers: true });
+  assert.match(scheduleError({ job: 'next-wide', schedule: 'every 30m --workers 3' }, context), /jobs\.workers/, 'because install refuses a next schedule that sets --workers beside jobs.workers, after the file was written');
+  assert.equal(scheduleError({ job: 'comments-fast', schedule: 'every 5m --workers 3' }, context), '', 'because only next reads jobs.workers');
+});
+
+test('JobSchedule_NoConfigEditor_Refused', () => {
+  assert.match(scheduleError({ job: 'next-nightly', schedule: 'every 30m' }, CONTEXT), /cannot edit/, 'because the schedule must go through the config editor, never a write of its own');
+});
+
+test('JobUnschedule_UninstallsThenTakesTheKeyOut', async () => {
+  const { context, written } = writing();
+  const plan = planned('job.unschedule', { job: 'next-nightly' }, context);
+  assert.deepEqual([plan.args.slice(1), plan.locks, plan.refresh], [['uninstall', 'next-nightly'], ['job:next-nightly'], ['jobs', 'files']], 'because launchd lets go of the schedule first');
+  assert.equal(plan.prepare, undefined, 'because the file is left as it is until the uninstall worked');
+  const concluded = await plan.conclude?.();
+  assert.deepEqual(written, [['jobs.schedule.next-nightly', null]], 'because once unloaded, the key comes out of .flow/config.yaml; a key already gone is fine for an orphan');
+  assert.equal(concluded?.output, 'console: wrote jobs.schedule.next-nightly\n', 'because the action says what changed in the file');
+});
+
+test('JobUnschedule_RunningOrBadName_Refused', () => {
+  const { context } = writing({ ...CONTEXT, schedules: [{ name: 'next-nightly', running: true }] });
+  assert.equal(planAction('job.unschedule', { job: 'next-nightly' }, context).ok, false, 'because unloading a running schedule would cut its run off');
+  assert.equal(planAction('job.unschedule', { job: 'next-2' }, writing().context).ok, false, 'because next-2 is a worker, not a schedule');
+  assert.equal(planAction('job.unschedule', { job: 'next-nightly', schedule: 'every 30m' }, writing().context).ok, false, 'because unschedule takes the name only');
+});
+
+test('JobUninstallAndRun_NamedSchedule_Accepted', () => {
+  assert.deepEqual(planned('job.uninstall', { job: 'next-nightly' }).args.slice(1), ['uninstall', 'next-nightly'], 'because an orphaned named schedule is unloaded on its own too');
+  assert.deepEqual(planned('job.stop', { job: 'next-nightly' }).locks, ['job:next-nightly'], 'because every jobs.sh command takes a schedule name');
+  assert.deepEqual(planned('job.pause', { job: 'all' }).args.slice(1), ['pause', 'all'], 'because jobs.sh pauses every schedule at once');
+  assert.equal(planAction('job.run', { job: 'all' }, CONTEXT).ok, false, 'because jobs.sh runs one schedule at a time');
+});
+
+test('JobsInstall_NamedSchedulesListed_HoldsTheirLocksToo', () => {
+  const plan = planned('jobs.install', {}, { ...CONTEXT, schedules: [{ name: 'next', running: false }, { name: 'next-nightly', running: false }] });
+  assert.deepEqual(plan.locks, ['job:next', 'job:comments', 'job:intake', 'job:retro', 'job:health', 'job:next-nightly'], 'because install rewrites every schedule the config names');
+});
+
+test('RunStopAndResume_RunStewardWithTheItem', () => {
+  const context = { ...CONTEXT, runItems: ['gh#7'] };
+  const stop = planned('run.stop', { item: 'gh#7' }, context);
+  assert.deepEqual([stop.args, stop.locks, stop.refresh, stop.outcome, stop.refreshAgainMs], [['/plugins/flow/1.17.0/scripts/steward.sh', 'stop', 'gh#7'], ['item:gh#7'], ['files', 'processes'], 'finished', null], 'because steward.sh stop ends the run and removes its record, keeping the claim');
+  const resume = planned('run.resume', { item: 'gh#7' }, context);
+  assert.deepEqual([resume.args.slice(1), resume.locks, resume.outcome, resume.refreshAgainMs], [['resume', 'gh#7'], ['item:gh#7'], 'started', HANDED_ON_REFRESH_MS], 'because resume starts the step in the background, whose session shows a moment later');
+});
+
+test('RunStopAndResume_BadItemOrNoRunRecord_Refused', () => {
+  for (const kind of ['run.stop', 'run.resume'] as const) {
+    assert.equal(planAction(kind, { item: 'gh#7; rm' }, { ...CONTEXT, runItems: ['gh#7'] }).ok, false, `because ${kind} takes an item id only`);
+    assert.match(refusal(planAction(kind, { item: 'gh#7' }, CONTEXT)), /no run record/, `because ${kind} acts on a run record, and none names gh#7`);
+  }
+  assert.ok(['job.schedule', 'job.unschedule', 'run.stop', 'run.resume'].every((kind) => (ACTION_KINDS as string[]).includes(kind)), 'because the server refuses a kind the list does not hold');
 });

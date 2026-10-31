@@ -15,7 +15,7 @@ function renderOverview(snapshot: Snapshot): void {
 }
 
 function needsField(id: string): AttentionRow {
-  return { kind: 'needs-field', id, title: `Item ${id}`, detail: 'needs priority', worktree: null, sinceAt: null, ageSeconds: null };
+  return { kind: 'needs-field', id, title: `Item ${id}`, detail: 'needs priority', worktree: null, sinceAt: null, ageSeconds: null, action: null };
 }
 
 test('ClaimedPoolCell_ShowsTheItemTitle', () => {
@@ -90,4 +90,10 @@ test('StepMismatch_ButtonSetsTheIssuesStep', async () => {
 test('Activity_ShowAllLeadsToTheActivityScreen', () => {
   renderOverview(snapshotAt(TAKEN_AT, 0));
   expect(screen.getByRole('link', { name: 'Show all' }).getAttribute('href'), 'because the overview shows only the latest events').toBe('#/project/activity');
+});
+
+test('StoppedHostRow_CarriesItsClearButton', () => {
+  const stopped: AttentionRow = { kind: 'host-stopped', id: 'codex', title: 'codex is stopped', detail: 'usage limit', worktree: null, sinceAt: TAKEN_AT, ageSeconds: 60, action: { kind: 'host.clear', args: { host: 'codex' }, label: 'Clear codex' } };
+  renderOverview({ ...snapshotAt(TAKEN_AT, 1), attention: [stopped] });
+  expect(screen.queryByRole('button', { name: 'Clear codex' }), 'because the row is settled from where it is seen').not.toBeNull();
 });

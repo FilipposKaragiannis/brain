@@ -4,16 +4,16 @@ import { UNRANKED } from './collectors/board.ts';
 import type { ClaimRecord, FlowHomeFacts, GateRecord, RunRecord } from './collectors/flowHome.ts';
 import { poolPaths } from './collectors/flowHome.ts';
 import type { GitFacts, GitWorktree } from './collectors/git.ts';
-import type { JobFacts, JobStatusRow } from './collectors/jobs.ts';
+import type { JobFacts, JobRunRecord, JobStatusRow, JobStatusRun, JobWorkerRow } from './collectors/jobs.ts';
 import type { AgentProcess, EndedProcess, ProcessFacts } from './collectors/processes.ts';
 import type { PullFact, PullFacts } from './collectors/pulls.ts';
 import { parseGateQuestions } from './gateMessage.ts';
 import {
-  ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
+  ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemState, Job, JobState, ProcessInfo,
-  ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemState, Job, JobRun, JobState, JobWorker,
+  ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, StoppedHost, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
 export type ReconcileInput = {
@@ -283,23 +283,86 @@ function buildEnded(input: ReconcileInput, contexts: WorktreeContext[]): EndedAg
     .slice(0, ENDED_KEPT);
 }
 
+/** What `jobs.sh status` says in `next` for a job whose interval has passed with no run started: the snapshot's `overdue`. */
+const NEXT_DUE = 'due';
+
 function jobState(row: JobStatusRow): JobState {
   if (row.paused) return 'paused';
   if (!row.installed) return 'not-installed';
   if (!row.loaded) return 'not-loaded';
   if (row.running.length > 0) return 'running';
-  if (row.next === 'due') return 'due';
+  if (row.next === NEXT_DUE) return 'overdue';
   return 'scheduled';
+}
+
+/** The words a job's result opens with that name its outcome, as flow's `_jobs.py reason` strips them. */
+const OUTCOME_WORD = /^(skipped|quiet|error|stopped|failed|done):\s*([\s\S]*)$/;
+
+/** How a run ended, from what it said last and its exit, as flow's `_jobs.py outcome` classifies it. */
+export function runOutcome(result: string, exit: number | string | null): string {
+  if (result.startsWith('paused')) return 'paused';
+  if (result.startsWith('skipped')) return 'skipped';
+  const failed = exit !== null && exit !== 0 && exit !== '0';
+  if (failed || result.startsWith('error') || result.startsWith('stopped: no step ran')) return 'failed';
+  if (result.startsWith('quiet')) return 'quiet';
+  if (result.includes('gate')) return 'gate';
+  return 'work';
+}
+
+/**
+ * Why a run ended as it did, as flow's `_jobs.py reason` says it: the result without the outcome
+ * word it opens with ("run 36596 still going" for "skipped: run 36596 still going"), the pause
+ * for a paused run, the whole result when it opens with no such word; null when it said nothing.
+ */
+export function runReason(result: string): string | null {
+  if (result.startsWith('paused')) return 'the job is paused';
+  const found = OUTCOME_WORD.exec(result);
+  const reason = found === null ? result : found[2]!;
+  return reason === '' ? null : reason;
+}
+
+/** The worker a run's job names: `next-2` is a worker of next, `next-nightly-2` of next-nightly; a schedule's own name is no worker. */
+function workerOf(job: string | undefined): string | null {
+  return job !== undefined && /^[a-z][a-z0-9]*(-[a-z][a-z0-9]*)?-[0-9]+$/.test(job) ? job : null;
+}
+
+/** One run as the snapshot shows it; flow's own outcome and reason win over the ones worked out here. */
+function jobRun(record: JobStatusRun): JobRun {
+  const result = String(record.result ?? '');
+  return {
+    at: record.at, seconds: record.seconds, exit: typeof record.exit === 'number' ? record.exit : null, result,
+    outcome: record.outcome ?? runOutcome(result, record.exit), reason: record.reason ?? runReason(result),
+    worker: workerOf(record.job), host: record.host || null,
+  };
+}
+
+/** A schedule's runs in the run log, newest first: its own and its workers' (`next-1` ... under next, `next-nightly-1` ... under next-nightly), skips included. */
+function recentRuns(name: string, runs: JobRunRecord[]): JobRun[] {
+  const own = (job: string): boolean => job === name || (job.startsWith(`${name}-`) && /^[0-9]+$/.test(job.slice(name.length + 1)));
+  const out: JobRun[] = [];
+  for (let index = runs.length - 1; index >= 0 && out.length < JOB_RUNS_KEPT; index -= 1) {
+    const run = runs[index]!;
+    if (own(run.job)) out.push(jobRun(run));
+  }
+  return out;
+}
+
+function jobWorker(row: JobWorkerRow): JobWorker {
+  return {
+    name: row.job, host: row.host,
+    running: row.running === null ? null : { pid: typeof row.running.pid === 'number' ? row.running.pid : null, since: row.running.at },
+    last: row.last_run === null ? null : jobRun(row.last_run),
+  };
 }
 
 function buildJobs(input: ReconcileInput): Job[] {
   return (input.jobs?.jobs ?? []).map((row) => ({
-    name: row.job, state: jobState(row), schedule: row.schedule, args: row.args, installed: row.installed, loaded: row.loaded,
+    name: row.name, job: row.job, host: row.host, configured: row.configured, state: jobState(row), schedule: row.schedule, args: row.args, installed: row.installed, loaded: row.loaded,
     paused: row.paused, running: row.running.map((entry) => entry.job),
-    last: row.last === null ? null : {
-      at: row.last.at, seconds: row.last.seconds, exit: typeof row.last.exit === 'number' ? row.last.exit : null,
-      result: row.last.result, outcome: row.last.outcome,
-    },
+    // jobs.sh's last is the newest run that did more than skip; an older plugin's has no job, so its worker is unknown.
+    last: row.last === null ? null : jobRun(row.last),
+    recent: recentRuns(row.name, input.jobs?.runs ?? []),
+    workers: (row.workers ?? []).map(jobWorker),
     next: row.next,
     runsThisWeek: Object.values(row.week).reduce((sum, count) => sum + count, 0),
     failedThisWeek: row.week['failed'] ?? 0,
@@ -537,7 +600,7 @@ function pullAttention(pulls: PullRequest[]): AttentionRow[] {
   return pulls.flatMap((pull) => {
     const row = PULL_ATTENTION[pull.state];
     if (row === undefined) return [];
-    return [{ kind: row.kind, id: pull.item ?? `#${pull.number}`, title: `#${pull.number} ${row.title}`, detail: pull.title, worktree: pull.worktree, sinceAt: pull.updatedAt, ageSeconds: pull.idleSeconds }];
+    return [{ kind: row.kind, id: pull.item ?? `#${pull.number}`, title: `#${pull.number} ${row.title}`, detail: pull.title, worktree: pull.worktree, sinceAt: pull.updatedAt, ageSeconds: pull.idleSeconds, action: null }];
   });
 }
 
@@ -577,30 +640,46 @@ function nextInLine(item: Item, items: Item[]): boolean {
 function needsFieldAttention(items: Item[]): AttentionRow[] {
   return items.filter((item) => nextInLine(item, items)).map((item) => ({
     kind: 'needs-field' as const, id: item.id, title: item.title || item.id, detail: `needs ${item.needs.join(' and ')}`,
-    worktree: item.worktree, sinceAt: null, ageSeconds: null,
+    worktree: item.worktree, sinceAt: null, ageSeconds: null, action: null,
   }));
 }
 
-type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[] };
+/** A stop's cause in words, as flow's `host_cause_said` says it. */
+const CAUSE_SAID: Record<string, string> = { 'spend-limit': 'a spend limit', auth: 'an auth error' };
 
-function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements }: AttentionSources, now: Date): AttentionRow[] {
-  const rows: AttentionRow[] = [];
+/** A stopped host's row: the host, the cause in words and what the host said, with the button that clears it (`gate.sh clear <host>`). */
+function stoppedHostAttention(stopped: StoppedHost, now: Date): AttentionRow {
+  const cause = CAUSE_SAID[stopped.cause] ?? (stopped.cause || 'an unknown cause');
+  const said = stopped.said === '' ? '' : `: ${stopped.said}`;
+  const gate = stopped.item === null ? '' : `, or when the gate on ${stopped.item} clears`;
+  return {
+    kind: 'host-stopped', id: stopped.host, title: `${stopped.host} is stopped on ${cause}`,
+    detail: `${stopped.host} stopped on ${cause}${said}. No ${stopped.host} session starts until you clear it${gate}.`,
+    worktree: null, sinceAt: stopped.at, ageSeconds: ageSeconds(stopped.at, now),
+    action: { kind: 'host.clear', args: { host: stopped.host }, label: `Clear ${stopped.host}` },
+  };
+}
+
+type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[]; stoppedHosts: StoppedHost[] };
+
+function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts }: AttentionSources, now: Date): AttentionRow[] {
+  const rows: AttentionRow[] = stoppedHosts.map((stopped) => stoppedHostAttention(stopped, now));
   for (const gate of gates) {
-    rows.push({ kind: 'gate', id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds });
+    rows.push({ kind: 'gate', id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds, action: null });
   }
   for (const run of runs.filter((entry) => !entry.alive)) {
-    rows.push({ kind: 'dead-run', id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now) });
+    rows.push({ kind: 'dead-run', id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now), action: null });
   }
   for (const worktree of worktrees.filter((entry) => entry.flags.includes('stale-branch') || entry.flags.includes('idle'))) {
-    rows.push({ kind: 'stale', id: worktree.item ?? worktree.name, title: `${worktree.name} is stale`, detail: worktree.staleReason ?? '', worktree: worktree.name, sinceAt: worktree.claim?.claimedAt ?? null, ageSeconds: worktree.claimAgeSeconds });
+    rows.push({ kind: 'stale', id: worktree.item ?? worktree.name, title: `${worktree.name} is stale`, detail: worktree.staleReason ?? '', worktree: worktree.name, sinceAt: worktree.claim?.claimedAt ?? null, ageSeconds: worktree.claimAgeSeconds, action: null });
   }
   for (const job of jobs.filter((entry) => entry.last !== null && entry.last.exit !== null && entry.last.exit !== 0)) {
-    rows.push({ kind: 'job-failed', id: job.name, title: `${job.name} job failed`, detail: job.last?.result ?? '', worktree: null, sinceAt: job.last?.at ?? null, ageSeconds: ageSeconds(job.last?.at ?? null, now) });
+    rows.push({ kind: 'job-failed', id: job.name, title: `${job.name} job failed`, detail: job.last?.result ?? '', worktree: null, sinceAt: job.last?.at ?? null, ageSeconds: ageSeconds(job.last?.at ?? null, now), action: null });
   }
   rows.push(...pullAttention(pulls));
   rows.push(...needsFieldAttention(items));
   for (const disagreement of disagreements) {
-    rows.push({ kind: 'disagreement', id: disagreement.item ?? disagreement.worktree ?? 'project', title: disagreement.sources.join(' vs '), detail: disagreement.message, worktree: disagreement.worktree, sinceAt: null, ageSeconds: null });
+    rows.push({ kind: 'disagreement', id: disagreement.item ?? disagreement.worktree ?? 'project', title: disagreement.sources.join(' vs '), detail: disagreement.message, worktree: disagreement.worktree, sinceAt: null, ageSeconds: null, action: null });
   }
   return rows.sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
@@ -668,8 +747,8 @@ export function reconcile(read: ReconcileInput): Snapshot {
     sources: input.sources,
     counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }),
     readiness: buildReadiness(items),
-    attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements }, input.now),
-    worktrees, items, gates, runs, agents, ended, jobs, pulls,
+    attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
+    worktrees, items, gates, runs, agents, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     events: input.flow.events,
     disagreements,
   };

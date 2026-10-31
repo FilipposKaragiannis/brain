@@ -45,7 +45,7 @@ async function clearEnds(daemon: FakeDaemon, state: ActionRecord['state']): Prom
 
 const PLAN_GATE: Gate = { ...waitingGate('gh#514', 'plan-approval'), message: '**Approve the plan, approve it with notes, or send it back.**\n\n- Three slices.', questions: [], plan: { file: 'plan.md', text: '## Phase 1\nWrite the drill.' } };
 
-const NEXT_JOB: Job = { name: 'next', state: 'scheduled', schedule: 'every 30m', args: '', installed: true, loaded: true, paused: false, running: [], last: null, next: '18:30', runsThisWeek: 0, failedThisWeek: 0 };
+const NEXT_JOB: Job = { name: 'next', job: 'next', host: 'claude', configured: true, state: 'scheduled', schedule: 'every 30m', args: '', installed: true, loaded: true, paused: false, running: [], last: null, recent: [], workers: [], next: '18:30', runsThisWeek: 0, failedThisWeek: 0 };
 
 async function press(name: string): Promise<void> {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name })); });

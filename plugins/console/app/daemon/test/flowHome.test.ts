@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import path from 'node:path';
 import type { CommandRequest, CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 import type { GateQuestionCache } from '../src/collectors/flowHome.ts';
-import { parseFlowConfig, parseGateList, pluginHasGateJson, pluginVersionOf, readFlowHome } from '../src/collectors/flowHome.ts';
+import { parseFlowConfig, parseGateList, pluginHasGateJson, pluginVersionOf, readFlowHome, readStoppedHosts } from '../src/collectors/flowHome.ts';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { FAKE_PLUGIN, FIXTURES, FIXTURE_ROOT, GATE_LIST_JSON, GATE_RECORD, fakeGateList, fakeRunner } from './fakeRunner.ts';
@@ -185,4 +185,65 @@ test('SplitGateWithItsWorktreeReleased_PlanReadFromThePool', async () => {
     const facts = await readFlowHome(root, fakeRunner);
     assert.deepEqual(facts.gates[0]?.plan, { file: 'plan.md', text: 'Decomposition: tracker tasks\n' }, 'because steward.sh split releases the claim but leaves the plan in that pool worktree');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+/** A temp project with a `.flow` home; `body` gets the project root. */
+async function withProject<T>(body: (root: string) => Promise<T>): Promise<T> {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'console-stopped-'));
+  mkdirSync(path.join(root, '.flow', 'log'), { recursive: true });
+  mkdirSync(path.join(root, '.flow', 'gates'), { recursive: true });
+  writeFileSync(path.join(root, '.flow', 'config.yaml'), 'pool: []\n');
+  try { return await body(root); } finally { rmSync(root, { recursive: true, force: true }); }
+}
+
+test('StoppedHosts_FromTheirFiles_ClaudeFirstAndEmptyFieldsNull', async () => {
+  await withProject(async (root) => {
+    writeFileSync(path.join(root, '.flow', 'log', 'codex.stopped'), JSON.stringify({ host: 'codex', cause: 'auth', said: 'Not logged in', at: '2026-10-24T17:00:00Z', item: '' }));
+    writeFileSync(path.join(root, '.flow', 'log', 'claude.stopped'), JSON.stringify({ host: 'claude', cause: 'spend-limit', said: 'Spend limit reached', at: '2026-10-24T16:00:00Z', item: 'gh#7' }));
+    assert.deepEqual(await readStoppedHosts(path.join(root, '.flow')), [
+      { host: 'claude', cause: 'spend-limit', said: 'Spend limit reached', at: '2026-10-24T16:00:00Z', item: 'gh#7' },
+      { host: 'codex', cause: 'auth', said: 'Not logged in', at: '2026-10-24T17:00:00Z', item: null },
+    ], 'because host_stop writes <flow home>/log/<host>.stopped, and a stop raised outside an item names none');
+  });
+});
+
+test('StoppedHostFileNotJson_StillListed', async () => {
+  await withProject(async (root) => {
+    writeFileSync(path.join(root, '.flow', 'log', 'codex.stopped'), 'half a line');
+    assert.deepEqual(await readStoppedHosts(path.join(root, '.flow')), [{ host: 'codex', cause: '', said: '', at: null, item: null }], 'because flow only tests that the file exists, so the host is stopped whatever it holds');
+  });
+});
+
+test('StoppedHosts_NoFiles_None', async () => {
+  await withProject(async (root) => {
+    writeFileSync(path.join(root, '.flow', 'log', 'runs.jsonl'), '');
+    assert.deepEqual(await readStoppedHosts(path.join(root, '.flow')), [], 'because only a <host>.stopped file stops a host');
+  });
+});
+
+test('StoppedHostInTheGateList_NeverAGateCard', async () => {
+  await withProject(async (root) => {
+    const message = 'Pick one.';
+    writeFileSync(path.join(root, '.flow', 'gates', 'gh-12.json'), JSON.stringify({ gate: 'ambiguity', item: 'gh#12', message, time: '2026-10-22T07:43:00Z', host: 'shell' }));
+    writeFileSync(path.join(root, '.flow', 'log', 'claude.stopped'), JSON.stringify({ host: 'claude', cause: 'spend-limit', said: 'limit', at: '2026-10-24T16:00:00Z', item: 'gh#12' }));
+    const list = JSON.stringify([
+      { item: 'claude', gate: 'stopped', message: 'claude stopped on a spend limit', time: '2026-10-24T16:00:00Z', questions: [] },
+      { item: 'gh#12', gate: 'ambiguity', message, time: '2026-10-22T07:43:00Z', questions: [{ number: 1, text: 'Pick one?', recommended: null }] },
+    ]);
+    const facts = await readFlowHome(root, runnerWith('1.24.0', () => ({ code: 0, stdout: list, stderr: '', timedOut: false })));
+    assert.deepEqual(facts.gates.map((gate) => gate.item), ['gh#12'], 'because a gate card comes from a .flow/gates record, and the stopped line names a host, not an item');
+    assert.equal(facts.gates[0]?.questions?.length, 1, "because the list was read, and the gate's own entry still pairs");
+    assert.deepEqual(facts.stoppedHosts.map((stopped) => stopped.host), ['claude'], 'because the stopped host shows as a stopped host instead');
+  });
+});
+
+test('ParseGateList_StoppedHostLine_Skipped', () => {
+  const list = parseGateList(JSON.stringify([{ item: 'codex', gate: 'stopped', message: 'codex stopped on an auth error', questions: [] }]));
+  assert.equal(list?.size, 0, "because gate.sh lists a stopped host as a gate named stopped, which is no gate on an item");
+});
+
+test('JobsWorkers_SetInEitherForm_Read', () => {
+  assert.equal(parseFlowConfig('jobs:\n  workers: {claude: 1, codex: 2}\n').jobsWorkers, true, 'because the one-line map is how flow init writes it');
+  assert.equal(parseFlowConfig('jobs:\n  workers:\n    claude: 2\n').jobsWorkers, true, 'because the nested form is the same plan');
+  assert.equal(parseFlowConfig('jobs:\n  host: claude\n').jobsWorkers, false, 'because without the key next runs one session');
 });

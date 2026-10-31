@@ -8,10 +8,10 @@ import { HTTP_OK, POLL_MS } from './useProject.ts';
 
 const HTTP_ACCEPTED = 202;
 
-/** What the last press of a button led to: the action it started, or why the daemon refused it. */
+/** What the last press of a button led to: the action it started, or why the daemon refused it (`press` tells two refusals apart). */
 export type ActionOutcome =
   | { kind: 'started'; record: ActionRecord }
-  | { kind: 'refused'; status: number; message: string };
+  | { kind: 'refused'; status: number; message: string; press: number };
 
 /**
  * `busy` and `outcome` take the arguments that identify a button; any action of that kind whose
@@ -87,7 +87,7 @@ export function useActions(projectId: string): ActionsView {
     }
     const message = refusalMessage(response.status, response.body);
     settle({ refused: response.status, message });
-    return { kind: 'refused', status: response.status, message };
+    return { kind: 'refused', status: response.status, message, press: id };
   }, [api, projectId]);
 
   const busy = useCallback((kind: ActionKind, args: Record<string, string>): boolean => {
@@ -96,9 +96,10 @@ export function useActions(projectId: string): ActionsView {
   }, [presses, records]);
 
   const outcome = useCallback((kind: ActionKind, args: Record<string, string>): ActionOutcome | null => {
-    const last = presses.find((press) => press.result !== null && matchesAction(kind, args, press.kind, press.args))?.result ?? null;
-    if (last === null) return null;
-    if ('refused' in last) return { kind: 'refused', status: last.refused, message: last.message };
+    const press = presses.find((candidate) => candidate.result !== null && matchesAction(kind, args, candidate.kind, candidate.args));
+    const last = press?.result ?? null;
+    if (press === undefined || last === null) return null;
+    if ('refused' in last) return { kind: 'refused', status: last.refused, message: last.message, press: press.id };
     const record = records.find((candidate) => candidate.id === last.started);
     return record === undefined ? null : { kind: 'started', record };
   }, [presses, records]);

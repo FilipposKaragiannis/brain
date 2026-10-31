@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 3;
+export const SNAPSHOT_SCHEMA_VERSION = 5;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -29,7 +29,8 @@ export type WorktreeRole = 'main' | 'pool' | 'outside';
  */
 export type WorktreeFlag = 'dirty' | 'behind' | 'stale-branch' | 'idle' | 'dead-run' | 'agent-without-claim' | 'session';
 export type ItemState = 'running' | 'needs-you' | 'stale' | 'claimed' | 'ready' | 'blocked' | 'backlog' | 'done';
-export type JobState = 'running' | 'due' | 'scheduled' | 'paused' | 'not-installed' | 'not-loaded';
+/** `overdue`: its interval has passed but launchd has not started it, usually because the Mac slept. */
+export type JobState = 'running' | 'overdue' | 'scheduled' | 'paused' | 'not-installed' | 'not-loaded';
 export type AgentHost = 'claude' | 'codex';
 /** An agent is a run the flow started unattended; a session is a person's interactive host in that folder. */
 export type AgentKind = 'agent' | 'session';
@@ -42,9 +43,10 @@ export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 
  * .flow/config.yaml, such as priority or size) is empty: open, not an epic, no step, no open
  * blocker, and either its parent has started (a step, a worktree, a PR or a gate), a sibling
  * under the same parent has started or is done, or it blocks an item that has started. Other
- * items waiting on a field are backlog and get no row.
+ * items waiting on a field are backlog and get no row. `host-stopped`: flow stopped a host on a
+ * spend limit or an auth error (`stoppedHosts`), and no session starts on it until it is cleared.
  */
-export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable' | 'needs-field';
+export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable' | 'needs-field' | 'host-stopped';
 /**
  * Where an open pull request stands, the first that holds: a draft, merge conflicts, a failing
  * check, changes requested, a check still running, no approval yet, approved with checks or
@@ -110,6 +112,17 @@ export type SessionRef = { host: AgentHost; id: string; transcript: string; resu
 
 /** One turn of a transcript with text in it, as `GET .../agents/<pid>/transcript` returns it. */
 export type TranscriptTurn = { at: string | null; role: 'user' | 'assistant'; text: string };
+
+/**
+ * One entry of a claude transcript as one line, as `GET .../agents/<pid>/transcript` returns it in
+ * `lines`: what the agent said (`say`), thought (`think`), ran (`tool`: `<Name> · <detail>`), a
+ * tool call that failed (`result`: `error: ...`), and what the user said (`user`). The text is the
+ * first line only, capped at `TRANSCRIPT_LINE_CHARS`.
+ */
+export type TranscriptLine = { at: string | null; kind: 'say' | 'think' | 'tool' | 'result' | 'user'; text: string };
+
+/** How much of one transcript line the route returns. */
+export const TRANSCRIPT_LINE_CHARS = 300;
 
 /**
  * A claude or codex process with its working directory in a worktree. The command is trimmed to
@@ -267,10 +280,33 @@ export type JobRun = {
   exit: number | null;
   result: string;
   outcome: string;
+  /** Why it ended as it did, without the outcome word ("run 36596 still going" for a skip), or null when flow gave none. */
+  reason: string | null;
+  /** The worker that ran it (`next-2`), or null for a job with one run at a time. */
+  worker: string | null;
+  host: string | null;
 };
 
-export type Job = {
+/** One worker of the next job (`next-1` ...), on its host: what runs now, and how its last run ended. */
+export type JobWorker = {
   name: string;
+  host: string;
+  running: { pid: number | null; since: string } | null;
+  last: JobRun | null;
+};
+
+/** How many recent runs each job keeps, skips included, newest first. */
+export const JOB_RUNS_KEPT = 12;
+
+export type Job = {
+  /** The schedule's name: the job (`next`), or `<job>-<label>` for another schedule of it (`next-nightly`). */
+  name: string;
+  /** The job the schedule runs, the script under the plugin's jobs/ (`next` for `next-nightly`); the name itself on a plugin before named schedules. */
+  job: string;
+  /** The host the schedule runs on, as `jobs.sh status` says; null when it does not say. */
+  host: string | null;
+  /** False for a schedule installed in launchd that .flow/config.yaml no longer names (an orphan to unschedule); true otherwise, and on a plugin that does not say. */
+  configured: boolean;
   state: JobState;
   schedule: string;
   args: string;
@@ -279,10 +315,20 @@ export type Job = {
   paused: boolean;
   running: string[];
   last: JobRun | null;
+  /** Its latest runs from flow's `log/runs.jsonl`, newest first, skips included, up to JOB_RUNS_KEPT. */
+  recent: JobRun[];
+  /** The next job's workers, one per worker the schedule or `jobs.workers` starts; empty for other jobs. */
+  workers: JobWorker[];
   next: string;
   runsThisWeek: number;
   failedThisWeek: number;
 };
+
+/**
+ * A host flow stopped on a spend limit or an auth error (`<flow home>/log/<host>.stopped`, flow
+ * 1.22.0 and later): no session starts on it until the owner clears it with `gate.sh clear <host>`.
+ */
+export type StoppedHost = { host: string; cause: string; said: string; at: string | null; item: string | null };
 
 export type FlowEvent = {
   at: string;
@@ -318,6 +364,8 @@ export type AttentionRow = {
   worktree: string | null;
   sinceAt: string | null;
   ageSeconds: number | null;
+  /** The one button that settles the row (`host.clear` for a stopped host), or null when the row only points somewhere. */
+  action: DisagreementAction | null;
 };
 
 export type Counts = {
@@ -373,6 +421,7 @@ export type Snapshot = {
   /** Agents and sessions with a transcript that ended in the last day while the daemon watched, newest first. */
   ended: EndedAgent[];
   jobs: Job[];
+  stoppedHosts: StoppedHost[];
   pulls: PullRequest[];
   events: FlowEvent[];
   disagreements: Disagreement[];
@@ -387,9 +436,14 @@ export type ActionKind =
   | 'gate.clear'
   | 'run.start'
   | 'job.run'
+  | 'job.start'
   | 'job.stop'
   | 'job.pause'
   | 'job.resume'
+  | 'job.schedule'
+  | 'job.unschedule'
+  | 'run.stop'
+  | 'run.resume'
   | 'worktree.claim'
   | 'worktree.release'
   | 'worktree.sync'
@@ -399,6 +453,7 @@ export type ActionKind =
   | 'jobs.install'
   | 'job.uninstall'
   | 'pr.merge'
+  | 'host.clear'
   | 'terminal.open'
   | 'refresh';
 export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
