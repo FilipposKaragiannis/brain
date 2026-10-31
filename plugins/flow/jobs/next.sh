@@ -1,6 +1,6 @@
 #!/bin/sh
 # Next job: run ready items unattended until a gate, nothing ready, or the step budget.
-#   jobs/next.sh <claude|codex> [item] [--max-steps N] [--workers N] [--wait]
+#   jobs/next.sh <claude|codex> [item] [--max-steps N] [--workers N] [--worker N] [--wait]
 # The unattended loop (templates/run-unattended.sh) does the work; this adds the lock and the
 # log, and turns "nothing ready" (exit 5) and "gate" (exit 4) into quiet exits so a scheduler
 # does not flag them. Schedule it at the cadence you want new work picked up. With notify.idle
@@ -13,14 +13,20 @@
 # (launchd starts no run while the last is alive). The launchd agent abandons what its run
 # leaves behind (AbandonProcessGroup), or launchd would end every worker when the job exits.
 # --wait stays until every worker ends and exits with the first failure.
+# jobs.workers in .flow/config.yaml ({claude: 1, codex: 2}) splits the workers across hosts: a
+# run of the queue with no --workers starts each worker on its own host, numbered in the map's
+# order across hosts, claude first (next-1 on claude, next-2 and next-3 on codex), and the host
+# argument only names the run. --workers N on the command line starts N on the host argument.
+# --worker N is one worker, as the job starts it; N is a number, so status and pause know it.
 set -u
 job=next
 . "$(dirname "$0")/_job.sh"
+. "$FLOW_PLUGIN/lib/workers.sh"
 host="${1:-}"; shift || true
-workers=1; worker=""; item=""; pass=""; wait_all=0
+workers=1; workers_given=0; worker=""; item=""; pass=""; wait_all=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --workers) workers="$2"; shift 2 ;;
+    --workers) workers="$2"; workers_given=1; shift 2 ;;
     --worker) worker="$2"; shift 2 ;;
     --max-steps) pass="$pass --max-steps $2"; shift 2 ;;
     --wait) wait_all=1; shift ;;
@@ -29,13 +35,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$workers" in ''|*[!0-9]*|0) die "--workers takes a number from 1" 2 ;; esac
+case "${worker:-1}" in ''|*[!0-9]*|0) die "--worker takes a number from 1; to split the workers across hosts, set jobs.workers in .flow/config.yaml" 2 ;; esac
+# plan: one host:count word per host whose workers this run starts; empty for one run in place.
+# A paused run never reads it, and a bad jobs.workers stops the run before the tracker is touched.
 # A tracker that keeps a board (the GitHub adapter's sync) is brought in step once per schedule,
 # so an item whose last missing field was just set shows as ready before a worker looks.
 # Gates the owner answered on the tracker (an /answer comment) clear first, so the item they free
 # can be picked in this same schedule. Then the sweep frees the worktrees whose PR the owner
 # merged (steward.sh sweep), so the pool has room before a worker claims.
+plan=""
 if [ -z "$worker" ]; then
   job_skip_if_paused
+  if [ -z "$item" ] && [ "$workers_given" -eq 0 ] && ! plan="$(jobs_workers 2>&1)"; then
+    printf '%s\n' "$plan" >&2; job_clock; job_say "error: ${plan#flow: }" >/dev/null; job_record 2; exit 2
+  fi
+  if [ -z "$plan" ] && [ "$workers" -gt 1 ]; then plan="$host:$workers"; fi
   mkdir -p "$(job_log_dir)"
   if flow_lock answers; then
     for a in $(adapters_configured); do
@@ -48,9 +62,9 @@ if [ -z "$worker" ]; then
     [ -x "$FLOW_PLUGIN/adapters/$a/sync.sh" ] && { adapter sync "$a" >/dev/null 2>&1 || true; }
   done
 fi
-if [ "$workers" -gt 1 ] && [ -z "$worker" ]; then
+if [ -n "$plan" ]; then
   [ -z "$item" ] || die "--workers runs the queue; drop the item, or run one worker for it" 2
-  host_check "$host" || exit 2
+  for hn in $plan; do host_check "${hn%:*}" || exit 2; done
   [ -x "$0" ] || die "$0 is not executable, so no worker can start" 2
   # detached <log> <command...>: runs the command in its own session, outside the scheduler's
   # process group; a command that cannot start is a line in <log>, as the worker would write it.
@@ -62,13 +76,16 @@ except OSError as e:
     with open(sys.argv[1], "a") as log: log.write("%s\tnext-%s\tstopped: cannot start: %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), sys.argv[5], e))
     sys.exit(1)' "$@" </dev/null; }
   pids=""; k=1
-  while [ "$k" -le "$workers" ]; do
-    # shellcheck disable=SC2086
-    if [ "$wait_all" -eq 1 ]; then "$0" "$host" --worker "$k" $pass &
-    else detached "$(job_log_dir)/next-$k.log" "$0" "$host" --worker "$k" $pass &
-    fi
-    pids="$pids $!"
-    k=$((k + 1))
+  for hn in $plan; do
+    i=1
+    while [ "$i" -le "${hn#*:}" ]; do
+      # shellcheck disable=SC2086
+      if [ "$wait_all" -eq 1 ]; then "$0" "${hn%:*}" --worker "$k" $pass </dev/null &
+      else detached "$(job_log_dir)/next-$k.log" "$0" "${hn%:*}" --worker "$k" $pass &
+      fi
+      pids="$pids $!"
+      k=$((k + 1)); i=$((i + 1))
+    done
   done
   [ "$wait_all" -eq 1 ] || exit 0
   rc=0
