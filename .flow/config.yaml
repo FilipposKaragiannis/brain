@@ -1,0 +1,113 @@
+# flow configuration. Read by every flow script on both hosts. Keep it flat: key: value,
+# nested maps, lists as '- item' or [a, b]. No anchors, no multi-line strings.
+adapters:
+  default: github
+  # bug: local    # keep bugs out of GitHub
+base: main
+# Gates the flow clears itself, by item size. Only plan-approval can be listed. Merge, interview,
+# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined.
+auto_gates:
+  # plan-approval: S,M
+github:
+  repo: FilipposKaragiannis/brain
+  limit: 500
+  # Opt in to the issue types, the org issue fields and one project's Status:
+  # types: true                 # kind sets the type (Epic, Bug, Task); flow:new --type picks others
+  # fields:
+  #   size: Size                # a single-select issue field replaces the size: labels
+  #   priority: Priority        # orders the ready items
+  #   area: Area                # the area intake files a note under, from its section
+  # priority_order: [P0, P1, P2, P3]
+  # ready_needs: [priority, size]   # an unstarted item without these is not ready
+  # project: 1                  # the project whose Status follows the flow state
+  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)
+  # status:                     # override the Status names, one key each:
+  #   gate: Needs you           # also backlog, ready, running, review
+# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism.
+# A claim with no free worktree adds one (named after the last entry, ../brain-wt-<n>)
+# while the pool is below pool_max, and the steward appends it here. 0 never adds.
+pool:
+pool_max: 3
+# Git-ignored files a new worktree gets from the main worktree when it lacks them, and
+# commands run in a new worktree after that (steward.sh setup <path> re-runs both).
+worktree_copy:
+  - .claude/settings.local.json
+worktree_setup:
+  - cd plugins/console/app && npm ci --silent && cd ui && npm ci --silent
+# Project gates the verifier runs after build, format and tests: name: command, run from the root.
+# A gate that only matters for some files takes a map: command, and paths (globs; it runs when a
+# changed file matches one, else the report says it was skipped).
+gates:
+  # Brain has no .standards/config.json, so these are its tests: tools/test.sh, split by plugin.
+  lint: tools/lint.sh
+  flow:
+    command: sh plugins/flow/tests/run.sh
+    paths: [plugins/flow/**]
+  standards:
+    command: sh plugins/standards/hooks/tests/run.sh
+    paths: [plugins/standards/**]
+  meta:
+    command: sh plugins/meta/tests/run.sh
+    paths: [plugins/meta/**]
+  console:
+    command: sh plugins/console/tests/run.sh && cd plugins/console/app && npm run --silent check
+    paths: [plugins/console/**]
+  tools:
+    command: sh tools/tests/run.sh
+    paths: [tools/**]
+# Changed files matching these globs raise the feel-test gate after verify passes.
+feel_test_paths:
+  - plugins/console/app/ui/**
+notify:
+  desktop: true
+  idle: false   # true: the scheduled next job says once when it finds nothing ready
+  health: true  # false: the health job still logs what it finds, but sends no notification
+  # Slack: set FLOW_SLACK_WEBHOOK in the environment of the session or the scheduler (keeps the URL
+  # out of the repository). A URL here is the fallback; empty with no variable disables Slack.
+  slack_webhook: ""   # Slack incoming webhook URL
+# Who each review round asks, by mention in its own PR comment: codex, claude, a GitHub login, or
+# copilot (asked through the reviewers API). The comments job asks a silent reviewer again.
+reviews:
+  reviewers: [codex]
+  # chase_after: 1h         # a request with no answer this long is asked again
+  # max_chases: 2           # asks again per request before the owner hears of it
+# Scheduled jobs (.flow/jobs/*.sh).
+jobs:
+  # host: claude             # the host the scheduled jobs run on: claude (the default) or codex
+  # workers: {claude: 1, codex: 2}  # next's workers per host; drop --workers from schedule.next
+  # The model and effort of the session a job starts (comments, intake, retro, and the next
+  # job's steps with no agent: design, implement, review, explain), one pair per host: a job
+  # reads the pair of the host it runs on. Each value goes to that host as written,
+  # so name a model the host knows. Empty means the host's own default: no flag is passed.
+  claude:
+    model: ""                # a Claude model or alias, e.g. opus or sonnet (claude --model)
+    effort: ""               # low, medium, high, xhigh or max (claude --effort)
+  codex:
+    model: ""                # a Codex model, e.g. gpt-6-sol (codex exec -m)
+    effort: ""               # low, medium, high or xhigh (model_reasoning_effort)
+  marketplace: ""            # the marketplace checkout the weekly retro opens its PR from
+  # permission_mode: auto    # dontAsk (default) denies edits without an allow list; auto lets the classifier decide
+  # The jobs' schedule on this machine: flow:jobs install loads it (launchd on macOS).
+  # The health job checks the worktree pool and the gates and spends no model while all is well,
+  # so it is the one schedule set here:
+  schedule:
+    health: every 15m
+    # next: every 30m --workers 1 --max-steps 15
+    # comments: every 30m
+    # intake: daily 02:00
+    # retro: weekly sun 03:00
+  # health:                   # what the health job does with a claim, and when it speaks up
+  #   grace: 10m              # a run record with no live process for this long is a dead run
+  #   max_resumes: 3          # resumes of a dead run in a row, while the step does not advance
+  #   behind_base: 20         # a task branch more commits behind the base gets the base merged in
+  #   gate_reminder: 24h      # a gate waiting this long gets one reminder per interval
+# The intake job files the notes in this file as items (jobs/intake.sh, nightly):
+# intake:
+#   notes: docs/notes.md      # in the repo: committed and pushed after each run (commit: false to stop)
+#   batch: 10
+#   answers: docs/answers.md  # answered questions (default answers.md beside the notes)
+#   dropped: docs/dropped.md  # dropped notes with their reasons (default dropped.md beside the notes)
+#   rules: .flow/intake.md    # how a note becomes an item (default: this file if it exists, else flow's rules)
+# The retro job commits .flow/lessons.jsonl and .flow/retros.log and pushes them after each run:
+# retro:
+#   commit: false             # to keep them uncommitted
