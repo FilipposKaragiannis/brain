@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { BoardFacts, BoardItem } from './collectors/board.ts';
+import { UNRANKED } from './collectors/board.ts';
 import type { ClaimRecord, FlowHomeFacts, GateRecord, RunRecord } from './collectors/flowHome.ts';
 import { poolPaths } from './collectors/flowHome.ts';
 import type { GitFacts, GitWorktree } from './collectors/git.ts';
@@ -41,7 +42,6 @@ const GITHUB = 'https://github.com';
 const GITHUB_ADAPTER = 'github';
 /** Items the next job never takes on their own; readiness counts the work under them. */
 const EPIC = 'epic';
-const UNRANKED = 999;
 /** The merge gate: the one gate that asks a person to merge a ready pull request. */
 const MERGE_GATE = 'merge';
 const PULL_PATH = /^(.*\/pull\/\d+)/;

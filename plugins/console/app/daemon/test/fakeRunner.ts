@@ -47,6 +47,12 @@ export const BOARD_JSON = JSON.stringify({
 });
 
 /**
+ * `board.sh --json` on a local-adapter project, captured from `_item.py list`: local:task/3 waits
+ * on the open local:task/1, local:task/4 on local:task/2, which is closed and so not listed.
+ */
+export const LOCAL_BOARD_JSON = readFileSync(path.join(FIXTURES, 'local', 'board.json'), 'utf8');
+
+/**
  * `gh pr list --json` shaped from real captures: #560 is an open pull as gh printed it, and #20
  * carries the real check rollup of a merged pull whose domain tests failed on one run and passed
  * on a later one (two job ids). #21, #22 and the fork #23 are built by hand in the same shape.

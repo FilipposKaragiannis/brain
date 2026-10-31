@@ -90,7 +90,9 @@ chase_row() { # chase_row <pr> <row> <after s> <max> <head sha>: act on one revi
   fi
 }
 chase_pr() { # chase_pr <pr>
-  after="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds reviews.chase_after "$(cfg reviews.chase_after | sed "s/^\$/$DEFAULT_CHASE_AFTER/")")" || exit 2
+  # An unset key prints nothing, not an empty line, so the default is a fallback, not a sed.
+  after="$(cfg reviews.chase_after)"
+  after="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds reviews.chase_after "${after:-$DEFAULT_CHASE_AFTER}")" || exit 2
   max="$(cfg reviews.max_chases)"; max="${max:-$DEFAULT_MAX_CHASES}"
   head="$(gh pr view "$1" -R "$repo" --json headRefOid -q .headRefOid)" || exit 1
   home="$(flow_home)"; mkdir -p "$home/reviews"

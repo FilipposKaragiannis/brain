@@ -13,7 +13,7 @@ import type { ReconcileInput } from '../src/reconcile.ts';
 import { DisagreementSettler } from '../src/settle.ts';
 import type { ReadMarks } from '../src/settle.ts';
 import type { Freshness, Snapshot } from '../src/snapshot.ts';
-import { BOARD_JSON, FIXTURE_ROOT, JOBS_JSON, fakeRunner } from './fakeRunner.ts';
+import { BOARD_JSON, FIXTURE_ROOT, JOBS_JSON, LOCAL_BOARD_JSON, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const fresh: Freshness = { at: NOW.toISOString(), ageSeconds: 0, ok: true, error: null };
@@ -123,6 +123,20 @@ test('Items_EngagedFirstThenRank', async () => {
 test('Items_BodyDropped', async () => {
   const seven = parseBoard(BOARD_JSON).items[0] as unknown as Record<string, unknown>;
   assert.equal('body' in seven, false, 'because the snapshot must stay small');
+});
+
+test('LocalBoard_ComputedFieldsFilledIn', () => {
+  const byId = Object.fromEntries(parseBoard(LOCAL_BOARD_JSON).items.map((item) => [item.id, item]));
+  assert.deepEqual(byId['local:task/3']?.open_blockers, ['local:task/1'], 'because its blocker is an open item on the board');
+  assert.deepEqual(byId['local:task/4']?.open_blockers, [], 'because its blocker is closed, so the board does not list it');
+  assert.deepEqual([byId['local:task/1']?.rank, byId['local:task/1']?.needs], [999, []], 'because the local adapter ranks nothing and lists no needs');
+});
+
+test('LocalBoard_ItemsGetStates', async () => {
+  const facts = await input();
+  facts.board = parseBoard(LOCAL_BOARD_JSON);
+  const states = Object.fromEntries(reconcile(facts).items.map((item) => [item.id, item.state]));
+  assert.deepEqual([states['local:task/1'], states['local:task/3'], states['local:task/4']], ['ready', 'blocked', 'ready'], 'because the daemon crashed on these items before, and only the open blocker holds one back');
 });
 
 test('Disagreements_DeadRunGateLabelsAndMergeless', async () => {

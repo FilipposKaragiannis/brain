@@ -675,6 +675,14 @@ check "chase: a request just under chase_after waits" sh -c "[ $code -eq 0 ] && 
 seed 1810 running 0
 out="$("$P/scripts/comments.sh" chase 91)"
 check "chase: a request just over chase_after is chased" sh -c "printf '%s' '$out' | grep -q 'chased codex' && [ $(posted) = 1 ]"
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [codex]\n  max_chases: 1\n' >> .flow/config.yaml
+seed 3000 running 0
+out="$("$P/scripts/comments.sh" chase 91 2>&1)"; code=$?
+check "chase: an unset chase_after is the 1h default, silently: a request 50m old waits" sh -c "[ $code -eq 0 ] && [ -z '$out' ] && [ $(posted) = 0 ]"
+seed 3700 running 0
+out="$("$P/scripts/comments.sh" chase 91 2>&1)"; code=$?
+check "chase: an unset chase_after is the 1h default: a request 62m old is chased" sh -c "[ $code -eq 0 ] && printf '%s' '$out' | grep -q 'chased codex on #91' && ! printf '%s' '$out' | grep -q chase_after && [ $(posted) = 1 ]"
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [codex]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
 seed 7200 running 0 chase
 rm -rf .flow/reviews; : > .flow/events.log
 first="$("$P/scripts/comments.sh" chase 91)"; second="$("$P/scripts/comments.sh" chase 91)"; code=$?
@@ -801,6 +809,15 @@ check "comments job: a named PR runs at a gate" grep -q 'comments gh#21' "$HOST_
 check "comments job: the merge gate does not stop a pass" grep -q 'comments gh#21' "$HOST_LOG"
 "$P/adapters/github/write-state.sh" 'gh#21' gate=none
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads']=[]; json.dump(d, open(p,'w'))"
+# A pass that stops at a gate leaves the PR as it was: the owner clearing the gate is what is new.
+"$P/jobs/comments.sh" claude >/dev/null; "$P/adapters/github/write-state.sh" 'gh#21' gate=escalation
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: an item at the escalation gate is skipped as gated" sh -c "[ ! -s '$HOST_LOG' ] && tail -2 .flow/log/comments.log | grep -q 'gh#21: waits at the escalation gate, skipped'"
+"$P/scripts/gate.sh" clear 'gh#21' "carry on" >/dev/null
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a cleared gate is new activity, so the item is picked up again" grep -q 'comments gh#21' "$HOST_LOG"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: the clear counts once: the run after it finds nothing new" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: nothing new since the last pass, skipped' .flow/log/comments.log"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['mergeable']='CONFLICTING'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a PR that conflicts with its base is named in the brief" grep -q 'gh#21. The PR conflicts with its base main: run the Conflicts step first.' "$HOST_LOG"
@@ -810,7 +827,7 @@ check "comments job: a base name with shell characters never reaches the brief" 
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['baseRefName']='main'; d['pr']['mergeable']='MERGEABLE'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" codex >/dev/null
-check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec -C $realrepo -s workspace-write' '$HOST_LOG'"
+check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec --json -C $realrepo -s workspace-write' '$HOST_LOG'"
 check "a job starts its skill as typed: /plugin:skill on Claude, \$skill on Codex" sh -c "grep -q 'codex	.*workspace-write.* \\\$comments gh#21' '$HOST_LOG' && [ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow implement gh#7')\" = '/flow:implement gh#7' ]"
 check "the unattended loop starts a skill step as typed" grep -q 'host_skill_prompt "$host" flow "$skill"' "$P/templates/run-unattended.sh"
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
@@ -860,7 +877,7 @@ kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null"
 home2="$work/home2"; mkdir -p "$home2"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    effort: bogus\n' > "$home2/config.yaml"
-check "next job: a bad jobs.claude.effort does not stop it, it never reads the pair" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'quiet: nothing ready'"
+check "next job: a bad jobs.claude.effort stops it before it picks: its steps with no agent run on the pair" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'stopped: exit 2' && grep -q 'jobs.claude.effort is bogus' '$home2/log/next.log'"
 check "health job: a bad jobs.claude.effort does not stop it either" sh -c "FLOW_HOME='$home2' '$P/jobs/health.sh' claude --dry-run >/dev/null 2>&1; [ \$? != 2 ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"job\":\"health\"' && ! tail -1 '$home2/log/runs.jsonl' | grep -q '\"exit\":2'"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  host: vim\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null 2>"$work/job.err"; code=$?
@@ -916,6 +933,10 @@ FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "again" >/de
 check "a paused job exits at once and spends nothing" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q '^.*paused:' && [ ! -s '$HOST_LOG' ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"result\":\"paused'"
 FLOW_HOME="$home2" "$J" pause next >/dev/null
 check "a paused next skips the tracker sync and every worker" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude --workers 2 | grep -q 'paused' && [ ! -f '$home2/log/next-1.log' ]"
+check "a paused next stops a worker started by hand too, recorded as that worker's paused run" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' codex --worker 3 | grep -q 'paused' && tail -1 '$home2/log/runs.jsonl' | grep -q '\"job\":\"next-3\",\"host\":\"codex\".*\"result\":\"paused'"
+FLOW_HOME="$home2" "$P/jobs/next.sh" codex --worker codex > "$work/worker.out" 2>&1; code=$?
+check "a worker label that is not a number is refused, so no worker runs where pause and status cannot see it" sh -c "[ $code = 2 ] && grep -q -- '--worker takes a number from 1; to split the workers across hosts, set jobs.workers' '$work/worker.out' && [ ! -f '$home2/log/next-codex.log' ]"
+check "pause is per job: any worker of next obeys next's pause" sh -c "FLOW_PLUGIN='$P' sh -c '. \"\$FLOW_PLUGIN/jobs/_job.sh\"; job=next-codex-1; [ \"\$(job_base)\" = next ] && job=next-2 && [ \"\$(job_base)\" = next ] && job=comments && [ \"\$(job_base)\" = comments ]' '$P/jobs/x'"
 FLOW_HOME="$home2" "$J" resume all >/dev/null
 check "resume all clears every pause" sh -c "! ls '$home2'/log/*.paused 2>/dev/null"
 check "jobs: an unknown job is refused" sh -c "! '$J' history vim 2>/dev/null"
@@ -950,6 +971,28 @@ FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
 check "status: an agent from before AbandonProcessGroup says to reinstall it" sh -c "python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert n[\"stale\"] and n[\"next\"]==\"reinstall: jobs.sh install next\", n' '$work/status.json'"
 FLOW_HOME="$home2" "$J" install next > /dev/null; FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
 check "status: a reinstalled agent is not stale" sh -c "python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert not n[\"stale\"], n' '$work/status.json'"
+check "status: the next schedule's --workers 2 is two workers on jobs.host" sh -c "python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert [(w[\"job\"],w[\"host\"]) for w in n[\"workers\"]]==[(\"next-1\",\"claude\"),(\"next-2\",\"claude\")], n[\"workers\"]' '$work/status.json'"
+check "status: last skips a paused run; last_run and latest keep it, with its reason" sh -c "python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"retro\"]; assert r[\"last_run\"][\"outcome\"]==\"paused\" and r[\"last_run\"][\"reason\"]==\"the job is paused\", r[\"last_run\"]; assert r[\"latest\"][\"paused\"]==r[\"last_run\"]; assert r[\"last\"] is None or r[\"last\"][\"outcome\"]!=\"paused\", r[\"last\"]' '$work/status.json'"
+printf '{"job":"comments","host":"claude","at":"%s","seconds":0,"exit":0,"result":"skipped: run 4242 still going"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$home2/log/runs.jsonl"
+FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
+check "status: a run a live lock skipped is the comments job's last_run and latest skipped, with why" sh -c "python3 -c 'import json,sys; c={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"comments\"]; s=c[\"latest\"][\"skipped\"]; assert s[\"reason\"]==\"run 4242 still going\" and s[\"host\"]==\"claude\" and c[\"last_run\"]==s, c; assert c[\"last\"] is None or c[\"last\"][\"outcome\"]!=\"skipped\"' '$work/status.json'"
+check "status: each worker carries its newest run of any kind" sh -c "python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert all(\"last_run\" in w and \"running\" in w for w in n[\"workers\"]), n[\"workers\"]' '$work/status.json'"
+cp "$home2/config.yaml" "$work/config.workers"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\nnotify:\n  desktop: false\njobs:\n  workers: {claude: 1, codex: 2}\n  schedule:\n    next: every 30m --max-steps 15\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install next > /dev/null; FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
+check "status: jobs.workers shows each worker on its host, numbered across the hosts, claude first" sh -c "python3 -c 'import json,sys; n={x[\"job\"]:x for x in json.load(open(sys.argv[1]))}[\"next\"]; assert [(w[\"job\"],w[\"host\"]) for w in n[\"workers\"]]==[(\"next-1\",\"claude\"),(\"next-2\",\"codex\"),(\"next-3\",\"codex\")], n[\"workers\"]' '$work/status.json'"
+check "status prints the workers of next under the table, with their hosts" sh -c "FLOW_HOME='$home2' '$J' status > '$work/status.out' && grep -q '^Workers of next:' '$work/status.out' && grep -q '^- next-1 on claude: ' '$work/status.out' && grep -q '^- next-3 on codex: last paused ' '$work/status.out'"
+check "install keeps the next command plain: the workers come from the config at each run" grep -q 'next.sh claude --max-steps 15<' "$work/agents/$lbl.next.plist"
+printf 'jobs:\n  workers:\n    codex: 1\n    claude: 2\n' > "$work/workers.yaml"
+check "jobs.workers as a block map is read too, claude first whatever the order" sh -c "FLOW_PLUGIN='$P' sh -c '. \"\$FLOW_PLUGIN/lib/flow.sh\"; . \"\$FLOW_PLUGIN/lib/host.sh\"; . \"\$FLOW_PLUGIN/lib/workers.sh\"; f=\"\$1\"; config_file() { echo \"\$f\"; }; [ \"\$(jobs_workers | tr \"\\n\" \" \")\" = \"claude:2 codex:1 \" ]' _ '$work/workers.yaml'"
+printf 'adapters:\n  default: local\nbase: main\njobs:\n  workers: {claude: 1, vim: 2}\n  schedule:\n    next: every 30m\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install next > "$work/install.out" 2>&1; code=$?
+check "install refuses a jobs.workers host other than claude or codex, exit 2, naming its line" sh -c "[ $code = 2 ] && grep -q \"flow: .*config.yaml:5: jobs.workers names the host 'vim'\" '$work/install.out'"
+printf 'adapters:\n  default: local\nbase: main\njobs:\n  workers: {claude: two}\n  schedule:\n    next: every 30m\n' > "$home2/config.yaml"
+check "run refuses a count that is not a whole number, exit 2" sh -c "FLOW_HOME='$home2' '$J' run next 2>&1 | grep -q \"jobs.workers.claude is 'two'\"; FLOW_HOME='$home2' '$J' run next >/dev/null 2>&1; [ \$? = 2 ]"
+printf 'adapters:\n  default: local\nbase: main\njobs:\n  workers: {claude: 1}\n  schedule:\n    next: every 30m --workers 2\n' > "$home2/config.yaml"
+check "install refuses jobs.workers beside --workers in the next schedule" sh -c "FLOW_HOME='$home2' '$J' install next 2>&1 | grep -q 'jobs.workers and --workers in jobs.schedule.next both set the workers: keep one'"
+cp "$work/config.workers" "$home2/config.yaml"
 printf 'jobs:\n  schedule:\n    next: hourly\n' > "$home2/config.yaml"
 check "install refuses a schedule it cannot read" sh -c "! FLOW_HOME='$home2' '$J' install next 2>&1 | grep -q 'as $lbl'"
 printf 'jobs:\n  schedule:\n    next: every 30m\n    intake: weekly sun 03:30\n' > "$home2/config.yaml"
@@ -1333,6 +1376,24 @@ FLOW_PLUGIN="$failing" "$failing/jobs/next.sh" claude --workers 2 --max-steps 1 
 check "--workers --wait: a worker's failure is the job's exit" [ "$code" -eq 9 ]
 check "--workers with an item is refused" sh -c "! '$P/jobs/next.sh' claude local:task/1 --workers 2 2>/dev/null"
 check "--workers 0 is refused" sh -c "! '$P/jobs/next.sh' claude --workers 0 2>/dev/null"
+# A plugin copy whose loop only notes the host it was given: which worker ran where.
+hosted="$work/plugin-hosted"; cp -R "$P" "$hosted"; rm -rf "$hosted/evals/results"
+printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s/hosted.log"\n' "$work" > "$hosted/templates/run-unattended.sh"
+cp .flow/config.yaml "$work/config.par"; printf 'jobs:\n  workers: {claude: 1, codex: 2}\n' >> .flow/config.yaml
+runs_before="$(wc -l < .flow/log/runs.jsonl | tr -d ' ')"
+: > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" claude --max-steps 1 --wait >/dev/null 2>&1; code=$?
+check "jobs.workers: one next run starts each worker on its host" sh -c "[ $code = 0 ] && [ \"\$(sort '$work/hosted.log' | tr '\\n' ' ')\" = 'claude codex codex ' ]"
+# Only this run's lines, each whole: three workers end at once, and each line is one write.
+check "jobs.workers: next-1 ran on claude, next-2 and next-3 on codex, as runs.jsonl says" sh -c "python3 -c 'import json,sys; new=[json.loads(l) for l in open(sys.argv[1]).readlines()[int(sys.argv[2]):]]; got={(r[\"job\"],r.get(\"host\")) for r in new}; assert {(\"next-1\",\"claude\"),(\"next-2\",\"codex\"),(\"next-3\",\"codex\")} <= got, new' .flow/log/runs.jsonl $runs_before"
+: > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" codex --workers 2 --max-steps 1 --wait >/dev/null 2>&1
+check "jobs.workers: --workers N on the command line starts N on the host it names instead" [ "$(sort "$work/hosted.log" | tr '\n' ' ')" = 'codex codex ' ]
+: > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" claude local:task/1 --max-steps 1 >/dev/null 2>&1
+check "jobs.workers: a run for one item is one run on the host it names" [ "$(cat "$work/hosted.log")" = claude ]
+cp "$work/config.par" .flow/config.yaml; printf 'jobs:\n  workers: {claude: 1, gemini: 1}\n' >> .flow/config.yaml
+: > "$work/hosted.log"; FLOW_PLUGIN="$hosted" "$hosted/jobs/next.sh" claude --max-steps 1 --wait > "$work/hosted.out" 2>&1; code=$?
+check "jobs.workers: a host other than claude or codex stops the run, exit 2, before any worker" sh -c "[ $code = 2 ] && [ ! -s '$work/hosted.log' ] && grep -q \"jobs.workers names the host 'gemini'\" '$work/hosted.out'"
+check "jobs.workers: the refused run is a failed run in runs.jsonl, so status shows it" sh -c "tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"next\".*\"exit\":2,\"result\":\"error: .*jobs.workers names the host'"
+cp "$work/config.par" .flow/config.yaml
 cd "$repo"
 
 echo "help"
@@ -1919,6 +1980,20 @@ check "comments job: uncommitted changes with no note get one, and the pass is t
 check "comments job: a pass that completes with the tree still dirty keeps the note" [ -f "$wm/.flow/reports/gh-77/comments-resume.md" ]
 rm "$wm/half.txt"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: a pass that completes with a clean tree removes the note" [ ! -f "$wm/.flow/reports/gh-77/comments-resume.md" ]
+# Another session in the item's worktree: the job never edits under it, named or not.
+printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(updatedAt='2026-10-25T01:30:00Z'); json.dump(d, open(p,'w'))"
+: > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: an item whose worktree another session works in is skipped, and the log says which" sh -c "[ ! -s '$work/host77.log' ] && grep -q '90: another session works in .*app-wt-.* (process 4242), skipped' .flow/log/comments.log && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 0 PR(s), 1 in use by another session'"
+: > "$FLOW_HEALTH_PROCS"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: once that session ends, the pass runs" grep -q 'comments 90' "$work/host77.log"
+# A PR from a local item's branch (flow/local-task-1) names its item too, so it is skipped the same way.
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/$(item_slug "$mg")', updatedAt='2026-10-25T01:45:00Z'); json.dump(d, open(p,'w'))"
+printf '{"item":"%s","branch":"flow/%s","base":"main"}\n' "$mg" "$(item_slug "$mg")" > "$wm/.flow/claim.json"
+printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"
+: > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: a PR from a local item's branch whose worktree another session works in is skipped" sh -c "[ ! -s '$work/host77.log' ] && tail -2 .flow/log/comments.log | grep -q '90: another session works in .*app-wt-.* (process 4242), skipped'"
+: > "$FLOW_HEALTH_PROCS"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 # P2-7: a reports folder in a worktree another item holds gets no dirty-tree note.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-78', updatedAt='2026-10-25T02:00:00Z'); json.dump(d, open(p,'w'))"
 mkdir -p "$wm/.flow/reports/gh-78" && printf 'other work\n' > "$wm/other.txt"
@@ -2024,6 +2099,121 @@ check "json_obj without jq: bytes that are not UTF-8 are replaced and the object
 check_all "runs.jsonl: seconds and exit are numbers on every line, result a string" '[ -s "$home2/log/runs.jsonl" ] && python3 -c "import json,sys
 for l in open(sys.argv[1]):
     r = json.loads(l); assert type(r[\"seconds\"]) is int and type(r[\"exit\"]) is int and type(r[\"result\"]) is str, l" "$home2/log/runs.jsonl"'
+
+echo "unattended steps: the model, the architect, the cache, the usage, a host stop (#65)"
+mkdir -p "$work/cost" && cd "$work/cost" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+git worktree add -q --detach ../cost-wt-1 && git worktree add -q --detach ../cost-wt-2
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ../cost-wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    model: claude-jobs-x\n    effort: low\n  codex:\n    model: gpt-jobs-y\n    effort: medium\n' > .flow/config.yaml
+# Host stubs that print what each host prints with the flags host_run passes: Claude one result
+# object, Codex one event per line. FAKE_HOST picks the session: ok does the step (it writes the
+# report the brief names), budget and auth fail as the hosts do on a spend limit and a login,
+# other fails on something else, quote ends well with text that quotes a limit.
+mkdir -p "$work/costbin"; export COST_LOG="$work/cost.log"
+cat > "$work/costbin/claude" <<'STUB'
+#!/bin/sh
+printf 'claude\tttl=%s/%s\t%s\n' "${CLAUDE_CODE_PROMPT_CACHE_TTL:-}" "${CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL:-}" "$*" >> "$COST_LOG"
+case "${FAKE_HOST:-ok}" in
+  budget) echo '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 422 {\"type\":\"error\",\"error\":{\"type\":\"ExceededBudget\",\"message\":\"The seat reached its spend limit.\"}}","total_cost_usd":0}'; exit 1 ;;
+  auth) echo '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}'; exit 1 ;;
+  other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
+  errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
+  quote) echo '{"type":"result","subtype":"success","is_error":false,"result":"Done. The old log said: Credit balance is too low."}'; exit 0 ;;
+esac
+brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
+report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" 2>/dev/null | head -1)"
+[ -z "$report" ] || { mkdir -p "$(dirname "$report")" && printf '{"status":"done","summary":"stub"}\n' > "$report"; }
+echo '{"type":"result","subtype":"success","is_error":false,"result":"did the step","total_cost_usd":0.25,"usage":{"input_tokens":120,"output_tokens":30,"cache_creation_input_tokens":400,"cache_read_input_tokens":900},"modelUsage":{"claude-jobs-x":{"costUSD":0.25}}}'
+STUB
+cat > "$work/costbin/codex" <<'STUB'
+#!/bin/sh
+printf 'codex\t\t%s\n' "$*" >> "$COST_LOG"
+case "${FAKE_HOST:-ok}" in
+  auth) echo '{"type":"thread.started","thread_id":"t"}'
+        echo '{"type":"error","message":"unexpected status 401 Unauthorized: Your access token could not be refreshed"}'
+        echo '{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}'; exit 1 ;;
+esac
+brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
+report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" 2>/dev/null | head -1)"
+[ -z "$report" ] || { mkdir -p "$(dirname "$report")" && printf '{"status":"done","summary":"stub"}\n' > "$report"; }
+echo '{"type":"thread.started","thread_id":"t"}'
+echo '{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"did the step"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":50,"cached_input_tokens":20,"output_tokens":5}}'
+STUB
+chmod +x "$work/costbin/claude" "$work/costbin/codex"
+cpath="$work/costbin:$PATH"
+lastrun() { tail -1 .flow/log/runs.jsonl | jget "$1"; }
+mt="$("$P/scripts/new.sh" task "Cost medium" --size M --body "## Acceptance
+- [ ] m")"
+lt="$("$P/scripts/new.sh" task "Cost large" --size L --body "## Acceptance
+- [ ] l")"
+out="$("$P/scripts/next.sh" "$mt" --json)"
+check_all "architect: an M task's design step runs no architect" '[ "$(printf "%s" "$out" | jget architect)" = no ] && grep -q "^- Architect: no (profile task-M)" "$(printf "%s" "$out" | jget brief)"'
+rm -f ".flow/runs/$(item_slug "$mt").json"
+out="$("$P/scripts/next.sh" "$lt" --json)"
+check_all "architect: an L task's design step runs the architect" '[ "$(printf "%s" "$out" | jget architect)" = yes ] && grep -q "^- Architect: yes (profile task-L)" "$(printf "%s" "$out" | jget brief)"'
+rm -f ".flow/runs/$(item_slug "$lt").json"
+check "architect: on for L tasks and epics only, a switch for every profile" python3 -c "import json,sys; p=json.load(open(sys.argv[1])); a=p['architect']; assert set(a)==set(p['profiles']) and [k for k in a if a[k]]==['task-L','epic'], a" "$P/profiles.json"
+check "architect: the plan skill reads the switch and runs no architect on no" sh -c "grep -q 'architect.<profile>' '$P/skills/plan/SKILL.md' && grep -q 'On no, spawn no architect' '$P/skills/plan/SKILL.md'"
+: > "$COST_LOG"
+PATH="$cpath" "$P/templates/run-unattended.sh" claude "$mt" --max-steps 1 > "$work/cost.out" 2>&1
+check "a step with no agent runs on jobs.claude.model and jobs.claude.effort" grep -q 'claude	.*--model claude-jobs-x --effort low' "$COST_LOG"
+check "claude sessions write the 5-minute prompt cache, main and subagents" grep -q 'claude	ttl=5m/5m	-p .*--output-format json' "$COST_LOG"
+check_all "the step session is a line in runs.jsonl: item, step, model, effort, usage, cost" '[ "$(lastrun item)" = "$mt" ] && [ "$(lastrun step)" = design ] && [ "$(lastrun model)" = claude-jobs-x ] && [ "$(lastrun effort)" = low ] && [ "$(lastrun usage.input_tokens)" = 120 ] && [ "$(lastrun usage.cache_read_input_tokens)" = 900 ] && [ "$(lastrun cost_usd)" = 0.25 ] && [ "$(lastrun models.0)" = claude-jobs-x ] && [ "$(lastrun exit)" = 0 ]'
+check_all "a step line has no job key, so the job readers pass over it" '! tail -1 .flow/log/runs.jsonl | grep -q "\"job\"" && [ "$(python3 -I "$P/scripts/_jobs.py" history .flow/log next 10)" = "No runs of next yet." ]'
+check "the host's text reaches the log as text, not as its JSON" sh -c "grep -qx 'did the step' '$work/cost.out' && ! grep -q 'total_cost_usd' '$work/cost.out'"
+: > "$COST_LOG"
+PATH="$cpath" "$P/templates/run-unattended.sh" claude "$mt" --max-steps 1 >/dev/null 2>&1
+check "a step with an agent keeps the roster's model and effort" sh -c "grep -q -- '--model $(agent_model planner) --effort $(agent_effort planner)' '$COST_LOG' && ! grep -q claude-jobs-x '$COST_LOG'"
+: > "$COST_LOG"
+PATH="$cpath" "$P/templates/run-unattended.sh" codex "$lt" --max-steps 1 >/dev/null 2>&1
+check "a step with no agent runs on jobs.codex.model and jobs.codex.effort, as written" grep -q 'codex		exec --json .*-m gpt-jobs-y -c model_reasoning_effort="medium"' "$COST_LOG"
+check_all "a codex step line sums the turn usage, with no cost" '[ "$(lastrun model)" = gpt-jobs-y ] && [ "$(lastrun usage.input_tokens)" = 50 ] && [ "$(lastrun usage.cached_input_tokens)" = 20 ] && [ "$(lastrun cost_usd)" = null ]'
+"$P/scripts/board.sh" > "$work/cost.board" 2>/dev/null
+check_all "board: the spend per item, summed over its step sessions, codex cached input counted once" 'grep -qF "| $mt | \$0.50 | 2 | 2900 |" "$work/cost.board" && grep -qF "| $lt | \$0.00 | 1 | 55 |" "$work/cost.board" && [ "$("$P/scripts/board.sh" --json 2>/dev/null | jget "spend.$mt.sessions")" = 2 ]'
+: > "$COST_LOG"
+PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; export CLAUDE_CODE_PROMPT_CACHE_TTL=1h; host_run claude . hi' >/dev/null 2>&1
+check "a prompt cache TTL the owner exported wins" grep -q 'claude	ttl=1h/5m' "$COST_LOG"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ../cost-wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    effort: bogus\n' > .flow/config.yaml
+PATH="$cpath" "$P/templates/run-unattended.sh" claude --max-steps 1 > "$work/cost.out" 2>&1; code=$?
+check "a jobs effort the host does not take stops the loop before it claims an item" sh -c "[ $code = 2 ] && grep -q 'jobs.claude.effort is bogus' '$work/cost.out' && [ -z \"\$(ls .flow/runs/*.json 2>/dev/null)\" ]"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ../cost-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+for it in "$mt" "$lt"; do "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$it" >/dev/null 2>&1; done
+st="$("$P/scripts/new.sh" task "Spends" --size S --body "## Acceptance
+- [ ] s")"
+: > "$COST_LOG"
+FAKE_HOST=budget PATH="$cpath" "$P/templates/run-unattended.sh" claude "$st" --max-steps 3 > "$work/cost.out" 2>&1; code=$?
+check_all "a spend limit raises the escalation gate at once, naming the cause and the host's line" '[ "$code" = 4 ] && [ "$("$P/adapters/local/read.sh" "$st" | jget state.gate)" = escalation ] && grep -q "claude failed on a spend limit: API Error: 422 .*ExceededBudget" ".flow/gates/$(item_slug "$st").json"'
+check "a spend limit is one session: no retry, and no run left for health to resume" sh -c "[ \"\$(grep -c . '$COST_LOG')\" = 1 ] && [ ! -f '.flow/runs/$(item_slug "$st").json' ]"
+check_all "the stop names the cause and the item whose gate holds it" '[ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ] && [ "$(jget item < .flow/log/claude.stopped)" = "$st" ]'
+check_all "the step line carries the cause" '[ "$(lastrun result | cut -d: -f1)" = spend-limit ]'
+s2="$("$P/scripts/new.sh" task "Waits" --size S --body "## Acceptance
+- [ ] w")"
+: > "$COST_LOG"
+PATH="$cpath" "$P/templates/run-unattended.sh" claude --max-steps 1 > "$work/cost.out" 2>&1; code=$?
+check "a stopped host starts no new session: the next loop exits 4 before it picks" sh -c "[ $code = 4 ] && [ ! -s '$COST_LOG' ] && grep -q 'claude is stopped since .* on a spend limit' '$work/cost.out' && [ -z \"\$(ls .flow/runs/*.json 2>/dev/null)\" ]"
+PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' > /dev/null 2>"$work/cost.err"; code=$?
+check "a stopped host starts no session for a job either: host_run refuses, exit 75" sh -c "[ $code = 75 ] && [ ! -s '$COST_LOG' ] && grep -q 'until the gate on $st clears' '$work/cost.err'"
+check "gate list shows the stopped host" sh -c "'$P/scripts/gate.sh' list | grep -q '	claude	stopped	spend-limit: API Error'"
+PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run codex . hi' >/dev/null 2>&1; code=$?
+check "a stop on claude leaves codex running" [ "$code" = 0 ]
+"$P/scripts/gate.sh" clear "$st" "raised the limit" > "$work/cost.out"
+check "clearing the gate that names the stop starts the host again" sh -c "grep -q 'claude starts sessions again' '$work/cost.out' && [ ! -f .flow/log/claude.stopped ]"
+: > "$COST_LOG"; PATH="$cpath" "$P/templates/run-unattended.sh" claude "$s2" --max-steps 1 >/dev/null 2>&1
+check "after the clear a loop starts sessions again" grep -q 'claude	' "$COST_LOG"
+FAKE_HOST=auth PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run codex . hi; echo "cause=$host_cause"' > "$work/cost.out" 2>&1; code=$?
+check_all "an auth error on codex outside any item stops codex and tells the owner" 'grep -q "cause=auth" "$work/cost.out" && [ "$(jget cause < .flow/log/codex.stopped)" = auth ] && grep -q "	host-stopped	codex stopped on an auth error: unexpected status 401 Unauthorized" .flow/events.log'
+"$P/scripts/gate.sh" clear codex > "$work/cost.out"
+check "gate.sh clear <host> starts it again" sh -c "grep -q 'codex starts sessions again' '$work/cost.out' && [ ! -f .flow/log/codex.stopped ]"
+FAKE_HOST=auth PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
+check_all "a Claude login that does not work is an auth stop" '[ "$(jget cause < .flow/log/claude.stopped)" = auth ] && grep -q "Please run /login" .flow/log/claude.stopped'
+"$P/scripts/gate.sh" clear claude >/dev/null
+FAKE_HOST=errors PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' > "$work/cost.out" 2>/dev/null
+check_all "a Claude error result with its words in errors, not result, is logged and stops the host" 'grep -q "Credit balance is too low" "$work/cost.out" && [ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ]'
+"$P/scripts/gate.sh" clear claude >/dev/null
+FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
+FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
+check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1
