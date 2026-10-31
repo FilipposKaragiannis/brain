@@ -563,7 +563,7 @@ health_branch_state() {
 }
 
 # health_free <path>: a free pool worktree sits on its idle branch at the base branch tip; one
-# left detached (a pool from before 1.22.0) moves onto it. A dirty one, one on another branch and
+# left detached (a pool from before 1.24.0) moves onto it. A dirty one, one on another branch and
 # one holding commits the base lacks are only said.
 health_free() {
   hf_name="$(basename "$1")"

@@ -32,7 +32,7 @@ export type FlowConfig = {
 export type GateRecord = { item: string; gate: string; message: string; time: string; host: string; questions: GateQuestion[] | null };
 /**
  * The health job's verdict on a PR waiting at the merge gate (`.flow/reviews/<n>.review.json`,
- * flow 1.22.0 and later): `in-review` while a reviewer the flow asked has not answered, which
+ * flow 1.24.0 and later): `in-review` while a reviewer the flow asked has not answered, which
  * GitHub cannot show for a reviewer asked by a mention, `changes-requested`, or `ready`.
  */
 export type ReviewRecord = { pr: number; state: string; waiting: string[]; at: string };
