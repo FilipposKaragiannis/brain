@@ -8,9 +8,10 @@ import type { Logger } from '../../log.ts';
 import { parseYaml } from '../../yaml.ts';
 import type { YamlMap } from '../../yaml.ts';
 import { applyChange, leafPaths, parseDocument, readsBack, valueAt } from './configDocument.ts';
+import type { Edited } from './configDocument.ts';
 import { readHostDefaults } from './hostDefaults.ts';
 import type { FieldChange, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, FollowUp, HostDefaults, Section } from './schema.ts';
-import { checkChange, checkFileValue, fieldAt, fieldCovering, FLOW_CONFIG_SCHEMA, namedScheduleFields, OTHER_GROUP, schemaSections } from './schema.ts';
+import { checkChange, checkFileValue, fieldAt, fieldCovering, FLOW_CONFIG_SCHEMA, namedScheduleFields, OTHER_GROUP, plainListValue, schemaSections } from './schema.ts';
 
 export type FlowConfigEditorDependencies = {
   projectId: string;
@@ -83,7 +84,7 @@ export function describe(file: string, text: string, hostDefaults: HostDefaults 
   const named = namedScheduleFields(values);
   const sections = sectionsWith(named);
   const warnings = [...FLOW_CONFIG_SCHEMA, ...named].flatMap((spec) => {
-    const value = valueAt(values, spec.path);
+    const value = valueAt(values, spec.path) ?? plainListValue(values, spec);
     if (value === undefined) return [];
     const checked = checkFileValue(spec, value);
     return checked.ok ? [] : [checked.error];
@@ -135,6 +136,20 @@ export function followUpsOf(paths: string[], after: YamlMap): (FollowUp & { path
     found.set(followUp.note, entry);
   }
   return [...found.values()];
+}
+
+/**
+ * A change under a map the file still holds as one plain list (`reviews.reviewers.claude` while
+ * `reviews.reviewers` is a list): the list first becomes the map's field that stands for it, so the
+ * change has a map to go in and the list keeps its meaning.
+ */
+function unfoldPlainList(text: string, path: string): Edited {
+  const spec = FLOW_CONFIG_SCHEMA.find((field) => field.plainList !== undefined && path.startsWith(`${field.plainList}.`));
+  const listed = spec === undefined ? undefined : plainListValue(parseYaml(text), spec);
+  if (spec === undefined || listed === undefined) return { ok: true, text };
+  const removed = applyChange(text, spec.plainList!, 'list', null);
+  if (!removed.ok) return removed;
+  return applyChange(removed.text, spec.path, 'list', typeof listed === 'string' ? [listed] : listed.map(String));
 }
 
 type Request = { kind: 'changes'; changes: FieldChange[]; hash: string; force: boolean } | { kind: 'text'; text: string; hash: string; force: boolean };
@@ -290,8 +305,10 @@ export class FlowConfigEditor {
         const refused = checkUnknown(change);
         if (refused !== null) return { ok: false, error: refused };
       }
+      const unfolded = unfoldPlainList(text, change.path);
+      if (!unfolded.ok) return { ok: false, error: `${change.path}: ${unfolded.error}` };
       const shape = shapeOf(spec, change.value);
-      const edited = applyChange(text, change.path, shape, change.value);
+      const edited = applyChange(unfolded.text, change.path, shape, change.value);
       if (!edited.ok) return { ok: false, error: `${change.path}: ${edited.error}` };
       if (!readsBack(edited.text, change.path, shape, change.value)) return { ok: false, error: `${change.path}: the edit would not read back as written, so nothing was saved` };
       text = edited.text;

@@ -94,10 +94,16 @@ test('FlowSettings_ScheduleChanged_SavesItAndOffersTheReload', async () => {
 });
 
 test('FlowSettings_ListChanged_SentAsAList', async () => {
-  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['reviews.reviewers'] }) }));
-  fireEvent.change(within(group('Reviews')).getByLabelText(label('reviews.reviewers')), { target: { value: 'codex\ncopilot\n' } });
+  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['reviews.reviewers.claude'] }) }));
+  fireEvent.change(within(group('Reviews')).getByLabelText(label('reviews.reviewers.claude')), { target: { value: 'codex\ncopilot\n' } });
   await act(async () => { fireEvent.click(saveButton()); });
-  expect(puts, 'because a list is one item per line in the form and a list in the file').toEqual([{ changes: [{ path: 'reviews.reviewers', value: ['codex', 'copilot'] }], hash: 'h1' }]);
+  expect(puts, 'because a list is one item per line in the form and a list in the file').toEqual([{ changes: [{ path: 'reviews.reviewers.claude', value: ['codex', 'copilot'] }], hash: 'h1' }]);
+});
+
+test('FlowSettings_PlainReviewersList_ShownAsTheDefaultReviewers', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }));
+  const field = within(group('Reviews')).getByLabelText(label('reviews.reviewers.default')) as HTMLTextAreaElement;
+  expect(field.value, 'because a plain reviews.reviewers list is the list every PR gets, the default').toBe('codex');
 });
 
 test('FlowSettings_DirtyFile_RefusedAndSaveAnywayForces', async () => {
@@ -158,12 +164,12 @@ test('FlowSettings_UnsetFieldEdited_StillMarkedDefaultUntilSaved', async () => {
 });
 
 test('FlowSettings_EditsInTwoGroups_OneSaveSendsBoth', async () => {
-  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['base', 'reviews.reviewers'] }) }));
+  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['base', 'reviews.reviewers.default'] }) }));
   fireEvent.change(within(group('Worktree pool')).getByLabelText(label('base')), { target: { value: 'dev' } });
-  fireEvent.change(within(group('Reviews')).getByLabelText(label('reviews.reviewers')), { target: { value: 'codex\ncopilot' } });
+  fireEvent.change(within(group('Reviews')).getByLabelText(label('reviews.reviewers.default')), { target: { value: 'codex\ncopilot' } });
   expect(said(), 'because the bar counts every edit before the save').toMatch(/2 unsaved changes in Worktree pool, Reviews\./);
   await act(async () => { fireEvent.click(saveButton()); });
-  expect(puts, 'because one save writes the file once').toEqual([{ changes: [{ path: 'base', value: 'dev' }, { path: 'reviews.reviewers', value: ['codex', 'copilot'] }], hash: 'h1' }]);
+  expect(puts, 'because one save writes the file once').toEqual([{ changes: [{ path: 'base', value: 'dev' }, { path: 'reviews.reviewers.default', value: ['codex', 'copilot'] }], hash: 'h1' }]);
 });
 
 test('FlowSettings_Discard_DropsEveryEdit', async () => {

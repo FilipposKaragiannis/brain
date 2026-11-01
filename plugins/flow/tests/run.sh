@@ -78,6 +78,8 @@ check "ready: an item that lists its open blockers is judged by that list, with 
 check "ready excludes blocked" [ "$("$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "local:task/1,local:task/2" ]
 "$P/adapters/local/link-pr.sh" "$t2" https://example/pr/1
 check "link-pr"           [ "$("$P/adapters/local/read.sh" "$t2" | jget state.pr)" = "https://example/pr/1" ]
+env -u CODEX_THREAD_ID -u CODEX_SANDBOX CLAUDECODE=1 "$P/adapters/local/link-pr.sh" "$t2" https://example/pr/1
+check "link-pr: a Claude session is recorded as the PR's host" [ "$("$P/adapters/local/read.sh" "$t2" | jget state.pr_host)" = "claude" ]
 "$P/adapters/local/write-state.sh" "$t2" pr=
 
 echo "steward"
@@ -638,6 +640,32 @@ check "request-review with a reviewer: no one else is asked again" sh -c "python
 check "request-review with a reviewer: a bad name is refused" sh -c "'$P/scripts/comments.sh' request-review 91 'please review' 'bad name' 2>&1 >/dev/null | grep -q \"request-review: 'bad name' is not a reviewer name\""
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [bad name]\n' >> .flow/config.yaml
 check "reviewers: a name with a space is refused by name" sh -c "'$P/scripts/comments.sh' reviewers 2>&1 >/dev/null | grep -q \"'bad name' is not a reviewer name\""
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers:\n    claude: [octo-cat]\n    codex:\n      - mona\n    default: [hubot]\n' >> .flow/config.yaml
+check "reviewers --host claude: the claude list of the map" [ "$("$P/scripts/comments.sh" reviewers --host claude | tr '\n' ' ')" = "octo-cat " ]
+check "reviewers --host codex: the codex list of the map, in block form" [ "$("$P/scripts/comments.sh" reviewers --host codex | tr '\n' ' ')" = "mona " ]
+check "reviewers with no host: the default list of the map" [ "$("$P/scripts/comments.sh" reviewers | tr '\n' ' ')" = "hubot " ]
+check "reviewers --host: a host other than claude or codex is refused" sh -c "! '$P/scripts/comments.sh' reviewers --host shell"
+asked() { python3 -c "import json,re; print(' '.join(re.findall(r'flow:review-request (\S+) -->', ' '.join(json.load(open('$FAKE_GH_DIR/issues.json'))['pr'].get('comments', [])))))"; }
+pr_as() { python3 -c "import json,sys; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName=sys.argv[1], body=sys.argv[2], comments=[]); json.dump(d, open(p,'w'))" "$1" "$2"; }
+claude_footer="Adds the slide.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+pr_as flow/x "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check "request-review: a PR whose body says Claude wrote it asks the claude list" [ "$(asked)" = "octo-cat" ]
+pr_as flow/x "Adds the slide.
+
+https://chatgpt.com/codex/tasks/task_e_6a1f"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check "request-review: a PR whose body says Codex wrote it asks the codex list" [ "$(asked)" = "mona" ]
+pr_as flow/x "Adds the slide."; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check "request-review: a PR whose author host is unknown asks the default list" [ "$(asked)" = "hubot" ]
+env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/91 >/dev/null
+check "link-pr: records the host that wrote the PR as pr_host" [ "$("$P/adapters/github/read.sh" 'gh#21' | jget state.pr_host)" = "codex" ]
+pr_as flow/gh-21 "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check "request-review: the pr_host of the item the branch names wins over the body" [ "$(asked)" = "mona" ]
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers:\n    claude: [octo-cat]\n' >> .flow/config.yaml
+check "reviewers --host codex: a map with no codex list and no default gets codex and claude" [ "$("$P/scripts/comments.sh" reviewers --host codex | tr '\n' ' ')" = "codex claude " ]
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [octo-cat]\n' >> .flow/config.yaml
+check "reviewers --host claude: a plain list is the list of every host" [ "$("$P/scripts/comments.sh" reviewers --host claude | tr '\n' ' ')" = "octo-cat " ]
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [codex]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
 seed() { # seed <request age s> <codex status> <+1 count> [chase|reply <body>|lookalike]: one request by the owner and the Codex summary
   python3 - "$FAKE_GH_DIR/issues.json" "$@" <<'PY2'
@@ -845,6 +873,16 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec --json -C $realrepo -s workspace-write' '$HOST_LOG'"
 check "a job starts its skill as typed: /plugin:skill on Claude, \$skill on Codex" sh -c "grep -q 'codex	.*workspace-write.* \\\$comments gh#21' '$HOST_LOG' && [ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow implement gh#7')\" = '/flow:implement gh#7' ]"
 check "the unattended loop starts a skill step as typed" grep -q 'host_skill_prompt "$host" flow "$skill"' "$P/templates/run-unattended.sh"
+# The chase asks the reviewers of the PR's author host: the pr_host of the item its branch names.
+cp .flow/config.yaml "$work/config.jobs"; printf 'reviews:\n  reviewers:\n    claude: [codex]\n    codex: [octo-cat]\n  chase_after: 30m\n' >> .flow/config.yaml
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-21', isDraft=False); json.dump(d, open(p,'w'))"
+"$P/adapters/github/write-state.sh" 'gh#21' pr=https://gh/pull/91 pr_host=claude >/dev/null; seed 7200 running 0; rm -rf .flow/reviews
+"$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a silent reviewer of the author host's list is chased" sh -c "python3 -c \"import json,sys; c=json.loads(sys.argv[1]); assert len(c)==1 and 'flow:chase codex' in c[0], c\" '$(pr_field comments)'"
+"$P/adapters/github/write-state.sh" 'gh#21' pr_host=codex >/dev/null; seed 7200 running 0; rm -rf .flow/reviews
+"$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a reviewer off the author host's list is not chased" [ "$(posted)" = 0 ]
+cp "$work/config.jobs" .flow/config.yaml; "$P/adapters/github/write-state.sh" 'gh#21' pr=https://gh/pull/90 pr_host= >/dev/null
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "jobs.model and jobs.effort reach the host" sh -c "grep -q 'gh#21.*--model haiku --effort low' '$HOST_LOG'"

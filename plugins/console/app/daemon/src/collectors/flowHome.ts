@@ -25,7 +25,7 @@ export type FlowConfig = {
    * so a run of the queue started with no `--workers` splits into workers across the hosts.
    */
   jobsWorkers: boolean;
-  /** `reviews.reviewers` without their `@`: who the flow asks to review each PR, codex and claude when unset. */
+  /** `reviews.reviewers` without their `@`, every list of a map once: who the flow asks to review a PR, codex and claude when unset. */
   reviewers: string[];
   /** What in the file the console read but the plugin no longer does, such as the old `health.behind_base`. */
   deprecated: string[];
@@ -137,17 +137,20 @@ export function parseFlowConfig(source: string): FlowConfig {
     behindBase: behindBase === null ? null : Number(behindBase),
     jobsHost: jobsHostOf(yamlString(map, 'jobs.host')),
     jobsWorkers: (yamlString(map, 'jobs.workers') ?? '').trim() !== '' || Object.keys(yamlMap(map, 'jobs.workers')).length > 0,
-    reviewers: reviewersOf(yamlList(map, 'reviews.reviewers')),
+    reviewers: reviewersOf([...yamlList(map, 'reviews.reviewers'), ...REVIEWER_LISTS.flatMap((list) => yamlList(map, `reviews.reviewers.${list}`))]),
     deprecated,
   };
 }
 
 /** The flow's own default when `reviews.reviewers` is unset (comments.sh). */
 const DEFAULT_REVIEWERS = ['codex', 'claude'];
+/** The lists of a `reviews.reviewers` map: one per host that wrote the PR, and the default. */
+const REVIEWER_LISTS = ['default', 'claude', 'codex'];
 
+/** Every name the lists hold, once each. */
 function reviewersOf(listed: string[]): string[] {
   const names = listed.map((name) => name.trim().replace(/^@/, '')).filter((name) => name !== '');
-  return names.length === 0 ? DEFAULT_REVIEWERS : names;
+  return names.length === 0 ? DEFAULT_REVIEWERS : [...new Set(names)];
 }
 
 async function readText(file: string): Promise<string | null> {

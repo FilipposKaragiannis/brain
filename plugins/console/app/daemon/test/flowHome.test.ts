@@ -247,6 +247,10 @@ test('Reviewers_FromTheConfigElseTheFlowDefault', () => {
   assert.deepEqual(parseFlowConfig('base: main\n').reviewers, ['codex', 'claude'], 'because flow asks codex and claude when the key is unset');
 });
 
+test('Reviewers_AMapPerHost_EveryListedNameOnce', () => {
+  assert.deepEqual(parseFlowConfig('reviews:\n  reviewers:\n    claude: [codex, copilot]\n    codex: [claude, copilot]\n').reviewers, ['codex', 'copilot', 'claude'], 'because the PR cards offer whoever reviews some PR, whichever host wrote it');
+});
+
 test('JobsWorkers_SetInEitherForm_Read', () => {
   assert.equal(parseFlowConfig('jobs:\n  workers: {claude: 1, codex: 2}\n').jobsWorkers, true, 'because the one-line map is how flow init writes it');
   assert.equal(parseFlowConfig('jobs:\n  workers:\n    claude: 2\n').jobsWorkers, true, 'because the nested form is the same plan');
