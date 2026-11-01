@@ -471,6 +471,14 @@ jira_blocker="$(jira_run "$P/adapters/jira/create.sh" task "Blocker")"
 printf '1\n403\n/rest/api/3/issueLink\n' > "$work/jira/fail"
 jira_held="$(jira_run "$P/adapters/jira/create.sh" task "Held" --blocked-by "$jira_blocker" 2>/dev/null)"
 check_all "jira: a blocker whose link Jira refused still holds the new task" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_held" | jget blocked_by)" = "[\"$jira_blocker\"]" ] && jira_run "$P/adapters/jira/list-ready.sh" | python3 -c "import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)]; sys.exit(0 if sys.argv[1] in ids and sys.argv[2] not in ids else 1)" "$jira_blocker" "$jira_held"'
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
+d["issues"]["WID-90"] = {"key": "WID-90", "properties": {}, "comments": [], "remotelinks": [], "fields": {"summary": "Linked", "labels": [], "priority": None,
+  "status": {"name": "To Do", "statusCategory": {"key": "new"}}, "issuetype": {"name": "Task"},
+  "description": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [
+    {"type": "text", "text": "the spec", "marks": [{"type": "link", "attrs": {"href": "https://docs.test/spec"}}]},
+    {"type": "text", "text": " and "}, {"type": "inlineCard", "attrs": {"url": "https://acme.atlassian.net/browse/WID-7"}}]}]}}}
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
+check_all "jira: a description keeps its link targets and smart links" '[ "$(jira_run "$P/adapters/jira/read.sh" jira:WID-90 | jget body)" = "[the spec](https://docs.test/spec) and https://acme.atlassian.net/browse/WID-7" ]'
 jira_config http://acme.atlassian.net
 site_err="$(jira_run "$P/adapters/jira/list.sh" 2>&1 >/dev/null)"; code=$?
 check_all "jira: a jira.site that is not https is refused" '[ "$code" -ne 0 ] && printf "%s" "$site_err" | grep -q "jira.site in .flow/config.yaml must be"'

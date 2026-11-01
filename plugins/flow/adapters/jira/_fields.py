@@ -60,7 +60,9 @@ def from_document(node):
         return node or ""
     kind, children = node.get("type"), node.get("content") or []
     if kind == "text":
-        return node.get("text", "")
+        return linked_text(node)
+    if kind in ("inlineCard", "blockCard", "embedCard"):
+        return (node.get("attrs") or {}).get("url", "")
     if kind == "hardBreak":
         return "\n"
     if kind in ("paragraph", "heading", "codeBlock"):
@@ -73,3 +75,9 @@ def from_document(node):
     if kind == "listItem":
         return "\n".join(from_document(c) for c in children)
     return "\n\n".join(from_document(c) for c in children)
+
+
+def linked_text(node):
+    text = node.get("text", "")
+    href = next(((m.get("attrs") or {}).get("href", "") for m in node.get("marks") or [] if m.get("type") == "link"), "")
+    return "[%s](%s)" % (text, href) if href and href != text else text
