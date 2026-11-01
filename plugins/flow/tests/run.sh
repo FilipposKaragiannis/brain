@@ -458,6 +458,8 @@ jira_task="$(jira_run "$P/adapters/jira/create.sh" task "Sized" --size M)"
 check_all "jira: a size goes to the jira.fields.size field, not a label" '[ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"customfield_10040\"][\"value\"]")" = M ] && [ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"labels\"]")" = "[]" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_task" | jget size)" = M ]'
 jira_run "$P/adapters/jira/write-state.sh" "$jira_task" size=L step=implement
 check_all "jira: write-state moves the size field and labels the step" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_task" | jget state.size)" = L ] && [ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"labels\"]")" = "['"'"'step:implement'"'"']" ]'
+jira_run "$P/adapters/jira/write-state.sh" "$jira_task" size=
+check_all "jira: write-state size= clears the jira.fields.size field" '[ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"customfield_10040\"]")" = None ] && [ -z "$(jira_run "$P/adapters/jira/read.sh" "$jira_task" | jget size)" ]'
 jira_run "$P/adapters/jira/link-pr.sh" "$jira_task" https://gh/pr/9
 check "jira: link-pr adds the PR as a remote link" [ "$(jira_db "[l[\"object\"][\"url\"] for l in d[\"issues\"][\"${jira_task#jira:}\"][\"remotelinks\"]]")" = "['https://gh/pr/9']" ]
 jira_run "$P/adapters/jira/close.sh" "$jira_task"

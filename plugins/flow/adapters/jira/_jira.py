@@ -256,9 +256,9 @@ def cmd_write_state(args):
         if value and value != "none" and prefix + value not in labels:
             changes.append({"add": prefix + value})
     update = {"update": {"labels": changes}} if changes else {}
-    size = next((v for n, v in pairs if n == "size" and v), "")
-    if size and "size" in fields:
-        update["fields"] = {fields["size"]["id"]: field_input(fields["size"], size)}
+    size = next((v for n, v in pairs if n == "size"), None)
+    if size is not None and "size" in fields:
+        update["fields"] = {fields["size"]["id"]: field_input(fields["size"], size) if size else None}
     if update:
         status, answer = call("PUT", "/rest/api/3/issue/" + key, update)
         expect(status, answer, "write the labels of %s%s" % (PREFIX, key))
