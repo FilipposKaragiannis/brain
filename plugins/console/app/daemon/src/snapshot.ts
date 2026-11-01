@@ -105,6 +105,8 @@ export type Claim = {
   step: string;
   claimedAt: string;
   host: string;
+  /** Who reserved the worktree for manual work (`steward.sh reserve`), with no item; empty for a flow claim. */
+  reserved: string;
 };
 
 /**
@@ -464,10 +466,12 @@ export type ActionKind =
   | 'run.resume'
   | 'worktree.claim'
   | 'worktree.release'
+  | 'worktree.reserve'
   | 'worktree.sync'
   | 'sync.handoff'
   | 'item.step-sync'
   | 'steward.health'
+  | 'steward.sweep'
   | 'jobs.install'
   | 'job.uninstall'
   | 'pr.merge'

@@ -17,6 +17,8 @@ export const HAND_TO_THE_FLOW = 'Hand to the flow';
 export const HAND_TO_THE_FLOW_TITLE = "Writes the sync note and starts the item's run. The flow's sync step merges, resolves what it can, and raises an escalation gate if a choice is yours.";
 export const RUN_GOING_SYNC_FIRST = 'A run is going; the sync step runs first when it starts';
 export const HANDING_OFF = 'Handing off to the flow: the sync note shows here once it is read';
+export const RESERVE_TITLE = 'Takes a free worktree for your own work, under your git name. The flow leaves it alone until you release it.';
+export const SWEEP_TITLE = 'Frees the worktrees whose PR merged or whose item closed, and clears their merge gates.';
 
 type Filter = 'all' | 'running' | 'needs-you' | 'stale' | 'claimed' | 'free';
 const FILTERS: { filter: Filter; label: string; tone: Tone }[] = [
@@ -46,7 +48,9 @@ export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
           ))}
         </div>
         <span className="worktree-base muted">{pool.length} in the pool{snapshot.project.poolMax !== null && snapshot.project.poolMax > pool.length ? `, grows to ${snapshot.project.poolMax}` : ''} · base {snapshot.project.base}</span>
+        <ActionButton kind="worktree.reserve" args={{}} label="Reserve" primary={false} title={RESERVE_TITLE} />
         <ActionButton kind="steward.health" args={{}} label="Run health" primary={false} />
+        <ActionButton kind="steward.sweep" args={{}} label="Sweep" primary={false} title={SWEEP_TITLE} />
       </div>
       {snapshot.worktrees.length === 0 ? <Empty>No worktree found.</Empty> : (
         <>
@@ -109,7 +113,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
       </header>
       <div className="worktree-card-what">
         {worktree.item === null
-          ? <span className="muted">{worktree.state === 'free' ? 'free' : 'no item'}</span>
+          ? <span className="muted">{worktree.claim?.reserved ? `reserved by ${worktree.claim.reserved}` : worktree.state === 'free' ? 'free' : 'no item'}</span>
           : <span className="worktree-item"><ItemLink id={worktree.item} pages={snapshot} />{worktree.itemTitle !== null && <span className="strong clip-line" title={worktree.itemTitle}>{worktree.itemTitle}</span>}</span>}
         <div className="mono muted clip-line" title={branch}>{branch}</div>
       </div>

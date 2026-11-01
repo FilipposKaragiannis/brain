@@ -60,6 +60,25 @@ test('ClaimedWorktreeFarBehindBase_IsStale', async () => {
   assert.ok(stale?.flags.includes('idle'), 'because it was claimed six days ago with no run, agent or gate');
 });
 
+/** The fixture with project-wt-4 (35 behind main, claimed six days ago) reserved by the owner instead. */
+async function reservedFarBehind(): Promise<Snapshot> {
+  const facts = await input();
+  facts.flow = { ...facts.flow, claims: facts.flow.claims.map((claim) => (claim.worktreePath.endsWith('project-wt-4') ? { ...claim, item: '', branch: '', step: '', reserved: 'Ada Lovelace' } : claim)) };
+  return reconcile(facts);
+}
+
+test('ReservedWorktreeFarBehindAndOld_IsNotStale', async () => {
+  assert.equal(worktree(await reservedFarBehind(), 'project-wt-4')?.state, 'claimed', "because a reservation is the owner's own work, which the console does not judge idle or behind");
+});
+
+test('ReservedWorktree_HasNoItem', async () => {
+  assert.equal(worktree(await reservedFarBehind(), 'project-wt-4')?.item, null, 'because a reservation claims no item, so the card links none');
+});
+
+test('ReservedWorktree_ClaimSaysWhoReservedIt', async () => {
+  assert.equal(worktree(await reservedFarBehind(), 'project-wt-4')?.claim?.reserved, 'Ada Lovelace', 'because the card names who holds the worktree');
+});
+
 test('MainAndSideWorktrees_AreOutsideThePool', async () => {
   const picture = await snapshot();
   assert.equal(worktree(picture, 'project')?.role, 'main', 'because the root is the flow home');

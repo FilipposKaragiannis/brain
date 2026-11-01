@@ -246,7 +246,7 @@ One status language, used by worktrees and items alike:
 |---|---|
 | `running` | an unattended agent process (`claude -p`, `codex exec`) has its cwd in the worktree, or a live run record |
 | `needs-you` | its item has a gate record in `.flow/gates` |
-| `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate |
+| `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate; never a reservation |
 | `claimed` | claimed, idle, nothing waits on you |
 | `free` | no claim |
 | `outside` | the main worktree or one not in the pool |
@@ -407,10 +407,12 @@ on every state change and at most twice a second while output arrives.
 | `run.resume` | `item` | `steward.sh resume <item>`: clears a dead run's record and starts its step again, as the health job does | the item | `started` |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
+| `worktree.reserve` | `name?` | `steward.sh reserve [--name <name>]`: a free worktree with no item under the name, git `user.name` when none is given; claim, sweep, health and next pass over it until a release | the pool | `finished` |
 | `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished`; on a conflict the record's `conflict` |
 | `sync.handoff` | `target`, `refs?` | writes the item's sync note, then `jobs/next.sh` as `run.start` with the item (below) | the item and the next job | `started` while the run goes, `finished` once it ends well |
 | `item.step-sync` | `item` | `adapters/<adapter>/write-state.sh <item> step=<claim's step> last_event=<when> step <old> -> <new>, set by the console from the claim in <worktree>` (below) | the item | `finished`; `board` and `files` are re-read |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
+| `steward.sweep` | | `steward.sh sweep --lock`: frees the worktrees whose PR merged or whose item closed and clears their merge gates; exit 75 when a sweep already runs | the pool and the health job | `finished`; the `note` names the worktrees freed and the gates cleared, or says nothing landed |
 | `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
@@ -618,7 +620,7 @@ its kind asks, the PR with its state and unresolved review threads when the item
 questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
 matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`), Worktrees (filter
 chips with counts for all, running, needs you, stale, claimed and free, the pool size and base,
-and Run health; a card per pool worktree with its name, state and flags, its item and title, its
+and Reserve, Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
 branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
 its agents and sessions with pid, host and age and the command on hover, a Watch button to the
 run or a Decide button to the gate, why it is stale and the way
@@ -629,7 +631,7 @@ which runs `sync.handoff` with the conflict's refs, or while a run record names 
 note is there "A run is going; the sync step runs first when it starts", and between an accepted
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
 <refs>" whenever `syncPending` is set, so a note the health job wrote shows too), Open in
-Terminal on every card and Release on a claimed one; then the worktrees outside the pool, the
+Terminal on every card and Release on a claimed one, a reserved one saying who reserved it; then the worktrees outside the pool, the
 project root included, in a table with their branch and Open in Terminal), Board (`#/<project>/board/<item>`: the open items with filters for
 under way, in review, ready, blocked and backlog, each row with its state, step, worktree, PR and
 spend, a head line summing the spend of the rows shown, and an item's detail beside the list:

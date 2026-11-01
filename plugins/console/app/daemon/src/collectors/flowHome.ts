@@ -55,6 +55,8 @@ export type ClaimRecord = {
   step: string;
   claimedAt: string;
   host: string;
+  /** Who reserved the worktree for manual work, with no item; empty for a flow claim. */
+  reserved: string;
   /** The refs the item's sync note names (`<worktree>/.flow/reports/<item>/sync.md`), or null with none. */
   syncPending: string[] | null;
 };
@@ -206,6 +208,7 @@ async function readClaims(paths: string[]): Promise<ClaimRecord[]> {
         step: text(value, 'step'),
         claimedAt: text(value, 'claimed_at'),
         host: text(value, 'host'),
+        reserved: text(value, 'reserved'),
         syncPending: item === '' ? null : await readSyncNote(worktreePath, item),
       });
     } catch { continue; }

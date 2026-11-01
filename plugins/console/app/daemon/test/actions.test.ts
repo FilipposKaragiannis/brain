@@ -118,6 +118,25 @@ test('ProcessExitsNonZero_Failed_WithStderrInOutput', async () => {
   } finally { await cleanup(); }
 });
 
+test('Sweep_Ends_TheRecordNotesWhatItFreed', async () => {
+  const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    const record = actionOf(actions.request('steward.sweep', {}));
+    processes[0]!.stdout.write('gh#5: cleared the merge gate\ngh#5: released app-wt-2 (https://github.com/o/r/pull/41 merged)\n');
+    processes[0]!.exit(0, null);
+    await settle();
+    assert.equal(actions.get(record.id)?.note, 'freed app-wt-2 (gh#5); cleared the merge gate of gh#5', 'because the Sweep button says what landed');
+  } finally { await cleanup(); }
+});
+
+test('Reserve_WhileAReleaseHoldsThePool_Conflict', async () => {
+  const { actions, cleanup } = await runner(CONTEXT, PLAIN);
+  try {
+    actions.request('worktree.release', { target: 'gh#5' });
+    assert.equal(actions.request('worktree.reserve', {}).status, HTTP_CONFLICT, 'because the release may be freeing the worktree the reserve would pick');
+  } finally { await cleanup(); }
+});
+
 test('LockHeld_SecondRequest_Conflict', async () => {
   const { actions, cleanup } = await runner(CONTEXT, PLAIN);
   try {
