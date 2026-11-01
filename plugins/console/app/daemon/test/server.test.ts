@@ -241,7 +241,7 @@ function fileSettings(registry: ProjectRegistry): SettingsStore {
   writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ projects: [{ root: FIXTURE_ROOT }] }));
   const read = readConfig([], { BRAIN_CONSOLE_TOKEN: 'tok', BRAIN_CONSOLE_STATE: dir }, { configFile: path.join(dir, 'config.json'), legacyProjectsFile: path.join(dir, 'projects.json') });
   const config = (read as { config: DaemonConfig }).config;
-  return new SettingsStore({ config, installed: () => ['iterm'], applyProjects: (projects) => { void registry.apply(projects); } });
+  return new SettingsStore({ config, installed: () => ['iterm'], applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => null });
 }
 
 const LOCAL_ROOT = path.join(FIXTURES, 'project-local');

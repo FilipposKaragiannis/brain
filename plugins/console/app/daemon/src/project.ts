@@ -22,7 +22,7 @@ import type { Logger } from './log.ts';
 import { ageSeconds, landedMergeGates, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
-import type { Freshness, Job, Snapshot, SourceName } from './snapshot.ts';
+import type { Freshness, Job, NewerConsole, Snapshot, SourceName } from './snapshot.ts';
 import { ENDED_KEPT } from './snapshot.ts';
 
 /** How often each source is re-read, in milliseconds. File changes also trigger `files` and `git` at once. */
@@ -63,6 +63,8 @@ export type ProjectMonitorDependencies = {
   cadence: Cadence;
   /** Finds each process's transcript; left out, no process has a session. */
   sessions?: Pick<SessionLocator, 'assign'>;
+  /** A newer console in the plugin cache than the one running, asked on every rebuild; left out, none. */
+  newerConsole?: () => NewerConsole | null;
 };
 
 const unread = (): Freshness => ({ at: null, ageSeconds: null, ok: false, error: 'not read yet' });
@@ -78,6 +80,7 @@ export class ProjectMonitor {
   private readonly log: Logger;
   private readonly cadence: Cadence;
   private readonly sessions: Pick<SessionLocator, 'assign'>;
+  private readonly newerConsole: () => NewerConsole | null;
   /** Processes with a session that left the list, newest first, so the owner can still open their session. */
   private ended: EndedProcess[] = [];
   private readonly facts: Facts = {
@@ -113,6 +116,7 @@ export class ProjectMonitor {
     this.log = dependencies.log;
     this.cadence = dependencies.cadence;
     this.sessions = dependencies.sessions ?? noSessions;
+    this.newerConsole = dependencies.newerConsole ?? (() => null);
   }
 
   get snapshot(): Snapshot | null { return this.current; }
@@ -278,7 +282,7 @@ export class ProjectMonitor {
       case 'pulls':
         if (flow === null) throw new Error('the flow files are not read yet');
         this.facts.pulls.facts = null;
-        if (flow.config.adapter !== PULLS_ADAPTER) return `not applicable: adapter ${flow.config.adapter}`;
+        if (!flow.config.trackers.includes(PULLS_ADAPTER)) return `not applicable: trackers ${flow.config.trackers.join(', ')}`;
         if (flow.config.repo === null) return 'not applicable: no github.repo in .flow/config.yaml';
         this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return null;
     }
@@ -297,7 +301,7 @@ export class ProjectMonitor {
     this.current = reconcile({
       now, project: this.project, flow, git: this.facts.git.facts, processes: this.facts.processes.facts, ended: this.ended,
       jobs: this.facts.jobs.facts, board: this.facts.board.facts, pulls: this.facts.pulls.facts, sources,
-      settle: (found) => this.settler.settle(found, this.reads),
+      settle: (found) => this.settler.settle(found, this.reads), newerConsole: this.newerConsole(),
     });
     const fingerprint = this.fingerprintOf();
     if (fingerprint === this.fingerprint) return;
@@ -311,7 +315,7 @@ export class ProjectMonitor {
     const ended = this.ended.map(({ pid, endedAt }) => [pid, endedAt]);
     const errors = (Object.keys(this.facts) as SourceName[]).map((name) => this.facts[name].freshness.error);
     const disagreements = (this.current?.disagreements ?? []).map(disagreementKey);
-    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, ended, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements]);
+    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, ended, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements, this.current?.newerConsole ?? null]);
   }
 
   /** A process with a session that was listed last time and is gone now has ended; one listed again is not. */

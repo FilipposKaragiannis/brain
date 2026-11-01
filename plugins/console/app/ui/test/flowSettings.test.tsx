@@ -300,15 +300,41 @@ function namedGroup(page: string, path: string): HTMLElement {
 test('TrackerPage_NoTrackerUsesGithub_GitHubPartHiddenWithANote', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ github: { repo: 'acme/app' } }));
   expect([within(group('Tracker')).queryByLabelText(label('github.repo')), within(group('Tracker')).queryByText(NO_GITHUB)], 'because adapters.default falls back to local, and the GitHub keys do nothing while no tracker is GitHub').toEqual([null, expect.anything()]);
-  expect([within(group('Readiness')).queryByRole('group', { name: label('github.ready_needs') }), within(group('Readiness')).queryByText(NO_GITHUB)], 'because only the GitHub adapter reads the readiness keys').toEqual([null, expect.anything()]);
   fireEvent.change(within(group('Tracker')).getByLabelText(label('adapters.bug')), { target: { value: 'github' } });
   expect([(within(group('Tracker')).getByLabelText(label('github.repo')) as HTMLInputElement).value, within(group('Tracker')).queryByText(NO_GITHUB)], 'because one kind sent to GitHub is enough for its settings to count').toEqual(['acme/app', null]);
+});
+
+test('TrackerPage_TrackersNamesGithub_GitHubPartShows', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ trackers: ['github', 'local'], github: { repo: 'acme/app' } }));
+  expect((within(group('Tracker')).getByLabelText(label('github.repo')) as HTMLInputElement).value, 'because the flow reads GitHub issues while trackers names github, though new items default to local').toBe('acme/app');
+});
+
+test('TrackerPage_TrackersLeavesGithubOut_GitHubPartHidden', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ ...ON_GITHUB, trackers: ['local'], github: { repo: 'acme/app' } }));
+  expect(within(group('Tracker')).queryByText(NO_GITHUB), 'because trackers, not adapters.default, says which trackers the flow reads').not.toBeNull();
+});
+
+test('ReadinessPage_NoTrackerUsesGithub_FieldsShow', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), DOCUMENT);
+  expect(within(group('Readiness')).queryByRole('group', { name: label('ready.needs') }), 'because the readiness keys apply to the local tracker too').not.toBeNull();
+});
+
+test('ReadyNeeds_OnlyTheDeprecatedGithubKeySet_StartsAtItsValue', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ github: { ready_needs: ['size'] } }));
+  const needs = namedGroup('Readiness', 'ready.needs');
+  expect([(within(needs).getByRole('checkbox', { name: 'priority' }) as HTMLInputElement).checked, (within(needs).getByRole('checkbox', { name: 'size' }) as HTMLInputElement).checked], 'because the flow reads github.ready_needs while ready.needs is unset, so the form shows what it runs with').toEqual([false, true]);
+});
+
+test('ReadyNeeds_SavedEmptyBesideTheDeprecatedGithubKey_StartsWithNothingTicked', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ ready: { needs: {} }, github: { ready_needs: ['size'] } }));
+  const needs = namedGroup('Readiness', 'ready.needs');
+  expect([(within(needs).getByRole('checkbox', { name: 'priority' }) as HTMLInputElement).checked, (within(needs).getByRole('checkbox', { name: 'size' }) as HTMLInputElement).checked], 'because an empty ready.needs in the file is what the flow runs with, not the deprecated github.ready_needs').toEqual([false, false]);
 });
 
 test('Pages_Read_FieldsUnderTheirPartsHeadings', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues(ON_GITHUB));
   const parts = (page: string): string[] => within(group(page)).getAllByRole('region').map((region) => region.getAttribute('aria-label') ?? '');
-  expect([parts('Tracker'), parts('Notifications'), parts('Agents')], 'because a page groups its keys the way the owner thinks of them: where items go, the channels, each AI provider').toEqual([['Where new items go', 'GitHub'], ['Channels', 'When to notify'], ['Claude', 'Codex']]);
+  expect([parts('Tracker'), parts('Notifications'), parts('Agents')], 'because a page groups its keys the way the owner thinks of them: where items go, the channels, each AI provider').toEqual([['Where items come from', 'Where new items go', 'GitHub'], ['Channels', 'When to notify'], ['Claude', 'Codex']]);
   const channels = within(group('Notifications')).getByRole('region', { name: 'Channels' });
   expect([within(channels).queryByLabelText(label('notify.desktop')) !== null, within(channels).queryByLabelText(label('notify.slack_webhook')) !== null], 'because desktop banners and Slack are both channels').toEqual([true, true]);
   expect(within(group('Agents')).getByRole('region', { name: 'Claude' }).textContent, 'because the permission mode applies to Claude sessions only').toContain(label('jobs.permission_mode'));
@@ -317,7 +343,7 @@ test('Pages_Read_FieldsUnderTheirPartsHeadings', async () => {
 test('FreeTextFields_Empty_ShowAConcreteExample', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues(ON_GITHUB));
   const placeholder = (page: string, path: string): string | null => within(group(page)).getByLabelText(label(path)).getAttribute('placeholder');
-  expect([placeholder('Tracker', 'github.repo'), placeholder('Worktree pool', 'worktree_setup'), placeholder('Readiness', 'github.priority_order'), placeholder('Intake job', 'intake.notes')], 'because an example says what the key takes better than its type').toEqual(['acme/app', 'npm ci', 'P0\nP1\nP2', '.flow/notes.md']);
+  expect([placeholder('Tracker', 'github.repo'), placeholder('Worktree pool', 'worktree_setup'), placeholder('Readiness', 'ready.priority_order'), placeholder('Intake job', 'intake.notes')], 'because an example says what the key takes better than its type').toEqual(['acme/app', 'npm ci', 'P0\nP1\nP2', '.flow/notes.md']);
   expect(within(group('Notifications')).getByLabelText(label('notify.slack_webhook')).closest('.flow-field')!.textContent, 'because the URL belongs in an environment variable, not in the committed file').toMatch(/FLOW_SLACK_WEBHOOK environment variable first.*only the fallback/);
 });
 
@@ -344,13 +370,13 @@ test('FixedKeyMap_NameTheFlowDoesNotRead_SaveWaitsForItsRemove', async () => {
 });
 
 test('FixedValuesList_Read_CheckboxesAndATickAddsTheValue', async () => {
-  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['github.ready_needs'] }) }), withValues({ ...ON_GITHUB, github: { ready_needs: ['priority'] } }));
-  const needs = namedGroup('Readiness', 'github.ready_needs');
+  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['ready.needs'] }) }), withValues({ ready: { needs: ['priority'] } }));
+  const needs = namedGroup('Readiness', 'ready.needs');
   const box = (name: string): HTMLInputElement => within(needs).getByRole('checkbox', { name }) as HTMLInputElement;
-  expect([box('priority').checked, box('size').checked], 'because the GitHub adapter knows priority and size only, so each is a tick').toEqual([true, false]);
+  expect([box('priority').checked, box('size').checked], 'because the flow knows priority and size only, so each is a tick').toEqual([true, false]);
   fireEvent.click(box('size'));
   await act(async () => { fireEvent.click(saveButton()); });
-  expect(puts, 'because the ticks are the list, in the field\'s order').toEqual([{ changes: [{ path: 'github.ready_needs', value: ['priority', 'size'] }], hash: 'h1' }]);
+  expect(puts, 'because the ticks are the list, in the field\'s order').toEqual([{ changes: [{ path: 'ready.needs', value: ['priority', 'size'] }], hash: 'h1' }]);
 });
 
 test('RowsMap_RowAddedAndOneRemoved_SavesTheRowsLeft', async () => {

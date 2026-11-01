@@ -4,7 +4,7 @@ import type { CommandOutcome, LaunchdDependencies } from './launchd.ts';
 import { flagsOfPlist, install, LAUNCHD_LABEL, launchdEnvironment, pidOf, PORT_WAIT_MS, plistPath, uninstall } from './launchd.ts';
 import type { PidRecord } from './pidFile.ts';
 import { parsePidRecord, pidFilePath } from './pidFile.ts';
-import type { ConfigPaths } from './settings.ts';
+import type { ConfigPaths, SettingsView } from './settings.ts';
 import { checkProjectList, readStoredSettings, saveSettings } from './settings.ts';
 
 const EXIT_OK = 0;
@@ -64,7 +64,7 @@ export const HELP = `brain-console: the Brain Console daemon and its page
   start [flags]       run the daemon here, in the foreground (--project <root>, --port <n>, --state-dir <d>, --config <file>, --token <t>)
   stop                stop the launchd job when it is loaded, else the foreground daemon
   restart             restart the launchd job, or stop the foreground daemon and start it here again
-  status              loaded or not, pid, port, the URL without the token, config file, state dir, version
+  status              loaded or not, pid, port, the URL without the token, config file, state dir, version, the projects watched
   open                open the page, token included, in the default browser
   url                 print the URL with the token, for scripts
   add <path>          watch one more project (a folder with .flow/config.yaml); a running daemon picks it up at once
@@ -244,7 +244,7 @@ async function start(args: string[], deps: CliDependencies): Promise<number> {
   return deps.startDaemon(args);
 }
 
-function status(target: Target, deps: CliDependencies): number {
+async function status(target: Target, deps: CliDependencies): Promise<number> {
   const print = deps.launchd.print;
   const plist = plistPath(deps.launchd.home);
   const running = target.mode === 'launchd'
@@ -258,7 +258,25 @@ function status(target: Target, deps: CliDependencies): number {
   print(`url: ${pageUrl(target, false)} (brain-console open adds the token)`);
   print(`config: ${target.paths.configFile}`);
   print(`state: ${target.stateDir}`);
+  if (target.mode !== 'stopped' && target.pid !== null && target.token !== null) for (const line of await daemonReport(target, target.token, deps)) print(line);
   return target.mode === 'stopped' || target.pid === null ? EXIT_FAILED : EXIT_OK;
+}
+
+/**
+ * What the running daemon says of itself: the projects it watches, a change to the config file
+ * it did not take and why, and a newer console in the plugin cache with the command that moves to it.
+ */
+async function daemonReport(target: Target, token: string, deps: CliDependencies): Promise<string[]> {
+  let answer: HttpAnswer;
+  try { answer = await deps.http(`http://${LOCALHOST}:${target.port}/api/settings`, 'GET', token); } catch (error) {
+    return [`projects: the daemon on ${target.port} did not answer: ${error instanceof Error ? error.message : String(error)}`];
+  }
+  const view = answer.body as Partial<SettingsView> | null;
+  if (answer.status !== 200 || view?.projects === undefined) return [`projects: the daemon answered ${answer.status} for its settings`];
+  const lines = [`projects: ${view.projects.roots.join(', ')}`];
+  if (view.fileError != null) lines.push(`config: the file differs from what the daemon loaded, which it keeps: ${view.fileError}`);
+  if (view.newerConsole != null) lines.push(`update: console ${view.newerConsole.cached} is installed but the daemon runs ${view.newerConsole.running}; brain-console update moves to it`);
+  return lines;
 }
 
 async function waitForExit(pid: number, deps: CliDependencies): Promise<boolean> {
@@ -424,8 +442,11 @@ export function pluginCaches(home: string, env: NodeJS.ProcessEnv): string[] {
   return [path.join(claude, 'plugins', 'cache'), path.join(home, '.codex', 'plugins', 'cache')];
 }
 
+/** What looking in the plugin caches reads: the folders in a folder, whether a file exists, and the environment. */
+export type CacheReader = { listDirs: CliDependencies['listDirs']; launchd: { env: NodeJS.ProcessEnv; files: { exists(file: string): boolean } } };
+
 /** The newest console plugin in the first cache that has one with an install script, or null. */
-export function newestCachedPlugin(home: string, deps: Pick<CliDependencies, 'listDirs' | 'launchd'>): { dir: string; version: string } | null {
+export function newestCachedPlugin(home: string, deps: CacheReader): { dir: string; version: string } | null {
   for (const cache of pluginCaches(home, deps.launchd.env)) {
     const found = deps.listDirs(cache).flatMap((marketplace) => deps.listDirs(path.join(cache, marketplace, 'console')).map((version) => ({ version, dir: path.join(cache, marketplace, 'console', version) })))
       .filter((entry) => /^\d+(\.\d+)*$/.test(entry.version) && deps.launchd.files.exists(path.join(entry.dir, 'scripts', 'install.sh')))

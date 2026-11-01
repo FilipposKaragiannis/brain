@@ -1,6 +1,6 @@
 ---
 name: steward
-description: Manage the worktree pool. Show the pool, claim a worktree for an item, release one after merge, add a worktree to the pool, create or remove temporary worktrees for parallel phases, and resolve a merge or rebase conflict in a worktree. Use when the user asks about worktrees, wants one freed, claimed or reset, or a conflict resolved.
+description: Manage the worktree pool. Show the pool, claim a worktree for an item, reserve one for the owner's manual work, release one after merge, add a worktree to the pool, create or remove temporary worktrees for parallel phases, and resolve a merge or rebase conflict in a worktree. Use when the user asks about worktrees, wants one freed, claimed, reserved or reset, or a conflict resolved.
 disable-model-invocation: true
 ---
 
@@ -11,7 +11,8 @@ path `codex plugin list` prints for `flow`). Call it `$P`. The script is `"$P/sc
 |---|---|
 | show the pool | `steward.sh pool` |
 | claim for an item | `steward.sh claim <item> [--base <branch>]` prints the path |
-| release after merge | `steward.sh release <item or path>`; add `--force` only when the owner says the unmerged branch may go |
+| reserve one for manual work | `steward.sh reserve [--name <who>]` takes a free worktree with no item under `<who>` (default: git `user.name`, else `$USER`) and prints its path; with none free it grows the pool or, at `pool_max`, exits 3, as `claim` does. `claim`, `sweep`, `health` and the `next` job never take or free it; `pool` and `board` show it reserved by that name |
+| release after merge | `steward.sh release <item or path>`; add `--force` only when the owner says the unmerged branch may go. A reserved worktree is released by its path |
 | add a worktree | `steward.sh add [path]`: adds it, appends it under `pool:` in `.flow/config.yaml`, copies the `worktree_copy` files and runs `worktree_setup` |
 | set up a worktree again | `steward.sh setup <path or item>`: the copies and the setup commands, on demand |
 | temporary worktree for a phase | `steward.sh tmp add <item> <phase>` from the task branch; `steward.sh tmp remove <path>` after the phase is rebased onto the task branch |

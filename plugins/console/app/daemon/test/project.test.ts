@@ -20,7 +20,19 @@ test('LocalAdapter_PullsFreshness_OkAndNotApplicable', async () => {
   const monitor = localMonitor(silentLogger);
   await monitor.refresh('files');
   await monitor.refresh('pulls');
-  assert.deepEqual([monitor.snapshot?.sources.pulls.ok, monitor.snapshot?.sources.pulls.error], [true, 'not applicable: adapter local'], 'because a project off GitHub has no pull requests to read, which is not a failure');
+  assert.deepEqual([monitor.snapshot?.sources.pulls.ok, monitor.snapshot?.sources.pulls.error], [true, 'not applicable: trackers local'], 'because a project off GitHub has no pull requests to read, which is not a failure');
+});
+
+test('TrackersReadGithubBesideALocalDefault_Pulls_GoOnToTheRepository', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-trackers-'));
+  try {
+    cpSync(LOCAL_ROOT, dir, { recursive: true });
+    writeFileSync(path.join(dir, '.flow', 'config.yaml'), 'adapters:\n  default: local\ntrackers: [github, local]\nbase: main\n');
+    const monitor = new ProjectMonitor({ project: { id: 'mixed', name: 'mixed', root: dir }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+    await monitor.refresh('files');
+    await monitor.refresh('pulls');
+    assert.equal(monitor.snapshot?.sources.pulls.error, 'not applicable: no github.repo in .flow/config.yaml', 'because the flow reads GitHub here, so only the missing repository stops the read');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('LocalAdapter_PullsRead_NothingWarned', async () => {
@@ -214,4 +226,10 @@ test('SweepFails_NotRunAgain', async () => {
     await copy.monitor.refresh('pulls');
     assert.equal(copy.sweeps.length, 1, 'because a sweep that fails would fail every minute; the health job sweeps again on its own schedule');
   } finally { copy.cleanUp(); }
+});
+
+test('Snapshot_NewerConsoleCached_CarriesTheNotice', async () => {
+  const monitor = new ProjectMonitor({ project: { id: 'local', name: 'local', root: LOCAL_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, newerConsole: () => ({ running: '0.9.2', cached: '0.10.0' }) });
+  await monitor.refresh('files');
+  assert.deepEqual(monitor.snapshot?.newerConsole, { running: '0.9.2', cached: '0.10.0' }, 'because the page shows the same notice as status while the versions differ');
 });

@@ -1,6 +1,6 @@
 #!/bin/sh
 # next.sh [item] [--json] [--embed-agent]: prepare the next step of one item. Without an item,
-# picks the first ready item, by rank (the tracker's priority), from every adapter that no run holds and that does not overlap a
+# picks the first ready item, by rank (ready.priority_order), from every tracker read that no run holds and that does not overlap a
 # claim. Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
@@ -59,7 +59,9 @@ claimed_touches() {
 if [ -z "$item" ] && [ -f "$ready_cache" ]; then
   ready="$(cat "$ready_cache")"; rm -f "$ready_cache"
 elif [ -z "$item" ]; then
-  ready="$(for a in $(adapters_configured); do adapter list-ready "$a" 2>/dev/null; done | python3 -I -c '
+  ready_rules
+  trackers="$(adapters_configured)" || exit 2
+  ready="$(for a in $trackers; do adapter list-ready "$a" 2>/dev/null; done | python3 -I -c '
 import json, sys
 seen, out = set(), []
 for line in sys.stdin:
@@ -176,7 +178,7 @@ brief="$reports/brief-$step.md"
   echo "## When you finish"
   echo "Write \`$reports/$step.json\`:"
   echo '```json'
-  echo '{"status": "done | fail | gate", "summary": "markdown: one headline sentence, then at most six short bullets (scope, order, risks, what changed)", "size": "S|M|L (only when your estimate changed)", "gate": "feel-test | ambiguity (status gate only)", "message": "markdown (status gate only): first line, in bold, the decision the owner must make; then short bullets of context; for ambiguity, numbered questions, one per line, each followed by a line Recommended: <your answer>, <why in a clause>", "touches": ["globs you changed or will change"]}'
+  echo '{"status": "done | fail | gate", "summary": "markdown: one headline sentence, then at most six short bullets (scope, order, risks, what changed)", "size": "S|M|L (only when your estimate changed)", "gate": "feel-test | ambiguity (status gate only)", "pr": "the PR URL (pr step only)", "message": "markdown (status gate only): first line, in bold, the decision the owner must make; then short bullets of context; for ambiguity, numbered questions, one per line, each followed by a line Recommended: <your answer>, <why in a clause>", "touches": ["globs you changed or will change"]}'
   echo '```'
   echo "Then stop. Do not advance the tracker yourself; the orchestrator calls advance.sh."
   echo "Stop with status fail when a check you cannot fix stays red; status gate when the codebase does not answer a question."
