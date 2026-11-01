@@ -1,4 +1,6 @@
-bump: patch
+# meta
+
+## 1.1.3 (2026-11-01)
 
 - `retro`: a marketplace PR adds a changelog fragment per plugin it changes,
   `plugins/<plugin>/changelog.d/retro-<date>.md`, and never edits the version or `CHANGELOG.md`.
