@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, SYNC_SCRIPT } from '../src/actionPlan.ts';
+import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, REVIEW_ASK, SYNC_SCRIPT } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -117,6 +117,18 @@ test('PrMerge_UsesGhWithSquashByDefault', () => {
   assert.equal(planAction('pr.merge', { pr: '41', method: 'force' }, CONTEXT).ok, false, 'because only the three gh methods exist');
   assert.equal(planAction('pr.merge', { pr: '41' }, { ...CONTEXT, repo: null }).ok, false, 'because gh needs a repo');
   assert.deepEqual(plan.refresh, ['board', 'git', 'pulls'], 'because a merge changes the issue, the branches and the pull list');
+});
+
+test('PrReview_AsksOneReviewerThroughComments', () => {
+  const plan = planned('pr.review', { pr: '41', reviewer: '@codex' });
+  assert.deepEqual(plan.args.slice(1), ['request-review', '41', REVIEW_ASK, 'codex'], 'because comments.sh posts the mention with the request marker the health job tracks, and takes the name without its @');
+  assert.match(plan.args[0] ?? '', /scripts\/comments\.sh$/, 'because the flow owns how a reviewer is asked');
+  assert.deepEqual(plan.locks, ['pr:41'], 'because an ask and a merge of one PR never overlap');
+  assert.equal(planAction('pr.review', { pr: '41', reviewer: 'bad name' }, CONTEXT).ok, false, 'because a name with a space would mention someone else');
+  assert.equal(planAction('pr.review', { pr: '41' }, CONTEXT).ok, false, 'because an ask needs someone to ask');
+  assert.equal(planAction('pr.review', { pr: '41', reviewer: 'codex' }, { ...CONTEXT, repo: null }).ok, false, 'because the ask is a GitHub comment');
+  assert.equal(planAction('pr.review', { pr: '41', reviewer: 'codex' }, { ...CONTEXT, pluginVersion: '1.26.0' }).ok, false, 'because flow 1.26.0 ignores the name and would ask every reviewer');
+  assert.equal(planAction('pr.review', { pr: '41', reviewer: 'codex' }, { ...CONTEXT, pluginVersion: '1.27.0' }).ok, true, 'because 1.27.0 asks the one named');
 });
 
 test('AnyScriptAction_WithoutPlugin_Rejected', () => {

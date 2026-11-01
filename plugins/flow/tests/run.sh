@@ -632,6 +632,10 @@ check "request-review: codex gets one mention comment with the request marker" s
 check "request-review: copilot is asked through the reviewers API" [ "$(pr_field reviewers)" = '["@copilot"]' ]
 check "request-review: a reviewer not in the list is not asked" sh -c "! printf '%s' '$(pr_field comments)' | grep -q '@claude'"
 check "request-review: the ask carries no chase marker" sh -c "! printf '%s' '$(pr_field comments)' | grep -q '<!-- flow:chase'"
+"$P/scripts/comments.sh" request-review 91 "please review this PR." @octo-cat >/dev/null
+check "request-review with a reviewer: that one is asked, even off the list" sh -c "python3 -c \"import json,sys; c=[b for b in json.loads(sys.argv[1]) if 'flow:review-request octo-cat' in b]; assert len(c)==1 and c[0].startswith('@octo-cat please review this PR.'), c\" '$(pr_field comments)'"
+check "request-review with a reviewer: no one else is asked again" sh -c "python3 -c \"import json,sys; c=[b for b in json.loads(sys.argv[1]) if 'flow:review-request codex' in b]; assert len(c)==1, c\" '$(pr_field comments)'"
+check "request-review with a reviewer: a bad name is refused" sh -c "'$P/scripts/comments.sh' request-review 91 'please review' 'bad name' 2>&1 >/dev/null | grep -q \"request-review: 'bad name' is not a reviewer name\""
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [bad name]\n' >> .flow/config.yaml
 check "reviewers: a name with a space is refused by name" sh -c "'$P/scripts/comments.sh' reviewers 2>&1 >/dev/null | grep -q \"'bad name' is not a reviewer name\""
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [codex]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml

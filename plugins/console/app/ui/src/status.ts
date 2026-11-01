@@ -22,6 +22,8 @@ export function itemTone(state: ItemState): Tone {
     case 'running': return 'running';
     case 'needs-you': return 'needs-you';
     case 'stale': return 'stale';
+    // A reviewer is at work on it: live work, though not an agent of the flow's.
+    case 'in-review': return 'running';
     case 'claimed': case 'ready': case 'blocked': case 'backlog': case 'done': return 'quiet';
   }
 }
@@ -39,7 +41,7 @@ export function pullTone(state: PullState): Tone {
   switch (state) {
     case 'mergeable': case 'changes-requested': return 'needs-you';
     case 'checks-failing': case 'conflicts': return 'failing';
-    case 'checks-pending': case 'review-pending': return 'running';
+    case 'checks-pending': case 'review-pending': case 'in-review': return 'running';
     case 'draft': case 'approved': return 'quiet';
   }
 }

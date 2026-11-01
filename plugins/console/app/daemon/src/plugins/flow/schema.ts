@@ -125,6 +125,8 @@ const HOST_SETTINGS: Record<JobsHost, { model: string[]; effort: string[]; cli: 
   claude: { model: ['opus', 'sonnet', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'], cli: 'Claude' },
   codex: { model: ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'], effort: ['low', 'medium', 'high', 'xhigh'], cli: 'Codex' },
 };
+/** `low, medium or high`: a list as a sentence says it. */
+const saidList = (values: string[]): string => values.length < 2 ? values.join('') : `${values.slice(0, -1).join(', ')} or ${values[values.length - 1]}`;
 const DEPRECATED_JOBS = 'Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort, and this key only while jobs.<host> is absent. Set those and clear these.';
 
 const field = (path: string, type: FieldType, group: FieldGroup, help: string, extra: Partial<FieldSpec> = {}): FieldSpec =>
@@ -162,8 +164,8 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('jobs.host', 'enum', 'Jobs', 'Which CLI runs the scheduled jobs. The workers inside a run keep their own models.', { values: [...JOBS_HOSTS], followUp: RELOAD_SCHEDULE }),
   // The next job run reads these from the file, so a change needs nothing after it.
   ...JOBS_HOSTS.flatMap((host) => [
-    field(`jobs.${host}.model`, 'enumOrText', 'Jobs', `The model the scheduled jobs' orchestrating session uses when they run on ${host}, a known one or any name the ${HOST_SETTINGS[host].cli} CLI takes; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].model, host: { host, setting: 'model' } }),
-    field(`jobs.${host}.effort`, 'enum', 'Jobs', `The reasoning effort the scheduled jobs' orchestrating session uses when they run on ${host}; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].effort, host: { host, setting: 'effort' } }),
+    field(`jobs.${host}.model`, 'enumOrText', 'Jobs', `The model of every unattended session on ${host} without an agent of its own: the steps with no agent (design, implement, review, explain) and the comments, intake and retro jobs. A known one or any name the ${HOST_SETTINGS[host].cli} CLI takes; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].model, host: { host, setting: 'model' } }),
+    field(`jobs.${host}.effort`, 'enum', 'Jobs', `The reasoning effort of those same sessions on ${host}: ${saidList(HOST_SETTINGS[host].effort)}, the values flow accepts; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].effort, host: { host, setting: 'effort' } }),
   ]),
   field('jobs.model', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),
   field('jobs.effort', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),

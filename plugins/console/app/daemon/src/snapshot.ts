@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 5;
+export const SNAPSHOT_SCHEMA_VERSION = 6;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -28,7 +28,8 @@ export type WorktreeRole = 'main' | 'pool' | 'outside';
  * - `session`: an interactive claude or codex (yours or an app's) has its working directory in the worktree.
  */
 export type WorktreeFlag = 'dirty' | 'behind' | 'stale-branch' | 'idle' | 'dead-run' | 'agent-without-claim' | 'session';
-export type ItemState = 'running' | 'needs-you' | 'stale' | 'claimed' | 'ready' | 'blocked' | 'backlog' | 'done';
+/** `in-review`: every step ran and its merge gate waits on reviewers, not on you (see `PullRequest.review`). */
+export type ItemState = 'running' | 'needs-you' | 'stale' | 'claimed' | 'in-review' | 'ready' | 'blocked' | 'backlog' | 'done';
 /** `overdue`: its interval has passed but launchd has not started it, usually because the Mac slept. */
 export type JobState = 'running' | 'overdue' | 'scheduled' | 'paused' | 'not-installed' | 'not-loaded';
 export type AgentHost = 'claude' | 'codex';
@@ -49,10 +50,11 @@ export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 
 export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable' | 'needs-field' | 'host-stopped';
 /**
  * Where an open pull request stands, the first that holds: a draft, merge conflicts, a failing
- * check, changes requested, a check still running, no approval yet, approved with checks or
- * threads not yet clean, and last ready to merge.
+ * check, changes requested, a check still running, no approval yet, a reviewer the flow asked by
+ * a mention has not answered (`in-review`, from the health job's review record), approved with
+ * checks or threads not yet clean, and last ready to merge.
  */
-export type PullState = 'draft' | 'conflicts' | 'checks-failing' | 'checks-pending' | 'changes-requested' | 'review-pending' | 'approved' | 'mergeable';
+export type PullState = 'draft' | 'conflicts' | 'checks-failing' | 'checks-pending' | 'changes-requested' | 'review-pending' | 'in-review' | 'approved' | 'mergeable';
 
 /** When a source was last read, how old that is, and whether the read worked. */
 export type Freshness = {
@@ -92,6 +94,8 @@ export type ProjectInfo = {
   /** `jobs.host`: the CLI the scheduled jobs run unattended, `claude` or `codex`. */
   jobsHost: string;
   poolMax: number | null;
+  /** `reviews.reviewers`: who the flow asks to review each PR, codex and claude when unset. The PR cards offer them for an ask. */
+  reviewers: string[];
 };
 
 export type Claim = {
@@ -191,7 +195,12 @@ export type Item = {
   needs: string[];
   rank: number;
   lastEvent: string | null;
+  /** What the item's step sessions cost, from `board.sh --json` (flow 1.22.0 and later); null with no session or an older plugin. */
+  spend: ItemSpend | null;
 };
+
+/** The spend of one item's step sessions: the cost the hosts reported (codex reports none, so 0), how many sessions, and their tokens. */
+export type ItemSpend = { costUsd: number; sessions: number; tokens: number };
 
 export type GateQuestion = {
   number: number;
@@ -272,7 +281,16 @@ export type PullRequest = {
   updatedAt: string;
   ageSeconds: number;
   idleSeconds: number;
+  /** The health job's review record for the pull (`.flow/reviews/<n>.review.json`), or null with none. */
+  review: PullReview | null;
 };
+
+/**
+ * The health job's verdict on a pull at the merge gate, up to one health interval old: `state`
+ * (`in-review`, `changes-requested` or `ready`), the reviewers asked by a mention who have not
+ * answered, and each reviewer that replied it cannot review here, with its reply.
+ */
+export type PullReview = { state: string; waiting: string[]; cannot: Array<{ reviewer: string; said: string }>; at: string };
 
 export type JobRun = {
   at: string;
@@ -453,6 +471,7 @@ export type ActionKind =
   | 'jobs.install'
   | 'job.uninstall'
   | 'pr.merge'
+  | 'pr.review'
   | 'host.clear'
   | 'terminal.open'
   | 'refresh';

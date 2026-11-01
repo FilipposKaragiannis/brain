@@ -127,6 +127,17 @@ test('Items_BodyDropped', async () => {
   assert.equal('body' in seven, false, 'because the snapshot must stay small');
 });
 
+test('Items_Spend_FromTheBoardOrNull', async () => {
+  const spend = Object.fromEntries((await snapshot()).items.map((item) => [item.id, item.spend]));
+  assert.deepEqual(spend['gh#7'], { costUsd: 1.234567, sessions: 3, tokens: 120000 }, 'because the board sums the item\'s step sessions');
+  assert.deepEqual(spend['gh#9'], { costUsd: 0, sessions: 2, tokens: 50000 }, 'because codex reports no cost, yet its sessions and tokens count');
+  assert.deepEqual([spend['gh#12'], spend['gh#13']], [null, null], 'because an item with no session has no spend, and a malformed entry is dropped, not shown as $0');
+});
+
+test('OlderBoard_NoSpend_ItemsHaveNone', () => {
+  assert.deepEqual(parseBoard(LOCAL_BOARD_JSON).spend, {}, 'because a plugin before flow 1.22.0 prints no spend');
+});
+
 test('LocalBoard_ComputedFieldsFilledIn', () => {
   const byId = Object.fromEntries(parseBoard(LOCAL_BOARD_JSON).items.map((item) => [item.id, item]));
   assert.deepEqual(byId['local:task/3']?.open_blockers, ['local:task/1'], 'because its blocker is an open item on the board');
@@ -186,7 +197,7 @@ const READY: PullFact = {
 const ready = (change: Partial<PullFact>): PullFact => ({ ...READY, ...change });
 const pullNumbered = (picture: Snapshot, pullNumber: number) => picture.pulls.find((pull) => pull.number === pullNumber);
 const withBoardItem = (facts: ReconcileInput, id: string, change: Partial<BoardItem['state']>): ReconcileInput => ({
-  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {} },
+  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} },
 });
 const mergeDisagreements = (picture: Snapshot) => picture.disagreements.filter((entry) => entry.sources.join(' vs ') === 'issue state vs pull request');
 
@@ -332,12 +343,12 @@ test('FixturePulls_CountedByState', async () => {
 
 const withExtraBoardItem = (facts: ReconcileInput, change: Partial<BoardItem>): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {} } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} } };
 };
 /** Adds board items made from gh#12's shape, one per change. */
 const withBoardItems = (facts: ReconcileInput, changes: Partial<BoardItem>[]): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {} } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} } };
 };
 const needsFieldIds = (picture: Snapshot): string[] => picture.attention.filter((row) => row.kind === 'needs-field').map((row) => row.id);
 const disagreementOf = (picture: Snapshot, sources: string) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === sources);
@@ -396,7 +407,7 @@ test('NeedsField_ChildOfASplitParentWithADoneSibling_Row', async () => {
 
 test('NeedsField_BlocksAnItemInProgress_Row', async () => {
   const facts = withBoardItems(withBoardItem(await input(), 'gh#9', {}), [{ id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], parent: '' }]);
-  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {} } };
+  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {}, spend: {} } };
   assert.deepEqual(needsFieldIds(reconcile(blocking)), ['gh#14'], 'because gh#9 is being worked and waits on it');
 });
 
@@ -478,7 +489,7 @@ const shownAtMergeGate = (picture: Snapshot): boolean[] => [
 ];
 
 test('MergeGate_PullReadyAndReviewed_ShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'ready', waiting: [], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'ready', waiting: [], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because only the merge is left, which is the owner\'s');
   assert.equal(picture.counts.needsYou, 1, 'because the gate counts as needing you');
 });
@@ -496,22 +507,41 @@ test('MergeGate_ReviewStillRequested_NotShownAtTheGate', async () => {
 });
 
 test('MergeGate_FlowReviewerYetToAnswer_NotShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['codex'], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['codex'], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [false, false, false], 'because codex, asked by a mention GitHub does not track, has not answered, as the health job recorded');
 });
 
+test('MergeGate_FlowReviewerYetToAnswer_ItemAndPullInReview', async () => {
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['codex'], cannot: [], at: '2026-10-24T18:00:00Z' }]));
+  const pull = picture.pulls.find((entry) => entry.number === 20);
+  assert.equal(picture.items.find((item) => item.id === 'gh#20')?.state, 'in-review', 'because the item waits on its reviewers, which is neither the owner\'s gate nor a blocker');
+  assert.deepEqual([pull?.state, pull?.review?.waiting], ['in-review', ['codex']], 'because GitHub calls the pull mergeable, but codex was asked by a mention and has not answered');
+  assert.equal(picture.attention.some((row) => row.kind === 'pr-mergeable' && row.id === 'gh#20'), false, 'because a pull in review is not ready to merge yet');
+});
+
+test('PullReview_ReviewerCannot_ReplyCarried', async () => {
+  const cannot = [{ reviewer: 'codex', said: 'Create an environment for this repo.' }];
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'ready', waiting: [], cannot, at: '2026-10-24T18:00:00Z' }]));
+  const pull = picture.pulls.find((entry) => entry.number === 20);
+  assert.deepEqual([pull?.state, pull?.review?.cannot], ['mergeable', cannot], 'because the reply shows on the pull until the record goes, while the pull itself is ready');
+});
+
+test('PullReview_NoRecord_Null', async () => {
+  assert.equal((await snapshot()).pulls.find((entry) => entry.number === 21)?.review, null, 'because the health job wrote no record for #21');
+});
+
 test('MergeGate_StaleRecordChangesRequestedPullApproved_ShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because the live pull says the reviewer approved since, and the health job\'s record is up to 15 minutes old');
 });
 
 test('MergeGate_RecordWaitingOnCopilotOnlyNoLiveRequest_ShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['copilot'], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['copilot'], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because Copilot is asked through GitHub, whose live pull shows no request left, so the record is stale');
 });
 
 test('MergeGate_PullsUnreadRecordChangesRequested_NotShownAtTheGate', async () => {
-  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], at: '2026-10-24T18:00:00Z' }]);
+  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], cannot: [], at: '2026-10-24T18:00:00Z' }]);
   facts.pulls = null;
   assert.deepEqual(shownAtMergeGate(reconcile(facts)), [false, false, false], 'because without the live pull the health job\'s verdict is the best there is');
 });
@@ -522,12 +552,12 @@ test('MergeGate_RequiredApprovalOnly_ShownAtTheGate', async () => {
 });
 
 test('MergeGate_RecordForAnotherPull_ShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 21, state: 'in-review', waiting: ['codex'], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 21, state: 'in-review', waiting: ['codex'], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because the record is about another pull');
 });
 
 test('MergeGate_PullsUnreadRecordInReview_NotShownAtTheGate', async () => {
-  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['claude'], at: '2026-10-24T18:00:00Z' }]);
+  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['claude'], cannot: [], at: '2026-10-24T18:00:00Z' }]);
   facts.pulls = null;
   assert.deepEqual(shownAtMergeGate(reconcile(facts)), [false, false, false], 'because without pull requests the item still names #20, and the health job says it is in review');
 });
@@ -678,7 +708,7 @@ test('Worktree_SyncNoteOfItsClaim_ShownAsSyncPending', async () => {
 
 test('GateItemWithABody_GateCarriesIt', async () => {
   const facts = await input();
-  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' } } });
+  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' }, spend: {} } });
   assert.equal(picture.gates.find((gate) => gate.item === 'gh#7')?.body, '## Spec', 'because the card shows the issue the gate is about');
 });
 

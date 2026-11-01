@@ -125,9 +125,9 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 5,
+    schema: 6,
     takenAt,
-    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', poolMax: 9 },
+    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', poolMax: 9, reviewers: ['codex', 'claude'] },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
     counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0 },
     readiness: { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0 },
@@ -159,7 +159,7 @@ function WithActions({ children }: { children: ReactNode }) {
 export function boardItem(id: string, title: string): Item {
   return {
     id, title, kind: 'task', size: 'M', priority: 'P2', status: 'open', state: 'ready', step: '', gate: 'none', worktree: null, pr: null,
-    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null,
+    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null, spend: null,
   };
 }
 

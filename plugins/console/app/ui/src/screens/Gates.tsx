@@ -6,6 +6,7 @@ import { gateKey, useGateAnswers } from '../gateAnswers.tsx';
 import type { Answered, Decision, Draft, Said, Step } from '../gateAnswers.tsx';
 import { choiceAnswers, composeGateMessage, gateAsk, gateBrief, initialChoices, verdictMessage } from '../gateAnswer.ts';
 import type { GateChoice, Verdict } from '../gateAnswer.ts';
+import { AskReview } from '../askReview.tsx';
 import { Markdown } from '../Markdown.tsx';
 import { routeHash } from '../route.ts';
 import type { ActionRecord } from '../actions.ts';
@@ -220,7 +221,7 @@ export function DecisionCard({ gate, snapshot, draft, onAnswer }: { gate: Gate; 
         {lead !== 'issue' && gate.body !== null && gate.body.trim() !== '' && <GateDocument title="Issue" file={null} text={gate.body} open={false} />}
         {(form === 'approval' || form === 'feel') && <VerdictForm gate={gate} ask={ask} form={form} split={isSplit(gate, snapshot)} draft={draft} onAnswer={onAnswer} />}
         {form === 'answers' && <AnswersForm gate={gate} questions={numbered ? gate.questions : []} draft={draft} onAnswer={onAnswer} />}
-        {form === 'merge' && <MergeForm gate={gate} ask={ask} onAnswer={onAnswer} />}
+        {form === 'merge' && <MergeForm gate={gate} ask={ask} reviewers={snapshot.project.reviewers} onAnswer={onAnswer} />}
         {session !== null && (
           <div className="gate-discuss">
             <ActionButton kind="terminal.open" args={{ path: session.cwd, session: String(session.pid) }} label="Discuss with the agent" primary={false}
@@ -366,8 +367,8 @@ function AnswersForm({ gate, questions, draft, onAnswer }: { gate: Gate; questio
   );
 }
 
-/** A merge gate: merge the PR from here when it is ready. The next sweep then clears the gate. */
-function MergeForm({ gate, ask, onAnswer }: { gate: Gate; ask: string; onAnswer: (decision: Decision, draft: Draft) => void }) {
+/** A merge gate: merge the PR from here when it is ready, or ask one more reviewer first. The next sweep then clears the gate. */
+function MergeForm({ gate, ask, reviewers, onAnswer }: { gate: Gate; ask: string; reviewers: string[]; onAnswer: (decision: Decision, draft: Draft) => void }) {
   const pull = gate.pull;
   const ready = pull !== null && (pull.state === 'mergeable' || pull.state === 'approved');
   return (
@@ -382,6 +383,7 @@ function MergeForm({ gate, ask, onAnswer }: { gate: Gate; ask: string; onAnswer:
             <span className="muted">Squash-merges and deletes the branch. The next sweep clears the gate and frees the worktree.</span>
           </div>
         )}
+        {pull !== null && <div className="decision-actions"><AskReview pr={pull.number} reviewers={reviewers} /></div>}
       </fieldset>
     </div>
   );

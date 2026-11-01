@@ -1,5 +1,12 @@
 # flow
 
+## 1.27.0 (2026-11-01)
+
+- `comments.sh request-review <pr> <ask> [reviewer]` asks one reviewer when a name is given: one
+  in `reviews.reviewers` or any GitHub login, with or without its `@`, checked like the list's
+  names. It is the same mention comment with the same request marker, Copilot through the
+  reviewers API, so the health job tracks and chases it. Console 0.10.0's PR cards use it.
+
 ## 1.26.0 (2026-10-31)
 
 - Named schedules: one job can run on several schedules, each with its own args.

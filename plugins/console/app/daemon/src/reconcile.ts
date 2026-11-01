@@ -1,7 +1,7 @@
 import path from 'node:path';
-import type { BoardFacts, BoardItem } from './collectors/board.ts';
+import type { BoardFacts, BoardItem, BoardSpend } from './collectors/board.ts';
 import { UNRANKED } from './collectors/board.ts';
-import type { ClaimRecord, FlowHomeFacts, GateRecord, RunRecord } from './collectors/flowHome.ts';
+import type { ClaimRecord, FlowHomeFacts, GateRecord, ReviewRecord, RunRecord } from './collectors/flowHome.ts';
 import { poolPaths } from './collectors/flowHome.ts';
 import type { GitFacts, GitWorktree } from './collectors/git.ts';
 import type { JobFacts, JobRunRecord, JobStatusRow, JobStatusRun, JobWorkerRow } from './collectors/jobs.ts';
@@ -12,7 +12,7 @@ import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemState, Job, JobRun, JobState, JobWorker,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker,
   ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, StoppedHost, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
@@ -49,7 +49,7 @@ const PULL_PATH = /^(.*\/pull\/\d+)/;
 const MERGE_READY_STATES = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE'];
 const PULL_NUMBER = /^#?(\d+)$/;
 const STATE_ORDER: Record<ItemState, number> = {
-  'needs-you': 0, running: 1, stale: 2, claimed: 3, ready: 4, blocked: 5, backlog: 6, done: 7,
+  'needs-you': 0, running: 1, stale: 2, claimed: 3, 'in-review': 4, ready: 5, blocked: 6, backlog: 7, done: 8,
 };
 
 export function ageSeconds(from: string | null, now: Date): number | null {
@@ -179,8 +179,8 @@ function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate:
   if (gate !== null) return 'needs-you';
   if (boardItem === null) return 'claimed';
   if (boardItem.status !== 'open') return 'done';
-  // A done item whose merge gate waits on its reviewers is blocked on them, not on the owner.
-  if (inReview) return 'blocked';
+  // A done item whose merge gate waits on its reviewers is in review: not the owner's, not blocked.
+  if (inReview) return 'in-review';
   // The flow's ready list leaves these out: every step ran, or the item is split. The owner
   // merges or closes a done item and a split one whose children are closed; open children block.
   if (boardItem.state.step === 'done') return 'needs-you';
@@ -207,6 +207,7 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
       pr: boardItem.state.pr || null, url: boardItem.url || null, parent: boardItem.parent || null,
       blockedBy: boardItem.blocked_by, openBlockers: boardItem.open_blockers, openChildren: boardItem.open_children,
       needs: boardItem.needs, rank: boardItem.rank, lastEvent: boardItem.state.last_event || null,
+      spend: itemSpend(input.board?.spend[boardItem.id]),
     });
   }
   for (const id of [...engagedIds].filter((entry) => !seen.has(entry)).sort()) {
@@ -216,9 +217,14 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
       id, title: '', kind: '', size: '', priority: '', status: 'open', state: itemState(null, worktree, gate),
       step: worktree?.claim?.step ?? '', gate: gate?.gate ?? 'none', worktree: worktree?.name ?? null, pr: null, url: null,
       parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: UNRANKED, lastEvent: null,
+      spend: itemSpend(input.board?.spend[id]),
     });
   }
   return items.sort((left, right) => STATE_ORDER[left.state] - STATE_ORDER[right.state] || left.rank - right.rank || left.id.localeCompare(right.id));
+}
+
+function itemSpend(spend: BoardSpend | undefined): ItemSpend | null {
+  return spend === undefined || spend.sessions === 0 ? null : { costUsd: spend.cost_usd, sessions: spend.sessions, tokens: spend.tokens };
 }
 
 /** The gate item's open pull: the one its `pr` field names first, else the one on its claimed branch. */
@@ -425,8 +431,7 @@ function heldMergeGates(input: ReconcileInput): Set<string> {
     const pullNumber = pull?.number ?? (input.pulls === null && named !== null ? namedPullNumber(named) : null);
     if (pullNumber === null) continue;
     const record = input.flow.reviews.find((entry) => entry.pr === pullNumber);
-    const mentionWaiting = record !== undefined && record.waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
-    const heldLive = pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting);
+    const heldLive = pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting(record));
     const heldByRecord = pull === undefined && record !== undefined && HELD_REVIEW_STATES.includes(record.state);
     if (heldLive || heldByRecord) held.add(gate.item);
   }
@@ -482,14 +487,28 @@ function linkPull(pull: PullFact, items: Item[], contexts: WorktreeContext[]): P
   return { item: null, worktree: null };
 }
 
+/** The states a reviewer asked by a mention and not yet answered turns into `in-review`: GitHub alone would call the pull further along. */
+const MENTION_REVIEW_OVERRIDES: PullState[] = ['review-pending', 'approved', 'mergeable'];
+
+/** Whether the record names a reviewer asked by a mention who has not answered, which GitHub's own review state cannot show. */
+function mentionWaiting(record: ReviewRecord | undefined): boolean {
+  return record !== undefined && record.waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+}
+
 function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeContext[]): PullRequest[] {
-  return (input.pulls?.pulls ?? []).map((pull) => ({
+  return (input.pulls?.pulls ?? []).map((pull) => {
+    const record = input.flow.reviews.find((entry) => entry.pr === pull.number);
+    const live = pullState(pull);
+    const state = mentionWaiting(record) && MENTION_REVIEW_OVERRIDES.includes(live) ? 'in-review' : live;
+    return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
-    draft: pull.draft, state: pullState(pull), checks: pull.checks, reviewDecision: pull.reviewDecision,
+    draft: pull.draft, state, checks: pull.checks, reviewDecision: pull.reviewDecision,
     unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, ...linkPull(pull, items, contexts),
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
-  }));
+    review: record === undefined ? null : { state: record.state, waiting: record.waiting, cannot: record.cannot, at: record.at },
+    };
+  });
 }
 
 /**
@@ -720,7 +739,7 @@ function projectInfo(input: ReconcileInput): ProjectInfo {
     id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
     base: config.base, repo: config.repo, repoUrl,
     trackerUrl: config.adapter === GITHUB_ADAPTER && repoUrl !== null ? `${repoUrl}/issues` : null,
-    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax,
+    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
   };
 }
 
