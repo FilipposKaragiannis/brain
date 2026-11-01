@@ -31,7 +31,8 @@ targets=""
 if [ -n "$one" ]; then
   targets="$one"
 else
-  for a in $(adapters_configured); do
+  trackers="$(adapters_configured 2>&1)" || { printf '%s\n' "$trackers" >&2; job_say "error: ${trackers#flow: }" >/dev/null; exit 2; }
+  for a in $trackers; do
     adapter list "$a" 2>/dev/null | python3 -I -c '
 import json, sys
 for i in json.load(sys.stdin):

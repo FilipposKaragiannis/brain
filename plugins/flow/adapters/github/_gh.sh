@@ -18,16 +18,12 @@ issue_number() {
 }
 
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority
-# name org issue fields (the size field replaces the size: labels), github.priority_order ranks the
-# priority options, github.ready_needs lists the fields an unstarted item needs before it is ready,
-# github.project numbers the project whose Status the adapter keeps in step.
+# name org issue fields (the size field replaces the size: labels), github.project numbers the
+# project whose Status the adapter keeps in step. The readiness rules are every tracker's
+# (ready_rules in lib/flow.sh); list and read take them before they build items.
 GH_SIZE_FIELD="$(cfg github.fields.size)"; GH_PRIORITY_FIELD="$(cfg github.fields.priority)"; GH_AREA_FIELD="$(cfg github.fields.area)"
-GH_PRIORITY_ORDER="$(cfg github.priority_order | paste -sd, -)"; GH_READY_NEEDS="$(cfg github.ready_needs | paste -sd, -)"
 GH_PROJECT="$(cfg github.project)"
-export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PRIORITY_ORDER GH_READY_NEEDS GH_PROJECT
-for _need in $(printf '%s' "$GH_READY_NEEDS" | tr , ' '); do
-  case "$_need" in priority|size) ;; *) echo "flow: github.ready_needs knows priority and size, not $_need" >&2 ;; esac
-done
+export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT
 for _key in backlog ready gate running review; do
   _v="$(cfg "github.status.$_key")"
   [ -n "$_v" ] && export "GH_STATUS_$(printf '%s' "$_key" | tr a-z A-Z)=$_v"
@@ -42,8 +38,9 @@ project_sync() {
 
 # issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: the issue
 # type Epic or Bug, else the label epic or bug, else task. Parent: the native sub-issue parent,
-# else a "Parent #N" line in the body. rank orders ready items (lower first); needs lists the
-# github.ready_needs fields an unstarted item still lacks; open_children counts its open native
+# else a "Parent #N" line in the body. rank orders ready items (lower first) by
+# READY_PRIORITY_ORDER; needs lists the READY_NEEDS fields an unstarted item still lacks, the
+# same rule as the local adapter's _item.py (change both); open_children counts its open native
 # sub-issues.
 issue_to_item() {
   python3 -I -c '
@@ -72,7 +69,7 @@ state["size"] = size
 priority = (fields.get(priority_field) or "") if priority_field else ""
 area_field = os.environ.get("GH_AREA_FIELD", "")
 area = (fields.get(area_field) or "") if area_field else ""
-order = [p for p in os.environ.get("GH_PRIORITY_ORDER", "").split(",") if p]
+order = [p for p in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if p]
 rank = 999 if not priority else order.index(priority) if priority in order else len(order)
 m = re.search(r"(?im)^Parent:? #(\d+)", raw.get("body", "") or "")
 parent = "gh#%d" % raw["parent"]["number"] if raw.get("parent") else "gh#%s" % m.group(1) if m else ""
@@ -82,7 +79,7 @@ if not kind: kind = "epic" if "epic" in labels or "kind:epic" in labels else "bu
 is_open = raw.get("state", "OPEN").upper() == "OPEN"
 needs = []
 if is_open and not state["step"]:
-    for need in [n for n in os.environ.get("GH_READY_NEEDS", "").split(",") if n]:
+    for need in [n for n in os.environ.get("READY_NEEDS", "").split(",") if n]:
         if need == "priority" and not priority: needs.append(need)
         if need == "size" and not size and kind != "epic": needs.append(need)
 project = os.environ.get("GH_PROJECT", "")

@@ -11,7 +11,9 @@ Usage (always from the shell scripts):
   _item.py close <home> <id> [<text>]
   _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME]
 
-An item's open_children counts the open items whose parent it is.
+An item's open_children counts the open items whose parent it is. Its rank places its priority in
+READY_PRIORITY_ORDER and needs lists the READY_NEEDS fields an open, unstarted item lacks (the
+GitHub adapter's issue_to_item applies the same rule; change both).
 """
 import glob
 import json
@@ -24,6 +26,8 @@ STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_e
               "answered", "asked", "answer", "answered_at", "gate_from"]
 LIST_KEYS = {"blocked_by", "labels", "touches"}
 INT_KEYS = {"attempts"}
+# The rank of an item with no priority: after every ranked one.
+NO_RANK = 999
 
 
 def now():
@@ -111,6 +115,24 @@ def open_children(home):
     return counts
 
 
+def ready_list(name):
+    return [value for value in os.environ.get(name, "").split(",") if value]
+
+
+def rank(priority):
+    order = ready_list("READY_PRIORITY_ORDER")
+    if not priority:
+        return NO_RANK
+    return order.index(priority) if priority in order else len(order)
+
+
+def needs(meta):
+    if meta.get("status", "open") != "open" or meta.get("step"):
+        return []
+    return [field for field in ready_list("READY_NEEDS")
+            if not meta.get(field) and not (field == "size" and meta.get("kind") == "epic")]
+
+
 def to_json(path, meta, body, children=None):
     state = {k: meta.get(k, [] if k == "touches" else (0 if k == "attempts" else "")) for k in STATE_KEYS}
     if not state["gate"]:
@@ -126,6 +148,8 @@ def to_json(path, meta, body, children=None):
         "parent": meta.get("parent", ""),
         "priority": meta.get("priority", ""),
         "area": meta.get("area", ""),
+        "rank": rank(meta.get("priority", "")),
+        "needs": needs(meta),
         "open_children": (children or {}).get(meta.get("id", ""), 0),
         "state": state,
         "url": path,

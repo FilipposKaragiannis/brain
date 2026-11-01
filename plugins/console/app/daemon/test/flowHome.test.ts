@@ -247,6 +247,14 @@ test('Reviewers_FromTheConfigElseTheFlowDefault', () => {
   assert.deepEqual(parseFlowConfig('base: main\n').reviewers, ['codex', 'claude'], 'because flow asks codex and claude when the key is unset');
 });
 
+test('Trackers_Named_TheReadSet', () => {
+  assert.deepEqual(parseFlowConfig('adapters:\n  default: local\ntrackers: [github, local]\n').trackers, ['github', 'local'], 'because trackers names the trackers the flow reads, whatever adapters.default says');
+});
+
+test('Trackers_Unset_LocalAndEveryAdapterNamed', () => {
+  assert.deepEqual(parseFlowConfig('adapters:\n  default: local\n  bug: github\n').trackers, ['local', 'github'], 'because adapters_configured reads local and every tracker under adapters while trackers is unset');
+});
+
 test('JobsWorkers_SetInEitherForm_Read', () => {
   assert.equal(parseFlowConfig('jobs:\n  workers: {claude: 1, codex: 2}\n').jobsWorkers, true, 'because the one-line map is how flow init writes it');
   assert.equal(parseFlowConfig('jobs:\n  workers:\n    claude: 2\n').jobsWorkers, true, 'because the nested form is the same plan');

@@ -164,9 +164,10 @@ const field = (path: string, type: FieldType, group: FieldGroup, label: string, 
   ({ path, type, group, label, help, followUp: null, ...extra });
 const capitalised = (word: string): string => `${word.charAt(0).toUpperCase()}${word.slice(1)}`;
 
+const READ_FROM = 'Where items come from';
 const TRACKERS = 'Where new items go';
 const GITHUB = 'GitHub';
-const GITHUB_ONLY = 'Read by the GitHub adapter only.';
+const DEPRECATED_READY = 'Deprecated: flow reads ready.needs and ready.priority_order for every tracker, and this key only while that one is unset. Set it and clear this.';
 const CHANNELS = 'Channels';
 const WHEN_TO_NOTIFY = 'When to notify';
 /** The project Status names the GitHub adapter moves cards to unless github.status renames them (adapters/github/_mutate.py STATUS). */
@@ -177,12 +178,40 @@ export const GITHUB_STATUS: MapKey[] = [
   { name: 'running', label: 'Being worked on', placeholder: 'In progress' },
   { name: 'review', label: 'Pull request in review', placeholder: 'In review' },
 ];
-/** The fields an unstarted GitHub item can be made to need before it is ready, the ones adapters/github/_gh.sh knows. */
+/** The fields an unstarted item can be made to need before it is ready, the ones `ready_rules` in the plugin's lib/flow.sh knows. */
 export const READY_NEEDS = ['priority', 'size'];
+/** Each readiness key and the deprecated GitHub key the plugin reads in its place while it is unset. */
+const LEGACY_READY: Record<string, string> = { 'ready.needs': 'github.ready_needs', 'ready.priority_order': 'github.priority_order' };
+
+/**
+ * What the plugin (`ready_rules` in lib/flow.sh) still takes from `github.ready_needs` or
+ * `github.priority_order` for a readiness key the file leaves out: the list and the key it came
+ * from, or null when the file has the new key (an empty list too), the old one is empty, or the
+ * path is no readiness key.
+ */
+export function legacyReadySetting(values: Record<string, unknown>, path: string): { value: string[]; from: string } | null {
+  const from = LEGACY_READY[path];
+  if (from === undefined || entryAt(values, path) !== undefined) return null;
+  const old = listAt(values, from);
+  return old.length === 0 ? null : { value: old, from };
+}
+
+/** The parsed file's entry at a dotted path, undefined when the file has no such key. */
+function entryAt(values: Record<string, unknown>, path: string): unknown {
+  return path.split('.').reduce<unknown>((at, key) => (at !== null && typeof at === 'object' && !Array.isArray(at) ? (at as Record<string, unknown>)[key] : undefined), values);
+}
+
+/** A list in the parsed file at a dotted path; one scalar is a one-item list, as lib/flow.sh reads it. */
+function listAt(values: Record<string, unknown>, path: string): string[] {
+  const value = entryAt(values, path);
+  if (typeof value === 'string') return value === '' ? [] : [value];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
+}
 const INTAKE_PATH = 'A path from the project root, from ~/ or absolute.';
 
 export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
-  field('adapters.default', 'enum', 'Tracker', 'Tracker for new items', 'Where new items go and are read from when their kind names no tracker of its own. Unset, local: items live as files in the project.', { values: ADAPTERS, part: TRACKERS }),
+  field('trackers', 'list', 'Tracker', 'Trackers the flow reads', 'The trackers the board, the next job and the health job read items from. Every tracker new items go to must be one of them. Unset, every tracker named below, and local.', { values: ADAPTERS, part: READ_FROM }),
+  field('adapters.default', 'enum', 'Tracker', 'Tracker for new items', 'Where new items go when their kind names no tracker of its own. Unset, local: items live as files in the project.', { values: ADAPTERS, part: TRACKERS }),
   field('adapters.epic', 'enum', 'Tracker', 'Tracker for epics', 'Sends new epics to this tracker instead of the default one.', { values: ADAPTERS, part: TRACKERS }),
   field('adapters.task', 'enum', 'Tracker', 'Tracker for tasks', 'Sends new tasks to this tracker instead of the default one.', { values: ADAPTERS, part: TRACKERS }),
   field('adapters.bug', 'enum', 'Tracker', 'Tracker for bugs', 'Sends new bugs to this tracker instead of the default one, such as local to keep bugs off GitHub.', { values: ADAPTERS, part: TRACKERS }),
@@ -196,8 +225,10 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('github.project', 'number', 'Tracker', 'GitHub project number', 'The number of a GitHub Projects board, from its URL (…/projects/<n>). The flow moves each item\'s card to the Status that says where the item is: Backlog, Ready, Needs you, In progress or In review. Unset leaves projects alone.', { min: 1, part: GITHUB, adapter: 'github', placeholder: '7' }),
   field('github.status', 'map', 'Tracker', 'Project status names', 'The Status options of that board, when yours are named differently. An empty box keeps the name shown in it.', { part: GITHUB, adapter: 'github', keys: GITHUB_STATUS }),
   field('github.answer_from', 'list', 'Tracker', 'Who may answer gates', 'The GitHub logins whose /answer comments on an issue clear its gate; empty, only the signed-in gh user\'s answers count.', { part: GITHUB, adapter: 'github', placeholder: 'octocat\nmonalisa' }),
-  field('github.ready_needs', 'list', 'Readiness', 'Fields an item needs to start', `The fields an unstarted item must have filled before the next job will take it. ${GITHUB_ONLY}`, { values: READY_NEEDS, adapter: 'github' }),
-  field('github.priority_order', 'list', 'Readiness', 'Priority order', `The options of the priority field from most to least urgent; the next job takes ready items in this order. ${GITHUB_ONLY}`, { adapter: 'github', placeholder: 'P0\nP1\nP2' }),
+  field('ready.needs', 'list', 'Readiness', 'Fields an item needs to start', 'The fields an unstarted item must have filled before the next job will take it, on every tracker.', { values: READY_NEEDS }),
+  field('ready.priority_order', 'list', 'Readiness', 'Priority order', 'The priorities from most to least urgent, on every tracker; the next job takes ready items in this order, items with no priority last.', { placeholder: 'P0\nP1\nP2' }),
+  field('github.ready_needs', 'list', 'Readiness', 'Fields an item needs (deprecated)', DEPRECATED_READY, { values: READY_NEEDS, deprecated: DEPRECATED_READY, part: 'Deprecated' }),
+  field('github.priority_order', 'list', 'Readiness', 'Priority order (deprecated)', DEPRECATED_READY, { deprecated: DEPRECATED_READY, part: 'Deprecated' }),
   field('base', 'string', 'Worktree pool', 'Base branch', 'The branch new task branches start from and pull requests merge into. Unset, main.', { placeholder: 'main' }),
   field('pool', 'list', 'Worktree pool', 'Pool worktrees', 'The worktrees tasks are claimed into, one task each; more entries means more work in parallel.', { followUp: NEXT_CLAIM, placeholder: '../app-wt-1\n../app-wt-2' }),
   field('pool_max', 'number', 'Worktree pool', 'Most worktrees the pool grows to', 'A cap on the whole pool, not per run. When a claim finds every worktree busy, the flow adds one more worktree and lists it under Pool worktrees, until that list has this many entries: with 2 worktrees there and 9 here, the pool can grow by 7 more. 0 or unset never adds one.', { min: 0, max: 64, followUp: NEXT_CLAIM, placeholder: '4' }),
@@ -358,7 +389,7 @@ function checkText(spec: FieldSpec, text: string): Checked {
   }
 }
 
-/** A list with fixed values (`github.ready_needs`) holds only those; an empty or free list passes. */
+/** A list with fixed values (`ready.needs`) holds only those; an empty or free list passes. */
 function checkListValues(spec: FieldSpec, entries: string[]): Checked {
   if (spec.values === undefined) return ok;
   const other = entries.find((entry) => !spec.values!.includes(entry));

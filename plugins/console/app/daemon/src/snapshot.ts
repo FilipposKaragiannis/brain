@@ -40,7 +40,7 @@ export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board' | 'pul
 export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board', 'pulls'];
 /**
  * Why a row is on the needs-you list. `needs-field`: an item that is the next step of work already
- * under way but that the next job refuses because a field the tracker asks for (`ready_needs` in
+ * under way but that the next job refuses because a field the tracker asks for (`ready.needs` in
  * .flow/config.yaml, such as priority or size) is empty: open, not an epic, no step, no open
  * blocker, and either its parent has started (a step, a worktree, a PR or a gate), a sibling
  * under the same parent has started or is done, or it blocks an item that has started. Other
@@ -78,7 +78,7 @@ export type ProjectInfo = {
   repo: string | null;
   /** `https://github.com/<repo>`, or null without `github.repo`. */
   repoUrl: string | null;
-  /** The tracker's page for the project's items: the GitHub issues page on the github adapter, null on local. */
+  /** The tracker's page for the project's items: the GitHub issues page while the flow reads GitHub, else null. */
   trackerUrl: string | null;
   /** The tracker adapter, `adapters.default`: `github` or `local`. */
   adapter: string;

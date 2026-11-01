@@ -282,7 +282,7 @@ export class ProjectMonitor {
       case 'pulls':
         if (flow === null) throw new Error('the flow files are not read yet');
         this.facts.pulls.facts = null;
-        if (flow.config.adapter !== PULLS_ADAPTER) return `not applicable: adapter ${flow.config.adapter}`;
+        if (!flow.config.trackers.includes(PULLS_ADAPTER)) return `not applicable: trackers ${flow.config.trackers.join(', ')}`;
         if (flow.config.repo === null) return 'not applicable: no github.repo in .flow/config.yaml';
         this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return null;
     }

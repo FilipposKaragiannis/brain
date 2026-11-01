@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FieldChange, FieldGroup, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, HostDefaults, JobsHost, Section } from '../../../daemon/src/plugins/flow/schema.ts';
-import { checkSchedule, DEFAULT_JOBS_HOST, fieldAt, legacyJobsSetting, OTHER_GROUP } from '../../../daemon/src/plugins/flow/schema.ts';
+import { checkSchedule, DEFAULT_JOBS_HOST, fieldAt, legacyJobsSetting, legacyReadySetting, OTHER_GROUP } from '../../../daemon/src/plugins/flow/schema.ts';
 import { projectPath, unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
 import { OpenFileButton } from '../OpenFileButton.tsx';
@@ -161,8 +161,10 @@ type FormContext = {
   workersSplit: boolean;
 };
 
-/** The trackers new items go to, from the form's adapters.* text: the default (local when unset) and each kind's own. */
+/** The trackers the flow reads, from the form's text: `trackers` when it names some, else the default (local when unset) and each kind's own. */
 function trackers(current: (path: string) => string): string[] {
+  const named = current('trackers').split('\n').map((line) => line.trim()).filter((tracker) => tracker !== '');
+  if (named.length > 0) return named;
   return [current('adapters.default') || 'local', ...['epic', 'task', 'bug'].map((kind) => current(`adapters.${kind}`))].filter((tracker) => tracker !== '');
 }
 
@@ -302,9 +304,15 @@ function isSet(value: unknown): boolean {
   return value !== undefined && value !== null && value !== '';
 }
 
-/** What the plugin runs a host's model or effort with while its jobs.<host> map is absent: the deprecated key's value, or null. */
+/**
+ * What the plugin runs a key with while the file leaves it to a deprecated one: a host's model or
+ * effort while its jobs.<host> map is absent, a readiness key while it is unset. The value as the
+ * form's text, or null.
+ */
 function legacyOf(spec: FieldSpec, values: Record<string, unknown>): { value: string; from: string } | null {
-  return spec.host === undefined ? null : legacyJobsSetting(values, spec.host.host, spec.host.setting);
+  if (spec.host !== undefined) return legacyJobsSetting(values, spec.host.host, spec.host.setting);
+  const ready = legacyReadySetting(values, spec.path);
+  return ready === null ? null : { value: ready.value.join('\n'), from: ready.from };
 }
 
 /** A deprecated key: its value read-only, the note, and Clear. */
@@ -393,7 +401,7 @@ function FieldControl({ spec, fileValue, legacy, unset, hostDefaults, context, t
     <div className={spec.type === 'schedule' || spec.rows !== undefined ? 'flow-field flow-wide' : 'flow-field'}>
       <FieldLabel spec={spec} id={id} group={group} unset={unset} />
       {control}
-      {legacy !== null && <p className="module-help flow-help flow-legacy">now {legacy.value}, from the deprecated {legacy.from}</p>}
+      {legacy !== null && <p className="module-help flow-help flow-legacy">now {legacy.value.split('\n').join(', ')}, from the deprecated {legacy.from}</p>}
       <p className="module-help flow-help">{spec.help}{hostDefaultHelp(spec, hostDefaults)}{group ? '' : spec.type === 'list' ? ' One per line.' : spec.type === 'map' ? ' One name: value per line.' : ''}</p>
     </div>
   );

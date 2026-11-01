@@ -4,7 +4,9 @@ description: Create an item in the project's tracker (an epic, a task or a bug) 
 ---
 
 Create one item. The script picks the tracker from `.flow/config.yaml` (`adapters.<kind>`, else
-`adapters.default`) and prints the id (`gh#310`, `local:task/3`).
+`adapters.default`) and prints the id (`gh#310`, `local:task/3`). `trackers` names the trackers
+the flow reads (unset: every one under `adapters` and local); when it is set, the script refuses
+while an `adapters` value is not in it, since the flow would never read the item.
 
 Plugin root `$P`: the directory holding this skill (`${CLAUDE_PLUGIN_ROOT}` on Claude; on Codex
 the path `codex plugin list` prints for `flow`).
@@ -44,7 +46,7 @@ the path `codex plugin list` prints for `flow`).
    Write the body to a file first (`--body-file -` reads stdin). `--parent` makes a sub-item of
    an epic or a split task, and the child takes the parent's priority and area unless
    `--priority` or `--area` names its own; `--blocked-by` records the dependency edges. A child
-   left without a priority that `github.ready_needs` asks for is said: tell the owner, it is not
+   left without a priority that `ready.needs` asks for is said: tell the owner, it is not
    ready until one is set. The title is a sentence of under ten
    words that names the outcome, not the work ("Bots never stall", not "Fix bot stalling").
 5. **Report** the id and the title in one line. Nothing else changes: no claim, no worktree, no
