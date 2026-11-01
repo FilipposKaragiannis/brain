@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { compareVersions, flowMarketplace, installedPlugins, parseClaudeInstalled, parseCodexEnabled, pluginReader } from '../src/collectors/plugins.ts';
+import { compareVersions, flowMarketplace, installedPlugins, mergeCodexPlugins, parseClaudeInstalled, parseCodexEnabled, parseCodexPlugins, pluginReader } from '../src/collectors/plugins.ts';
 import type { ClaudeInstall } from '../src/collectors/plugins.ts';
 
 const ROOT = '/work/projects/app';
@@ -88,6 +88,38 @@ test('FlowMarketplace_ClaudeInstallFirst_ThenCodexCache_ThenPluginFolder_ThenDef
   ], ['mine', 'theirs', 'folder-market', 'brain-plugins'], 'because flow\'s own install names its marketplace, then the Codex cache, then the folder the project\'s flow sits in');
 });
 
+test('FlowMarketplace_UserInstallFromOtherMarketplaceListedFirst_ProjectInstallsMarketplace', () => {
+  const claude = claudeOf({ 'flow@user-market': [install('flow', 'user', '1.27.1')], 'flow@project-market': [install('flow', 'project', '1.11.0', ROOT)] });
+  assert.equal(flowMarketplace({ root: ROOT, claude, codex: [], codexFlowMarketplaces: [], pluginRoot: null }), 'project-market', 'because the project\'s own flow install is what Claude Code loads there, over a user one listed before it');
+});
+
+test('FlowMarketplace_OnlyAnotherProjectsInstall_FallsToCodexCache', () => {
+  const claude = claudeOf({ 'flow@other-market': [install('flow', 'project', '1.10.0', '/work/projects/other')] });
+  assert.equal(flowMarketplace({ root: ROOT, claude, codex: [], codexFlowMarketplaces: ['theirs'], pluginRoot: null }), 'theirs', 'because another project\'s install says nothing of this one, so the next clue decides');
+});
+
+test('CodexSettings_ProjectEnablesWhatHomeDoesNot_Enabled', () => {
+  const home = parseCodexPlugins('[plugins."flow@brain-plugins"]\nenabled = true\n');
+  const project = parseCodexPlugins('[plugins."standards@brain-plugins"]\nenabled = true\n');
+  assert.deepEqual(mergeCodexPlugins(home, project), [{ name: 'flow', marketplace: 'brain-plugins' }, { name: 'standards', marketplace: 'brain-plugins' }], 'because Codex reads the project\'s config.toml on top of the home one');
+});
+
+test('CodexSettings_ProjectDisablesWhatHomeEnables_NotEnabled', () => {
+  const home = parseCodexPlugins('[plugins."flow@brain-plugins"]\nenabled = true\n[plugins."meta@brain-plugins"]\nenabled = true\n');
+  const project = parseCodexPlugins('[plugins."flow@brain-plugins"]\nenabled = false\n');
+  assert.deepEqual(mergeCodexPlugins(home, project), [{ name: 'meta', marketplace: 'brain-plugins' }], 'because the project\'s setting for a plugin overrides the home\'s');
+});
+
+test('CodexSettings_ProjectTableWithoutEnabled_HomeSettingKept', () => {
+  const home = parseCodexPlugins('[plugins."flow@brain-plugins"]\nenabled = true\n');
+  const project = parseCodexPlugins('[plugins."flow@brain-plugins"]\n# no enabled line\n');
+  assert.deepEqual(mergeCodexPlugins(home, project), [{ name: 'flow', marketplace: 'brain-plugins' }], 'because a table that sets nothing overrides nothing');
+});
+
+test('CodexConfig_EnabledTwiceInATable_LastWins', () => {
+  assert.deepEqual(parseCodexEnabled('[plugins."flow@brain-plugins"]\nenabled = true\nenabled = false\n'), [], 'because the last enabled line of a table is the one that holds');
+});
+
 test('PluginReader_MissingFiles_Empty', async () => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'plugins-empty-'));
   try {
@@ -105,4 +137,37 @@ test('PluginReader_BothHostsFiles_ReadFromTheHome', async () => {
     writeFileSync(path.join(home, '.codex', 'config.toml'), '[plugins."flow@brain-plugins"]\nenabled = true\n');
     assert.deepEqual(await pluginReader(home)(ROOT, null), [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.11.0', codex: '1.10.0' }], 'because each host\'s version comes from its own files under the home');
   } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+function writeCodexConfig(folder: string, source: string): void {
+  mkdirSync(path.join(folder, '.codex'), { recursive: true });
+  writeFileSync(path.join(folder, '.codex', 'config.toml'), source);
+}
+
+test('PluginReader_ProjectConfigEnablesPluginHomeDoesNot_Listed', async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'plugins-home-'));
+  const root = mkdtempSync(path.join(os.tmpdir(), 'plugins-root-'));
+  try {
+    mkdirSync(path.join(home, '.codex', 'plugins', 'cache', 'brain-plugins', 'standards', '1.4.0'), { recursive: true });
+    writeCodexConfig(home, '[plugins."standards@brain-plugins"]\nenabled = false\n');
+    writeCodexConfig(root, '[plugins."standards@brain-plugins"]\nenabled = true\n');
+    assert.deepEqual(await pluginReader(home)(root, null), [{ name: 'standards', marketplace: 'brain-plugins', claude: null, codex: '1.4.0' }], 'because Codex enables a plugin the project\'s config.toml enables, with its version from the home cache');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('PluginReader_ProjectConfigDisablesPluginHomeEnables_NotListed', async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'plugins-home-'));
+  const root = mkdtempSync(path.join(os.tmpdir(), 'plugins-root-'));
+  try {
+    mkdirSync(path.join(home, '.codex', 'plugins', 'cache', 'brain-plugins', 'standards', '1.4.0'), { recursive: true });
+    writeCodexConfig(home, '[plugins."standards@brain-plugins"]\nenabled = true\n');
+    writeCodexConfig(root, '[plugins."standards@brain-plugins"]\nenabled = false\n');
+    assert.deepEqual(await pluginReader(home)(root, null), [], 'because the project\'s enabled = false overrides the home\'s for that plugin');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });

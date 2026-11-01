@@ -181,12 +181,15 @@ snapshots.
   without their `@`, codex and claude when unset: who the PR cards offer for a review ask).
 - `plugins` is the plugins of flow's marketplace either host has for the project, by name, each
   `{name, marketplace, claude, codex}` with that host's version or null. The marketplace is that of
-  flow's own install (`flow@<marketplace>` in Claude's list, else the flow folder in the Codex
-  cache), else of the cache folder the project's flow sits in, else `brain-plugins`. `claude` is
-  from `~/.claude/plugins/installed_plugins.json`: the entry whose `projectPath` is the project
-  root (project or local scope), else the user one. `codex` is the newest version folder (dotted
-  numbers compared as numbers) under `~/.codex/plugins/cache/<marketplace>/<name>/` when
-  `~/.codex/config.toml` has `[plugins."<name>@<marketplace>"]` with `enabled = true`. Read with
+  the flow install Claude loads for the project (`flow@<marketplace>` in Claude's list: the
+  project's own entry, else the user one; another project's entry never decides), else of the flow
+  folder in the Codex cache, else of the cache folder the project's flow sits in, else
+  `brain-plugins`. `claude` is from `~/.claude/plugins/installed_plugins.json`: the entry whose
+  `projectPath` is the project root (project or local scope), else the user one. `codex` is the
+  newest version folder (dotted numbers compared as numbers) under
+  `~/.codex/plugins/cache/<marketplace>/<name>/` when `[plugins."<name>@<marketplace>"]` ends up
+  with `enabled = true`: `<root>/.codex/config.toml` overrides `~/.codex/config.toml` per plugin
+  (the last `enabled` in a table counts), so the project can turn one on or off. Read with
   the `files` source; a missing or broken file counts as none. The home is injected
   (`daemon/src/collectors/plugins.ts`).
 - `jobs` has one entry per schedule `jobs.sh status --json` lists (flow 1.26.0): every job, then
@@ -239,9 +242,13 @@ snapshots.
   has an unresolved thread shows it there.
 - A gate carries `session`: the `{host, id, transcript, resume}` of the session that raised it, or
   null. Only for a claude or codex gate on a claimed worktree (a step run from the root shares its
-  folder with the owner's own sessions): the newest transcript in that worktree written at or after
-  30 minutes before `raisedAt` (`<claude folder>/*.jsonl`, or for codex a session file whose first
-  line names the worktree, as above; a discussion resumed since appends to the same file). It
+  folder with the owner's own sessions): of the transcripts in that worktree (`<claude
+  folder>/*.jsonl`, or for codex a session file whose first line names the worktree, as above)
+  written at or after 30 minutes before `raisedAt`, the one that started latest no later than 5
+  seconds after `raisedAt`. A transcript's start is the first `"timestamp"` in its head (both
+  hosts write one on the first line), read once per file; one without it is skipped. A session the owner opened in the worktree after
+  the raise is never chosen, however new, while a discussion resumed since still matches, since it
+  appends to the raising session's own file. It
   comes from the files on disk, so it outlives a restart that empties `ended`. Looked up with the
   `files` source and kept per item and `raisedAt` while the gate waits (a miss is scanned again a
   minute later).

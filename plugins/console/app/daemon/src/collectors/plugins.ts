@@ -15,6 +15,8 @@ const CODEX_ENABLED = /^enabled\s*=\s*(true|false)\s*(?:#.*)?$/;
 export type ClaudeInstall = { name: string; marketplace: string; scope: string; projectPath: string | null; version: string };
 /** A plugin Codex's config enables, as `<name>@<marketplace>`. */
 export type CodexEnabled = { name: string; marketplace: string };
+/** A plugin table in a Codex config, with the `enabled` value it sets. */
+export type CodexSetting = CodexEnabled & { enabled: boolean };
 
 /** Reads the hosts' plugin files for a project: its root and the flow plugin folder it resolves. */
 export type PluginReader = (root: string, pluginRoot: string | null) => Promise<InstalledPlugin[]>;
@@ -48,25 +50,38 @@ export function parseClaudeInstalled(source: string | null): ClaudeInstall[] {
   return out;
 }
 
-/** The plugins `~/.codex/config.toml` enables: each `[plugins."<name>@<marketplace>"]` table with `enabled = true`. */
-export function parseCodexEnabled(source: string | null): CodexEnabled[] {
+/** Each `[plugins."<name>@<marketplace>"]` table of a Codex config.toml that sets `enabled`, with the last value it sets. */
+export function parseCodexPlugins(source: string | null): CodexSetting[] {
   if (source === null) return [];
-  const out: CodexEnabled[] = [];
-  let current: CodexEnabled | null = null;
+  const settings = new Map<string, CodexSetting>();
+  let current: { key: string; name: string; marketplace: string } | null = null;
   for (const raw of source.split(/\r?\n/)) {
     const line = raw.trim();
     if (line.startsWith('[')) {
       const match = CODEX_PLUGIN_TABLE.exec(line);
       const key = match === null ? null : match[1] ?? match[2] ?? null;
-      current = key === null ? null : splitKey(key);
+      const named = key === null ? null : splitKey(key);
+      current = key === null || named === null ? null : { key, ...named };
       continue;
     }
     const enabled = CODEX_ENABLED.exec(line);
-    if (current !== null && enabled !== null && enabled[1] === 'true' && !out.some((entry) => entry.name === current?.name && entry.marketplace === current.marketplace)) {
-      out.push(current);
+    if (current !== null && enabled !== null) {
+      settings.set(current.key, { name: current.name, marketplace: current.marketplace, enabled: enabled[1] === 'true' });
     }
   }
-  return out;
+  return [...settings.values()];
+}
+
+/** The plugins Codex enables for a project: the home config's settings, each overridden by the project config's for the same `<name>@<marketplace>`. */
+export function mergeCodexPlugins(home: CodexSetting[], project: CodexSetting[]): CodexEnabled[] {
+  const settings = new Map<string, CodexSetting>();
+  for (const setting of [...home, ...project]) settings.set(`${setting.name}@${setting.marketplace}`, setting);
+  return [...settings.values()].filter((setting) => setting.enabled).map(({ name, marketplace }) => ({ name, marketplace }));
+}
+
+/** The plugins one Codex config.toml enables: each `[plugins."<name>@<marketplace>"]` table whose last `enabled` is true. */
+export function parseCodexEnabled(source: string | null): CodexEnabled[] {
+  return mergeCodexPlugins(parseCodexPlugins(source), []);
 }
 
 /** Orders versions on their dotted numbers, as .flow/plugin.sh sorts them: 1.10.0 after 1.9.2. */
@@ -86,10 +101,15 @@ export function newestVersion(versions: string[]): string | null {
   return [...versions].sort(compareVersions).at(-1) ?? null;
 }
 
-/** The version installed for the project: its own install (project or local scope, at its root), else the user's; null with neither. */
-function claudeVersionFor(installs: ClaudeInstall[], root: string): string | null {
+/** The install Claude Code loads for the project: its own (project or local scope, at its root), else the user's; another project's never. */
+function claudeInstallFor(installs: ClaudeInstall[], root: string): ClaudeInstall | undefined {
   const own = installs.find((install) => install.scope !== 'user' && install.projectPath !== null && path.resolve(install.projectPath) === path.resolve(root));
-  return (own ?? installs.find((install) => install.scope === 'user'))?.version ?? null;
+  return own ?? installs.find((install) => install.scope === 'user');
+}
+
+/** The version installed for the project, from the install Claude Code loads there; null with none. */
+function claudeVersionFor(installs: ClaudeInstall[], root: string): string | null {
+  return claudeInstallFor(installs, root)?.version ?? null;
 }
 
 export type MarketplaceClues = {
@@ -102,14 +122,13 @@ export type MarketplaceClues = {
 };
 
 /**
- * flow's marketplace: that of Claude's flow install (the one for this project first), else of the
- * flow folder in the Codex cache (an enabled one first), else of the cache folder the project's
- * plugin sits in, else brain-plugins.
+ * flow's marketplace: that of the flow install Claude Code loads for the project (its own at the
+ * root first, else the user's; another project's never decides), else of the flow folder in the
+ * Codex cache (an enabled one first), else of the cache folder the project's plugin sits in, else
+ * brain-plugins.
  */
 export function flowMarketplace({ root, claude, codex, codexFlowMarketplaces, pluginRoot }: MarketplaceClues): string {
-  const flows = claude.filter((install) => install.name === FLOW);
-  const forProject = flows.find((install) => claudeVersionFor([install], root) !== null);
-  const fromClaude = (forProject ?? flows[0])?.marketplace;
+  const fromClaude = claudeInstallFor(claude.filter((install) => install.name === FLOW), root)?.marketplace;
   if (fromClaude !== undefined) return fromClaude;
   const cached = [...codexFlowMarketplaces].sort();
   const fromCodex = cached.find((marketplace) => codex.some((entry) => entry.name === FLOW && entry.marketplace === marketplace)) ?? cached[0];
@@ -148,14 +167,18 @@ async function folders(folder: string): Promise<string[]> {
 }
 
 /**
- * Reads the plugins of flow's marketplace from the hosts' files under `home`: Claude Code's
- * installed_plugins.json, Codex's config.toml and the version folders of the plugins it enables.
+ * Reads the plugins of flow's marketplace from the hosts' files: Claude Code's
+ * installed_plugins.json under `home`, Codex's config.toml under `home` with the one under the
+ * project root over it, and the version folders under `home` of the plugins they enable.
  * A missing or unreadable file counts as no plugins.
  */
 export function pluginReader(home: string): PluginReader {
   return async (root, pluginRoot) => {
     const claude = parseClaudeInstalled(await readText(path.join(home, '.claude', 'plugins', 'installed_plugins.json')));
-    const codex = parseCodexEnabled(await readText(path.join(home, '.codex', 'config.toml')));
+    const codex = mergeCodexPlugins(
+      parseCodexPlugins(await readText(path.join(home, '.codex', 'config.toml'))),
+      parseCodexPlugins(await readText(path.join(root, '.codex', 'config.toml'))),
+    );
     const cache = path.join(home, '.codex', 'plugins', 'cache');
     const codexFlowMarketplaces: string[] = [];
     for (const marketplace of await folders(cache)) {
