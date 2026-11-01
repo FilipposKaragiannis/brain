@@ -851,7 +851,7 @@ health_gates() {
 # children are all closed, or one whose every step ran and that waits at no gate (its PR was merged
 # by hand, or its merge gate cleared without the sweep closing it). Say each once and notify.
 health_splits() {
-  hs_rows="$(for a in $(adapters_configured); do adapter list "$a" 2>/dev/null; echo; done | python3 -I -c '
+  hs_rows="$(for a in $health_trackers; do adapter list "$a" 2>/dev/null; echo; done | python3 -I -c '
 import json, sys
 for line in sys.stdin:
     if line.strip():
@@ -949,6 +949,7 @@ cmd_health() {
   done
   health_settings
   resume_pair_check
+  health_trackers="$(adapters_configured)" || exit 2
   FLOW_LOCK_WAIT="${FLOW_LOCK_WAIT:-10}"
   now="$(date +%s)"; facts=0; claims=0; running=0; gated=0; reviewing=0; waiting=0; claimable=0; released=0; holders=""
   health_in_review=""; health_records=""
