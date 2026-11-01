@@ -15,7 +15,7 @@ JIRA_API_TOKEN. Items are issues of one project; ids are jira:<KEY>-<n>. The flo
 state is mirrored as labels the way the GitHub adapter does it (step:*, gate:*, wt:*, flow:*, and
 size:* unless jira.fields.size names a field) and kept whole in the issue property flow-state.
 A blocker in another tracker has no Jira link, so it sits in the description as a line
-"Blocked by: <id>, <id>".
+"Blocked by: <id>, <id>", as does a Jira blocker whose link Jira refused.
 """
 import json
 import os
@@ -91,12 +91,13 @@ def to_item(issue, fields, open_children):
     body = from_document(data.get("description"))
     links = [l for l in data.get("issuelinks") or [] if (l.get("type") or {}).get("name") == "Blocks" and l.get("inwardIssue")]
     foreign = [b.strip() for line in FOREIGN_BLOCKERS.findall(body) for b in line.split(",") if b.strip()]
+    linked_ids = [PREFIX + l["inwardIssue"]["key"] for l in links]
     item = {
         "id": PREFIX + issue["key"], "kind": kind, "type": type_name, "title": data.get("summary", ""), "body": body,
         "status": "open" if is_open else "closed", "size": state["size"],
         "priority": (data.get("priority") or {}).get("name", ""),
         "area": field_text(data.get(fields["area"]["id"])) if "area" in fields else "",
-        "labels": labels, "blocked_by": [PREFIX + l["inwardIssue"]["key"] for l in links] + foreign,
+        "labels": labels, "blocked_by": linked_ids + [b for b in foreign if b not in linked_ids],
         "parent": PREFIX + data["parent"]["key"] if data.get("parent") else "",
         "open_children": open_children, "url": "%s/browse/%s" % (setting("SITE").rstrip("/"), issue["key"]),
         "state": state,
@@ -182,7 +183,8 @@ def cmd_create(args):
     fields = custom_fields()
     blockers = [b for b in options["blocked-by"].split(",") if b]
     foreign = [b for b in blockers if not b.startswith(PREFIX)]
-    body = options["body"] + ("\n\nBlocked by: %s" % ", ".join(foreign) if foreign else "")
+    jira_blockers = [b for b in blockers if b.startswith(PREFIX)]
+    body = with_blockers(options["body"], foreign)
     data = {"project": {"key": setting("PROJECT")}, "summary": title,
             "issuetype": {"name": options["type"] or type_names().get(kind, type_names()["task"])}, "labels": []}
     if body.strip():
@@ -201,13 +203,24 @@ def cmd_create(args):
         data["parent"] = {"key": key_of(options["parent"])}
     status, made = call("POST", "/rest/api/3/issue", {"fields": data}, once=True)
     expect(status, made, "create the issue")
-    for blocker in blockers:
-        if blocker.startswith(PREFIX):
-            link = {"type": {"name": "Blocks"}, "inwardIssue": {"key": key_of(blocker)}, "outwardIssue": {"key": made["key"]}}
-            status, answer = call("POST", "/rest/api/3/issueLink", link, once=True)
-            if status // 100 != 2:
-                sys.stderr.write("flow: could not record %s%s blocked by %s\n" % (PREFIX, made["key"], blocker))
+    unlinked = [b for b in jira_blockers if not linked(b, made["key"])]
+    if unlinked:
+        sys.stderr.write("flow: Jira refused the Blocks link from %s, so the description of %s%s names it\n"
+                         % (", ".join(unlinked), PREFIX, made["key"]))
+        status, answer = call("PUT", "/rest/api/3/issue/" + made["key"],
+                              {"fields": {"description": to_document(with_blockers(options["body"], foreign + unlinked))}})
+        expect(status, answer, "record the blockers of %s%s" % (PREFIX, made["key"]))
     print(PREFIX + made["key"])
+
+
+def with_blockers(body, blockers):
+    return body + ("\n\nBlocked by: %s" % ", ".join(blockers) if blockers else "")
+
+
+def linked(blocker, key):
+    link = {"type": {"name": "Blocks"}, "inwardIssue": {"key": key_of(blocker)}, "outwardIssue": {"key": key}}
+    status, _ = call("POST", "/rest/api/3/issueLink", link, once=True)
+    return status // 100 == 2
 
 
 def merged_state(current, pairs):

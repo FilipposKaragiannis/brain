@@ -465,6 +465,10 @@ check "jira: close takes the jira.transitions.done transition" [ "$(jira_db "d[\
 check "jira: the token never reaches curl's command line" sh -c "! grep -q run-token '$work/jira/calls.log'"
 printf '1\n503\n/rest/api/3/issue$\n' > "$work/jira/fail"
 check_all "jira: a create that met a 5xx is not tried again, as it may have landed" '! jira_run "$P/adapters/jira/create.sh" task "Twice" 2>/dev/null && [ "$(jira_db "len(d[\"issues\"])")" = 1 ] && [ "$(grep -c "/rest/api/3/issue\$" "$work/jira/calls.log")" = 2 ]'
+jira_blocker="$(jira_run "$P/adapters/jira/create.sh" task "Blocker")"
+printf '1\n403\n/rest/api/3/issueLink\n' > "$work/jira/fail"
+jira_held="$(jira_run "$P/adapters/jira/create.sh" task "Held" --blocked-by "$jira_blocker" 2>/dev/null)"
+check_all "jira: a blocker whose link Jira refused still holds the new task" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_held" | jget blocked_by)" = "[\"$jira_blocker\"]" ] && jira_run "$P/adapters/jira/list-ready.sh" | python3 -c "import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)]; sys.exit(0 if sys.argv[1] in ids and sys.argv[2] not in ids else 1)" "$jira_blocker" "$jira_held"'
 jira_config http://acme.atlassian.net
 site_err="$(jira_run "$P/adapters/jira/list.sh" 2>&1 >/dev/null)"; code=$?
 check_all "jira: a jira.site that is not https is refused" '[ "$code" -ne 0 ] && printf "%s" "$site_err" | grep -q "jira.site in .flow/config.yaml must be"'

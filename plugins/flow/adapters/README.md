@@ -144,8 +144,9 @@ The `jira` adapter reaches Jira Cloud through its REST API v3 with `curl`. Name 
 
 The token is `JIRA_API_TOKEN` in the environment, never a config key; without it every script
 refuses before it calls Jira. It reaches `curl` on stdin, never on its command line. Ids are
-`jira:<KEY>-<n>`. A Jira blocker is a Blocks link; a blocker in another tracker is a
-`Blocked by: <id>, <id>` line in the description, and then the item carries no `open_blockers`.
+`jira:<KEY>-<n>`. A Jira blocker is a Blocks link; a blocker in another tracker, or a Jira one
+whose link Jira refused, is a `Blocked by: <id>, <id>` line in the description, and then the item
+carries no `open_blockers`.
 `link-pr` adds the PR as a remote link and a comment. There is no `sync`, `vocabulary` or
 `answers` yet: the owner clears a Jira item's gate with `scripts/gate.sh`.
 
