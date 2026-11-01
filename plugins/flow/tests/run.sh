@@ -438,11 +438,37 @@ check "gh next.sh end to end" sh -c "'$P/scripts/next.sh' --json | grep -q '\"it
 check "cross-tracker blocker: local waits on gh" sh -c "'$P/adapters/local/create.sh' task Cross --blocked-by 'gh#12' >/dev/null && ! '$P/adapters/local/list-ready.sh' | grep -q Cross"
 
 echo "adapter contract (adapters/README.md)"
-for contract_adapter in github local; do
+for contract_adapter in github local jira; do
   sh "$here/adapter-contract.sh" "$contract_adapter" > "$work/contract-$contract_adapter.out" 2>&1; code=$?
   check "the $contract_adapter adapter meets the contract: $(tail -n 1 "$work/contract-$contract_adapter.out")" [ "$code" -eq 0 ]
   [ "$code" -eq 0 ] || grep '^  FAIL' "$work/contract-$contract_adapter.out"
 done
+
+echo "jira adapter (fake curl)"
+cp .flow/config.yaml "$work/config.gh"
+mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
+printf '{"transitions": [{"id": "31", "name": "Done", "category": "done"}, {"id": "41", "name": "Closed", "category": "done"}]}\n' > "$work/jira/jira.json"
+jira_config() { printf 'adapters:\n  default: jira\nbase: main\nnotify:\n  desktop: false\njira:\n  site: %s\n  project: WID\n  email: flow@acme.test\n  api_token: in-the-config\n  fields:\n    size: Size\n  transitions:\n    done: Closed\n' "$1" > .flow/config.yaml; }
+jira_run() { env PATH="$work/jirabin:$PATH" FAKE_JIRA_DIR="$work/jira" FLOW_JIRA_RETRY_WAIT="0 0" JIRA_API_TOKEN=run-token "$@"; }
+jira_db() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$work/jira/jira.json" "$1"; }
+jira_config https://acme.atlassian.net
+env PATH="$work/jirabin:$PATH" FAKE_JIRA_DIR="$work/jira" "$P/adapters/jira/list.sh" > /dev/null 2> "$work/jira/refused.err"; code=$?
+check_all "jira: without JIRA_API_TOKEN the adapter refuses and says why, though the config holds a token" '[ "$code" -ne 0 ] && grep -q "JIRA_API_TOKEN is not set" "$work/jira/refused.err" && [ ! -s "$work/jira/calls.log" ]'
+jira_task="$(jira_run "$P/adapters/jira/create.sh" task "Sized" --size M)"
+check_all "jira: a size goes to the jira.fields.size field, not a label" '[ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"customfield_10040\"][\"value\"]")" = M ] && [ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"labels\"]")" = "[]" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_task" | jget size)" = M ]'
+jira_run "$P/adapters/jira/write-state.sh" "$jira_task" size=L step=implement
+check_all "jira: write-state moves the size field and labels the step" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_task" | jget state.size)" = L ] && [ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"labels\"]")" = "['"'"'step:implement'"'"']" ]'
+jira_run "$P/adapters/jira/link-pr.sh" "$jira_task" https://gh/pr/9
+check "jira: link-pr adds the PR as a remote link" [ "$(jira_db "[l[\"object\"][\"url\"] for l in d[\"issues\"][\"${jira_task#jira:}\"][\"remotelinks\"]]")" = "['https://gh/pr/9']" ]
+jira_run "$P/adapters/jira/close.sh" "$jira_task"
+check "jira: close takes the jira.transitions.done transition" [ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"status\"][\"name\"]")" = Closed ]
+check "jira: the token never reaches curl's command line" sh -c "! grep -q run-token '$work/jira/calls.log'"
+printf '1\n503\n/rest/api/3/issue$\n' > "$work/jira/fail"
+check_all "jira: a create that met a 5xx is not tried again, as it may have landed" '! jira_run "$P/adapters/jira/create.sh" task "Twice" 2>/dev/null && [ "$(jira_db "len(d[\"issues\"])")" = 1 ] && [ "$(grep -c "/rest/api/3/issue\$" "$work/jira/calls.log")" = 2 ]'
+jira_config http://acme.atlassian.net
+site_err="$(jira_run "$P/adapters/jira/list.sh" 2>&1 >/dev/null)"; code=$?
+check_all "jira: a jira.site that is not https is refused" '[ "$code" -ne 0 ] && printf "%s" "$site_err" | grep -q "jira.site in .flow/config.yaml must be"'
+cp "$work/config.gh" .flow/config.yaml
 
 echo "github blips (fake gh)"
 # $FAKE_GH_DIR/fail makes the next N gh calls fail with a message; the waits are zero here.

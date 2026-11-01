@@ -649,3 +649,10 @@ test('FixedValuesList_OtherValue_RefusedOnChangeAndWarnedInTheFile', () => {
   assert.ok(checkChange(needs, ['priority', 'size']).ok && checkFileValue(needs, 'size').ok, 'because _gh.sh knows priority and size');
   assert.deepEqual([checkChange(needs, ['area']), checkFileValue(needs, ['priority', 'area'])], Array(2).fill({ ok: false, error: 'github.ready_needs lists area: it takes priority or size' }), 'because _gh.sh ignores any other field with a warning');
 });
+
+test('TrackerKeys_Jira_TakenAsATrackerForNewItems', () => {
+  for (const key of ['adapters.default', 'adapters.epic', 'adapters.task', 'adapters.bug']) {
+    const spec = fieldAt(key)!;
+    assert.deepEqual([checkChange(spec, 'jira').ok, checkFileValue(spec, 'jira').ok], [true, true], `because the flow plugin ships a jira adapter, so ${key} may name it`);
+  }
+});

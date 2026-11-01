@@ -144,7 +144,7 @@ const SCHEDULE_PREFIX = 'jobs.schedule.';
 export function scheduleJob(name: string): string {
   return name.split('-')[0] ?? name;
 }
-const ADAPTERS = ['github', 'local'];
+const ADAPTERS = ['github', 'local', 'jira'];
 
 const RELOAD_SCHEDULE: FollowUp = {
   note: 'The schedule launchd runs is written at install: run jobs.sh install to reload it.',

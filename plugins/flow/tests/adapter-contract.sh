@@ -98,6 +98,23 @@ comments_github() {
 }
 blip_github() { printf '1\ngh: HTTP 502\n' > "$FAKE_GH_DIR/fail"; }
 
+setup_jira() {
+  export FAKE_JIRA_DIR="$work/jira"; mkdir -p "$FAKE_JIRA_DIR"; cp "$here/_fake_jira.py" "$FAKE_JIRA_DIR/"
+  printf '{}\n' > "$FAKE_JIRA_DIR/jira.json"
+  ln -sf "$here/fake-jira.sh" "$work/bin/curl"
+  export JIRA_API_TOKEN="contract-token" FLOW_JIRA_RETRY_WAIT="0 0"
+}
+config_jira() {
+  printf 'jira:\n  site: https://acme.atlassian.net\n  project: WID\n  email: flow@acme.test\n  fields:\n    area: Area\n'
+}
+missing_jira() { echo 'jira:WID-999'; }
+comments_jira() {
+  python3 -c 'import json,sys
+def text(node): return node.get("text", "") + "".join(text(c) for c in node.get("content", []))
+[print(text(c["body"])) for c in json.load(open(sys.argv[1]))["issues"][sys.argv[2]]["comments"]]' "$FAKE_JIRA_DIR/jira.json" "${1#jira:}"
+}
+blip_jira() { printf '1\n503\n' > "$FAKE_JIRA_DIR/fail"; }
+
 type "setup_$name" >/dev/null 2>&1 || { echo "adapter-contract: no backend setup for $name in $0" >&2; exit 2; }
 write_config() {
   { printf 'adapters:\n  default: %s\nbase: main\nnotify:\n  desktop: false\n' "$name"
