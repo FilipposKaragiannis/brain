@@ -3,7 +3,7 @@
 #   comments.sh threads <pr>                    unresolved review threads as JSON
 #   comments.sh reply <pr> <comment_id> <text>  reply in a review thread, marked as the flow's (REPLY_MARKER)
 #   comments.sh resolve <thread_id>             resolve a review thread
-#   comments.sh issue-comments <pr>             plain PR comments as JSON (quiz answers live here)
+#   comments.sh issue-comments <pr>             plain PR comments as JSON
 #   comments.sh ready <pr>                      mark a draft PR ready for review
 #   comments.sh state <pr>                      {state, isDraft, mergedAt, url, headRefName, headRefOid, baseRefName, mergeable, updatedAt,
 #                                               reviewDecision, latestReviews, reviewRequests}

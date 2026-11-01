@@ -125,7 +125,7 @@ export class ProjectMonitor {
   actionContext(): ActionContext {
     const flow = this.facts.files.facts;
     return {
-      root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, pluginVersion: flow?.pluginVersion ?? null, repo: flow?.config.repo ?? null,
+      root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, pluginVersion: flow?.pluginVersion ?? null, pluginScripts: flow?.pluginScripts ?? null, repo: flow?.config.repo ?? null,
       jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
       outsideWorktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role !== 'pool').map((worktree) => worktree.path),
       // The snapshot's agents, not the raw process list: only processes in this project's worktrees.

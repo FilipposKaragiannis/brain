@@ -29,8 +29,10 @@ The item (its `parent`, acceptance lines), the task branch in the claimed worktr
    Mermaid, one of them), Evidence before and after from the verify report, Merge danger
    (one-way or two-way door, blast radius in one word), the `verify.md` table, and
    `Resolves #<n>` for a GitHub item (a local item gets `Item: <id>`). Glossary words only.
-5. When a quiz exists: open as a draft (`--draft`), post `quiz.md` as the first comment with
-   the marker `<!-- flow:quiz -->`, and say the PR goes ready when the owner's answers pass.
+5. When a quiz exists (`<reports>/quiz.md`): open as a draft (`--draft`) and say in the
+   result that the PR goes ready when the owner passes the quiz in the console. Never post the
+   quiz, its answers or a link to it on the PR: the console shows it on the Gates and Pull
+   requests pages.
 6. Request reviews with `<plugin>/scripts/comments.sh request-review <pr> "<ask>"`: the ask
    is to review the diff line by line for correctness and to check the implementation against
    the item's acceptance lines. The script asks each reviewer in `.flow/config.yaml`

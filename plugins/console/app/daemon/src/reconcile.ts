@@ -8,6 +8,7 @@ import type { JobFacts, JobRunRecord, JobStatusRow, JobStatusRun, JobWorkerRow }
 import type { AgentProcess, EndedProcess, ProcessFacts } from './collectors/processes.ts';
 import type { PullFact, PullFacts } from './collectors/pulls.ts';
 import { parseGateQuestions } from './gateMessage.ts';
+import { itemSlug } from './syncNote.ts';
 import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
@@ -251,6 +252,7 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[], items: I
       pull: gatePull(gate.item, items, pulls),
       plan: gate.plan,
       body: input.board?.bodies[gate.item] ?? null,
+      quiz: input.flow.quizzes[itemSlug(gate.item)] ?? null,
     }))
     .sort((left, right) => right.ageSeconds - left.ageSeconds);
 }
@@ -504,13 +506,15 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
     const record = input.flow.reviews.find((entry) => entry.pr === pull.number);
     const live = pullState(pull);
     const state = mentionWaiting(record) && MENTION_REVIEW_OVERRIDES.includes(live) ? 'in-review' : live;
+    const linked = linkPull(pull, items, contexts);
     return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
     draft: pull.draft, state, checks: pull.checks, reviewDecision: pull.reviewDecision,
-    unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, ...linkPull(pull, items, contexts),
+    unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, ...linked,
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
     review: record === undefined ? null : { state: record.state, waiting: record.waiting, cannot: record.cannot, at: record.at },
+    quiz: linked.item === null ? null : input.flow.quizzes[itemSlug(linked.item)] ?? null,
     };
   });
 }

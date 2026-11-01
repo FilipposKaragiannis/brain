@@ -5,6 +5,7 @@ import { ExternalLink, ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
 import { healthCells, mergeBlockedReason, PULL_STATE_LABEL, pullRowsFromItems } from '../pulls.ts';
 import type { PullRequestRow } from '../pulls.ts';
+import { QuizPanel } from '../Quiz.tsx';
 import { itemTone, pullTone } from '../status.ts';
 import { ActionButton, Chip, Dot, Empty, Module, SourceFreshness } from '../ui.tsx';
 
@@ -42,7 +43,8 @@ export function Pulls({ snapshot }: { snapshot: Snapshot }) {
 
 function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot }) {
   const agent = snapshot.worktrees.find((worktree) => worktree.name === pull.worktree)?.agents[0] ?? null;
-  const blocked = mergeBlockedReason(pull);
+  const quizPending = pull.quiz !== null && pull.quiz.result?.passed !== true;
+  const blocked = pull.state === 'draft' && quizPending ? 'A draft until you pass the quiz above; then it goes ready for review.' : mergeBlockedReason(pull);
   const review = pull.review;
   return (
     <section className="module pull-card" aria-label={`PR #${pull.number}`}>
@@ -65,6 +67,7 @@ function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot })
           </div>
         ))}
       </div>
+      {pull.quiz !== null && pull.item !== null && <div className="pull-quiz"><QuizPanel item={pull.item} quiz={pull.quiz} /></div>}
       {review !== null && (review.cannot.length > 0 || review.waiting.length > 0) && <Reviewers review={review} pr={pull.number} />}
       <footer className="pull-foot">
         {blocked === null ? <ActionButton kind="pr.merge" args={{ pr: String(pull.number) }} label="Merge" primary={true} /> : <span className="muted">{blocked}</span>}

@@ -2303,6 +2303,64 @@ check "gate json: no numbered line, no questions" [ "$(gq 0.questions)" = "[]" ]
 rm .flow/gates/*.json
 check "gate json: nothing pending, an empty array" [ "$("$P/scripts/gate.sh" list --json)" = "[]" ]
 
+echo "quiz: parse, grade, record and mark the draft ready (fake gh)"
+mkdir -p "$work/quiz" && cd "$work/quiz" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+git worktree add -q --detach ../q-wt-1
+mkdir -p .flow && printf 'adapters:\n  default: local\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../q-wt-1\nnotify:\n  desktop: false\n' > .flow/config.yaml
+q1="$("$P/adapters/local/create.sh" task "Charge shot" --size M --body "Hold to power up.")"
+"$P/adapters/local/link-pr.sh" "$q1" https://github.com/acme/widgets/pull/90
+qreports="$("$P/scripts/steward.sh" reports "$q1")"
+cat > "$qreports/quiz.md" <<'MD'
+<!-- flow:quiz -->
+## Quiz for local:task/1
+1. What fires a shot now?
+   a) A tap only
+   b) A tap, or a release after a hold
+   c) Only a release after a hold
+   Because: a tap still fires a normal shot, and a release after a hold fires a charged one.
+2. What happens when the hold
+   passes 600 ms?
+   a) The shot fires on its own b) The power caps at full c) The charge resets
+   **Because:** the power is clamped at 1.0,
+   so a longer hold adds nothing.
+3. Why does the tap golden replay matter?
+   a) It proves a tap still plays as before
+   b) It proves the glow renders
+<!-- answers: 1b 2b 3a -->
+MD
+"$P/scripts/quiz.sh" show "$q1" > "$work/quiz/show.json"; code=$?
+qs() { jget "$1" < "$work/quiz/show.json"; }
+check_all "quiz show: exits 0 and names the item" '[ "$code" -eq 0 ] && [ "$(qs item)" = "$q1" ]'
+check_all "quiz show: the title and three questions" '[ "$(qs title)" = "Quiz for local:task/1" ] && [ "$(python3 -c "import json,sys; print(len(json.load(sys.stdin)[\"questions\"]))" < "$work/quiz/show.json")" = 3 ]'
+check "quiz show: one choice per line" [ "$(qs questions.0.choices)" = '[{"key": "a", "text": "A tap only"}, {"key": "b", "text": "A tap, or a release after a hold"}, {"key": "c", "text": "Only a release after a hold"}]' ]
+check_all "quiz show: choices sharing a line, a question over two lines" '[ "$(qs questions.1.text)" = "What happens when the hold passes 600 ms?" ] && [ "$(qs questions.1.choices.2.text)" = "The charge resets" ]'
+check_all "quiz show: the answer key" '[ "$(qs questions.0.answer)" = b ] && [ "$(qs questions.2.answer)" = a ]'
+check_all "quiz show: a Because line, bold or plain, continued" '[ "$(qs questions.0.because)" = "a tap still fires a normal shot, and a release after a hold fires a charged one." ] && [ "$(qs questions.1.because)" = "the power is clamped at 1.0, so a longer hold adds nothing." ]'
+check "quiz show: no Because line, because null" [ "$(qs questions.2.because)" = null ]
+check "quiz show: no result before an answer" [ "$(qs result)" = null ]
+"$P/scripts/quiz.sh" show local:task/77 >/dev/null 2>&1; code=$?
+check "quiz show: an item with no quiz exits 2" [ "$code" -eq 2 ]
+"$P/scripts/quiz.sh" answer "$q1" >/dev/null 2>&1; code=$?
+check "quiz answer: no answers exits 2" [ "$code" -eq 2 ]
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['isDraft']=True; json.dump(d,open(p,'w'))"
+: > "$FAKE_GH_DIR/calls.log"
+qout="$("$P/scripts/quiz.sh" answer "$q1" 1b 2a 3a)"; code=$?
+check "quiz answer: a wrong answer fails, exit 0, 2 of 3 right" sh -c "[ $code -eq 0 ] && printf '%s' \"$qout\" | grep -q 'quiz failed on $q1: 2 of 3 right'"
+check_all "quiz answer: the result is kept in the reports" '[ "$(jget passed < "$qreports/quiz.json")" = false ] && [ "$(jget results.1.given < "$qreports/quiz.json")" = a ] && [ "$(jget results.1.right < "$qreports/quiz.json")" = false ]'
+check "quiz answer: a fail leaves the draft alone" sh -c "! grep -q 'pr ready' '$FAKE_GH_DIR/calls.log'"
+check "quiz answer: one events.log line per answer" grep -q "	$q1	quiz	failed 2/3" .flow/events.log
+qout="$("$P/scripts/quiz.sh" answer "$q1" b b a)"
+check "quiz answer: letters in question order pass" sh -c "printf '%s' \"$qout\" | grep -q 'quiz passed on $q1: 3 of 3 right; PR https://github.com/acme/widgets/pull/90 marked ready for review'"
+check "quiz answer: a pass marks the item's draft PR ready" sh -c "grep -q 'pr ready 90 -R acme/widgets' '$FAKE_GH_DIR/calls.log' && python3 -c \"import json; assert json.load(open('$FAKE_GH_DIR/issues.json'))['pr']['isDraft'] is False\""
+check_all "quiz answer: the pass is kept and logged" '[ "$(jget passed < "$qreports/quiz.json")" = true ] && grep -q "	$q1	quiz	passed 3/3" .flow/events.log'
+"$P/scripts/quiz.sh" show "$q1" > "$work/quiz/show.json"
+check_all "quiz show: the last result rides along" '[ "$(qs result.passed)" = true ] && [ "$(qs result.given)" = "{\"1\": \"b\", \"2\": \"b\", \"3\": \"a\"}" ]'
+q2="$("$P/adapters/local/create.sh" task "No PR yet" --size S --body x)"
+q2reports="$("$P/scripts/steward.sh" reports "$q2")"; cp "$qreports/quiz.md" "$q2reports/quiz.md"
+: > "$FAKE_GH_DIR/calls.log"
+qout="$("$P/scripts/quiz.sh" answer "$q2" 1b 2b 3a)"
+check "quiz answer: a pass with no PR records the pass and asks gh nothing" sh -c "printf '%s' \"$qout\" | grep -q 'quiz passed on $q2: 3 of 3 right\$' && ! grep -q 'pr ready' '$FAKE_GH_DIR/calls.log'"
+
 echo "digits stay strings, numbers stay numbers"
 mkdir -p "$work/digits" && cd "$work/digits" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 git worktree add -q --detach ../01

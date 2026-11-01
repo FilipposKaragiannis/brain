@@ -1,0 +1,1 @@
+{"given": {"1": "b", "2": "a"}, "right": 1, "total": 2, "passed": false, "results": [{"number": 1, "given": "b", "answer": "b", "right": true}, {"number": 2, "given": "a", "answer": "b", "right": false}], "item": "gh#7", "at": "2026-10-24T09:30:00Z"}

@@ -7,7 +7,8 @@ import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
-import type { FlowEvent, GatePlan, GateQuestion, PluginSource, StoppedHost } from '../snapshot.ts';
+import type { FlowEvent, GatePlan, GateQuestion, PluginSource, Quiz, StoppedHost } from '../snapshot.ts';
+import { readQuizzes } from '../quiz.ts';
 
 /** The parts of .flow/config.yaml the snapshot needs. */
 export type FlowConfig = {
@@ -85,6 +86,14 @@ export type FlowHomeFacts = {
    * plugin or its table could not be read.
    */
   worktreeSteps: Record<string, boolean> | null;
+  /**
+   * The quiz of every item that has one (`<root>/.flow/reports/<slug>/quiz.md` with its
+   * `quiz.json`), by item slug, the claimed worktree's copy first, then the pool's, then the
+   * main worktree's.
+   */
+  quizzes: Record<string, Quiz>;
+  /** The names in the plugin's `scripts/` folder, so an action can see a script a checkout has before its version says so; null with no plugin or an unreadable folder. */
+  pluginScripts: string[] | null;
 };
 
 const PLUGIN_LOOKUP_TIMEOUT_MS = 5000;
@@ -404,7 +413,14 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
   const worktreeSteps = pluginRoot === null ? null : await readWorktreeSteps(pluginRoot);
   const stoppedHosts = await readStoppedHosts(flowHome);
-  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps };
+  const quizzes = await readQuizzes([...new Set([...claims.map((claim) => claim.worktreePath), ...pool, root])]);
+  const pluginScripts = pluginRoot === null ? null : await readPluginScripts(pluginRoot);
+  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps, quizzes, pluginScripts };
+}
+
+/** The file names under the plugin's `scripts/`, sorted; null when the folder cannot be read. */
+export async function readPluginScripts(pluginRoot: string): Promise<string[] | null> {
+  try { return (await readdir(path.join(pluginRoot, 'scripts'))).sort(); } catch { return null; }
 }
 
 /** The `worktree` flag of every step in the plugin's profiles.json, as next.sh's `step_field` reads it; null when unreadable. */

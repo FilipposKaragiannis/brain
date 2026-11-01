@@ -1,6 +1,6 @@
 ---
 name: comments
-description: Address the review comments on an item's PR and keep it mergeable. Merges the base in when the PR conflicts with it, lists the unresolved threads, grades each (valid, nit, wrong), spawns the comment-addresser in the task worktree per thread, re-requests review, grades a quiz answer and marks the draft ready on a pass, and stops when the PR is merged or closed or nothing is new. Use when the user asks to address comments on a PR, or from the scheduled comments job.
+description: Address the review comments on an item's PR and keep it mergeable. Merges the base in when the PR conflicts with it, lists the unresolved threads, grades each (valid, nit, wrong), spawns the comment-addresser in the task worktree per thread, re-requests review, marks a draft whose quiz was passed in the console ready, and stops when the PR is merged or closed or nothing is new. Use when the user asks to address comments on a PR, or from the scheduled comments job.
 disable-model-invocation: true
 ---
 
@@ -45,10 +45,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    Wait for each addresser in the foreground and never end the turn while one runs: an
    unattended host stops background work after the last turn, and the comments job then counts
    the pass as failed and runs it again.
-6. **Quiz**: when the PR is a draft and a comment carries `<!-- flow:quiz -->`, look for the
-   owner's answer comment after it. Grade against the answer key in `<reports>/quiz.md`: every
-   question right → `comments.sh ready <pr>` and reply "quiz passed"; otherwise reply with the
-   questions to retry, nothing else.
+6. **Quiz**: the owner takes it in the console (`quiz.sh answer`), which grades it, writes
+   `<reports>/quiz.json` and marks the draft ready. When the PR is still a draft and that file
+   says `passed: true` (the console could not reach GitHub), run `comments.sh ready <pr>`. Never
+   grade a comment, and never post the quiz or its answers on the PR.
 7. **Re-request review** when at least one thread changed code or step 2 merged the base:
    `"$P/scripts/comments.sh" request-review <pr> "<ask>"`, the ask naming the new commits and
    what changed. It asks each reviewer in `reviews.reviewers`, one comment each. Never tag a
@@ -59,4 +59,4 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    pending, the quiz state.
 
 Never batch threads into one commit. Never resolve a thread without a reply. Never mark the
-PR ready without a passed quiz when one exists.
+PR ready without a passed quiz (`<reports>/quiz.json`) when one exists.

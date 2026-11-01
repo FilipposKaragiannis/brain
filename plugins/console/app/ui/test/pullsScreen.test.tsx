@@ -10,7 +10,7 @@ function pull(number: number, change: Partial<PullRequest>): PullRequest {
   return {
     number, title: `Pull ${number}`, url: `https://github.com/owner/project/pull/${number}`, branch: `flow/gh-${number}`, base: 'main', author: 'owner',
     draft: false, state: 'mergeable', checks: { passed: 5, failed: 0, pending: 0 }, reviewDecision: 'APPROVED', unresolvedThreads: 0, mergeable: 'MERGEABLE',
-    item: null, worktree: null, createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 3600, idleSeconds: 600, review: null, ...change,
+    item: null, worktree: null, createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 3600, idleSeconds: 600, review: null, quiz: null, ...change,
   };
 }
 

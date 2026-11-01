@@ -37,6 +37,8 @@ export type ActionContext = {
   pluginRoot: string | null;
   /** The flow plugin's version, or null when it could not be read. */
   pluginVersion: string | null;
+  /** The names under the plugin's `scripts/`, or null when unread: a checkout ahead of its version has a script its version does not promise. */
+  pluginScripts: string[] | null;
   repo: string | null;
   jobsHost: string;
   /** The pool worktrees, as absolute paths. A release names one of these or an item. */
@@ -146,7 +148,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.start', 'job.stop', 'job.pause', 'job.resume',
   'job.schedule', 'job.unschedule', 'run.stop', 'run.resume',
-  'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.review', 'host.clear', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.review', 'quiz.answer', 'host.clear', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -170,6 +172,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'job.uninstall': ['job'],
   'pr.merge': ['pr', 'method'],
   'pr.review': ['pr', 'reviewer'],
+  'quiz.answer': ['item', 'answers'],
   'host.clear': ['host'],
   'terminal.open': ['path', 'job', 'session'],
   refresh: ['source'],
@@ -194,6 +197,10 @@ const ITEM_ID = /^(gh#[1-9][0-9]*|local:[a-z]+\/[1-9][0-9]*)$/;
 /** A job's log name: a schedule (`next`, `next-nightly`) or one of its workers (`next-2`, `next-nightly-2`). */
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
+/** A quiz try as quiz.sh takes it: a letter per question number, `1b 2a 3c`, space separated. */
+const QUIZ_ANSWERS = /^[1-9][0-9]?[a-h]( [1-9][0-9]?[a-h])*$/;
+/** The first flow version with `scripts/quiz.sh`. */
+export const QUIZ_SINCE = '1.28.0';
 /** Who a reservation is under: letters or digits first, so it is never read as an option, then letters, digits, spaces and `.'_-`. */
 const RESERVE_NAME = /^[\p{L}\p{N}][\p{L}\p{N} .'_-]{0,63}$/u;
 /** A reviewer as comments.sh takes one: codex, claude, copilot or a GitHub login, with or without its @. */
@@ -367,6 +374,18 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       if (!MERGE_METHODS.includes(method)) return fail(`method must be one of ${MERGE_METHODS.join(', ')}`);
       if (context.repo === null) return fail('pr.merge needs github.repo in .flow/config.yaml');
       return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
+    }
+    // quiz.sh grades the try against the key in <reports>/quiz.md, keeps <reports>/quiz.json, logs
+    // one event and marks the item's draft PR ready on a pass; the page re-reads files and pulls.
+    case 'quiz.answer': {
+      const item = args['item'] ?? '';
+      const answers = args['answers'] ?? '';
+      if (!ITEM_ID.test(item)) return fail('quiz.answer needs an item id like gh#12 or local:task/7');
+      if (!QUIZ_ANSWERS.test(answers)) return fail('quiz.answer needs answers like "1b 2a 3c": a letter per question number');
+      // The script itself is the test when the plugin folder was read: a checkout has it before a release says so.
+      const missing = context.pluginScripts !== null ? !context.pluginScripts.includes('quiz.sh') : context.pluginVersion !== null && compareVersions(context.pluginVersion, QUIZ_SINCE) < 0;
+      if (missing) return fail(`quiz.answer needs flow ${QUIZ_SINCE} or later: flow ${context.pluginVersion ?? 'here'} has no scripts/quiz.sh`);
+      return sh('quiz.sh', ['answer', item, ...answers.split(' ')], [`item:${item}`], SCRIPT_TIMEOUT_MS, ['files', 'pulls']);
     }
     // comments.sh posts the mention with the flow's request marker (copilot goes through the
     // reviewers API), so the health job tracks and chases this ask like one the PR step made.

@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Open or update the pull request for an item with the pr-creator agent: base from the parent or the config, the house PR body with the verify report, draft plus quiz when the explain step ran, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
+description: Open or update the pull request for an item with the pr-creator agent: base from the parent or the config, the house PR body with the verify report, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
 disable-model-invocation: true
 ---
 
@@ -16,7 +16,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 2. **Spawn `pr-creator`** with the step brief plus the path of [PR-BODY.md](PR-BODY.md) (the
    house body) and, when they exist, `<reports>/explain.html` and `quiz.md`.
 3. **Result** `<reports>/pr.json`: `done` with the URL (under `pr`), the base and why, draft or
-   ready, the reviewers asked. The profile raises the merge gate after this step; the orchestrator
+   ready, the reviewers asked. A quiz never goes on the PR: the owner takes it in the console,
+   which marks the draft ready on a pass. The profile raises the merge gate after this step; the orchestrator
    notifies the owner with the URL and the verify summary.
 4. Report once: the URL, the base, draft or ready, and the warning when the base is not the
    default branch (the merge will not auto-close the item; closeout does).

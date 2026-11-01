@@ -159,7 +159,7 @@
       "agent": "",
       "worktree": true,
       "skill": "explain",
-      "summary": "Plain-language HTML summary plus a short quiz the owner answers on the PR (flow:explain)."
+      "summary": "Plain-language HTML summary plus a short quiz the owner takes in the console (flow:explain)."
     },
     "sync": {
       "agent": "implementer",
@@ -171,7 +171,7 @@
       "agent": "pr-creator",
       "worktree": true,
       "skill": "pr",
-      "summary": "Open or update the PR: base from the parent, house body, verify report, draft when a quiz exists, review requests (pr-creator)."
+      "summary": "Open or update the PR: base from the parent, house body, verify report, a draft while the owner has a quiz to pass in the console, review requests (pr-creator)."
     }
   },
   "gates": {
