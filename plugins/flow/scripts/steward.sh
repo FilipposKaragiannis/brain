@@ -474,6 +474,14 @@ cmd_sweep() {
     [ -n "$it" ] && adapter_for "$it" >/dev/null 2>&1 || continue
     data="$(adapter read "$it" 2>/dev/null)" || continue
     status="$(json_get "$data" status)"; gate="$(state_get "$data" gate)"; pr="$(state_get "$data" pr)"
+    # A PR the pr step's worker could not record (a local item file lies outside its sandbox) is
+    # found by the claim's task branch, flow/<slug>, while the item waits at the merge gate, and
+    # recorded on the item.
+    if [ -z "$pr" ] && [ "$gate" = merge ]; then
+      gh_repo="$(cfg github.repo)"
+      found="$(cd "$main" && gh pr list ${gh_repo:+-R "$gh_repo"} --head "$br" --state all --json url 2>/dev/null)" && pr="$(json_get "$found" 0.url)"
+      [ -z "$pr" ] || [ "$dry" -eq 1 ] || adapter link-pr "$it" "$pr" >/dev/null || echo "flow: could not record $pr on $it" >&2
+    fi
     merged=0; head=""
     if [ -n "$pr" ] && st="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pr" 2>/dev/null)" && [ "$(json_get "$st" state)" = MERGED ]; then
       merged=1; head="$(json_get "$st" headRefOid)"

@@ -140,5 +140,8 @@ case "$code" in
      if grep -B1 'run-unattended: next.sh exit 7$' "$(job_log_dir)/$job.log" | tail -n 2 | head -n 1 | grep -q 'another run is picking an item'; then job_say "quiet: another worker held the pick for over ${FLOW_LOCK_WAIT:-60}s"
      else job_say "quiet: a run is in flight"; fi ;;
   3) job_say "quiet: no free worktree (the pool is at pool_max)" ;;
+  2) # a usage error, as a jobs.<host>.effort the host does not take: the loop's last line names it
+     why="$(tail -n +"$((n0 + 1))" "$(job_log_dir)/$job.log" | grep -v '^run-unattended: next.sh exit ' | tail -n 1)"
+     job_say "stopped: exit 2${why:+: ${why#run-unattended: }}"; exit 2 ;;
   *) job_say "stopped: exit $code"; exit "$code" ;;
 esac
