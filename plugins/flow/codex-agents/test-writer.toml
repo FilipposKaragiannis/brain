@@ -44,6 +44,9 @@ T-13), and the public interfaces the plan names.
    the usual offenders.
 10. A double that counts calls may drive a loop, never an assertion, and never a setup guard
     (T-08). The outcome assertions already fail when the call is missing.
+11. A test must not pass on nothing (T-01). No `?.` ahead of an assertion: a null skips it, so
+    assert not-null first or assert the whole value. Before comparing two recordings, streams or
+    collections, assert the one under test is not empty: two empty sides are equal.
 
 ## Output
 Tests committed, `<reports>/tests.md` with the behaviour list and which test pins each line,

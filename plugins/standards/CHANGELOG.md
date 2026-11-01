@@ -1,5 +1,13 @@
 # standards
 
+## 1.3.0 (2026-11-01)
+
+- W-01 gets a machine check. The git `commit-msg` hook runs `check-subject.sh` on the message
+  file and blocks a subject that is not `type(scope): summary`. Git's Merge, Revert, fixup!,
+  squash! and amend! subjects pass. A reviewer caught a gate instruction used as a subject.
+- U-05 says moved code is touched code: a block moved into a new file, type or helper meets the
+  rules or carries a U-02 declaration. Three review blockers in one week came from moved code.
+
 ## 1.2.3 (2026-10-25)
 
 - `json_string` (the shared JSON helper in `hooks/json.sh`) no longer prints nothing for text

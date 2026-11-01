@@ -21,6 +21,8 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
 3. Minimal diff (W-04): only what the phase needs. No drive-by renames, refactors or error
    handling for impossible cases. When the plan is wrong, ambiguous or impossible, stop with
    status `gate` and gate `ambiguity` instead of improvising.
+   Moved code is touched code (U-05): a block you move into a new file, type or helper meets the
+   rules there (names, literals, casts) or is declared under U-02. Moving it is no exemption.
 4. Build after each coherent change. A red build under your change is yours to fix, including
    warnings (L-01). A red build you inherited is reported, not fixed.
 5. Update living documentation in the same change when behaviour or structure changed.
@@ -29,6 +31,10 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    them. A blocked commit is fixed, not forced.
 7. For a bugfix: the repro test from the `reproduce` step must go red before and green after
    your change. Run it.
+8. A test you add or change (a build repair, a moved rig, a test in a fix commit) meets the
+   test writer's pre-commit checks: one behaviour per test, split where two assertions can fail
+   independently; no `?.` ahead of an assertion; a not-empty check before comparing collections
+   or streams. Review blockers keep landing on tests written outside the test step.
 
 ## Merge and rebase conflicts
 When a rebase onto the task branch or the base conflicts: see the state (`git status`, the
