@@ -45,6 +45,11 @@ data="$(adapter read "$item")" || die "cannot read $item"
 attempts="$(state_get "$data" attempts)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; 0*) attempts="${attempts#"${attempts%%[!0]*}"}"; attempts="${attempts:-0}" ;; esac
 size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
 kind="$(json_get "$data" kind)"
+# The pr step's worker may be unable to record its PR (a local item file lies outside its
+# sandbox): the URL its result names is recorded here when the item has none.
+if [ "$step" = pr ] && pr_url="$(json_get "$result" pr)" && [ -n "$pr_url" ] && [ -z "$(state_get "$data" pr)" ]; then
+  adapter link-pr "$item" "$pr_url" >/dev/null || echo "advance: could not record $pr_url on $item" >&2
+fi
 
 finish_run() { rm -f "$run_file"; }
 

@@ -58,8 +58,9 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
    An effort the host does not take is refused, exit 2, before the run touches the tracker.
 9. Every job takes `--model <name>` and `--effort <level>`, in a schedule's args too
    (`jobs.schedule.intake: daily 02:00 codex --model gpt-6-luna --effort low`). They replace
-   `jobs.<host>.model` and `jobs.<host>.effort` for that run's sessions: comments, intake and
-   retro for their own sessions, health for the run it resumes. Empty or absent keeps the pair.
+   `jobs.<host>.model` and `jobs.<host>.effort` for that run: comments, intake and retro for
+   their own sessions, `next` and the run `health` resumes for their steps with no agent. Empty
+   or absent keeps the pair.
    An effort the host does not take fails the run at its start, exit 2, as a failed run.
 
 Facts to answer with:
@@ -107,22 +108,32 @@ Facts to answer with:
   each worker carries the `host` it ran on.
 - The host is `jobs.host` (claude, the default, or codex), except for a schedule whose args begin
   with a host and for the plain `next` schedule's workers when `jobs.workers` is set. The sessions a job starts (comments,
-  intake, retro) take the model and effort of that host's pair: `jobs.claude.model` and
-  `jobs.claude.effort` reach `claude` as `--model` and `--effort`; `jobs.codex.model` and
-  `jobs.codex.effort` reach `codex exec` as `-m` and `model_reasoning_effort`. Each value goes as
-  written, so it names a model that host knows; empty or missing is the host's default. A Claude
-  effort is low, medium, high, xhigh or max; a Codex one low, medium, high or xhigh. A `jobs.host`
-  other than claude or codex stops every job at its start (exit 2, the line to fix in the
-  error). A bad effort stops comments, intake and retro as a failed run that `status` and
-  `history` show, and `next` before it claims an item; `run` and `install` refuse both. `next`
-  (and the run `health` resumes) runs a step with an agent on the roster's model and effort, and
-  a step with none (design, implement, review, explain) on the host's pair, or on the
-  `--model` and `--effort` of a run started by hand with them.
+  intake, retro) and the steps with no agent that `next` runs take the model and effort of that
+  host's pair: `jobs.claude.model` and `jobs.claude.effort` reach `claude` as `--model` and
+  `--effort`; `jobs.codex.model` and `jobs.codex.effort` reach `codex exec` as `-m` and
+  `model_reasoning_effort`. Each value goes as written, so it names a model that host knows;
+  empty or missing is the host's default. A Claude effort is low, medium, high, xhigh or max; a
+  Codex one low, medium, high or xhigh. A `jobs.host` other than claude or codex stops every job
+  at its start (exit 2, the line to fix in the error). A bad effort stops comments, intake and
+  retro as a failed run that `status` and `history` show, and `next` before it claims an item,
+  its status line naming the bad value; `run` and `install` refuse both. `next` (and the run
+  `health` resumes) runs a step with an agent on the roster's model and effort, and a step with
+  none (design, implement, review, explain) on the host's pair, or on the `--model` and
+  `--effort` of a run started by hand with them.
 - Each step session of `next` is a line in `.flow/log/runs.jsonl` with its item, step, model,
   effort, and the usage and cost the host reported. A session that fails on a spend limit or an
   auth error raises the escalation gate on its item, naming the cause, and stops the host: no
   job starts a session on it until that gate clears (`gate.sh clear <item>`, or
-  `gate.sh clear <host>` for a stop outside any item's run).
+  `gate.sh clear <host>` for a stop outside any item's run). A comments, intake or retro run the
+  stopped host refuses, or whose own session stops it, ends there, its status line saying the
+  host is stopped and why; that stop names no item (the comments job's item waits at the merge
+  gate, which an escalation gate would replace), so `gate.sh clear <host>` lifts it.
+- `health` does not resume a run a spend limit or an auth error stopped: the escalation gate
+  ended that run, as every gate does, so no run record is left. Once the gate clears, the next
+  `next` run continues the item at the step the stop cut short, in the worktree as the run left
+  it, with the gate's question and answer in the step's brief. `health` resumes only a run that
+  died with nobody told; a stop the flow saw is the owner's gate, and the owner's answer goes on
+  through `next`, so the two never start the same step.
 - `jobs.model` and `jobs.effort` are deprecated (read only while the host has no `jobs.<host>`
   map, with the old name mapping for Codex and one warning in the job's log). To migrate, move
   them under `jobs.claude` and give `jobs.codex` Codex names.

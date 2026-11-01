@@ -30,16 +30,18 @@ The item (its `parent`, acceptance lines), the task branch in the claimed worktr
    the item's acceptance lines. The script asks each reviewer in `.flow/config.yaml`
    `reviews.reviewers` (default codex and claude) in its own comment, Copilot through the API.
    Never write a reviewer mention yourself.
-7. Record the PR on the item: `adapters/<name>/link-pr.sh <item> <url>`.
+7. Record the PR on the item: `adapters/<name>/link-pr.sh <item> <url>`. When it fails (a local
+   item file can lie outside the worktree you may write), the step does not fail: say so in the
+   result, and the orchestrator records the URL from the result's `pr`.
 8. When the base is not the default branch, warn in the result that the merge will not
    auto-close the item; the closeout step closes it.
 9. Updating an existing PR (the state has `pr`): push, edit the body's verify section, add one
    comment with what changed since the last push.
 
 ## Output
-The PR, then the result file the brief names: status `done` with the URL, the base and why,
-draft or ready, and the reviewers asked; status `fail` when verify is not pass or the push is
-rejected.
+The PR, then the result file the brief names: status `done` with the URL under `pr` and in the
+summary, the base and why, draft or ready, and the reviewers asked; status `fail` when verify is
+not pass or the push is rejected.
 
 ## Never
 Never open a PR when verify is not pass. Never pick the default branch as base when the item

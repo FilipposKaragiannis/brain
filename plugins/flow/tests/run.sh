@@ -905,6 +905,7 @@ check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null
 home2="$work/home2"; mkdir -p "$home2"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    effort: bogus\n' > "$home2/config.yaml"
 check "next job: a bad jobs.claude.effort stops it before it picks: its steps with no agent run on the pair" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'stopped: exit 2' && grep -q 'jobs.claude.effort is bogus' '$home2/log/next.log'"
+check "next job: a bad jobs.claude.effort is named in the run's status line" sh -c "grep '\"job\":\"next\"' '$home2/log/runs.jsonl' | tail -1 | grep -q 'jobs.claude.effort is bogus'"
 check "health job: a bad jobs.claude.effort does not stop it either" sh -c "FLOW_HOME='$home2' '$P/jobs/health.sh' claude --dry-run >/dev/null 2>&1; [ \$? != 2 ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"job\":\"health\"' && ! tail -1 '$home2/log/runs.jsonl' | grep -q '\"exit\":2'"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  host: vim\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null 2>"$work/job.err"; code=$?
@@ -1518,7 +1519,7 @@ check "release: an open item's reports stay" sh -c "'$P/scripts/steward.sh' rele
 echo "sweep"
 # The fake gh answers pr view with the PR in its state file, whatever the URL. One pool
 # worktree is free here, so each case claims it in turn.
-fake_pr() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pr"]={"number":90,"state":sys.argv[2],"isDraft":False,"mergedAt":None,"url":"https://gh/pull/90","headRefName":"","headRefOid":sys.argv[3],"baseRefName":"main"}; json.dump(d,open(p,"w"))' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
+fake_pr() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pr"]={"number":90,"state":sys.argv[2],"isDraft":False,"mergedAt":None,"url":"https://gh/pull/90","headRefName":sys.argv[4],"headRefOid":sys.argv[3],"baseRefName":"main"}; json.dump(d,open(p,"w"))' "$FAKE_GH_DIR/issues.json" "$1" "$2" "${3:-}"; }
 commit_in() { printf '%s\n' "$2" > "$1/$2.txt" && git -C "$1" add -- "$2.txt" && git -C "$1" commit -qm "$2" && git -C "$1" rev-parse HEAD; }
 sc="$("$P/adapters/local/create.sh" task "Closed, claimed")"; wc_="$("$P/scripts/steward.sh" claim "$sc")"
 "$P/adapters/local/close.sh" "$sc" >/dev/null
@@ -1543,6 +1544,21 @@ merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 "$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "sweep: a commit after the merge keeps the branch" sh -c "[ ! -f '$wl/.flow/claim.json' ] && git -C '$wl' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sl")"
+# A pr step whose worker cannot write the local item file (it lies outside the worker's sandbox)
+# leaves the PR unrecorded: advance records the URL the step's result names, and the sweep finds
+# a PR nobody recorded by the item's task branch.
+ap="$("$P/adapters/local/create.sh" task "PR its worker could not link" --size S)"; "$P/adapters/local/write-state.sh" "$ap" step=pr
+printf '{"status":"done","summary":"PR open","pr":"https://gh/pull/90"}\n' > "$("$P/scripts/next.sh" "$ap" --json | jget reports)/pr.json"
+"$P/scripts/advance.sh" "$ap" >/dev/null 2>&1
+check "advance: a pr step's result records its PR on an item link-pr never reached" [ "$("$P/adapters/local/read.sh" "$ap" | jget state.pr)" = https://gh/pull/90 ]
+"$P/scripts/gate.sh" clear "$ap" merged >/dev/null; "$P/scripts/steward.sh" release "$ap" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$ap" >/dev/null
+sp="$("$P/adapters/local/create.sh" task "PR found by its branch" --size S)"; "$P/adapters/local/write-state.sh" "$sp" step=pr
+printf '{"status":"done","summary":"PR open"}\n' > "$("$P/scripts/next.sh" "$sp" --json | jget reports)/pr.json"
+"$P/scripts/advance.sh" "$sp" >/dev/null 2>&1
+fake_pr MERGED "$(git -C "$("$P/scripts/steward.sh" find "$sp")" rev-parse HEAD)" "flow/$(item_slug "$sp")"
+"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+check "sweep: an item at the merge gate with no PR recorded finds it by its branch, and the merge gate clears" [ "$("$P/adapters/local/read.sh" "$sp" | jget state.gate)" = none ]
+check "sweep: the PR found by the branch is recorded on the item" [ "$("$P/adapters/local/read.sh" "$sp" | jget state.pr)" = https://gh/pull/90 ]
 # The console sweeps one item once its gated PR leaves the open list; a sweep already running is enough.
 si="$("$P/adapters/local/create.sh" task "Swept alone")"; wi="$("$P/scripts/steward.sh" claim "$si")"
 "$P/adapters/local/close.sh" "$si" >/dev/null
@@ -2316,6 +2332,7 @@ st="$("$P/scripts/new.sh" task "Spends" --size S --body "## Acceptance
 - [ ] s")"
 : > "$COST_LOG"
 FAKE_HOST=budget PATH="$cpath" "$P/templates/run-unattended.sh" claude "$st" --max-steps 3 > "$work/cost.out" 2>&1; code=$?
+st_step="$(steprun "$st" step)"
 check_all "a spend limit raises the escalation gate at once, naming the cause and the host's line" '[ "$code" = 4 ] && [ "$("$P/adapters/local/read.sh" "$st" | jget state.gate)" = escalation ] && grep -q "claude failed on a spend limit: API Error: 422 .*ExceededBudget" ".flow/gates/$(item_slug "$st").json"'
 check "a spend limit is one session: no retry, and no run left for health to resume" sh -c "[ \"\$(grep -c . '$COST_LOG')\" = 1 ] && [ ! -f '.flow/runs/$(item_slug "$st").json' ]"
 check_all "the stop names the cause and the item whose gate holds it" '[ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ] && [ "$(jget item < .flow/log/claude.stopped)" = "$st" ]'
@@ -2327,6 +2344,15 @@ PATH="$cpath" "$P/templates/run-unattended.sh" claude --max-steps 1 > "$work/cos
 check "a stopped host starts no new session: the next loop exits 4 before it picks" sh -c "[ $code = 4 ] && [ ! -s '$COST_LOG' ] && grep -q 'claude is stopped since .* on a spend limit' '$work/cost.out' && [ -z \"\$(ls .flow/runs/*.json 2>/dev/null)\" ]"
 PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' > /dev/null 2>"$work/cost.err"; code=$?
 check "a stopped host starts no session for a job either: host_run refuses, exit 75" sh -c "[ $code = 75 ] && [ ! -s '$COST_LOG' ] && grep -q 'until the gate on $st clears' '$work/cost.err'"
+# jobrun <job> <field>: the job's newest line in runs.jsonl.
+jobrun() { grep "\"job\":\"$1\"" .flow/log/runs.jsonl | tail -1 | jget "$2"; }
+PATH="$cpath" "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check_all "comments job: a host stopped on a spend limit ends the run, its status line saying so" 'jobrun comments result | grep -q "^stopped: claude is stopped since .* on a spend limit"'
+printf -- '- a note for the stopped host\n' > "$work/stop-notes.md"
+PATH="$cpath" "$P/jobs/intake.sh" claude --notes "$work/stop-notes.md" >/dev/null 2>&1
+check_all "intake job: a host stopped on a spend limit ends the run, its status line saying so" 'jobrun intake result | grep -q "^stopped: claude is stopped since .* on a spend limit"'
+PATH="$cpath" "$P/jobs/retro.sh" claude >/dev/null 2>&1
+check_all "retro job: a host stopped on a spend limit ends the run, its status line saying so" 'jobrun retro result | grep -q "^stopped: claude is stopped since .* on a spend limit"'
 check "gate list shows the stopped host" sh -c "'$P/scripts/gate.sh' list | grep -q '	claude	stopped	spend-limit: API Error'"
 PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run codex . hi' >/dev/null 2>&1; code=$?
 check "a stop on claude leaves codex running" [ "$code" = 0 ]
@@ -2334,6 +2360,10 @@ check "a stop on claude leaves codex running" [ "$code" = 0 ]
 check "clearing the gate that names the stop starts the host again" sh -c "grep -q 'claude starts sessions again' '$work/cost.out' && [ ! -f .flow/log/claude.stopped ]"
 : > "$COST_LOG"; PATH="$cpath" "$P/templates/run-unattended.sh" claude "$s2" --max-steps 1 >/dev/null 2>&1
 check "after the clear a loop starts sessions again" grep -q 'claude	' "$COST_LOG"
+# Health resumes no run a spend limit stopped: the gate ended it. Once cleared, the next run
+# continues the item at the step the limit cut short.
+PATH="$cpath" "$P/templates/run-unattended.sh" claude "$st" --max-steps 1 >/dev/null 2>&1
+check_all "after the clear, the next run continues the item the spend limit stopped, at that step" '[ "$(steprun "$st" step)" = "$st_step" ] && [ -z "$(steprun "$st" result)" ]'
 FAKE_HOST=auth PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run codex . hi; echo "cause=$host_cause"' > "$work/cost.out" 2>&1; code=$?
 check_all "an auth error on codex outside any item stops codex and tells the owner" 'grep -q "cause=auth" "$work/cost.out" && [ "$(jget cause < .flow/log/codex.stopped)" = auth ] && grep -q "	host-stopped	codex stopped on an auth error: unexpected status 401 Unauthorized" .flow/events.log'
 "$P/scripts/gate.sh" clear codex > "$work/cost.out"
