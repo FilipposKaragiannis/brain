@@ -377,11 +377,12 @@ on every state change and at most twice a second while output arrives.
 | `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item | `finished` |
 | `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item and the next job | with an item `started` while the run goes, `finished` once it ends well; without one `started` |
 | `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
-| `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
+| `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
+| `job.stop` | `job` | `jobs.sh stop <job>` | a stop lock of the job's own, so it reaches a run `job.start` holds | `finished` |
 | `job.start` | `job?` (next), `host`, `model?`, `effort?`; for next also `item?`, `workers?`, `maxSteps?` | `.flow/jobs/<job>.sh <host> [item] [--workers N] [--max-steps M] [--model X] [--effort Y]`, detached: one run outside the schedules (below) | the job, and the item when given | `finished` once it ends; `started` for a next run that hands the queue to workers |
 | `job.schedule` | `job` (a schedule name), `schedule` | writes `jobs.schedule.<job>` through the flow config editor, then `jobs.sh install <job>` | the schedule | `finished`; `jobs` and `files` are re-read |
 | `job.unschedule` | `job` (a schedule name) | `jobs.sh uninstall <job>`, then takes `jobs.schedule.<job>` out of the config | the schedule | `finished`; `jobs` and `files` are re-read |
-| `run.stop` | `item` | `steward.sh stop <item>`: ends the run's processes and removes its record, keeping the claim and the worktree | the item | `finished` |
+| `run.stop` | `item` | `steward.sh stop <item>`: ends the run's processes and removes its record, keeping the claim and the worktree | a stop lock of the item's own, so it reaches a run `run.start` or `job.start` holds | `finished` |
 | `run.resume` | `item` | `steward.sh resume <item>`: clears a dead run's record and starts its step again, as the health job does | the item | `started` |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |

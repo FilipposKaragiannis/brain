@@ -81,7 +81,7 @@ test('JobActions_MapToJobsScriptVerbs', () => {
   for (const [kind, verb] of [['job.run', 'run'], ['job.stop', 'stop'], ['job.pause', 'pause'], ['job.resume', 'resume']] as const) {
     const plan = planned(kind, { job: 'health' });
     assert.deepEqual(plan.args.slice(1), [verb, 'health'], `because ${kind} is jobs.sh ${verb}`);
-    assert.deepEqual(plan.locks, ['job:health'], 'because one job takes one action at a time');
+    assert.deepEqual(plan.locks, [kind === 'job.stop' ? 'stop:job:health' : 'job:health'], kind === 'job.stop' ? 'because a stop must reach a run that holds the job lock' : 'because one job takes one action at a time');
   }
   assert.equal(planAction('job.run', { job: 'Health' }, CONTEXT).ok, false, 'because job names are lower case words');
 });
@@ -568,7 +568,7 @@ test('JobUnschedule_RunningOrBadName_Refused', () => {
 
 test('JobUninstallAndRun_NamedSchedule_Accepted', () => {
   assert.deepEqual(planned('job.uninstall', { job: 'next-nightly' }).args.slice(1), ['uninstall', 'next-nightly'], 'because an orphaned named schedule is unloaded on its own too');
-  assert.deepEqual(planned('job.stop', { job: 'next-nightly' }).locks, ['job:next-nightly'], 'because every jobs.sh command takes a schedule name');
+  assert.deepEqual(planned('job.stop', { job: 'next-nightly' }).args.slice(1), ['stop', 'next-nightly'], 'because every jobs.sh command takes a schedule name');
   assert.deepEqual(planned('job.pause', { job: 'all' }).args.slice(1), ['pause', 'all'], 'because jobs.sh pauses every schedule at once');
   assert.equal(planAction('job.run', { job: 'all' }, CONTEXT).ok, false, 'because jobs.sh runs one schedule at a time');
 });
@@ -581,7 +581,7 @@ test('JobsInstall_NamedSchedulesListed_HoldsTheirLocksToo', () => {
 test('RunStopAndResume_RunStewardWithTheItem', () => {
   const context = { ...CONTEXT, runItems: ['gh#7'] };
   const stop = planned('run.stop', { item: 'gh#7' }, context);
-  assert.deepEqual([stop.args, stop.locks, stop.refresh, stop.outcome, stop.refreshAgainMs], [['/plugins/flow/1.17.0/scripts/steward.sh', 'stop', 'gh#7'], ['item:gh#7'], ['files', 'processes'], 'finished', null], 'because steward.sh stop ends the run and removes its record, keeping the claim');
+  assert.deepEqual([stop.args, stop.locks, stop.refresh, stop.outcome, stop.refreshAgainMs], [['/plugins/flow/1.17.0/scripts/steward.sh', 'stop', 'gh#7'], ['stop:item:gh#7'], ['files', 'processes'], 'finished', null], 'because steward.sh stop ends the run and removes its record, keeping the claim, and must reach a run that holds the item lock');
   const resume = planned('run.resume', { item: 'gh#7' }, context);
   assert.deepEqual([resume.args.slice(1), resume.locks, resume.outcome, resume.refreshAgainMs], [['resume', 'gh#7'], ['item:gh#7'], 'started', HANDED_ON_REFRESH_MS], 'because resume starts the step in the background, whose session shows a moment later');
 });

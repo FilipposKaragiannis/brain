@@ -226,6 +226,16 @@ test('RunStart_Detached_HoldsTheLockUntilTheRunEnds', async () => {
   } finally { await cleanup(); }
 });
 
+test('RunStart_Detached_StopsStillReachTheRun', async () => {
+  const { actions, cleanup } = await runner({ ...CONTEXT, runItems: ['gh#9'] }, PLAIN);
+  try {
+    actions.request('run.start', { item: 'gh#9' });
+    assert.equal(actions.request('run.stop', { item: 'gh#9' }).status, HTTP_ACCEPTED, 'because Stop this run must end a run the console started, which holds item:gh#9 until it ends');
+    assert.equal(actions.request('job.stop', { job: 'next' }).status, HTTP_ACCEPTED, 'because stopping next must reach a run that holds job:next');
+    assert.equal(actions.request('run.stop', { item: 'gh#9' }).status, HTTP_CONFLICT, 'because a second stop of the same run waits for the first');
+  } finally { await cleanup(); }
+});
+
 test('RunStart_Detached_AuditNeverOverwritesTheRunsFile', async () => {
   const { actions, processes, stateDir, auditLines, cleanup } = await runner(CONTEXT, { failWith: null, detachedOutput: 'skipped: run 123 still going\n' });
   try {

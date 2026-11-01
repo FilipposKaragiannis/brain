@@ -275,7 +275,10 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       const all = job === 'all' && (kind === 'job.pause' || kind === 'job.resume');
       if (!SCHEDULE_NAME.test(job) && !all) return fail(`${kind} needs a schedule name: a job (${FLOW_JOBS.join(', ')}) or <job>-<label>, such as next-nightly`);
       if (kind === 'job.run') return handOn(job, [`job:${job}`], ['jobs', 'processes']);
-      return sh('jobs.sh', [kind.slice('job.'.length), job], [`job:${job}`], SCRIPT_TIMEOUT_MS, ['jobs', 'processes']);
+      // A stop must reach a run the console started, which holds job:<job> until it ends, so it
+      // takes a lock of its own: only a second stop of the same schedule waits.
+      const locks = kind === 'job.stop' ? [`stop:job:${job}`] : [`job:${job}`];
+      return sh('jobs.sh', [kind.slice('job.'.length), job], locks, SCRIPT_TIMEOUT_MS, ['jobs', 'processes']);
     }
     case 'worktree.claim': {
       const item = args['item'] ?? '';
@@ -305,11 +308,12 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     case 'job.unschedule': return planUnschedule(args, context);
     // steward.sh stop ends the run's process and removes its record, keeping the claim and the
     // worktree; resume starts the step of a dead run again in the background, as health does.
+    // A run the console started holds item:<id> until it ends, so stop takes a lock of its own.
     case 'run.stop': case 'run.resume': {
       const item = args['item'] ?? '';
       if (!ITEM_ID.test(item)) return fail(`${kind} needs an item id like gh#12 or local:task/7`);
       if (!context.runItems.includes(item)) return fail(`no run record names ${item}, so there is no run to ${kind === 'run.stop' ? 'stop' : 'resume'}`);
-      const planned = sh('steward.sh', [kind === 'run.stop' ? 'stop' : 'resume', item], [`item:${item}`], SCRIPT_TIMEOUT_MS, ['files', 'processes']);
+      const planned = sh('steward.sh', [kind === 'run.stop' ? 'stop' : 'resume', item], [kind === 'run.stop' ? `stop:item:${item}` : `item:${item}`], SCRIPT_TIMEOUT_MS, ['files', 'processes']);
       if (!planned.ok || kind === 'run.stop') return planned;
       // The resumed step's session shows in the process list a few seconds after the script returns.
       return { ok: true, plan: { ...planned.plan, refreshAgainMs: HANDED_ON_REFRESH_MS, outcome: 'started' } };
