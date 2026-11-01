@@ -3,6 +3,10 @@
 #   steward.sh pool                              list the pool with claim, branch and dirt
 #   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
 #   steward.sh find <item>                       print the claimed path, or nothing
+#   steward.sh reserve [--name <who>]            claim a free pool worktree for manual work, with
+#                                                no item, under <who> (default: git user.name, else
+#                                                $USER); print its path. claim, sweep, health and
+#                                                next leave it alone until release frees it
 #   steward.sh release <item|path> [--force]     back to its idle branch (<base>-wt-<n>) at the base
 #                                                tip, delete the task branch, clear the claim; a
 #                                                closed item's reports go too
@@ -63,6 +67,8 @@ base_ref() {
 }
 
 claim_of() { [ -f "$1/.flow/claim.json" ] && cat "$1/.flow/claim.json"; }
+# reserved_by <path>: who reserved the worktree for manual work (reserve), or nothing.
+reserved_by() { json_get "$(claim_of "$1")" reserved; }
 
 # idle_branch <path>: the branch a free pool worktree sits on, one per worktree, because git checks
 # a branch out in one worktree at a time: <base>-wt-<n> for ../app-wt-<n>, else <base>-<folder>.
@@ -102,6 +108,7 @@ cmd_pool() {
     c="$(claim_of "$p")"
     item="$(json_get "$c" item)"; step="$(json_get "$c" step)"
     st="free"; [ -n "$item" ] && st="claimed"
+    rv="$(json_get "$c" reserved)"; [ -z "$rv" ] || st="reserved by $rv"
     dirty "$p" && st="$st, uncommitted changes"
     printf '%-28s %-32s %-22s %-10s %s\n' "$(basename "$p")" "${branch:-?}" "${item:--}" "${step:--}" "$st"
   done
@@ -119,14 +126,7 @@ cmd_claim() {
   while [ $# -gt 0 ]; do case "$1" in --base) base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
-  free=""
-  for p in $(pool_paths); do
-    [ -d "$p" ] || continue
-    [ -z "$(json_get "$(claim_of "$p")" item)" ] || continue
-    dirty "$p" && continue
-    free="$p"; break
-  done
-  [ -n "$free" ] || free="$(grow_pool)" || die "no free worktree in the pool (every pool entry is claimed, dirty or missing) and the pool is at pool_max ($(cfg_or pool_max 0)). Release one, or raise pool_max in $(config_file)." 3
+  free="$(free_worktree)" || exit $?
   slug="$(item_slug "$item")"; branch="flow/$slug"
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null
   ref="$(base_ref "$base")"
@@ -139,6 +139,37 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   write_state "$item" "worktree=$(basename "$free")" "last_event=$(now_iso) claimed $(basename "$free")"
+  printf '%s\n' "$free"
+}
+
+# free_worktree: the first pool worktree with no claim, no reservation and a clean tree, else one
+# grow_pool adds; exit 3 when the pool is at pool_max.
+free_worktree() {
+  for p in $(pool_paths); do
+    [ -d "$p" ] || continue
+    [ -z "$(json_get "$(claim_of "$p")" item)" ] && [ -z "$(reserved_by "$p")" ] || continue
+    dirty "$p" && continue
+    printf '%s\n' "$p"; return 0
+  done
+  grow_pool || die "no free worktree in the pool (every pool entry is claimed, reserved, dirty or missing) and the pool is at pool_max ($(cfg_or pool_max 0)). Release one, or raise pool_max in $(config_file)." 3
+}
+
+# cmd_reserve: the owner's own claim, with no item, under the pick lock so a next claiming right
+# now does not take the same worktree.
+cmd_reserve() {
+  who=""
+  while [ $# -gt 0 ]; do case "$1" in
+    --name) [ $# -ge 2 ] && [ -n "$2" ] || die "--name needs a name" 2; who="$2"; shift 2 ;;
+    *) die "unknown option $1" 2 ;;
+  esac; done
+  [ -n "$who" ] || who="$(git -C "$main" config user.name 2>/dev/null)"
+  [ -n "$who" ] || who="${USER:-}"
+  [ -n "$who" ] || die "no name to reserve under: pass --name <who>" 2
+  flow_lock pick || die "the pick lock is busy (a next run is picking an item); try again" 75
+  free="$(free_worktree)" || exit $?
+  mkdir -p "$free/.flow"
+  json_obj "item=" "reserved=$who" "worktree=$free" "name=$(basename "$free")" "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
+  flow_unlock
   printf '%s\n' "$free"
 }
 
@@ -483,7 +514,7 @@ cmd_sweep() {
     if [ -f "$home/runs/$(item_slug "$it").json" ]; then echo "$it: kept $name, a run is in flight"; continue; fi
     if dirty "$p"; then echo "$it: kept $name, it has uncommitted changes ($why)"; continue; fi
     if [ "$dry" -eq 1 ]; then echo "$it: would release $name ($why)"; continue; fi
-    [ "$gate" = merge ] && "$FLOW_PLUGIN/scripts/gate.sh" clear "$it" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" >/dev/null
+    [ "$gate" = merge ] && "$FLOW_PLUGIN/scripts/gate.sh" clear "$it" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" >/dev/null && echo "$it: cleared the merge gate"
     [ "$status" = closed ] || adapter close "$it" --comment "Closed by flow: $pr is merged." >/dev/null || echo "flow: could not close $it" >&2
     force=""
     [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
@@ -970,7 +1001,11 @@ cmd_health() {
   fi
   for p in $(pool_paths); do
     [ -d "$p" ] || continue
-    if [ -z "$(json_get "$(claim_of "$p")" item)" ]; then
+    reserver="$(reserved_by "$p")"
+    if [ -n "$reserver" ]; then
+      claims=$((claims + 1)); holders="$holders$(basename "$p") (reserved) $reserver works in it by hand
+"
+    elif [ -z "$(json_get "$(claim_of "$p")" item)" ]; then
       health_free "$p"
       dirty "$p" || claimable=$((claimable + 1))
     else health_claim "$p"; fi
@@ -1084,6 +1119,7 @@ case "$cmd" in
   pool) cmd_pool ;;
   claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>]" 2; cmd_claim "$@" ;;
   find) [ $# -ge 1 ] || die "usage: find <item>" 2; cmd_find "$1" ;;
+  reserve) cmd_reserve "$@" ;;
   release) [ $# -ge 1 ] || die "usage: release <item|path> [--force]" 2; cmd_release "$@" ;;
   tmp) cmd_tmp "$@" ;;
   add) cmd_add "${1:-}" ;;
@@ -1097,5 +1133,5 @@ case "$cmd" in
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,38p' "$0"; exit 2 ;;
+  *) sed -n '2,42p' "$0"; exit 2 ;;
 esac

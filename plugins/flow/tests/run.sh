@@ -2348,5 +2348,47 @@ FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run clau
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
 
+echo "reserve: the owner's own worktree"
+rroot="$work/reserve"; mkdir -p "$rroot"
+git init -q -b main "$rroot/app" && cd "$rroot/app" || exit 1
+git config user.email t@t && git config user.name "Grace Hopper"
+printf 'hi\n' > README.md && git add -A && git commit -qm init
+for n in 1 2; do git worktree add -q -b "main-wt-$n" "../wt-$n"; done
+mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\npool_max: 2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+rw1="$(cd ../wt-1 && pwd -P)"; rw2="$(cd ../wt-2 && pwd -P)"
+rv="$("$P/scripts/steward.sh" reserve --name "Ada Lovelace")"
+check "reserve: prints the path of a free pool worktree" [ "$rv" = "$rw1" ]
+check "reserve: the claim records who reserved it" [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Ada Lovelace" ]
+check "reserve: the claim names no item" [ -z "$(jget item < "$rw1/.flow/claim.json")" ]
+ra="$("$P/adapters/local/create.sh" task "Claimed beside a reservation" --size S --body "x")"
+check "claim: a reserved worktree is passed over" [ "$("$P/scripts/steward.sh" claim "$ra")" = "$rw2" ]
+rb="$("$P/adapters/local/create.sh" task "No room left" --size S --body "x")"
+"$P/scripts/next.sh" "$rb" >/dev/null 2>&1; code=$?
+check "next: with the only unclaimed worktree reserved there is no free worktree (exit 3)" [ "$code" -eq 3 ]
+"$P/scripts/steward.sh" reserve --name "Ada Lovelace" >/dev/null 2>&1; code=$?
+check "reserve: no free worktree at pool_max exits 3, as claim does" [ "$code" -eq 3 ]
+check "pool: a reserved worktree shows who reserved it" sh -c "'$P/scripts/steward.sh' pool | grep -q '^wt-1 .*reserved by Ada Lovelace'"
+check "board: the pool shows a reserved worktree as reserved by that name" sh -c "'$P/scripts/board.sh' | grep -q '^| wt-1 |.*| reserved by Ada Lovelace |'"
+"$P/adapters/local/close.sh" "$ra" >/dev/null
+"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+check "sweep: a reserved worktree keeps its reservation" [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Ada Lovelace" ]
+python3 -c '
+import json, sys, time
+p = sys.argv[1] + "/.flow/claim.json"
+d = json.load(open(p)); d["claimed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 172800)); json.dump(d, open(p, "w"))' "$rw1"
+reserved_head="$(git -C "$rw1" rev-parse HEAD)"
+printf 'later\n' > later.txt && git add -A && git commit -qm later
+"$P/scripts/steward.sh" health > "$rroot/health.out" 2>&1
+check "health: a free worktree behind the base moves to its tip" [ "$(git -C "$rw2" rev-parse HEAD)" = "$(git rev-parse main)" ]
+check "health: a reserved worktree is not moved to the base tip" [ "$(git -C "$rw1" rev-parse HEAD)" = "$reserved_head" ]
+check "health: a reserved claim with no item, commits or run for two days is not released" [ -f "$rw1/.flow/claim.json" ]
+"$P/scripts/steward.sh" release "$rw1" >/dev/null 2>&1
+check "release: a reserved worktree is freed" [ ! -f "$rw1/.flow/claim.json" ]
+"$P/scripts/steward.sh" reserve >/dev/null
+check "reserve: with no --name the reservation is under git user.name" [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Grace Hopper" ]
+"$P/scripts/steward.sh" reserve --name >/dev/null 2>&1; code=$?
+check "reserve: --name with no name is bad usage (exit 2)" [ "$code" -eq 2 ]
+
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1
