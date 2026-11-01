@@ -127,17 +127,68 @@ test('Version_PrintsThePackageVersion', async () => {
   } finally { f.cleanup(); }
 });
 
+/** The running daemon's `GET /api/settings`, watching these roots, with what it says of the file and the cache. */
+const settingsAnswer = (roots: string[], fileError: string | null, newerConsole: { running: string; cached: string } | null) =>
+  (method: string): HttpAnswer => (method === 'GET' ? { status: 200, body: { projects: { roots, editable: true, note: null }, fileError, newerConsole } } : { status: 405, body: null });
+
 test('Status_UnderLaunchd_NamesThePidPortUrlFilesAndVersion', async () => {
-  const f = fake({ loaded: true });
+  const f = fake({ loaded: true, http: settingsAnswer([FIXTURE_ROOT], null, null) });
   try {
     withToken(f);
     agent(f, ['--port', '7480', '--state-dir', f.state, '--config', f.config]);
     assert.equal(await runCli(['status'], f.deps), 0, 'because the job runs');
     assert.deepEqual(f.lines, [
       'brain-console 0.7.0', `daemon: loaded under launchd as ${LAUNCHD_LABEL}, pid 4242`, 'port: 7480',
-      'url: http://127.0.0.1:7480/ (brain-console open adds the token)', `config: ${f.config}`, `state: ${f.state}`,
+      'url: http://127.0.0.1:7480/ (brain-console open adds the token)', `config: ${f.config}`, `state: ${f.state}`, `projects: ${FIXTURE_ROOT}`,
     ], 'because status reads the port and the files from the agent the job runs');
     assert.equal(f.lines.join('\n').includes('s3cr3t'), false, 'because status never prints the token');
+  } finally { f.cleanup(); }
+});
+
+test('Status_DaemonRuns_ListsTheProjectsItWatches', async () => {
+  const f = fake({ loaded: true, http: settingsAnswer([FIXTURE_ROOT, LOCAL_ROOT], null, null) });
+  try {
+    withToken(f);
+    await runCli(['status'], f.deps);
+    assert.ok(f.lines.includes(`projects: ${FIXTURE_ROOT}, ${LOCAL_ROOT}`), 'because the owner sees which projects the running daemon watches, not what the file says');
+  } finally { f.cleanup(); }
+});
+
+test('Status_ConfigFileRefused_SaysTheFileDiffersWithTheError', async () => {
+  const f = fake({ loaded: true, http: settingsAnswer([FIXTURE_ROOT], '/work/nowhere has no .flow/config.yaml; run flow:init there first', null) });
+  try {
+    withToken(f);
+    await runCli(['status'], f.deps);
+    const line = f.lines.find((entry) => entry.includes('differs from what the daemon loaded')) ?? '';
+    assert.match(line, /\/work\/nowhere has no \.flow\/config\.yaml/, 'because a hand edit the daemon did not take is named with the reason');
+  } finally { f.cleanup(); }
+});
+
+test('Status_ConfigFileTaken_NoDifferenceLine', async () => {
+  const f = fake({ loaded: true, http: settingsAnswer([FIXTURE_ROOT], null, null) });
+  try {
+    withToken(f);
+    await runCli(['status'], f.deps);
+    assert.equal(f.lines.some((entry) => entry.includes('differs from what the daemon loaded')), false, 'because a file the daemon took is no news');
+  } finally { f.cleanup(); }
+});
+
+test('Status_NewerConsoleCached_NamesBothVersionsAndUpdate', async () => {
+  const f = fake({ loaded: true, http: settingsAnswer([FIXTURE_ROOT], null, { running: '0.9.2', cached: '0.10.0' }) });
+  try {
+    withToken(f);
+    await runCli(['status'], f.deps);
+    const line = f.lines.find((entry) => entry.includes('brain-console update')) ?? '';
+    assert.match(line, /0\.10\.0.*0\.9\.2/, 'because the owner hears which version is installed and which one runs');
+  } finally { f.cleanup(); }
+});
+
+test('Status_RunsTheNewestCached_NoUpdateLine', async () => {
+  const f = fake({ loaded: true, http: settingsAnswer([FIXTURE_ROOT], null, null) });
+  try {
+    withToken(f);
+    await runCli(['status'], f.deps);
+    assert.equal(f.lines.some((entry) => entry.includes('brain-console update')), false, 'because nothing is said while the daemon runs the newest cached version');
   } finally { f.cleanup(); }
 });
 

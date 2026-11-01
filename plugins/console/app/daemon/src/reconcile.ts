@@ -12,7 +12,7 @@ import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, NewerConsole,
   ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, StoppedHost, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
@@ -33,6 +33,8 @@ export type ReconcileInput = {
    * ones that may be a store lagging a read (see `DisagreementSettler`); left out, all of them do.
    */
   settle?: (found: Disagreement[]) => Disagreement[];
+  /** A newer console in the plugin cache than the one running; left out, none. */
+  newerConsole?: NewerConsole | null;
 };
 
 const MILLISECONDS_PER_SECOND = 1000;
@@ -770,5 +772,6 @@ export function reconcile(read: ReconcileInput): Snapshot {
     worktrees, items, gates, runs, agents, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     events: input.flow.events,
     disagreements,
+    newerConsole: input.newerConsole ?? null,
   };
 }

@@ -423,6 +423,12 @@ export type Readiness = {
   nextInLineMissingField: number;
 };
 
+/**
+ * A newer console in the plugin cache than the one the daemon runs, which `brain-console update`
+ * moves the daemon to. Null while the daemon runs the newest cached version.
+ */
+export type NewerConsole = { running: string; cached: string };
+
 export type Snapshot = {
   schema: typeof SNAPSHOT_SCHEMA_VERSION;
   takenAt: string;
@@ -443,6 +449,7 @@ export type Snapshot = {
   pulls: PullRequest[];
   events: FlowEvent[];
   disagreements: Disagreement[];
+  newerConsole: NewerConsole | null;
 };
 
 /*
@@ -533,6 +540,9 @@ export type SettingsView = {
   projects: { roots: string[]; from: SettingOrigin; editable: boolean; note: string | null };
   terminal: { value: TerminalSetting | null; from: SettingOrigin; installed: TerminalName[] };
   port: { value: number; from: SettingOrigin; saved: number | null; note: string };
+  /** Why the config file, changed on disk since the daemon loaded it, was not taken; null once the daemon took its last change. */
+  fileError: string | null;
+  newerConsole: NewerConsole | null;
 };
 
 /** One thing `POST /api/settings/check-project` asks of a folder, in the order it asks. */

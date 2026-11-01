@@ -215,3 +215,9 @@ test('SweepFails_NotRunAgain', async () => {
     assert.equal(copy.sweeps.length, 1, 'because a sweep that fails would fail every minute; the health job sweeps again on its own schedule');
   } finally { copy.cleanUp(); }
 });
+
+test('Snapshot_NewerConsoleCached_CarriesTheNotice', async () => {
+  const monitor = new ProjectMonitor({ project: { id: 'local', name: 'local', root: LOCAL_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, newerConsole: () => ({ running: '0.9.2', cached: '0.10.0' }) });
+  await monitor.refresh('files');
+  assert.deepEqual(monitor.snapshot?.newerConsole, { running: '0.9.2', cached: '0.10.0' }, 'because the page shows the same notice as status while the versions differ');
+});
