@@ -10,7 +10,7 @@ fake backend, and `tests/run.sh` runs it for every adapter.
 
 | File | Required | What it is |
 |---|---|---|
-| `prefix` | yes | one line: the id prefix the adapter owns (`gh#`, `local:`) |
+| `prefix` | yes | one line: the id prefix the adapter owns (`gh#`, `local:`, `jira:`) |
 | `slug.sed` | yes | a `sed -n` script that turns an item's slug back into its id, printing nothing for a slug it does not own |
 | `list.sh`, `list-ready.sh`, `read.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh` | yes | the operations below, executable |
 | `sync.sh`, `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
@@ -21,15 +21,16 @@ Every script sources `lib/flow.sh` (`. "$(dirname "$0")/../../lib/flow.sh"`) for
 ## Ids and routing
 
 An id is the prefix and a non-empty rest, in the id characters `A-Za-z0-9:#/_.-` (`gh#12`,
-`local:task/3`). No prefix may start another. `lib/flow.sh` routes by the prefix files, so a new
-adapter needs no edit there: `adapter_for <id>` names the adapter whose prefix starts the id,
-`adapter <op> <id|name> [args]` runs `adapters/<name>/<op>.sh`, and `scripts/_filter_ready.py`
-reads the same files to look up a blocker in another tracker.
+`local:task/3`, `jira:WID-7`). No prefix may start another. `lib/flow.sh` routes by the prefix
+files, so a new adapter needs no edit there: `adapter_for <id>` names the adapter whose prefix
+starts the id, `adapter <op> <id|name> [args]` runs `adapters/<name>/<op>.sh`, and
+`scripts/_filter_ready.py` reads the same files to look up a blocker in another tracker.
 
 `item_slug` turns an id into a name safe for a branch and a folder (`tr ':/#' '---'`: `gh-12`,
-`local-task-3`); task branches are `flow/<slug>`, reports live in `.flow/reports/<slug>`, and a
-`claude --worktree <slug>` session claims for the item. `slug_item <slug>` reverses it through each
-adapter's `slug.sed`, so the reverse must be unique: `s/^gh-\([0-9][0-9]*\)$/gh#\1/p`.
+`local-task-3`, `jira-WID-7`); task branches are `flow/<slug>`, reports live in
+`.flow/reports/<slug>`, and a `claude --worktree <slug>` session claims for the item.
+`slug_item <slug>` reverses it through each adapter's `slug.sed`, so the reverse must be unique:
+`s/^gh-\([0-9][0-9]*\)$/gh#\1/p`.
 
 Still named by hand: `scripts/steward.sh` `item_id` checks the exact shape of `gh#` and `local:`
 ids and takes any other adapter's id by its prefix; `scripts/_slack.py` links only `gh#` and
@@ -68,7 +69,7 @@ Exit codes, for every script:
 A tracker reached over the network retries a 5xx answer or a dropped connection the way `gh()` in
 `lib/flow.sh` does (waits from `FLOW_GH_RETRY_WAIT`, default `2 5`, then one last try), and tries
 a call that creates something (an issue, a comment) once, because a lost answer can follow a write
-that landed.
+that landed. The Jira adapter's waits come from `FLOW_JIRA_RETRY_WAIT`.
 
 ## The item
 
@@ -118,12 +119,36 @@ and `github.priority_order` stand in for an unset key) and refuses a field it do
 |---|---|---|---|
 | `github` | the issue field `github.fields.priority` | the issue field `github.fields.size`, else the `size:<S>` label | labels `step:<step>`, `gate:<gate>`, `wt:<worktree>`, `flow:<profile>`, `size:<size>` (not with a size field), and the whole state as JSON in one issue comment marked `<!-- flow:state -->`; a label wins over the comment on read; an empty value or `gate=none` removes the label |
 | `local` | the item file's `priority` | the item file's `size` | the item file's frontmatter, one key each |
+| `jira` | Jira's own priority field | the field `jira.fields.size` (an id or a name), else the `size:<S>` label | the same labels as `github`, and the whole state as JSON in the issue property `flow-state`; a label wins over the property on read |
 
 Until `ready_rules` and `trackers` land in `lib/flow.sh`, the GitHub adapter reads only
 `github.ready_needs` and `github.priority_order`, the local adapter fills no `rank` or `needs`,
 and the flow reads every adapter named under `adapters.*`. The contract suite follows
 `lib/flow.sh`: with `ready_rules` there, `rank` and `needs` are required and every adapter must
 pass the readiness checks; without it, an adapter whose items carry no `needs` skips them.
+
+### Jira
+
+The `jira` adapter reaches Jira Cloud through its REST API v3 with `curl`. Name it in
+`adapters.default` or `adapters.<kind>`, and in `trackers` when that is set. Its keys:
+
+| Key | Default | |
+|---|---|---|
+| `jira.site` | | required: `https://<org>.atlassian.net` |
+| `jira.project` | | required: the project key, `WID` |
+| `jira.email` | | required: the login the token belongs to |
+| `jira.types.epic`, `.task`, `.bug` | `Epic`, `Task`, `Bug` | the issue type each kind is created as and read back from; any other type reads as a task |
+| `jira.fields.size`, `jira.fields.area` | unset | a custom field, by id (`customfield_10040`) or name, for the size and the area; unset, the size is a label and the area is not kept |
+| `jira.transitions.done` | the first transition named `Done` | the transition `close` takes |
+| `jira.limit` | `500` | the most issues `list` reads |
+
+The token is `JIRA_API_TOKEN` in the environment, never a config key; without it every script
+refuses before it calls Jira. It reaches `curl` on stdin, never on its command line. Ids are
+`jira:<KEY>-<n>`. A Jira blocker is a Blocks link; a blocker in another tracker, or a Jira one
+whose link Jira refused, is a `Blocked by: <id>, <id>` line in the description, and then the item
+carries no `open_blockers`.
+`link-pr` adds the PR as a remote link and a comment. There is no `sync`, `vocabulary` or
+`answers` yet: the owner clears a Jira item's gate with `scripts/gate.sh`.
 
 ## Where the two adapters differed
 
@@ -141,7 +166,8 @@ pass the readiness checks; without it, an adapter whose items carry no `needs` s
 ## Fakes in tests
 
 The contract suite and `tests/run.sh` never reach a tracker. A fake backend stands in for the
-adapter's client on `PATH` (`tests/fake-gh.sh` and `tests/_fake_gh.py` for `gh`) and must:
+adapter's client on `PATH` (`tests/fake-gh.sh` and `tests/_fake_gh.py` for `gh`,
+`tests/fake-jira.sh` and `tests/_fake_jira.py` for Jira's `curl`) and must:
 
 - keep its store in a file under the test's temp folder, seeded with what the test needs;
 - answer every call the adapter makes, in the shape the real service answers, and fail any other

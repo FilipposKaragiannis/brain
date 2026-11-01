@@ -674,3 +674,10 @@ test('LegacyReadySetting_NewKeyAnEmptyList_NoFallback', () => {
 test('LegacyReadySetting_OneScalar_ReadAsAOneItemList', () => {
   assert.deepEqual(legacyReadySetting({ github: { priority_order: 'P0' } }, 'ready.priority_order'), { value: ['P0'], from: 'github.priority_order' }, 'because yaml_get reads a scalar as a one-item list');
 });
+
+test('TrackerKeys_Jira_TakenAsATrackerForNewItems', () => {
+  for (const key of ['adapters.default', 'adapters.epic', 'adapters.task', 'adapters.bug']) {
+    const spec = fieldAt(key)!;
+    assert.deepEqual([checkChange(spec, 'jira').ok, checkFileValue(spec, 'jira').ok], [true, true], `because the flow plugin ships a jira adapter, so ${key} may name it`);
+  }
+});
