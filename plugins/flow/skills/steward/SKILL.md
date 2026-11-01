@@ -39,7 +39,9 @@ releases it through `WorktreeRemove` unless it holds uncommitted work. Codex has
 - Never create worktrees outside the pool except `tmp add`, and delete those after the phase.
 - **The pool grows on its own.** A claim with no free worktree adds one while the pool is below
   `pool_max`, named after the last entry (`../app-wt-3` after `../app-wt-2`), appends it to
-  `pool:` and runs the copies and the setup. At `pool_max` the claim fails with exit 3: tell the
+  `pool:` and runs the copies and the setup. `worktree_name: ../{repo}-wt-{n}` in the config names
+  it instead (and `add` without a path): `{repo}` is the main worktree's folder, `{n}` the first
+  number no pool entry and no folder uses. A `worktree_name` with no `{n}`, or with `{n}` only in a parent folder (every new worktree would share one idle branch), is refused. At `pool_max` the claim fails with exit 3: tell the
   owner, who raises `pool_max` or releases one. Never edit `pool:` by hand; `add` does it.
 - A release of a closed item also deletes its reports in every worktree.
 - A free worktree sits on its own idle branch at the base tip: `main-wt-2` for `../app-wt-2`

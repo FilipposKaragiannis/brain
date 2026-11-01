@@ -162,6 +162,11 @@ test('StewardAppendsAfterAConsoleWrite_BothParsers_ReadTheWholePool', () => {
   }
 });
 
+test('WorktreeNameTemplate_WrittenByTheConsole_ThePluginsYamlGetReadsItAsWritten', () => {
+  const after = edited(FOOSBRAWL, 'worktree_name', 'scalar', '../{repo}-wt-{n}');
+  assert.deepEqual(yamlGet(after, 'worktree_name'), ['../{repo}-wt-{n}'], 'because steward.sh fills the braces of the name lib/flow.sh reads, so they must reach it untouched');
+});
+
 test('ScalarStartingWithABracket_Written_Refused', () => {
   const result = applyChange(FOOSBRAWL, 'jobs.model', 'scalar', '[wip]');
   assert.ok(!result.ok && /starts with \[ or \{/.test(result.error), 'because lib/flow.sh strips the quotes and then reads [wip] as the list wip');
