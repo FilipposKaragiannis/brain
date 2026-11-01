@@ -113,7 +113,7 @@ test('SyncRefs_TheRefsTheScriptWouldMerge_WithoutMerging', async () => {
 /** An action runner over the temp repos: the worktree is pool slot wt, claimed for gh#7. */
 async function runnerOver(worktree: string, dir: string, log: Logger, spawner = childProcessSpawner) {
   const context: ActionContext = {
-    root: path.join(dir, 'main'), pluginRoot: path.join(dir, 'plugin'), repo: null, jobsHost: 'claude', pool: [worktree], outsideWorktrees: [], processCwds: [], sessions: [], terminal: null, installedTerminals: [], base: 'main',
+    root: path.join(dir, 'main'), pluginRoot: path.join(dir, 'plugin'), pluginVersion: null, repo: null, jobsHost: 'claude', pool: [worktree], outsideWorktrees: [], processCwds: [], sessions: [], terminal: null, installedTerminals: [], base: 'main',
     worktrees: [{ name: 'wt', path: worktree, item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 1, agentPids: [], step: 'implement', claimStep: 'implement', trackerStep: 'implement' }], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true }, nextJob: null,
   };
   const events: ActionRecord[] = [];

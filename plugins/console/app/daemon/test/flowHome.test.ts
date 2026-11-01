@@ -59,7 +59,7 @@ test('PluginVersion_FromTheManifest_WhenTheFolderIsACheckout', async () => {
 
 test('FlowHome_ReviewRecords_OnlyTheHealthJobsVerdicts', async () => {
   const { reviews } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
-  assert.deepEqual(reviews, [{ pr: 20, state: 'in-review', waiting: ['codex'], at: '2026-10-24T18:00:00Z' }], 'because only <n>.review.json files are verdicts; the chase counts and other files beside them are not');
+  assert.deepEqual(reviews, [{ pr: 40, state: 'in-review', waiting: ['codex'], cannot: [{ reviewer: 'codex', said: 'Create an environment for this repo.' }], at: '2026-10-24T18:00:00Z' }], 'because only <n>.review.json files are verdicts, the chase counts and other files beside them are not, and a cannot entry without its reply is dropped');
 });
 
 test('FlowHome_GatesRunsClaimsEvents', async () => {
@@ -240,6 +240,11 @@ test('StoppedHostInTheGateList_NeverAGateCard', async () => {
 test('ParseGateList_StoppedHostLine_Skipped', () => {
   const list = parseGateList(JSON.stringify([{ item: 'codex', gate: 'stopped', message: 'codex stopped on an auth error', questions: [] }]));
   assert.equal(list?.size, 0, "because gate.sh lists a stopped host as a gate named stopped, which is no gate on an item");
+});
+
+test('Reviewers_FromTheConfigElseTheFlowDefault', () => {
+  assert.deepEqual(parseFlowConfig('reviews:\n  reviewers: [codex, "@octo-cat"]\n').reviewers, ['codex', 'octo-cat'], 'because the PR cards offer the names comments.sh asks, without their @');
+  assert.deepEqual(parseFlowConfig('base: main\n').reviewers, ['codex', 'claude'], 'because flow asks codex and claude when the key is unset');
 });
 
 test('JobsWorkers_SetInEitherForm_Read', () => {

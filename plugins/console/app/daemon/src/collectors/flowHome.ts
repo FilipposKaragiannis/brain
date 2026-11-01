@@ -25,6 +25,8 @@ export type FlowConfig = {
    * so a run of the queue started with no `--workers` splits into workers across the hosts.
    */
   jobsWorkers: boolean;
+  /** `reviews.reviewers` without their `@`: who the flow asks to review each PR, codex and claude when unset. */
+  reviewers: string[];
   /** What in the file the console read but the plugin no longer does, such as the old `health.behind_base`. */
   deprecated: string[];
 };
@@ -39,8 +41,11 @@ export type GateRecord = { item: string; gate: string; message: string; time: st
  * The health job's verdict on a PR waiting at the merge gate (`.flow/reviews/<n>.review.json`,
  * flow 1.24.0 and later): `in-review` while a reviewer the flow asked has not answered, which
  * GitHub cannot show for a reviewer asked by a mention, `changes-requested`, or `ready`.
+ * `cannot`: each reviewer that replied it cannot review here, with what it said (Codex with no
+ * environment for the repository); the PR waits without that review until the record goes.
  */
-export type ReviewRecord = { pr: number; state: string; waiting: string[]; at: string };
+export type ReviewRecord = { pr: number; state: string; waiting: string[]; cannot: ReviewCannot[]; at: string };
+export type ReviewCannot = { reviewer: string; said: string };
 export type RunRecord = { item: string; step: string; profile: string; worktree: string; host: string; startedAt: string | null };
 export type ClaimRecord = {
   worktreePath: string;
@@ -91,6 +96,10 @@ export const GATE_JSON_SINCE = '1.18.0';
  */
 export type GateQuestionCache = Map<string, { message: string; questions: GateQuestion[] }>;
 
+function isCannot(value: unknown): value is ReviewCannot {
+  return typeof value === 'object' && value !== null && typeof (value as ReviewCannot).reviewer === 'string' && typeof (value as ReviewCannot).said === 'string';
+}
+
 export function flowHomeOf(root: string): string {
   return path.join(root, '.flow');
 }
@@ -128,8 +137,17 @@ export function parseFlowConfig(source: string): FlowConfig {
     behindBase: behindBase === null ? null : Number(behindBase),
     jobsHost: jobsHostOf(yamlString(map, 'jobs.host')),
     jobsWorkers: (yamlString(map, 'jobs.workers') ?? '').trim() !== '' || Object.keys(yamlMap(map, 'jobs.workers')).length > 0,
+    reviewers: reviewersOf(yamlList(map, 'reviews.reviewers')),
     deprecated,
   };
+}
+
+/** The flow's own default when `reviews.reviewers` is unset (comments.sh). */
+const DEFAULT_REVIEWERS = ['codex', 'claude'];
+
+function reviewersOf(listed: string[]): string[] {
+  const names = listed.map((name) => name.trim().replace(/^@/, '')).filter((name) => name !== '');
+  return names.length === 0 ? DEFAULT_REVIEWERS : names;
 }
 
 async function readText(file: string): Promise<string | null> {
@@ -350,6 +368,7 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
     .flatMap(({ value }) => (typeof value['pr'] === 'number' ? [{
       pr: value['pr'], state: text(value, 'state'), at: text(value, 'at'),
       waiting: Array.isArray(value['waiting']) ? value['waiting'].filter((entry): entry is string => typeof entry === 'string') : [],
+      cannot: Array.isArray(value['cannot']) ? value['cannot'].flatMap((entry: unknown) => (isCannot(entry) ? [{ reviewer: entry.reviewer, said: entry.said }] : [])) : [],
     }] : []));
   const claims = await readClaims([root, ...poolPaths(root, config)]);
   const events = parseEvents((await readText(path.join(flowHome, 'events.log'))) ?? '', EVENTS_KEPT);

@@ -44,6 +44,11 @@ export const BOARD_JSON = JSON.stringify({
     { id: 'gh#2', kind: 'task', title: 'Two', size: 'S', priority: 'P1', rank: 999, needs: [], status: 'closed', labels: [], blocked_by: [], open_blockers: [], open_children: 0, parent: '', url: 'https://example/2', body: '', state: { step: 'done', gate: 'none', worktree: '', pr: 'https://example/pull/2', last_event: '', profile: '', attempts: 0 } },
     { id: 'gh#20', kind: 'task', title: 'Twenty', size: 'S', priority: 'P1', rank: 4, needs: [], status: 'open', labels: [], blocked_by: [], open_blockers: [], open_children: 0, parent: '', url: 'https://example/20', body: '', state: { step: 'done', gate: 'none', worktree: '', pr: 'https://example/pull/20', last_event: '', profile: '', attempts: 0 } },
   ],
+  spend: {
+    'gh#7': { cost_usd: 1.234567, sessions: 3, tokens: 120000 },
+    'gh#9': { cost_usd: 0, sessions: 2, tokens: 50000 },
+    'gh#13': { cost_usd: 'a lot', sessions: 1, tokens: 10 },
+  },
 });
 
 /**

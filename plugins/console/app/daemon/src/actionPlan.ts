@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { ActionKind, ActionOutcome, SessionRef, SyncConflict, TerminalName, TerminalSetting } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
+import { compareVersions } from './cli.ts';
 import { checkSchedule, FLOW_JOBS, SCHEDULE_NAME, scheduleJob } from './plugins/flow/schema.ts';
 import { syncConflict, syncRefs, writeSyncNote } from './syncNote.ts';
 import { sessionLaunch, terminalLaunch } from './terminal.ts';
@@ -34,6 +35,8 @@ export type SessionFacts = { pid: number; cwd: string; session: SessionRef; aliv
 export type ActionContext = {
   root: string;
   pluginRoot: string | null;
+  /** The flow plugin's version, or null when it could not be read. */
+  pluginVersion: string | null;
   repo: string | null;
   jobsHost: string;
   /** The pool worktrees, as absolute paths. A release names one of these or an item. */
@@ -128,7 +131,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.start', 'job.stop', 'job.pause', 'job.resume',
   'job.schedule', 'job.unschedule', 'run.stop', 'run.resume',
-  'worktree.claim', 'worktree.release', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'host.clear', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.review', 'host.clear', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -149,6 +152,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'jobs.install': [],
   'job.uninstall': ['job'],
   'pr.merge': ['pr', 'method'],
+  'pr.review': ['pr', 'reviewer'],
   'host.clear': ['host'],
   'terminal.open': ['path', 'job', 'session'],
   refresh: ['source'],
@@ -173,6 +177,12 @@ const ITEM_ID = /^(gh#[1-9][0-9]*|local:[a-z]+\/[1-9][0-9]*)$/;
 /** A job's log name: a schedule (`next`, `next-nightly`) or one of its workers (`next-2`, `next-nightly-2`). */
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
+/** A reviewer as comments.sh takes one: codex, claude, copilot or a GitHub login, with or without its @. */
+const REVIEWER_NAME = /^@?[A-Za-z0-9_.-]+$/;
+/** The ask the PR step writes when it requests reviews (the pr-creator agent), so a review asked from here reads the same. */
+/** The first flow whose request-review takes one reviewer; an older one ignores the name and asks every reviewer. */
+const ONE_REVIEWER_SINCE = '1.27.0';
+export const REVIEW_ASK = "please review the diff line by line for correctness, and check the implementation against the item's acceptance lines.";
 const PID = /^[1-9][0-9]*$/;
 const MAX_STEPS = /^[1-9][0-9]{0,2}$/;
 const MERGE_METHODS = ['squash', 'merge', 'rebase'];
@@ -325,6 +335,17 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       if (!MERGE_METHODS.includes(method)) return fail(`method must be one of ${MERGE_METHODS.join(', ')}`);
       if (context.repo === null) return fail('pr.merge needs github.repo in .flow/config.yaml');
       return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
+    }
+    // comments.sh posts the mention with the flow's request marker (copilot goes through the
+    // reviewers API), so the health job tracks and chases this ask like one the PR step made.
+    case 'pr.review': {
+      const pr = args['pr'] ?? '';
+      const reviewer = args['reviewer'] ?? '';
+      if (!PR_NUMBER.test(pr)) return fail('pr.review needs a PR number');
+      if (!REVIEWER_NAME.test(reviewer)) return fail('pr.review needs a reviewer: codex, claude, copilot or a GitHub login');
+      if (context.repo === null) return fail('pr.review needs github.repo in .flow/config.yaml');
+      if (context.pluginVersion !== null && compareVersions(context.pluginVersion, ONE_REVIEWER_SINCE) < 0) return fail(`pr.review needs flow ${ONE_REVIEWER_SINCE} or later: flow ${context.pluginVersion} would ask every reviewer`);
+      return sh('comments.sh', ['request-review', pr, REVIEW_ASK, reviewer.replace(/^@/, '')], [`pr:${pr}`], SCRIPT_TIMEOUT_MS, ['pulls']);
     }
   }
 }

@@ -1,0 +1,1 @@
+{"pr": 40, "url": "https://example/pull/40", "state": "in-review", "waiting": ["codex"], "cannot": [{"reviewer": "codex", "said": "Create an environment for this repo."}, {"reviewer": "bob"}], "at": "2026-10-24T18:00:00Z"}

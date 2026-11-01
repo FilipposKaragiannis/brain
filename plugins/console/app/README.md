@@ -159,8 +159,8 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 5 since a job is a schedule
-(`name`, with `job`, `host` and `configured`, below). One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 6 since an item carries `spend` and a pull
+`review` (below). One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`) and `disagreements`. Timestamps are
@@ -172,7 +172,8 @@ snapshots.
   issues page on the github adapter, null on local), `adapter`, `pluginVersion`, `pluginRoot`
   (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
   variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
-  `jobsHost` (`jobs.host`, the CLI the jobs run) and `poolMax`.
+  `jobsHost` (`jobs.host`, the CLI the jobs run), `poolMax` and `reviewers` (`reviews.reviewers`
+  without their `@`, codex and claude when unset: who the PR cards offer for a review ask).
 - `jobs` has one entry per schedule `jobs.sh status --json` lists (flow 1.26.0): every job, then
   the named schedules (`next-codex`) in config order, then the installed ones the config no longer
   names. `name` is the schedule, `job` the script it runs (`next` for `next-codex`), `host` the
@@ -210,7 +211,13 @@ snapshots.
 - `ended` lists the agents and sessions with a session that left the process list while the
   daemon watched, in the last 24 hours, at most 10, newest first: an `agents` entry plus `endedAt`
   (when the read that missed it ran). It lives in the daemon's memory, so a restart empties it.
-- An item's `url` is its tracker page, from the board.
+- An item's `url` is its tracker page, from the board. Its `spend` is `{costUsd, sessions,
+  tokens}`, summed over the step sessions `board.sh --json` counts from `log/runs.jsonl`, or null
+  when it has none or the plugin prints no `spend`. Codex reports no cost, so a codex session adds
+  sessions and tokens but no dollars.
+- An item whose merge gate waits on review is `in-review`, not `blocked`: its PR has changes
+  requested, a reviewer requested, or a reviewer the flow asked by a mention that has not
+  answered. Its gate leaves `gates` and the attention list while that lasts.
 - A gate carries `pull`: `{number, url, state, unresolvedThreads}` for its item's open PR (the one
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
   or null. A merge gate whose PR still
@@ -263,6 +270,7 @@ Every open pull request carries one state, the first that holds:
 | `changes-requested` | the review decision is `CHANGES_REQUESTED`, or, with no review required, a latest review asks for changes |
 | `checks-pending` | a check is still queued or running |
 | `review-pending` | the repository requires an approval and has none yet |
+| `in-review` | the health job's record says a reviewer it asked by a mention has not answered, and GitHub alone would say `review-pending`, `approved` or `mergeable` |
 | `approved` | approval is satisfied (approved, or no review required) but a review thread is unresolved, or GitHub does not let it merge yet (merge state `BLOCKED`, `BEHIND`, `UNKNOWN`, or `mergeable` not `MERGEABLE`) |
 | `mergeable` | checks green, approval satisfied, no unresolved thread, `MERGEABLE`, merge state `CLEAN`, `HAS_HOOKS` or `UNSTABLE`: ready to merge |
 
@@ -270,7 +278,10 @@ A PR belongs to the item whose `pr` field names it (a number, or its URL compare
 scheme), else to the item claimed on its head branch unless the PR comes from a fork, and that
 gives its worktree. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
 (`pr-failing`, `pr-changes-requested`, `pr-mergeable`), and `counts` carries `pullsFailing`,
-`pullsChangesRequested` and `pullsMergeable`.
+`pullsChangesRequested` and `pullsMergeable`. A PR's `review` is the health job's record for it,
+`.flow/reviews/<n>.review.json`: `{state, waiting, cannot, at}`, where `cannot` lists the
+reviewers that replied they cannot review here, each `{reviewer, said}` with their own words.
+Null without a record.
 
 ## Sources and cadence
 | Source | How | Every |
@@ -306,8 +317,9 @@ offered only while some job keeps a schedule, since install exits 2 when none ha
 `jobs.sh uninstall <job>` (the `job.uninstall` action, one per job) instead;
 the pool keys (`pool`, `pool_max`, `worktree_copy`, `worktree_setup`) count at the next claim.
 
-The Jobs group holds the jobs' host and, per host, the model and effort of the jobs'
-orchestrating session (flow 1.20.0): `jobs.host` (`claude` or `codex`, claude when unset; the
+The Jobs group holds the jobs' host and, per host, the model and effort of every unattended session
+on that host without an agent of its own: the steps with no agent (design, implement, review,
+explain) and the comments, intake and retro jobs (flow 1.20.0): `jobs.host` (`claude` or `codex`, claude when unset; the
 workers inside a run keep their own models), then `jobs.claude.model` (opus, sonnet, haiku,
 fable), `jobs.claude.effort` (low, medium, high, xhigh, max), `jobs.codex.model` (gpt-6-astra,
 gpt-6-sol, gpt-6-luna) and `jobs.codex.effort` (low, medium, high, xhigh), where empty or unset
@@ -394,6 +406,7 @@ on every state change and at most twice a second while output arrives.
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
+| `pr.review` | `pr`, `reviewer` (a name or GitHub login, `@` optional) | `comments.sh request-review <pr> <ask> <reviewer>` (flow 1.27.0): one mention comment with the flow's request marker, Copilot through the reviewers API, so the health job tracks and chases it; the ask is the PR step's own. Refused on flow before 1.27.0, whose script would ask every reviewer | the PR | `finished` |
 | `terminal.open` | `path`, `job?`, `session?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
@@ -577,7 +590,7 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Six project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles, a
+imports). Seven project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles, a
 readiness line from `readiness` that says what runs, or why nothing does: how many items the next
 job could take, how many next-in-line items lack a field and how many more in the backlog do, how
 many wait at gates and how many are blocked; the needs-you table oldest first with the next-in-line
@@ -597,7 +610,10 @@ note is there "A run is going; the sync step runs first when it starts", and bet
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
 <refs>" whenever `syncPending` is set, so a note the health job wrote shows too), a
 legend for dirty, agents and sessions; Open in Terminal on every row, the project root
-included, Release, Health), Agents and jobs (a main column and a side column. Runs: a card per live run, the first open and the
+included, Release, Health), Board (`#/<project>/board/<item>`: the open items with filters for
+under way, in review, ready, blocked and backlog, each row with its state, step, worktree, PR and
+spend, a head line summing the spend of the rows shown, and an item's detail beside the list:
+its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents and jobs (a main column and a side column. Runs: a card per live run, the first open and the
 others folded to their header, each with its step, item, worktree, host and PR, its stats
 (started, last commit, transcript size and turns, pid) and its transcript as a terminal of the
 last 12 lines, with Full log (the last 2000 lines in a box that scrolls), Open session, Open in
@@ -611,7 +627,14 @@ name. Then your own sessions and the runs ended in the last day, folded. The sid
 card per stopped host with Clear (`host.clear`), the panel that adds a schedule of any job or runs
 it once (`job.schedule`, `job.start`): a Job picker, then the name, the timing and the job's
 settings, where only next takes an item and limits, an empty name making the job's own schedule
-only while it has none; and the latest events), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
+only while it has none; and the latest events), Pull requests (a head line of how many are open, in review and ready to merge, then a card per PR
+from the `pulls` source: its state, item, agent or worktree and ages; four cells for checks,
+conflicts, review and threads; the reviewers asked by a mention, each silent one "has not answered
+yet" and each that cannot review with its own reply and the way out; Merge on a PR in state
+`mergeable`, else why not; and, on a PR that is not a draft, "Ask for review from" with the
+project's reviewers and "other…" for a GitHub login, whose Ask runs `pr.review`; a merge gate's
+card has the same ask. Before that source is read, or off GitHub, a table of the items with a
+PR) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s). A row above every screen holds the project's fields, each a small uppercase label over its
@@ -629,14 +652,12 @@ per project, "flow settings for <project>", edits its `.flow/config.yaml`: the n
 then a form per schema group (each field labelled by its key, the control for its type: a select
 for an enum or a boolean with "(not set)" to take the key out, a number or text box, a text area
 of one item or `name: value` per line for a list or a map; the help under it) with its own Save,
-disabled until something in the group changed. In Jobs, `jobs.host` is a dropdown and only the
-picked host's model and effort dropdowns show under it, each listing its values and "host default"
+disabled until something in the group changed. In Jobs, `jobs.host` is a dropdown and both hosts' model and effort dropdowns show under it, each listing its values and "host default"
 for empty and, for a model, "other…" that opens a text field (a name off the list starts there),
 the help under it naming the default (for codex the one `hostDefaults` read, "On this machine
-that is gpt-6-sol"); changing the host switches the pair before any save, and the other host's
-pair is hidden with its saved values kept and never sent. While the picked host has no map and a
+that is gpt-6-sol"). While a host has no map and a
 deprecated key is set, its dropdown starts at what the jobs really run with, under it "now opus,
-from the deprecated jobs.model". A save of either of the pair writes both, "host default" as an
+from the deprecated jobs.model". A save of either of a host's pair writes both, "host default" as an
 empty line, so the `jobs.<host>` map is there and the fallback ends. A deprecated `jobs.model` or
 `jobs.effort` the file sets shows read-only with its note and a Clear button. A save shows the keys written and each follow-up,
 with a "Reload the schedule" button (`jobs.install`) when a schedule or `jobs.host` changed and an
