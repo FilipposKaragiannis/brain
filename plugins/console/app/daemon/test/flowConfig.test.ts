@@ -651,7 +651,7 @@ test('FixedValuesList_OtherValue_RefusedOnChangeAndWarnedInTheFile', () => {
 });
 
 test('Trackers_OtherValue_Refused', () => {
-  assert.deepEqual(checkChange(fieldAt('trackers')!, ['github', 'jira']), { ok: false, error: 'trackers lists jira: it takes github or local' }, 'because adapters_configured refuses a tracker with no adapter');
+  assert.deepEqual(checkChange(fieldAt('trackers')!, ['github', 'linear']), { ok: false, error: 'trackers lists linear: it takes github, local or jira' }, 'because adapters_configured refuses a tracker with no adapter');
 });
 
 test('ReadinessFields_ReadForEveryTracker_NotMarkedGithubOnly', () => {

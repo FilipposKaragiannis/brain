@@ -21,7 +21,8 @@ done
 for f in $(find tools plugins -name '*.py' -not -path '*/evals/results/*' -not -path '*/node_modules/*'); do
   python3 -m py_compile "$f" 2>/dev/null || fail "python syntax: $f"
 done
-rm -rf tools/lib/__pycache__ plugins/*/*/__pycache__ plugins/*/*/*/__pycache__
+# py_compile writes bytecode whatever PYTHONDONTWRITEBYTECODE says; drop every cache it left.
+find tools plugins -name '__pycache__' -type d -not -path '*/node_modules/*' -prune -exec rm -rf {} +
 
 # Every skill has a SKILL.md whose name matches its directory and that has a description.
 for skill_dir in plugins/*/skills/*/; do
