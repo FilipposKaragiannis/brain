@@ -660,14 +660,14 @@ check "trackers: next picks the most urgent ready item from every named tracker"
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 "$P/adapters/github/write-state.sh" 'gh#36' step=done >/dev/null 2>&1
 check "trackers: health reads every named tracker" sh -c "'$P/scripts/steward.sh' health 2>/dev/null | grep -q 'gh#36: done (every step ran)'"
-tracked_config 'trackers: [github, jira]' ''
+tracked_config 'trackers: [github, linear]' ''
 "$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: a name with no adapter is refused (exit 2) with the adapters there are" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira, not an adapter; the adapters are github local' '$work/trackers.err'"
+check "trackers: a name with no adapter is refused (exit 2) with the adapters there are" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear, not an adapter; the adapters are github jira local' '$work/trackers.err'"
 "$P/scripts/steward.sh" health --dry-run >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: health refuses (exit 2) a name with no adapter instead of reading no tracker" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira' '$work/trackers.err'"
+check "trackers: health refuses (exit 2) a name with no adapter instead of reading no tracker" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear' '$work/trackers.err'"
 mkdir -p "$work/trackers/bin" && printf '#!/bin/sh\nexit 0\n' > "$work/trackers/bin/claude" && chmod +x "$work/trackers/bin/claude"
 PATH="$work/trackers/bin:$PATH" "$P/jobs/comments.sh" claude >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: the comments job refuses (exit 2) a name with no adapter instead of a quiet pass" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira' '$work/trackers.err'"
+check "trackers: the comments job refuses (exit 2) a name with no adapter instead of a quiet pass" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear' '$work/trackers.err'"
 tracked_config 'trackers: [github]' ''
 "$P/scripts/new.sh" task "Never read" >/dev/null 2>"$work/trackers.err"; code=$?
 check "trackers: new refuses (exit 2) while new items go to a tracker trackers leaves out" sh -c "[ $code -eq 2 ] && grep -q 'adapters.default is local, which trackers leaves out' '$work/trackers.err'"
