@@ -115,8 +115,10 @@ function worktreeFlags(context: WorktreeContext, now: Date): WorktreeFlag[] {
   const dirty = context.git?.dirtyFiles ?? 0;
   if (dirty > 0) flags.push('dirty');
   if (behind > 0) flags.push('behind');
-  if (context.claim !== null && behind >= STALE_BEHIND_BASE_COMMITS) flags.push('stale-branch');
-  const claimAge = context.claim === null ? null : ageSeconds(context.claim.claimedAt, now);
+  // A reservation is the owner's own work, never stale: only a flow claim is judged.
+  const flowClaim = context.claim !== null && context.claim.reserved === '';
+  if (flowClaim && behind >= STALE_BEHIND_BASE_COMMITS) flags.push('stale-branch');
+  const claimAge = flowClaim ? ageSeconds(context.claim?.claimedAt ?? null, now) : null;
   const quiet = context.agents.length === 0 && context.run === null && context.gate === null;
   if (quiet && claimAge !== null && claimAge >= STALE_IDLE_HOURS * SECONDS_PER_HOUR) flags.push('idle');
   if (context.run !== null && context.agents.length === 0) flags.push('dead-run');
@@ -141,7 +143,7 @@ function processInfo(process: AgentProcess): ProcessInfo {
 }
 
 function toClaim(record: ClaimRecord): Claim {
-  return { item: record.item, branch: record.branch, base: record.base, step: record.step, claimedAt: record.claimedAt, host: record.host };
+  return { item: record.item, branch: record.branch, base: record.base, step: record.step, claimedAt: record.claimedAt, host: record.host, reserved: record.reserved };
 }
 
 function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Worktree[] {
@@ -164,7 +166,7 @@ function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Wor
       lastCommitAt: context.git?.lastCommitAt ?? null,
       claim: context.claim === null ? null : toClaim(context.claim),
       claimAgeSeconds: context.claim === null ? null : ageSeconds(context.claim.claimedAt, now),
-      item: context.claim?.item ?? null,
+      item: context.claim?.item || null,
       itemUrl: boardItem?.url || null,
       itemTitle: boardItem?.title || null,
       gate: context.gate?.gate ?? null,

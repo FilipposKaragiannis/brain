@@ -126,12 +126,27 @@ export function installNote(output: string): string | null {
   return skipped.length === 0 ? null : `skipped ${skipped.join(', ')}: running now, so ${skipped.length === 1 ? 'it keeps' : 'they keep'} the old schedule; install again after the run`;
 }
 
+/**
+ * What `steward.sh sweep` did, from the lines it prints: `<item>: released <worktree> (<why>)` and
+ * `<item>: cleared the merge gate`. A sweep that finds nothing landed prints nothing.
+ */
+export function sweepNote(output: string): string {
+  if (/sweep skipped: the sweep lock is held/.test(output)) return 'a sweep is running already, so this one did nothing';
+  const freed = [...output.matchAll(/^(\S+): released (\S+) \(/gm)].map((match) => `${match[2]!} (${match[1]!})`);
+  const cleared = [...output.matchAll(/^(\S+): cleared the merge gate$/gm)].map((match) => match[1]!);
+  if (freed.length === 0 && cleared.length === 0) return 'nothing landed: no worktree freed, no gate cleared';
+  return [
+    ...(freed.length === 0 ? [] : [`freed ${freed.join(', ')}`]),
+    ...(cleared.length === 0 ? [] : [`cleared the merge gate of ${cleared.join(', ')}`]),
+  ].join('; ');
+}
+
 export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: string };
 
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.start', 'job.stop', 'job.pause', 'job.resume',
   'job.schedule', 'job.unschedule', 'run.stop', 'run.resume',
-  'worktree.claim', 'worktree.release', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.review', 'host.clear', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.review', 'host.clear', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -145,10 +160,12 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'run.stop': ['item'], 'run.resume': ['item'],
   'worktree.claim': ['item'],
   'worktree.release': ['target', 'force'],
+  'worktree.reserve': ['name'],
   'worktree.sync': ['target'],
   'sync.handoff': ['target', 'refs'],
   'item.step-sync': ['item'],
   'steward.health': [],
+  'steward.sweep': [],
   'jobs.install': [],
   'job.uninstall': ['job'],
   'pr.merge': ['pr', 'method'],
@@ -177,6 +194,8 @@ const ITEM_ID = /^(gh#[1-9][0-9]*|local:[a-z]+\/[1-9][0-9]*)$/;
 /** A job's log name: a schedule (`next`, `next-nightly`) or one of its workers (`next-2`, `next-nightly-2`). */
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
+/** Who a reservation is under: letters or digits first, so it is never read as an option, then letters, digits, spaces and `.'_-`. */
+const RESERVE_NAME = /^[\p{L}\p{N}][\p{L}\p{N} .'_-]{0,63}$/u;
 /** A reviewer as comments.sh takes one: codex, claude, copilot or a GitHub login, with or without its @. */
 const REVIEWER_NAME = /^@?[A-Za-z0-9_.-]+$/;
 /** The ask the PR step writes when it requests reviews (the pr-creator agent), so a review asked from here reads the same. */
@@ -301,7 +320,20 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       const force = args['force'] === 'true' ? ['--force'] : [];
       return sh('steward.sh', ['release', target, ...force], ['pool', `${ITEM_ID.test(target) ? 'item' : 'worktree'}:${target}`], STEWARD_TIMEOUT_MS, ['files', 'git']);
     }
+    // A worktree with no item under the owner's name (git user.name when no name is given), which
+    // claim, sweep, health and next pass over until a release.
+    case 'worktree.reserve': {
+      const name = args['name'];
+      if (name !== undefined && !RESERVE_NAME.test(name)) return fail("worktree.reserve takes a name of letters, digits, spaces and .'_-, up to 64 characters");
+      return sh('steward.sh', ['reserve', ...(name === undefined ? [] : ['--name', name])], ['pool'], STEWARD_TIMEOUT_MS, ['files', 'git']);
+    }
     case 'steward.health': return handOn('health', ['job:health'], ['jobs', 'files', 'git']);
+    // The sweep the next and health jobs run, now: under the pool lock as a release, and the health
+    // job's, whose run sweeps first. --lock exits 75 when a sweep already runs.
+    case 'steward.sweep': {
+      const planned = sh('steward.sh', ['sweep', '--lock'], ['pool', 'job:health'], SCRIPT_TIMEOUT_MS, ['files', 'git', 'board']);
+      return planned.ok ? { ok: true, plan: { ...planned.plan, note: sweepNote } } : planned;
+    }
     // Writes and loads the schedule of every job jobs.schedule names: after a schedule or jobs.host change in .flow/config.yaml.
     case 'jobs.install': {
       const names = [...new Set([...FLOW_JOBS, ...(context.schedules ?? []).map((schedule) => schedule.name)])];

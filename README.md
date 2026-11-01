@@ -70,8 +70,9 @@ Codex rules and agents, and reports the config gaps. It stamps what it wrote
 `init` when the stamp is behind the plugin. `flow:next` runs the next
 step of an item in a fresh subagent; `advance.sh` applies the step's result file; gates stop
 the run and notify. `flow:board` shows the pool, items, gates and overlaps; `flow:steward`
-claims and releases pool worktrees and never resets uncommitted work; a claim with no free
-worktree grows the pool up to `pool_max` (the entry is appended to the config, the ignored files
+claims and releases pool worktrees, reserves one for the owner's manual work (`steward.sh
+reserve`, left alone by the flow until a release) and never resets uncommitted work; a claim
+with no free worktree grows the pool up to `pool_max` (the entry is appended to the config, the ignored files
 copied, the setup commands run). `flow:new` creates an epic, task or bug in the tracker; a child takes its parent's priority and area. A plan step that makes tracker tasks of a task splits it: step `split`, its worktree back to the pool. `flow:do` takes a plain sentence and routes it to the right skill; `flow:help` is the manual (`help <skill>`, `help lines`, `help gates`); `flow:gate` lists and answers the gates; `auto_gates` in the config lets the flow clear `plan-approval` itself for chosen sizes. `claude --worktree gh-310`
 lands in the pool through the project hook `init` prints. The step skills `plan`, `implement`,
 `test`, `review`, `verify`, `pr`, `comments` and `explain` run one step on demand with the same
