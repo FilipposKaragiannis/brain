@@ -609,10 +609,17 @@ test('Project_GithubAdapter_RepoAndIssuesUrls', async () => {
   assert.deepEqual([project.repoUrl, project.trackerUrl, project.jobsHost], ['https://github.com/example/fixture', 'https://github.com/example/fixture/issues', 'claude'], 'because the header links the repository and the tracker and says which CLI the jobs run');
 });
 
-test('Project_LocalAdapter_NoTrackerUrl', async () => {
+test('Project_TrackersWithoutGithub_NoTrackerUrl', async () => {
+  const facts = await input();
+  facts.flow.config.trackers = ['local'];
+  assert.equal(reconcile(facts).project.trackerUrl, null, 'because the local tracker has no page to open');
+});
+
+test('Project_TrackersReadGithubBesideALocalDefault_IssuesUrl', async () => {
   const facts = await input();
   facts.flow.config.adapter = 'local';
-  assert.equal(reconcile(facts).project.trackerUrl, null, 'because the local tracker has no page to open');
+  facts.flow.config.trackers = ['github', 'local'];
+  assert.equal(reconcile(facts).project.trackerUrl, 'https://github.com/example/fixture/issues', 'because the flow reads GitHub issues even while new items default to local');
 });
 
 test('Disagreement_GateVsLabels_ExplainedWithReReadTheBoard', async () => {

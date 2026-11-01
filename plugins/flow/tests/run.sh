@@ -507,9 +507,10 @@ github:
     size: Size
     priority: Priority
     area: Area
-  priority_order: [P0, P1, P2, P3]
-  ready_needs: [priority, size]
   project: 1
+ready:
+  priority_order: [P0, P1, P2, P3]
+  needs: [priority, size]
 pool:
   - ../wt-1
   - ../wt-2
@@ -526,7 +527,7 @@ check "gh a started item needs nothing" grep -qx 'gh#36 task S P2 -' "$work/ghli
 check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
 check_all "graph: a GitHub epic's children come from the item list, native parent or Parent: line" '[ "$("$P/scripts/board.sh" --graph gh#39 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#40'\'']" ] && [ "$("$P/scripts/board.sh" --graph gh#30 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#31'\'']" ]'
 sed -i.bak 's/^  priority_order: .*/  priority_order: [P2, P0, P1, P3]/' .flow/config.yaml
-check_all "graph priorities: GitHub columns follow github.priority_order, not the names" '[ "$("$P/scripts/board.sh" --graph priorities | python3 -c "import json,sys; print(\" \".join(c[\"priority\"] or \"-\" for c in json.load(sys.stdin)[\"columns\"]))")" = "P2 P0 P1 P3 -" ]'
+check_all "graph priorities: GitHub columns follow ready.priority_order, not the names" '[ "$("$P/scripts/board.sh" --graph priorities | python3 -c "import json,sys; print(\" \".join(c[\"priority\"] or \"-\" for c in json.load(sys.stdin)[\"columns\"]))")" = "P2 P0 P1 P3 -" ]'
 mv .flow/config.yaml.bak .flow/config.yaml
 printf '1\ngh: HTTP 401: Bad credentials\n' > "$FAKE_GH_DIR/fail"
 check_all "graph: a failed adapter list stops the graph and shows the error" '! "$P/scripts/board.sh" --graph gh#39 >/dev/null 2>"$work/graph.err" && grep -q "Bad credentials" "$work/graph.err" && grep -q "no graph" "$work/graph.err" && ! grep -q "not an open item" "$work/graph.err"'
@@ -564,7 +565,7 @@ gpar="$("$P/scripts/new.sh" task "Parent with fields" --size M --priority P1 --a
 gkid="$("$P/scripts/new.sh" task "Kid" --size S --parent "$gpar" 2>/dev/null)"
 check "gh create: a child takes the parent's priority and area fields" sh -c "'$P/adapters/github/read.sh' '$gkid' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"priority\"],i[\"area\"],i[\"parent\"])==(\"P1\",\"Bots\",\"$gpar\"), i'"
 "$P/scripts/new.sh" task "Orphan kid" --size S --parent "$bots" > /dev/null 2> "$work/orphan.err"
-check "gh create: a child left without the priority ready_needs asks for is said" grep -q 'has no priority and github.ready_needs asks for one' "$work/orphan.err"
+check "gh create: a child left without the priority ready.needs asks for is said" grep -q 'has no priority and ready.needs asks for one' "$work/orphan.err"
 check "gh vocabulary: the issue types and the area options" sh -c "'$P/adapters/github/vocabulary.sh' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert \"Chore\" in v[\"types\"] and v[\"areas\"]==[\"Bots\",\"Debugging & Observability\"], v'"
 picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
@@ -596,6 +597,53 @@ slack_long() { python3 -I "$P/scripts/_slack.py" t '' '' '' '' 'The branch flow/
 check "slack: a long line breaks into one bullet per sentence" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; bullets=json.load(sys.stdin)[\"blocks\"][1][\"elements\"][0][\"elements\"]; assert len(bullets)==2, bullets'"
 check "slack: ids, commits, paths and code names read as code" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; d=json.load(sys.stdin); code=[e[\"text\"] for l in d[\"blocks\"][1][\"elements\"] for s in l[\"elements\"] for e in s[\"elements\"] if e.get(\"style\",{}).get(\"code\")]; assert code==[\"flow/gh-310\",\"3a677d23\",\"OptionUtility\",\"gh#320\"], code'"
 check "slack: a link that is not https stays out of the fallback" sh -c "python3 -I '$P/scripts/_slack.py' t 'gh#1 x' 'javascript:x|<!channel>' ambiguity 'gh#1' m | python3 -c 'import json,sys; t=json.load(sys.stdin)[\"text\"]; assert \"javascript\" not in t and \"<!channel>\" not in t, t'"
+echo "trackers and readiness on every tracker (fake gh)"
+mkdir -p "$work/trackers" && cd "$work/trackers" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
+tracked_config() { # tracked_config <trackers line> <ready block>: the GitHub fields fixture, new items to local
+  printf 'adapters:\n  default: local\n%s\nbase: main\ngithub:\n  repo: acme/widgets\n  types: true\n  fields:\n    size: Size\n    priority: Priority\n%s\npool:\npool_max: 2\nnotify:\n  desktop: false\n' "$1" "$2" > .flow/config.yaml
+}
+tracked_config 'trackers: [github, local]' 'ready:
+  needs: [priority, size]
+  priority_order: [P0, P1, P2, P3]'
+tq0="$("$P/adapters/local/create.sh" task "No priority" --size S)"
+check "trackers: the board reads GitHub when trackers names it, beside a local default" sh -c "'$P/scripts/board.sh' --json | python3 -c 'import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)[\"items\"]]; assert \"gh#32\" in ids and \"$tq0\" in ids, ids'"
+picked="$("$P/scripts/next.sh" --json 2>/dev/null)"
+check "trackers: next picks the most urgent ready item from every named tracker" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
+rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
+"$P/adapters/github/write-state.sh" 'gh#36' step=done >/dev/null 2>&1
+check "trackers: health reads every named tracker" sh -c "'$P/scripts/steward.sh' health 2>/dev/null | grep -q 'gh#36: done (every step ran)'"
+tracked_config 'trackers: [github, jira]' ''
+"$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"; code=$?
+check "trackers: a name with no adapter is refused (exit 2) with the adapters there are" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira, not an adapter; the adapters are github local' '$work/trackers.err'"
+tracked_config 'trackers: [github]' ''
+"$P/scripts/new.sh" task "Never read" >/dev/null 2>"$work/trackers.err"; code=$?
+check "trackers: new refuses (exit 2) while new items go to a tracker trackers leaves out" sh -c "[ $code -eq 2 ] && grep -q 'adapters.default is local, which trackers leaves out' '$work/trackers.err'"
+check "init: --check reports an adapters value trackers leaves out as a gap" sh -c "FLOW_PLUGIN='$P' '$P/skills/init/scripts/init.sh' --check | grep -q 'gap: .flow/config.yaml: adapters.default is local, which trackers leaves out'"
+tracked_config '' 'ready:
+  needs: [size]
+  priority_order: [P1, P0]'
+tq1="$("$P/adapters/local/create.sh" task "Low" --size S --priority P0)"
+tq2="$("$P/adapters/local/create.sh" task "Urgent" --size S --priority P1)"
+tq3="$("$P/adapters/local/create.sh" task "Unsized" --priority P1)"
+local_ready() { "$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+check_all "ready: a local item without a field ready.needs asks for is not ready" '[ -n "$(local_ready)" ] && case " $(local_ready) " in *" $tq3 "*) false ;; *) true ;; esac'
+check "ready: a local item lists the ready.needs fields it lacks" [ "$("$P/adapters/local/read.sh" "$tq3" | jget needs)" = '["size"]' ]
+check "ready: local list-ready follows ready.priority_order, items with no priority last" [ "$(local_ready)" = "$tq2 $tq1 $tq0" ]
+tracked_config '' 'ready:
+  needs: [priority]'
+"$P/scripts/new.sh" task "Local kid" --size S --parent "$tq0" >/dev/null 2>"$work/trackers.err"
+check "ready: a local child without the priority ready.needs asks for is said" grep -q 'has no priority and ready.needs asks for one' "$work/trackers.err"
+tracked_config '' 'ready:
+  needs: [priority, owner]'
+"$P/adapters/local/list.sh" >/dev/null 2>"$work/trackers.err"; code=$?
+check "ready: an unknown field in ready.needs is refused (exit 2) with the fields the flow knows" sh -c "[ $code -eq 2 ] && grep -q 'ready.needs knows priority and size, not owner' '$work/trackers.err'"
+printf 'adapters:\n  default: local\ntrackers: [github, local]\nbase: main\ngithub:\n  repo: acme/widgets\n  types: true\n  fields:\n    size: Size\n    priority: Priority\n  ready_needs: [priority]\n  priority_order: [P1, P0]\npool:\npool_max: 2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+check "ready: github.ready_needs still applies, to the GitHub adapter too" [ "$("$P/adapters/github/read.sh" 'gh#33' 2>/dev/null | jget needs)" = '["priority"]' ]
+check "ready: github.priority_order still orders the local items" [ "$(local_ready 2>/dev/null)" = "$tq2 $tq3 $tq1" ]
+"$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"
+check "ready: the deprecated github keys warn once a board run, naming the new keys" sh -c "[ \"\$(grep -c 'deprecated: set ready.needs and ready.priority_order' '$work/trackers.err')\" = 1 ]"
+cd "$repo"
 cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
 
 echo "comments plumbing (fake gh)"

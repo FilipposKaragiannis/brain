@@ -13,6 +13,8 @@ import type { FlowEvent, GatePlan, GateQuestion, PluginSource, StoppedHost } fro
 export type FlowConfig = {
   base: string;
   adapter: string;
+  /** The trackers the flow reads, as `adapters_configured` in lib/flow.sh says: `trackers`, else every one under `adapters` and local. */
+  trackers: string[];
   repo: string | null;
   pool: string[];
   poolMax: number | null;
@@ -114,6 +116,13 @@ function jobsHostOf(value: string | null): string {
   return value !== null && JOB_HOSTS.includes(value) ? value : 'claude';
 }
 
+function trackersOf(map: YamlMap): string[] {
+  const named = yamlList(map, 'trackers');
+  if (named.length > 0) return named;
+  const routed = ['default', 'epic', 'task', 'bug'].map((kind) => yamlString(map, `adapters.${kind}`) ?? '');
+  return [...new Set(['local', ...routed.filter((tracker) => tracker !== '')])];
+}
+
 export function parseFlowConfig(source: string): FlowConfig {
   const map: YamlMap = parseYaml(source);
   const poolMax = yamlString(map, 'pool_max');
@@ -130,6 +139,7 @@ export function parseFlowConfig(source: string): FlowConfig {
   return {
     base: yamlString(map, 'base') ?? 'main',
     adapter: yamlString(map, 'adapters.default') ?? 'local',
+    trackers: trackersOf(map),
     repo: yamlString(map, 'github.repo'),
     pool: yamlList(map, 'pool'),
     poolMax: poolMax === null ? null : Number(poolMax),

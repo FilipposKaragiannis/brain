@@ -83,6 +83,10 @@ if [ ! -f .flow/config.yaml ]; then
       echo "# nested maps, lists as '- item' or [a, b]. No anchors, no multi-line strings."
       echo "adapters:"
       if [ -n "$repo" ]; then echo "  default: github"; echo "  # bug: local    # keep bugs out of GitHub"; else echo "  default: local"; fi
+      echo "# trackers: [github, local]   # the trackers board, next and health read; unset, every one above and local"
+      echo "ready:"
+      echo "  # needs: [priority, size]           # an unstarted item without these is not ready, on every tracker"
+      echo "  # priority_order: [P0, P1, P2, P3]  # ready items run in this order, items with no priority last"
       echo "base: $base"
       echo "# Gates the flow clears itself, by item size. Only plan-approval can be listed. Merge, interview,"
       echo "# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined."
@@ -95,8 +99,6 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  #   size: Size                # a single-select issue field replaces the size: labels"
         echo "  #   priority: Priority        # orders the ready items"
         echo "  #   area: Area                # the area intake files a note under, from its section"
-        echo "  # priority_order: [P0, P1, P2, P3]"
-        echo "  # ready_needs: [priority, size]   # an unstarted item without these is not ready"
         echo "  # project: 1                  # the project whose Status follows the flow state"
         echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
@@ -251,6 +253,10 @@ if [ -f .flow/config.yaml ]; then
   bad_auto="$(sed -n '/^auto_gates:/,/^[^ #]/p' .flow/config.yaml | grep -E '^  [A-Za-z]' | grep -v '^  plan-approval:' | sed 's/:.*//; s/^ *//' | head -1)"
   [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"
   a="$(cfg_or adapters.default local)"; [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.default names $a, not an adapter"
+  bad="$(adapters_configured 2>&1 >/dev/null)" || gap ".flow/config.yaml: ${bad#flow: }"
+  while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_TRACKERS
+$(trackers_unread)
+EOF_TRACKERS
   # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;
   # the old jobs.model and jobs.effort still work for one release, with a note.
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS

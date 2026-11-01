@@ -20,7 +20,19 @@ test('LocalAdapter_PullsFreshness_OkAndNotApplicable', async () => {
   const monitor = localMonitor(silentLogger);
   await monitor.refresh('files');
   await monitor.refresh('pulls');
-  assert.deepEqual([monitor.snapshot?.sources.pulls.ok, monitor.snapshot?.sources.pulls.error], [true, 'not applicable: adapter local'], 'because a project off GitHub has no pull requests to read, which is not a failure');
+  assert.deepEqual([monitor.snapshot?.sources.pulls.ok, monitor.snapshot?.sources.pulls.error], [true, 'not applicable: trackers local'], 'because a project off GitHub has no pull requests to read, which is not a failure');
+});
+
+test('TrackersReadGithubBesideALocalDefault_Pulls_GoOnToTheRepository', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-trackers-'));
+  try {
+    cpSync(LOCAL_ROOT, dir, { recursive: true });
+    writeFileSync(path.join(dir, '.flow', 'config.yaml'), 'adapters:\n  default: local\ntrackers: [github, local]\nbase: main\n');
+    const monitor = new ProjectMonitor({ project: { id: 'mixed', name: 'mixed', root: dir }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+    await monitor.refresh('files');
+    await monitor.refresh('pulls');
+    assert.equal(monitor.snapshot?.sources.pulls.error, 'not applicable: no github.repo in .flow/config.yaml', 'because the flow reads GitHub here, so only the missing repository stops the read');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('LocalAdapter_PullsRead_NothingWarned', async () => {

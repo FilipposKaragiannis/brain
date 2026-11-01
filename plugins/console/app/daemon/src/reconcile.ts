@@ -625,7 +625,7 @@ function pullAttention(pulls: PullRequest[]): AttentionRow[] {
 
 /**
  * Open items, not epics, the next job refuses only because a field is empty: no step yet, nothing open blocks
- * them, and `needs` (the `ready_needs` fields they lack) is not empty. They are the heads of their
+ * them, and `needs` (the `ready.needs` fields they lack) is not empty. They are the heads of their
  * chains, so filling the field is what starts the chain.
  */
 function waitsOnField(item: Item): boolean {
@@ -738,7 +738,7 @@ function projectInfo(input: ReconcileInput): ProjectInfo {
   return {
     id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
     base: config.base, repo: config.repo, repoUrl,
-    trackerUrl: config.adapter === GITHUB_ADAPTER && repoUrl !== null ? `${repoUrl}/issues` : null,
+    trackerUrl: config.trackers.includes(GITHUB_ADAPTER) && repoUrl !== null ? `${repoUrl}/issues` : null,
     adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
   };
 }

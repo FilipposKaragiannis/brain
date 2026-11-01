@@ -172,7 +172,7 @@ snapshots.
 
 - `project`: `id`, `name`, `root`, `flowHome`, `base` (the branch work merges into), `repo`
   (`github.repo`), `repoUrl` (`https://github.com/<repo>`, null without a repo), `trackerUrl` (the
-  issues page on the github adapter, null on local), `adapter`, `pluginVersion`, `pluginRoot`
+  issues page while the flow reads GitHub, null otherwise), `adapter`, `pluginVersion`, `pluginRoot`
   (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
   variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
   `jobsHost` (`jobs.host`, the CLI the jobs run), `poolMax` and `reviewers` (`reviews.reviewers`
@@ -234,7 +234,7 @@ snapshots.
   them are the next step of work in progress".
 - A `needs-field` attention row (and `counts.needsField`, equal to `nextInLineMissingField`) is
   kept for those next-in-line items only: open, not an epic, no step, no open blocker, a `needs`
-  that is not empty (a field `ready_needs` asks for, such as priority or size, is empty, so the
+  that is not empty (a field `ready.needs` asks for, such as priority or size, is empty, so the
   next job refuses it), and either its parent has started (a step, a worktree, a PR or a gate), a
   sibling under the same parent has started or is done, or it blocks an item that has started.
   Every other item waiting on a field is backlog and gets no row. The row's `detail` names the
@@ -294,7 +294,7 @@ Null without a record.
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
-| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project not on the github adapter, or without `github.repo`, reports `ok` with `error: "not applicable: …"` and is never read | 60s |
+| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project whose trackers (`trackers`, else every one under `adapters` and local) leave out github, or without `github.repo`, reports `ok` with `error: "not applicable: …"` and is never read | 60s |
 
 ¹ Flow 1.18.0 and later. The parse is kept per gate until its message changes, so a waiting gate
 costs no process after its first read. An older plugin is not asked. A list that fails, times out
@@ -315,12 +315,13 @@ with its values, `enumOrText` with its known values but any text allowed, `list`
 sentence on what changing it does, its group, which is its page in Settings (`GROUP_FAMILY` puts each under Plugins › Flow: Tracker,
 Readiness, Worktree pool, Gates and verification, Reviews, Notifications; under Jobs: Schedules,
 Next job, Health job, Comments job, Retro job, Intake job; or Agents), an optional `part` that
-heads a few fields inside a page (Tracker: "Where new items go" and "GitHub"; Notifications:
+heads a few fields inside a page (Tracker: "Where items come from", "Where new items go" and "GitHub"; Notifications:
 "Channels" and "When to notify"; Agents: "Claude", "Codex" and "Deprecated"), a `placeholder`
 with a concrete example for every free-text key, `adapter: 'github'` on the keys only the GitHub
 adapter reads, `keys` for a map with fixed names (`github.fields`: size, priority, area;
 `github.status`: backlog, ready, gate, running, review), `values` for a list of fixed choices
-(`github.ready_needs`: priority, size), `rows` for a map of free names (`gates`), and its follow-up: `jobs.schedule.*` and
+(`ready.needs` and `trackers`), `deprecated` on `github.ready_needs` and `github.priority_order`
+(the form starts `ready.needs` and `ready.priority_order` at them while those are unset), `rows` for a map of free names (`gates`), and its follow-up: `jobs.schedule.*` and
 `jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action,
 offered only while some job keeps a schedule, since install exits 2 when none has); a job whose
 `jobs.schedule.<job>` is removed or emptied is never touched by install again, so it gets
@@ -594,7 +595,7 @@ person has to look:
 | agent | an unattended claude or codex the flow started (`claude -p`, `codex exec`) with its working directory in the worktree |
 | session | an interactive claude or codex whose working directory is in the worktree, yours or an app's (such as the Claude desktop app), not an unattended agent; a host's own background server (the Codex desktop app's `app-server`) is neither |
 | disagreement | two places flow state lives say different things, and kept saying it after both were read again |
-| needs-field | an item that is the next step of work already under way (its parent or a sibling has started, or it blocks started work) but lacks a field the tracker asks for (`ready_needs`, such as priority), so the next job passes it over |
+| needs-field | an item that is the next step of work already under way (its parent or a sibling has started, or it blocks started work) but lacks a field the tracker asks for (`ready.needs`, such as priority), so the next job passes it over |
 
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
@@ -691,8 +692,8 @@ switched off is left out, and the last one cannot be), and for a schedule the ti
 and fields, then the host ("jobs.host" keeps following it), the model and effort, for next the
 item, workers and max steps, and the job's other options, with Edit as text, Unschedule and, for an
 empty key, Schedule it; a line the builder cannot hold whole stays a text box with a note. The
-GitHub part of Tracker and the Readiness page show only while some tracker is github, else one
-line saying so. The keys the file sets come first and the rest fold under "N more settings the
+GitHub part of Tracker shows only while the flow reads github (`trackers`, else some `adapters` key
+names it), else one line saying so. The keys the file sets come first and the rest fold under "N more settings the
 file leaves at the default". Every page of a project is one form: an edit waits while you move to
 another page, and one save bar at the bottom counts the unsaved changes and which pages hold them,
 with Discard and Save changes, which sends them all in one write. On Agents, both hosts' model and effort dropdowns show, each listing its values and "host default"
