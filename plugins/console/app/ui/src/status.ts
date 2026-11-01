@@ -2,11 +2,12 @@ import type { AttentionKind, Freshness, ItemState, Job, PullState, WorktreeState
 import type { ActionRecord, ActionState } from './actions.ts';
 
 /**
- * The console's one status language. Every state anywhere on the page maps to one of five tones:
+ * The console's one status language. Every state anywhere on the page maps to one of eight tones:
  * green pulse for running, orange breathing for needs-you, purple hatching for stale, grey for
- * free or claimed, red for failing.
+ * free or claimed, red for failing, teal for ready (a pull that can merge), blue for review (changes
+ * asked on a pull) and pink for mixed (two stores that disagree).
  */
-export type Tone = 'running' | 'needs-you' | 'stale' | 'quiet' | 'failing';
+export type Tone = 'running' | 'needs-you' | 'stale' | 'quiet' | 'failing' | 'ready' | 'review' | 'mixed';
 
 export function worktreeTone(state: WorktreeState): Tone {
   switch (state) {
@@ -32,17 +33,22 @@ export function attentionTone(kind: AttentionKind): Tone {
   switch (kind) {
     case 'gate': return 'needs-you';
     case 'stale': return 'stale';
-    case 'dead-run': case 'disagreement': case 'job-failed': case 'pr-failing': case 'host-stopped': return 'failing';
-    case 'pr-changes-requested': case 'pr-mergeable': case 'needs-field': return 'needs-you';
+    case 'dead-run': case 'job-failed': case 'pr-failing': case 'host-stopped': return 'failing';
+    case 'disagreement': return 'mixed';
+    case 'pr-mergeable': return 'ready';
+    case 'pr-changes-requested': return 'review';
+    // A field to fill in on the tracker: a chore, quieter than a decision.
+    case 'needs-field': return 'quiet';
   }
 }
 
 export function pullTone(state: PullState): Tone {
   switch (state) {
-    case 'mergeable': case 'changes-requested': return 'needs-you';
+    case 'mergeable': case 'approved': return 'ready';
+    case 'changes-requested': return 'review';
     case 'checks-failing': case 'conflicts': return 'failing';
     case 'checks-pending': case 'review-pending': case 'in-review': return 'running';
-    case 'draft': case 'approved': return 'quiet';
+    case 'draft': return 'quiet';
   }
 }
 

@@ -1,8 +1,8 @@
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { App, PROJECTS_RETRY_MS } from '../src/App.tsx';
 import { ClockProvider } from '../src/clock.tsx';
-import { FakeDaemon, HTTP_OK, HTTP_UNAUTHORIZED } from './fakeDaemon.tsx';
+import { FakeDaemon, HTTP_OK, HTTP_UNAUTHORIZED, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 const PROJECTS_PATH = '/api/projects';
 const NETWORK_DOWN = 0;
@@ -90,4 +90,44 @@ test('App_ProjectsEvent_TheSwitcherListsTheNewProject', async () => {
   await flush(0);
   act(() => { daemon.latestStream().send('projects', [FOOSBRAWL, { id: 'brain', name: 'brain', counts: null }]); });
   expect(screen.getByRole('option', { name: 'brain' }), 'because a project added in Settings shows without a reload').not.toBeNull();
+});
+
+test('App_Nav_ListsAgentsThenJobs', async () => {
+  window.location.hash = '#/foosbrawl/overview';
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
+  renderApp(daemon);
+  await flush(0);
+  const labels = within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link').map((link) => link.textContent);
+  expect(labels.slice(labels.indexOf('Agents'), labels.indexOf('Agents') + 2), 'because the runs and the jobs are two pages, the jobs right after the agents').toEqual(['Agents', 'Jobs']);
+  expect(labels, 'because the old combined page is gone').not.toContain('Agents and jobs');
+});
+
+test('App_JobsHash_OpensTheJobsPage', async () => {
+  window.location.hash = '#/foosbrawl/jobs';
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
+  renderApp(daemon);
+  await flush(0);
+  expect(screen.getByRole('heading', { level: 1 }).textContent, 'because #/<project>/jobs is the Jobs page').toBe('Jobs');
+});
+
+test('App_OldAgentsHash_OpensTheAgentsPage', async () => {
+  window.location.hash = '#/foosbrawl/agents';
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
+  renderApp(daemon);
+  await flush(0);
+  expect(screen.getByRole('heading', { level: 1 }).textContent, 'because a link from before the split still lands on the runs').toBe('Agents');
+});
+
+test('App_JobRunning_JobsNavSaysHowMany', async () => {
+  window.location.hash = '#/foosbrawl/agents';
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
+  renderApp(daemon);
+  await flush(0);
+  const snapshot = snapshotAt(TAKEN_AT, 0);
+  act(() => { daemon.latestStream().send('snapshot', { ...snapshot, project: { ...snapshot.project, id: 'foosbrawl' }, counts: { ...snapshot.counts, jobsRunning: 2 } }); });
+  expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Jobs/ }).textContent, 'because the nav says when jobs run, as Agents says when agents are live').toBe('Jobs2 running');
 });

@@ -215,3 +215,28 @@ test('SweepFails_NotRunAgain', async () => {
     assert.equal(copy.sweeps.length, 1, 'because a sweep that fails would fail every minute; the health job sweeps again on its own schedule');
   } finally { copy.cleanUp(); }
 });
+
+test('FilesRead_PluginReader_AskedWithTheRootAndPluginRoot', async () => {
+  const asked: [string, string | null][] = [];
+  const plugins = [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: '1.27.0' }];
+  const monitor = new ProjectMonitor({
+    project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE,
+    plugins: async (root, pluginRoot) => { asked.push([root, pluginRoot]); return plugins; },
+  });
+  await monitor.refresh('files');
+  await monitor.refresh('git');
+  assert.equal(asked.length, 1, 'because the plugins are read with the files, not on every snapshot build');
+  assert.equal(asked[0]?.[0], FIXTURE_ROOT, 'because a project-scope install is matched on the project root');
+  assert.deepEqual(monitor.snapshot?.project.plugins, plugins, 'because the header shows what the hosts have installed');
+});
+
+test('Monitor_RefreshNowWithNothingNew_StillSendsTheSnapshot', async () => {
+  const monitor = fixtureMonitor();
+  await readEverySource(monitor);
+  let sent = 0;
+  monitor.onChange(() => { sent += 1; });
+  await monitor.refresh('git');
+  assert.equal(sent, 0, 'because a timed read that finds nothing new stays quiet');
+  await monitor.refreshNow(['git', 'board']);
+  assert.equal(sent, 1, 'because a forced read must reach the page, so its new read times show');
+});

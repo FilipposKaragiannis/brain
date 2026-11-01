@@ -9,7 +9,7 @@ import type { ActionContext } from '../src/actionPlan.ts';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
 import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator } from '../src/collectors/sessions.ts';
-import type { SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
+import type { GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
@@ -157,6 +157,67 @@ test('CodexMeta_FirstLineLongerThanTheHead_StillRead', () => {
   assert.deepEqual(codexMeta(line.slice(0, 400)), { cwd: '/p/app-wt-3', id: '019c-long' }, 'because the id and cwd come before the long base instructions the head may cut');
 });
 
+/** A gate raised two hours before NOW in a pool worktree, so a transcript can be older than the raise or written around it. */
+const RAISED = new Date(NOW.getTime() - 120 * MINUTE_MS);
+const gateAt = (host: string, cwd = '/p/app-wt-2'): GateLookup => ({ item: 'gh#7', raisedAt: RAISED.toISOString(), host, cwd });
+
+test('GateSession_TranscriptWrittenAroundTheRaise_IsItsSession', async () => {
+  const { dir, done } = home();
+  try {
+    const folder = claudeProjectFolder(dir, '/p/app-wt-2');
+    written(path.join(folder, 'plan-step-1111.jsonl'), '{}\n', new Date(RAISED.getTime() - 90 * MINUTE_MS));
+    written(path.join(folder, 'implement-step-2222.jsonl'), '{}\n', new Date(RAISED.getTime() - 50 * MINUTE_MS));
+    written(path.join(folder, 'raised-it-3333.jsonl'), '{}\n', new Date(RAISED.getTime() + MINUTE_MS));
+    const [session] = await locator(dir).gates([gateAt('claude')]);
+    assert.deepEqual(session, { host: 'claude', id: 'raised-it-3333', transcript: path.join(folder, 'raised-it-3333.jsonl'), resume: ['claude', '--resume', 'raised-it-3333'] }, 'because the step that raised the gate wrote its transcript up to the raise, and the earlier steps\' transcripts stopped before it');
+  } finally { done(); }
+});
+
+test('GateSession_OnlyTranscriptsOlderThanTheRaise_Null', async () => {
+  const { dir, done } = home();
+  try {
+    written(path.join(claudeProjectFolder(dir, '/p/app-wt-2'), 'plan-step-1111.jsonl'), '{}\n', new Date(RAISED.getTime() - 90 * MINUTE_MS));
+    assert.deepEqual(await locator(dir).gates([gateAt('claude'), gateAt('claude', '/p/app-wt-9')]), [null, null], 'because a transcript that stopped well before the raise is an earlier step\'s, and a folder with no transcript has no session');
+  } finally { done(); }
+});
+
+test('GateSession_HostNeitherClaudeNorCodex_Null', async () => {
+  const { dir, done } = home();
+  try {
+    written(path.join(claudeProjectFolder(dir, '/p/app-wt-2'), 'raised-it-3333.jsonl'), '{}\n', new Date(RAISED.getTime() + MINUTE_MS));
+    assert.deepEqual(await locator(dir).gates([gateAt('shell')]), [null], 'because a gate raised from a shell has no host session to resume');
+  } finally { done(); }
+});
+
+test('GateSession_Codex_LocatedByTheCwdOfItsSessionFile', async () => {
+  const { dir, done } = home();
+  try {
+    const day = path.join(dir, '.codex', 'sessions', String(RAISED.getFullYear()), String(RAISED.getMonth() + 1).padStart(2, '0'), String(RAISED.getDate()).padStart(2, '0'));
+    written(path.join(day, 'rollout-a-019c-mine.jsonl'), `${meta('019c-mine', '/p/app-wt-3')}\n`, new Date(RAISED.getTime() + MINUTE_MS));
+    written(path.join(day, 'rollout-b-019c-other.jsonl'), `${meta('019c-other', '/elsewhere')}\n`, new Date(RAISED.getTime() + 2 * MINUTE_MS));
+    const [session] = await locator(dir).gates([gateAt('codex', '/p/app-wt-3')]);
+    assert.deepEqual([session?.id, session?.resume], ['019c-mine', ['codex', 'resume', '019c-mine']], 'because the newer file ran in another folder, and a codex session file names its cwd on its first line');
+  } finally { done(); }
+});
+
+test('GateSession_ScannedOncePerGate_AMissTriedAgainAfterAMinute', async () => {
+  const { dir, done } = home();
+  try {
+    const folder = claudeProjectFolder(dir, '/p/app-wt-2');
+    let listed = 0;
+    let now = NOW;
+    const counting: SessionFiles = { ...diskSessionFiles, list: async (asked) => { listed += 1; return diskSessionFiles.list(asked); } };
+    const found = new SessionLocator({ home: dir, clock: () => now, files: counting });
+    assert.deepEqual(await found.gates([gateAt('claude')]), [null], 'because nothing was written yet');
+    written(path.join(folder, 'raised-it-3333.jsonl'), '{}\n', new Date(RAISED.getTime() + MINUTE_MS));
+    assert.deepEqual([await found.gates([gateAt('claude')]), listed], [[null], 1], 'because a miss is not scanned again on every files read');
+    now = new Date(NOW.getTime() + 2 * MINUTE_MS);
+    assert.equal((await found.gates([gateAt('claude')]))[0]?.id, 'raised-it-3333', 'because a miss is tried again a minute later');
+    await found.gates([gateAt('claude')]);
+    assert.equal(listed, 2, 'because a gate\'s session, once found, is kept while the gate waits');
+  } finally { done(); }
+});
+
 test('Transcript_TextTurnsOfUserAndAssistant_OldestFirst', () => {
   const turns = parseTranscript(readFileSync(TRANSCRIPT, 'utf8'), 200);
   assert.deepEqual(turns, [
@@ -263,6 +324,30 @@ test('SessionOfAnUnknownPidOrInAnotherFolder_Refused', () => {
   assert.equal(planAction('terminal.open', { path: '/p/app-wt-2', session: '100', job: 'next' }, CONTEXT).ok, false, 'because a window follows a log or opens a session, not both');
 });
 
+const GATE_SESSION: SessionRef = { host: 'claude', id: 'raised-it-3333', transcript: '/h/raised-it-3333.jsonl', resume: ['claude', '--resume', 'raised-it-3333'] };
+const GATE_CONTEXT: ActionContext = { ...CONTEXT, gateSessions: [{ item: 'gh#7', cwd: '/p/app-wt-2', session: GATE_SESSION }] };
+
+test('GateSessionInIterm_ResumesAtOnceInTheGatesWorktree', () => {
+  const argv = launch({ gate: 'gh#7' }, GATE_CONTEXT);
+  assert.ok(argv.includes('write text "cd \'/p/app-wt-2\'"'), 'because claude --resume finds a session by the folder its step ran in');
+  assert.ok(argv.includes('write text "claude --resume raised-it-3333"'), 'because the step that raised the gate has ended, so the session resumes straight away');
+  assert.ok(!argv.some((word) => word.includes('newline NO')), 'because no process writes the session any more');
+});
+
+test('GateSessionStillWrittenByALiveProcess_ResumeTypedButNotRun', () => {
+  const live = { ...GATE_CONTEXT, sessions: [{ pid: 300, cwd: '/p/app-wt-2', session: GATE_SESSION, alive: true }] };
+  assert.ok(launch({ gate: 'gh#7', path: '/p/app-wt-2' }, live).includes('write text "claude --resume raised-it-3333" newline NO'), 'because a resume while a process still writes the session would put two writers on it');
+});
+
+test('GateSessionNotLocatedOrAskedElsewhere_Refused', () => {
+  const unknown = planAction('terminal.open', { gate: 'gh#9' }, GATE_CONTEXT);
+  assert.match(unknown.ok ? '' : unknown.error, /^the console located no session for a gate on gh#9: /, 'because only a session the daemon located for a waiting gate may be resumed, and the owner is told why');
+  assert.equal(planAction('terminal.open', { gate: 'gh#7' }, CONTEXT).ok, false, 'because a context with no located gate session opens none');
+  assert.equal(planAction('terminal.open', { gate: 'gh#7; rm -rf /' }, GATE_CONTEXT).ok, false, 'because the gate must be an item id');
+  assert.equal(planAction('terminal.open', { gate: 'gh#7', path: '/p/app' }, GATE_CONTEXT).ok, false, 'because claude --resume run outside the gate\'s worktree would not find the session');
+  assert.equal(planAction('terminal.open', { gate: 'gh#7', session: '100' }, GATE_CONTEXT).ok, false, 'because a window opens one session, named one way');
+});
+
 /** The fake runner, with the process list it answers changed by the test. */
 function changingProcesses(): { runner: CommandRunner; drop: (pid: number) => void } {
   const dropped = new Set<number>();
@@ -294,6 +379,16 @@ test('AgentGoneFromTheProcessList_ListedAsEndedWithItsSession', async () => {
   await monitor.refresh('processes');
   assert.deepEqual(monitor.snapshot?.ended.map((entry) => [entry.pid, entry.worktree, entry.endedAt, entry.session?.id]), [[100, 'project-wt-3', NOW.toISOString(), SESSION.id]], 'because a run that ended leaves a session the owner can resume');
   assert.deepEqual(monitor.actionContext().sessions.map((entry) => [entry.pid, entry.alive]), [[104, true], [100, false]], 'because an ended run\'s session resumes at once, a live one waits for Enter');
+});
+
+test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async () => {
+  const asked: GateLookup[][] = [];
+  const gateSessions = { gates: async (gates: GateLookup[]) => { asked.push(gates); return gates.map(() => SESSION); } };
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, gateSessions });
+  await monitor.refresh('files');
+  assert.deepEqual(asked[0]?.map((gate) => [gate.item, gate.cwd, gate.raisedAt]), [['gh#7', path.join(FIXTURES, 'project-wt-2'), '2026-10-22T07:43:00Z']], 'because the gate\'s session is looked for in the worktree that claims its item, from the time it was raised');
+  assert.deepEqual(monitor.snapshot?.gates.find((gate) => gate.item === 'gh#7')?.session, SESSION, 'because the card offers the located session when no agent on the item is known');
+  assert.deepEqual(monitor.actionContext().gateSessions, [{ item: 'gh#7', cwd: path.join(FIXTURES, 'project-wt-2'), session: SESSION }], 'because terminal.open resumes only a session located for a waiting gate, in its worktree');
 });
 
 async function transcriptServer(): Promise<{ base: string; close: () => Promise<void> }> {

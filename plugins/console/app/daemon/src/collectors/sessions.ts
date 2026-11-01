@@ -32,6 +32,9 @@ export type SessionLocatorDependencies = { home: string; clock: () => Date; file
 /** A process the locator looks a session up for: its pid, host, working directory and age. */
 export type SessionProcess = { pid: number; host: AgentHost; cwd: string; elapsedSeconds: number };
 
+/** A waiting gate the locator looks the raising session up for: its item, when it was raised, its host (`claude`, `codex`) and the folder its step ran in. */
+export type GateLookup = { item: string; raisedAt: string; host: string; cwd: string };
+
 const MILLISECONDS_PER_SECOND = 1000;
 const MILLISECONDS_PER_DAY = 86400000;
 /** ps rounds the elapsed time down to the second, so a file written in the process's first second still counts. */
@@ -45,6 +48,8 @@ const CODEX_DAYS_BACK = 14;
 /** The session_meta line holds the base instructions, so it can be long; this much is read to find the cwd. */
 const CODEX_HEAD_BYTES = 256 * 1024;
 const SESSIONS_FILE_BYTES = 64 * 1024;
+/** A step writes its transcript up to the moment it raises its gate, so the gate's session was written no earlier than this before. */
+const GATE_SLACK_MS = 30 * 60000;
 const TRANSCRIPT_EXTENSION = '.jsonl';
 /** The ids the hosts write: a uuid. Anything else is not a session file of theirs, and never reaches a terminal. */
 const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -94,6 +99,7 @@ export function claudeSessionsFile(text: string): { pid: number; sessionId: stri
 }
 
 type Found = { session: SessionRef | null; certain: boolean };
+type GateScan = { session: SessionRef | null; scannedAt: number };
 type Remembered = { startedMs: number; session: SessionRef | null; scannedAt: number };
 
 /**
@@ -117,6 +123,8 @@ export class SessionLocator {
   private readonly codexMetas = new Map<string, { meta: { cwd: string; id: string } | null; modified: number }>();
   /** What the folder scan found per pid, for the life of that process. */
   private readonly scanned = new Map<number, Remembered>();
+  /** What the folder scan found per waiting gate (item, raise time, host and folder), for as long as the gate waits. */
+  private readonly gateScans = new Map<string, GateScan>();
 
   constructor(dependencies: SessionLocatorDependencies) { this.deps = dependencies; }
 
@@ -133,6 +141,33 @@ export class SessionLocator {
       claimed.add(entry.session.transcript);
       return entry.session;
     });
+  }
+
+  /**
+   * The session that raised each waiting gate, in the same order; null where none was found. The
+   * step that raised it has ended, so no pid or sessions file is left: the answer is the newest
+   * transcript in the gate's folder written at or after 30 minutes before the raise (a discussion
+   * resumed since appends to that same file). A gate's answer is kept while the gate waits (a miss
+   * is tried again a minute later), and forgotten once it is no longer asked for.
+   */
+  async gates(gates: GateLookup[]): Promise<(SessionRef | null)[]> {
+    const now = this.deps.clock().getTime();
+    const keys = gates.map((gate) => JSON.stringify([gate.item, gate.raisedAt, gate.host, path.resolve(gate.cwd)]));
+    const asked = new Set(keys);
+    for (const key of [...this.gateScans.keys()]) if (!asked.has(key)) this.gateScans.delete(key);
+    const found: (SessionRef | null)[] = [];
+    for (const [index, gate] of gates.entries()) {
+      const key = keys[index]!;
+      const remembered = this.gateScans.get(key);
+      if (remembered !== undefined && (remembered.session !== null || now - remembered.scannedAt < RESCAN_MS)) { found.push(remembered.session); continue; }
+      const raised = Date.parse(gate.raisedAt);
+      let session: SessionRef | null = null;
+      if (!Number.isNaN(raised) && gate.host === 'claude') session = await this.claudeScan(gate.cwd, raised - GATE_SLACK_MS);
+      if (!Number.isNaN(raised) && gate.host === 'codex') session = await this.codexScan(gate.cwd, raised - GATE_SLACK_MS, now);
+      this.gateScans.set(key, { session, scannedAt: now });
+      found.push(session);
+    }
+    return found;
   }
 
   private forget(processes: SessionProcess[], now: number): void {
@@ -217,7 +252,7 @@ export class SessionLocator {
 }
 
 /** A locator that finds nothing, for a monitor built without one (tests that do not look at sessions). */
-export const noSessions: Pick<SessionLocator, 'assign'> = { assign: async (processes) => processes.map(() => null) };
+export const noSessions: Pick<SessionLocator, 'assign' | 'gates'> = { assign: async (processes) => processes.map(() => null), gates: async (gates) => gates.map(() => null) };
 
 /** A user line that opens with a tag such as `<task-notification>` or `<local-command-stdout>` is the host's wrapper. */
 const WRAPPER_TAG = /^<[a-z][a-z0-9-]*[\s>/]/;

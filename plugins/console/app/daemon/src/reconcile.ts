@@ -12,8 +12,8 @@ import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker,
-  ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, StoppedHost, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker,
+  ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, SessionRef, Snapshot, SourceName, StoppedHost, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
 export type ReconcileInput = {
@@ -28,11 +28,15 @@ export type ReconcileInput = {
   board: BoardFacts | null;
   pulls: PullFacts | null;
   sources: Record<SourceName, Freshness>;
+  /** The plugins of flow's marketplace the hosts have for the project, read with the files. Left out, none. */
+  plugins?: InstalledPlugin[];
   /**
    * Which of the disagreements found this time go into the snapshot. The monitor holds back the
    * ones that may be a store lagging a read (see `DisagreementSettler`); left out, all of them do.
    */
   settle?: (found: Disagreement[]) => Disagreement[];
+  /** The session located for the gate on an item raised at a time (see `SessionLocator.gates`); left out, no gate has one. */
+  gateSession?: (item: string, raisedAt: string) => SessionRef | null;
 };
 
 const MILLISECONDS_PER_SECOND = 1000;
@@ -247,6 +251,7 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[], items: I
       pull: gatePull(gate.item, items, pulls),
       plan: gate.plan,
       body: input.board?.bodies[gate.item] ?? null,
+      session: input.gateSession?.(gate.item, gate.time) ?? null,
     }))
     .sort((left, right) => right.ageSeconds - left.ageSeconds);
 }
@@ -732,7 +737,13 @@ function buildReadiness(items: Item[]): Readiness {
   };
 }
 
-function projectInfo(input: ReconcileInput): ProjectInfo {
+/** The hosts the jobs run on: the schedules' and the next job's workers', else the configured `jobs.host`. */
+function jobHostsOf(jobs: Job[], jobsHost: string): string[] {
+  const hosts = new Set(jobs.flatMap((job) => [job.host, ...job.workers.map((worker) => worker.host)]).filter((host): host is string => host !== null && host !== ''));
+  return hosts.size === 0 ? [jobsHost] : [...hosts].sort();
+}
+
+function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
   const { config } = input.flow;
   const repoUrl = config.repo === null ? null : `${GITHUB}/${config.repo}`;
   return {
@@ -740,6 +751,7 @@ function projectInfo(input: ReconcileInput): ProjectInfo {
     base: config.base, repo: config.repo, repoUrl,
     trackerUrl: config.adapter === GITHUB_ADAPTER && repoUrl !== null ? `${repoUrl}/issues` : null,
     adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
+    jobHosts: jobHostsOf(jobs, config.jobsHost), plugins: input.plugins ?? [],
   };
 }
 
@@ -762,7 +774,7 @@ export function reconcile(read: ReconcileInput): Snapshot {
   return {
     schema: SNAPSHOT_SCHEMA_VERSION,
     takenAt: input.now.toISOString(),
-    project: projectInfo(input),
+    project: projectInfo(input, jobs),
     sources: input.sources,
     counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }),
     readiness: buildReadiness(items),

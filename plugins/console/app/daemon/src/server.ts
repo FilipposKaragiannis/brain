@@ -169,7 +169,7 @@ function refresh(monitor: ProjectMonitor, request: IncomingMessage, response: Se
   if (request.method !== 'POST') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'POST only' }); return; }
   const wanted = url.searchParams.get('source');
   const sources = SOURCE_NAMES.filter((source) => wanted === null || source === wanted);
-  void Promise.all(sources.map((source) => monitor.refresh(source)));
+  void monitor.refreshNow(sources);
   sendJson(response, HTTP_ACCEPTED, { refreshing: sources });
 }
 
