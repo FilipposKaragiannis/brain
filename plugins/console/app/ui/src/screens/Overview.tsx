@@ -7,6 +7,8 @@ import type { Route } from '../route.ts';
 import { routeHash } from '../route.ts';
 import { countTone, jobTone, worktreeTone } from '../status.ts';
 import type { Tone } from '../status.ts';
+import { PluginsFooter } from '../PluginsFooter.tsx';
+import { SourcesRefresh } from '../SourcesRefresh.tsx';
 import { useTranscript } from '../Transcript.tsx';
 import { Dot, Empty, Module, SourceFreshness } from '../ui.tsx';
 import { Disagreements } from './Disagreements.tsx';
@@ -44,11 +46,12 @@ export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
       </div>
       {snapshot.disagreements.length > 0 && <Disagreements snapshot={snapshot} />}
       <Pool snapshot={snapshot} />
-      <Module className="sources" title="Sources" aside={null} footer={<span>taken at {clockTime(snapshot.takenAt)} · <Age seconds={0} takenAt={snapshot.takenAt} /> ago</span>}>
+      <Module className="sources" title="Sources" aside={<SourcesRefresh projectId={projectId} />} footer={<span>taken at {clockTime(snapshot.takenAt)} · <Age seconds={0} takenAt={snapshot.takenAt} /> ago</span>}>
         <ul className="source-strip">
           {SOURCE_NAMES.map((name) => <li key={name}><SourceFreshness name={name} freshness={snapshot.sources[name]} /></li>)}
         </ul>
       </Module>
+      <PluginsFooter project={snapshot.project} />
     </div>
   );
 }
@@ -84,9 +87,10 @@ function names(list: string[]): string {
 function RunningNow({ snapshot }: { snapshot: Snapshot }) {
   const agents = snapshot.agents.filter((agent) => agent.kind === 'agent');
   const agentsHref = routeHash({ projectId: snapshot.project.id, screen: 'agents', detail: null });
+  const jobsHref = routeHash({ projectId: snapshot.project.id, screen: 'jobs', detail: null });
   const jobs = [...snapshot.jobs].filter((job) => job.configured && job.installed).sort(byNextRun);
   return (
-    <Module className="running-now" title="Running now" aside={<a className="module-link" href={agentsHref}>Agents</a>} footer={null}>
+    <Module className="running-now" title="Running now" aside={<span className="module-links"><a className="module-link" href={agentsHref}>Agents</a><a className="module-link" href={jobsHref}>Jobs</a></span>} footer={null}>
       {agents.length === 0 ? <Empty>No run is going.</Empty> : (
         <ul className="running-list">
           {agents.map((agent, index) => <RunningAgent key={agent.pid} agent={agent} snapshot={snapshot} lastLine={index === 0} />)}

@@ -228,6 +228,42 @@ test('SweepFails_NotRunAgain', async () => {
   } finally { copy.cleanUp(); }
 });
 
+test('FilesRead_PluginReaderForTheRoot_SnapshotCarriesItsPlugins', async () => {
+  const plugins = [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: '1.27.0' }];
+  const monitor = new ProjectMonitor({
+    project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE,
+    plugins: async (root) => (root === FIXTURE_ROOT ? plugins : []),
+  });
+  await monitor.refresh('files');
+  assert.deepEqual(monitor.snapshot?.project.plugins, plugins, 'because a project-scope install is matched on the project root, and the header shows what the hosts have installed');
+});
+
+test('GitReadAfterTheFiles_PluginsNotReadAgain', async () => {
+  const reads = [
+    [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: '1.27.0' }],
+    [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.28.0', codex: '1.28.0' }],
+  ];
+  let next = 0;
+  const monitor = new ProjectMonitor({
+    project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE,
+    plugins: async () => reads[Math.min(next++, reads.length - 1)]!,
+  });
+  await monitor.refresh('files');
+  await monitor.refresh('git');
+  assert.deepEqual(monitor.snapshot?.project.plugins, reads[0], 'because the plugins are read with the files, not on every snapshot build');
+});
+
+test('Monitor_RefreshNowWithNothingNew_StillSendsTheSnapshot', async () => {
+  const monitor = fixtureMonitor();
+  await readEverySource(monitor);
+  let sent = 0;
+  monitor.onChange(() => { sent += 1; });
+  await monitor.refresh('git');
+  assert.equal(sent, 0, 'because a timed read that finds nothing new stays quiet');
+  await monitor.refreshNow(['git', 'board']);
+  assert.equal(sent, 1, 'because a forced read must reach the page, so its new read times show');
+});
+
 test('Snapshot_NewerConsoleCached_CarriesTheNotice', async () => {
   const monitor = new ProjectMonitor({ project: { id: 'local', name: 'local', root: LOCAL_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, newerConsole: () => ({ running: '0.9.2', cached: '0.10.0' }) });
   await monitor.refresh('files');

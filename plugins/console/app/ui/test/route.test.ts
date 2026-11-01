@@ -25,3 +25,11 @@ test('ParseRoute_SettingsHash_IsTheSettingsScreen', () => {
 test('RouteHash_SettingsRoute_WritesTheSettingsHash', () => {
   expect(routeHash({ projectId: 'foosbrawl', screen: 'settings', detail: null }), 'because every Settings link lands on the one page whatever project was open').toBe('#/settings');
 });
+
+test('ParseRoute_JobsHash_IsTheJobsScreen', () => {
+  expect(parseRoute('#/foosbrawl/jobs'), 'because the jobs have a page of their own').toEqual({ projectId: 'foosbrawl', screen: 'jobs', detail: null });
+});
+
+test('ParseRoute_OldAgentsHash_IsStillTheAgentsScreen', () => {
+  expect(parseRoute('#/foosbrawl/agents').screen, 'because a bookmark from before the split still opens the runs').toBe('agents');
+});

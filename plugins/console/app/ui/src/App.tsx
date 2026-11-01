@@ -12,6 +12,7 @@ import { Activity } from './screens/Activity.tsx';
 import { Agents } from './screens/Agents.tsx';
 import { Board } from './screens/Board.tsx';
 import { Gates, GatesHeading } from './screens/Gates.tsx';
+import { Jobs } from './screens/Jobs.tsx';
 import { Overview } from './screens/Overview.tsx';
 import { Pulls } from './screens/Pulls.tsx';
 import { Settings } from './screens/Settings.tsx';
@@ -125,6 +126,7 @@ function ScreenView({ route, snapshot, go }: { route: Route; snapshot: Snapshot;
     case 'board': return <Board snapshot={snapshot} selected={route.detail} />;
     case 'worktrees': return <Worktrees snapshot={snapshot} />;
     case 'agents': return <Agents snapshot={snapshot} />;
+    case 'jobs': return <Jobs snapshot={snapshot} />;
     case 'pulls': return <Pulls snapshot={snapshot} />;
     case 'activity': return <Activity key={route.detail ?? ''} snapshot={snapshot} item={route.detail} go={go} />;
     case 'settings': return <Settings />;
@@ -137,6 +139,7 @@ function NavBadge({ screen, snapshot }: { screen: Screen; snapshot: Snapshot }) 
     case 'gates': return snapshot.gates.length > 0 ? <span className="badge tone-needs-you">{snapshot.gates.length}</span> : null;
     case 'worktrees': return <span className="badge-plain">{pool.filter((worktree) => worktree.claim !== null).length} / {pool.length}</span>;
     case 'agents': return snapshot.counts.agents > 0 ? <span className="badge-plain tone-running"><Dot tone="running" />{snapshot.counts.agents} live</span> : null;
+    case 'jobs': return snapshot.counts.jobsRunning > 0 ? <span className="badge-plain tone-running"><Dot tone="running" />{snapshot.counts.jobsRunning} running</span> : null;
     case 'overview': case 'board': case 'pulls': case 'activity': case 'settings': return null;
   }
 }

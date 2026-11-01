@@ -95,7 +95,7 @@ function lateness(ageSeconds: number | null): { tone: 'fresh' | 'late' | 'old'; 
 function rowTarget(row: AttentionRow, projectId: string): Route | null {
   if (row.kind === 'gate') return { projectId, screen: 'gates', detail: row.id };
   if (row.kind.startsWith('pr-')) return { projectId, screen: 'pulls', detail: null };
-  if (row.kind === 'host-stopped') return { projectId, screen: 'agents', detail: null };
+  if (row.kind === 'host-stopped' || row.kind === 'job-failed') return { projectId, screen: 'jobs', detail: null };
   if (row.worktree !== null) return { projectId, screen: 'worktrees', detail: null };
   return null;
 }

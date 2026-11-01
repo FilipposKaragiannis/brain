@@ -852,7 +852,7 @@ test('StoppedHost_InTheSnapshotAndOnTheNeedsYouListWithItsClear', async () => {
   const facts = await input();
   facts.flow.stoppedHosts = [{ host: 'claude', cause: 'spend-limit', said: 'You have hit your limit', at: '2026-10-24T18:00:00Z', item: null }];
   const picture = reconcile(facts);
-  assert.deepEqual(picture.stoppedHosts.map((stopped) => stopped.host), ['claude'], 'because the Agents and jobs screen shows which host starts no session');
+  assert.deepEqual(picture.stoppedHosts.map((stopped) => stopped.host), ['claude'], 'because the Jobs screen shows which host starts no session');
   const row = picture.attention.find((entry) => entry.kind === 'host-stopped');
   assert.deepEqual([row?.id, row?.title, row?.ageSeconds], ['claude', 'claude is stopped on a spend limit', 964], 'because the row names the host and the cause in words, aged from the stop');
   assert.match(row?.detail ?? '', /^claude stopped on a spend limit: You have hit your limit\. No claude session starts until you clear it\.$/, 'because the owner reads what the host said and what clearing does');
@@ -869,4 +869,28 @@ test('StoppedHostOnAuthForAGate_CauseInWordsAndTheGateNamed', async () => {
 test('NoStoppedHost_NoRowAndOtherRowsHaveNoAction', async () => {
   const picture = await snapshot();
   assert.deepEqual([picture.stoppedHosts, picture.attention.filter((row) => row.action !== null)], [[], []], 'because only a stopped host has a button on its row');
+});
+
+test('JobHosts_SchedulesAndWorkers_DistinctAndSorted', async () => {
+  const facts = await withJobs([], (rows) => {
+    rows[0]!.host = 'claude';
+    rows[0]!.workers = [
+      { job: 'next-1', host: 'codex', running: null, last_run: null },
+      { job: 'next-2', host: 'claude', running: null, last_run: null },
+    ];
+    rows.push({ ...rows[0]!, name: 'next-nightly', job: 'next', host: 'codex', workers: [] });
+  });
+  assert.deepEqual(reconcile(facts).project.jobHosts, ['claude', 'codex'], 'because the header names each host a schedule or a worker runs on, once each');
+});
+
+test('JobHosts_NoJobSaysAHost_JobsHostAlone', async () => {
+  const facts = await input();
+  facts.flow.config.jobsHost = 'codex';
+  assert.deepEqual(reconcile(facts).project.jobHosts, ['codex'], 'because with no host in jobs.sh status the jobs run on jobs.host');
+});
+
+test('ProjectPlugins_FromTheInput_LeftOutNone', async () => {
+  const facts = await input();
+  const plugins = [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: null }];
+  assert.deepEqual([reconcile({ ...facts, plugins }).project.plugins, reconcile(facts).project.plugins], [plugins, []], 'because the snapshot carries what the files read found, and nothing when it was not read');
 });

@@ -161,7 +161,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns, lines, bytes, turnCount}` of the claude transcript of an agent or session in `agents` or `ended`, oldest first: `turns` the last `n` turns with text (`[{at, role, text}]`, default 20, at most 200), user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results, and without the host's wrapper turns (a user line that opens with a tag such as `<task-notification>`, `<local-command-stdout>` or `<command-name>`, and a compaction summary); `lines` the last `n` entries as one line each (`[{at, kind, text}]`, at most 2000; `kind` is `say`, `think`, `tool`, `result` or `user`, a result only when it failed, each text cut to 300 characters); `bytes` the file's size and `turnCount` its user and assistant entries. Read from the last 4 MB of the file, doubled up to 64 MB while it holds fewer lines than asked. 404 for a pid not listed or without a transcript, 400 for a codex session or a bad `lines` |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
-| `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
+| `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted), then send the snapshot even when nothing changed, so the new read times show |
 | `POST /api/projects/<id>/actions` | run one action, body `{"kind","args"}`; 202 with the record, 400 on a bad request, 409 when its lock is held |
 | `GET /api/projects/<id>/actions` | the recent 50 actions, newest first, with the output tail |
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
@@ -183,9 +183,24 @@ snapshots.
   issues page while the flow reads GitHub, null otherwise), `adapter`, `pluginVersion`, `pluginRoot`
   (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
   variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
-  `jobsHost` (`jobs.host`, the CLI the jobs run), `poolMax` and `reviewers` (`reviews.reviewers`
+  `jobsHost` (`jobs.host`, the CLI the jobs run), `jobHosts` (every host the jobs run on: the
+  `host` of each schedule and of the next job's workers, sorted, once each; `[jobsHost]` when none
+  says), `plugins`, `poolMax` and `reviewers` (`reviews.reviewers`
   without their `@`, every list of a per-host map once, codex and claude when unset: who the PR
   cards offer for a review ask).
+- `plugins` is the plugins of flow's marketplace either host has for the project, by name, each
+  `{name, marketplace, claude, codex}` with that host's version or null. The marketplace is that of
+  the flow install Claude loads for the project (`flow@<marketplace>` in Claude's list: the
+  project's own entry, else the user one; another project's entry never decides), else of the flow
+  folder in the Codex cache, else of the cache folder the project's flow sits in, else
+  `brain-plugins`. `claude` is from `~/.claude/plugins/installed_plugins.json`: the entry whose
+  `projectPath` is the project root (project or local scope), else the user one. `codex` is the
+  newest version folder (dotted numbers compared as numbers) under
+  `~/.codex/plugins/cache/<marketplace>/<name>/` when `[plugins."<name>@<marketplace>"]` ends up
+  with `enabled = true`: `<root>/.codex/config.toml` overrides `~/.codex/config.toml` per plugin
+  (the last `enabled` in a table counts), so the project can turn one on or off. Read with
+  the `files` source; a missing or broken file counts as none. The home is injected
+  (`daemon/src/collectors/plugins.ts`).
 - `jobs` has one entry per schedule `jobs.sh status --json` lists (flow 1.26.0): every job, then
   the named schedules (`next-codex`) in config order, then the installed ones the config no longer
   names. `name` is the schedule, `job` the script it runs (`next` for `next-codex`), `host` the
@@ -234,6 +249,18 @@ snapshots.
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
   or null. A merge gate whose PR still
   has an unresolved thread shows it there.
+- A gate carries `session`: the `{host, id, transcript, resume}` of the session that raised it, or
+  null. Only for a claude or codex gate on a claimed worktree (a step run from the root shares its
+  folder with the owner's own sessions): of the transcripts in that worktree (`<claude
+  folder>/*.jsonl`, or for codex a session file whose first line names the worktree, as above)
+  written at or after 30 minutes before `raisedAt`, the one that started latest no later than 5
+  seconds after `raisedAt`. A transcript's start is the first `"timestamp"` in its head (both
+  hosts write one on the first line), read once per file; one without it is skipped. A session the owner opened in the worktree after
+  the raise is never chosen, however new, while a discussion resumed since still matches, since it
+  appends to the raising session's own file. It
+  comes from the files on disk, so it outlives a restart that empties `ended`. Looked up with the
+  `files` source and kept per item and `raisedAt` while the gate waits (a miss is scanned again a
+  minute later).
 - `readiness` is `{ready, waitingOnField, blocked, gated, nextInLineMissingField}` over open
   items that are not epics. The first four are buckets, each item in one at most: the next job can
   take it, only an empty field stops it (the whole backlog of such items), an open item blocks it,
@@ -428,7 +455,7 @@ on every state change and at most twice a second while output arrives.
 | `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
 | `pr.review` | `pr`, `reviewer` (a name or GitHub login, `@` optional) | `comments.sh request-review <pr> <ask> <reviewer>` (flow 1.27.0): one mention comment with the flow's request marker, Copilot through the reviewers API, so the health job tracks and chases it; the ask is the PR step's own. Refused on flow before 1.27.0, whose script would ask every reviewer | the PR | `finished` |
-| `terminal.open` | `path`, `job?`, `session?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command | none | `finished` |
+| `terminal.open` | `path`, `job?`, `session?`, `gate?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command; with `gate` (an item, `path` optional) one with the resume command of the gate's located `session` | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
 `ActionRecord.note` is what a finished action wants said beside its state (null for most); the
@@ -538,6 +565,11 @@ the same with the line after `-e`, then `exec "${SHELL:-/bin/sh}" -l` keeps a sh
 command gets that line in `{cmd}`. Once the process has ended the command runs at once in all of
 them.
 
+With `gate` (an item id; `job` or `session` with it is refused) the window opens in the worktree
+the gate was raised in (a `path`, when given, must be it) with the resume command of the gate's
+`session`, run at once, unless a listed live process writes that transcript. Only a gate in
+`gates` with a located session; any other item is refused with the reason.
+
 An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
 never changes what runs. A second action on a held lock is refused with 409 and recorded as
@@ -611,7 +643,7 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Seven project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
+imports). Eight project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
 Needs you, Running, Stale, Checks red and Free, each with a line under its count: the oldest wait
 and its item, the steps running on which items, the stale worktrees, the red PRs and the free
 worktrees; a
@@ -625,10 +657,20 @@ beside it Running now, each agent's step, item, worktree, host and PR with its a
 of the first claude transcript, and the scheduled jobs in the order they run next; then the latest
 12 events with Show all; the disagreements, only when there are some, with what each store says
 and the button that settles it; the pool map, a cell per worktree with its item, title and what it
-waits on, striped while it runs; and the sources strip), Gates (a decision card per gate, one line on what
+waits on, striped while it runs; and the sources strip, with a small refresh button at the right of its
+title that posts `/refresh` for every source, turns while the request is out and a moment after, and
+shows a refusal beside it; and at the bottom a footer in small muted type, "Plugins from
+<marketplace>", a row per plugin of `plugins` (flow first, then by name) with a Claude Code and a
+Codex column, each the version or "—" where that provider lacks it, both cells in the needs-you
+colour with the title "Claude Code and Codex differ" when the versions differ, the table scrolling
+inside itself at phone width; under it the flow the scripts use, `pluginVersion` and where it came
+from (`FLOW_PLUGIN` or the installed plugin, with its folder), or "No plugins found in ~/.claude
+or ~/.codex." with none), Gates (a decision card per gate, one line on what
 its kind asks, the PR with its state and unresolved review threads when the item has one, the
 questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
-matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`), Worktrees (filter
+matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; Discuss with the
+agent resumes the newest agent on the item in `agents` or `ended` by its pid, else the gate's
+`session` with `gate`, and is left out with neither), Worktrees (filter
 chips with counts for all, running, needs you, stale, claimed and free, the pool size and base,
 and Reserve, Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
 branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
@@ -645,17 +687,20 @@ Terminal on every card and Release on a claimed one, a reserved one saying who r
 project root included, in a table with their branch and Open in Terminal), Board (`#/<project>/board/<item>`: the open items with filters for
 under way, in review, ready, blocked and backlog, each row with its state, step, worktree, PR and
 spend, a head line summing the spend of the rows shown, and an item's detail beside the list:
-its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents and jobs (a main column and a side column. Runs: a card per live run, the first open and the
+its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across
+the page: a card per live run, the first open and the
 others folded to their header, each with its step, item, worktree, host and PR, its stats
 (started, last commit, transcript size and turns, pid) and its transcript as a terminal of the
 last 12 lines, with Full log (the last 2000 lines in a box that scrolls), Open session, Open in
 Terminal and Stop this run (`run.stop`); a run record with no process is a dashed card with
-Resume (`run.resume`). Jobs: a card per schedule with its state, timing, host and args, the last
+Resume (`run.resume`); with no run, a link to Jobs. Then your own sessions, folded, and the runs
+ended in the last day), Jobs (`#/<project>/jobs`, a main column and a side column. Schedules: a
+card per schedule with its state, timing, host and args, the last
 run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Open in Terminal in the row; its
 history and workers open in a box of fixed height that scrolls; the jobs with no schedule fold
 into one line. Edit… opens a dialog over the page with the schedule's timing, host, model and
 effort, and for next its item, workers and max steps; saving runs `job.schedule` under the same
-name. Then your own sessions and the runs ended in the last day, folded. The side column holds a
+name. The side column holds a
 card per stopped host with Clear (`host.clear`), the panel that adds a schedule of any job or runs
 it once (`job.schedule`, `job.start`): a Job picker, then the name, the timing and the job's
 settings, where only next takes an item and limits, an empty name making the job's own schedule
@@ -671,10 +716,11 @@ Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=20
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s). A row above every screen holds the project's fields, each a small uppercase label over its
 value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker
-("GitHub issues", linked to the issues page, on the github adapter; "local" on local), Base branch,
-Flow plugin (the version; its title says whether it is the installed plugin or the one
-`FLOW_PLUGIN` named, with its folder) and Jobs run on (`claude` or `codex`), with the Settings
-link at the far right. At phone width the fields wrap. Settings (`#/settings`, linked from the top bar of every screen) shows one page at a time
+("GitHub issues", linked to the issues page, on the github adapter; "local" on local), Base branch
+and Jobs run on (`jobHosts`, every host the schedules and their workers run on, e.g.
+`claude, codex`); the plugins and their versions are in the Overview's footer. The top bar holds the Settings button, and
+the theme switch is a small square icon (a moon on light, a sun on dark) kept per browser. At phone
+width the fields wrap. Settings (`#/settings`, linked from the top bar of every screen) shows one page at a time
 beside a menu: General; Projects; Plugins › Flow with the Flow pages; Jobs with Schedules and
 Configuration; and Agents. Plugins, Flow and Jobs expand and collapse with a chevron, open at
 first; the browser keeps which are closed, and the group holding the page on screen stays open.

@@ -22,7 +22,7 @@ function DisagreementRow({ disagreement, snapshot }: { disagreement: Disagreemen
   return (
     <li className="disagreement">
       <div className="disagreement-head">
-        <Chip tone="failing">{disagreement.sources.join(' vs ')}</Chip>
+        <Chip tone="mixed">{disagreement.sources.join(' vs ')}</Chip>
         {disagreement.item !== null && <ItemLink id={disagreement.item} pages={snapshot} />}
         {disagreement.worktree !== null && <span className="mono muted">{disagreement.worktree}</span>}
         <span className="strong">{disagreement.message}</span>
