@@ -132,6 +132,7 @@ export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
     counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0 },
     readiness: { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0 },
     attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], ended: [], jobs: [], stoppedHosts: [], events: [], disagreements: [], pulls: [],
+    newerConsole: null,
   };
 }
 

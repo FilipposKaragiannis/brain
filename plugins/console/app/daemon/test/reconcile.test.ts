@@ -60,6 +60,25 @@ test('ClaimedWorktreeFarBehindBase_IsStale', async () => {
   assert.ok(stale?.flags.includes('idle'), 'because it was claimed six days ago with no run, agent or gate');
 });
 
+/** The fixture with project-wt-4 (35 behind main, claimed six days ago) reserved by the owner instead. */
+async function reservedFarBehind(): Promise<Snapshot> {
+  const facts = await input();
+  facts.flow = { ...facts.flow, claims: facts.flow.claims.map((claim) => (claim.worktreePath.endsWith('project-wt-4') ? { ...claim, item: '', branch: '', step: '', reserved: 'Ada Lovelace' } : claim)) };
+  return reconcile(facts);
+}
+
+test('ReservedWorktreeFarBehindAndOld_IsNotStale', async () => {
+  assert.equal(worktree(await reservedFarBehind(), 'project-wt-4')?.state, 'claimed', "because a reservation is the owner's own work, which the console does not judge idle or behind");
+});
+
+test('ReservedWorktree_HasNoItem', async () => {
+  assert.equal(worktree(await reservedFarBehind(), 'project-wt-4')?.item, null, 'because a reservation claims no item, so the card links none');
+});
+
+test('ReservedWorktree_ClaimSaysWhoReservedIt', async () => {
+  assert.equal(worktree(await reservedFarBehind(), 'project-wt-4')?.claim?.reserved, 'Ada Lovelace', 'because the card names who holds the worktree');
+});
+
 test('MainAndSideWorktrees_AreOutsideThePool', async () => {
   const picture = await snapshot();
   assert.equal(worktree(picture, 'project')?.role, 'main', 'because the root is the flow home');
@@ -609,10 +628,17 @@ test('Project_GithubAdapter_RepoAndIssuesUrls', async () => {
   assert.deepEqual([project.repoUrl, project.trackerUrl, project.jobsHost], ['https://github.com/example/fixture', 'https://github.com/example/fixture/issues', 'claude'], 'because the header links the repository and the tracker and says which CLI the jobs run');
 });
 
-test('Project_LocalAdapter_NoTrackerUrl', async () => {
+test('Project_TrackersWithoutGithub_NoTrackerUrl', async () => {
+  const facts = await input();
+  facts.flow.config.trackers = ['local'];
+  assert.equal(reconcile(facts).project.trackerUrl, null, 'because the local tracker has no page to open');
+});
+
+test('Project_TrackersReadGithubBesideALocalDefault_IssuesUrl', async () => {
   const facts = await input();
   facts.flow.config.adapter = 'local';
-  assert.equal(reconcile(facts).project.trackerUrl, null, 'because the local tracker has no page to open');
+  facts.flow.config.trackers = ['github', 'local'];
+  assert.equal(reconcile(facts).project.trackerUrl, 'https://github.com/example/fixture/issues', 'because the flow reads GitHub issues even while new items default to local');
 });
 
 test('Disagreement_GateVsLabels_ExplainedWithReReadTheBoard', async () => {

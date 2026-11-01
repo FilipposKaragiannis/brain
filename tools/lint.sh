@@ -1,6 +1,7 @@
 #!/bin/sh
 # Lint the marketplace: generated files fresh, skills well-formed, roster and agents in step,
-# JSON valid, shell scripts parse, hooks and plugin paths resolve. Exit 1 on any finding.
+# JSON valid, shell scripts parse, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
+# match the plugin's. Exit 1 on any finding.
 set -u
 cd "$(dirname "$0")/.."
 status=0
@@ -20,7 +21,8 @@ done
 for f in $(find tools plugins -name '*.py' -not -path '*/evals/results/*' -not -path '*/node_modules/*'); do
   python3 -m py_compile "$f" 2>/dev/null || fail "python syntax: $f"
 done
-rm -rf tools/lib/__pycache__ plugins/*/*/__pycache__ plugins/*/*/*/__pycache__
+# py_compile writes bytecode whatever PYTHONDONTWRITEBYTECODE says; drop every cache it left.
+find tools plugins -name '__pycache__' -type d -not -path '*/node_modules/*' -prune -exec rm -rf {} +
 
 # Every skill has a SKILL.md whose name matches its directory and that has a description.
 for skill_dir in plugins/*/skills/*/; do
@@ -70,6 +72,12 @@ PY2
 
 # Hook commands name executable scripts in the plugin; plugin paths the shipped files name exist.
 python3 tools/lib/check_plugins.py || status=1
+
+# Changelog fragments: a changelog.d holds only .md files, each a bump line and bullets.
+python3 tools/lib/fragments.py || status=1
+
+# A plugin's app packages (app/package.json, its lockfile, app/*/) carry the plugin's version.
+python3 tools/lib/packages.py || status=1
 
 # The invocation flag in plugin.source.json matches the SKILL.md frontmatter.
 python3 - <<'PY' || status=1

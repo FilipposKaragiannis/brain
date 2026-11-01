@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, REVIEW_ASK, SYNC_SCRIPT } from '../src/actionPlan.ts';
+import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, REVIEW_ASK, SYNC_SCRIPT, sweepNote } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
@@ -107,6 +107,50 @@ test('StewardHealth_RunsTheHealthJob', () => {
   const plan = planned('steward.health', {});
   assert.deepEqual(plan.args.slice(1), ['run', 'health'], 'because the job takes the health lock the scheduled run also takes, so two health passes never overlap');
   assert.deepEqual(plan.locks, ['job:health'], 'because the console lock mirrors the job');
+});
+
+test('WorktreeReserve_WithoutName_RunsStewardReserve', () => {
+  assert.deepEqual(planned('worktree.reserve', {}).args.slice(1), ['reserve'], "because the steward reserves under the owner's git user.name when no name is given");
+});
+
+test('WorktreeReserve_WithName_PassesItAsOneArgument', () => {
+  assert.deepEqual(planned('worktree.reserve', { name: 'Ada Lovelace' }).args.slice(1), ['reserve', '--name', 'Ada Lovelace'], 'because a name with a space travels as one argv entry');
+});
+
+test('WorktreeReserve_HoldsThePoolLock', () => {
+  assert.deepEqual(planned('worktree.reserve', {}).locks, ['pool'], 'because a reserve and a claim or release from the console must not pick the same worktree');
+});
+
+test('WorktreeReserve_BadName_Rejected', () => {
+  for (const name of ['', '-x', '--force', 'a\nb', 'x'.repeat(65)]) {
+    assert.equal(planAction('worktree.reserve', { name }, CONTEXT).ok, false, `because "${name}" is not a name: empty, read as an option, two lines or too long`);
+  }
+});
+
+test('StewardSweep_RunsTheSweepUnderItsOwnLock', () => {
+  assert.deepEqual(planned('steward.sweep', {}).args.slice(1), ['sweep', '--lock'], 'because --lock takes the sweep lock the next and health jobs take, and exits at once when one runs');
+});
+
+test('StewardSweep_HoldsThePoolAndTheHealthJobLocks', () => {
+  assert.deepEqual(planned('steward.sweep', {}).locks, ['pool', 'job:health'], 'because a sweep releases worktrees as a release does, and the health job sweeps first');
+});
+
+test('StewardSweep_FinishedWithinTheScriptTimeout', () => {
+  const plan = planned('steward.sweep', {});
+  assert.deepEqual([plan.outcome, plan.detach], ['finished', false], 'because the sweep is over when the script returns, unlike the health job it is handed to');
+});
+
+test('SweepNote_ReleasedAndClearedLines_NameTheWorktreesAndTheGates', () => {
+  const output = 'gh#5: cleared the merge gate\ngh#5: released app-wt-2 (https://github.com/o/r/pull/41 merged)\nlocal:task/7: released app-wt-3 (local:task/7 is closed)\n';
+  assert.equal(sweepNote(output), 'freed app-wt-2 (gh#5), app-wt-3 (local:task/7); cleared the merge gate of gh#5', 'because the owner pressed Sweep to see what it freed');
+});
+
+test('SweepNote_KeptWorktreeOnly_NothingLanded', () => {
+  assert.equal(sweepNote('gh#5: kept app-wt-2, it has uncommitted changes (gh#5 is closed)\n'), 'nothing landed: no worktree freed, no gate cleared', 'because a kept worktree was not freed');
+});
+
+test('SweepNote_LockHeld_SaysASweepRunsAlready', () => {
+  assert.equal(sweepNote('flow: sweep skipped: the sweep lock is held\n'), 'a sweep is running already, so this one did nothing', 'because exit 75 alone does not say why');
 });
 
 test('PrMerge_UsesGhWithSquashByDefault', () => {

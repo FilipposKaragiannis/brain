@@ -21,6 +21,7 @@ const VIEW: SettingsView = {
   projects: { roots: ['/work/projects/foosbrawl'], from: 'file', editable: true, note: null },
   terminal: { value: null, from: 'default', installed: ['ghostty'] },
   port: { value: 7474, from: 'default', saved: null, note: 'The daemon listens on 7474; a new port takes a restart of the daemon.' },
+  fileError: null, newerConsole: null,
 };
 
 const FLOW: FlowConfigDocument = {

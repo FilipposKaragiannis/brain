@@ -62,9 +62,11 @@ for id in $(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" split "$run/notes.json"
   if [ -f "$run/$id/results.json" ]; then
     python3 -I "$FLOW_PLUGIN/scripts/_intake.py" apply "$notes" "$ledger" "$run/$id/notes.json" "$run/$id/results.json" "$keep" "$answers" "$dropped" \
       >/dev/null 2>>"$(job_log_dir)/$job.log" || { job_say "$id: could not apply $run/$id/results.json"; missing=$((missing + 1)); }
-  else
+  elif [ -z "$(host_stopped "$host")" ]; then
     job_say "$id: no results file, left in the notes"; missing=$((missing + 1))
   fi
+  # A stopped host starts no session for the notes left: they stay in the notes file.
+  [ -z "$(host_stopped "$host")" ] || break
 done
 summary="$(python3 -I "$FLOW_PLUGIN/scripts/_intake.py" tally "$run")"
 job_say "done: $summary"
@@ -72,4 +74,5 @@ job_say "done: $summary"
 if [ "$keep" -eq 0 ] && [ "$(cfg intake.commit)" != "false" ] && git -C "$main" ls-files --error-unmatch "$notes" >/dev/null 2>&1; then
   job_commit notes "notes file" "chore(notes): file notes as tracker items [skip ci]" "$notes" "$answers" "$dropped"
 fi
+job_host_stopped
 [ "$missing" -eq 0 ] || exit 1

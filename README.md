@@ -12,7 +12,7 @@ plugins/
   console/     the Brain Console: app/ (daemon and web UI, Node 24)
 shared/        sh/json.sh, copied into each plugin by the generator
 roster/        agents.json (every agent, model, effort, tier), briefs/<agent>.md, templates/
-tools/         generate.sh, lint.sh, test.sh, eval.sh, cost.sh, host-cleanup.sh, tests/
+tools/         generate.sh, lint.sh, test.sh, release.sh, eval.sh, cost.sh, host-cleanup.sh, tests/
 local/         sync-skills (not shipped)
 docs/          coding-standards.md, adr/
 ```
@@ -27,7 +27,18 @@ tools/generate.sh   # render generated files after editing a source, a brief or 
 tools/lint.sh       # fresh generated files, well-formed skills, roster in step
 tools/test.sh       # lint, the suites and `claude plugin validate`; CI runs this
 tools/cost.sh       # each plugin's always-on token cost, a warning over budget (needs the claude CLI)
+tools/release.sh    # fold the changelog fragments into versions; the release workflow runs it
 ```
+A PR that changes a plugin never edits its `version` or its `CHANGELOG.md`. It adds one changelog
+fragment, `plugins/<plugin>/changelog.d/<slug>.md` (the slug is the branch or the item): the line
+`bump: major`, `bump: minor` or `bump: patch`, a blank line, then the bullets as they will stand in
+the CHANGELOG (`- ` lines, continuations indented two spaces, wrapped at 100 columns). On every
+push to main the `release` workflow folds the fragments with `tools/release.sh` and opens or
+refreshes the release PR from `release/next`; merging it releases the versions. Lint fails on a
+malformed fragment. A plugin's app packages (`app/package.json`, the lockfiles, `app/ui/`) carry
+the plugin's version: the release stamps it and lint fails on a difference. See
+`docs/adr/0002-changelog-fragments.md`.
+
 `tools/lint.sh` also checks that every hook command names an executable script in its plugin and
 that the plugin paths the shipped files name exist; `tools/tests/run.sh` proves it fails on the
 broken fixture under `tools/tests/fixtures/`.
@@ -59,8 +70,9 @@ Codex rules and agents, and reports the config gaps. It stamps what it wrote
 `init` when the stamp is behind the plugin. `flow:next` runs the next
 step of an item in a fresh subagent; `advance.sh` applies the step's result file; gates stop
 the run and notify. `flow:board` shows the pool, items, gates and overlaps; `flow:steward`
-claims and releases pool worktrees and never resets uncommitted work; a claim with no free
-worktree grows the pool up to `pool_max` (the entry is appended to the config, the ignored files
+claims and releases pool worktrees, reserves one for the owner's manual work (`steward.sh
+reserve`, left alone by the flow until a release) and never resets uncommitted work; a claim
+with no free worktree grows the pool up to `pool_max` (the entry is appended to the config, the ignored files
 copied, the setup commands run). `flow:new` creates an epic, task or bug in the tracker; a child takes its parent's priority and area. A plan step that makes tracker tasks of a task splits it: step `split`, its worktree back to the pool. `flow:do` takes a plain sentence and routes it to the right skill; `flow:help` is the manual (`help <skill>`, `help lines`, `help gates`); `flow:gate` lists and answers the gates; `auto_gates` in the config lets the flow clear `plan-approval` itself for chosen sizes. `claude --worktree gh-310`
 lands in the pool through the project hook `init` prints. The step skills `plan`, `implement`,
 `test`, `review`, `verify`, `pr`, `comments` and `explain` run one step on demand with the same

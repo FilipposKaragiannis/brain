@@ -1,5 +1,94 @@
 # flow
 
+## 1.28.0 (2026-11-01)
+
+- A PR the pr step's worker could not record (a local item file lies outside its sandbox) no
+  longer leaves the merge gate stuck. The pr step's result names its PR under `pr`, and
+  `advance.sh` records it when the item has none. `steward.sh sweep` finds the PR of an item at
+  the merge gate with no PR recorded by its task branch (`gh pr list --head flow/<slug>`),
+  records it, and clears the gate once it is merged. A failed `link-pr` no longer fails the step.
+- `jobs/next.sh` names what stopped it with exit 2 in its status line, such as the bad
+  `jobs.<host>.effort`, not only `stopped: exit 2`.
+- The comments, intake and retro jobs end the run when the host is stopped, before a session or
+  by one, their status line saying the host is stopped and why. The stop names no item, so
+  `gate.sh clear <host>` lifts it: the comments job's item waits at the merge gate, which an
+  escalation gate would replace. A comments pass the stopped host refused runs after the clear,
+  even when it was the one extra pass for a thread still awaiting a reply.
+- The `_job.sh` and jobs skill wording says the model and effort pair also feeds the steps with
+  no agent that `next` runs. The jobs skill and the health job say why `health` does not resume a
+  run a spend limit or an auth error stopped: its gate ended it, and `next` continues the item
+  once the gate clears.
+- `init` run from a linked worktree works on the flow home, the main worktree's `.flow`, says so,
+  and `--check` reads the same place. With no main worktree to find it refuses and names it.
+- `init` proposes as the pool only the linked worktrees under the main worktree's parent folder:
+  not Claude's session worktrees under `.claude/worktrees`, nor `.flow/tmp`, nor any elsewhere.
+- Missing Claude worktree hooks are a note, not a gap: the flow runs without them, and
+  `init --check` exits 0 when they are its only finding.
+- `worktree_name` in `.flow/config.yaml`, such as `../{repo}-wt-{n}`, names the worktree the pool
+  grows by and the one `steward.sh add` adds without a path: `{repo}` is the main worktree's
+  folder, `{n}` the first number no pool entry and no folder uses. Unset keeps the old names. A
+  name with no `{n}`, or one that gives every number the same idle branch (`{n}` only in a parent
+  folder, such as `../slots/{n}/checkout`), is refused with the reason before anything is created
+  (`add` exits 2).
+  `init` writes it commented out next to `pool_max`.
+- `trackers: [github, local]` names the trackers the board, next, health and the comments job
+  read, apart from where new items go (`adapters.default` and `adapters.<kind>`, unchanged). Unset
+  keeps today's set: every tracker under `adapters` and local. A name with no adapter is refused,
+  exit 2, with the adapters there are. While `trackers` is set, an `adapters` value it leaves out
+  is refused by `new.sh` (exit 2) and is an `init --check` gap: the flow would never read the item.
+- `ready.needs` and `ready.priority_order` are the readiness rules of every tracker, read once by
+  `ready_rules` in lib/flow.sh. The local adapter honours both: an open, unstarted item without a
+  needed field lists it under `needs` and is not ready, and `list-ready` follows the order, items
+  with no priority last. A field other than priority and size is refused, exit 2, with the fields
+  the flow knows (the GitHub adapter only warned). `github.ready_needs` and
+  `github.priority_order` still stand in for a key the file leaves out (an empty list written
+  under `ready` is kept), now for every tracker, with one warning a run naming the new key.
+  `new.sh` says a child lacks the priority `ready.needs` asks for on any tracker.
+- A tracker is a plug-in point with a written contract: `adapters/README.md` gives every script,
+  its arguments, output and exit codes, the item JSON and the state keys, the `<adapter>.*` config
+  and the readiness keys, how each adapter keeps the flow state, and what a test fake must do.
+  `tests/adapter-contract.sh <adapter>` checks an adapter against it with its fake backend;
+  `tests/run.sh` runs it for `github` and `local`.
+- An adapter owns its ids through its folder: `prefix` holds the id prefix and `slug.sed` turns a
+  slug back into an id. `lib/flow.sh` (`adapter_for`, the new `slug_item`), the ready filter, the
+  worktree hook, the steward and the comments job read them, so a third adapter needs no edit
+  there.
+- The adapters agree where they differed: an id the adapter does not own, an unknown option or an
+  unknown state key exits 2 on both; GitHub's `write-state` refuses a key outside the fourteen
+  state keys instead of storing it; `local create` takes `--type` (left out, said on stderr), which
+  `flow:new` passes on, instead of failing on it.
+- Jira Cloud is a tracker: `adapters/jira/` meets the adapter contract through the REST API v3
+  and `curl`, with ids `jira:<KEY>-<n>`. Set `adapters.default` (or `adapters.<kind>`) to `jira`
+  and `jira.site`, `jira.project` and `jira.email`; the token comes from `JIRA_API_TOKEN` in the
+  environment only, reaches `curl` on stdin, and without it every script refuses with the reason.
+- Each kind is created as the issue type `jira.types.epic|task|bug` (default Epic, Task, Bug). The
+  flow state lives in the same labels GitHub uses (`step:`, `gate:`, `wt:`, `flow:`, `size:`) and
+  whole in the issue property `flow-state`. The priority is Jira's own; the size is the field
+  `jira.fields.size` when set, else a label; `ready.needs` and `ready.priority_order` apply.
+- Blockers are Blocks links (a blocker in another tracker is a `Blocked by:` line), `link-pr` adds
+  a remote link and a comment, `close` takes `jira.transitions.done` (default the transition named
+  Done), and a 5xx or a dropped connection is tried again like `gh`, except for a create.
+- `init` writes the `jira:` keys, commented, into a new config. `tests/fake-jira.sh` stands in for
+  Jira's `curl`, and `tests/run.sh` runs the contract suite for `jira` too.
+- Reviewers per author host. `reviews.reviewers` is one list for every PR, as before, or a map:
+  `claude` names the reviewers of a PR Claude wrote, `codex` of one Codex wrote, and `default` of
+  a PR whose author host is unknown or has no list (unset, codex and claude). `link-pr` records
+  the host that wrote the PR as the item's `pr_host`; with none there, the PR body's footer says
+  it. `comments.sh request-review` and the comments job's chase ask the author host's list, and
+  `comments.sh reviewers --host claude|codex` prints it. The `pr-creator` brief records the PR on
+  the item before it asks for reviews, so the request finds the host.
+- `steward.sh reserve [--name <who>]` takes a free pool worktree for the owner's manual work: a
+  claim with no item under `<who>` (default: git `user.name`, else `$USER`), path printed. With
+  none free it grows the pool or exits 3 at `pool_max`, as `claim` does; a bad option exits 2.
+  `claim`, `sweep`, `health` (no fast-forward or move of a free worktree, no empty-claim release)
+  and the `next` job pass over it; `release <path>` frees it as any claim.
+  `pool` and `board` show it as reserved by that name.
+- `steward.sh sweep` says `<item>: cleared the merge gate` when it clears one, so the console's
+  Sweep button and the job logs show which gates went with the worktrees.
+- `steward.sh claim` and `reserve` allocate under one claim lock (`<flow home>/claim.lock`), so a
+  claim from the worktree hook or by hand and a reserve running together never take the same
+  worktree. Each exits 75 when another allocation holds the lock past the lock wait.
+
 ## 1.27.1 (2026-11-01)
 
 - The `implementer` brief: moved code is touched code (U-05), and a test the implementer adds or

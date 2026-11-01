@@ -13,7 +13,8 @@ Install the flow plugin into the current repository, or refresh it after a plugi
    "<plugin root>/skills/init/scripts/init.sh"
    ```
    The plugin root is the directory that holds this skill (`${CLAUDE_PLUGIN_ROOT}` on Claude; on
-   Codex, the path `codex plugin list` prints for `flow`). Add `--check` to only report drift
+   Codex, the path `codex plugin list` prints for `flow`). Run from a linked worktree, it works
+   on the flow home, the main worktree's `.flow`, and says so. Add `--check` to only report drift
    and hand edits. If it refuses a file edited by hand, do not add `--force` for the owner: show
    the refusal and ask. The edit belongs in the plugin source.
 2. **Read what it printed** and report once (W-07), in one short message: the files written,
@@ -37,7 +38,7 @@ Install the flow plugin into the current repository, or refresh it after a plugi
 
 | Target | Content | Re-run |
 |---|---|---|
-| `.flow/config.yaml` | adapters, base, github repo, pool and `pool_max`, `worktree_copy` and `worktree_setup`, `auto_gates`, gates, feel-test paths, notify, reviews, jobs (`jobs.claude` and `jobs.codex`: model and effort per host) | written once, never overwritten; `--check` reports a gap with its line when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist, an `auto_gates` entry other than `plan-approval`, a `jobs.host` other than claude or codex, an effort the host does not take). It does not ask an existing config for `jobs.claude` or `jobs.codex`, and notes once that `jobs.model`/`jobs.effort` are deprecated when they are set |
+| `.flow/config.yaml` | adapters (where each kind of new item goes), `trackers` (the trackers board, next and health read), `ready` (`ready.needs` and `ready.priority_order`, for every tracker), base, github repo, pool (the linked worktrees under the main worktree's parent folder, not those under `.claude/worktrees` or `.flow/tmp`), `pool_max` and a commented `worktree_name`, `worktree_copy` and `worktree_setup`, `auto_gates`, gates, feel-test paths, notify, reviews, jobs (`jobs.claude` and `jobs.codex`: model and effort per host) | written once, never overwritten; `--check` reports a gap with its line when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist, an `adapters` value `trackers` leaves out, an `auto_gates` entry other than `plan-approval`, a `jobs.host` other than claude or codex, an effort the host does not take). Missing Claude worktree hooks are a note, not a gap. It does not ask an existing config for `jobs.claude` or `jobs.codex`, and notes once that `jobs.model`/`jobs.effort` are deprecated when they are set |
 | `.flow/plugin.sh` | finds the installed plugin when a wrapper runs: `$FLOW_PLUGIN`, else the newest flow in the Claude plugin cache, else the Codex one | replaced |
 | `.flow/notify.sh` | wrapper around the plugin notify script | replaced |
 | `.flow/run-unattended.sh` | the unattended loop for `claude` or `codex` | replaced |

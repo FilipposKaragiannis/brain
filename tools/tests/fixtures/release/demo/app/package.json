@@ -1,0 +1,6 @@
+{
+  "name": "demo-app",
+  "version": "1.4.2",
+  "private": true,
+  "engines": { "node": ">=24" }
+}

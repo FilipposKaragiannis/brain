@@ -15,8 +15,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    on the task branch. Otherwise stop with status `fail` and say which.
 2. **Spawn `pr-creator`** with the step brief plus the path of [PR-BODY.md](PR-BODY.md) (the
    house body) and, when they exist, `<reports>/explain.html` and `quiz.md`.
-3. **Result** `<reports>/pr.json`: `done` with the URL, the base and why, draft or ready, the
-   reviewers asked. The profile raises the merge gate after this step; the orchestrator
+3. **Result** `<reports>/pr.json`: `done` with the URL (under `pr`), the base and why, draft or
+   ready, the reviewers asked. The profile raises the merge gate after this step; the orchestrator
    notifies the owner with the URL and the verify summary.
 4. Report once: the URL, the base, draft or ready, and the warning when the base is not the
    default branch (the merge will not auto-close the item; closeout does).

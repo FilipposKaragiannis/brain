@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { DaemonConfig } from './config.ts';
 import type { ProjectDefinition } from './project.ts';
-import type { ProjectCheck, ProjectFinding, SettingOrigin, SettingsView, TerminalName, TerminalSetting } from './snapshot.ts';
+import type { NewerConsole, ProjectCheck, ProjectFinding, SettingOrigin, SettingsView, TerminalName, TerminalSetting } from './snapshot.ts';
 import { commandText, TERMINAL_NAMES } from './terminal.ts';
 
 export type { ProjectCheck, ProjectFinding, SettingOrigin, SettingsView, TerminalSetting };
@@ -227,7 +227,13 @@ export type SettingsStoreDependencies = {
   installed: () => TerminalName[];
   /** Starts and stops monitors so the daemon watches exactly these projects. */
   applyProjects: (projects: ProjectDefinition[]) => void;
+  /** A newer console in the plugin cache than the one running, as the daemon last saw it. */
+  newerConsole: () => NewerConsole | null;
 };
+
+/** Two readings of the file hold the same settings, whatever the order of their keys. */
+const sameSettings = (left: ConfigFile, right: ConfigFile): boolean =>
+  JSON.stringify([left.projects ?? [], left.terminal ?? null, left.port ?? null]) === JSON.stringify([right.projects ?? [], right.terminal ?? null, right.port ?? null]);
 
 const PROJECT_NOTES: Record<SettingOrigin, string | null> = {
   flag: 'Set by --project when the daemon started; start it without the flag to edit them here.',
@@ -249,6 +255,7 @@ export class SettingsStore {
   private legacy: boolean;
   private roots: string[];
   private projectsFrom: SettingOrigin;
+  private fileError: string | null = null;
 
   constructor(dependencies: SettingsStoreDependencies) {
     this.deps = dependencies;
@@ -277,6 +284,8 @@ export class SettingsStore {
           ? `The daemon listens on ${config.port}, set by --port: a port saved here is used only when it starts without --port.`
           : `The daemon listens on ${config.port}; a new port takes a restart of the daemon.`,
       },
+      fileError: this.fileError,
+      newerConsole: this.deps.newerConsole(),
     };
   }
 
@@ -290,6 +299,45 @@ export class SettingsStore {
   /** The files `POST /api/open` may show: the console's settings file and its state folder. */
   files(): { path: string; folder: boolean }[] {
     return [{ path: this.deps.config.paths.configFile, folder: false }, { path: this.deps.config.stateDir, folder: true }];
+  }
+
+  /**
+   * Reads the file again after it changed on disk, and takes a hand edit as a PUT would: the
+   * projects applied at once when they come from the file (a flag or the environment keeps
+   * them fixed), the terminal on the next Open in Terminal. A file that does not parse, or whose
+   * projects fail the PUT's checks, is refused: the daemon keeps what it loaded and the view says
+   * why until the file is fixed. The roots watched after a reload; null when the file holds what
+   * the daemon runs already.
+   */
+  reload(): Checked<string[]> | null {
+    const stored = readStoredSettings(this.deps.config.paths);
+    if (!stored.ok) { this.fileError = stored.error; return stored; }
+    const { file } = stored.value;
+    if (sameSettings(file, this.file) && this.watchesFileProjects(file)) { this.fileError = null; return null; }
+    let projects: ProjectDefinition[] | null = null;
+    if (this.projectsFrom === 'file') {
+      const found = checkProjectList((file.projects ?? []).map((entry) => entry.root));
+      if (!found.ok) { this.fileError = found.error; return found; }
+      projects = found.value;
+    }
+    this.file = file;
+    this.legacy = stored.value.legacy;
+    this.fileError = null;
+    if (projects !== null) {
+      this.roots = projects.map((project) => project.root);
+      this.deps.applyProjects(projects);
+    }
+    return { ok: true, value: [...this.roots] };
+  }
+
+  /**
+   * The roots the file names are the ones watched, or a flag or the environment sets them. A PUT
+   * of the terminal or the port keeps a hand edit of the projects in the file without applying it.
+   */
+  private watchesFileProjects(file: ConfigFile): boolean {
+    if (this.projectsFrom !== 'file') return true;
+    const fileRoots = (file.projects ?? []).map((entry) => path.resolve(entry.root));
+    return JSON.stringify(fileRoots) === JSON.stringify(this.roots);
   }
 
   /**

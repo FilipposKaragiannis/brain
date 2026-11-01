@@ -131,3 +131,25 @@ test('App_JobRunning_JobsNavSaysHowMany', async () => {
   act(() => { daemon.latestStream().send('snapshot', { ...snapshot, project: { ...snapshot.project, id: 'foosbrawl' }, counts: { ...snapshot.counts, jobsRunning: 2 } }); });
   expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Jobs/ }).textContent, 'because the nav says when jobs run, as Agents says when agents are live').toBe('Jobs2 running');
 });
+
+const UPDATE_NOTICE = /brain-console update/;
+
+/** The page on foosbrawl's overview once the stream sent this snapshot. */
+async function renderWithSnapshot(snapshot: ReturnType<typeof snapshotAt>): Promise<void> {
+  window.location.hash = '#/foosbrawl/overview';
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
+  renderApp(daemon);
+  await flush(0);
+  act(() => { daemon.latestStream().send('snapshot', snapshot); });
+}
+
+test('App_NewerConsoleInstalled_BannerNamesBothVersionsAndUpdate', async () => {
+  await renderWithSnapshot({ ...snapshotAt(TAKEN_AT, 0), newerConsole: { running: '0.9.2', cached: '0.10.0' } });
+  expect(screen.getByRole('status').textContent, 'because the page says which console is installed, which one runs, and how to move').toMatch(/0\.10\.0.*0\.9\.2.*brain-console update/);
+});
+
+test('App_DaemonRunsTheNewestConsole_NoBanner', async () => {
+  await renderWithSnapshot(snapshotAt(TAKEN_AT, 0));
+  expect(screen.queryByText(UPDATE_NOTICE), 'because the notice goes once the daemon runs the newest cached version').toBeNull();
+});

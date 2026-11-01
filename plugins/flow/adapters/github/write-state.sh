@@ -4,7 +4,15 @@
 # comment; then the project card's Status. Lists are comma-separated.
 . "$(dirname "$0")/_gh.sh"
 [ $# -ge 2 ] || die "usage: write-state <id> key=value..." 2
-repo="$(gh_repo)"; n="$(issue_number "$1")"; shift
+repo="$(gh_repo)"; n="$(issue_number "$1")" || exit 2; shift
+# The state keys of adapters/README.md; any other is refused before anything is written.
+for kv in "$@"; do
+  case "$kv" in *=*) ;; *) die "expected key=value, got $kv" 2 ;; esac
+  case "$(printf '%s' "${kv%%=*}" | tr - _)" in
+    step|profile|size|worktree|attempts|gate|gate_from|last_event|pr|pr_host|touches|answered|asked|answer|answered_at) ;;
+    *) die "unknown state key ${kv%%=*}" 2 ;;
+  esac
+done
 # Every GitHub call here must land or the write stops and says so (the labels go first, the
 # comment second, so a stop between them leaves new labels over the older comment, and labels win
 # in issue_to_item). The callers in advance.sh and next.sh go on either way, with that state.

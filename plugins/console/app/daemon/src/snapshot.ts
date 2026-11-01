@@ -40,7 +40,7 @@ export type SourceName = 'files' | 'git' | 'processes' | 'jobs' | 'board' | 'pul
 export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 'board', 'pulls'];
 /**
  * Why a row is on the needs-you list. `needs-field`: an item that is the next step of work already
- * under way but that the next job refuses because a field the tracker asks for (`ready_needs` in
+ * under way but that the next job refuses because a field the tracker asks for (`ready.needs` in
  * .flow/config.yaml, such as priority or size) is empty: open, not an epic, no step, no open
  * blocker, and either its parent has started (a step, a worktree, a PR or a gate), a sibling
  * under the same parent has started or is done, or it blocks an item that has started. Other
@@ -85,7 +85,7 @@ export type ProjectInfo = {
   repo: string | null;
   /** `https://github.com/<repo>`, or null without `github.repo`. */
   repoUrl: string | null;
-  /** The tracker's page for the project's items: the GitHub issues page on the github adapter, null on local. */
+  /** The tracker's page for the project's items: the GitHub issues page while the flow reads GitHub, else null. */
   trackerUrl: string | null;
   /** The tracker adapter, `adapters.default`: `github` or `local`. */
   adapter: string;
@@ -119,6 +119,8 @@ export type Claim = {
   step: string;
   claimedAt: string;
   host: string;
+  /** Who reserved the worktree for manual work (`steward.sh reserve`), with no item; empty for a flow claim. */
+  reserved: string;
 };
 
 /**
@@ -443,6 +445,12 @@ export type Readiness = {
   nextInLineMissingField: number;
 };
 
+/**
+ * A newer console in the plugin cache than the one the daemon runs, which `brain-console update`
+ * moves the daemon to. Null while the daemon runs the newest cached version.
+ */
+export type NewerConsole = { running: string; cached: string };
+
 export type Snapshot = {
   schema: typeof SNAPSHOT_SCHEMA_VERSION;
   takenAt: string;
@@ -463,6 +471,7 @@ export type Snapshot = {
   pulls: PullRequest[];
   events: FlowEvent[];
   disagreements: Disagreement[];
+  newerConsole: NewerConsole | null;
 };
 
 /*
@@ -484,10 +493,12 @@ export type ActionKind =
   | 'run.resume'
   | 'worktree.claim'
   | 'worktree.release'
+  | 'worktree.reserve'
   | 'worktree.sync'
   | 'sync.handoff'
   | 'item.step-sync'
   | 'steward.health'
+  | 'steward.sweep'
   | 'jobs.install'
   | 'job.uninstall'
   | 'pr.merge'
@@ -553,6 +564,9 @@ export type SettingsView = {
   projects: { roots: string[]; from: SettingOrigin; editable: boolean; note: string | null };
   terminal: { value: TerminalSetting | null; from: SettingOrigin; installed: TerminalName[] };
   port: { value: number; from: SettingOrigin; saved: number | null; note: string };
+  /** Why the config file, changed on disk since the daemon loaded it, was not taken; null once the daemon took its last change. */
+  fileError: string | null;
+  newerConsole: NewerConsole | null;
 };
 
 /** One thing `POST /api/settings/check-project` asks of a folder, in the order it asks. */

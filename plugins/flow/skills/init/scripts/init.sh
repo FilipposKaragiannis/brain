@@ -41,6 +41,14 @@ edited() {
   else refused=1; echo "init: refused: $1 was edited by hand since init last wrote it; move the edit to the plugin source, or re-run with --force"; fi
 }
 die() { echo "init: $1" >&2; exit 1; }
+# Flow reads the main worktree's .flow (flow_home), so a run from a linked worktree writes and
+# checks there.
+main="$(main_worktree)"; [ -n "$main" ] || die "no main worktree for $root: git worktree list names none; run init inside the repository"
+home_root="$(dirname "$(flow_home)")"
+if [ "$(cd "$home_root" 2>/dev/null && pwd -P)" != "$(pwd -P)" ]; then
+  echo "init: $root is a linked worktree; init works on the flow home in the main worktree, $home_root"
+  cd "$home_root" || die "cannot enter the main worktree $home_root"
+fi
 scratch=".flow/.init-tmp"; mkdir -p "$scratch" || die "cannot create $scratch"
 trap 'rm -rf "$scratch"' EXIT
 install_file() {
@@ -66,8 +74,6 @@ write_stamp() {
   if [ ! -f "$stamp" ] || ! cmp -s "$tmp" "$stamp"; then cp "$tmp" "$stamp" && note "$stamp"; fi
 }
 
-main="$(main_worktree)"; [ -n "$main" ] || main="$root"
-
 # 1. Project config, written once.
 if [ ! -f .flow/config.yaml ]; then
   if [ "$check" -eq 1 ]; then drifted ".flow/config.yaml is missing"; else
@@ -76,13 +82,20 @@ if [ ! -f .flow/config.yaml ]; then
     base="$(gh repo view --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)"
     [ -n "$base" ] || base="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
     [ -n "$base" ] || base="main"
-    pool="$(git worktree list --porcelain | sed -n 's/^worktree //p' | tail -n +2 | grep -v '/\.flow/tmp/' | while read -r p; do
-      python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$p" "$main"; done)"
+    # The linked worktrees under the main worktree's parent folder, but not Claude's session
+    # worktrees (.claude/worktrees) nor flow's temporary ones (.flow/tmp).
+    parent="$(dirname "$main")"
+    pool="$(git worktree list --porcelain | sed -n 's/^worktree //p' | tail -n +2 | grep -v -e '/\.flow/tmp/' -e '/\.claude/worktrees/' | while read -r p; do
+      [ "${p#"$parent"/}" = "$p" ] || python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$p" "$main"; done)"
     {
       echo "# flow configuration. Read by every flow script on both hosts. Keep it flat: key: value,"
       echo "# nested maps, lists as '- item' or [a, b]. No anchors, no multi-line strings."
       echo "adapters:"
       if [ -n "$repo" ]; then echo "  default: github"; echo "  # bug: local    # keep bugs out of GitHub"; else echo "  default: local"; fi
+      echo "# trackers: [github, local]   # the trackers board, next and health read; unset, every one above and local"
+      echo "ready:"
+      echo "  # needs: [priority, size]           # an unstarted item without these is not ready, on every tracker"
+      echo "  # priority_order: [P0, P1, P2, P3]  # ready items run in this order, items with no priority last"
       echo "base: $base"
       echo "# Gates the flow clears itself, by item size. Only plan-approval can be listed. Merge, interview,"
       echo "# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined."
@@ -95,12 +108,23 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  #   size: Size                # a single-select issue field replaces the size: labels"
         echo "  #   priority: Priority        # orders the ready items"
         echo "  #   area: Area                # the area intake files a note under, from its section"
-        echo "  # priority_order: [P0, P1, P2, P3]"
-        echo "  # ready_needs: [priority, size]   # an unstarted item without these is not ready"
         echo "  # project: 1                  # the project whose Status follows the flow state"
         echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
         echo "  #   gate: Needs you           # also backlog, ready, running, review"; }
+      echo "# Jira Cloud as a tracker: set adapters.default (or adapters.<kind>) to jira. The API token"
+      echo "# comes from JIRA_API_TOKEN in the environment, never from this file."
+      echo "# jira:"
+      echo "#   site: https://<org>.atlassian.net"
+      echo "#   project: KEY                # the project key"
+      echo "#   email: you@example.com      # the login the token belongs to"
+      echo "#   types:                      # the issue type of each kind"
+      echo "#     epic: Epic                # also task: Task, bug: Bug"
+      echo "#   fields:                     # custom fields, by name or id"
+      echo "#     size: Size                # unset, the size is a size: label"
+      echo "#     area: Area"
+      echo "#   transitions:"
+      echo "#     done: Done                # the transition close takes"
       echo "# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism."
       echo "# A claim with no free worktree adds one (named after the last entry, ../$(basename "$main")-wt-<n>)"
       echo "# while the pool is below pool_max, and the steward appends it here. 0 never adds."
@@ -108,6 +132,7 @@ if [ ! -f .flow/config.yaml ]; then
       if [ -n "$pool" ]; then printf '%s\n' "$pool" | sed 's/^/  - /'; else echo "  # - ../$(basename "$main")-wt-1"; fi
       pool_n="$(printf '%s\n' "$pool" | grep -c .)"; pool_max=3; [ "$pool_n" -gt 3 ] && pool_max="$pool_n"
       echo "pool_max: $pool_max"
+      echo "# worktree_name: ../{repo}-wt-{n}   # names a new one instead: {repo} the main worktree's folder, {n} the first free number"
       echo "# Git-ignored files a new worktree gets from the main worktree when it lacks them, and"
       echo "# commands run in a new worktree after that (steward.sh setup <path> re-runs both)."
       echo "worktree_copy:"
@@ -134,6 +159,11 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  slack_webhook: \"\"   # Slack incoming webhook URL"
       echo "# Who each review round asks, by mention in its own PR comment: codex, claude, a GitHub login, or"
       echo "# copilot (asked through the reviewers API). The comments job asks a silent reviewer again."
+      echo "# One list for every PR, or a list per host that wrote the PR, the default for any other:"
+      echo "#   reviewers:"
+      echo "#     claude: [codex]"
+      echo "#     codex: [claude]"
+      echo "#     default: [codex, claude]"
       echo "reviews:"
       echo "  reviewers: [codex, claude]"
       echo "  # chase_after: 1h         # a request with no answer this long is asked again"
@@ -212,7 +242,7 @@ install_file "$plugin/templates/flow.rules" .codex/rules/flow.rules "" guard
 for src in "$plugin"/codex-agents/*.toml; do install_file "$src" ".codex/agents/$(basename "$src")" "" guard; done
 
 # 5. .gitignore block. .flow/*.lock/ covers the locks flow_lock takes in the flow home (pick,
-# answers, sweep). Under --check each line the project's block lacks is named.
+# claim, answers, sweep). Under --check each line the project's block lacks is named.
 # One per line and read with read, so the lock pattern is never expanded by the shell.
 ignored=".flow/items/
 .flow/reports/
@@ -251,6 +281,10 @@ if [ -f .flow/config.yaml ]; then
   bad_auto="$(sed -n '/^auto_gates:/,/^[^ #]/p' .flow/config.yaml | grep -E '^  [A-Za-z]' | grep -v '^  plan-approval:' | sed 's/:.*//; s/^ *//' | head -1)"
   [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"
   a="$(cfg_or adapters.default local)"; [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.default names $a, not an adapter"
+  bad="$(adapters_configured 2>&1 >/dev/null)" || gap ".flow/config.yaml: ${bad#flow: }"
+  while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_TRACKERS
+$(trackers_unread)
+EOF_TRACKERS
   # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;
   # the old jobs.model and jobs.effort still work for one release, with a note.
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
@@ -258,7 +292,8 @@ $(host_jobs_problems)
 EOF_JOBS
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
-[ -d .claude ] && [ "$settings_has_hook" -eq 0 ] && gap ".claude/settings.json: no WorktreeCreate and WorktreeRemove hooks, so claude --worktree lands outside the pool (init prints the entry under Next)"
+# Missing worktree hooks are a note: the flow runs without them.
+[ "$check" -eq 1 ] && [ -d .claude ] && [ "$settings_has_hook" -eq 0 ] && echo "init: note: .claude/settings.json has no WorktreeCreate and WorktreeRemove hooks, so claude --worktree lands outside the pool (init prints the entry under Next)"
 
 
 if [ "$check" -eq 1 ]; then

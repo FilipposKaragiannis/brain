@@ -71,7 +71,7 @@ One command, `node daemon/src/main.ts <subcommand>` (the launcher `~/.local/bin/
 | `start [flags]` | runs the daemon here in the foreground, with the flags under Run it; writes `<state dir>/daemon.pid` (its pid, port, config and flags with every path absolute) while it runs, and refuses while that daemon still runs |
 | `stop` | boots the launchd job out when it is loaded, else sends SIGTERM to the pid in `daemon.pid` |
 | `restart` | `launchctl kickstart -k` for a loaded job, `bootstrap` for an agent on disk but not loaded, else stops the foreground daemon and starts it here with its flags |
-| `status` | loaded or not, the pid, the port, the URL without the token, the config file, the state dir and the version; exit 1 when nothing runs |
+| `status` | loaded or not, the pid, the port, the URL without the token, the config file, the state dir and the version; from a running daemon, the projects it watches, a change to the config file it refused (with the reason) and a newer console in the plugin cache than the one it runs (with `brain-console update`); exit 1 when nothing runs |
 | `open` | opens the URL with the token in the default browser (`open`) |
 | `url` | prints the URL with the token, for scripts; exit 1 when nothing runs |
 | `add <path>` | adds a project (a folder inside a git checkout with `.flow/config.yaml`, relative to here or `~/`); through `PUT /api/settings` when the daemon runs, so it is watched at once, else into the config file with the same checks; refused when the launch agent names its projects with `--project` (`brain-console install --project …` changes those) |
@@ -128,6 +128,11 @@ While `config.json` is absent the daemon still reads the projects of the older
 `~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`); the first save from
 Settings writes `config.json` with them, and `projects.json` is then no longer read. A file that is
 not valid JSON, or holds a setting the daemon does not know, stops the daemon at start with the reason.
+While it runs, the daemon looks at the file's modification time once a minute and takes a hand edit
+as a PUT (below) would, logging `config.reloaded`: new roots are watched, removed ones dropped
+(projects set by a flag or the environment stay as they are), the terminal counts at once. A file
+that does not parse or fails the PUT's checks is refused (`config.refused` in the log): the daemon
+keeps what it runs, and `fileError` in the settings and `brain-console status` say why.
 
 `PUT /api/settings` (the Settings screen) changes the settings its body names and keeps the rest:
 the whole body is checked first (every root exists, is a folder inside a git checkout and holds
@@ -146,7 +151,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 |---|---|
 | `GET /healthz` | `{ok, projects}` |
 | `GET /api/projects` | every project with its counts |
-| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon |
+| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon, `fileError` (a change to the file the daemon refused, else null) and `newerConsole` |
 | `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
 | `POST /api/settings/check-project` | body `{"root"}`: whether that folder can be added, with the same checks the PUT runs on the list plus it; 200 with `{root, id, ok, error, findings: [{check, ok, text}], initCommand}`, `check` one of `path`, `exists`, `flow`, `git`, `watched`, `name`, and `initCommand` (`cd '<root>' && claude /flow:init`) only while `.flow/config.yaml` is missing |
 | `POST /api/open` | body `{"path", "with": "editor" \| "finder"}`: runs `open -t <path>` or `open -R <path>` (execFile, no shell) for the console settings file, the state folder (Finder only) or a watched project's `.flow/config.yaml`; 400 for any other path, 501 off macOS |
@@ -166,19 +171,23 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 `review` (below). One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
-(the latest 200, each with `at`, `item`, `kind` and `message`) and `disagreements`. Timestamps are
+(the latest 200, each with `at`, `item`, `kind` and `message`), `disagreements` and `newerConsole`
+(`{running, cached}` while the plugin cache holds a newer console with an install script than the
+one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
+banner while it is set). Timestamps are
 ISO UTC; every age is seconds at `takenAt`, so a reader keeps counting on its own clock between
 snapshots.
 
 - `project`: `id`, `name`, `root`, `flowHome`, `base` (the branch work merges into), `repo`
   (`github.repo`), `repoUrl` (`https://github.com/<repo>`, null without a repo), `trackerUrl` (the
-  issues page on the github adapter, null on local), `adapter`, `pluginVersion`, `pluginRoot`
+  issues page while the flow reads GitHub, null otherwise), `adapter`, `pluginVersion`, `pluginRoot`
   (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
   variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
   `jobsHost` (`jobs.host`, the CLI the jobs run), `jobHosts` (every host the jobs run on: the
   `host` of each schedule and of the next job's workers, sorted, once each; `[jobsHost]` when none
   says), `plugins`, `poolMax` and `reviewers` (`reviews.reviewers`
-  without their `@`, codex and claude when unset: who the PR cards offer for a review ask).
+  without their `@`, every list of a per-host map once, codex and claude when unset: who the PR
+  cards offer for a review ask).
 - `plugins` is the plugins of flow's marketplace either host has for the project, by name, each
   `{name, marketplace, claude, codex}` with that host's version or null. The marketplace is that of
   the flow install Claude loads for the project (`flow@<marketplace>` in Claude's list: the
@@ -261,7 +270,7 @@ snapshots.
   them are the next step of work in progress".
 - A `needs-field` attention row (and `counts.needsField`, equal to `nextInLineMissingField`) is
   kept for those next-in-line items only: open, not an epic, no step, no open blocker, a `needs`
-  that is not empty (a field `ready_needs` asks for, such as priority or size, is empty, so the
+  that is not empty (a field `ready.needs` asks for, such as priority or size, is empty, so the
   next job refuses it), and either its parent has started (a step, a worktree, a PR or a gate), a
   sibling under the same parent has started or is done, or it blocks an item that has started.
   Every other item waiting on a field is backlog and gets no row. The row's `detail` names the
@@ -273,7 +282,7 @@ One status language, used by worktrees and items alike:
 |---|---|
 | `running` | an unattended agent process (`claude -p`, `codex exec`) has its cwd in the worktree, or a live run record |
 | `needs-you` | its item has a gate record in `.flow/gates` |
-| `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate |
+| `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate; never a reservation |
 | `claimed` | claimed, idle, nothing waits on you |
 | `free` | no claim |
 | `outside` | the main worktree or one not in the pool |
@@ -321,7 +330,7 @@ Null without a record.
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
-| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project not on the github adapter, or without `github.repo`, reports `ok` with `error: "not applicable: …"` and is never read | 60s |
+| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project whose trackers (`trackers`, else every one under `adapters` and local) leave out github, or without `github.repo`, reports `ok` with `error: "not applicable: …"` and is never read | 60s |
 
 ¹ Flow 1.18.0 and later. The parse is kept per gate until its message changes, so a waiting gate
 costs no process after its first read. An older plugin is not asked. A list that fails, times out
@@ -342,12 +351,13 @@ with its values, `enumOrText` with its known values but any text allowed, `list`
 sentence on what changing it does, its group, which is its page in Settings (`GROUP_FAMILY` puts each under Plugins › Flow: Tracker,
 Readiness, Worktree pool, Gates and verification, Reviews, Notifications; under Jobs: Schedules,
 Next job, Health job, Comments job, Retro job, Intake job; or Agents), an optional `part` that
-heads a few fields inside a page (Tracker: "Where new items go" and "GitHub"; Notifications:
+heads a few fields inside a page (Tracker: "Where items come from", "Where new items go" and "GitHub"; Notifications:
 "Channels" and "When to notify"; Agents: "Claude", "Codex" and "Deprecated"), a `placeholder`
 with a concrete example for every free-text key, `adapter: 'github'` on the keys only the GitHub
 adapter reads, `keys` for a map with fixed names (`github.fields`: size, priority, area;
 `github.status`: backlog, ready, gate, running, review), `values` for a list of fixed choices
-(`github.ready_needs`: priority, size), `rows` for a map of free names (`gates`), and its follow-up: `jobs.schedule.*` and
+(`ready.needs` and `trackers`), `deprecated` on `github.ready_needs` and `github.priority_order`
+(the form starts `ready.needs` and `ready.priority_order` at them while the file leaves those out; an empty list saved there counts as set), `rows` for a map of free names (`gates`), and its follow-up: `jobs.schedule.*` and
 `jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action,
 offered only while some job keeps a schedule, since install exits 2 when none has); a job whose
 `jobs.schedule.<job>` is removed or emptied is never touched by install again, so it gets
@@ -434,10 +444,12 @@ on every state change and at most twice a second while output arrives.
 | `run.resume` | `item` | `steward.sh resume <item>`: clears a dead run's record and starts its step again, as the health job does | the item | `started` |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
+| `worktree.reserve` | `name?` | `steward.sh reserve [--name <name>]`: a free worktree with no item under the name, git `user.name` when none is given; claim, sweep, health and next pass over it until a release | the pool | `finished` |
 | `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished`; on a conflict the record's `conflict` |
 | `sync.handoff` | `target`, `refs?` | writes the item's sync note, then `jobs/next.sh` as `run.start` with the item (below) | the item and the next job | `started` while the run goes, `finished` once it ends well |
 | `item.step-sync` | `item` | `adapters/<adapter>/write-state.sh <item> step=<claim's step> last_event=<when> step <old> -> <new>, set by the console from the claim in <worktree>` (below) | the item | `finished`; `board` and `files` are re-read |
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
+| `steward.sweep` | | `steward.sh sweep --lock`: frees the worktrees whose PR merged or whose item closed and clears their merge gates; exit 75 when a sweep already runs | the pool and the health job | `finished`; the `note` names the worktrees freed and the gates cleared, or says nothing landed |
 | `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
@@ -626,7 +638,7 @@ person has to look:
 | agent | an unattended claude or codex the flow started (`claude -p`, `codex exec`) with its working directory in the worktree |
 | session | an interactive claude or codex whose working directory is in the worktree, yours or an app's (such as the Claude desktop app), not an unattended agent; a host's own background server (the Codex desktop app's `app-server`) is neither |
 | disagreement | two places flow state lives say different things, and kept saying it after both were read again |
-| needs-field | an item that is the next step of work already under way (its parent or a sibling has started, or it blocks started work) but lacks a field the tracker asks for (`ready_needs`, such as priority), so the next job passes it over |
+| needs-field | an item that is the next step of work already under way (its parent or a sibling has started, or it blocks started work) but lacks a field the tracker asks for (`ready.needs`, such as priority), so the next job passes it over |
 
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
@@ -660,7 +672,7 @@ matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`
 agent resumes the newest agent on the item in `agents` or `ended` by its pid, else the gate's
 `session` with `gate`, and is left out with neither), Worktrees (filter
 chips with counts for all, running, needs you, stale, claimed and free, the pool size and base,
-and Run health; a card per pool worktree with its name, state and flags, its item and title, its
+and Reserve, Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
 branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
 its agents and sessions with pid, host and age and the command on hover, a Watch button to the
 run or a Decide button to the gate, why it is stale and the way
@@ -671,7 +683,7 @@ which runs `sync.handoff` with the conflict's refs, or while a run record names 
 note is there "A run is going; the sync step runs first when it starts", and between an accepted
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
 <refs>" whenever `syncPending` is set, so a note the health job wrote shows too), Open in
-Terminal on every card and Release on a claimed one; then the worktrees outside the pool, the
+Terminal on every card and Release on a claimed one, a reserved one saying who reserved it; then the worktrees outside the pool, the
 project root included, in a table with their branch and Open in Terminal), Board (`#/<project>/board/<item>`: the open items with filters for
 under way, in review, ready, blocked and backlog, each row with its state, step, worktree, PR and
 spend, a head line summing the spend of the rows shown, and an item's detail beside the list:
@@ -737,8 +749,8 @@ switched off is left out, and the last one cannot be), and for a schedule the ti
 and fields, then the host ("jobs.host" keeps following it), the model and effort, for next the
 item, workers and max steps, and the job's other options, with Edit as text, Unschedule and, for an
 empty key, Schedule it; a line the builder cannot hold whole stays a text box with a note. The
-GitHub part of Tracker and the Readiness page show only while some tracker is github, else one
-line saying so. The keys the file sets come first and the rest fold under "N more settings the
+GitHub part of Tracker shows only while the flow reads github (`trackers`, else some `adapters` key
+names it), else one line saying so. The keys the file sets come first and the rest fold under "N more settings the
 file leaves at the default". Every page of a project is one form: an edit waits while you move to
 another page, and one save bar at the bottom counts the unsaved changes and which pages hold them,
 with Discard and Save changes, which sends them all in one write. On Agents, both hosts' model and effort dropdowns show, each listing its values and "host default"

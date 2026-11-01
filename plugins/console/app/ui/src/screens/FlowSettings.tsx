@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FieldChange, FieldGroup, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, HostDefaults, JobsHost, Section } from '../../../daemon/src/plugins/flow/schema.ts';
-import { checkSchedule, DEFAULT_JOBS_HOST, fieldAt, legacyJobsSetting, OTHER_GROUP } from '../../../daemon/src/plugins/flow/schema.ts';
+import { checkSchedule, DEFAULT_JOBS_HOST, fieldAt, legacyJobsSetting, legacyReadySetting, OTHER_GROUP, plainListValue } from '../../../daemon/src/plugins/flow/schema.ts';
 import { projectPath, unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
 import { OpenFileButton } from '../OpenFileButton.tsx';
@@ -92,7 +92,7 @@ type FormProps = { projectId: string; document: FlowConfigDocument; name: string
 function FlowForm({ projectId, document, name, show, save, reload }: FormProps) {
   const values = document.values!;
   const fields = document.sections.flatMap((section) => section.fields);
-  const initial = Object.fromEntries(fields.map((spec) => [spec.path, legacyOf(spec, values)?.value ?? textOf(spec, valueAt(values, spec.path))]));
+  const initial = Object.fromEntries(fields.map((spec) => [spec.path, legacyOf(spec, values)?.value ?? textOf(spec, fileValueOf(spec, values))]));
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
@@ -161,8 +161,10 @@ type FormContext = {
   workersSplit: boolean;
 };
 
-/** The trackers new items go to, from the form's adapters.* text: the default (local when unset) and each kind's own. */
+/** The trackers the flow reads, from the form's text: `trackers` when it names some, else the default (local when unset) and each kind's own. */
 function trackers(current: (path: string) => string): string[] {
+  const named = current('trackers').split('\n').map((line) => line.trim()).filter((tracker) => tracker !== '');
+  if (named.length > 0) return named;
   return [current('adapters.default') || 'local', ...['epic', 'task', 'bug'].map((kind) => current(`adapters.${kind}`))].filter((tracker) => tracker !== '');
 }
 
@@ -183,10 +185,10 @@ type GroupProps = {
  */
 function GroupFields({ section, hidden, shown, values, hostDefaults, busy, drafts, initial, context, edit, clear }: GroupProps) {
   const fields = section.fields.filter((spec) => shown.includes(spec));
-  const inFile = (spec: FieldSpec): boolean => isSet(valueAt(values, spec.path)) || legacyOf(spec, values) !== null;
+  const inFile = (spec: FieldSpec): boolean => isSet(fileValueOf(spec, values)) || legacyOf(spec, values) !== null;
   const control = (spec: FieldSpec) => (spec.deprecated !== undefined
     ? <DeprecatedField key={spec.path} id={`${context.idPrefix}${spec.path}`} spec={spec} fileValue={valueAt(values, spec.path)} busy={busy} clear={() => clear(spec.path)} />
-    : <FieldControl key={spec.path} spec={spec} fileValue={valueAt(values, spec.path)} legacy={legacyOf(spec, values)} unset={!inFile(spec)} hostDefaults={hostDefaults} context={context} text={drafts[spec.path] ?? initial[spec.path] ?? ''} onChange={(text) => edit(spec.path, text)} />);
+    : <FieldControl key={spec.path} spec={spec} fileValue={fileValueOf(spec, values)} legacy={legacyOf(spec, values)} unset={!inFile(spec)} hostDefaults={hostDefaults} context={context} text={drafts[spec.path] ?? initial[spec.path] ?? ''} onChange={(text) => edit(spec.path, text)} />);
   const parts = [...new Set(fields.map((spec) => spec.part ?? ''))];
   const partFields = (part: string) => {
     const inPart = fields.filter((spec) => (spec.part ?? '') === part);
@@ -222,6 +224,11 @@ export function valueAt(values: Record<string, unknown>, path: string): unknown 
     current = (current as Record<string, unknown>)[key];
   }
   return current;
+}
+
+/** A field's value in the file: its own key's, else the plain list it stands for (`reviews.reviewers` as the default reviewers). */
+function fileValueOf(spec: FieldSpec, values: Record<string, unknown>): unknown {
+  return valueAt(values, spec.path) ?? plainListValue(values, spec);
 }
 
 /** A map whose entries are maps themselves (a gate with command and paths) is edited only in Raw YAML. */
@@ -302,9 +309,15 @@ function isSet(value: unknown): boolean {
   return value !== undefined && value !== null && value !== '';
 }
 
-/** What the plugin runs a host's model or effort with while its jobs.<host> map is absent: the deprecated key's value, or null. */
+/**
+ * What the plugin runs a key with while the file leaves it to a deprecated one: a host's model or
+ * effort while its jobs.<host> map is absent, a readiness key while it is unset. The value as the
+ * form's text, or null.
+ */
 function legacyOf(spec: FieldSpec, values: Record<string, unknown>): { value: string; from: string } | null {
-  return spec.host === undefined ? null : legacyJobsSetting(values, spec.host.host, spec.host.setting);
+  if (spec.host !== undefined) return legacyJobsSetting(values, spec.host.host, spec.host.setting);
+  const ready = legacyReadySetting(values, spec.path);
+  return ready === null ? null : { value: ready.value.join('\n'), from: ready.from };
 }
 
 /** A deprecated key: its value read-only, the note, and Clear. */
@@ -393,7 +406,7 @@ function FieldControl({ spec, fileValue, legacy, unset, hostDefaults, context, t
     <div className={spec.type === 'schedule' || spec.rows !== undefined ? 'flow-field flow-wide' : 'flow-field'}>
       <FieldLabel spec={spec} id={id} group={group} unset={unset} />
       {control}
-      {legacy !== null && <p className="module-help flow-help flow-legacy">now {legacy.value}, from the deprecated {legacy.from}</p>}
+      {legacy !== null && <p className="module-help flow-help flow-legacy">now {legacy.value.split('\n').join(', ')}, from the deprecated {legacy.from}</p>}
       <p className="module-help flow-help">{spec.help}{hostDefaultHelp(spec, hostDefaults)}{group ? '' : spec.type === 'list' ? ' One per line.' : spec.type === 'map' ? ' One name: value per line.' : ''}</p>
     </div>
   );
