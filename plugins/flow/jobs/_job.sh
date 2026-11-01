@@ -61,7 +61,11 @@ job_skip_if_paused() {
 # the system has since given to something else.
 job_alive() { case "$(ps -o command= -p "$1" 2>/dev/null)" in *"jobs/$(job_base).sh"*) return 0 ;; esac; return 1; }
 # job_lock: exit 0 quietly when another run of this job is alive; a lock whose pid is not is stale.
+# The schedules of one job but next (intake and intake-nightly) share that job's state, the notes
+# and ledger, the PR replies, the lessons or the claims, so they take turns on <job>.shared.lock as
+# well: a run that finds another schedule of its job alive skips. next has the pick lock instead.
 job_lock() {
+  job_shared=
   d="$(job_log_dir)/$job.lock"
   if mkdir "$d" 2>/dev/null; then :; else
     pid="$(cat "$d/pid" 2>/dev/null)"
@@ -72,8 +76,16 @@ job_lock() {
   trap 'job_end $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  [ "$(job_base)" != next ] || return 0
+  _s="$(job_log_dir)/$(job_base).shared.lock"
+  if mkdir "$_s" 2>/dev/null; then :; else
+    _spid="$(cat "$_s/pid" 2>/dev/null)"
+    if [ -n "$_spid" ] && job_alive "$_spid"; then job_say "skipped: $(cat "$_s/name" 2>/dev/null) is running (pid $_spid), which shares the $(job_base) job's state"; exit 0; fi
+    rm -rf "$_s"; mkdir "$_s" || die "cannot lock $_s"
+  fi
+  job_shared="$_s"; echo $$ > "$_s/pid"; printf '%s' "$job" > "$_s/name"
 }
-job_end() { rm -rf "$d"; job_record "$1"; }
+job_end() { rm -rf "$d"; [ -z "${job_shared:-}" ] || rm -rf "$job_shared"; job_record "$1"; }
 # job_start <host> [model]: checks the host and jobs.host (a bad one ends the run here, exit 2),
 # then the pause, the lock and the log. With model, the job starts host sessions: their model and
 # effort are read once, from jobs.<host>, or from the deprecated jobs.model and jobs.effort with

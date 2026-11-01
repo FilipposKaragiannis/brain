@@ -236,6 +236,17 @@ test('RunStart_Detached_StopsStillReachTheRun', async () => {
   } finally { await cleanup(); }
 });
 
+test('RunnerFull_StopsStillAccepted', async () => {
+  const { actions, cleanup } = await runner({ ...CONTEXT, runItems: ['gh#1'] }, PLAIN);
+  try {
+    actions.request('run.start', { item: 'gh#1' });
+    for (const item of ['gh#2', 'gh#3', 'gh#4']) actions.request('gate.clear', { item });
+    assert.equal(actions.request('gate.clear', { item: 'gh#5' }).status, HTTP_CONFLICT, 'because four running actions fill the runner');
+    assert.equal(actions.request('run.stop', { item: 'gh#1' }).status, HTTP_ACCEPTED, 'because a full runner must not keep you from stopping a run');
+    assert.equal(actions.request('job.stop', { job: 'next' }).status, HTTP_ACCEPTED, 'because a full runner must not keep you from stopping a job');
+  } finally { await cleanup(); }
+});
+
 test('RunStart_Detached_AuditNeverOverwritesTheRunsFile', async () => {
   const { actions, processes, stateDir, auditLines, cleanup } = await runner(CONTEXT, { failWith: null, detachedOutput: 'skipped: run 123 still going\n' });
   try {

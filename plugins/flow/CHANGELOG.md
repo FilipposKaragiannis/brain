@@ -9,7 +9,9 @@
   learns it from `--as <name>`, which the agent's command passes. A named `next` schedule's workers
   are `<name>-<n>`. Two `next` schedules no longer skip each other on one lock, and the pick lock
   still keeps them off the same item. `jobs.workers` stays the plain `next` schedule's: a named
-  one runs `--workers N` from its args, or one worker.
+  one runs `--workers N` from its args, or one worker. The schedules of any other job share its
+  state (intake's notes and ledger, the PR replies, the lessons, the claims), so they take turns on
+  `<job>.shared.lock`: a run that finds another schedule of its job alive skips.
 - A schedule's args may begin with `claude` or `codex`: that schedule runs on that host instead
   of `jobs.host` (`every 30m codex --max-steps 15`). Another plain word there is refused as a
   misspelled host; item ids and options are args as before. An arg may hold a `#`, so a GitHub

@@ -57,6 +57,8 @@ const OUTPUT_KEPT_CHARS = 256 * 1024;
 const RECORDS_KEPT = 200;
 export const RECENT_LISTED = 50;
 const MAX_RUNNING = 4;
+/** Stops never count against MAX_RUNNING: a full runner is when one is most needed. Each holds its own stop lock, so they stay few. */
+const STOP_KINDS: readonly string[] = ['run.stop', 'job.stop'];
 /** How often the stream hears about output still arriving. */
 const OUTPUT_EVENT_MS = 500;
 /** How long a process gets after SIGTERM before SIGKILL. */
@@ -170,7 +172,7 @@ export class ActionRunner {
       const shared = held.record.locks.filter((lock) => record.locks.includes(lock)).join(', ');
       return { status: HTTP_CONFLICT, body: { error: `${shared} is held by action ${held.record.id} (${held.record.kind})`, action: this.reject(record, `lock held: ${shared}`) } };
     }
-    if (this.live.size >= MAX_RUNNING) return { status: HTTP_CONFLICT, body: { error: `${MAX_RUNNING} actions are running already`, action: this.reject(record, 'too many running') } };
+    if (this.live.size >= MAX_RUNNING && !STOP_KINDS.includes(record.kind)) return { status: HTTP_CONFLICT, body: { error: `${MAX_RUNNING} actions are running already`, action: this.reject(record, 'too many running') } };
     this.remember(record);
     this.start(record, plan);
     return { status: HTTP_ACCEPTED, body: { action: { ...record } } };

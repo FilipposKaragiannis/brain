@@ -507,7 +507,8 @@ them.
 An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
 never changes what runs. A second action on a held lock is refused with 409 and recorded as
-`rejected`. At most four run at once. Scripts get two minutes, a merge three; a process that
+`rejected`. At most four run at once, stops aside: `run.stop` and `job.stop` start on a full
+runner too. Scripts get two minutes, a merge three; a process that
 ignores SIGTERM is killed with its group ten seconds later, and a timed-out action is `failed`
 whatever its exit code. A run started with `run.start` and an item is detached, writes its own output file,
 holds its item for as long as it runs and is never killed by the console. `jobs/next.sh` takes

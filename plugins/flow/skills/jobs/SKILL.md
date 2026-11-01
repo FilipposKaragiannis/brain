@@ -36,7 +36,8 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
    `next-gh81`), so one job runs on several schedules, each with its own args and host. Each one
    is its own launchd agent (`com.<repo>.flow.<name>`), log, lock, pause and history, and its
    runs are `<name>` in `runs.jsonl`. Two `next` schedules run side by side and never pick the
-   same item. `install` refuses any other name (`next_codex`, `next-1`), exit 2. `all` is every
+   same item. The schedules of any other job take turns: one skips while another of its job runs,
+   as they share its state. `install` refuses any other name (`next_codex`, `next-1`), exit 2. `all` is every
    schedule the config names.
 4. `stop` ends the agent sessions mid-step. Confirm it first: the item stays where its last
    step left it, and the next run picks it up again.

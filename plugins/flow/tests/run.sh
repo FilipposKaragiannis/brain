@@ -887,9 +887,12 @@ mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fa
 fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
 mkdir -p .flow/log/comments.lock && echo "$fakejob" > .flow/log/comments.lock/pid
 check "job lock: live pid skips"  sh -c "'$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
+mkdir -p .flow/log/comments.shared.lock && echo "$fakejob" > .flow/log/comments.shared.lock/pid && printf comments > .flow/log/comments.shared.lock/name
+check "job lock: another schedule of the job skips while one runs, as they share its state" sh -c "'$P/jobs/comments.sh' claude --as comments-fast | grep -q 'skipped: comments is running (pid $fakejob), which shares the comments job.s state' && [ ! -d .flow/log/comments-fast.lock ] && [ \"\$(cat .flow/log/comments.shared.lock/pid)\" = $fakejob ]"
+rm -rf .flow/log/comments.shared.lock
 pkill -P "$fakejob" 2>/dev/null; kill "$fakejob" 2>/dev/null
 echo 999999 > .flow/log/comments.lock/pid
-check "job lock: stale pid runs" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ]"
+check "job lock: stale pid runs, and leaves neither its lock nor the shared one" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ] && [ ! -d .flow/log/comments.shared.lock ]"
 sleep 60 & other=$!
 mkdir -p .flow/log/comments.lock && echo "$other" > .flow/log/comments.lock/pid
 check "job lock: a pid a restart gave to another process is stale, and that process is left alone" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ] && kill -0 $other"
