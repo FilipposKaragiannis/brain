@@ -173,13 +173,23 @@ cfg_or() { v="$(cfg "$1")"; [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2";
 # item_slug gh#310 -> gh-310 ; local:bug/12 -> local-bug-12. Safe as a directory and branch name.
 item_slug() { printf '%s' "$1" | tr ':/#' '---'; }
 
-# adapter_for <id>: the adapter that owns an item, from the id prefix.
+# adapter_for <id>: the adapter that owns an item: the one whose adapters/<name>/prefix starts the
+# id (adapters/README.md).
 adapter_for() {
-  case "$1" in
-    gh#*) printf 'github' ;;
-    local:*) printf 'local' ;;
-    *) return 1 ;;
-  esac
+  for _af_file in "$FLOW_PLUGIN"/adapters/*/prefix; do
+    _af_prefix=""; read -r _af_prefix < "$_af_file" 2>/dev/null
+    [ -n "$_af_prefix" ] || continue
+    case "$1" in "$_af_prefix"*) _af_name="${_af_file%/prefix}"; printf '%s' "${_af_name##*/}"; return 0 ;; esac
+  done
+  return 1
+}
+
+# slug_item <slug>: the item id item_slug made the slug from, through each adapter's slug.sed;
+# nothing when no adapter owns it.
+slug_item() {
+  for _si_file in "$FLOW_PLUGIN"/adapters/*/slug.sed; do
+    [ -f "$_si_file" ] && printf '%s\n' "$1" | sed -n -f "$_si_file"
+  done | head -n 1
 }
 
 # adapter_for_kind <kind>: the adapter that new items of a kind go to, from the config.

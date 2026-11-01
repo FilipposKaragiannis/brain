@@ -5,10 +5,19 @@ items = json.load(sys.stdin)
 known = {i["id"]: i.get("status", "open") for i in items}
 cache = {}
 
+def read_prefix(name):
+    try:
+        with open(os.path.join(plugin, "adapters", name, "prefix"), encoding="utf-8") as f:
+            return f.readline().strip()
+    except OSError:
+        return ""
+
+# Each adapter's id prefix, as lib/flow.sh's adapter_for reads it (adapters/README.md).
+PREFIXES = [(prefix, name) for name in sorted(os.listdir(os.path.join(plugin, "adapters")))
+            for prefix in [read_prefix(name)] if prefix]
+
 def adapter_for(item_id):
-    if item_id.startswith("gh#"): return "github"
-    if item_id.startswith("local:"): return "local"
-    return None
+    return next((name for prefix, name in PREFIXES if item_id.startswith(prefix)), None)
 
 def blocker_open(item_id):
     if item_id in known:

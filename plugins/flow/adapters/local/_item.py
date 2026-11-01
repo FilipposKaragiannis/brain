@@ -9,7 +9,7 @@ Usage (always from the shell scripts):
   _item.py write-state <home> <id> key=value...
   _item.py comment <home> <id> <text>
   _item.py close <home> <id> [<text>]
-  _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME]
+  _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME] [--type NAME]
 
 An item's open_children counts the open items whose parent it is.
 """
@@ -24,6 +24,11 @@ STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_e
               "answered", "asked", "answer", "answered_at", "gate_from"]
 LIST_KEYS = {"blocked_by", "labels", "touches"}
 INT_KEYS = {"attempts"}
+
+
+def usage(message):
+    sys.stderr.write("flow: %s\n" % message)
+    sys.exit(2)
 
 
 def now():
@@ -97,7 +102,7 @@ def dump(path, meta, body):
 
 def item_path(home, item_id):
     if not item_id.startswith("local:") or "/" not in item_id:
-        raise SystemExit("flow: not a local item id: %s" % item_id)
+        usage("not a local item id: %s" % item_id)
     kind, n = item_id[len("local:"):].split("/", 1)
     return os.path.join(home, "items", kind, n + ".md")
 
@@ -134,8 +139,14 @@ def to_json(path, meta, body, children=None):
 
 
 def cmd_list(home, args):
-    want_all = "--all" in args
-    kind = args[args.index("--kind") + 1] if "--kind" in args else None
+    want_all, kind, i = False, None, 0
+    while i < len(args):
+        if args[i] == "--all":
+            want_all = True; i += 1
+        elif args[i] == "--kind" and i + 1 < len(args):
+            kind = args[i + 1]; i += 2
+        else:
+            usage("unknown option %s" % args[i])
     items, children = [], open_children(home)
     for path in sorted(glob.glob(os.path.join(home, "items", "*", "*.md")), key=natural_key):
         meta, body = parse(path)
@@ -166,11 +177,11 @@ def cmd_write_state(home, args):
     meta, body = parse(path)
     for kv in args[1:]:
         if "=" not in kv:
-            raise SystemExit("flow: expected key=value, got %s" % kv)
+            usage("expected key=value, got %s" % kv)
         key, value = kv.split("=", 1)
         key = key.replace("-", "_")
         if key not in STATE_KEYS:
-            raise SystemExit("flow: unknown state key %s" % key)
+            usage("unknown state key %s" % key)
         if key in LIST_KEYS:
             meta[key] = [v for v in value.split(",") if v.strip()]
         elif key in INT_KEYS:
@@ -222,8 +233,10 @@ def cmd_create(home, args):
             opt["area"] = rest[i + 1]; i += 2
         elif rest[i] == "--priority":
             opt["priority"] = rest[i + 1]; i += 2
+        elif rest[i] == "--type":
+            sys.stderr.write("flow: the local tracker has no issue types, so --type %s is left out\n" % rest[i + 1]); i += 2
         else:
-            raise SystemExit("flow: unknown option %s" % rest[i])
+            usage("unknown option %s" % rest[i])
     folder = os.path.join(home, "items", kind)
     os.makedirs(folder, exist_ok=True)
     numbers = [int(os.path.splitext(os.path.basename(p))[0]) for p in glob.glob(os.path.join(folder, "*.md"))
