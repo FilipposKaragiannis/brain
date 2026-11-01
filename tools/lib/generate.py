@@ -2,8 +2,7 @@
 """Render every generated file of the marketplace from its sources.
 
 Sources: plugins/<plugin>/plugin.source.json, roster/agents.json, roster/briefs/<agent>.md,
-roster/templates/*, shared/sh/*.sh (copied into each plugin that runs shell). The version in
-plugins/<plugin>/app/package.json is generated too; the rest of that file is written by hand.
+roster/templates/*, shared/sh/*.sh (copied into each plugin that runs shell).
 
 Usage: generate.py [--check] [--root DIR]
   --check  compare with the files on disk, print stale paths, exit 1 on drift, write nothing.
@@ -13,7 +12,6 @@ import argparse
 import glob
 import json
 import os
-import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,10 +28,6 @@ AGENT_TEMPLATES_DIR = "plugins/standards/templates/agents"
 SHARED_SH_DIRS = ["plugins/standards/hooks", "plugins/flow/lib"]
 MARKETPLACE_NAME = "brain-plugins"
 MARKETPLACE_DESCRIPTION = "Filip Karagiannis's Claude Code and Codex plugins: standards, flow, craft, meta, console."
-# A plugin's app is installed without the plugin around it, so its package.json carries the
-# plugin's version: the version the app reports is the one the plugin cache names.
-APP_PACKAGE = os.path.join("app", "package.json")
-TOP_LEVEL_VERSION = re.compile(r'^(  "version": )"[^"]*"', re.MULTILINE)
 
 
 def read_json(path):
@@ -105,17 +99,7 @@ def render_plugin(plugin, roster, root):
             lines += ["policy:", "  allow_implicit_invocation: false"]
         out[os.path.join(rel, "skills", skill["name"], "agents", "openai.yaml")] = "\n".join(lines) + "\n"
     out.update(render_plugin_agents(plugin["name"], rel, roster, root))
-    out.update(render_app_version(plugin, rel))
     return out
-
-
-def render_app_version(plugin, rel):
-    """The plugin's app/package.json with the plugin's version, the rest as written by hand."""
-    package = os.path.join(plugin["_dir"], APP_PACKAGE)
-    if not os.path.exists(package):
-        return {}
-    version = '"%s"' % plugin["version"]
-    return {os.path.join(rel, APP_PACKAGE): TOP_LEVEL_VERSION.sub(lambda match: match.group(1) + version, read_text(package), count=1)}
 
 
 def render_plugin_agents(plugin_name, rel, roster, root):
