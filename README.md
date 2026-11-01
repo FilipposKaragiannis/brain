@@ -19,7 +19,7 @@ docs/          coding-standards.md, adr/
 
 Each plugin has one hand-written `plugin.source.json`. Everything else under `.claude-plugin/`,
 `.codex-plugin/`, `skills/*/agents/openai.yaml`, `agents/` and `codex-agents/` is generated, as
-are both marketplace files. See `docs/adr/0001-one-source-two-hosts.md`.
+are both marketplace files and the version in a plugin's `app/package.json`. See `docs/adr/0001-one-source-two-hosts.md`.
 
 ## Work on it
 ```bash

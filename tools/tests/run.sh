@@ -96,5 +96,15 @@ check "no new result: says so, exit 0" [ "$code" -eq 0 ]
 check "no new result: message" has 'no new aggregate-result.json'
 rm "$work/bin/claude"
 
+echo "generate carries the plugin version into its app"
+mkdir -p "$work/plugins/demo/app"
+printf '{\n  "name": "demo",\n  "version": "0.8.0",\n  "engines": { "node": ">=24" },\n  "config": {\n    "version": "9.9.9"\n  }\n}\n' > "$work/plugins/demo/app/package.json"
+app_version() { python3 -c "import sys; sys.path.insert(0, sys.argv[1]); import generate; out = generate.render_app_version({'_dir': sys.argv[2], 'version': '0.11.0'}, 'plugins/demo'); print(out.get('plugins/demo/app/package.json', 'none'))" "$root/tools/lib" "$1"; }
+out="$(app_version "$work/plugins/demo")"
+check "the version is the plugin's" sh -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; assert json.load(sys.stdin)[\"version\"] == \"0.11.0\"'" "$out"
+check "a nested version stays" sh -c "printf '%s' \"\$0\" | python3 -c 'import json,sys; assert json.load(sys.stdin)[\"config\"][\"version\"] == \"9.9.9\"'" "$out"
+check "the hand-written layout stays" has '"engines": { "node": ">=24" },'
+check "a plugin with no app: nothing" [ "$(app_version "$work/plugins/none")" = "none" ]
+
 [ "$fails" -eq 0 ] && echo "tools: ok"
 exit $(( fails > 0 ))
