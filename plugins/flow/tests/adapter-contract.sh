@@ -170,6 +170,7 @@ check "read gives back the priority" '[ "$(field "$t1" priority)" = P1 ]'
 check "read gives back the area" '[ "$(field "$t1" area)" = Bots ]'
 check "read gives back the parent" '[ "$(field "$t1" parent)" = "$epic" ]'
 check "read gives back the blockers" '[ "$(field "$t2" blocked_by)" = "[\"$t1\"]" ]'
+check "a blocker is not blocked by the task it blocks" '[ "$(field "$t1" blocked_by)" = "[]" ]'
 check "a parent counts its open child" '[ "$(field "$epic" open_children)" = 1 ]'
 check "a new item has no step, no gate, no attempts, no touches" '[ -z "$(field "$t1" state.step)" ] && [ "$(field "$t1" state.gate)" = none ] && [ "$(field "$t1" state.attempts)" = 0 ] && [ "$(field "$t1" state.touches)" = "[]" ]'
 missing="$("missing_$name")"

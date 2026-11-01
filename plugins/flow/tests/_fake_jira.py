@@ -1,6 +1,7 @@
 """The fake Jira Cloud behind fake-jira.sh: one project in a JSON file, answering the REST v3 calls
 the Jira adapter makes, as curl prints them with -w "\\n%{http_code}". Any other call answers 404
-and says so on stderr."""
+and says so on stderr. A Blocks link posted with inwardIssue A and outwardIssue B means A blocks B:
+A reads it back as an outwardIssue B ("blocks"), B as an inwardIssue A ("is blocked by")."""
 import json, re, sys
 from urllib.parse import parse_qs, urlsplit
 
@@ -47,7 +48,7 @@ def view(issue, wanted, properties):
         for link in links:
             if issue["key"] not in (link["inward"], link["outward"]):
                 continue
-            side, other = ("inwardIssue", link["outward"]) if link["inward"] == issue["key"] else ("outwardIssue", link["inward"])
+            side, other = ("outwardIssue", link["outward"]) if link["inward"] == issue["key"] else ("inwardIssue", link["inward"])
             shown["issuelinks"].append({"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
                                         side: {"key": other, "fields": {"status": status_of(issues[other])}}})
     return {"key": issue["key"], "fields": shown,

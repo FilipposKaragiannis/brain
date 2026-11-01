@@ -203,7 +203,7 @@ def cmd_create(args):
     expect(status, made, "create the issue")
     for blocker in blockers:
         if blocker.startswith(PREFIX):
-            link = {"type": {"name": "Blocks"}, "inwardIssue": {"key": made["key"]}, "outwardIssue": {"key": key_of(blocker)}}
+            link = {"type": {"name": "Blocks"}, "inwardIssue": {"key": key_of(blocker)}, "outwardIssue": {"key": made["key"]}}
             status, answer = call("POST", "/rest/api/3/issueLink", link, once=True)
             if status // 100 != 2:
                 sys.stderr.write("flow: could not record %s%s blocked by %s\n" % (PREFIX, made["key"], blocker))
