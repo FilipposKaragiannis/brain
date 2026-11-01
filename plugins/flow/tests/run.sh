@@ -648,6 +648,10 @@ check "ready: github.ready_needs still applies, to the GitHub adapter too" [ "$(
 check "ready: github.priority_order still orders the local items" [ "$(local_ready 2>/dev/null)" = "$tq2 $tq3 $tq1" ]
 "$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"
 check "ready: the deprecated github keys warn once a board run, naming the new keys" sh -c "[ \"\$(grep -c 'deprecated: set ready.needs and ready.priority_order' '$work/trackers.err')\" = 1 ]"
+printf 'adapters:\n  default: local\nbase: main\nready:\n  needs:\n  priority_order: []\ngithub:\n  ready_needs: [priority]\n  priority_order: [P1, P0]\npool:\npool_max: 2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+tq4="$("$P/adapters/local/create.sh" task "Sized, no priority" --size S 2>/dev/null)"
+check_all "ready: an empty ready.needs asks for nothing, over the deprecated github.ready_needs" 'case " $(local_ready 2>/dev/null) " in *" $tq4 "*) true ;; *) false ;; esac'
+check "ready: an empty ready.priority_order ranks every priority alike, over the deprecated github.priority_order" [ "$("$P/adapters/local/read.sh" "$tq1" 2>/dev/null | jget rank)" = "$("$P/adapters/local/read.sh" "$tq2" 2>/dev/null | jget rank)" ]
 cd "$repo"
 cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
 

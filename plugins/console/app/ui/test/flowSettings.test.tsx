@@ -325,6 +325,12 @@ test('ReadyNeeds_OnlyTheDeprecatedGithubKeySet_StartsAtItsValue', async () => {
   expect([(within(needs).getByRole('checkbox', { name: 'priority' }) as HTMLInputElement).checked, (within(needs).getByRole('checkbox', { name: 'size' }) as HTMLInputElement).checked], 'because the flow reads github.ready_needs while ready.needs is unset, so the form shows what it runs with').toEqual([false, true]);
 });
 
+test('ReadyNeeds_SavedEmptyBesideTheDeprecatedGithubKey_StartsWithNothingTicked', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ ready: { needs: {} }, github: { ready_needs: ['size'] } }));
+  const needs = namedGroup('Readiness', 'ready.needs');
+  expect([(within(needs).getByRole('checkbox', { name: 'priority' }) as HTMLInputElement).checked, (within(needs).getByRole('checkbox', { name: 'size' }) as HTMLInputElement).checked], 'because an empty ready.needs in the file is what the flow runs with, not the deprecated github.ready_needs').toEqual([false, false]);
+});
+
 test('Pages_Read_FieldsUnderTheirPartsHeadings', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues(ON_GITHUB));
   const parts = (page: string): string[] => within(group(page)).getAllByRole('region').map((region) => region.getAttribute('aria-label') ?? '');

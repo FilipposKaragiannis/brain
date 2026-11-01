@@ -214,18 +214,19 @@ trackers_unread() {
 # ready_rules: the readiness rules of every tracker, exported comma-separated: READY_NEEDS, the
 # fields an unstarted item must have before it is ready (ready.needs), and READY_PRIORITY_ORDER,
 # the priorities from most to least urgent (ready.priority_order). The deprecated
-# github.ready_needs and github.priority_order stand in for an unset key, with one warning a run
-# (FLOW_READY_WARNED keeps the scripts it starts quiet). A field no adapter knows is refused, exit 2.
+# github.ready_needs and github.priority_order stand in for a key the file leaves out (an empty
+# list written there is kept), with one warning a run (FLOW_READY_WARNED keeps the scripts it
+# starts quiet). A field no adapter knows is refused, exit 2.
 READY_FIELDS="priority size"
 ready_rules() {
   _needs_key=ready.needs; _old=""; _new=""
   READY_NEEDS="$(cfg ready.needs | paste -sd, -)"
-  if [ -z "$READY_NEEDS" ]; then
+  if [ -z "$(yaml_line "$(config_file)" ready.needs)" ]; then
     _needs_key=github.ready_needs; READY_NEEDS="$(cfg github.ready_needs | paste -sd, -)"
     [ -z "$READY_NEEDS" ] || { _old="github.ready_needs is"; _new="ready.needs"; }
   fi
   READY_PRIORITY_ORDER="$(cfg ready.priority_order | paste -sd, -)"
-  if [ -z "$READY_PRIORITY_ORDER" ]; then
+  if [ -z "$(yaml_line "$(config_file)" ready.priority_order)" ]; then
     READY_PRIORITY_ORDER="$(cfg github.priority_order | paste -sd, -)"
     [ -z "$READY_PRIORITY_ORDER" ] || { _old="${_old:+github.ready_needs and github.priority_order are}"; _old="${_old:-github.priority_order is}"; _new="${_new:+$_new and }ready.priority_order"; }
   fi

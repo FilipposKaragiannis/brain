@@ -185,19 +185,25 @@ const LEGACY_READY: Record<string, string> = { 'ready.needs': 'github.ready_need
 
 /**
  * What the plugin (`ready_rules` in lib/flow.sh) still takes from `github.ready_needs` or
- * `github.priority_order` for a readiness key the file leaves unset: the list and the key it came
- * from, or null when the new key is set, the old one is empty, or the path is no readiness key.
+ * `github.priority_order` for a readiness key the file leaves out: the list and the key it came
+ * from, or null when the file has the new key (an empty list too), the old one is empty, or the
+ * path is no readiness key.
  */
 export function legacyReadySetting(values: Record<string, unknown>, path: string): { value: string[]; from: string } | null {
   const from = LEGACY_READY[path];
-  if (from === undefined || listAt(values, path).length > 0) return null;
+  if (from === undefined || entryAt(values, path) !== undefined) return null;
   const old = listAt(values, from);
   return old.length === 0 ? null : { value: old, from };
 }
 
+/** The parsed file's entry at a dotted path, undefined when the file has no such key. */
+function entryAt(values: Record<string, unknown>, path: string): unknown {
+  return path.split('.').reduce<unknown>((at, key) => (at !== null && typeof at === 'object' && !Array.isArray(at) ? (at as Record<string, unknown>)[key] : undefined), values);
+}
+
 /** A list in the parsed file at a dotted path; one scalar is a one-item list, as lib/flow.sh reads it. */
 function listAt(values: Record<string, unknown>, path: string): string[] {
-  const value = path.split('.').reduce<unknown>((at, key) => (at !== null && typeof at === 'object' && !Array.isArray(at) ? (at as Record<string, unknown>)[key] : undefined), values);
+  const value = entryAt(values, path);
   if (typeof value === 'string') return value === '' ? [] : [value];
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }

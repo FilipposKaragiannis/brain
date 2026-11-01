@@ -321,7 +321,7 @@ with a concrete example for every free-text key, `adapter: 'github'` on the keys
 adapter reads, `keys` for a map with fixed names (`github.fields`: size, priority, area;
 `github.status`: backlog, ready, gate, running, review), `values` for a list of fixed choices
 (`ready.needs` and `trackers`), `deprecated` on `github.ready_needs` and `github.priority_order`
-(the form starts `ready.needs` and `ready.priority_order` at them while those are unset), `rows` for a map of free names (`gates`), and its follow-up: `jobs.schedule.*` and
+(the form starts `ready.needs` and `ready.priority_order` at them while the file leaves those out; an empty list saved there counts as set), `rows` for a map of free names (`gates`), and its follow-up: `jobs.schedule.*` and
 `jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action,
 offered only while some job keeps a schedule, since install exits 2 when none has); a job whose
 `jobs.schedule.<job>` is removed or emptied is never touched by install again, so it gets

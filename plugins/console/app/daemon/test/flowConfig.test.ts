@@ -666,6 +666,11 @@ test('LegacyReadySetting_NewKeySet_NoFallback', () => {
   assert.equal(legacyReadySetting({ ready: { priority_order: ['P1'] }, github: { priority_order: ['P0', 'P1'] } }, 'ready.priority_order'), null, 'because a set ready.priority_order wins over the deprecated key');
 });
 
+test('LegacyReadySetting_NewKeyAnEmptyList_NoFallback', () => {
+  const github = { ready_needs: ['priority'], priority_order: ['P0', 'P1'] };
+  assert.deepEqual([legacyReadySetting({ ready: { needs: {} }, github }, 'ready.needs'), legacyReadySetting({ ready: { priority_order: [] }, github }, 'ready.priority_order')], [null, null], 'because ready_rules keeps an empty list written under ready (the bare key the form saves, or []) instead of the deprecated key');
+});
+
 test('LegacyReadySetting_OneScalar_ReadAsAOneItemList', () => {
   assert.deepEqual(legacyReadySetting({ github: { priority_order: 'P0' } }, 'ready.priority_order'), { value: ['P0'], from: 'github.priority_order' }, 'because yaml_get reads a scalar as a one-item list');
 });
