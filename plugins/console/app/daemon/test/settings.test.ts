@@ -319,6 +319,26 @@ test('Reload_AfterTheDaemonsOwnSave_NothingToTake', () => {
   } finally { cleanup(); }
 });
 
+test('Reload_ProjectAddedByHandThenTerminalSaved_Applied', () => {
+  const { settings, applied, paths, cleanup } = store([], FILE_PROJECT);
+  try {
+    writeFileSync(paths.configFile, JSON.stringify(BOTH_PROJECTS));
+    settings.update({ terminal: 'ghostty' });
+    settings.reload();
+    assert.deepEqual(applied.map((projects) => projects.map((project) => project.id)), [['project', 'project-local']], 'because a save of another setting before the next look keeps the hand-added root in the file, and it must still be watched');
+  } finally { cleanup(); }
+});
+
+test('Reload_ProjectRemovedByHandThenPortSaved_Dropped', () => {
+  const { settings, applied, paths, cleanup } = store([], { 'config.json': BOTH_PROJECTS });
+  try {
+    writeFileSync(paths.configFile, JSON.stringify({ projects: [{ root: LOCAL_ROOT }] }));
+    settings.update({ port: 7490 });
+    settings.reload();
+    assert.deepEqual(applied.map((projects) => projects.map((project) => project.id)), [['project-local']], 'because a save of another setting before the next look keeps the hand-removed root out of the file, and it must stop being watched');
+  } finally { cleanup(); }
+});
+
 test('ConfigEditedByHand_TakenOnTheNextMinute', () => {
   const { settings, paths, cleanup } = store([], FILE_PROJECT);
   const timers = fakeScheduler();

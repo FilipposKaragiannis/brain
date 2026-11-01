@@ -313,7 +313,7 @@ export class SettingsStore {
     const stored = readStoredSettings(this.deps.config.paths);
     if (!stored.ok) { this.fileError = stored.error; return stored; }
     const { file } = stored.value;
-    if (sameSettings(file, this.file)) { this.fileError = null; return null; }
+    if (sameSettings(file, this.file) && this.watchesFileProjects(file)) { this.fileError = null; return null; }
     let projects: ProjectDefinition[] | null = null;
     if (this.projectsFrom === 'file') {
       const found = checkProjectList((file.projects ?? []).map((entry) => entry.root));
@@ -328,6 +328,16 @@ export class SettingsStore {
       this.deps.applyProjects(projects);
     }
     return { ok: true, value: [...this.roots] };
+  }
+
+  /**
+   * The roots the file names are the ones watched, or a flag or the environment sets them. A PUT
+   * of the terminal or the port keeps a hand edit of the projects in the file without applying it.
+   */
+  private watchesFileProjects(file: ConfigFile): boolean {
+    if (this.projectsFrom !== 'file') return true;
+    const fileRoots = (file.projects ?? []).map((entry) => path.resolve(entry.root));
+    return JSON.stringify(fileRoots) === JSON.stringify(this.roots);
   }
 
   /**
