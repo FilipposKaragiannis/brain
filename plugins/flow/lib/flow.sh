@@ -173,21 +173,81 @@ cfg_or() { v="$(cfg "$1")"; [ -n "$v" ] && printf '%s' "$v" || printf '%s' "$2";
 # item_slug gh#310 -> gh-310 ; local:bug/12 -> local-bug-12. Safe as a directory and branch name.
 item_slug() { printf '%s' "$1" | tr ':/#' '---'; }
 
-# adapter_for <id>: the adapter that owns an item, from the id prefix.
+# adapter_for <id>: the adapter that owns an item: the one whose adapters/<name>/prefix starts the
+# id (adapters/README.md).
 adapter_for() {
-  case "$1" in
-    gh#*) printf 'github' ;;
-    local:*) printf 'local' ;;
-    *) return 1 ;;
-  esac
+  for _af_file in "$FLOW_PLUGIN"/adapters/*/prefix; do
+    _af_prefix=""; read -r _af_prefix < "$_af_file" 2>/dev/null
+    [ -n "$_af_prefix" ] || continue
+    case "$1" in "$_af_prefix"*) _af_name="${_af_file%/prefix}"; printf '%s' "${_af_name##*/}"; return 0 ;; esac
+  done
+  return 1
+}
+
+# slug_item <slug>: the item id item_slug made the slug from, through each adapter's slug.sed;
+# nothing when no adapter owns it.
+slug_item() {
+  for _si_file in "$FLOW_PLUGIN"/adapters/*/slug.sed; do
+    [ -f "$_si_file" ] && printf '%s\n' "$1" | sed -n -f "$_si_file"
+  done | head -n 1
 }
 
 # adapter_for_kind <kind>: the adapter that new items of a kind go to, from the config.
 adapter_for_kind() { v="$(cfg "adapters.$1")"; [ -n "$v" ] && printf '%s' "$v" || cfg_or "adapters.default" "local"; }
 
-# adapters_configured: every adapter named in the config, local always, one per line.
+# adapters_configured: the trackers the flow reads, one per line: the config's `trackers` when it
+# names them, else every adapter named under adapters.* and local. A name in trackers that is no
+# adapter is refused, exit 2, with the adapters there are.
 adapters_configured() {
-  { echo local; cfg "adapters.default"; for k in epic task bug; do cfg "adapters.$k"; done; } | grep -v '^$' | sort -u
+  _trackers="$(cfg trackers)"
+  if [ -z "$_trackers" ]; then
+    { echo local; cfg "adapters.default"; for k in epic task bug; do cfg "adapters.$k"; done; } | grep -v '^$' | sort -u
+    return
+  fi
+  for _tracker in $_trackers; do
+    [ -d "$FLOW_PLUGIN/adapters/$_tracker" ] || die "trackers names $_tracker, not an adapter; the adapters are $(ls "$FLOW_PLUGIN/adapters" | paste -sd ' ' -)" 2
+  done
+  printf '%s\n' "$_trackers"
+}
+
+# trackers_unread: each adapters.* value that the config's `trackers` leaves out, one reason a
+# line; nothing while trackers is unset. A new item sent there would never be read.
+trackers_unread() {
+  _trackers="$(cfg trackers)"; [ -n "$_trackers" ] || return 0
+  for _key in default epic task bug; do
+    _to="$(cfg "adapters.$_key")"; [ -n "$_to" ] || [ "$_key" != default ] || _to=local
+    [ -z "$_to" ] || printf '%s\n' "$_trackers" | grep -qx "$_to" \
+      || echo "adapters.$_key is $_to, which trackers leaves out, so the flow would never read the items it gets"
+  done
+}
+
+# ready_rules: the readiness rules of every tracker, exported comma-separated: READY_NEEDS, the
+# fields an unstarted item must have before it is ready (ready.needs), and READY_PRIORITY_ORDER,
+# the priorities from most to least urgent (ready.priority_order). The deprecated
+# github.ready_needs and github.priority_order stand in for a key the file leaves out (an empty
+# list written there is kept), with one warning a run (FLOW_READY_WARNED keeps the scripts it
+# starts quiet). A field no adapter knows is refused, exit 2.
+READY_FIELDS="priority size"
+ready_rules() {
+  _needs_key=ready.needs; _old=""; _new=""
+  READY_NEEDS="$(cfg ready.needs | paste -sd, -)"
+  if [ -z "$(yaml_line "$(config_file)" ready.needs)" ]; then
+    _needs_key=github.ready_needs; READY_NEEDS="$(cfg github.ready_needs | paste -sd, -)"
+    [ -z "$READY_NEEDS" ] || { _old="github.ready_needs is"; _new="ready.needs"; }
+  fi
+  READY_PRIORITY_ORDER="$(cfg ready.priority_order | paste -sd, -)"
+  if [ -z "$(yaml_line "$(config_file)" ready.priority_order)" ]; then
+    READY_PRIORITY_ORDER="$(cfg github.priority_order | paste -sd, -)"
+    [ -z "$READY_PRIORITY_ORDER" ] || { _old="${_old:+github.ready_needs and github.priority_order are}"; _old="${_old:-github.priority_order is}"; _new="${_new:+$_new and }ready.priority_order"; }
+  fi
+  if [ -n "$_old" ] && [ -z "${FLOW_READY_WARNED:-}" ]; then
+    echo "flow: $_old deprecated: set $_new in .flow/config.yaml instead, read for every tracker" >&2
+    FLOW_READY_WARNED=1
+  fi
+  for _need in $(printf '%s' "$READY_NEEDS" | tr , ' '); do
+    case " $READY_FIELDS " in *" $_need "*) ;; *) die "$_needs_key knows $(printf '%s' "$READY_FIELDS" | sed 's/ / and /'), not $_need" 2 ;; esac
+  done
+  export READY_NEEDS READY_PRIORITY_ORDER FLOW_READY_WARNED
 }
 
 # adapter <op> <id|adapter-name> [args...]: run one adapter operation. The first argument after

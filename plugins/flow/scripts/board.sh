@@ -1,5 +1,5 @@
 #!/bin/sh
-# board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every adapter, every claim. The pool
+# board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every tracker read, every claim. The pool
 # with item, step and last event; open items with their state and blockers; pending gates;
 # overlapping claims; the spend per item, from the step sessions in log/runs.jsonl. --graph
 # prints a graph model built from every adapter's open items (scripts/_graph.py): the dependency
@@ -17,6 +17,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -z "$mermaid" ] || [ -n "$graph" ] || die "--mermaid goes with --graph" 2
+ready_rules
+trackers="$(adapters_configured)" || exit 2
 merge_lists() { python3 -I -c '
 import json, sys
 out = []
@@ -27,12 +29,12 @@ print(json.dumps(out))'; }
 # through and stops when one fails. FLOW_LIST_WHOLE makes a list cut at its limit fail. The board
 # shows what it can.
 if [ -n "$graph" ]; then
-  lists="$(for a in $(adapters_configured); do FLOW_LIST_WHOLE=1 adapter list "$a" || exit 1; done)" || die "an adapter could not list its items, so no graph" 1
+  lists="$(for a in $trackers; do FLOW_LIST_WHOLE=1 adapter list "$a" || exit 1; done)" || die "an adapter could not list its items, so no graph" 1
   case "$graph" in priorities) set -- priorities ;; *) set -- epic "$graph" ;; esac
   printf '%s\n' "$lists" | merge_lists | python3 -I "$FLOW_PLUGIN/scripts/_graph.py" "$@" $mermaid
   exit
 fi
-items="$(for a in $(adapters_configured); do adapter list "$a" 2>/dev/null; done | merge_lists)"
+items="$(for a in $trackers; do adapter list "$a" 2>/dev/null; done | merge_lists)"
 # Each run record says whether a process still holds it: "running on shell" is only true then.
 grace="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
 reminder="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2

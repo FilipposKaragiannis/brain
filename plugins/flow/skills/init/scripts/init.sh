@@ -83,6 +83,10 @@ if [ ! -f .flow/config.yaml ]; then
       echo "# nested maps, lists as '- item' or [a, b]. No anchors, no multi-line strings."
       echo "adapters:"
       if [ -n "$repo" ]; then echo "  default: github"; echo "  # bug: local    # keep bugs out of GitHub"; else echo "  default: local"; fi
+      echo "# trackers: [github, local]   # the trackers board, next and health read; unset, every one above and local"
+      echo "ready:"
+      echo "  # needs: [priority, size]           # an unstarted item without these is not ready, on every tracker"
+      echo "  # priority_order: [P0, P1, P2, P3]  # ready items run in this order, items with no priority last"
       echo "base: $base"
       echo "# Gates the flow clears itself, by item size. Only plan-approval can be listed. Merge, interview,"
       echo "# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined."
@@ -95,12 +99,23 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  #   size: Size                # a single-select issue field replaces the size: labels"
         echo "  #   priority: Priority        # orders the ready items"
         echo "  #   area: Area                # the area intake files a note under, from its section"
-        echo "  # priority_order: [P0, P1, P2, P3]"
-        echo "  # ready_needs: [priority, size]   # an unstarted item without these is not ready"
         echo "  # project: 1                  # the project whose Status follows the flow state"
         echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
         echo "  #   gate: Needs you           # also backlog, ready, running, review"; }
+      echo "# Jira Cloud as a tracker: set adapters.default (or adapters.<kind>) to jira. The API token"
+      echo "# comes from JIRA_API_TOKEN in the environment, never from this file."
+      echo "# jira:"
+      echo "#   site: https://<org>.atlassian.net"
+      echo "#   project: KEY                # the project key"
+      echo "#   email: you@example.com      # the login the token belongs to"
+      echo "#   types:                      # the issue type of each kind"
+      echo "#     epic: Epic                # also task: Task, bug: Bug"
+      echo "#   fields:                     # custom fields, by name or id"
+      echo "#     size: Size                # unset, the size is a size: label"
+      echo "#     area: Area"
+      echo "#   transitions:"
+      echo "#     done: Done                # the transition close takes"
       echo "# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism."
       echo "# A claim with no free worktree adds one (named after the last entry, ../$(basename "$main")-wt-<n>)"
       echo "# while the pool is below pool_max, and the steward appends it here. 0 never adds."
@@ -217,7 +232,7 @@ install_file "$plugin/templates/flow.rules" .codex/rules/flow.rules "" guard
 for src in "$plugin"/codex-agents/*.toml; do install_file "$src" ".codex/agents/$(basename "$src")" "" guard; done
 
 # 5. .gitignore block. .flow/*.lock/ covers the locks flow_lock takes in the flow home (pick,
-# answers, sweep). Under --check each line the project's block lacks is named.
+# claim, answers, sweep). Under --check each line the project's block lacks is named.
 # One per line and read with read, so the lock pattern is never expanded by the shell.
 ignored=".flow/items/
 .flow/reports/
@@ -256,6 +271,10 @@ if [ -f .flow/config.yaml ]; then
   bad_auto="$(sed -n '/^auto_gates:/,/^[^ #]/p' .flow/config.yaml | grep -E '^  [A-Za-z]' | grep -v '^  plan-approval:' | sed 's/:.*//; s/^ *//' | head -1)"
   [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"
   a="$(cfg_or adapters.default local)"; [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.default names $a, not an adapter"
+  bad="$(adapters_configured 2>&1 >/dev/null)" || gap ".flow/config.yaml: ${bad#flow: }"
+  while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_TRACKERS
+$(trackers_unread)
+EOF_TRACKERS
   # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;
   # the old jobs.model and jobs.effort still work for one release, with a note.
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS

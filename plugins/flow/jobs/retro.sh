@@ -25,7 +25,7 @@ retro_commit() { [ "$(cfg retro.commit)" = "false" ] || job_commit lessons "less
 [ "$new" -ge "$min" ] || { job_say "quiet: $new new lesson(s), minimum $min"; retro_commit "chore(flow): record the lessons [skip ci]"; exit 0; }
 job_say "running over $new new lesson(s)"
 job_host_run "$main" "$(host_skill_prompt "$host" meta retro "Unattended: nobody answers questions. Read the $new lessons since the last retro from $home/lessons.jsonl ($total lines, $read_so_far read before). Marketplace changes go in a PR${market:+ from the marketplace at $market}; project changes are listed, not applied, in $home/reports/retro-$(date +%F).md. Append the retros.log line with $total as the lessons read so far.")" \
-  >> "$(job_log_dir)/$job.log" 2>&1 || job_say "host exit $?"
+  >> "$(job_log_dir)/$job.log" 2>&1 || { job_say "host exit $?"; job_host_stopped && exit 0; }
 [ -f "$home/reports/retro-$(date +%F).md" ] && job_say "report: $home/reports/retro-$(date +%F).md"
 retro_commit "chore(flow): record the lessons the retro read [skip ci]"
 job_say "done"

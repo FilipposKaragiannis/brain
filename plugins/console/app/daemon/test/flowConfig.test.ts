@@ -10,7 +10,7 @@ import { applyChange, parseDocument, valueAt } from '../src/plugins/flow/configD
 import { contentHash, describe, FlowConfigEditor, followUpsOf } from '../src/plugins/flow/configEditor.ts';
 import { codexDefaults, readHostDefaults } from '../src/plugins/flow/hostDefaults.ts';
 import type { FlowConfigDocument, FlowConfigSaved } from '../src/plugins/flow/schema.ts';
-import { checkChange, checkFileValue, checkSchedule, fieldAt, FLOW_CONFIG_SCHEMA, legacyJobsSetting } from '../src/plugins/flow/schema.ts';
+import { checkChange, checkFileValue, checkSchedule, fieldAt, FLOW_CONFIG_SCHEMA, legacyJobsSetting, legacyReadySetting } from '../src/plugins/flow/schema.ts';
 import { parseYaml } from '../src/yaml.ts';
 import { FIXTURES } from './fakeRunner.ts';
 
@@ -670,7 +670,39 @@ test('FixedKeyMap_OtherName_RefusedOnChangeAndWarnedInTheFile', () => {
 });
 
 test('FixedValuesList_OtherValue_RefusedOnChangeAndWarnedInTheFile', () => {
-  const needs = fieldAt('github.ready_needs')!;
-  assert.ok(checkChange(needs, ['priority', 'size']).ok && checkFileValue(needs, 'size').ok, 'because _gh.sh knows priority and size');
-  assert.deepEqual([checkChange(needs, ['area']), checkFileValue(needs, ['priority', 'area'])], Array(2).fill({ ok: false, error: 'github.ready_needs lists area: it takes priority or size' }), 'because _gh.sh ignores any other field with a warning');
+  const needs = fieldAt('ready.needs')!;
+  assert.ok(checkChange(needs, ['priority', 'size']).ok && checkFileValue(needs, 'size').ok, 'because ready_rules knows priority and size');
+  assert.deepEqual([checkChange(needs, ['area']), checkFileValue(needs, ['priority', 'area'])], Array(2).fill({ ok: false, error: 'ready.needs lists area: it takes priority or size' }), 'because ready_rules refuses any other field');
+});
+
+test('Trackers_OtherValue_Refused', () => {
+  assert.deepEqual(checkChange(fieldAt('trackers')!, ['github', 'jira']), { ok: false, error: 'trackers lists jira: it takes github or local' }, 'because adapters_configured refuses a tracker with no adapter');
+});
+
+test('ReadinessFields_ReadForEveryTracker_NotMarkedGithubOnly', () => {
+  assert.deepEqual(['ready.needs', 'ready.priority_order'].map((path) => fieldAt(path)?.adapter), [undefined, undefined], 'because ready_rules applies the readiness keys to the local tracker too, so the form shows them without GitHub');
+});
+
+test('LegacyReadySetting_NewKeyUnset_TheDeprecatedGithubKey', () => {
+  assert.deepEqual(legacyReadySetting({ github: { ready_needs: ['priority'] } }, 'ready.needs'), { value: ['priority'], from: 'github.ready_needs' }, 'because ready_rules reads github.ready_needs while ready.needs is unset');
+});
+
+test('LegacyReadySetting_NewKeySet_NoFallback', () => {
+  assert.equal(legacyReadySetting({ ready: { priority_order: ['P1'] }, github: { priority_order: ['P0', 'P1'] } }, 'ready.priority_order'), null, 'because a set ready.priority_order wins over the deprecated key');
+});
+
+test('LegacyReadySetting_NewKeyAnEmptyList_NoFallback', () => {
+  const github = { ready_needs: ['priority'], priority_order: ['P0', 'P1'] };
+  assert.deepEqual([legacyReadySetting({ ready: { needs: {} }, github }, 'ready.needs'), legacyReadySetting({ ready: { priority_order: [] }, github }, 'ready.priority_order')], [null, null], 'because ready_rules keeps an empty list written under ready (the bare key the form saves, or []) instead of the deprecated key');
+});
+
+test('LegacyReadySetting_OneScalar_ReadAsAOneItemList', () => {
+  assert.deepEqual(legacyReadySetting({ github: { priority_order: 'P0' } }, 'ready.priority_order'), { value: ['P0'], from: 'github.priority_order' }, 'because yaml_get reads a scalar as a one-item list');
+});
+
+test('TrackerKeys_Jira_TakenAsATrackerForNewItems', () => {
+  for (const key of ['adapters.default', 'adapters.epic', 'adapters.task', 'adapters.bug']) {
+    const spec = fieldAt(key)!;
+    assert.deepEqual([checkChange(spec, 'jira').ok, checkFileValue(spec, 'jira').ok], [true, true], `because the flow plugin ships a jira adapter, so ${key} may name it`);
+  }
 });

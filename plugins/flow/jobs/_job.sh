@@ -7,8 +7,9 @@
 # It is taken out of the arguments here, so the job reads the rest as before, and $job becomes the
 # name: the lock, the log, the pause and the runs.jsonl lines go by it. Absent, the name is the job.
 # --model <name> and --effort <level>, anywhere too, replace jobs.<host>.model and .effort for this
-# run's host sessions (job_opt_model, job_opt_effort; empty keeps the pair), so one schedule can
-# run on its own pair. They are taken out of the arguments the same way.
+# run (job_opt_model, job_opt_effort; empty keeps the pair): the host sessions it starts, next's
+# steps with no agent (design, implement, review, explain) and the run health resumes, so one
+# schedule can run on its own pair. They are taken out of the arguments the same way.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/host.sh"
 job_log_dir() { printf '%s/log' "$(flow_home)"; }
@@ -90,7 +91,9 @@ job_end() { rm -rf "$d"; [ -z "${job_shared:-}" ] || rm -rf "$job_shared"; job_r
 # then the pause, the lock and the log. With model, the job starts host sessions: their model and
 # effort are read once, from jobs.<host>, or from the deprecated jobs.model and jobs.effort with
 # one warning; an effort the host does not take ends the run, exit 2, recorded in runs.jsonl and
-# the job log so status shows it. Jobs without model never read the pair, so it never stops them.
+# the job log so status shows it. Jobs without model never read the pair here: next's unattended
+# loop reads it for the steps with no agent and stops on a bad effort before it claims an item,
+# and health hands it to the run it resumes.
 # --model and --effort win over the pair; an --effort the host does not take ends any job the same way,
 # and an --effort leaves the pair's effort unchecked, since this run never uses it.
 job_start() {
@@ -132,6 +135,11 @@ job_model() { printf '%s' "${job_m:-}"; }
 job_effort() { printf '%s' "${job_e:-}"; }
 # job_host_run <dir> <prompt>: one host session with the jobs' model and effort, names as is.
 job_host_run() { host_run "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is; }
+# job_host_stopped: true when the host is stopped (host_run refused a session, exit 75, or a
+# session's spend limit or auth error stopped it), and the job's line then says so and why. No
+# later session of the run would start. The stop names no item, so gate.sh clear <host> lifts it:
+# the comments job's item waits at the merge gate, which an escalation gate would replace.
+job_host_stopped() { _stop="$(host_stopped "$host")"; [ -n "$_stop" ] || return 1; job_say "stopped: $_stop"; }
 # job_commit <what> <noun> <message> <file>...: commit the files alone on the base branch in the
 # main worktree ($main) and push, when the base's unpushed changes are only these files. A file
 # outside the main worktree or missing is skipped; one git ignores is left out, and said.

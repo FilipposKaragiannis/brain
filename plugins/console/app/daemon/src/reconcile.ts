@@ -12,7 +12,7 @@ import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, NewerConsole,
   ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, StoppedHost, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
@@ -33,6 +33,8 @@ export type ReconcileInput = {
    * ones that may be a store lagging a read (see `DisagreementSettler`); left out, all of them do.
    */
   settle?: (found: Disagreement[]) => Disagreement[];
+  /** A newer console in the plugin cache than the one running; left out, none. */
+  newerConsole?: NewerConsole | null;
 };
 
 const MILLISECONDS_PER_SECOND = 1000;
@@ -113,8 +115,10 @@ function worktreeFlags(context: WorktreeContext, now: Date): WorktreeFlag[] {
   const dirty = context.git?.dirtyFiles ?? 0;
   if (dirty > 0) flags.push('dirty');
   if (behind > 0) flags.push('behind');
-  if (context.claim !== null && behind >= STALE_BEHIND_BASE_COMMITS) flags.push('stale-branch');
-  const claimAge = context.claim === null ? null : ageSeconds(context.claim.claimedAt, now);
+  // A reservation is the owner's own work, never stale: only a flow claim is judged.
+  const flowClaim = context.claim !== null && context.claim.reserved === '';
+  if (flowClaim && behind >= STALE_BEHIND_BASE_COMMITS) flags.push('stale-branch');
+  const claimAge = flowClaim ? ageSeconds(context.claim?.claimedAt ?? null, now) : null;
   const quiet = context.agents.length === 0 && context.run === null && context.gate === null;
   if (quiet && claimAge !== null && claimAge >= STALE_IDLE_HOURS * SECONDS_PER_HOUR) flags.push('idle');
   if (context.run !== null && context.agents.length === 0) flags.push('dead-run');
@@ -139,7 +143,7 @@ function processInfo(process: AgentProcess): ProcessInfo {
 }
 
 function toClaim(record: ClaimRecord): Claim {
-  return { item: record.item, branch: record.branch, base: record.base, step: record.step, claimedAt: record.claimedAt, host: record.host };
+  return { item: record.item, branch: record.branch, base: record.base, step: record.step, claimedAt: record.claimedAt, host: record.host, reserved: record.reserved };
 }
 
 function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Worktree[] {
@@ -162,7 +166,7 @@ function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Wor
       lastCommitAt: context.git?.lastCommitAt ?? null,
       claim: context.claim === null ? null : toClaim(context.claim),
       claimAgeSeconds: context.claim === null ? null : ageSeconds(context.claim.claimedAt, now),
-      item: context.claim?.item ?? null,
+      item: context.claim?.item || null,
       itemUrl: boardItem?.url || null,
       itemTitle: boardItem?.title || null,
       gate: context.gate?.gate ?? null,
@@ -625,7 +629,7 @@ function pullAttention(pulls: PullRequest[]): AttentionRow[] {
 
 /**
  * Open items, not epics, the next job refuses only because a field is empty: no step yet, nothing open blocks
- * them, and `needs` (the `ready_needs` fields they lack) is not empty. They are the heads of their
+ * them, and `needs` (the `ready.needs` fields they lack) is not empty. They are the heads of their
  * chains, so filling the field is what starts the chain.
  */
 function waitsOnField(item: Item): boolean {
@@ -738,7 +742,7 @@ function projectInfo(input: ReconcileInput): ProjectInfo {
   return {
     id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
     base: config.base, repo: config.repo, repoUrl,
-    trackerUrl: config.adapter === GITHUB_ADAPTER && repoUrl !== null ? `${repoUrl}/issues` : null,
+    trackerUrl: config.trackers.includes(GITHUB_ADAPTER) && repoUrl !== null ? `${repoUrl}/issues` : null,
     adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
   };
 }
@@ -770,5 +774,6 @@ export function reconcile(read: ReconcileInput): Snapshot {
     worktrees, items, gates, runs, agents, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     events: input.flow.events,
     disagreements,
+    newerConsole: input.newerConsole ?? null,
   };
 }

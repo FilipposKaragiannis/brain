@@ -1,7 +1,8 @@
 #!/bin/sh
 # Tests for the repo tools: lint catches a broken plugin, the cost report parses and never
-# fails. Exit 1 on any failure.
+# fails, release.sh folds the changelog fragments and lint checks them. Exit 1 on any failure.
 set -u
+export PYTHONDONTWRITEBYTECODE=1   # a __pycache__ in the repo copy would read as "written" to the diffs below
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 fails=0
@@ -95,6 +96,123 @@ out="$(PATH="$work/bin:$PATH" "$root/tools/eval.sh" demo --output-dir "$work/eva
 check "no new result: says so, exit 0" [ "$code" -eq 0 ]
 check "no new result: message" has 'no new aggregate-result.json'
 rm "$work/bin/claude"
+
+echo "release folds the changelog fragments"
+# A copy of this repo without its own fragments, plus the demo plugin at 1.4.2: release.sh, the
+# generator and lint.sh run in the copy as they run here.
+seed="$work/seed"; mkdir -p "$seed"
+(cd "$root" && git ls-files -co --exclude-standard | while IFS= read -r f; do [ -e "$f" ] && printf '%s\n' "$f"; done | tar -cf - -T -) | tar -xf - -C "$seed"
+rm -rf "$seed"/plugins/*/changelog.d
+cp -R "$here/fixtures/release/demo" "$seed/plugins/demo"
+"$seed/tools/generate.sh" >/dev/null
+repo="$work/repo"; demo="$repo/plugins/demo"; today="$(date +%F)"
+fresh() { rm -rf "$repo"; cp -R "$seed" "$repo"; mkdir -p "$demo/changelog.d"; }
+version() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$1/plugin.source.json"; }
+release() { out="$("$repo/tools/release.sh" "$@" 2>"$work/release.err")"; code=$?; }
+package_versions() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(' '.join([d['version']] + ([d['packages']['']['version']] if 'packages' in d else [])))" "$1"; }
+
+fresh
+printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
+printf 'bump: minor\n\n- A feature whose line\n  wraps.\n' > "$demo/changelog.d/b-feature.md"
+release demo
+check "exits 0" [ "$code" -eq 0 ]
+check "prints the plugin, the old and the new version" [ "$out" = "demo 1.4.2 -> 1.5.0" ]
+check "minor wins over patch" [ "$(version "$demo")" = 1.5.0 ]
+check "the section goes on top, the fragments in filename order" [ "$(cat "$demo/CHANGELOG.md")" = "$(printf '# demo\n\n## 1.5.0 (%s)\n\n- A fix.\n- A feature whose line\n  wraps.\n\n## 1.4.2 (2026-10-30)\n\n- The release before the fragments.' "$today")" ]
+check "the fragments are gone" [ ! -e "$demo/changelog.d" ]
+check "generate ran: the manifest carries the new version" grep -q '"version": "1.5.0"' "$demo/.claude-plugin/plugin.json"
+check "generate ran: every generated file is fresh" python3 "$repo/tools/lib/generate.py" --check
+check "the app's package.json takes the new version" [ "$(package_versions "$demo/app/package.json")" = 1.5.0 ]
+check "the app's lockfile takes it at the top and in its root package" [ "$(package_versions "$demo/app/package-lock.json")" = "1.5.0 1.5.0" ]
+check "a package in a folder of the app takes it" [ "$(package_versions "$demo/app/ui/package.json")" = 1.5.0 ]
+check "a dependency's version in the lockfile stays" [ "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['packages']['node_modules/typescript']['version'])" "$demo/app/package-lock.json")" = 5.9.3 ]
+check "the package.json keeps npm's formatting" grep -q '^  "engines": { "node": ">=24" }$' "$demo/app/package.json"
+
+fresh
+printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
+printf 'bump: patch\n\n- Another fix.\n' > "$demo/changelog.d/b-fix.md"
+release demo
+check "patch only raises the patch" [ "$code-$(version "$demo")" = "0-1.4.3" ]
+
+fresh
+printf 'bump: major\n\n- A break.\n' > "$demo/changelog.d/a-break.md"
+printf 'bump: minor\n\n- A feature.\n' > "$demo/changelog.d/b-feature.md"
+release demo
+check "major wins and resets minor and patch" [ "$code-$(version "$demo")" = "0-2.0.0" ]
+
+fresh
+rm "$demo/CHANGELOG.md"
+printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
+release demo
+check "a plugin without a CHANGELOG gets one under its heading" [ "$(cat "$demo/CHANGELOG.md")" = "$(printf '# demo\n\n## 1.4.3 (%s)\n\n- A fix.' "$today")" ]
+
+fresh
+mkdir -p "$repo/plugins/craft/changelog.d"
+printf 'bump: patch\n\n- A demo fix.\n' > "$demo/changelog.d/a-fix.md"
+printf 'bump: minor\n\n- A craft feature.\n' > "$repo/plugins/craft/changelog.d/a-feature.md"
+release
+check "no plugin named: every plugin with fragments" [ "$code-$out" = "0-craft $(version "$seed/plugins/craft") -> $(version "$repo/plugins/craft")
+demo 1.4.2 -> 1.4.3" ]
+
+fresh
+release
+check "no fragments: nothing to release, exit 0" [ "$code-$out" = "0-release: nothing to release" ]
+check "no fragments: nothing written" diff -r -x changelog.d "$seed" "$repo"
+
+fresh
+printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
+printf 'bump: minor\n- No blank line.\n' > "$demo/changelog.d/b-bad.md"
+release demo
+check "a malformed fragment: exit 2" [ "$code" -eq 2 ]
+check "a malformed fragment: the file and the reason" grep -q '^release: plugins/demo/changelog.d/b-bad.md: a blank line and then the bullets must follow the bump line$' "$work/release.err"
+check "a malformed fragment: nothing written" diff -r -x changelog.d "$seed" "$repo"
+check "a malformed fragment: the good one is kept" [ -f "$demo/changelog.d/a-fix.md" ]
+
+fresh
+printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
+printf '{"name": "demo-ui", "version": "1.4.2"}\n' > "$demo/app/ui/package.json"
+release demo
+check "an app package with its version elsewhere: exit 2 naming it" sh -c "[ $code -eq 2 ] && grep -q '^release: plugins/demo/app/ui/package.json: no version field where npm writes it\$' '$work/release.err'"
+check "an app package with its version elsewhere: nothing written" [ "$(version "$demo")" = 1.4.2 ]
+
+release nope
+check "an unknown plugin: exit 2" [ "$code-$(cat "$work/release.err")" = "2-release: no plugin named nope" ]
+
+fresh
+printf 'bump: minor\n\n- A feature.\n' > "$demo/changelog.d/a-feature.md"
+release --dry-run demo
+check "dry run: exit 0 and the plugin line first" [ "$code-$(printf '%s\n' "$out" | head -1)" = "0-demo 1.4.2 -> 1.5.0" ]
+check "dry run: prints the section" sh -c "printf '%s' \"\$0\" | grep -q '^- A feature.\$'" "$out"
+check "dry run: nothing written" diff -r -x changelog.d "$seed" "$repo"
+check "dry run: the fragment stays" [ -f "$demo/changelog.d/a-feature.md" ]
+
+echo "lint checks the changelog fragments"
+lint_fragments() { out="$(python3 "$repo/tools/lib/fragments.py" "$repo")"; code=$?; }
+fresh
+printf 'bump: minor\n\n- A feature.\n  - A nested point.\n' > "$demo/changelog.d/a-feature.md"
+lint_fragments
+check "a well-formed fragment passes" [ "$code-$out" = "0-" ]
+printf 'bump: big\n\n- A feature.\n' > "$demo/changelog.d/a-feature.md"
+lint_fragments
+check "an unknown bump fails" [ "$code-$out" = "1-lint: malformed changelog fragment plugins/demo/changelog.d/a-feature.md: the first line must be 'bump: major', 'bump: minor' or 'bump: patch'" ]
+printf 'bump: minor\n\n- A feature.\nA paragraph.\n' > "$demo/changelog.d/a-feature.md"
+lint_fragments
+check "a line that is no bullet fails" [ "$code-$out" = "1-lint: malformed changelog fragment plugins/demo/changelog.d/a-feature.md: line 4 is neither a bullet ('- ') nor a continuation (indented two spaces)" ]
+printf 'bump: minor\n\n- %0100d\n' 0 > "$demo/changelog.d/a-feature.md"
+lint_fragments
+check "a line over 100 columns fails" [ "$code-$out" = "1-lint: malformed changelog fragment plugins/demo/changelog.d/a-feature.md: line 3 is over 100 columns" ]
+rm "$demo/changelog.d/a-feature.md"; : > "$demo/changelog.d/notes.txt"
+lint_fragments
+check "a file that is not .md fails" [ "$code-$out" = "1-lint: a changelog.d holds only .md files: plugins/demo/changelog.d/notes.txt" ]
+rm "$demo/changelog.d/notes.txt"
+check "app packages at the plugin's version pass" python3 "$repo/tools/lib/packages.py" "$repo"
+sed 's/"version": "1.4.2"/"version": "1.4.1"/' "$seed/plugins/demo/app/package-lock.json" > "$demo/app/package-lock.json"
+out="$(python3 "$repo/tools/lib/packages.py" "$repo")"; code=$?
+check "an app lockfile behind the plugin fails" [ "$code-$out" = "1-lint: plugins/demo/app/package-lock.json: version 1.4.1 and 1.4.1, the plugin is 1.4.2" ]
+printf 'bump: minor\n- No blank line.\n' > "$demo/changelog.d/b-bad.md"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "tools/lint.sh fails on a malformed fragment and names it" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'malformed changelog fragment plugins/demo/changelog.d/b-bad.md'" "$out"
+check "tools/lint.sh fails on a drifted app package and names it" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'plugins/demo/app/package-lock.json: version 1.4.1'" "$out"
 
 [ "$fails" -eq 0 ] && echo "tools: ok"
 exit $(( fails > 0 ))

@@ -43,7 +43,11 @@ elif args[:2] == ["issue", "comment"]:
     i = issue(args[2]); i.setdefault("comments", []).append({"id": i["number"] * 100 + len(i.get("comments", [])) + 1, "body": sys.stdin.read(),
                                                           "user": {"login": os.environ.get("FAKE_GH_USER", "owner")}}); save()
 elif args[:2] == ["issue", "close"]:
-    issue(args[2])["state"] = "CLOSED"; save()
+    i = issue(args[2]); i["state"] = "CLOSED"
+    if "--comment" in args:
+        i.setdefault("comments", []).append({"id": i["number"] * 100 + len(i.get("comments", [])) + 1, "body": args[args.index("--comment") + 1],
+                                             "user": {"login": os.environ.get("FAKE_GH_USER", "owner")}})
+    save()
 elif args[:2] == ["label", "create"]:
     data.setdefault("labels", []).append(args[2]); save()
 elif args[:2] == ["pr", "view"]:

@@ -36,12 +36,13 @@ const BOARD_TIMEOUT_MS = 180000;
 /** The rank `_board.py` sorts an item without one by. */
 export const UNRANKED = 999;
 
-/** What the local adapter prints: the GitHub adapter's item without the fields it computes. */
+/** What an adapter prints: an item that may lack the fields the board computes. */
 type AdapterItem = Omit<BoardItem, 'rank' | 'needs' | 'open_blockers'> & Partial<Pick<BoardItem, 'rank' | 'needs' | 'open_blockers'>> & { body?: string };
 
 /**
- * Only the GitHub adapter computes rank, needs and open_blockers, so an item without them gets
- * the board's sort default, no needs, and the blockers that are open items on this board.
+ * An adapter may leave out rank, needs and open_blockers (the local one has no open_blockers), so
+ * an item without them gets the board's sort default, no needs, and the blockers that are open
+ * items on this board.
  */
 export function parseBoard(source: string): BoardFacts {
   const parsed = JSON.parse(source) as { items?: unknown; spend?: unknown };

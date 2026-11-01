@@ -32,7 +32,8 @@ targets=""
 if [ -n "$one" ]; then
   targets="$one"
 else
-  for a in $(adapters_configured); do
+  trackers="$(adapters_configured 2>&1)" || { printf '%s\n' "$trackers" >&2; job_say "error: ${trackers#flow: }" >/dev/null; exit 2; }
+  for a in $trackers; do
     adapter list "$a" 2>/dev/null | python3 -I -c '
 import json, sys
 for i in json.load(sys.stdin):
@@ -50,7 +51,7 @@ fi
 # prepare_pr <target>: chase its silent reviewers (not on a draft, which waits on its quiz) and
 # print the brief's note when the PR conflicts with its base. Model free.
 prepare_pr() {
-  case "$1" in *#*|local:*) pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)" ;; *) pull="$1" ;; esac
+  if adapter_for "$1" >/dev/null; then pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)"; else pull="$1"; fi
   [ -n "$pull" ] && state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pull" 2>/dev/null)" || return 0
   [ "$(json_get "$state" isDraft)" = "true" ] || chase_reviewers "$1" "$pull"
   [ "$(json_get "$state" mergeable)" = "CONFLICTING" ] || return 0
@@ -69,10 +70,9 @@ chase_reviewers() { # chase_reviewers <target> <pr>
 # was, and the owner's answer is what is new. A line with no clear is the line before 1.23.0.
 activity() {
   awaiting=""; cleared=""
-  case "$1" in
-    *#*|local:*) data="$(adapter read "$1" 2>/dev/null)"; pull="$(json_get "$data" state.pr)"; cleared="$(json_get "$data" state.answered_at)" ;;
-    *) pull="$1" ;;
-  esac
+  if adapter_for "$1" >/dev/null; then
+    data="$(adapter read "$1" 2>/dev/null)"; pull="$(json_get "$data" state.pr)"; cleared="$(json_get "$data" state.answered_at)"
+  else pull="$1"; fi
   [ -n "$pull" ] && act="$("$FLOW_PLUGIN/scripts/comments.sh" activity "$pull" 2>/dev/null)" || return 0
   awaiting="$(json_list "$act" awaiting | tr '\n' ' ' | sed 's/ $//')"
   printf '%s %s %s threads:%s comments:%s awaiting:%s%s' "$(json_get "$act" updatedAt)" "$(json_get "$act" headRefOid)" "$(json_get "$act" mergeable)" \
@@ -96,13 +96,9 @@ tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 
 # branch names, flow/<item slug> (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1);
 # nothing for a PR the flow did not open.
 item_of() {
-  case "$1" in *#*|local:*) printf '%s' "$1" ;;
-    *) "$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c '
-import json, re, sys
-head = json.load(sys.stdin).get("headRefName", "")
-gh, local = re.match(r"flow/gh-(\d+)$", head), re.match(r"flow/local-([a-z]+)-(\d+)$", head)
-print("gh#" + gh.group(1) if gh else "local:%s/%s" % local.groups() if local else "")' 2>/dev/null ;;
-  esac
+  if adapter_for "$1" >/dev/null; then printf '%s' "$1"; return; fi
+  io_head="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("headRefName", ""))' 2>/dev/null)"
+  case "$io_head" in flow/?*) slug_item "${io_head#flow/}" ;; esac
 }
 # resume_note <target>: the item's comments-resume.md, the note a cut-short pass leaves for the
 # next one (the shape of the health job's resume.md), in the reports folder the steward names.
@@ -180,6 +176,10 @@ for t in $targets; do
   { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$rnote Unattended: nobody answers questions; collect owner decisions in the report and stop.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
+  # A pass the stopped host refused or cut ends the run: no later pass would start, and this PR is
+  # tried again after the clear, with no failure counted. The saved activity goes, so the extra
+  # pass this run may have marked as taken still runs.
+  if [ "$code" -ne 0 ] && job_host_stopped; then rm -f "$f"; exit 0; fi
   why=""
   if [ "$code" -ne 0 ]; then why="host exit $code"
   elif [ -n "$(cut_short "$out")" ]; then why="the host stopped the addresser before it finished"; fi

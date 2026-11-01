@@ -22,7 +22,7 @@ import sys
 
 SIZE = {"S": 1, "M": 2, "L": 3}
 DEFAULT_SIZE = 2
-# The rank an adapter gives an item with no priority, or none at all (the local adapter).
+# The rank an adapter gives an item with no priority, or none at all.
 NO_RANK = 999
 # One fill per priority column, highest first; every column past the last takes the last.
 FILLS = ["#fecaca", "#fed7aa", "#fef08a", "#e5e7eb"]

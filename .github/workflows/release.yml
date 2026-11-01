@@ -1,0 +1,89 @@
+name: release
+# On every push to main: fold the changelog fragments (plugins/*/changelog.d/*.md) with
+# tools/release.sh and open or refresh the release PR from release/next. Nothing pushes to main;
+# the owner merges the release PR. See docs/adr/0002-changelog-fragments.md.
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_BRANCH: release/next
+      PYTHONDONTWRITEBYTECODE: "1"   # no __pycache__ for `git add -A` to pick up
+    defaults:
+      run:
+        shell: bash   # -eo pipefail: a failing tools/release.sh fails the step through tee
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Fold the fragments
+        id: fold
+        run: |
+          tools/release.sh | tee "$RUNNER_TEMP/released.txt"
+          if grep -q '^release: nothing to release$' "$RUNNER_TEMP/released.txt"; then exit 0; fi
+          tools/lint.sh
+          echo "released=true" >> "$GITHUB_OUTPUT"
+      - name: Write the PR title and body
+        if: steps.fold.outputs.released == 'true'
+        run: |
+          # "flow 1.27.1 -> 1.28.0" lines become "release: flow 1.28.0, console 0.13.0".
+          echo "RELEASE_TITLE=release: $(awk '{ printf "%s%s %s", sep, $1, $4; sep = ", " }' "$RUNNER_TEMP/released.txt")" >> "$GITHUB_ENV"
+          while read -r plugin old arrow new; do
+            awk -v plugin="$plugin" '/^## /{ n++; if (n == 1) { sub(/^## /, "## " plugin " "); print }; next } n == 1' "plugins/$plugin/CHANGELOG.md"
+          done < "$RUNNER_TEMP/released.txt" > "$RUNNER_TEMP/body.md"
+          printf '%s\n' "Folded from the changelog fragments on main by the release workflow. A later push to main" \
+            "refreshes this PR; merging it releases these versions." >> "$RUNNER_TEMP/body.md"
+          cat "$RUNNER_TEMP/body.md"
+      - name: Commit the release to release/next
+        if: steps.fold.outputs.released == 'true'
+        run: |
+          # The commit is made through the API so GitHub signs it: main's ruleset requires signed
+          # commits. It lands on a throwaway branch first, so release/next never points at main's
+          # head, which GitHub would read as the open release PR being merged.
+          base="$(git rev-parse HEAD)"
+          build="release/build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$build" -f sha="$base" > /dev/null
+          trap 'gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$build" > /dev/null || true' EXIT
+          git add -A
+          python3 - "$GITHUB_REPOSITORY" "$build" "$base" "$RELEASE_TITLE" > "$RUNNER_TEMP/commit.json" <<'PY'
+          import base64, json, subprocess, sys
+          repo, branch, head, title = sys.argv[1:]
+          listed = subprocess.run(["git", "diff", "--cached", "--name-status", "--no-renames", "-z"],
+                                  capture_output=True, check=True).stdout.decode().split("\0")[:-1]
+          additions, deletions = [], []
+          for status, path in zip(listed[0::2], listed[1::2]):
+              if status == "D":
+                  deletions.append({"path": path})
+                  continue
+              with open(path, "rb") as f:
+                  additions.append({"path": path, "contents": base64.b64encode(f.read()).decode()})
+          query = "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }"
+          print(json.dumps({"query": query, "variables": {"input": {
+              "branch": {"repositoryNameWithOwner": repo, "branchName": branch},
+              "message": {"headline": title},
+              "expectedHeadOid": head,
+              "fileChanges": {"additions": additions, "deletions": deletions},
+          }}}))
+          PY
+          commit="$(gh api graphql --input "$RUNNER_TEMP/commit.json" --jq '.data.createCommitOnBranch.commit.oid')"
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/$RELEASE_BRANCH" -f sha="$commit" -F force=true > /dev/null \
+            || gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$RELEASE_BRANCH" -f sha="$commit" > /dev/null
+      - name: Open or update the release PR
+        if: steps.fold.outputs.released == 'true'
+        run: |
+          number="$(gh pr list --head "$RELEASE_BRANCH" --base main --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --title "$RELEASE_TITLE" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh pr create --base main --head "$RELEASE_BRANCH" --title "$RELEASE_TITLE" --body-file "$RUNNER_TEMP/body.md"
+          fi

@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import type { Worktree } from '../../daemon/src/snapshot.ts';
+import type { ActionRecord, Worktree } from '../../daemon/src/snapshot.ts';
 import { Worktrees } from '../src/screens/Worktrees.tsx';
 import { actionRecord, claudeSession, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
@@ -70,7 +70,7 @@ test('StaleWorktree_SaysWhy', () => {
   expect(screen.queryByText(/branch is 27 commits behind main/), 'because stale is only useful with its reason').not.toBeNull();
 });
 
-const CLAIM = { item: 'gh#344', branch: 'flow/gh-344', base: 'epic/gh-300', step: 'implement', claimedAt: TAKEN_AT, host: 'claude' };
+const CLAIM = { item: 'gh#344', branch: 'flow/gh-344', base: 'epic/gh-300', step: 'implement', claimedAt: TAKEN_AT, host: 'claude', reserved: '' };
 
 test('BranchFarBehind_SaysMergeTheClaimsBaseIn', () => {
   renderWorktrees([{ ...poolWorktree('wt-7'), state: 'stale', flags: ['stale-branch'], claim: CLAIM, item: 'gh#344', staleReason: 'branch is 27 commits behind epic/gh-300 (limit 20)' }]);
@@ -201,4 +201,47 @@ test('SyncHandedOff_ReadSinceWithNoNote_ConflictGone', async () => {
   const files = { ...snapshot.sources.files, at: '2026-10-24T18:30:00Z' };
   await renderWithActions([BEHIND], [handoff, conflictedSync(['a.ts'])], { sources: { ...snapshot.sources, files } });
   expect(screen.queryByRole('list', { name: 'Conflicting files' }), 'because a read after the hand-off found no note: the sync step merged and dropped it').toBeNull();
+});
+
+/** The Worktrees screen over one free worktree, with the daemon answering every action with `answer`. */
+async function pressToolbar(label: string, answer: ActionRecord) {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: answer } }; });
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-2')] }} /></Wrapper>);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: label })); });
+  return { posted };
+}
+
+test('Toolbar_Reserve_PostsAReserveWithNoName', async () => {
+  const { posted } = await pressToolbar('Reserve', { ...actionRecord('r1', 'running', {}), kind: 'worktree.reserve' });
+  expect(posted, "because the daemon reserves under the owner's git name when none is given").toEqual([{ kind: 'worktree.reserve', args: {} }]);
+});
+
+test('Toolbar_Sweep_PostsASweep', async () => {
+  const { posted } = await pressToolbar('Sweep', { ...actionRecord('w1', 'running', {}), kind: 'steward.sweep' });
+  expect(posted, 'because Sweep runs the steward sweep now, not on the next schedule').toEqual([{ kind: 'steward.sweep', args: {} }]);
+});
+
+test('Toolbar_SweepDone_ShowsWhatItFreed', async () => {
+  await pressToolbar('Sweep', { ...actionRecord('w2', 'done', {}), kind: 'steward.sweep', outcome: 'finished', note: 'freed wt-3 (gh#41); cleared the merge gate of gh#41' });
+  expect(screen.queryByText('freed wt-3 (gh#41); cleared the merge gate of gh#41'), 'because the owner pressed Sweep to see what landed').not.toBeNull();
+});
+
+const RESERVED: Worktree = { ...poolWorktree('wt-4'), state: 'claimed', claim: { ...CLAIM, item: '', branch: '', step: '', reserved: 'Ada Lovelace' } };
+
+test('ReservedCard_SaysWhoReservedIt', () => {
+  renderWorktrees([RESERVED]);
+  expect(screen.queryByText('reserved by Ada Lovelace'), 'because a claim with no item would otherwise read as a stray one').not.toBeNull();
+});
+
+test('ReservedCard_HasRelease', async () => {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('l1', 'running', {}), kind: 'worktree.release', args: { target: 'wt-4' } } } }; });
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [RESERVED] }} /></Wrapper>);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Release' })); });
+  expect(posted, 'because the owner frees a reservation the way any claim is freed').toEqual([{ kind: 'worktree.release', args: { target: 'wt-4' } }]);
 });

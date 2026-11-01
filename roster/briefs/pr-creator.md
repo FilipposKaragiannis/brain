@@ -26,7 +26,9 @@ The item (its `parent`, acceptance lines), the task branch in the claimed worktr
 5. When a quiz exists: open as a draft (`--draft`), post `quiz.md` as the first comment with
    the marker `<!-- flow:quiz -->`, and say the PR goes ready when the owner's answers pass.
 6. Record the PR on the item: `adapters/<name>/link-pr.sh <item> <url>`. It also records the
-   host that wrote the PR, which picks the reviewers in step 7.
+   host that wrote the PR, which picks the reviewers in step 7. When it fails (a local item
+   file can lie outside the worktree you may write), the step does not fail: say so in the
+   result, and the orchestrator records the URL from the result's `pr`.
 7. Request reviews with `<plugin>/scripts/comments.sh request-review <pr> "<ask>"`: the ask
    is to review the diff line by line for correctness and to check the implementation against
    the item's acceptance lines. The script asks each reviewer of the author host's list in
@@ -39,9 +41,9 @@ The item (its `parent`, acceptance lines), the task branch in the claimed worktr
    comment with what changed since the last push.
 
 ## Output
-The PR, then the result file the brief names: status `done` with the URL, the base and why,
-draft or ready, and the reviewers asked; status `fail` when verify is not pass or the push is
-rejected.
+The PR, then the result file the brief names: status `done` with the URL under `pr` and in the
+summary, the base and why, draft or ready, and the reviewers asked; status `fail` when verify is
+not pass or the push is rejected.
 
 ## Never
 Never open a PR when verify is not pass. Never pick the default branch as base when the item

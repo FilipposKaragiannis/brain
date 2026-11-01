@@ -2,7 +2,7 @@ import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { App, PROJECTS_RETRY_MS } from '../src/App.tsx';
 import { ClockProvider } from '../src/clock.tsx';
-import { FakeDaemon, HTTP_OK, HTTP_UNAUTHORIZED } from './fakeDaemon.tsx';
+import { FakeDaemon, HTTP_OK, HTTP_UNAUTHORIZED, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 const PROJECTS_PATH = '/api/projects';
 const NETWORK_DOWN = 0;
@@ -90,4 +90,26 @@ test('App_ProjectsEvent_TheSwitcherListsTheNewProject', async () => {
   await flush(0);
   act(() => { daemon.latestStream().send('projects', [FOOSBRAWL, { id: 'brain', name: 'brain', counts: null }]); });
   expect(screen.getByRole('option', { name: 'brain' }), 'because a project added in Settings shows without a reload').not.toBeNull();
+});
+
+const UPDATE_NOTICE = /brain-console update/;
+
+/** The page on foosbrawl's overview once the stream sent this snapshot. */
+async function renderWithSnapshot(snapshot: ReturnType<typeof snapshotAt>): Promise<void> {
+  window.location.hash = '#/foosbrawl/overview';
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
+  renderApp(daemon);
+  await flush(0);
+  act(() => { daemon.latestStream().send('snapshot', snapshot); });
+}
+
+test('App_NewerConsoleInstalled_BannerNamesBothVersionsAndUpdate', async () => {
+  await renderWithSnapshot({ ...snapshotAt(TAKEN_AT, 0), newerConsole: { running: '0.9.2', cached: '0.10.0' } });
+  expect(screen.getByRole('status').textContent, 'because the page says which console is installed, which one runs, and how to move').toMatch(/0\.10\.0.*0\.9\.2.*brain-console update/);
+});
+
+test('App_DaemonRunsTheNewestConsole_NoBanner', async () => {
+  await renderWithSnapshot(snapshotAt(TAKEN_AT, 0));
+  expect(screen.queryByText(UPDATE_NOTICE), 'because the notice goes once the daemon runs the newest cached version').toBeNull();
 });

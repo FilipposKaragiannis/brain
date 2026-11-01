@@ -439,6 +439,53 @@ check "gh close"          [ "$("$P/adapters/github/read.sh" 'gh#11' | jget statu
 check "gh next.sh end to end" sh -c "'$P/scripts/next.sh' --json | grep -q '\"item\":\"gh#10\"'"
 check "cross-tracker blocker: local waits on gh" sh -c "'$P/adapters/local/create.sh' task Cross --blocked-by 'gh#12' >/dev/null && ! '$P/adapters/local/list-ready.sh' | grep -q Cross"
 
+echo "adapter contract (adapters/README.md)"
+for contract_adapter in github local jira; do
+  sh "$here/adapter-contract.sh" "$contract_adapter" > "$work/contract-$contract_adapter.out" 2>&1; code=$?
+  check "the $contract_adapter adapter meets the contract: $(tail -n 1 "$work/contract-$contract_adapter.out")" [ "$code" -eq 0 ]
+  [ "$code" -eq 0 ] || grep '^  FAIL' "$work/contract-$contract_adapter.out"
+done
+
+echo "jira adapter (fake curl)"
+cp .flow/config.yaml "$work/config.gh"
+mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
+printf '{"transitions": [{"id": "31", "name": "Done", "category": "done"}, {"id": "41", "name": "Closed", "category": "done"}]}\n' > "$work/jira/jira.json"
+jira_config() { printf 'adapters:\n  default: jira\nbase: main\nnotify:\n  desktop: false\njira:\n  site: %s\n  project: WID\n  email: flow@acme.test\n  api_token: in-the-config\n  fields:\n    size: Size\n  transitions:\n    done: Closed\n' "$1" > .flow/config.yaml; }
+jira_run() { env PATH="$work/jirabin:$PATH" FAKE_JIRA_DIR="$work/jira" FLOW_JIRA_RETRY_WAIT="0 0" JIRA_API_TOKEN=run-token "$@"; }
+jira_db() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(eval(sys.argv[2]))' "$work/jira/jira.json" "$1"; }
+jira_config https://acme.atlassian.net
+env PATH="$work/jirabin:$PATH" FAKE_JIRA_DIR="$work/jira" "$P/adapters/jira/list.sh" > /dev/null 2> "$work/jira/refused.err"; code=$?
+check_all "jira: without JIRA_API_TOKEN the adapter refuses and says why, though the config holds a token" '[ "$code" -ne 0 ] && grep -q "JIRA_API_TOKEN is not set" "$work/jira/refused.err" && [ ! -s "$work/jira/calls.log" ]'
+jira_task="$(jira_run "$P/adapters/jira/create.sh" task "Sized" --size M)"
+check_all "jira: a size goes to the jira.fields.size field, not a label" '[ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"customfield_10040\"][\"value\"]")" = M ] && [ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"labels\"]")" = "[]" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_task" | jget size)" = M ]'
+jira_run "$P/adapters/jira/write-state.sh" "$jira_task" size=L step=implement
+check_all "jira: write-state moves the size field and labels the step" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_task" | jget state.size)" = L ] && [ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"labels\"]")" = "['"'"'step:implement'"'"']" ]'
+jira_run "$P/adapters/jira/write-state.sh" "$jira_task" size=
+check_all "jira: write-state size= clears the jira.fields.size field" '[ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"customfield_10040\"]")" = None ] && [ -z "$(jira_run "$P/adapters/jira/read.sh" "$jira_task" | jget size)" ]'
+jira_run "$P/adapters/jira/link-pr.sh" "$jira_task" https://gh/pr/9
+check "jira: link-pr adds the PR as a remote link" [ "$(jira_db "[l[\"object\"][\"url\"] for l in d[\"issues\"][\"${jira_task#jira:}\"][\"remotelinks\"]]")" = "['https://gh/pr/9']" ]
+jira_run "$P/adapters/jira/close.sh" "$jira_task"
+check "jira: close takes the jira.transitions.done transition" [ "$(jira_db "d[\"issues\"][\"${jira_task#jira:}\"][\"fields\"][\"status\"][\"name\"]")" = Closed ]
+check "jira: the token never reaches curl's command line" sh -c "! grep -q run-token '$work/jira/calls.log'"
+printf '1\n503\n/rest/api/3/issue$\n' > "$work/jira/fail"
+check_all "jira: a create that met a 5xx is not tried again, as it may have landed" '! jira_run "$P/adapters/jira/create.sh" task "Twice" 2>/dev/null && [ "$(jira_db "len(d[\"issues\"])")" = 1 ] && [ "$(grep -c "/rest/api/3/issue\$" "$work/jira/calls.log")" = 2 ]'
+jira_blocker="$(jira_run "$P/adapters/jira/create.sh" task "Blocker")"
+printf '1\n403\n/rest/api/3/issueLink\n' > "$work/jira/fail"
+jira_held="$(jira_run "$P/adapters/jira/create.sh" task "Held" --blocked-by "$jira_blocker" 2>/dev/null)"
+check_all "jira: a blocker whose link Jira refused still holds the new task" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_held" | jget blocked_by)" = "[\"$jira_blocker\"]" ] && jira_run "$P/adapters/jira/list-ready.sh" | python3 -c "import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)]; sys.exit(0 if sys.argv[1] in ids and sys.argv[2] not in ids else 1)" "$jira_blocker" "$jira_held"'
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
+d["issues"]["WID-90"] = {"key": "WID-90", "properties": {}, "comments": [], "remotelinks": [], "fields": {"summary": "Linked", "labels": [], "priority": None,
+  "status": {"name": "To Do", "statusCategory": {"key": "new"}}, "issuetype": {"name": "Task"},
+  "description": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [
+    {"type": "text", "text": "the spec", "marks": [{"type": "link", "attrs": {"href": "https://docs.test/spec"}}]},
+    {"type": "text", "text": " and "}, {"type": "inlineCard", "attrs": {"url": "https://acme.atlassian.net/browse/WID-7"}}]}]}}}
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
+check_all "jira: a description keeps its link targets and smart links" '[ "$(jira_run "$P/adapters/jira/read.sh" jira:WID-90 | jget body)" = "[the spec](https://docs.test/spec) and https://acme.atlassian.net/browse/WID-7" ]'
+jira_config http://acme.atlassian.net
+site_err="$(jira_run "$P/adapters/jira/list.sh" 2>&1 >/dev/null)"; code=$?
+check_all "jira: a jira.site that is not https is refused" '[ "$code" -ne 0 ] && printf "%s" "$site_err" | grep -q "jira.site in .flow/config.yaml must be"'
+cp "$work/config.gh" .flow/config.yaml
+
 echo "github blips (fake gh)"
 # $FAKE_GH_DIR/fail makes the next N gh calls fail with a message; the waits are zero here.
 export FLOW_GH_RETRY_WAIT="0 0"
@@ -509,9 +556,10 @@ github:
     size: Size
     priority: Priority
     area: Area
-  priority_order: [P0, P1, P2, P3]
-  ready_needs: [priority, size]
   project: 1
+ready:
+  priority_order: [P0, P1, P2, P3]
+  needs: [priority, size]
 pool:
   - ../wt-1
   - ../wt-2
@@ -528,7 +576,7 @@ check "gh a started item needs nothing" grep -qx 'gh#36 task S P2 -' "$work/ghli
 check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
 check_all "graph: a GitHub epic's children come from the item list, native parent or Parent: line" '[ "$("$P/scripts/board.sh" --graph gh#39 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#40'\'']" ] && [ "$("$P/scripts/board.sh" --graph gh#30 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#31'\'']" ]'
 sed -i.bak 's/^  priority_order: .*/  priority_order: [P2, P0, P1, P3]/' .flow/config.yaml
-check_all "graph priorities: GitHub columns follow github.priority_order, not the names" '[ "$("$P/scripts/board.sh" --graph priorities | python3 -c "import json,sys; print(\" \".join(c[\"priority\"] or \"-\" for c in json.load(sys.stdin)[\"columns\"]))")" = "P2 P0 P1 P3 -" ]'
+check_all "graph priorities: GitHub columns follow ready.priority_order, not the names" '[ "$("$P/scripts/board.sh" --graph priorities | python3 -c "import json,sys; print(\" \".join(c[\"priority\"] or \"-\" for c in json.load(sys.stdin)[\"columns\"]))")" = "P2 P0 P1 P3 -" ]'
 mv .flow/config.yaml.bak .flow/config.yaml
 printf '1\ngh: HTTP 401: Bad credentials\n' > "$FAKE_GH_DIR/fail"
 check_all "graph: a failed adapter list stops the graph and shows the error" '! "$P/scripts/board.sh" --graph gh#39 >/dev/null 2>"$work/graph.err" && grep -q "Bad credentials" "$work/graph.err" && grep -q "no graph" "$work/graph.err" && ! grep -q "not an open item" "$work/graph.err"'
@@ -566,7 +614,7 @@ gpar="$("$P/scripts/new.sh" task "Parent with fields" --size M --priority P1 --a
 gkid="$("$P/scripts/new.sh" task "Kid" --size S --parent "$gpar" 2>/dev/null)"
 check "gh create: a child takes the parent's priority and area fields" sh -c "'$P/adapters/github/read.sh' '$gkid' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"priority\"],i[\"area\"],i[\"parent\"])==(\"P1\",\"Bots\",\"$gpar\"), i'"
 "$P/scripts/new.sh" task "Orphan kid" --size S --parent "$bots" > /dev/null 2> "$work/orphan.err"
-check "gh create: a child left without the priority ready_needs asks for is said" grep -q 'has no priority and github.ready_needs asks for one' "$work/orphan.err"
+check "gh create: a child left without the priority ready.needs asks for is said" grep -q 'has no priority and ready.needs asks for one' "$work/orphan.err"
 check "gh vocabulary: the issue types and the area options" sh -c "'$P/adapters/github/vocabulary.sh' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert \"Chore\" in v[\"types\"] and v[\"areas\"]==[\"Bots\",\"Debugging & Observability\"], v'"
 picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
@@ -598,6 +646,62 @@ slack_long() { python3 -I "$P/scripts/_slack.py" t '' '' '' '' 'The branch flow/
 check "slack: a long line breaks into one bullet per sentence" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; bullets=json.load(sys.stdin)[\"blocks\"][1][\"elements\"][0][\"elements\"]; assert len(bullets)==2, bullets'"
 check "slack: ids, commits, paths and code names read as code" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; d=json.load(sys.stdin); code=[e[\"text\"] for l in d[\"blocks\"][1][\"elements\"] for s in l[\"elements\"] for e in s[\"elements\"] if e.get(\"style\",{}).get(\"code\")]; assert code==[\"flow/gh-310\",\"3a677d23\",\"OptionUtility\",\"gh#320\"], code'"
 check "slack: a link that is not https stays out of the fallback" sh -c "python3 -I '$P/scripts/_slack.py' t 'gh#1 x' 'javascript:x|<!channel>' ambiguity 'gh#1' m | python3 -c 'import json,sys; t=json.load(sys.stdin)[\"text\"]; assert \"javascript\" not in t and \"<!channel>\" not in t, t'"
+echo "trackers and readiness on every tracker (fake gh)"
+mkdir -p "$work/trackers" && cd "$work/trackers" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
+tracked_config() { # tracked_config <trackers line> <ready block>: the GitHub fields fixture, new items to local
+  printf 'adapters:\n  default: local\n%s\nbase: main\ngithub:\n  repo: acme/widgets\n  types: true\n  fields:\n    size: Size\n    priority: Priority\n%s\npool:\npool_max: 2\nnotify:\n  desktop: false\n' "$1" "$2" > .flow/config.yaml
+}
+tracked_config 'trackers: [github, local]' 'ready:
+  needs: [priority, size]
+  priority_order: [P0, P1, P2, P3]'
+tq0="$("$P/adapters/local/create.sh" task "No priority" --size S)"
+check "trackers: the board reads GitHub when trackers names it, beside a local default" sh -c "'$P/scripts/board.sh' --json | python3 -c 'import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)[\"items\"]]; assert \"gh#32\" in ids and \"$tq0\" in ids, ids'"
+picked="$("$P/scripts/next.sh" --json 2>/dev/null)"
+check "trackers: next picks the most urgent ready item from every named tracker" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
+rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
+"$P/adapters/github/write-state.sh" 'gh#36' step=done >/dev/null 2>&1
+check "trackers: health reads every named tracker" sh -c "'$P/scripts/steward.sh' health 2>/dev/null | grep -q 'gh#36: done (every step ran)'"
+tracked_config 'trackers: [github, jira]' ''
+"$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"; code=$?
+check "trackers: a name with no adapter is refused (exit 2) with the adapters there are" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira, not an adapter; the adapters are github local' '$work/trackers.err'"
+"$P/scripts/steward.sh" health --dry-run >/dev/null 2>"$work/trackers.err"; code=$?
+check "trackers: health refuses (exit 2) a name with no adapter instead of reading no tracker" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira' '$work/trackers.err'"
+mkdir -p "$work/trackers/bin" && printf '#!/bin/sh\nexit 0\n' > "$work/trackers/bin/claude" && chmod +x "$work/trackers/bin/claude"
+PATH="$work/trackers/bin:$PATH" "$P/jobs/comments.sh" claude >/dev/null 2>"$work/trackers.err"; code=$?
+check "trackers: the comments job refuses (exit 2) a name with no adapter instead of a quiet pass" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira' '$work/trackers.err'"
+tracked_config 'trackers: [github]' ''
+"$P/scripts/new.sh" task "Never read" >/dev/null 2>"$work/trackers.err"; code=$?
+check "trackers: new refuses (exit 2) while new items go to a tracker trackers leaves out" sh -c "[ $code -eq 2 ] && grep -q 'adapters.default is local, which trackers leaves out' '$work/trackers.err'"
+check "init: --check reports an adapters value trackers leaves out as a gap" sh -c "FLOW_PLUGIN='$P' '$P/skills/init/scripts/init.sh' --check | grep -q 'gap: .flow/config.yaml: adapters.default is local, which trackers leaves out'"
+tracked_config '' 'ready:
+  needs: [size]
+  priority_order: [P1, P0]'
+tq1="$("$P/adapters/local/create.sh" task "Low" --size S --priority P0)"
+tq2="$("$P/adapters/local/create.sh" task "Urgent" --size S --priority P1)"
+tq3="$("$P/adapters/local/create.sh" task "Unsized" --priority P1)"
+local_ready() { "$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+check_all "ready: a local item without a field ready.needs asks for is not ready" '[ -n "$(local_ready)" ] && case " $(local_ready) " in *" $tq3 "*) false ;; *) true ;; esac'
+check "ready: a local item lists the ready.needs fields it lacks" [ "$("$P/adapters/local/read.sh" "$tq3" | jget needs)" = '["size"]' ]
+check "ready: local list-ready follows ready.priority_order, items with no priority last" [ "$(local_ready)" = "$tq2 $tq1 $tq0" ]
+tracked_config '' 'ready:
+  needs: [priority]'
+"$P/scripts/new.sh" task "Local kid" --size S --parent "$tq0" >/dev/null 2>"$work/trackers.err"
+check "ready: a local child without the priority ready.needs asks for is said" grep -q 'has no priority and ready.needs asks for one' "$work/trackers.err"
+tracked_config '' 'ready:
+  needs: [priority, owner]'
+"$P/adapters/local/list.sh" >/dev/null 2>"$work/trackers.err"; code=$?
+check "ready: an unknown field in ready.needs is refused (exit 2) with the fields the flow knows" sh -c "[ $code -eq 2 ] && grep -q 'ready.needs knows priority and size, not owner' '$work/trackers.err'"
+printf 'adapters:\n  default: local\ntrackers: [github, local]\nbase: main\ngithub:\n  repo: acme/widgets\n  types: true\n  fields:\n    size: Size\n    priority: Priority\n  ready_needs: [priority]\n  priority_order: [P1, P0]\npool:\npool_max: 2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+check "ready: github.ready_needs still applies, to the GitHub adapter too" [ "$("$P/adapters/github/read.sh" 'gh#33' 2>/dev/null | jget needs)" = '["priority"]' ]
+check "ready: github.priority_order still orders the local items" [ "$(local_ready 2>/dev/null)" = "$tq2 $tq3 $tq1" ]
+"$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"
+check "ready: the deprecated github keys warn once a board run, naming the new keys" sh -c "[ \"\$(grep -c 'deprecated: set ready.needs and ready.priority_order' '$work/trackers.err')\" = 1 ]"
+printf 'adapters:\n  default: local\nbase: main\nready:\n  needs:\n  priority_order: []\ngithub:\n  ready_needs: [priority]\n  priority_order: [P1, P0]\npool:\npool_max: 2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+tq4="$("$P/adapters/local/create.sh" task "Sized, no priority" --size S 2>/dev/null)"
+check_all "ready: an empty ready.needs asks for nothing, over the deprecated github.ready_needs" 'case " $(local_ready 2>/dev/null) " in *" $tq4 "*) true ;; *) false ;; esac'
+check "ready: an empty ready.priority_order ranks every priority alike, over the deprecated github.priority_order" [ "$("$P/adapters/local/read.sh" "$tq1" 2>/dev/null | jget rank)" = "$("$P/adapters/local/read.sh" "$tq2" 2>/dev/null | jget rank)" ]
+cd "$repo"
 cp "$work/issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/config.saved" .flow/config.yaml
 
 echo "comments plumbing (fake gh)"
@@ -820,6 +924,16 @@ check "comments job: a new review thread starts a pass" grep -q 'comments gh#21'
 check "comments job: a thread still awaiting a reply gets one more pass" sh -c "grep -q 'comments gh#21' '$HOST_LOG' && grep -q 'gh#21: open thread(s) 901 still wait on a reply, one more pass' .flow/log/comments.log"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: then the same awaiting threads are skipped, and the owner told once" sh -c "[ ! -s '$HOST_LOG' ] && [ \"\$(grep -c 'comments	gh#21: review thread(s) on .* still wait on a reply after two passes' .flow/events.log)\" = 1 ]"
+# The extra pass a stopped host refuses is not spent: after the clear it runs.
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].append({'databaseId': 904, 'body': 'Still drops it.', 'author': {'login': 'chatgpt-codex-connector'}, 'createdAt': 't'}); json.dump(d, open(p,'w'))"
+"$P/jobs/comments.sh" claude >/dev/null
+FLOW_HOST_GATES=1 sh -c '. "$FLOW_PLUGIN/lib/flow.sh"; . "$FLOW_PLUGIN/lib/host.sh"; host_stop claude spend-limit "API Error: 422 ExceededBudget"'
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a stopped host refuses the extra pass" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: open thread(s) 904 still wait on a reply, one more pass' .flow/log/comments.log"
+"$P/scripts/gate.sh" clear claude >/dev/null
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: the extra pass a stopped host refused runs after the clear" grep -q 'comments gh#21' "$HOST_LOG"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].pop(); json.dump(d, open(p,'w'))"
 check "activity: a reply from before 1.19.0 (no marker) by the flow's login is ours" sh -c "python3 - '$FAKE_GH_DIR/issues.json' <<'PY5'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -943,6 +1057,7 @@ check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null
 home2="$work/home2"; mkdir -p "$home2"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    effort: bogus\n' > "$home2/config.yaml"
 check "next job: a bad jobs.claude.effort stops it before it picks: its steps with no agent run on the pair" sh -c "FLOW_HOME='$home2' '$P/jobs/next.sh' claude | grep -q 'stopped: exit 2' && grep -q 'jobs.claude.effort is bogus' '$home2/log/next.log'"
+check "next job: a bad jobs.claude.effort is named in the run's status line" sh -c "grep '\"job\":\"next\"' '$home2/log/runs.jsonl' | tail -1 | grep -q 'jobs.claude.effort is bogus'"
 check "health job: a bad jobs.claude.effort does not stop it either" sh -c "FLOW_HOME='$home2' '$P/jobs/health.sh' claude --dry-run >/dev/null 2>&1; [ \$? != 2 ] && tail -1 '$home2/log/runs.jsonl' | grep -q '\"job\":\"health\"' && ! tail -1 '$home2/log/runs.jsonl' | grep -q '\"exit\":2'"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  host: vim\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null 2>"$work/job.err"; code=$?
@@ -1556,7 +1671,7 @@ check "release: an open item's reports stay" sh -c "'$P/scripts/steward.sh' rele
 echo "sweep"
 # The fake gh answers pr view with the PR in its state file, whatever the URL. One pool
 # worktree is free here, so each case claims it in turn.
-fake_pr() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pr"]={"number":90,"state":sys.argv[2],"isDraft":False,"mergedAt":None,"url":"https://gh/pull/90","headRefName":"","headRefOid":sys.argv[3],"baseRefName":"main"}; json.dump(d,open(p,"w"))' "$FAKE_GH_DIR/issues.json" "$1" "$2"; }
+fake_pr() { python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["pr"]={"number":90,"state":sys.argv[2],"isDraft":False,"mergedAt":None,"url":"https://gh/pull/90","headRefName":sys.argv[4],"headRefOid":sys.argv[3],"baseRefName":"main"}; json.dump(d,open(p,"w"))' "$FAKE_GH_DIR/issues.json" "$1" "$2" "${3:-}"; }
 commit_in() { printf '%s\n' "$2" > "$1/$2.txt" && git -C "$1" add -- "$2.txt" && git -C "$1" commit -qm "$2" && git -C "$1" rev-parse HEAD; }
 sc="$("$P/adapters/local/create.sh" task "Closed, claimed")"; wc_="$("$P/scripts/steward.sh" claim "$sc")"
 "$P/adapters/local/close.sh" "$sc" >/dev/null
@@ -1581,6 +1696,21 @@ merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 "$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "sweep: a commit after the merge keeps the branch" sh -c "[ ! -f '$wl/.flow/claim.json' ] && git -C '$wl' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sl")"
+# A pr step whose worker cannot write the local item file (it lies outside the worker's sandbox)
+# leaves the PR unrecorded: advance records the URL the step's result names, and the sweep finds
+# a PR nobody recorded by the item's task branch.
+ap="$("$P/adapters/local/create.sh" task "PR its worker could not link" --size S)"; "$P/adapters/local/write-state.sh" "$ap" step=pr
+printf '{"status":"done","summary":"PR open","pr":"https://gh/pull/90"}\n' > "$("$P/scripts/next.sh" "$ap" --json | jget reports)/pr.json"
+"$P/scripts/advance.sh" "$ap" >/dev/null 2>&1
+check "advance: a pr step's result records its PR on an item link-pr never reached" [ "$("$P/adapters/local/read.sh" "$ap" | jget state.pr)" = https://gh/pull/90 ]
+"$P/scripts/gate.sh" clear "$ap" merged >/dev/null; "$P/scripts/steward.sh" release "$ap" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$ap" >/dev/null
+sp="$("$P/adapters/local/create.sh" task "PR found by its branch" --size S)"; "$P/adapters/local/write-state.sh" "$sp" step=pr
+printf '{"status":"done","summary":"PR open"}\n' > "$("$P/scripts/next.sh" "$sp" --json | jget reports)/pr.json"
+"$P/scripts/advance.sh" "$sp" >/dev/null 2>&1
+fake_pr MERGED "$(git -C "$("$P/scripts/steward.sh" find "$sp")" rev-parse HEAD)" "flow/$(item_slug "$sp")"
+"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+check "sweep: an item at the merge gate with no PR recorded finds it by its branch, and the merge gate clears" [ "$("$P/adapters/local/read.sh" "$sp" | jget state.gate)" = none ]
+check "sweep: the PR found by the branch is recorded on the item" [ "$("$P/adapters/local/read.sh" "$sp" | jget state.pr)" = https://gh/pull/90 ]
 # The console sweeps one item once its gated PR leaves the open list; a sweep already running is enough.
 si="$("$P/adapters/local/create.sh" task "Swept alone")"; wi="$("$P/scripts/steward.sh" claim "$si")"
 "$P/adapters/local/close.sh" "$si" >/dev/null
@@ -2354,6 +2484,7 @@ st="$("$P/scripts/new.sh" task "Spends" --size S --body "## Acceptance
 - [ ] s")"
 : > "$COST_LOG"
 FAKE_HOST=budget PATH="$cpath" "$P/templates/run-unattended.sh" claude "$st" --max-steps 3 > "$work/cost.out" 2>&1; code=$?
+st_step="$(steprun "$st" step)"
 check_all "a spend limit raises the escalation gate at once, naming the cause and the host's line" '[ "$code" = 4 ] && [ "$("$P/adapters/local/read.sh" "$st" | jget state.gate)" = escalation ] && grep -q "claude failed on a spend limit: API Error: 422 .*ExceededBudget" ".flow/gates/$(item_slug "$st").json"'
 check "a spend limit is one session: no retry, and no run left for health to resume" sh -c "[ \"\$(grep -c . '$COST_LOG')\" = 1 ] && [ ! -f '.flow/runs/$(item_slug "$st").json' ]"
 check_all "the stop names the cause and the item whose gate holds it" '[ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ] && [ "$(jget item < .flow/log/claude.stopped)" = "$st" ]'
@@ -2365,6 +2496,15 @@ PATH="$cpath" "$P/templates/run-unattended.sh" claude --max-steps 1 > "$work/cos
 check "a stopped host starts no new session: the next loop exits 4 before it picks" sh -c "[ $code = 4 ] && [ ! -s '$COST_LOG' ] && grep -q 'claude is stopped since .* on a spend limit' '$work/cost.out' && [ -z \"\$(ls .flow/runs/*.json 2>/dev/null)\" ]"
 PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' > /dev/null 2>"$work/cost.err"; code=$?
 check "a stopped host starts no session for a job either: host_run refuses, exit 75" sh -c "[ $code = 75 ] && [ ! -s '$COST_LOG' ] && grep -q 'until the gate on $st clears' '$work/cost.err'"
+# jobrun <job> <field>: the job's newest line in runs.jsonl.
+jobrun() { grep "\"job\":\"$1\"" .flow/log/runs.jsonl | tail -1 | jget "$2"; }
+PATH="$cpath" "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check_all "comments job: a host stopped on a spend limit ends the run, its status line saying so" 'jobrun comments result | grep -q "^stopped: claude is stopped since .* on a spend limit"'
+printf -- '- a note for the stopped host\n' > "$work/stop-notes.md"
+PATH="$cpath" "$P/jobs/intake.sh" claude --notes "$work/stop-notes.md" >/dev/null 2>&1
+check_all "intake job: a host stopped on a spend limit ends the run, its status line saying so" 'jobrun intake result | grep -q "^stopped: claude is stopped since .* on a spend limit"'
+PATH="$cpath" "$P/jobs/retro.sh" claude >/dev/null 2>&1
+check_all "retro job: a host stopped on a spend limit ends the run, its status line saying so" 'jobrun retro result | grep -q "^stopped: claude is stopped since .* on a spend limit"'
 check "gate list shows the stopped host" sh -c "'$P/scripts/gate.sh' list | grep -q '	claude	stopped	spend-limit: API Error'"
 PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run codex . hi' >/dev/null 2>&1; code=$?
 check "a stop on claude leaves codex running" [ "$code" = 0 ]
@@ -2372,6 +2512,10 @@ check "a stop on claude leaves codex running" [ "$code" = 0 ]
 check "clearing the gate that names the stop starts the host again" sh -c "grep -q 'claude starts sessions again' '$work/cost.out' && [ ! -f .flow/log/claude.stopped ]"
 : > "$COST_LOG"; PATH="$cpath" "$P/templates/run-unattended.sh" claude "$s2" --max-steps 1 >/dev/null 2>&1
 check "after the clear a loop starts sessions again" grep -q 'claude	' "$COST_LOG"
+# Health resumes no run a spend limit stopped: the gate ended it. Once cleared, the next run
+# continues the item at the step the limit cut short.
+PATH="$cpath" "$P/templates/run-unattended.sh" claude "$st" --max-steps 1 >/dev/null 2>&1
+check_all "after the clear, the next run continues the item the spend limit stopped, at that step" '[ "$(steprun "$st" step)" = "$st_step" ] && [ -z "$(steprun "$st" result)" ]'
 FAKE_HOST=auth PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run codex . hi; echo "cause=$host_cause"' > "$work/cost.out" 2>&1; code=$?
 check_all "an auth error on codex outside any item stops codex and tells the owner" 'grep -q "cause=auth" "$work/cost.out" && [ "$(jget cause < .flow/log/codex.stopped)" = auth ] && grep -q "	host-stopped	codex stopped on an auth error: unexpected status 401 Unauthorized" .flow/events.log'
 "$P/scripts/gate.sh" clear codex > "$work/cost.out"
@@ -2385,6 +2529,57 @@ check_all "a Claude error result with its words in errors, not result, is logged
 FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
+
+echo "reserve: the owner's own worktree"
+rroot="$work/reserve"; mkdir -p "$rroot"
+git init -q -b main "$rroot/app" && cd "$rroot/app" || exit 1
+git config user.email t@t && git config user.name "Grace Hopper"
+printf 'hi\n' > README.md && git add -A && git commit -qm init
+for n in 1 2; do git worktree add -q -b "main-wt-$n" "../wt-$n"; done
+mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\npool_max: 2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+rw1="$(cd ../wt-1 && pwd -P)"; rw2="$(cd ../wt-2 && pwd -P)"
+rv="$("$P/scripts/steward.sh" reserve --name "Ada Lovelace")"
+check "reserve: prints the path of a free pool worktree" [ "$rv" = "$rw1" ]
+check "reserve: the claim records who reserved it" [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Ada Lovelace" ]
+check "reserve: the claim names no item" [ -z "$(jget item < "$rw1/.flow/claim.json")" ]
+ra="$("$P/adapters/local/create.sh" task "Claimed beside a reservation" --size S --body "x")"
+check "claim: a reserved worktree is passed over" [ "$("$P/scripts/steward.sh" claim "$ra")" = "$rw2" ]
+rb="$("$P/adapters/local/create.sh" task "No room left" --size S --body "x")"
+"$P/scripts/next.sh" "$rb" >/dev/null 2>&1; code=$?
+check "next: with the only unclaimed worktree reserved there is no free worktree (exit 3)" [ "$code" -eq 3 ]
+"$P/scripts/steward.sh" reserve --name "Ada Lovelace" >/dev/null 2>&1; code=$?
+check "reserve: no free worktree at pool_max exits 3, as claim does" [ "$code" -eq 3 ]
+check "pool: a reserved worktree shows who reserved it" sh -c "'$P/scripts/steward.sh' pool | grep -q '^wt-1 .*reserved by Ada Lovelace'"
+check "board: the pool shows a reserved worktree as reserved by that name" sh -c "'$P/scripts/board.sh' | grep -q '^| wt-1 |.*| reserved by Ada Lovelace |'"
+"$P/adapters/local/close.sh" "$ra" >/dev/null
+"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+check "sweep: a reserved worktree keeps its reservation" [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Ada Lovelace" ]
+python3 -c '
+import json, sys, time
+p = sys.argv[1] + "/.flow/claim.json"
+d = json.load(open(p)); d["claimed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 172800)); json.dump(d, open(p, "w"))' "$rw1"
+reserved_head="$(git -C "$rw1" rev-parse HEAD)"
+printf 'later\n' > later.txt && git add -A && git commit -qm later
+"$P/scripts/steward.sh" health > "$rroot/health.out" 2>&1
+check "health: a free worktree behind the base moves to its tip" [ "$(git -C "$rw2" rev-parse HEAD)" = "$(git rev-parse main)" ]
+check "health: a reserved worktree is not moved to the base tip" [ "$(git -C "$rw1" rev-parse HEAD)" = "$reserved_head" ]
+check "health: a reserved claim with no item, commits or run for two days is not released" [ -f "$rw1/.flow/claim.json" ]
+"$P/scripts/steward.sh" release "$rw1" >/dev/null 2>&1
+check "release: a reserved worktree is freed" [ ! -f "$rw1/.flow/claim.json" ]
+"$P/scripts/steward.sh" reserve >/dev/null
+check "reserve: with no --name the reservation is under git user.name" [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Grace Hopper" ]
+"$P/scripts/steward.sh" reserve --name >/dev/null 2>&1; code=$?
+check "reserve: --name with no name is bad usage (exit 2)" [ "$code" -eq 2 ]
+rc="$("$P/adapters/local/create.sh" task "Claimed by the worktree hook" --size S --body "x")"
+sleep 30 & held=$!
+mkdir -p .flow/claim.lock && echo "$held" > .flow/claim.lock/pid
+FLOW_LOCK_WAIT=1 "$P/scripts/steward.sh" claim "$rc" >/dev/null 2>&1; code=$?
+check_all "claim: an allocation in flight makes a claim outside next wait, then exit 75 with nothing claimed" '[ "$code" -eq 75 ] && [ ! -f "$rw2/.flow/claim.json" ]'
+FLOW_LOCK_WAIT=1 "$P/scripts/steward.sh" reserve --name "Ada Lovelace" >/dev/null 2>&1; code=$?
+check_all "reserve: an allocation in flight makes it wait, then exit 75 with nothing reserved" '[ "$code" -eq 75 ] && [ ! -f "$rw2/.flow/claim.json" ]'
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
+check_all "claim: once the holder is gone it takes the free worktree and frees the claim lock" '[ "$("$P/scripts/steward.sh" claim "$rc")" = "$rw2" ] && [ ! -d .flow/claim.lock ]'
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1

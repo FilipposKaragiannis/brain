@@ -52,9 +52,12 @@ it lands**, with the lesson lines that support it. Then ask which to apply.
 ## 4. Apply
 
 - Marketplace changes: in the marketplace repo (the owner names its path; `/work/brain` here),
-  on a branch `retro/<date>`, the edits, `tools/generate.sh`, `tools/test.sh`, then a PR
-  (`gh pr create`) titled `retro: <summary>` with the findings as the body. Only the owner
-  merges; a standards change changes the enforcing plugin in the same PR (W-06).
+  on a branch `retro/<date>`, the edits, a changelog fragment
+  `plugins/<plugin>/changelog.d/retro-<date>.md` for each plugin changed (a `bump:` line, a blank
+  line, the bullets; never the version or `CHANGELOG.md`, the release PR folds them),
+  `tools/generate.sh`, `tools/test.sh`, then a PR (`gh pr create`) titled `retro: <summary>`
+  with the findings as the body. Only the owner merges; a standards change changes the enforcing
+  plugin in the same PR (W-06).
 - Project changes: the edits in the project, uncommitted, listed in the report.
 - Append one line to `.flow/retros.log`: `<time>\t<lessons read so far>\t<findings>\t<applied>`,
   where the second column is the total number of `lessons.jsonl` lines read to date (the
