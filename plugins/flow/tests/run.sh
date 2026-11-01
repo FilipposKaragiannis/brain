@@ -1943,6 +1943,13 @@ check "worktree_name: a refused add creates nothing" sh -c "[ ! -e ../shop-box ]
 nm2="$("$P/scripts/new.sh" task "Named again")"
 "$P/scripts/steward.sh" claim "$nm2" > "$work/named.out" 2>&1
 check "worktree_name: a claim that would grow with one with no {n} says why" grep -q 'worktree_name ../{repo}-box has no {n}' "$work/named.out"
+namedcfg '  - ../shop-box-1\n' 'worktree_name: ../slots/{n}/checkout\n'
+"$P/scripts/steward.sh" add > "$work/named.out" 2>&1; code=$?
+check "worktree_name: one whose numbers all give the same idle branch is refused, exit 2, with the reason" sh -c "[ $code = 2 ] && grep -q 'gives every new pool worktree the idle branch main-checkout' '$work/named.out'"
+check "worktree_name: a refused add for a shared idle branch creates nothing" sh -c "[ ! -e ../slots ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool)\" = ../shop-box-1 ]"
+namedcfg '  - ../shop-box-1\n' 'worktree_name: ../slots/checkout-{n}\n'
+"$P/scripts/steward.sh" add >/dev/null 2>&1; "$P/scripts/steward.sh" add >/dev/null 2>&1
+check "worktree_name: nested folders with {n} in the last name add one worktree per number" sh -c "[ -d ../slots/checkout-1 ] && [ -d ../slots/checkout-2 ]"
 
 echo "decomposition: a split parent and its children"
 mkdir -p "$work/split" && cd "$work/split" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
