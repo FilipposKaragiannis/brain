@@ -162,6 +162,11 @@ test('StewardAppendsAfterAConsoleWrite_BothParsers_ReadTheWholePool', () => {
   }
 });
 
+test('WorktreeNameTemplate_WrittenByTheConsole_ThePluginsYamlGetReadsItAsWritten', () => {
+  const after = edited(FOOSBRAWL, 'worktree_name', 'scalar', '../{repo}-wt-{n}');
+  assert.deepEqual(yamlGet(after, 'worktree_name'), ['../{repo}-wt-{n}'], 'because steward.sh fills the braces of the name lib/flow.sh reads, so they must reach it untouched');
+});
+
 test('ScalarStartingWithABracket_Written_Refused', () => {
   const result = applyChange(FOOSBRAWL, 'jobs.model', 'scalar', '[wip]');
   assert.ok(!result.ok && /starts with \[ or \{/.test(result.error), 'because lib/flow.sh strips the quotes and then reads [wip] as the list wip');
@@ -676,7 +681,7 @@ test('FixedValuesList_OtherValue_RefusedOnChangeAndWarnedInTheFile', () => {
 });
 
 test('Trackers_OtherValue_Refused', () => {
-  assert.deepEqual(checkChange(fieldAt('trackers')!, ['github', 'jira']), { ok: false, error: 'trackers lists jira: it takes github or local' }, 'because adapters_configured refuses a tracker with no adapter');
+  assert.deepEqual(checkChange(fieldAt('trackers')!, ['github', 'linear']), { ok: false, error: 'trackers lists linear: it takes github, local or jira' }, 'because adapters_configured refuses a tracker with no adapter');
 });
 
 test('ReadinessFields_ReadForEveryTracker_NotMarkedGithubOnly', () => {

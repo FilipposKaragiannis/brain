@@ -662,14 +662,14 @@ check "trackers: next picks the most urgent ready item from every named tracker"
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 "$P/adapters/github/write-state.sh" 'gh#36' step=done >/dev/null 2>&1
 check "trackers: health reads every named tracker" sh -c "'$P/scripts/steward.sh' health 2>/dev/null | grep -q 'gh#36: done (every step ran)'"
-tracked_config 'trackers: [github, jira]' ''
+tracked_config 'trackers: [github, linear]' ''
 "$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: a name with no adapter is refused (exit 2) with the adapters there are" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira, not an adapter; the adapters are github local' '$work/trackers.err'"
+check "trackers: a name with no adapter is refused (exit 2) with the adapters there are" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear, not an adapter; the adapters are github jira local' '$work/trackers.err'"
 "$P/scripts/steward.sh" health --dry-run >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: health refuses (exit 2) a name with no adapter instead of reading no tracker" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira' '$work/trackers.err'"
+check "trackers: health refuses (exit 2) a name with no adapter instead of reading no tracker" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear' '$work/trackers.err'"
 mkdir -p "$work/trackers/bin" && printf '#!/bin/sh\nexit 0\n' > "$work/trackers/bin/claude" && chmod +x "$work/trackers/bin/claude"
 PATH="$work/trackers/bin:$PATH" "$P/jobs/comments.sh" claude >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: the comments job refuses (exit 2) a name with no adapter instead of a quiet pass" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira' '$work/trackers.err'"
+check "trackers: the comments job refuses (exit 2) a name with no adapter instead of a quiet pass" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear' '$work/trackers.err'"
 tracked_config 'trackers: [github]' ''
 "$P/scripts/new.sh" task "Never read" >/dev/null 2>"$work/trackers.err"; code=$?
 check "trackers: new refuses (exit 2) while new items go to a tracker trackers leaves out" sh -c "[ $code -eq 2 ] && grep -q 'adapters.default is local, which trackers leaves out' '$work/trackers.err'"
@@ -2040,7 +2040,8 @@ printf '\n# changed\n' >> "$plugin_copy/templates/flow.rules"
 check "session-start: nudges when the plugin changed" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'behind flow v' && echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'drift: .codex/rules/flow.rules'"
 check "init: refresh brings the stamp back in step" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && [ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 mkdir -p .claude && printf '{}\n' > .claude/settings.json
-check "init: --check flags missing Claude worktree hooks as a gap" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .claude/settings.json: no WorktreeCreate'"
+check "init: --check exits 0 when missing Claude worktree hooks are its only finding" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check"
+check "init: --check names missing Claude worktree hooks as a note, not a gap" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'note: .claude/settings.json has no WorktreeCreate'"
 check "session-start: names missing Claude worktree hooks" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'no flow worktree hooks'"
 printf '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-create.sh"}]}],"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh"}]}]}}\n' > .claude/settings.json
 check "init: --check is clean once the hooks are in the settings" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
@@ -2072,6 +2073,51 @@ printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop
 : > "$work/curl.log"
 PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
 check "notify: the variable alone is enough, with no URL in the config" sh -c "grep -q 'env.example/hook' '$work/curl.log'"
+
+echo "init: from a linked worktree, and the pool it proposes"
+mkdir -p "$work/linked" && cd "$work/linked" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach .claude/worktrees/bold-oak && git worktree add -q --detach "$work/outside-wt"
+lmain="$PWD"; cd ../app-wt-1
+out="$(FLOW_PLUGIN="$plugin_copy" "$init" 2>&1)"
+check "init: from a linked worktree it writes the main worktree's config" sh -c "[ -f '$lmain/.flow/config.yaml' ] && [ ! -e .flow/config.yaml ]"
+check "init: from a linked worktree it says it works on the main worktree's flow home" sh -c "printf '%s' '$out' | grep -q 'linked worktree; init works on the flow home in the main worktree'"
+check "init: --check from a linked worktree reads the main worktree's config" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+check "init: the pool proposal keeps a worktree beside the main one" sh -c "[ \"\$(. '$P/lib/flow.sh'; yaml_get '$lmain/.flow/config.yaml' pool)\" = ../app-wt-1 ]"
+check "init: the pool proposal skips Claude's session worktrees" sh -c "! grep -q 'bold-oak' '$lmain/.flow/config.yaml'"
+check "init: the pool proposal skips a worktree outside the main worktree's parent folder" sh -c "! grep -q 'outside-wt' '$lmain/.flow/config.yaml'"
+mkdir -p "$work/nogit"
+FLOW_PLUGIN="$plugin_copy" "$init" --root "$work/nogit" > "$work/nogit.out" 2>&1; code=$?
+check "init: with no main worktree to find it refuses and names the problem" sh -c "[ $code = 1 ] && grep -q 'no main worktree for $work/nogit' '$work/nogit.out'"
+
+echo "worktree_name"
+mkdir -p "$work/named" && cd "$work/named" && git init -q -b main shop && cd shop && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+mkdir -p .flow
+namedcfg() { printf 'adapters:\n  default: local\nbase: main\npool:\n%bpool_max: 9\n%bnotify:\n  desktop: false\n' "$1" "$2" > .flow/config.yaml; }
+namedcfg '' 'worktree_name: ../{repo}-box-{n}\n'
+nm1="$("$P/scripts/new.sh" task "Named")"
+nw1="$("$P/scripts/steward.sh" claim "$nm1" 2>/dev/null)"
+check "worktree_name: a grown worktree takes the template, {repo} and {n} filled" [ "$nw1" = "$(cd ../shop-box-1 2>/dev/null && pwd -P)" ]
+mkdir ../shop-box-2
+namedcfg '  - ../shop-box-1\n  - ../shop-box-3\n' 'worktree_name: ../{repo}-box-{n}\n'
+"$P/scripts/steward.sh" add >/dev/null 2>&1
+check "worktree_name: add takes the first number no pool entry and no folder uses" sh -c "[ -d ../shop-box-4 ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool | tail -1)\" = ../shop-box-4 ]"
+namedcfg '  - ../shop-box-1\n' ''
+"$P/scripts/steward.sh" add >/dev/null 2>&1
+check "worktree_name: unset, a new worktree keeps today's name" [ -d ../shop-wt-1 ]
+namedcfg '  - ../shop-box-1\n' 'worktree_name: ../{repo}-box\n'
+"$P/scripts/steward.sh" add > "$work/named.out" 2>&1; code=$?
+check "worktree_name: one with no {n} is refused, exit 2, with the reason" sh -c "[ $code = 2 ] && grep -q 'worktree_name ../{repo}-box has no {n}' '$work/named.out'"
+check "worktree_name: a refused add creates nothing" sh -c "[ ! -e ../shop-box ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool)\" = ../shop-box-1 ]"
+nm2="$("$P/scripts/new.sh" task "Named again")"
+"$P/scripts/steward.sh" claim "$nm2" > "$work/named.out" 2>&1
+check "worktree_name: a claim that would grow with one with no {n} says why" grep -q 'worktree_name ../{repo}-box has no {n}' "$work/named.out"
+namedcfg '  - ../shop-box-1\n' 'worktree_name: ../slots/{n}/checkout\n'
+"$P/scripts/steward.sh" add > "$work/named.out" 2>&1; code=$?
+check "worktree_name: one whose numbers all give the same idle branch is refused, exit 2, with the reason" sh -c "[ $code = 2 ] && grep -q 'gives every new pool worktree the idle branch main-checkout' '$work/named.out'"
+check "worktree_name: a refused add for a shared idle branch creates nothing" sh -c "[ ! -e ../slots ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool)\" = ../shop-box-1 ]"
+namedcfg '  - ../shop-box-1\n' 'worktree_name: ../slots/checkout-{n}\n'
+"$P/scripts/steward.sh" add >/dev/null 2>&1; "$P/scripts/steward.sh" add >/dev/null 2>&1
+check "worktree_name: nested folders with {n} in the last name add one worktree per number" sh -c "[ -d ../slots/checkout-1 ] && [ -d ../slots/checkout-2 ]"
 
 echo "decomposition: a split parent and its children"
 mkdir -p "$work/split" && cd "$work/split" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
