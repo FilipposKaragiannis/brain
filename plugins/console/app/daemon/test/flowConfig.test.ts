@@ -495,3 +495,144 @@ test('HostDefaultPair_SavedOverAnOldModel_WritesTheMapThePluginReadsAsDefault', 
     assert.deepEqual(yamlGet(text, 'jobs.claude.model'), [], 'because lib/flow.sh reads the empty line as no model, the host default');
   } finally { fixture.done(); }
 });
+
+/**
+ * The workers plan flow reads from the text, as lib/workers.sh's jobs_workers does: the value of
+ * jobs.workers and its keys (yaml_get and yaml_keys from lib/flow.sh) handed to `_jobs.py workers`.
+ * Its `host:count` lines, or `refused` with what it said when flow would stop the run.
+ */
+function flowWorkers(text: string): string[] | { refused: string } {
+  return inTemp(text, (file) => {
+    const script = `${shellFunction('lib/flow.sh', 'yaml_get')}\n${shellFunction('lib/flow.sh', 'yaml_keys')}\n`
+      + 'f="$1"; set -- "$(yaml_get "$f" jobs.workers)"; for k in $(yaml_keys "$f" jobs.workers); do set -- "$@" "$k=$(yaml_get "$f" "jobs.workers.$k")"; done\n'
+      + `python3 -I ${JSON.stringify(path.join(PLUGIN, 'scripts', '_jobs.py'))} workers config "$@"`;
+    try {
+      return execFileSync('sh', ['-c', script, 'sh', file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).split('\n').filter((line) => line !== '');
+    } catch (error) { return { refused: String((error as { stderr?: string }).stderr ?? '') }; }
+  });
+}
+
+const ONE_LINE_WORKERS = 'base: main\njobs:\n  host: claude\n  workers: {claude: 1, codex: 2}   # next-1 on claude, next-2 and next-3 on codex\n  permission_mode: auto\n';
+
+test('JobsWorkersOnOneLine_Described_NoWarningAndTheSamePlanFlowReads', () => {
+  const described = describe('/p/.flow/config.yaml', ONE_LINE_WORKERS);
+  assert.deepEqual(described.warnings, [], 'because {claude: 1, codex: 2} is how flow documents jobs.workers, so it is no flow map outside the format');
+  const field = described.sections.find((section) => section.group === 'Jobs')?.fields.find((spec) => spec.path === 'jobs.workers');
+  assert.deepEqual([field?.type, field?.counts?.keys], ['map', ['claude', 'codex']], 'because the key is a count per host in the Jobs group');
+  assert.deepEqual(flowWorkers(ONE_LINE_WORKERS), ['claude:1', 'codex:2'], 'because the plugin reads the line the console accepted as the same plan');
+});
+
+test('JobsWorkersAsABlock_Described_NoWarning', () => {
+  const text = 'jobs:\n  workers:\n    claude: 2\n    codex: 0\n';
+  assert.deepEqual(describe('/p/.flow/config.yaml', text).warnings, [], 'because one host per line is the other form flow reads');
+  assert.deepEqual(flowWorkers(text), ['claude:2'], 'because a host with 0 starts no worker and flow takes it');
+});
+
+test('JobsWorkersOnOneLine_Changed_StaysOnOneLineWithItsComment', () => {
+  const after = edited(ONE_LINE_WORKERS, 'jobs.workers', 'map', { claude: '2', codex: '0' });
+  assert.deepEqual(changedLines(ONE_LINE_WORKERS, after), ['  workers: {claude: 2, codex: 0}   # next-1 on claude, next-2 and next-3 on codex'], 'because the owner wrote the map on one line, and only its counts move');
+  assert.deepEqual(flowWorkers(after), ['claude:2'], 'because flow reads the rewritten line back as the new plan');
+});
+
+test('JobsWorkers_Saved_WrittenAsABlockTheFlowReads', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const reply = await fixture.editor.write({ changes: [{ path: 'jobs.workers', value: { claude: '1', codex: '2' } }], hash });
+    assert.equal(reply.status, 200, `because both hosts take a whole number of workers: ${JSON.stringify(reply.body)}`);
+    const text = readFileSync(fixture.file, 'utf8');
+    const lines = text.split('\n');
+    const at = lines.indexOf('  workers:');
+    assert.deepEqual(lines.slice(at, at + 3), ['  workers:', '    claude: 1', '    codex: 2'], 'because a new map goes under jobs: as a block, one host a line');
+    assert.deepEqual(flowWorkers(text), ['claude:1', 'codex:2'], 'because jobs_workers reads the block the console wrote');
+    assert.deepEqual((reply.body as FlowConfigSaved).followUps, [], 'because the next run reads jobs.workers from the file, so nothing needs installing');
+  } finally { fixture.done(); }
+});
+
+test('JobsWorkersOutOfShape_Described_WarnedAsFlowRefusesIt', () => {
+  const cases: [string, RegExp][] = [
+    ['{gemini: 1}', /names gemini: it takes claude and codex/],
+    ['{claude: x}', /jobs\.workers\.claude must be a whole number/],
+    ['{claude: 0, codex: 0}', /starts no worker/],
+    ['claude 1', /write it as \{claude: 1, codex: 2\}/],
+  ];
+  for (const [value, reason] of cases) {
+    const text = `jobs:\n  workers: ${value}\n`;
+    const warnings = describe('/p/.flow/config.yaml', text).warnings;
+    assert.ok(warnings.some((warning) => reason.test(warning)), `because the console warns on jobs.workers: ${value} (${JSON.stringify(warnings)})`);
+    assert.ok(!Array.isArray(flowWorkers(text)), `because flow stops the run on jobs.workers: ${value} too`);
+  }
+});
+
+test('JobsWorkersBadCounts_Saved_RefusedWithTheReason', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const cases: [Record<string, string>, RegExp][] = [
+      [{ gemini: '1' }, /names gemini/],
+      [{ claude: '0', codex: '0' }, /starts no worker/],
+      [{ claude: '1.5' }, /whole number/],
+      [{ codex: '65' }, /at most 64/],
+    ];
+    for (const [value, reason] of cases) {
+      const reply = await fixture.editor.write({ changes: [{ path: 'jobs.workers', value }], hash });
+      assert.ok(reply.status === 400 && reason.test((reply.body as { error: string }).error), `because ${JSON.stringify(value)} is no plan flow runs (${JSON.stringify(reply.body)})`);
+    }
+    assert.equal(readFileSync(fixture.file, 'utf8'), FOOSBRAWL, 'because nothing refused reaches the file');
+  } finally { fixture.done(); }
+});
+
+test('OneLineMap_UnclosedOrOnAnotherKey_StillRefused', () => {
+  const unclosed = parseDocument('jobs:\n  workers: {claude: 1\n');
+  assert.ok(!unclosed.ok && /close with \} on the same line/.test(unclosed.error), 'because a map that runs onto the next line is not one flow reads');
+  const other = parseDocument('jobs:\n  model: {a: 1}\n');
+  assert.ok(!other.ok && /a flow map is not in the flat format/.test(other.error), 'because only jobs.workers is a one-line map flow reads');
+});
+
+test('NamedSchedule_SetForAnAction_NewKeyAfterTheOtherSchedulesWithEveryCommentKept', async () => {
+  const fixture = project({ code: 0, stdout: ' M .flow/config.yaml\n', stderr: '', timedOut: false });
+  try {
+    const said = await fixture.editor.setKey('jobs.schedule.next-nightly', 'daily 02:00 gh#12 --max-steps 5');
+    const after = readFileSync(fixture.file, 'utf8');
+    const lines = after.split('\n');
+    assert.equal(lines[lines.indexOf('    health: every 15m') + 1], '    next-nightly: daily 02:00 gh#12 --max-steps 5', 'because a new schedule goes under jobs.schedule, after the last one there');
+    assert.deepEqual(after.split('\n').filter((line) => line !== '    next-nightly: daily 02:00 gh#12 --max-steps 5'), FOOSBRAWL.split('\n'), 'because every other line, comments included, stays as it was');
+    assert.deepEqual(yamlGet(after, 'jobs.schedule.next-nightly'), ['daily 02:00 gh#12 --max-steps 5'], "because the plugin's own reader takes the value back whole, the # of the item id included");
+    assert.match(said, /^wrote jobs\.schedule\.next-nightly: daily 02:00 gh#12 --max-steps 5 to \.flow\/config\.yaml\n.*uncommitted changes/s, 'because an action is not refused over uncommitted work, but the owner hears it went beside it');
+    assert.equal(fixture.refreshed(), 0, 'because the action reads the sources again once its process ends');
+  } finally { fixture.done(); }
+});
+
+test('NamedSchedule_TakenOutForAnAction_LineGoneAndAMissingKeyFine', async () => {
+  const fixture = project();
+  try {
+    await fixture.editor.setKey('jobs.schedule.next-nightly', 'every 2h');
+    await fixture.editor.setKey('jobs.schedule.next-nightly', null);
+    assert.equal(readFileSync(fixture.file, 'utf8'), FOOSBRAWL, 'because taking the key out leaves the file as it was before');
+    assert.match(await fixture.editor.setKey('jobs.schedule.next-nightly', null), /nothing to take out/, 'because an orphaned schedule has no key, and unscheduling it still succeeds');
+  } finally { fixture.done(); }
+});
+
+test('NamedSchedule_BadValueForAnAction_ThrownAndFileUntouched', async () => {
+  const fixture = project();
+  try {
+    await assert.rejects(fixture.editor.setKey('jobs.schedule.next-nightly', 'daily 2:00'), /cannot read the schedule/, 'because _jobs.py reads HH:MM with two digits each');
+    assert.equal(readFileSync(fixture.file, 'utf8'), FOOSBRAWL, 'because a refused change writes nothing');
+  } finally { fixture.done(); }
+});
+
+test('NamedSchedule_Described_InJobsAfterTheOtherSchedulesAndChecked', () => {
+  const text = FOOSBRAWL.replace('    health: every 15m\n', '    health: every 15m\n    next-nightly: daily 02:00 gh#12\n    comments-slow: hourly\n');
+  const document = describe('/p/.flow/config.yaml', text);
+  const jobs = document.sections.find((section) => section.group === 'Jobs')?.fields.map((spec) => spec.path) ?? [];
+  assert.deepEqual(jobs.slice(jobs.indexOf('jobs.schedule.health'), jobs.indexOf('jobs.schedule.health') + 3), ['jobs.schedule.health', 'jobs.schedule.next-nightly', 'jobs.schedule.comments-slow'], 'because a named schedule is edited beside the job schedules, not as Other text');
+  assert.equal(document.sections.some((section) => section.group === 'Other'), false, 'because a named schedule is a key the console knows');
+  assert.deepEqual(document.warnings.filter((warning) => warning.includes('schedule')), ['jobs.schedule.comments-slow: cannot read the schedule "hourly": use every 30m, daily 02:00 or weekly sun 03:00'], 'because a named schedule is checked as jobs.sh would read it');
+  assert.equal(fieldAt('jobs.schedule.deploy-nightly'), undefined, 'because only a schedule of a job flow knows is one');
+});
+
+test('Schedule_Checked_ItemIdArgsPassAndACommentDoesNot', () => {
+  assert.ok(checkSchedule('every 30m gh#12 local:task/5').ok, 'because _jobs.py takes an item id as an arg');
+  assert.equal(checkSchedule('every 30m #12').ok, false, 'because lib/flow.sh would cut the value at " #"');
+  assert.equal(checkSchedule('daily 2:00').ok, false, 'because _jobs.py reads the hour as two digits');
+});

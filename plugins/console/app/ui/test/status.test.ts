@@ -3,8 +3,8 @@ import type { Job } from '../../daemon/src/snapshot.ts';
 import { actionTone, attentionTone, countTone, freshnessTone, itemTone, jobTone, worktreeTone } from '../src/status.ts';
 
 const IDLE_JOB: Job = {
-  name: 'next', state: 'scheduled', schedule: 'every 30m', args: '', installed: true, loaded: true, paused: false, running: [],
-  last: { at: '2026-10-24T18:00:00Z', seconds: 42, exit: 0, result: 'quiet', outcome: 'idle' }, next: '18:30', runsThisWeek: 3, failedThisWeek: 0,
+  name: 'next', job: 'next', host: 'claude', configured: true, state: 'scheduled', schedule: 'every 30m', args: '', installed: true, loaded: true, paused: false, running: [],
+  last: { at: '2026-10-24T18:00:00Z', seconds: 42, exit: 0, result: 'quiet', outcome: 'idle', reason: null, worker: null, host: null }, recent: [], workers: [], next: '18:30', runsThisWeek: 3, failedThisWeek: 0,
 };
 
 test('RunningWorktree_IsGreen', () => {
@@ -36,7 +36,7 @@ test('GateAttention_NeedsYou', () => {
 });
 
 test('JobWhoseLastRunExitedNonZero_IsFailing', () => {
-  const failed: Job = { ...IDLE_JOB, last: { at: '2026-10-24T18:00:00Z', seconds: 3, exit: 2, result: 'boom', outcome: 'error' } };
+  const failed: Job = { ...IDLE_JOB, last: { at: '2026-10-24T18:00:00Z', seconds: 3, exit: 2, result: 'boom', outcome: 'error', reason: null, worker: null, host: null } };
   expect(jobTone(failed), 'because a non-zero exit is a failure even while the job sits scheduled').toBe('failing');
 });
 

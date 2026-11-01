@@ -2,13 +2,38 @@
 # Shared by the job scripts: host argument, a lock so overlapping schedules skip instead of
 # colliding, a log under <flow home>/log/<job>.log, and the host runner. A job sources this
 # after setting $job, then calls job_start "$host"; everything it prints goes to the log too.
+# --as <name>, anywhere in the job's arguments, names the schedule this run belongs to: the job,
+# or the job, a dash and a label (next-codex), as scripts/jobs.sh passes it for a named schedule.
+# It is taken out of the arguments here, so the job reads the rest as before, and $job becomes the
+# name: the lock, the log, the pause and the runs.jsonl lines go by it. Absent, the name is the job.
+# --model <name> and --effort <level>, anywhere too, replace jobs.<host>.model and .effort for this
+# run's host sessions (job_opt_model, job_opt_effort; empty keeps the pair), so one schedule can
+# run on its own pair. They are taken out of the arguments the same way.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/host.sh"
 job_log_dir() { printf '%s/log' "$(flow_home)"; }
 job_say() { job_last="$*"; printf '%s\t%s\t%s\n' "$(now_iso)" "$job" "$*" | tee -a "$(job_log_dir)/$job.log"; }
 die() { job_last="error: $1"; echo "flow: $1" >&2; exit "${2:-1}"; }
-# job_base: the job a worker belongs to (next-2 is next): everything before the first dash, as no
-# job name holds one. Pause and the schedule are per job, so every worker of next obeys its pause.
+# The arguments go round once, each kept but --as, --model, --effort and their values.
+_n=$#; _as=""; job_opt_model=""; job_opt_effort=""
+while [ "$_n" -gt 0 ]; do
+  _a="$1"; shift; _n=$((_n - 1))
+  case "$_a" in
+    --as) [ "$_n" -gt 0 ] || die "--as takes a schedule name" 2; _as="$1" ;;
+    --model) [ "$_n" -gt 0 ] || die "--model takes a model name" 2; job_opt_model="$1" ;;
+    --effort) [ "$_n" -gt 0 ] || die "--effort takes a level" 2; job_opt_effort="$1" ;;
+    *) set -- "$@" "$_a"; continue ;;
+  esac
+  shift; _n=$((_n - 1))
+done
+if [ -n "$_as" ] && [ "$_as" != "$job" ]; then
+  case "${_as#"$job"-}" in ""|"$_as"|[!a-z]*|*[!a-z0-9]*) die "--as $_as is no schedule of $job: use $job, or $job-<label>, the label a lowercase letter then lowercase letters and digits" 2 ;; esac
+  job="$_as"
+fi
+# job_sched: the schedule; a worker (next-2, next-codex-2) obeys its schedule's pause.
+job_sched="$job"
+# job_base: the job a worker or a schedule belongs to (next-2 and next-codex are next): everything
+# before the first dash, as no job name holds one.
 job_base() { printf '%s' "${job%%-*}"; }
 # job_record <exit>: one line per run in <flow home>/log/runs.jsonl, read by scripts/jobs.sh:
 # the job, the host it ran on (empty for a run that stopped before it read one), its start, its
@@ -27,16 +52,20 @@ job_record() {
   rmdir "$_runs.trim"
 }
 job_clock() { mkdir -p "$(job_log_dir)"; job_t0="$(date +%s)"; job_at="$(now_iso)"; }
-# job_skip_if_paused: a paused job (scripts/jobs.sh pause) exits at once, quietly, until resumed.
+# job_skip_if_paused: a paused schedule (scripts/jobs.sh pause) exits at once, quietly, until resumed.
 job_skip_if_paused() {
-  [ -f "$(job_log_dir)/$(job_base).paused" ] || return 0
+  [ -f "$(job_log_dir)/$job_sched.paused" ] || return 0
   job_clock; job_say "paused: resume it with the flow jobs skill"; job_record 0; exit 0
 }
 # job_alive <pid>: the pid still runs this job's script. A lock left by a restart can name a pid
 # the system has since given to something else.
 job_alive() { case "$(ps -o command= -p "$1" 2>/dev/null)" in *"jobs/$(job_base).sh"*) return 0 ;; esac; return 1; }
 # job_lock: exit 0 quietly when another run of this job is alive; a lock whose pid is not is stale.
+# The schedules of one job but next (intake and intake-nightly) share that job's state, the notes
+# and ledger, the PR replies, the lessons or the claims, so they take turns on <job>.shared.lock as
+# well: a run that finds another schedule of its job alive skips. next has the pick lock instead.
 job_lock() {
+  job_shared=
   d="$(job_log_dir)/$job.lock"
   if mkdir "$d" 2>/dev/null; then :; else
     pid="$(cat "$d/pid" 2>/dev/null)"
@@ -47,13 +76,23 @@ job_lock() {
   trap 'job_end $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+  [ "$(job_base)" != next ] || return 0
+  _s="$(job_log_dir)/$(job_base).shared.lock"
+  if mkdir "$_s" 2>/dev/null; then :; else
+    _spid="$(cat "$_s/pid" 2>/dev/null)"
+    if [ -n "$_spid" ] && job_alive "$_spid"; then job_say "skipped: $(cat "$_s/name" 2>/dev/null) is running (pid $_spid), which shares the $(job_base) job's state"; exit 0; fi
+    rm -rf "$_s"; mkdir "$_s" || die "cannot lock $_s"
+  fi
+  job_shared="$_s"; echo $$ > "$_s/pid"; printf '%s' "$job" > "$_s/name"
 }
-job_end() { rm -rf "$d"; job_record "$1"; }
+job_end() { rm -rf "$d"; [ -z "${job_shared:-}" ] || rm -rf "$job_shared"; job_record "$1"; }
 # job_start <host> [model]: checks the host and jobs.host (a bad one ends the run here, exit 2),
 # then the pause, the lock and the log. With model, the job starts host sessions: their model and
 # effort are read once, from jobs.<host>, or from the deprecated jobs.model and jobs.effort with
 # one warning; an effort the host does not take ends the run, exit 2, recorded in runs.jsonl and
 # the job log so status shows it. Jobs without model never read the pair, so it never stops them.
+# --model and --effort win over the pair; an --effort the host does not take ends any job the same way,
+# and an --effort leaves the pair's effort unchecked, since this run never uses it.
 job_start() {
   host="$1"
   host_check "$host" || exit 2
@@ -61,15 +100,17 @@ job_start() {
   [ -z "$_bad" ] || { printf 'flow: %s\n' "$_bad" >&2; exit 2; }
   job_clock
   job_skip_if_paused
+  _bad="$(host_effort_problem "$host" "$job_opt_effort" --effort)"
+  if [ -z "$_bad" ] && [ "${2:-}" = model ] && [ -z "$job_opt_effort" ]; then _bad="$(host_jobs_pair_problem "$host")"; fi
+  if [ -n "$_bad" ]; then
+    printf 'flow: %s\n' "$_bad" >&2; job_say "error: $_bad" >/dev/null; job_record 2; exit 2
+  fi
   if [ "${2:-}" = model ]; then
-    _bad="$(host_jobs_pair_problem "$host")"
-    if [ -n "$_bad" ]; then
-      printf 'flow: %s\n' "$_bad" >&2; job_say "error: $_bad" >/dev/null; job_record 2; exit 2
-    fi
-    host_jobs_pair "$host"; job_m="$jobs_model"; job_e="$jobs_effort"
+    host_jobs_pair "$host"; job_m="${job_opt_model:-$jobs_model}"; job_e="${job_opt_effort:-$jobs_effort}"
   fi
   job_lock
   job_say "start on $host in $(flow_home)"
+  [ "${2:-}" != model ] || [ -z "$job_opt_model$job_opt_effort" ] || job_say "this run's model ${job_opt_model:-from jobs.$host.model}, effort ${job_opt_effort:-from jobs.$host.effort}"
   if [ "${2:-}" = model ] && [ "$jobs_from" = jobs ] && host_jobs_legacy; then
     job_say "jobs.model and jobs.effort are deprecated: set jobs.$host.model and jobs.$host.effort in .flow/config.yaml (passed to $host as is; empty is its default)"
   fi

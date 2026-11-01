@@ -10,7 +10,7 @@ import type { YamlMap } from '../../yaml.ts';
 import { applyChange, leafPaths, parseDocument, readsBack, valueAt } from './configDocument.ts';
 import { readHostDefaults } from './hostDefaults.ts';
 import type { FieldChange, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, FollowUp, HostDefaults, Section } from './schema.ts';
-import { checkChange, checkFileValue, fieldAt, fieldCovering, FLOW_CONFIG_SCHEMA, OTHER_GROUP, schemaSections } from './schema.ts';
+import { checkChange, checkFileValue, fieldAt, fieldCovering, FLOW_CONFIG_SCHEMA, namedScheduleFields, OTHER_GROUP, schemaSections } from './schema.ts';
 
 export type FlowConfigEditorDependencies = {
   projectId: string;
@@ -62,13 +62,27 @@ function otherFields(values: YamlMap): FieldSpec[] {
 
 const NO_HOST_DEFAULTS: HostDefaults = { codex: null };
 
-/** The file as the editor shows it: its text and hash, the values, the schema's sections plus Other, what does not fit, and the hosts' defaults given. */
+/** The schema's sections with the file's named schedules in Jobs, right after the last schedule the schema names. */
+function sectionsWith(named: FieldSpec[]): Section[] {
+  return schemaSections().map((section) => {
+    if (named.length === 0 || section.group !== 'Jobs') return section;
+    const last = section.fields.findLastIndex((spec) => spec.path.startsWith(SCHEDULE_PREFIX));
+    return { ...section, fields: [...section.fields.slice(0, last + 1), ...named, ...section.fields.slice(last + 1)] };
+  });
+}
+
+/**
+ * The file as the editor shows it: its text and hash, the values, the schema's sections (with the
+ * file's named schedules, `jobs.schedule.<job>-<label>`, in Jobs) plus Other, what does not fit,
+ * and the hosts' defaults given.
+ */
 export function describe(file: string, text: string, hostDefaults: HostDefaults = NO_HOST_DEFAULTS): FlowConfigDocument {
   const parsed = parseDocument(text);
-  const sections: Section[] = schemaSections();
-  if (!parsed.ok) return { path: file, text, hash: contentHash(text), values: null, sections, warnings: [`not in the flat format, so only Raw YAML can change it: ${parsed.error}`], hostDefaults };
+  if (!parsed.ok) return { path: file, text, hash: contentHash(text), values: null, sections: schemaSections(), warnings: [`not in the flat format, so only Raw YAML can change it: ${parsed.error}`], hostDefaults };
   const values = parseYaml(text);
-  const warnings = FLOW_CONFIG_SCHEMA.flatMap((spec) => {
+  const named = namedScheduleFields(values);
+  const sections = sectionsWith(named);
+  const warnings = [...FLOW_CONFIG_SCHEMA, ...named].flatMap((spec) => {
     const value = valueAt(values, spec.path);
     if (value === undefined) return [];
     const checked = checkFileValue(spec, value);
@@ -210,6 +224,40 @@ export class FlowConfigEditor {
     }
     const reply: FlowConfigSaved = { ...describe(this.file, next.text, await this.hostDefaults()), saved, followUps: followUpsOf(saved, after), notes: git.note === null ? [] : [git.note] };
     return { status: HTTP_OK, body: reply };
+  }
+
+  /**
+   * One key changed for an action rather than the form (`job.schedule` writes
+   * jobs.schedule.<name>, `job.unschedule` takes it out with null): checked as a change from the
+   * form is, written in place with every other line and comment kept, and queued with the form's
+   * saves. Unlike a save from the form it is not refused over uncommitted changes in git: the
+   * owner asked for this one key, and the rest of the file stays as it is; the reply says so.
+   * Returns what to tell the owner, one line each; throws with the reason when the file is
+   * missing, out of the flat format, or the value does not fit. It re-reads no source: the
+   * action does that once its process ends.
+   */
+  setKey(key: string, value: FieldValue): Promise<string> {
+    const turn = this.queue.then(() => this.setKeyNow(key, value));
+    this.queue = turn.catch(() => {});
+    return turn;
+  }
+
+  private async setKeyNow(key: string, value: FieldValue): Promise<string> {
+    if (!PATH.test(key)) throw new Error(`${key} is not a dotted key`);
+    const current = await this.text();
+    if (current === null) throw new Error(`${this.file} is missing`);
+    const next = this.edit(current, [{ path: key, value }]);
+    if (!next.ok) throw new Error(next.error);
+    if (next.text === current) return value === null ? `${CONFIG_FILE} has no ${key}, so there was nothing to take out\n` : `${CONFIG_FILE} already sets ${key} to that\n`;
+    const git = await this.gitState();
+    // The git check can take seconds, and the steward may append to the pool meanwhile: read again just before writing.
+    if (((await this.text()) ?? '') !== current) throw new Error(`${CONFIG_FILE} changed on disk while the change was checked; try again`);
+    const written = await this.replace(next.text);
+    if (written !== null) throw new Error(written);
+    this.deps.log.info('flow.config.saved', { project: this.deps.projectId, file: this.file, keys: key, raw: false, force: git.dirty !== null });
+    const said = value === null ? `took ${key} out of ${CONFIG_FILE}` : `wrote ${key}: ${String(value)} to ${CONFIG_FILE}`;
+    const note = git.dirty !== null ? `${CONFIG_FILE} had uncommitted changes in git; they are still there, beside this one` : git.note;
+    return `${said}\n${note === null ? '' : `${note}\n`}`;
   }
 
   /** Read on every GET and save, so a codex default changed since shows without a restart. */

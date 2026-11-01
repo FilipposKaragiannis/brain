@@ -1,6 +1,6 @@
 #!/bin/sh
 # Health job: check the worktree pool and the gates, with no model spend while all is well.
-#   jobs/health.sh <claude|codex> [--dry-run]
+#   jobs/health.sh <claude|codex> [--dry-run] [--model <name>] [--effort <level>]
 # First frees the worktrees whose PR was merged or whose item closed (`steward.sh sweep`, as the
 # next job does), so a merge clears its gate within one cycle even while a next run is busy.
 # Then runs `steward.sh health`: clears the run records whose process is gone, releases a claim
@@ -12,6 +12,8 @@
 # the pool is full and the next job has no worktree to start in. Each fact is a line in the log
 # and in events.log. Nothing to do: one quiet line, no notification. Schedule it every 15
 # minutes; the lock skips an overlap. --dry-run says what it would do and changes nothing.
+# --model and --effort set the pair a resumed run's steps with no agent run on, instead of
+# jobs.<host>.model and jobs.<host>.effort.
 set -u
 job=health
 . "$(dirname "$0")/_job.sh"
@@ -27,7 +29,7 @@ job_start "$host"
 swept=0
 # shellcheck disable=SC2086
 job_sweep $pass && swept=1
-out="$("$FLOW_PLUGIN/scripts/steward.sh" health --host "$host" $pass 2>&1)" || {
+out="$("$FLOW_PLUGIN/scripts/steward.sh" health --host "$host" $pass ${job_opt_model:+--model "$job_opt_model"} ${job_opt_effort:+--effort "$job_opt_effort"} 2>&1)" || {
   printf '%s\n' "$out" | sed '$d' | while IFS= read -r line; do job_say "$line"; done
   job_say "error: steward.sh health stopped: $(printf '%s\n' "$out" | tail -1)"; exit 1
 }

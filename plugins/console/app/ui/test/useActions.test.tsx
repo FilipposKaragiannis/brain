@@ -115,7 +115,7 @@ test('DaemonRestartedWhileStreamBlinked_ButtonFreeAfterReopen', async () => {
 
 test('LockHeld_ShowsTheRefusal', async () => {
   const result = await pressed(refusing());
-  expect(result.current.outcome('job.run', NEXT), 'because a refused press must say why').toEqual({ kind: 'refused', status: HTTP_CONFLICT, message: LOCK_HELD });
+  expect(result.current.outcome('job.run', NEXT), 'because a refused press must say why').toEqual({ kind: 'refused', status: HTTP_CONFLICT, message: LOCK_HELD, press: 1 });
 });
 
 test('LockHeld_ButtonFreeAgain', async () => {

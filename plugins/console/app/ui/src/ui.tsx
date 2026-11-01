@@ -1,12 +1,12 @@
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Freshness, SourceName } from '../../daemon/src/snapshot.ts';
 import type { ActionKind } from './actions.ts';
 import { actionStateLabel } from './actions.ts';
-import { Since } from './clock.tsx';
+import { Since, useNow } from './clock.tsx';
 import { actionRecordTone, freshnessTone } from './status.ts';
 import type { Tone } from './status.ts';
-import type { ActionsView } from './useActions.ts';
+import type { ActionOutcome, ActionsView } from './useActions.ts';
 
 export function Dot({ tone }: { tone: Tone }) {
   return <span className={`dot tone-${tone}`} aria-hidden="true" />;
@@ -79,11 +79,15 @@ export function SessionButton({ path, pid, alive }: { path: string; pid: number;
   return <ActionButton kind="terminal.open" args={{ path, session: String(pid) }} label={OPEN_SESSION} primary title={alive ? OPEN_SESSION_LIVE : OPEN_SESSION_ENDED} />;
 }
 
-/** A button that runs one action, stays disabled while that action runs, and shows how it ended. */
+/** How long a button keeps saying how its last press ended: a short while for success, longer for a failure. */
+export const OUTCOME_SHOWN_MS = 8000;
+export const FAILURE_SHOWN_MS = 30000;
+
+/** A button that runs one action, stays disabled while that action runs, and says for a while how it ended. */
 export function ActionButton({ kind, args, label, primary, title }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean; title?: string | undefined }) {
   const actions = useActionsView();
   const busy = actions.busy(kind, args);
-  const outcome = actions.outcome(kind, args);
+  const outcome = useFadingOutcome(actions.outcome(kind, args));
   return (
     <span className="action">
       <button type="button" className={primary ? 'button primary' : 'button'} disabled={busy} title={title} onClick={() => { void actions.run(kind, args); }}>
@@ -94,4 +98,29 @@ export function ActionButton({ kind, args, label, primary, title }: { kind: Acti
       {outcome?.kind === 'started' && outcome.record.note !== null && <span className="muted action-note">{outcome.record.note}</span>}
     </span>
   );
+}
+
+/**
+ * The outcome while it is worth showing. A running action shows until it ends. Then the chip
+ * stays `OUTCOME_SHOWN_MS`, or `FAILURE_SHOWN_MS` for a failure or a refusal, counted from the
+ * moment this button first saw that ending.
+ */
+function useFadingOutcome(outcome: ActionOutcome | null): ActionOutcome | null {
+  const now = useNow();
+  const key = outcomeKey(outcome);
+  const [seen, setSeen] = useState({ key, at: now });
+  if (seen.key !== key) {
+    setSeen({ key, at: now });
+    return outcome;
+  }
+  if (outcome === null) return null;
+  if (outcome.kind === 'started' && outcome.record.state === 'running') return outcome;
+  const failed = outcome.kind === 'refused' || outcome.record.state === 'failed' || outcome.record.state === 'rejected';
+  return now - seen.at < (failed ? FAILURE_SHOWN_MS : OUTCOME_SHOWN_MS) ? outcome : null;
+}
+
+function outcomeKey(outcome: ActionOutcome | null): string | null {
+  if (outcome === null) return null;
+  if (outcome.kind === 'refused') return `refused:${outcome.press}`;
+  return `${outcome.record.id}:${outcome.record.state}`;
 }

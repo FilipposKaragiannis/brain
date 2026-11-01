@@ -35,6 +35,12 @@ export type FieldSpec = {
   host?: { host: JobsHost; setting: 'model' | 'effort' };
   /** A key on its way out: shown only when the file sets it, read-only with this note and a Clear. */
   deprecated?: string;
+  /**
+   * A map of counts under fixed names (`jobs.workers`: each host to its workers): only these names,
+   * each a whole number from `min` to `max`, and at least one above 0. The plugin also reads such a
+   * map on one line, `{claude: 1, codex: 2}`; a file that holds it so keeps that form when edited.
+   */
+  counts?: { keys: string[] };
 };
 
 export const JOBS_HOSTS = ['claude', 'codex'] as const;
@@ -92,7 +98,21 @@ export type FlowConfigDocument = {
 /** `notes`: what the save wants the owner to know, such as a file git does not track. */
 export type FlowConfigSaved = FlowConfigDocument & { saved: string[]; followUps: (FollowUp & { paths: string[] })[]; notes: string[] };
 
-const JOBS = ['next', 'comments', 'intake', 'retro', 'health'];
+/** The jobs `jobs.sh` knows, each a script under the plugin's jobs/. */
+export const FLOW_JOBS = ['next', 'comments', 'intake', 'retro', 'health'];
+const JOBS = FLOW_JOBS;
+/**
+ * A schedule's name, as jobs.sh takes it: a job (`next`), or `<job>-<label>` for another schedule
+ * of the same job (`next-nightly`), the label a lower case word. A worker's name, `<schedule>-<n>`,
+ * never reads as one, since a label opens with a letter.
+ */
+export const SCHEDULE_NAME = new RegExp(`^(${JOBS.join('|')})(-[a-z][a-z0-9]*)?$`);
+const SCHEDULE_PREFIX = 'jobs.schedule.';
+
+/** The job a schedule runs: its name up to the label (`next` for `next-nightly`). */
+export function scheduleJob(name: string): string {
+  return name.split('-')[0] ?? name;
+}
 const ADAPTERS = ['github', 'local'];
 
 const RELOAD_SCHEDULE: FollowUp = {
@@ -147,6 +167,8 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   ]),
   field('jobs.model', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),
   field('jobs.effort', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),
+  // jobs/next.sh reads it at every run of the queue (lib/workers.sh), so a change needs nothing after it.
+  field('jobs.workers', 'map', 'Jobs', 'How many workers a run of the next job starts on each host, numbered claude first (claude: 1 and codex: 2 is next-1 on claude, next-2 and next-3 on codex); a run given --workers, the schedule\'s too, starts that many on its own host instead.', { counts: { keys: [...JOBS_HOSTS] }, min: 0, max: 64 }),
   field('jobs.permission_mode', 'enum', 'Jobs', 'How unattended Claude sessions ask for tools: dontAsk denies every edit not allowed already, auto lets the classifier allow safe ones.', { values: ['dontAsk', 'auto'] }),
   field('jobs.marketplace', 'string', 'Jobs', 'The marketplace checkout the weekly retro opens its pull request from.'),
   ...JOBS.map((job) => field(`jobs.schedule.${job}`, 'schedule', 'Jobs', `When the ${job} job runs on this machine: every 30m, daily 02:00 or weekly sun 07:00, then its options.`, { followUp: RELOAD_SCHEDULE })),
@@ -165,13 +187,32 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('intake.commit', 'boolean', 'Intake', 'When off, the intake job leaves the notes file uncommitted after filing.'),
 ];
 
+/**
+ * The field of a named schedule, `jobs.schedule.<job>-<label>`: the file may hold any number of
+ * them, so the schema lists none and makes each one here; undefined for any other path.
+ */
+function namedScheduleField(path: string): FieldSpec | undefined {
+  if (!path.startsWith(SCHEDULE_PREFIX)) return undefined;
+  const name = path.slice(SCHEDULE_PREFIX.length);
+  if (!SCHEDULE_NAME.test(name) || JOBS.includes(name)) return undefined;
+  return field(path, 'schedule', 'Jobs', `Another schedule of the ${scheduleJob(name)} job, ${name}, with its own options: every 30m, daily 02:00 or weekly sun 07:00, then its options.`, { followUp: RELOAD_SCHEDULE });
+}
+
 export function fieldAt(path: string): FieldSpec | undefined {
-  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path);
+  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path) ?? namedScheduleField(path);
 }
 
 /** The schema field a path belongs to: itself, or the map or list field above it. */
 export function fieldCovering(path: string): FieldSpec | undefined {
-  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path || ((spec.type === 'map' || spec.type === 'list') && path.startsWith(`${spec.path}.`)));
+  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path || ((spec.type === 'map' || spec.type === 'list') && path.startsWith(`${spec.path}.`))) ?? namedScheduleField(path);
+}
+
+/** The fields of the named schedules a parsed file holds, in file order. */
+export function namedScheduleFields(values: Record<string, unknown>): FieldSpec[] {
+  const jobs = values['jobs'];
+  const schedule = jobs !== null && typeof jobs === 'object' && !Array.isArray(jobs) ? (jobs as Record<string, unknown>)['schedule'] : undefined;
+  if (schedule === null || typeof schedule !== 'object' || Array.isArray(schedule)) return [];
+  return Object.keys(schedule).flatMap((name) => namedScheduleField(`${SCHEDULE_PREFIX}${name}`) ?? []);
 }
 
 /** The fixed groups with their fields, in schema order. */
@@ -185,9 +226,13 @@ const fail = (error: string): Checked => ({ ok: false, error });
 
 const DURATION = /^[0-9]+[smhd]$/;
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
-const CLOCK = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
-/** One option or value after the schedule, as `_jobs.py` takes it: no globs, redirections or substitutions. */
-const SCHEDULE_ARG = /^[A-Za-z0-9_./:=@%+,-]+$/;
+/** HH:MM, two digits each, as `_jobs.py clock` reads it. */
+const CLOCK = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+/**
+ * One option or value after the schedule, as `_jobs.py`'s ARG takes it: no spaces, quotes, globs,
+ * redirections or substitutions. `#` is in it so an item id (gh#12) can be one.
+ */
+const SCHEDULE_ARG = /^[A-Za-z0-9_./:=@%+,#-]+$/;
 const NUMBER = /^-?[0-9]+$/;
 
 /** The schedule as `scripts/_jobs.py` reads it: every 30m, every 2h, daily 02:00 or weekly sun 03:00, then its args. */
@@ -199,7 +244,41 @@ export function checkSchedule(text: string): Checked {
   if (words[0] === 'weekly' && words[1] !== undefined && WEEKDAYS.includes(words[1].slice(0, 3).toLowerCase()) && words[2] !== undefined && CLOCK.test(words[2])) args = words.slice(3);
   if (args === null) return fail(`cannot read the schedule "${text}": use every 30m, daily 02:00 or weekly sun 03:00`);
   const bad = args.find((arg) => !SCHEDULE_ARG.test(arg));
-  return bad === undefined ? ok : fail(`the schedule "${text}" has the arg "${bad}": an arg is one option or value of letters, digits and _./:=@%+,-`);
+  if (bad !== undefined) return fail(`the schedule "${text}" has the arg "${bad}": an arg is one option or value of letters, digits and _./:=@%+,#-`);
+  // The schedule lives in .flow/config.yaml, where lib/flow.sh reads " #" as the start of a comment.
+  const comment = args.find((arg) => arg.startsWith('#'));
+  return comment === undefined ? ok : fail(`the schedule "${text}" has the arg "${comment}": an arg cannot open with #, which .flow/config.yaml reads as a comment`);
+}
+
+/**
+ * A map written on one line, `{claude: 1, codex: 2}`, as the plugin's `_jobs.py workers` reads it:
+ * the entries between the braces split on commas, each `name: value` with quotes taken off; null
+ * when the text is not in braces or an entry has no colon.
+ */
+export function parseOneLineMap(text: string): Record<string, string> | null {
+  const raw = text.trim();
+  if (!raw.startsWith('{') || !raw.endsWith('}')) return null;
+  const unquote = (part: string): string => part.trim().replace(/^["']+|["']+$/g, '');
+  const entries: Record<string, string> = {};
+  for (const part of raw.slice(1, -1).split(',')) {
+    if (part.trim() === '') continue;
+    const colon = part.indexOf(':');
+    if (colon < 0) return null;
+    entries[unquote(part.slice(0, colon))] = unquote(part.slice(colon + 1));
+  }
+  return entries;
+}
+
+/** A counts map's entries against its names and range, as `_jobs.py workers` checks `jobs.workers`. */
+function checkCounts(spec: FieldSpec & { counts: { keys: string[] } }, entries: Record<string, string>): Checked {
+  for (const [key, value] of Object.entries(entries)) {
+    if (!spec.counts.keys.includes(key)) return fail(`${spec.path} names ${key}: it takes ${spec.counts.keys.join(' and ')}`);
+    if (!/^[0-9]+$/.test(value)) return fail(`${spec.path}.${key} must be a whole number, not "${value}"`);
+    const checked = inRange({ ...spec, path: `${spec.path}.${key}` }, Number(value));
+    if (!checked.ok) return checked;
+  }
+  const values = Object.values(entries);
+  return values.length > 0 && values.every((value) => Number(value) === 0) ? fail(`${spec.path} starts no worker: give one of ${spec.counts.keys.join(', ')} 1 or more`) : ok;
 }
 
 function inRange(spec: FieldSpec, value: number): Checked {
@@ -238,11 +317,26 @@ export function checkFileValue(spec: FieldSpec, value: unknown): Checked {
     return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? ok : fail(`${spec.path} must be a list of text`);
   }
   if (spec.type === 'map') {
+    if (spec.counts !== undefined) return checkCountsValue({ ...spec, counts: spec.counts }, value);
     if (value !== null && typeof value === 'object' && !Array.isArray(value)) return ok;
     return fail(`${spec.path} must be a map of name: value lines`);
   }
   if (typeof value !== 'string') return fail(`${spec.path} must be one value, not a ${Array.isArray(value) ? 'list' : 'map'}`);
   return checkText(spec, value);
+}
+
+/** A counts map as the file holds it: one line in braces, or name: value lines under the key. */
+function checkCountsValue(spec: FieldSpec & { counts: { keys: string[] } }, value: unknown): Checked {
+  if (typeof value === 'string') {
+    if (value.trim() === '') return ok;
+    const entries = parseOneLineMap(value);
+    return entries === null ? fail(`${spec.path} is "${value}": write it as {${spec.counts.keys.map((key, index) => `${key}: ${index + 1}`).join(', ')}}, or one name per line under it`) : checkCounts(spec, entries);
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return fail(`${spec.path} must be a map of name: count lines`);
+  const entries = value as Record<string, unknown>;
+  const notText = Object.keys(entries).find((key) => typeof entries[key] !== 'string');
+  if (notText !== undefined) return fail(`${spec.path}.${notText} must be one count, not a list or a map`);
+  return checkCounts(spec, entries as Record<string, string>);
 }
 
 /** A change from the UI against its field: the JSON type the field takes, then the same checks as a value in the file. */
@@ -254,9 +348,11 @@ export function checkChange(spec: FieldSpec, value: FieldValue): Checked {
       return inRange(spec, value);
     case 'boolean': return typeof value === 'boolean' ? ok : fail(`${spec.path} must be true or false`);
     case 'list': return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? ok : fail(`${spec.path} must be a list of text`);
-    case 'map':
-      return value !== null && typeof value === 'object' && !Array.isArray(value) && Object.entries(value).every(([key, entry]) => /^[A-Za-z0-9_-]+$/.test(key) && typeof entry === 'string')
-        ? ok : fail(`${spec.path} must be a map of names (letters, digits, - and _) to text`);
+    case 'map': {
+      const map = value !== null && typeof value === 'object' && !Array.isArray(value) && Object.entries(value).every(([key, entry]) => /^[A-Za-z0-9_-]+$/.test(key) && typeof entry === 'string');
+      if (!map) return fail(`${spec.path} must be a map of names (letters, digits, - and _) to text`);
+      return spec.counts === undefined ? ok : checkCounts({ ...spec, counts: spec.counts }, value as Record<string, string>);
+    }
     case 'string': case 'enum': case 'enumOrText': case 'duration': case 'schedule':
       return typeof value === 'string' ? checkText(spec, value) : fail(`${spec.path} must be text`);
   }

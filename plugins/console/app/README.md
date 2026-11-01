@@ -150,7 +150,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings, hostDefaults}` (below) |
 | `PUT /api/projects/<id>/plugins/flow/config` | change it, body `{"changes": [{"path", "value"}], "hash", "force"?}` or `{"text", "hash", "force"?}`; 200 with the new document plus `saved` and `followUps`, 400 with the reason, 409 with `reason: "stale"` or `"dirty"` |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
-| `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns: [{at, role, text}]}`: the last `n` turns with text (default 20, at most 200) of the claude transcript of an agent or session in `agents` or `ended`, oldest first; user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results, and without the host's wrapper turns (a user line that opens with a tag such as `<task-notification>`, `<local-command-stdout>` or `<command-name>`, and a compaction summary); read from the last 4 MB of the file. 404 for a pid not listed or without a transcript, 400 for a codex session or a bad `lines` |
+| `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns, lines, bytes, turnCount}` of the claude transcript of an agent or session in `agents` or `ended`, oldest first: `turns` the last `n` turns with text (`[{at, role, text}]`, default 20, at most 200), user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results, and without the host's wrapper turns (a user line that opens with a tag such as `<task-notification>`, `<local-command-stdout>` or `<command-name>`, and a compaction summary); `lines` the last `n` entries as one line each (`[{at, kind, text}]`, at most 2000; `kind` is `say`, `think`, `tool`, `result` or `user`, a result only when it failed, each text cut to 300 characters); `bytes` the file's size and `turnCount` its user and assistant entries. Read from the last 4 MB of the file, doubled up to 64 MB while it holds fewer lines than asked. 404 for a pid not listed or without a transcript, 400 for a codex session or a bad `lines` |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted) |
@@ -159,8 +159,8 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 3 since worktrees carry
-`syncPending` (and action records `conflict`). One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 5 since a job is a schedule
+(`name`, with `job`, `host` and `configured`, below). One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`) and `disagreements`. Timestamps are
@@ -173,6 +173,12 @@ snapshots.
   (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
   variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
   `jobsHost` (`jobs.host`, the CLI the jobs run) and `poolMax`.
+- `jobs` has one entry per schedule `jobs.sh status --json` lists (flow 1.26.0): every job, then
+  the named schedules (`next-codex`) in config order, then the installed ones the config no longer
+  names. `name` is the schedule, `job` the script it runs (`next` for `next-codex`), `host` the
+  host its args name or else `jobs.host` (null when the plugin does not say), and `configured`
+  false only for a schedule installed here that the config dropped. On a plugin before 1.26.0 a
+  row has no `name`: the console takes `job` as the name and the job as its part before the label.
 - A worktree carries `agents` and `sessions`, each a list of `{pid, host, command, elapsedSeconds,
   session}` (the command cut to 200 characters), `item`, `itemUrl` and `itemTitle` (from the board, null
   without an item or before the board is read), and `staleReason`: "branch is 35 commits behind
@@ -371,7 +377,13 @@ on every state change and at most twice a second while output arrives.
 | `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item | `finished` |
 | `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item and the next job | with an item `started` while the run goes, `finished` once it ends well; without one `started` |
 | `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
-| `job.stop` `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
+| `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
+| `job.stop` | `job` | `jobs.sh stop <job>` | a stop lock of the job's own, so it reaches a run `job.start` holds | `finished` |
+| `job.start` | `job?` (next), `host`, `model?`, `effort?`; for next also `item?`, `workers?`, `maxSteps?` | `.flow/jobs/<job>.sh <host> [item] [--workers N] [--max-steps M] [--model X] [--effort Y]`, detached: one run outside the schedules (below) | the job, and the item when given | `finished` once it ends; `started` for a next run that hands the queue to workers |
+| `job.schedule` | `job` (a schedule name), `schedule` | writes `jobs.schedule.<job>` through the flow config editor, then `jobs.sh install <job>` | the schedule | `finished`; `jobs` and `files` are re-read |
+| `job.unschedule` | `job` (a schedule name) | `jobs.sh uninstall <job>`, then takes `jobs.schedule.<job>` out of the config | the schedule | `finished`; `jobs` and `files` are re-read |
+| `run.stop` | `item` | `steward.sh stop <item>`: ends the run's processes and removes its record, keeping the claim and the worktree | a stop lock of the item's own, so it reaches a run `run.start` or `job.start` holds | `finished` |
+| `run.resume` | `item` | `steward.sh resume <item>`: clears a dead run's record and starts its step again, as the health job does | the item | `started` |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
 | `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished`; on a conflict the record's `conflict` |
@@ -380,6 +392,7 @@ on every state change and at most twice a second while output arrives.
 | `steward.health` | | `jobs.sh run health`, so the health job's own lock applies | the health job | `started` |
 | `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
+| `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
 | `terminal.open` | `path`, `job?`, `session?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
@@ -394,6 +407,18 @@ second), `finished` means the work is over. It is null while an attached action 
 failed or rejected one. Every `jobs.sh run <job>` (`job.run`, `steward.health`, `run.start` without
 an item) also re-reads its sources a second time five seconds after it returns
 (`ActionPlan.refreshAgainMs`), so the run it started shows; a daemon that stops drops the wait.
+
+`job.start` runs any of the five jobs once with its own host, model and effort, which replace
+`jobs.<host>.model` and `.effort` for that run (flow 1.26.0); `item`, `workers` and `maxSteps` are
+next's alone and refused for the others. It is refused while next is paused, since next.sh would
+exit at once, and for an item with more than one worker. `job.schedule` takes a schedule name, a job
+or `<job>-<label>` with a label of a lowercase letter then letters and digits, and a schedule line
+as `_jobs.py` reads it: `every <n>m|h`, `daily HH:MM` or `weekly <day> HH:MM`, then an optional
+host word and the job's args (letters, digits and `_./:=@%+,#-`, none opening with `#`). It is
+refused while that schedule runs, and for the plain next schedule with `--workers` while
+`jobs.workers` is set; a named next schedule runs its own `--workers`. `job.unschedule` unloads first, so an installed schedule the config already dropped is only
+unloaded. `run.stop` and `run.resume` need a run record for the item; a resumed step shows in the
+process list a few seconds later, so its sources are read again then.
 
 `worktree.sync` brings a claimed pool worktree up to date. The target is an item or a pool
 worktree's name, as for a release; the base is the claim's, else the project's. It is refused, each
@@ -482,7 +507,8 @@ them.
 An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
 never changes what runs. A second action on a held lock is refused with 409 and recorded as
-`rejected`. At most four run at once. Scripts get two minutes, a merge three; a process that
+`rejected`. At most four run at once, stops aside: `run.stop` and `job.stop` start on a full
+runner too. Scripts get two minutes, a merge three; a process that
 ignores SIGTERM is killed with its group ten seconds later, and a timed-out action is `failed`
 whatever its exit code. A run started with `run.start` and an item is detached, writes its own output file,
 holds its item for as long as it runs and is never killed by the console. `jobs/next.sh` takes
@@ -571,14 +597,21 @@ note is there "A run is going; the sync step runs first when it starts", and bet
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
 <refs>" whenever `syncPending` is set, so a note the health job wrote shows too), a
 legend for dirty, agents and sessions; Open in Terminal on every row, the project root
-included, Release, Health), Agents and jobs (Open in Terminal on every agent and session row, in
-its working directory; Run, Stop, Pause, Resume and Open in Terminal, which follows the job's log,
-on every job; an agent or session whose transcript was found also gets Open session, which runs
-`terminal.open` with its pid, titled "Opens a terminal at the worktree with the resume command
-ready. The run is still going, so press Enter once it ends." while it runs, and a Transcript fold
-under a claude row with its last 20 turns, read when opened and again with each snapshot; a table
-"Ended in the last day" lists `ended` with Open session, titled "Opens a terminal at the worktree
-and resumes the session.", Open in Terminal and the Transcript fold), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
+included, Release, Health), Agents and jobs (a main column and a side column. Runs: a card per live run, the first open and the
+others folded to their header, each with its step, item, worktree, host and PR, its stats
+(started, last commit, transcript size and turns, pid) and its transcript as a terminal of the
+last 12 lines, with Full log (the last 2000 lines in a box that scrolls), Open session, Open in
+Terminal and Stop this run (`run.stop`); a run record with no process is a dashed card with
+Resume (`run.resume`). Jobs: a card per schedule with its state, timing, host and args, the last
+run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Open in Terminal in the row; its
+history and workers open in a box of fixed height that scrolls; the jobs with no schedule fold
+into one line. Edit… opens a dialog over the page with the schedule's timing, host, model and
+effort, and for next its item, workers and max steps; saving runs `job.schedule` under the same
+name. Then your own sessions and the runs ended in the last day, folded. The side column holds a
+card per stopped host with Clear (`host.clear`), the panel that adds a schedule of any job or runs
+it once (`job.schedule`, `job.start`): a Job picker, then the name, the timing and the job's
+settings, where only next takes an item and limits, an empty name making the job's own schedule
+only while it has none; and the latest events), Pull requests (from the `pulls` source, with Merge on a PR in state `mergeable`) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s). A row above every screen holds the project's fields, each a small uppercase label over its

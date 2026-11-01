@@ -25,11 +25,20 @@
 #                                                commits past the base
 #   steward.sh keep-whole <item>                 the owner kept it whole: no split until its plan
 #                                                step rewrites plan.md (kept-whole <item> asks)
-#   steward.sh health [--dry-run] [--host H] [--wait]
+#   steward.sh health [--dry-run] [--host H] [--wait] [--model M] [--effort E]
 #                                                check every claim: clear a dead run, release an
 #                                                empty claim, finish a split, resume cut-off work,
 #                                                sync branches, remind on old gates, say when the
 #                                                pool is stuck
+#   steward.sh stop <item>                       end the item's run: its process and every one under
+#                                                it; the record goes, so health does not resume it;
+#                                                the claim, the worktree and its changes stay
+#   steward.sh resume <item> [--host H] [--wait] [--model M] [--effort E]
+#                                                start a run whose process is gone again where it
+#                                                stopped, as health resumes one; a live run or no
+#                                                record is refused, exit 1. --model and --effort
+#                                                replace jobs.<host>.model and .effort for the
+#                                                resumed run's steps with no agent, in both
 # A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named
 # after the last pool entry (../app-wt-3 after ../app-wt-2). worktree_copy lists ignored paths
 # copied from the main worktree when the new one lacks them (.claude/settings.local.json);
@@ -485,12 +494,13 @@ cmd_sweep() {
 # --- health: the pool checked in order, claim by claim. See jobs/health.sh, which runs it.
 hpy() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
 
-# health_say <item> <fact>: one line per fact, on stdout and in events.log.
+# health_say <item> <fact>: one line per fact, on stdout and in events.log, of the kind health
+# (resume when the owner resumes a run).
 health_say() {
   echo "$1: $2"
   facts=$((facts + 1))
   [ "$dry" -eq 1 ] && return 0
-  printf '%s\t%s\thealth\t%s\n' "$(now_iso)" "$([ "$1" = pool ] && echo - || echo "$1")" "$2" >> "$home/events.log"
+  printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$([ "$1" = pool ] && echo - || echo "$1")" "${health_kind:-health}" "$2" >> "$home/events.log"
 }
 
 # health_notify <message>: a notification on the health event; notify.health: false silences it.
@@ -592,7 +602,7 @@ health_free() {
 }
 
 # health_resume <item> <step> <path>: start the step again in the background, where the dead run
-# left it, at most max_resumes times in a row while the step does not advance; then escalate. The
+# left it, on $resume_host with $resume_model and $resume_effort when set, at most max_resumes times in a row while the step does not advance; then escalate. The
 # note for the resumed step goes in resume.md, which next.sh puts in that one brief and removes.
 health_resume() {
   hr_item="$1"; hr_step="$2"; hr_path="$3"; hr_file="$home/health/$(item_slug "$1").resume"
@@ -612,8 +622,8 @@ health_resume() {
   mkdir -p "$health_reports" && printf 'The previous run of step %s died. Health job resume %s of %s: this worktree holds its commits and uncommitted changes. Read git status and git log, continue from there, and discard nothing.\n' "$hr_step" "$hr_n" "$max_resumes" > "$health_reports/resume.md"
   health_say "$hr_item" "resumed $hr_step on $resume_host (attempt $hr_n of $max_resumes)"
   hr_run="$FLOW_PLUGIN/templates/run-unattended.sh"; hr_log="$home/log/resume-$(item_slug "$hr_item").log"
-  if [ "$wait_for_resume" -eq 1 ]; then "$hr_run" "$resume_host" "$hr_item" >> "$hr_log" 2>&1
-  else hpy spawn "$hr_log" "$hr_run" "$resume_host" "$hr_item" >/dev/null; fi
+  if [ "$wait_for_resume" -eq 1 ]; then "$hr_run" "$resume_host" "$hr_item" ${resume_model:+--model "$resume_model"} ${resume_effort:+--effort "$resume_effort"} >> "$hr_log" 2>&1
+  else hpy spawn "$hr_log" "$hr_run" "$resume_host" "$hr_item" ${resume_model:+--model "$resume_model"} ${resume_effort:+--effort "$resume_effort"} >/dev/null; fi
 }
 
 # health_claim <path>: every check of one claimed worktree, in order: the heartbeat, the empty
@@ -913,16 +923,32 @@ health_next_runs() {
   done
 }
 
-cmd_health() {
-  dry=0; wait_for_resume=0; resume_host="$(cfg_or jobs.host claude)"
-  while [ $# -gt 0 ]; do
-    case "$1" in --dry-run) dry=1; shift ;; --wait) wait_for_resume=1; shift ;; --host) resume_host="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac
-  done
+# health_settings: the jobs.health settings and the host library; a bad setting exits 2.
+health_settings() {
   . "$FLOW_PLUGIN/lib/host.sh"
   grace="$(hpy seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
   reminder="$(hpy seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
   max_resumes="$(cfg_or jobs.health.max_resumes 3)"; behind_base="$(cfg_or jobs.health.behind_base 20)"; push="$(cfg_or jobs.health.push false)"
   case "$max_resumes$behind_base" in *[!0-9]*) die "jobs.health.max_resumes and jobs.health.behind_base take whole numbers" 2 ;; esac
+}
+
+# resume_pair_check: an --effort the resume host does not take exits 2 before anything changes.
+resume_pair_check() {
+  case "$resume_host" in claude|codex) _bad="$(host_effort_problem "$resume_host" "$resume_effort" --effort)"; [ -z "$_bad" ] || die "$_bad" 2 ;; esac
+}
+
+cmd_health() {
+  dry=0; wait_for_resume=0; resume_host="$(cfg_or jobs.host claude)"; resume_model=""; resume_effort=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run) dry=1; shift ;; --wait) wait_for_resume=1; shift ;; --host) resume_host="$2"; shift 2 ;;
+      --model) [ $# -ge 2 ] || die "--model takes a model name" 2; resume_model="$2"; shift 2 ;;
+      --effort) [ $# -ge 2 ] || die "--effort takes a level" 2; resume_effort="$2"; shift 2 ;;
+      *) die "unknown option $1" 2 ;;
+    esac
+  done
+  health_settings
+  resume_pair_check
   FLOW_LOCK_WAIT="${FLOW_LOCK_WAIT:-10}"
   now="$(date +%s)"; facts=0; claims=0; running=0; gated=0; reviewing=0; waiting=0; claimable=0; released=0; holders=""
   health_in_review=""; health_records=""
@@ -964,6 +990,95 @@ cmd_health() {
   echo "health: $claims claimed ($running running, $gated at a gate$([ "$reviewing" -eq 0 ] || echo ", $reviewing in review")), $claimable free, $waiting gate(s) waiting; $([ "$facts" -eq 0 ] && echo "nothing to do" || echo "$facts finding(s)")"
 }
 
+# --- stop and resume: the owner's hand on one item's run.
+# item_id <id>: an item's id, gh#<n> or local:<kind>/<n>; anything else exits 2.
+item_id() {
+  case "$1" in
+    gh#|gh#*[!0-9]*) ;;
+    gh#*) return 0 ;;
+    local:epic/*|local:task/*|local:bug/*) case "${1#local:*/}" in ''|*[!0-9]*) ;; *) return 0 ;; esac ;;
+  esac
+  die "not an item id: $1 (use gh#<n> or local:<kind>/<n>)" 2
+}
+descendants() { for c in $(pgrep -P "$1" 2>/dev/null); do echo "$c"; descendants "$c"; done; }
+# run_procs: $procs, the process list the health job reads: FLOW_HEALTH_PROCS, else a fresh one
+# that run_procs_done removes. When ps lists nothing it exits 1: no run is judged on a blank list.
+run_procs() {
+  procs="${FLOW_HEALTH_PROCS:-}"
+  [ -z "$procs" ] || return 0
+  mkdir -p "$home/health"; procs="$home/health/.procs.$$"
+  hpy procs > "$procs" 2>/dev/null || { rm -f "$procs"; die "cannot list processes (ps failed or listed nothing), so the run is left as it is" 1; }
+}
+run_procs_done() { [ "${FLOW_HEALTH_PROCS:-}" = "$procs" ] || rm -f "$procs"; }
+# run_of <item>: the run record's fields: rn_rec, rn_step, rn_pid, rn_path (the record's worktree,
+# else the claim's). Returns 1 when the item has no record.
+run_of() {
+  rn_rec="$home/runs/$(item_slug "$1").json"
+  [ -f "$rn_rec" ] || return 1
+  rn_run="$(cat "$rn_rec")"; rn_step="$(json_get "$rn_run" step)"; rn_pid="$(json_get "$rn_run" pid)"
+  rn_path="$(json_get "$rn_run" worktree)"; [ -n "$rn_path" ] || rn_path="$(cmd_find "$1")"
+}
+
+# cmd_stop <item>: end the item's run: the process its record names, when it still runs the
+# unattended loop or a host session (the health job's test), and every process under it, as
+# jobs.sh stop ends a job's. The record goes, so the health job does not resume the run; the claim,
+# the worktree and its commits and changes stay, and the next job may continue the item. One
+# events.log line and the item's last_event say it. Nothing in flight is said, exit 0.
+cmd_stop() {
+  item_id "$1"
+  run_of "$1" || { echo "$1: no run in flight, nothing to stop"; return 0; }
+  run_procs
+  st_live="$(hpy alive "$procs" "$1" "${rn_path:-$home}" "$rn_pid")"; run_procs_done
+  st_pids=""
+  [ -z "$rn_pid" ] || [ "$st_live" != "pid $rn_pid" ] || st_pids="$(echo "$rn_pid"; descendants "$rn_pid")"
+  # shellcheck disable=SC2086
+  [ -z "$st_pids" ] || kill -TERM $st_pids 2>/dev/null
+  rm -f "$rn_rec"
+  st_said="run of ${rn_step:-?} stopped by the owner"
+  printf '%s\t%s\tstopped\t%s\n' "$(now_iso)" "$1" "$st_said" >> "$home/events.log"
+  write_state "$1" "last_event=$(now_iso) $st_said"
+  if [ -n "$st_pids" ]; then
+    echo "$1: $st_said: $(printf '%s\n' $st_pids | sort -u | wc -l | tr -d ' ') process(es) ended; the claim and the worktree are kept as they are"
+  else
+    echo "$1: $st_said: no process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
+  fi
+}
+
+# cmd_resume <item> [--host H] [--wait] [--model M] [--effort E]: start again a run whose process is gone, as the health job
+# resumes a dead run (health_resume): its record cleared, the same resume.md note in the step's
+# brief, the same jobs.health.max_resumes count, then the escalation gate (exit 4). The run starts
+# in the background on --host (default jobs.host), or in the foreground with --wait. A run still
+# alive (the health job's test, without its grace) and an item with no record are refused, exit 1.
+cmd_resume() {
+  item_id "$1"; rs_item="$1"; shift
+  dry=0; wait_for_resume=0; resume_host="$(cfg_or jobs.host claude)"; resume_model=""; resume_effort=""; facts=0; health_gate=""; health_kind=resume
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --wait) wait_for_resume=1; shift ;; --host) [ $# -ge 2 ] || die "--host takes claude or codex" 2; resume_host="$2"; shift 2 ;;
+      --model) [ $# -ge 2 ] || die "--model takes a model name" 2; resume_model="$2"; shift 2 ;;
+      --effort) [ $# -ge 2 ] || die "--effort takes a level" 2; resume_effort="$2"; shift 2 ;;
+      *) die "unknown option $1" 2 ;;
+    esac
+  done
+  health_settings
+  resume_pair_check
+  run_of "$rs_item" || die "$rs_item has no run record, so there is no run to resume: the next job continues it from its step" 1
+  [ -n "$rn_path" ] && [ -d "$rn_path" ] || die "$rs_item: the worktree of its run is gone, so the run cannot resume" 1
+  run_procs
+  rs_live="$(hpy alive "$procs" "$rs_item" "$rn_path" "$rn_pid")"; run_procs_done
+  [ -z "$rs_live" ] || die "$rs_item: the run of ${rn_step:-?} is still alive ($rs_live): end it first with steward.sh stop $rs_item" 1
+  host_check "$resume_host" || exit 2
+  # The step health counts resumes by is the item's own (a sync run's record says sync).
+  rs_step="$(state_get "$(adapter read "$rs_item" 2>/dev/null)" step)"; [ -n "$rs_step" ] || rs_step="$rn_step"
+  mkdir -p "$home/health" "$home/log"
+  health_reports="$rn_path/.flow/reports/$(item_slug "$rs_item")"
+  rm -f "$rn_rec"
+  write_state "$rs_item" "last_event=$(now_iso) owner: cleared the dead run of ${rs_step:-?} to resume it"
+  health_say "$rs_item" "dead run of ${rs_step:-?} cleared by the owner"
+  health_resume "$rs_item" "$rs_step" "$rn_path"
+  [ -z "$health_gate" ] || exit 4
+}
+
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
@@ -979,6 +1094,8 @@ case "$cmd" in
   keep-whole) [ $# -ge 1 ] || die "usage: keep-whole <item>" 2; cmd_keep_whole "$1" ;;
   kept-whole) [ $# -ge 1 ] || die "usage: kept-whole <item>" 2; kept_whole "$1" ;;
   health) cmd_health "$@" ;;
+  stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
+  resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,32p' "$0"; exit 2 ;;
+  *) sed -n '2,38p' "$0"; exit 2 ;;
 esac

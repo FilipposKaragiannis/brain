@@ -1,6 +1,6 @@
 #!/bin/sh
 # Intake job: turn the owner's notes into tracker items.
-#   jobs/intake.sh <claude|codex> [--notes PATH] [--batch N] [--keep-notes]
+#   jobs/intake.sh <claude|codex> [--notes PATH] [--batch N] [--keep-notes] [--model <name>] [--effort <level>]
 # Reads the next unfiled notes from intake.notes in .flow/config.yaml (or --notes), at most
 # intake.batch of them (default 10), and runs the flow `intake` skill on each note in its own
 # host session from the main worktree, one after another, so every note gets a fresh context and

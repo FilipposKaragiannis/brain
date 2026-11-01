@@ -1,6 +1,6 @@
 #!/bin/sh
 # Comments job: address review comments on every open PR, or one.
-#   jobs/comments.sh <claude|codex> [pr|item]
+#   jobs/comments.sh <claude|codex> [pr|item] [--model <name>] [--effort <level>]
 # Finds every open item with a linked PR across the adapters, drops the merged and closed
 # ones, and runs the flow `comments` skill once per PR in a fresh host session from the main
 # worktree (the skill spawns the comment-addresser in the task's worktree). Before that, with no

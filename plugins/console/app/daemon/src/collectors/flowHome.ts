@@ -7,7 +7,7 @@ import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
-import type { FlowEvent, GatePlan, GateQuestion, PluginSource } from '../snapshot.ts';
+import type { FlowEvent, GatePlan, GateQuestion, PluginSource, StoppedHost } from '../snapshot.ts';
 
 /** The parts of .flow/config.yaml the snapshot needs. */
 export type FlowConfig = {
@@ -20,6 +20,11 @@ export type FlowConfig = {
   behindBase: number | null;
   /** jobs.host: the CLI the jobs run unattended, claude by default. */
   jobsHost: string;
+  /**
+   * Whether `jobs.workers` names any host (one line, `{claude: 1, codex: 2}`, or a map under it),
+   * so a run of the queue started with no `--workers` splits into workers across the hosts.
+   */
+  jobsWorkers: boolean;
   /** What in the file the console read but the plugin no longer does, such as the old `health.behind_base`. */
   deprecated: string[];
 };
@@ -63,6 +68,8 @@ export type FlowHomeFacts = {
   pluginSource: PluginSource | null;
   /** Why `gate.sh list --json` gave no parse this read, or null when it was not needed or worked. */
   gateListError: string | null;
+  /** The hosts flow stopped on a spend limit or an auth error, from `<flow home>/log/<host>.stopped`, claude first. */
+  stoppedHosts: StoppedHost[];
   /**
    * Whether each step of the plugin's step table (`steps.<step>.worktree` in its profiles.json,
    * what next.sh's `step_field <step> worktree` reads) runs in a claimed worktree; null when the
@@ -120,6 +127,7 @@ export function parseFlowConfig(source: string): FlowConfig {
     schedule,
     behindBase: behindBase === null ? null : Number(behindBase),
     jobsHost: jobsHostOf(yamlString(map, 'jobs.host')),
+    jobsWorkers: (yamlString(map, 'jobs.workers') ?? '').trim() !== '' || Object.keys(yamlMap(map, 'jobs.workers')).length > 0,
     deprecated,
   };
 }
@@ -227,6 +235,8 @@ export function parseGateList(source: string): Map<string, GateListEntry> | null
     if (typeof entry !== 'object' || entry === null) continue;
     const record = entry as Record<string, unknown>;
     if (typeof record['item'] !== 'string' || typeof record['message'] !== 'string' || !Array.isArray(record['questions'])) continue;
+    // gate.sh's text list prints a stopped host as a gate named `stopped`; that is no gate record, and stoppedHosts shows it.
+    if (record['gate'] === STOPPED_GATE) continue;
     const questions = (record['questions'] as unknown[]).map(gateQuestion).filter((question): question is GateQuestion => question !== null);
     entries.set(record['item'], { message: record['message'], questions });
   }
@@ -272,6 +282,31 @@ async function fillGateQuestions(
     if (entry !== undefined && entry.message === record.message) cache.set(record.item, entry);
   }
   return null;
+}
+
+/** The gate name `gate.sh list` gives a stopped host's line: a host, not a gate on an item. */
+const STOPPED_GATE = 'stopped';
+
+/**
+ * The hosts flow stopped (`host_stop` in the plugin's lib/host.sh writes `<flow home>/log/<host>.stopped`,
+ * `{host, cause, said, at, item}`): no session starts on one until `gate.sh clear <host>`, or the
+ * clear of the gate on its item, removes the file. The host is the file's, the one `gate.sh clear`
+ * takes; an empty `at` or `item` is null. A file that is not a JSON object still stops the host
+ * (flow only tests that it exists), so it is listed with what can be read.
+ */
+export async function readStoppedHosts(flowHome: string): Promise<StoppedHost[]> {
+  const out: StoppedHost[] = [];
+  for (const host of JOB_HOSTS) {
+    const source = await readText(path.join(flowHome, 'log', `${host}.stopped`));
+    if (source === null) continue;
+    let value: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(source);
+      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) value = parsed as Record<string, unknown>;
+    } catch { /* an unreadable file still stops the host */ }
+    out.push({ host, cause: text(value, 'cause'), said: text(value, 'said'), at: text(value, 'at') || null, item: text(value, 'item') || null });
+  }
+  return out;
 }
 
 /** The installed flow plugin the project uses, as .flow/plugin.sh resolves it. */
@@ -336,7 +371,8 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   }
   const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
   const worktreeSteps = pluginRoot === null ? null : await readWorktreeSteps(pluginRoot);
-  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, worktreeSteps };
+  const stoppedHosts = await readStoppedHosts(flowHome);
+  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps };
 }
 
 /** The `worktree` flag of every step in the plugin's profiles.json, as next.sh's `step_field` reads it; null when unreadable. */

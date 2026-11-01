@@ -3,11 +3,13 @@
  * blank line and key keeps its place. The format is the flat one the file's header names and
  * lib/flow.sh reads: two-space indentation, `key: value`, nested maps, lists as `- item` or
  * `[a, b]`. Anything else (tabs, anchors, block scalars, flow maps, a list of maps) is refused with
- * the line, never guessed at.
+ * the line, never guessed at. The one flow map taken is a one-line map where the plugin reads one
+ * (a counts field, `jobs.workers: {claude: 1, codex: 2}`).
  */
 import { parseYaml } from '../../yaml.ts';
 import type { YamlMap, YamlValue } from '../../yaml.ts';
 import type { FieldValue } from './schema.ts';
+import { fieldAt, parseOneLineMap } from './schema.ts';
 
 const INDENT = 2;
 const KEY = /^([A-Za-z0-9_][A-Za-z0-9_.-]*):(.*)$/;
@@ -47,8 +49,18 @@ function splitValue(rest: string, where: string): { ok: true; value: string; tai
   return { ok: true, value, tail: body.slice(value.length) };
 }
 
-function checkValueShape(value: string, where: string): string | null {
+/** Whether the key at `path` may hold a map on one line: a counts field, which the plugin reads so. */
+function oneLineMapKey(path: string | null): boolean {
+  return path !== null && fieldAt(path)?.counts !== undefined;
+}
+
+function checkValueShape(value: string, where: string, path: string | null = null): string | null {
   const first = value[0];
+  if (first === '{' && oneLineMapKey(path)) {
+    if (!value.endsWith('}')) return `${where}: a one-line map must close with } on the same line`;
+    if (/[[\]{}]/.test(value.slice(1, -1))) return `${where}: a map inside a map is not in the flat format`;
+    return parseOneLineMap(value) === null ? `${where}: each entry of ${path} is name: count` : null;
+  }
   if (first !== undefined && UNSUPPORTED_START[first] !== undefined) return `${where}: ${UNSUPPORTED_START[first]} is not in the flat format`;
   if (value.startsWith('[') !== value.endsWith(']')) return `${where}: an inline list must open with [ and close with ] on the same line`;
   if (value.startsWith('[') && /[[\]{}]/.test(value.slice(1, -1))) return `${where}: a list inside a list is not in the flat format`;
@@ -107,7 +119,7 @@ export function parseDocument(text: string): Parsed {
     const head = `${leading}${key}:`;
     const split = splitValue(rest, where);
     if (!split.ok) return split;
-    const shape = checkValueShape(split.value, where);
+    const shape = checkValueShape(split.value, where, path);
     if (shape !== null) return { ok: false, error: shape };
     if (split.value.includes('\t') || /\t#/.test(split.tail)) return { ok: false, error: `${where}: a tab in the value of ${key}; lib/flow.sh ends a value at a tab, so use spaces` };
     lines.push({ kind: 'key', index, indent, raw, key, path, value: split.value, head, tail: split.tail });
@@ -277,9 +289,20 @@ export function applyChange(text: string, path: string, shape: Shape, value: Fie
     next.splice(at, 0, ...formatted.texts.map((entry) => `${head}${entry}`));
     return { ok: true, text: next.join('\n') };
   }
+  const entries = value as Record<string, string>;
+  // A map the file holds on one line stays on one line, its entries in the order given.
+  if (key.value.startsWith('{') && oneLineMapKey(path)) {
+    const formatted: string[] = [];
+    for (const [child, entry] of Object.entries(entries)) {
+      const text = formatScalar(entry);
+      if (!text.ok) return text;
+      formatted.push(`${child}: ${text.text}`);
+    }
+    next[key.index] = `${key.head} {${formatted.join(', ')}}${key.tail}`;
+    return { ok: true, text: next.join('\n') };
+  }
   // A map: each child line keeps its place, its value rewritten; a child the change drops goes, a new one goes last.
   if (key.value !== '' || children.some((line) => line.kind === 'item')) return { ok: false, error: `${path} is not a map in the file; change it in Raw YAML` };
-  const entries = value as Record<string, string>;
   const removals: [number, number][] = [];
   for (const child of children as KeyLine[]) {
     const wanted = entries[child.key];
@@ -311,5 +334,7 @@ export function readsBack(text: string, path: string, shape: Shape, value: Field
   if (shape === 'scalar') return found === String(value);
   // A bare key reads as an empty map: that is how the flat format writes an empty list.
   if (shape === 'list' && Array.isArray(value) && value.length === 0) return found !== undefined && typeof found === 'object' && Object.keys(found).length === 0;
+  // A map kept on one line reads back as its text, which the plugin splits as parseOneLineMap does.
+  if (shape === 'map' && typeof found === 'string' && oneLineMapKey(path)) return JSON.stringify(parseOneLineMap(found)) === JSON.stringify(value);
   return JSON.stringify(found) === JSON.stringify(value);
 }

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Retro job: the weekly retrospective over the lessons log, unattended.
-#   jobs/retro.sh <claude|codex> [--min-lessons N] [--marketplace <path>]
+#   jobs/retro.sh <claude|codex> [--min-lessons N] [--marketplace <path>] [--model <name>] [--effort <level>]
 # Counts the lessons since the last retro (the second column of <flow home>/retros.log is the
 # number of lessons.jsonl lines read so far). Fewer than N new lessons (default 1): quiet exit,
 # no model spend. Otherwise runs the meta `retro` skill in a fresh host session from the main
