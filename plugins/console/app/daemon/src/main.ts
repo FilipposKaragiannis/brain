@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +8,7 @@ import type { CliDependencies } from './cli.ts';
 import { DEFAULT_STATE_DIR, privateFolder } from './config.ts';
 import { runDaemon } from './daemon.ts';
 import type { LaunchdDependencies } from './launchd.ts';
+import { listDirs } from './selfCheck.ts';
 import { DEFAULT_CONFIG_PATHS } from './settings.ts';
 
 /**
@@ -97,14 +98,14 @@ const deps: CliDependencies = {
   tail: (file, follow) => inherit('tail', ['-n', '200', ...(follow ? ['-f'] : []), file]),
   runScript: (file, args) => inherit('sh', [file, ...args]),
   // The daemon keeps this process alive; it exits on its own, so this never resolves.
-  startDaemon: async (argv) => { await runDaemon(argv, env); return new Promise<number>(() => {}); },
+  startDaemon: async (argv) => { await runDaemon(argv, env, packageJson.version); return new Promise<number>(() => {}); },
   tree: {
     readLink: (file) => { try { return readlinkSync(file); } catch { return null; } },
     // A new link beside the old, renamed over it: the link is never missing.
     link: (target, file) => { const temporary = `${file}.${process.pid}.tmp`; rmSync(temporary, { force: true }); symlinkSync(target, temporary); renameSync(temporary, file); },
     remove: (folder) => rmSync(folder, { recursive: true, force: true }),
   },
-  listDirs: (folder) => { try { return readdirSync(folder, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name); } catch { return []; } },
+  listDirs,
 };
 
 process.exit(await runCli(process.argv.slice(2), deps));

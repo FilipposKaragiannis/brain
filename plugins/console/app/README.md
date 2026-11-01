@@ -71,7 +71,7 @@ One command, `node daemon/src/main.ts <subcommand>` (the launcher `~/.local/bin/
 | `start [flags]` | runs the daemon here in the foreground, with the flags under Run it; writes `<state dir>/daemon.pid` (its pid, port, config and flags with every path absolute) while it runs, and refuses while that daemon still runs |
 | `stop` | boots the launchd job out when it is loaded, else sends SIGTERM to the pid in `daemon.pid` |
 | `restart` | `launchctl kickstart -k` for a loaded job, `bootstrap` for an agent on disk but not loaded, else stops the foreground daemon and starts it here with its flags |
-| `status` | loaded or not, the pid, the port, the URL without the token, the config file, the state dir and the version; exit 1 when nothing runs |
+| `status` | loaded or not, the pid, the port, the URL without the token, the config file, the state dir and the version; from a running daemon, the projects it watches, a change to the config file it refused (with the reason) and a newer console in the plugin cache than the one it runs (with `brain-console update`); exit 1 when nothing runs |
 | `open` | opens the URL with the token in the default browser (`open`) |
 | `url` | prints the URL with the token, for scripts; exit 1 when nothing runs |
 | `add <path>` | adds a project (a folder inside a git checkout with `.flow/config.yaml`, relative to here or `~/`); through `PUT /api/settings` when the daemon runs, so it is watched at once, else into the config file with the same checks; refused when the launch agent names its projects with `--project` (`brain-console install --project …` changes those) |
@@ -128,6 +128,11 @@ While `config.json` is absent the daemon still reads the projects of the older
 `~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`); the first save from
 Settings writes `config.json` with them, and `projects.json` is then no longer read. A file that is
 not valid JSON, or holds a setting the daemon does not know, stops the daemon at start with the reason.
+While it runs, the daemon looks at the file's modification time once a minute and takes a hand edit
+as a PUT (below) would, logging `config.reloaded`: new roots are watched, removed ones dropped
+(projects set by a flag or the environment stay as they are), the terminal counts at once. A file
+that does not parse or fails the PUT's checks is refused (`config.refused` in the log): the daemon
+keeps what it runs, and `fileError` in the settings and `brain-console status` say why.
 
 `PUT /api/settings` (the Settings screen) changes the settings its body names and keeps the rest:
 the whole body is checked first (every root exists, is a folder inside a git checkout and holds
@@ -146,7 +151,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 |---|---|
 | `GET /healthz` | `{ok, projects}` |
 | `GET /api/projects` | every project with its counts |
-| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon |
+| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon, `fileError` (a change to the file the daemon refused, else null) and `newerConsole` |
 | `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
 | `POST /api/settings/check-project` | body `{"root"}`: whether that folder can be added, with the same checks the PUT runs on the list plus it; 200 with `{root, id, ok, error, findings: [{check, ok, text}], initCommand}`, `check` one of `path`, `exists`, `flow`, `git`, `watched`, `name`, and `initCommand` (`cd '<root>' && claude /flow:init`) only while `.flow/config.yaml` is missing |
 | `POST /api/open` | body `{"path", "with": "editor" \| "finder"}`: runs `open -t <path>` or `open -R <path>` (execFile, no shell) for the console settings file, the state folder (Finder only) or a watched project's `.flow/config.yaml`; 400 for any other path, 501 off macOS |
@@ -166,7 +171,10 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 `review` (below). One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
-(the latest 200, each with `at`, `item`, `kind` and `message`) and `disagreements`. Timestamps are
+(the latest 200, each with `at`, `item`, `kind` and `message`), `disagreements` and `newerConsole`
+(`{running, cached}` while the plugin cache holds a newer console with an install script than the
+one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
+banner while it is set). Timestamps are
 ISO UTC; every age is seconds at `takenAt`, so a reader keeps counting on its own clock between
 snapshots.
 

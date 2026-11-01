@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { readConfig } from '../src/config.ts';
 import type { DaemonConfig } from '../src/config.ts';
 import type { ProjectDefinition } from '../src/project.ts';
+import { fileStamp, SELF_CHECK_MS, SelfCheck } from '../src/selfCheck.ts';
 import { SettingsStore } from '../src/settings.ts';
 import { FIXTURE_ROOT, FIXTURES } from './fakeRunner.ts';
+import { fakeScheduler } from './fakeSpawner.ts';
 
 const LOCAL_ROOT = path.join(FIXTURES, 'project-local');
 
@@ -20,7 +22,7 @@ function store(argv: string[], files: Record<string, unknown>) {
   assert.ok(read.ok, 'because the test config is valid');
   const config = (read as { config: DaemonConfig }).config;
   const applied: ProjectDefinition[][] = [];
-  const settings = new SettingsStore({ config, installed: () => ['ghostty', 'terminal'], applyProjects: (projects) => applied.push(projects) });
+  const settings = new SettingsStore({ config, installed: () => ['ghostty', 'terminal'], applyProjects: (projects) => applied.push(projects), newerConsole: () => null });
   const written = (): unknown => JSON.parse(readFileSync(paths.configFile, 'utf8'));
   return { settings, applied, written, paths, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
@@ -240,4 +242,93 @@ test('PutProjects_FolderOutsideGit_RefusedWithTheReason', () => {
     const result = settings.update({ projects: [{ root: FIXTURE_ROOT }, { root }] });
     assert.match(result.ok ? '' : result.error, /not in a git checkout/, 'because the flow works on branches and worktrees, which a folder outside git has none of');
   } finally { cleanup(); rmSync(path.dirname(root), { recursive: true, force: true }); }
+});
+
+const BOTH_PROJECTS = { projects: [{ root: FIXTURE_ROOT }, { root: LOCAL_ROOT }] };
+
+test('Reload_ProjectAddedByHand_Applied', () => {
+  const { settings, applied, paths, cleanup } = store([], FILE_PROJECT);
+  try {
+    writeFileSync(paths.configFile, JSON.stringify(BOTH_PROJECTS));
+    settings.reload();
+    assert.deepEqual(applied.map((projects) => projects.map((project) => project.id)), [['project', 'project-local']], 'because a root added to the file by hand is watched without a restart');
+  } finally { cleanup(); }
+});
+
+test('Reload_ProjectRemovedByHand_Dropped', () => {
+  const { settings, applied, paths, cleanup } = store([], { 'config.json': BOTH_PROJECTS });
+  try {
+    writeFileSync(paths.configFile, JSON.stringify({ projects: [{ root: LOCAL_ROOT }] }));
+    settings.reload();
+    assert.deepEqual(applied.map((projects) => projects.map((project) => project.id)), [['project-local']], 'because a root taken out of the file by hand stops being watched');
+  } finally { cleanup(); }
+});
+
+test('Reload_FileNotJson_KeepsTheProjectsItLoaded', () => {
+  const { settings, applied, paths, cleanup } = store([], FILE_PROJECT);
+  try {
+    writeFileSync(paths.configFile, '{"projects": [');
+    settings.reload();
+    assert.deepEqual([applied.length, settings.view().projects.roots], [0, [FIXTURE_ROOT]], 'because a half-written file must not stop the daemon watching what it watches');
+  } finally { cleanup(); }
+});
+
+test('Reload_FileNotJson_ViewSaysWhy', () => {
+  const { settings, paths, cleanup } = store([], FILE_PROJECT);
+  try {
+    writeFileSync(paths.configFile, '{"projects": [');
+    settings.reload();
+    assert.match(settings.view().fileError ?? '', /not valid JSON/, 'because status must say the file differs from what the daemon loaded, and why');
+  } finally { cleanup(); }
+});
+
+test('Reload_RelativeRoot_RefusedWithTheReason', () => {
+  const { settings, applied, paths, cleanup } = store([], FILE_PROJECT);
+  try {
+    writeFileSync(paths.configFile, JSON.stringify({ projects: [{ root: 'projects/foo' }] }));
+    settings.reload();
+    assert.deepEqual([applied.length, /absolute path/.test(settings.view().fileError ?? '')], [0, true], 'because a file that fails the checks is refused as a PUT would be, with the check\'s words');
+  } finally { cleanup(); }
+});
+
+test('Reload_FixedAfterARefusal_NoErrorLeft', () => {
+  const { settings, paths, cleanup } = store([], FILE_PROJECT);
+  try {
+    writeFileSync(paths.configFile, '{"projects": [');
+    settings.reload();
+    writeFileSync(paths.configFile, JSON.stringify(BOTH_PROJECTS));
+    settings.reload();
+    assert.equal(settings.view().fileError, null, 'because once the daemon took the file there is no difference left to report');
+  } finally { cleanup(); }
+});
+
+test('Reload_ProjectsFromAFlag_StayFixed', () => {
+  const { settings, applied, paths, cleanup } = store(['--project', FIXTURE_ROOT], {});
+  try {
+    writeFileSync(paths.configFile, JSON.stringify({ projects: [{ root: LOCAL_ROOT }] }));
+    settings.reload();
+    assert.deepEqual([applied.length, settings.view().projects.roots], [0, [FIXTURE_ROOT]], 'because projects given by a flag stay fixed while the daemon runs');
+  } finally { cleanup(); }
+});
+
+test('Reload_AfterTheDaemonsOwnSave_NothingToTake', () => {
+  const { settings, cleanup } = store([], FILE_PROJECT);
+  try {
+    settings.update({ terminal: 'ghostty', port: 7490 });
+    assert.equal(settings.reload(), null, 'because a file the daemon wrote itself holds what it runs, so there is no reload to log');
+  } finally { cleanup(); }
+});
+
+test('ConfigEditedByHand_TakenOnTheNextMinute', () => {
+  const { settings, paths, cleanup } = store([], FILE_PROJECT);
+  const timers = fakeScheduler();
+  const check = new SelfCheck({ running: '0.9.0', newestCached: () => null, configStamp: () => fileStamp(paths.configFile), onConfigChange: () => { settings.reload(); }, scheduler: timers.scheduler });
+  try {
+    check.start();
+    writeFileSync(paths.configFile, JSON.stringify(BOTH_PROJECTS));
+    const later = new Date(Date.now() + SELF_CHECK_MS);
+    utimesSync(paths.configFile, later, later);
+    timers.fire(SELF_CHECK_MS);
+    assert.deepEqual(settings.view().projects.roots, [FIXTURE_ROOT, LOCAL_ROOT], 'because a hand edit is watched within a minute');
+  } finally { check.stop(); cleanup(); }
 });

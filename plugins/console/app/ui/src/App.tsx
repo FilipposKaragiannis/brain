@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Snapshot } from '../../daemon/src/snapshot.ts';
+import type { NewerConsole, Snapshot } from '../../daemon/src/snapshot.ts';
 import { isActive } from './actions.ts';
 import { ActionsDrawer } from './ActionsDrawer.tsx';
 import { DAEMON_RETRY_MS, unreachableMessage } from './api.ts';
@@ -93,6 +93,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
           </div>
         </nav>
         <main className="main">
+          {snapshot !== null && snapshot.newerConsole !== null && <NewerConsoleBanner newer={snapshot.newerConsole} />}
           {snapshot !== null && <ProjectHeader project={snapshot.project} />}
           <header className="page-head">
             <div className="page-title"><h1>{screenLabel(route.screen)}</h1>{route.screen === 'gates' && snapshot !== null && <GatesHeading snapshot={snapshot} />}</div>
@@ -110,6 +111,11 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
       </GateAnswersProvider>
     </ActionsProvider>
   );
+}
+
+/** A newer console is installed than the one the daemon runs: said until the daemon runs it. */
+function NewerConsoleBanner({ newer }: { newer: NewerConsole }) {
+  return <p className="banner tone-needs-you" role="status">Console {newer.cached} is installed, but the daemon runs {newer.running}. Run <code>brain-console update</code> to move to it.</p>;
 }
 
 function ScreenView({ route, snapshot, go }: { route: Route; snapshot: Snapshot; go: (route: Route) => void }) {
