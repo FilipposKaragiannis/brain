@@ -32,7 +32,8 @@
   `jobs.<host>.model` and `jobs.<host>.effort` for that run only: next for its steps with no
   agent (on the host argument's run or workers), comments, intake and retro for their sessions,
   health for the run it resumes. `run-unattended.sh` takes them too. An effort the host does not take fails the run
-  at its start, exit 2, recorded in `runs.jsonl`. `steward.sh health` and `steward.sh resume`
+  at its start, exit 2, recorded in `runs.jsonl`. A run or schedule with its own `--effort` never
+  checks the pair's, which it replaces. `steward.sh health` and `steward.sh resume`
   take them too.
 
 ## 1.25.0 (2026-10-31)

@@ -414,8 +414,8 @@ exit at once, and for an item with more than one worker. `job.schedule` takes a 
 or `<job>-<label>` with a label of a lowercase letter then letters and digits, and a schedule line
 as `_jobs.py` reads it: `every <n>m|h`, `daily HH:MM` or `weekly <day> HH:MM`, then an optional
 host word and the job's args (letters, digits and `_./:=@%+,#-`, none opening with `#`). It is
-refused while that schedule runs, and for a next schedule with `--workers` while `jobs.workers` is
-set. `job.unschedule` unloads first, so an installed schedule the config already dropped is only
+refused while that schedule runs, and for the plain next schedule with `--workers` while
+`jobs.workers` is set; a named next schedule runs its own `--workers`. `job.unschedule` unloads first, so an installed schedule the config already dropped is only
 unloaded. `run.stop` and `run.resume` need a run record for the item; a resumed step shows in the
 process list a few seconds later, so its sources are read again then.
 

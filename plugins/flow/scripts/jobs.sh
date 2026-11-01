@@ -92,10 +92,11 @@ live() {
 }
 # settings_ok <name>...: the jobs settings a run would refuse are refused here, before anything
 # starts: jobs.host for every schedule, its host's model and effort for the jobs that start
-# sessions, jobs.workers for next, and a next schedule that sets --workers beside it.
+# sessions unless the schedule's args give an --effort, jobs.workers for next, and a next schedule that sets --workers beside it.
 settings_ok() {
   _bad="$(host_jobs_host_problem)"
   if [ -z "$_bad" ]; then for _j in "$@"; do case "$(job_of "$_j")" in comments|intake|retro)
+    case " $(spec "$_j") " in *" --effort "*) continue ;; esac
     _bad="$(host_jobs_pair_problem "$(host_of "$_j")")"; [ -z "$_bad" ] || break ;; esac; done; fi
   if [ -z "$_bad" ]; then case " $* " in *" next "*)
     if ! _plan="$(jobs_workers 2>&1)"; then _bad="${_plan#flow: }"

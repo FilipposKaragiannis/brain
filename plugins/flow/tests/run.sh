@@ -870,6 +870,8 @@ check "a job's --model and --effort hold for their run only: the next run is on 
 : > "$HOST_LOG"; "$P/jobs/comments.sh" codex 'gh#21' --effort max >/dev/null 2>"$work/job.err"; code=$?
 check "a job's --effort the host does not take fails the run early, exit 2, as a failed run" sh -c "[ $code = 2 ] && grep -q 'flow: --effort is max; codex takes low, medium, high or xhigh' '$work/job.err' && [ ! -s '$HOST_LOG' ] && tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"comments\".*\"exit\":2'"
 check "a job's --model needs a value, exit 2" sh -c "'$P/jobs/comments.sh' claude --model 2>/dev/null; [ \$? = 2 ]"
+jobscfg '  codex:\n    effort: max\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" codex 'gh#21' --effort low >/dev/null 2>&1
+check "a job's --effort replaces a jobs.<host>.effort the host does not take, so that run starts" grep -q 'exec .*model_reasoning_effort="low"' "$HOST_LOG"
 jobscfg '  host: vim\n'; : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>"$work/job.err"; code=$?
 check "a jobs.host other than claude or codex fails the job early, exit 2" sh -c "[ $code = 2 ] && grep -q 'jobs.host is vim; it must be claude or codex' '$work/job.err' && [ ! -s '$HOST_LOG' ]"
@@ -1074,6 +1076,12 @@ check "install refuses a label that does not start with a letter: next-1 is a wo
 printf 'jobs:\n  schedule:\n    next-x: every 30m gemini --max-steps 1\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install next-x > "$work/install.out" 2>&1; code=$?
 check "install refuses a leading word that is no host, exit 2" sh -c "[ $code = 2 ] && grep -q \"starts its args with 'gemini': a leading word is the host, claude or codex\" '$work/install.out' && [ ! -f '$work/agents/$lbl.next-x.plist' ]"
+printf 'jobs:\n  codex:\n    effort: max\n  schedule:\n    intake-low: daily 02:00 codex --effort low\n    retro-bad: weekly sun 03:00 codex\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install intake-low >/dev/null 2>&1; code=$?
+check "install takes a schedule whose --effort replaces a jobs.<host>.effort the host does not take" sh -c "[ $code = 0 ] && [ -f '$work/agents/$lbl.intake-low.plist' ]"
+FLOW_HOME="$home2" "$J" install retro-bad > "$work/install.out" 2>&1; code=$?
+check "install still refuses that effort for a schedule without its own --effort" sh -c "[ $code != 0 ] && grep -q 'jobs.codex.effort is max' '$work/install.out' && [ ! -f '$work/agents/$lbl.retro-bad.plist' ]"
+FLOW_HOME="$home2" "$J" uninstall intake-low >/dev/null 2>&1
 printf 'jobs:\n  schedule:\n    next-x: every 30m local:task/3 --max-steps 1\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install next-x >/dev/null 2>&1
 check "install: an item id leading the args is an arg, on jobs.host" grep -q "next.sh claude --as next-x 'local:task/3' --max-steps 1<" "$work/agents/$lbl.next-x.plist"

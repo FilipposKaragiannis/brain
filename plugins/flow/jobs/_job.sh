@@ -79,7 +79,8 @@ job_end() { rm -rf "$d"; job_record "$1"; }
 # effort are read once, from jobs.<host>, or from the deprecated jobs.model and jobs.effort with
 # one warning; an effort the host does not take ends the run, exit 2, recorded in runs.jsonl and
 # the job log so status shows it. Jobs without model never read the pair, so it never stops them.
-# --model and --effort win over the pair; an --effort the host does not take ends any job the same way.
+# --model and --effort win over the pair; an --effort the host does not take ends any job the same way,
+# and an --effort leaves the pair's effort unchecked, since this run never uses it.
 job_start() {
   host="$1"
   host_check "$host" || exit 2
@@ -88,7 +89,7 @@ job_start() {
   job_clock
   job_skip_if_paused
   _bad="$(host_effort_problem "$host" "$job_opt_effort" --effort)"
-  if [ -z "$_bad" ] && [ "${2:-}" = model ]; then _bad="$(host_jobs_pair_problem "$host")"; fi
+  if [ -z "$_bad" ] && [ "${2:-}" = model ] && [ -z "$job_opt_effort" ]; then _bad="$(host_jobs_pair_problem "$host")"; fi
   if [ -n "$_bad" ]; then
     printf 'flow: %s\n' "$_bad" >&2; job_say "error: $_bad" >/dev/null; job_record 2; exit 2
   fi

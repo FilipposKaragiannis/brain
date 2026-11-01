@@ -540,7 +540,8 @@ test('JobSchedule_ScheduleRunning_Refused', () => {
 
 test('JobSchedule_WorkersBesideJobsWorkers_Refused', () => {
   const { context } = writing({ ...CONTEXT, jobsWorkers: true });
-  assert.match(scheduleError({ job: 'next-wide', schedule: 'every 30m --workers 3' }, context), /jobs\.workers/, 'because install refuses a next schedule that sets --workers beside jobs.workers, after the file was written');
+  assert.match(scheduleError({ job: 'next', schedule: 'every 30m --workers 3' }, context), /jobs\.workers/, 'because install refuses the next schedule that sets --workers beside jobs.workers, after the file was written');
+  assert.equal(scheduleError({ job: 'next-wide', schedule: 'every 30m --workers 3' }, context), '', 'because a named next schedule runs its own --workers and never reads jobs.workers');
   assert.equal(scheduleError({ job: 'comments-fast', schedule: 'every 5m --workers 3' }, context), '', 'because only next reads jobs.workers');
 });
 

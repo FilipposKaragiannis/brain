@@ -384,7 +384,8 @@ function runningRefusal(name: string, context: ActionContext): string | null {
  * config editor, comments and layout kept, then `jobs.sh install <job>` to load it. `job` is a
  * schedule name: a job, or `<job>-<label>` for another schedule of it. The file is written before
  * the process starts, so a refused write never reaches launchd. Refused while that schedule runs,
- * and for a next schedule that sets --workers while `jobs.workers` does too, which install refuses.
+ * and for the plain next schedule when it sets --workers while `jobs.workers` does too, which install
+ * refuses; a named next schedule runs its own --workers.
  */
 function planSchedule(args: Record<string, string>, context: ActionContext): PlanResult {
   const name = args['job'] ?? '';
@@ -394,7 +395,7 @@ function planSchedule(args: Record<string, string>, context: ActionContext): Pla
   const spec = words.join(' ');
   const checked = checkSchedule(spec);
   if (!checked.ok) return fail(checked.error);
-  if (scheduleJob(name) === 'next' && words.includes('--workers') && context.jobsWorkers === true) return fail('jobs.workers in .flow/config.yaml sets the workers already, and jobs.sh install refuses a next schedule that sets --workers beside it; drop --workers');
+  if (name === 'next' && words.includes('--workers') && context.jobsWorkers === true) return fail('jobs.workers in .flow/config.yaml sets the workers already, and jobs.sh install refuses the next schedule when it sets --workers beside it; drop --workers, or name another schedule such as next-wide');
   const running = runningRefusal(name, context);
   if (running !== null) return fail(running);
   const write = context.writeConfig;
