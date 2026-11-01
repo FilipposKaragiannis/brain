@@ -51,8 +51,12 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    questions to retry, nothing else.
 7. **Re-request review** when at least one thread changed code or step 2 merged the base:
    `"$P/scripts/comments.sh" request-review <pr> "<ask>"`, the ask naming the new commits and
-   what changed. It asks each reviewer in `reviews.reviewers`, one comment each. Never tag a
+   what changed. It asks each reviewer of the PR's author host, one comment each. Never tag a
    reviewer by hand. A reviewer that stays silent is chased by the comments job, not here.
+   `reviews.reviewers` in `.flow/config.yaml` is one list for every PR, or a map:
+   `claude` lists the reviewers of a PR Claude wrote, `codex` of one Codex wrote, `default` of
+   a PR whose author host is unknown or has no list (unset, codex and claude). The author host
+   is the item's `pr_host`, recorded by `link-pr`, else the PR body's footer.
 8. Delete `<reports>/comments-resume.md` once every thread of this pass is addressed or replied
    to, and the interrupted work is committed or named in a reply.
 9. Report once: the conflict merge, threads addressed (valid, nit, wrong counts), commits, the owner's decisions

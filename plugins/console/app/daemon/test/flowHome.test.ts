@@ -247,6 +247,10 @@ test('Reviewers_FromTheConfigElseTheFlowDefault', () => {
   assert.deepEqual(parseFlowConfig('base: main\n').reviewers, ['codex', 'claude'], 'because flow asks codex and claude when the key is unset');
 });
 
+test('Reviewers_AMapPerHost_EveryListedNameOnce', () => {
+  assert.deepEqual(parseFlowConfig('reviews:\n  reviewers:\n    claude: [codex, copilot]\n    codex: [claude, copilot]\n').reviewers, ['codex', 'copilot', 'claude'], 'because the PR cards offer whoever reviews some PR, whichever host wrote it');
+});
+
 test('Trackers_Named_TheReadSet', () => {
   assert.deepEqual(parseFlowConfig('adapters:\n  default: local\ntrackers: [github, local]\n').trackers, ['github', 'local'], 'because trackers names the trackers the flow reads, whatever adapters.default says');
 });

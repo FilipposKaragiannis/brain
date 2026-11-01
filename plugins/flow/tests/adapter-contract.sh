@@ -217,6 +217,8 @@ check "comment from stdin lands on the item" '"comments_$name" "$t1" | grep -q "
 "$A/link-pr.sh" "$t2" https://example.test/pull/7 >/dev/null 2>&1
 check "link-pr records the PR in the state" '[ "$(field "$t2" state.pr)" = https://example.test/pull/7 ]'
 check "link-pr says the PR in a comment" '"comments_$name" "$t2" | grep -q "https://example.test/pull/7"'
+env -u CLAUDECODE CODEX_THREAD_ID=t "$A/link-pr.sh" "$t2" https://example.test/pull/8 >/dev/null 2>&1
+check "link-pr records the host that wrote the PR as pr_host" '[ "$(field "$t2" state.pr_host)" = codex ]'
 "$A/close.sh" "$t1" --comment "closed by the contract" >/dev/null 2>&1
 check "close makes the item closed" '[ "$(field "$t1" status)" = closed ]'
 check "close --comment lands on the item" '"comments_$name" "$t1" | grep -q "closed by the contract"'

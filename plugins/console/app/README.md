@@ -184,7 +184,8 @@ snapshots.
   (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
   variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
   `jobsHost` (`jobs.host`, the CLI the jobs run), `poolMax` and `reviewers` (`reviews.reviewers`
-  without their `@`, codex and claude when unset: who the PR cards offer for a review ask).
+  without their `@`, every list of a per-host map once, codex and claude when unset: who the PR
+  cards offer for a review ask).
 - `jobs` has one entry per schedule `jobs.sh status --json` lists (flow 1.26.0): every job, then
   the named schedules (`next-codex`) in config order, then the installed ones the config no longer
   names. `name` is the schedule, `job` the script it runs (`next` for `next-codex`), `host` the

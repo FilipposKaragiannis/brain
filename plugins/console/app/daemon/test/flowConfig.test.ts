@@ -194,6 +194,12 @@ test('FoosbrawlConfig_Described_NoKeyLeftForOther', () => {
   assert.equal(sections.find((section) => section.group === 'Other'), undefined, 'because the schema knows every key foosbrawl sets');
 });
 
+test('ReviewersPerHost_Described_NoWarningAndNothingInOther', () => {
+  const text = 'reviews:\n  reviewers:\n    claude: [codex]\n    codex:\n      - claude\n    default: [codex, claude]\n';
+  const document = describe('/p/.flow/config.yaml', text);
+  assert.deepEqual([document.warnings, document.sections.find((section) => section.group === 'Other')], [[], undefined], 'because each host\'s list and the default are fields of the Reviews page');
+});
+
 test('UnknownKey_Described_ShowsInOther', () => {
   const sections = describe('/p/.flow/config.yaml', `${FOOSBRAWL}experiments:\n  fast_lane: on\n`).sections;
   assert.deepEqual(sections.find((section) => section.group === 'Other')?.fields.map((spec) => [spec.path, spec.type]), [['experiments.fast_lane', 'string']], 'because a key the schema does not know is still editable, as text');
@@ -322,6 +328,25 @@ test('Save_Written_KeepsTheFileModeAndLeavesNoTempFile', async () => {
     await fixture.editor.write({ changes: [{ path: 'reviews.max_chases', value: 3 }], hash });
     assert.equal(statSync(fixture.file).mode & 0o777, 0o640, 'because the file is renamed over from a temp copy, which takes the old mode');
     assert.deepEqual(readdirSync(path.dirname(fixture.file)), ['config.yaml'], 'because the temp file is renamed, not left beside it');
+  } finally { fixture.done(); }
+});
+
+test('PlainReviewersList_HostListSaved_TheListStaysAsTheDefault', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    await fixture.editor.write({ changes: [{ path: 'reviews.reviewers.claude', value: ['copilot'] }], hash });
+    assert.deepEqual(yamlGet(readFileSync(fixture.file, 'utf8'), 'reviews.reviewers.default'), ['codex'], 'because the plain list was every PR\'s reviewers, so it goes on asking for the PRs no host list names');
+  } finally { fixture.done(); }
+});
+
+test('PlainReviewersList_HostListSaved_TheFlowReadsTheHostList', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const reply = await fixture.editor.write({ changes: [{ path: 'reviews.reviewers.claude', value: ['copilot'] }], hash });
+    assert.equal(reply.status, 200, `because a host list may replace the plain list: ${JSON.stringify(reply.body)}`);
+    assert.deepEqual(yamlGet(readFileSync(fixture.file, 'utf8'), 'reviews.reviewers.claude'), ['copilot'], 'because comments.sh reads the list of the host that wrote the PR');
   } finally { fixture.done(); }
 });
 
