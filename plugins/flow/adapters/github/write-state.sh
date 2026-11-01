@@ -9,7 +9,7 @@ repo="$(gh_repo)"; n="$(issue_number "$1")" || exit 2; shift
 for kv in "$@"; do
   case "$kv" in *=*) ;; *) die "expected key=value, got $kv" 2 ;; esac
   case "$(printf '%s' "${kv%%=*}" | tr - _)" in
-    step|profile|size|worktree|attempts|gate|gate_from|last_event|pr|touches|answered|asked|answer|answered_at) ;;
+    step|profile|size|worktree|attempts|gate|gate_from|last_event|pr|pr_host|touches|answered|asked|answer|answered_at) ;;
     *) die "unknown state key ${kv%%=*}" 2 ;;
   esac
 done

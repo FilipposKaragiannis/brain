@@ -46,7 +46,7 @@ ids and takes any other adapter's id by its prefix; `scripts/_slack.py` links on
 | `create` | `<kind> <title> [--size S\|M\|L] [--priority NAME] [--area NAME] [--type NAME] [--blocked-by id,id] [--parent id] [--body TEXT]` | the new id, one line |
 | `close` | `<id> [--comment TEXT]` | nothing; the item reads `closed` and the comment lands |
 | `comment` | `<id> [--body TEXT]` | nothing; the text is `--body` or stdin |
-| `link-pr` | `<id> <url>` | nothing; `state.pr` reads the url, and a comment names it |
+| `link-pr` | `<id> <url>` | nothing; `state.pr` reads the url, `state.pr_host` the host that ran it (claude or codex, else unset), and a comment names it |
 | `write-state` | `<id> key=value...` | nothing; each key reads back (below) |
 | `sync` | `[id]` | optional: moves the tracker's own board to the flow state, one line per change; exit 0 with nothing to do. `jobs/next.sh` runs it each round |
 | `vocabulary` | | optional: `{"types": [...], "areas": [...]}`, the names a new item may use; the intake job reads it |
@@ -94,10 +94,11 @@ that landed. The Jira adapter's waits come from `FLOW_JIRA_RETRY_WAIT`.
 
 `state` always has `step`, `profile`, `size`, `worktree`, `last_event`, `pr` (strings),
 `attempts` (a number), `touches` (a list of globs) and `gate` (`none` when clear), and, once
-written, `gate_from`, `answered`, `asked`, `answer` and `answered_at`. Those fourteen are the
-state keys. `write-state` takes them as `key=value` (a dash reads as an underscore): `touches` is
-comma-separated, `attempts` a whole number, an empty value clears a key, `gate=none` clears the
-gate, `size` sets the item's size too. A key outside the fourteen exits 2 and writes nothing.
+written, `gate_from`, `pr_host` (claude or codex, the host that wrote the PR), `answered`,
+`asked`, `answer` and `answered_at`. Those fifteen are the state keys. `write-state` takes them
+as `key=value` (a dash reads as an underscore): `touches` is comma-separated, `attempts` a whole
+number, an empty value clears a key, `gate=none` clears the gate, `size` sets the item's size
+too. A key outside the fifteen exits 2 and writes nothing.
 
 ## Config
 
