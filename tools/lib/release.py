@@ -4,11 +4,13 @@
 Usage: release.py [--dry-run] [plugin ...]   (default: every plugin with fragments)
 For each plugin, the highest bump among its fragments raises the version in plugin.source.json,
 `## <version> (<YYYY-MM-DD>)` with the bullets (fragments in filename order) goes on top of
-CHANGELOG.md (created with a `# <plugin>` heading when missing), and the fragments are deleted.
+CHANGELOG.md (created with a `# <plugin>` heading when missing), the plugin's app packages take
+the new version (tools/lib/packages.py), and the fragments are deleted.
 Then tools/generate.sh renders the manifests and marketplaces once. Prints `<plugin> <old> ->
 <new>` per plugin; --dry-run prints the same and each section, and writes nothing.
 Exit 0 with "nothing to release" when no fragment is found. Exit 2, writing nothing, on a
-malformed fragment, an unknown plugin or a version that is not major.minor.patch.
+malformed fragment, an unknown plugin, a version that is not major.minor.patch or an app package
+whose version field is not where npm writes it.
 Needs python3 >= 3.9 and nothing else.
 """
 import argparse
@@ -23,6 +25,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fragments  # noqa: E402
+import packages  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 VERSION = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -73,6 +76,9 @@ def problems(names, folders):
         version = json.loads(read_text(source_path(folder)))["version"]
         if not VERSION.match(version):
             found.append("%s: version '%s' is not major.minor.patch" % (rel(source_path(folder)), version))
+        for path in packages.files(folder):
+            if packages.stamped(path, version) is None:
+                found.append("%s: no version field where npm writes it" % rel(path))
     return found
 
 
@@ -110,6 +116,8 @@ def apply(release):
     changelog_path = os.path.join(release.folder, "CHANGELOG.md")
     changelog = read_text(changelog_path) if os.path.exists(changelog_path) else None
     write_text(changelog_path, with_section(changelog, release.name, release.section))
+    for path in packages.files(release.folder):
+        write_text(path, packages.stamped(path, release.new))
     for path in release.fragment_paths:
         os.remove(path)
     fragments_folder = os.path.join(release.folder, "changelog.d")

@@ -108,6 +108,7 @@ repo="$work/repo"; demo="$repo/plugins/demo"; today="$(date +%F)"
 fresh() { rm -rf "$repo"; cp -R "$seed" "$repo"; mkdir -p "$demo/changelog.d"; }
 version() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['version'])" "$1/plugin.source.json"; }
 release() { out="$("$repo/tools/release.sh" "$@" 2>"$work/release.err")"; code=$?; }
+package_versions() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(' '.join([d['version']] + ([d['packages']['']['version']] if 'packages' in d else [])))" "$1"; }
 
 fresh
 printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
@@ -120,6 +121,11 @@ check "the section goes on top, the fragments in filename order" [ "$(cat "$demo
 check "the fragments are gone" [ ! -e "$demo/changelog.d" ]
 check "generate ran: the manifest carries the new version" grep -q '"version": "1.5.0"' "$demo/.claude-plugin/plugin.json"
 check "generate ran: every generated file is fresh" python3 "$repo/tools/lib/generate.py" --check
+check "the app's package.json takes the new version" [ "$(package_versions "$demo/app/package.json")" = 1.5.0 ]
+check "the app's lockfile takes it at the top and in its root package" [ "$(package_versions "$demo/app/package-lock.json")" = "1.5.0 1.5.0" ]
+check "a package in a folder of the app takes it" [ "$(package_versions "$demo/app/ui/package.json")" = 1.5.0 ]
+check "a dependency's version in the lockfile stays" [ "$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['packages']['node_modules/typescript']['version'])" "$demo/app/package-lock.json")" = 5.9.3 ]
+check "the package.json keeps npm's formatting" grep -q '^  "engines": { "node": ">=24" }$' "$demo/app/package.json"
 
 fresh
 printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
@@ -161,6 +167,13 @@ check "a malformed fragment: the file and the reason" grep -q '^release: plugins
 check "a malformed fragment: nothing written" diff -r -x changelog.d "$seed" "$repo"
 check "a malformed fragment: the good one is kept" [ -f "$demo/changelog.d/a-fix.md" ]
 
+fresh
+printf 'bump: patch\n\n- A fix.\n' > "$demo/changelog.d/a-fix.md"
+printf '{"name": "demo-ui", "version": "1.4.2"}\n' > "$demo/app/ui/package.json"
+release demo
+check "an app package with its version elsewhere: exit 2 naming it" sh -c "[ $code -eq 2 ] && grep -q '^release: plugins/demo/app/ui/package.json: no version field where npm writes it\$' '$work/release.err'"
+check "an app package with its version elsewhere: nothing written" [ "$(version "$demo")" = 1.4.2 ]
+
 release nope
 check "an unknown plugin: exit 2" [ "$code-$(cat "$work/release.err")" = "2-release: no plugin named nope" ]
 
@@ -190,9 +203,15 @@ check "a line over 100 columns fails" [ "$code-$out" = "1-lint: malformed change
 rm "$demo/changelog.d/a-feature.md"; : > "$demo/changelog.d/notes.txt"
 lint_fragments
 check "a file that is not .md fails" [ "$code-$out" = "1-lint: a changelog.d holds only .md files: plugins/demo/changelog.d/notes.txt" ]
-rm "$demo/changelog.d/notes.txt"; printf 'bump: minor\n- No blank line.\n' > "$demo/changelog.d/b-bad.md"
+rm "$demo/changelog.d/notes.txt"
+check "app packages at the plugin's version pass" python3 "$repo/tools/lib/packages.py" "$repo"
+sed 's/"version": "1.4.2"/"version": "1.4.1"/' "$seed/plugins/demo/app/package-lock.json" > "$demo/app/package-lock.json"
+out="$(python3 "$repo/tools/lib/packages.py" "$repo")"; code=$?
+check "an app lockfile behind the plugin fails" [ "$code-$out" = "1-lint: plugins/demo/app/package-lock.json: version 1.4.1 and 1.4.1, the plugin is 1.4.2" ]
+printf 'bump: minor\n- No blank line.\n' > "$demo/changelog.d/b-bad.md"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "tools/lint.sh fails on a malformed fragment and names it" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'malformed changelog fragment plugins/demo/changelog.d/b-bad.md'" "$out"
+check "tools/lint.sh fails on a drifted app package and names it" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'plugins/demo/app/package-lock.json: version 1.4.1'" "$out"
 
 [ "$fails" -eq 0 ] && echo "tools: ok"
 exit $(( fails > 0 ))

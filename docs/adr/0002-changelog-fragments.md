@@ -42,6 +42,10 @@ merges.
   collides, and the manifests carry it, so the installed plugin's version changes when the
   release lands. Wanting one release per merge is merging the release PR after each merge.
 - A change on main reaches the installed plugin only when its release PR merges.
+- A plugin with an app (`app/package.json`, console today) runs the version its packages name
+  while the hosts cache it by the plugin's version, so `tools/release.sh` stamps the new version
+  into the app's `package.json` and `package-lock.json` files and `tools/lint.sh` fails when they
+  differ.
 - The release PR is opened with the workflow's token, and GitHub starts no workflow run for that
   token's events, so `ci.yml` does not run on it. The release job runs `tools/lint.sh` on the
   folded tree before it commits, which catches what a release can break: a stale generated file

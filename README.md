@@ -35,7 +35,9 @@ fragment, `plugins/<plugin>/changelog.d/<slug>.md` (the slug is the branch or th
 the CHANGELOG (`- ` lines, continuations indented two spaces, wrapped at 100 columns). On every
 push to main the `release` workflow folds the fragments with `tools/release.sh` and opens or
 refreshes the release PR from `release/next`; merging it releases the versions. Lint fails on a
-malformed fragment. See `docs/adr/0002-changelog-fragments.md`.
+malformed fragment. A plugin's app packages (`app/package.json`, the lockfiles, `app/ui/`) carry
+the plugin's version: the release stamps it and lint fails on a difference. See
+`docs/adr/0002-changelog-fragments.md`.
 
 `tools/lint.sh` also checks that every hook command names an executable script in its plugin and
 that the plugin paths the shipped files name exist; `tools/tests/run.sh` proves it fails on the

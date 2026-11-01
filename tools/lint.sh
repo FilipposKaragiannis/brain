@@ -1,7 +1,7 @@
 #!/bin/sh
 # Lint the marketplace: generated files fresh, skills well-formed, roster and agents in step,
-# JSON valid, shell scripts parse, hooks and plugin paths resolve, changelog fragments well-formed.
-# Exit 1 on any finding.
+# JSON valid, shell scripts parse, hooks and plugin paths resolve, changelog fragments well-formed, app package versions
+# match the plugin's. Exit 1 on any finding.
 set -u
 cd "$(dirname "$0")/.."
 status=0
@@ -74,6 +74,9 @@ python3 tools/lib/check_plugins.py || status=1
 
 # Changelog fragments: a changelog.d holds only .md files, each a bump line and bullets.
 python3 tools/lib/fragments.py || status=1
+
+# A plugin's app packages (app/package.json, its lockfile, app/*/) carry the plugin's version.
+python3 tools/lib/packages.py || status=1
 
 # The invocation flag in plugin.source.json matches the SKILL.md frontmatter.
 python3 - <<'PY' || status=1
