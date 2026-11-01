@@ -2,6 +2,7 @@
 # Tests for the repo tools: lint catches a broken plugin, the cost report parses and never
 # fails, release.sh folds the changelog fragments and lint checks them. Exit 1 on any failure.
 set -u
+export PYTHONDONTWRITEBYTECODE=1   # a __pycache__ in the repo copy would read as "written" to the diffs below
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 fails=0
