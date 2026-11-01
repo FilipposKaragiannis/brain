@@ -150,7 +150,7 @@ expect "push gate passes"            check-gates.sh 'git push'                  
 rm push-ok
 expect "forbidden command blocked"   check-gates.sh 'dotnet run -- update-golden x.json' 2 "gate pause"
 expect "forbidden command with the marker in the command" check-gates.sh 'dotnet run -- update-golden x.json # [closeout #1]' 0 ""
-printf '[closeout #1] regenerate\n' > "$work/msg"
+printf 'chore: regenerate [closeout #1]\n' > "$work/msg"
 expect "forbidden command with the marker in the -F message" check-gates.sh "git commit -F $work/msg && ./update-hash-stream" 0 ""
 expect "plain command untouched"     check-gates.sh 'dotnet build'                       0 ""
 expect "forbid: a quoted mention is no run" check-gates.sh 'echo "update-golden is paused" > note.txt' 0 ""
@@ -188,7 +188,7 @@ PY
 expect "marked command gate runs on a plain commit"   check-gates.sh 'git commit -m x'                     2 "gate golden failed"
 expect "...and names the marker that lets it through" check-gates.sh 'git commit -m x'                    2 "add [closeout #2]"
 expect "marked command gate skipped by the marker in -m" check-gates.sh 'git commit -m "[closeout #2] regenerate"' 0 ""
-printf '[closeout #2] regenerate\n' > "$work/msg"
+printf 'chore: regenerate [closeout #2]\n' > "$work/msg"
 expect "marked command gate skipped by the marker in -F" check-gates.sh "git commit -F $work/msg"          0 ""
 EXPECT_ENV="STANDARDS_GATES=unmarked"
 expect "pre-commit mode leaves marked gates to commit-msg" check-gates.sh 'git commit -m x'                0 ""
@@ -201,10 +201,10 @@ expect "the gate command sees the commit message"    check-gates.sh 'git commit 
 expect "...and passes on another message"            check-gates.sh 'git commit -m "tidy"'                0 ""
 git reset -q; mv golden-ok golden-ok.off
 printf 'x\n' > golden-pending; git add golden-pending
-printf 'tidy\n' > "$work/msg"
+printf 'chore: tidy\n' > "$work/msg"
 if "$hooks/git/pre-commit" >/dev/null 2>&1; then pass "git pre-commit does not run the marked gate"; else fail "pre-commit blocked on a marked gate"; fi
 if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then fail "git commit-msg lets the marked gate through"; else pass "git commit-msg runs the marked gate"; fi
-printf '[closeout #2] tidy\n' > "$work/msg"
+printf 'chore: tidy [closeout #2]\n' > "$work/msg"
 if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then pass "git commit-msg honours the marker"; else fail "git commit-msg ignored the gate marker"; fi
 git reset -q golden-pending; mv golden-pending golden-pending.off; mv golden-pending.off "$work/"; mv golden-ok.off "$work/"
 cp "$work/config.bak" .standards/config.json
@@ -219,7 +219,7 @@ PY
 : > "$work/count.log"
 printf 'x\n' > once.txt; git add once.txt
 expect "the agent hook runs the gate"                check-gates.sh 'git commit -m "add once"'            0 ""
-printf 'add once\n' > "$work/msg"
+printf 'chore: add once\n' > "$work/msg"
 "$hooks/git/pre-commit" >/dev/null 2>&1; "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1
 check "git's hooks skip the gate the agent hook passed for the same index" [ "$(grep -c ran "$work/count.log")" = 1 ]
 printf 'y\n' > twice.txt; git add twice.txt
@@ -235,12 +235,32 @@ check "a human commit with no agent record runs the gate" [ "$(grep -c ran "$wor
 git reset -q; mv once.txt twice.txt "$work/"
 cp "$work/config.bak" .standards/config.json
 
+echo "commit subject (W-01)"
+subject_case() {
+  # $1 name, $2 message, $3 expected exit
+  printf '%s\n' "$2" > "$work/subject"
+  "$hooks/check-subject.sh" "$work/subject" >/dev/null 2>&1; code=$?
+  [ "$code" -eq "$3" ] && pass "$1" || fail "$1 (exit $code, wanted $3)"
+}
+subject_case "a conventional subject passes"            'feat(bots): a back rod lifts over a slow ball' 0
+subject_case "a subject without a scope passes"         'docs: record the decision' 0
+subject_case "a breaking-change bang passes"            'refactor(api)!: drop the old verb' 0
+subject_case "a gate instruction as subject is blocked" 'Approve the plan and re-bless the tables' 2
+subject_case "an unknown type is blocked"               'update(bots): something' 2
+subject_case "a missing space after the colon is blocked" 'fix(bots):nospace' 2
+subject_case "a merge subject passes"                   "Merge branch 'main' into flow/gh-1" 0
+subject_case "a fixup subject passes"                   'fixup! feat(bots): x' 0
+printf '# a git comment line\n\nfix(x): after the comment\n' > "$work/subject"
+check "git comment lines before the subject are skipped" "$hooks/check-subject.sh" "$work/subject"
+printf 'not conventional\n' > "$work/msg"
+if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then fail "git commit-msg lets a bad subject through"; else pass "git commit-msg blocks a bad subject"; fi
+
 echo "git hooks"
 printf 'class H {\n  // bad\n}\n' > src/App/H.cs; git add src/App/H.cs
 if "$hooks/git/pre-commit" >/dev/null 2>&1; then pass "pre-commit has no message, so it leaves the comment rule to commit-msg"; else fail "pre-commit blocked without a message"; fi
-printf 'add H\n' > "$work/msg"
+printf 'chore: add H\n' > "$work/msg"
 if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then fail "commit-msg lets a bad comment through"; else pass "commit-msg blocks the comment"; fi
-printf '[why-comment] add H\n' > "$work/msg"
+printf 'chore: add H [why-comment]\n' > "$work/msg"
 if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then pass "commit-msg sees the marker in the real message"; else fail "commit-msg ignored the marker"; fi
 git reset -q src/App/H.cs; rm src/App/H.cs
 printf 'class E {\n\tTABS\n}\n' > src/App/E.cs; git add src/App/E.cs

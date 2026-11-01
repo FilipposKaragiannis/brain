@@ -1,5 +1,13 @@
 # flow
 
+## 1.27.1 (2026-11-01)
+
+- The `implementer` brief: moved code is touched code (U-05), and a test the implementer adds or
+  changes meets the test writer's pre-commit checks. Four T-09 blockers landed on tests written
+  in implement commits, outside the test writer's split check.
+- The `test-writer` brief: a test must not pass on nothing. No `?.` ahead of an assertion, and
+  a not-empty check before comparing two recordings or collections (T-01).
+
 ## 1.27.0 (2026-11-01)
 
 - `comments.sh request-review <pr> <ask> [reviewer]` asks one reviewer when a name is given: one
