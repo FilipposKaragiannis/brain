@@ -4,6 +4,7 @@ import type { ActionRecord } from '../src/actions.ts';
 import type { Api, ApiResponse, HttpMethod, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
 import { ClockProvider } from '../src/clock.tsx';
+import type { Clock } from '../src/clock.tsx';
 import { ServicesProvider } from '../src/console.tsx';
 import { ActionsProvider } from '../src/ui.tsx';
 import { GateAnswersProvider } from '../src/gateAnswers.tsx';
@@ -105,10 +106,10 @@ export class FakeDaemon implements Api {
     return ({ children }) => <ServicesProvider services={services}>{children}</ServicesProvider>;
   }
 
-  /** What a screen sits in on the page: the services, a clock stopped at `TAKEN_AT`, and the project's actions. */
-  screenWrapper(): (props: { children: ReactNode }) => ReactNode {
+  /** What a screen sits in on the page: the services, a clock (stopped at `TAKEN_AT` unless given), and the project's actions. */
+  screenWrapper(clock: Clock = stoppedClock): (props: { children: ReactNode }) => ReactNode {
     const Services = this.wrapper();
-    return ({ children }) => <Services><ClockProvider clock={stoppedClock}><WithActions>{children}</WithActions></ClockProvider></Services>;
+    return ({ children }) => <Services><ClockProvider clock={clock}><WithActions>{children}</WithActions></ClockProvider></Services>;
   }
 
   private eventSent(): void {
@@ -124,13 +125,13 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 3,
+    schema: 6,
     takenAt,
-    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', poolMax: 9 },
+    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', poolMax: 9, reviewers: ['codex', 'claude'] },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
     counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0 },
     readiness: { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0 },
-    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], ended: [], jobs: [], events: [], disagreements: [], pulls: [],
+    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], ended: [], jobs: [], stoppedHosts: [], events: [], disagreements: [], pulls: [],
   };
 }
 
@@ -158,7 +159,7 @@ function WithActions({ children }: { children: ReactNode }) {
 export function boardItem(id: string, title: string): Item {
   return {
     id, title, kind: 'task', size: 'M', priority: 'P2', status: 'open', state: 'ready', step: '', gate: 'none', worktree: null, pr: null,
-    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null,
+    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null, spend: null,
   };
 }
 

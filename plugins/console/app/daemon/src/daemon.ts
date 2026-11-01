@@ -43,12 +43,14 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv): Promise
   /** A project's monitor and runner. The runner reads the terminal setting at request time, so a change in Settings counts at once. */
   const serve = (project: ProjectDefinition) => {
     const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE, sessions });
+    const flowConfig = new FlowConfigEditor({ projectId: project.id, root: project.root, runner: childProcessRunner, refresh: async () => { await Promise.all([monitor.refresh('files'), monitor.refresh('jobs')]); }, log });
     const actions = new ActionRunner({
-      projectId: project.id, context: () => ({ ...monitor.actionContext(), terminal: settings.terminal(), installedTerminals: installed() }), spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
+      projectId: project.id,
+      context: () => ({ ...monitor.actionContext(), terminal: settings.terminal(), installedTerminals: installed(), writeConfig: (key, value) => flowConfig.setKey(key, value) }),
+      spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
       onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },
     });
     monitor.onChange((snapshot) => log.info('snapshot', { project: project.id, needsYou: snapshot.counts.needsYou, running: snapshot.counts.running, stale: snapshot.counts.stale, free: snapshot.counts.free, disagreements: snapshot.counts.disagreements }));
-    const flowConfig = new FlowConfigEditor({ projectId: project.id, root: project.root, runner: childProcessRunner, refresh: async () => { await Promise.all([monitor.refresh('files'), monitor.refresh('jobs')]); }, log });
     return { monitor, actions, flowConfig };
   };
   const registry = new ProjectRegistry(serve, log);

@@ -123,32 +123,34 @@ function optionsOf(label: string): string[] {
 }
 const withJobs = (extra: Record<string, unknown>): FlowConfigDocument => ({ ...DOCUMENT, values: { ...DOCUMENT.values, jobs: { host: 'claude', schedule: { next: 'every 30m --workers 2' }, ...extra } } });
 
-test('JobsGroup_HostClaude_OnlyClaudesModelAndEffortShow', async () => {
+test('JobsGroup_HostClaude_BothHostsPairsShow', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withJobs({ codex: { model: 'gpt-6-luna' } }));
-  expect(within(jobs()).queryByLabelText('jobs.claude.model'), 'because the jobs run on claude, so its model is the one that counts').not.toBeNull();
-  expect(within(jobs()).queryByLabelText('jobs.claude.effort'), 'because the effort goes with the model').not.toBeNull();
-  expect([within(jobs()).queryByLabelText('jobs.codex.model'), within(jobs()).queryByLabelText('jobs.codex.effort')], 'because the other host\'s pair is hidden while the jobs do not run on it').toEqual([null, null]);
+  const shown = ['jobs.claude.model', 'jobs.claude.effort', 'jobs.codex.model', 'jobs.codex.effort'].map((label) => within(jobs()).queryByLabelText(label) !== null);
+  expect(shown, 'because workers and schedules run on either host whatever jobs.host names').toEqual([true, true, true, true]);
+  expect((within(jobs()).getByLabelText('jobs.codex.model') as HTMLSelectElement).value, 'because the control starts at the file\'s value').toBe('gpt-6-luna');
   expect(optionsOf('jobs.claude.model'), 'because the dropdown lists the enum, with the empty value as the host\'s default').toEqual(['host default', 'opus', 'sonnet', 'haiku', 'fable', 'other…']);
   expect(within(jobs()).getByLabelText('jobs.claude.model').closest('.flow-field')!.textContent, 'because claude has no file that names its default').toMatch(/empty takes the Claude CLI's default/);
 });
 
-test('JobsGroup_HostSwitchedToCodex_CodexPairShowsWithThisMachinesDefault', async () => {
+test('JobsGroup_HostModel_HelpSaysEveryStepWithoutAnAgent', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }));
+  expect(within(jobs()).getByLabelText('jobs.claude.model').closest('.flow-field')!.textContent, 'because since flow 1.22.0 the pair runs the agent-less steps too, not only the jobs').toMatch(/without an agent of its own: the steps with no agent \(design, implement, review, explain\) and the comments, intake and retro jobs/);
+  expect(within(jobs()).getByLabelText('jobs.claude.effort').closest('.flow-field')!.textContent, 'because the owner sees the efforts flow accepts before a run stops on one').toMatch(/low, medium, high, xhigh or max, the values flow accepts/);
+  expect(within(jobs()).getByLabelText('jobs.codex.effort').closest('.flow-field')!.textContent, 'because codex takes no max').toMatch(/low, medium, high or xhigh, the values flow accepts/);
+});
+
+test('JobsGroup_CodexPair_ShowsThisMachinesDefault', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withJobs({ codex: { model: 'gpt-6-luna' } }));
-  fireEvent.change(within(jobs()).getByLabelText('jobs.host'), { target: { value: 'codex' } });
-  expect(within(jobs()).queryByLabelText('jobs.claude.model'), 'because the pair follows the host as picked, before any save').toBeNull();
-  expect((within(jobs()).getByLabelText('jobs.codex.model') as HTMLSelectElement).value, 'because the hidden pair kept its saved value').toBe('gpt-6-luna');
   expect(optionsOf('jobs.codex.effort'), 'because codex takes no max effort').toEqual(['host default', 'low', 'medium', 'high', 'xhigh']);
   expect(within(jobs()).getByLabelText('jobs.codex.model').closest('.flow-field')!.textContent, 'because the daemon read the default from ~/.codex/config.toml').toMatch(/On this machine that is gpt-6-sol/);
   expect(within(jobs()).getByLabelText('jobs.codex.effort').closest('.flow-field')!.textContent, 'because the effort default comes from model_reasoning_effort').toMatch(/On this machine that is high/);
 });
 
-test('JobsGroup_HiddenPairEdited_NotSent', async () => {
-  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.codex.effort', 'jobs.host'] }) }));
-  fireEvent.change(within(jobs()).getByLabelText('jobs.claude.model'), { target: { value: 'opus' } });
-  fireEvent.change(within(jobs()).getByLabelText('jobs.host'), { target: { value: 'codex' } });
+test('JobsGroup_OneHostsEffortEdited_ThatPairGoesWholeTheOtherStays', async () => {
+  const { puts } = await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({ saved: ['jobs.codex.effort'] }) }));
   fireEvent.change(within(jobs()).getByLabelText('jobs.codex.effort'), { target: { value: 'xhigh' } });
   await act(async () => { fireEvent.click(within(jobs()).getByRole('button', { name: 'Save' })); });
-  expect(puts, 'because a change to the pair the owner can no longer see must not be saved behind their back, and the shown pair goes whole').toEqual([{ changes: [{ path: 'jobs.host', value: 'codex' }, { path: 'jobs.codex.model', value: '' }, { path: 'jobs.codex.effort', value: 'xhigh' }], hash: 'h1' }]);
+  expect(puts, 'because a host\'s map is written whole, and the untouched host\'s pair is not sent').toEqual([{ changes: [{ path: 'jobs.codex.model', value: '' }, { path: 'jobs.codex.effort', value: 'xhigh' }], hash: 'h1' }]);
 });
 
 test('JobsGroup_NoCodexConfig_HelpSaysCodexPicks', async () => {

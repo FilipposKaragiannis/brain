@@ -1,6 +1,8 @@
+import { createReadStream } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { AgentHost, SessionRef, TranscriptTurn } from '../snapshot.ts';
+import type { AgentHost, SessionRef, TranscriptLine, TranscriptTurn } from '../snapshot.ts';
+import { TRANSCRIPT_LINE_CHARS } from '../snapshot.ts';
 
 /** What the locator reads of the disk. Injected so a test can hand it a home in a temp folder. */
 export type SessionFiles = {
@@ -223,8 +225,12 @@ const COMPACTION_SUMMARY = 'This session is being continued from a previous conv
 
 export const TRANSCRIPT_TURNS_DEFAULT = 20;
 export const TRANSCRIPT_TURNS_MAX = 200;
+/** The most lines `?lines=` returns. */
+export const TRANSCRIPT_LINES_MAX = 2000;
 /** A transcript can run to tens of megabytes; the last turns are in its tail. */
-const TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024;
+export const TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024;
+/** How far the tail grows, doubling, when it holds fewer lines than asked: long tool results make few lines of many bytes. */
+const TRANSCRIPT_TAIL_MAX_BYTES = 64 * 1024 * 1024;
 
 /** The text of a message's content: the string itself, or its `text` parts joined (tool calls, tool results and thinking left out). */
 function textOf(content: unknown): string {
@@ -259,17 +265,170 @@ export function parseTranscript(source: string, limit: number): TranscriptTurn[]
   return turns.slice(-limit);
 }
 
-/** The tail of a transcript file, at most 4 MB, from the first whole line in it. */
-export async function readTranscriptTail(file: string): Promise<string | null> {
+/** The last `bytes` of a transcript from the first whole line in it, the file's size, and whether that is the whole file; null when it cannot be read. */
+async function tailOf(file: string, bytes: number): Promise<{ text: string; size: number; whole: boolean } | null> {
   try {
     const handle = await open(file, 'r');
     try {
       const { size } = await handle.stat();
-      const start = Math.max(0, size - TRANSCRIPT_TAIL_BYTES);
+      const start = Math.max(0, size - bytes);
       const buffer = Buffer.alloc(size - start);
       await handle.read(buffer, 0, buffer.length, start);
       const text = buffer.toString('utf8');
-      return start === 0 ? text : text.slice(text.indexOf('\n') + 1);
+      return { text: start === 0 ? text : text.slice(text.indexOf('\n') + 1), size, whole: start === 0 };
     } finally { await handle.close(); }
   } catch { return null; }
+}
+
+/** The tail of a transcript file, at most 4 MB, from the first whole line in it. */
+export async function readTranscriptTail(file: string): Promise<string | null> {
+  return (await tailOf(file, TRANSCRIPT_TAIL_BYTES))?.text ?? null;
+}
+
+/** A transcript entry as far as the readers look into it. */
+type TranscriptEntry = { type?: unknown; isMeta?: unknown; isSidechain?: unknown; isCompactSummary?: unknown; timestamp?: unknown; message?: { role?: unknown; content?: unknown } };
+type ContentPart = { type?: unknown; text?: unknown; thinking?: unknown; name?: unknown; input?: unknown; is_error?: unknown; content?: unknown };
+
+/** The first line of a text with something on it, trimmed and capped at `TRANSCRIPT_LINE_CHARS`. */
+function firstLine(text: string): string {
+  const line = text.split('\n').map((entry) => entry.trim()).find((entry) => entry !== '') ?? '';
+  return line.length <= TRANSCRIPT_LINE_CHARS ? line : `${line.slice(0, TRANSCRIPT_LINE_CHARS - 1)}…`;
+}
+
+/** The tools whose detail is a field of their own; any other tool shows its description or its first text input. */
+const TOOL_DETAIL: Record<string, string> = { Bash: 'command', Read: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', Write: 'file_path', Grep: 'pattern', Glob: 'pattern', WebFetch: 'url' };
+
+/** `<Name> · <detail>` for a tool call, or the name alone when it has no detail. */
+function toolLine(part: ContentPart): string {
+  const name = typeof part.name === 'string' && part.name !== '' ? part.name : 'tool';
+  const input = part.input !== null && typeof part.input === 'object' && !Array.isArray(part.input) ? part.input as Record<string, unknown> : {};
+  const field = TOOL_DETAIL[name];
+  const own = field === undefined ? undefined : input[field];
+  const detail = typeof own === 'string' ? own
+    : typeof input['description'] === 'string' ? input['description']
+      : Object.values(input).find((value): value is string => typeof value === 'string') ?? '';
+  const shown = firstLine(detail);
+  return firstLine(shown === '' ? name : `${name} · ${shown}`);
+}
+
+/** The text of a tool result's content: the string itself, or its text parts joined. */
+function resultText(content: unknown): string {
+  return typeof content === 'string' ? content : textOf(content);
+}
+
+/**
+ * The one line an assistant entry makes: what it said, else the tool it called, else what it
+ * thought (the first line of the thinking, or `thinking` when it is empty or redacted); null for
+ * an entry with none of them.
+ */
+function assistantLine(parts: ContentPart[], at: string | null): TranscriptLine | null {
+  const said = firstLine(parts.flatMap((part) => (part.type === 'text' && typeof part.text === 'string' ? [part.text] : [])).join('\n'));
+  if (said !== '') return { at, kind: 'say', text: said };
+  const tool = parts.find((part) => part.type === 'tool_use');
+  if (tool !== undefined) return { at, kind: 'tool', text: toolLine(tool) };
+  const thought = parts.find((part) => part.type === 'thinking' || part.type === 'redacted_thinking');
+  if (thought === undefined) return null;
+  return { at, kind: 'think', text: firstLine(typeof thought.thinking === 'string' ? thought.thinking : '') || 'thinking' };
+}
+
+/**
+ * The one line a user entry makes: what the user said, else a tool call that failed (`error:` and
+ * the first line of its result); null for a tool result that went well and for the host's wrapper
+ * turns (a tag-wrapped notification, command or reminder, a compaction summary).
+ */
+function userLine(content: unknown, at: string | null): TranscriptLine | null {
+  const text = textOf(content).trim();
+  if (text !== '') return WRAPPER_TAG.test(text) || text.startsWith(COMPACTION_SUMMARY) ? null : { at, kind: 'user', text: firstLine(text) };
+  const parts = Array.isArray(content) ? content as ContentPart[] : [];
+  const failed = parts.find((part) => part !== null && typeof part === 'object' && part.type === 'tool_result' && part.is_error === true);
+  return failed === undefined ? null : { at, kind: 'result', text: firstLine(`error: ${firstLine(resultText(failed.content)) || 'no output'}`) };
+}
+
+/**
+ * A claude transcript as lines, in file order, one per user or assistant entry that has one to
+ * show (see `assistantLine` and `userLine`); meta lines, compaction summaries and side chains (a
+ * subagent's own talk) make none, and a line cut by the tail or not JSON is skipped.
+ */
+export function parseTranscriptLines(source: string): TranscriptLine[] {
+  const lines: TranscriptLine[] = [];
+  for (const raw of source.split('\n')) {
+    if (raw.trim() === '') continue;
+    let entry: TranscriptEntry;
+    try { entry = JSON.parse(raw) as TranscriptEntry; } catch { continue; }
+    if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isMeta === true || entry.isSidechain === true || entry.isCompactSummary === true) continue;
+    const at = typeof entry.timestamp === 'string' ? entry.timestamp : null;
+    const content = entry.message?.content;
+    const line = entry.type === 'assistant'
+      ? assistantLine(Array.isArray(content) ? (content as unknown[]).filter((part): part is ContentPart => part !== null && typeof part === 'object') : typeof content === 'string' ? [{ type: 'text', text: content }] : [], at)
+      : userLine(content, at);
+    if (line !== null) lines.push(line);
+  }
+  return lines;
+}
+
+/** What `GET .../agents/<pid>/transcript` returns of a transcript, beside the session id. */
+export type TranscriptRead = { turns: TranscriptTurn[]; lines: TranscriptLine[]; bytes: number; turnCount: number };
+
+/** What the entry count of a transcript has read so far: up to `offset`, the end of its last whole line. */
+type Counted = { offset: number; count: number };
+/** Transcripts whose entries were counted, so a read counts only what was written since; the oldest is forgotten past this many. */
+const COUNTS_KEPT = 64;
+const counted = new Map<string, Counted>();
+
+/** Whether one line of a transcript is a user or assistant entry; the cheap substring test skips parsing the rest. */
+function isTurnEntry(line: string): boolean {
+  if (!line.includes('"type":"user"') && !line.includes('"type":"assistant"')) return false;
+  try {
+    const type = (JSON.parse(line) as { type?: unknown }).type;
+    return type === 'user' || type === 'assistant';
+  } catch { return false; }
+}
+
+/**
+ * The user and assistant entries in the whole transcript file: every one, tool calls, tool results,
+ * side chains and the host's wrapper turns included. A transcript only grows, so the count is kept
+ * per file and a read streams only what was written since; a file shorter than the count's end
+ * was replaced, and is counted again from the start.
+ */
+export async function countTranscriptEntries(file: string, size: number): Promise<number> {
+  const known = counted.get(file);
+  let { offset, count } = known !== undefined && known.offset <= size ? known : { offset: 0, count: 0 };
+  if (offset < size) {
+    let carry = '';
+    let at = offset;
+    for await (const chunk of createReadStream(file, { start: offset, end: size - 1, encoding: 'utf8' })) {
+      const lines = (carry + (chunk as string)).split('\n');
+      carry = lines.pop() ?? '';
+      for (const line of lines) {
+        at += Buffer.byteLength(line) + 1;
+        if (isTurnEntry(line)) count += 1;
+      }
+    }
+    offset = at;
+  }
+  counted.delete(file);
+  counted.set(file, { offset, count });
+  if (counted.size > COUNTS_KEPT) counted.delete(counted.keys().next().value!);
+  return count;
+}
+
+/**
+ * The last `turns` turns with text and the last `lines` lines of a claude transcript, its size in
+ * bytes and its count of user and assistant entries; null when it cannot be read. The tail read
+ * starts at `tailBytes` (4 MB) and doubles, up to 64 MB or the whole file, while it holds fewer
+ * lines than asked.
+ */
+export async function readTranscript(file: string, wanted: { turns: number; lines: number }, tailBytes = TRANSCRIPT_TAIL_BYTES): Promise<TranscriptRead | null> {
+  let bytes = tailBytes;
+  for (;;) {
+    const tail = await tailOf(file, bytes);
+    if (tail === null) return null;
+    const lines = parseTranscriptLines(tail.text);
+    if (lines.length >= wanted.lines || tail.whole || bytes >= TRANSCRIPT_TAIL_MAX_BYTES) {
+      let turnCount: number;
+      try { turnCount = await countTranscriptEntries(file, tail.size); } catch { return null; }
+      return { turns: parseTranscript(tail.text, wanted.turns), lines: lines.slice(-wanted.lines), bytes: tail.size, turnCount };
+    }
+    bytes = Math.min(bytes * 2, TRANSCRIPT_TAIL_MAX_BYTES);
+  }
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FieldChange, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, HostDefaults, Section } from '../../../daemon/src/plugins/flow/schema.ts';
-import { DEFAULT_JOBS_HOST, legacyJobsSetting } from '../../../daemon/src/plugins/flow/schema.ts';
+import type { FieldChange, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, HostDefaults, JobsHost, Section } from '../../../daemon/src/plugins/flow/schema.ts';
+import { legacyJobsSetting } from '../../../daemon/src/plugins/flow/schema.ts';
 import { projectPath, unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
 import { ActionButton, ActionsProvider, Empty, Module } from '../ui.tsx';
@@ -13,7 +13,6 @@ export const TRACKED_NOTE = 'This edits .flow/config.yaml in the project. It is 
 const HTTP_CONFLICT = 409;
 /** The select option that leaves a key out of the file. */
 const UNSET = '';
-const HOST_PATH = 'jobs.host';
 /** The label of the empty option of a host's model or effort: the host picks. */
 export const HOST_DEFAULT = 'host default';
 /** The select option of a known-or-free-text value that opens the text field. */
@@ -152,12 +151,12 @@ function legacyOf(spec: FieldSpec, values: Record<string, unknown>): { value: st
 }
 
 /**
- * One group of the schema: its fields, and a Save that sends only what changed in it. A host's
- * own model and effort show only while the host control (as edited, before any save) names that
- * host; the other host's pair is hidden, its values kept and never sent. While the host's map is
- * absent and a deprecated key is set, the pair starts at what the plugin really runs with, and a
- * save of either sends both, so the map is written and the fallback ends. A deprecated key shows
- * only when the file sets it, with a Clear that saves it as null at once.
+ * One group of the schema: its fields, and a Save that sends only what changed in it. Both hosts'
+ * model and effort show, since workers and schedules run on either host whatever `jobs.host`
+ * says. A save of either half of a host's pair sends both, so the host's map is written whole;
+ * while that map is absent and a deprecated key is set, the pair starts at what the plugin really
+ * runs with, so the fallback ends with the same values. A deprecated key shows only when the file
+ * sets it, with a Clear that saves it as null at once.
  */
 function GroupForm({ section, values, hash, hostDefaults, save, reload }: GroupProps) {
   const initial = Object.fromEntries(section.fields.map((spec) => [spec.path, legacyOf(spec, values)?.value ?? textOf(spec, valueAt(values, spec.path))]));
@@ -166,16 +165,10 @@ function GroupForm({ section, values, hash, hostDefaults, save, reload }: GroupP
   const [result, setResult] = useState<Result | null>(null);
   /** What the last save sent, so Save anyway sends the same again with force. */
   const [sent, setSent] = useState<{ changes: FieldChange[]; only: string | null }>({ changes: [], only: null });
-  const host = (drafts[HOST_PATH] ?? initial[HOST_PATH] ?? '') || DEFAULT_JOBS_HOST;
-  const visible = (spec: FieldSpec): boolean => {
-    if (spec.host !== undefined) return spec.host.host === host;
-    if (spec.deprecated !== undefined) return isSet(valueAt(values, spec.path));
-    return true;
-  };
-  const shown = section.fields.filter(visible);
+  const shown = section.fields.filter((spec) => spec.deprecated === undefined || isSet(valueAt(values, spec.path)));
   const changed = (spec: FieldSpec): boolean => spec.deprecated === undefined && drafts[spec.path] !== undefined && drafts[spec.path] !== initial[spec.path];
-  const pairChanged = shown.some((spec) => spec.host !== undefined && changed(spec));
-  const edited = shown.filter((spec) => changed(spec) || (pairChanged && spec.host !== undefined));
+  const pairChanged = (host: JobsHost): boolean => shown.some((spec) => spec.host?.host === host && changed(spec));
+  const edited = shown.filter((spec) => changed(spec) || (spec.host !== undefined && pairChanged(spec.host.host)));
   const parsed = edited.map((spec) => ({ spec, parsed: valueOf(spec, drafts[spec.path] ?? initial[spec.path] ?? '') }));
   const invalid = parsed.find((entry) => !entry.parsed.ok);
   /** `only`: the one key a Clear saves, whose draft alone goes after it; the group's other edits stay. */

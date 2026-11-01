@@ -1,14 +1,15 @@
 #!/bin/sh
 # Next job: run ready items unattended until a gate, nothing ready, or the step budget.
 #   jobs/next.sh <claude|codex> [item] [--max-steps N] [--workers N] [--worker N] [--wait]
+#                [--model <name>] [--effort <level>] [--as <name>]
 # The unattended loop (templates/run-unattended.sh) does the work; this adds the lock and the
 # log, and turns "nothing ready" (exit 5) and "gate" (exit 4) into quiet exits so a scheduler
 # does not flag them. Schedule it at the cadence you want new work picked up. With notify.idle
 # true in .flow/config.yaml, the first run that finds nothing ready sends one notification; it
 # stays quiet until a run does work again, so a schedule does not repeat it every time.
 # --workers N starts N loops at once, each on its own ready item and worktree, each with its own
-# lock and log (next-1 ... next-N): a worker still busy from the last schedule is skipped, a free
-# one starts. The pool caps them: a worker with no worktree left stops quietly. The job starts
+# lock and log (next-1 ... next-N; next-codex-1 ... for the schedule next-codex): a worker still
+# busy from the last schedule is skipped, a free one starts. The pool caps them: a worker with no worktree left stops quietly. The job starts
 # the workers in their own session and ends, so one long worker never holds the next schedule
 # (launchd starts no run while the last is alive). The launchd agent abandons what its run
 # leaves behind (AbandonProcessGroup), or launchd would end every worker when the job exits.
@@ -17,13 +18,24 @@
 # run of the queue with no --workers starts each worker on its own host, numbered in the map's
 # order across hosts, claude first (next-1 on claude, next-2 and next-3 on codex), and the host
 # argument only names the run. --workers N on the command line starts N on the host argument.
+# jobs.workers is the plain next schedule's: a named one (--as next-codex) runs --workers N on
+# its host, or one run in place.
 # --worker N is one worker, as the job starts it; N is a number, so status and pause know it.
+# --as <name> (jobs/_job.sh) runs this as the schedule <name>, with its own lock, log and pause,
+# so two next schedules never skip each other; the pick lock still keeps them off the same item.
+# --model and --effort run this one run's steps with no agent (design, implement, review,
+# explain) on that model and effort instead of jobs.<host>.model and jobs.<host>.effort, passed
+# to the host as is; the config is left alone, so the schedule's runs keep the pair. They apply
+# on the host argument only: its run, or its workers (with jobs.workers, a worker on another host
+# keeps that host's pair). Empty or absent keeps the pair. An effort the host does not take (low,
+# medium, high, xhigh or max on claude; up to xhigh on codex) is refused, exit 2, before the run
+# reads the tracker, as a bad jobs.<host>.effort stops a run before it claims an item.
 set -u
 job=next
 . "$(dirname "$0")/_job.sh"
 . "$FLOW_PLUGIN/lib/workers.sh"
 host="${1:-}"; shift || true
-workers=1; workers_given=0; worker=""; item=""; pass=""; wait_all=0
+workers=1; workers_given=0; worker=""; item=""; pass=""; wait_all=0; model="$job_opt_model"; effort="$job_opt_effort"
 while [ $# -gt 0 ]; do
   case "$1" in
     --workers) workers="$2"; workers_given=1; shift 2 ;;
@@ -36,6 +48,8 @@ while [ $# -gt 0 ]; do
 done
 case "$workers" in ''|*[!0-9]*|0) die "--workers takes a number from 1" 2 ;; esac
 case "${worker:-1}" in ''|*[!0-9]*|0) die "--worker takes a number from 1; to split the workers across hosts, set jobs.workers in .flow/config.yaml" 2 ;; esac
+# A bad host is left to host_check below, which names it.
+case "$host" in claude|codex) bad="$(host_effort_problem "$host" "$effort" --effort)"; [ -z "$bad" ] || die "$bad" 2 ;; esac
 # plan: one host:count word per host whose workers this run starts; empty for one run in place.
 # A paused run never reads it, and a bad jobs.workers stops the run before the tracker is touched.
 # A tracker that keeps a board (the GitHub adapter's sync) is brought in step once per schedule,
@@ -46,7 +60,7 @@ case "${worker:-1}" in ''|*[!0-9]*|0) die "--worker takes a number from 1; to sp
 plan=""
 if [ -z "$worker" ]; then
   job_skip_if_paused
-  if [ -z "$item" ] && [ "$workers_given" -eq 0 ] && ! plan="$(jobs_workers 2>&1)"; then
+  if [ -z "$item" ] && [ "$workers_given" -eq 0 ] && [ "$job" = next ] && ! plan="$(jobs_workers 2>&1)"; then
     printf '%s\n' "$plan" >&2; job_clock; job_say "error: ${plan#flow: }" >/dev/null; job_record 2; exit 2
   fi
   if [ -z "$plan" ] && [ "$workers" -gt 1 ]; then plan="$host:$workers"; fi
@@ -73,15 +87,17 @@ try: os.setsid()
 except OSError: pass
 try: os.execv(sys.argv[2], sys.argv[2:])
 except OSError as e:
-    with open(sys.argv[1], "a") as log: log.write("%s\tnext-%s\tstopped: cannot start: %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), sys.argv[5], e))
+    with open(sys.argv[1], "a") as log: log.write("%s\t%s\tstopped: cannot start: %s\n" % (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), os.path.basename(sys.argv[1])[:-4], e))
     sys.exit(1)' "$@" </dev/null; }
   pids=""; k=1
   for hn in $plan; do
+    # The run's --model and --effort go to the workers on its host; the others keep their pair.
+    wm=""; we=""; [ "${hn%:*}" != "$host" ] || { wm="$model"; we="$effort"; }
     i=1
     while [ "$i" -le "${hn#*:}" ]; do
       # shellcheck disable=SC2086
-      if [ "$wait_all" -eq 1 ]; then "$0" "${hn%:*}" --worker "$k" $pass </dev/null &
-      else detached "$(job_log_dir)/next-$k.log" "$0" "${hn%:*}" --worker "$k" $pass &
+      if [ "$wait_all" -eq 1 ]; then "$0" "${hn%:*}" --worker "$k" --as "$job" $pass ${wm:+--model "$wm"} ${we:+--effort "$we"} </dev/null &
+      else detached "$(job_log_dir)/$job-$k.log" "$0" "${hn%:*}" --worker "$k" --as "$job" $pass ${wm:+--model "$wm"} ${we:+--effort "$we"} &
       fi
       pids="$pids $!"
       k=$((k + 1)); i=$((i + 1))
@@ -92,11 +108,12 @@ except OSError as e:
   for p in $pids; do wait "$p"; c=$?; [ "$c" -ne 0 ] && [ "$rc" -eq 0 ] && rc=$c; done
   exit "$rc"
 fi
-[ -n "$worker" ] && job="next-$worker"
+[ -n "$worker" ] && job="$job-$worker"
 job_start "$host"
+[ -z "$model$effort" ] || job_say "this run's steps with no agent: model ${model:-from jobs.$host.model}, effort ${effort:-from jobs.$host.effort}"
 n0="$(wc -l < "$(job_log_dir)/$job.log" 2>/dev/null | tr -d ' ')"; n0="${n0:-0}"
 # shellcheck disable=SC2086
-"$FLOW_PLUGIN/templates/run-unattended.sh" "$host" $item $pass >> "$(job_log_dir)/$job.log" 2>&1; code=$?
+"$FLOW_PLUGIN/templates/run-unattended.sh" "$host" $item $pass ${model:+--model "$model"} ${effort:+--effort "$effort"} >> "$(job_log_dir)/$job.log" 2>&1; code=$?
 # The steps this run made, from its own lines of the log (the step line is not anchored: a host
 # whose last output has no newline glues it), so the last word carries the count and a run that
 # ended as if done without one step says so (health counts those).

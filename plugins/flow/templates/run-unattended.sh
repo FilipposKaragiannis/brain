@@ -1,6 +1,6 @@
 #!/bin/sh
 # Unattended flow run. Installed by flow:init as <repo>/.flow/run-unattended.sh.
-#   .flow/run-unattended.sh <claude|codex> [item] [--max-steps N]
+#   .flow/run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>]
 # A shell loop is the orchestrator: next.sh prepares a step, the host runs its brief with the
 # claimed worktree as the working directory, advance.sh applies the result; repeat until a gate,
 # nothing ready, or done. Each step is a fresh host process with the step agent's model and
@@ -11,22 +11,36 @@
 # fails on a spend limit or an auth error raises the escalation gate on its item, naming the
 # cause, and stops the host: this loop and every other one start no session on it until the
 # owner clears the gate (exit 4, as for any gate).
+# --model and --effort replace the jobs' pair for this run only: its steps with no agent run on
+# them, passed as is, as jobs.<host>.model and jobs.<host>.effort would be. Empty or absent keeps
+# the pair; an effort the host does not take stops the loop before it claims an item (exit 2).
 set -u
 host="${1:-}"; shift || true
-[ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N]" >&2; exit 2; }
+[ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>]" >&2; exit 2; }
 FLOW_RUN_PID=$$; export FLOW_RUN_PID   # next.sh records it, so the health job knows this loop is alive
 FLOW_HOST_GATES=1                      # a host stop raises the item's gate here, which tells the owner
-item=""; max=20
-while [ $# -gt 0 ]; do case "$1" in --max-steps) max="$2"; shift 2 ;; *) item="$1"; shift ;; esac; done
+item=""; max=20; once_model=""; once_effort=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --max-steps) max="$2"; shift 2 ;;
+    --model) once_model="$2"; shift 2 ;;
+    --effort) once_effort="$2"; shift 2 ;;
+    *) item="$1"; shift ;;
+  esac
+done
 . "$(dirname "$0")/plugin.sh"
 plugin="$FLOW_PLUGIN"
 . "$plugin/lib/host.sh"
 host_check "$host" || exit 2
 # The jobs' pair is checked before a step is claimed: an effort the host does not take would fail
-# the agent-less step's session after next.sh recorded its run.
-bad="$(host_jobs_pair_problem "$host")"
+# the agent-less step's session after next.sh recorded its run. An --effort for this run is
+# checked instead of the pair's, which it replaces.
+if [ -n "$once_effort" ]; then bad="$(host_effort_problem "$host" "$once_effort" --effort)"
+else bad="$(host_jobs_pair_problem "$host")"; fi
 [ -z "$bad" ] || { echo "run-unattended: $bad" >&2; exit 2; }
 host_jobs_pair "$host"
+[ -z "$once_model" ] || jobs_model="$once_model"
+[ -z "$once_effort" ] || jobs_effort="$once_effort"
 n=0
 while [ "$n" -lt "$max" ]; do
   n=$((n + 1))

@@ -8,11 +8,13 @@ import { parseJobStatus } from '../src/collectors/jobs.ts';
 import { readProcesses } from '../src/collectors/processes.ts';
 import type { PullFact } from '../src/collectors/pulls.ts';
 import { readPulls } from '../src/collectors/pulls.ts';
-import { landedMergeGates, pullState, reconcile } from '../src/reconcile.ts';
+import { landedMergeGates, pullState, reconcile, runOutcome, runReason } from '../src/reconcile.ts';
 import type { ReconcileInput } from '../src/reconcile.ts';
 import { DisagreementSettler } from '../src/settle.ts';
 import type { ReadMarks } from '../src/settle.ts';
+import type { JobRunRecord, JobStatusRow } from '../src/collectors/jobs.ts';
 import type { Freshness, Snapshot } from '../src/snapshot.ts';
+import { JOB_RUNS_KEPT } from '../src/snapshot.ts';
 import { BOARD_JSON, FIXTURE_ROOT, JOBS_JSON, LOCAL_BOARD_JSON, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
@@ -25,7 +27,7 @@ async function input(): Promise<ReconcileInput> {
     flow: await readFlowHome(FIXTURE_ROOT, fakeRunner),
     git: await readGit(FIXTURE_ROOT, 'main', fakeRunner),
     processes: await readProcesses(fakeRunner),
-    jobs: { jobs: parseJobStatus(JOBS_JSON) },
+    jobs: { jobs: parseJobStatus(JOBS_JSON), runs: [] },
     board: parseBoard(BOARD_JSON),
     pulls: await readPulls(FIXTURE_ROOT, 'example/fixture', fakeRunner),
     sources: { files: fresh, git: fresh, processes: fresh, jobs: fresh, board: fresh, pulls: fresh },
@@ -125,6 +127,17 @@ test('Items_BodyDropped', async () => {
   assert.equal('body' in seven, false, 'because the snapshot must stay small');
 });
 
+test('Items_Spend_FromTheBoardOrNull', async () => {
+  const spend = Object.fromEntries((await snapshot()).items.map((item) => [item.id, item.spend]));
+  assert.deepEqual(spend['gh#7'], { costUsd: 1.234567, sessions: 3, tokens: 120000 }, 'because the board sums the item\'s step sessions');
+  assert.deepEqual(spend['gh#9'], { costUsd: 0, sessions: 2, tokens: 50000 }, 'because codex reports no cost, yet its sessions and tokens count');
+  assert.deepEqual([spend['gh#12'], spend['gh#13']], [null, null], 'because an item with no session has no spend, and a malformed entry is dropped, not shown as $0');
+});
+
+test('OlderBoard_NoSpend_ItemsHaveNone', () => {
+  assert.deepEqual(parseBoard(LOCAL_BOARD_JSON).spend, {}, 'because a plugin before flow 1.22.0 prints no spend');
+});
+
 test('LocalBoard_ComputedFieldsFilledIn', () => {
   const byId = Object.fromEntries(parseBoard(LOCAL_BOARD_JSON).items.map((item) => [item.id, item]));
   assert.deepEqual(byId['local:task/3']?.open_blockers, ['local:task/1'], 'because its blocker is an open item on the board');
@@ -158,7 +171,7 @@ test('RunWithoutProcess_IsDeadAndFlagged', async () => {
 
 test('Jobs_StateFromRows', async () => {
   const states = Object.fromEntries((await snapshot()).jobs.map((job) => [job.name, job.state]));
-  assert.deepEqual(states, { next: 'due', health: 'running', retro: 'paused' }, 'because next is due, health has a running entry and retro is paused');
+  assert.deepEqual(states, { next: 'overdue', health: 'running', retro: 'paused' }, 'because jobs.sh says next is due, which the snapshot calls overdue, health has a running entry and retro is paused');
 });
 
 test('Attention_OldestFirstWithFailedJob', async () => {
@@ -184,7 +197,7 @@ const READY: PullFact = {
 const ready = (change: Partial<PullFact>): PullFact => ({ ...READY, ...change });
 const pullNumbered = (picture: Snapshot, pullNumber: number) => picture.pulls.find((pull) => pull.number === pullNumber);
 const withBoardItem = (facts: ReconcileInput, id: string, change: Partial<BoardItem['state']>): ReconcileInput => ({
-  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {} },
+  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} },
 });
 const mergeDisagreements = (picture: Snapshot) => picture.disagreements.filter((entry) => entry.sources.join(' vs ') === 'issue state vs pull request');
 
@@ -330,12 +343,12 @@ test('FixturePulls_CountedByState', async () => {
 
 const withExtraBoardItem = (facts: ReconcileInput, change: Partial<BoardItem>): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {} } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} } };
 };
 /** Adds board items made from gh#12's shape, one per change. */
 const withBoardItems = (facts: ReconcileInput, changes: Partial<BoardItem>[]): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {} } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} } };
 };
 const needsFieldIds = (picture: Snapshot): string[] => picture.attention.filter((row) => row.kind === 'needs-field').map((row) => row.id);
 const disagreementOf = (picture: Snapshot, sources: string) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === sources);
@@ -394,7 +407,7 @@ test('NeedsField_ChildOfASplitParentWithADoneSibling_Row', async () => {
 
 test('NeedsField_BlocksAnItemInProgress_Row', async () => {
   const facts = withBoardItems(withBoardItem(await input(), 'gh#9', {}), [{ id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], parent: '' }]);
-  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {} } };
+  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {}, spend: {} } };
   assert.deepEqual(needsFieldIds(reconcile(blocking)), ['gh#14'], 'because gh#9 is being worked and waits on it');
 });
 
@@ -476,7 +489,7 @@ const shownAtMergeGate = (picture: Snapshot): boolean[] => [
 ];
 
 test('MergeGate_PullReadyAndReviewed_ShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'ready', waiting: [], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'ready', waiting: [], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because only the merge is left, which is the owner\'s');
   assert.equal(picture.counts.needsYou, 1, 'because the gate counts as needing you');
 });
@@ -494,22 +507,41 @@ test('MergeGate_ReviewStillRequested_NotShownAtTheGate', async () => {
 });
 
 test('MergeGate_FlowReviewerYetToAnswer_NotShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['codex'], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['codex'], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [false, false, false], 'because codex, asked by a mention GitHub does not track, has not answered, as the health job recorded');
 });
 
+test('MergeGate_FlowReviewerYetToAnswer_ItemAndPullInReview', async () => {
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['codex'], cannot: [], at: '2026-10-24T18:00:00Z' }]));
+  const pull = picture.pulls.find((entry) => entry.number === 20);
+  assert.equal(picture.items.find((item) => item.id === 'gh#20')?.state, 'in-review', 'because the item waits on its reviewers, which is neither the owner\'s gate nor a blocker');
+  assert.deepEqual([pull?.state, pull?.review?.waiting], ['in-review', ['codex']], 'because GitHub calls the pull mergeable, but codex was asked by a mention and has not answered');
+  assert.equal(picture.attention.some((row) => row.kind === 'pr-mergeable' && row.id === 'gh#20'), false, 'because a pull in review is not ready to merge yet');
+});
+
+test('PullReview_ReviewerCannot_ReplyCarried', async () => {
+  const cannot = [{ reviewer: 'codex', said: 'Create an environment for this repo.' }];
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'ready', waiting: [], cannot, at: '2026-10-24T18:00:00Z' }]));
+  const pull = picture.pulls.find((entry) => entry.number === 20);
+  assert.deepEqual([pull?.state, pull?.review?.cannot], ['mergeable', cannot], 'because the reply shows on the pull until the record goes, while the pull itself is ready');
+});
+
+test('PullReview_NoRecord_Null', async () => {
+  assert.equal((await snapshot()).pulls.find((entry) => entry.number === 21)?.review, null, 'because the health job wrote no record for #21');
+});
+
 test('MergeGate_StaleRecordChangesRequestedPullApproved_ShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because the live pull says the reviewer approved since, and the health job\'s record is up to 15 minutes old');
 });
 
 test('MergeGate_RecordWaitingOnCopilotOnlyNoLiveRequest_ShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['copilot'], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['copilot'], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because Copilot is asked through GitHub, whose live pull shows no request left, so the record is stale');
 });
 
 test('MergeGate_PullsUnreadRecordChangesRequested_NotShownAtTheGate', async () => {
-  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], at: '2026-10-24T18:00:00Z' }]);
+  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'changes-requested', waiting: [], cannot: [], at: '2026-10-24T18:00:00Z' }]);
   facts.pulls = null;
   assert.deepEqual(shownAtMergeGate(reconcile(facts)), [false, false, false], 'because without the live pull the health job\'s verdict is the best there is');
 });
@@ -520,12 +552,12 @@ test('MergeGate_RequiredApprovalOnly_ShownAtTheGate', async () => {
 });
 
 test('MergeGate_RecordForAnotherPull_ShownAtTheGate', async () => {
-  const picture = reconcile(await mergeGateOn20({}, [{ pr: 21, state: 'in-review', waiting: ['codex'], at: '2026-10-24T18:00:00Z' }]));
+  const picture = reconcile(await mergeGateOn20({}, [{ pr: 21, state: 'in-review', waiting: ['codex'], cannot: [], at: '2026-10-24T18:00:00Z' }]));
   assert.deepEqual(shownAtMergeGate(picture), [true, true, true], 'because the record is about another pull');
 });
 
 test('MergeGate_PullsUnreadRecordInReview_NotShownAtTheGate', async () => {
-  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['claude'], at: '2026-10-24T18:00:00Z' }]);
+  const facts = await mergeGateOn20({}, [{ pr: 20, state: 'in-review', waiting: ['claude'], cannot: [], at: '2026-10-24T18:00:00Z' }]);
   facts.pulls = null;
   assert.deepEqual(shownAtMergeGate(reconcile(facts)), [false, false, false], 'because without pull requests the item still names #20, and the health job says it is in review');
 });
@@ -676,7 +708,7 @@ test('Worktree_SyncNoteOfItsClaim_ShownAsSyncPending', async () => {
 
 test('GateItemWithABody_GateCarriesIt', async () => {
   const facts = await input();
-  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' } } });
+  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' }, spend: {} } });
   assert.equal(picture.gates.find((gate) => gate.item === 'gh#7')?.body, '## Spec', 'because the card shows the issue the gate is about');
 });
 
@@ -685,3 +717,130 @@ test('BoardJson_KeepsBodiesApartFromItems', () => {
   assert.deepEqual([board.bodies, 'body' in board.items[0]!], [{ 'gh#1': 'text' }, false], 'because only gates carry a body, not every item on every snapshot');
 });
 
+
+/** The input with the run log and the status rows' changes given. */
+async function withJobs(runs: JobRunRecord[], change: (rows: JobStatusRow[]) => void = () => {}): Promise<ReconcileInput> {
+  const facts = await input();
+  const rows = parseJobStatus(JOBS_JSON);
+  change(rows);
+  return { ...facts, jobs: { jobs: rows, runs } };
+}
+
+const jobOf = (picture: Snapshot, name: string) => picture.jobs.find((job) => job.name === name);
+const run = (job: string, at: string, result: string, extra: Partial<JobRunRecord> = {}): JobRunRecord => ({ job, host: 'claude', at, seconds: 3, exit: 0, result, ...extra });
+
+test('JobRecent_FromTheRunLog_NewestFirstWithItsWorkersAndSkips', async () => {
+  const runs = [
+    run('next', '2026-10-24T17:00:00Z', 'done, 2 steps'),
+    run('health', '2026-10-24T17:05:00Z', 'quiet: nothing to do'),
+    run('next-2', '2026-10-24T17:30:00Z', 'skipped: run 36596 still going', { host: 'codex' }),
+    run('next-1', '2026-10-24T17:44:00Z', 'quiet: nothing ready', { host: '' }),
+  ];
+  const recent = jobOf(reconcile(await withJobs(runs)), 'next')?.recent ?? [];
+  assert.deepEqual(recent.map((entry) => [entry.at, entry.worker, entry.host, entry.outcome, entry.reason]), [
+    ['2026-10-24T17:44:00Z', 'next-1', null, 'quiet', 'nothing ready'],
+    ['2026-10-24T17:30:00Z', 'next-2', 'codex', 'skipped', 'run 36596 still going'],
+    ['2026-10-24T17:00:00Z', null, 'claude', 'work', 'done, 2 steps'],
+  ], "because next's workers are next-N, a skip is a run the owner wants to see, and the health line is the health job's");
+});
+
+test('JobRecent_LongLog_KeepsTheNewestJobRunsKept', async () => {
+  const runs = Array.from({ length: JOB_RUNS_KEPT + 5 }, (_, index) => run('health', `2026-10-24T${String(index).padStart(2, '0')}:00:00Z`, 'quiet: nothing to do'));
+  const recent = jobOf(reconcile(await withJobs(runs)), 'health')?.recent ?? [];
+  assert.equal(recent.length, JOB_RUNS_KEPT, 'because the card shows a dozen runs, not the whole log');
+  assert.equal(recent[0]?.at, runs.at(-1)?.at, 'because the newest run comes first');
+});
+
+test('JobRecent_JobWithASimilarName_NotMixedIn', async () => {
+  const runs = [run('next', '2026-10-24T17:00:00Z', 'quiet: nothing ready'), run('nextish', '2026-10-24T17:01:00Z', 'done'), run('next-x', '2026-10-24T17:02:00Z', 'done')];
+  assert.deepEqual(jobOf(reconcile(await withJobs(runs)), 'next')?.recent.map((entry) => entry.at), ['2026-10-24T17:00:00Z'], 'because only next and next-<number> are the next job, as flow\'s own runs reader matches them');
+});
+
+test('JobRun_FlowsOwnOutcomeAndReason_Win', async () => {
+  const runs = [run('retro', '2026-10-24T17:00:00Z', 'skipped: run 1 still going', { outcome: 'quiet', reason: 'flow said so' })];
+  const recent = jobOf(reconcile(await withJobs(runs)), 'retro')?.recent[0];
+  assert.deepEqual([recent?.outcome, recent?.reason], ['quiet', 'flow said so'], 'because flow classifies its own runs, and the console only fills in for a line without them');
+});
+
+test('JobLast_FromStatus_CarriesReasonWorkerAndHost', async () => {
+  const facts = await withJobs([], (rows) => { rows[0]!.last = { job: 'next-2', host: 'codex', at: '2026-10-24T17:44:00Z', seconds: 107, exit: 0, result: 'quiet: nothing ready', outcome: 'quiet' }; });
+  const last = jobOf(reconcile(facts), 'next')?.last;
+  assert.deepEqual([last?.reason, last?.worker, last?.host], ['nothing ready', 'next-2', 'codex'], 'because the card says why the last run did nothing, and which worker on which host ran it');
+});
+
+test('JobLast_OlderFlowWithoutJobOrHost_NullWorkerAndHost', async () => {
+  const last = jobOf(await snapshot(), 'health')?.last;
+  assert.deepEqual([last?.worker, last?.host, last?.reason, last?.outcome], [null, null, 'git failed', 'failed'], 'because a status row with no job or host names neither, and its result is its reason');
+});
+
+test('JobWorkers_FromStatus_MappedWithTheirRunAndLastRun', async () => {
+  const facts = await withJobs([], (rows) => {
+    rows[0]!.workers = [
+      { job: 'next-1', host: 'claude', running: { job: 'next-1', pid: 36596, at: '2026-10-24T18:00:00Z', host: 'claude' }, last_run: null },
+      { job: 'next-2', host: 'codex', running: null, last_run: { job: 'next-2', host: 'codex', at: '2026-10-24T17:30:00Z', seconds: 0, exit: 0, result: 'skipped: run 36597 still going', outcome: 'skipped', reason: 'run 36597 still going' } },
+    ];
+  });
+  const workers = jobOf(reconcile(facts), 'next')?.workers;
+  assert.deepEqual(workers?.map((worker) => [worker.name, worker.host, worker.running, worker.last?.reason ?? null, worker.last?.worker ?? null]), [
+    ['next-1', 'claude', { pid: 36596, since: '2026-10-24T18:00:00Z' }, null, null],
+    ['next-2', 'codex', null, 'run 36597 still going', 'next-2'],
+  ], 'because each worker shows what runs on it now and why its last run ended');
+});
+
+test('JobWorkers_OtherJobOrOlderFlow_Empty', async () => {
+  const picture = await snapshot();
+  assert.deepEqual(picture.jobs.map((job) => job.workers), [[], [], []], 'because jobs.sh before 1.24.0 lists no workers, and only next has any');
+});
+
+test('NamedSchedule_JobHostAndConfigured_CarriedWithItsOwnRunsAndWorkers', async () => {
+  const runs = [run('next', '2026-10-24T17:00:00Z', 'done, 2 steps'), run('next-nightly-2', '2026-10-24T17:10:00Z', 'quiet: nothing ready'), run('next-nightly', '2026-10-24T17:20:00Z', 'done, 1 step')];
+  const facts = await withJobs(runs, (rows) => {
+    rows.push({ ...rows[0]!, name: 'next-nightly', job: 'next', host: 'codex', configured: false, workers: [] });
+  });
+  const picture = reconcile(facts);
+  const nightly = jobOf(picture, 'next-nightly');
+  assert.deepEqual([nightly?.job, nightly?.host, nightly?.configured], ['next', 'codex', false], 'because the card says which job the schedule runs, on which host, and that the config no longer names it');
+  assert.deepEqual(nightly?.recent.map((entry) => [entry.at, entry.worker]), [['2026-10-24T17:20:00Z', null], ['2026-10-24T17:10:00Z', 'next-nightly-2']], 'because a named schedule\'s runs are its own and its workers\', <name>-<n>');
+  assert.deepEqual(jobOf(picture, 'next')?.recent.map((entry) => entry.at), ['2026-10-24T17:00:00Z'], 'because next-nightly-2 is a worker of next-nightly, not of next');
+  assert.deepEqual([jobOf(picture, 'health')?.job, jobOf(picture, 'health')?.configured], ['health', true], 'because a row from an older plugin is the job of its own name, in the config');
+});
+
+test('RunOutcome_ClassifiedAsFlowsJobsPyDoes', () => {
+  const cases: [string, number | string | null, string][] = [
+    ['paused: resume it with the flow jobs skill', 0, 'paused'], ['skipped: run 1 still going', 0, 'skipped'], ['done, 2 steps', 1, 'failed'],
+    ['error: jobs.workers names gemini', 2, 'failed'], ['stopped: no step ran (exit 0: x)', 0, 'failed'], ['quiet: nothing ready', 0, 'quiet'],
+    ['stopped at a gate (see .flow/gates)', 0, 'gate'], ['done, 3 steps', 0, 'work'], ['done', '0', 'work'],
+  ];
+  for (const [result, exit, outcome] of cases) assert.equal(runOutcome(result, exit), outcome, `because flow calls "${result}" with exit ${String(exit)} ${outcome}`);
+});
+
+test('RunReason_TheResultWithoutItsOutcomeWord', () => {
+  const cases: [string, string | null][] = [
+    ['skipped: run 36596 still going', 'run 36596 still going'], ['paused: resume it with the flow jobs skill', 'the job is paused'],
+    ['stopped: exit 3', 'exit 3'], ['done, 2 steps', 'done, 2 steps'], ['quiet:', null], ['', null],
+  ];
+  for (const [result, reason] of cases) assert.equal(runReason(result), reason, `because flow's reason for "${result}" is ${String(reason)}`);
+});
+
+test('StoppedHost_InTheSnapshotAndOnTheNeedsYouListWithItsClear', async () => {
+  const facts = await input();
+  facts.flow.stoppedHosts = [{ host: 'claude', cause: 'spend-limit', said: 'You have hit your limit', at: '2026-10-24T18:00:00Z', item: null }];
+  const picture = reconcile(facts);
+  assert.deepEqual(picture.stoppedHosts.map((stopped) => stopped.host), ['claude'], 'because the Agents and jobs screen shows which host starts no session');
+  const row = picture.attention.find((entry) => entry.kind === 'host-stopped');
+  assert.deepEqual([row?.id, row?.title, row?.ageSeconds], ['claude', 'claude is stopped on a spend limit', 964], 'because the row names the host and the cause in words, aged from the stop');
+  assert.match(row?.detail ?? '', /^claude stopped on a spend limit: You have hit your limit\. No claude session starts until you clear it\.$/, 'because the owner reads what the host said and what clearing does');
+  assert.deepEqual(row?.action, { kind: 'host.clear', args: { host: 'claude' }, label: 'Clear claude' }, 'because the row clears the host with gate.sh clear claude');
+});
+
+test('StoppedHostOnAuthForAGate_CauseInWordsAndTheGateNamed', async () => {
+  const facts = await input();
+  facts.flow.stoppedHosts = [{ host: 'codex', cause: 'auth', said: 'Not logged in', at: null, item: 'gh#7' }];
+  const row = reconcile(facts).attention.find((entry) => entry.kind === 'host-stopped');
+  assert.equal(row?.detail, 'codex stopped on an auth error: Not logged in. No codex session starts until you clear it, or when the gate on gh#7 clears.', 'because clearing the gate that names the stop starts the host again too');
+});
+
+test('NoStoppedHost_NoRowAndOtherRowsHaveNoAction', async () => {
+  const picture = await snapshot();
+  assert.deepEqual([picture.stoppedHosts, picture.attention.filter((row) => row.action !== null)], [[], []], 'because only a stopped host has a button on its row');
+});

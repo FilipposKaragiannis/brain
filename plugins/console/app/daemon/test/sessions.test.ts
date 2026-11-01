@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,14 +8,15 @@ import { planAction } from '../src/actionPlan.ts';
 import type { ActionContext } from '../src/actionPlan.ts';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
-import { claudeProjectFolder, codexMeta, diskSessionFiles, parseTranscript, SessionLocator } from '../src/collectors/sessions.ts';
+import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator } from '../src/collectors/sessions.ts';
 import type { SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
 import { ProjectRegistry } from '../src/registry.ts';
 import { closeConsoleServer, createConsoleServer } from '../src/server.ts';
-import type { SessionRef, TranscriptTurn } from '../src/snapshot.ts';
+import type { SessionRef, TranscriptLine, TranscriptTurn } from '../src/snapshot.ts';
+import { TRANSCRIPT_LINE_CHARS } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
 
@@ -170,9 +171,59 @@ test('Transcript_Limit_KeepsTheLastTurns', () => {
   assert.deepEqual(parseTranscript(readFileSync(TRANSCRIPT, 'utf8'), 1).map((turn) => turn.text), ['Keep going, and use <b> tags in the docs.'], 'because the fold shows where the run is now');
 });
 
+/** A run's transcript with text, thinking (written and redacted), Read, Bash, Grep and Agent calls, a tool result that went well and one that failed. */
+const LINES_TRANSCRIPT = path.join(FIXTURES, 'transcripts', 'claude-lines.jsonl');
+
+test('TranscriptLines_EachEntryAsOneLineInFileOrder', () => {
+  const lines = parseTranscriptLines(readFileSync(LINES_TRANSCRIPT, 'utf8'));
+  assert.deepEqual(lines.slice(0, -1).map((line) => [line.at?.slice(17, 19), line.kind, line.text]), [
+    ['01', 'user', 'Implement gh#9: the score panel.'],
+    ['02', 'think', 'The brief wants the panel first.'],
+    ['03', 'say', 'Reading the plan first.'],
+    ['04', 'tool', 'Read · /p/app-wt-2/.flow/reports/gh-9/plan.md'],
+    ['06', 'think', 'thinking'],
+    ['07', 'tool', 'Bash · npm test -- --grep panel \\'],
+    ['08', 'result', 'error: Exit code 1'],
+    ['09', 'tool', 'Grep · ScorePanel'],
+    ['10', 'tool', 'Agent · Review the panel'],
+  ], "because each entry shows as its first line: what was said, thought (or just that it thought), run with its target, and a call that failed; a result that went well, a side chain and the host's wrapper turns show nothing");
+  const long = lines.at(-1);
+  assert.deepEqual([long?.kind, long?.text.length, long?.text.endsWith('…')], ['say', TRANSCRIPT_LINE_CHARS, true], 'because one line of a transcript is capped, and says it was cut');
+});
+
+test('ReadTranscript_ManyLinesAskedOfASmallTail_TheTailGrowsUntilItHoldsThem', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-transcript-'));
+  try {
+    const file = path.join(dir, 'run.jsonl');
+    const entry = (index: number): string => JSON.stringify({ type: 'assistant', isSidechain: false, timestamp: `2026-10-24T18:00:${String(index % 60).padStart(2, '0')}.000Z`, message: { role: 'assistant', content: [{ type: 'text', text: `step ${index}\n${'detail '.repeat(100)}` }] } });
+    writeFileSync(file, `${Array.from({ length: 50 }, (_, index) => entry(index)).join('\n')}\n`);
+    const read = await readTranscript(file, { turns: 2, lines: 40 }, 1000);
+    assert.deepEqual([read?.lines.length, read?.lines[0]?.text, read?.lines.at(-1)?.text], [40, 'step 10', 'step 49'], 'because 1000 bytes hold one entry, so the tail doubles until it holds the 40 lines asked');
+    assert.deepEqual(read?.turns.map((turn) => turn.text.split('\n')[0]), ['step 48', 'step 49'], 'because the turns are capped on their own');
+    assert.deepEqual([read?.bytes, read?.turnCount], [statSync(file).size, 50], 'because the size and the entry count are of the whole file');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('TranscriptEntries_FileGrows_CountedOnwardFromWhereTheLastCountEnded', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-transcript-'));
+  try {
+    const file = path.join(dir, 'run.jsonl');
+    const user = JSON.stringify({ type: 'user', message: { role: 'user', content: 'go' } });
+    const progress = JSON.stringify({ type: 'progress', data: { message: { type: 'assistant', message: { content: [] } } } });
+    writeFileSync(file, `${user}\n${progress}\n`);
+    assert.equal(await countTranscriptEntries(file, statSync(file).size), 1, "because a progress entry is not a turn, even with a subagent's assistant message inside it");
+    appendFileSync(file, `${user}\n${user.slice(0, 10)}`);
+    assert.equal(await countTranscriptEntries(file, statSync(file).size), 2, 'because the new whole line counts, and the half-written one waits for its end');
+    appendFileSync(file, `${user.slice(10)}\n`);
+    assert.equal(await countTranscriptEntries(file, statSync(file).size), 3, 'because the line finished since is counted once');
+    writeFileSync(file, `${user}\n`);
+    assert.equal(await countTranscriptEntries(file, statSync(file).size), 1, 'because a file shorter than the last count was replaced, and is counted again');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 const SESSION: SessionRef = { host: 'claude', id: '8f3c2a10-5b7e-4c1d-9a0b-1e2f3a4b5c6d', transcript: TRANSCRIPT, resume: ['claude', '--resume', '8f3c2a10-5b7e-4c1d-9a0b-1e2f3a4b5c6d'] };
 const CONTEXT: ActionContext = {
-  root: '/p/app', pluginRoot: '/plugins/flow/1.19.0', repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2'], outsideWorktrees: [], processCwds: ['/p/app-wt-2'],
+  root: '/p/app', pluginRoot: '/plugins/flow/1.19.0', pluginVersion: null, repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2'], outsideWorktrees: [], processCwds: ['/p/app-wt-2'],
   sessions: [{ pid: 100, cwd: '/p/app-wt-2', session: SESSION, alive: true }, { pid: 200, cwd: '/p/app-wt-2', session: { ...SESSION, id: 'ended-1', resume: ['claude', '--resume', 'ended-1'] }, alive: false }],
   terminal: 'iterm', installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: null, nextJob: null,
 };
@@ -263,9 +314,12 @@ test('TranscriptRoute_LastTurnsOfTheAgentsClaudeSession', async () => {
   const { base, close } = await transcriptServer();
   try {
     const response = await fetch(`${base}/api/projects/project/agents/100/transcript?lines=2`, { headers: { authorization: 'Bearer tok' } });
-    const body = (await response.json()) as { turns: TranscriptTurn[] };
+    const body = (await response.json()) as { turns: TranscriptTurn[]; lines: TranscriptLine[]; bytes: number; turnCount: number };
     assert.equal(response.status, 200, 'because pid 100 is a listed agent with a claude transcript');
     assert.deepEqual(body.turns.map((turn) => turn.text), ['The tree is clean.\nWriting the test first.', 'Keep going, and use <b> tags in the docs.'], 'because lines asks for the last two turns with text, the wrapper turns between them left out');
+    assert.deepEqual(body.lines.map((line) => [line.kind, line.text]), [['say', 'The tree is clean.'], ['user', 'Keep going, and use <b> tags in the docs.']], 'because lines asks for the last two lines too, each its first line');
+    assert.equal(body.bytes, statSync(TRANSCRIPT).size, 'because the page shows how large the transcript is');
+    assert.equal(body.turnCount, 13, 'because every user and assistant entry of the file counts, meta, wrapper, side chain and tool turns among them, and the other entry types do not');
   } finally { await close(); }
 });
 

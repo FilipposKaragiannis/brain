@@ -13,7 +13,9 @@
 #                                               not carry the reply marker (in a thread with no marker at all, a
 #                                               last reply by the flow's login is ours: replies before 1.19.0)
 #   comments.sh reviewers                       the reviewers each round asks, one per line (reviews.reviewers)
-#   comments.sh request-review <pr> <ask>       ask each reviewer: a comment "@<reviewer> <ask>" each, copilot through the API
+#   comments.sh request-review <pr> <ask> [reviewer]
+#                                               ask each reviewer: a comment "@<reviewer> <ask>" each, copilot through the API;
+#                                               with a reviewer (one in the list or any GitHub login), ask that one only
 #   comments.sh reviews <pr>                    each reviewer's last request: answered, waiting, chases (JSON lines)
 #   comments.sh chase <pr>                      ask again a reviewer silent past reviews.chase_after, at most
 #                                               reviews.max_chases times per request, then tell the owner once
@@ -29,13 +31,15 @@ PAGE_SIZE=100          # REST entries per page; --paginate fetches the rest
 SHORT_SHA=8            # characters of the head commit a chase names
 DEFAULT_CHASE_AFTER=1h # reviews.chase_after when unset
 DEFAULT_MAX_CHASES=2   # reviews.max_chases when unset
+reviewer_name() { # reviewer_name <where> <name>: the name without its @, or die when it is not one
+  name="${2#@}"
+  case "$name" in ""|*[!A-Za-z0-9_.-]*) die "$1: '$2' is not a reviewer name (codex, claude, copilot or a GitHub login)" 2 ;; esac
+  echo "$name"
+}
 reviewers() {
   list="$(cfg reviews.reviewers)"; [ -n "$list" ] || list="codex
 claude"
-  printf '%s\n' "$list" | sed 's/^@//' | while read -r reviewer; do
-    case "$reviewer" in ""|*[!A-Za-z0-9_.-]*) die "reviews.reviewers: '$reviewer' is not a reviewer name (codex, claude, copilot or a GitHub login)" 2 ;; esac
-    echo "$reviewer"
-  done
+  printf '%s\n' "$list" | while read -r reviewer; do reviewer_name reviews.reviewers "$reviewer" || exit 2; done
 }
 # The ask goes to bots verbatim: no markers that would count as a request or a chase, no extra mentions.
 plain_ask() { printf '%s' "$1" | sed 's/<!--//g; s/-->//g; s/@\([A-Za-z0-9]\)/\1/g'; }
@@ -131,8 +135,9 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
   reviewers)
     reviewers ;;
   request-review)
-    [ $# -ge 3 ] || die "usage: comments.sh request-review <pr> <ask>" 2
-    pull="$(pr_number "$2")"; list="$(reviewers)" || exit 2
+    [ $# -ge 3 ] && [ $# -le 4 ] || die "usage: comments.sh request-review <pr> <ask> [reviewer]" 2
+    pull="$(pr_number "$2")"
+    if [ $# -eq 4 ]; then list="$(reviewer_name request-review "$4")" || exit 2; else list="$(reviewers)" || exit 2; fi
     for reviewer in $list; do
       ask_reviewer "$pull" "$reviewer" "$3" || die "could not ask $reviewer on #$pull"
       echo "asked $reviewer"

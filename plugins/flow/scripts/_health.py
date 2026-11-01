@@ -216,8 +216,9 @@ def last_next(log):
 
 
 def next_runs(log):
-    """The next job's records, oldest first, with job and result as strings; a line that is not a
-    record is skipped (a record before 1.20.2 may hold a result of digits as a number)."""
+    """The records of every next schedule and worker (next, next-2, next-codex, next-codex-2),
+    oldest first, with job and result as strings; a line that is not a record is skipped (a record
+    before 1.20.2 may hold a result of digits as a number)."""
     for name in ("runs.1.jsonl", "runs.jsonl"):
         path = os.path.join(log, name)
         for line in open(path) if os.path.exists(path) else []:
@@ -228,7 +229,7 @@ def next_runs(log):
             if not isinstance(r, dict):
                 continue
             job = r.get("job")
-            if isinstance(job, str) and re.fullmatch(r"next(-\d+)?", job):
+            if isinstance(job, str) and re.fullmatch(r"next(-[a-z][a-z0-9]*)?(-\d+)?", job):
                 yield {**r, "job": job, "result": str(r.get("result") or "")}
 
 

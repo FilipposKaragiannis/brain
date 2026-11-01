@@ -10,7 +10,7 @@ import { filterEvents } from './events.ts';
 import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import { serveStatic } from './static.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
-import { parseTranscript, readTranscriptTail, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX } from './collectors/sessions.ts';
+import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX } from './collectors/sessions.ts';
 
 /** `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code. */
 export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger };
@@ -196,9 +196,12 @@ async function settingsRoute(settings: SettingsStore | null, request: IncomingMe
 }
 
 /**
- * The last turns with text of an agent's or session's claude transcript, `{turns: [{at, role,
- * text}]}`: only for a pid the snapshot lists (running, or ended in the last day), so the file
- * read is always one the daemon found itself. `lines` is how many turns, 20 by default, 200 at most.
+ * An agent's or session's claude transcript, `{session, turns, lines, bytes, turnCount}`: the last
+ * turns with text (`[{at, role, text}]`), the last entries as one line each (`[{at, kind, text}]`,
+ * what it said, thought, ran and failed at, and what the user said), the file's size in bytes, and
+ * how many user and assistant entries the whole file holds. Only for a pid the snapshot lists
+ * (running, or ended in the last day), so the file read is always one the daemon found itself.
+ * `?lines=N` is how many of each, 20 by default; at most 200 turns and 2000 lines.
  */
 async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
   if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
@@ -209,9 +212,10 @@ async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: In
   if (agent === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: `no agent or session with pid ${pid} in this project` }); return; }
   if (agent.session === null) { sendJson(response, HTTP_NOT_FOUND, { error: `no transcript found for pid ${pid}` }); return; }
   if (agent.session.host !== 'claude') { sendJson(response, HTTP_BAD_REQUEST, { error: 'the console reads claude transcripts only' }); return; }
-  const source = await readTranscriptTail(agent.session.transcript);
-  if (source === null) { sendJson(response, HTTP_NOT_FOUND, { error: `${agent.session.transcript} cannot be read` }); return; }
-  sendJson(response, HTTP_OK, { session: agent.session.id, turns: parseTranscript(source, Math.min(Number(linesText), TRANSCRIPT_TURNS_MAX)) });
+  const wanted = Number(linesText);
+  const read = await readTranscript(agent.session.transcript, { turns: Math.min(wanted, TRANSCRIPT_TURNS_MAX), lines: Math.min(wanted, TRANSCRIPT_LINES_MAX) });
+  if (read === null) { sendJson(response, HTTP_NOT_FOUND, { error: `${agent.session.transcript} cannot be read` }); return; }
+  sendJson(response, HTTP_OK, { session: agent.session.id, ...read });
 }
 
 /**

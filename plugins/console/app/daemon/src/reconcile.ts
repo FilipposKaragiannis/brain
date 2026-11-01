@@ -1,19 +1,19 @@
 import path from 'node:path';
-import type { BoardFacts, BoardItem } from './collectors/board.ts';
+import type { BoardFacts, BoardItem, BoardSpend } from './collectors/board.ts';
 import { UNRANKED } from './collectors/board.ts';
-import type { ClaimRecord, FlowHomeFacts, GateRecord, RunRecord } from './collectors/flowHome.ts';
+import type { ClaimRecord, FlowHomeFacts, GateRecord, ReviewRecord, RunRecord } from './collectors/flowHome.ts';
 import { poolPaths } from './collectors/flowHome.ts';
 import type { GitFacts, GitWorktree } from './collectors/git.ts';
-import type { JobFacts, JobStatusRow } from './collectors/jobs.ts';
+import type { JobFacts, JobRunRecord, JobStatusRow, JobStatusRun, JobWorkerRow } from './collectors/jobs.ts';
 import type { AgentProcess, EndedProcess, ProcessFacts } from './collectors/processes.ts';
 import type { PullFact, PullFacts } from './collectors/pulls.ts';
 import { parseGateQuestions } from './gateMessage.ts';
 import {
-  ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
+  ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemState, Job, JobState, ProcessInfo,
-  ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker,
+  ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, Snapshot, SourceName, StoppedHost, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
 export type ReconcileInput = {
@@ -49,7 +49,7 @@ const PULL_PATH = /^(.*\/pull\/\d+)/;
 const MERGE_READY_STATES = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE'];
 const PULL_NUMBER = /^#?(\d+)$/;
 const STATE_ORDER: Record<ItemState, number> = {
-  'needs-you': 0, running: 1, stale: 2, claimed: 3, ready: 4, blocked: 5, backlog: 6, done: 7,
+  'needs-you': 0, running: 1, stale: 2, claimed: 3, 'in-review': 4, ready: 5, blocked: 6, backlog: 7, done: 8,
 };
 
 export function ageSeconds(from: string | null, now: Date): number | null {
@@ -179,8 +179,8 @@ function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate:
   if (gate !== null) return 'needs-you';
   if (boardItem === null) return 'claimed';
   if (boardItem.status !== 'open') return 'done';
-  // A done item whose merge gate waits on its reviewers is blocked on them, not on the owner.
-  if (inReview) return 'blocked';
+  // A done item whose merge gate waits on its reviewers is in review: not the owner's, not blocked.
+  if (inReview) return 'in-review';
   // The flow's ready list leaves these out: every step ran, or the item is split. The owner
   // merges or closes a done item and a split one whose children are closed; open children block.
   if (boardItem.state.step === 'done') return 'needs-you';
@@ -207,6 +207,7 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
       pr: boardItem.state.pr || null, url: boardItem.url || null, parent: boardItem.parent || null,
       blockedBy: boardItem.blocked_by, openBlockers: boardItem.open_blockers, openChildren: boardItem.open_children,
       needs: boardItem.needs, rank: boardItem.rank, lastEvent: boardItem.state.last_event || null,
+      spend: itemSpend(input.board?.spend[boardItem.id]),
     });
   }
   for (const id of [...engagedIds].filter((entry) => !seen.has(entry)).sort()) {
@@ -216,9 +217,14 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
       id, title: '', kind: '', size: '', priority: '', status: 'open', state: itemState(null, worktree, gate),
       step: worktree?.claim?.step ?? '', gate: gate?.gate ?? 'none', worktree: worktree?.name ?? null, pr: null, url: null,
       parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: UNRANKED, lastEvent: null,
+      spend: itemSpend(input.board?.spend[id]),
     });
   }
   return items.sort((left, right) => STATE_ORDER[left.state] - STATE_ORDER[right.state] || left.rank - right.rank || left.id.localeCompare(right.id));
+}
+
+function itemSpend(spend: BoardSpend | undefined): ItemSpend | null {
+  return spend === undefined || spend.sessions === 0 ? null : { costUsd: spend.cost_usd, sessions: spend.sessions, tokens: spend.tokens };
 }
 
 /** The gate item's open pull: the one its `pr` field names first, else the one on its claimed branch. */
@@ -283,23 +289,86 @@ function buildEnded(input: ReconcileInput, contexts: WorktreeContext[]): EndedAg
     .slice(0, ENDED_KEPT);
 }
 
+/** What `jobs.sh status` says in `next` for a job whose interval has passed with no run started: the snapshot's `overdue`. */
+const NEXT_DUE = 'due';
+
 function jobState(row: JobStatusRow): JobState {
   if (row.paused) return 'paused';
   if (!row.installed) return 'not-installed';
   if (!row.loaded) return 'not-loaded';
   if (row.running.length > 0) return 'running';
-  if (row.next === 'due') return 'due';
+  if (row.next === NEXT_DUE) return 'overdue';
   return 'scheduled';
+}
+
+/** The words a job's result opens with that name its outcome, as flow's `_jobs.py reason` strips them. */
+const OUTCOME_WORD = /^(skipped|quiet|error|stopped|failed|done):\s*([\s\S]*)$/;
+
+/** How a run ended, from what it said last and its exit, as flow's `_jobs.py outcome` classifies it. */
+export function runOutcome(result: string, exit: number | string | null): string {
+  if (result.startsWith('paused')) return 'paused';
+  if (result.startsWith('skipped')) return 'skipped';
+  const failed = exit !== null && exit !== 0 && exit !== '0';
+  if (failed || result.startsWith('error') || result.startsWith('stopped: no step ran')) return 'failed';
+  if (result.startsWith('quiet')) return 'quiet';
+  if (result.includes('gate')) return 'gate';
+  return 'work';
+}
+
+/**
+ * Why a run ended as it did, as flow's `_jobs.py reason` says it: the result without the outcome
+ * word it opens with ("run 36596 still going" for "skipped: run 36596 still going"), the pause
+ * for a paused run, the whole result when it opens with no such word; null when it said nothing.
+ */
+export function runReason(result: string): string | null {
+  if (result.startsWith('paused')) return 'the job is paused';
+  const found = OUTCOME_WORD.exec(result);
+  const reason = found === null ? result : found[2]!;
+  return reason === '' ? null : reason;
+}
+
+/** The worker a run's job names: `next-2` is a worker of next, `next-nightly-2` of next-nightly; a schedule's own name is no worker. */
+function workerOf(job: string | undefined): string | null {
+  return job !== undefined && /^[a-z][a-z0-9]*(-[a-z][a-z0-9]*)?-[0-9]+$/.test(job) ? job : null;
+}
+
+/** One run as the snapshot shows it; flow's own outcome and reason win over the ones worked out here. */
+function jobRun(record: JobStatusRun): JobRun {
+  const result = String(record.result ?? '');
+  return {
+    at: record.at, seconds: record.seconds, exit: typeof record.exit === 'number' ? record.exit : null, result,
+    outcome: record.outcome ?? runOutcome(result, record.exit), reason: record.reason ?? runReason(result),
+    worker: workerOf(record.job), host: record.host || null,
+  };
+}
+
+/** A schedule's runs in the run log, newest first: its own and its workers' (`next-1` ... under next, `next-nightly-1` ... under next-nightly), skips included. */
+function recentRuns(name: string, runs: JobRunRecord[]): JobRun[] {
+  const own = (job: string): boolean => job === name || (job.startsWith(`${name}-`) && /^[0-9]+$/.test(job.slice(name.length + 1)));
+  const out: JobRun[] = [];
+  for (let index = runs.length - 1; index >= 0 && out.length < JOB_RUNS_KEPT; index -= 1) {
+    const run = runs[index]!;
+    if (own(run.job)) out.push(jobRun(run));
+  }
+  return out;
+}
+
+function jobWorker(row: JobWorkerRow): JobWorker {
+  return {
+    name: row.job, host: row.host,
+    running: row.running === null ? null : { pid: typeof row.running.pid === 'number' ? row.running.pid : null, since: row.running.at },
+    last: row.last_run === null ? null : jobRun(row.last_run),
+  };
 }
 
 function buildJobs(input: ReconcileInput): Job[] {
   return (input.jobs?.jobs ?? []).map((row) => ({
-    name: row.job, state: jobState(row), schedule: row.schedule, args: row.args, installed: row.installed, loaded: row.loaded,
+    name: row.name, job: row.job, host: row.host, configured: row.configured, state: jobState(row), schedule: row.schedule, args: row.args, installed: row.installed, loaded: row.loaded,
     paused: row.paused, running: row.running.map((entry) => entry.job),
-    last: row.last === null ? null : {
-      at: row.last.at, seconds: row.last.seconds, exit: typeof row.last.exit === 'number' ? row.last.exit : null,
-      result: row.last.result, outcome: row.last.outcome,
-    },
+    // jobs.sh's last is the newest run that did more than skip; an older plugin's has no job, so its worker is unknown.
+    last: row.last === null ? null : jobRun(row.last),
+    recent: recentRuns(row.name, input.jobs?.runs ?? []),
+    workers: (row.workers ?? []).map(jobWorker),
     next: row.next,
     runsThisWeek: Object.values(row.week).reduce((sum, count) => sum + count, 0),
     failedThisWeek: row.week['failed'] ?? 0,
@@ -362,8 +431,7 @@ function heldMergeGates(input: ReconcileInput): Set<string> {
     const pullNumber = pull?.number ?? (input.pulls === null && named !== null ? namedPullNumber(named) : null);
     if (pullNumber === null) continue;
     const record = input.flow.reviews.find((entry) => entry.pr === pullNumber);
-    const mentionWaiting = record !== undefined && record.waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
-    const heldLive = pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting);
+    const heldLive = pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting(record));
     const heldByRecord = pull === undefined && record !== undefined && HELD_REVIEW_STATES.includes(record.state);
     if (heldLive || heldByRecord) held.add(gate.item);
   }
@@ -419,14 +487,28 @@ function linkPull(pull: PullFact, items: Item[], contexts: WorktreeContext[]): P
   return { item: null, worktree: null };
 }
 
+/** The states a reviewer asked by a mention and not yet answered turns into `in-review`: GitHub alone would call the pull further along. */
+const MENTION_REVIEW_OVERRIDES: PullState[] = ['review-pending', 'approved', 'mergeable'];
+
+/** Whether the record names a reviewer asked by a mention who has not answered, which GitHub's own review state cannot show. */
+function mentionWaiting(record: ReviewRecord | undefined): boolean {
+  return record !== undefined && record.waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+}
+
 function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeContext[]): PullRequest[] {
-  return (input.pulls?.pulls ?? []).map((pull) => ({
+  return (input.pulls?.pulls ?? []).map((pull) => {
+    const record = input.flow.reviews.find((entry) => entry.pr === pull.number);
+    const live = pullState(pull);
+    const state = mentionWaiting(record) && MENTION_REVIEW_OVERRIDES.includes(live) ? 'in-review' : live;
+    return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
-    draft: pull.draft, state: pullState(pull), checks: pull.checks, reviewDecision: pull.reviewDecision,
+    draft: pull.draft, state, checks: pull.checks, reviewDecision: pull.reviewDecision,
     unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, ...linkPull(pull, items, contexts),
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
-  }));
+    review: record === undefined ? null : { state: record.state, waiting: record.waiting, cannot: record.cannot, at: record.at },
+    };
+  });
 }
 
 /**
@@ -537,7 +619,7 @@ function pullAttention(pulls: PullRequest[]): AttentionRow[] {
   return pulls.flatMap((pull) => {
     const row = PULL_ATTENTION[pull.state];
     if (row === undefined) return [];
-    return [{ kind: row.kind, id: pull.item ?? `#${pull.number}`, title: `#${pull.number} ${row.title}`, detail: pull.title, worktree: pull.worktree, sinceAt: pull.updatedAt, ageSeconds: pull.idleSeconds }];
+    return [{ kind: row.kind, id: pull.item ?? `#${pull.number}`, title: `#${pull.number} ${row.title}`, detail: pull.title, worktree: pull.worktree, sinceAt: pull.updatedAt, ageSeconds: pull.idleSeconds, action: null }];
   });
 }
 
@@ -577,30 +659,46 @@ function nextInLine(item: Item, items: Item[]): boolean {
 function needsFieldAttention(items: Item[]): AttentionRow[] {
   return items.filter((item) => nextInLine(item, items)).map((item) => ({
     kind: 'needs-field' as const, id: item.id, title: item.title || item.id, detail: `needs ${item.needs.join(' and ')}`,
-    worktree: item.worktree, sinceAt: null, ageSeconds: null,
+    worktree: item.worktree, sinceAt: null, ageSeconds: null, action: null,
   }));
 }
 
-type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[] };
+/** A stop's cause in words, as flow's `host_cause_said` says it. */
+const CAUSE_SAID: Record<string, string> = { 'spend-limit': 'a spend limit', auth: 'an auth error' };
 
-function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements }: AttentionSources, now: Date): AttentionRow[] {
-  const rows: AttentionRow[] = [];
+/** A stopped host's row: the host, the cause in words and what the host said, with the button that clears it (`gate.sh clear <host>`). */
+function stoppedHostAttention(stopped: StoppedHost, now: Date): AttentionRow {
+  const cause = CAUSE_SAID[stopped.cause] ?? (stopped.cause || 'an unknown cause');
+  const said = stopped.said === '' ? '' : `: ${stopped.said}`;
+  const gate = stopped.item === null ? '' : `, or when the gate on ${stopped.item} clears`;
+  return {
+    kind: 'host-stopped', id: stopped.host, title: `${stopped.host} is stopped on ${cause}`,
+    detail: `${stopped.host} stopped on ${cause}${said}. No ${stopped.host} session starts until you clear it${gate}.`,
+    worktree: null, sinceAt: stopped.at, ageSeconds: ageSeconds(stopped.at, now),
+    action: { kind: 'host.clear', args: { host: stopped.host }, label: `Clear ${stopped.host}` },
+  };
+}
+
+type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[]; stoppedHosts: StoppedHost[] };
+
+function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts }: AttentionSources, now: Date): AttentionRow[] {
+  const rows: AttentionRow[] = stoppedHosts.map((stopped) => stoppedHostAttention(stopped, now));
   for (const gate of gates) {
-    rows.push({ kind: 'gate', id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds });
+    rows.push({ kind: 'gate', id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds, action: null });
   }
   for (const run of runs.filter((entry) => !entry.alive)) {
-    rows.push({ kind: 'dead-run', id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now) });
+    rows.push({ kind: 'dead-run', id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now), action: null });
   }
   for (const worktree of worktrees.filter((entry) => entry.flags.includes('stale-branch') || entry.flags.includes('idle'))) {
-    rows.push({ kind: 'stale', id: worktree.item ?? worktree.name, title: `${worktree.name} is stale`, detail: worktree.staleReason ?? '', worktree: worktree.name, sinceAt: worktree.claim?.claimedAt ?? null, ageSeconds: worktree.claimAgeSeconds });
+    rows.push({ kind: 'stale', id: worktree.item ?? worktree.name, title: `${worktree.name} is stale`, detail: worktree.staleReason ?? '', worktree: worktree.name, sinceAt: worktree.claim?.claimedAt ?? null, ageSeconds: worktree.claimAgeSeconds, action: null });
   }
   for (const job of jobs.filter((entry) => entry.last !== null && entry.last.exit !== null && entry.last.exit !== 0)) {
-    rows.push({ kind: 'job-failed', id: job.name, title: `${job.name} job failed`, detail: job.last?.result ?? '', worktree: null, sinceAt: job.last?.at ?? null, ageSeconds: ageSeconds(job.last?.at ?? null, now) });
+    rows.push({ kind: 'job-failed', id: job.name, title: `${job.name} job failed`, detail: job.last?.result ?? '', worktree: null, sinceAt: job.last?.at ?? null, ageSeconds: ageSeconds(job.last?.at ?? null, now), action: null });
   }
   rows.push(...pullAttention(pulls));
   rows.push(...needsFieldAttention(items));
   for (const disagreement of disagreements) {
-    rows.push({ kind: 'disagreement', id: disagreement.item ?? disagreement.worktree ?? 'project', title: disagreement.sources.join(' vs '), detail: disagreement.message, worktree: disagreement.worktree, sinceAt: null, ageSeconds: null });
+    rows.push({ kind: 'disagreement', id: disagreement.item ?? disagreement.worktree ?? 'project', title: disagreement.sources.join(' vs '), detail: disagreement.message, worktree: disagreement.worktree, sinceAt: null, ageSeconds: null, action: null });
   }
   return rows.sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
@@ -641,7 +739,7 @@ function projectInfo(input: ReconcileInput): ProjectInfo {
     id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
     base: config.base, repo: config.repo, repoUrl,
     trackerUrl: config.adapter === GITHUB_ADAPTER && repoUrl !== null ? `${repoUrl}/issues` : null,
-    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax,
+    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
   };
 }
 
@@ -668,8 +766,8 @@ export function reconcile(read: ReconcileInput): Snapshot {
     sources: input.sources,
     counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }),
     readiness: buildReadiness(items),
-    attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements }, input.now),
-    worktrees, items, gates, runs, agents, ended, jobs, pulls,
+    attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
+    worktrees, items, gates, runs, agents, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     events: input.flow.events,
     disagreements,
   };
