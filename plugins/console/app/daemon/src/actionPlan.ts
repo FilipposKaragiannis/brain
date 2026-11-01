@@ -205,7 +205,7 @@ const PR_NUMBER = /^[1-9][0-9]*$/;
 /** A quiz try as quiz.sh takes it: a letter per question number, `1b 2a 3c`, space separated. */
 const QUIZ_ANSWERS = /^[1-9][0-9]?[a-h]( [1-9][0-9]?[a-h])*$/;
 /** The first flow version with `scripts/quiz.sh`. */
-export const QUIZ_SINCE = '1.28.0';
+export const QUIZ_SINCE = '1.29.0';
 /** Who a reservation is under: letters or digits first, so it is never read as an option, then letters, digits, spaces and `.'_-`. */
 const RESERVE_NAME = /^[\p{L}\p{N}][\p{L}\p{N} .'_-]{0,63}$/u;
 /** A reviewer as comments.sh takes one: codex, claude, copilot or a GitHub login, with or without its @. */
