@@ -9,8 +9,19 @@ import type { ActionKind } from '../../snapshot.ts';
 /** `enumOrText`: the known values to pick from, but any text passes (the plugin passes a model name on as is). */
 export type FieldType = 'string' | 'number' | 'boolean' | 'enum' | 'enumOrText' | 'list' | 'map' | 'duration' | 'schedule';
 
-export const FIELD_GROUPS = ['Tracker', 'Readiness', 'Worktree pool', 'Gates and verification', 'Reviews', 'Notifications', 'Jobs', 'Intake'] as const;
+export const FIELD_GROUPS = [
+  'Tracker', 'Readiness', 'Worktree pool', 'Gates and verification', 'Reviews', 'Notifications',
+  'Schedules', 'Next job', 'Health job', 'Comments job', 'Retro job', 'Intake job',
+  'Agents',
+] as const;
 export type FieldGroup = (typeof FIELD_GROUPS)[number] | 'Other';
+/** Where a group sits in the Settings menu: the flow plugin's own pages, the jobs' pages, or the agents' page. */
+export type GroupFamily = 'Flow' | 'Jobs' | 'Agents';
+export const GROUP_FAMILY: Record<(typeof FIELD_GROUPS)[number], GroupFamily> = {
+  'Tracker': 'Flow', 'Readiness': 'Flow', 'Worktree pool': 'Flow', 'Gates and verification': 'Flow', 'Reviews': 'Flow', 'Notifications': 'Flow',
+  'Schedules': 'Jobs', 'Next job': 'Jobs', 'Health job': 'Jobs', 'Comments job': 'Jobs', 'Retro job': 'Jobs', 'Intake job': 'Jobs',
+  'Agents': 'Agents',
+};
 /** Keys in the file the schema does not know: shown as text, still editable. */
 export const OTHER_GROUP: FieldGroup = 'Other';
 
@@ -21,6 +32,8 @@ export type FieldSpec = {
   /** The dotted path, such as `jobs.schedule.next`. */
   path: string;
   type: FieldType;
+  /** What the form calls the key, in plain words; the path shows beside it. */
+  label: string;
   help: string;
   group: FieldGroup;
   /** The allowed values of an enum, or the known ones of an enumOrText. */
@@ -41,7 +54,25 @@ export type FieldSpec = {
    * map on one line, `{claude: 1, codex: 2}`; a file that holds it so keeps that form when edited.
    */
   counts?: { keys: string[] };
+  /** The subheading the field sits under inside its page, such as GitHub in Tracker; none sits at the top. */
+  part?: string;
+  /** A concrete example, shown greyed in the empty control (lines of a list on their own lines). */
+  placeholder?: string;
+  /** Read by one tracker's adapter only: the form hides it while no tracker of the project is that one. */
+  adapter?: 'github';
+  /**
+   * A map under fixed names (`github.status`: backlog, ready, …): one labelled box per name, an
+   * empty box leaves the name out, and no other name passes the check.
+   */
+  keys?: MapKey[];
+  /** A map of free names to text (`gates`: a check to its command), edited as rows of a name and a value. */
+  rows?: MapRows;
 };
+
+/** One fixed name of a map: the name the file writes, what the form calls it, and an example. */
+export type MapKey = { name: string; label: string; placeholder: string };
+/** What the rows of a free map call their two boxes, an example of each, and the add button's words. */
+export type MapRows = { name: string; value: string; namePlaceholder: string; valuePlaceholder: string; add: string };
 
 export const JOBS_HOSTS = ['claude', 'codex'] as const;
 export type JobsHost = (typeof JOBS_HOSTS)[number];
@@ -129,64 +160,85 @@ const HOST_SETTINGS: Record<JobsHost, { model: string[]; effort: string[]; cli: 
 const saidList = (values: string[]): string => values.length < 2 ? values.join('') : `${values.slice(0, -1).join(', ')} or ${values[values.length - 1]}`;
 const DEPRECATED_JOBS = 'Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort, and this key only while jobs.<host> is absent. Set those and clear these.';
 
-const field = (path: string, type: FieldType, group: FieldGroup, help: string, extra: Partial<FieldSpec> = {}): FieldSpec =>
-  ({ path, type, group, help, followUp: null, ...extra });
+const field = (path: string, type: FieldType, group: FieldGroup, label: string, help: string, extra: Partial<FieldSpec> = {}): FieldSpec =>
+  ({ path, type, group, label, help, followUp: null, ...extra });
+const capitalised = (word: string): string => `${word.charAt(0).toUpperCase()}${word.slice(1)}`;
+
+const TRACKERS = 'Where new items go';
+const GITHUB = 'GitHub';
+const GITHUB_ONLY = 'Read by the GitHub adapter only.';
+const CHANNELS = 'Channels';
+const WHEN_TO_NOTIFY = 'When to notify';
+/** The project Status names the GitHub adapter moves cards to unless github.status renames them (adapters/github/_mutate.py STATUS). */
+export const GITHUB_STATUS: MapKey[] = [
+  { name: 'backlog', label: 'Backlog', placeholder: 'Backlog' },
+  { name: 'ready', label: 'Ready', placeholder: 'Ready' },
+  { name: 'gate', label: 'Waiting on you (a gate)', placeholder: 'Needs you' },
+  { name: 'running', label: 'Being worked on', placeholder: 'In progress' },
+  { name: 'review', label: 'Pull request in review', placeholder: 'In review' },
+];
+/** The fields an unstarted GitHub item can be made to need before it is ready, the ones adapters/github/_gh.sh knows. */
+export const READY_NEEDS = ['priority', 'size'];
+const INTAKE_PATH = 'A path from the project root, from ~/ or absolute.';
 
 export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
-  field('adapters.default', 'enum', 'Tracker', 'Where new items go and are read from when their kind names no adapter of its own.', { values: ADAPTERS }),
-  field('adapters.epic', 'enum', 'Tracker', 'Sends new epics to this tracker instead of the default one.', { values: ADAPTERS }),
-  field('adapters.task', 'enum', 'Tracker', 'Sends new tasks to this tracker instead of the default one.', { values: ADAPTERS }),
-  field('adapters.bug', 'enum', 'Tracker', 'Sends new bugs to this tracker instead of the default one, such as local to keep bugs off GitHub.', { values: ADAPTERS }),
-  field('github.repo', 'string', 'Tracker', 'The owner/name repository whose issues and pull requests the flow reads and writes.'),
-  field('github.limit', 'number', 'Tracker', 'How many issues one board read lists before it stops and says so.', { min: 1, max: 5000 }),
-  field('github.types', 'boolean', 'Tracker', 'When on, an item\'s kind sets the GitHub issue type (Epic, Task, Bug) instead of a label.'),
-  field('github.fields', 'map', 'Tracker', 'Maps the flow\'s size, priority and area to the names of the organisation\'s issue fields.'),
-  field('github.project', 'number', 'Tracker', 'The GitHub project number whose Status column the flow keeps in step; unset leaves projects alone.', { min: 1 }),
-  field('github.status', 'map', 'Tracker', 'Renames the project Status options the flow moves items to (backlog, ready, gate, running, review).'),
-  field('github.answer_from', 'list', 'Tracker', 'The GitHub logins whose /answer comments clear a gate; empty, only the signed-in gh user\'s answers count.'),
-  field('github.ready_needs', 'list', 'Readiness', 'The fields an unstarted item must have filled before the next job will take it.'),
-  field('github.priority_order', 'list', 'Readiness', 'The priorities from most to least urgent; the next job takes ready items in this order.'),
-  field('base', 'string', 'Worktree pool', 'The branch new task branches start from and pull requests merge into.'),
-  field('pool', 'list', 'Worktree pool', 'The worktrees tasks are claimed into, one task each; more entries means more work in parallel.', { followUp: NEXT_CLAIM }),
-  field('pool_max', 'number', 'Worktree pool', 'How far the pool may grow on its own when every worktree is busy; 0 never adds one.', { min: 0, max: 64, followUp: NEXT_CLAIM }),
-  field('worktree_copy', 'list', 'Worktree pool', 'Git-ignored files a new worktree gets copied from the main checkout when it lacks them.', { followUp: NEXT_CLAIM }),
-  field('worktree_setup', 'list', 'Worktree pool', 'Commands run in a new worktree after the copy, such as a package restore.', { followUp: NEXT_CLAIM }),
-  field('gates', 'map', 'Gates and verification', 'Project checks the verifier runs after build, format and tests: a name and the command, run from the root.'),
-  field('feel_test_paths', 'list', 'Gates and verification', 'Changed files matching these globs stop the item at the feel-test gate after verify passes.'),
-  field('auto_gates.plan-approval', 'string', 'Gates and verification', 'Item sizes, comma separated (such as S,M), whose plan the flow approves itself instead of waiting for you.'),
-  field('reviews.reviewers', 'list', 'Reviews', 'Who each review round asks: codex, claude, copilot or a GitHub login.'),
-  field('reviews.chase_after', 'duration', 'Reviews', 'How long a reviewer may stay silent before the comments job asks again.'),
-  field('reviews.max_chases', 'number', 'Reviews', 'How many times a silent reviewer is asked again before you are told.', { min: 0, max: 20 }),
-  field('notify.desktop', 'boolean', 'Notifications', 'When on, notifications also show as a macOS banner on this machine.'),
-  field('notify.slack_webhook', 'string', 'Notifications', 'The Slack incoming webhook notifications go to; empty sends none (FLOW_SLACK_WEBHOOK keeps the URL out of the repository).'),
-  field('notify.idle', 'boolean', 'Notifications', 'When on, the scheduled next job tells you once when it finds nothing ready.'),
-  field('notify.health', 'boolean', 'Notifications', 'When off, the health job stops notifying about old gates, diverged branches and a full pool.'),
-  field('jobs.host', 'enum', 'Jobs', 'Which CLI runs the scheduled jobs. The workers inside a run keep their own models.', { values: [...JOBS_HOSTS], followUp: RELOAD_SCHEDULE }),
+  field('adapters.default', 'enum', 'Tracker', 'Tracker for new items', 'Where new items go and are read from when their kind names no tracker of its own. Unset, local: items live as files in the project.', { values: ADAPTERS, part: TRACKERS }),
+  field('adapters.epic', 'enum', 'Tracker', 'Tracker for epics', 'Sends new epics to this tracker instead of the default one.', { values: ADAPTERS, part: TRACKERS }),
+  field('adapters.task', 'enum', 'Tracker', 'Tracker for tasks', 'Sends new tasks to this tracker instead of the default one.', { values: ADAPTERS, part: TRACKERS }),
+  field('adapters.bug', 'enum', 'Tracker', 'Tracker for bugs', 'Sends new bugs to this tracker instead of the default one, such as local to keep bugs off GitHub.', { values: ADAPTERS, part: TRACKERS }),
+  field('github.repo', 'string', 'Tracker', 'GitHub repository', 'The owner/name repository whose issues and pull requests the flow reads and writes. Unset, the repository of the checkout\'s origin, as gh repo view names it.', { part: GITHUB, adapter: 'github', placeholder: 'acme/app' }),
+  field('github.limit', 'number', 'Tracker', 'Issues per board read', 'How many issues one board read lists before it stops and says so. Unset, 500.', { min: 1, max: 5000, part: GITHUB, adapter: 'github', placeholder: '500' }),
+  field('github.types', 'boolean', 'Tracker', 'Use GitHub issue types', 'When on, an item\'s kind sets the GitHub issue type (Epic, Task, Bug) instead of a label.', { part: GITHUB, adapter: 'github' }),
+  field('github.fields', 'map', 'Tracker', 'Issue field names', 'The organisation\'s issue fields the flow fills in, by their name on GitHub. Without a size field the size goes in a size: label; without a priority field an item has no priority; without an area field the body names the area.', {
+    part: GITHUB, adapter: 'github',
+    keys: [{ name: 'size', label: 'Size field', placeholder: 'Size' }, { name: 'priority', label: 'Priority field', placeholder: 'Priority' }, { name: 'area', label: 'Area field', placeholder: 'Area' }],
+  }),
+  field('github.project', 'number', 'Tracker', 'GitHub project number', 'The number of a GitHub Projects board, from its URL (…/projects/<n>). The flow moves each item\'s card to the Status that says where the item is: Backlog, Ready, Needs you, In progress or In review. Unset leaves projects alone.', { min: 1, part: GITHUB, adapter: 'github', placeholder: '7' }),
+  field('github.status', 'map', 'Tracker', 'Project status names', 'The Status options of that board, when yours are named differently. An empty box keeps the name shown in it.', { part: GITHUB, adapter: 'github', keys: GITHUB_STATUS }),
+  field('github.answer_from', 'list', 'Tracker', 'Who may answer gates', 'The GitHub logins whose /answer comments on an issue clear its gate; empty, only the signed-in gh user\'s answers count.', { part: GITHUB, adapter: 'github', placeholder: 'octocat\nmonalisa' }),
+  field('github.ready_needs', 'list', 'Readiness', 'Fields an item needs to start', `The fields an unstarted item must have filled before the next job will take it. ${GITHUB_ONLY}`, { values: READY_NEEDS, adapter: 'github' }),
+  field('github.priority_order', 'list', 'Readiness', 'Priority order', `The options of the priority field from most to least urgent; the next job takes ready items in this order. ${GITHUB_ONLY}`, { adapter: 'github', placeholder: 'P0\nP1\nP2' }),
+  field('base', 'string', 'Worktree pool', 'Base branch', 'The branch new task branches start from and pull requests merge into. Unset, main.', { placeholder: 'main' }),
+  field('pool', 'list', 'Worktree pool', 'Pool worktrees', 'The worktrees tasks are claimed into, one task each; more entries means more work in parallel.', { followUp: NEXT_CLAIM, placeholder: '../app-wt-1\n../app-wt-2' }),
+  field('pool_max', 'number', 'Worktree pool', 'Most worktrees the pool grows to', 'A cap on the whole pool, not per run. When a claim finds every worktree busy, the flow adds one more worktree and lists it under Pool worktrees, until that list has this many entries: with 2 worktrees there and 9 here, the pool can grow by 7 more. 0 or unset never adds one.', { min: 0, max: 64, followUp: NEXT_CLAIM, placeholder: '4' }),
+  field('worktree_copy', 'list', 'Worktree pool', 'Files copied into a new worktree', 'Git-ignored files a new worktree gets copied from the main checkout when it lacks them, as paths from the project root.', { followUp: NEXT_CLAIM, placeholder: '.env\n.claude/settings.local.json' }),
+  field('worktree_setup', 'list', 'Worktree pool', 'Setup commands for a new worktree', 'Commands run in a new worktree after the copy, such as a package restore.', { followUp: NEXT_CLAIM, placeholder: 'npm ci' }),
+  field('gates', 'map', 'Gates and verification', 'Project checks', 'Project checks the verifier runs after build, format and tests: a name, and the command it runs from the project root.', { rows: { name: 'Check', value: 'Command', namePlaceholder: 'lint', valuePlaceholder: 'npm run lint', add: 'Add a check' } }),
+  field('feel_test_paths', 'list', 'Gates and verification', 'Paths that need a feel test', 'Changed files matching these globs stop the item at the feel-test gate after verify passes, for you to try the change by hand.', { placeholder: 'ui/src/**/*.tsx' }),
+  field('auto_gates.plan-approval', 'string', 'Gates and verification', 'Sizes whose plan is approved for you', 'Item sizes, comma separated, whose plan the flow approves itself instead of waiting for you.', { placeholder: 'S,M' }),
+  field('reviews.reviewers', 'list', 'Reviews', 'Reviewers', 'Who each review round asks: codex, claude, copilot or a GitHub login.', { placeholder: 'codex\ncopilot' }),
+  field('reviews.chase_after', 'duration', 'Reviews', 'Ask a silent reviewer again after', 'How long a reviewer may stay silent before the comments job asks again: a number with s, m, h or d. Unset, 1h.', { placeholder: '1h' }),
+  field('reviews.max_chases', 'number', 'Reviews', 'Most times to ask again', 'How many times a silent reviewer is asked again before you are told. Unset, 2.', { min: 0, max: 20, placeholder: '2' }),
+  field('notify.desktop', 'boolean', 'Notifications', 'Desktop banners', 'When on, notifications also show as a macOS banner on this machine.', { part: CHANNELS }),
+  field('notify.slack_webhook', 'string', 'Notifications', 'Slack webhook (fallback)', 'Slack gets the notifications through an incoming webhook, and flow looks for it in the FLOW_SLACK_WEBHOOK environment variable first (export it in ~/.zprofile: the scheduled jobs run in a zsh login shell). This box is only the fallback when the variable is unset, and its URL is committed to the repository with .flow/config.yaml. Neither set, nothing goes to Slack.', { part: CHANNELS, placeholder: 'https://hooks.slack.com/services/…' }),
+  field('notify.idle', 'boolean', 'Notifications', 'Tell me when nothing is ready', 'When on, the scheduled next job tells you once when it finds nothing ready.', { part: WHEN_TO_NOTIFY }),
+  field('notify.health', 'boolean', 'Notifications', 'Health job notifications', 'When off, the health job stops notifying about old gates, diverged branches and a full pool.', { part: WHEN_TO_NOTIFY }),
+  field('jobs.host', 'enum', 'Schedules', 'Host for scheduled jobs', 'Which CLI runs the scheduled jobs whose schedule names no host. The workers inside a run keep their own models.', { values: [...JOBS_HOSTS], followUp: RELOAD_SCHEDULE }),
   // The next job run reads these from the file, so a change needs nothing after it.
   ...JOBS_HOSTS.flatMap((host) => [
-    field(`jobs.${host}.model`, 'enumOrText', 'Jobs', `The model of every unattended session on ${host} without an agent of its own: the steps with no agent (design, implement, review, explain) and the comments, intake and retro jobs. A known one or any name the ${HOST_SETTINGS[host].cli} CLI takes; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].model, host: { host, setting: 'model' } }),
-    field(`jobs.${host}.effort`, 'enum', 'Jobs', `The reasoning effort of those same sessions on ${host}: ${saidList(HOST_SETTINGS[host].effort)}, the values flow accepts; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].effort, host: { host, setting: 'effort' } }),
+    field(`jobs.${host}.model`, 'enumOrText', 'Agents', `${HOST_SETTINGS[host].cli} model`, `The model of every unattended session on ${host} without an agent of its own: the steps with no agent (design, implement, review, explain) and the comments, intake and retro jobs. A known one or any name the ${HOST_SETTINGS[host].cli} CLI takes; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].model, host: { host, setting: 'model' }, part: HOST_SETTINGS[host].cli }),
+    field(`jobs.${host}.effort`, 'enum', 'Agents', `${HOST_SETTINGS[host].cli} effort`, `The reasoning effort of those same sessions on ${host}: ${saidList(HOST_SETTINGS[host].effort)}, the values flow accepts; empty takes the ${HOST_SETTINGS[host].cli} CLI's default.`, { values: HOST_SETTINGS[host].effort, host: { host, setting: 'effort' }, part: HOST_SETTINGS[host].cli }),
+    ...(host === 'claude' ? [field('jobs.permission_mode', 'enum', 'Agents', 'Tool permission mode', 'How unattended Claude sessions ask for tools: dontAsk denies every edit not allowed already, auto lets the classifier allow safe ones.', { values: ['dontAsk', 'auto'], part: HOST_SETTINGS.claude.cli })] : []),
   ]),
-  field('jobs.model', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),
-  field('jobs.effort', 'string', 'Jobs', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS }),
+  field('jobs.model', 'string', 'Agents', 'Model (deprecated)', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS, part: 'Deprecated' }),
+  field('jobs.effort', 'string', 'Agents', 'Effort (deprecated)', DEPRECATED_JOBS, { deprecated: DEPRECATED_JOBS, part: 'Deprecated' }),
   // jobs/next.sh reads it at every run of the queue (lib/workers.sh), so a change needs nothing after it.
-  field('jobs.workers', 'map', 'Jobs', 'How many workers a run of the next job starts on each host, numbered claude first (claude: 1 and codex: 2 is next-1 on claude, next-2 and next-3 on codex); a run given --workers, the schedule\'s too, starts that many on its own host instead.', { counts: { keys: [...JOBS_HOSTS] }, min: 0, max: 64 }),
-  field('jobs.permission_mode', 'enum', 'Jobs', 'How unattended Claude sessions ask for tools: dontAsk denies every edit not allowed already, auto lets the classifier allow safe ones.', { values: ['dontAsk', 'auto'] }),
-  field('jobs.marketplace', 'string', 'Jobs', 'The marketplace checkout the weekly retro opens its pull request from.'),
-  ...JOBS.map((job) => field(`jobs.schedule.${job}`, 'schedule', 'Jobs', `When the ${job} job runs on this machine: every 30m, daily 02:00 or weekly sun 07:00, then its options.`, { followUp: RELOAD_SCHEDULE })),
-  field('jobs.health.grace', 'duration', 'Jobs', 'How long a run record may show no live process before the health job calls the run dead.'),
-  field('jobs.health.gate_reminder', 'duration', 'Jobs', 'How often a gate nobody answered gets a reminder.'),
-  field('jobs.health.max_resumes', 'number', 'Jobs', 'How many times in a row the health job resumes cut-off work before it raises an escalation gate.', { min: 0, max: 20 }),
-  field('jobs.health.behind_base', 'number', 'Jobs', 'How many commits behind the base a task branch may fall before the health job merges the base in.', { min: 1, max: 1000 }),
-  field('jobs.health.push', 'boolean', 'Jobs', 'When on, the health job pushes a clean task branch that is only ahead of its remote.'),
-  field('jobs.comments.max_failures', 'number', 'Jobs', 'How many failed passes in a row on one pull request before the comments job stops trying it and tells you.', { min: 1, max: 20 }),
-  field('retro.commit', 'boolean', 'Jobs', 'When off, the retro job leaves the lessons it writes uncommitted.'),
-  field('intake.notes', 'string', 'Intake', 'The notes file the nightly intake job turns into tracker items.'),
-  field('intake.batch', 'number', 'Intake', 'How many notes one intake run files at most.', { min: 1, max: 100 }),
-  field('intake.rules', 'string', 'Intake', 'The file that says how a note becomes an item: outcomes, type, area, priority.'),
-  field('intake.answers', 'string', 'Intake', 'Where the intake job appends the answers it gave; empty puts answers.md beside the notes.'),
-  field('intake.dropped', 'string', 'Intake', 'Where the intake job moves the notes it dropped, with the reason; empty puts dropped.md beside the notes.'),
-  field('intake.commit', 'boolean', 'Intake', 'When off, the intake job leaves the notes file uncommitted after filing.'),
+  field('jobs.workers', 'map', 'Next job', 'Workers per host', 'How many workers a run of the next job starts on each host, numbered claude first (claude 1 and codex 2 is next-1 on claude, next-2 and next-3 on codex). A host turned off starts none. A run given its own workers, the next schedule\'s too, starts that many on its own host instead, and jobs.sh refuses the next schedule naming workers while this is set.', { counts: { keys: [...JOBS_HOSTS] }, min: 0, max: 64 }),
+  field('jobs.marketplace', 'string', 'Retro job', 'Marketplace checkout', 'The folder of your checkout of the brain marketplace (the repository the flow plugin comes from). The weekly retro opens its pull request of plugin lessons from there; lessons about this project go in a report instead.', { placeholder: '~/work/brain' }),
+  ...JOBS.map((job) => field(`jobs.schedule.${job}`, 'schedule', 'Schedules', `${capitalised(job)} job schedule`, `When the ${job} job runs on this machine, and what it runs with.`, { followUp: RELOAD_SCHEDULE })),
+  field('jobs.health.grace', 'duration', 'Health job', 'Grace before a run counts as dead', 'How long a run record may show no live process before the health job calls the run dead. Unset, 10m.', { placeholder: '10m' }),
+  field('jobs.health.gate_reminder', 'duration', 'Health job', 'Remind about an open gate every', 'How often a gate nobody answered gets a reminder. Unset, 24h.', { placeholder: '24h' }),
+  field('jobs.health.max_resumes', 'number', 'Health job', 'Most resumes in a row', 'How many times in a row the health job resumes cut-off work before it raises an escalation gate. Unset, 3.', { min: 0, max: 20, placeholder: '3' }),
+  field('jobs.health.behind_base', 'number', 'Health job', 'Commits behind before the base is merged in', 'How many commits behind the base a task branch may fall before the health job merges the base in. Unset, 20.', { min: 1, max: 1000, placeholder: '20' }),
+  field('jobs.health.push', 'boolean', 'Health job', 'Push clean task branches', 'When on, the health job pushes a clean task branch that is only ahead of its remote.'),
+  field('jobs.comments.max_failures', 'number', 'Comments job', 'Failed passes before a PR is dropped', 'How many failed passes in a row on one pull request before the comments job stops trying it and tells you. Unset, 3.', { min: 1, max: 20, placeholder: '3' }),
+  field('retro.commit', 'boolean', 'Retro job', 'Commit the retro lessons', 'When off, the retro job leaves the lessons it writes uncommitted.'),
+  field('intake.notes', 'string', 'Intake job', 'Notes file', `The notes file the intake job turns into tracker items. ${INTAKE_PATH} The file need not exist yet: with no file there the job says "no notes file" and stops quietly. Unset, the job stops with an error unless its schedule names a notes file.`, { placeholder: '.flow/notes.md' }),
+  field('intake.batch', 'number', 'Intake job', 'Notes per intake run', 'How many notes one intake run files at most. Unset, 10.', { min: 1, max: 100, placeholder: '10' }),
+  field('intake.rules', 'string', 'Intake job', 'Intake rules file', `The file that says how a note becomes an item: outcomes, type, area, priority. ${INTAKE_PATH} It must exist; unset, .flow/intake.md when there is one, else the flow's own rules.`, { placeholder: '.flow/intake.md' }),
+  field('intake.answers', 'string', 'Intake job', 'Answers file', `Where the intake job appends the answers it gave. ${INTAKE_PATH} Empty puts answers.md beside the notes.`, { placeholder: '.flow/answers.md' }),
+  field('intake.dropped', 'string', 'Intake job', 'Dropped notes file', `Where the intake job moves the notes it dropped, with the reason. ${INTAKE_PATH} Empty puts dropped.md beside the notes.`, { placeholder: '.flow/dropped.md' }),
+  field('intake.commit', 'boolean', 'Intake job', 'Commit the notes file', 'When off, the intake job leaves the notes file uncommitted after filing.'),
 ];
 
 /**
@@ -197,7 +249,7 @@ function namedScheduleField(path: string): FieldSpec | undefined {
   if (!path.startsWith(SCHEDULE_PREFIX)) return undefined;
   const name = path.slice(SCHEDULE_PREFIX.length);
   if (!SCHEDULE_NAME.test(name) || JOBS.includes(name)) return undefined;
-  return field(path, 'schedule', 'Jobs', `Another schedule of the ${scheduleJob(name)} job, ${name}, with its own options: every 30m, daily 02:00 or weekly sun 07:00, then its options.`, { followUp: RELOAD_SCHEDULE });
+  return field(path, 'schedule', 'Schedules', `${capitalised(name)} schedule`, `Another schedule of the ${scheduleJob(name)} job, ${name}, with its own timing and options.`, { followUp: RELOAD_SCHEDULE });
 }
 
 export function fieldAt(path: string): FieldSpec | undefined {
@@ -306,6 +358,21 @@ function checkText(spec: FieldSpec, text: string): Checked {
   }
 }
 
+/** A list with fixed values (`github.ready_needs`) holds only those; an empty or free list passes. */
+function checkListValues(spec: FieldSpec, entries: string[]): Checked {
+  if (spec.values === undefined) return ok;
+  const other = entries.find((entry) => !spec.values!.includes(entry));
+  return other === undefined ? ok : fail(`${spec.path} lists ${other}: it takes ${saidList(spec.values)}`);
+}
+
+/** A map under fixed names (`github.status`) names only those. */
+function checkMapKeys(spec: FieldSpec, entries: Record<string, unknown>): Checked {
+  if (spec.keys === undefined) return ok;
+  const names = spec.keys.map((key) => key.name);
+  const other = Object.keys(entries).find((name) => !names.includes(name));
+  return other === undefined ? ok : fail(`${spec.path} names ${other}: it takes ${saidList(names)}`);
+}
+
 /**
  * A value read from the file against its field. A list may be written as one scalar (the flow
  * reads it as a one-item list); a map whose entries are maps themselves (a gate with command and
@@ -313,14 +380,14 @@ function checkText(spec: FieldSpec, text: string): Checked {
  */
 export function checkFileValue(spec: FieldSpec, value: unknown): Checked {
   if (spec.type === 'list') {
-    if (typeof value === 'string') return ok;
+    if (typeof value === 'string') return value === '' ? ok : checkListValues(spec, [value]);
     // A bare key with no items is how the flat format writes an empty list.
     if (value !== null && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) return ok;
-    return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? ok : fail(`${spec.path} must be a list of text`);
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? checkListValues(spec, value) : fail(`${spec.path} must be a list of text`);
   }
   if (spec.type === 'map') {
     if (spec.counts !== undefined) return checkCountsValue({ ...spec, counts: spec.counts }, value);
-    if (value !== null && typeof value === 'object' && !Array.isArray(value)) return ok;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) return checkMapKeys(spec, value as Record<string, unknown>);
     return fail(`${spec.path} must be a map of name: value lines`);
   }
   if (typeof value !== 'string') return fail(`${spec.path} must be one value, not a ${Array.isArray(value) ? 'list' : 'map'}`);
@@ -349,10 +416,11 @@ export function checkChange(spec: FieldSpec, value: FieldValue): Checked {
       if (typeof value !== 'number' || !Number.isInteger(value)) return fail(`${spec.path} must be a whole number`);
       return inRange(spec, value);
     case 'boolean': return typeof value === 'boolean' ? ok : fail(`${spec.path} must be true or false`);
-    case 'list': return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? ok : fail(`${spec.path} must be a list of text`);
+    case 'list': return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? checkListValues(spec, value) : fail(`${spec.path} must be a list of text`);
     case 'map': {
       const map = value !== null && typeof value === 'object' && !Array.isArray(value) && Object.entries(value).every(([key, entry]) => /^[A-Za-z0-9_-]+$/.test(key) && typeof entry === 'string');
       if (!map) return fail(`${spec.path} must be a map of names (letters, digits, - and _) to text`);
+      if (spec.keys !== undefined) return checkMapKeys(spec, value as Record<string, string>);
       return spec.counts === undefined ? ok : checkCounts({ ...spec, counts: spec.counts }, value as Record<string, string>);
     }
     case 'string': case 'enum': case 'enumOrText': case 'duration': case 'schedule':

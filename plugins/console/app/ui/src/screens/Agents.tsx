@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ReactNode, RefObject } from 'react';
+import type { ReactNode } from 'react';
 import type { Agent, EndedAgent, Job, JobRun, JobWorker, PullRequest, Run, Snapshot, StoppedHost, Worktree } from '../../../daemon/src/snapshot.ts';
 import { Age, clockTime, Since } from '../clock.tsx';
-import { JOB_EFFORTS, JOB_HOSTS, JOB_KINDS, JOB_MODELS, WEEK_DAYS, newScheduleProblem, ownArgs, pairSpec, scheduleName, scheduleProblem, scheduleSpec, startArgs, startFormFrom, startProblem, whenFrom } from '../jobStart.ts';
-import type { JobStartForm, ScheduleWhen } from '../jobStart.ts';
+import { JOB_KINDS, newScheduleProblem, ownArgs, pairSpec, scheduleName, scheduleProblem, scheduleSpec, startArgs, startFormFrom, startProblem, whenFrom } from '../jobStart.ts';
+import type { ScheduleWhen } from '../jobStart.ts';
 import { ExternalLink, ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
 import { routeHash } from '../route.ts';
+import { RunFields, useRunForm, WhenFields } from '../scheduleFields.tsx';
 import { jobTone } from '../status.ts';
 import type { Tone } from '../status.ts';
 import { FULL_LINES, RunStream, TAIL_LINES, transcriptSize, useTranscript } from '../Transcript.tsx';
@@ -367,66 +368,6 @@ function runTone(run: JobRun): Tone {
   return 'quiet';
 }
 
-const FROM_CONFIG = '';
-const OTHER_MODEL = 'other';
-
-/** next's run settings as a form: the model offers the host's own names, and a host change drops a model or effort it does not take. */
-function useRunForm(initial: JobStartForm, changed: () => void) {
-  const [form, setForm] = useState(initial);
-  const [typing, setTyping] = useState(initial.model !== '' && !(JOB_MODELS[initial.host] ?? []).includes(initial.model));
-  const change = (next: JobStartForm): void => { setForm(next); changed(); };
-  return {
-    form,
-    typing,
-    change,
-    reset: (): void => { setForm(initial); setTyping(initial.model !== '' && !(JOB_MODELS[initial.host] ?? []).includes(initial.model)); },
-    pickHost: (host: string): void => {
-      change({ ...form, host, model: (JOB_MODELS[host] ?? []).includes(form.model) || typing ? form.model : FROM_CONFIG, effort: (JOB_EFFORTS[host] ?? []).includes(form.effort) ? form.effort : FROM_CONFIG });
-    },
-    pickModel: (model: string): void => {
-      if (model === OTHER_MODEL) { setTyping(true); change({ ...form, model: '' }); return; }
-      setTyping(false);
-      change({ ...form, model });
-    },
-  };
-}
-
-type RunForm = ReturnType<typeof useRunForm>;
-
-/** The run's settings; `pair` shows only what every job takes: the host, the model and the effort. */
-function RunFields({ run, pair = false }: { run: RunForm; pair?: boolean }) {
-  const { form, typing } = run;
-  const field = (name: keyof JobStartForm) => ({ value: form[name], onChange: (event: { target: { value: string } }) => run.change({ ...form, [name]: event.target.value }) });
-  return (
-    <>
-      <label className="field"><span>Host</span>
-        <select value={form.host} onChange={(event) => run.pickHost(event.target.value)}>{JOB_HOSTS.map((host) => <option key={host} value={host}>{host}</option>)}</select>
-      </label>
-      {!pair && (
-        <>
-          <label className="field"><span>Item</span><input placeholder="first ready item" title="A tracker id such as gh#81. Empty takes the first ready item each run." {...field('item')} /></label>
-          <label className="field"><span>Workers</span><input inputMode="numeric" placeholder="1" title="How many items run at once, each in its own worktree." {...field('workers')} /></label>
-          <label className="field"><span>Max steps</span><input inputMode="numeric" placeholder="no limit" title="The run stops after this many steps." {...field('maxSteps')} /></label>
-        </>
-      )}
-      <label className="field"><span>Model</span>
-        <select value={typing ? OTHER_MODEL : form.model} onChange={(event) => run.pickModel(event.target.value)}>
-          <option value={FROM_CONFIG}>From config</option>
-          {(JOB_MODELS[form.host] ?? []).map((model) => <option key={model} value={model}>{model}</option>)}
-          <option value={OTHER_MODEL}>Other…</option>
-        </select>
-      </label>
-      {typing && <label className="field"><span>Model name</span><input placeholder={form.host === 'claude' ? 'claude-opus-5-5' : 'gpt-6-sol'} {...field('model')} /></label>}
-      <label className="field"><span>Effort</span>
-        <select {...field('effort')}>
-          <option value={FROM_CONFIG}>From config</option>
-          {(JOB_EFFORTS[form.host] ?? []).map((effort) => <option key={effort} value={effort}>{effort}</option>)}
-        </select>
-      </label>
-    </>
-  );
-}
-
 /**
  * The side panel: a new schedule of any job, or one run of it now, with the same settings on both
  * tabs. Every job takes a host, a model and an effort; next also an item and limits. It stays
@@ -552,36 +493,6 @@ function EditDialog({ job, jobsHost, close }: { job: Job; jobsHost: string; clos
         </form>
       </div>
     </div>
-  );
-}
-
-function WhenFields({ when, setWhen, first }: { when: ScheduleWhen; setWhen: (when: ScheduleWhen) => void; first?: RefObject<HTMLSelectElement> }) {
-  const time = when.kind === 'every' ? '02:00' : when.time;
-  return (
-    <>
-      <label className="field"><span>Runs</span>
-        <select ref={first} value={when.kind} onChange={(event) => {
-          const kind = event.target.value;
-          setWhen(kind === 'every' ? { kind: 'every', count: '30', unit: 'm' } : kind === 'daily' ? { kind: 'daily', time } : { kind: 'weekly', day: 'mon', time });
-        }}>
-          <option value="every">every</option><option value="daily">daily</option><option value="weekly">weekly</option>
-        </select>
-      </label>
-      {when.kind === 'every' && (
-        <label className="field"><span>Every</span>
-          <span className="prefixed">
-            <input aria-label="Every" inputMode="numeric" value={when.count} onChange={(event) => setWhen({ ...when, count: event.target.value })} />
-            <select aria-label="Unit" value={when.unit} onChange={(event) => setWhen({ ...when, unit: event.target.value as 'm' | 'h' })}><option value="m">min</option><option value="h">hours</option></select>
-          </span>
-        </label>
-      )}
-      {when.kind === 'weekly' && (
-        <label className="field"><span>Day</span>
-          <select value={when.day} onChange={(event) => setWhen({ ...when, day: event.target.value })}>{WEEK_DAYS.map((day) => <option key={day} value={day}>{day}</option>)}</select>
-        </label>
-      )}
-      {when.kind !== 'every' && <label className="field"><span>At</span><input placeholder="02:00" value={when.time} onChange={(event) => setWhen({ ...when, time: event.target.value })} /></label>}
-    </>
   );
 }
 

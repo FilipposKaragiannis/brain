@@ -404,11 +404,11 @@ test('JobsHostKeys_InTheSchema_EnumsInTheJobsGroupWithNoFollowUp', () => {
   ];
   for (const [key, type, values] of expected) {
     const spec = fieldAt(key);
-    assert.deepEqual([spec?.type, spec?.group, spec?.values, spec?.followUp], [type, 'Jobs', values, null], `because ${key} is picked from the host's own list and the next job run reads it from the file`);
+    assert.deepEqual([spec?.type, spec?.group, spec?.values, spec?.followUp], [type, 'Agents', values, null], `because ${key} is picked from the host's own list and the next job run reads it from the file`);
     assert.ok(checkChange(spec!, values[0]!).ok && checkChange(spec!, '').ok && checkChange(spec!, null).ok, `because ${key} takes its values, and empty or unset for the host's default`);
     assert.match(spec!.help, /empty takes the (Claude|Codex) CLI's default/, `because the help of ${key} says what empty means`);
   }
-  assert.equal(fieldAt('jobs.host')?.help, 'Which CLI runs the scheduled jobs. The workers inside a run keep their own models.', 'because the host picks the jobs\' CLI, not the workers\' models');
+  assert.equal(fieldAt('jobs.host')?.help, 'Which CLI runs the scheduled jobs whose schedule names no host. The workers inside a run keep their own models.', 'because the host picks the jobs\' CLI, not the workers\' models, and a schedule\'s own host word wins');
   assert.deepEqual(['jobs.model', 'jobs.effort'].map((key) => fieldAt(key)?.deprecated), Array(2).fill('Deprecated: flow 1.20.0 reads jobs.<host>.model and jobs.<host>.effort, and this key only while jobs.<host> is absent. Set those and clear these.'), 'because flow 1.20.0 reads the old keys only as a fallback');
   for (const key of ['jobs.claude.model', 'jobs.codex.model']) {
     assert.ok(checkChange(fieldAt(key)!, 'claude-opus-x').ok && checkFileValue(fieldAt(key)!, 'claude-opus-x').ok, `because the plugin passes any ${key} on as is, so a name off the list is no error`);
@@ -517,8 +517,8 @@ const ONE_LINE_WORKERS = 'base: main\njobs:\n  host: claude\n  workers: {claude:
 test('JobsWorkersOnOneLine_Described_NoWarningAndTheSamePlanFlowReads', () => {
   const described = describe('/p/.flow/config.yaml', ONE_LINE_WORKERS);
   assert.deepEqual(described.warnings, [], 'because {claude: 1, codex: 2} is how flow documents jobs.workers, so it is no flow map outside the format');
-  const field = described.sections.find((section) => section.group === 'Jobs')?.fields.find((spec) => spec.path === 'jobs.workers');
-  assert.deepEqual([field?.type, field?.counts?.keys], ['map', ['claude', 'codex']], 'because the key is a count per host in the Jobs group');
+  const field = described.sections.find((section) => section.group === 'Next job')?.fields.find((spec) => spec.path === 'jobs.workers');
+  assert.deepEqual([field?.type, field?.counts?.keys], ['map', ['claude', 'codex']], 'because the key is a count per host on the next job\'s page');
   assert.deepEqual(flowWorkers(ONE_LINE_WORKERS), ['claude:1', 'codex:2'], 'because the plugin reads the line the console accepted as the same plan');
 });
 
@@ -624,7 +624,7 @@ test('NamedSchedule_BadValueForAnAction_ThrownAndFileUntouched', async () => {
 test('NamedSchedule_Described_InJobsAfterTheOtherSchedulesAndChecked', () => {
   const text = FOOSBRAWL.replace('    health: every 15m\n', '    health: every 15m\n    next-nightly: daily 02:00 gh#12\n    comments-slow: hourly\n');
   const document = describe('/p/.flow/config.yaml', text);
-  const jobs = document.sections.find((section) => section.group === 'Jobs')?.fields.map((spec) => spec.path) ?? [];
+  const jobs = document.sections.find((section) => section.group === 'Schedules')?.fields.map((spec) => spec.path) ?? [];
   assert.deepEqual(jobs.slice(jobs.indexOf('jobs.schedule.health'), jobs.indexOf('jobs.schedule.health') + 3), ['jobs.schedule.health', 'jobs.schedule.next-nightly', 'jobs.schedule.comments-slow'], 'because a named schedule is edited beside the job schedules, not as Other text');
   assert.equal(document.sections.some((section) => section.group === 'Other'), false, 'because a named schedule is a key the console knows');
   assert.deepEqual(document.warnings.filter((warning) => warning.includes('schedule')), ['jobs.schedule.comments-slow: cannot read the schedule "hourly": use every 30m, daily 02:00 or weekly sun 03:00'], 'because a named schedule is checked as jobs.sh would read it');
@@ -635,4 +635,17 @@ test('Schedule_Checked_ItemIdArgsPassAndACommentDoesNot', () => {
   assert.ok(checkSchedule('every 30m gh#12 local:task/5').ok, 'because _jobs.py takes an item id as an arg');
   assert.equal(checkSchedule('every 30m #12').ok, false, 'because lib/flow.sh would cut the value at " #"');
   assert.equal(checkSchedule('daily 2:00').ok, false, 'because _jobs.py reads the hour as two digits');
+});
+
+test('FixedKeyMap_OtherName_RefusedOnChangeAndWarnedInTheFile', () => {
+  const status = fieldAt('github.status')!;
+  assert.ok(checkChange(status, { ready: 'Todo', gate: 'Blocked' }).ok, 'because backlog, ready, gate, running and review are the names _mutate.py reads');
+  assert.deepEqual([checkChange(status, { doing: 'Doing' }), checkFileValue(status, { doing: 'Doing' })], Array(2).fill({ ok: false, error: 'github.status names doing: it takes backlog, ready, gate, running or review' }), 'because a name the adapter never reads would do nothing');
+  assert.equal(checkChange(fieldAt('github.fields')!, { team: 'Team' }).ok, false, 'because _gh.sh reads only size, priority and area');
+});
+
+test('FixedValuesList_OtherValue_RefusedOnChangeAndWarnedInTheFile', () => {
+  const needs = fieldAt('github.ready_needs')!;
+  assert.ok(checkChange(needs, ['priority', 'size']).ok && checkFileValue(needs, 'size').ok, 'because _gh.sh knows priority and size');
+  assert.deepEqual([checkChange(needs, ['area']), checkFileValue(needs, ['priority', 'area'])], Array(2).fill({ ok: false, error: 'github.ready_needs lists area: it takes priority or size' }), 'because _gh.sh ignores any other field with a warning');
 });

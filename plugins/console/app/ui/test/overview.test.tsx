@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import type { AttentionRow, Disagreement, Snapshot } from '../../daemon/src/snapshot.ts';
-import { Overview } from '../src/screens/Overview.tsx';
+import type { AttentionRow, Disagreement, PullRequest, Snapshot } from '../../daemon/src/snapshot.ts';
+import type { Route } from '../src/route.ts';
+import { Overview, tiles } from '../src/screens/Overview.tsx';
 import { FIELD_ROWS_SHOWN } from '../src/screens/NeedsYou.tsx';
 import { actionRecord, boardDisagreement, readiness, boardItem, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
@@ -9,9 +10,21 @@ afterEach(cleanup);
 
 const ignoreRoute = (): void => {};
 
-function renderOverview(snapshot: Snapshot): void {
+function renderOverview(snapshot: Snapshot, go: (route: Route) => void = ignoreRoute): void {
   const Wrapper = new FakeDaemon().screenWrapper();
-  render(<Wrapper><Overview snapshot={snapshot} go={ignoreRoute} /></Wrapper>);
+  render(<Wrapper><Overview snapshot={snapshot} go={go} /></Wrapper>);
+}
+
+function failingPull(number: number): PullRequest {
+  return {
+    number, title: `PR ${number}`, url: `https://github.com/owner/project/pull/${number}`, branch: `b${number}`, base: 'main', author: 'o', draft: false, state: 'checks-failing',
+    checks: { passed: 0, failed: 1, pending: 0 }, reviewDecision: null, unresolvedThreads: 0, mergeable: null, item: null, worktree: null,
+    createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 0, idleSeconds: 0, review: null,
+  };
+}
+
+function gateRow(id: string, ageSeconds: number): AttentionRow {
+  return { kind: 'gate', id, title: `Plan for ${id}`, detail: 'plan', worktree: null, sinceAt: TAKEN_AT, ageSeconds, action: null };
 }
 
 function needsField(id: string): AttentionRow {
@@ -31,7 +44,7 @@ test('ReadinessLine_SaysWhyNothingRuns', () => {
 
 test('ItemWaitingOnAField_ListedWithTheFieldNamed', () => {
   renderOverview({ ...snapshotAt(TAKEN_AT, 0), attention: [needsField('gh#197')] });
-  const row = screen.getByText('gh#197').closest('tr');
+  const row = screen.getByText('gh#197').closest('li');
   expect(row?.textContent, 'because the owner must see which field to fill on which item').toMatch(/needs priority/);
 });
 
@@ -96,4 +109,26 @@ test('StoppedHostRow_CarriesItsClearButton', () => {
   const stopped: AttentionRow = { kind: 'host-stopped', id: 'codex', title: 'codex is stopped', detail: 'usage limit', worktree: null, sinceAt: TAKEN_AT, ageSeconds: 60, action: { kind: 'host.clear', args: { host: 'codex' }, label: 'Clear codex' } };
   renderOverview({ ...snapshotAt(TAKEN_AT, 1), attention: [stopped] });
   expect(screen.queryByRole('button', { name: 'Clear codex' }), 'because the row is settled from where it is seen').not.toBeNull();
+});
+
+test('Tiles_NeedsYou_NamesTheOldestRowAndItsAge', () => {
+  const needsYou = tiles({ ...snapshotAt(TAKEN_AT, 2), attention: [gateRow('gh#1', 600), gateRow('gh#2', 7200)] })[0]!;
+  expect(needsYou.sub, 'because the oldest wait is the one to settle first').toMatch(/^oldest 2h.* · gh#2$/);
+});
+
+test('Tiles_ChecksRed_NamesTheFailingPullsAndLeadsToPulls', () => {
+  const red = tiles({ ...snapshotAt(TAKEN_AT, 0), pulls: [failingPull(81), failingPull(82)] }).find((tile) => tile.label === 'Checks red')!;
+  expect([red.sub, red.screen], 'because the owner fixes a red PR from the pulls screen').toEqual(['PR #81, PR #82', 'pulls']);
+});
+
+test('GateRow_DecideOpensThatGate', () => {
+  const routes: Route[] = [];
+  renderOverview({ ...snapshotAt(TAKEN_AT, 1), attention: [gateRow('gh#322', 600)] }, (route) => routes.push(route));
+  fireEvent.click(screen.getByRole('button', { name: 'Decide' }));
+  expect(routes, 'because a gate is settled on its own page').toEqual([{ projectId: 'project', screen: 'gates', detail: 'gh#322' }]);
+});
+
+test('NothingRuns_RunningNowSaysSo', () => {
+  renderOverview(snapshotAt(TAKEN_AT, 0));
+  expect(screen.queryByText('No run is going.'), 'because an empty panel would look like a broken one').not.toBeNull();
 });

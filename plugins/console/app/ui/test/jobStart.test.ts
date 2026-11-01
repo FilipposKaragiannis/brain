@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { ownArgs, pairSpec, scheduleName, scheduleProblem, scheduleSpec, startArgs, startFormFrom, startProblem, whenFrom } from '../src/jobStart.ts';
+import { ownArgs, pairSpec, scheduleLine, scheduleName, scheduleParts, scheduleProblem, scheduleSpec, startArgs, startFormFrom, startProblem, whenFrom } from '../src/jobStart.ts';
 
 test('ScheduleArgs_FillTheForm', () => {
   expect(startFormFrom('codex gh#12 --max-steps 3 --workers 2', 'claude'), 'because Run… starts from what the schedule runs').toEqual({ host: 'codex', item: 'gh#12', workers: '2', maxSteps: '3', model: '', effort: '' });
@@ -64,4 +64,11 @@ test('OwnArgs_DropTheHostWordModelAndEffort', () => {
 test('PairSpec_LeavesOutWhatIsFromConfig', () => {
   const form = { ...startFormFrom('', 'claude'), model: '', effort: '' };
   expect(pairSpec({ kind: 'every', count: '15', unit: 'm' }, form, '--dry-run'), 'because an empty model or effort is jobs.<host>.model and effort').toBe('every 15m claude --dry-run');
+});
+
+test('ScheduleParts_LinesTheBuilderHoldsOrNot_RoundTripOrNull', () => {
+  const lines: [string, string][] = [['next', 'every 30m --workers 2'], ['next', 'daily 02:00 codex gh#12 --max-steps 5 --model gpt-6-sol --effort high'], ['intake', 'weekly sun 07:00 claude --batch 5 --keep-notes --model opus']];
+  for (const [job, line] of lines) expect(scheduleLine(scheduleParts(line, job, 'claude')!, job), `because the builder writes ${line} back as it read it`).toBe(line);
+  const unreadable = ['weekly Sunday 07:00', 'every 30m --workers', 'every 30m --model opus --model sonnet', 'every 30m gh#1 gh#2', 'every 30m codex --effort max'];
+  expect(unreadable.map((line) => scheduleParts(line, 'next', 'claude')), 'because a line the builder would rewrite differently stays text').toEqual(unreadable.map(() => null));
 });

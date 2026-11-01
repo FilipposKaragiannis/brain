@@ -2,11 +2,15 @@ import { useState } from 'react';
 import type { ActionRecord, ProcessInfo, Snapshot, SyncConflict, Worktree } from '../../../daemon/src/snapshot.ts';
 import { Age, formatDuration, useLiveSeconds } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
+import { routeHash } from '../route.ts';
 import { worktreeTone } from '../status.ts';
-import { ActionButton, Chip, Empty, Flags, Module, SourceFreshness, TerminalButton, useActionsView } from '../ui.tsx';
+import type { Tone } from '../status.ts';
+import { ActionButton, Chip, Dot, Empty, Flags, Module, SourceFreshness, TerminalButton, useActionsView } from '../ui.tsx';
 import { WORDS } from '../words.ts';
 
-const COLUMNS = 11;
+/** How many commits behind the base fill a card's behind bar; a stale branch passes 20. */
+const FULL_BEHIND = 40;
+const FAR_BEHIND = 20;
 /** How many conflicting files a card lists before "Show all". */
 export const CONFLICT_FILES_SHOWN = 5;
 export const HAND_TO_THE_FLOW = 'Hand to the flow';
@@ -14,78 +18,141 @@ export const HAND_TO_THE_FLOW_TITLE = "Writes the sync note and starts the item'
 export const RUN_GOING_SYNC_FIRST = 'A run is going; the sync step runs first when it starts';
 export const HANDING_OFF = 'Handing off to the flow: the sync note shows here once it is read';
 
-/** The pool first, then the worktrees outside it under their own heading, then what the columns mean. */
+type Filter = 'all' | 'running' | 'needs-you' | 'stale' | 'claimed' | 'free';
+const FILTERS: { filter: Filter; label: string; tone: Tone }[] = [
+  { filter: 'all', label: 'All', tone: 'quiet' },
+  { filter: 'running', label: 'Running', tone: 'running' },
+  { filter: 'needs-you', label: 'Needs you', tone: 'needs-you' },
+  { filter: 'stale', label: 'Stale', tone: 'stale' },
+  { filter: 'claimed', label: 'Claimed', tone: 'quiet' },
+  { filter: 'free', label: 'Free', tone: 'quiet' },
+];
+
+/** The pool as cards with a filter by state, then the worktrees outside it under their own heading. */
 export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
+  const [filter, setFilter] = useState<Filter>('all');
   const pool = snapshot.worktrees.filter((worktree) => worktree.role === 'pool');
   const outside = snapshot.worktrees.filter((worktree) => worktree.role !== 'pool');
+  const shown = pool.filter((worktree) => filter === 'all' || worktree.state === filter);
+  const count = (each: Filter): number => pool.filter((worktree) => each === 'all' || worktree.state === each).length;
   return (
     <div className="screen">
-      <Module className="worktrees" title="Worktrees" aside={<ActionButton kind="steward.health" args={{}} label="Health" primary={false} />}
-        footer={<><SourceFreshness name="git" freshness={snapshot.sources.git} /><SourceFreshness name="processes" freshness={snapshot.sources.processes} /></>}>
-        {snapshot.worktrees.length === 0 ? <Empty>No worktree found.</Empty> : (
-          <>
-            <WorktreeTable worktrees={pool} snapshot={snapshot} label="Pool" />
-            {outside.length > 0 && (
-              <section className="worktree-group" aria-labelledby="outside-heading">
-                <h3 id="outside-heading" className="group-head">Outside the pool</h3>
-                <p className="module-help">{WORDS.outside}</p>
-                <WorktreeTable worktrees={outside} snapshot={snapshot} label="Outside the pool" />
-              </section>
-            )}
-            <p className="legend"><strong>Dirty</strong> {WORDS.dirty} <strong>Agents</strong> {WORDS.agents} <strong>Sessions</strong> {WORDS.sessions}</p>
-          </>
-        )}
-      </Module>
+      <div className="worktree-tools">
+        <div className="filter-chips" role="group" aria-label="Show">
+          {FILTERS.filter((each) => each.filter !== 'claimed' || count('claimed') > 0).map((each) => (
+            <button key={each.filter} type="button" className={`filter-chip tone-${each.tone}`} aria-pressed={filter === each.filter} onClick={() => setFilter(each.filter)}>
+              {each.filter !== 'all' && <Dot tone={each.tone} />}{each.label} <span className="filter-count">{count(each.filter)}</span>
+            </button>
+          ))}
+        </div>
+        <span className="worktree-base muted">{pool.length} in the pool{snapshot.project.poolMax !== null && snapshot.project.poolMax > pool.length ? `, grows to ${snapshot.project.poolMax}` : ''} · base {snapshot.project.base}</span>
+        <ActionButton kind="steward.health" args={{}} label="Run health" primary={false} />
+      </div>
+      {snapshot.worktrees.length === 0 ? <Empty>No worktree found.</Empty> : (
+        <>
+          <section className="worktree-cards" aria-label="Pool">
+            {shown.length === 0 ? <Empty>No pool worktree is {filter.replace('-', ' ')}.</Empty> : shown.map((worktree) => <WorktreeCard key={worktree.name} worktree={worktree} snapshot={snapshot} />)}
+          </section>
+          {outside.length > 0 && (
+            <Module className="worktrees-outside" title={<>Outside the pool <span className="muted">{WORDS.outside}</span></>} aside={null}
+              footer={<><SourceFreshness name="git" freshness={snapshot.sources.git} /><SourceFreshness name="processes" freshness={snapshot.sources.processes} /></>}>
+              <table className="table outside-table" aria-label="Outside the pool">
+                <tbody>
+                  {outside.map((worktree) => (
+                    <tr key={worktree.name}>
+                      <td className="strong nowrap" title={worktree.path}>{worktree.name}</td>
+                      <td className="mono clip" title={worktree.branch ?? ''}>{worktree.branch ?? '—'}{worktree.head !== null && ` · ${worktree.head.slice(0, 8)}`}</td>
+                      <td className="muted">{outsideNote(worktree, snapshot)}</td>
+                      <td className="buttons"><TerminalButton path={worktree.path} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Module>
+          )}
+        </>
+      )}
     </div>
   );
 }
 
-function WorktreeTable({ worktrees, snapshot, label }: { worktrees: Worktree[]; snapshot: Snapshot; label: string }) {
-  return (
-    <div className="scroll">
-      <table className="table" aria-label={label}>
-        <thead>
-          <tr>
-            <th>Worktree</th><th>State</th><th>Flags</th><th>Branch</th><th title="Commits ahead of and behind the base">Ahead / behind</th>
-            <th title={WORDS.dirty}>Dirty</th><th>Claim age</th><th>Item</th>
-            <th title={WORDS.agents}>Agents</th><th title={WORDS.sessions}>Sessions</th><th />
-          </tr>
-        </thead>
-        {worktrees.map((worktree) => <WorktreeRows key={worktree.name} worktree={worktree} snapshot={snapshot} />)}
-      </table>
-    </div>
-  );
+function outsideNote(worktree: Worktree, snapshot: Snapshot): string {
+  if (worktree.role === 'main') return 'the flow home, jobs run here';
+  const parts: string[] = [];
+  if (worktree.aheadOfBase !== null && worktree.aheadOfBase > 0) parts.push(`${worktree.aheadOfBase} ahead of ${snapshot.project.base}`);
+  if (worktree.dirtyFiles !== null && worktree.dirtyFiles > 0) parts.push(`${worktree.dirtyFiles} uncommitted`);
+  const people = worktree.sessions.length + worktree.agents.length;
+  if (people > 0) parts.push(`${people} ${people === 1 ? 'session' : 'sessions'} here`);
+  return parts.length === 0 ? 'not claimed by the flow' : parts.join(' · ');
 }
 
-function WorktreeRows({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
+/**
+ * One pool worktree: its state, the item and branch, the step, its tree and how far behind the
+ * base it is, who works in it, why it is stale and the way out, and the buttons that act on it.
+ */
+function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
+  const tone = worktreeTone(worktree.state);
   const note = worktreeNote(worktree, snapshot);
   const { records } = useActionsView();
   const open = openConflict(records, worktree, snapshot.sources.files.at);
+  const pull = worktree.item === null ? null : snapshot.pulls.find((each) => each.item === worktree.item) ?? null;
+  const branch = [worktree.branch ?? 'detached', worktree.head?.slice(0, 8) ?? null, pull === null ? null : `PR #${pull.number}`].filter((part) => part !== null).join(' · ');
+  const behind = worktree.behindBase ?? 0;
+  const behindTone = behind >= FAR_BEHIND ? 'stale' : behind > 0 ? 'needs-you' : 'quiet';
   return (
-    <tbody className={worktree.state === 'stale' ? 'worktree-rows hatched' : 'worktree-rows'}>
-      <tr>
-        <td className="mono strong nowrap" title={worktree.path}>{worktree.name}</td>
-        <td><Chip tone={worktreeTone(worktree.state)}>{worktree.state}</Chip></td>
-        <td><Flags flags={worktree.flags} /></td>
-        <td className="mono clip" title={worktree.branch ?? ''}>{worktree.branch ?? '—'}</td>
-        <td className="mono">{worktree.aheadOfBase ?? '—'} / {worktree.behindBase ?? '—'}</td>
-        <td className="mono">{worktree.dirtyFiles ?? '—'}</td>
-        <td className="mono"><Age seconds={worktree.claimAgeSeconds} takenAt={snapshot.takenAt} /></td>
-        <td className="item-cell">
-          {worktree.item === null ? '—' : <ItemLink id={worktree.item} pages={snapshot} />}
-          {worktree.itemTitle !== null && <span className="item-title clip" title={worktree.itemTitle}>{worktree.itemTitle}</span>}
-        </td>
-        <td><Processes processes={worktree.agents} takenAt={snapshot.takenAt} /></td>
-        <td><Processes processes={worktree.sessions} takenAt={snapshot.takenAt} /></td>
-        <td className="buttons">
-          <TerminalButton path={worktree.path} />
-          {worktree.role === 'pool' && worktree.claim !== null && <ActionButton kind="worktree.release" args={{ target: worktree.name }} label="Release" primary={false} />}
-        </td>
-      </tr>
-      {note !== null && <tr className="note-row"><td colSpan={COLUMNS}>{note}</td></tr>}
-      {(open !== null || worktree.syncPending !== null) && <tr className="note-row"><td colSpan={COLUMNS}><SyncNote worktree={worktree} snapshot={snapshot} open={open} /></td></tr>}
-    </tbody>
+    <article className={`worktree-card tone-${tone}${worktree.state === 'stale' ? ' hatched' : ''}`} aria-label={worktree.name}>
+      <header className="worktree-card-head">
+        <span className="mono strong worktree-name" title={worktree.path}>{worktree.name}</span>
+        <Chip tone={tone}>{worktree.state}</Chip>
+        <Flags flags={worktree.flags} />
+        <span className="worktree-right mono"><CardRight worktree={worktree} snapshot={snapshot} /></span>
+      </header>
+      <div className="worktree-card-what">
+        {worktree.item === null
+          ? <span className="muted">{worktree.state === 'free' ? 'free' : 'no item'}</span>
+          : <span className="worktree-item"><ItemLink id={worktree.item} pages={snapshot} />{worktree.itemTitle !== null && <span className="strong clip-line" title={worktree.itemTitle}>{worktree.itemTitle}</span>}</span>}
+        <div className="mono muted clip-line" title={branch}>{branch}</div>
+      </div>
+      <dl className="worktree-stats">
+        <div><dt>step</dt><dd>{worktree.claim?.step ?? '—'}</dd></div>
+        <div title={WORDS.dirty}><dt>tree</dt><dd className={worktree.dirtyFiles !== null && worktree.dirtyFiles > 0 ? 'tone-needs-you tone-text' : undefined}>{worktree.dirtyFiles === null ? '—' : worktree.dirtyFiles === 0 ? 'clean' : `${worktree.dirtyFiles} ${worktree.dirtyFiles === 1 ? 'file' : 'files'}`}</dd></div>
+        <div title={`Commits behind ${worktree.claim?.base || snapshot.project.base}; ahead ${worktree.aheadOfBase ?? '—'}`}>
+          <dt><span>behind {worktree.claim?.base || snapshot.project.base}</span><span className={`tone-${behindTone} tone-text`}>{worktree.behindBase ?? '—'}</span></dt>
+          <dd><span className={`behind-bar tone-${behindTone}`}><span style={{ width: `${Math.min(behind / FULL_BEHIND, 1) * 100}%` }} /></span></dd>
+        </div>
+      </dl>
+      {(worktree.agents.length > 0 || worktree.sessions.length > 0) && (
+        <div className="worktree-who">
+          {worktree.agents.length > 0 && <span title={WORDS.agents}><span className="muted">agents</span> <Processes processes={worktree.agents} takenAt={snapshot.takenAt} /></span>}
+          {worktree.sessions.length > 0 && <span title={WORDS.sessions}><span className="muted">sessions</span> <Processes processes={worktree.sessions} takenAt={snapshot.takenAt} /></span>}
+        </div>
+      )}
+      {note !== null && <div className="worktree-note">{note}</div>}
+      {(open !== null || worktree.syncPending !== null) && <div className="worktree-note"><SyncNote worktree={worktree} snapshot={snapshot} open={open} /></div>}
+      <footer className="buttons worktree-card-foot">
+        <PrimaryLink worktree={worktree} snapshot={snapshot} />
+        <TerminalButton path={worktree.path} />
+        {worktree.claim !== null && <ActionButton kind="worktree.release" args={{ target: worktree.name }} label="Release" primary={false} />}
+      </footer>
+      {worktree.state === 'running' && <div className="worktree-stripes run-stripes" aria-hidden="true" />}
+    </article>
   );
+}
+
+/** What the card's top right says: how long a run has gone, how long the claim has waited, or the base a free worktree sits at. */
+function CardRight({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
+  const agent = worktree.agents[0];
+  if (worktree.state === 'running' && agent !== undefined) return <Age seconds={agent.elapsedSeconds} takenAt={snapshot.takenAt} />;
+  if (worktree.claimAgeSeconds !== null) return <Age seconds={worktree.claimAgeSeconds} takenAt={snapshot.takenAt} />;
+  return <>{snapshot.project.base}</>;
+}
+
+/** The screen where a busy worktree is settled: its run on Agents, its gate on Gates. */
+function PrimaryLink({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
+  const projectId = snapshot.project.id;
+  if (worktree.state === 'running') return <a className="button primary" href={routeHash({ projectId, screen: 'agents', detail: null })}>Watch</a>;
+  if (worktree.state === 'needs-you' && worktree.item !== null) return <a className="button primary" href={routeHash({ projectId, screen: 'gates', detail: worktree.item })}>Decide</a>;
+  return null;
 }
 
 function worktreeNote(worktree: Worktree, snapshot: Snapshot) {

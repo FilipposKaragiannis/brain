@@ -15,6 +15,9 @@ import { readConfig } from '../src/config.ts';
 import type { DaemonConfig } from '../src/config.ts';
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { closeConsoleServer, createConsoleServer } from '../src/server.ts';
+import type { ServerOptions } from '../src/server.ts';
+import type { OpenRunner } from '../src/openFile.ts';
+import type { ProjectCheck } from '../src/snapshot.ts';
 import type { Snapshot } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
@@ -25,7 +28,7 @@ const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobs
 
 const PROJECT = { id: 'project', name: 'project', root: FIXTURE_ROOT };
 
-async function started(makeSettings: (registry: ProjectRegistry) => SettingsStore | null = () => null): Promise<{ monitor: ProjectMonitor; processes: FakeProcess[]; base: string; close: () => Promise<void> }> {
+async function started(makeSettings: (registry: ProjectRegistry) => SettingsStore | null = () => null, open: Pick<ServerOptions, 'openRunner' | 'platform'> = {}): Promise<{ monitor: ProjectMonitor; processes: FakeProcess[]; base: string; close: () => Promise<void> }> {
   const { spawner, processes } = plainSpawner();
   const stateDir = path.join(os.tmpdir(), `console-server-${process.pid}`);
   const registry = new ProjectRegistry((project) => {
@@ -33,7 +36,7 @@ async function started(makeSettings: (registry: ProjectRegistry) => SettingsStor
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: () => {} });
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
   }, silentLogger);
-  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger });
+  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger, ...open });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   await registry.apply([PROJECT]);
   const monitor = registry.get('project')!.monitor;
@@ -257,8 +260,8 @@ test('Settings_PutBadRoot_BadRequestWithTheReason', async () => {
   const { base, close } = await started(fileSettings);
   try {
     const response = await fetch(`${base}/api/settings`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ projects: [{ root: '/nowhere/at/all' }] }) });
-    assert.equal(response.status, 400, 'because a root without a flow is refused');
-    assert.match(((await response.json()) as { error: string }).error, /\.flow\/config\.yaml/, 'because the owner hears what is missing');
+    assert.equal(response.status, 400, 'because a root that is not there is refused');
+    assert.match(((await response.json()) as { error: string }).error, /\/nowhere\/at\/all does not exist/, 'because the owner hears what is missing');
   } finally { await close(); }
 });
 
@@ -302,6 +305,7 @@ test('Settings_PutRemovesTheProject_ItsStreamEnds', async () => {
 test('Settings_PutMovesTheIdToAnotherRoot_TheOldStreamEnds', async () => {
   const moved = path.join(mkdtempSync(path.join(os.tmpdir(), 'console-moved-')), 'project');
   mkdirSync(path.join(moved, '.flow'), { recursive: true });
+  mkdirSync(path.join(moved, '.git'));
   copyFileSync(path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), path.join(moved, '.flow', 'config.yaml'));
   const { base, close } = await started(fileSettings);
   try {
@@ -334,5 +338,73 @@ test('FlowConfigPut_WithoutJson_Refused', async () => {
   try {
     const response = await fetch(`${base}/api/projects/project/plugins/flow/config`, { method: 'PUT', headers: { authorization: 'Bearer tok' }, body: 'base: dev' });
     assert.equal(response.status, 415, 'because the body is JSON with the hash, never a bare file');
+  } finally { await close(); }
+});
+
+test('CheckProject_RouteBehindTheToken_FindingsAsTheStoreGivesThem', async () => {
+  const { base, close } = await started(fileSettings);
+  try {
+    const response = await fetch(`${base}/api/settings/check-project`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ root: LOCAL_ROOT }) });
+    const check = (await response.json()) as ProjectCheck;
+    assert.deepEqual([response.status, check.ok, check.id, check.findings.length], [200, true, 'project-local', 6], 'because the fixture folder passes every check and the page shows each one');
+    const refused = (await (await fetch(`${base}/api/settings/check-project`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ root: '/nowhere/at/all' }) })).json()) as ProjectCheck;
+    assert.deepEqual([refused.ok, refused.findings.at(-1)?.check], [false, 'exists'], 'because a folder that fails a check is an answer, not an error');
+    assert.equal((await fetch(`${base}/api/settings/check-project`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 401, 'because the check sits behind the token like every route');
+  } finally { await close(); }
+});
+
+/** A runner that records each `open` it is asked to run and succeeds. */
+function recordingRunner(): { runner: OpenRunner; ran: string[][] } {
+  const ran: string[][] = [];
+  return { ran, runner: async (command, args) => { ran.push([command, ...args]); return { ok: true }; } };
+}
+
+const openBody = (file: string, how: string): RequestInit => ({ method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ path: file, with: how }) });
+
+test('Open_UnknownPath_RefusedAndNothingRun', async () => {
+  const { runner, ran } = recordingRunner();
+  const { base, close } = await started(fileSettings, { openRunner: runner, platform: 'darwin' });
+  try {
+    for (const file of ['/etc/passwd', path.join(FIXTURE_ROOT, '.flow', 'state.json'), 'relative/config.json']) {
+      assert.equal((await fetch(`${base}/api/open`, openBody(file, 'editor'))).status, 400, `because ${file} is not a file the console knows`);
+    }
+    assert.equal((await fetch(`${base}/api/open`, openBody(path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), 'terminal'))).status, 400, 'because a file opens in the editor or in Finder, nothing else');
+    assert.deepEqual(ran, [], 'because a refused path never reaches open');
+  } finally { await close(); }
+});
+
+test('Open_KnownFiles_OpenTForTheEditorAndOpenRForFinder', async () => {
+  const { runner, ran } = recordingRunner();
+  const settingsHolder: { store: SettingsStore | null } = { store: null };
+  const { base, close } = await started((registry) => { settingsHolder.store = fileSettings(registry); return settingsHolder.store; }, { openRunner: runner, platform: 'darwin' });
+  try {
+    const view = settingsHolder.store!.view();
+    const projectConfig = path.join(FIXTURE_ROOT, '.flow', 'config.yaml');
+    const answers = [
+      await fetch(`${base}/api/open`, openBody(projectConfig, 'editor')),
+      await fetch(`${base}/api/open`, openBody(view.configFile, 'finder')),
+      await fetch(`${base}/api/open`, openBody(view.stateDir, 'finder')),
+    ];
+    assert.deepEqual(answers.map((answer) => answer.status), [200, 200, 200], 'because each is a file the console names on its Files page');
+    assert.deepEqual(ran, [['open', '-t', projectConfig], ['open', '-R', view.configFile], ['open', '-R', view.stateDir]], 'because the editor is open -t and Finder is open -R, one argv each and no shell');
+    assert.equal((await fetch(`${base}/api/open`, openBody(view.stateDir, 'editor'))).status, 400, 'because a folder has no text to edit');
+  } finally { await close(); }
+});
+
+test('Open_OffMacos_NotImplementedWithTheReason', async () => {
+  const { runner, ran } = recordingRunner();
+  const { base, close } = await started(fileSettings, { openRunner: runner, platform: 'linux' });
+  try {
+    const response = await fetch(`${base}/api/open`, openBody(path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), 'editor'));
+    assert.deepEqual([response.status, ran], [501, []], 'because there is no open command off macOS');
+    assert.match(((await response.json()) as { error: string }).error, /needs macOS/, 'because the page says why nothing opened');
+  } finally { await close(); }
+});
+
+test('Open_RunnerFails_TheErrorComesBack', async () => {
+  const { base, close } = await started(fileSettings, { openRunner: async () => ({ ok: false, error: 'No application knows how to open it' }), platform: 'darwin' });
+  try {
+    const response = await fetch(`${base}/api/open`, openBody(path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), 'editor'));
+    assert.deepEqual([response.status, ((await response.json()) as { error: string }).error], [500, 'open failed: No application knows how to open it'], 'because the owner hears why the file did not open');
   } finally { await close(); }
 });

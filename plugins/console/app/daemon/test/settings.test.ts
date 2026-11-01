@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -158,4 +158,86 @@ test('PutPort_PortFromAFlag_NoteSaysTheFlagWins', () => {
     const result = settings.update({ port: 7480 });
     assert.match(result.ok ? result.value.port.note : '', /set by --port: a port saved here is used only when it starts without --port/, 'because a saved port has no effect while the flag sets it, and the owner must not wait for it');
   } finally { cleanup(); }
+});
+
+/** A fresh folder named `name` that holds what a test names: a .flow/config.yaml, a .git, or both. */
+function folder(name: string, parts: { flow: boolean; git: boolean }): string {
+  const root = path.join(mkdtempSync(path.join(os.tmpdir(), 'console-check-')), name);
+  mkdirSync(root, { recursive: true });
+  if (parts.flow) { mkdirSync(path.join(root, '.flow')); writeFileSync(path.join(root, '.flow', 'config.yaml'), 'base: main\n'); }
+  if (parts.git) mkdirSync(path.join(root, '.git'));
+  return root;
+}
+
+test('CheckProject_FolderWithAFlowInGit_EveryFindingOkAndNoCommand', () => {
+  const { settings, cleanup } = store([], FILE_PROJECT);
+  try {
+    const check = settings.checkProject(LOCAL_ROOT);
+    assert.deepEqual(check.findings.map((finding) => [finding.check, finding.ok]), [['path', true], ['exists', true], ['flow', true], ['git', true], ['watched', true], ['name', true]], 'because the fixture folder exists, holds a flow, sits in this repository and is not watched yet');
+    assert.deepEqual([check.ok, check.error, check.id, check.root, check.initCommand], [true, null, 'project-local', LOCAL_ROOT, null], 'because the PUT would take it under its folder name');
+  } finally { cleanup(); }
+});
+
+test('CheckProject_NoFlowConfig_FlowFindingFailsWithTheInitCommand', () => {
+  const { settings, cleanup } = store([], FILE_PROJECT);
+  const root = folder('fresh repo', { flow: false, git: true });
+  try {
+    const check = settings.checkProject(root);
+    assert.deepEqual(check.findings.filter((finding) => !finding.ok).map((finding) => finding.check), ['flow'], 'because only the .flow/config.yaml is missing');
+    assert.equal(check.initCommand, `cd '${root}' && claude /flow:init`, 'because the owner gets the line to run there, the folder quoted for its space');
+    assert.match(check.error ?? '', /run flow:init there first/, 'because the refusal is the PUT\'s own words');
+  } finally { cleanup(); rmSync(path.dirname(root), { recursive: true, force: true }); }
+});
+
+test('CheckProject_MissingFolder_OnlyThePathAndExistsFindings', () => {
+  const { settings, cleanup } = store([], FILE_PROJECT);
+  try {
+    const check = settings.checkProject('/nowhere/at/all');
+    assert.deepEqual(check.findings.map((finding) => [finding.check, finding.ok]), [['path', true], ['exists', false]], 'because nothing more can be said of a folder that is not there');
+  } finally { cleanup(); }
+});
+
+test('CheckProject_AndThePut_AgreeOnEveryKindOfFolder', () => {
+  const made = [folder('outside-git', { flow: true, git: false }), folder('project', { flow: true, git: true }), folder('no-flow', { flow: false, git: true })];
+  const cases: unknown[] = [LOCAL_ROOT, FIXTURE_ROOT, '/nowhere/at/all', 'relative/path', path.join(FIXTURES, 'project-wt-2'), path.join(FIXTURE_ROOT, '.flow', 'config.yaml'), ...made];
+  try {
+    for (const root of cases) {
+      const checked = store([], FILE_PROJECT);
+      const put = store([], FILE_PROJECT);
+      try {
+        const check = checked.settings.checkProject(root);
+        const update = put.settings.update({ projects: [{ root: FIXTURE_ROOT }, { root }] });
+        assert.deepEqual([check.ok, check.error], [update.ok, update.ok ? null : update.error], `because the check and the PUT must give ${String(root)} the same answer`);
+        assert.equal(check.ok, check.findings.every((finding) => finding.ok), `because a failed finding for ${String(root)} is a refused PUT, and a refused PUT shows a failed finding`);
+      } finally { checked.cleanup(); put.cleanup(); }
+    }
+  } finally { for (const root of made) rmSync(path.dirname(root), { recursive: true, force: true }); }
+});
+
+test('CheckProject_AlreadyWatchedAndNameClash_EachSaysWhich', () => {
+  const { settings, cleanup } = store([], FILE_PROJECT);
+  const twin = folder('project', { flow: true, git: true });
+  try {
+    const watched = settings.checkProject(FIXTURE_ROOT).findings.find((finding) => !finding.ok);
+    const clash = settings.checkProject(twin).findings.find((finding) => !finding.ok);
+    assert.deepEqual([watched?.check, clash?.check], ['watched', 'name'], 'because the same root and another root under the same folder name are told apart');
+    assert.match(clash?.text ?? '', new RegExp(`${FIXTURE_ROOT}.*also called project`), 'because the owner hears which watched project has the name');
+  } finally { cleanup(); rmSync(path.dirname(twin), { recursive: true, force: true }); }
+});
+
+test('CheckProject_ProjectsFromAFlag_RefusedAsThePutIs', () => {
+  const { settings, cleanup } = store(['--project', FIXTURE_ROOT], {});
+  try {
+    const check = settings.checkProject(LOCAL_ROOT);
+    assert.deepEqual([check.ok, check.error], [false, (settings.update({ projects: [{ root: FIXTURE_ROOT }, { root: LOCAL_ROOT }] }) as { error: string }).error], 'because a flag would bring the list back, so neither the check nor the PUT takes a new root');
+  } finally { cleanup(); }
+});
+
+test('PutProjects_FolderOutsideGit_RefusedWithTheReason', () => {
+  const { settings, cleanup } = store([], FILE_PROJECT);
+  const root = folder('loose', { flow: true, git: false });
+  try {
+    const result = settings.update({ projects: [{ root: FIXTURE_ROOT }, { root }] });
+    assert.match(result.ok ? '' : result.error, /not in a git checkout/, 'because the flow works on branches and worktrees, which a folder outside git has none of');
+  } finally { cleanup(); rmSync(path.dirname(root), { recursive: true, force: true }); }
 });
