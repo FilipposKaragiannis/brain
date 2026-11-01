@@ -278,21 +278,44 @@ test('GateSession_CodexTwoSessionsStartedBeforeTheRaise_TheLaterStartedWins', as
   } finally { done(); }
 });
 
-test('GateSession_ScannedOncePerGate_AMissTriedAgainAfterAMinute', async () => {
+test('GateSession_MissWithinAMinute_NotScannedAgain', async () => {
   const { dir, done } = home();
   try {
     const folder = claudeProjectFolder(dir, '/p/app-wt-2');
     let listed = 0;
+    const counting: SessionFiles = { ...diskSessionFiles, list: async (asked) => { listed += 1; return diskSessionFiles.list(asked); } };
+    const found = new SessionLocator({ home: dir, clock: () => NOW, files: counting });
+    await found.gates([gateAt('claude')]);
+    written(path.join(folder, 'raised-it-3333.jsonl'), startedLine(raisedPlus(-40)), raisedPlus(1));
+    assert.deepEqual([await found.gates([gateAt('claude')]), listed], [[null], 1], 'because a miss is not scanned again on every files read');
+  } finally { done(); }
+});
+
+test('GateSession_MissAMinuteLater_ScannedAgainAndFound', async () => {
+  const { dir, done } = home();
+  try {
+    const folder = claudeProjectFolder(dir, '/p/app-wt-2');
+    let now = NOW;
+    const found = new SessionLocator({ home: dir, clock: () => now, files: diskSessionFiles });
+    await found.gates([gateAt('claude')]);
+    written(path.join(folder, 'raised-it-3333.jsonl'), startedLine(raisedPlus(-40)), raisedPlus(1));
+    now = new Date(NOW.getTime() + 2 * MINUTE_MS);
+    assert.equal((await found.gates([gateAt('claude')]))[0]?.id, 'raised-it-3333', 'because a miss is tried again a minute later');
+  } finally { done(); }
+});
+
+test('GateSession_Found_NotScannedAgainWhileTheGateWaits', async () => {
+  const { dir, done } = home();
+  try {
+    written(path.join(claudeProjectFolder(dir, '/p/app-wt-2'), 'raised-it-3333.jsonl'), startedLine(raisedPlus(-40)), raisedPlus(1));
+    let listed = 0;
     let now = NOW;
     const counting: SessionFiles = { ...diskSessionFiles, list: async (asked) => { listed += 1; return diskSessionFiles.list(asked); } };
     const found = new SessionLocator({ home: dir, clock: () => now, files: counting });
-    assert.deepEqual(await found.gates([gateAt('claude')]), [null], 'because nothing was written yet');
-    written(path.join(folder, 'raised-it-3333.jsonl'), startedLine(raisedPlus(-40)), raisedPlus(1));
-    assert.deepEqual([await found.gates([gateAt('claude')]), listed], [[null], 1], 'because a miss is not scanned again on every files read');
-    now = new Date(NOW.getTime() + 2 * MINUTE_MS);
-    assert.equal((await found.gates([gateAt('claude')]))[0]?.id, 'raised-it-3333', 'because a miss is tried again a minute later');
     await found.gates([gateAt('claude')]);
-    assert.equal(listed, 2, 'because a gate\'s session, once found, is kept while the gate waits');
+    now = new Date(NOW.getTime() + 2 * MINUTE_MS);
+    await found.gates([gateAt('claude')]);
+    assert.equal(listed, 1, 'because a gate\'s session, once found, is kept while the gate waits');
   } finally { done(); }
 });
 
@@ -460,11 +483,9 @@ test('AgentGoneFromTheProcessList_ListedAsEndedWithItsSession', async () => {
 });
 
 test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async () => {
-  const asked: GateLookup[][] = [];
-  const gateSessions = { gates: async (gates: GateLookup[]) => { asked.push(gates); return gates.map(() => SESSION); } };
+  const gateSessions = { gates: async (gates: GateLookup[]) => gates.map((gate) => (gate.cwd === path.join(FIXTURES, 'project-wt-2') && gate.raisedAt === '2026-10-22T07:43:00Z' ? SESSION : null)) };
   const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, gateSessions });
   await monitor.refresh('files');
-  assert.deepEqual(asked[0]?.map((gate) => [gate.item, gate.cwd, gate.raisedAt]), [['gh#7', path.join(FIXTURES, 'project-wt-2'), '2026-10-22T07:43:00Z']], 'because the gate\'s session is looked for in the worktree that claims its item, from the time it was raised');
   assert.deepEqual(monitor.snapshot?.gates.find((gate) => gate.item === 'gh#7')?.session, SESSION, 'because the card offers the located session when no agent on the item is known');
   assert.deepEqual(monitor.actionContext().gateSessions, [{ item: 'gh#7', cwd: path.join(FIXTURES, 'project-wt-2'), session: SESSION }], 'because terminal.open resumes only a session located for a waiting gate, in its worktree');
 });

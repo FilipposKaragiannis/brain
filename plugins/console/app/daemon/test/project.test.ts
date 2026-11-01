@@ -228,18 +228,29 @@ test('SweepFails_NotRunAgain', async () => {
   } finally { copy.cleanUp(); }
 });
 
-test('FilesRead_PluginReader_AskedWithTheRootAndPluginRoot', async () => {
-  const asked: [string, string | null][] = [];
+test('FilesRead_PluginReaderForTheRoot_SnapshotCarriesItsPlugins', async () => {
   const plugins = [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: '1.27.0' }];
   const monitor = new ProjectMonitor({
     project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE,
-    plugins: async (root, pluginRoot) => { asked.push([root, pluginRoot]); return plugins; },
+    plugins: async (root) => (root === FIXTURE_ROOT ? plugins : []),
+  });
+  await monitor.refresh('files');
+  assert.deepEqual(monitor.snapshot?.project.plugins, plugins, 'because a project-scope install is matched on the project root, and the header shows what the hosts have installed');
+});
+
+test('GitReadAfterTheFiles_PluginsNotReadAgain', async () => {
+  const reads = [
+    [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: '1.27.0' }],
+    [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.28.0', codex: '1.28.0' }],
+  ];
+  let next = 0;
+  const monitor = new ProjectMonitor({
+    project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE,
+    plugins: async () => reads[Math.min(next++, reads.length - 1)]!,
   });
   await monitor.refresh('files');
   await monitor.refresh('git');
-  assert.equal(asked.length, 1, 'because the plugins are read with the files, not on every snapshot build');
-  assert.equal(asked[0]?.[0], FIXTURE_ROOT, 'because a project-scope install is matched on the project root');
-  assert.deepEqual(monitor.snapshot?.project.plugins, plugins, 'because the header shows what the hosts have installed');
+  assert.deepEqual(monitor.snapshot?.project.plugins, reads[0], 'because the plugins are read with the files, not on every snapshot build');
 });
 
 test('Monitor_RefreshNowWithNothingNew_StillSendsTheSnapshot', async () => {

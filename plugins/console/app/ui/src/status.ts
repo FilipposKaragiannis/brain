@@ -37,7 +37,6 @@ export function attentionTone(kind: AttentionKind): Tone {
     case 'disagreement': return 'mixed';
     case 'pr-mergeable': return 'ready';
     case 'pr-changes-requested': return 'review';
-    // A field to fill in on the tracker: a chore, quieter than a decision.
     case 'needs-field': return 'quiet';
   }
 }

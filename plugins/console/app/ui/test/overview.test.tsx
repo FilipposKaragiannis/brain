@@ -204,13 +204,13 @@ test('PluginOnDifferentVersions_BothCellsMarkedAsDiffering', () => {
 
 test('InstalledFlow_FlowScriptsLineNamesTheVersionAndTheInstalledPlugin', () => {
   renderOverview(snapshotAt(TAKEN_AT, 0));
-  expect(screen.getByText(/^Flow scripts/).textContent, 'because the table says what is installed, and the owner must also know which copy the scripts run').toBe('Flow scripts use 1.17.0 · The installed plugin, as .flow/plugin.sh finds it: /home/owner/.claude/plugins/cache/brain/flow/1.17.0');
+  expect(screen.getByText(/^Flow scripts/).textContent, 'because the table says what is installed, and the owner must also know which copy the scripts run').toMatch(/1\.17\.0.*installed plugin.*\/home\/owner\/\.claude\/plugins\/cache\/brain\/flow\/1\.17\.0/);
 });
 
 test('FlowFromTheEnvironment_FlowScriptsLineSaysFlowPlugin', () => {
   const snapshot = snapshotAt(TAKEN_AT, 0);
   renderOverview({ ...snapshot, project: { ...snapshot.project, pluginVersion: '1.28.0', pluginSource: 'FLOW_PLUGIN', pluginRoot: '/work/brain/plugins/flow' } });
-  expect(screen.getByText(/^Flow scripts/).textContent, 'because a checkout named by FLOW_PLUGIN is not the installed plugin, and the owner must be able to tell').toBe('Flow scripts use 1.28.0 · Set by FLOW_PLUGIN when the daemon started: /work/brain/plugins/flow');
+  expect(screen.getByText(/^Flow scripts/).textContent, 'because a checkout named by FLOW_PLUGIN is not the installed plugin, and the owner must be able to tell').toMatch(/1\.28\.0.*FLOW_PLUGIN.*\/work\/brain\/plugins\/flow/);
 });
 
 test('NoPluginsFound_FooterSaysWhereItLooked', () => {

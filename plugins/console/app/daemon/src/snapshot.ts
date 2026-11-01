@@ -246,8 +246,9 @@ export type Gate = {
   body: string | null;
   /**
    * The session that raised the gate, found from the host's transcripts in the claimed worktree
-   * (the newest written from 30 minutes before the raise on), so it can be discussed after the
-   * daemon restarts; null with no claimed worktree, a host other than claude or codex, or none found.
+   * (of those written at or after 30 minutes before the raise, the one that started latest no later
+   * than 5 seconds after the raise), so it can be discussed after the daemon restarts; null with no
+   * claimed worktree, a host other than claude or codex, or none found.
    */
   session: SessionRef | null;
 };

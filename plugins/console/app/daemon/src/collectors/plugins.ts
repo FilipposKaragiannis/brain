@@ -10,6 +10,7 @@ const CACHED_FLOW = /[/\\]plugins[/\\]cache[/\\]([^/\\]+)[/\\]flow[/\\][^/\\]+[/
 /** A Codex config table that names a plugin: `[plugins."<name>@<marketplace>"]`. */
 const CODEX_PLUGIN_TABLE = /^\[\s*plugins\.(?:"([^"]+)"|'([^']+)')\s*\]\s*(?:#.*)?$/;
 const CODEX_ENABLED = /^enabled\s*=\s*(true|false)\s*(?:#.*)?$/;
+const FOLDER_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /** One install of a plugin in Claude Code's installed_plugins.json. */
 export type ClaudeInstall = { name: string; marketplace: string; scope: string; projectPath: string | null; version: string };
@@ -26,7 +27,9 @@ export const noPlugins: PluginReader = async () => [];
 
 function splitKey(key: string): { name: string; marketplace: string } | null {
   const at = key.lastIndexOf('@');
-  return at <= 0 || at === key.length - 1 ? null : { name: key.slice(0, at), marketplace: key.slice(at + 1) };
+  const name = key.slice(0, at);
+  const marketplace = key.slice(at + 1);
+  return at < 0 || !FOLDER_NAME.test(name) || !FOLDER_NAME.test(marketplace) ? null : { name, marketplace };
 }
 
 /** Every install `~/.claude/plugins/installed_plugins.json` lists; nothing when it is missing or not that shape. */

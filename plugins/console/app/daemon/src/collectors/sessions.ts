@@ -228,7 +228,7 @@ export class SessionLocator {
     const remembered = this.scanned.get(process.pid);
     const same = remembered !== undefined && Math.abs(remembered.startedMs - startedMs) <= SAME_PROCESS_MS;
     if (same && (remembered.session !== null || now - remembered.scannedAt < RESCAN_MS)) return { session: remembered.session, certain: false };
-    const session = process.host === 'claude' ? await this.claudeScan(process.cwd, startedMs) : await this.codexScan(process.cwd, startedMs, now);
+    const session = process.host === 'claude' ? await this.claudeScan(process.cwd, startedMs, null) : await this.codexScan(process.cwd, startedMs, now, null);
     this.scanned.set(process.pid, { startedMs, session, scannedAt: now });
     return { session, certain: false };
   }
@@ -248,7 +248,7 @@ export class SessionLocator {
    * The claude transcript in a folder written at or after `writtenSince`: the newest written, or
    * with `startedBy` (a gate) the latest started of those that started by then.
    */
-  private async claudeScan(cwd: string, writtenSince: number, startedBy: number | null = null): Promise<SessionRef | null> {
+  private async claudeScan(cwd: string, writtenSince: number, startedBy: number | null): Promise<SessionRef | null> {
     const folder = claudeProjectFolder(this.deps.home, cwd);
     let best: { file: string; rank: number; modified: number } | null = null;
     for (const name of await this.deps.files.list(folder)) {
@@ -269,7 +269,7 @@ export class SessionLocator {
    * The Codex session file of a folder written at or after `writtenSince`: the newest written, or
    * with `startedBy` (a gate) the latest started of those that started by then.
    */
-  private async codexScan(cwd: string, writtenSince: number, now: number, startedBy: number | null = null): Promise<SessionRef | null> {
+  private async codexScan(cwd: string, writtenSince: number, now: number, startedBy: number | null): Promise<SessionRef | null> {
     const root = path.join(this.deps.home, '.codex', 'sessions');
     const from = Math.max(writtenSince - MILLISECONDS_PER_DAY, now - CODEX_DAYS_BACK * MILLISECONDS_PER_DAY);
     const days = new Set<string>();

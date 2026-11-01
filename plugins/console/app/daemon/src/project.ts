@@ -148,7 +148,6 @@ export class ProjectMonitor {
         ...(this.current?.agents ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: true }])),
         ...(this.current?.ended ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: false }])),
       ],
-      // Only the gates the snapshot shows waiting, each with the session located for it.
       gateSessions: (this.current?.gates ?? []).flatMap((gate) => {
         const found = this.gateSessions.get(gateSessionKey(gate.item, gate.raisedAt));
         return found === undefined ? [] : [{ item: gate.item, cwd: found.cwd, session: found.session }];
@@ -242,7 +241,7 @@ export class ProjectMonitor {
       this.reads.failing[source] = true;
       this.log.warn('collect.failed', { project: this.project.id, source, error: message });
     }
-    this.rebuild();
+    this.rebuild(false);
     if (source === 'pulls' && this.facts.pulls.facts !== null) await this.sweepLanded();
   }
 
@@ -318,7 +317,7 @@ export class ProjectMonitor {
     }
   }
 
-  private rebuild(publish = false): void {
+  private rebuild(publish: boolean): void {
     const flow = this.facts.files.facts;
     if (flow === null) return;
     const now = this.clock();

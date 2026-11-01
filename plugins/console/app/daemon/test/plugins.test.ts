@@ -158,6 +158,19 @@ test('PluginReader_ProjectConfigEnablesPluginHomeDoesNot_Listed', async () => {
   }
 });
 
+test('CodexConfig_PluginNameWithPathSegments_Skipped', async () => {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'plugins-home-'));
+  const root = mkdtempSync(path.join(os.tmpdir(), 'plugins-root-'));
+  try {
+    mkdirSync(path.join(home, '.codex', 'plugins', 'x', '9.9.9'), { recursive: true });
+    writeCodexConfig(root, '[plugins."../../x@brain-plugins"]\nenabled = true\n');
+    assert.deepEqual(await pluginReader(home)(root, null), [], 'because a project\'s own config.toml must not steer the read to a folder outside the Codex cache, so a name with path segments is no plugin');
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('PluginReader_ProjectConfigDisablesPluginHomeEnables_NotListed', async () => {
   const home = mkdtempSync(path.join(os.tmpdir(), 'plugins-home-'));
   const root = mkdtempSync(path.join(os.tmpdir(), 'plugins-root-'));

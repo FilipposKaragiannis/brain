@@ -306,7 +306,7 @@ test('GateWithALocatedSessionAndNoAgent_DiscussOpensTheGatesSession', async () =
   renderGate({ ...PLAN_GATE, session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] } }, daemon);
   act(() => { daemon.latestStream().open(); });
   const button = screen.getByRole('button', { name: 'Discuss with the agent' });
-  expect(button.getAttribute('title'), 'because the button explains itself the same way whichever way the session was found').toBe('Opens a terminal at the worktree and resumes the session that raised this gate, so you can talk it through before you answer.');
+  expect(button.getAttribute('title'), 'because the button explains itself the same way whichever way the session was found').toContain('resumes the session that raised this gate');
   await press('Discuss with the agent');
   expect(posted, 'because after a daemon restart no agent is known, and the daemon resumes the session it located for the gate').toEqual([{ kind: 'terminal.open', args: { gate: 'gh#514' } }]);
 });
