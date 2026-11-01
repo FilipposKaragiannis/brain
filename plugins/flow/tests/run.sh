@@ -792,6 +792,16 @@ check "comments job: a new review thread starts a pass" grep -q 'comments gh#21'
 check "comments job: a thread still awaiting a reply gets one more pass" sh -c "grep -q 'comments gh#21' '$HOST_LOG' && grep -q 'gh#21: open thread(s) 901 still wait on a reply, one more pass' .flow/log/comments.log"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: then the same awaiting threads are skipped, and the owner told once" sh -c "[ ! -s '$HOST_LOG' ] && [ \"\$(grep -c 'comments	gh#21: review thread(s) on .* still wait on a reply after two passes' .flow/events.log)\" = 1 ]"
+# The extra pass a stopped host refuses is not spent: after the clear it runs.
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].append({'databaseId': 904, 'body': 'Still drops it.', 'author': {'login': 'chatgpt-codex-connector'}, 'createdAt': 't'}); json.dump(d, open(p,'w'))"
+"$P/jobs/comments.sh" claude >/dev/null
+FLOW_HOST_GATES=1 sh -c '. "$FLOW_PLUGIN/lib/flow.sh"; . "$FLOW_PLUGIN/lib/host.sh"; host_stop claude spend-limit "API Error: 422 ExceededBudget"'
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a stopped host refuses the extra pass" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: open thread(s) 904 still wait on a reply, one more pass' .flow/log/comments.log"
+"$P/scripts/gate.sh" clear claude >/dev/null
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: the extra pass a stopped host refused runs after the clear" grep -q 'comments gh#21' "$HOST_LOG"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].pop(); json.dump(d, open(p,'w'))"
 check "activity: a reply from before 1.19.0 (no marker) by the flow's login is ours" sh -c "python3 - '$FAKE_GH_DIR/issues.json' <<'PY5'
 import json, sys
 d = json.load(open(sys.argv[1]))

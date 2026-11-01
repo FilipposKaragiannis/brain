@@ -180,8 +180,9 @@ for t in $targets; do
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
   # A pass the stopped host refused or cut ends the run: no later pass would start, and this PR is
-  # tried again after the clear, with no failure counted.
-  if [ "$code" -ne 0 ] && job_host_stopped; then exit 0; fi
+  # tried again after the clear, with no failure counted. The saved activity goes, so the extra
+  # pass this run may have marked as taken still runs.
+  if [ "$code" -ne 0 ] && job_host_stopped; then rm -f "$f"; exit 0; fi
   why=""
   if [ "$code" -ne 0 ]; then why="host exit $code"
   elif [ -n "$(cut_short "$out")" ]; then why="the host stopped the addresser before it finished"; fi
