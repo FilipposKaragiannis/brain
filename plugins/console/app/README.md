@@ -74,7 +74,7 @@ One command, `node daemon/src/main.ts <subcommand>` (the launcher `~/.local/bin/
 | `status` | loaded or not, the pid, the port, the URL without the token, the config file, the state dir and the version; exit 1 when nothing runs |
 | `open` | opens the URL with the token in the default browser (`open`) |
 | `url` | prints the URL with the token, for scripts; exit 1 when nothing runs |
-| `add <path>` | adds a project (a folder with `.flow/config.yaml`, relative to here or `~/`); through `PUT /api/settings` when the daemon runs, so it is watched at once, else into the config file with the same checks; refused when the launch agent names its projects with `--project` (`brain-console install --project …` changes those) |
+| `add <path>` | adds a project (a folder inside a git checkout with `.flow/config.yaml`, relative to here or `~/`); through `PUT /api/settings` when the daemon runs, so it is watched at once, else into the config file with the same checks; refused when the launch agent names its projects with `--project` (`brain-console install --project …` changes those) |
 | `remove <path>` | drops a project the same way; the last one stays |
 | `logs [-f]` | the last 200 lines of `<state dir>/daemon.log` (the launchd daemon's), `-f` follows it |
 | `install [flags]` | the launch agent, as under Run it on login; with no flags over an agent already written, its flags are kept |
@@ -130,7 +130,8 @@ Settings writes `config.json` with them, and `projects.json` is then no longer r
 not valid JSON, or holds a setting the daemon does not know, stops the daemon at start with the reason.
 
 `PUT /api/settings` (the Settings screen) changes the settings its body names and keeps the rest:
-the whole body is checked first (every root holds `.flow/config.yaml`, no two share a folder name,
+the whole body is checked first (every root exists, is a folder inside a git checkout and holds
+`.flow/config.yaml`, none is watched twice, no two share a folder name,
 at least one stays, the terminal is a name or a non-empty command, `"terminal": null` goes back to
 the first installed), then merged into the file as it is on disk at that moment (a hand edit made
 while the daemon runs is kept; a file that no longer parses is refused with the reason, never
@@ -147,6 +148,8 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects` | every project with its counts |
 | `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon |
 | `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
+| `POST /api/settings/check-project` | body `{"root"}`: whether that folder can be added, with the same checks the PUT runs on the list plus it; 200 with `{root, id, ok, error, findings: [{check, ok, text}], initCommand}`, `check` one of `path`, `exists`, `flow`, `git`, `watched`, `name`, and `initCommand` (`cd '<root>' && claude /flow:init`) only while `.flow/config.yaml` is missing |
+| `POST /api/open` | body `{"path", "with": "editor" \| "finder"}`: runs `open -t <path>` or `open -R <path>` (execFile, no shell) for the console settings file, the state folder (Finder only) or a watched project's `.flow/config.yaml`; 400 for any other path, 501 off macOS |
 | `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings, hostDefaults}` (below) |
 | `PUT /api/projects/<id>/plugins/flow/config` | change it, body `{"changes": [{"path", "value"}], "hash", "force"?}` or `{"text", "hash", "force"?}`; 200 with the new document plus `saved` and `followUps`, 400 with the reason, 409 with `reason: "stale"` or `"dirty"` |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
@@ -306,21 +309,27 @@ sync note. Every other write goes through an action's script.
 ## Flow settings
 `daemon/src/plugins/flow/` edits the project's `.flow/config.yaml`. `schema.ts` is a fixed schema
 of every key the flow plugin reads (its scripts, `skills/init/SKILL.md` and the foosbrawl file):
-the dotted path, the type (`string`, `number` with a range where one is known, `boolean`, `enum`
+the dotted path, a plain label the form shows in its place ("Base branch" for `base`), the type (`string`, `number` with a range where one is known, `boolean`, `enum`
 with its values, `enumOrText` with its known values but any text allowed, `list` of text, `map` of name to text, `duration` like `1h`, `schedule` like
 `every 30m --workers 2`, `daily 02:00` or `weekly sun 07:00` with the args `jobs.sh` takes), one
-sentence on what changing it does, its group (Tracker, Readiness, Worktree pool, Gates and
-verification, Reviews, Notifications, Jobs, Intake) and its follow-up: `jobs.schedule.*` and
+sentence on what changing it does, its group, which is its page in Settings (`GROUP_FAMILY` puts each under Plugins › Flow: Tracker,
+Readiness, Worktree pool, Gates and verification, Reviews, Notifications; under Jobs: Schedules,
+Next job, Health job, Comments job, Retro job, Intake job; or Agents), an optional `part` that
+heads a few fields inside a page (Tracker: "Where new items go" and "GitHub"; Notifications:
+"Channels" and "When to notify"; Agents: "Claude", "Codex" and "Deprecated"), a `placeholder`
+with a concrete example for every free-text key, `adapter: 'github'` on the keys only the GitHub
+adapter reads, `keys` for a map with fixed names (`github.fields`: size, priority, area;
+`github.status`: backlog, ready, gate, running, review), `values` for a list of fixed choices
+(`github.ready_needs`: priority, size), `rows` for a map of free names (`gates`), and its follow-up: `jobs.schedule.*` and
 `jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action,
 offered only while some job keeps a schedule, since install exits 2 when none has); a job whose
 `jobs.schedule.<job>` is removed or emptied is never touched by install again, so it gets
 `jobs.sh uninstall <job>` (the `job.uninstall` action, one per job) instead;
 the pool keys (`pool`, `pool_max`, `worktree_copy`, `worktree_setup`) count at the next claim.
 
-The Jobs group holds the jobs' host and, per host, the model and effort of every unattended session
+The Agents page holds, per host, the model and effort of every unattended session
 on that host without an agent of its own: the steps with no agent (design, implement, review,
-explain) and the comments, intake and retro jobs (flow 1.20.0): `jobs.host` (`claude` or `codex`, claude when unset; the
-workers inside a run keep their own models), then `jobs.claude.model` (opus, sonnet, haiku,
+explain) and the comments, intake and retro jobs (flow 1.20.0): `jobs.claude.model` (opus, sonnet, haiku,
 fable), `jobs.claude.effort` (low, medium, high, xhigh, max), `jobs.codex.model` (gpt-6-astra,
 gpt-6-sol, gpt-6-luna) and `jobs.codex.effort` (low, medium, high, xhigh), where empty or unset
 takes the host's own default; they need no follow-up, the next job run reads the file. The two
@@ -590,27 +599,38 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Seven project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles, a
+imports). Seven project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
+Needs you, Running, Stale, Checks red and Free, each with a line under its count: the oldest wait
+and its item, the steps running on which items, the stale worktrees, the red PRs and the free
+worktrees; a
 readiness line from `readiness` that says what runs, or why nothing does: how many items the next
 job could take, how many next-in-line items lack a field and how many more in the backlog do, how
-many wait at gates and how many are blocked; the needs-you table oldest first with the next-in-line
-items that lack a field folded after five, the latest 30 events with Show
-all, the disagreements with what each store says and the button that settles it, the 3x3 pool map
-with each item's title, and the sources strip), Gates (a decision card per gate, one line on what
+many wait at gates and how many are blocked; Needs you, a list oldest first where each row has
+its kind, its item and title over what it waits on, how long it has waited with a bar that turns
+late at a day and old at two, and one button that settles it (the row's own action, else Decide,
+Open PR, Fix, Fill in or Open), with the next-in-line items that lack a field folded after five;
+beside it Running now, each agent's step, item, worktree, host and PR with its age, the last line
+of the first claude transcript, and the scheduled jobs in the order they run next; then the latest
+12 events with Show all; the disagreements, only when there are some, with what each store says
+and the button that settles it; the pool map, a cell per worktree with its item, title and what it
+waits on, striped while it runs; and the sources strip), Gates (a decision card per gate, one line on what
 its kind asks, the PR with its state and unresolved review threads when the item has one, the
 questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
-matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`), Worktrees (the
-pool, then the worktrees outside it under their own heading; each row has its item's title, its
-agents and sessions with pid, host and age and the command on hover, why it is stale and the way
+matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`), Worktrees (filter
+chips with counts for all, running, needs you, stale, claimed and free, the pool size and base,
+and Run health; a card per pool worktree with its name, state and flags, its item and title, its
+branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
+its agents and sessions with pid, host and age and the command on hover, a Watch button to the
+run or a Decide button to the gate, why it is stale and the way
 out (for a branch far behind, a "Merge <base> in" button that runs `worktree.sync` when the
 worktree is clean, has no run record and no agent, else the same words without the button;
 after a sync that conflicted, the conflicting files folded after five and "Hand to the flow",
 which runs `sync.handoff` with the conflict's refs, or while a run record names the item and its
 note is there "A run is going; the sync step runs first when it starts", and between an accepted
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
-<refs>" whenever `syncPending` is set, so a note the health job wrote shows too), a
-legend for dirty, agents and sessions; Open in Terminal on every row, the project root
-included, Release, Health), Board (`#/<project>/board/<item>`: the open items with filters for
+<refs>" whenever `syncPending` is set, so a note the health job wrote shows too), Open in
+Terminal on every card and Release on a claimed one; then the worktrees outside the pool, the
+project root included, in a table with their branch and Open in Terminal), Board (`#/<project>/board/<item>`: the open items with filters for
 under way, in review, ready, blocked and backlog, each row with its state, step, worktree, PR and
 spend, a head line summing the spend of the rows shown, and an item's detail beside the list:
 its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents and jobs (a main column and a side column. Runs: a card per live run, the first open and the
@@ -642,30 +662,54 @@ value: Project (the name; its title is the root), Repository (`owner/name`, link
 ("GitHub issues", linked to the issues page, on the github adapter; "local" on local), Base branch,
 Flow plugin (the version; its title says whether it is the installed plugin or the one
 `FLOW_PLUGIN` named, with its folder) and Jobs run on (`claude` or `codex`), with the Settings
-link at the far right. At phone width the fields wrap. Settings (`#/settings`, linked from the top bar of every screen) lists the projects
-with Add (a path) and Remove, or the note why they cannot change; the terminal as radio buttons
-(the first installed, iTerm, Terminal, Ghostty, a custom command as a JSON array, checked as you type); the port, read
-only, with the restart note; the config file, the state folder and whether the daemon runs under
-launchd. A refused save shows the daemon's reason. Under the console's own settings, one section
-per project, "flow settings for <project>", edits its `.flow/config.yaml`: the note "This edits
+link at the far right. At phone width the fields wrap. Settings (`#/settings`, linked from the top bar of every screen) shows one page at a time
+beside a menu: General; Projects; Plugins › Flow with the Flow pages; Jobs with Schedules and
+Configuration; and Agents. Plugins, Flow and Jobs expand and collapse with a chevron, open at
+first; the browser keeps which are closed, and the group holding the page on screen stays open.
+Configuration shows a trail, Configuration › Next, Health, Comments, Retro, Intake, one button per
+job: only the chosen job's settings show, the choice holds while you move between pages, and a
+draft on one job waits while another shows. With two projects or more, a picker at the top of the menu chooses the project the
+Plugins, Jobs and Agents pages edit. General (where the page opens) has Terminal, radio buttons for
+the first installed, iTerm, Terminal, Ghostty or a custom command as a JSON array, checked as you
+type; Daemon, the port it listens on now with a box to save another for the next start, the
+restart note, and whether it runs under launchd or a terminal; and Files, the config file, the
+state folder and each project's `.flow/config.yaml` with Show in Finder, over each project's Raw
+YAML. Projects lists the watched projects with Remove, or the note why they cannot change, and
+Add a project, a wizard in four steps: the folder; the daemon's check of it, a mark per finding
+and, when `.flow/config.yaml` is missing, the flow:init command to run there and Check again; the
+name and root to confirm; and a link to the new project's overview. A refused save shows the
+daemon's reason. A flow page
+edits the project's `.flow/config.yaml`: the note "This edits
 .flow/config.yaml in the project. It is a tracked file: commit it there.", the file's warnings,
-then a form per schema group (each field labelled by its key, the control for its type: a select
-for an enum or a boolean with "(not set)" to take the key out, a number or text box, a text area
-of one item or `name: value` per line for a list or a map; the help under it) with its own Save,
-disabled until something in the group changed. In Jobs, `jobs.host` is a dropdown and both hosts' model and effort dropdowns show under it, each listing its values and "host default"
+then the page's fields under their part headings (each labelled in words with its key under the
+label and the help under the control, with a concrete example in an empty box). The control
+follows the field: a select for an enum or a boolean with "(not set)" to take the key out, a number
+or text box, a text area of one item per line for a list, checkboxes for a list of fixed choices, a
+labelled box per name for a map with fixed names (empty leaves the name out), rows of name and
+command with Add a check for `gates`, a switch and a count per host for `jobs.workers` (a host
+switched off is left out, and the last one cannot be), and for a schedule the timing as dropdowns
+and fields, then the host ("jobs.host" keeps following it), the model and effort, for next the
+item, workers and max steps, and the job's other options, with Edit as text, Unschedule and, for an
+empty key, Schedule it; a line the builder cannot hold whole stays a text box with a note. The
+GitHub part of Tracker and the Readiness page show only while some tracker is github, else one
+line saying so. The keys the file sets come first and the rest fold under "N more settings the
+file leaves at the default". Every page of a project is one form: an edit waits while you move to
+another page, and one save bar at the bottom counts the unsaved changes and which pages hold them,
+with Discard and Save changes, which sends them all in one write. On Agents, both hosts' model and effort dropdowns show, each listing its values and "host default"
 for empty and, for a model, "other…" that opens a text field (a name off the list starts there),
 the help under it naming the default (for codex the one `hostDefaults` read, "On this machine
 that is gpt-6-sol"). While a host has no map and a
 deprecated key is set, its dropdown starts at what the jobs really run with, under it "now opus,
 from the deprecated jobs.model". A save of either of a host's pair writes both, "host default" as an
 empty line, so the `jobs.<host>` map is there and the fallback ends. A deprecated `jobs.model` or
-`jobs.effort` the file sets shows read-only with its note and a Clear button. A save shows the keys written and each follow-up,
+`jobs.effort` the file sets shows read-only with its note and a Clear button. A save shows the fields written and each follow-up,
 with a "Reload the schedule" button (`jobs.install`) when a schedule or `jobs.host` changed and an
 "Unload <job>" button (`job.uninstall`) for each job whose schedule was removed, and any note (a
 file git does not track); a
 refusal shows the reason, with Save anyway for a file with uncommitted changes and Reload for one
-that changed on disk. A "Raw YAML" fold at the bottom holds the whole file in a text area with the
-same Save (open when the file is not in the flat format). Every item id opens its tracker
+that changed on disk. Raw YAML, under General, holds the whole file in a text area with Save YAML and Open, which
+opens it in the default text editor (it opens on the flow pages too when the file is not in the
+flat format). Every item id opens its tracker
 page in a new tab; a link from the snapshot that is not `http` or `https` shows as plain text. An action that handed its work on (`outcome: started`, such as `job.run`) shows
 "started", not "done", on its button and in the drawer. Every module is a title row, a body and a
 footer saying how fresh its source is; every age is a live counter driven by one shared clock.

@@ -535,3 +535,18 @@ export type SettingsView = {
   port: { value: number; from: SettingOrigin; saved: number | null; note: string };
 };
 
+/** One thing `POST /api/settings/check-project` asks of a folder, in the order it asks. */
+export type ProjectCheckName = 'path' | 'exists' | 'git' | 'flow' | 'watched' | 'name';
+export type ProjectFinding = { check: ProjectCheckName; ok: boolean; text: string };
+
+/**
+ * What `POST /api/settings/check-project` says of a folder before it is added: each finding, and
+ * whether `PUT /api/settings` with the watched roots and this one would take it (`ok`, else
+ * `error`, the PUT's own words). `root` is the folder as the daemon resolves it, `id` its folder
+ * name, `initCommand` the line that writes .flow/config.yaml when that is what it lacks.
+ */
+export type ProjectCheck = { root: string; id: string | null; ok: boolean; error: string | null; findings: ProjectFinding[]; initCommand: string | null };
+
+/** How `POST /api/open` shows a file: in the default text editor (`open -t`) or selected in Finder (`open -R`). */
+export type OpenWith = 'editor' | 'finder';
+

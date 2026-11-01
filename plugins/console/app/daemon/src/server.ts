@@ -1,19 +1,25 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
+import path from 'node:path';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import type { ActionRunner } from './actions.ts';
 import type { Logger } from './log.ts';
 import type { ProjectMonitor } from './project.ts';
 import type { ProjectRegistry, ServedProject } from './registry.ts';
 import type { SettingsStore } from './settings.ts';
+import type { KnownFile, OpenRunner } from './openFile.ts';
+import { execFileOpenRunner, openPlan } from './openFile.ts';
 import { filterEvents } from './events.ts';
 import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import { serveStatic } from './static.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
 import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX } from './collectors/sessions.ts';
 
-/** `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code. */
-export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger };
+/**
+ * `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code.
+ * `openRunner` runs `open` for `POST /api/open` (execFile by default) and `platform` says whether there is one (this process's by default); tests pass both.
+ */
+export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger; openRunner?: OpenRunner; platform?: NodeJS.Platform };
 
 export type { ServedProject } from './registry.ts';
 
@@ -29,6 +35,7 @@ const HTTP_NOT_FOUND = 404;
 const HTTP_METHOD_NOT_ALLOWED = 405;
 const HTTP_TOO_LARGE = 413;
 const HTTP_UNSUPPORTED_MEDIA = 415;
+const HTTP_INTERNAL_ERROR = 500;
 /** The hosts a browser may name for this server: its own loopback address and localhost. */
 const LOCAL_HOSTS = ['127.0.0.1', 'localhost', '[::1]'];
 
@@ -108,6 +115,8 @@ export function createConsoleServer(registry: ProjectRegistry, settings: Setting
     if (url.pathname === '/healthz') { sendJson(response, HTTP_OK, { ok: true, projects: registry.list().map(({ monitor }) => monitor.project.id) }); return; }
     if (url.pathname === '/api/projects') { sendJson(response, HTTP_OK, registry.summaries()); return; }
     if (url.pathname === '/api/settings') { void settingsRoute(settings, request, response); return; }
+    if (url.pathname === '/api/settings/check-project') { void checkProjectRoute(settings, request, response); return; }
+    if (url.pathname === '/api/open') { void openRoute(knownFiles(registry, settings), options, request, response); return; }
     const plugin = /^\/api\/projects\/([^/]+)\/plugins\/flow\/config$/.exec(url.pathname);
     if (plugin !== null) {
       const owner = registry.get(decodeURIComponent(plugin[1]!));
@@ -193,6 +202,44 @@ async function settingsRoute(settings: SettingsStore | null, request: IncomingMe
   if (!read.ok) { sendJson(response, read.status, { error: read.error }); return; }
   const updated = settings.update(read.body);
   if (updated.ok) sendJson(response, HTTP_OK, updated.value); else sendJson(response, HTTP_BAD_REQUEST, { error: updated.error });
+}
+
+/**
+ * `POST {root}`: what the daemon finds of a folder before it is added, as `ProjectCheck`
+ * (each finding, and whether the PUT that adds it would be taken). Always 200 for a JSON body:
+ * a folder that fails a check is an answer, not a bad request.
+ */
+async function checkProjectRoute(settings: SettingsStore | null, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (settings === null) { sendJson(response, HTTP_NOT_FOUND, { error: 'no settings in this daemon' }); return; }
+  if (request.method !== 'POST') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'POST only' }); return; }
+  if (!(request.headers['content-type'] ?? '').startsWith('application/json')) { sendJson(response, HTTP_UNSUPPORTED_MEDIA, { error: 'send application/json' }); return; }
+  const read = await readBody(request);
+  if (!read.ok) { sendJson(response, read.status, { error: read.error }); return; }
+  const root = (typeof read.body === 'object' && read.body !== null ? read.body : {}) as { root?: unknown };
+  sendJson(response, HTTP_OK, settings.checkProject(root.root));
+}
+
+/** The files `POST /api/open` may show: the console's settings file and state folder, and each watched project's .flow/config.yaml. */
+function knownFiles(registry: ProjectRegistry, settings: SettingsStore | null): KnownFile[] {
+  const projects = registry.list().map(({ monitor }) => ({ path: path.join(monitor.project.root, '.flow', 'config.yaml'), folder: false }));
+  return [...(settings?.files() ?? []), ...projects];
+}
+
+/**
+ * `POST {path, with}`: shows a known file in the default text editor (`with: "editor"`, `open -t`)
+ * or selected in Finder (`"finder"`, `open -R`), run with execFile and no shell. 200 `{opened, with}`;
+ * 400 for any other path, 501 off macOS, 500 when `open` fails.
+ */
+async function openRoute(known: KnownFile[], options: ServerOptions, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method !== 'POST') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'POST only' }); return; }
+  if (!(request.headers['content-type'] ?? '').startsWith('application/json')) { sendJson(response, HTTP_UNSUPPORTED_MEDIA, { error: 'send application/json' }); return; }
+  const read = await readBody(request);
+  if (!read.ok) { sendJson(response, read.status, { error: read.error }); return; }
+  const plan = openPlan(read.body, known, options.platform ?? process.platform);
+  if (!plan.ok) { sendJson(response, plan.status, { error: plan.error }); return; }
+  const ran = await (options.openRunner ?? execFileOpenRunner)(plan.command, plan.args);
+  if (ran.ok) sendJson(response, HTTP_OK, { opened: plan.args[1], with: (read.body as { with: string }).with });
+  else sendJson(response, HTTP_INTERNAL_ERROR, { error: `open failed: ${ran.error}` });
 }
 
 /**

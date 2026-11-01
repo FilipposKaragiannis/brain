@@ -56,16 +56,16 @@ function otherFields(values: YamlMap): FieldSpec[] {
     const value = valueAt(values, leaf);
     // An empty map (`auto_gates:` with only a commented example) has nothing to edit.
     if (value !== undefined && typeof value === 'object' && !Array.isArray(value)) return [];
-    return [{ path: leaf, type: Array.isArray(value) ? 'list' as const : 'string' as const, group: OTHER_GROUP, help: OTHER_HELP, followUp: null }];
+    return [{ path: leaf, type: Array.isArray(value) ? 'list' as const : 'string' as const, group: OTHER_GROUP, label: leaf, help: OTHER_HELP, followUp: null }];
   });
 }
 
 const NO_HOST_DEFAULTS: HostDefaults = { codex: null };
 
-/** The schema's sections with the file's named schedules in Jobs, right after the last schedule the schema names. */
+/** The schema's sections with the file's named schedules in Schedules, right after the last schedule the schema names. */
 function sectionsWith(named: FieldSpec[]): Section[] {
   return schemaSections().map((section) => {
-    if (named.length === 0 || section.group !== 'Jobs') return section;
+    if (named.length === 0 || section.group !== 'Schedules') return section;
     const last = section.fields.findLastIndex((spec) => spec.path.startsWith(SCHEDULE_PREFIX));
     return { ...section, fields: [...section.fields.slice(0, last + 1), ...named, ...section.fields.slice(last + 1)] };
   });

@@ -18,14 +18,35 @@ test('OutsideWorktree_ListedUnderItsOwnHeading', () => {
   expect(screen.getByRole('table', { name: 'Outside the pool' }).textContent, 'because the main checkout is not a pool slot and must not read like one').toMatch(/project/);
 });
 
-test('OutsideWorktree_NotInThePoolTable', () => {
+test('OutsideWorktree_NotAPoolCard', () => {
   renderWorktrees([poolWorktree('wt-2'), { ...poolWorktree('elsewhere'), role: 'outside', state: 'outside' }]);
-  expect(screen.getByRole('table', { name: 'Pool' }).textContent, 'because the pool table lists only what the flow can claim').not.toMatch(/elsewhere/);
+  expect(screen.getByRole('region', { name: 'Pool' }).textContent, 'because the pool cards show only what the flow can claim').not.toMatch(/elsewhere/);
 });
 
-test('SessionsColumn_ExplainsTheWordOnHover', () => {
-  renderWorktrees([poolWorktree('wt-2')]);
-  expect(screen.getByRole('columnheader', { name: 'Sessions' }).getAttribute('title'), 'because a session is not an agent and the header must say so').toMatch(/not an agent/i);
+test('SessionsOnACard_ExplainTheWordOnHover', () => {
+  renderWorktrees([{ ...poolWorktree('wt-10'), flags: ['session'], sessions: [claudeSession(62102, TWO_HOURS)] }]);
+  expect(screen.getByText('sessions').parentElement?.getAttribute('title'), 'because a session is not an agent and the card must say so').toMatch(/not an agent/i);
+});
+
+test('Filter_Stale_ShowsOnlyTheStaleCards', () => {
+  renderWorktrees([poolWorktree('wt-2'), { ...poolWorktree('wt-7'), state: 'stale', item: 'gh#344', staleReason: 'branch is behind' }]);
+  fireEvent.click(screen.getByRole('button', { name: /^Stale/ }));
+  expect(screen.getAllByRole('article').map((card) => card.getAttribute('aria-label')), 'because the filter narrows the pool to the cards in that state').toEqual(['wt-7']);
+});
+
+test('Filter_CountsEachState', () => {
+  renderWorktrees([poolWorktree('wt-2'), poolWorktree('wt-3'), { ...poolWorktree('wt-7'), state: 'stale' }]);
+  expect(screen.getByRole('button', { name: /^Free/ }).textContent, 'because each chip says how many cards it would show').toMatch(/2$/);
+});
+
+test('RunningCard_WatchLeadsToAgents', () => {
+  renderWorktrees([{ ...poolWorktree('wt-10'), state: 'running', item: 'gh#213' }]);
+  expect(screen.getByRole('link', { name: 'Watch' }).getAttribute('href'), 'because a running card is followed on the Agents screen').toBe('#/project/agents');
+});
+
+test('WaitingCard_DecideLeadsToItsGate', () => {
+  renderWorktrees([{ ...poolWorktree('wt-3'), state: 'needs-you', item: 'gh#322' }]);
+  expect(screen.getByRole('link', { name: 'Decide' }).getAttribute('href'), 'because a card waiting on you opens the gate it waits at').toBe('#/project/gates/gh%23322');
 });
 
 test('Session_ShowsItsCommandOnHover', () => {

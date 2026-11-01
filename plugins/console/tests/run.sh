@@ -69,7 +69,7 @@ check "the profile named is the shell's" grep -q '~/.zshrc' "$work/out"
 check "--no-launchd leaves launchd alone" sh -c "! grep -q 'bootstrap' '$work/offline.log'"
 check "it ends with the status" grep -q "^brain-console $version\$" "$work/out"
 
-project="$work/project"; mkdir -p "$project/.flow"; : > "$project/.flow/config.yaml"
+project="$work/project"; mkdir -p "$project/.flow" "$project/.git"; : > "$project/.flow/config.yaml"
 run_install "$P/scripts/install.sh" --no-launchd --project "$project"; code=$?
 check "--project adds the folder to the settings" sh -c "[ $code -eq 0 ] && grep -q '\"root\": \"$project\"' '$home/.config/brain-console/config.json'"
 run_install "$P/scripts/install.sh" --no-launchd --project "$work"; code=$?

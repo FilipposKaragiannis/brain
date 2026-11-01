@@ -1,12 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { DaemonConfig } from './config.ts';
 import type { ProjectDefinition } from './project.ts';
-import type { SettingOrigin, SettingsView, TerminalName, TerminalSetting } from './snapshot.ts';
-import { TERMINAL_NAMES } from './terminal.ts';
+import type { ProjectCheck, ProjectFinding, SettingOrigin, SettingsView, TerminalName, TerminalSetting } from './snapshot.ts';
+import { commandText, TERMINAL_NAMES } from './terminal.ts';
 
-export type { SettingOrigin, SettingsView, TerminalSetting };
+export type { ProjectCheck, ProjectFinding, SettingOrigin, SettingsView, TerminalSetting };
 
 /** `~/.config/brain-console/config.json`: every field optional. */
 export type ConfigFile = { projects?: { root: string }[]; terminal?: TerminalSetting; port?: number };
@@ -96,7 +96,7 @@ export function projectsFromRoots(roots: string[]): Checked<ProjectDefinition[]>
     return { id: path.basename(resolved), name: path.basename(resolved), root: resolved };
   });
   const missing = projects.find((project) => !existsSync(path.join(project.root, '.flow', 'config.yaml')));
-  if (missing !== undefined) return fail(`${missing.root} has no .flow/config.yaml; run flow:init there first`);
+  if (missing !== undefined) return fail(flowMissing(missing.root));
   const duplicate = projects.find((project, index) => projects.findIndex((other) => other.id === project.id) !== index);
   if (duplicate !== undefined) return fail(`two projects share the id ${duplicate.id}`);
   return { ok: true, value: projects };
@@ -134,12 +134,76 @@ export function writeConfigFile(file: string, settings: ConfigFile): void {
   renameSync(temporary, file);
 }
 
-/** A new project list, checked as a settings change is: one or more roots, each holding a flow, no two with one id. */
+const flowMissing = (root: string): string => `${root} has no .flow/config.yaml; run flow:init there first`;
+
+/** True when the folder, or one above it, holds a `.git` (a folder, or the file a git worktree has), as git itself looks. */
+export function insideGitCheckout(folder: string): boolean {
+  for (let current = folder; ; current = path.dirname(current)) {
+    if (existsSync(path.join(current, '.git'))) return true;
+    if (path.dirname(current) === current) return false;
+  }
+}
+
+/**
+ * What the disk says of one resolved root, in the order a settings change asks: it is a folder,
+ * it holds .flow/config.yaml, it sits in a git checkout. Nothing more is said of a root that is
+ * not a folder. `PUT /api/settings` refuses a list on the first finding that fails, in its words.
+ */
+export function rootFindings(root: string): ProjectFinding[] {
+  let folder: boolean | null = null;
+  try { folder = statSync(root).isDirectory(); } catch { folder = null; }
+  if (folder === null) return [{ check: 'exists', ok: false, text: `${root} does not exist` }];
+  if (!folder) return [{ check: 'exists', ok: false, text: `${root} is not a folder` }];
+  const hasFlow = existsSync(path.join(root, '.flow', 'config.yaml'));
+  return [
+    { check: 'exists', ok: true, text: `${root} exists` },
+    hasFlow ? { check: 'flow', ok: true, text: 'it holds .flow/config.yaml' } : { check: 'flow', ok: false, text: flowMissing(root) },
+    insideGitCheckout(root) ? { check: 'git', ok: true, text: 'it is in a git checkout' } : { check: 'git', ok: false, text: `${root} is not in a git checkout; the flow works on git branches and worktrees` },
+  ];
+}
+
+/**
+ * A new project list, checked as a settings change is: one or more absolute roots, each a folder
+ * in a git checkout holding .flow/config.yaml, no two with one id (the folder name).
+ */
 export function checkProjectList(roots: string[]): Checked<ProjectDefinition[]> {
   const shape = checkConfigFile({ projects: roots.map((root) => ({ root })) });
   if (!shape.ok) return shape;
   if (roots.length === 0) return fail('keep at least one project: the daemon watches one or more');
-  return projectsFromRoots((shape.value.projects ?? []).map((entry) => entry.root));
+  const resolved = (shape.value.projects ?? []).map((entry) => entry.root);
+  for (const root of resolved) {
+    const failed = rootFindings(root).find((finding) => !finding.ok);
+    if (failed !== undefined) return fail(failed.text);
+  }
+  return projectsFromRoots(resolved);
+}
+
+/**
+ * A folder the owner wants to add, checked before the PUT: each finding of `rootFindings`, then
+ * whether it is watched already and whether a watched project has its folder name. `ok` and
+ * `error` are `checkProjectList` of the watched roots and this one, the very check the PUT makes,
+ * so the two never disagree.
+ */
+export function checkNewProject(typed: unknown, watched: string[]): ProjectCheck {
+  const root = checkRoot(typed);
+  if (!root.ok) return { root: typeof typed === 'string' ? typed : '', id: null, ok: false, error: root.error, findings: [{ check: 'path', ok: false, text: root.error }], initCommand: null };
+  const resolved = root.value;
+  const id = path.basename(resolved);
+  const findings: ProjectFinding[] = [{ check: 'path', ok: true, text: `${resolved} is an absolute path` }, ...rootFindings(resolved)];
+  if (findings.every((finding) => finding.check !== 'exists' || finding.ok)) {
+    const others = watched.map((entry) => path.resolve(entry));
+    if (others.includes(resolved)) findings.push({ check: 'watched', ok: false, text: `${resolved} is watched already` });
+    else {
+      findings.push({ check: 'watched', ok: true, text: 'it is not watched yet' });
+      const clash = others.find((other) => path.basename(other) === id);
+      findings.push(clash === undefined
+        ? { check: 'name', ok: true, text: `no watched project is called ${id}` }
+        : { check: 'name', ok: false, text: `the watched project ${clash} is also called ${id}: the console names a project by its folder, so rename one of the two` });
+    }
+  }
+  const put = checkProjectList([...watched, resolved]);
+  const lacksFlow = findings.some((finding) => finding.check === 'flow' && !finding.ok);
+  return { root: resolved, id, ok: put.ok, error: put.ok ? null : put.error, findings, initCommand: lacksFlow ? `${commandText(['cd', resolved])} && claude /flow:init` : null };
 }
 
 /**
@@ -214,6 +278,18 @@ export class SettingsStore {
           : `The daemon listens on ${config.port}; a new port takes a restart of the daemon.`,
       },
     };
+  }
+
+  /** A folder checked as a PUT that adds it to the watched projects would be, and refused the same way while a flag or the environment sets them. */
+  checkProject(root: unknown): ProjectCheck {
+    const check = checkNewProject(root, this.roots);
+    if (this.projectsFrom === 'file') return check;
+    return { ...check, ok: false, error: `projects cannot change here: ${PROJECT_NOTES[this.projectsFrom] ?? ''}` };
+  }
+
+  /** The files `POST /api/open` may show: the console's settings file and its state folder. */
+  files(): { path: string; folder: boolean }[] {
+    return [{ path: this.deps.config.paths.configFile, folder: false }, { path: this.deps.config.stateDir, folder: true }];
   }
 
   /**

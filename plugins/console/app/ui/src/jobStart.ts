@@ -156,3 +156,69 @@ export function pairSpec(when: ScheduleWhen, form: JobStartForm, args: string): 
   if (form.effort !== '') words.push('--effort', form.effort);
   return words.join(' ');
 }
+
+/**
+ * A schedule line as the settings builder edits it: when it runs, the run's form (its host word
+ * empty when the line names none, so the schedule follows jobs.host) and the job's other
+ * arguments, kept as they were.
+ */
+export type ScheduleParts = { when: ScheduleWhen; form: JobStartForm; own: string };
+
+/** The options each job's builder reads into its own fields; next also takes an item. */
+const BUILDER_OPTIONS: Record<string, keyof JobStartForm> = { '--workers': 'workers', '--max-steps': 'maxSteps', '--model': 'model', '--effort': 'effort' };
+const PAIR_OPTIONS: Record<string, keyof JobStartForm> = { '--model': 'model', '--effort': 'effort' };
+
+/**
+ * The builder's reading of a schedule line, or null when it cannot hold it whole: a timing other
+ * than the one it writes back (weekly Sunday), an option twice or without its value, a second item,
+ * or an effort the host does not take. `hostDefault` is jobs.host, the host of a line with no host word.
+ */
+export function scheduleParts(text: string, job: string, hostDefault: string): ScheduleParts | null {
+  const words = text.split(/\s+/).filter((word) => word !== '');
+  const when = whenFrom(text);
+  const head = when.kind === 'weekly' ? 3 : 2;
+  if (words.length < head || whenSpec(when) !== words.slice(0, head).join(' ') || scheduleProblem('', when) !== null) return null;
+  const args = words.slice(head);
+  const form: JobStartForm = { host: '', item: '', workers: '', maxSteps: '', model: '', effort: '' };
+  if (args[0] !== undefined && isHost(args[0])) form.host = args.shift()!;
+  const options = job === 'next' ? BUILDER_OPTIONS : PAIR_OPTIONS;
+  const own: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const word = args[index]!;
+    const field = options[word];
+    if (field !== undefined) {
+      const value = args[index + 1];
+      if (value === undefined || value.startsWith('-') || form[field] !== '') return null;
+      form[field] = value;
+      index += 1;
+    } else if (job === 'next' && !word.startsWith('-')) {
+      if (form.item !== '') return null;
+      form.item = word;
+    } else {
+      own.push(word);
+    }
+  }
+  const host = form.host !== '' ? form.host : hostDefault;
+  if (form.effort !== '' && !(JOB_EFFORTS[host] ?? []).includes(form.effort)) return null;
+  return { when, form, own: own.join(' ') };
+}
+
+/**
+ * The schedule line the builder writes: when, the host word when one is picked, next's item and
+ * limits, the job's other arguments, then the model and effort when set.
+ */
+export function scheduleLine(parts: ScheduleParts, job: string): string {
+  const { form } = parts;
+  const words = [whenSpec(parts.when)];
+  if (form.host !== '') words.push(form.host);
+  const option = (name: string, value: string): void => { if (value.trim() !== '') words.push(name, value.trim()); };
+  if (job === 'next') {
+    if (form.item.trim() !== '') words.push(form.item.trim());
+    option('--workers', form.workers);
+    option('--max-steps', form.maxSteps);
+  }
+  words.push(...parts.own.split(/\s+/).filter((word) => word !== ''));
+  option('--model', form.model);
+  option('--effort', form.effort);
+  return words.join(' ');
+}
