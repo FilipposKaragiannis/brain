@@ -1,4 +1,5 @@
 .scratch/
+__pycache__/
 plugins/*/evals/results/
 docs/rework-*.md
 tools/.eval-bin/
