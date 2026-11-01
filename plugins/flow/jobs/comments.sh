@@ -50,7 +50,7 @@ fi
 # prepare_pr <target>: chase its silent reviewers (not on a draft, which waits on its quiz) and
 # print the brief's note when the PR conflicts with its base. Model free.
 prepare_pr() {
-  case "$1" in *#*|local:*) pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)" ;; *) pull="$1" ;; esac
+  if adapter_for "$1" >/dev/null; then pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)"; else pull="$1"; fi
   [ -n "$pull" ] && state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pull" 2>/dev/null)" || return 0
   [ "$(json_get "$state" isDraft)" = "true" ] || chase_reviewers "$1" "$pull"
   [ "$(json_get "$state" mergeable)" = "CONFLICTING" ] || return 0
@@ -69,10 +69,9 @@ chase_reviewers() { # chase_reviewers <target> <pr>
 # was, and the owner's answer is what is new. A line with no clear is the line before 1.23.0.
 activity() {
   awaiting=""; cleared=""
-  case "$1" in
-    *#*|local:*) data="$(adapter read "$1" 2>/dev/null)"; pull="$(json_get "$data" state.pr)"; cleared="$(json_get "$data" state.answered_at)" ;;
-    *) pull="$1" ;;
-  esac
+  if adapter_for "$1" >/dev/null; then
+    data="$(adapter read "$1" 2>/dev/null)"; pull="$(json_get "$data" state.pr)"; cleared="$(json_get "$data" state.answered_at)"
+  else pull="$1"; fi
   [ -n "$pull" ] && act="$("$FLOW_PLUGIN/scripts/comments.sh" activity "$pull" 2>/dev/null)" || return 0
   awaiting="$(json_list "$act" awaiting | tr '\n' ' ' | sed 's/ $//')"
   printf '%s %s %s threads:%s comments:%s awaiting:%s%s' "$(json_get "$act" updatedAt)" "$(json_get "$act" headRefOid)" "$(json_get "$act" mergeable)" \
@@ -96,13 +95,9 @@ tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 
 # branch names, flow/<item slug> (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1);
 # nothing for a PR the flow did not open.
 item_of() {
-  case "$1" in *#*|local:*) printf '%s' "$1" ;;
-    *) "$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c '
-import json, re, sys
-head = json.load(sys.stdin).get("headRefName", "")
-gh, local = re.match(r"flow/gh-(\d+)$", head), re.match(r"flow/local-([a-z]+)-(\d+)$", head)
-print("gh#" + gh.group(1) if gh else "local:%s/%s" % local.groups() if local else "")' 2>/dev/null ;;
-  esac
+  if adapter_for "$1" >/dev/null; then printf '%s' "$1"; return; fi
+  io_head="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("headRefName", ""))' 2>/dev/null)"
+  case "$io_head" in flow/?*) slug_item "${io_head#flow/}" ;; esac
 }
 # resume_note <target>: the item's comments-resume.md, the note a cut-short pass leaves for the
 # next one (the shape of the health job's resume.md), in the reports folder the steward names.

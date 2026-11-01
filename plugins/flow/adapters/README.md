@@ -1,0 +1,165 @@
+# Tracker adapters
+
+An adapter is the flow's one way into a tracker. Each is a folder here, `adapters/<name>/`, named
+in the config (`adapters.default`, `adapters.epic|task|bug`). The flow never talks to a tracker
+any other way: it runs the folder's scripts and reads the item JSON they print. This file is the
+contract a folder must meet; `tests/adapter-contract.sh <name>` checks it against the adapter's
+fake backend, and `tests/run.sh` runs it for every adapter.
+
+## The folder
+
+| File | Required | What it is |
+|---|---|---|
+| `prefix` | yes | one line: the id prefix the adapter owns (`gh#`, `local:`) |
+| `slug.sed` | yes | a `sed -n` script that turns an item's slug back into its id, printing nothing for a slug it does not own |
+| `list.sh`, `list-ready.sh`, `read.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh` | yes | the operations below, executable |
+| `sync.sh`, `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
+
+Every script sources `lib/flow.sh` (`. "$(dirname "$0")/../../lib/flow.sh"`) for `die`, `cfg`,
+`flow_home` and the JSON helpers, and says what went wrong as one `flow: ...` line on stderr.
+
+## Ids and routing
+
+An id is the prefix and a non-empty rest, in the id characters `A-Za-z0-9:#/_.-` (`gh#12`,
+`local:task/3`). No prefix may start another. `lib/flow.sh` routes by the prefix files, so a new
+adapter needs no edit there: `adapter_for <id>` names the adapter whose prefix starts the id,
+`adapter <op> <id|name> [args]` runs `adapters/<name>/<op>.sh`, and `scripts/_filter_ready.py`
+reads the same files to look up a blocker in another tracker.
+
+`item_slug` turns an id into a name safe for a branch and a folder (`tr ':/#' '---'`: `gh-12`,
+`local-task-3`); task branches are `flow/<slug>`, reports live in `.flow/reports/<slug>`, and a
+`claude --worktree <slug>` session claims for the item. `slug_item <slug>` reverses it through each
+adapter's `slug.sed`, so the reverse must be unique: `s/^gh-\([0-9][0-9]*\)$/gh#\1/p`.
+
+Still named by hand: `scripts/steward.sh` `item_id` checks the exact shape of `gh#` and `local:`
+ids and takes any other adapter's id by its prefix; `scripts/_slack.py` links only `gh#` and
+`local:` ids; the console's `actionPlan.ts` (`ITEM_ID`, `ADAPTER_OF_PREFIX`) acts only on those two.
+
+## Operations
+
+| Script | Arguments | Prints |
+|---|---|---|
+| `list` | `[--all] [--kind KIND]` | a JSON array of items: the open ones, every one with `--all`, one kind with `--kind` |
+| `list-ready` | `[--kind KIND]` | the ready items, best first: `list` piped through `scripts/filter-ready.sh` |
+| `read` | `<id>` | one item |
+| `create` | `<kind> <title> [--size S\|M\|L] [--priority NAME] [--area NAME] [--type NAME] [--blocked-by id,id] [--parent id] [--body TEXT]` | the new id, one line |
+| `close` | `<id> [--comment TEXT]` | nothing; the item reads `closed` and the comment lands |
+| `comment` | `<id> [--body TEXT]` | nothing; the text is `--body` or stdin |
+| `link-pr` | `<id> <url>` | nothing; `state.pr` reads the url, and a comment names it |
+| `write-state` | `<id> key=value...` | nothing; each key reads back (below) |
+| `sync` | `[id]` | optional: moves the tracker's own board to the flow state, one line per change; exit 0 with nothing to do. `jobs/next.sh` runs it each round |
+| `vocabulary` | | optional: `{"types": [...], "areas": [...]}`, the names a new item may use; the intake job reads it |
+| `answers` | | optional: clears each gate the owner answered on the tracker through `scripts/gate.sh clear`, prints each cleared id; `jobs/next.sh` runs it |
+
+`kind` is `epic`, `task` or `bug`. `create` puts a value the tracker has no place for nowhere
+and says so on stderr (`--type` on a tracker without types, `--priority` without a field for it);
+it never fails for one. `--blocked-by` may name items of other adapters. A `list` cut short by a
+tracker limit says so on stderr, and fails when `FLOW_LIST_WHOLE` is set (the board graph needs
+every item).
+
+Exit codes, for every script:
+
+| Code | When | stdout |
+|---|---|---|
+| 0 | done | as above |
+| 1 | the tracker failed, or the item does not exist | nothing |
+| 2 | a usage error: a missing argument, an unknown option, an unknown state key, an id the adapter does not own | nothing |
+
+A tracker reached over the network retries a 5xx answer or a dropped connection the way `gh()` in
+`lib/flow.sh` does (waits from `FLOW_GH_RETRY_WAIT`, default `2 5`, then one last try), and tries
+a call that creates something (an issue, a comment) once, because a lost answer can follow a write
+that landed.
+
+## The item
+
+| Field | Type | |
+|---|---|---|
+| `id` | string | the prefix and the rest |
+| `kind` | `epic`, `task`, `bug` | |
+| `title`, `body` | string | the body is Markdown, the item shape |
+| `status` | `open`, `closed` | |
+| `size` | `S`, `M`, `L` or empty | the same value as `state.size` |
+| `priority`, `area` | string, empty when unset | the tracker's own names |
+| `labels` | list of strings | the tracker's labels, for the board |
+| `blocked_by` | list of ids | |
+| `parent` | id or empty | |
+| `open_children` | number | open items whose parent this is; a parent with any is not ready |
+| `url` | string | where the owner opens it (the file path for a local item) |
+| `state` | object | the flow state, below |
+| `open_blockers` | list of ids, optional | the open ones among `blocked_by`, when the adapter knows; without it `filter-ready` reads each blocker through its adapter |
+| `rank` | number | lower is picked first: the priority's place in `READY_PRIORITY_ORDER`, the order's length for a priority not in it, 999 without one; `_filter_ready.py` and `_graph.py` sort on it |
+| `needs` | list | the fields of `READY_NEEDS` an open item with no step yet lacks; an epic never needs a size. `_filter_ready.py` holds back an item with any |
+| `type` | string, optional | the tracker's own issue type |
+
+`state` always has `step`, `profile`, `size`, `worktree`, `last_event`, `pr` (strings),
+`attempts` (a number), `touches` (a list of globs) and `gate` (`none` when clear), and, once
+written, `gate_from`, `answered`, `asked`, `answer` and `answered_at`. Those fourteen are the
+state keys. `write-state` takes them as `key=value` (a dash reads as an underscore): `touches` is
+comma-separated, `attempts` a whole number, an empty value clears a key, `gate=none` clears the
+gate, `size` sets the item's size too. A key outside the fourteen exits 2 and writes nothing.
+
+## Config
+
+The flow reads `adapters.default` (default `local`) and `adapters.<kind>` to pick where a new
+item goes. It lists from the trackers `adapters_configured` names: the config's `trackers`
+(`trackers: [github, local]`) when set, each one an adapter folder here, else every adapter named
+under `adapters.*` and `local`. An adapter reads its own keys under `<name>.*` and nothing else of
+the config but the shared keys here. A token never sits in the
+config: it comes from the environment, and an adapter without one refuses with a plain reason.
+
+Readiness is tracker-neutral: `ready.needs` lists the fields, of `priority` and `size`, an
+unstarted item must have before it is ready, and `ready.priority_order` ranks the priority names.
+`list` and `read` call `ready_rules` from `lib/flow.sh` before they build items; it exports them
+comma-separated as `READY_NEEDS` and `READY_PRIORITY_ORDER` (the deprecated `github.ready_needs`
+and `github.priority_order` stand in for an unset key) and refuses a field it does not know, exit
+2. The adapter fills `rank` and `needs` from those two and maps the fields to its own:
+
+| Adapter | priority | size | state |
+|---|---|---|---|
+| `github` | the issue field `github.fields.priority` | the issue field `github.fields.size`, else the `size:<S>` label | labels `step:<step>`, `gate:<gate>`, `wt:<worktree>`, `flow:<profile>`, `size:<size>` (not with a size field), and the whole state as JSON in one issue comment marked `<!-- flow:state -->`; a label wins over the comment on read; an empty value or `gate=none` removes the label |
+| `local` | the item file's `priority` | the item file's `size` | the item file's frontmatter, one key each |
+
+Until `ready_rules` and `trackers` land in `lib/flow.sh`, the GitHub adapter reads only
+`github.ready_needs` and `github.priority_order`, the local adapter fills no `rank` or `needs`,
+and the flow reads every adapter named under `adapters.*`. The contract suite follows
+`lib/flow.sh`: with `ready_rules` there, `rank` and `needs` are required and every adapter must
+pass the readiness checks; without it, an adapter whose items carry no `needs` skips them.
+
+## Where the two adapters differed
+
+| What | Before | The contract |
+|---|---|---|
+| a malformed or foreign id | local exited 1; GitHub's `die` ran in a command substitution, so the script went on and exited 1 | exit 2; both fixed |
+| an unknown state key | local refused it; GitHub stored it in the state comment | exit 2, nothing written; GitHub fixed |
+| `create --type` | `scripts/new.sh` passes it to any adapter; local failed on it as an unknown option | taken, left out where the tracker has no types; local fixed |
+| an unknown `list` option | local ignored it | exit 2; local fixed |
+| `rank`, `needs` | GitHub prints them, local does not | required, from `ready_rules` |
+| `open_blockers` | GitHub prints it, local does not | optional, as above |
+| a missing item on `write-state`, `comment`, `close` | local ends in a Python traceback, exit 1 | non-zero is the contract; the traceback is left as it is |
+| extras | GitHub `list --limit N`, local `create --labels a,b` | the adapter's own; the flow never passes them |
+
+## Fakes in tests
+
+The contract suite and `tests/run.sh` never reach a tracker. A fake backend stands in for the
+adapter's client on `PATH` (`tests/fake-gh.sh` and `tests/_fake_gh.py` for `gh`) and must:
+
+- keep its store in a file under the test's temp folder, seeded with what the test needs;
+- answer every call the adapter makes, in the shape the real service answers, and fail any other
+  call with exit 1 and a `fake ...: unknown ...` line, so a new call cannot pass unseen;
+- let the test read an item's comments as the tracker holds them;
+- for a network tracker, fail the next N calls with a 5xx message on request (`fake-gh.sh` reads
+  `$FAKE_GH_DIR/fail`), so the retries are tested.
+
+The suite's setup for an adapter is a few functions in `tests/adapter-contract.sh`: `setup_<name>`
+puts the fake on `PATH`, `config_<name>` prints the adapter's config block, `missing_<name>` an id
+it owns that names no item, `comments_<name> <id>` the comments, and `blip_<name>` (network only)
+the failing call.
+
+## A new adapter
+
+1. `adapters/<name>/` with `prefix`, `slug.sed` and the eight scripts; the optional ones when the
+   tracker has a board, a type list or a place for the owner's answers.
+2. Its keys under `<name>.*`, commented in the config `skills/init/scripts/init.sh` writes, and
+   the name in the console's `ADAPTERS` (`plugins/console/app/daemon/src/plugins/flow/schema.ts`).
+3. A fake of its client in `tests/`, its setup in `tests/adapter-contract.sh`, and its name in the
+   contract loop of `tests/run.sh`.

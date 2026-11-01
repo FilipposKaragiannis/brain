@@ -13,7 +13,7 @@ name="$(json_get "$payload" name)"
 cwd="$(json_get "$payload" cwd)"
 [ -n "$cwd" ] && cd "$cwd" 2>/dev/null
 [ -f "$(config_file)" ] || die "no .flow/config.yaml in this repository; run flow:init or start without --worktree"
-item="$(printf '%s' "$name" | sed -n 's/^gh-\([0-9][0-9]*\)$/gh#\1/p; s/^local-\([a-z][a-z0-9]*\)-\([0-9][0-9]*\)$/local:\1\/\2/p')"
+item="$(slug_item "$name")"
 [ -n "$item" ] || item="adhoc:${name:-session}"
 path="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item")" || exit 1
 printf '%s\n' "$path"

@@ -437,6 +437,13 @@ check "gh close"          [ "$("$P/adapters/github/read.sh" 'gh#11' | jget statu
 check "gh next.sh end to end" sh -c "'$P/scripts/next.sh' --json | grep -q '\"item\":\"gh#10\"'"
 check "cross-tracker blocker: local waits on gh" sh -c "'$P/adapters/local/create.sh' task Cross --blocked-by 'gh#12' >/dev/null && ! '$P/adapters/local/list-ready.sh' | grep -q Cross"
 
+echo "adapter contract (adapters/README.md)"
+for contract_adapter in github local; do
+  sh "$here/adapter-contract.sh" "$contract_adapter" > "$work/contract-$contract_adapter.out" 2>&1; code=$?
+  check "the $contract_adapter adapter meets the contract: $(tail -n 1 "$work/contract-$contract_adapter.out")" [ "$code" -eq 0 ]
+  [ "$code" -eq 0 ] || grep '^  FAIL' "$work/contract-$contract_adapter.out"
+done
+
 echo "github blips (fake gh)"
 # $FAKE_GH_DIR/fail makes the next N gh calls fail with a message; the waits are zero here.
 export FLOW_GH_RETRY_WAIT="0 0"

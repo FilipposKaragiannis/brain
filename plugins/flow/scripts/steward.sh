@@ -412,12 +412,6 @@ cmd_setup() {
   run_setup "$p"
 }
 
-# slug_item <reports folder name>: the item id item_slug made it from (gh-12 -> gh#12,
-# local-task-3 -> local:task/3), or nothing for a folder no adapter owns.
-slug_item() {
-  printf '%s' "$1" | sed -n 's/^gh-\([0-9][0-9]*\)$/gh#\1/p; s/^local-\([a-z][a-z0-9]*\)-\([0-9][0-9]*\)$/local:\1\/\2/p'
-}
-
 # cmd_prune: reports outlive the release, so they pile up in every worktree. A folder goes when
 # its item is closed and no worktree claims it. Open, claimed, unreadable and unknown folders stay.
 cmd_prune() {
@@ -1000,12 +994,15 @@ cmd_health() {
 }
 
 # --- stop and resume: the owner's hand on one item's run.
-# item_id <id>: an item's id, gh#<n> or local:<kind>/<n>; anything else exits 2.
+# item_id <id>: an item's id, gh#<n>, local:<kind>/<n>, or an id another adapter's prefix starts
+# in the id characters (adapters/README.md); anything else exits 2.
 item_id() {
   case "$1" in
     gh#|gh#*[!0-9]*) ;;
     gh#*) return 0 ;;
     local:epic/*|local:task/*|local:bug/*) case "${1#local:*/}" in ''|*[!0-9]*) ;; *) return 0 ;; esac ;;
+    local:*|*[!A-Za-z0-9:#/_.-]*) ;;
+    *) adapter_for "$1" >/dev/null && return 0 ;;
   esac
   die "not an item id: $1 (use gh#<n> or local:<kind>/<n>)" 2
 }
