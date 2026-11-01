@@ -126,10 +126,13 @@ cmd_claim() {
   while [ $# -gt 0 ]; do case "$1" in --base) base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
-  free="$(free_worktree)" || exit $?
   slug="$(item_slug "$item")"; branch="flow/$slug"
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null
   ref="$(base_ref "$base")"
+  claim_lock
+  existing="$(cmd_find "$item")"
+  if [ -n "$existing" ]; then flow_unlock; printf '%s\n' "$existing"; return 0; fi
+  free="$(free_worktree)" || exit $?
   if git -C "$free" show-ref --verify --quiet "refs/heads/$branch"; then
     git -C "$free" switch -q "$branch" || die "cannot switch $free to $branch"
   else
@@ -138,6 +141,7 @@ cmd_claim() {
   mkdir -p "$free/.flow"
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
+  flow_unlock
   write_state "$item" "worktree=$(basename "$free")" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
@@ -154,8 +158,14 @@ free_worktree() {
   grow_pool || die "no free worktree in the pool (every pool entry is claimed, reserved, dirty or missing) and the pool is at pool_max ($(cfg_or pool_max 0)). Release one, or raise pool_max in $(config_file)." 3
 }
 
-# cmd_reserve: the owner's own claim, with no item, under the pick lock so a next claiming right
-# now does not take the same worktree.
+# claim_lock: one worktree allocation at a time. claim (from next, the worktree hook or by hand)
+# and reserve take it, so two of them never write the same claim.json. Not the pick lock: next
+# holds that while it runs claim. Exits 75 when another allocation holds it past the lock wait.
+claim_lock() {
+  flow_lock claim || die "the claim lock is busy (another claim or reserve is taking a worktree); try again" 75
+}
+
+# cmd_reserve: the owner's own claim, with no item, under the claim lock.
 cmd_reserve() {
   who=""
   while [ $# -gt 0 ]; do case "$1" in
@@ -165,7 +175,7 @@ cmd_reserve() {
   [ -n "$who" ] || who="$(git -C "$main" config user.name 2>/dev/null)"
   [ -n "$who" ] || who="${USER:-}"
   [ -n "$who" ] || die "no name to reserve under: pass --name <who>" 2
-  flow_lock pick || die "the pick lock is busy (a next run is picking an item); try again" 75
+  claim_lock
   free="$(free_worktree)" || exit $?
   mkdir -p "$free/.flow"
   json_obj "item=" "reserved=$who" "worktree=$free" "name=$(basename "$free")" "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"

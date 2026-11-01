@@ -212,7 +212,7 @@ install_file "$plugin/templates/flow.rules" .codex/rules/flow.rules "" guard
 for src in "$plugin"/codex-agents/*.toml; do install_file "$src" ".codex/agents/$(basename "$src")" "" guard; done
 
 # 5. .gitignore block. .flow/*.lock/ covers the locks flow_lock takes in the flow home (pick,
-# answers, sweep). Under --check each line the project's block lacks is named.
+# claim, answers, sweep). Under --check each line the project's block lacks is named.
 # One per line and read with read, so the lock pattern is never expanded by the shell.
 ignored=".flow/items/
 .flow/reports/

@@ -2389,6 +2389,15 @@ check "release: a reserved worktree is freed" [ ! -f "$rw1/.flow/claim.json" ]
 check "reserve: with no --name the reservation is under git user.name" [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Grace Hopper" ]
 "$P/scripts/steward.sh" reserve --name >/dev/null 2>&1; code=$?
 check "reserve: --name with no name is bad usage (exit 2)" [ "$code" -eq 2 ]
+rc="$("$P/adapters/local/create.sh" task "Claimed by the worktree hook" --size S --body "x")"
+sleep 30 & held=$!
+mkdir -p .flow/claim.lock && echo "$held" > .flow/claim.lock/pid
+FLOW_LOCK_WAIT=1 "$P/scripts/steward.sh" claim "$rc" >/dev/null 2>&1; code=$?
+check_all "claim: an allocation in flight makes a claim outside next wait, then exit 75 with nothing claimed" '[ "$code" -eq 75 ] && [ ! -f "$rw2/.flow/claim.json" ]'
+FLOW_LOCK_WAIT=1 "$P/scripts/steward.sh" reserve --name "Ada Lovelace" >/dev/null 2>&1; code=$?
+check_all "reserve: an allocation in flight makes it wait, then exit 75 with nothing reserved" '[ "$code" -eq 75 ] && [ ! -f "$rw2/.flow/claim.json" ]'
+kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
+check_all "claim: once the holder is gone it takes the free worktree and frees the claim lock" '[ "$("$P/scripts/steward.sh" claim "$rc")" = "$rw2" ] && [ ! -d .flow/claim.lock ]'
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1
