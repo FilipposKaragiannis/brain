@@ -27,14 +27,16 @@ The item (its `parent`, acceptance lines), the task branch in the claimed worktr
    result that the PR goes ready when the owner passes the quiz in the console. Never post the
    quiz, its answers or a link to it on the PR: the console shows it on the Gates and Pull
    requests pages.
-6. Request reviews with `<plugin>/scripts/comments.sh request-review <pr> "<ask>"`: the ask
-   is to review the diff line by line for correctness and to check the implementation against
-   the item's acceptance lines. The script asks each reviewer in `.flow/config.yaml`
-   `reviews.reviewers` (default codex and claude) in its own comment, Copilot through the API.
-   Never write a reviewer mention yourself.
-7. Record the PR on the item: `adapters/<name>/link-pr.sh <item> <url>`. When it fails (a local
-   item file can lie outside the worktree you may write), the step does not fail: say so in the
+6. Record the PR on the item: `adapters/<name>/link-pr.sh <item> <url>`. It also records the
+   host that wrote the PR, which picks the reviewers in step 7. When it fails (a local item
+   file can lie outside the worktree you may write), the step does not fail: say so in the
    result, and the orchestrator records the URL from the result's `pr`.
+7. Request reviews with `<plugin>/scripts/comments.sh request-review <pr> "<ask>"`: the ask
+   is to review the diff line by line for correctness and to check the implementation against
+   the item's acceptance lines. The script asks each reviewer of the author host's list in
+   `.flow/config.yaml` (`reviews.reviewers.claude` or `.codex`, else `.default` or a plain
+   `reviews.reviewers` list; codex and claude when unset) in its own comment, Copilot through
+   the API. Never write a reviewer mention yourself.
 8. When the base is not the default branch, warn in the result that the merge will not
    auto-close the item; the closeout step closes it.
 9. Updating an existing PR (the state has `pr`): push, edit the body's verify section, add one

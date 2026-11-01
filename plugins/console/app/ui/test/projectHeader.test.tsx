@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import { ProjectHeader } from '../src/ProjectHeader.tsx';
+import { JOB_HOSTS_TITLE, ProjectHeader } from '../src/ProjectHeader.tsx';
 import { snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
@@ -16,7 +16,12 @@ function field(label: string): HTMLElement {
 test('Header_Fields_LabelledInOrder', () => {
   render(<ProjectHeader project={PROJECT} />);
   const labels = screen.getAllByRole('term').map((term) => term.textContent);
-  expect(labels, 'because every value says what it is, in the order the owner scans them').toEqual(['Project', 'Repository', 'Tracker', 'Base branch', 'Flow plugin', 'Jobs run on']);
+  expect(labels, 'because every value says what it is, in the order the owner scans them').toEqual(['Project', 'Repository', 'Tracker', 'Base branch', 'Jobs run on']);
+});
+
+test('Header_AnyProject_HasNoPluginFields', () => {
+  render(<ProjectHeader project={PROJECT} />);
+  expect(screen.getByRole('region', { name: 'Project details' }).textContent, 'because the plugins and their versions moved to the Overview footer, so the row stays on which project this is').not.toMatch(/plugin|1\.17\.0|1\.3\.0/i);
 });
 
 test('Header_ProjectField_NamesItAndTheTitleShowsTheRoot', () => {
@@ -34,10 +39,10 @@ test('GithubAdapter_TrackerFieldLinksGithubIssues', () => {
   expect(within(field('Tracker')).getByRole('link', { name: 'GitHub issues' }).getAttribute('href'), 'because the items live on the issues page, and the value says so in words').toBe('https://github.com/owner/project/issues');
 });
 
-test('LocalProject_TrackerSaysLocalAndOnlySettingsLinks', () => {
+test('LocalProject_TrackerSaysLocalAndNothingLinks', () => {
   render(<ProjectHeader project={{ ...PROJECT, repo: null, repoUrl: null, trackerUrl: null, adapter: 'local' }} />);
   expect(field('Tracker').textContent, 'because a local tracker has no page, only its name').toBe('Trackerlocal');
-  expect(screen.queryAllByRole('link').map((link) => link.textContent), 'because a local project has no repository or tracker page to open, only the Settings link').toEqual(['Settings']);
+  expect(screen.queryAllByRole('link').map((link) => link.textContent), 'because a local project has no repository or tracker page to open').toEqual([]);
 });
 
 test('Header_BaseBranch_ShownInMono', () => {
@@ -45,23 +50,17 @@ test('Header_BaseBranch_ShownInMono', () => {
   expect(within(field('Base branch')).getByText('main').className, 'because a branch name reads as code').toBe('mono');
 });
 
-test('InstalledPlugin_FlowPluginTitleSaysInstalled', () => {
+test('JobsOnBothHosts_JobsRunOnListsBoth', () => {
+  render(<ProjectHeader project={{ ...PROJECT, jobsHost: 'claude', jobHosts: ['claude', 'codex'] }} />);
+  expect([field('Jobs run on').textContent, field('Jobs run on').getAttribute('title')], 'because schedules and workers can run on either CLI, and jobs.host alone would hide the other').toEqual(['Jobs run onclaude, codex', JOB_HOSTS_TITLE]);
+});
+
+test('NoJobHostsReported_JobsRunOnFallsBackToTheJobsHost', () => {
+  render(<ProjectHeader project={{ ...PROJECT, jobsHost: 'codex', jobHosts: [] }} />);
+  expect(field('Jobs run on').textContent, 'because the field must still name a host when the daemon lists none').toBe('Jobs run oncodex');
+});
+
+test('Header_AnyProject_HasNoSettingsLink', () => {
   render(<ProjectHeader project={PROJECT} />);
-  expect([field('Flow plugin').textContent, field('Flow plugin').getAttribute('title')], 'because the owner should know which copy of the plugin runs').toEqual(['Flow plugin1.17.0', 'The installed plugin, as .flow/plugin.sh finds it: /home/owner/.claude/plugins/cache/brain/flow/1.17.0']);
-});
-
-test('PluginFromTheEnvironment_FlowPluginTitleSaysFlowPlugin', () => {
-  render(<ProjectHeader project={{ ...PROJECT, pluginSource: 'FLOW_PLUGIN', pluginRoot: '/work/brain/plugins/flow' }} />);
-  expect(field('Flow plugin').getAttribute('title'), 'because a checkout named by FLOW_PLUGIN is not the installed plugin, and the owner must be able to tell').toBe('Set by FLOW_PLUGIN when the daemon started: /work/brain/plugins/flow');
-});
-
-test('Header_JobsRunOn_SaysTheJobsHost', () => {
-  render(<ProjectHeader project={{ ...PROJECT, jobsHost: 'codex' }} />);
-  expect(field('Jobs run on').textContent, 'because which CLI runs the jobs changes what the agents can do').toBe('Jobs run oncodex');
-});
-
-test('Header_AnyProject_LinksToSettings', () => {
-  render(<ProjectHeader project={PROJECT} />);
-  const settings = screen.getByRole('link', { name: 'Settings' });
-  expect([settings.getAttribute('href'), settings.getAttribute('title')], 'because projects are added and removed there, and the tooltip says what Settings holds').toEqual(['#/settings', 'The projects the daemon watches, the terminal it opens and its port: add or remove a project there without a restart.']);
+  expect(screen.queryByRole('link', { name: 'Settings' }), 'because the top bar already has a Settings button, so the row does not repeat it').toBeNull();
 });

@@ -67,6 +67,12 @@ export type FieldSpec = {
   keys?: MapKey[];
   /** A map of free names to text (`gates`: a check to its command), edited as rows of a name and a value. */
   rows?: MapRows;
+  /**
+   * The key that may hold one plain list in place of the map this field sits in (`reviews.reviewers`
+   * for its `default`): the form shows that list as this field's value, and a save under the map
+   * turns the list into this field first.
+   */
+  plainList?: string;
 };
 
 /** One fixed name of a map: the name the file writes, what the form calls it, and an example. */
@@ -232,12 +238,15 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('base', 'string', 'Worktree pool', 'Base branch', 'The branch new task branches start from and pull requests merge into. Unset, main.', { placeholder: 'main' }),
   field('pool', 'list', 'Worktree pool', 'Pool worktrees', 'The worktrees tasks are claimed into, one task each; more entries means more work in parallel.', { followUp: NEXT_CLAIM, placeholder: '../app-wt-1\n../app-wt-2' }),
   field('pool_max', 'number', 'Worktree pool', 'Most worktrees the pool grows to', 'A cap on the whole pool, not per run. When a claim finds every worktree busy, the flow adds one more worktree and lists it under Pool worktrees, until that list has this many entries: with 2 worktrees there and 9 here, the pool can grow by 7 more. 0 or unset never adds one.', { min: 0, max: 64, followUp: NEXT_CLAIM, placeholder: '4' }),
+  field('worktree_name', 'string', 'Worktree pool', 'Name of a new worktree', 'The path a worktree the pool adds gets, from the project root: {repo} is the main checkout\'s folder and {n} the first number no pool entry or folder uses, and the last folder name must hold {n}. Unset, the next number after the last entry\'s name.', { followUp: NEXT_CLAIM, placeholder: '../{repo}-wt-{n}' }),
   field('worktree_copy', 'list', 'Worktree pool', 'Files copied into a new worktree', 'Git-ignored files a new worktree gets copied from the main checkout when it lacks them, as paths from the project root.', { followUp: NEXT_CLAIM, placeholder: '.env\n.claude/settings.local.json' }),
   field('worktree_setup', 'list', 'Worktree pool', 'Setup commands for a new worktree', 'Commands run in a new worktree after the copy, such as a package restore.', { followUp: NEXT_CLAIM, placeholder: 'npm ci' }),
   field('gates', 'map', 'Gates and verification', 'Project checks', 'Project checks the verifier runs after build, format and tests: a name, and the command it runs from the project root.', { rows: { name: 'Check', value: 'Command', namePlaceholder: 'lint', valuePlaceholder: 'npm run lint', add: 'Add a check' } }),
   field('feel_test_paths', 'list', 'Gates and verification', 'Paths that need a feel test', 'Changed files matching these globs stop the item at the feel-test gate after verify passes, for you to try the change by hand.', { placeholder: 'ui/src/**/*.tsx' }),
   field('auto_gates.plan-approval', 'string', 'Gates and verification', 'Sizes whose plan is approved for you', 'Item sizes, comma separated, whose plan the flow approves itself instead of waiting for you.', { placeholder: 'S,M' }),
-  field('reviews.reviewers', 'list', 'Reviews', 'Reviewers', 'Who each review round asks: codex, claude, copilot or a GitHub login.', { placeholder: 'codex\ncopilot' }),
+  field('reviews.reviewers.claude', 'list', 'Reviews', 'Reviewers of Claude\'s PRs', 'Who each review round asks on a PR Claude wrote: codex, claude, copilot or a GitHub login. Empty, the default reviewers.', { placeholder: 'codex\ncopilot' }),
+  field('reviews.reviewers.codex', 'list', 'Reviews', 'Reviewers of Codex\'s PRs', 'Who each review round asks on a PR Codex wrote. Empty, the default reviewers.', { placeholder: 'claude\ncopilot' }),
+  field('reviews.reviewers.default', 'list', 'Reviews', 'Default reviewers', 'Who each review round asks on a PR whose author is unknown or has no list of its own. Unset, codex and claude.', { placeholder: 'codex\nclaude', plainList: 'reviews.reviewers' }),
   field('reviews.chase_after', 'duration', 'Reviews', 'Ask a silent reviewer again after', 'How long a reviewer may stay silent before the comments job asks again: a number with s, m, h or d. Unset, 1h.', { placeholder: '1h' }),
   field('reviews.max_chases', 'number', 'Reviews', 'Most times to ask again', 'How many times a silent reviewer is asked again before you are told. Unset, 2.', { min: 0, max: 20, placeholder: '2' }),
   field('notify.desktop', 'boolean', 'Notifications', 'Desktop banners', 'When on, notifications also show as a macOS banner on this machine.', { part: CHANNELS }),
@@ -287,9 +296,20 @@ export function fieldAt(path: string): FieldSpec | undefined {
   return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path) ?? namedScheduleField(path);
 }
 
-/** The schema field a path belongs to: itself, or the map or list field above it. */
+/** The schema field a path belongs to: itself, the map or list field above it, or the field whose plain list it is. */
 export function fieldCovering(path: string): FieldSpec | undefined {
-  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path || ((spec.type === 'map' || spec.type === 'list') && path.startsWith(`${spec.path}.`))) ?? namedScheduleField(path);
+  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path || spec.plainList === path || ((spec.type === 'map' || spec.type === 'list') && path.startsWith(`${spec.path}.`))) ?? namedScheduleField(path);
+}
+
+/** The plain list a field stands for, as the parsed file holds it (a list, or one item), or undefined when its key holds a map or nothing. */
+export function plainListValue(values: Record<string, unknown>, spec: FieldSpec): string | unknown[] | undefined {
+  if (spec.plainList === undefined) return undefined;
+  let current: unknown = values;
+  for (const key of spec.plainList.split('.')) {
+    if (current === null || typeof current !== 'object' || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return Array.isArray(current) || (typeof current === 'string' && current !== '') ? current : undefined;
 }
 
 /** The fields of the named schedules a parsed file holds, in file order. */

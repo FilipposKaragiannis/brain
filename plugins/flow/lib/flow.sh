@@ -205,7 +205,7 @@ adapters_configured() {
     return
   fi
   for _tracker in $_trackers; do
-    [ -d "$FLOW_PLUGIN/adapters/$_tracker" ] || die "trackers names $_tracker, not an adapter; the adapters are $(ls "$FLOW_PLUGIN/adapters" | paste -sd ' ' -)" 2
+    [ -d "$FLOW_PLUGIN/adapters/$_tracker" ] || die "trackers names $_tracker, not an adapter; the adapters are $(find "$FLOW_PLUGIN/adapters" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | paste -sd ' ' -)" 2
   done
   printf '%s\n' "$_trackers"
 }

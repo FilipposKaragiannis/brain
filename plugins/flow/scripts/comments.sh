@@ -12,10 +12,13 @@
 #                                               last comment ids of the unresolved threads whose last comment does
 #                                               not carry the reply marker (in a thread with no marker at all, a
 #                                               last reply by the flow's login is ours: replies before 1.19.0)
-#   comments.sh reviewers                       the reviewers each round asks, one per line (reviews.reviewers)
+#   comments.sh reviewers [--host claude|codex] the reviewers each round asks on a PR that host wrote, one per line:
+#                                               reviews.reviewers.<host>, else .default, else a plain reviews.reviewers
+#                                               list; no host, the default list
 #   comments.sh request-review <pr> <ask> [reviewer]
-#                                               ask each reviewer: a comment "@<reviewer> <ask>" each, copilot through the API;
-#                                               with a reviewer (one in the list or any GitHub login), ask that one only
+#                                               ask each reviewer of the PR's author host: a comment "@<reviewer> <ask>"
+#                                               each, copilot through the API; with a reviewer (one in the list or any
+#                                               GitHub login), ask that one only
 #   comments.sh reviews <pr>                    each reviewer's last request: answered, waiting, chases (JSON lines)
 #   comments.sh chase <pr>                      ask again a reviewer silent past reviews.chase_after, at most
 #                                               reviews.max_chases times per request, then tell the owner once
@@ -36,10 +39,31 @@ reviewer_name() { # reviewer_name <where> <name>: the name without its @, or die
   case "$name" in ""|*[!A-Za-z0-9_.-]*) die "$1: '$2' is not a reviewer name (codex, claude, copilot or a GitHub login)" 2 ;; esac
   echo "$name"
 }
-reviewers() {
-  list="$(cfg reviews.reviewers)"; [ -n "$list" ] || list="codex
+reviewers() { # reviewers <host>: the list for PRs that host wrote; an empty host gets the default list
+  list=""; [ -z "$1" ] || list="$(cfg "reviews.reviewers.$1")"
+  [ -n "$list" ] || list="$(cfg reviews.reviewers.default)"
+  [ -n "$list" ] || list="$(cfg reviews.reviewers)"
+  [ -n "$list" ] || list="codex
 claude"
   printf '%s\n' "$list" | while read -r reviewer; do reviewer_name reviews.reviewers "$reviewer" || exit 2; done
+}
+# author_host <pr>: the host that wrote the PR, claude or codex: the pr_host of the item its branch
+# names (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1), else its body's footer; nothing
+# when neither says.
+author_host() {
+  said="$(gh pr view "$1" -R "$repo" --json headRefName,body 2>/dev/null | python3 -I -c '
+import json, re, sys
+pr = json.load(sys.stdin); head, body = pr.get("headRefName") or "", pr.get("body") or ""
+gh, local = re.match(r"flow/gh-(\d+)$", head), re.match(r"flow/local-([a-z]+)-(\d+)$", head)
+print("gh#" + gh.group(1) if gh else "local:%s/%s" % local.groups() if local else "-",
+      "claude" if "Generated with [Claude Code]" in body else "codex" if "chatgpt.com/codex/tasks/" in body else "-")' 2>/dev/null)" || return 0
+  item="${said% *}"; footer="${said#* }"; recorded=""
+  [ "$item" = "-" ] || recorded="$(json_get "$(adapter read "$item" 2>/dev/null)" state.pr_host)"
+  case "$recorded" in claude|codex) echo "$recorded" ;; *) [ "$footer" = "-" ] || echo "$footer" ;; esac
+}
+# pr_reviewers <pr>: the reviewers of the PR's author host. Only a map per host asks who wrote it.
+pr_reviewers() {
+  if [ -n "$(yaml_keys "$(config_file)" reviews.reviewers)" ]; then reviewers "$(author_host "$1")"; else reviewers ""; fi
 }
 # The ask goes to bots verbatim: no markers that would count as a request or a chase, no extra mentions.
 plain_ask() { printf '%s' "$1" | sed 's/<!--//g; s/-->//g; s/@\([A-Za-z0-9]\)/\1/g'; }
@@ -133,17 +157,22 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
   state)
     gh pr view "$(pr_number "$2")" -R "$repo" --json state,isDraft,mergedAt,url,headRefName,headRefOid,baseRefName,number,mergeable,updatedAt,reviewDecision,latestReviews,reviewRequests ;;
   reviewers)
-    reviewers ;;
+    case "$#:${2:-}:${3:-}" in
+      1::) host="" ;;
+      3:--host:claude|3:--host:codex) host="$3" ;;
+      *) die "usage: comments.sh reviewers [--host claude|codex]" 2 ;;
+    esac
+    reviewers "$host" ;;
   request-review)
     [ $# -ge 3 ] && [ $# -le 4 ] || die "usage: comments.sh request-review <pr> <ask> [reviewer]" 2
     pull="$(pr_number "$2")"
-    if [ $# -eq 4 ]; then list="$(reviewer_name request-review "$4")" || exit 2; else list="$(reviewers)" || exit 2; fi
+    if [ $# -eq 4 ]; then list="$(reviewer_name request-review "$4")" || exit 2; else list="$(pr_reviewers "$pull")" || exit 2; fi
     for reviewer in $list; do
       ask_reviewer "$pull" "$reviewer" "$3" || die "could not ask $reviewer on #$pull"
       echo "asked $reviewer"
     done ;;
   reviews)
-    pull="$(pr_number "$2")"; scratch="$(mktemp -d)"; list="$(reviewers)" || exit 2
+    pull="$(pr_number "$2")"; scratch="$(mktemp -d)"; list="$(pr_reviewers "$pull")" || exit 2
     gh api --paginate --slurp "repos/$repo/issues/$pull/comments?per_page=$PAGE_SIZE" > "$scratch/comments.json" &&
       gh api --paginate --slurp "repos/$repo/pulls/$pull/reviews?per_page=$PAGE_SIZE" > "$scratch/reviews.json" &&
       gh api --paginate --slurp "repos/$repo/issues/$pull/timeline?per_page=$PAGE_SIZE" > "$scratch/timeline.json" &&
@@ -183,5 +212,5 @@ print(json.dumps({"updatedAt": state.get("updatedAt", ""), "headRefOid": state.g
                   "mergeable": state.get("mergeable", ""), "unresolved": len(threads),
                   "review_comments": sum(1 + len(t["replies"]) for t in threads),
                   "awaiting": waiting}))' "$st" "$th" "$REPLY_MARKER" "$me" ;;
-  *) sed -n '2,19p' "$0"; exit 2 ;;
+  *) sed -n '2,24p' "$0"; exit 2 ;;
 esac

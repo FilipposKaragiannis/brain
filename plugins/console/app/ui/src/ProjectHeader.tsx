@@ -1,25 +1,19 @@
 import type { ReactNode } from 'react';
 import type { ProjectInfo } from '../../daemon/src/snapshot.ts';
 import { ExternalLink } from './links.tsx';
-import { SETTINGS_HASH } from './route.ts';
-import { WORDS } from './words.ts';
 
 /** What the tracker value says for each adapter; another adapter shows its own name. */
 const TRACKER_WORDS: Record<string, string> = { github: 'GitHub issues', local: 'local' };
 
-/** How the plugin was found, for the Flow plugin field's tooltip. */
-export function pluginTitle(project: ProjectInfo): string {
-  if (project.pluginSource === null || project.pluginRoot === null) return 'No flow plugin found for this project';
-  if (project.pluginSource === 'FLOW_PLUGIN') return `Set by FLOW_PLUGIN when the daemon started: ${project.pluginRoot}`;
-  return `The installed plugin, as .flow/plugin.sh finds it: ${project.pluginRoot}`;
-}
+export const JOB_HOSTS_TITLE = 'The hosts the schedules and their workers run on';
 
 /**
  * Which project this is, as a row of labelled fields: a small label over each value, so every
- * word says what it is. The fields wrap at phone width; Settings stays at the far right.
+ * word says what it is. The fields wrap at phone width; the top bar holds the Settings button.
  */
 export function ProjectHeader({ project }: { project: ProjectInfo }) {
   const tracker = TRACKER_WORDS[project.adapter] ?? project.adapter;
+  const hosts = project.jobHosts.length > 0 ? project.jobHosts : [project.jobsHost];
   return (
     <section className="project-bar" aria-label="Project details">
       <dl className="project-fields">
@@ -31,10 +25,8 @@ export function ProjectHeader({ project }: { project: ProjectInfo }) {
           {project.trackerUrl !== null ? <ExternalLink url={project.trackerUrl} className="">{tracker}</ExternalLink> : tracker}
         </Field>
         <Field label="Base branch" title="The branch work merges into"><span className="mono">{project.base}</span></Field>
-        <Field label="Flow plugin" title={pluginTitle(project)}>{project.pluginVersion ?? 'not found'}</Field>
-        <Field label="Jobs run on" title="jobs.host: the CLI the scheduled jobs run">{project.jobsHost}</Field>
+        <Field label="Jobs run on" title={JOB_HOSTS_TITLE}>{hosts.join(', ')}</Field>
       </dl>
-      <a className="project-settings" href={SETTINGS_HASH} title={WORDS.projects}>Settings</a>
     </section>
   );
 }

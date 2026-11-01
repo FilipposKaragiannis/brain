@@ -1,12 +1,14 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, expect, test } from 'vitest';
-import type { AttentionRow, Disagreement, PullRequest, Snapshot } from '../../daemon/src/snapshot.ts';
+import { afterEach, expect, test, vi } from 'vitest';
+import type { AttentionRow, Disagreement, InstalledPlugin, PullRequest, Snapshot } from '../../daemon/src/snapshot.ts';
 import type { Route } from '../src/route.ts';
 import { Overview, tiles } from '../src/screens/Overview.tsx';
 import { FIELD_ROWS_SHOWN } from '../src/screens/NeedsYou.tsx';
-import { actionRecord, boardDisagreement, readiness, boardItem, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { REFRESH_ALL_SOURCES, REFRESH_SETTLE_MS } from '../src/SourcesRefresh.tsx';
+import { MISSING, NO_PLUGINS, PROVIDERS_DIFFER } from '../src/PluginsFooter.tsx';
+import { actionRecord, boardDisagreement, readiness, boardItem, FakeDaemon, HTTP_ACCEPTED, HTTP_UNAUTHORIZED, installedPlugin, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 const ignoreRoute = (): void => {};
 
@@ -131,4 +133,95 @@ test('GateRow_DecideOpensThatGate', () => {
 test('NothingRuns_RunningNowSaysSo', () => {
   renderOverview(snapshotAt(TAKEN_AT, 0));
   expect(screen.queryByText('No run is going.'), 'because an empty panel would look like a broken one').not.toBeNull();
+});
+
+const REFRESH_PATH = '/api/projects/project/refresh';
+
+function renderWith(daemon: FakeDaemon, snapshot: Snapshot): void {
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Overview snapshot={snapshot} go={ignoreRoute} /></Wrapper>);
+}
+
+function refreshButton(): HTMLButtonElement {
+  return screen.getByRole('button', { name: REFRESH_ALL_SOURCES }) as HTMLButtonElement;
+}
+
+test('RefreshPressed_PostsToTheRefreshRouteAndStaysDisabledUntilSettled', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answerAfterEvents('POST', REFRESH_PATH, 1, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { refreshing: ['files'] } }; });
+  renderWith(daemon, snapshotAt(TAKEN_AT, 0));
+  fireEvent.click(refreshButton());
+  expect([refreshButton().disabled, refreshButton().classList.contains('spinning')], 'because a second press while the daemon reads would only queue the same work, and the turning icon says it is on its way').toEqual([true, true]);
+  daemon.openStream();
+  await act(async () => { daemon.latestStream().send('projects', []); });
+  expect([posted, refreshButton().disabled], 'because no source named means every source, and the icon keeps turning a moment after the daemon took it').toEqual([[null], true]);
+  await act(async () => { vi.advanceTimersByTime(REFRESH_SETTLE_MS); });
+  expect(refreshButton().disabled, 'because once settled the owner can ask again').toBe(false);
+});
+
+test('RefreshRefused_ShowsTheErrorAndCanBePressedAgain', async () => {
+  const daemon = new FakeDaemon();
+  daemon.answer('POST', REFRESH_PATH, () => ({ status: HTTP_UNAUTHORIZED, body: { error: 'token needed' } }));
+  renderWith(daemon, snapshotAt(TAKEN_AT, 0));
+  await act(async () => { fireEvent.click(refreshButton()); });
+  expect([screen.getByRole('status').textContent, refreshButton().disabled], 'because a refused refresh must say why beside the button, and a retry stays one press away').toEqual(['Refresh failed: token needed', false]);
+});
+
+function withPlugins(...plugins: InstalledPlugin[]): Snapshot {
+  const snapshot = snapshotAt(TAKEN_AT, 0);
+  return { ...snapshot, project: { ...snapshot.project, plugins } };
+}
+
+/** The footer's table as the owner reads it: one row per plugin, the name then each provider's cell. */
+function pluginRows(): string[][] {
+  const table = within(screen.getByLabelText('Installed plugins')).getByRole('table');
+  return within(table).getAllByRole('row').slice(1).map((row) => Array.from(row.children, (cell) => cell.textContent ?? ''));
+}
+
+test('PluginsFooter_ListsFlowFirstThenTheOthersWithEachProvidersVersion', () => {
+  renderOverview(withPlugins(installedPlugin('standards', '1.3.0', '1.3.0'), installedPlugin('craft', '1.0.0', '1.0.0'), installedPlugin('flow', '1.17.0', '1.17.0')));
+  expect(pluginRows(), 'because the owner wants every plugin, flow among them, with what Claude Code and Codex each have').toEqual([['flow', '1.17.0', '1.17.0'], ['craft', '1.0.0', '1.0.0'], ['standards', '1.3.0', '1.3.0']]);
+});
+
+test('PluginsFooter_NamesTheProvidersAndTheMarketplace', () => {
+  renderOverview(snapshotAt(TAKEN_AT, 0));
+  const table = within(screen.getByLabelText('Installed plugins')).getByRole('table', { name: 'Plugins from brain' });
+  expect(within(table).getAllByRole('columnheader').map((header) => header.textContent), 'because each column is one provider, said in full').toEqual(['Plugin', 'Claude Code', 'Codex']);
+});
+
+test('PluginOnOneProviderOnly_OtherCellShowsADash', () => {
+  renderOverview(withPlugins(installedPlugin('meta', '1.1.2', null), installedPlugin('craft', null, '1.0.0')));
+  expect(pluginRows(), 'because a plugin a provider lacks is not there for jobs on it, and an empty cell would read as not loaded').toEqual([['craft', MISSING, '1.0.0'], ['meta', '1.1.2', MISSING]]);
+});
+
+test('PluginOnDifferentVersions_BothCellsMarkedAsDiffering', () => {
+  renderOverview(withPlugins(installedPlugin('flow', '1.17.0', '1.16.0'), installedPlugin('standards', '1.3.0', '1.3.0')));
+  const marked = Array.from(screen.getByLabelText('Installed plugins').querySelectorAll('.plugin-differs'), (cell) => [cell.textContent, cell.getAttribute('title')]);
+  expect(marked, 'because a job on Codex runs the Codex copy, so a mismatch must stand out, and only the plugin that differs').toEqual([['1.17.0', PROVIDERS_DIFFER], ['1.16.0', PROVIDERS_DIFFER]]);
+});
+
+test('InstalledFlow_FlowScriptsLineNamesTheVersionAndTheInstalledPlugin', () => {
+  renderOverview(snapshotAt(TAKEN_AT, 0));
+  expect(screen.getByText(/^Flow scripts/).textContent, 'because the table says what is installed, and the owner must also know which copy the scripts run').toMatch(/1\.17\.0.*installed plugin.*\/home\/owner\/\.claude\/plugins\/cache\/brain\/flow\/1\.17\.0/);
+});
+
+test('FlowFromTheEnvironment_FlowScriptsLineSaysFlowPlugin', () => {
+  const snapshot = snapshotAt(TAKEN_AT, 0);
+  renderOverview({ ...snapshot, project: { ...snapshot.project, pluginVersion: '1.28.0', pluginSource: 'FLOW_PLUGIN', pluginRoot: '/work/brain/plugins/flow' } });
+  expect(screen.getByText(/^Flow scripts/).textContent, 'because a checkout named by FLOW_PLUGIN is not the installed plugin, and the owner must be able to tell').toMatch(/1\.28\.0.*FLOW_PLUGIN.*\/work\/brain\/plugins\/flow/);
+});
+
+test('NoPluginsFound_FooterSaysWhereItLooked', () => {
+  renderOverview(withPlugins());
+  const footer = screen.getByLabelText('Installed plugins');
+  expect([within(footer).queryByRole('table'), within(footer).queryByText(NO_PLUGINS)], 'because an empty table would read as not loaded yet').toEqual([null, expect.anything()]);
+});
+
+test('RunningNow_Header_LinksToAgentsAndJobs', () => {
+  renderOverview(snapshotAt(TAKEN_AT, 0));
+  const running = screen.getByRole('heading', { name: 'Running now' }).closest('section, article, details, div.module') as HTMLElement;
+  expect(within(running).getByRole('link', { name: 'Agents' }).getAttribute('href'), 'because the runs live on the Agents page').toMatch(/\/agents$/);
+  expect(within(running).getByRole('link', { name: 'Jobs' }).getAttribute('href'), 'because the scheduled jobs listed here live on the Jobs page').toMatch(/\/jobs$/);
 });

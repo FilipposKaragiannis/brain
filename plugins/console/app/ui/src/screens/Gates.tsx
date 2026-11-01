@@ -210,7 +210,7 @@ export function DecisionCard({ gate, snapshot, draft, onAnswer }: { gate: Gate; 
   const summary = (form === 'answers' ? [`**${ask}**`, rest] : [rest]).filter((part) => part.trim() !== '').join('\n\n');
   const short = summary.length <= SHORT_SUMMARY_CHARS;
   const lead = form === 'approval' ? (gate.plan !== null ? 'plan' : gate.body !== null && gate.body.trim() !== '' ? 'issue' : null) : null;
-  const session = latestSession(snapshot, gate.item);
+  const discuss = discussArgs(snapshot, gate);
   return (
     <section className="decision-card" aria-label="Decision card">
       <DecisionHead gate={gate} snapshot={snapshot} answered={false} summary={short && summary !== '' ? summary : null} />
@@ -225,9 +225,9 @@ export function DecisionCard({ gate, snapshot, draft, onAnswer }: { gate: Gate; 
         {(form === 'approval' || form === 'feel') && <VerdictForm gate={gate} ask={ask} form={form} split={isSplit(gate, snapshot)} draft={draft} onAnswer={onAnswer} />}
         {form === 'answers' && <AnswersForm gate={gate} questions={numbered ? gate.questions : []} draft={draft} onAnswer={onAnswer} />}
         {form === 'merge' && <MergeForm gate={gate} ask={ask} reviewers={snapshot.project.reviewers} onAnswer={onAnswer} />}
-        {session !== null && (
+        {discuss !== null && (
           <div className="gate-discuss">
-            <ActionButton kind="terminal.open" args={{ path: session.cwd, session: String(session.pid) }} label="Discuss with the agent" primary={false}
+            <ActionButton kind="terminal.open" args={discuss} label="Discuss with the agent" primary={false}
               title="Opens a terminal at the worktree and resumes the session that raised this gate, so you can talk it through before you answer." />
             <span className="muted">Resumes the session that raised the gate, in a terminal.</span>
           </div>
@@ -235,6 +235,17 @@ export function DecisionCard({ gate, snapshot, draft, onAnswer }: { gate: Gate; 
       </div>
     </section>
   );
+}
+
+/**
+ * How to open the session to discuss the gate with: the newest agent on the item with a session,
+ * running or ended, by its pid; else the session the daemon located for the gate from the
+ * transcripts on disk (it survives a daemon restart), by the gate's item. Null with neither.
+ */
+function discussArgs(snapshot: Snapshot, gate: Gate): Record<string, string> | null {
+  const agent = latestSession(snapshot, gate.item);
+  if (agent !== null) return { path: agent.cwd, session: String(agent.pid) };
+  return gate.session !== null ? { gate: gate.item } : null;
 }
 
 /** The newest session that worked on the item, running or ended, so the owner can talk to it. */
@@ -433,7 +444,7 @@ function AnsweredCard({ entry, snapshot, nextGate, onRetry }: { entry: Answered;
         </div>
         {going && (
           <div className="run-live">
-            <div className="run-live-line"><Dot tone="running" /><span className="run-live-text">Run going{wt === null ? '' : ` in ${wt}`}</span><span className="muted">· watch it on Agents and jobs</span></div>
+            <div className="run-live-line"><Dot tone="running" /><span className="run-live-text">Run going{wt === null ? '' : ` in ${wt}`}</span><span className="muted">· watch it on Agents</span></div>
             <div className="run-stripes" />
           </div>
         )}
@@ -500,7 +511,7 @@ function queueBusy(message: string): boolean {
 function queuedText(gate: Gate, snapshot: Snapshot): string {
   const next = snapshot.jobs.find((job) => job.name === 'next');
   if (next === undefined || !next.installed || next.next === '' || next.next === 'no schedule') {
-    return 'another run holds the queue and no run is scheduled; start one from Agents and jobs once it is free';
+    return 'another run holds the queue and no run is scheduled; start one from Jobs once it is free';
   }
   return `another run holds the queue; the next scheduled run picks up ${gate.item} (${next.next})`;
 }

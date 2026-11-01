@@ -78,6 +78,8 @@ check "ready: an item that lists its open blockers is judged by that list, with 
 check "ready excludes blocked" [ "$("$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "local:task/1,local:task/2" ]
 "$P/adapters/local/link-pr.sh" "$t2" https://example/pr/1
 check "link-pr"           [ "$("$P/adapters/local/read.sh" "$t2" | jget state.pr)" = "https://example/pr/1" ]
+env -u CODEX_THREAD_ID -u CODEX_SANDBOX CLAUDECODE=1 "$P/adapters/local/link-pr.sh" "$t2" https://example/pr/1
+check "link-pr: a Claude session is recorded as the PR's host" [ "$("$P/adapters/local/read.sh" "$t2" | jget state.pr_host)" = "claude" ]
 "$P/adapters/local/write-state.sh" "$t2" pr=
 
 echo "steward"
@@ -660,14 +662,14 @@ check "trackers: next picks the most urgent ready item from every named tracker"
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 "$P/adapters/github/write-state.sh" 'gh#36' step=done >/dev/null 2>&1
 check "trackers: health reads every named tracker" sh -c "'$P/scripts/steward.sh' health 2>/dev/null | grep -q 'gh#36: done (every step ran)'"
-tracked_config 'trackers: [github, jira]' ''
+tracked_config 'trackers: [github, linear]' ''
 "$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: a name with no adapter is refused (exit 2) with the adapters there are" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira, not an adapter; the adapters are github local' '$work/trackers.err'"
+check "trackers: a name with no adapter is refused (exit 2) with the adapters there are" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear, not an adapter; the adapters are github jira local' '$work/trackers.err'"
 "$P/scripts/steward.sh" health --dry-run >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: health refuses (exit 2) a name with no adapter instead of reading no tracker" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira' '$work/trackers.err'"
+check "trackers: health refuses (exit 2) a name with no adapter instead of reading no tracker" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear' '$work/trackers.err'"
 mkdir -p "$work/trackers/bin" && printf '#!/bin/sh\nexit 0\n' > "$work/trackers/bin/claude" && chmod +x "$work/trackers/bin/claude"
 PATH="$work/trackers/bin:$PATH" "$P/jobs/comments.sh" claude >/dev/null 2>"$work/trackers.err"; code=$?
-check "trackers: the comments job refuses (exit 2) a name with no adapter instead of a quiet pass" sh -c "[ $code -eq 2 ] && grep -q 'trackers names jira' '$work/trackers.err'"
+check "trackers: the comments job refuses (exit 2) a name with no adapter instead of a quiet pass" sh -c "[ $code -eq 2 ] && grep -q 'trackers names linear' '$work/trackers.err'"
 tracked_config 'trackers: [github]' ''
 "$P/scripts/new.sh" task "Never read" >/dev/null 2>"$work/trackers.err"; code=$?
 check "trackers: new refuses (exit 2) while new items go to a tracker trackers leaves out" sh -c "[ $code -eq 2 ] && grep -q 'adapters.default is local, which trackers leaves out' '$work/trackers.err'"
@@ -742,6 +744,32 @@ check "request-review with a reviewer: no one else is asked again" sh -c "python
 check "request-review with a reviewer: a bad name is refused" sh -c "'$P/scripts/comments.sh' request-review 91 'please review' 'bad name' 2>&1 >/dev/null | grep -q \"request-review: 'bad name' is not a reviewer name\""
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [bad name]\n' >> .flow/config.yaml
 check "reviewers: a name with a space is refused by name" sh -c "'$P/scripts/comments.sh' reviewers 2>&1 >/dev/null | grep -q \"'bad name' is not a reviewer name\""
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers:\n    claude: [octo-cat]\n    codex:\n      - mona\n    default: [hubot]\n' >> .flow/config.yaml
+check "reviewers --host claude: the claude list of the map" [ "$("$P/scripts/comments.sh" reviewers --host claude | tr '\n' ' ')" = "octo-cat " ]
+check "reviewers --host codex: the codex list of the map, in block form" [ "$("$P/scripts/comments.sh" reviewers --host codex | tr '\n' ' ')" = "mona " ]
+check "reviewers with no host: the default list of the map" [ "$("$P/scripts/comments.sh" reviewers | tr '\n' ' ')" = "hubot " ]
+check "reviewers --host: a host other than claude or codex is refused" sh -c "! '$P/scripts/comments.sh' reviewers --host shell"
+asked() { python3 -c "import json,re; print(' '.join(re.findall(r'flow:review-request (\S+) -->', ' '.join(json.load(open('$FAKE_GH_DIR/issues.json'))['pr'].get('comments', [])))))"; }
+pr_as() { python3 -c "import json,sys; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName=sys.argv[1], body=sys.argv[2], comments=[]); json.dump(d, open(p,'w'))" "$1" "$2"; }
+claude_footer="Adds the slide.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+pr_as flow/x "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check "request-review: a PR whose body says Claude wrote it asks the claude list" [ "$(asked)" = "octo-cat" ]
+pr_as flow/x "Adds the slide.
+
+https://chatgpt.com/codex/tasks/task_e_6a1f"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check "request-review: a PR whose body says Codex wrote it asks the codex list" [ "$(asked)" = "mona" ]
+pr_as flow/x "Adds the slide."; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check "request-review: a PR whose author host is unknown asks the default list" [ "$(asked)" = "hubot" ]
+env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/91 >/dev/null
+check "link-pr: records the host that wrote the PR as pr_host" [ "$("$P/adapters/github/read.sh" 'gh#21' | jget state.pr_host)" = "codex" ]
+pr_as flow/gh-21 "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check "request-review: the pr_host of the item the branch names wins over the body" [ "$(asked)" = "mona" ]
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers:\n    claude: [octo-cat]\n' >> .flow/config.yaml
+check "reviewers --host codex: a map with no codex list and no default gets codex and claude" [ "$("$P/scripts/comments.sh" reviewers --host codex | tr '\n' ' ')" = "codex claude " ]
+cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [octo-cat]\n' >> .flow/config.yaml
+check "reviewers --host claude: a plain list is the list of every host" [ "$("$P/scripts/comments.sh" reviewers --host claude | tr '\n' ' ')" = "octo-cat " ]
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [codex]\n  chase_after: 30m\n  max_chases: 1\n' >> .flow/config.yaml
 seed() { # seed <request age s> <codex status> <+1 count> [chase|reply <body>|lookalike]: one request by the owner and the Codex summary
   python3 - "$FAKE_GH_DIR/issues.json" "$@" <<'PY2'
@@ -959,6 +987,16 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec --json -C $realrepo -s workspace-write' '$HOST_LOG'"
 check "a job starts its skill as typed: /plugin:skill on Claude, \$skill on Codex" sh -c "grep -q 'codex	.*workspace-write.* \\\$comments gh#21' '$HOST_LOG' && [ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow implement gh#7')\" = '/flow:implement gh#7' ]"
 check "the unattended loop starts a skill step as typed" grep -q 'host_skill_prompt "$host" flow "$skill"' "$P/templates/run-unattended.sh"
+# The chase asks the reviewers of the PR's author host: the pr_host of the item its branch names.
+cp .flow/config.yaml "$work/config.jobs"; printf 'reviews:\n  reviewers:\n    claude: [codex]\n    codex: [octo-cat]\n  chase_after: 30m\n' >> .flow/config.yaml
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-21', isDraft=False); json.dump(d, open(p,'w'))"
+"$P/adapters/github/write-state.sh" 'gh#21' pr=https://gh/pull/91 pr_host=claude >/dev/null; seed 7200 running 0; rm -rf .flow/reviews
+"$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a silent reviewer of the author host's list is chased" sh -c "python3 -c \"import json,sys; c=json.loads(sys.argv[1]); assert len(c)==1 and 'flow:chase codex' in c[0], c\" '$(pr_field comments)'"
+"$P/adapters/github/write-state.sh" 'gh#21' pr_host=codex >/dev/null; seed 7200 running 0; rm -rf .flow/reviews
+"$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a reviewer off the author host's list is not chased" [ "$(posted)" = 0 ]
+cp "$work/config.jobs" .flow/config.yaml; "$P/adapters/github/write-state.sh" 'gh#21' pr=https://gh/pull/90 pr_host= >/dev/null
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "jobs.model and jobs.effort reach the host" sh -c "grep -q 'gh#21.*--model haiku --effort low' '$HOST_LOG'"
@@ -2002,7 +2040,8 @@ printf '\n# changed\n' >> "$plugin_copy/templates/flow.rules"
 check "session-start: nudges when the plugin changed" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'behind flow v' && echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'drift: .codex/rules/flow.rules'"
 check "init: refresh brings the stamp back in step" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && [ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 mkdir -p .claude && printf '{}\n' > .claude/settings.json
-check "init: --check flags missing Claude worktree hooks as a gap" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .claude/settings.json: no WorktreeCreate'"
+check "init: --check exits 0 when missing Claude worktree hooks are its only finding" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check"
+check "init: --check names missing Claude worktree hooks as a note, not a gap" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'note: .claude/settings.json has no WorktreeCreate'"
 check "session-start: names missing Claude worktree hooks" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'no flow worktree hooks'"
 printf '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-create.sh"}]}],"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh"}]}]}}\n' > .claude/settings.json
 check "init: --check is clean once the hooks are in the settings" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
@@ -2034,6 +2073,51 @@ printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop
 : > "$work/curl.log"
 PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
 check "notify: the variable alone is enough, with no URL in the config" sh -c "grep -q 'env.example/hook' '$work/curl.log'"
+
+echo "init: from a linked worktree, and the pool it proposes"
+mkdir -p "$work/linked" && cd "$work/linked" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach .claude/worktrees/bold-oak && git worktree add -q --detach "$work/outside-wt"
+lmain="$PWD"; cd ../app-wt-1
+out="$(FLOW_PLUGIN="$plugin_copy" "$init" 2>&1)"
+check "init: from a linked worktree it writes the main worktree's config" sh -c "[ -f '$lmain/.flow/config.yaml' ] && [ ! -e .flow/config.yaml ]"
+check "init: from a linked worktree it says it works on the main worktree's flow home" sh -c "printf '%s' '$out' | grep -q 'linked worktree; init works on the flow home in the main worktree'"
+check "init: --check from a linked worktree reads the main worktree's config" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+check "init: the pool proposal keeps a worktree beside the main one" sh -c "[ \"\$(. '$P/lib/flow.sh'; yaml_get '$lmain/.flow/config.yaml' pool)\" = ../app-wt-1 ]"
+check "init: the pool proposal skips Claude's session worktrees" sh -c "! grep -q 'bold-oak' '$lmain/.flow/config.yaml'"
+check "init: the pool proposal skips a worktree outside the main worktree's parent folder" sh -c "! grep -q 'outside-wt' '$lmain/.flow/config.yaml'"
+mkdir -p "$work/nogit"
+FLOW_PLUGIN="$plugin_copy" "$init" --root "$work/nogit" > "$work/nogit.out" 2>&1; code=$?
+check "init: with no main worktree to find it refuses and names the problem" sh -c "[ $code = 1 ] && grep -q 'no main worktree for $work/nogit' '$work/nogit.out'"
+
+echo "worktree_name"
+mkdir -p "$work/named" && cd "$work/named" && git init -q -b main shop && cd shop && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+mkdir -p .flow
+namedcfg() { printf 'adapters:\n  default: local\nbase: main\npool:\n%bpool_max: 9\n%bnotify:\n  desktop: false\n' "$1" "$2" > .flow/config.yaml; }
+namedcfg '' 'worktree_name: ../{repo}-box-{n}\n'
+nm1="$("$P/scripts/new.sh" task "Named")"
+nw1="$("$P/scripts/steward.sh" claim "$nm1" 2>/dev/null)"
+check "worktree_name: a grown worktree takes the template, {repo} and {n} filled" [ "$nw1" = "$(cd ../shop-box-1 2>/dev/null && pwd -P)" ]
+mkdir ../shop-box-2
+namedcfg '  - ../shop-box-1\n  - ../shop-box-3\n' 'worktree_name: ../{repo}-box-{n}\n'
+"$P/scripts/steward.sh" add >/dev/null 2>&1
+check "worktree_name: add takes the first number no pool entry and no folder uses" sh -c "[ -d ../shop-box-4 ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool | tail -1)\" = ../shop-box-4 ]"
+namedcfg '  - ../shop-box-1\n' ''
+"$P/scripts/steward.sh" add >/dev/null 2>&1
+check "worktree_name: unset, a new worktree keeps today's name" [ -d ../shop-wt-1 ]
+namedcfg '  - ../shop-box-1\n' 'worktree_name: ../{repo}-box\n'
+"$P/scripts/steward.sh" add > "$work/named.out" 2>&1; code=$?
+check "worktree_name: one with no {n} is refused, exit 2, with the reason" sh -c "[ $code = 2 ] && grep -q 'worktree_name ../{repo}-box has no {n}' '$work/named.out'"
+check "worktree_name: a refused add creates nothing" sh -c "[ ! -e ../shop-box ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool)\" = ../shop-box-1 ]"
+nm2="$("$P/scripts/new.sh" task "Named again")"
+"$P/scripts/steward.sh" claim "$nm2" > "$work/named.out" 2>&1
+check "worktree_name: a claim that would grow with one with no {n} says why" grep -q 'worktree_name ../{repo}-box has no {n}' "$work/named.out"
+namedcfg '  - ../shop-box-1\n' 'worktree_name: ../slots/{n}/checkout\n'
+"$P/scripts/steward.sh" add > "$work/named.out" 2>&1; code=$?
+check "worktree_name: one whose numbers all give the same idle branch is refused, exit 2, with the reason" sh -c "[ $code = 2 ] && grep -q 'gives every new pool worktree the idle branch main-checkout' '$work/named.out'"
+check "worktree_name: a refused add for a shared idle branch creates nothing" sh -c "[ ! -e ../slots ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool)\" = ../shop-box-1 ]"
+namedcfg '  - ../shop-box-1\n' 'worktree_name: ../slots/checkout-{n}\n'
+"$P/scripts/steward.sh" add >/dev/null 2>&1; "$P/scripts/steward.sh" add >/dev/null 2>&1
+check "worktree_name: nested folders with {n} in the last name add one worktree per number" sh -c "[ -d ../slots/checkout-1 ] && [ -d ../slots/checkout-2 ]"
 
 echo "decomposition: a split parent and its children"
 mkdir -p "$work/split" && cd "$work/split" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t

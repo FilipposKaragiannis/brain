@@ -67,6 +67,13 @@ export type Freshness = {
 /** How the project's flow plugin was found. */
 export type PluginSource = 'installed' | 'FLOW_PLUGIN';
 
+/**
+ * One plugin of flow's marketplace and the version each host has installed for the project: Claude
+ * Code's from ~/.claude/plugins/installed_plugins.json (the project's own entry over the user one),
+ * Codex's the newest in its plugin cache when its config enables it. Null where a host lacks it.
+ */
+export type InstalledPlugin = { name: string; marketplace: string; claude: string | null; codex: string | null };
+
 export type ProjectInfo = {
   id: string;
   name: string;
@@ -93,6 +100,13 @@ export type ProjectInfo = {
   pluginSource: PluginSource | null;
   /** `jobs.host`: the CLI the scheduled jobs run unattended, `claude` or `codex`. */
   jobsHost: string;
+  /**
+   * Every host the project's jobs run on: the hosts of the schedules and their workers as
+   * `jobs.sh status` says, else `jobsHost` alone. Sorted, no repeats.
+   */
+  jobHosts: string[];
+  /** The plugins of flow's marketplace installed for this project, by name, with each host's version. */
+  plugins: InstalledPlugin[];
   poolMax: number | null;
   /** `reviews.reviewers`: who the flow asks to review each PR, codex and claude when unset. The PR cards offer them for an ask. */
   reviewers: string[];
@@ -232,6 +246,13 @@ export type Gate = {
   body: string | null;
   /** The quiz the explain step wrote for the item, with its last result, or null when the item has none. */
   quiz: Quiz | null;
+  /**
+   * The session that raised the gate, found from the host's transcripts in the claimed worktree
+   * (of those written at or after 30 minutes before the raise, the one that started latest no later
+   * than 5 seconds after the raise), so it can be discussed after the daemon restarts; null with no
+   * claimed worktree, a host other than claude or codex, or none found.
+   */
+  session: SessionRef | null;
 };
 
 export type GatePlan = { file: string; text: string };

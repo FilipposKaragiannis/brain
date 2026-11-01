@@ -4,8 +4,9 @@
 # Finds every open item with a linked PR across the adapters, drops the merged and closed
 # ones, and runs the flow `comments` skill once per PR in a fresh host session from the main
 # worktree (the skill spawns the comment-addresser in the task's worktree). Before that, with no
-# model: a reviewer silent past reviews.chase_after is asked again (comments.sh chase), and a PR
-# that conflicts with its base is named in the brief so the skill merges the base in first.
+# model: a reviewer of the PR's author host silent past reviews.chase_after is asked again
+# (comments.sh chase), and a PR that conflicts with its base is named in the brief so the skill
+# merges the base in first.
 # An item waiting at a gate other than merge is skipped, and so is an item whose worktree another
 # session works in (the health job's process scan), named or not: the pass would edit under it.
 # A PR whose activity (last update, head commit, mergeable, unresolved threads, their comments,

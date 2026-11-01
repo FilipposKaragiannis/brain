@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Disagreement, Readiness, FlowEvent, Gate, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
+import type { Disagreement, Readiness, FlowEvent, Gate, InstalledPlugin, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord } from '../src/actions.ts';
 import type { Api, ApiResponse, HttpMethod, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
@@ -127,7 +127,7 @@ export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   return {
     schema: 7,
     takenAt,
-    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', poolMax: 9, reviewers: ['codex', 'claude'] },
+    project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', jobHosts: ['claude'], plugins: [installedPlugin('flow', '1.17.0', '1.17.0'), installedPlugin('standards', '1.3.0', '1.3.0')], poolMax: 9, reviewers: ['codex', 'claude'] },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
     counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0 },
     readiness: { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0 },
@@ -137,6 +137,11 @@ export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
 }
 
 const PLUGIN = '/home/owner/.claude/plugins/flow';
+/** One plugin of flow's marketplace with the version each host has, null where a host lacks it. */
+export function installedPlugin(name: string, claude: string | null, codex: string | null): InstalledPlugin {
+  return { name, marketplace: 'brain', claude, codex };
+}
+
 export const ENDED_AT = '2026-10-24T18:16:40Z';
 
 /** A `job.run` record in the daemon's shape: the job's lock, and the plugin's jobs.sh as the command. */
@@ -177,7 +182,7 @@ export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo 
 }
 
 export function waitingGate(item: string, gate: string): Gate {
-  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null, quiz: null };
+  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null, quiz: null, session: null };
 }
 
 export function boardDisagreement(item: string): Disagreement {

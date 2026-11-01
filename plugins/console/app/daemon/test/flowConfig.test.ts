@@ -162,6 +162,11 @@ test('StewardAppendsAfterAConsoleWrite_BothParsers_ReadTheWholePool', () => {
   }
 });
 
+test('WorktreeNameTemplate_WrittenByTheConsole_ThePluginsYamlGetReadsItAsWritten', () => {
+  const after = edited(FOOSBRAWL, 'worktree_name', 'scalar', '../{repo}-wt-{n}');
+  assert.deepEqual(yamlGet(after, 'worktree_name'), ['../{repo}-wt-{n}'], 'because steward.sh fills the braces of the name lib/flow.sh reads, so they must reach it untouched');
+});
+
 test('ScalarStartingWithABracket_Written_Refused', () => {
   const result = applyChange(FOOSBRAWL, 'jobs.model', 'scalar', '[wip]');
   assert.ok(!result.ok && /starts with \[ or \{/.test(result.error), 'because lib/flow.sh strips the quotes and then reads [wip] as the list wip');
@@ -187,6 +192,12 @@ test('FixtureKeysInTheSchema_Parsed_EachFitsItsType', () => {
 test('FoosbrawlConfig_Described_NoKeyLeftForOther', () => {
   const sections = describe('/p/.flow/config.yaml', FOOSBRAWL).sections;
   assert.equal(sections.find((section) => section.group === 'Other'), undefined, 'because the schema knows every key foosbrawl sets');
+});
+
+test('ReviewersPerHost_Described_NoWarningAndNothingInOther', () => {
+  const text = 'reviews:\n  reviewers:\n    claude: [codex]\n    codex:\n      - claude\n    default: [codex, claude]\n';
+  const document = describe('/p/.flow/config.yaml', text);
+  assert.deepEqual([document.warnings, document.sections.find((section) => section.group === 'Other')], [[], undefined], 'because each host\'s list and the default are fields of the Reviews page');
 });
 
 test('UnknownKey_Described_ShowsInOther', () => {
@@ -317,6 +328,25 @@ test('Save_Written_KeepsTheFileModeAndLeavesNoTempFile', async () => {
     await fixture.editor.write({ changes: [{ path: 'reviews.max_chases', value: 3 }], hash });
     assert.equal(statSync(fixture.file).mode & 0o777, 0o640, 'because the file is renamed over from a temp copy, which takes the old mode');
     assert.deepEqual(readdirSync(path.dirname(fixture.file)), ['config.yaml'], 'because the temp file is renamed, not left beside it');
+  } finally { fixture.done(); }
+});
+
+test('PlainReviewersList_HostListSaved_TheListStaysAsTheDefault', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    await fixture.editor.write({ changes: [{ path: 'reviews.reviewers.claude', value: ['copilot'] }], hash });
+    assert.deepEqual(yamlGet(readFileSync(fixture.file, 'utf8'), 'reviews.reviewers.default'), ['codex'], 'because the plain list was every PR\'s reviewers, so it goes on asking for the PRs no host list names');
+  } finally { fixture.done(); }
+});
+
+test('PlainReviewersList_HostListSaved_TheFlowReadsTheHostList', async () => {
+  const fixture = project();
+  try {
+    const { hash } = await readDocument(fixture.editor);
+    const reply = await fixture.editor.write({ changes: [{ path: 'reviews.reviewers.claude', value: ['copilot'] }], hash });
+    assert.equal(reply.status, 200, `because a host list may replace the plain list: ${JSON.stringify(reply.body)}`);
+    assert.deepEqual(yamlGet(readFileSync(fixture.file, 'utf8'), 'reviews.reviewers.claude'), ['copilot'], 'because comments.sh reads the list of the host that wrote the PR');
   } finally { fixture.done(); }
 });
 
@@ -651,7 +681,7 @@ test('FixedValuesList_OtherValue_RefusedOnChangeAndWarnedInTheFile', () => {
 });
 
 test('Trackers_OtherValue_Refused', () => {
-  assert.deepEqual(checkChange(fieldAt('trackers')!, ['github', 'jira']), { ok: false, error: 'trackers lists jira: it takes github or local' }, 'because adapters_configured refuses a tracker with no adapter');
+  assert.deepEqual(checkChange(fieldAt('trackers')!, ['github', 'linear']), { ok: false, error: 'trackers lists linear: it takes github, local or jira' }, 'because adapters_configured refuses a tracker with no adapter');
 });
 
 test('ReadinessFields_ReadForEveryTracker_NotMarkedGithubOnly', () => {

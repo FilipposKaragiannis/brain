@@ -73,8 +73,8 @@ function conflictsCell(pull: PullRequest): HealthCell {
 }
 
 const REVIEW_DECISION: Record<string, { value: string; tone: Tone }> = {
-  APPROVED: { value: 'approved', tone: 'quiet' },
-  CHANGES_REQUESTED: { value: 'changes requested', tone: 'needs-you' },
+  APPROVED: { value: 'approved', tone: 'ready' },
+  CHANGES_REQUESTED: { value: 'changes requested', tone: 'review' },
   REVIEW_REQUIRED: { value: 'approval required', tone: 'quiet' },
 };
 

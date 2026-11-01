@@ -31,6 +31,9 @@ export type SyncFacts = {
 /** A process's session as the snapshot lists it: where it ran, how to resume it, and whether the process still runs. */
 export type SessionFacts = { pid: number; cwd: string; session: SessionRef; alive: boolean };
 
+/** The session the daemon located for a waiting gate from the transcripts on disk, and the worktree its step ran in. */
+export type GateSessionFacts = { item: string; cwd: string; session: SessionRef };
+
 /** What an action needs from the project before it can be planned. */
 export type ActionContext = {
   root: string;
@@ -49,6 +52,8 @@ export type ActionContext = {
   processCwds: string[];
   /** The sessions of the agents and sessions the snapshot lists (alive) and of those that ended since (not alive). */
   sessions: SessionFacts[];
+  /** The sessions located for the gates the snapshot shows waiting; absent or empty, a gate's session cannot be opened. */
+  gateSessions?: GateSessionFacts[];
   /** The terminal chosen in Settings, or null for the first installed one. */
   terminal: TerminalSetting | null;
   /** The terminals installed, first choice first. */
@@ -174,7 +179,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'pr.review': ['pr', 'reviewer'],
   'quiz.answer': ['item', 'answers'],
   'host.clear': ['host'],
-  'terminal.open': ['path', 'job', 'session'],
+  'terminal.open': ['path', 'job', 'session', 'gate'],
   refresh: ['source'],
 };
 
@@ -514,9 +519,12 @@ function planUnschedule(args: Record<string, string>, context: ActionContext): P
 /**
  * `terminal.open`: a terminal window in the project root, a pool worktree, another worktree git
  * lists for the project, or the folder of an agent or session the snapshot lists, nowhere else. With `job` (from the root only) the window follows that
- * job's log, `<root>/.flow/log/<job>.log`. Nothing is locked or re-read: it only opens a window.
+ * job's log, `<root>/.flow/log/<job>.log`; with `session` (a pid) or `gate` (an item) it resumes a
+ * session (see `planSession`, `planGateSession`). Nothing is locked or re-read: it only opens a window.
  */
 function planTerminal(args: Record<string, string>, context: ActionContext): PlanResult {
+  const gate = args['gate'];
+  if (gate !== undefined) return planGateSession(gate, args, context);
   const asked = args['path'] ?? '';
   if (!path.isAbsolute(asked)) return fail('terminal.open needs an absolute path');
   const folder = path.resolve(asked);
@@ -535,6 +543,26 @@ function planTerminal(args: Record<string, string>, context: ActionContext): Pla
     run = ['tail', '-n', LOG_LINES, '-f', log];
   }
   const launch = terminalLaunch(context.terminal, context.installedTerminals, folder, run);
+  if (!launch.ok) return launch;
+  return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
+}
+
+/**
+ * `terminal.open` with `gate` (an item id): a terminal at the worktree the gate on that item was
+ * raised in, with the session the daemon located for it resumed at once: the step that raised it
+ * has ended. Only a session located for a gate the snapshot shows waiting; a `path`, when given,
+ * must be that worktree. Should the session's process still run, its command is typed, not run.
+ */
+function planGateSession(item: string, args: Record<string, string>, context: ActionContext): PlanResult {
+  if (!ITEM_ID.test(item)) return fail('gate must be an item id like gh#12 or local:task/7');
+  if (args['job'] !== undefined || args['session'] !== undefined) return fail('terminal.open takes one of a job, a session or a gate');
+  const found = (context.gateSessions ?? []).find((entry) => entry.item === item);
+  if (found === undefined) return fail(`the console located no session for a gate on ${item}: no gate waits on it, it has no claimed worktree, or no transcript there was written around the time it was raised`);
+  const folder = path.resolve(found.cwd);
+  const asked = args['path'];
+  if (asked !== undefined && (!path.isAbsolute(asked) || path.resolve(asked) !== folder)) return fail(`the gate on ${item} was raised in ${folder}; its session opens there, not in ${asked}`);
+  const alive = context.sessions.some((entry) => entry.alive && entry.session.transcript === found.session.transcript);
+  const launch = sessionLaunch(context.terminal, context.installedTerminals, folder, found.session.resume, alive);
   if (!launch.ok) return launch;
   return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
 }

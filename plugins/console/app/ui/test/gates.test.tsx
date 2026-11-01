@@ -301,6 +301,25 @@ test('GateWithNoSession_NoDiscuss', () => {
   expect(screen.queryByRole('button', { name: 'Discuss with the agent' }), 'because there is no session to resume').toBeNull();
 });
 
+test('GateWithALocatedSessionAndNoAgent_DiscussOpensTheGatesSession', async () => {
+  const { daemon, posted } = recordingDaemon();
+  renderGate({ ...PLAN_GATE, session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] } }, daemon);
+  act(() => { daemon.latestStream().open(); });
+  const button = screen.getByRole('button', { name: 'Discuss with the agent' });
+  expect(button.getAttribute('title'), 'because the button explains itself the same way whichever way the session was found').toContain('resumes the session that raised this gate');
+  await press('Discuss with the agent');
+  expect(posted, 'because after a daemon restart no agent is known, and the daemon resumes the session it located for the gate').toEqual([{ kind: 'terminal.open', args: { gate: 'gh#514' } }]);
+});
+
+test('GateWithALocatedSessionAndAnEndedAgent_DiscussOpensTheAgentsSession', async () => {
+  const { daemon, posted } = recordingDaemon();
+  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', elapsedSeconds: 60, command: 'claude -p', session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
+  renderGate({ ...PLAN_GATE, session: { host: 'claude', id: '9a9a', transcript: '/h/9a9a.jsonl', resume: ['claude', '--resume', '9a9a'] } }, daemon, { ended: [ended] });
+  act(() => { daemon.latestStream().open(); });
+  await press('Discuss with the agent');
+  expect(posted, 'because an agent the daemon watched end is known for sure, so it wins over the session found from file times').toEqual([{ kind: 'terminal.open', args: { path: '/p-wt/wt-3', session: '200' } }]);
+});
+
 const ANSWERED_NOW = new Date().toISOString();
 
 test('AnsweredEventToday_ListedUnderAnsweredToday', () => {

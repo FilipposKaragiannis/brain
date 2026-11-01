@@ -16,13 +16,15 @@ import { readProcesses } from './collectors/processes.ts';
 import type { SessionLocator } from './collectors/sessions.ts';
 import { noSessions } from './collectors/sessions.ts';
 import type { ActionContext } from './actionPlan.ts';
+import type { PluginReader } from './collectors/plugins.ts';
+import { noPlugins } from './collectors/plugins.ts';
 import type { PullFacts } from './collectors/pulls.ts';
 import { readPulls } from './collectors/pulls.ts';
 import type { Logger } from './log.ts';
 import { ageSeconds, landedMergeGates, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
-import type { Freshness, Job, NewerConsole, Snapshot, SourceName } from './snapshot.ts';
+import type { Freshness, InstalledPlugin, Job, NewerConsole, SessionRef, Snapshot, SourceName } from './snapshot.ts';
 import { ENDED_KEPT } from './snapshot.ts';
 
 /** How often each source is re-read, in milliseconds. File changes also trigger `files` and `git` at once. */
@@ -63,6 +65,10 @@ export type ProjectMonitorDependencies = {
   cadence: Cadence;
   /** Finds each process's transcript; left out, no process has a session. */
   sessions?: Pick<SessionLocator, 'assign'>;
+  /** Finds the transcript of the session that raised each waiting gate; left out, no gate has a session. */
+  gateSessions?: Pick<SessionLocator, 'gates'>;
+  /** Reads the plugins the hosts have for the project, with the files; left out, it has none. */
+  plugins?: PluginReader;
   /** A newer console in the plugin cache than the one running, asked on every rebuild; left out, none. */
   newerConsole?: () => NewerConsole | null;
 };
@@ -80,6 +86,12 @@ export class ProjectMonitor {
   private readonly log: Logger;
   private readonly cadence: Cadence;
   private readonly sessions: Pick<SessionLocator, 'assign'>;
+  private readonly gateLocator: Pick<SessionLocator, 'gates'>;
+  /** The session located for each waiting gate, by item and raise time, with the folder it ran in: only gates with one. */
+  private gateSessions = new Map<string, { cwd: string; session: SessionRef }>();
+  private readonly plugins: PluginReader;
+  /** The plugins of flow's marketplace the hosts have for the project, as the last files read found them. */
+  private installed: InstalledPlugin[] = [];
   private readonly newerConsole: () => NewerConsole | null;
   /** Processes with a session that left the list, newest first, so the owner can still open their session. */
   private ended: EndedProcess[] = [];
@@ -116,6 +128,8 @@ export class ProjectMonitor {
     this.log = dependencies.log;
     this.cadence = dependencies.cadence;
     this.sessions = dependencies.sessions ?? noSessions;
+    this.gateLocator = dependencies.gateSessions ?? noSessions;
+    this.plugins = dependencies.plugins ?? noPlugins;
     this.newerConsole = dependencies.newerConsole ?? (() => null);
   }
 
@@ -134,6 +148,10 @@ export class ProjectMonitor {
         ...(this.current?.agents ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: true }])),
         ...(this.current?.ended ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: false }])),
       ],
+      gateSessions: (this.current?.gates ?? []).flatMap((gate) => {
+        const found = this.gateSessions.get(gateSessionKey(gate.item, gate.raisedAt));
+        return found === undefined ? [] : [{ item: gate.item, cwd: found.cwd, session: found.session }];
+      }),
       terminal: null, installedTerminals: [],
       base: flow?.config.base ?? 'main',
       worktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role === 'pool').map((worktree) => ({
@@ -193,6 +211,15 @@ export class ProjectMonitor {
     return read;
   }
 
+  /**
+   * Reads the sources now, then sends the snapshot even when nothing in it changed, so the page
+   * shows each source's new read time. The refresh route uses it: a forced read must show.
+   */
+  async refreshNow(sources: readonly SourceName[]): Promise<void> {
+    await Promise.all(sources.map((source) => this.refresh(source)));
+    this.rebuild(true);
+  }
+
   private schedule(source: SourceName, everyMs: number): void {
     const timer = setInterval(() => { void this.refresh(source); }, everyMs);
     timer.unref();
@@ -214,7 +241,7 @@ export class ProjectMonitor {
       this.reads.failing[source] = true;
       this.log.warn('collect.failed', { project: this.project.id, source, error: message });
     }
-    this.rebuild();
+    this.rebuild(false);
     if (source === 'pulls' && this.facts.pulls.facts !== null) await this.sweepLanded();
   }
 
@@ -255,6 +282,8 @@ export class ProjectMonitor {
       case 'files': {
         const flowHome = await readFlowHome(root, this.runner, this.gateQuestions);
         this.facts.files.facts = flowHome;
+        this.installed = await this.plugins(root, flowHome.pluginRoot);
+        await this.locateGateSessions(flowHome);
         if (flowHome.gateListError !== null && flowHome.gateListError !== this.gateListError) {
           this.log.warn('gates.list.failed', { project: this.project.id, error: flowHome.gateListError });
         }
@@ -288,7 +317,7 @@ export class ProjectMonitor {
     }
   }
 
-  private rebuild(): void {
+  private rebuild(publish: boolean): void {
     const flow = this.facts.files.facts;
     if (flow === null) return;
     const now = this.clock();
@@ -300,11 +329,12 @@ export class ProjectMonitor {
     ) as Record<SourceName, Freshness>;
     this.current = reconcile({
       now, project: this.project, flow, git: this.facts.git.facts, processes: this.facts.processes.facts, ended: this.ended,
-      jobs: this.facts.jobs.facts, board: this.facts.board.facts, pulls: this.facts.pulls.facts, sources,
+      jobs: this.facts.jobs.facts, board: this.facts.board.facts, pulls: this.facts.pulls.facts, sources, plugins: this.installed,
       settle: (found) => this.settler.settle(found, this.reads), newerConsole: this.newerConsole(),
+      gateSession: (item, raisedAt) => this.gateSessions.get(gateSessionKey(item, raisedAt))?.session ?? null,
     });
     const fingerprint = this.fingerprintOf();
-    if (fingerprint === this.fingerprint) return;
+    if (!publish && fingerprint === this.fingerprint) return;
     this.fingerprint = fingerprint;
     for (const listener of this.listeners) listener(this.current);
   }
@@ -315,7 +345,26 @@ export class ProjectMonitor {
     const ended = this.ended.map(({ pid, endedAt }) => [pid, endedAt]);
     const errors = (Object.keys(this.facts) as SourceName[]).map((name) => this.facts[name].freshness.error);
     const disagreements = (this.current?.disagreements ?? []).map(disagreementKey);
-    return JSON.stringify([this.facts.files.facts, this.facts.git.facts, agents, ended, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements, this.current?.newerConsole ?? null]);
+    const gateSessions = [...this.gateSessions].map(([key, found]) => [key, found.session.id]);
+    return JSON.stringify([this.facts.files.facts, this.installed, gateSessions, this.facts.git.facts, agents, ended, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements, this.current?.newerConsole ?? null]);
+  }
+
+  /**
+   * Finds the session that raised each gate from the host's transcripts in the claimed worktree,
+   * so the owner can still discuss it after the daemon restarted or when the step ended while the
+   * console was not running. A gate with no claim is left out: a step run from the project root
+   * shares its folder with the owner's own sessions, so the newest transcript there may not be its.
+   */
+  private async locateGateSessions(flow: FlowHomeFacts): Promise<void> {
+    const lookups = flow.gates.flatMap((gate) => {
+      const claim = flow.claims.find((entry) => entry.item === gate.item);
+      return claim === undefined ? [] : [{ item: gate.item, raisedAt: gate.time, host: gate.host, cwd: path.resolve(this.project.root, claim.worktreePath) }];
+    });
+    const found = await this.gateLocator.gates(lookups);
+    this.gateSessions = new Map(lookups.flatMap((lookup, index) => {
+      const session = found[index] ?? null;
+      return session === null ? [] : [[gateSessionKey(lookup.item, lookup.raisedAt), { cwd: lookup.cwd, session }] as const];
+    }));
   }
 
   /** A process with a session that was listed last time and is gone now has ended; one listed again is not. */
@@ -360,4 +409,9 @@ function jobRunning(job: Job): boolean {
 function nextJobOf(jobs: Job[]): { paused: boolean; running: boolean } | null {
   const next = jobs.find((job) => job.name === 'next');
   return next === undefined ? null : { paused: next.paused, running: next.state === 'running' || next.running.length > 0 };
+}
+
+/** The key a gate's located session is kept under: a gate raised again is another gate. */
+function gateSessionKey(item: string, raisedAt: string): string {
+  return `${item} ${raisedAt}`;
 }

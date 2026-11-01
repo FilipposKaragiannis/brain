@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import type { Job } from '../../daemon/src/snapshot.ts';
-import { actionTone, attentionTone, countTone, freshnessTone, itemTone, jobTone, worktreeTone } from '../src/status.ts';
+import { actionTone, attentionTone, countTone, freshnessTone, itemTone, jobTone, pullTone, worktreeTone } from '../src/status.ts';
 
 const IDLE_JOB: Job = {
   name: 'next', job: 'next', host: 'claude', configured: true, state: 'scheduled', schedule: 'every 30m', args: '', installed: true, loaded: true, paused: false, running: [],
@@ -33,6 +33,18 @@ test('DeadRunAttention_IsFailing', () => {
 
 test('GateAttention_NeedsYou', () => {
   expect(attentionTone('gate'), 'because a gate row is the person\'s to answer').toBe('needs-you');
+});
+
+test('MergeablePullAttention_IsReady', () => {
+  expect(attentionTone('pr-mergeable'), 'because a pull that can merge is healthy, not a warning').toBe('ready');
+  expect(pullTone('mergeable'), 'because the pulls screen says the same as the needs-you row').toBe('ready');
+});
+
+test('AttentionKinds_ToneTellsThemApart', () => {
+  expect(attentionTone('disagreement'), 'because two stores disagreeing is its own kind of trouble').toBe('mixed');
+  expect(attentionTone('pr-changes-requested'), 'because changes asked on a pull are not a gate to decide').toBe('review');
+  expect(attentionTone('pr-failing'), 'because red checks are broken').toBe('failing');
+  expect(attentionTone('needs-field'), 'because a missing field is a chore, quieter than a decision').toBe('quiet');
 });
 
 test('JobWhoseLastRunExitedNonZero_IsFailing', () => {
