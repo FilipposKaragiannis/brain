@@ -322,17 +322,24 @@ cmd_tmp() {
   esac
 }
 
-# next_pool_path: the path a new pool worktree gets, following the last entry's name
+# next_pool_path: the path a new pool worktree gets. worktree_name, such as ../{repo}-wt-{n},
+# names it: {repo} is the main worktree's folder, {n} the first number no pool entry and no folder
+# uses; a name with no {n} is refused (exit 2). Unset, it follows the last entry's name
 # (../app-wt-2 -> ../app-wt-3) or ../<main>-wt-<n> when the pool is empty or named otherwise.
 next_pool_path() {
-  last="$(cfg pool | grep . | tail -1)"
-  case "$last" in
-    *-wt-[0-9]*) stem="${last%-wt-*}" ;;
-    *) stem="../$(basename "$main")" ;;
-  esac
+  template="$(cfg worktree_name)"
+  if [ -z "$template" ]; then
+    last="$(cfg pool | grep . | tail -1)"
+    case "$last" in
+      *-wt-[0-9]*) template="${last%-wt-*}-wt-{n}" ;;
+      *) template="../{repo}-wt-{n}" ;;
+    esac
+  fi
+  case "$template" in *'{n}'*) ;; *) die "worktree_name $template has no {n}, so every new pool worktree would get the same path; add {n} to it in $(config_file)" 2 ;; esac
+  repo_name="$(basename "$main" | sed 's/[\\&|]/\\&/g')"
   n=1
   while :; do
-    cand="$stem-wt-$n"
+    cand="$(printf '%s' "$template" | sed "s|{repo}|$repo_name|g; s|{n}|$n|g")"
     case "$cand" in /*) abs="$cand" ;; *) abs="$main/$cand" ;; esac
     cfg pool | grep -qx "$cand" || [ -e "$abs" ] || { printf '%s' "$cand"; return; }
     n=$((n + 1))
@@ -389,7 +396,7 @@ grow_pool() {
   max="$(cfg_or pool_max 0)"
   count="$(cfg pool | grep -c .)"
   [ "$max" -gt "$count" ] 2>/dev/null || return 1
-  rel="$(next_pool_path)"
+  rel="$(next_pool_path)" || exit
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
   pool_worktree_add "$abs" || return 1
   pool_add_entry "$rel"
@@ -399,7 +406,7 @@ grow_pool() {
 }
 
 cmd_add() {
-  rel="${1:-$(next_pool_path)}"
+  rel="${1:-$(next_pool_path)}" || exit
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
   pool_worktree_add "$abs" || die "cannot add worktree $rel"
   pool_add_entry "$rel"
