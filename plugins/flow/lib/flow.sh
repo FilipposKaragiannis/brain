@@ -88,6 +88,40 @@ claude_hooks_present() {
   printf '%s' "$_f" | grep -q 'worktree-create.sh' && printf '%s' "$_f" | grep -q 'worktree-remove.sh'
 }
 
+# claude_worktree_hook <create|remove>: the shell command init prints for .claude/settings.json.
+# The settings are committed, so the command must also work in the clone of a teammate without
+# flow. It runs the main worktree's .flow/hooks wrapper when there is one (found from a linked
+# worktree too), and otherwise does what Claude does with no hook: a git worktree under
+# .claude/worktrees on branch worktree-<name>, and git worktree remove. Skipping is not enough:
+# a WorktreeCreate hook that prints no path fails the session, and a WorktreeRemove hook that
+# exits 0 counts as removed and leaves the folder.
+claude_worktree_hook() {
+  if [ "$1" = create ]; then cat <<'EOF'
+m="$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"; [ ! -f "$m/.flow/hooks/worktree-create.sh" ] || exec "$m/.flow/hooks/worktree-create.sh"; n="$(sed -n 's/.*"name" *: *"\([^"]*\)".*/\1/p' | head -n 1)"; d="$CLAUDE_PROJECT_DIR/.claude/worktrees/${n:-session}"; git -C "$CLAUDE_PROJECT_DIR" worktree add -q -b "worktree-${n:-session}" "$d" >&2 && printf '%s\n' "$d"
+EOF
+  else cat <<'EOF'
+m="$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"; [ ! -f "$m/.flow/hooks/worktree-remove.sh" ] || exec "$m/.flow/hooks/worktree-remove.sh"; p="$(sed -n 's/.*"worktree_path" *: *"\([^"]*\)".*/\1/p' | head -n 1)"; [ -z "$p" ] || git -C "$CLAUDE_PROJECT_DIR" worktree remove "$p" >&2
+EOF
+  fi
+}
+
+# claude_hooks_fall_back [root]: the project's hook entries are the ones above, which work in a
+# clone without flow. Entries an older init printed call the wrapper alone and fail there.
+claude_hooks_fall_back() {
+  _r="${1:-.}"; _f="$(cat "$_r/.claude/settings.json" "$_r/.claude/settings.local.json" 2>/dev/null)"
+  printf '%s' "$_f" | grep -qF '.claude/worktrees/' && printf '%s' "$_f" | grep -qF 'worktree remove'
+}
+
+# flow_exclude: the clone's own ignore file, info/exclude in the common git directory. Every linked
+# worktree of the clone reads it and it is never committed, so flow stays out of tracking.
+flow_exclude() {
+  _common="$(git rev-parse --git-common-dir 2>/dev/null)" || return 1
+  printf '%s/info/exclude' "$(cd "$_common" && pwd)"
+}
+
+# codex_user_home: where Codex reads the user's own rules and agents, $CODEX_HOME or ~/.codex.
+codex_user_home() { printf '%s' "${CODEX_HOME:-$HOME/.codex}"; }
+
 config_file() { printf '%s/config.yaml' "$(flow_home)"; }
 
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }

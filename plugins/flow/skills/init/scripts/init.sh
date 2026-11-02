@@ -1,22 +1,27 @@
 #!/bin/sh
 # Install or refresh the flow plugin in a repository.
-#   init.sh [--root <repo>] [--check] [--force] [--source-hash]
+#   init.sh [--root <repo>] [--check] [--force] [--user-codex] [--source-hash]
 # Writes: .flow/config.yaml (once), .flow/plugin.sh (finds the installed plugin when a wrapper
 # runs), .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and .flow/hooks/*.sh (wrappers,
-# always replaced; they hold no path or version, so a plugin update leaves them as they are), .codex/rules/flow.rules and
-# .codex/agents/<flow agents>.toml (replaced, unless edited by hand since: then refused, exit 1,
-# --force replaces), a marked block in .gitignore, and .flow/stamp (what it wrote; see stamp.sh).
+# always replaced; they hold no path or version, so a plugin update leaves them as they are), the
+# Codex rules/flow.rules and agents/<flow agents>.toml (replaced, unless edited by hand since: then
+# refused, exit 1, --force replaces), a marked block in .git/info/exclude covering .flow/, and
+# .flow/stamp (what it wrote; see stamp.sh). Flow is one user's tool, so nothing it writes is
+# tracked: .flow/ is excluded in this clone only, and init never commits or edits the index.
+# The Codex files go to the repo's .codex/ when it has one, else to the user's ~/.codex
+# ($CODEX_HOME); --user-codex picks ~/.codex, and a later run keeps the place the stamp records.
 # --check reports drift and hand edits and writes nothing (exit 1 on either). --source-hash
 # prints the hash of the plugin's install set and exits (the session-start hook).
 set -u
 plugin="$(cd "$(dirname "$0")/../../.." && pwd)"
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-check=0; force=0; source_hash=0
+check=0; force=0; source_hash=0; user_codex=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --root) root="$2"; shift 2 ;;
     --check) check=1; shift ;;
     --force) force=1; shift ;;
+    --user-codex) user_codex=1; shift ;;
     --source-hash) source_hash=1; shift ;;
     *) echo "init: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -237,41 +242,58 @@ for h in create remove; do
 done
 settings_has_hook=0; claude_hooks_present && settings_has_hook=1
 
-# 4. Codex: rules and agents (Codex cannot load agents or rules from a plugin).
-install_file "$plugin/templates/flow.rules" .codex/rules/flow.rules "" guard
-for src in "$plugin"/codex-agents/*.toml; do install_file "$src" ".codex/agents/$(basename "$src")" "" guard; done
+# 4. Codex: rules and agents (Codex cannot load agents or rules from a plugin). In the repo's
+# .codex/ when it has one, where the team already keeps its Codex layer; else in the user's own
+# ~/.codex, so the clone carries nothing. A later run keeps the place the stamp records.
+codex_user="$(codex_user_home)"
+if [ "$user_codex" -eq 1 ]; then codex_dir="$codex_user"; codex_why="--user-codex"
+elif [ -n "$(stamp_get "$stamp" "$codex_user/rules/flow.rules")" ]; then codex_dir="$codex_user"; codex_why="where the last init put them"
+elif [ -d .codex ]; then codex_dir=".codex"; codex_why="the repository has a .codex folder"
+else codex_dir="$codex_user"; codex_why="the repository has no .codex folder"; fi
+install_file "$plugin/templates/flow.rules" "$codex_dir/rules/flow.rules" "" guard
+for src in "$plugin"/codex-agents/*.toml; do install_file "$src" "$codex_dir/agents/$(basename "$src")" "" guard; done
+[ "$codex_dir" != .codex ] && [ -f .codex/rules/flow.rules ] && echo "init: note: .codex/rules/flow.rules and the flow agents in .codex/agents stay in the repository; Codex reads them besides the copies in $codex_dir until you remove them"
 
-# 5. .gitignore block. .flow/*.lock/ covers the locks flow_lock takes in the flow home (pick,
-# claim, answers, sweep). Under --check each line the project's block lacks is named.
-# One per line and read with read, so the lock pattern is never expanded by the shell.
-ignored=".flow/items/
-.flow/reports/
-.flow/runs/
-.flow/gates/
-.flow/health/
-.flow/tmp/
-.flow/log/
-.flow/*.lock/
-.flow/claim.json
-.flow/events.log
-.flow/.init-tmp/"
-tmp="$scratch/gitignore"
+# 5. The ignore block, in the clone's info/exclude: all of .flow/ (config, wrappers, stamp and
+# state) belongs to this clone, every linked worktree of it reads the same file, and nothing in
+# it is committed. Under --check a block that lacks .flow/ is drift.
+exclude="$(flow_exclude)" || die "no git directory for $(pwd); run init inside the repository"
+tmp="$scratch/exclude"
 {
-  [ -f .gitignore ] && awk '/^# flow:begin/{skip=1} !skip{print} /^# flow:end/{skip=0}' .gitignore
-  echo "# flow:begin (written by flow:init; state that stays on this machine)"
-  printf '%s\n' "$ignored"
+  [ -f "$exclude" ] && awk '/^# flow:begin/{skip=1} !skip{print} /^# flow:end/{skip=0}' "$exclude"
+  echo "# flow:begin (written by flow:init; flow is this clone's own tool, so none of .flow/ is committed)"
+  echo ".flow/"
   echo "# flow:end"
 } > "$tmp"
-if [ "$check" -eq 1 ]; then
-  block="$( [ -f .gitignore ] && awk '/^# flow:begin/{on=1; next} /^# flow:end/{on=0} on' .gitignore)"
-  # Fed by a here-document, not a pipe, so the loop runs in this shell and drifted sets drift.
-  while IFS= read -r p; do
-    printf '%s\n' "$block" | grep -qxF -- "$p" || drifted ".gitignore: the flow block lacks $p"
-  done <<EOF_IGNORED
-$ignored
-EOF_IGNORED
+if [ "$check" -eq 1 ] && ! { [ -f "$exclude" ] && awk '/^# flow:begin/{on=1; next} /^# flow:end/{on=0} on' "$exclude" | grep -qxF '.flow/'; }; then
+  drifted "$exclude: the flow block lacks .flow/"
+else
+  install_file "$tmp" "$exclude"
 fi
-install_file "$tmp" .gitignore
+
+# The block an older init wrote to .gitignore goes: removed when every line in it is one init
+# wrote, left and reported when the owner added to it. Fixed strings, so the lock pattern is
+# never a glob.
+printf '%s\n' .flow/items/ .flow/reports/ .flow/runs/ .flow/gates/ .flow/health/ .flow/tmp/ .flow/log/ \
+  '.flow/*.lock/' .flow/claim.json .flow/events.log .flow/.init-tmp/ > "$scratch/legacy-ignore"
+gitignore_moved=0
+if [ -f .gitignore ] && grep -q '^# flow:begin' .gitignore; then
+  owner_lines="$(awk '/^# flow:begin/{on=1; next} /^# flow:end/{on=0} on' .gitignore | grep -v '^[[:space:]]*$' | grep -vxF -f "$scratch/legacy-ignore" | tr '\n' ' ')"
+  if [ -n "$owner_lines" ]; then
+    echo "init: note: the flow block in .gitignore was edited by hand (it also lists ${owner_lines% }), so init leaves it; .git/info/exclude covers .flow/ now, so remove the block when you no longer need it"
+  elif [ "$check" -eq 1 ]; then
+    drifted ".gitignore still holds the flow block; init moves it to .git/info/exclude"
+  else
+    awk '/^# flow:begin/{skip=1} !skip{print} /^# flow:end/{skip=0}' .gitignore > "$scratch/gitignore"
+    if grep -q '[^[:space:]]' "$scratch/gitignore"; then cp "$scratch/gitignore" .gitignore && note ".gitignore: the flow block moved to .git/info/exclude"
+    else rm -f .gitignore && note ".gitignore removed: it held only the flow block, now in .git/info/exclude"; fi
+    gitignore_moved=1
+  fi
+fi
+# Files a team committed before: init names them and the command that stops tracking them, and
+# never runs it (the owner decides, and the commit reaches every teammate).
+tracked="$(git ls-files -- .flow | grep -c .)"
+[ "$check" -eq 1 ] && [ "$tracked" -gt 0 ] && echo "init: note: git tracks $tracked files under .flow/; init prints the git rm --cached command that stops it"
 
 # 6. Gaps: config values the flow cannot run without. Reported every run; drift under --check.
 if [ -f .flow/config.yaml ]; then
@@ -292,9 +314,14 @@ $(host_jobs_problems)
 EOF_JOBS
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
-# Missing worktree hooks are a note: the flow runs without them.
-[ "$check" -eq 1 ] && [ -d .claude ] && [ "$settings_has_hook" -eq 0 ] && echo "init: note: .claude/settings.json has no WorktreeCreate and WorktreeRemove hooks, so claude --worktree lands outside the pool (init prints the entry under Next)"
-
+# Missing worktree hooks are a note: the flow runs without them. So is an entry an older init
+# printed: it calls the wrapper alone, so claude --worktree fails in a clone without flow.
+settings_fall_back=0; claude_hooks_fall_back && settings_fall_back=1
+if [ "$check" -eq 1 ] && [ -d .claude ]; then
+  if [ "$settings_has_hook" -eq 0 ]; then echo "init: note: .claude/settings.json has no WorktreeCreate and WorktreeRemove hooks, so claude --worktree lands outside the pool (init prints the entry under Next)"
+  elif [ "$settings_fall_back" -eq 0 ]; then echo "init: note: the worktree hooks in .claude/settings.json call .flow/hooks alone, so claude --worktree fails in a clone without flow (init prints the entry that falls back under Next)"; fi
+fi
+echo "init: Codex rules and agents: $codex_dir ($codex_why)"
 
 if [ "$check" -eq 1 ]; then
   [ "$drift" -eq 0 ] && echo "init: up to date with flow v$version"
@@ -306,18 +333,33 @@ if [ "$refused" -eq 1 ]; then echo "flow v$version: some copies were refused (se
 [ -n "$gaps" ] && { echo "Gaps (the flow cannot run until these are filled; init --check reports them):"; printf '%s' "$gaps"; }
 echo "Next:"
 echo "  - review .flow/config.yaml: the pool and pool_max, worktree_copy and worktree_setup, the base branch, the adapters, the gates, feel_test_paths, the Slack webhook"
-echo "  - commit .flow/config.yaml, .flow/stamp, .flow/plugin.sh, .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/, .flow/hooks/, .codex/ and .gitignore"
-if [ "$settings_has_hook" -eq 0 ]; then
-  echo "  - Claude: add the worktree hooks to .claude/settings.json so --worktree lands in the pool"
-  echo "    (a plugin cannot provide them: the worktree is created before plugins load):"
-  echo '      "hooks": { "WorktreeCreate": [ { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.flow/hooks/worktree-create.sh" } ] } ],'
-  echo '                 "WorktreeRemove": [ { "hooks": [ { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.flow/hooks/worktree-remove.sh" } ] } ] }'
+echo "  - nothing under .flow/ is committed: .git/info/exclude keeps it out of git in this clone and its worktrees"
+if [ "$tracked" -gt 0 ]; then
+  echo "  - git still tracks $tracked files under .flow/ from an earlier install. To stop (init does not run it;"
+  echo "    the files stay on disk), run this and commit it$( [ "$gitignore_moved" -eq 1 ] && echo " with the .gitignore change"):"
+  echo "      git rm -r --cached --quiet -- .flow"
+  echo "    A teammate who uses flow copies .flow/config.yaml aside before pulling that commit (the pull"
+  echo "    deletes the tracked copies), puts it back and runs flow:init."
+elif [ "$gitignore_moved" -eq 1 ]; then
+  echo "  - commit the .gitignore change: the flow block is in .git/info/exclude now"
 fi
-echo "  - Codex: trust the project .codex layer and every pool worktree in ~/.codex/config.toml:"
-for p in "$main" $(cfg pool | sed "s|^\([^/]\)|$main/\1|"); do
-  [ -d "$p" ] && echo "      [projects.\"$(cd "$p" && pwd)\"]" && echo "      trust_level = \"trusted\""
-done
-echo "    and run /hooks in Codex once to trust the plugin hooks (again after a plugin update)."
+[ "$codex_dir" = .codex ] && [ -n "$(git status --porcelain -- .codex)" ] && echo "  - commit .codex/: the team's Codex reads the flow rules and agents from there (init --user-codex puts them in ~/.codex instead)"
+if [ "$settings_has_hook" -eq 0 ] || [ "$settings_fall_back" -eq 0 ]; then
+  if [ "$settings_has_hook" -eq 0 ]; then echo "  - Claude: add the worktree hooks to .claude/settings.json so --worktree lands in the pool"
+  else echo "  - Claude: replace the worktree hooks in .claude/settings.json with these, so --worktree also works in a clone without flow"; fi
+  echo "    (a plugin cannot provide them: the worktree is created before plugins load; where .flow/hooks"
+  echo "    is missing they make the worktree as Claude does with no hook):"
+  # printf, not echo: the JSON strings hold backslashes that sh's echo would read as escapes.
+  printf '      "hooks": { "WorktreeCreate": [ { "hooks": [ { "type": "command", "command": %s } ] } ],\n' "$(json_string "$(claude_worktree_hook create)")"
+  printf '                 "WorktreeRemove": [ { "hooks": [ { "type": "command", "command": %s } ] } ] }\n' "$(json_string "$(claude_worktree_hook remove)")"
+fi
+if [ -d .codex ]; then
+  echo "  - Codex: trust the project .codex layer and every pool worktree in ~/.codex/config.toml:"
+  for p in "$main" $(cfg pool | sed "s|^\([^/]\)|$main/\1|"); do
+    [ -d "$p" ] && echo "      [projects.\"$(cd "$p" && pwd)\"]" && echo "      trust_level = \"trusted\""
+  done
+fi
+echo "  - Codex: run /hooks once to trust the plugin hooks (again after a plugin update)."
 echo "  - Codex, interactive sessions in the main worktree that write into pool worktrees need the"
 echo "    pool as writable roots in ~/.codex/config.toml: [sandbox_workspace_write] writable_roots = [..]"
 echo "    (unverified on this version; unattended runs use -C <worktree> and do not need it)."

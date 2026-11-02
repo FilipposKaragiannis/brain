@@ -8,9 +8,11 @@ FLOW_PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"; export FLOW_PLUGIN
 . "$FLOW_PLUGIN/lib/flow.sh"
 cat >/dev/null 2>&1 || true
 root="$(repo_root)" || exit 0
-[ -f "$root/.flow/config.yaml" ] || exit 0
+# The flow home is the main worktree's .flow: it is not committed, so a linked worktree has none.
+home="$(cd "$root" && flow_home)"
+[ -f "$home/config.yaml" ] || exit 0
 init="$FLOW_PLUGIN/skills/init/scripts/init.sh"
-stamp="$root/.flow/stamp"
+stamp="$home/stamp"
 if [ ! -f "$stamp" ]; then
   echo "flow: note for the owner, not a task: this project has no install stamp (installed before flow 0.2.0). /flow:init writes .flow/stamp on its next run."
   exit 0
