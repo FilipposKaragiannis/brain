@@ -11,7 +11,7 @@ import type { ActionRecord } from '../src/snapshot.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
 import type { SourceName } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
-import { fakeScheduler, fakeSpawner, plainSpawner, settle, until } from './fakeSpawner.ts';
+import { fakeScheduler, fakeSpawner, plainSpawner } from './fakeSpawner.ts';
 import type { FakeSpawnerOptions } from './fakeSpawner.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
@@ -23,6 +23,29 @@ const SIGNAL_EXIT = 128;
 const PLAIN: FakeSpawnerOptions = { failWith: null, detachedOutput: '' };
 
 const actionOf = (outcome: { body: { action: ActionRecord } }): ActionRecord => outcome.body.action;
+/** Only turns a wait whose event never comes into a failure; a passing test never reaches it. */
+const EVENT_DEADLINE_MS = 20000;
+
+/**
+ * Resolves with the action's record once the runner announces a change that meets `wanted`, or at
+ * once when the record meets it already. Tests wait on this event, never on a clock: the runner
+ * ends an action after real file I/O, which takes as long as a loaded machine makes it take.
+ */
+function announced(actions: ActionRunner, id: string, wanted: (record: ActionRecord) => boolean): Promise<ActionRecord> {
+  const now = actions.get(id);
+  if (now !== null && wanted(now)) return Promise.resolve(now);
+  return new Promise((resolve, reject) => {
+    const deadline = setTimeout(() => { stop(); reject(new Error(`because action ${id} never announced the change the test waits for`)); }, EVENT_DEADLINE_MS);
+    const stop = actions.onChange((record) => {
+      if (record.id !== id || !wanted(record)) return;
+      clearTimeout(deadline);
+      stop();
+      resolve(record);
+    });
+  });
+}
+
+const notRunning = (record: ActionRecord): boolean => record.state !== 'running';
 
 async function runner(context: ActionContext, options: FakeSpawnerOptions) {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), 'console-actions-'));
@@ -33,7 +56,7 @@ async function runner(context: ActionContext, options: FakeSpawnerOptions) {
   const actions = new ActionRunner({ projectId: 'app', context: () => context, spawner, scheduler: timers.scheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: (sources) => refreshed.push(sources) });
   actions.onChange((record) => events.push(record));
   const auditLines = async (): Promise<ActionRecord[]> => { await actions.whenIdle(); return (await readFile(path.join(stateDir, 'app', 'actions.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line) as ActionRecord); };
-  const cleanup = async (): Promise<void> => { await settle(); await actions.whenIdle(); await rm(stateDir, { recursive: true, force: true }); };
+  const cleanup = async (): Promise<void> => { await actions.whenIdle(); await rm(stateDir, { recursive: true, force: true }); };
   return { actions, processes, timers, refreshed, events, stateDir, auditLines, cleanup };
 }
 
@@ -61,7 +84,7 @@ test('ProcessExitsZero_Done_WithFullOutputBehindGet', async () => {
     const record = actionOf(actions.request('gate.clear', { item: 'gh#268', message: 'yes' }));
     processes[0]!.stdout.write('gate cleared on gh#268\n');
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     const done = actions.get(record.id)!;
     assert.equal(done.state, 'done', 'because exit 0 is done');
     assert.equal(done.output, 'gate cleared on gh#268\n', 'because the detail route carries the whole output');
@@ -72,9 +95,9 @@ test('ProcessExitsZero_Done_WithFullOutputBehindGet', async () => {
 test('ProcessEnds_SourcesItChanged_RefreshedOnce', async () => {
   const { actions, processes, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
   try {
-    actions.request('gate.clear', { item: 'gh#268' });
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#268' }));
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.deepEqual(refreshed, [['files', 'board']], 'because a cleared gate changes the gate records and the tracker');
   } finally { await cleanup(); }
 });
@@ -85,7 +108,7 @@ test('Action_AuditedAtStartAndAtEnd', async () => {
     const record = actionOf(actions.request('gate.clear', { item: 'gh#268' }));
     processes[0]!.stdout.write('cleared\n');
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     const lines = await auditLines();
     assert.deepEqual(lines.map((line) => line.state), ['running', 'done'], 'because a daemon that dies mid-action still leaves the start line');
     assert.equal('outputTail' in lines[1]!, false, 'because the audit line keeps the record, not the output');
@@ -99,7 +122,7 @@ test('OutputAfterExitBeforeClose_Kept', async () => {
     const record = actionOf(actions.request('gate.clear', { item: 'gh#268' }));
     processes[0]!.lateOutput('from a grandchild\n');
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)?.output, 'from a grandchild\n', 'because the runner waits for close, not exit, so a grandchild\'s last words land');
   } finally { await cleanup(); }
 });
@@ -110,7 +133,7 @@ test('ProcessExitsNonZero_Failed_WithStderrInOutput', async () => {
     const record = actionOf(actions.request('worktree.release', { target: 'gh#5' }));
     processes[0]!.stderr.write('flow: no claimed worktree for gh#5\n');
     processes[0]!.exit(2, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     const ended = actions.get(record.id)!;
     assert.equal(ended.state, 'failed', 'because a non-zero exit is a failure');
     assert.equal(ended.exitCode, 2, 'because the steward exit codes carry meaning');
@@ -124,7 +147,7 @@ test('Sweep_Ends_TheRecordNotesWhatItFreed', async () => {
     const record = actionOf(actions.request('steward.sweep', {}));
     processes[0]!.stdout.write('gh#5: cleared the merge gate\ngh#5: released app-wt-2 (https://github.com/o/r/pull/41 merged)\n');
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)?.note, 'freed app-wt-2 (gh#5); cleared the merge gate of gh#5', 'because the Sweep button says what landed');
   } finally { await cleanup(); }
 });
@@ -158,9 +181,9 @@ test('LockHeld_OtherItem_Accepted', async () => {
 test('ProcessEnds_LockReleased', async () => {
   const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
   try {
-    actions.request('gate.clear', { item: 'gh#1' });
+    const record = actionOf(actions.request('gate.clear', { item: 'gh#1' }));
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.request('gate.clear', { item: 'gh#1' }).status, HTTP_ACCEPTED, 'because the lock goes when the action ends');
   } finally { await cleanup(); }
 });
@@ -197,7 +220,7 @@ test('Timeout_TermThenKill_Failed', async () => {
     assert.deepEqual(processes[0]!.signals, ['SIGTERM'], 'because the first attempt is polite');
     assert.equal(actions.get(record.id)?.state, 'running', 'because a shell with a trap may ignore SIGTERM');
     assert.equal(timers.fire(KILL_GRACE_MS), 1, 'because a grace timer follows the TERM');
-    await settle();
+    await announced(actions, record.id, notRunning);
     const ended = actions.get(record.id)!;
     assert.deepEqual(processes[0]!.signals, ['SIGTERM', 'SIGKILL'], 'because the process group is killed after the grace');
     assert.equal(ended.state, 'failed', 'because a timed out action never counts as done');
@@ -213,7 +236,7 @@ test('TimeoutThenExitZero_StillFailed', async () => {
     processes[0]!.ignoresTerm = true;
     timers.fire(SCRIPT_TIMEOUT_MS);
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)?.state, 'failed', 'because finishing late is not finishing');
   } finally { await cleanup(); }
 });
@@ -222,7 +245,7 @@ test('SpawnThrows_FailedWithReason', async () => {
   const { actions, cleanup } = await runner(CONTEXT, { failWith: 'spawn sh ENOENT', detachedOutput: '' });
   try {
     const record = actionOf(actions.request('gate.clear', { item: 'gh#1' }));
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)?.state, 'failed', 'because a process that never started did nothing');
     assert.match(actions.get(record.id)?.output ?? '', /could not start: spawn sh ENOENT/, 'because the reason is in the output');
     assert.equal(actions.request('gate.clear', { item: 'gh#1' }).status, HTTP_ACCEPTED, 'because the lock was released');
@@ -237,7 +260,7 @@ test('RunStart_Detached_HoldsTheLockUntilTheRunEnds', async () => {
     assert.equal(actions.get(record.id)?.state, 'running', 'because the run is still going');
     assert.equal(actions.request('worktree.release', { target: 'gh#9', force: 'true' }).status, HTTP_CONFLICT, 'because the item is held for the life of the run, so nobody resets its worktree under the agent');
     processes[0]!.exit(0, null);
-    await until(() => actions.get(record.id)?.state !== 'running');
+    await announced(actions, record.id, notRunning);
     const ended = actions.get(record.id)!;
     assert.equal(ended.state, 'done', 'because the run ended well');
     assert.match(ended.output ?? '', /started pid 4001/, 'because the pid lets the process list find it');
@@ -271,7 +294,7 @@ test('RunStart_Detached_AuditNeverOverwritesTheRunsFile', async () => {
   try {
     const record = actionOf(actions.request('run.start', { item: 'gh#9' }));
     processes[0]!.exit(0, null);
-    await until(() => actions.get(record.id)?.state !== 'running');
+    await announced(actions, record.id, notRunning);
     await auditLines();
     assert.equal(await readFile(path.join(stateDir, 'app', 'actions', `${record.id}.log`), 'utf8'), 'skipped: run 123 still going\n', 'because the file is the run\'s, the audit only reads it');
   } finally { await cleanup(); }
@@ -297,11 +320,11 @@ test('Refresh_UnknownSource_BadRequest', async () => {
 test('List_NewestFirst_TailOnly', async () => {
   const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
   try {
-    actions.request('gate.clear', { item: 'gh#1' });
+    const first = actionOf(actions.request('gate.clear', { item: 'gh#1' }));
     actions.request('gate.clear', { item: 'gh#2' });
     processes[0]!.stdout.write('x'.repeat(OUTPUT_TAIL_CHARS + 1000));
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, first.id, notRunning);
     const listed = actions.list();
     assert.equal(listed[0]?.args['item'], 'gh#2', 'because the newest request comes first');
     assert.equal(listed[1]?.outputTail.length, OUTPUT_TAIL_CHARS, 'because the list carries the tail only');
@@ -312,10 +335,11 @@ test('List_NewestFirst_TailOnly', async () => {
 test('StopAll_EndsAttachedActionsOnly', async () => {
   const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
   try {
-    actions.request('gate.clear', { item: 'gh#1' });
+    const attached = actionOf(actions.request('gate.clear', { item: 'gh#1' }));
     actions.request('run.start', { item: 'gh#2' });
     actions.stopAll();
     assert.deepEqual(processes.map((entry) => entry.signals), [['SIGTERM'], []], 'because a detached run must survive a daemon restart');
+    await announced(actions, attached.id, notRunning);
   } finally { await cleanup(); }
 });
 
@@ -331,71 +355,82 @@ async function wiredToMonitor() {
   const stateDir = await mkdtemp(path.join(os.tmpdir(), 'console-actions-'));
   const { spawner, processes } = plainSpawner();
   const timers = fakeScheduler();
+  const reads: Promise<void>[] = [];
   const actions = new ActionRunner({
     projectId: 'project', context: () => monitor.actionContext(), spawner, scheduler: timers.scheduler, clock: () => clock.now, log: silentLogger, stateDir,
-    onRefresh: (sources) => { for (const source of sources) void monitor.refresh(source as SourceName); },
+    onRefresh: (sources) => { for (const source of sources) reads.push(monitor.refresh(source as SourceName)); },
   });
+  /**
+   * Every read the runner asked for so far has landed. The monitor answers a refresh of a source
+   * whose read is still going with that same read, so a first read still in flight would swallow
+   * the second one, and its time would stand where the second read's should.
+   */
+  const readsLanded = async (): Promise<void> => { await Promise.all(reads); };
   const jobsReadAt = (): string | null => monitor.snapshot?.sources.jobs.at ?? null;
   const later = (seconds: number): string => { clock.now = new Date(clock.now.getTime() + seconds * 1000); return clock.now.toISOString(); };
-  const cleanup = async (): Promise<void> => { await settle(); await actions.whenIdle(); await rm(stateDir, { recursive: true, force: true }); };
-  return { actions, processes, timers, jobsReadAt, later, cleanup };
+  const cleanup = async (): Promise<void> => { await readsLanded(); await actions.whenIdle(); await rm(stateDir, { recursive: true, force: true }); };
+  return { actions, processes, timers, jobsReadAt, later, readsLanded, cleanup };
 }
 
 test('JobRunEnds_JobsReadAgainAfterTheDelay', async () => {
-  const { actions, processes, timers, jobsReadAt, later, cleanup } = await wiredToMonitor();
+  const { actions, processes, timers, jobsReadAt, later, readsLanded, cleanup } = await wiredToMonitor();
   try {
-    actions.request('job.run', { job: 'comments' });
+    const record = actionOf(actions.request('job.run', { job: 'comments' }));
     later(1);
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
+    await readsLanded();
     const fiveSecondsOn = later(5);
     timers.fire(HANDED_ON_REFRESH_MS);
-    await settle();
+    await readsLanded();
     assert.equal(jobsReadAt(), fiveSecondsOn, 'because the job launchd started shows in its status only a few seconds after jobs.sh returns, so the jobs are read again then');
   } finally { await cleanup(); }
 });
 
 test('StopAll_SecondReadWaiting_Dropped', async () => {
-  const { actions, processes, timers, jobsReadAt, later, cleanup } = await wiredToMonitor();
+  const { actions, processes, timers, jobsReadAt, later, readsLanded, cleanup } = await wiredToMonitor();
   try {
-    actions.request('job.run', { job: 'comments' });
+    const record = actionOf(actions.request('job.run', { job: 'comments' }));
     const ended = later(1);
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
+    await readsLanded();
     actions.stopAll();
     later(5);
     timers.fire(HANDED_ON_REFRESH_MS);
-    await settle();
+    await readsLanded();
     assert.equal(jobsReadAt(), ended, 'because a daemon shutting down must not read sources after it stopped');
   } finally { await cleanup(); }
 });
 
 test('StopAll_HandOffEndsWellAfterTheStop_NoSecondRead', async () => {
-  const { actions, processes, timers, jobsReadAt, later, cleanup } = await wiredToMonitor();
+  const { actions, processes, timers, jobsReadAt, later, readsLanded, cleanup } = await wiredToMonitor();
   try {
-    actions.request('job.run', { job: 'comments' });
+    const record = actionOf(actions.request('job.run', { job: 'comments' }));
     processes[0]!.ignoresTerm = true;
     actions.stopAll();
     const ended = later(1);
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
+    await readsLanded();
     later(5);
     timers.fire(HANDED_ON_REFRESH_MS);
-    await settle();
+    await readsLanded();
     assert.equal(jobsReadAt(), ended, 'because an action that ends after the stop must not start a read behind a stopped daemon');
   } finally { await cleanup(); }
 });
 
 test('JobRunFails_NoSecondRead', async () => {
-  const { actions, processes, timers, jobsReadAt, later, cleanup } = await wiredToMonitor();
+  const { actions, processes, timers, jobsReadAt, later, readsLanded, cleanup } = await wiredToMonitor();
   try {
-    actions.request('job.run', { job: 'comments' });
+    const record = actionOf(actions.request('job.run', { job: 'comments' }));
     const ended = later(1);
     processes[0]!.exit(1, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
+    await readsLanded();
     later(5);
     timers.fire(HANDED_ON_REFRESH_MS);
-    await settle();
+    await readsLanded();
     assert.equal(jobsReadAt(), ended, 'because a hand-off that failed started no job, so there is nothing to wait for');
   } finally { await cleanup(); }
 });
@@ -405,7 +440,7 @@ test('JobRunExitsZero_DoneAndStarted', async () => {
   try {
     const record = actionOf(actions.request('job.run', { job: 'comments' }));
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)?.outcome, 'started', 'because the job itself still runs under launchd, so done means started, not finished');
   } finally { await cleanup(); }
 });
@@ -415,7 +450,7 @@ test('GateClearExitsZero_DoneAndFinished', async () => {
   try {
     const record = actionOf(actions.request('gate.clear', { item: 'gh#1' }));
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)?.outcome, 'finished', 'because the gate is cleared when the script returns');
   } finally { await cleanup(); }
 });
@@ -441,7 +476,7 @@ test('ActionFails_NoOutcome', async () => {
   try {
     const record = actionOf(actions.request('job.run', { job: 'comments' }));
     processes[0]!.exit(1, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)?.outcome, null, 'because a failed hand-off started nothing');
   } finally { await cleanup(); }
 });
@@ -453,7 +488,7 @@ test('TerminalOpen_TwoAtOnce_NoLockAndNothingReRead', async () => {
     const second = actions.request('terminal.open', { path: '/p/app' });
     assert.equal(second.status, HTTP_ACCEPTED, 'because two windows on one folder hold nothing against each other');
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, first.id, notRunning);
     assert.deepEqual([actions.get(first.id)?.state, actions.get(first.id)?.outcome, refreshed], ['done', 'finished', []], 'because opening a window changes no source');
   } finally { await cleanup(); }
 });
@@ -463,7 +498,7 @@ test('SyncHandoff_NoteCannotBeWritten_FailsAndTheRunNeverStarts', async () => {
   const { actions, processes, cleanup } = await runner(unwritable, PLAIN);
   try {
     const record = actionOf(actions.request('sync.handoff', { target: 'gh#7', refs: 'origin/main' }));
-    await settle();
+    await announced(actions, record.id, notRunning);
     const ended = actions.get(record.id)!;
     assert.equal(ended.state, 'failed', 'because a hand-off without its note would start a run that never syncs');
     assert.equal(processes.length, 0, 'because the run starts only once the note is written');
@@ -477,23 +512,26 @@ test('ActionRecord_NotASync_ConflictIsNull', async () => {
     const record = actionOf(actions.request('gate.clear', { item: 'gh#268' }));
     processes[0]!.stdout.write('console: merging origin/main conflicts, so the merge was aborted. Conflicting files:\na.txt\nconsole: still to merge: origin/main\n');
     processes[0]!.exit(1, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)!.conflict, null, 'because only a worktree.sync reads its output for a conflict');
   } finally { await cleanup(); }
 });
 
-/** A context whose config writer waits until the test lets it finish, and records each key it wrote. */
-function heldWriter(fail: string | null = null): { context: ActionContext; written: [string, string | null][]; release: () => void } {
+/** A context whose config writer says when it is called, waits until the test lets it finish, and records each key it wrote. */
+function heldWriter(fail: string | null = null): { context: ActionContext; written: [string, string | null][]; called: Promise<void>; release: () => void } {
   const written: [string, string | null][] = [];
   let release = (): void => {};
+  let enter = (): void => {};
   const gate = new Promise<void>((resolve) => { release = resolve; });
+  const called = new Promise<void>((resolve) => { enter = resolve; });
   const writeConfig = async (key: string, value: string | null): Promise<string> => {
+    enter();
     await gate;
     if (fail !== null) throw new Error(fail);
     written.push([key, value]);
     return `took ${key} out of .flow/config.yaml\n`;
   };
-  return { context: { ...CONTEXT, writeConfig }, written, release: () => release() };
+  return { context: { ...CONTEXT, writeConfig }, written, called, release: () => release() };
 }
 
 test('JobUnschedule_ExitZero_KeyTakenOutWhileTheLockStillHolds', async () => {
@@ -502,14 +540,14 @@ test('JobUnschedule_ExitZero_KeyTakenOutWhileTheLockStillHolds', async () => {
   try {
     const record = actionOf(actions.request('job.unschedule', { job: 'next-nightly' }));
     processes[0]!.exit(0, null);
-    await settle();
+    await writer.called;
     assert.equal(actions.request('job.schedule', { job: 'next-nightly', schedule: 'every 30m' }).status, HTTP_CONFLICT, 'because the schedule stays locked until its key is out of the file');
     assert.equal(actions.get(record.id)?.state, 'running', 'because the action ends once the file is written');
     writer.release();
-    await settle();
-    const ended = actions.get(record.id)!;
-    assert.deepEqual([ended.state, writer.written, refreshed], ['done', [['jobs.schedule.next-nightly', null]], [['jobs', 'files']]], 'because the key comes out after launchd let go, then both sources are read again');
-    assert.match(ended.output ?? '', /console: took jobs\.schedule\.next-nightly out/, 'because the output says what changed in the file');
+    await announced(actions, record.id, notRunning);
+    const done = actions.get(record.id)!;
+    assert.deepEqual([done.state, writer.written, refreshed], ['done', [['jobs.schedule.next-nightly', null]], [['jobs', 'files']]], 'because the key comes out after launchd let go, then both sources are read again');
+    assert.match(done.output ?? '', /console: took jobs\.schedule\.next-nightly out/, 'because the output says what changed in the file');
   } finally { await cleanup(); }
 });
 
@@ -520,7 +558,7 @@ test('JobUnschedule_UninstallFails_FileLeftAlone', async () => {
   try {
     const record = actionOf(actions.request('job.unschedule', { job: 'next-nightly' }));
     processes[0]!.exit(1, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     assert.deepEqual([actions.get(record.id)?.state, writer.written], ['failed', []], 'because a schedule launchd still runs must stay in the config that names it');
   } finally { await cleanup(); }
 });
@@ -532,7 +570,7 @@ test('JobUnschedule_KeyCannotBeTakenOut_Failed', async () => {
   try {
     const record = actionOf(actions.request('job.unschedule', { job: 'next-nightly' }));
     processes[0]!.exit(0, null);
-    await settle();
+    await announced(actions, record.id, notRunning);
     const ended = actions.get(record.id)!;
     assert.equal(ended.state, 'failed', 'because the schedule is unloaded but the config still names it, so the owner must hear');
     assert.match(ended.output ?? '', /^console: \.flow\/config\.yaml changed on disk/m, 'because the output says why');
@@ -543,11 +581,11 @@ test('JobSchedule_KeyWrittenBeforeInstallStarts', async () => {
   const writer = heldWriter();
   const { actions, processes, cleanup } = await runner(writer.context, PLAIN);
   try {
-    actions.request('job.schedule', { job: 'next-nightly', schedule: 'daily 02:00 gh#12' });
-    await settle();
+    const record = actionOf(actions.request('job.schedule', { job: 'next-nightly', schedule: 'daily 02:00 gh#12' }));
+    await writer.called;
     assert.equal(processes.length, 0, 'because install would load the old schedule before the file holds the new one');
     writer.release();
-    await settle();
+    await announced(actions, record.id, () => processes.length > 0);
     assert.deepEqual([writer.written, processes[0]?.plan.args.slice(1)], [[['jobs.schedule.next-nightly', 'daily 02:00 gh#12']], ['install', 'next-nightly']], 'because the file is written, then install loads it');
   } finally { await cleanup(); }
 });
