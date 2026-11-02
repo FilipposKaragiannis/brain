@@ -56,27 +56,59 @@ if [ "$(cd "$home_root" 2>/dev/null && pwd -P)" != "$(pwd -P)" ]; then
 fi
 scratch=".flow/.init-tmp"; mkdir -p "$scratch" || die "cannot create $scratch"
 trap 'rm -rf "$scratch"' EXIT
+# The Codex files in the user's ~/.codex are shared by every repository that installs there, so
+# what flow last wrote there is recorded beside them (shared_stamp, set in section 4), not only in
+# this repository's stamp: another repository's init then sees a hand edit too.
+shared_stamp=""
+shared_target() { [ -n "$shared_stamp" ] && case "$1" in "$codex_dir"/*) return 0 ;; esac; return 1; }
+foreign() {
+  if [ "$check" -eq 1 ]; then drift=1; echo "init: not written by flow: $1 ($shared_stamp has no line for it)"
+  else refused=1; echo "init: refused: $1 exists and $shared_stamp does not record flow writing it, so it may be yours; re-run with --force to replace it"; fi
+}
+# stamped and kept hold one path per line: a home folder can have a space in its name.
+nl='
+'
 install_file() {
   # install_file <built file> <target> [mode] [guard]: replace the target when it differs from
   # the built file. With "guard", refuse when the target also differs from what init last wrote
   # (a hand edit) unless --force; guarded targets land in the stamp. Wrappers and merged files
   # are not guarded: wrappers are flow's own and always replaced, merged files are the owner's.
-  if [ -f "$2" ] && cmp -s "$1" "$2"; then [ "${4:-}" = guard ] && stamped="$stamped $2"; return; fi
+  if [ -f "$2" ] && cmp -s "$1" "$2"; then [ "${4:-}" = guard ] && stamped="$stamped$2$nl"; return; fi
   if [ "${4:-}" = guard ] && [ -f "$2" ] && [ "$force" -eq 0 ]; then
-    last="$(stamp_get "$stamp" "$2")"
-    if [ -n "$last" ] && [ "$last" != "$(hash_file "$2")" ]; then edited "$2"; kept="$kept $2"; return; fi
+    if shared_target "$2"; then
+      last="$(stamp_get "$shared_stamp" "$2")"
+      [ -n "$last" ] || { foreign "$2"; kept="$kept$2$nl"; return; }
+    else last="$(stamp_get "$stamp" "$2")"; fi
+    if [ -n "$last" ] && [ "$last" != "$(hash_file "$2")" ]; then edited "$2"; kept="$kept$2$nl"; return; fi
   fi
   if [ "$check" -eq 1 ]; then drifted "$2"; else mkdir -p "$(dirname "$2")" && cp "$1" "$2" && { [ -z "${3:-}" ] || chmod "$3" "$2"; } && note "$2"; fi
-  [ "${4:-}" = guard ] && stamped="$stamped $2"
+  [ "${4:-}" = guard ] && stamped="$stamped$2$nl"
+}
+# stamp_lines <stamp to keep refused hashes from> [<only under this folder>]: one line per guarded
+# copy, the hash of the file as it is, or for a refused copy the hash the stamp held (none: left out).
+stamp_lines() {
+  printf '%s' "$stamped" | while IFS= read -r t; do
+    [ -z "${2:-}" ] || case "$t" in "$2"/*) ;; *) continue ;; esac
+    printf '%s\t%s\n' "$(hash_file "$t")" "$t"
+  done
+  printf '%s' "$kept" | while IFS= read -r t; do
+    [ -z "${2:-}" ] || case "$t" in "$2"/*) ;; *) continue ;; esac
+    h="$(stamp_get "$1" "$t")"; [ -z "$h" ] || printf '%s\t%s\n' "$h" "$t"
+  done
 }
 write_stamp() {
   tmp="$scratch/stamp"
+  { printf 'source\t%s\n' "$(source_hash)"; stamp_lines "$stamp"; } > "$tmp"
+  if [ ! -f "$stamp" ] || ! cmp -s "$tmp" "$stamp"; then cp "$tmp" "$stamp" && note "$stamp"; fi
+  [ -n "$shared_stamp" ] || return 0
+  # The shared stamp keeps the lines of files this run did not touch (another plugin version's).
+  stamp_lines "$shared_stamp" "$codex_dir" > "$scratch/shared-ours"
   {
     printf 'source\t%s\n' "$(source_hash)"
-    for t in $stamped; do printf '%s\t%s\n' "$(hash_file "$t")" "$t"; done
-    for t in $kept; do printf '%s\t%s\n' "$(stamp_get "$stamp" "$t")" "$t"; done
-  } > "$tmp"
-  if [ ! -f "$stamp" ] || ! cmp -s "$tmp" "$stamp"; then cp "$tmp" "$stamp" && note "$stamp"; fi
+    [ -f "$shared_stamp" ] && awk -F'\t' 'NR == FNR { ours[$2] = 1; next } FNR > 1 && !($2 in ours)' "$scratch/shared-ours" "$shared_stamp"
+    cat "$scratch/shared-ours"
+  } > "$scratch/shared-stamp"
+  if [ ! -f "$shared_stamp" ] || ! cmp -s "$scratch/shared-stamp" "$shared_stamp"; then cp "$scratch/shared-stamp" "$shared_stamp" && note "$shared_stamp"; fi
 }
 
 # 1. Project config, written once.
@@ -250,6 +282,7 @@ if [ "$user_codex" -eq 1 ]; then codex_dir="$codex_user"; codex_why="--user-code
 elif [ -n "$(stamp_get "$stamp" "$codex_user/rules/flow.rules")" ]; then codex_dir="$codex_user"; codex_why="where the last init put them"
 elif [ -d .codex ]; then codex_dir=".codex"; codex_why="the repository has a .codex folder"
 else codex_dir="$codex_user"; codex_why="the repository has no .codex folder"; fi
+[ "$codex_dir" = .codex ] || shared_stamp="$codex_dir/.flow-stamp"
 install_file "$plugin/templates/flow.rules" "$codex_dir/rules/flow.rules" "" guard
 for src in "$plugin"/codex-agents/*.toml; do install_file "$src" "$codex_dir/agents/$(basename "$src")" "" guard; done
 [ "$codex_dir" != .codex ] && [ -f .codex/rules/flow.rules ] && echo "init: note: .codex/rules/flow.rules and the flow agents in .codex/agents stay in the repository; Codex reads them besides the copies in $codex_dir until you remove them"

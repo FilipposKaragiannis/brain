@@ -92,15 +92,17 @@ claude_hooks_present() {
 # The settings are committed, so the command must also work in the clone of a teammate without
 # flow. It runs the main worktree's .flow/hooks wrapper when there is one (found from a linked
 # worktree too), and otherwise does what Claude does with no hook: a git worktree under
-# .claude/worktrees on branch worktree-<name>, and git worktree remove. Skipping is not enough:
+# .claude/worktrees on branch worktree-<name> (reused when it exists, so a name can be opened
+# again), and git worktree remove, with the branch deleted when it is merged or unchanged
+# (git branch -d refuses otherwise, and the branch stays). Skipping is not enough:
 # a WorktreeCreate hook that prints no path fails the session, and a WorktreeRemove hook that
 # exits 0 counts as removed and leaves the folder.
 claude_worktree_hook() {
   if [ "$1" = create ]; then cat <<'EOF'
-m="$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"; [ ! -f "$m/.flow/hooks/worktree-create.sh" ] || exec "$m/.flow/hooks/worktree-create.sh"; n="$(sed -n 's/.*"name" *: *"\([^"]*\)".*/\1/p' | head -n 1)"; d="$CLAUDE_PROJECT_DIR/.claude/worktrees/${n:-session}"; git -C "$CLAUDE_PROJECT_DIR" worktree add -q -b "worktree-${n:-session}" "$d" >&2 && printf '%s\n' "$d"
+m="$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"; [ ! -f "$m/.flow/hooks/worktree-create.sh" ] || exec "$m/.flow/hooks/worktree-create.sh"; n="$(sed -n 's/.*"name" *: *"\([^"]*\)".*/\1/p' | head -n 1)"; d="$CLAUDE_PROJECT_DIR/.claude/worktrees/${n:-session}"; b="worktree-${n:-session}"; if [ -d "$d" ]; then :; elif git -C "$CLAUDE_PROJECT_DIR" show-ref --verify -q "refs/heads/$b"; then git -C "$CLAUDE_PROJECT_DIR" worktree add -q "$d" "$b" >&2; else git -C "$CLAUDE_PROJECT_DIR" worktree add -q -b "$b" "$d" >&2; fi && printf '%s\n' "$d"
 EOF
   else cat <<'EOF'
-m="$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"; [ ! -f "$m/.flow/hooks/worktree-remove.sh" ] || exec "$m/.flow/hooks/worktree-remove.sh"; p="$(sed -n 's/.*"worktree_path" *: *"\([^"]*\)".*/\1/p' | head -n 1)"; [ -z "$p" ] || git -C "$CLAUDE_PROJECT_DIR" worktree remove "$p" >&2
+m="$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"; [ ! -f "$m/.flow/hooks/worktree-remove.sh" ] || exec "$m/.flow/hooks/worktree-remove.sh"; p="$(sed -n 's/.*"worktree_path" *: *"\([^"]*\)".*/\1/p' | head -n 1)"; [ -z "$p" ] || { b="$(git -C "$p" symbolic-ref --short -q HEAD)"; git -C "$CLAUDE_PROJECT_DIR" worktree remove "$p" >&2 && case "$b" in worktree-*) git -C "$CLAUDE_PROJECT_DIR" branch -d "$b" >/dev/null 2>&1 || true ;; esac; }
 EOF
   fi
 }

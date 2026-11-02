@@ -70,7 +70,10 @@ has one, else to `~/.codex`. Init says which on its `Codex rules and agents:` li
 
 **The guard.** `<codex>/rules/flow.rules` and `<codex>/agents/*.toml` are guarded: before replacing
 one, `init` compares it with the stamp, refuses a hand edit (exit 1, the rest is installed) and
-`--force` replaces it. The wrappers under `.flow/` are not guarded: they are flow's own and
+`--force` replaces it. In `~/.codex` the stamp that counts is `~/.codex/.flow-stamp`, which every
+repository installing there shares, so one repository's init never overwrites a hand edit made
+after another's; a file there that it does not list is not flow's and is refused too. The
+wrappers under `.flow/` are not guarded: they are flow's own and
 always replaced. They hold no path and no version, so a plugin update changes none of them and
 needs no `init`; only a release that changes a copied file does.
 

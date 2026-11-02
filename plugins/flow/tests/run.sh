@@ -2109,6 +2109,14 @@ printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" 
 check "WorktreeCreateHook_NoFlowInTheClone_MakesClaudesOwnWorktreeAndPrintsOnlyItsPath" sh -c "[ $code = 0 ] && [ \"\$(cat '$work/hook-create.out')\" = '$tmate/.claude/worktrees/calm-fern' ] && [ \"\$(git -C '$tmate/.claude/worktrees/calm-fern' symbolic-ref --short HEAD)\" = worktree-calm-fern ]"
 printf '{"worktree_path":"%s/.claude/worktrees/calm-fern","cwd":"%s"}' "$tmate" "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" > "$work/hook-remove.out" 2>&1; code=$?
 check "WorktreeRemoveHook_NoFlowInTheClone_RemovesItQuietly" sh -c "[ $code = 0 ] && [ ! -s '$work/hook-remove.out' ] && [ ! -e '$tmate/.claude/worktrees/calm-fern' ]"
+check "WorktreeRemoveHook_UnchangedBranch_DeletedWithTheWorktree" sh -c "[ -z \"\$(git -C '$tmate' branch --list worktree-calm-fern)\" ]"
+printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-create.sh" > "$work/hook-create.out" 2>&1; code=$?
+check "WorktreeCreateHook_NameOpenedAgainAfterARemove_CreatedAgain" sh -c "[ $code = 0 ] && [ \"\$(cat '$work/hook-create.out')\" = '$tmate/.claude/worktrees/calm-fern' ] && [ -d '$tmate/.claude/worktrees/calm-fern' ]"
+git -C "$tmate/.claude/worktrees/calm-fern" -c user.email=t@t -c user.name=t commit -q --allow-empty -m 'work on calm-fern'
+printf '{"worktree_path":"%s/.claude/worktrees/calm-fern"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" >/dev/null 2>&1
+check "WorktreeRemoveHook_BranchWithCommits_KeptAfterTheRemove" sh -c "[ -n \"\$(git -C '$tmate' branch --list worktree-calm-fern)\" ] && [ ! -e '$tmate/.claude/worktrees/calm-fern' ]"
+printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-create.sh" > "$work/hook-create.out" 2>&1; code=$?
+check "WorktreeCreateHook_BranchLeftByARemove_ReusedWithItsCommits" sh -c "[ $code = 0 ] && [ \"\$(git -C '$tmate/.claude/worktrees/calm-fern' log -1 --format=%s)\" = 'work on calm-fern' ]"
 printf '{"worktree_path":"","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" > "$work/hook-remove.out" 2>&1; code=$?
 check "WorktreeRemoveHook_NoFlowAndNoPath_ExitsZeroWithNoOutput" sh -c "[ $code = 0 ] && [ ! -s '$work/hook-remove.out' ]"
 mkdir -p .claude && printf '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-create.sh"}]}],"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh"}]}]}}\n' > .claude/settings.json
@@ -2123,6 +2131,19 @@ mkdir -p "$work/codexuser" && cd "$work/codexuser" && git init -q -b main && git
 CODEX_HOME="$work/codex-home" FLOW_PLUGIN="$plugin_copy" "$init" --user-codex > "$work/codexuser.out" 2>&1
 check "Init_UserCodex_CodexFilesInCodexHomeAndTheRepoUntouched" sh -c "[ -f '$work/codex-home/rules/flow.rules' ] && [ ! -e .codex/rules ] && grep -qF 'Codex rules and agents: $work/codex-home (--user-codex)' '$work/codexuser.out' && [ -z \"\$(git status --porcelain --untracked-files=all)\" ]"
 check "InitCheck_AfterUserCodex_KeepsTheUserHomeWithoutTheFlag" sh -c "CODEX_HOME='$work/codex-home' FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+# Two repositories that share one Codex home, which has a space in its name.
+shared="$work/shared codex"
+mkdir -p "$work/share-a" "$work/share-b" && for r in share-a share-b; do (cd "$work/$r" && git init -q -b main && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init); done
+cd "$work/share-a" && CODEX_HOME="$shared" FLOW_PLUGIN="$plugin_copy" "$init" >/dev/null 2>&1
+check "Init_CodexHomeWithASpace_StampHoldsTheWholePath" sh -c "grep -qF '	$shared/agents/explorer.toml' .flow/stamp && grep -qF '	$shared/agents/explorer.toml' '$shared/.flow-stamp'"
+printf '# mine\n' >> "$shared/agents/explorer.toml"
+check "InitCheck_CodexHomeWithASpace_NamesAHandEdit" sh -c "CODEX_HOME='$shared' FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -qF 'edited by hand: $shared/agents/explorer.toml'"
+cd "$work/share-b" && CODEX_HOME="$shared" FLOW_PLUGIN="$plugin_copy" "$init" > "$work/share-b.out" 2>&1; code=$?
+check "Init_SecondRepoOnASharedCodexHome_RefusesAHandEditAndSaysSo" sh -c "[ $code = 1 ] && grep -q '# mine' '$shared/agents/explorer.toml' && grep -qF 'refused: $shared/agents/explorer.toml was edited by hand' '$work/share-b.out'"
+check "Init_SecondRepoOnASharedCodexHome_ForceReplacesTheEdit" sh -c "CODEX_HOME='$shared' FLOW_PLUGIN='$plugin_copy' '$init' --force >/dev/null 2>&1 && ! grep -q '# mine' '$shared/agents/explorer.toml' && cd '$work/share-a' && CODEX_HOME='$shared' FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+mkdir -p "$work/foreign codex/agents" && printf 'mine\n' > "$work/foreign codex/agents/planner.toml"
+cd "$work/share-b" && CODEX_HOME="$work/foreign codex" FLOW_PLUGIN="$plugin_copy" "$init" --user-codex > "$work/foreign.out" 2>&1; code=$?
+check "Init_UserCodexFileFlowNeverWrote_RefusedAndKept" sh -c "[ $code = 1 ] && [ \"\$(cat '$work/foreign codex/agents/planner.toml')\" = mine ] && grep -q 'does not record flow writing it' '$work/foreign.out'"
 
 echo "init: a repo that committed flow before"
 mkdir -p "$work/migrate" && cd "$work/migrate" && git init -q -b main && git config user.email t@t && git config user.name t
