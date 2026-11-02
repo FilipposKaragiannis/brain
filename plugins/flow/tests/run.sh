@@ -484,6 +484,29 @@ check_all "jira: a description keeps its link targets and smart links" '[ "$(jir
 jira_config http://acme.atlassian.net
 site_err="$(jira_run "$P/adapters/jira/list.sh" 2>&1 >/dev/null)"; code=$?
 check_all "jira: a jira.site that is not https is refused" '[ "$code" -ne 0 ] && printf "%s" "$site_err" | grep -q "jira.site in .flow/config.yaml must be"'
+# jira_area_config [jira lines]: an area field and the given lines (answer_from) under jira.
+jira_area_config() { printf 'adapters:\n  default: jira\nbase: main\nnotify:\n  desktop: false\njira:\n  site: https://acme.atlassian.net\n  project: WID\n  email: flow@acme.test\n  fields:\n    area: Area\n%s' "${1:-}" > .flow/config.yaml; }
+# jira_comment_as <id> <email> <text>: a comment written by that user straight into the fake's store.
+jira_comment_as() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); c=d["issues"][sys.argv[2]]["comments"]
+c.append({"id": str(len(c) + 1), "author": {"accountId": "acct-" + sys.argv[3].split("@")[0], "emailAddress": sys.argv[3]},
+  "body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": sys.argv[4]}]}]}})
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${1#jira:}" "$2" "$3"; }
+jira_area_config
+check_all "jira vocabulary: the project's issue types without sub-tasks, and the options of the area field" '[ "$(jira_run "$P/adapters/jira/vocabulary.sh")" = "{\"types\": [\"Epic\", \"Task\", \"Bug\", \"Story\", \"Feature\"], \"areas\": [\"Bots\", \"Debugging\"]}" ]'
+jira_gated="$(jira_run "$P/adapters/jira/create.sh" task "Gated")"
+jira_comment_as "$jira_gated" flow@acme.test "/answer before the gate"
+jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "1. Which way?" >/dev/null 2>&1
+jira_comment_as "$jira_gated" stranger@acme.test "/answer the stranger's way"
+jira_comment_as "$jira_gated" flow@acme.test "thinking about it"
+jira_comment_as "$jira_gated" flow@acme.test "/answer the owner's way"
+check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ]'
+check_all "jira answers: the owner's words, not a stranger's or an earlier one, become the answer" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "the owner'"'"'s way" ]'
+check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh")" ]'
+jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "2. And now?" >/dev/null 2>&1
+jira_comment_as "$jira_gated" stranger@acme.test "/answer"
+jira_area_config '  answer_from: [stranger@acme.test]
+'
+check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
 cp "$work/config.gh" .flow/config.yaml
 
 echo "github blips (fake gh)"
@@ -645,6 +668,12 @@ check "notify: Slack says how to answer" sh -c "printf '%s' '$(slack_blocks)' | 
 slack_long() { python3 -I "$P/scripts/_slack.py" t '' '' '' '' 'The branch flow/gh-310 is behind at 3a677d23 and OptionUtility still prices the giveaway under the floor for every weight. The test step cannot change production code; see gh#320.'; }
 check "slack: a long line breaks into one bullet per sentence" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; bullets=json.load(sys.stdin)[\"blocks\"][1][\"elements\"][0][\"elements\"]; assert len(bullets)==2, bullets'"
 check "slack: ids, commits, paths and code names read as code" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; d=json.load(sys.stdin); code=[e[\"text\"] for l in d[\"blocks\"][1][\"elements\"] for s in l[\"elements\"] for e in s[\"elements\"] if e.get(\"style\",{}).get(\"code\")]; assert code==[\"flow/gh-310\",\"3a677d23\",\"OptionUtility\",\"gh#320\"], code'"
+slack_codes() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(e["text"] for l in d["blocks"][1]["elements"] for e in l.get("elements", []) if e.get("style",{}).get("code")))'; }
+check_all "slack: a Jira id reads as code, the full stop after it left out" '[ "$(python3 -I "$P/scripts/_slack.py" t "" "" "" "" "Blocked by jira:WID-7." | slack_codes)" = "jira:WID-7" ]'
+check_all "slack: a gate on a Jira item says to answer on the issue, as its adapter reads /answer" 'python3 -I "$P/scripts/_slack.py" t "jira:WID-7 x" https://acme.atlassian.net/browse/WID-7 ambiguity jira:WID-7 m | grep -q "Answer on the issue"'
+check_all "slack: a gate on a local item says to answer in a session, as its adapter has no answers" 'python3 -I "$P/scripts/_slack.py" t "local:task/3 x" https://example.test/3 ambiguity local:task/3 m | grep -q "Answer in a session"'
+mkdir -p "$work/slackplugin/scripts" "$work/slackplugin/adapters/linear" && cp "$P/scripts/_slack.py" "$work/slackplugin/scripts/" && printf 'lin:\n' > "$work/slackplugin/adapters/linear/prefix"
+check_all "slack: an id reads as code by the prefix file of any adapter folder, not a fixed list" '[ "$(python3 -I "$work/slackplugin/scripts/_slack.py" t "" "" "" "" "See lin:ENG-4 and gh#5" | slack_codes)" = "lin:ENG-4" ]'
 check "slack: a link that is not https stays out of the fallback" sh -c "python3 -I '$P/scripts/_slack.py' t 'gh#1 x' 'javascript:x|<!channel>' ambiguity 'gh#1' m | python3 -c 'import json,sys; t=json.load(sys.stdin)[\"text\"]; assert \"javascript\" not in t and \"<!channel>\" not in t, t'"
 echo "trackers and readiness on every tracker (fake gh)"
 mkdir -p "$work/trackers" && cd "$work/trackers" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -657,6 +686,15 @@ tracked_config 'trackers: [github, local]' 'ready:
   priority_order: [P0, P1, P2, P3]'
 tq0="$("$P/adapters/local/create.sh" task "No priority" --size S)"
 check "trackers: the board reads GitHub when trackers names it, beside a local default" sh -c "'$P/scripts/board.sh' --json | python3 -c 'import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)[\"items\"]]; assert \"gh#32\" in ids and \"$tq0\" in ids, ids'"
+check_all "trackers: a board whose trackers all read has no tracker errors" '[ "$("$P/scripts/board.sh" --json | jget tracker_errors)" = "[]" ]'
+tracked_config 'trackers: [github, local, jira]' ''
+env -u JIRA_API_TOKEN "$P/scripts/board.sh" --json > "$work/board-jira.json" 2>/dev/null
+check_all "trackers: a tracker whose list fails is named in tracker_errors with its reason" '[ "$(jget tracker_errors.0.tracker < "$work/board-jira.json")" = jira ] && jget tracker_errors.0.message < "$work/board-jira.json" | grep -q "JIRA_API_TOKEN is not set"'
+check_all "trackers: a failing tracker leaves the items of the others on the board" 'jget items < "$work/board-jira.json" | grep -q "\"gh#32\""'
+check_all "trackers: the text board lists a tracker it could not read" 'env -u JIRA_API_TOKEN "$P/scripts/board.sh" 2>/dev/null | grep -q "^- jira (exit 1): flow: JIRA_API_TOKEN is not set"'
+tracked_config 'trackers: [github, local]' 'ready:
+  needs: [priority, size]
+  priority_order: [P0, P1, P2, P3]'
 picked="$("$P/scripts/next.sh" --json 2>/dev/null)"
 check "trackers: next picks the most urgent ready item from every named tracker" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FieldChange, FieldGroup, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, HostDefaults, JobsHost, Section } from '../../../daemon/src/plugins/flow/schema.ts';
+import type { FieldChange, FieldGroup, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, HostDefaults, JobsHost, Section, TrackerAdapter } from '../../../daemon/src/plugins/flow/schema.ts';
 import { checkSchedule, DEFAULT_JOBS_HOST, fieldAt, legacyJobsSetting, legacyReadySetting, OTHER_GROUP, plainListValue } from '../../../daemon/src/plugins/flow/schema.ts';
 import { projectPath, unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
@@ -121,7 +121,7 @@ function FlowForm({ projectId, document, name, show, save, reload }: FormProps) 
   const current = (path: string): string => drafts[path] ?? initial[path] ?? '';
   const context: FormContext = {
     idPrefix: `flow-${projectId}-`,
-    usesGithub: trackers(current).includes('github'),
+    trackers: trackers(current),
     jobsHost: current('jobs.host') || DEFAULT_JOBS_HOST,
     workersSplit: current('jobs.workers').trim() !== '',
   };
@@ -153,8 +153,8 @@ function FlowForm({ projectId, document, name, show, save, reload }: FormProps) 
 type FormContext = {
   /** What every control's id starts with: the project's own, since every project's form stays mounted on the page. */
   idPrefix: string;
-  /** Whether a tracker of the project is GitHub: the fields only the GitHub adapter reads show only then. */
-  usesGithub: boolean;
+  /** The trackers the flow reads: a field only one adapter reads shows only while that adapter is one of them. */
+  trackers: string[];
   /** jobs.host, the host of a schedule that names none. */
   jobsHost: string;
   /** Whether jobs.workers splits the next job's workers across hosts. */
@@ -169,7 +169,10 @@ function trackers(current: (path: string) => string): string[] {
 }
 
 /** What shows instead of the fields only the GitHub adapter reads, while no tracker is GitHub. */
-export const NO_GITHUB = 'No tracker here uses GitHub, so these settings do nothing and are hidden. Pick github as a tracker to set them.';
+export const NO_GITHUB = 'No tracker here uses GitHub issues, so the settings only the GitHub adapter reads do nothing and are hidden. Pick github as a tracker to set them.';
+/** What shows instead of the Jira fields, while no tracker is Jira. */
+export const NO_JIRA = 'No tracker here uses Jira, so these settings do nothing and are hidden. Pick jira as a tracker to set them.';
+const NOT_A_TRACKER: Record<TrackerAdapter, string> = { github: NO_GITHUB, jira: NO_JIRA };
 
 type GroupProps = {
   section: Section; hidden: boolean; shown: FieldSpec[]; values: Record<string, unknown>; hostDefaults: HostDefaults; busy: boolean;
@@ -180,8 +183,8 @@ type GroupProps = {
  * One group (a page of the settings), in its parts when its fields name some, each part under its
  * own small heading, every field in schema order. A key the file leaves out (with no deprecated key
  * standing in for it) is marked default beside its name; the mark follows the file, not the draft,
- * so it stays put while the field is edited. The fields only the GitHub adapter reads give way to
- * one line while no tracker is GitHub.
+ * so it stays put while the field is edited. The fields only one adapter reads give way to one
+ * line while that adapter is no tracker of the project.
  */
 function GroupFields({ section, hidden, shown, values, hostDefaults, busy, drafts, initial, context, edit, clear }: GroupProps) {
   const fields = section.fields.filter((spec) => shown.includes(spec));
@@ -192,11 +195,12 @@ function GroupFields({ section, hidden, shown, values, hostDefaults, busy, draft
   const parts = [...new Set(fields.map((spec) => spec.part ?? ''))];
   const partFields = (part: string) => {
     const inPart = fields.filter((spec) => (spec.part ?? '') === part);
-    const hiddenHere = !context.usesGithub && inPart.some((spec) => spec.adapter === 'github');
-    const showing = hiddenHere ? inPart.filter((spec) => spec.adapter === undefined) : inPart;
+    const applies = (spec: FieldSpec): boolean => spec.adapter === undefined || context.trackers.includes(spec.adapter);
+    const showing = inPart.filter(applies);
+    const hiddenFor = inPart.find((spec) => !applies(spec))?.adapter;
     return (
       <>
-        {hiddenHere && <p className="module-help flow-no-tracker">{NO_GITHUB}</p>}
+        {hiddenFor !== undefined && <p className="module-help flow-no-tracker">{NOT_A_TRACKER[hiddenFor]}</p>}
         {showing.length > 0 && <div className="flow-fields">{showing.map(control)}</div>}
       </>
     );

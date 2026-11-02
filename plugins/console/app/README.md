@@ -46,8 +46,9 @@ brain-console uninstall                                    # stop it and remove 
 (for an installed console the `~/.local/share/brain-console/current` link's path, never the
 version's folder or the plugin cache, so an update needs only `brain-console restart`), `start`,
 the flags with every path made absolute, `RunAtLoad` and `KeepAlive`, `PATH`, `HOME`,
-`BRAIN_CONSOLE_LAUNCHD=1` (and `FLOW_PLUGIN`, `BRAIN_CONSOLE_PROJECTS`, `BRAIN_CONSOLE_STATE` when
-set) in `EnvironmentVariables`, `Umask` 63 (077, so the log is the owner's alone), and stdout and
+`BRAIN_CONSOLE_LAUNCHD=1` (and `FLOW_PLUGIN`, `BRAIN_CONSOLE_PROJECTS`, `BRAIN_CONSOLE_STATE` and
+`JIRA_API_TOKEN` when set) in `EnvironmentVariables`, the plist written `0600` since it may hold
+that token, `Umask` 63 (077, so the log is the owner's alone), and stdout and
 stderr to `<state dir>/daemon.log`; the state dir is closed to `0700`. It takes no `--token`: the
 plist would keep the secret, so the daemon reads `<state dir>/token`. After booting a loaded job
 out it refuses when something else holds the port and names it (`lsof`), such as an `npm start`
@@ -167,8 +168,8 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 7 since a gate and a pull carry
-`quiz` (below). One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 8 since `project.trackers`
+took the place of `trackerUrl` (7 when a gate and a pull took `quiz`, below). One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`), `disagreements` and `newerConsole`
@@ -179,8 +180,12 @@ ISO UTC; every age is seconds at `takenAt`, so a reader keeps counting on its ow
 snapshots.
 
 - `project`: `id`, `name`, `root`, `flowHome`, `base` (the branch work merges into), `repo`
-  (`github.repo`), `repoUrl` (`https://github.com/<repo>`, null without a repo), `trackerUrl` (the
-  issues page while the flow reads GitHub, null otherwise), `adapter`, `pluginVersion`, `pluginRoot`
+  (`github.repo`), `repoUrl` (`https://github.com/<repo>`, null without a repo), `adapter`
+  (`adapters.default`, where new items go), `trackers` (each tracker the flow reads, in the order of
+  `trackers`: `name`, `url`, the page of its items, GitHub's issues or
+  `<jira.site>/browse/<jira.project>`, null for local, and `error`, why the last board read could
+  not list it, from `board.sh --json`'s `tracker_errors`, or the console's own when jira is a
+  tracker and its environment has no `JIRA_API_TOKEN`; null when it was read), `pluginVersion`, `pluginRoot`
   (the plugin's folder), `pluginSource` (`FLOW_PLUGIN` when the daemon was started with that
   variable, `installed` when `.flow/plugin.sh` found it in the plugin cache, null with no plugin),
   `jobsHost` (`jobs.host`, the CLI the jobs run), `jobHosts` (every host the jobs run on: the
@@ -339,7 +344,7 @@ Null without a record.
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
-| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project whose trackers (`trackers`, else every one under `adapters` and local) leave out github, or without `github.repo`, reports `ok` with `error: "not applicable: …"` and is never read | 60s |
+| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project without `github.repo` reports `ok` with `error: "not applicable: …"` and is never read; whatever tracker holds the items, the flow keeps their PRs on GitHub, so the tracker does not matter | 60s |
 
 ¹ Flow 1.18.0 and later. The parse is kept per gate until its message changes, so a waiting gate
 costs no process after its first read. An older plugin is not asked. A list that fails, times out
@@ -360,11 +365,13 @@ with its values, `enumOrText` with its known values but any text allowed, `list`
 sentence on what changing it does, its group, which is its page in Settings (`GROUP_FAMILY` puts each under Plugins › Flow: Tracker,
 Readiness, Worktree pool, Gates and verification, Reviews, Notifications; under Jobs: Schedules,
 Next job, Health job, Comments job, Retro job, Intake job; or Agents), an optional `part` that
-heads a few fields inside a page (Tracker: "Where items come from", "Where new items go" and "GitHub"; Notifications:
+heads a few fields inside a page (Tracker: "Where items come from", "Where new items go", "GitHub" and "Jira"; Notifications:
 "Channels" and "When to notify"; Agents: "Claude", "Codex" and "Deprecated"), a `placeholder`
-with a concrete example for every free-text key, `adapter: 'github'` on the keys only the GitHub
-adapter reads, `keys` for a map with fixed names (`github.fields`: size, priority, area;
-`github.status`: backlog, ready, gate, running, review), `values` for a list of fixed choices
+with a concrete example for every free-text key, `adapter: 'github'` or `'jira'` on the keys only
+that adapter reads (hidden, with a line saying why, while it is no tracker; `github.repo` has none,
+since the PRs are on GitHub for any tracker), `keys` for a map with fixed names (`github.fields`: size, priority, area;
+`github.status`: backlog, ready, gate, running, review; `jira.types`: epic, task, bug; `jira.fields`:
+size, area), `values` for a list of fixed choices
 (`ready.needs` and `trackers`), `deprecated` on `github.ready_needs` and `github.priority_order`
 (the form starts `ready.needs` and `ready.priority_order` at them while the file leaves those out; an empty list saved there counts as set), `rows` for a map of free names (`gates`), and its follow-up: `jobs.schedule.*` and
 `jobs.host` need `jobs.sh install` to reload the schedule launchd runs (the `jobs.install` action,
@@ -535,7 +542,7 @@ refs it replaced.
 `item.step-sync` settles a claim whose step differs from the tracker's by writing the claim's step
 to the tracker, the claim being the agent's own record. It runs what `adapter write-state` in
 `lib/flow.sh` runs, `<plugin>/adapters/<adapter>/write-state.sh` (the adapter from the id's
-prefix, `gh#` github, `local:` local) with the item first, and writes the fields advance.sh writes
+prefix, as the plugin's `adapters/<name>/prefix` files say: `gh#` github, `jira:` jira, `local:` local) with the item first, and writes the fields advance.sh writes
 at every step change: `step`, and `last_event` saying the console set it. It is refused, each with
 its own reason, when no pool worktree claims the item; while a run record names the item or an
 agent works in its worktree, since the run moves the step itself; when the claim records no step,
@@ -580,7 +587,10 @@ the gate was raised in (a `path`, when given, must be it) with the resume comman
 `session`, run at once, unless a listed live process writes that transcript. Only a gate in
 `gates` with a located session; any other item is refused with the reason.
 
-An item is `gh#12` or `local:task/7`; a release target is an item or the name of a pool worktree,
+An item is an id that starts with the prefix of one of the plugin's adapters (the first line of
+`adapters/<name>/prefix`, read with the flow files; `gh#` and `local:` for a plugin before flow
+1.28.0, which has none), followed by a letter or digit and at most 127 of letters, digits and
+`:#/_.-`: `gh#12`, `local:task/7`, `jira:WID-7`. A release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
 never changes what runs. A second action on a held lock is refused with 409 and recorded as
 `rejected`. At most four run at once, stops aside: `run.stop` and `job.stop` start on a full
@@ -702,7 +712,8 @@ hand-off and the first read of its note "Handing off to the flow"; and "sync pen
 Terminal on every card and Release on a claimed one, a reserved one saying who reserved it; then the worktrees outside the pool, the
 project root included, in a table with their branch and Open in Terminal), Board (`#/<project>/board/<item>`: the open items with filters for
 under way, in review, ready, blocked and backlog, each row with its state, step, worktree, PR and
-spend, a head line summing the spend of the rows shown, and an item's detail beside the list:
+spend, a head line summing the spend of the rows shown, a banner (`role="alert"`) for each
+tracker the board could not read saying why its items are missing, and an item's detail beside the list:
 its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across
 the page: a card per live run, the first open and the
 others folded to their header, each with its step, item, worktree, host and PR, its stats
@@ -733,8 +744,9 @@ PR) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s). A row above every screen holds the project's fields, each a small uppercase label over its
-value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker
-("GitHub issues", linked to the issues page, on the github adapter; "local" on local), Base branch
+value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker, or
+Trackers for several (each tracker the flow reads: "GitHub issues" and "Jira" linked to their
+items, "local" plain; one the board could not read followed by "(not read)", its title the reason), Base branch
 and Jobs run on (`jobHosts`, every host the schedules and their workers run on, e.g.
 `claude, codex`); the plugins and their versions are in the Overview's footer. The top bar holds the Settings button, and
 the theme switch is a small square icon (a moon on light, a sun on dark) kept per browser. At phone
@@ -767,8 +779,9 @@ switched off is left out, and the last one cannot be), and for a schedule the ti
 and fields, then the host ("jobs.host" keeps following it), the model and effort, for next the
 item, workers and max steps, and the job's other options, with Edit as text, Unschedule and, for an
 empty key, Schedule it; a line the builder cannot hold whole stays a text box with a note. The
-GitHub part of Tracker shows only while the flow reads github (`trackers`, else some `adapters` key
-names it), else one line saying so. The keys the file sets come first and the rest fold under "N more settings the
+GitHub issue keys show only while the flow reads github (`trackers`, else some `adapters` key
+names it), and the Jira part only while it reads jira, else one line saying so; the GitHub
+repository shows always, since the PRs are on GitHub whatever the tracker. The keys the file sets come first and the rest fold under "N more settings the
 file leaves at the default". Every page of a project is one form: an edit waits while you move to
 another page, and one save bar at the bottom counts the unsaved changes and which pages hold them,
 with Discard and Save changes, which sends them all in one write. On Agents, both hosts' model and effort dropdowns show, each listing its values and "host default"

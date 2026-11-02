@@ -244,7 +244,7 @@ const READY: PullFact = {
 const ready = (change: Partial<PullFact>): PullFact => ({ ...READY, ...change });
 const pullNumbered = (picture: Snapshot, pullNumber: number) => picture.pulls.find((pull) => pull.number === pullNumber);
 const withBoardItem = (facts: ReconcileInput, id: string, change: Partial<BoardItem['state']>): ReconcileInput => ({
-  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} },
+  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] },
 });
 const mergeDisagreements = (picture: Snapshot) => picture.disagreements.filter((entry) => entry.sources.join(' vs ') === 'issue state vs pull request');
 
@@ -390,12 +390,12 @@ test('FixturePulls_CountedByState', async () => {
 
 const withExtraBoardItem = (facts: ReconcileInput, change: Partial<BoardItem>): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] } };
 };
 /** Adds board items made from gh#12's shape, one per change. */
 const withBoardItems = (facts: ReconcileInput, changes: Partial<BoardItem>[]): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {} } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] } };
 };
 const needsFieldIds = (picture: Snapshot): string[] => picture.attention.filter((row) => row.kind === 'needs-field').map((row) => row.id);
 const disagreementOf = (picture: Snapshot, sources: string) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === sources);
@@ -428,9 +428,9 @@ test('Worktree_ItemOnBoard_ItemUrlAndTitle', async () => {
   assert.deepEqual([gated?.itemUrl, gated?.itemTitle], ['https://example/7', 'Seven'], 'because the pool map links and names the item without a lookup');
 });
 
-test('Worktree_ItemNotOnBoard_NoUrlOrTitle', async () => {
+test('Worktree_ItemNotOnBoard_IssueLinkedWithNoTitle', async () => {
   const stale = worktree(await snapshot(), 'project-wt-4');
-  assert.deepEqual([stale?.itemUrl, stale?.itemTitle], [null, null], 'because the board never listed gh#5, so nothing is known about it');
+  assert.deepEqual([stale?.itemUrl, stale?.itemTitle], ['https://github.com/example/fixture/issues/5', null], 'because the issue page follows from the id and github.repo, while the title is known only from the board');
 });
 
 test('NeedsField_OpenUnstartedUnblocked_AttentionRow', async () => {
@@ -454,7 +454,7 @@ test('NeedsField_ChildOfASplitParentWithADoneSibling_Row', async () => {
 
 test('NeedsField_BlocksAnItemInProgress_Row', async () => {
   const facts = withBoardItems(withBoardItem(await input(), 'gh#9', {}), [{ id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], parent: '' }]);
-  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {}, spend: {} } };
+  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {}, spend: {}, trackerErrors: [] } };
   assert.deepEqual(needsFieldIds(reconcile(blocking)), ['gh#14'], 'because gh#9 is being worked and waits on it');
 });
 
@@ -653,20 +653,60 @@ test('LandedMergeGates_OtherGate_NotListed', async () => {
 
 test('Project_GithubAdapter_RepoAndIssuesUrls', async () => {
   const { project } = await snapshot();
-  assert.deepEqual([project.repoUrl, project.trackerUrl, project.jobsHost], ['https://github.com/example/fixture', 'https://github.com/example/fixture/issues', 'claude'], 'because the header links the repository and the tracker and says which CLI the jobs run');
+  assert.deepEqual([project.repoUrl, project.trackers.find((tracker) => tracker.name === 'github')?.url, project.jobsHost], ['https://github.com/example/fixture', 'https://github.com/example/fixture/issues', 'claude'], 'because the header links the repository and the tracker and says which CLI the jobs run');
 });
 
 test('Project_TrackersWithoutGithub_NoTrackerUrl', async () => {
   const facts = await input();
   facts.flow.config.trackers = ['local'];
-  assert.equal(reconcile(facts).project.trackerUrl, null, 'because the local tracker has no page to open');
+  assert.deepEqual(reconcile(facts).project.trackers.map((tracker) => tracker.url), [null], 'because the local tracker has no page to open');
 });
 
 test('Project_TrackersReadGithubBesideALocalDefault_IssuesUrl', async () => {
   const facts = await input();
   facts.flow.config.adapter = 'local';
   facts.flow.config.trackers = ['github', 'local'];
-  assert.equal(reconcile(facts).project.trackerUrl, 'https://github.com/example/fixture/issues', 'because the flow reads GitHub issues even while new items default to local');
+  assert.deepEqual(reconcile(facts).project.trackers.map((tracker) => tracker.url), ['https://github.com/example/fixture/issues', null], 'because the flow reads GitHub issues even while new items default to local');
+});
+
+/** The fixture project reading Jira beside GitHub, on the site and project given. */
+async function jiraInput(site = 'https://acme.atlassian.net/'): Promise<ReconcileInput> {
+  const facts = await input();
+  facts.flow.config.trackers = ['github', 'jira'];
+  facts.flow.config.jiraSite = site;
+  facts.flow.config.jiraProject = 'WID';
+  return facts;
+}
+
+test('Project_JiraTracker_ListedWithItsProjectPage', async () => {
+  const { project } = reconcile(await jiraInput());
+  assert.deepEqual(project.trackers, [
+    { name: 'github', url: 'https://github.com/example/fixture/issues', error: null },
+    { name: 'jira', url: 'https://acme.atlassian.net/browse/WID', error: null },
+  ], 'because the header names every tracker the flow reads, each linked to its items, in the order of trackers');
+});
+
+test('Project_LocalTracker_ListedWithNoPage', async () => {
+  const facts = await input();
+  facts.flow.config.trackers = ['local'];
+  assert.deepEqual(reconcile(facts).project.trackers, [{ name: 'local', url: null, error: null }], 'because the local tracker keeps its items in files, with no page to open');
+});
+
+test('Project_JiraSiteNotHttps_NoPage', async () => {
+  const project = reconcile(await jiraInput('http://acme.atlassian.net')).project;
+  assert.equal(project.trackers.find((tracker) => tracker.name === 'jira')?.url, null, 'because the adapter refuses a site that is not https, so the console links none');
+});
+
+test('Project_TrackerTheBoardCouldNotRead_CarriesTheError', async () => {
+  const facts = await jiraInput();
+  facts.board = { ...facts.board!, trackerErrors: [{ tracker: 'jira', code: 1, message: 'flow: jira.site is not set' }] };
+  assert.deepEqual(reconcile(facts).project.trackers.map((tracker) => tracker.error), [null, 'flow: jira.site is not set'], 'because the header says which tracker failed and why, so the missing items are not taken for none');
+});
+
+test('Worktree_JiraItemNotOnBoard_LinksTheIssueOnTheSite', async () => {
+  const facts = await jiraInput();
+  facts.flow.claims = facts.flow.claims.map((claim) => (claim.item === 'gh#5' ? { ...claim, item: 'jira:WID-5' } : claim));
+  assert.equal(worktree(reconcile(facts), 'project-wt-4')?.itemUrl, 'https://acme.atlassian.net/browse/WID-5', 'because a Jira issue opens at <site>/browse/<key>, the link the worktree keeps while the board cannot list it');
 });
 
 test('Disagreement_GateVsLabels_ExplainedWithReReadTheBoard', async () => {
@@ -762,7 +802,7 @@ test('Worktree_SyncNoteOfItsClaim_ShownAsSyncPending', async () => {
 
 test('GateItemWithABody_GateCarriesIt', async () => {
   const facts = await input();
-  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' }, spend: {} } });
+  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' }, spend: {}, trackerErrors: [] } });
   assert.equal(picture.gates.find((gate) => gate.item === 'gh#7')?.body, '## Spec', 'because the card shows the issue the gate is about');
 });
 

@@ -1,7 +1,8 @@
 #!/bin/sh
 # board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every tracker read, every claim. The pool
 # with item, step and last event; open items with their state and blockers; pending gates;
-# overlapping claims; the spend per item, from the step sessions in log/runs.jsonl. --graph
+# overlapping claims; the spend per item, from the step sessions in log/runs.jsonl; each tracker
+# whose list failed, with why (--json: tracker_errors, [{"tracker", "code", "message"}]). --graph
 # prints a graph model built from every adapter's open items (scripts/_graph.py): the dependency
 # waves of one epic's children, or every open item by priority. --mermaid prints it as a Mermaid
 # flowchart instead of JSON.
@@ -34,11 +35,17 @@ if [ -n "$graph" ]; then
   printf '%s\n' "$lists" | merge_lists | python3 -I "$FLOW_PLUGIN/scripts/_graph.py" "$@" $mermaid
   exit
 fi
-items="$(for a in $trackers; do adapter list "$a" 2>/dev/null; done | merge_lists)"
+procs="$(mktemp)"; failed="$(mktemp)"; said="$(mktemp)"; trap 'rm -f "$procs" "$failed" "$said"' EXIT
+# A tracker whose list fails is named with its exit code and its last stderr line (a missing token,
+# a refused config key), so the board says why its items are missing instead of showing fewer.
+items="$(for a in $trackers; do
+  adapter list "$a" 2>"$said"; code=$?
+  [ "$code" -eq 0 ] || { json_obj "tracker=$a" "code:=$code" "message=$(grep . "$said" | tail -n 1)"; echo; } >> "$failed"
+done | merge_lists)"
+tracker_errors="$(sed 's/.*/[&]/' "$failed" | merge_lists)"
 # Each run record says whether a process still holds it: "running on shell" is only true then.
 grace="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
 reminder="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
-procs="$(mktemp)"; trap 'rm -f "$procs"' EXIT
 python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$procs"
 runs="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" runs "$home/runs" "$procs" "$grace")"
 # A record that does not parse (one written before 1.20.2 with a value such as 007) is skipped.
@@ -52,4 +59,4 @@ for l in sys.stdin:
         pass
 print(json.dumps(out))')"
 pool="$("$FLOW_PLUGIN/scripts/steward.sh" pool 2>/dev/null | tail -n +2)"
-printf '%s\n%s\n%s\n' "$items" "$runs" "$gates" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"
+printf '%s\n%s\n%s\n%s\n' "$items" "$runs" "$gates" "$tracker_errors" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"

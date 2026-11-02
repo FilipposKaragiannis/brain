@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { parseJobStatus, parseRunLines, readJobs, readRunTail } from '../src/collectors/jobs.ts';
-import { fakeRunner } from './fakeRunner.ts';
+import { FAKE_PLUGIN, fakeRunner } from './fakeRunner.ts';
 
 /** A run log line as `job_record` in the plugin's jobs/_job.sh writes it. */
 const line = (job: string, at: string, result: string, exit = 0): string => JSON.stringify({ job, host: 'claude', at, seconds: 0, exit, result });
@@ -53,7 +53,7 @@ test('RunTail_NoLog_NoRuns', async () => {
 test('ReadJobs_StatusRowsAndTheRunLogOfTheProject', async () => {
   await withLogDir(async (logDir, root) => {
     writeFileSync(path.join(logDir, 'runs.jsonl'), `${line('next-2', '2026-10-24T17:30:00Z', 'skipped: run 36596 still going')}\n`);
-    const facts = await readJobs(root, '/fake/plugins/flow/9.9.9', fakeRunner);
+    const facts = await readJobs(root, FAKE_PLUGIN, fakeRunner);
     assert.deepEqual([facts.jobs.map((row) => row.job), facts.runs.map((run) => run.job)], [['next', 'health', 'retro'], ['next-2']], "because the rows come from jobs.sh status and the runs from <flow home>/log/runs.jsonl");
   });
 });

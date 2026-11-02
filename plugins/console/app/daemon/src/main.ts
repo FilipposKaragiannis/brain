@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -64,7 +64,7 @@ const launchd: LaunchdDependencies = {
     execFile(launchctl, args, { encoding: 'utf8' }, (error, stdout, stderr) => resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : 1, stdout, stderr }));
   }),
   files: {
-    write: (file, text) => writeFileSync(file, text), remove: (file) => rmSync(file, { force: true }), exists: existsSync,
+    write: (file, text, mode) => { writeFileSync(file, text); if (mode !== undefined) chmodSync(file, mode); }, remove: (file) => rmSync(file, { force: true }), exists: existsSync,
     read: (file) => readFileSync(file, 'utf8'), mkdir: (folder) => { mkdirSync(folder, { recursive: true }); }, privateFolder,
   },
   portHolder,

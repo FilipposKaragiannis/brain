@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { consoleUrl, readConfig } from './config.ts';
 import type { ConfigPaths } from './settings.ts';
+import { JIRA_TOKEN } from './collectors/exec.ts';
 
 /** The launchd job that runs the daemon on login. */
 export const LAUNCHD_LABEL = 'com.brain.console';
@@ -9,13 +10,16 @@ export const PORT_WAIT_MS = 15000;
 const EXIT_OK = 0;
 const EXIT_FAILED = 1;
 const EXIT_BAD_CONFIG = 2;
+/** The launch agent may carry JIRA_API_TOKEN, so only its owner reads it; launchd takes a plist no one else can write. */
+export const PLIST_MODE = 0o600;
 
 export type CommandOutcome = { code: number | null; stdout: string; stderr: string };
 
 /** Everything `install` and `uninstall` touch outside the process, so a test never reaches launchd or the disk. */
 export type LaunchdDependencies = {
   launchctl: (args: string[]) => Promise<CommandOutcome>;
-  files: { write(file: string, text: string): void; remove(file: string): void; exists(file: string): boolean; read(file: string): string; mkdir(folder: string): void; privateFolder(folder: string): void };
+  /** `write` with a mode sets the file to it, also when the file was there before. */
+  files: { write(file: string, text: string, mode?: number): void; remove(file: string): void; exists(file: string): boolean; read(file: string): string; mkdir(folder: string): void; privateFolder(folder: string): void };
   /** What listens on the port now, such as "pid 4242 (node)", or null when nothing does. */
   portHolder: (port: number) => Promise<string | null>;
   /** Resolves true once something listens on the port, false when the wait ran out. */
@@ -43,10 +47,14 @@ export function absoluteFlags(argv: string[]): string[] {
   return argv.map((value, index) => (['--project', '--state-dir', '--config'].includes(argv[index - 1] ?? '') ? path.resolve(value) : value));
 }
 
-/** The variables the daemon gets under launchd: PATH and HOME, the marker Settings reads, and the ones that change what it runs. */
+/**
+ * The variables the daemon gets under launchd: PATH and HOME, the marker Settings reads, the ones
+ * that change what it runs, and the Jira API token its flow scripts pass on (the Jira adapter reads
+ * it from the environment only), so `install` keeps the plist the owner's alone (PLIST_MODE).
+ */
 export function launchdEnvironment(env: NodeJS.ProcessEnv): Record<string, string> {
   const kept: Record<string, string> = { BRAIN_CONSOLE_LAUNCHD: '1' };
-  for (const name of ['PATH', 'HOME', 'FLOW_PLUGIN', 'BRAIN_CONSOLE_PROJECTS', 'BRAIN_CONSOLE_STATE']) {
+  for (const name of ['PATH', 'HOME', 'FLOW_PLUGIN', 'BRAIN_CONSOLE_PROJECTS', 'BRAIN_CONSOLE_STATE', JIRA_TOKEN]) {
     const value = env[name];
     if (value !== undefined) kept[name] = value;
   }
@@ -119,7 +127,7 @@ export async function install(argv: string[], deps: LaunchdDependencies): Promis
   const log = path.join(config.stateDir, 'daemon.log');
   deps.files.mkdir(path.dirname(plist));
   deps.files.privateFolder(config.stateDir);
-  deps.files.write(plist, plistXml({ node: deps.node, daemon: deps.daemon, flags, env: launchdEnvironment(deps.env), log }));
+  deps.files.write(plist, plistXml({ node: deps.node, daemon: deps.daemon, flags, env: launchdEnvironment(deps.env), log }), PLIST_MODE);
   deps.print(`wrote ${plist}`);
   const domain = `gui/${deps.uid}`;
   if ((await deps.launchctl(['print', `${domain}/${LAUNCHD_LABEL}`])).code === 0) await deps.launchctl(['bootout', `${domain}/${LAUNCHD_LABEL}`]);

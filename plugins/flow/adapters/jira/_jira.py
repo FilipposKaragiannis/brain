@@ -8,6 +8,8 @@
   _jira.py comment <id> <text>
   _jira.py close <id> [<text>]
   _jira.py remote-link <id> <url>
+  _jira.py answers
+  _jira.py vocabulary
 
 Every call goes through curl (_http.py). The settings come from _jira.sh in FLOW_JIRA_* variables,
 the readiness rules from ready_rules (READY_NEEDS, READY_PRIORITY_ORDER), the token from
@@ -16,6 +18,9 @@ state is mirrored as labels the way the GitHub adapter does it (step:*, gate:*, 
 size:* unless jira.fields.size names a field) and kept whole in the issue property flow-state.
 A blocker in another tracker has no Jira link, so it sits in the description as a line
 "Blocked by: <id>, <id>", as does a Jira blocker whose link Jira refused.
+answers prints one JSON line {"id", "text"} per gated item the owner answered with an /answer
+comment; answers.sh clears the gates. vocabulary prints the project's issue types and the options
+of the jira.fields.area field.
 """
 import json
 import os
@@ -37,6 +42,10 @@ FOREIGN_BLOCKERS = re.compile(r"(?m)^Blocked by: (.+)$")
 NO_RANK = 999
 PAGE_SIZE = 100
 SEARCH = "/rest/api/3/search/jql"
+GATE_COMMENT = "**Gate: "
+ANSWER_WORD = "/answer"
+# Gates an /answer comment clears; the merge gate clears when the PR is merged.
+UNANSWERABLE_GATES = ("none", "merge")
 
 
 def key_of(item_id):
@@ -300,12 +309,96 @@ def cmd_remote_link(args):
     expect(status, answer, "link the PR to %s%s" % (PREFIX, key))
 
 
+# --- the owner's answers and the names a new item may use
+
+
+def answerers():
+    """The account ids and emails whose /answer counts: jira.answer_from, else the token's own user."""
+    named = [n.strip() for n in setting("ANSWER_FROM").split(",") if n.strip()]
+    if named:
+        return set(named)
+    status, me = call("GET", "/rest/api/3/myself")
+    expect(status, me, "read the user the API token belongs to")
+    return {me.get("accountId", ""), me.get("emailAddress", "")} - {""}
+
+
+def comments_of(key):
+    found, start = [], 0
+    while True:
+        status, page = call("GET", "/rest/api/3/issue/%s/comment" % key,
+                            query={"startAt": start, "maxResults": PAGE_SIZE, "orderBy": "created"})
+        expect(status, page, "read the comments of %s%s" % (PREFIX, key))
+        batch = page.get("comments") or []
+        found += batch
+        start += len(batch)
+        if not batch or start >= page.get("total", 0):
+            return found
+
+
+def answer_after_gate(comments, allowed):
+    """The text of the first /answer by an allowed author after the latest gate comment, or None."""
+    texts = [from_document(c.get("body")).strip() for c in comments]
+    gate_at = max([n for n, text in enumerate(texts) if text.startswith(GATE_COMMENT)], default=-1)
+    if gate_at < 0:
+        return None
+    for comment, text in list(zip(comments, texts))[gate_at + 1:]:
+        author = comment.get("author") or {}
+        by_allowed = allowed & {author.get("accountId", ""), author.get("emailAddress", "")}
+        if text.split(None, 1)[:1] == [ANSWER_WORD] and by_allowed:
+            return text[len(ANSWER_WORD):].strip() or "as recommended"
+    return None
+
+
+def cmd_answers(args):
+    if args:
+        fail("answers takes no arguments", 2)
+    jql = 'project = "%s" AND statusCategory != Done ORDER BY created DESC' % setting("PROJECT")
+    issues, _ = search(jql, ["labels"], int(setting("LIMIT", "500")))
+    gated = [i for i in issues if flow_state(i, i["fields"].get("labels") or [], {})["gate"] not in UNANSWERABLE_GATES]
+    if not gated:
+        return
+    allowed = answerers()
+    for issue in gated:
+        text = answer_after_gate(comments_of(issue["key"]), allowed)
+        if text is not None:
+            print(json.dumps({"id": PREFIX + issue["key"], "text": text}))
+
+
+def issue_types():
+    status, project = call("GET", "/rest/api/3/project/" + setting("PROJECT"))
+    expect(status, project, "read the Jira project %s" % setting("PROJECT"))
+    return [t for t in project.get("issueTypes") or [] if not t.get("subtask")]
+
+
+def area_options(types, area):
+    """The allowed values of the area field on the screen that creates a task; none for a text field."""
+    task = next((t for t in types if t.get("name") == type_names()["task"]), None)
+    if not task or area["type"] != "option":
+        return []
+    path = "/rest/api/3/issue/createmeta/%s/issuetypes/%s" % (setting("PROJECT"), task["id"])
+    status, page = call("GET", path, query={"maxResults": 200})
+    expect(status, page, "read the fields a new %s takes" % task["name"])
+    # The docs name the list "results"; Jira Cloud answers with "fields". Either is taken.
+    fields = page.get("fields") or page.get("results") or []
+    found = next((f for f in fields if f.get("fieldId") == area["id"]), {})
+    return [v.get("value") or v.get("name") for v in found.get("allowedValues") or [] if v.get("value") or v.get("name")]
+
+
+def cmd_vocabulary(args):
+    if args:
+        fail("vocabulary takes no arguments", 2)
+    types = issue_types()
+    area = custom_fields().get("area")
+    print(json.dumps({"types": [t["name"] for t in types], "areas": area_options(types, area) if area else []}))
+
+
 def main():
     if len(sys.argv) < 2:
         fail(__doc__.strip().splitlines()[0], 2)
     command, args = sys.argv[1], sys.argv[2:]
     commands = {"list": cmd_list, "read": cmd_read, "create": cmd_create, "write-state": cmd_write_state,
-                "comment": cmd_comment, "close": cmd_close, "remote-link": cmd_remote_link}
+                "comment": cmd_comment, "close": cmd_close, "remote-link": cmd_remote_link,
+                "answers": cmd_answers, "vocabulary": cmd_vocabulary}
     if command not in commands:
         fail("unknown command %s" % command, 2)
     commands[command](args)

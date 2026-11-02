@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 7;
+export const SNAPSHOT_SCHEMA_VERSION = 8;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -85,10 +85,10 @@ export type ProjectInfo = {
   repo: string | null;
   /** `https://github.com/<repo>`, or null without `github.repo`. */
   repoUrl: string | null;
-  /** The tracker's page for the project's items: the GitHub issues page while the flow reads GitHub, else null. */
-  trackerUrl: string | null;
-  /** The tracker adapter, `adapters.default`: `github` or `local`. */
+  /** The tracker adapter, `adapters.default`: where new items go. */
   adapter: string;
+  /** Each tracker the flow reads (`trackers`, as lib/flow.sh's `adapters_configured` says), in that order: the header shows them. */
+  trackers: TrackerInfo[];
   /** The flow plugin's version the project resolves, or null when no plugin was found. */
   pluginVersion: string | null;
   /** The folder of that plugin, or null when none was found. */
@@ -111,6 +111,13 @@ export type ProjectInfo = {
   /** `reviews.reviewers`: who the flow asks to review each PR, codex and claude when unset. The PR cards offer them for an ask. */
   reviewers: string[];
 };
+
+/**
+ * One tracker the flow reads: its adapter name, the page of its items (GitHub's issues with
+ * `github.repo`, `<jira.site>/browse/<jira.project>`; null for local), and why the last board read
+ * could not list it, or null when it could.
+ */
+export type TrackerInfo = { name: string; url: string | null; error: string | null };
 
 export type Claim = {
   item: string;
