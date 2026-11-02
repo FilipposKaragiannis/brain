@@ -73,6 +73,12 @@ export type FieldSpec = {
    * turns the list into this field first.
    */
   plainList?: string;
+  /**
+   * An empty value is no value (a pick filter's field): a save of "" or [] takes the key out, as
+   * flow reads an empty key the same as none and a key left behind would read as set to a reader
+   * of the file.
+   */
+  emptyUnset?: true;
 };
 
 /** One fixed name of a map: the name the file writes, what the form calls it, and an example. */
@@ -311,12 +317,12 @@ function namedScheduleField(path: string): FieldSpec | undefined {
 }
 
 export function fieldAt(path: string): FieldSpec | undefined {
-  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path) ?? namedScheduleField(path);
+  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path) ?? namedScheduleField(path) ?? pickField(path);
 }
 
 /** The schema field a path belongs to: itself, the map or list field above it, or the field whose plain list it is. */
 export function fieldCovering(path: string): FieldSpec | undefined {
-  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path || spec.plainList === path || ((spec.type === 'map' || spec.type === 'list') && path.startsWith(`${spec.path}.`))) ?? namedScheduleField(path);
+  return FLOW_CONFIG_SCHEMA.find((spec) => spec.path === path || spec.plainList === path || ((spec.type === 'map' || spec.type === 'list') && path.startsWith(`${spec.path}.`))) ?? namedScheduleField(path) ?? pickField(path);
 }
 
 /** The plain list a field stands for, as the parsed file holds it (a list, or one item), or undefined when its key holds a map or nothing. */
@@ -336,6 +342,44 @@ export function namedScheduleFields(values: Record<string, unknown>): FieldSpec[
   const schedule = jobs !== null && typeof jobs === 'object' && !Array.isArray(jobs) ? (jobs as Record<string, unknown>)['schedule'] : undefined;
   if (schedule === null || typeof schedule !== 'object' || Array.isArray(schedule)) return [];
   return Object.keys(schedule).flatMap((name) => namedScheduleField(`${SCHEDULE_PREFIX}${name}`) ?? []);
+}
+
+const PICK_PREFIX = 'pick.';
+/** A filter's name, as flow's pick_check in lib/flow.sh takes it. */
+const PICK_NAME = /^[A-Za-z0-9_-]+$/;
+const PICK_KINDS = ['epic', 'task', 'bug'];
+/**
+ * The fields of a pick filter, `pick.<name>.<field>`, in the order the form shows them: what each
+ * keeps, as flow's adapters map it (adapters/README.md, Pick filters).
+ */
+const PICK_FIELDS: { name: string; type: FieldType; label: string; help: string; extra: Partial<FieldSpec> }[] = [
+  { name: 'assignee', type: 'string', label: 'Assignee', help: 'Keeps the items assigned to this person: me (the user the tracker acts as), a login or an email.', extra: { placeholder: 'me' } },
+  { name: 'status', type: 'list', label: 'Statuses', help: 'Keeps the items in one of these statuses, as the tracker names them.', extra: { placeholder: 'To Do' } },
+  { name: 'labels', type: 'list', label: 'Labels', help: 'Keeps the items with one of these labels.', extra: { placeholder: 'api' } },
+  { name: 'kinds', type: 'list', label: 'Kinds', help: 'Keeps the items of one of these kinds.', extra: { values: PICK_KINDS } },
+  { name: 'trackers', type: 'list', label: 'Trackers', help: 'The trackers the filter reads; empty, every tracker the flow reads.', extra: { values: ADAPTERS } },
+  { name: 'query', type: 'string', label: 'Query', help: 'One tracker\'s own search, passed as written (JQL on Jira, search qualifiers on GitHub): set Trackers to that one tracker and leave the other fields empty.', extra: { placeholder: 'component = Backend' } },
+];
+
+/**
+ * The field of a pick filter's key, `pick.<name>.<field>`: next --pick <name> and a next schedule
+ * with --pick take only the ready items it keeps. The file may name any filters, so the schema
+ * lists none and makes each one here, in Readiness under the filter's own name; undefined for any
+ * other path.
+ */
+function pickField(path: string): FieldSpec | undefined {
+  if (!path.startsWith(PICK_PREFIX)) return undefined;
+  const [name = '', key = '', ...rest] = path.slice(PICK_PREFIX.length).split('.');
+  const known = PICK_FIELDS.find((each) => each.name === key);
+  if (!PICK_NAME.test(name) || known === undefined || (rest.length > 0 && known.type !== 'list')) return undefined;
+  return field(`${PICK_PREFIX}${name}.${key}`, known.type, 'Readiness', known.label, known.help, { ...known.extra, part: `Pick filter ${name}`, emptyUnset: true });
+}
+
+/** The fields of every pick filter a parsed file holds, each filter's in the form's order, filters in file order. */
+export function pickFields(values: Record<string, unknown>): FieldSpec[] {
+  const picks = values['pick'];
+  if (picks === null || typeof picks !== 'object' || Array.isArray(picks)) return [];
+  return Object.keys(picks).flatMap((name) => PICK_FIELDS.flatMap((each) => pickField(`${PICK_PREFIX}${name}.${each.name}`) ?? []));
 }
 
 /** The fixed groups with their fields, in schema order. */

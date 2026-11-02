@@ -796,6 +796,7 @@ function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
     base: config.base, repo: config.repo, repoUrl,
     adapter: config.adapter, trackers: trackersOf(input), pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
     jobHosts: jobHostsOf(jobs, config.jobsHost), plugins: input.plugins ?? [],
+    picks: config.picks,
   };
 }
 

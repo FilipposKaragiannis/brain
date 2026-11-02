@@ -5,8 +5,11 @@ A reads it back as an outwardIssue B ("blocks"), B as an inwardIssue A ("is bloc
 Comments keep their author, the user the -K login names (/rest/api/3/myself answers the same), so
 answers.sh can tell the owner's /answer from anyone else's. The project (types, plus a sub-task
 type) and the createmeta of each type (the option fields' allowedValues) feed vocabulary.sh; the
-createmeta answers in pages of at most createmeta_page fields (default 50), as Jira caps them."""
+createmeta answers in pages of at most createmeta_page fields (default 50), as Jira caps them. A
+search reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other; an issue's assignee is a
+fields.assignee object, as Jira returns one."""
 import json, re, sys
+from functools import reduce
 from urllib.parse import parse_qs, urlsplit
 
 db_path, args = sys.argv[1], sys.argv[2:]
@@ -65,6 +68,37 @@ def view(issue, wanted, properties):
             "properties": {p: issue["properties"][p] for p in properties if p in issue["properties"]}}
 
 
+def quoted(text):
+    return [unquote(v) for v in re.findall(r'"((?:[^"\\]|\\.)*)"', text)]
+
+
+def unquote(text):
+    return text.replace('\\"', '"').replace("\\\\", "\\")
+
+
+def assigned(issue, who):
+    person = issue["fields"].get("assignee") or {}
+    return who in (person.get("emailAddress"), person.get("accountId"), person.get("displayName"))
+
+
+# The JQL the adapter and the tests send, each clause with the issues it keeps; the clauses are
+# ANDed, and the search refuses any other text. The login is the user currentUser() stands for.
+signed_in = re.search(r'^user = "([^:"]+):', login, re.M)
+me = signed_in.group(1) if signed_in else ""
+JQL_CLAUSES = [
+    (re.compile(r'project = "([^"]+)"'), lambda i, m: i["key"].startswith(m.group(1) + "-")),
+    (re.compile(r"parent = ([A-Z][A-Z0-9_]*-\d+)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") == m.group(1)),
+    (re.compile(r"parent in \(([^)]*)\)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") in [k.strip() for k in m.group(1).split(",")]),
+    (re.compile(r"statusCategory != Done"), lambda i, m: status_of(i)["statusCategory"]["key"] != "done"),
+    (re.compile(r"assignee = currentUser\(\)"), lambda i, m: assigned(i, me)),
+    (re.compile(r'assignee = ("(?:[^"\\]|\\.)*")'), lambda i, m: assigned(i, quoted(m.group(1))[0])),
+    (re.compile(r'status (?:in \(([^)]*)\)|= ("(?:[^"\\]|\\.)*"))'),
+     lambda i, m: status_of(i)["name"].lower() in [s.lower() for s in quoted(m.group(1) or m.group(2))]),
+    (re.compile(r'labels (?:in \(([^)]*)\)|= ("(?:[^"\\]|\\.)*"))'),
+     lambda i, m: bool(set(i["fields"].get("labels") or []) & set(quoted(m.group(1) or m.group(2))))),
+]
+
+
 def check_field(fields, field_id):
     if field_id in fields and fields[field_id] is not None and fields[field_id].get("value") not in options.get(field_id, []):
         refuse(400, "option %s is not valid for %s" % (fields[field_id], field_id))
@@ -113,12 +147,13 @@ if path == "/rest/api/3/issueLink" and method == "POST":
 if path == "/rest/api/3/search/jql" and method == "POST":
     jql = body["jql"]
     rows = sorted(issues.values(), key=lambda i: int(i["key"].rsplit("-", 1)[1]), reverse="ORDER BY created DESC" in jql)
-    m = re.match(r'project = "([^"]+)"', jql)
-    rows = [i for i in rows if i["key"].startswith(m.group(1) + "-")] if m else rows
-    m = re.match(r"parent = (\S+)", jql)
-    rows = [i for i in rows if (i["fields"].get("parent") or {}).get("key") == m.group(1)] if m else rows
-    if "statusCategory != Done" in jql:
-        rows = [i for i in rows if status_of(i)["statusCategory"]["key"] != "done"]
+    where = jql.split(" ORDER BY ")[0]
+    for clause in JQL_CLAUSES:
+        for m in clause[0].finditer(where):
+            rows = [i for i in rows if clause[1](i, m)]
+    leftover = re.sub(r"\bAND\b|[()\s]", "", reduce(lambda text, clause: clause[0].sub("", text), JQL_CLAUSES, where))
+    if leftover:
+        refuse(400, "fake jira: unknown JQL in %s" % jql)
     start = int(body.get("nextPageToken") or 0)
     page = rows[start:start + body.get("maxResults", 50)]
     last = start + len(page) >= len(rows)

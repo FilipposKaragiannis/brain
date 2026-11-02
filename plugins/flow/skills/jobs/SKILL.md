@@ -20,6 +20,7 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
 | hold a schedule, or all, without unscheduling | `"$P/scripts/jobs.sh" pause <name\|all>`, then `resume` |
 | schedule the jobs, or change a schedule | set `jobs.schedule.<name>` in `.flow/config.yaml`, then `"$P/scripts/jobs.sh" install [name]` |
 | run one job on two schedules (a claude `next` and a codex `next`) | add `jobs.schedule.next-codex: every 30m codex --max-steps 15`, then `"$P/scripts/jobs.sh" install next-codex` |
+| run `next` only on the items a filter keeps (the owner's own) | add `jobs.schedule.next-mine: every 30m --pick mine` beside a filter `pick.mine` with `assignee: me`, then `"$P/scripts/jobs.sh" install next-mine` |
 | remove a schedule | `"$P/scripts/jobs.sh" uninstall [name]`, also for one the config no longer names |
 | end one item's run, or start a dead one again | `"$P/scripts/steward.sh" stop <item>`, `"$P/scripts/steward.sh" resume <item>` |
 | the pool looks stuck, or what the health job would do | `"$P/scripts/steward.sh" health --dry-run`; to act, `"$P/scripts/jobs.sh" run health` |

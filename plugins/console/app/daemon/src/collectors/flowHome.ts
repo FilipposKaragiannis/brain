@@ -7,7 +7,7 @@ import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
-import type { FlowEvent, GatePlan, GateQuestion, PluginSource, Quiz, StoppedHost } from '../snapshot.ts';
+import type { FlowEvent, GatePlan, GateQuestion, PickFilter, PluginSource, Quiz, StoppedHost } from '../snapshot.ts';
 import { readQuizzes } from '../quiz.ts';
 
 /** The parts of .flow/config.yaml the snapshot needs. */
@@ -35,6 +35,8 @@ export type FlowConfig = {
   reviewers: string[];
   /** What in the file the console read but the plugin no longer does, such as the old `health.behind_base`. */
   deprecated: string[];
+  /** The filters under `pick` whose names flow takes (letters, digits, _ and -), in the file's order. */
+  picks: PickFilter[];
 };
 
 /**
@@ -170,7 +172,23 @@ export function parseFlowConfig(source: string): FlowConfig {
     jobsWorkers: (yamlString(map, 'jobs.workers') ?? '').trim() !== '' || Object.keys(yamlMap(map, 'jobs.workers')).length > 0,
     reviewers: reviewersOf([...yamlList(map, 'reviews.reviewers'), ...REVIEWER_LISTS.flatMap((list) => yamlList(map, `reviews.reviewers.${list}`))]),
     deprecated,
+    picks: picksOf(map),
   };
+}
+
+/** A filter name as flow's pick_check in lib/flow.sh takes it; any other, next --pick refuses. */
+const PICK_NAME = /^[A-Za-z0-9_-]+$/;
+
+function picksOf(map: YamlMap): PickFilter[] {
+  return Object.keys(yamlMap(map, 'pick')).filter((name) => PICK_NAME.test(name)).map((name) => ({
+    name,
+    assignee: yamlString(map, `pick.${name}.assignee`) ?? '',
+    status: yamlList(map, `pick.${name}.status`),
+    labels: yamlList(map, `pick.${name}.labels`),
+    kinds: yamlList(map, `pick.${name}.kinds`),
+    trackers: yamlList(map, `pick.${name}.trackers`),
+    query: yamlString(map, `pick.${name}.query`) ?? '',
+  }));
 }
 
 /** The flow's own default when `reviews.reviewers` is unset (comments.sh). */

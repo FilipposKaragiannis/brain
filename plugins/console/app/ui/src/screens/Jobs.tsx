@@ -26,7 +26,7 @@ export function Jobs({ snapshot }: { snapshot: Snapshot }) {
       </div>
       <div className="jobs-side">
         {snapshot.stoppedHosts.map((stopped) => <StoppedHostCard key={stopped.host} stopped={stopped} pages={snapshot} />)}
-        <StartPanel jobs={snapshot.jobs} jobsHost={snapshot.project.jobsHost} />
+        <StartPanel jobs={snapshot.jobs} jobsHost={snapshot.project.jobsHost} picks={snapshot.project.picks.map((filter) => filter.name)} />
         <Events snapshot={snapshot} />
       </div>
     </div>
@@ -74,7 +74,7 @@ function Schedules({ snapshot }: { snapshot: Snapshot }) {
         </ul>
       )}
       {unscheduled.length > 0 && <p className="muted job-unscheduled">Not scheduled: {unscheduled.map((job) => job.name).join(' · ')}. Add one under jobs.schedule in the flow settings.</p>}
-      {edited !== null && <EditDialog job={edited} jobsHost={snapshot.project.jobsHost} close={close} />}
+      {edited !== null && <EditDialog job={edited} jobsHost={snapshot.project.jobsHost} picks={snapshot.project.picks.map((filter) => filter.name)} close={close} />}
     </Module>
   );
 }
@@ -188,11 +188,12 @@ function runTone(run: JobRun): Tone {
 
 /**
  * The side panel: a new schedule of any job, or one run of it now, with the same settings on both
- * tabs. Every job takes a host, a model and an effort; next also an item and limits. It stays
+ * tabs. Every job takes a host, a model and an effort; next also an item, limits and one of the
+ * `picks`, the config's filters. It stays
  * open: a sent schedule or run says so and leaves the settings for the next one. An existing
  * schedule is changed from its row (Edit…), never here.
  */
-function StartPanel({ jobs, jobsHost }: { jobs: Job[]; jobsHost: string }) {
+function StartPanel({ jobs, jobsHost, picks }: { jobs: Job[]; jobsHost: string; picks: readonly string[] }) {
   const actions = useActionsView();
   const [job, setJob] = useState('next');
   const ownWhen = (name: string): ScheduleWhen => whenFrom(jobs.find((each) => each.name === name)?.schedule ?? '');
@@ -207,7 +208,7 @@ function StartPanel({ jobs, jobsHost }: { jobs: Job[]; jobsHost: string }) {
   const name = scheduleName(job, label);
   const pick = (to: string): void => {
     setJob(to); setWhen(ownWhen(to)); setLabel('');
-    if (to !== 'next') run.change({ ...run.form, item: '', workers: '', maxSteps: '' });
+    if (to !== 'next') run.change({ ...run.form, item: '', workers: '', maxSteps: '', pick: '' });
     setSaid(null);
   };
   const submit = async (): Promise<void> => {
@@ -251,7 +252,7 @@ function StartPanel({ jobs, jobsHost }: { jobs: Job[]; jobsHost: string }) {
             <WhenFields when={when} setWhen={(value) => { setWhen(value); setSaid(null); }} />
           </>
         )}
-        <RunFields run={run} pair={!isNext} />
+        <RunFields run={run} pair={!isNext} picks={picks} />
         {said !== null && <p className={`chip start-said ${said.ok ? 'tone-running' : 'tone-failing'}`} role={said.ok ? 'status' : 'alert'}>{said.text}</p>}
         <div className="buttons">
           <button type="submit" className="button primary" disabled={sending}>{sending ? 'Sending…' : mode === 'once' ? 'Start' : `Add ${name}`}</button>
@@ -264,17 +265,17 @@ function StartPanel({ jobs, jobsHost }: { jobs: Job[]; jobsHost: string }) {
 
 /**
  * Edit… on a job's row, in a dialog over the page: its timing, host, model and effort for every
- * job, and for next its item and limits too. Another job's own arguments stay as they are.
+ * job, and for next its item, limits and filter too. Another job's own arguments stay as they are.
  * Saving rewrites that schedule in place, under the same name.
  */
-function EditDialog({ job, jobsHost, close }: { job: Job; jobsHost: string; close: () => void }) {
+function EditDialog({ job, jobsHost, picks, close }: { job: Job; jobsHost: string; picks: readonly string[]; close: () => void }) {
   const actions = useActionsView();
   const isNext = job.job === 'next';
   const [when, setWhen] = useState(() => whenFrom(job.schedule));
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const loaded = startFormFrom(job.args, job.host ?? jobsHost);
-  const run = useRunForm(isNext ? loaded : { ...loaded, item: '', workers: '', maxSteps: '' }, () => setError(null));
+  const run = useRunForm(isNext ? loaded : { ...loaded, item: '', workers: '', maxSteps: '', pick: '' }, () => setError(null));
   const own = ownArgs(job.args).join(' ');
   const first = useRef<HTMLSelectElement>(null);
   useEffect(() => {
@@ -302,7 +303,7 @@ function EditDialog({ job, jobsHost, close }: { job: Job; jobsHost: string; clos
             {isNext ? `Changes when ${job.name} runs and what it runs. A run going now finishes as it started.` : `Changes when ${job.name} runs, and the host, model and effort of its sessions. From config is jobs.<host>.model and effort.${own === '' ? '' : ` Its own options stay: ${own}.`}`}
           </p>
           <WhenFields when={when} setWhen={(value) => { setWhen(value); setError(null); }} first={first} />
-          <RunFields run={run} pair={!isNext} />
+          <RunFields run={run} pair={!isNext} picks={picks} />
           {error !== null && <p className="chip tone-failing start-said" role="alert">{error}</p>}
           <div className="buttons">
             <button type="submit" className="button primary" disabled={sending}>{sending ? 'Saving…' : `Save ${job.name}`}</button>

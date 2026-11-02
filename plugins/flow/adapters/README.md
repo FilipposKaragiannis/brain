@@ -206,3 +206,51 @@ the failing call.
    the name in the console's `ADAPTERS` (`plugins/console/app/daemon/src/plugins/flow/schema.ts`).
 3. A fake of its client in `tests/`, its setup in `tests/adapter-contract.sh`, and its name in the
    contract loop of `tests/run.sh`.
+
+## Pick filters
+
+A pick filter narrows the ready list `next --pick <name>` takes (and a next schedule with
+`--pick <name>` in its args). The config names each filter under `pick.<name>`:
+
+```yaml
+pick:
+  mine:
+    assignee: me              # me, a login or an email
+    status: [To Do]           # the item's status in its tracker, any of these
+    labels: [api]             # any of these
+    kinds: [task, bug]        # any of epic, task and bug
+    trackers: [jira]          # the trackers next reads for it; unset, every one it reads
+  backend:
+    query: 'component = Backend AND sprint in openSprints()'
+    trackers: [jira]          # a query goes to exactly one tracker
+```
+
+`list` and `list-ready` take `--pick <name>`; `list-ready` passes it to `list`, so readiness,
+blockers, gates and the priority order apply after the filter. `list` calls `pick_filter <adapter>
+"$@"` from `lib/flow.sh`, which checks the filter and exports its fields comma-separated as
+`FLOW_PICK_ASSIGNEE`, `FLOW_PICK_STATUS`, `FLOW_PICK_LABELS`, `FLOW_PICK_KINDS` and
+`FLOW_PICK_QUERY`, and returns 1 when the filter's `trackers` leave the adapter out (the list is
+then `[]`). A list field keeps an item that matches one of its values; the fields a filter sets
+must all match. Without `--pick`, the list is what it was.
+
+`pick-fields` in the adapter folder names, on one line, the fields the adapter maps. A filter with
+a field the adapter does not map is refused, exit 2, naming the ones it does
+(`pick.mine.query: the local adapter maps assignee, status, labels and kinds, not query`). So is a
+name the config does not have (naming the ones it has), a `query` without exactly one tracker in
+`trackers`, a `query` beside a neutral field, and a tracker the flow does not read.
+
+| Adapter | assignee | status | labels | kinds | query |
+|---|---|---|---|---|---|
+| `github` | an issue assignee's login, any case; `me` is the `gh` user (`gh api user`) | the issue state, `open` or `closed` | the issue's labels, any case | the item's kind | GitHub search qualifiers, sent as `repo:<repo> is:issue is:open <query>` |
+| `local` | the item file's `assignee`, any case; `me` is the git `user.email` or `user.name` | the item file's `status` (`open`, `closed`) | the item file's `labels`, any case | the item file's kind | not mapped |
+| `jira` | JQL `assignee = "<value>"`; `me` is `currentUser()`, the `jira.email` user the token belongs to | JQL `status in (...)`, the status names | JQL `labels in (...)` | the item's kind, matched on the built items (a Story is a task) | a JQL condition, sent as `project = "<project>" AND (<query>) AND statusCategory != Done ORDER BY created DESC`, so it takes no `ORDER BY` |
+
+GitHub and local match the filter on what they read; Jira puts it in the search, then counts each
+listed issue's open children with a second search (`parent in (...)`), since the filter can leave
+a child out. The fakes in tests read the filter as the trackers do: `_fake_gh.py` answers the
+`search(query: ...)` call with the qualifiers `repo:`, `is:`, `label:` and `assignee:`, and
+`_fake_jira.py` the JQL clauses in its `JQL_CLAUSES` (an issue's `fields.assignee` holds its
+`emailAddress`, `accountId` and `displayName`); any other qualifier or clause fails, so a new one
+cannot pass unseen. The contract suite assigns and labels items through `set_<name>` and reads
+`me_<name>`, `open_status_<name>` and `query_<name>`; a new adapter adds those and its
+`pick-fields`.

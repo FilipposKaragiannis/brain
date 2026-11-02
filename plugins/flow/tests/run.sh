@@ -484,6 +484,19 @@ d["issues"]["WID-90"] = {"key": "WID-90", "properties": {}, "comments": [], "rem
     {"type": "text", "text": " and "}, {"type": "inlineCard", "attrs": {"url": "https://acme.atlassian.net/browse/WID-7"}}]}]}}}
 json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
 check_all "jira: a description keeps its link targets and smart links" '[ "$(jira_run "$P/adapters/jira/read.sh" jira:WID-90 | jget body)" = "[the spec](https://docs.test/spec) and https://acme.atlassian.net/browse/WID-7" ]'
+# A filter narrows the list to two epics whose three open children it leaves out; jira.limit 2
+# must not cut the child count short, or the second epic reads as having none, and as ready.
+jira_config https://acme.atlassian.net
+printf '  limit: 2\npick:\n  epics:\n    labels: [picked]\n' >> .flow/config.yaml
+pe1="$(jira_run "$P/adapters/jira/create.sh" epic "Picked epic one")"; pe2="$(jira_run "$P/adapters/jira/create.sh" epic "Picked epic two")"
+for parent in "$pe1" "$pe1" "$pe2"; do jira_run "$P/adapters/jira/create.sh" task "Unpicked child" --parent "$parent" >/dev/null; done
+python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+for key in sys.argv[2:]: d["issues"][key]["fields"]["labels"] = ["picked"]
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${pe1#jira:}" "${pe2#jira:}"
+picked_children="$(jira_run "$P/adapters/jira/list.sh" --pick epics | python3 -c 'import json,sys; counts={i["id"]: i["open_children"] for i in json.load(sys.stdin)}; print(counts.get(sys.argv[1]), counts.get(sys.argv[2]))' "$pe1" "$pe2")"
+check "jira: a filter's epics count every open child, past jira.limit" [ "$picked_children" = "2 1" ]
+check "jira: so an epic with an open child the filter left out is not ready" sh -c "! env PATH='$work/jirabin:$PATH' FAKE_JIRA_DIR='$work/jira' FLOW_JIRA_RETRY_WAIT='0 0' JIRA_API_TOKEN=run-token '$P/adapters/jira/list-ready.sh' --pick epics | grep -q '\"$pe2\"'"
 jira_config http://acme.atlassian.net
 site_err="$(jira_run "$P/adapters/jira/list.sh" 2>&1 >/dev/null)"; code=$?
 check_all "jira: a jira.site that is not https is refused" '[ "$code" -ne 0 ] && printf "%s" "$site_err" | grep -q "jira.site in .flow/config.yaml must be"'
@@ -1292,6 +1305,9 @@ check "install: an item id leading the args is an arg, on jobs.host" grep -q "ne
 printf 'jobs:\n  schedule:\n    next-gh12: every 30m codex gh#12 --max-steps 1\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install next-gh12 >/dev/null 2>&1
 check "install: a GitHub item id in the args is one arg, quoted for the shell, after the host word" grep -q "next.sh codex --as next-gh12 'gh#12' --max-steps 1<" "$work/agents/$lbl.next-gh12.plist"
+printf 'jobs:\n  schedule:\n    next-mine: every 30m --pick mine\npick:\n  mine:\n    assignee: me\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$J" install next-mine >/dev/null 2>&1
+check "install: a named next schedule runs its --pick filter" grep -q "next.sh claude --as next-mine --pick mine<" "$work/agents/$lbl.next-mine.plist"
 check "args refuses an arg that starts with a hash, which YAML would read as a comment" sh -c "! python3 -I '$P/scripts/_jobs.py' args 'every 30m #12' 2>/dev/null && python3 -I '$P/scripts/_jobs.py' args 'every 30m #12' 2>&1 | grep -q 'not starting with #'"
 check "run refuses a named schedule the config does not name" sh -c "FLOW_HOME='$home2' '$J' run next-y 2>&1 | grep -q 'no schedule next-y: set jobs.schedule.next-y'; FLOW_HOME='$home2' '$J' run next-y >/dev/null 2>&1; [ \$? = 2 ]"
 printf 'jobs:\n  schedule:\n    next: every 30m\n' > "$home2/config.yaml"
@@ -1679,6 +1695,94 @@ cp "$work/config.par" .flow/config.yaml; printf 'jobs:\n  workers: {claude: 1, g
 check "jobs.workers: a host other than claude or codex stops the run, exit 2, before any worker" sh -c "[ $code = 2 ] && [ ! -s '$work/hosted.log' ] && grep -q \"jobs.workers names the host 'gemini'\" '$work/hosted.out'"
 check "jobs.workers: the refused run is a failed run in runs.jsonl, so status shows it" sh -c "tail -1 .flow/log/runs.jsonl | grep -q '\"job\":\"next\".*\"exit\":2,\"result\":\"error: .*jobs.workers names the host'"
 cp "$work/config.par" .flow/config.yaml
+cd "$repo"
+
+echo "pick filters: next --pick"
+mkdir -p "$work/pick" && cd "$work/pick" && git init -q -b main app && cd app && git config user.email me@pick.test && git config user.name t
+printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
+pick_config() { # pick_config <the pick block's lines>: local items, P0 first, and the filters given
+  printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 2\nready:\n  priority_order: [P0, P1, P2]\nnotify:\n  desktop: false\npick:\n%s\n' "$1" > .flow/config.yaml
+}
+assign_local() { # assign_local <id> <who>: the item file's assignee
+  python3 -c 'import sys; p=sys.argv[1]; t=open(p).read(); open(p,"w").write(t.replace("---\n", "---\nassignee: %s\n" % sys.argv[2], 1))' ".flow/items/$(printf '%s' "${1#local:}").md" "$2"
+}
+unpick() { # unpick <next.sh --json output>: the run and its claim go, so the next pick starts clean
+  rm -f ".flow/runs/$(item_slug "$(printf '%s' "$1" | jget item)").json"
+  "$P/scripts/steward.sh" release "$(printf '%s' "$1" | jget item)" --force >/dev/null 2>&1
+}
+pick_config '  mine:
+    assignee: me
+  urgent:
+    labels: [urgent]
+    kinds: [bug]'
+kt="$("$P/adapters/local/create.sh" task "Theirs, most urgent" --size S --priority P0)"
+km2="$("$P/adapters/local/create.sh" task "Mine, least urgent" --size S --priority P2)"
+km1="$("$P/adapters/local/create.sh" task "Mine, urgent" --size S --priority P1)"
+kmb="$("$P/adapters/local/create.sh" task "Mine, most urgent but blocked" --size S --priority P0 --blocked-by "$kt")"
+assign_local "$kt" other@pick.test; assign_local "$km2" me@pick.test; assign_local "$km1" me@pick.test; assign_local "$kmb" me@pick.test
+out="$("$P/scripts/next.sh" --json --pick mine 2>/dev/null)"
+check "next --pick: takes the most urgent ready item the filter keeps; the blocker and the order apply after it" [ "$(printf '%s' "$out" | jget item)" = "$km1" ]
+unpick "$out"
+out="$("$P/scripts/next.sh" --json 2>/dev/null)"
+check "next with no filter still takes the most urgent ready item of all" [ "$(printf '%s' "$out" | jget item)" = "$kt" ]
+unpick "$out"
+"$P/adapters/local/write-state.sh" "$km1" gate=plan-approval
+out="$("$P/scripts/next.sh" --json --pick mine 2>/dev/null)"
+check "next --pick: an item the filter keeps that waits at a gate is passed over" [ "$(printf '%s' "$out" | jget item)" = "$km2" ]
+unpick "$out"
+"$P/scripts/next.sh" --pick urgent >/dev/null 2>"$work/pick.err"; code=$?
+check "next --pick: a filter that keeps no ready item is nothing ready (exit 5)" sh -c "[ $code -eq 5 ] && grep -q 'nothing ready' '$work/pick.err'"
+"$P/scripts/next.sh" --pick theirs >/dev/null 2>"$work/pick.err"; code=$?
+check "next --pick: an unknown filter is refused (exit 2) with the filters the config names" sh -c "[ $code -eq 2 ] && grep -q 'pick has no filter theirs in .flow/config.yaml; the filters are mine urgent' '$work/pick.err'"
+"$P/scripts/next.sh" "$km2" --pick mine >/dev/null 2>"$work/pick.err"; code=$?
+check "next --pick: a named item beside a filter is refused (exit 2)" sh -c "[ $code -eq 2 ] && grep -q -- '--pick narrows the ready list' '$work/pick.err'"
+pick_config '  raw:
+    query: assignee = currentUser()'
+"$P/scripts/next.sh" --pick raw >/dev/null 2>"$work/pick.err"; code=$?
+check "pick: a query with no tracker is refused (exit 2): it goes to exactly one" sh -c "[ $code -eq 2 ] && grep -q 'set pick.raw.trackers to exactly one tracker, not none' '$work/pick.err'"
+pick_config '  raw:
+    query: label:api
+    trackers: [github]
+    assignee: me'
+"$P/scripts/next.sh" --pick raw >/dev/null 2>"$work/pick.err"; code=$?
+check "pick: a query beside a neutral field is refused (exit 2)" sh -c "[ $code -eq 2 ] && grep -q 'pick.raw.query goes to github as written, so the filter takes no assignee' '$work/pick.err'"
+pick_config '  raw:
+    query: label:api
+    trackers: [github]
+    assignee: ""
+    labels: []
+    status:'
+"$P/scripts/next.sh" --pick raw >/dev/null 2>"$work/pick.err"; code=$?
+check "pick: neutral fields Settings cleared beside a query are unset, so the filter passes to its tracker" sh -c "! grep -q 'so the filter takes no' '$work/pick.err' && grep -q 'pick.raw.trackers names github, which the flow does not read' '$work/pick.err'"
+pick_config '  mine:
+    assignee: me
+    labels: []
+    query: ""'
+out="$("$P/scripts/next.sh" --json --pick mine 2>"$work/pick.err")"
+check "pick: a cleared field the adapter cannot map is unset, so the filter still picks" [ "$(printf '%s' "$out" | jget item)" = "$km2" ]
+unpick "$out"
+pick_config '  raw:
+    query: status = Open
+    trackers: [local]'
+"$P/scripts/next.sh" --pick raw >/dev/null 2>"$work/pick.err"; code=$?
+check "pick: a field the adapter cannot map is refused (exit 2) with the fields it maps" sh -c "[ $code -eq 2 ] && grep -q 'pick.raw.query: the local adapter maps assignee, status, labels and kinds, not query' '$work/pick.err'"
+pick_config '  mine:
+    assignee: me
+    trackers: [github]'
+"$P/scripts/next.sh" --pick mine >/dev/null 2>"$work/pick.err"; code=$?
+check "pick: a tracker the flow does not read is refused (exit 2) with the ones it reads" sh -c "[ $code -eq 2 ] && grep -q 'pick.mine.trackers names github, which the flow does not read; it reads local' '$work/pick.err'"
+pick_config '  mine:
+    assignee: me'
+picks="$work/plugin-picks"; cp -R "$P" "$picks"; rm -rf "$picks/evals/results"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/picks.args"\n' "$work" > "$picks/templates/run-unattended.sh"
+: > "$work/picks.args"; FLOW_PLUGIN="$picks" "$picks/jobs/next.sh" claude --pick mine --max-steps 1 >/dev/null 2>&1
+check "next job: --pick reaches the unattended loop" grep -qx 'claude --pick mine --max-steps 1' "$work/picks.args"
+: > "$work/picks.args"; FLOW_PLUGIN="$picks" "$picks/jobs/next.sh" claude --pick theirs --max-steps 1 > "$work/pick.err" 2>&1; code=$?
+check "next job: an unknown filter stops the run (exit 2) before the loop starts" sh -c "[ $code -eq 2 ] && [ ! -s '$work/picks.args' ] && grep -q 'pick has no filter theirs' '$work/pick.err'"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/picks.next"\nexit 5\n' "$work" > "$picks/scripts/next.sh"
+cp "$P/templates/run-unattended.sh" "$picks/templates/run-unattended.sh"; : > "$work/picks.next"
+FLOW_PLUGIN="$picks" "$picks/templates/run-unattended.sh" claude --pick mine --max-steps 1 >/dev/null 2>&1
+check "unattended loop: picks its item through next.sh --pick" grep -qx -- '--json --embed-agent --pick mine' "$work/picks.next"
 cd "$repo"
 
 echo "help"

@@ -272,3 +272,32 @@ describe('outcome chips', () => {
     expect(screen.queryByText('done'), 'because an old outcome is noise once the owner has seen it').toBeNull();
   });
 });
+
+const MINE = { name: 'mine', assignee: 'me', status: [], labels: [], kinds: [], trackers: [], query: '' };
+const withPicks = (picks: Snapshot['project']['picks']): Partial<Snapshot> => ({ jobs: [JOB], project: { ...snapshotAt(TAKEN_AT, 0).project, picks } });
+
+test('RunOnce_AFilterPicked_SentAsPick', async () => {
+  const posted = await renderSnapshot(withPicks([MINE]));
+  await act(async () => { fireEvent.click(screen.getByRole('tab', { name: 'Run once' })); });
+  const form = screen.getByRole('form', { name: 'Run next once' });
+  fireEvent.change(within(form).getByLabelText('Filter'), { target: { value: 'mine' } });
+  await act(async () => { fireEvent.click(within(form).getByRole('button', { name: 'Start' })); });
+  expect(posted, 'because the run takes only the ready items the filter keeps').toEqual([{ kind: 'job.start', args: { job: 'next', host: 'claude', pick: 'mine' } }]);
+});
+
+test('ScheduleForm_ConfiguredFilters_Offered', async () => {
+  await renderSnapshot(withPicks([MINE, { ...MINE, name: 'urgent' }]));
+  const filter = within(screen.getByRole('form', { name: 'Schedule next' })).getByLabelText('Filter');
+  expect(within(filter).getAllByRole('option').map((option) => option.textContent), 'because a schedule may run through any filter the config names, or none').toEqual(['every ready item', 'mine', 'urgent']);
+});
+
+test('RunForm_NoFiltersConfigured_NoFilterField', async () => {
+  await renderSnapshot(withPicks([]));
+  expect(within(screen.getByRole('form', { name: 'Schedule next' })).queryByLabelText('Filter'), 'because there is nothing to pick from').toBeNull();
+});
+
+test('RunForm_AnotherJob_NoFilterField', async () => {
+  await renderSnapshot(withPicks([MINE]));
+  fireEvent.change(screen.getByLabelText('Job'), { target: { value: 'health' } });
+  expect(within(screen.getByRole('form', { name: 'Schedule health' })).queryByLabelText('Filter'), 'because only next picks items').toBeNull();
+});

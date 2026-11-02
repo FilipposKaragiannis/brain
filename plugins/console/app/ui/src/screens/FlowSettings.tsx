@@ -124,6 +124,7 @@ function FlowForm({ projectId, document, name, show, save, reload }: FormProps) 
     trackers: trackers(current),
     jobsHost: current('jobs.host') || DEFAULT_JOBS_HOST,
     workersSplit: current('jobs.workers').trim() !== '',
+    picks: pickNames(values),
   };
   return (
     <form className={show === 'all' ? 'flow-form' : 'flow-form single'} aria-label={`flow settings form for ${name}`} onSubmit={(event) => { event.preventDefault(); void submit(editedChanges(), false); }}>
@@ -159,7 +160,15 @@ type FormContext = {
   jobsHost: string;
   /** Whether jobs.workers splits the next job's workers across hosts. */
   workersSplit: boolean;
+  /** The pick filters the file names, which a next schedule may run through (--pick). */
+  picks: string[];
 };
+
+/** The names under `pick` in the parsed file, in file order. */
+function pickNames(values: Record<string, unknown>): string[] {
+  const picks = values['pick'];
+  return picks !== null && typeof picks === 'object' && !Array.isArray(picks) ? Object.keys(picks) : [];
+}
 
 /** The trackers the flow reads, from the form's text: `trackers` when it names some, else the default (local when unset) and each kind's own. */
 function trackers(current: (path: string) => string): string[] {
@@ -371,7 +380,7 @@ function FieldControl({ spec, fileValue, legacy, unset, hostDefaults, context, t
   } else if (spec.type === 'list' && spec.values !== undefined) {
     control = <ChecklistControl {...grouped} />;
   } else if (spec.type === 'schedule') {
-    control = <ScheduleControl {...grouped} jobsHost={context.jobsHost} workersSplit={context.workersSplit} />;
+    control = <ScheduleControl {...grouped} jobsHost={context.jobsHost} workersSplit={context.workersSplit} picks={context.picks} />;
   } else if (spec.type === 'boolean' || spec.type === 'enum') {
     const options = spec.type === 'boolean' ? ['true', 'false'] : spec.values ?? [];
     group = false;

@@ -711,3 +711,32 @@ test('TrackerKeys_Jira_TakenAsATrackerForNewItems', () => {
     assert.deepEqual([checkChange(spec, 'jira').ok, checkFileValue(spec, 'jira').ok], [true, true], `because the flow plugin ships a jira adapter, so ${key} may name it`);
   }
 });
+
+test('PickFilters_Described_InReadinessUnderEachFiltersName', () => {
+  const text = `${FOOSBRAWL}pick:\n  mine:\n    assignee: me\n    kinds: [task, story]\n`;
+  const document = describe('/p/.flow/config.yaml', text);
+  const readiness = document.sections.find((section) => section.group === 'Readiness')?.fields.filter((spec) => spec.path.startsWith('pick.')) ?? [];
+  assert.deepEqual(readiness.map((spec) => spec.path), ['pick.mine.assignee', 'pick.mine.status', 'pick.mine.labels', 'pick.mine.kinds', 'pick.mine.trackers', 'pick.mine.query'], 'because Readiness lists every filter with each field it can set');
+  assert.deepEqual([...new Set(readiness.map((spec) => spec.part))], ['Pick filter mine'], 'because each filter sits under its own name');
+  assert.equal(document.sections.some((section) => section.group === 'Other'), false, 'because a filter is a key the console knows, not Other text');
+  assert.deepEqual(document.warnings.filter((warning) => warning.startsWith('pick.')).length, 1, 'because story is no kind a filter keeps, and the form says so');
+});
+
+test('PickField_AKeyNoFilterHas_NotKnown', () => {
+  assert.equal(fieldAt('pick.mine.sprint'), undefined, 'because flow refuses a field no adapter maps, so the form leaves it to Other');
+  assert.equal(fieldAt('pick.my items.assignee'), undefined, 'because next --pick refuses a filter name with a space');
+  assert.equal(fieldAt('pick.mine.trackers')?.type, 'list', 'because a filter reads a list of trackers');
+});
+
+test('PickFieldCleared_Saved_KeyTakenOutSoAQueryFilterRuns', async () => {
+  const fixture = project();
+  try {
+    writeFileSync(fixture.file, `${FOOSBRAWL}pick:\n  mine:\n    assignee: me\n    labels: [api]\n`);
+    const { hash } = await readDocument(fixture.editor);
+    const changes = [{ path: 'pick.mine.assignee', value: '' }, { path: 'pick.mine.labels', value: [] }, { path: 'pick.mine.trackers', value: ['github'] }, { path: 'pick.mine.query', value: 'assignee:@me' }];
+    const reply = await fixture.editor.write({ changes, hash });
+    assert.equal(reply.status, 200, `because each change is a valid filter field: ${JSON.stringify(reply.body)}`);
+    const pick = ((await readDocument(fixture.editor)).values?.['pick'] as Record<string, unknown>)['mine'];
+    assert.deepEqual(pick, { trackers: ['github'], query: 'assignee:@me' }, 'because a cleared field is taken out, not saved empty, so the file reads as the query filter the form shows');
+  } finally { fixture.done(); }
+});

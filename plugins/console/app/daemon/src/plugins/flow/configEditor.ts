@@ -11,7 +11,7 @@ import { applyChange, leafPaths, parseDocument, readsBack, valueAt } from './con
 import type { Edited } from './configDocument.ts';
 import { readHostDefaults } from './hostDefaults.ts';
 import type { FieldChange, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, FollowUp, HostDefaults, Section } from './schema.ts';
-import { checkChange, checkFileValue, fieldAt, fieldCovering, FLOW_CONFIG_SCHEMA, namedScheduleFields, OTHER_GROUP, plainListValue, schemaSections } from './schema.ts';
+import { checkChange, checkFileValue, fieldAt, fieldCovering, FLOW_CONFIG_SCHEMA, namedScheduleFields, OTHER_GROUP, pickFields, plainListValue, schemaSections } from './schema.ts';
 
 export type FlowConfigEditorDependencies = {
   projectId: string;
@@ -63,9 +63,13 @@ function otherFields(values: YamlMap): FieldSpec[] {
 
 const NO_HOST_DEFAULTS: HostDefaults = { codex: null };
 
-/** The schema's sections with the file's named schedules in Schedules, right after the last schedule the schema names. */
-function sectionsWith(named: FieldSpec[]): Section[] {
+/**
+ * The schema's sections with the file's named schedules in Schedules, right after the last
+ * schedule the schema names, and its pick filters at the end of Readiness.
+ */
+function sectionsWith(named: FieldSpec[], picks: FieldSpec[]): Section[] {
   return schemaSections().map((section) => {
+    if (section.group === 'Readiness') return { ...section, fields: [...section.fields, ...picks] };
     if (named.length === 0 || section.group !== 'Schedules') return section;
     const last = section.fields.findLastIndex((spec) => spec.path.startsWith(SCHEDULE_PREFIX));
     return { ...section, fields: [...section.fields.slice(0, last + 1), ...named, ...section.fields.slice(last + 1)] };
@@ -74,7 +78,8 @@ function sectionsWith(named: FieldSpec[]): Section[] {
 
 /**
  * The file as the editor shows it: its text and hash, the values, the schema's sections (with the
- * file's named schedules, `jobs.schedule.<job>-<label>`, in Jobs) plus Other, what does not fit,
+ * file's named schedules, `jobs.schedule.<job>-<label>`, in Jobs, and its pick filters,
+ * `pick.<name>`, in Readiness) plus Other, what does not fit,
  * and the hosts' defaults given.
  */
 export function describe(file: string, text: string, hostDefaults: HostDefaults = NO_HOST_DEFAULTS): FlowConfigDocument {
@@ -82,8 +87,9 @@ export function describe(file: string, text: string, hostDefaults: HostDefaults 
   if (!parsed.ok) return { path: file, text, hash: contentHash(text), values: null, sections: schemaSections(), warnings: [`not in the flat format, so only Raw YAML can change it: ${parsed.error}`], hostDefaults };
   const values = parseYaml(text);
   const named = namedScheduleFields(values);
-  const sections = sectionsWith(named);
-  const warnings = [...FLOW_CONFIG_SCHEMA, ...named].flatMap((spec) => {
+  const picks = pickFields(values);
+  const sections = sectionsWith(named, picks);
+  const warnings = [...FLOW_CONFIG_SCHEMA, ...named, ...picks].flatMap((spec) => {
     const value = valueAt(values, spec.path) ?? plainListValue(values, spec);
     if (value === undefined) return [];
     const checked = checkFileValue(spec, value);
@@ -296,8 +302,11 @@ export class FlowConfigEditor {
     const parsed = parseDocument(current);
     if (!parsed.ok) return { ok: false, error: `the file is not in the flat format, so change it in Raw YAML: ${parsed.error}` };
     let text = current;
-    for (const change of changes) {
-      const spec = fieldAt(change.path);
+    for (const sent of changes) {
+      const spec = fieldAt(sent.path);
+      // A cleared field the form sends as "" or [] is taken out, so a query filter is not left
+      // with an empty assignee beside it.
+      const change = spec?.emptyUnset === true && (sent.value === '' || (Array.isArray(sent.value) && sent.value.length === 0)) ? { ...sent, value: null } : sent;
       if (spec !== undefined) {
         const checked = checkChange(spec, change.value);
         if (!checked.ok) return checked;

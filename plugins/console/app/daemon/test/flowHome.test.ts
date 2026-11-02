@@ -294,3 +294,19 @@ test('JobsWorkers_SetInEitherForm_Read', () => {
   assert.equal(parseFlowConfig('jobs:\n  workers:\n    claude: 2\n').jobsWorkers, true, 'because the nested form is the same plan');
   assert.equal(parseFlowConfig('jobs:\n  host: claude\n').jobsWorkers, false, 'because without the key next runs one session');
 });
+
+test('Picks_FromTheConfig_EachFilterWithItsFieldsInFileOrder', () => {
+  const config = parseFlowConfig('pick:\n  mine:\n    assignee: me\n    labels: [api, ui]\n  backend:\n    query: component = Backend\n    trackers: [jira]\n');
+  assert.deepEqual(config.picks, [
+    { name: 'mine', assignee: 'me', status: [], labels: ['api', 'ui'], kinds: [], trackers: [], query: '' },
+    { name: 'backend', assignee: '', status: [], labels: [], kinds: [], trackers: ['jira'], query: 'component = Backend' },
+  ], 'because the Jobs page offers each filter by name and Readiness shows what it keeps');
+});
+
+test('Picks_ANameFlowRefuses_LeftOut', () => {
+  assert.deepEqual(parseFlowConfig('pick:\n  "my items":\n    assignee: me\n').picks, [], 'because next --pick refuses a name with a space, so a run through it could never start');
+});
+
+test('Picks_NoneInTheConfig_Empty', () => {
+  assert.deepEqual(parseFlowConfig('base: main\n').picks, [], 'because without filters every run takes every ready item');
+});

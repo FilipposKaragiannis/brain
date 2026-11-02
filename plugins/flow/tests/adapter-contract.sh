@@ -270,5 +270,99 @@ if type "blip_$name" >/dev/null 2>&1; then
   check "a read survives one 5xx answer from the backend" '[ "$("$A/read.sh" "$t2" 2>"$work/blip.err" | jget id)" = "$t2" ] && grep -q "trying again" "$work/blip.err"'
 fi
 
+# Pick filters (adapters/README.md, Pick filters): each field of pick.<name> narrows list and
+# list-ready as the adapter maps it. Per backend: set_<name> <id> assignee|label <value> writes the
+# store as the tracker would hold an assignment or a label, me_<name> is the login `me` stands for,
+# open_status_<name> the status a new item has, query_<name> <label> a search of its own for the
+# label (none where the adapter maps no query).
+echo " pick filters"
+export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email GIT_CONFIG_VALUE_0=me@contract.test
+set_local() {
+  python3 -c 'import sys
+p, key, value = sys.argv[1:]
+text = open(p).read(); end = text.find("\n---\n", 4)
+line = "labels: [%s]" % value if key == "label" else "assignee: %s" % value
+open(p, "w").write(text[:end] + "\n" + line + text[end:])' "$FLOW_HOME/items/${1#local:}.md" "$2" "$3"
+}
+set_github() {
+  python3 -c 'import json, sys
+p, number, key, value = sys.argv[1:]; data = json.load(open(p))
+issue = [i for i in data["issues"] if i["number"] == int(number)][0]
+issue["assignees" if key == "assignee" else "labels"] = [value]
+json.dump(data, open(p, "w"))' "$FAKE_GH_DIR/issues.json" "${1#gh#}" "$2" "$3"
+}
+set_jira() {
+  python3 -c 'import json, sys
+p, key, field, value = sys.argv[1:]; data = json.load(open(p)); fields = data["issues"][key]["fields"]
+if field == "label": fields["labels"] = [value]
+else: fields["assignee"] = {"accountId": "id-" + value, "emailAddress": value, "displayName": value}
+json.dump(data, open(p, "w"))' "$FAKE_JIRA_DIR/jira.json" "${1#jira:}" "$2" "$3"
+}
+me_local() { echo me@contract.test; }
+me_github() { echo owner; }
+me_jira() { echo flow@acme.test; }
+open_status_local() { echo open; }
+open_status_github() { echo open; }
+open_status_jira() { echo "To Do"; }
+query_github() { echo "label:$1"; }
+query_jira() { echo "labels = \"$1\""; }
+other_tracker() { if [ "$name" = local ]; then echo github; else echo local; fi; }
+pick_config() { write_config 0; printf 'pick:\n%s\n' "$1" >> "$FLOW_HOME/config.yaml"; }
+if type "set_$name" >/dev/null 2>&1; then
+  pa="$("$A/create.sh" task "Pick: mine, labelled")"
+  pb="$("$A/create.sh" bug "Pick: theirs")"
+  pc="$("$A/create.sh" task "Pick: nobody's")"
+  "$A/create.sh" task "Pick: the epic's child, unlabelled" --parent "$epic" >/dev/null
+  "set_$name" "$pa" assignee "$("me_$name")"; "set_$name" "$pa" label picked
+  "set_$name" "$pb" assignee someone@contract.test
+  "set_$name" "$epic" label picked
+  check "pick-fields names only the fields a filter has" '[ -s "$A/pick-fields" ] && for f in $(cat "$A/pick-fields"); do case " assignee status labels kinds query " in *" $f "*) ;; *) exit 1 ;; esac; done'
+  pick_config '  mine:
+    assignee: me
+  theirs:
+    assignee: someone@contract.test
+  labelled:
+    labels: [picked]
+  bugs:
+    kinds: [bug]
+  open:
+    status: ['"$("open_status_$name")"']
+  shut:
+    status: [Nonesuch]
+  elsewhere:
+    trackers: ['"$(other_tracker)"']
+  odd:
+    sprint: 12
+  loose:
+    query: anything
+  mixed:
+    query: anything
+    trackers: ['"$name"']
+    labels: [picked]'
+  check "list without --pick still lists every open item" 'listed "$pa" "$A/list.sh" && listed "$pb" "$A/list.sh" && listed "$pc" "$A/list.sh"'
+  check "assignee: me keeps the items assigned to the user the adapter acts as" 'listed "$pa" "$A/list-ready.sh" --pick mine && ! listed "$pb" "$A/list-ready.sh" --pick mine && ! listed "$pc" "$A/list-ready.sh" --pick mine'
+  check "assignee: a login keeps the items assigned to it" 'listed "$pb" "$A/list-ready.sh" --pick theirs && ! listed "$pa" "$A/list-ready.sh" --pick theirs'
+  check "labels keeps the items with one of them" 'listed "$pa" "$A/list-ready.sh" --pick labelled && ! listed "$pb" "$A/list-ready.sh" --pick labelled'
+  check "a filter that leaves a parent's children out still counts them open" '"$A/list.sh" --pick labelled | python3 -c "import json,sys; sys.exit(0 if [i[\"open_children\"] for i in json.load(sys.stdin) if i[\"id\"] == sys.argv[1]] == [1] else 1)" "$epic"'
+  check "kinds keeps the items of one of them" 'listed "$pb" "$A/list-ready.sh" --pick bugs && ! listed "$pa" "$A/list-ready.sh" --pick bugs'
+  check "status keeps the items in one of them" 'listed "$pa" "$A/list-ready.sh" --pick open && ! listed "$pa" "$A/list-ready.sh" --pick shut'
+  check "a filter whose trackers leave the adapter out lists nothing" '[ "$("$A/list.sh" --pick elsewhere)" = "[]" ]'
+  check "an unknown filter exits 2 naming the filters there are" '[ "$(code_of "$A/list.sh" --pick nonesuch)" = 2 ] && "$A/list.sh" --pick nonesuch 2>&1 | grep -q "the filters are mine theirs"'
+  check "a field the adapter does not map exits 2 naming the ones it maps" '[ "$(code_of "$A/list.sh" --pick odd)" = 2 ] && "$A/list.sh" --pick odd 2>&1 | grep -q "pick.odd.sprint: the $name adapter maps .*assignee.*, not sprint"'
+  check "a query without exactly one tracker exits 2" '[ "$(code_of "$A/list.sh" --pick loose)" = 2 ]'
+  check "a query beside a neutral field exits 2" '[ "$(code_of "$A/list.sh" --pick mixed)" = 2 ]'
+  pick_config '  own:
+    query: '"'$(type "query_$name" >/dev/null 2>&1 && "query_$name" picked || printf %s "label = picked")'"'
+    trackers: ['"$name"']'
+  if grep -qw query "$A/pick-fields"; then
+    check "query goes to the tracker as written and keeps what its search keeps" 'listed "$pa" "$A/list-ready.sh" --pick own && ! listed "$pb" "$A/list-ready.sh" --pick own'
+  else
+    check "query exits 2 where the adapter has no search of its own" '[ "$(code_of "$A/list.sh" --pick own)" = 2 ]'
+  fi
+  write_config 0
+else
+  skip "no set_$name in this suite to assign or label an item"
+fi
+
 echo "contract $name: $checks checks, $fails failed"
 [ "$fails" -eq 0 ]

@@ -1,5 +1,9 @@
-/** The Run… form for the next job: one run with its own host, item and limits, outside the schedule. */
-export type JobStartForm = { host: string; item: string; workers: string; maxSteps: string; model: string; effort: string };
+/**
+ * The Run… form for the next job: one run with its own host, item and limits, outside the
+ * schedule. `pick` names a filter of pick in .flow/config.yaml the run takes its items through;
+ * empty, every ready item.
+ */
+export type JobStartForm = { host: string; item: string; workers: string; maxSteps: string; model: string; effort: string; pick: string };
 
 export const JOB_HOSTS = ['claude', 'codex'] as const;
 /** The jobs flow runs, and what each one does, as the side panel's picker says it. */
@@ -17,15 +21,17 @@ export const JOB_EFFORTS: Record<string, string[]> = { claude: ['low', 'medium',
 /** The daemon's limits on a `job.start`. */
 export const MAX_WORKERS = 99;
 export const MAX_STEPS = 999;
+/** A filter's name as flow's pick_check takes it. */
+const PICK_NAME = /^[A-Za-z0-9_-]+$/;
 
 /**
- * The form as the schedule would run it: the host, item, `--workers` and `--max-steps` the job's
+ * The form as the schedule would run it: the host, item, `--workers`, `--max-steps` and `--pick` the job's
  * arguments name, else the project's jobs host. Model and effort start empty, which means the
  * config's `jobs.<host>.model` and `effort`.
  */
 export function startFormFrom(args: string, jobsHost: string): JobStartForm {
   const words = args.split(/\s+/).filter((word) => word !== '');
-  const form: JobStartForm = { host: isHost(jobsHost) ? jobsHost : 'claude', item: '', workers: '', maxSteps: '', model: '', effort: '' };
+  const form: JobStartForm = { host: isHost(jobsHost) ? jobsHost : 'claude', item: '', workers: '', maxSteps: '', model: '', effort: '', pick: '' };
   for (let index = 0; index < words.length; index += 1) {
     const word = words[index]!;
     const value = words[index + 1] ?? '';
@@ -33,6 +39,7 @@ export function startFormFrom(args: string, jobsHost: string): JobStartForm {
     if (word === '--max-steps') { form.maxSteps = value; index += 1; continue; }
     if (word === '--model') { form.model = value; index += 1; continue; }
     if (word === '--effort') { form.effort = value; index += 1; continue; }
+    if (word === '--pick') { form.pick = value; index += 1; continue; }
     if (word.startsWith('--')) continue;
     if (isHost(word)) form.host = word;
     else if (form.item === '') form.item = word;
@@ -43,7 +50,7 @@ export function startFormFrom(args: string, jobsHost: string): JobStartForm {
 /** The `job.start` arguments: the host always, every other field only when filled. */
 export function startArgs(form: JobStartForm): Record<string, string> {
   const args: Record<string, string> = { host: form.host };
-  const named: [keyof JobStartForm, string][] = [['item', 'item'], ['workers', 'workers'], ['maxSteps', 'maxSteps'], ['model', 'model'], ['effort', 'effort']];
+  const named: [keyof JobStartForm, string][] = [['item', 'item'], ['workers', 'workers'], ['maxSteps', 'maxSteps'], ['model', 'model'], ['effort', 'effort'], ['pick', 'pick']];
   for (const [field, name] of named) {
     const value = form[field].trim();
     if (value !== '') args[name] = value;
@@ -60,6 +67,8 @@ export function startProblem(form: JobStartForm): string | null {
   if (/\s/.test(form.model.trim())) return 'One model name, such as opus.';
   if (form.effort !== '' && !(JOB_EFFORTS[form.host] ?? []).includes(form.effort)) return `${form.host} takes ${(JOB_EFFORTS[form.host] ?? []).join(', ')} as effort.`;
   if (form.item.trim() !== '' && Number(form.workers) > 1) return 'One item runs on one worker. Clear the item or set workers to 1.';
+  if (form.pick.trim() !== '' && !PICK_NAME.test(form.pick.trim())) return 'A filter is one name from pick in .flow/config.yaml, such as mine.';
+  if (form.pick.trim() !== '' && form.item.trim() !== '') return 'A filter picks from the queue. Clear the item or the filter.';
   return null;
 }
 
@@ -94,7 +103,7 @@ export function scheduleSpec(when: ScheduleWhen, form: JobStartForm): string {
   const args = startArgs(form);
   const words = [whenSpec(when), form.host];
   if (args.item !== undefined) words.push(args.item);
-  const options: [string, string | undefined][] = [['--workers', args.workers], ['--max-steps', args.maxSteps], ['--model', args.model], ['--effort', args.effort]];
+  const options: [string, string | undefined][] = [['--workers', args.workers], ['--max-steps', args.maxSteps], ['--model', args.model], ['--effort', args.effort], ['--pick', args.pick]];
   for (const [option, value] of options) if (value !== undefined) words.push(option, value);
   return words.join(' ');
 }
@@ -165,7 +174,7 @@ export function pairSpec(when: ScheduleWhen, form: JobStartForm, args: string): 
 export type ScheduleParts = { when: ScheduleWhen; form: JobStartForm; own: string };
 
 /** The options each job's builder reads into its own fields; next also takes an item. */
-const BUILDER_OPTIONS: Record<string, keyof JobStartForm> = { '--workers': 'workers', '--max-steps': 'maxSteps', '--model': 'model', '--effort': 'effort' };
+const BUILDER_OPTIONS: Record<string, keyof JobStartForm> = { '--workers': 'workers', '--max-steps': 'maxSteps', '--model': 'model', '--effort': 'effort', '--pick': 'pick' };
 const PAIR_OPTIONS: Record<string, keyof JobStartForm> = { '--model': 'model', '--effort': 'effort' };
 
 /**
@@ -179,7 +188,7 @@ export function scheduleParts(text: string, job: string, hostDefault: string): S
   const head = when.kind === 'weekly' ? 3 : 2;
   if (words.length < head || whenSpec(when) !== words.slice(0, head).join(' ') || scheduleProblem('', when) !== null) return null;
   const args = words.slice(head);
-  const form: JobStartForm = { host: '', item: '', workers: '', maxSteps: '', model: '', effort: '' };
+  const form: JobStartForm = { host: '', item: '', workers: '', maxSteps: '', model: '', effort: '', pick: '' };
   if (args[0] !== undefined && isHost(args[0])) form.host = args.shift()!;
   const options = job === 'next' ? BUILDER_OPTIONS : PAIR_OPTIONS;
   const own: string[] = [];
@@ -204,8 +213,8 @@ export function scheduleParts(text: string, job: string, hostDefault: string): S
 }
 
 /**
- * The schedule line the builder writes: when, the host word when one is picked, next's item and
- * limits, the job's other arguments, then the model and effort when set.
+ * The schedule line the builder writes: when, the host word when one is picked, next's item,
+ * limits and filter, the job's other arguments, then the model and effort when set.
  */
 export function scheduleLine(parts: ScheduleParts, job: string): string {
   const { form } = parts;
@@ -216,6 +225,7 @@ export function scheduleLine(parts: ScheduleParts, job: string): string {
     if (form.item.trim() !== '') words.push(form.item.trim());
     option('--workers', form.workers);
     option('--max-steps', form.maxSteps);
+    option('--pick', form.pick);
   }
   words.push(...parts.own.split(/\s+/).filter((word) => word !== ''));
   option('--model', form.model);

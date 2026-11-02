@@ -1,6 +1,6 @@
 """Jira Cloud items through the REST API v3, for the jira/*.sh entry points. See adapters/README.md.
 
-  _jira.py list [--all] [--kind KIND]
+  _jira.py list [--all] [--kind KIND] [--pick NAME]
   _jira.py read <id>
   _jira.py create <kind> <title> [--size S] [--priority NAME] [--area NAME] [--type NAME]
                   [--blocked-by id,id] [--parent id] [--body TEXT]
@@ -137,6 +137,46 @@ def field_list(fields):
     return FIELDS + [f["id"] for f in fields.values()]
 
 
+def jql_text(value):
+    return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def pick_values(name):
+    return [v.strip() for v in os.environ.get("FLOW_PICK_" + name, "").split(",") if v.strip()]
+
+
+def pick_conditions():
+    """The JQL conditions of `list --pick` (pick_filter in lib/flow.sh): its query as written, else
+    the assignee (me is currentUser(), the jira.email login the token belongs to), the statuses and
+    the labels. The kinds are matched on the built items, as read maps the issue types back."""
+    query = os.environ.get("FLOW_PICK_QUERY", "").strip()
+    if query:
+        return ["(%s)" % query]
+    conditions = []
+    assignee = os.environ.get("FLOW_PICK_ASSIGNEE", "").strip()
+    if assignee:
+        conditions.append("assignee = %s" % ("currentUser()" if assignee == "me" else jql_text(assignee)))
+    for field, name in (("status", "STATUS"), ("labels", "LABELS")):
+        if pick_values(name):
+            conditions.append("%s in (%s)" % (field, ", ".join(jql_text(v) for v in pick_values(name))))
+    return conditions
+
+
+def children_of(issues, narrowed):
+    """Each listed issue's open children. A list a filter narrowed can leave a child out, so its
+    children are searched for apart, every page of them: a count cut at jira.limit would read a
+    parent with open children as having none, and so as ready."""
+    rows = issues
+    if narrowed and issues:
+        rows, _ = search("parent in (%s) AND statusCategory != Done" % ", ".join(i["key"] for i in issues), ["parent", "status"], sys.maxsize)
+    children = {}
+    for issue in rows:
+        parent = issue["fields"].get("parent")
+        if parent and (issue["fields"].get("status") or {}).get("statusCategory", {}).get("key") != "done":
+            children[parent["key"]] = children.get(parent["key"], 0) + 1
+    return children
+
+
 def cmd_list(args):
     want_all, kind, i = False, None, 0
     while i < len(args):
@@ -144,22 +184,22 @@ def cmd_list(args):
             want_all, i = True, i + 1
         elif args[i] == "--kind" and i + 1 < len(args):
             kind, i = args[i + 1], i + 2
+        elif args[i] == "--pick" and i + 1 < len(args):
+            i += 2  # list.sh has exported the filter as FLOW_PICK_* (pick_conditions)
         else:
             fail("unknown option %s" % args[i], 2)
     fields, limit = custom_fields(), int(setting("LIMIT", "500"))
-    jql = 'project = "%s"%s ORDER BY created DESC' % (setting("PROJECT"), "" if want_all else " AND statusCategory != Done")
-    issues, cut = search(jql, field_list(fields), limit)
+    picked = pick_conditions()
+    conditions = ["project = %s" % jql_text(setting("PROJECT"))] + picked + ([] if want_all else ["statusCategory != Done"])
+    issues, cut = search(" AND ".join(conditions) + " ORDER BY created DESC", field_list(fields), limit)
     if cut:
         sys.stderr.write("flow: stopped at jira.limit %d issues; raise it in .flow/config.yaml\n" % limit)
         if os.environ.get("FLOW_LIST_WHOLE"):
             sys.exit(1)
-    children = {}
-    for issue in issues:
-        parent = issue["fields"].get("parent")
-        if parent and (issue["fields"].get("status") or {}).get("statusCategory", {}).get("key") != "done":
-            children[parent["key"]] = children.get(parent["key"], 0) + 1
+    children = children_of(issues, bool(picked))
+    kinds = {k.lower() for k in pick_values("KINDS")}
     items = [to_item(issue, fields, children.get(issue["key"], 0)) for issue in issues]
-    print(json.dumps([i for i in items if not kind or i["kind"] == kind]))
+    print(json.dumps([i for i in items if (not kind or i["kind"] == kind) and (not kinds or i["kind"] in kinds)]))
 
 
 def read_issue(key, fields):
