@@ -2188,13 +2188,29 @@ check "init: --force replaces it" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --fo
 printf '\n# changed\n' >> "$plugin_copy/templates/flow.rules"
 check "session-start: nudges when the plugin changed" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'behind flow v' && echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -qF 'drift: $codex_rules'"
 check "init: refresh brings the stamp back in step" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && [ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
-mkdir -p .claude && printf '{}\n' > .claude/settings.json
-check "init: --check exits 0 when missing Claude worktree hooks are its only finding" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check"
-check "init: --check names missing Claude worktree hooks as a note, not a gap" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'note: .claude/settings.json has no WorktreeCreate'"
-check "session-start: names missing Claude worktree hooks" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'no flow worktree hooks'"
-printf '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-create.sh"}]}],"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh"}]}]}}\n' > .claude/settings.json
-check "init: --check is clean once the hooks are in the settings" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
-check "session-start: silent once the hooks are in the settings" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+echo "init: the Claude worktree hooks in this user's local settings"
+mkdir -p .claude && printf '{}\n' > .claude/settings.json && printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > .claude/settings.local.json
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/hooks-check.out" 2>&1; code=$?
+check "InitCheck_LocalSettingsWithoutTheEntries_ReportedAsDrift" sh -c "[ $code = 1 ] && grep -q 'drift: .claude/settings.local.json: the flow WorktreeCreate and WorktreeRemove entries are missing' '$work/hooks-check.out'"
+check "SessionStart_LocalSettingsWithoutTheEntries_NamesThem" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'settings.local.json has no flow worktree hooks'"
+FLOW_PLUGIN="$plugin_copy" "$init" >/dev/null 2>&1
+check_all "Init_LocalSettingsWithOtherKeys_KeepsThemBesideTheEntries" '[ "$(jget permissions.allow.0 < .claude/settings.local.json)" = "Bash(ls)" ] && jget hooks.WorktreeRemove.0.hooks.0.command < .claude/settings.local.json | grep -qF "/.flow/hooks/worktree-remove.sh"'
+check "InitCheck_CommittedSettingsWithoutFlowHooksAndLocalEntries_UpToDate" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+check "SessionStart_LocalSettingsWithTheEntries_Silent" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+sed -i.bak 's|/.flow/hooks/worktree-create.sh|/.flow/hooks/worktree-create.sh --old|' .claude/settings.local.json && rm -f .claude/settings.local.json.bak
+check "InitCheck_ChangedEntry_ReportedAsDrift" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'drift: .claude/settings.local.json: the flow WorktreeCreate and WorktreeRemove entries are missing or changed'"
+FLOW_PLUGIN="$plugin_copy" "$init" >/dev/null 2>&1
+check_all "Init_ChangedEntry_ReplacedByTheCurrentOne" '! grep -q -- "--old" .claude/settings.local.json && [ "$(jget hooks.WorktreeCreate < .claude/settings.local.json | grep -o "worktree-create.sh" | wc -l | tr -d " ")" = 1 ]'
+printf '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-create.sh"}]}],"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh"}]}]}}\n' > .claude/settings.json && cp .claude/settings.json "$work/committed-settings.json"
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/hooks-check.out" 2>&1; code=$?
+check "InitCheck_CommittedSettingsWithAFlowHook_NotesItWithTheEntry" sh -c "grep -q 'note: .claude/settings.json still carries flow worktree hooks; remove them' '$work/hooks-check.out' && grep -qF '\"command\": \".flow/hooks/worktree-remove.sh\"' '$work/hooks-check.out'"
+check "InitCheck_CommittedSettingsWithAFlowHook_StillPasses" [ "$code" = 0 ]
+FLOW_PLUGIN="$plugin_copy" "$init" > "$work/hooks-init.out" 2>&1
+check "Init_CommittedSettingsWithAFlowHook_NextSaysToRemoveItWithTheEntry" sh -c "sed -n '/^Next:/,\$p' '$work/hooks-init.out' | grep -q 'remove the flow worktree hooks from .claude/settings.json' && sed -n '/^Next:/,\$p' '$work/hooks-init.out' | grep -qF '\"command\": \".flow/hooks/worktree-create.sh\"'"
+check "Init_CommittedSettingsWithAFlowHook_LeavesThatFileAsItIs" cmp -s .claude/settings.json "$work/committed-settings.json"
+printf '{"hooks":' > .claude/settings.local.json
+FLOW_PLUGIN="$plugin_copy" "$init" > "$work/hooks-init.out" 2>&1; code=$?
+check "Init_LocalSettingsNotJson_RefusedWithTheFileAndLeftAsItIs" sh -c "[ $code = 1 ] && grep -q 'refused: .claude/settings.local.json is not valid JSON' '$work/hooks-init.out' && [ \"\$(cat .claude/settings.local.json)\" = '{\"hooks\":' ]"
 rm -rf .claude
 rm .flow/stamp
 check "session-start: no stamp asks for one init" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'no install stamp'"
@@ -2224,11 +2240,6 @@ PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scrip
 check "notify: the variable alone is enough, with no URL in the config" sh -c "grep -q 'env.example/hook' '$work/curl.log'"
 
 echo "init: nothing of flow is tracked"
-# hook_command <WorktreeCreate|WorktreeRemove> <init output file>: the command of that hook in the
-# settings entry init printed, decoded from its JSON string.
-hook_command() {
-  sed -n "s/.*\"$1\": \[ { \"hooks\": \[ { \"type\": \"command\", \"command\": \(\".*\"\) } \] } \].*/\1/p" "$2" | python3 -c 'import json,sys; sys.stdout.write(json.loads(sys.stdin.read()))'
-}
 mkdir -p "$work/notrace" && cd "$work/notrace" && git init -q -b main origin-src && (cd origin-src && git config user.email t@t && git config user.name t && printf 'hi\n' > README.md && git add -A && git commit -qm init)
 git clone -q origin-src app 2>/dev/null && cd app && git config user.email t@t && git config user.name t
 ntmain="$PWD"
@@ -2237,9 +2248,13 @@ check "Init_FreshClone_GitStatusCleanAndNothingTracked" sh -c "[ -f .flow/config
 check "Init_FreshClone_TheExcludeBlockCoversAllOfFlow" sh -c "awk '/^# flow:begin/{on=1; next} /^# flow:end/{on=0} on' .git/info/exclude | grep -qxF '.flow/' && [ ! -e .gitignore ]"
 check "Init_Next_NoLongerSaysToCommitFlow" sh -c "! grep -q 'commit .flow' '$work/notrace.out' && grep -q 'nothing under .flow/ is committed' '$work/notrace.out'"
 check "Init_RepoWithoutCodex_CodexFilesInTheUserHomeAndSaidSo" sh -c "[ -f '$HOME/.codex/rules/flow.rules' ] && [ -f '$HOME/.codex/agents/explorer.toml' ] && [ ! -e .codex ] && grep -qF 'Codex rules and agents: $HOME/.codex (the repository has no .codex folder)' '$work/notrace.out'"
-# The settings entry init printed, run as Claude runs it, in a clone with flow and in one without.
-hook_command WorktreeCreate "$work/notrace.out" > "$work/hook-create.sh"
-hook_command WorktreeRemove "$work/notrace.out" > "$work/hook-remove.sh"
+create_command="$(jget hooks.WorktreeCreate.0.hooks.0.command < .claude/settings.local.json)"; remove_command="$(jget hooks.WorktreeRemove.0.hooks.0.command < .claude/settings.local.json)"
+check_all "Init_RepoWithoutClaudeFolder_WritesBothEntriesToTheLocalSettings" 'case "$create_command" in *"/.flow/hooks/worktree-create.sh"*) ;; *) false ;; esac && case "$remove_command" in *"/.flow/hooks/worktree-remove.sh"*) ;; *) false ;; esac'
+check "Init_RepoWithoutClaudeFolder_LocalSettingsIgnoredByTheExclude" git check-ignore -q .claude/settings.local.json
+check "Init_RepoWithoutClaudeFolder_NoSharedSettingsWritten" [ ! -e .claude/settings.json ]
+# The entries init wrote, run as Claude runs them, in a clone with flow and in one without.
+jget hooks.WorktreeCreate.0.hooks.0.command < .claude/settings.local.json > "$work/hook-create.sh"
+jget hooks.WorktreeRemove.0.hooks.0.command < .claude/settings.local.json > "$work/hook-remove.sh"
 printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 1\nworktree_copy:\n  - local.env\nworktree_setup:\n  - printf ran > setup.txt\nnotify:\n  desktop: false\n' > .flow/config.yaml
 printf 'secret\n' > local.env && printf 'local.env\n' >> .git/info/exclude
 ntpath="$(printf '{"name":"bold-oak","cwd":"%s"}' "$ntmain" | CLAUDE_PROJECT_DIR="$ntmain" FLOW_PLUGIN="$plugin_copy" sh "$work/hook-create.sh" 2>/dev/null | tail -n 1)"
@@ -2248,25 +2263,13 @@ check "LinkedWorktree_FlowHome_ResolvesToTheMainWorktree" sh -c "cd '$ntpath' &&
 check "LinkedWorktree_ClaimFile_IgnoredByTheSharedExclude" sh -c "[ -f '$ntpath/.flow/claim.json' ] && git -C '$ntpath' check-ignore -q .flow/claim.json && [ -z \"\$(git -C '$ntpath' status --porcelain --untracked-files=all -- .flow)\" ]"
 check "LinkedWorktree_Grown_WorktreeCopyAndWorktreeSetupRan" sh -c "[ \"\$(cat '$ntpath/local.env')\" = secret ] && [ \"\$(cat '$ntpath/setup.txt')\" = ran ]"
 check "SessionStart_LinkedWorktree_ReadsTheMainWorktreesStamp" sh -c "cd '$ntpath' && [ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+# A linked worktree has no .flow/hooks of its own, so only the main worktree's wrapper can answer.
+printf '{"cwd":"%s"}' "$ntpath" | CLAUDE_PROJECT_DIR="$ntpath" FLOW_PLUGIN="$plugin_copy" sh "$work/hook-remove.sh" > "$work/hook-remove.out" 2>&1; code=$?
+check "WorktreeRemoveHook_RunFromALinkedWorktree_RunsTheMainWorktreesWrapper" sh -c "[ $code = 0 ] && [ ! -s '$work/hook-remove.out' ]"
 git clone -q "$work/notrace/origin-src" "$work/notrace/teammate" 2>/dev/null
 tmate="$work/notrace/teammate"
 printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-create.sh" > "$work/hook-create.out" 2> "$work/hook-create.err"; code=$?
-check "WorktreeCreateHook_NoFlowInTheClone_MakesClaudesOwnWorktreeAndPrintsOnlyItsPath" sh -c "[ $code = 0 ] && [ \"\$(cat '$work/hook-create.out')\" = '$tmate/.claude/worktrees/calm-fern' ] && [ \"\$(git -C '$tmate/.claude/worktrees/calm-fern' symbolic-ref --short HEAD)\" = worktree-calm-fern ]"
-printf '{"worktree_path":"%s/.claude/worktrees/calm-fern","cwd":"%s"}' "$tmate" "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" > "$work/hook-remove.out" 2>&1; code=$?
-check "WorktreeRemoveHook_NoFlowInTheClone_RemovesItQuietly" sh -c "[ $code = 0 ] && [ ! -s '$work/hook-remove.out' ] && [ ! -e '$tmate/.claude/worktrees/calm-fern' ]"
-check "WorktreeRemoveHook_UnchangedBranch_DeletedWithTheWorktree" sh -c "[ -z \"\$(git -C '$tmate' branch --list worktree-calm-fern)\" ]"
-printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-create.sh" > "$work/hook-create.out" 2>&1; code=$?
-check "WorktreeCreateHook_NameOpenedAgainAfterARemove_CreatedAgain" sh -c "[ $code = 0 ] && [ \"\$(cat '$work/hook-create.out')\" = '$tmate/.claude/worktrees/calm-fern' ] && [ -d '$tmate/.claude/worktrees/calm-fern' ]"
-git -C "$tmate/.claude/worktrees/calm-fern" -c user.email=t@t -c user.name=t commit -q --allow-empty -m 'work on calm-fern'
-printf '{"worktree_path":"%s/.claude/worktrees/calm-fern"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" >/dev/null 2>&1
-check "WorktreeRemoveHook_BranchWithCommits_KeptAfterTheRemove" sh -c "[ -n \"\$(git -C '$tmate' branch --list worktree-calm-fern)\" ] && [ ! -e '$tmate/.claude/worktrees/calm-fern' ]"
-printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-create.sh" > "$work/hook-create.out" 2>&1; code=$?
-check "WorktreeCreateHook_BranchLeftByARemove_ReusedWithItsCommits" sh -c "[ $code = 0 ] && [ \"\$(git -C '$tmate/.claude/worktrees/calm-fern' log -1 --format=%s)\" = 'work on calm-fern' ]"
-printf '{"worktree_path":"","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" > "$work/hook-remove.out" 2>&1; code=$?
-check "WorktreeRemoveHook_NoFlowAndNoPath_ExitsZeroWithNoOutput" sh -c "[ $code = 0 ] && [ ! -s '$work/hook-remove.out' ]"
-mkdir -p .claude && printf '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-create.sh"}]}],"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh"}]}]}}\n' > .claude/settings.json
-check "InitCheck_HookEntryWithoutTheFallBack_NamedAsANote" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'note: the worktree hooks in .claude/settings.json call .flow/hooks alone'"
-rm -rf .claude
+check "WorktreeCreateHook_CloneWithoutFlow_FailsAndMakesNoWorktree" sh -c "[ $code != 0 ] && [ ! -s '$work/hook-create.out' ] && [ ! -e '$tmate/.claude' ] && [ \"\$(git -C '$tmate' worktree list | wc -l | tr -d ' ')\" = 1 ]"
 
 echo "init: Codex in the repository or the user home"
 mkdir -p "$work/codexrepo" && cd "$work/codexrepo" && git init -q -b main && git config user.email t@t && git config user.name t && mkdir .codex && printf '[plugins]\n' > .codex/config.toml && git add -A && git commit -qm init

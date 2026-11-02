@@ -17,8 +17,10 @@ if [ ! -f "$stamp" ]; then
   echo "flow: note for the owner, not a task: this project has no install stamp (installed before flow 0.2.0). /flow:init writes .flow/stamp on its next run."
   exit 0
 fi
-if [ -d "$root/.claude" ] && ! claude_hooks_present "$root"; then
-  echo "flow: note for the owner, not a task: .claude/settings.json has no flow worktree hooks on this branch, so claude --worktree lands outside the pool. /flow:init prints the entry to add."
+# init writes the hooks to the main worktree's local settings, beside the flow home.
+main="$(dirname "$home")"
+if [ -d "$main/.claude" ] && ! claude_hooks_present "$main"; then
+  echo "flow: note for the owner, not a task: .claude/settings.local.json has no flow worktree hooks, so claude --worktree lands outside the pool. /flow:init writes them."
 fi
 [ "$(stamp_source "$stamp")" = "$(flow_source_hash "$FLOW_PLUGIN")" ] && exit 0
 version="$(json_get "$(cat "$FLOW_PLUGIN/.claude-plugin/plugin.json")" "version")"
