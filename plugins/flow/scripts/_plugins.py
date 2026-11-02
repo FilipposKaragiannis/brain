@@ -8,12 +8,17 @@ loads that pin, `claude plugin update` run inside it reads the main checkout's r
 and the marketplace auto-update never touches it. sync lifts every project record of every
 worktree of the repository (git worktree list) to the newest version any record of that plugin
 has in the cache, and prints one line per lifted record. Silent and the file untouched when
-nothing is behind. The config dir is CLAUDE_CONFIG_DIR, else ~/.claude.
+nothing is behind. The config dir is CLAUDE_CONFIG_DIR, else ~/.claude. Sessions start together
+(the jobs start several workers at once), so the read, the lift and the replace run under one
+lock (installed_plugins.json.lock, next to the registry) and the new file is written to a
+temporary name of its own before it replaces the registry.
 """
+import fcntl
 import json
 import os
 import subprocess
 import sys
+import tempfile
 
 LIFTED_FIELDS = ("installPath", "version", "gitCommitSha", "lastUpdated")
 
@@ -55,13 +60,32 @@ def lift(record, newest):
     return True
 
 
+def write_registry(path, registry):
+    directory = os.path.dirname(path)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix="installed_plugins.", suffix=".tmp", dir=directory,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(registry, handle, indent=2)
+        os.replace(temporary, path)
+    except BaseException:
+        os.unlink(temporary)
+        raise
+
+
 def sync(root):
     path = registry_path()
     if not os.path.isfile(path):
         return []
+    with open(path + ".lock", "w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return sync_locked(path, worktree_paths(root))
+
+
+def sync_locked(path, repo_paths):
     with open(path, encoding="utf-8") as handle:
         registry = json.load(handle)
-    repo_paths = worktree_paths(root)
     lifted = []
     for plugin_id, records in registry.get("plugins", {}).items():
         newest = newest_installed(records)
@@ -78,10 +102,7 @@ def sync(root):
                 name = os.path.basename(project_path)
                 lifted.append(f"{plugin_id} in {name}: {was} -> {record['version']}")
     if lifted:
-        temporary = path + ".tmp"
-        with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump(registry, handle, indent=2)
-        os.replace(temporary, path)
+        write_registry(path, registry)
     return lifted
 
 

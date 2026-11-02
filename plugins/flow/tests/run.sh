@@ -2228,6 +2228,16 @@ write_registry 1.0.0 3.0.0 "$cfg/plugins/cache/m/flow/3.0.0-missing"
 echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
 check "session-start: a newer version missing from the cache is not a target; the next installed one is" [ "$(jget plugins.flow@m.1.version < "$registry")" = "1.0.0" ]
 check "session-start: no registry at all is silent" sh -c "[ -z \"\$(echo '{}' | CLAUDE_CONFIG_DIR='$work/no-such-config' FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+write_registry 1.0.0 2.0.0 "$cfg/plugins/cache/m/flow/2.0.0"
+python3 -c 'import fcntl, sys, time
+lock = open(sys.argv[1] + ".lock", "w"); fcntl.flock(lock, fcntl.LOCK_EX); time.sleep(2)' "$registry" &
+holder=$!; sleep 0.5
+started="$(date +%s)"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+waited=$(( $(date +%s) - started ))
+wait "$holder"
+check_all "session-start: a sync in flight makes the next one wait for it, then lift" '[ "$waited" -ge 1 ] && [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.0" ]'
+check "session-start: the registry's temporary file is gone after a lift" sh -c "! ls '$cfg/plugins/' | grep -q '\\.tmp$'"
 git worktree remove -q --force ../plugin-wt
 rm -rf .claude
 rm .flow/stamp
