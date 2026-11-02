@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import path from 'node:path';
 import type { CommandRequest, CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 import type { GateQuestionCache } from '../src/collectors/flowHome.ts';
-import { parseFlowConfig, parseGateList, pluginHasGateJson, pluginVersionOf, readFlowHome, readStoppedHosts } from '../src/collectors/flowHome.ts';
+import { parseFlowConfig, parseGateList, pluginHasGateJson, pluginVersionOf, readAdapterPrefixes, readFlowHome, readStoppedHosts } from '../src/collectors/flowHome.ts';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import { FAKE_PLUGIN, FIXTURES, FIXTURE_ROOT, GATE_LIST_JSON, GATE_RECORD, fakeGateList, fakeRunner } from './fakeRunner.ts';
@@ -34,6 +34,36 @@ async function withFlowPlugin<T>(value: string | undefined, body: () => Promise<
   if (value === undefined) delete process.env['FLOW_PLUGIN']; else process.env['FLOW_PLUGIN'] = value;
   try { return await body(); } finally { if (kept === undefined) delete process.env['FLOW_PLUGIN']; else process.env['FLOW_PLUGIN'] = kept; }
 }
+
+test('FlowHome_AdapterPrefixes_FromThePluginsPrefixFiles', async () => {
+  const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.deepEqual(facts.adapterPrefixes, [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], "because the ids the console routes are the ones the plugin's adapters say they own");
+});
+
+test('FlowHome_PluginWithoutPrefixFiles_GithubAndLocalIds', async () => {
+  const facts = await readFlowHome(FIXTURE_ROOT, runnerWith('1.20.0', fakeGateList));
+  assert.deepEqual(facts.adapterPrefixes.map(({ prefix }) => prefix), ['gh#', 'local:'], 'because a plugin from before the prefix files owned exactly these ids, and its items must stay actionable');
+});
+
+test('ReadAdapterPrefixes_NewAdapterFolder_ItsPrefixRead', async () => {
+  const plugin = mkdtempSync(path.join(os.tmpdir(), 'console-prefixes-'));
+  try {
+    mkdirSync(path.join(plugin, 'adapters', 'linear'), { recursive: true });
+    writeFileSync(path.join(plugin, 'adapters', 'linear', 'prefix'), 'lin:\n');
+    assert.deepEqual(await readAdapterPrefixes(plugin), [{ adapter: 'linear', prefix: 'lin:' }], 'because an adapter added to the plugin routes its ids with no change to the console');
+  } finally { rmSync(plugin, { recursive: true, force: true }); }
+});
+
+test('ReadAdapterPrefixes_PrefixOfAnotherShape_LeftOut', async () => {
+  const plugin = mkdtempSync(path.join(os.tmpdir(), 'console-prefixes-'));
+  try {
+    for (const [name, prefix] of [['odd', '$(x):'], ['blank', ''], ['Upper', 'up:']] as const) {
+      mkdirSync(path.join(plugin, 'adapters', name), { recursive: true });
+      writeFileSync(path.join(plugin, 'adapters', name, 'prefix'), `${prefix}\n`);
+    }
+    assert.deepEqual(await readAdapterPrefixes(plugin), [], 'because only a prefix of letters and digits with # or :, in a folder named like an adapter, may decide what reaches a script');
+  } finally { rmSync(plugin, { recursive: true, force: true }); }
+});
 
 test('FlowPluginUnset_PluginSourceIsInstalled', async () => {
   const facts = await withFlowPlugin(undefined, () => readFlowHome(FIXTURE_ROOT, fakeRunner));

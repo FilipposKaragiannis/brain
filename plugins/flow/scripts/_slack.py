@@ -6,21 +6,44 @@ Prints the webhook JSON: a plain-text fallback for the push preview, and Block K
 lay the message out as a list. Numbered lines stay numbered, with their indented lines nested
 under them; other lines are bullets; a long line of prose breaks into one bullet per sentence,
 and a line of three or more ';'-separated parts into one bullet per part. Ids, commits, paths,
-flags and code names read as code; a short label opening a line reads bold."""
-import json, re, sys
+flags and code names read as code; a short label opening a line reads bold. Ids are known by the
+adapters' prefix files (adapters/*/prefix), and a gate on an item whose adapter has answers.sh
+says to answer on the tracker."""
+import glob, json, os, re, sys
 
 LONG_LINE = 160      # characters of prose before a line breaks into sentences
 MIN_PARTS = 3        # ';'-separated parts before a line breaks into one bullet per part
 LABEL_WORDS = 3      # words at most in a bold opening label
 LABEL_CHARS = 24     # characters at most in that label, after its capital
 SHORT_HASH, FULL_HASH = 7, 40
+ADAPTERS = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "adapters")
+# A prefix is letters and digits, then its separator, as adapters/README.md has them (gh#, local:, jira:).
+PREFIX_SHAPE = re.compile(r"^[A-Za-z][A-Za-z0-9]*[#:]$")
 SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Za-z0-9`(])")
 NUMBERED = re.compile(r"^(\d+)[.)]\s+(.*)")
 LABEL = re.compile(r"^([A-Z][A-Za-z ]{0,%d}):\s+" % LABEL_CHARS)
 URL = re.compile(r"https?://[^\s>)]+")
+
+
+def prefixes():
+    """Each adapter folder's id prefix by adapter name, the ones of a known shape only."""
+    found = {}
+    for path in sorted(glob.glob(os.path.join(ADAPTERS, "*", "prefix"))):
+        with open(path) as f:
+            prefix = f.readline().strip()
+        if PREFIX_SHAPE.match(prefix):
+            found[os.path.basename(os.path.dirname(path))] = prefix
+    return found
+
+
+PREFIXES = prefixes()
+# An id: a prefix (any case, so GH#12 too) and a rest in the id characters that ends on a letter or
+# digit, so the full stop after an id at the end of a sentence stays out of it.
+# With no prefix file to read, no text is an id: (?!) never matches.
+ITEM_ID = r"\b(?:%s)[A-Za-z0-9:#/_.-]*[A-Za-z0-9]" % ("|".join("(?i:%s)" % re.escape(p) for p in PREFIXES.values()) or "(?!)")
 CODE = re.compile(
     r"`[^`]+`"
-    r"|\b(?:gh|GH)#\d+\b|\blocal:[a-z]+/\d+\b"
+    r"|" + ITEM_ID +
     r"|(?<![\w/.-])--?[a-z][\w-]+"
     r"|\b(?=[0-9a-f]*[a-f])(?=[0-9a-f]*\d)[0-9a-f]{%d,%d}\b" % (SHORT_HASH, FULL_HASH) +
     r"|[\w.-]*/[\w./*-]+"
@@ -113,12 +136,18 @@ def body(message):
     return lists(rows)
 
 
+def answers_on_tracker(item):
+    """Whether the adapter whose prefix starts the id reads the owner's /answer comments."""
+    owner = next((name for name, prefix in PREFIXES.items() if item.startswith(prefix)), None)
+    return owner is not None and os.access(os.path.join(ADAPTERS, owner, "answers.sh"), os.X_OK)
+
+
 def main():
     title, link, url, gate, item, message = sys.argv[1:7]
     url = url if url.startswith("https://") else ""
     if gate:
         fallback_head = "*flow: %s* on %s" % (escape(gate), "<%s|%s>" % (escape(url), escape(link)) if url else "*%s*" % escape(link))
-        if url and item.startswith("gh#"):
+        if url and answers_on_tracker(item):
             answer = "Answer on the issue: comment `/answer <your answer>`, or `/answer` alone for the recommendations."
         else:
             answer = "Answer in a session: `flow:gate %s \"<your answer>\"`" % item

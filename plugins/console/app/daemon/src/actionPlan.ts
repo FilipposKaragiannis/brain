@@ -4,6 +4,7 @@ import { SOURCE_NAMES } from './snapshot.ts';
 import { compareVersions } from './cli.ts';
 import { checkSchedule, FLOW_JOBS, SCHEDULE_NAME, scheduleJob } from './plugins/flow/schema.ts';
 import { syncConflict, syncRefs, writeSyncNote } from './syncNote.ts';
+import type { AdapterPrefix } from './collectors/flowHome.ts';
 import { sessionLaunch, terminalLaunch } from './terminal.ts';
 
 /** What a sync needs to know of one pool worktree, from the latest snapshot. */
@@ -42,6 +43,8 @@ export type ActionContext = {
   pluginVersion: string | null;
   /** The names under the plugin's `scripts/`, or null when unread: a checkout ahead of its version has a script its version does not promise. */
   pluginScripts: string[] | null;
+  /** The id prefix of each adapter of the plugin (`adapters/<name>/prefix`): an id an action takes starts with one of them. */
+  adapterPrefixes: AdapterPrefix[];
   repo: string | null;
   jobsHost: string;
   /** The pool worktrees, as absolute paths. A release names one of these or an item. */
@@ -197,8 +200,14 @@ const DEFAULT_MAX_STEPS = 15;
 /** The jobs `jobs.sh` knows; an install rewrites the schedule of every one (and of every named schedule), so it holds all their locks. */
 export { FLOW_JOBS };
 const MESSAGE_LIMIT_CHARS = 10000;
-/** The ids the adapters own: gh#12 on GitHub, local:task/7 in the local tracker. Nothing else reaches a script. */
-const ITEM_ID = /^(gh#[1-9][0-9]*|local:[a-z]+\/[1-9][0-9]*)$/;
+/**
+ * What follows an adapter's prefix in an id (`12` of gh#12, `task/7` of local:task/7, `WID-7` of
+ * jira:WID-7): a letter or digit, then the id characters of adapters/README.md. With a prefix the
+ * plugin's adapters own, nothing else reaches a script.
+ */
+const ID_REST = /^[A-Za-z0-9][A-Za-z0-9:#/_.-]{0,127}$/;
+/** Path parts an id never has: an adapter may join the id onto a folder (the local one does), so `..` would leave it. */
+const NOT_AN_ID_PART = new Set(['', '.', '..']);
 /** A job's log name: a schedule (`next`, `next-nightly`) or one of its workers (`next-2`, `next-nightly-2`). */
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
@@ -236,10 +245,29 @@ const LOG_LINES = '200';
 
 /** A step name as profiles.json spells them; anything else in a claim file never reaches the tracker. */
 const STEP = /^[a-z][a-z0-9-]*$/;
-/** The adapter that owns an item, from its id's prefix, as lib/flow.sh's `adapter_for` says. */
-const ADAPTER_OF_PREFIX: [string, string][] = [['gh#', 'github'], ['local:', 'local']];
-
 const fail = (error: string): PlanResult => ({ ok: false, error });
+
+/** The adapter that owns an id, by the prefix that starts it as lib/flow.sh's `adapter_for` routes it; null for no id of the plugin's adapters. */
+export function adapterOfItem(id: string, prefixes: AdapterPrefix[]): string | null {
+  const owner = prefixes.find(({ prefix }) => id.startsWith(prefix));
+  return owner !== undefined && isIdRest(id.slice(owner.prefix.length)) ? owner.adapter : null;
+}
+
+/** Id characters only, and no empty, `.` or `..` part between slashes, so no id climbs out of an adapter's folder. */
+function isIdRest(rest: string): boolean {
+  return ID_REST.test(rest) && !rest.split('/').some((part) => NOT_AN_ID_PART.has(part));
+}
+
+function isItemId(id: string, context: ActionContext): boolean {
+  return adapterOfItem(id, context.adapterPrefixes) !== null;
+}
+
+/** "an item id: gh#, local: or jira: and its number or key", from the prefixes the plugin has. */
+function itemIdShape(context: ActionContext): string {
+  const prefixes = context.adapterPrefixes.map(({ prefix }) => prefix);
+  const named = prefixes.length < 2 ? prefixes.join('') : `${prefixes.slice(0, -1).join(', ')} or ${prefixes[prefixes.length - 1]}`;
+  return prefixes.length === 0 ? 'an item id, and the flow plugin has no adapters to own one' : `an item id: ${named} and its number or key`;
+}
 
 function script(context: ActionContext, name: string): string {
   return path.join(context.pluginRoot ?? '', 'scripts', name);
@@ -247,7 +275,7 @@ function script(context: ActionContext, name: string): string {
 
 /** A release target: an item id, passed as is, or the name of a pool worktree, passed as its path. */
 function releaseTarget(target: string, context: ActionContext): string | null {
-  if (ITEM_ID.test(target)) return target;
+  if (isItemId(target, context)) return target;
   return context.pool.find((worktree) => path.basename(worktree) === target) ?? null;
 }
 
@@ -280,7 +308,7 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     case 'gate.clear': {
       const item = args['item'] ?? '';
       const message = args['message'] ?? '';
-      if (!ITEM_ID.test(item)) return fail('gate.clear needs an item id like gh#12 or local:task/7');
+      if (!isItemId(item, context)) return fail(`gate.clear needs ${itemIdShape(context)}`);
       if (message.length > MESSAGE_LIMIT_CHARS) return fail(`message longer than ${MESSAGE_LIMIT_CHARS} characters`);
       // back=true sends the work back: the step the gate judges runs again, with the message in its brief.
       const back = args['back'] ?? 'false';
@@ -294,7 +322,7 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     case 'run.start': {
       const item = args['item'] ?? '';
       const maxSteps = args['maxSteps'] ?? String(DEFAULT_MAX_STEPS);
-      if (item !== '' && !ITEM_ID.test(item)) return fail('run.start takes an item id or nothing');
+      if (item !== '' && !isItemId(item, context)) return fail(`run.start takes ${itemIdShape(context)}, or nothing`);
       if (!MAX_STEPS.test(maxSteps)) return fail('maxSteps must be a number from 1 to 999');
       if (item === '') {
         if (args['maxSteps'] !== undefined) return fail('maxSteps needs an item; the scheduled next job has its own');
@@ -325,14 +353,14 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     }
     case 'worktree.claim': {
       const item = args['item'] ?? '';
-      if (!ITEM_ID.test(item)) return fail('worktree.claim needs an item id');
+      if (!isItemId(item, context)) return fail(`worktree.claim needs ${itemIdShape(context)}`);
       return sh('steward.sh', ['claim', item], ['pool', `item:${item}`], STEWARD_TIMEOUT_MS, ['files', 'git']);
     }
     case 'worktree.release': {
       const target = releaseTarget(args['target'] ?? '', context);
       if (target === null) return fail('worktree.release needs an item id or the name of a pool worktree');
       const force = args['force'] === 'true' ? ['--force'] : [];
-      return sh('steward.sh', ['release', target, ...force], ['pool', `${ITEM_ID.test(target) ? 'item' : 'worktree'}:${target}`], STEWARD_TIMEOUT_MS, ['files', 'git']);
+      return sh('steward.sh', ['release', target, ...force], ['pool', `${isItemId(target, context) ? 'item' : 'worktree'}:${target}`], STEWARD_TIMEOUT_MS, ['files', 'git']);
     }
     // A worktree with no item under the owner's name (git user.name when no name is given), which
     // claim, sweep, health and next pass over until a release.
@@ -367,7 +395,7 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     // A run the console started holds item:<id> until it ends, so stop takes a lock of its own.
     case 'run.stop': case 'run.resume': {
       const item = args['item'] ?? '';
-      if (!ITEM_ID.test(item)) return fail(`${kind} needs an item id like gh#12 or local:task/7`);
+      if (!isItemId(item, context)) return fail(`${kind} needs ${itemIdShape(context)}`);
       if (!context.runItems.includes(item)) return fail(`no run record names ${item}, so there is no run to ${kind === 'run.stop' ? 'stop' : 'resume'}`);
       const planned = sh('steward.sh', [kind === 'run.stop' ? 'stop' : 'resume', item], [kind === 'run.stop' ? `stop:item:${item}` : `item:${item}`], SCRIPT_TIMEOUT_MS, ['files', 'processes']);
       if (!planned.ok || kind === 'run.stop') return planned;
@@ -387,7 +415,7 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     case 'quiz.answer': {
       const item = args['item'] ?? '';
       const answers = args['answers'] ?? '';
-      if (!ITEM_ID.test(item)) return fail('quiz.answer needs an item id like gh#12 or local:task/7');
+      if (!isItemId(item, context)) return fail(`quiz.answer needs ${itemIdShape(context)}`);
       if (!QUIZ_ANSWERS.test(answers)) return fail('quiz.answer needs answers like "1b 2a 3c": a letter per question number');
       // The script itself is the test when the plugin folder was read: a checkout has it before a release says so.
       const missing = context.pluginScripts !== null ? !context.pluginScripts.includes('quiz.sh') : context.pluginVersion !== null && compareVersions(context.pluginVersion, QUIZ_SINCE) < 0;
@@ -432,7 +460,7 @@ function planJobStart(args: Record<string, string>, context: ActionContext): Pla
   const host = args['host'] ?? '';
   if (!HOSTS.includes(host)) return fail(`job.start needs a host: ${HOSTS.join(' or ')}`);
   const item = args['item'] ?? '';
-  if (item !== '' && !ITEM_ID.test(item)) return fail('job.start takes an item id like gh#12 or local:task/7, or none for the queue');
+  if (item !== '' && !isItemId(item, context)) return fail(`job.start takes ${itemIdShape(context)}, or none for the queue`);
   const { workers, maxSteps, model, effort, pick } = args;
   if (pick !== undefined && !PICK_NAME.test(pick)) return fail('pick must be a filter name from pick in .flow/config.yaml: letters, digits, _ and -');
   if (pick !== undefined && item !== '') return fail('pick narrows the queue; drop the item, or the filter');
@@ -561,7 +589,7 @@ function planTerminal(args: Record<string, string>, context: ActionContext): Pla
  * must be that worktree. Should the session's process still run, its command is typed, not run.
  */
 function planGateSession(item: string, args: Record<string, string>, context: ActionContext): PlanResult {
-  if (!ITEM_ID.test(item)) return fail('gate must be an item id like gh#12 or local:task/7');
+  if (!isItemId(item, context)) return fail(`gate must be ${itemIdShape(context)}`);
   if (args['job'] !== undefined || args['session'] !== undefined) return fail('terminal.open takes one of a job, a session or a gate');
   const found = (context.gateSessions ?? []).find((entry) => entry.item === item);
   if (found === undefined) return fail(`the console located no session for a gate on ${item}: no gate waits on it, it has no claimed worktree, or no transcript there was written around the time it was raised`);
@@ -599,7 +627,7 @@ function planSession(folder: string, pid: string, args: Record<string, string>, 
  */
 /** The pool worktree a sync or a hand-off names: an item claimed in the pool, or a pool worktree's name. */
 function syncTarget(kind: ActionKind, target: string, context: ActionContext): { ok: true; worktree: SyncFacts & { item: string } } | { ok: false; error: string } {
-  const worktree = ITEM_ID.test(target)
+  const worktree = isItemId(target, context)
     ? context.worktrees.find((entry) => entry.item === target)
     : context.worktrees.find((entry) => entry.name === target && context.pool.includes(entry.path));
   if (worktree === undefined) return { ok: false, error: `${kind} needs an item claimed in the pool or the name of a pool worktree; ${target === '' ? 'none given' : `${target} is neither`}` };
@@ -701,7 +729,8 @@ function nowIso(now: Date): string {
  */
 function planStepSync(args: Record<string, string>, context: ActionContext): PlanResult {
   const item = args['item'] ?? '';
-  if (!ITEM_ID.test(item)) return fail('item.step-sync needs an item id like gh#12 or local:task/7');
+  const adapter = adapterOfItem(item, context.adapterPrefixes);
+  if (adapter === null) return fail(`item.step-sync needs ${itemIdShape(context)}`);
   const worktree = context.worktrees.find((entry) => entry.item === item);
   if (worktree === undefined) return fail(`no pool worktree claims ${item}, so there is no claim to take the step from`);
   if (context.runItems.includes(item)) return fail(`a run record names ${item}; its run moves the step itself, so let it end first`);
@@ -711,7 +740,6 @@ function planStepSync(args: Record<string, string>, context: ActionContext): Pla
   if (!STEP.test(step)) return fail(`the claim in ${worktree.name} records the step ${step}, which is not a step name`);
   if (step === 'sync') return fail(`the claim in ${worktree.name} names the sync step, which runs ahead of ${item}'s own step and never moves it`);
   if (worktree.trackerStep === step) return fail(`the issue already says ${item} is at step ${step}`);
-  const adapter = ADAPTER_OF_PREFIX.find(([prefix]) => item.startsWith(prefix))?.[1] ?? '';
   const old = worktree.trackerStep === '' ? 'none' : worktree.trackerStep;
   const writeState = path.join(context.pluginRoot ?? '', 'adapters', adapter, 'write-state.sh');
   const lastEvent = `last_event=${nowIso(new Date())} step ${old} -> ${step}, set by the console from the claim in ${worktree.name}`;

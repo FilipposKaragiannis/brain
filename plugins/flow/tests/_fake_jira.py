@@ -1,8 +1,12 @@
 """The fake Jira Cloud behind fake-jira.sh: one project in a JSON file, answering the REST v3 calls
 the Jira adapter makes, as curl prints them with -w "\\n%{http_code}". Any other call answers 404
 and says so on stderr. A Blocks link posted with inwardIssue A and outwardIssue B means A blocks B:
-A reads it back as an outwardIssue B ("blocks"), B as an inwardIssue A ("is blocked by"). A search
-reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other; an issue's assignee is a
+A reads it back as an outwardIssue B ("blocks"), B as an inwardIssue A ("is blocked by").
+Comments keep their author, the user the -K login names (/rest/api/3/myself answers the same), so
+answers.sh can tell the owner's /answer from anyone else's. The project (types, plus a sub-task
+type) and the createmeta of each type (the option fields' allowedValues) feed vocabulary.sh; the
+createmeta answers in pages of at most createmeta_page fields (default 50), as Jira caps them. A
+search reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other; an issue's assignee is a
 fields.assignee object, as Jira returns one."""
 import json, re, sys
 from functools import reduce
@@ -28,6 +32,12 @@ priorities = data.setdefault("priorities", ["P0", "P1", "P2", "P3"])
 transitions = data.setdefault("transitions", [{"id": "11", "name": "To Do", "category": "new"},
                                               {"id": "21", "name": "In Progress", "category": "indeterminate"},
                                               {"id": "31", "name": "Done", "category": "done"}])
+
+
+def user_of(login_line):
+    """The account the login belongs to: its email, and an account id made from it."""
+    email = re.search(r'^user = "([^:"]+):', login_line, re.M).group(1)
+    return {"accountId": "acct-" + email.split("@")[0], "emailAddress": email, "displayName": email.split("@")[0]}
 
 
 def answer(status, payload=None):
@@ -98,6 +108,17 @@ if not re.search(r'^user = "[^:"]+:[^"]+"$', login, re.M):
     refuse(401, "Client must be authenticated to access this resource.")
 if path == "/rest/api/3/field" and method == "GET":
     answer(200, fields_known)
+if path == "/rest/api/3/myself" and method == "GET":
+    answer(200, user_of(login))
+if path == "/rest/api/3/project/" + project and method == "GET":
+    answer(200, {"key": project, "issueTypes": [{"id": str(10000 + n), "name": t, "subtask": False} for n, t in enumerate(types)]
+                 + [{"id": "10900", "name": "Subtask", "subtask": True}]})
+m = re.match(r"/rest/api/3/issue/createmeta/%s/issuetypes/(\d+)$" % project, path)
+if m and method == "GET":
+    every = [{"fieldId": f, "name": f, "allowedValues": [{"id": str(n), "value": v} for n, v in enumerate(values)]}
+             for f, values in options.items()]
+    start, size = int(query.get("startAt", 0)), min(int(query.get("maxResults", 50)), data.get("createmeta_page", 50))
+    answer(200, {"startAt": start, "maxResults": size, "total": len(every), "fields": every[start:start + size]})
 if path == "/rest/api/3/issue" and method == "POST":
     f = body["fields"]
     if f["project"]["key"] != project:
@@ -163,8 +184,11 @@ if m:
         issue["properties"][m.group(1)] = body
         answer(status)
     if rest == "/comment" and method == "POST":
-        issue["comments"].append({"id": str(len(issue["comments"]) + 1), "body": body["body"]})
+        issue["comments"].append({"id": str(len(issue["comments"]) + 1), "body": body["body"], "author": user_of(login)})
         answer(201, issue["comments"][-1])
+    if rest == "/comment" and method == "GET":
+        start, size = int(query.get("startAt", 0)), int(query.get("maxResults", 50))
+        answer(200, {"startAt": start, "maxResults": size, "total": len(issue["comments"]), "comments": issue["comments"][start:start + size]})
     if rest == "/transitions" and method == "GET":
         answer(200, {"transitions": [{"id": t["id"], "name": t["name"], "to": {"name": t["name"], "statusCategory": {"key": t["category"]}}}
                                      for t in transitions]})

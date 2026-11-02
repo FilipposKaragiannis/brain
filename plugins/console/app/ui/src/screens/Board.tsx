@@ -24,6 +24,7 @@ const STATE_LABEL: Partial<Record<ItemState, string>> = { 'needs-you': 'needs yo
  * The open items from the board, in the snapshot's order (what needs you first, then by rank),
  * each with what its sessions cost. The head line sums the spend of the items the filter shows;
  * an item picked by its title shows its detail beside the list, sessions and tokens included.
+ * A tracker the board could not read says so above the list, with why, since its items are missing.
  */
 export function Board({ snapshot, selected }: { snapshot: Snapshot; selected: string | null }) {
   const [filter, setFilter] = useState(FILTERS[0]?.label ?? '');
@@ -32,8 +33,10 @@ export function Board({ snapshot, selected }: { snapshot: Snapshot; selected: st
   const shown = open.filter((item) => states.includes(item.state));
   const picked = selected === null ? null : snapshot.items.find((item) => item.id === selected) ?? null;
   const total = spendTotal(shown);
+  const unread = snapshot.project.trackers.filter((tracker) => tracker.error !== null);
   return (
     <div className="screen">
+      {unread.map((tracker) => <p key={tracker.name} className="banner tone-failing" role="alert">{trackerNotRead(tracker.name, tracker.error ?? '')}</p>)}
       <div className="board-head">
         <div className="board-filters" role="group" aria-label="Filter">
           {FILTERS.map((entry) => {
@@ -53,6 +56,11 @@ export function Board({ snapshot, selected }: { snapshot: Snapshot; selected: st
       </div>
     </div>
   );
+}
+
+/** The banner for a tracker the board could not read: its items are not on the board, and why. */
+export function trackerNotRead(tracker: string, error: string): string {
+  return `The ${tracker} items are not on the board: ${error}`;
 }
 
 /** `1 item`, `3 items`. */

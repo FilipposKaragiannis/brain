@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { Item, PullRequest } from '../../daemon/src/snapshot.ts';
-import { Board } from '../src/screens/Board.tsx';
+import { Board, trackerNotRead } from '../src/screens/Board.tsx';
 import { formatCost, formatTokens } from '../src/spend.ts';
 import { boardItem, FakeDaemon, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
@@ -66,4 +66,17 @@ test('ItemWithoutPrField_PullMatchedByBranch_ShowsInPrColumn', () => {
 
 test('Formats_CostAndTokens', () => {
   expect([formatCost(0.004), formatCost(12.3456), formatTokens(950), formatTokens(1234567)], 'because a cell must stay short and never round a real cost to $0.00').toEqual(['<$0.01', '$12.35', '950', '1.2M']);
+});
+
+test('TrackerNotRead_BannerSaysWhyItsItemsAreMissing', () => {
+  const snapshot = snapshotAt(TAKEN_AT, 0);
+  const project = { ...snapshot.project, trackers: [...snapshot.project.trackers, { name: 'jira', url: null, error: 'JIRA_API_TOKEN is not set' }] };
+  const Wrapper = new FakeDaemon().screenWrapper();
+  render(<Wrapper><Board snapshot={{ ...snapshot, project, items: [NOTHING] }} selected={null} /></Wrapper>);
+  expect(screen.getAllByRole('alert').map((alert) => alert.textContent), 'because fewer items with no word would read as no work, while the owner can fix the cause').toEqual([trackerNotRead('jira', 'JIRA_API_TOKEN is not set')]);
+});
+
+test('EveryTrackerRead_NoBanner', () => {
+  renderBoard([NOTHING]);
+  expect(screen.queryByRole('alert'), 'because a board that read every tracker has nothing to warn about').toBeNull();
 });

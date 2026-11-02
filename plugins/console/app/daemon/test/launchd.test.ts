@@ -20,6 +20,7 @@ function fakeLaunchd(answers: Record<string, CommandOutcome | CommandOutcome[]>,
   const calls: string[] = [];
   const lines: string[] = [];
   const privateFolders: string[] = [];
+  const modes = new Map<string, number>();
   const answer = (verb: string): CommandOutcome => {
     const given = answers[verb];
     if (Array.isArray(given)) return given.length > 1 ? given.shift()! : given[0] ?? OK;
@@ -27,14 +28,14 @@ function fakeLaunchd(answers: Record<string, CommandOutcome | CommandOutcome[]>,
   };
   const deps: LaunchdDependencies = {
     launchctl: async (args) => { calls.push(args.join(' ')); return answer(args[0] ?? ''); },
-    files: { write: (file, text) => { files.set(file, text); }, remove: (file) => { files.delete(file); }, exists: (file) => files.has(file), read: (file) => files.get(file) ?? '', mkdir: () => {}, privateFolder: (folder) => { privateFolders.push(folder); } },
+    files: { write: (file, text, mode) => { files.set(file, text); if (mode !== undefined) modes.set(file, mode); }, remove: (file) => { files.delete(file); }, exists: (file) => files.has(file), read: (file) => files.get(file) ?? '', mkdir: () => {}, privateFolder: (folder) => { privateFolders.push(folder); } },
     portHolder: async () => holder,
     waitForPort: async () => portAnswers, print: (line) => lines.push(line),
     env: { PATH: '/usr/bin:/bin', HOME: '/Users/o', BRAIN_CONSOLE_TOKEN: 'tok', SECRET: 'nope', FLOW_PLUGIN: '/work/brain/plugins/flow' },
     uid: 501, home: '/Users/o', node: '/opt/node/bin/node', daemon: '/work/brain/app/daemon/src/main.ts',
     configPaths: { configFile: path.join(state, 'config.json'), legacyProjectsFile: path.join(state, 'projects.json') },
   };
-  return { deps, files, calls, lines, state, privateFolders, cleanup: () => rmSync(state, { recursive: true, force: true }) };
+  return { deps, files, modes, calls, lines, state, privateFolders, cleanup: () => rmSync(state, { recursive: true, force: true }) };
 }
 
 const PLIST = plistPath('/Users/o');
@@ -129,6 +130,23 @@ test('Install_Plist_KeepsItsFilesPrivate', async () => {
     await install(['--project', FIXTURE_ROOT, '--state-dir', state], deps);
     assert.ok((files.get(PLIST) ?? '').includes('<key>Umask</key>\n  <integer>63</integer>'), 'because the log launchd writes must not be readable by other accounts');
     assert.deepEqual(privateFolders, [state], 'because the state dir holds the token and the log, closed to 0700');
+  } finally { cleanup(); }
+});
+
+test('Install_JiraTokenInTheEnvironment_KeptInThePlistForTheFlowScripts', async () => {
+  const { deps, files, state, cleanup } = fakeLaunchd(fresh());
+  try {
+    deps.env = { ...deps.env, JIRA_API_TOKEN: 'jira-secret' };
+    await install(['--project', FIXTURE_ROOT, '--state-dir', state], deps);
+    assert.ok((files.get(PLIST) ?? '').includes('<key>JIRA_API_TOKEN</key>\n    <string>jira-secret</string>'), 'because the Jira adapter reads its token from the environment only, and the daemon under launchd has no other');
+  } finally { cleanup(); }
+});
+
+test('Install_Plist_ReadableByItsOwnerAlone', async () => {
+  const { deps, modes, state, cleanup } = fakeLaunchd(fresh());
+  try {
+    await install(['--project', FIXTURE_ROOT, '--state-dir', state], deps);
+    assert.equal(modes.get(PLIST), 0o600, 'because the plist may carry the Jira API token');
   } finally { cleanup(); }
 });
 

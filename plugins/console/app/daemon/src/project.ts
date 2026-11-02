@@ -33,8 +33,6 @@ export type Cadence = { filesMs: number; gitMs: number; processesMs: number; job
 export const DEFAULT_CADENCE: Cadence = { filesMs: 30000, gitMs: 30000, processesMs: 10000, jobsMs: 60000, boardMs: 120000, pullsMs: 60000 };
 
 const WATCH_DEBOUNCE_MS = 500;
-/** Pull requests are read from GitHub; a project on another tracker has none to show. */
-const PULLS_ADAPTER = 'github';
 /** Folders under the flow home whose churn never changes the snapshot. */
 const UNWATCHED_FOLDERS = ['log', 'tmp', 'reports', 'reviews', 'health'];
 /** The one kind of file in an unwatched folder that does: a host flow stopped (`log/<host>.stopped`), shown at once. */
@@ -139,7 +137,7 @@ export class ProjectMonitor {
   actionContext(): ActionContext {
     const flow = this.facts.files.facts;
     return {
-      root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, pluginVersion: flow?.pluginVersion ?? null, pluginScripts: flow?.pluginScripts ?? null, repo: flow?.config.repo ?? null,
+      root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, pluginVersion: flow?.pluginVersion ?? null, pluginScripts: flow?.pluginScripts ?? null, adapterPrefixes: flow?.adapterPrefixes ?? [], repo: flow?.config.repo ?? null,
       jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
       outsideWorktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role !== 'pool').map((worktree) => worktree.path),
       // The snapshot's agents, not the raw process list: only processes in this project's worktrees.
@@ -307,11 +305,12 @@ export class ProjectMonitor {
         this.facts.jobs.facts = await readJobs(root, flow.pluginRoot, this.runner); return null;
       case 'board':
         if (flow?.pluginRoot == null) throw new Error('no flow plugin found for the project');
-        this.facts.board.facts = await readBoard(root, flow.pluginRoot, this.runner); return null;
+        this.facts.board.facts = await readBoard(root, flow.pluginRoot, this.runner, flow.config.trackers); return null;
+      // The flow keeps every item's PR on GitHub, whatever tracker holds the item (comments.sh,
+      // the sweep in steward.sh), so the pulls are read wherever github.repo names the repository.
       case 'pulls':
         if (flow === null) throw new Error('the flow files are not read yet');
         this.facts.pulls.facts = null;
-        if (!flow.config.trackers.includes(PULLS_ADAPTER)) return `not applicable: trackers ${flow.config.trackers.join(', ')}`;
         if (flow.config.repo === null) return 'not applicable: no github.repo in .flow/config.yaml';
         this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return null;
     }

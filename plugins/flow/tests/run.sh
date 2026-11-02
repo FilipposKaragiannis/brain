@@ -11,6 +11,9 @@ trap 'rm -rf "$work"' EXIT
 # FLOW_SLACK_WEBHOOK, so it is cleared, and these tools are stubs that log to $work/offline.log.
 # A test that needs one of them puts its own fake earlier in PATH.
 unset FLOW_SLACK_WEBHOOK
+# init writes the Codex rules and agents to ~/.codex when a repo has no .codex folder, so no test
+# runs with the owner's home.
+mkdir -p "$work/home" && HOME="$work/home" && export HOME && unset CODEX_HOME
 mkdir -p "$work/offline"
 for tool in curl wget gh osascript notify-send claude codex launchctl; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
@@ -497,6 +500,32 @@ check "jira: so an epic with an open child the filter left out is not ready" sh 
 jira_config http://acme.atlassian.net
 site_err="$(jira_run "$P/adapters/jira/list.sh" 2>&1 >/dev/null)"; code=$?
 check_all "jira: a jira.site that is not https is refused" '[ "$code" -ne 0 ] && printf "%s" "$site_err" | grep -q "jira.site in .flow/config.yaml must be"'
+# jira_area_config [jira lines]: an area field and the given lines (answer_from) under jira.
+jira_area_config() { printf 'adapters:\n  default: jira\nbase: main\nnotify:\n  desktop: false\njira:\n  site: https://acme.atlassian.net\n  project: WID\n  email: flow@acme.test\n  fields:\n    area: Area\n%s' "${1:-}" > .flow/config.yaml; }
+# jira_comment_as <id> <email> <text>: a comment written by that user straight into the fake's store.
+jira_comment_as() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); c=d["issues"][sys.argv[2]]["comments"]
+c.append({"id": str(len(c) + 1), "author": {"accountId": "acct-" + sys.argv[3].split("@")[0], "emailAddress": sys.argv[3]},
+  "body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": sys.argv[4]}]}]}})
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${1#jira:}" "$2" "$3"; }
+jira_area_config
+check_all "jira vocabulary: the project's issue types without sub-tasks, and the options of the area field" '[ "$(jira_run "$P/adapters/jira/vocabulary.sh")" = "{\"types\": [\"Epic\", \"Task\", \"Bug\", \"Story\", \"Feature\"], \"areas\": [\"Bots\", \"Debugging\"]}" ]'
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["createmeta_page"]=1; json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
+check_all "jira vocabulary: the area field on a later page of the create metadata is still found" '[ "$(jira_run "$P/adapters/jira/vocabulary.sh" | jget areas)" = "[\"Bots\", \"Debugging\"]" ]'
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d.pop("createmeta_page"); json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
+jira_gated="$(jira_run "$P/adapters/jira/create.sh" task "Gated")"
+jira_comment_as "$jira_gated" flow@acme.test "/answer before the gate"
+jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "1. Which way?" >/dev/null 2>&1
+jira_comment_as "$jira_gated" stranger@acme.test "/answer the stranger's way"
+jira_comment_as "$jira_gated" flow@acme.test "thinking about it"
+jira_comment_as "$jira_gated" flow@acme.test "/answer the owner's way"
+check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ]'
+check_all "jira answers: the owner's words, not a stranger's or an earlier one, become the answer" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "the owner'"'"'s way" ]'
+check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh")" ]'
+jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "2. And now?" >/dev/null 2>&1
+jira_comment_as "$jira_gated" stranger@acme.test "/answer"
+jira_area_config '  answer_from: [stranger@acme.test]
+'
+check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
 cp "$work/config.gh" .flow/config.yaml
 
 echo "github blips (fake gh)"
@@ -658,6 +687,12 @@ check "notify: Slack says how to answer" sh -c "printf '%s' '$(slack_blocks)' | 
 slack_long() { python3 -I "$P/scripts/_slack.py" t '' '' '' '' 'The branch flow/gh-310 is behind at 3a677d23 and OptionUtility still prices the giveaway under the floor for every weight. The test step cannot change production code; see gh#320.'; }
 check "slack: a long line breaks into one bullet per sentence" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; bullets=json.load(sys.stdin)[\"blocks\"][1][\"elements\"][0][\"elements\"]; assert len(bullets)==2, bullets'"
 check "slack: ids, commits, paths and code names read as code" sh -c "printf '%s' '$(slack_long)' | python3 -c 'import json,sys; d=json.load(sys.stdin); code=[e[\"text\"] for l in d[\"blocks\"][1][\"elements\"] for s in l[\"elements\"] for e in s[\"elements\"] if e.get(\"style\",{}).get(\"code\")]; assert code==[\"flow/gh-310\",\"3a677d23\",\"OptionUtility\",\"gh#320\"], code'"
+slack_codes() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(e["text"] for l in d["blocks"][1]["elements"] for e in l.get("elements", []) if e.get("style",{}).get("code")))'; }
+check_all "slack: a Jira id reads as code, the full stop after it left out" '[ "$(python3 -I "$P/scripts/_slack.py" t "" "" "" "" "Blocked by jira:WID-7." | slack_codes)" = "jira:WID-7" ]'
+check_all "slack: a gate on a Jira item says to answer on the issue, as its adapter reads /answer" 'python3 -I "$P/scripts/_slack.py" t "jira:WID-7 x" https://acme.atlassian.net/browse/WID-7 ambiguity jira:WID-7 m | grep -q "Answer on the issue"'
+check_all "slack: a gate on a local item says to answer in a session, as its adapter has no answers" 'python3 -I "$P/scripts/_slack.py" t "local:task/3 x" https://example.test/3 ambiguity local:task/3 m | grep -q "Answer in a session"'
+mkdir -p "$work/slackplugin/scripts" "$work/slackplugin/adapters/linear" && cp "$P/scripts/_slack.py" "$work/slackplugin/scripts/" && printf 'lin:\n' > "$work/slackplugin/adapters/linear/prefix"
+check_all "slack: an id reads as code by the prefix file of any adapter folder, not a fixed list" '[ "$(python3 -I "$work/slackplugin/scripts/_slack.py" t "" "" "" "" "See lin:ENG-4 and gh#5" | slack_codes)" = "lin:ENG-4" ]'
 check "slack: a link that is not https stays out of the fallback" sh -c "python3 -I '$P/scripts/_slack.py' t 'gh#1 x' 'javascript:x|<!channel>' ambiguity 'gh#1' m | python3 -c 'import json,sys; t=json.load(sys.stdin)[\"text\"]; assert \"javascript\" not in t and \"<!channel>\" not in t, t'"
 echo "trackers and readiness on every tracker (fake gh)"
 mkdir -p "$work/trackers" && cd "$work/trackers" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -670,6 +705,15 @@ tracked_config 'trackers: [github, local]' 'ready:
   priority_order: [P0, P1, P2, P3]'
 tq0="$("$P/adapters/local/create.sh" task "No priority" --size S)"
 check "trackers: the board reads GitHub when trackers names it, beside a local default" sh -c "'$P/scripts/board.sh' --json | python3 -c 'import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)[\"items\"]]; assert \"gh#32\" in ids and \"$tq0\" in ids, ids'"
+check_all "trackers: a board whose trackers all read has no tracker errors" '[ "$("$P/scripts/board.sh" --json | jget tracker_errors)" = "[]" ]'
+tracked_config 'trackers: [github, local, jira]' ''
+env -u JIRA_API_TOKEN "$P/scripts/board.sh" --json > "$work/board-jira.json" 2>/dev/null
+check_all "trackers: a tracker whose list fails is named in tracker_errors with its reason" '[ "$(jget tracker_errors.0.tracker < "$work/board-jira.json")" = jira ] && jget tracker_errors.0.message < "$work/board-jira.json" | grep -q "JIRA_API_TOKEN is not set"'
+check_all "trackers: a failing tracker leaves the items of the others on the board" 'jget items < "$work/board-jira.json" | grep -q "\"gh#32\""'
+check_all "trackers: the text board lists a tracker it could not read" 'env -u JIRA_API_TOKEN "$P/scripts/board.sh" 2>/dev/null | grep -q "^- jira (exit 1): flow: JIRA_API_TOKEN is not set"'
+tracked_config 'trackers: [github, local]' 'ready:
+  needs: [priority, size]
+  priority_order: [P0, P1, P2, P3]'
 picked="$("$P/scripts/next.sh" --json 2>/dev/null)"
 check "trackers: next picks the most urgent ready item from every named tracker" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
 rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
@@ -2095,7 +2139,8 @@ cd "$repo"
 plugin_copy="$work/plugin"; cp -R "$P" "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
 mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
-check "init: a fresh install writes the stamp" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '^source	' .flow/stamp && grep -q '	.codex/rules/flow.rules' .flow/stamp && ! grep -q 'notify.sh' .flow/stamp"
+codex_rules="$HOME/.codex/rules/flow.rules"   # this repo has no .codex folder, so the user's
+check "init: a fresh install writes the stamp" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '^source	' .flow/stamp && grep -qF '	$codex_rules' .flow/stamp && ! grep -q 'notify.sh' .flow/stamp"
 check "init: --check is clean after install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 check "init: the fresh config has an empty model and effort pair per host, and no old jobs.model" sh -c "for k in claude.model claude.effort codex.model codex.effort; do grep -q \"^  \${k%%.*}:\" .flow/config.yaml || exit 1; [ -z \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.\$k)\" ] || exit 1; done; ! grep -q '^  model:' .flow/config.yaml && grep -q 'Empty means the host.s own default' .flow/config.yaml"
 cp .flow/config.yaml "$work/fresh.config"
@@ -2109,13 +2154,13 @@ check "init: --check says once that jobs.model and jobs.effort are deprecated" [
 sed -i.bak 's/^  host: vim$/  host: codex/; s/^  effort: high$/  effort: max/' .flow/config.yaml && rm -f .flow/config.yaml.bak
 check "init: --check flags an effort the jobs host does not take" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .flow/config.yaml:[0-9]*: jobs.effort is max; codex takes low, medium, high or xhigh'"
 cp "$work/fresh.config" .flow/config.yaml
-check "init: installs the health job wrapper, its default schedule and its state folder in the gitignore" sh -c "[ -x .flow/jobs/health.sh ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.schedule.health)\" = 'every 15m' ] && grep -q '^.flow/health/' .gitignore && grep -q 'health: true' .flow/config.yaml"
-mkdir -p .flow/answers.lock && echo $$ > .flow/answers.lock/pid
-check "init: the gitignore block covers the lock directories, so answers.lock is not untracked" sh -c "grep -qxF '.flow/*.lock/' .gitignore && [ -z \"\$(git status --porcelain --untracked-files=all -- .flow/answers.lock)\" ]"
-rm -rf .flow/answers.lock
-sed -i.bak '/^\.flow\/\*\.lock\/$/d' .gitignore && rm -f .gitignore.bak
-check "init: --check names a flow block that lacks the lock directories" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'drift: .gitignore: the flow block lacks .flow/\*.lock/'"
-check "init: a refresh adds the lock line back" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -qxF '.flow/*.lock/' .gitignore && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+check "init: installs the health job wrapper and its default schedule" sh -c "[ -x .flow/jobs/health.sh ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml jobs.schedule.health)\" = 'every 15m' ] && grep -q 'health: true' .flow/config.yaml"
+mkdir -p .flow/answers.lock .flow/health && echo $$ > .flow/answers.lock/pid && echo '{}' > .flow/health/last.json
+check "init: the exclude block covers the state folders and the lock directories, so git sees none of them" sh -c "[ -z \"\$(git status --porcelain --untracked-files=all)\" ] && [ ! -e .gitignore ]"
+rm -rf .flow/answers.lock .flow/health
+sed -i.bak '/^\.flow\/$/d' .git/info/exclude && rm -f .git/info/exclude.bak
+check "init: --check reads the block from .git/info/exclude and names one that lacks .flow/" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'drift: .*/.git/info/exclude: the flow block lacks .flow/'"
+check "init: a refresh puts .flow/ back in the exclude block" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -qxF '.flow/' .git/info/exclude && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 check "init: the fresh config asks codex and claude for reviews" [ "$(FLOW_PLUGIN="$plugin_copy" "$plugin_copy/scripts/comments.sh" reviewers | tr '\n' ' ')" = "codex claude " ]
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 printf '# mine\n' >> .flow/notify.sh
@@ -2136,12 +2181,12 @@ check "plugin.sh: no installed plugin exits 2" [ "$code" -eq 2 ]
 before="$(head -1 .flow/stamp)"
 sed -i.bak 's/"version": "[^"]*"/"version": "9.9.9"/' "$plugin_copy/.claude-plugin/plugin.json" && rm -f "$plugin_copy/.claude-plugin/plugin.json.bak"
 check "a version bump alone: the stamp source holds and session-start is silent" sh -c "[ \"\$(FLOW_PLUGIN='$plugin_copy' '$init' --source-hash)\" = \"\$(printf '%s' '$before' | cut -f2)\" ] && [ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
-printf '# mine\n' >> .codex/rules/flow.rules
-check "init: --check names a hand edit" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'edited by hand: .codex/rules/flow.rules'"
-check "init: refuses to replace a hand edit (exit 1, file kept)" sh -c "! FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '# mine' .codex/rules/flow.rules"
-check "init: --force replaces it" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --force >/dev/null && ! grep -q '# mine' .codex/rules/flow.rules && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+printf '# mine\n' >> "$codex_rules"
+check "init: --check names a hand edit" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -qF 'edited by hand: $codex_rules'"
+check "init: refuses to replace a hand edit (exit 1, file kept)" sh -c "! FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && grep -q '# mine' '$codex_rules'"
+check "init: --force replaces it" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --force >/dev/null && ! grep -q '# mine' '$codex_rules' && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 printf '\n# changed\n' >> "$plugin_copy/templates/flow.rules"
-check "session-start: nudges when the plugin changed" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'behind flow v' && echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'drift: .codex/rules/flow.rules'"
+check "session-start: nudges when the plugin changed" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'behind flow v' && echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -qF 'drift: $codex_rules'"
 check "init: refresh brings the stamp back in step" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' >/dev/null && [ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 mkdir -p .claude && printf '{}\n' > .claude/settings.json
 check "init: --check exits 0 when missing Claude worktree hooks are its only finding" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check"
@@ -2164,7 +2209,7 @@ mkdir -p "$work/bigpool" && cd "$work/bigpool" && git init -q -b main app && cd 
 for n in 1 2 3 4 5; do git worktree add -q "../app-wt-$n" -b "wt$n" >/dev/null 2>&1; done
 out="$(FLOW_PLUGIN="$plugin_copy" "$init" 2>&1)"
 check "init: more worktrees than three raise pool_max to match" sh -c "grep -qx 'pool_max: 5' .flow/config.yaml && [ \"\$(grep -c '^  - ../app-wt-' .flow/config.yaml)\" = 5 ]"
-check "init: says every listed worktree becomes a task slot" sh -c "printf '%s' '$out' | grep -q '5 worktrees already exist'"
+check "init: says every listed worktree becomes a task slot" sh -c 'printf "%s" "$1" | grep -q "5 worktrees already exist"' _ "$out"
 mkdir -p "$work/fakebin" && printf '#!/bin/sh\necho "$@" >> "%s/curl.log"\n' "$work" > "$work/fakebin/curl" && chmod +x "$work/fakebin/curl"
 printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop: false\n  slack_webhook: https://config.example/hook\n' > .flow/config.yaml
 : > "$work/curl.log"
@@ -2178,13 +2223,95 @@ printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nnotify:\n  desktop
 PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/notify.sh" merge local:task/1 "ready" >/dev/null 2>&1
 check "notify: the variable alone is enough, with no URL in the config" sh -c "grep -q 'env.example/hook' '$work/curl.log'"
 
+echo "init: nothing of flow is tracked"
+# hook_command <WorktreeCreate|WorktreeRemove> <init output file>: the command of that hook in the
+# settings entry init printed, decoded from its JSON string.
+hook_command() {
+  sed -n "s/.*\"$1\": \[ { \"hooks\": \[ { \"type\": \"command\", \"command\": \(\".*\"\) } \] } \].*/\1/p" "$2" | python3 -c 'import json,sys; sys.stdout.write(json.loads(sys.stdin.read()))'
+}
+mkdir -p "$work/notrace" && cd "$work/notrace" && git init -q -b main origin-src && (cd origin-src && git config user.email t@t && git config user.name t && printf 'hi\n' > README.md && git add -A && git commit -qm init)
+git clone -q origin-src app 2>/dev/null && cd app && git config user.email t@t && git config user.name t
+ntmain="$PWD"
+FLOW_PLUGIN="$plugin_copy" "$init" > "$work/notrace.out" 2>&1
+check "Init_FreshClone_GitStatusCleanAndNothingTracked" sh -c "[ -f .flow/config.yaml ] && [ -z \"\$(git status --porcelain --untracked-files=all)\" ] && [ -z \"\$(git ls-files .flow)\" ]"
+check "Init_FreshClone_TheExcludeBlockCoversAllOfFlow" sh -c "awk '/^# flow:begin/{on=1; next} /^# flow:end/{on=0} on' .git/info/exclude | grep -qxF '.flow/' && [ ! -e .gitignore ]"
+check "Init_Next_NoLongerSaysToCommitFlow" sh -c "! grep -q 'commit .flow' '$work/notrace.out' && grep -q 'nothing under .flow/ is committed' '$work/notrace.out'"
+check "Init_RepoWithoutCodex_CodexFilesInTheUserHomeAndSaidSo" sh -c "[ -f '$HOME/.codex/rules/flow.rules' ] && [ -f '$HOME/.codex/agents/explorer.toml' ] && [ ! -e .codex ] && grep -qF 'Codex rules and agents: $HOME/.codex (the repository has no .codex folder)' '$work/notrace.out'"
+# The settings entry init printed, run as Claude runs it, in a clone with flow and in one without.
+hook_command WorktreeCreate "$work/notrace.out" > "$work/hook-create.sh"
+hook_command WorktreeRemove "$work/notrace.out" > "$work/hook-remove.sh"
+printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 1\nworktree_copy:\n  - local.env\nworktree_setup:\n  - printf ran > setup.txt\nnotify:\n  desktop: false\n' > .flow/config.yaml
+printf 'secret\n' > local.env && printf 'local.env\n' >> .git/info/exclude
+ntpath="$(printf '{"name":"bold-oak","cwd":"%s"}' "$ntmain" | CLAUDE_PROJECT_DIR="$ntmain" FLOW_PLUGIN="$plugin_copy" sh "$work/hook-create.sh" 2>/dev/null | tail -n 1)"
+check "WorktreeCreateHook_FlowInstalled_ClaimsAGrownPoolWorktree" sh -c "[ '$ntpath' = \"\$(cd ../app-wt-1 2>/dev/null && pwd -P)\" ] && grep -q 'adhoc:bold-oak' '$ntpath/.flow/claim.json'"
+check "LinkedWorktree_FlowHome_ResolvesToTheMainWorktree" sh -c "cd '$ntpath' && [ \"\$(. '$plugin_copy/lib/flow.sh'; flow_home)\" = \"\$(cd '$ntmain' && pwd -P)/.flow\" ] && [ ! -e .flow/config.yaml ]"
+check "LinkedWorktree_ClaimFile_IgnoredByTheSharedExclude" sh -c "[ -f '$ntpath/.flow/claim.json' ] && git -C '$ntpath' check-ignore -q .flow/claim.json && [ -z \"\$(git -C '$ntpath' status --porcelain --untracked-files=all -- .flow)\" ]"
+check "LinkedWorktree_Grown_WorktreeCopyAndWorktreeSetupRan" sh -c "[ \"\$(cat '$ntpath/local.env')\" = secret ] && [ \"\$(cat '$ntpath/setup.txt')\" = ran ]"
+check "SessionStart_LinkedWorktree_ReadsTheMainWorktreesStamp" sh -c "cd '$ntpath' && [ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+git clone -q "$work/notrace/origin-src" "$work/notrace/teammate" 2>/dev/null
+tmate="$work/notrace/teammate"
+printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-create.sh" > "$work/hook-create.out" 2> "$work/hook-create.err"; code=$?
+check "WorktreeCreateHook_NoFlowInTheClone_MakesClaudesOwnWorktreeAndPrintsOnlyItsPath" sh -c "[ $code = 0 ] && [ \"\$(cat '$work/hook-create.out')\" = '$tmate/.claude/worktrees/calm-fern' ] && [ \"\$(git -C '$tmate/.claude/worktrees/calm-fern' symbolic-ref --short HEAD)\" = worktree-calm-fern ]"
+printf '{"worktree_path":"%s/.claude/worktrees/calm-fern","cwd":"%s"}' "$tmate" "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" > "$work/hook-remove.out" 2>&1; code=$?
+check "WorktreeRemoveHook_NoFlowInTheClone_RemovesItQuietly" sh -c "[ $code = 0 ] && [ ! -s '$work/hook-remove.out' ] && [ ! -e '$tmate/.claude/worktrees/calm-fern' ]"
+check "WorktreeRemoveHook_UnchangedBranch_DeletedWithTheWorktree" sh -c "[ -z \"\$(git -C '$tmate' branch --list worktree-calm-fern)\" ]"
+printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-create.sh" > "$work/hook-create.out" 2>&1; code=$?
+check "WorktreeCreateHook_NameOpenedAgainAfterARemove_CreatedAgain" sh -c "[ $code = 0 ] && [ \"\$(cat '$work/hook-create.out')\" = '$tmate/.claude/worktrees/calm-fern' ] && [ -d '$tmate/.claude/worktrees/calm-fern' ]"
+git -C "$tmate/.claude/worktrees/calm-fern" -c user.email=t@t -c user.name=t commit -q --allow-empty -m 'work on calm-fern'
+printf '{"worktree_path":"%s/.claude/worktrees/calm-fern"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" >/dev/null 2>&1
+check "WorktreeRemoveHook_BranchWithCommits_KeptAfterTheRemove" sh -c "[ -n \"\$(git -C '$tmate' branch --list worktree-calm-fern)\" ] && [ ! -e '$tmate/.claude/worktrees/calm-fern' ]"
+printf '{"name":"calm-fern","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-create.sh" > "$work/hook-create.out" 2>&1; code=$?
+check "WorktreeCreateHook_BranchLeftByARemove_ReusedWithItsCommits" sh -c "[ $code = 0 ] && [ \"\$(git -C '$tmate/.claude/worktrees/calm-fern' log -1 --format=%s)\" = 'work on calm-fern' ]"
+printf '{"worktree_path":"","cwd":"%s"}' "$tmate" | CLAUDE_PROJECT_DIR="$tmate" sh "$work/hook-remove.sh" > "$work/hook-remove.out" 2>&1; code=$?
+check "WorktreeRemoveHook_NoFlowAndNoPath_ExitsZeroWithNoOutput" sh -c "[ $code = 0 ] && [ ! -s '$work/hook-remove.out' ]"
+mkdir -p .claude && printf '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-create.sh"}]}],"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh"}]}]}}\n' > .claude/settings.json
+check "InitCheck_HookEntryWithoutTheFallBack_NamedAsANote" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'note: the worktree hooks in .claude/settings.json call .flow/hooks alone'"
+rm -rf .claude
+
+echo "init: Codex in the repository or the user home"
+mkdir -p "$work/codexrepo" && cd "$work/codexrepo" && git init -q -b main && git config user.email t@t && git config user.name t && mkdir .codex && printf '[plugins]\n' > .codex/config.toml && git add -A && git commit -qm init
+FLOW_PLUGIN="$plugin_copy" "$init" > "$work/codexrepo.out" 2>&1
+check "Init_RepoWithCodex_CodexFilesInTheRepoAndSaidSo" sh -c "[ -f .codex/rules/flow.rules ] && [ -f .codex/agents/explorer.toml ] && grep -qF 'Codex rules and agents: .codex (the repository has a .codex folder)' '$work/codexrepo.out' && grep -q 'commit .codex/' '$work/codexrepo.out'"
+mkdir -p "$work/codexuser" && cd "$work/codexuser" && git init -q -b main && git config user.email t@t && git config user.name t && mkdir .codex && printf '[plugins]\n' > .codex/config.toml && git add -A && git commit -qm init
+CODEX_HOME="$work/codex-home" FLOW_PLUGIN="$plugin_copy" "$init" --user-codex > "$work/codexuser.out" 2>&1
+check "Init_UserCodex_CodexFilesInCodexHomeAndTheRepoUntouched" sh -c "[ -f '$work/codex-home/rules/flow.rules' ] && [ ! -e .codex/rules ] && grep -qF 'Codex rules and agents: $work/codex-home (--user-codex)' '$work/codexuser.out' && [ -z \"\$(git status --porcelain --untracked-files=all)\" ]"
+check "InitCheck_AfterUserCodex_KeepsTheUserHomeWithoutTheFlag" sh -c "CODEX_HOME='$work/codex-home' FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+# Two repositories that share one Codex home, which has a space in its name.
+shared="$work/shared codex"
+mkdir -p "$work/share-a" "$work/share-b" && for r in share-a share-b; do (cd "$work/$r" && git init -q -b main && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init); done
+cd "$work/share-a" && CODEX_HOME="$shared" FLOW_PLUGIN="$plugin_copy" "$init" >/dev/null 2>&1
+check "Init_CodexHomeWithASpace_StampHoldsTheWholePath" sh -c "grep -qF '	$shared/agents/explorer.toml' .flow/stamp && grep -qF '	$shared/agents/explorer.toml' '$shared/.flow-stamp'"
+printf '# mine\n' >> "$shared/agents/explorer.toml"
+check "InitCheck_CodexHomeWithASpace_NamesAHandEdit" sh -c "CODEX_HOME='$shared' FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -qF 'edited by hand: $shared/agents/explorer.toml'"
+cd "$work/share-b" && CODEX_HOME="$shared" FLOW_PLUGIN="$plugin_copy" "$init" > "$work/share-b.out" 2>&1; code=$?
+check "Init_SecondRepoOnASharedCodexHome_RefusesAHandEditAndSaysSo" sh -c "[ $code = 1 ] && grep -q '# mine' '$shared/agents/explorer.toml' && grep -qF 'refused: $shared/agents/explorer.toml was edited by hand' '$work/share-b.out'"
+check "Init_SecondRepoOnASharedCodexHome_ForceReplacesTheEdit" sh -c "CODEX_HOME='$shared' FLOW_PLUGIN='$plugin_copy' '$init' --force >/dev/null 2>&1 && ! grep -q '# mine' '$shared/agents/explorer.toml' && cd '$work/share-a' && CODEX_HOME='$shared' FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
+mkdir -p "$work/foreign codex/agents" && printf 'mine\n' > "$work/foreign codex/agents/planner.toml"
+cd "$work/share-b" && CODEX_HOME="$work/foreign codex" FLOW_PLUGIN="$plugin_copy" "$init" --user-codex > "$work/foreign.out" 2>&1; code=$?
+check "Init_UserCodexFileFlowNeverWrote_RefusedAndKept" sh -c "[ $code = 1 ] && [ \"\$(cat '$work/foreign codex/agents/planner.toml')\" = mine ] && grep -q 'does not record flow writing it' '$work/foreign.out'"
+
+echo "init: a repo that committed flow before"
+mkdir -p "$work/migrate" && cd "$work/migrate" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir .flow && printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 1\n' > .flow/config.yaml && printf 'source\tx\n' > .flow/stamp
+printf 'node_modules/\n# flow:begin (written by flow:init; state that stays on this machine)\n.flow/items/\n.flow/*.lock/\n.flow/claim.json\n# flow:end\n' > .gitignore
+git add -A && git commit -qm init
+FLOW_PLUGIN="$plugin_copy" "$init" > "$work/migrate.out" 2>&1
+check "Init_GitignoreBlockInitWrote_RemovedAndTheOwnersLinesKept" sh -c "[ \"\$(cat .gitignore)\" = node_modules/ ] && grep -qxF '.flow/' .git/info/exclude"
+check "Init_FlowTrackedBefore_PrintsTheGitRmCachedCommand" sh -c "grep -qF 'git rm -r --cached --quiet -- .flow' '$work/migrate.out' && grep -q 'git still tracks 2 files under .flow/' '$work/migrate.out'"
+check "Init_FlowTrackedBefore_NeverRunsTheGitRm" [ "$(git ls-files .flow | wc -l | tr -d ' ')" = 2 ]
+git rm -r -q --cached -- .flow && git commit -qam untrack
+check "Init_AfterTheOwnersGitRm_StatusClean" sh -c "[ -z \"\$(git status --porcelain --untracked-files=all)\" ] && [ -f .flow/config.yaml ]"
+printf '# flow:begin (written by flow:init; state that stays on this machine)\n.flow/items/\n.flow/mine.txt\n# flow:end\n' > .gitignore
+FLOW_PLUGIN="$plugin_copy" "$init" > "$work/migrate.out" 2>&1
+check "Init_GitignoreBlockEditedByHand_LeftAndReported" sh -c "grep -qxF '.flow/mine.txt' .gitignore && grep -q 'edited by hand (it also lists .flow/mine.txt)' '$work/migrate.out'"
+
 echo "init: from a linked worktree, and the pool it proposes"
 mkdir -p "$work/linked" && cd "$work/linked" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach .claude/worktrees/bold-oak && git worktree add -q --detach "$work/outside-wt"
 lmain="$PWD"; cd ../app-wt-1
 out="$(FLOW_PLUGIN="$plugin_copy" "$init" 2>&1)"
 check "init: from a linked worktree it writes the main worktree's config" sh -c "[ -f '$lmain/.flow/config.yaml' ] && [ ! -e .flow/config.yaml ]"
-check "init: from a linked worktree it says it works on the main worktree's flow home" sh -c "printf '%s' '$out' | grep -q 'linked worktree; init works on the flow home in the main worktree'"
+check "init: from a linked worktree it says it works on the main worktree's flow home" sh -c 'printf "%s" "$1" | grep -q "linked worktree; init works on the flow home in the main worktree"' _ "$out"
 check "init: --check from a linked worktree reads the main worktree's config" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 check "init: the pool proposal keeps a worktree beside the main one" sh -c "[ \"\$(. '$P/lib/flow.sh'; yaml_get '$lmain/.flow/config.yaml' pool)\" = ../app-wt-1 ]"
 check "init: the pool proposal skips Claude's session worktrees" sh -c "! grep -q 'bold-oak' '$lmain/.flow/config.yaml'"

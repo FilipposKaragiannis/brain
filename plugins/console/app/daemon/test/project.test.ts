@@ -20,7 +20,19 @@ test('LocalAdapter_PullsFreshness_OkAndNotApplicable', async () => {
   const monitor = localMonitor(silentLogger);
   await monitor.refresh('files');
   await monitor.refresh('pulls');
-  assert.deepEqual([monitor.snapshot?.sources.pulls.ok, monitor.snapshot?.sources.pulls.error], [true, 'not applicable: trackers local'], 'because a project off GitHub has no pull requests to read, which is not a failure');
+  assert.deepEqual([monitor.snapshot?.sources.pulls.ok, monitor.snapshot?.sources.pulls.error], [true, 'not applicable: no github.repo in .flow/config.yaml'], 'because a project that names no repository has no pull requests to read, which is not a failure');
+});
+
+test('JiraTrackerWithGithubRepo_Pulls_ReadFromTheRepository', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-jira-pulls-'));
+  try {
+    cpSync(LOCAL_ROOT, dir, { recursive: true });
+    writeFileSync(path.join(dir, '.flow', 'config.yaml'), 'adapters:\n  default: jira\ntrackers: [jira]\ngithub:\n  repo: example/fixture\njira:\n  site: https://acme.atlassian.net\n  project: WID\nbase: main\n');
+    const monitor = new ProjectMonitor({ project: { id: 'jira', name: 'jira', root: dir }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+    await monitor.refresh('files');
+    await monitor.refresh('pulls');
+    assert.deepEqual([monitor.snapshot?.sources.pulls.ok, monitor.snapshot?.sources.pulls.error], [true, null], 'because the PRs of Jira items are on GitHub, so github.repo is read whatever tracker holds the items');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('TrackersReadGithubBesideALocalDefault_Pulls_GoOnToTheRepository', async () => {

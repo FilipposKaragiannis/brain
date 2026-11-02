@@ -4,7 +4,8 @@ import type { CommandRequest, CommandResult, CommandRunner } from '../src/collec
 
 export const FIXTURES = path.resolve(import.meta.dirname, 'fixtures');
 export const FIXTURE_ROOT = path.join(FIXTURES, 'project');
-export const FAKE_PLUGIN = '/fake/plugins/flow/9.9.9';
+/** The flow plugin plugin.sh resolves in the fake: a folder with only the adapters' prefix files. */
+export const FAKE_PLUGIN = path.join(FIXTURES, 'plugins', 'flow', '9.9.9');
 
 const ok = (stdout: string): CommandResult => ({ code: 0, stdout, stderr: '', timedOut: false });
 
