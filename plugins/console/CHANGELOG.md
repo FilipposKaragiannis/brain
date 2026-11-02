@@ -1,5 +1,41 @@
 # console
 
+## 0.15.0 (2026-11-02)
+
+- The daemon's action tests wait for the event they need, not a fixed 10 ms: an action's end as
+  the runner announces it, the monitor reads the runner asked for, and the config writer being
+  called. Under load the hand-off's second jobs read and the sync hand-off's failed note no longer
+  fail the suite.
+- Tests prove that adding a project and watching it work when its `.flow/` is excluded in
+  `.git/info/exclude` and untracked, as `flow:init` now leaves it: the console reads the flow home
+  and the claims from the disk, and the worktrees count no dirty files for them. No code changed.
+- The console routes an item id by the flow plugin's adapter prefix files, so `jira:WID-7` (and an
+  id of any adapter added later) passes to gate, run, claim, quiz and step-sync actions, and
+  step-sync writes through the item's own adapter. An id with no adapter's prefix is refused with
+  the prefixes the plugin has; a plugin before flow 1.28.0, with no prefix files, keeps `gh#` and
+  `local:`.
+- The Jira token reaches the flow scripts: `JIRA_API_TOKEN` passes from the console's environment
+  to every script, and `brain-console install` keeps it in the launch agent's plist, now written
+  readable by its owner alone (0600). When jira is a tracker and the console has no token, the
+  board and the header say so and how to fix it.
+- The header lists every tracker the flow reads (`trackers`), each linked to its items (GitHub's
+  issues, `<jira.site>/browse/<jira.project>`), and marks one the board could not read with why;
+  the Board page says the same in a banner above the list. A worktree whose item the board did
+  not list still links its issue page. The snapshot is schema 8: `project.trackers` replaces
+  `project.trackerUrl`.
+- Pull requests are read wherever `github.repo` is set, whatever tracker holds the items, since the
+  flow keeps every PR on GitHub.
+- The settings page has a Jira part on the Tracker page (`jira.site`, `jira.project`,
+  `jira.email`, `jira.types`, `jira.fields`, `jira.transitions.done`, `jira.limit`,
+  `jira.answer_from`), shown while jira is a tracker. The GitHub repository field shows whatever
+  the tracker, and only the GitHub issue keys hide while no tracker is GitHub.
+- The Jobs page offers the config's pick filters for a next run: the Run once and Schedule forms,
+  Edit… on a next schedule and the settings' schedule builder have a Filter field (every ready
+  item, or one filter), sent as `--pick <name>`. `job.start` takes `pick` for next, refused
+  beside an item. Needs flow with pick filters.
+- Settings, Readiness lists each filter under `pick` with its assignee, statuses, labels, kinds,
+  trackers and query, editable in place; the snapshot's project carries the filters as `picks`.
+
 ## 0.14.0 (2026-11-02)
 
 - The quiz the flow's explain step writes is taken in the console. A gate whose item has a quiz

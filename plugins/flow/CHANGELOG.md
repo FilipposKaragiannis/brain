@@ -1,5 +1,65 @@
 # flow
 
+## 1.30.0 (2026-11-02)
+
+- A claim (or reserve) that would grow the pool with a refused `worktree_name` (no `{n}`, or one
+  that gives every number the same idle branch) exits 2 with the template's reason and no pool_max
+  message; a full pool still exits 3. Tests now pin both, and the steward.sh header names the
+  `worktree_name` template that names a grown worktree.
+- `flow:init` leaves no trace in tracking: its ignore block goes to the clone's `.git/info/exclude`
+  and covers all of `.flow/`, which every linked worktree shares and nobody commits. `--check`
+  reads the block there. The "Next" text no longer asks to commit `.flow/`.
+- A repository that committed flow before migrates: init removes the `# flow:begin` block from
+  `.gitignore` when every line in it is one init wrote (a block the owner added to is left and
+  named), and prints `git rm -r --cached --quiet -- .flow` for the tracked files. It never runs it.
+- The `.claude/settings.json` hook entry init prints runs the main worktree's `.flow/hooks`
+  wrapper when the clone has one (from a linked worktree too), and otherwise makes the worktree
+  as Claude does with no hook, so `claude --worktree` works for a teammate without flow. It
+  reuses the `worktree-<name>` branch when one exists, and the remove entry deletes that branch
+  when it is merged or unchanged, so a name can be opened again. A
+  WorktreeCreate hook that printed nothing would fail the session. `init --check` notes an entry
+  an older init printed.
+- The Codex rules and agents go to the user's `~/.codex` (`$CODEX_HOME`) with `init --user-codex`
+  or when the repository has no `.codex/`, and to the repository's `.codex/` otherwise. A later run
+  keeps the place the stamp records, and init says which on its `Codex rules and agents:` line.
+  What flow wrote in `~/.codex` is recorded in `~/.codex/.flow-stamp`, which every repository
+  installing there reads: a hand edit there, or a file flow never wrote, is refused unless
+  `--force`. The stamps keep paths whole, so a home folder with a space in its name works.
+- The session-start install check reads the stamp in the main worktree's `.flow`, so a session in
+  a linked worktree, which has no `.flow/config.yaml` of its own now, is checked too.
+- The Jira adapter answers gates on the issue: `adapters/jira/answers.sh` clears a gate when the
+  owner comments `/answer <text>` (or `/answer` alone, as recommended) after its `**Gate: ...**`
+  comment. The owner is the API token's user, or an account id or email in the new
+  `jira.answer_from` list. The merge gate is left to the merge. `gate.sh` comments "Gate cleared"
+  on the issue as the receipt.
+- `adapters/jira/vocabulary.sh` prints the project's issue types (no sub-tasks) and the options of
+  the `jira.fields.area` field, so `flow:new` offers Jira's own names. Jira has no `sync.sh`: its
+  board columns are workflow statuses each project shapes its own way, the `step:` and `gate:`
+  labels already show where an item is, and closing takes the done transition.
+- Slack notifications know an item id by the adapters' prefix files, so `jira:WID-7` reads as code
+  and a new adapter's ids do too. A gate on an item whose adapter has `answers.sh` says to answer
+  on the issue; any other gate says to answer in a session.
+- `board.sh` shows what it can when a tracker's list fails: the other trackers' items, and each
+  failed tracker with its exit code and last stderr line (`tracker_errors` in `--json`, a
+  "Trackers not read" section in the text board), where before the whole board stopped or the
+  items went missing without a word.
+- `init.sh` writes the commented `jira.limit` and `jira.answer_from` keys into a new config.
+- `next --pick <name>` takes the first ready item the filter `pick.<name>` in `.flow/config.yaml`
+  keeps: `assignee` (`me`, a login or an email), `status`, `labels` and `kinds` (any of each),
+  `trackers`, or `query`, one tracker's own search passed as written (JQL on Jira, search
+  qualifiers on GitHub). Readiness, blockers, gates and the priority order apply after the
+  filter; without `--pick` nothing changes. An unknown name exits 2 naming the filters there are.
+- Each adapter maps the fields in `list` and `list-ready --pick <name>` and names them in a new
+  `pick-fields` file; a field it cannot map (local has no `query`), a query without exactly one
+  tracker or beside a neutral field, and a tracker the flow does not read are refused, exit 2.
+  `adapters/README.md` documents the mapping and the contract suite checks it for github, local
+  and jira.
+- `jobs/next.sh` and `run-unattended.sh` take `--pick <name>`, so a named schedule runs one
+  filter: `jobs.schedule.next-mine: every 30m --pick mine`. A bad filter stops the run before it
+  reads the tracker.
+- The Jira adapter counts a listed epic's open children with a second search when a filter
+  narrows the list, so an epic whose children the filter leaves out still counts them.
+
 ## 1.29.0 (2026-11-02)
 
 - The quiz the explain step writes is taken in the console, not on the PR. `scripts/quiz.sh show
