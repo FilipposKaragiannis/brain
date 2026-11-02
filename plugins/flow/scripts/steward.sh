@@ -43,10 +43,13 @@
 #                                                record is refused, exit 1. --model and --effort
 #                                                replace jobs.<host>.model and .effort for the
 #                                                resumed run's steps with no agent, in both
-# A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named
-# after the last pool entry (../app-wt-3 after ../app-wt-2). worktree_copy lists ignored paths
-# copied from the main worktree when the new one lacks them (.claude/settings.local.json);
-# worktree_setup lists commands run in the new worktree. Both run on add and on setup.
+# A claim with no free worktree adds one while the pool is below pool_max (config.yaml), named by
+# the worktree_name template (../{repo}-wt-{n}: {repo} the main worktree's folder, {n} the first
+# number no pool entry and no folder uses); unset, after the last pool entry (../app-wt-3 after
+# ../app-wt-2). A template with no {n}, or one that gives every number the same idle branch, is
+# refused with its reason, exit 2. worktree_copy lists ignored paths copied from the main
+# worktree when the new one lacks them (.claude/settings.local.json); worktree_setup lists
+# commands run in the new worktree. Both run on add and on setup.
 # Never resets a worktree with uncommitted changes: release exits 3 and says so (escalate).
 . "$(dirname "$0")/../lib/flow.sh"
 
@@ -147,7 +150,8 @@ cmd_claim() {
 }
 
 # free_worktree: the first pool worktree with no claim, no reservation and a clean tree, else one
-# grow_pool adds; exit 3 when the pool is at pool_max.
+# grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name exits 2 inside
+# grow_pool, before the pool_max message, so claim and reserve pass the template's reason through.
 free_worktree() {
   for p in $(pool_paths); do
     [ -d "$p" ] || continue
@@ -439,7 +443,8 @@ pool_worktree_add() {
   else git -C "$main" worktree add -q --no-track -B "$pa_branch" "$1" "$(base_ref)"; fi
 }
 
-# grow_pool: add one worktree when the pool is below pool_max; print its path.
+# grow_pool: add one worktree when the pool is below pool_max; print its path. Returns 1 when the
+# pool is full or git cannot add the worktree; exits 2 when next_pool_path refuses worktree_name.
 grow_pool() {
   max="$(cfg_or pool_max 0)"
   count="$(cfg pool | grep -c .)"
