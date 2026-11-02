@@ -6,7 +6,7 @@ import type { JobStartForm, ScheduleWhen } from './jobStart.ts';
 /**
  * The fields a schedule or a run is set with, shared by the Agents page (Schedule, Run once,
  * Edit…) and the schedule builder of the settings: when it runs, and the host, item, limits,
- * model and effort of the run.
+ * filter, model and effort of the run.
  */
 
 /** The model or effort option that leaves it to the config's jobs.<host>.model and effort. */
@@ -63,9 +63,14 @@ export function useRunForm(initial: JobStartForm, changed: () => void): RunForm 
   return runFormOver(state.form, state.typing, (form, typing) => { setState({ form, typing }); changed(); }, () => setState({ form: initial, typing: typedModel(initial) }));
 }
 
-/** The run's settings; `pair` shows only what every job takes: the host, the model and the effort. */
-export function RunFields({ run, pair = false }: { run: RunForm; pair?: boolean }) {
+/**
+ * The run's settings; `pair` shows only what every job takes: the host, the model and the effort.
+ * `picks` are the filters pick in .flow/config.yaml names, offered for next's queue; a filter the
+ * form names that the config no longer has stays offered, so it is never dropped unseen.
+ */
+export function RunFields({ run, pair = false, picks = [] }: { run: RunForm; pair?: boolean; picks?: readonly string[] }) {
   const { form, typing } = run;
+  const filters = form.pick === '' || picks.includes(form.pick) ? picks : [...picks, form.pick];
   const host = formHost(form, run.hostDefault);
   const field = (name: keyof JobStartForm) => ({ value: form[name], onChange: (event: { target: { value: string } }) => run.change({ ...form, [name]: event.target.value }) });
   return (
@@ -81,6 +86,14 @@ export function RunFields({ run, pair = false }: { run: RunForm; pair?: boolean 
           <label className="field"><span>Item</span><input placeholder="first ready item" title="A tracker id such as gh#81. Empty takes the first ready item each run." {...field('item')} /></label>
           <label className="field"><span>Workers</span><input inputMode="numeric" placeholder="1" title="How many items run at once, each in its own worktree." {...field('workers')} /></label>
           <label className="field"><span>Max steps</span><input inputMode="numeric" placeholder="no limit" title="The run stops after this many steps." {...field('maxSteps')} /></label>
+          {filters.length > 0 && (
+            <label className="field"><span>Filter</span>
+              <select title="Takes only the ready items this filter of pick in .flow/config.yaml keeps." {...field('pick')}>
+                <option value="">every ready item</option>
+                {filters.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+          )}
         </>
       )}
       <label className="field"><span>Model</span>

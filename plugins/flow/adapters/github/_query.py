@@ -1,6 +1,6 @@
 """Issues as raw adapter input, through GraphQL. See list.sh and read.sh.
 
-  _query.py list <repo> <marker> <open|all> <limit>
+  _query.py list <repo> <marker> <open|all> <limit>   (narrowed by FLOW_PICK_*, see picked)
   _query.py read <repo> <marker> <number>
 
 One paged query returns each issue with its labels, type, native parent, blockers, open sub-issue
@@ -23,6 +23,7 @@ WANT_PROJECT = bool(os.environ.get("GH_PROJECT"))
 BASE = """
   number title body state url
   labels(first: 50) { nodes { name } }
+  assignees(first: 20) { nodes { login } }
   issueType { name }
   parent { number }
   blockedBy(first: 50) { nodes { number state } }
@@ -45,6 +46,41 @@ LIST = """query($owner: String!, $name: String!, $first: Int!, $after: String, $
       pageInfo { hasNextPage endCursor } nodes { ...F } } } }""" + FIELDS
 READ = """query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { issue(number: $number) { ...F } } }""" + FIELDS
+SEARCH = """query($q: String!, $first: Int!, $after: String) {
+  search(query: $q, type: ISSUE, first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor } nodes { ...F } } }""" + FIELDS
+
+
+def pick_values(name):
+    return {v.strip().lower() for v in os.environ.get("FLOW_PICK_" + name, "").split(",") if v.strip()}
+
+
+# The pick filter of `list --pick` (pick_filter in lib/flow.sh; list.sh turns `me` into the gh
+# user's login): a login, label names and issue states (open, closed), compared without case as
+# GitHub does. The kinds are matched in list.sh, on the built item. A query is GitHub search
+# qualifiers, sent as written within the repository's issues.
+PICK_ASSIGNEE = os.environ.get("FLOW_PICK_ASSIGNEE", "").strip().lower()
+PICK_LABELS = pick_values("LABELS")
+PICK_STATUS = pick_values("STATUS")
+PICK_QUERY = os.environ.get("FLOW_PICK_QUERY", "").strip()
+
+
+def picked(node):
+    if PICK_ASSIGNEE and PICK_ASSIGNEE not in {a["login"].lower() for a in node["assignees"]["nodes"]}:
+        return False
+    if PICK_LABELS and not PICK_LABELS & {l["name"].lower() for l in node["labels"]["nodes"]}:
+        return False
+    return not PICK_STATUS or node["state"].lower() in PICK_STATUS
+
+
+def issue_page(owner, name, states, first, after):
+    """One page of the repository's issues, or of the search PICK_QUERY names; None on a failed call."""
+    if PICK_QUERY:
+        query = "repo:%s/%s is:issue %s%s" % (owner, name, "is:open " if states else "", PICK_QUERY)
+        data = graphql(SEARCH, q=query, first=first, after=after)
+        return data and data["data"]["search"]
+    data = graphql(LIST, owner=owner, name=name, first=first, after=after, states=states)
+    return data and data["data"]["repository"]["issues"]
 
 
 def gh(*args):
@@ -123,12 +159,12 @@ def main():
     what = "open issues" if states else "issues"
     limit, page, after, seen = int(sys.argv[5]), int(os.environ.get("FLOW_GH_PAGE", "50")), None, 0
     while seen < limit:
-        data = graphql(LIST, owner=owner, name=name, first=min(page, limit - seen), after=after, states=states)
-        if not data:
+        issues = issue_page(owner, name, states, min(page, limit - seen), after)
+        if not issues:
             sys.exit(1)
-        issues = data["data"]["repository"]["issues"]
         for node in issues["nodes"]:
-            issue = raw(repo, node, marker)
+            # A node the filter leaves out costs no state comment read.
+            issue = raw(repo, node, marker) if picked(node) else None
             if issue is not None:
                 print(json.dumps(issue))
             seen += 1

@@ -110,7 +110,16 @@ export type ProjectInfo = {
   poolMax: number | null;
   /** `reviews.reviewers`: who the flow asks to review each PR, codex and claude when unset. The PR cards offer them for an ask. */
   reviewers: string[];
+  /** The pick filters `pick.<name>` names, by name: the Jobs page offers them to next runs, Readiness lists them. */
+  picks: PickFilter[];
 };
+
+/**
+ * A pick filter, `pick.<name>` in .flow/config.yaml: `next --pick <name>` takes only the ready
+ * items it keeps. Each field is as written, empty when unset; flow's adapters map them
+ * (adapters/README.md, Pick filters) and refuse what they cannot.
+ */
+export type PickFilter = { name: string; assignee: string; status: string[]; labels: string[]; kinds: string[]; trackers: string[]; query: string };
 
 export type Claim = {
   item: string;

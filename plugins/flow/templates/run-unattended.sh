@@ -1,6 +1,6 @@
 #!/bin/sh
 # Unattended flow run. Installed by flow:init as <repo>/.flow/run-unattended.sh.
-#   .flow/run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>]
+#   .flow/run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>] [--pick <name>]
 # A shell loop is the orchestrator: next.sh prepares a step, the host runs its brief with the
 # claimed worktree as the working directory, advance.sh applies the result; repeat until a gate,
 # nothing ready, or done. Each step is a fresh host process with the step agent's model and
@@ -14,17 +14,20 @@
 # --model and --effort replace the jobs' pair for this run only: its steps with no agent run on
 # them, passed as is, as jobs.<host>.model and jobs.<host>.effort would be. Empty or absent keeps
 # the pair; an effort the host does not take stops the loop before it claims an item (exit 2).
+# --pick picks each new item through the filter pick.<name> (next.sh --pick); the item a step
+# continues is named, so it takes no filter.
 set -u
 host="${1:-}"; shift || true
-[ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>]" >&2; exit 2; }
+[ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>] [--pick <name>]" >&2; exit 2; }
 FLOW_RUN_PID=$$; export FLOW_RUN_PID   # next.sh records it, so the health job knows this loop is alive
 FLOW_HOST_GATES=1                      # a host stop raises the item's gate here, which tells the owner
-item=""; max=20; once_model=""; once_effort=""
+item=""; max=20; once_model=""; once_effort=""; pick=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --max-steps) max="$2"; shift 2 ;;
     --model) once_model="$2"; shift 2 ;;
     --effort) once_effort="$2"; shift 2 ;;
+    --pick) pick="$2"; shift 2 ;;
     *) item="$1"; shift ;;
   esac
 done
@@ -46,7 +49,8 @@ while [ "$n" -lt "$max" ]; do
   n=$((n + 1))
   stopped="$(host_stopped "$host")"
   [ -z "$stopped" ] || { echo "run-unattended: $stopped"; exit 4; }
-  step="$("$plugin/scripts/next.sh" --json --embed-agent $item)"; code=$?
+  if [ -n "$item" ]; then set -- "$item"; else set -- ${pick:+--pick "$pick"}; fi
+  step="$("$plugin/scripts/next.sh" --json --embed-agent "$@")"; code=$?
   [ "$code" -eq 0 ] || { echo "run-unattended: next.sh exit $code"; exit "$code"; }
   get() { printf '%s' "$step" | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"; }
   item="$(get item)"; wt="$(get worktree)"; brief="$(get brief)"; model="$(get model)"; effort="$(get effort)"; agent="$(get agent)"

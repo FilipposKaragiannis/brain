@@ -4,12 +4,15 @@ An item is <flow home>/items/<kind>/<n>.md: YAML frontmatter (flat keys, inline 
 Markdown body. Comments are appended under "## Comments". Needs python3 >= 3.9 only.
 
 Usage (always from the shell scripts):
-  _item.py list <home> [--all] [--kind KIND]
+  _item.py list <home> [--all] [--kind KIND] [--pick NAME]
   _item.py read <home> <id>
   _item.py write-state <home> <id> key=value...
   _item.py comment <home> <id> <text>
   _item.py close <home> <id> [<text>]
   _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME] [--type NAME]
+
+A list with --pick keeps the items its filter matches: the item file's assignee (`me` is the git
+user's email or name), status, labels and kind, each compared without case.
 
 An item's open_children counts the open items whose parent it is. Its rank places its priority in
 READY_PRIORITY_ORDER and needs lists the READY_NEEDS fields an open, unstarted item lacks (the
@@ -19,6 +22,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 
@@ -162,6 +166,43 @@ def to_json(path, meta, body, children=None):
     }
 
 
+def git_identity():
+    """The names `me` stands for in a filter: the git user's email and name, lower case."""
+    names = set()
+    for key in ("user.email", "user.name"):
+        try:
+            out = subprocess.run(["git", "config", key], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if out.stdout.strip():
+            names.add(out.stdout.strip().lower())
+    return names
+
+
+def pick_rules():
+    """The filter of `list --pick` (pick_filter in lib/flow.sh): each field it sets, as a set of
+    lower-case values an item must match one of."""
+    rules = {}
+    for field in ("status", "labels", "kinds"):
+        values = {v.strip().lower() for v in ready_list("FLOW_PICK_" + field.upper())}
+        if values:
+            rules[field] = values
+    assignee = os.environ.get("FLOW_PICK_ASSIGNEE", "").strip()
+    if assignee:
+        rules["assignee"] = git_identity() if assignee == "me" else {assignee.lower()}
+    return rules
+
+
+def picked(meta, rules):
+    values = {
+        "assignee": {str(meta.get("assignee", "")).lower()},
+        "status": {meta.get("status", "open").lower()},
+        "labels": {label.lower() for label in meta.get("labels", [])},
+        "kinds": {meta.get("kind", "task").lower()},
+    }
+    return all(values[field] & wanted for field, wanted in rules.items())
+
+
 def cmd_list(home, args):
     want_all, kind, i = False, None, 0
     while i < len(args):
@@ -169,14 +210,18 @@ def cmd_list(home, args):
             want_all = True; i += 1
         elif args[i] == "--kind" and i + 1 < len(args):
             kind = args[i + 1]; i += 2
+        elif args[i] == "--pick" and i + 1 < len(args):
+            i += 2  # list.sh has exported the filter as FLOW_PICK_* (pick_rules)
         else:
             usage("unknown option %s" % args[i])
-    items, children = [], open_children(home)
+    items, children, rules = [], open_children(home), pick_rules()
     for path in sorted(glob.glob(os.path.join(home, "items", "*", "*.md")), key=natural_key):
         meta, body = parse(path)
         if kind and meta.get("kind") != kind:
             continue
         if not want_all and meta.get("status", "open") != "open":
+            continue
+        if not picked(meta, rules):
             continue
         items.append(to_json(path, meta, body, children))
     print(json.dumps(items))

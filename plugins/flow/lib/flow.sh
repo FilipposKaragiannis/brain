@@ -250,6 +250,83 @@ ready_rules() {
   export READY_NEEDS READY_PRIORITY_ORDER FLOW_READY_WARNED
 }
 
+# Pick filters (pick.<name> in .flow/config.yaml) narrow the ready list `next --pick <name>` takes.
+# A filter names tracker-neutral fields each adapter maps to its own in list (adapters/README.md):
+# assignee (me, a login or an email), status, labels and kinds (lists: an item matches one of the
+# values); trackers, the trackers next reads for it; or query, one tracker's own search as written,
+# which takes no neutral field. Each adapter names the fields it maps in its pick-fields file.
+PICK_NEUTRAL="assignee status labels kinds"
+
+# pick_names: the filters the config names, one per line.
+pick_names() { yaml_keys "$(config_file)" pick; }
+
+# pick_check <name>: refuses, exit 2, a name the config does not have (saying the names it has), a
+# tracker that is no adapter, and a query without exactly one tracker or beside a neutral field.
+pick_check() {
+  case "$1" in ""|*[!A-Za-z0-9_-]*) die "--pick takes a filter name from pick in .flow/config.yaml (letters, digits, _ and -), not '$1'" 2 ;; esac
+  pick_names | grep -qx -- "$1" \
+    || die "pick has no filter $1 in .flow/config.yaml; the filters are $(pick_names | paste -sd ' ' - | sed 's/^$/none/')" 2
+  _pick_trackers="$(cfg "pick.$1.trackers")"
+  for _tracker in $_pick_trackers; do
+    [ -d "$FLOW_PLUGIN/adapters/$_tracker" ] || die "pick.$1.trackers names $_tracker, not an adapter; the adapters are $(find "$FLOW_PLUGIN/adapters" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort | paste -sd ' ' -)" 2
+  done
+  [ -n "$(cfg "pick.$1.query")" ] || return 0
+  [ "$(printf '%s\n' "$_pick_trackers" | grep -c .)" = 1 ] \
+    || die "pick.$1.query is one tracker's own search: set pick.$1.trackers to exactly one tracker, not ${_pick_trackers:-none}" 2
+  for _field in $PICK_NEUTRAL; do
+    ! yaml_keys "$(config_file)" "pick.$1" | grep -qx "$_field" \
+      || die "pick.$1.query goes to $_pick_trackers as written, so the filter takes no $_field; put it in the query" 2
+  done
+}
+
+# pick_mapped <name> <adapter>: refuses, exit 2, a field of the filter the adapter cannot map,
+# saying the fields it maps (adapters/<adapter>/pick-fields).
+pick_mapped() {
+  _mapped="$(cat "$FLOW_PLUGIN/adapters/$2/pick-fields" 2>/dev/null)"
+  for _field in $(yaml_keys "$(config_file)" "pick.$1"); do
+    [ "$_field" = trackers ] && continue
+    case " $_mapped " in *" $_field "*) ;; *) die "pick.$1.$_field: the $2 adapter maps $(printf '%s' "${_mapped:-no field}" | sed 's/ /, /g; s/, \([^,]*\)$/ and \1/'), not $_field" 2 ;; esac
+  done
+}
+
+# pick_trackers <name> <tracker>...: the trackers next reads for the filter, one per line: its
+# trackers, else every one given (the trackers the flow reads). Refuses, exit 2, what pick_check
+# refuses, a tracker the flow does not read, and a field one of the trackers cannot map.
+pick_trackers() {
+  _pick="$1"; shift
+  pick_check "$_pick"
+  _chosen="$(cfg "pick.$_pick.trackers")"
+  for _tracker in $_chosen; do
+    case " $* " in *" $_tracker "*) ;; *) die "pick.$_pick.trackers names $_tracker, which the flow does not read; it reads $*" 2 ;; esac
+  done
+  [ -n "$_chosen" ] || _chosen="$*"
+  for _tracker in $_chosen; do pick_mapped "$_pick" "$_tracker"; printf '%s\n' "$_tracker"; done
+}
+
+# pick_filter <adapter> [args...]: the filter `--pick <name>` among an adapter list's arguments
+# names, checked (pick_check, pick_mapped) and exported comma-separated for the adapter to map:
+# FLOW_PICK_ASSIGNEE, FLOW_PICK_STATUS, FLOW_PICK_LABELS, FLOW_PICK_KINDS and FLOW_PICK_QUERY, each
+# empty when the filter leaves it unset or no --pick is given. Returns 1 when the filter's
+# trackers leave the adapter out, so its list is empty.
+pick_filter() {
+  _adapter="$1"; shift; _pick=""
+  while [ $# -gt 0 ]; do
+    if [ "$1" = --pick ]; then [ $# -ge 2 ] || die "--pick takes a filter name from pick in .flow/config.yaml" 2; _pick="$2"; fi
+    shift
+  done
+  FLOW_PICK_ASSIGNEE=""; FLOW_PICK_STATUS=""; FLOW_PICK_LABELS=""; FLOW_PICK_KINDS=""; FLOW_PICK_QUERY=""
+  export FLOW_PICK_ASSIGNEE FLOW_PICK_STATUS FLOW_PICK_LABELS FLOW_PICK_KINDS FLOW_PICK_QUERY
+  [ -n "$_pick" ] || return 0
+  pick_check "$_pick"
+  _chosen="$(cfg "pick.$_pick.trackers")"
+  [ -z "$_chosen" ] || printf '%s\n' "$_chosen" | grep -qx "$_adapter" || return 1
+  pick_mapped "$_pick" "$_adapter"
+  FLOW_PICK_ASSIGNEE="$(cfg "pick.$_pick.assignee")"; FLOW_PICK_QUERY="$(cfg "pick.$_pick.query")"
+  FLOW_PICK_STATUS="$(cfg "pick.$_pick.status" | paste -sd, -)"
+  FLOW_PICK_LABELS="$(cfg "pick.$_pick.labels" | paste -sd, -)"
+  FLOW_PICK_KINDS="$(cfg "pick.$_pick.kinds" | paste -sd, -)"
+}
+
 # adapter <op> <id|adapter-name> [args...]: run one adapter operation. The first argument after
 # the op is an item id (adapter from its prefix) or an adapter name (for list and list-ready).
 adapter() {

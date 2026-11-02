@@ -161,7 +161,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'gate.clear': ['item', 'message', 'back'],
   'run.start': ['item', 'maxSteps'],
   'job.run': ['job'], 'job.stop': ['job'], 'job.pause': ['job'], 'job.resume': ['job'],
-  'job.start': ['job', 'host', 'item', 'workers', 'maxSteps', 'model', 'effort'],
+  'job.start': ['job', 'host', 'item', 'workers', 'maxSteps', 'model', 'effort', 'pick'],
   'job.schedule': ['job', 'schedule'],
   'job.unschedule': ['job'],
   'run.stop': ['item'], 'run.resume': ['item'],
@@ -225,6 +225,8 @@ const HOST_EFFORTS: Record<string, string[]> = { claude: ['low', 'medium', 'high
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 /** How many workers one custom run may start: the pool caps them anyway. */
 const WORKERS = /^[1-9][0-9]?$/;
+/** A pick filter's name, `pick.<name>` in .flow/config.yaml, as flow's pick_check in lib/flow.sh takes it. */
+const PICK_NAME = /^[A-Za-z0-9_-]+$/;
 /** A branch name git takes without reading it as an option or a range. */
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 /** The console's own merge script: fetch, the upstream, then the base, aborting on a conflict. */
@@ -416,20 +418,24 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
  * no `workers`) hands its work on and ends, so it is `started` and its sources are read again;
  * a run in place is `finished` when it ends. Refused while the next job is paused, since next.sh
  * would exit at once, and for an item with more than one worker, which next.sh refuses: workers
- * run the queue. `job` may be left out for next.
+ * run the queue. `job` may be left out for next. next also takes `pick`, a filter's name
+ * (`--pick <name>`), which narrows the queue and so is refused beside an item; jobs/next.sh
+ * refuses a name the config does not have.
  */
 function planJobStart(args: Record<string, string>, context: ActionContext): PlanResult {
   const job = args['job'] ?? 'next';
   if (!FLOW_JOBS.includes(job)) return fail(`job.start runs one of ${FLOW_JOBS.join(', ')}${job === '' ? '' : `, not ${job}`}`);
   if (job !== 'next') {
-    const extra = ['item', 'workers', 'maxSteps'].find((key) => args[key] !== undefined);
+    const extra = ['item', 'workers', 'maxSteps', 'pick'].find((key) => args[key] !== undefined);
     if (extra !== undefined) return fail(`${extra} is for the next job; ${job} takes a host, a model and an effort`);
   }
   const host = args['host'] ?? '';
   if (!HOSTS.includes(host)) return fail(`job.start needs a host: ${HOSTS.join(' or ')}`);
   const item = args['item'] ?? '';
   if (item !== '' && !ITEM_ID.test(item)) return fail('job.start takes an item id like gh#12 or local:task/7, or none for the queue');
-  const { workers, maxSteps, model, effort } = args;
+  const { workers, maxSteps, model, effort, pick } = args;
+  if (pick !== undefined && !PICK_NAME.test(pick)) return fail('pick must be a filter name from pick in .flow/config.yaml: letters, digits, _ and -');
+  if (pick !== undefined && item !== '') return fail('pick narrows the queue; drop the item, or the filter');
   if (workers !== undefined && !WORKERS.test(workers)) return fail('workers must be a number from 1 to 99');
   if (maxSteps !== undefined && !MAX_STEPS.test(maxSteps)) return fail('maxSteps must be a number from 1 to 999');
   if (model !== undefined && !MODEL.test(model)) return fail('model must be a model name: letters, digits and . _ : -, not opening with -');
@@ -441,6 +447,7 @@ function planJobStart(args: Record<string, string>, context: ActionContext): Pla
   const flags = [
     ...(workers === undefined ? [] : ['--workers', workers]), ...(maxSteps === undefined ? [] : ['--max-steps', maxSteps]),
     ...(model === undefined ? [] : ['--model', model]), ...(effort === undefined ? [] : ['--effort', effort]),
+    ...(pick === undefined ? [] : ['--pick', pick]),
   ];
   const handsOn = job === 'next' && item === '' && (many || (workers === undefined && context.jobsWorkers === true));
   const script = path.join(context.root, '.flow', 'jobs', `${job}.sh`);

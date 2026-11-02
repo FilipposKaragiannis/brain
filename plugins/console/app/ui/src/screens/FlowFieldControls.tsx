@@ -201,17 +201,17 @@ export function WorkersControl({ spec, labelId, text, onChange }: ControlProps) 
 
 /** The job options a schedule of each job may carry beyond the builder's fields, as an example. */
 const OWN_EXAMPLE: Record<string, string> = { next: '--wait', comments: 'gh#12', intake: '--batch 5 --keep-notes', retro: '--min-lessons 3', health: '--dry-run' };
-const NEW_SCHEDULE: ScheduleParts = { when: { kind: 'every', count: '30', unit: 'm' }, form: { host: '', item: '', workers: '', maxSteps: '', model: '', effort: '' }, own: '' };
+const NEW_SCHEDULE: ScheduleParts = { when: { kind: 'every', count: '30', unit: 'm' }, form: { host: '', item: '', workers: '', maxSteps: '', model: '', effort: '', pick: '' }, own: '' };
 
 type Builder = { parts: ScheduleParts | null; typing: boolean; asText: boolean };
 
 /**
  * A schedule as the Agents page sets one: when it runs as dropdowns and fields, then the host
- * (jobs.host unless one is picked), next's item and limits, the model, the effort and the job's
+ * (jobs.host unless one is picked), next's item, limits and filter (one of `picks`), the model, the effort and the job's
  * other options. A line the builder cannot hold whole stays a text box with a note; Edit as text
  * opens the box for any line, and Unschedule empties the key.
  */
-export function ScheduleControl({ spec, labelId, text, onChange, jobsHost, workersSplit }: ControlProps & { jobsHost: string; workersSplit: boolean }) {
+export function ScheduleControl({ spec, labelId, text, onChange, jobsHost, workersSplit, picks = [] }: ControlProps & { jobsHost: string; workersSplit: boolean; picks?: readonly string[] }) {
   const name = spec.path.split('.').at(-1) ?? '';
   const job = scheduleJob(name);
   const parse = (from: string): Builder => {
@@ -248,7 +248,7 @@ export function ScheduleControl({ spec, labelId, text, onChange, jobsHost, worke
     <div className="flow-schedule" role="group" aria-labelledby={labelId}>
       <div className="start-form flow-schedule-form">
         <WhenFields when={parts.when} setWhen={(when) => build({ ...parts, when }, builder.typing)} />
-        <RunFields run={run} pair={job !== 'next'} />
+        <RunFields run={run} pair={job !== 'next'} picks={picks} />
         <label className="field wide"><span>Other options</span>
           <input className="mono" placeholder={OWN_EXAMPLE[job] ?? ''} title={`Options of the ${job} job the fields above do not cover, as jobs/${job}.sh takes them.`} value={parts.own} onChange={(event) => build({ ...parts, own: event.target.value }, builder.typing)} />
         </label>

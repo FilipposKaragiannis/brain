@@ -760,6 +760,7 @@ function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
     trackerUrl: config.trackers.includes(GITHUB_ADAPTER) && repoUrl !== null ? `${repoUrl}/issues` : null,
     adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
     jobHosts: jobHostsOf(jobs, config.jobsHost), plugins: input.plugins ?? [],
+    picks: config.picks,
   };
 }
 

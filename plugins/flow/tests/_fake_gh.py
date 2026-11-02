@@ -90,6 +90,7 @@ elif args[0] == "api" and "graphql" in args:
         fields = i.get("fields", {})
         return {"number": i["number"], "title": i["title"], "body": i.get("body", ""), "state": i["state"], "url": i.get("url", ""),
                 "labels": {"nodes": [{"name": l} for l in i["labels"]]},
+                "assignees": {"nodes": [{"login": a} for a in i.get("assignees", [])]},
                 "issueType": {"name": i["type"]} if i.get("type") else None,
                 "parent": {"number": i["parent"]} if i.get("parent") else None,
                 "blockedBy": {"nodes": [{"number": b, "state": issue(b)["state"]} for b in i.get("blocked_by", [])]},
@@ -99,7 +100,28 @@ elif args[0] == "api" and "graphql" in args:
                 "projectItems": {"nodes": [{"id": i["project_item"], "project": {"number": 1},
                                             "fieldValueByName": {"name": i["project_status"]} if i.get("project_status") else None}]
                                  if i.get("project_item") else []}}
-    if "pageInfo" in q:
+    def searched(i, words):
+        # The search qualifiers the tests use, as GitHub reads them; any other word is an error.
+        for word in words:
+            key, _, value = word.partition(":")
+            value = value.strip('"').lower()
+            if key == "repo" or word == "is:issue":
+                continue
+            if key == "is" and value in ("open", "closed"):
+                if i["state"].lower() != value: return False
+            elif key == "label":
+                if value not in [l.lower() for l in i["labels"]]: return False
+            elif key == "assignee":
+                if value not in [a.lower() for a in i.get("assignees", [])]: return False
+            else:
+                print("fake gh: unknown search qualifier " + word, file=sys.stderr); sys.exit(1)
+        return True
+    if "search(query:" in q:
+        rows = [i for i in data["issues"] if searched(i, var["q"].split())]
+        start = int(var.get("after", "0")); first = int(var["first"]); page = rows[start:start + first]
+        print(json.dumps({"data": {"search": {"pageInfo": {"hasNextPage": start + first < len(rows), "endCursor": str(start + first)},
+                                              "nodes": [node_of(i) for i in page]}}}))
+    elif "pageInfo" in q:
         rows = [i for i in data["issues"] if "states" not in var or i["state"] == "OPEN"]
         start = int(var.get("after", "0")); first = int(var["first"]); page = rows[start:start + first]
         more = start + first < len(rows)

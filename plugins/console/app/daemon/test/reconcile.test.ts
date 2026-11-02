@@ -922,3 +922,10 @@ test('ProjectPlugins_FromTheInput_LeftOutNone', async () => {
   const plugins = [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: null }];
   assert.deepEqual([reconcile({ ...facts, plugins }).project.plugins, reconcile(facts).project.plugins], [plugins, []], 'because the snapshot carries what the files read found, and nothing when it was not read');
 });
+
+test('ProjectPicks_FromTheConfig', async () => {
+  const facts = await input();
+  const mine = { name: 'mine', assignee: 'me', status: [], labels: [], kinds: [], trackers: [], query: '' };
+  facts.flow.config.picks = [mine];
+  assert.deepEqual(reconcile(facts).project.picks, [mine], 'because the Jobs page offers the filters the config names');
+});

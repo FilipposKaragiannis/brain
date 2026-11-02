@@ -14,8 +14,12 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
 
 1. **Prepare the step.**
    ```
-   "$P/scripts/next.sh" --json [item]
+   "$P/scripts/next.sh" --json [item | --pick <name>]
    ```
+   `--pick <name>` takes the first ready item the filter `pick.<name>` in `.flow/config.yaml`
+   keeps (assignee, status, labels, kinds, trackers, or one tracker's query; the mapping is in
+   `adapters/README.md`, Pick filters), when the user asks for their own items or a named filter.
+   Exit 2 names the filters there are, or what the filter has wrong; say so and stop.
    Exit 0 prints JSON: `item, step, agent, skill, worktree, branch, brief, reports, model, effort`.
    Exit 3: no free worktree, and every ready item left needs a new one; say which worktrees
    hold what (`steward.sh pool`) and stop.

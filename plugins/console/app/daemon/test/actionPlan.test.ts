@@ -671,3 +671,21 @@ test('RunStopAndResume_BadItemOrNoRunRecord_Refused', () => {
   }
   assert.ok(['job.schedule', 'job.unschedule', 'run.stop', 'run.resume'].every((kind) => (ACTION_KINDS as string[]).includes(kind)), 'because the server refuses a kind the list does not hold');
 });
+
+test('JobStartWithAFilter_PassedToTheNextJobAsPick', () => {
+  const plan = planned('job.start', { job: 'next', host: 'claude', maxSteps: '5', pick: 'mine' });
+  assert.deepEqual(plan.args, ['/p/app/.flow/jobs/next.sh', 'claude', '--max-steps', '5', '--pick', 'mine'], 'because jobs/next.sh takes the filter as --pick and passes it to every pick of the run');
+});
+
+test('JobStartWithAFilter_RefusedBesideAnItemOrForAnotherJob', () => {
+  const item = planAction('job.start', { job: 'next', host: 'claude', item: 'gh#12', pick: 'mine' }, CONTEXT);
+  assert.match(item.ok ? '' : item.error, /pick narrows the queue/, 'because next.sh refuses a filter beside a named item');
+  const other = planAction('job.start', { job: 'health', host: 'claude', pick: 'mine' }, CONTEXT);
+  assert.match(other.ok ? '' : other.error, /is for the next job/, 'because only next picks items');
+});
+
+test('JobStartWithAFilter_ANameFlowRefuses_Rejected', () => {
+  for (const pick of ['', 'my items', 'a;b', 'mine.x']) {
+    assert.equal(planAction('job.start', { job: 'next', host: 'claude', pick }, CONTEXT).ok, false, `because pick_check refuses "${pick}" as a filter name`);
+  }
+});

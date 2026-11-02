@@ -1,7 +1,7 @@
 #!/bin/sh
 # Next job: run ready items unattended until a gate, nothing ready, or the step budget.
 #   jobs/next.sh <claude|codex> [item] [--max-steps N] [--workers N] [--worker N] [--wait]
-#                [--model <name>] [--effort <level>] [--as <name>]
+#                [--model <name>] [--effort <level>] [--as <name>] [--pick <name>]
 # The unattended loop (templates/run-unattended.sh) does the work; this adds the lock and the
 # log, and turns "nothing ready" (exit 5) and "gate" (exit 4) into quiet exits so a scheduler
 # does not flag them. Schedule it at the cadence you want new work picked up. With notify.idle
@@ -30,17 +30,22 @@
 # keeps that host's pair). Empty or absent keeps the pair. An effort the host does not take (low,
 # medium, high, xhigh or max on claude; up to xhigh on codex) is refused, exit 2, before the run
 # reads the tracker, as a bad jobs.<host>.effort stops a run before it claims an item.
+# --pick <name> picks the queue's items through the filter pick.<name> in .flow/config.yaml
+# (next.sh --pick), on every worker; a named schedule takes it in its args
+# (jobs.schedule.next-mine: every 30m --pick mine). A filter next would refuse, or one beside an
+# item, is refused here, exit 2, before the run reads the tracker.
 set -u
 job=next
 . "$(dirname "$0")/_job.sh"
 . "$FLOW_PLUGIN/lib/workers.sh"
 host="${1:-}"; shift || true
-workers=1; workers_given=0; worker=""; item=""; pass=""; wait_all=0; model="$job_opt_model"; effort="$job_opt_effort"
+workers=1; workers_given=0; worker=""; item=""; pass=""; wait_all=0; model="$job_opt_model"; effort="$job_opt_effort"; pick=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --workers) workers="$2"; workers_given=1; shift 2 ;;
     --worker) worker="$2"; shift 2 ;;
     --max-steps) pass="$pass --max-steps $2"; shift 2 ;;
+    --pick) [ $# -ge 2 ] || die "--pick takes a filter name from pick in .flow/config.yaml" 2; pick="$2"; pass="$pass --pick $2"; shift 2 ;;
     --wait) wait_all=1; shift ;;
     -*) die "unknown option $1" 2 ;;
     *) item="$1"; shift ;;
@@ -50,6 +55,12 @@ case "$workers" in ''|*[!0-9]*|0) die "--workers takes a number from 1" 2 ;; esa
 case "${worker:-1}" in ''|*[!0-9]*|0) die "--worker takes a number from 1; to split the workers across hosts, set jobs.workers in .flow/config.yaml" 2 ;; esac
 # A bad host is left to host_check below, which names it.
 case "$host" in claude|codex) bad="$(host_effort_problem "$host" "$effort" --effort)"; [ -z "$bad" ] || die "$bad" 2 ;; esac
+if [ -n "$pick" ]; then
+  [ -z "$item" ] || die "--pick narrows the queue; $item is named, so drop one of them" 2
+  trackers="$(adapters_configured)" || exit 2
+  # shellcheck disable=SC2086
+  pick_trackers "$pick" $trackers >/dev/null
+fi
 # plan: one host:count word per host whose workers this run starts; empty for one run in place.
 # A paused run never reads it, and a bad jobs.workers stops the run before the tracker is touched.
 # A tracker that keeps a board (the GitHub adapter's sync) is brought in step once per schedule,

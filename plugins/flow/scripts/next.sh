@@ -1,7 +1,9 @@
 #!/bin/sh
-# next.sh [item] [--json] [--embed-agent]: prepare the next step of one item. Without an item,
+# next.sh [item] [--json] [--embed-agent] [--pick <name>]: prepare the next step of one item. Without an item,
 # picks the first ready item, by rank (ready.priority_order), from every tracker read that no run holds and that does not overlap a
-# claim. Reads the state, selects the profile, claims a pool worktree when the step needs one,
+# claim. --pick narrows the items read to the filter pick.<name> in .flow/config.yaml (pick_trackers
+# in lib/flow.sh) before readiness, blockers, gates and the order apply; an unknown name exits 2.
+# Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, or split
@@ -16,16 +18,18 @@
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
-item=""; as_json=0; embed=0
+item=""; as_json=0; embed=0; pick=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --json) as_json=1; shift ;;
     --embed-agent) embed=1; shift ;;
+    --pick) [ $# -ge 2 ] || die "--pick takes a filter name from pick in .flow/config.yaml" 2; pick="$2"; shift 2 ;;
     -*) die "unknown option $1" 2 ;;
     *) item="$1"; shift ;;
   esac
 done
 named="$item"
+[ -z "$pick" ] || [ -z "$item" ] || die "--pick narrows the ready list a pick reads; $item is named, so drop one of them" 2
 ready_cache="$home/runs/.ready.$$"
 if [ "${FLOW_NEXT_PID:-}" != "$$" ]; then FLOW_NEXT_SKIP=""; FLOW_NEXT_FULL=""; rm -f "$ready_cache"; fi
 mkdir -p "$home/runs"
@@ -35,6 +39,7 @@ pick_again() {
   set --
   [ "$as_json" -eq 1 ] && set -- "$@" --json
   [ "$embed" -eq 1 ] && set -- "$@" --embed-agent
+  [ -n "$pick" ] && set -- "$@" --pick "$pick"
   printf '%s\n' "$ready" > "$ready_cache"
   FLOW_NEXT_PID=$$ FLOW_NEXT_SKIP="${FLOW_NEXT_SKIP:-} $item" FLOW_NEXT_FULL="${FLOW_NEXT_FULL:-}" exec "$0" "$@"
 }
@@ -61,7 +66,9 @@ if [ -z "$item" ] && [ -f "$ready_cache" ]; then
 elif [ -z "$item" ]; then
   ready_rules
   trackers="$(adapters_configured)" || exit 2
-  ready="$(for a in $trackers; do adapter list-ready "$a" 2>/dev/null; done | python3 -I -c '
+  # shellcheck disable=SC2086
+  [ -z "$pick" ] || trackers="$(pick_trackers "$pick" $trackers)" || exit 2
+  ready="$(for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | python3 -I -c '
 import json, sys
 seen, out = set(), []
 for line in sys.stdin:

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { FlowConfigDocument, FlowConfigSaved } from '../../daemon/src/plugins/flow/schema.ts';
-import { fieldAt, schemaSections } from '../../daemon/src/plugins/flow/schema.ts';
+import { fieldAt, pickFields, schemaSections } from '../../daemon/src/plugins/flow/schema.ts';
 import type { FlowShown } from '../src/screens/FlowSettings.tsx';
 import { FlowSettings, NO_GITHUB, TRACKED_NOTE } from '../src/screens/FlowSettings.tsx';
 import { actionRecord, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, HTTP_OK } from './fakeDaemon.tsx';
@@ -468,4 +468,23 @@ test('RawYaml_Open_AsksTheDaemonToOpenTheFileInTheEditor', async () => {
   await act(async () => {});
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open' })); });
   expect(opened, 'because the owner may rather edit the whole file in their own editor').toEqual([{ path: DOCUMENT.path, with: 'editor' }]);
+});
+
+/** The document with a pick filter, mine, in its values and in Readiness, as the daemon describes it. */
+function withPickFilter(): FlowConfigDocument {
+  const values = { ...DOCUMENT.values, pick: { mine: { assignee: 'me', labels: ['api'] } } };
+  const sections = schemaSections().map((section) => (section.group === 'Readiness' ? { ...section, fields: [...section.fields, ...pickFields(values)] } : section));
+  return { ...DOCUMENT, text: `${TEXT}pick:\n  mine:\n    assignee: me\n    labels: [api]\n`, values, sections };
+}
+
+test('Readiness_PickFilters_ListedUnderTheirNames', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withPickFilter(), 'Readiness');
+  const mine = within(group('Readiness')).getByRole('region', { name: 'Pick filter mine' });
+  expect((within(mine).getByLabelText('Assignee') as HTMLInputElement).value, 'because Readiness shows what the filter keeps').toBe('me');
+});
+
+test('ScheduleBuilder_NextSchedule_OffersTheConfiguredFilters', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withPickFilter());
+  const filter = within(schedule('jobs.schedule.next')).getByLabelText('Filter');
+  expect(within(filter).getAllByRole('option').map((option) => option.textContent), 'because a next schedule may run through any filter the file names').toEqual(['every ready item', 'mine']);
 });
