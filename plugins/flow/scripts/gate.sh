@@ -75,7 +75,7 @@ $message" >/dev/null
       [ -n "$from" ] || die "$item has no step to send back to (its gate predates gate_from); clear it with the change instead" 2
       [ "$(state_get "$data" step)" != split ] || die "$item is already split into tracker tasks; close its children to keep it whole, then clear the gate" 2
       # The question and the answer stay in the state, so the from step's brief carries them.
-      adapter write-state "$item" "gate=none" "gate_from=" "step=$from" "attempts=0" "answered=$gate, sent back" "asked=$asked" "answer=$message" \
+      step_write "$item" "gate=none" "gate_from=" "step=$from" "attempts=0" "answered=$gate, sent back" "asked=$asked" "answer=$message" \
         "last_event=$(now_iso) gate sent back to $from: $message" >/dev/null
       adapter comment "$item" --body "Gate sent back to $from: $message" >/dev/null
       answered_event "${gate:-gate}, sent back to $from: $message"
@@ -95,7 +95,7 @@ $message" >/dev/null
     if [ "$gate" = decomposition ]; then
       data="$(adapter read "$item" 2>/dev/null)"
       if [ "$(state_get "$data" step)" = split ] && [ "$(json_get "$data" open_children)" = 0 ]; then
-        adapter write-state "$item" "step=plan" "last_event=$(now_iso) kept whole: the children are closed, the plan step runs again" >/dev/null
+        step_write "$item" "step=plan" "last_event=$(now_iso) kept whole: the children are closed, the plan step runs again" >/dev/null
         "$FLOW_PLUGIN/scripts/steward.sh" keep-whole "$item" >/dev/null
         echo "gate cleared on $item; its children are closed, so it is whole again: next $item runs the plan step"; exit 0
       fi
