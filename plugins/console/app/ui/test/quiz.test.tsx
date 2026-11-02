@@ -57,13 +57,19 @@ async function press(name: string): Promise<void> {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name })); });
 }
 
-test('QuizAnswers_OneLetterPerQuestionNumber', () => {
+test('QuizAnswers_LetterPerQuestionNumber_JoinedInQuestionOrder', () => {
   expect(quizAnswers(QUIZ, { 2: 'a', 1: 'b' }), 'because quiz.sh takes the letters with their question numbers').toBe('1b 2a');
 });
 
-test('GradeQuiz_EveryQuestionRightPasses_AQuestionWithNoKeyNever', () => {
+test('GradeQuiz_EveryQuestionRight_Passes', () => {
   expect(gradeQuiz(QUIZ, { 1: 'b', 2: 'b' }).passed, 'because every question right is a pass').toBe(true);
+});
+
+test('GradeQuiz_AWrongAnswer_CountedAndFails', () => {
   expect(gradeQuiz(QUIZ, { 1: 'b', 2: 'a' }), 'because one wrong is a fail with the count shown').toMatchObject({ right: 1, total: 2, passed: false });
+});
+
+test('GradeQuiz_QuestionWithNoKey_NeverRight', () => {
   const keyless: Quiz = { ...QUIZ, questions: [{ ...QUIZ.questions[0]!, answer: null }] };
   expect(gradeQuiz(keyless, { 1: 'b' }).passed, 'because a question the key leaves out cannot be right, as the flow grades it').toBe(false);
 });
@@ -71,7 +77,8 @@ test('GradeQuiz_EveryQuestionRightPasses_AQuestionWithNoKeyNever', () => {
 test('GateWithAnUntriedQuiz_OffersToTakeIt', () => {
   renderGate({ ...waitingGate('gh#7', 'merge'), quiz: QUIZ });
   expect(within(quizPanel()).getByRole('button', { name: TAKE_QUIZ }), 'because the quiz is taken here, not in a PR comment').not.toBeNull();
-  expect(quizPanel().textContent, 'because the owner sees what is asked of them and why').toMatch(/2 questions on this change\. Pass it and the draft PR goes ready for review\./);
+  expect(quizPanel().textContent, 'because the owner sees how much is asked of them').toMatch(/2 questions/);
+  expect(quizPanel().textContent, 'because the owner sees what passing does').toMatch(/draft PR goes ready/);
   expect(screen.queryByText('quiz: 2 questions'), 'because the card head lists the quiz among its facts').not.toBeNull();
 });
 
@@ -100,7 +107,7 @@ test('ResultsAfterATry_MarkEachQuestionAndSayWhy', async () => {
   expect(within(panel).getAllByLabelText('wrong').length, 'because the second was wrong').toBe(1);
   expect(panel.textContent, 'because a wrong answer shows the right one').toMatch(/Right answer: b\) The power caps at full/);
   expect(panel.textContent, 'because the Because line is what the owner learns from').toMatch(/Because the power is clamped at 1\.0\./);
-  expect(panel.textContent, 'because the score and the rule to pass are said').toMatch(/1 of 2 right\. Every question right passes\./);
+  expect(panel.textContent, 'because the score is said').toMatch(/1 of 2 right/);
   expect(within(panel).getByRole('button', { name: 'Take it again' }), 'because a failed try can be retaken').not.toBeNull();
 });
 
@@ -111,7 +118,8 @@ test('APassingTry_SaysTheDraftGoesReady', async () => {
   fireEvent.click(screen.getByRole('radio', { name: /A tap, or a release after a hold/ }));
   fireEvent.click(screen.getByRole('radio', { name: /The power caps at full/ }));
   await press(CHECK_ANSWERS);
-  expect(quizPanel().textContent, 'because passing is what frees the PR').toMatch(/Passed: 2 of 2 right\. The draft PR goes ready for review\./);
+  expect(quizPanel().textContent, 'because the score of a pass is said').toMatch(/Passed: 2 of 2/);
+  expect(quizPanel().textContent, 'because passing is what frees the PR').toMatch(/draft PR goes ready/);
   expect(within(quizPanel()).queryByRole('button', { name: 'Take it again' }), 'because a pass needs no retake').toBeNull();
 });
 

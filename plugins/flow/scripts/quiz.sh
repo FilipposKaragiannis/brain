@@ -14,6 +14,20 @@
 home="$(flow_home)"
 
 reports_of() { "$FLOW_PLUGIN/scripts/steward.sh" reports "$1"; }
+is_pr() { # is_pr <value>: a PR number, or a GitHub PR URL that ends in one
+  number="${1##*/}"
+  case "$number" in ""|*[!0-9]*) return 1 ;; esac
+  case "$1" in "$number"|https://github.com/*/pull/"$number") return 0 ;; esac
+  return 1
+}
+mark_ready() { # mark_ready <item>: marks the item's draft PR ready and prints the note for the pass line,
+  # nothing when the item has no PR on GitHub
+  pr="$(state_get "$(adapter read "$1" 2>/dev/null)" pr)"
+  [ -n "$pr" ] && [ -n "$(cfg github.repo)" ] || return 0
+  is_pr "$pr" || { echo "; the PR in the state is not a PR number or URL, so it was not marked ready"; return 0; }
+  if "$FLOW_PLUGIN/scripts/comments.sh" ready "$pr" >/dev/null 2>&1; then echo "; PR $pr marked ready for review"
+  else echo "; PR $pr could not be marked ready (comments.sh ready $pr)"; fi
+}
 
 case "${1:-}" in
   show)
@@ -35,14 +49,7 @@ case "${1:-}" in
     right="$(json_get "$result" right)"; total="$(json_get "$result" total)"; passed="$(json_get "$result" passed)"
     verdict="failed"; [ "$passed" = true ] && verdict="passed"
     mkdir -p "$home"; printf '%s\t%s\tquiz\t%s %s/%s\n' "$at" "$item" "$verdict" "$right" "$total" >> "$home/events.log"
-    note=""
-    if [ "$passed" = true ]; then
-      pr="$(state_get "$(adapter read "$item" 2>/dev/null)" pr)"
-      if [ -n "$pr" ] && [ -n "$(cfg github.repo)" ]; then
-        if "$FLOW_PLUGIN/scripts/comments.sh" ready "$pr" >/dev/null 2>&1; then note="; PR $pr marked ready for review"
-        else note="; PR $pr could not be marked ready (comments.sh ready $pr)"; fi
-      fi
-    fi
+    note=""; [ "$passed" = true ] && note="$(mark_ready "$item")"
     echo "quiz $verdict on $item: $right of $total right$note"
     printf '%s\n' "$result" ;;
   *) sed -n '2,13p' "$0"; exit 2 ;;

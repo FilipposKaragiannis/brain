@@ -23,7 +23,7 @@ const QUIZ = `<!-- flow:quiz -->
 <!-- answers: 1b 2b 3a -->
 `;
 
-test('ParseQuiz_TitleQuestionsAndKey', () => {
+test('ParseQuiz_WrittenQuiz_TitleQuestionsAndKeyRead', () => {
   const quiz = parseQuiz(QUIZ);
   assert.equal(quiz.title, 'Quiz for gh#7', 'because the heading names the quiz on the card');
   assert.deepEqual(quiz.questions.map((question) => question.number), [1, 2, 3], 'because every numbered line starts a question');
@@ -53,14 +53,22 @@ test('ParseQuiz_NoNumberedLine_NoQuestions', () => {
   assert.deepEqual(parseQuiz('## Quiz\nNothing here.').questions, [], 'because a page with no quiz shows no quiz');
 });
 
-test('ParseQuizResult_TheGraderFile', () => {
+test('ParseQuizResult_ValidFile_ReadAsWritten', () => {
   const result = parseQuizResult('{"given": {"1": "b", "2": "a"}, "right": 1, "total": 2, "passed": false, "item": "gh#7", "at": "2026-10-24T09:30:00Z"}');
   assert.deepEqual(result, { at: '2026-10-24T09:30:00Z', right: 1, total: 2, passed: false, given: { '1': 'b', '2': 'a' } }, 'because the card shows the last try and the letters given');
+});
+
+test('ParseQuizResult_MalformedJson_Null', () => {
   assert.equal(parseQuizResult('not json'), null, 'because a broken file is no result');
+});
+
+test('ParseQuizResult_MissingNumbers_Null', () => {
   assert.equal(parseQuizResult('{"right": "one"}'), null, 'because a result without its numbers is no result');
 });
 
-test('ReadQuizzes_FirstRootWins_AndTheResultRidesAlong', async () => {
+/** The quizzes read from a claimed worktree, a missing root and the main root, in that order: gh-7 in
+ * both real roots (a last try beside the claimed one), gh-8 only in main, and gh-9 with no question. */
+async function readFixtureQuizzes(): Promise<Awaited<ReturnType<typeof readQuizzes>>> {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'console-quiz-'));
   try {
     const claimed = path.join(dir, 'wt');
@@ -70,10 +78,31 @@ test('ReadQuizzes_FirstRootWins_AndTheResultRidesAlong', async () => {
       writeFileSync(path.join(root, '.flow', 'reports', slug, 'quiz.md'), text);
     }
     writeFileSync(path.join(claimed, '.flow', 'reports', 'gh-7', 'quiz.json'), '{"given": {"1": "b"}, "right": 1, "total": 3, "passed": false, "at": "2026-10-24T09:30:00Z"}');
-    const quizzes = await readQuizzes([claimed, main, path.join(dir, 'missing')]);
-    assert.deepEqual(Object.keys(quizzes).sort(), ['gh-7', 'gh-8'], 'because a quiz.md with no question is no quiz, and a missing root is skipped');
-    assert.equal(quizzes['gh-7']?.questions.length, 3, 'because the claimed worktree holds the quiz the explain step wrote, as steward.sh reports looks');
-    assert.equal(quizzes['gh-7']?.result?.right, 1, 'because the result beside the quiz is the last try');
-    assert.equal(quizzes['gh-8']?.result, null, 'because an untried quiz has no result');
+    return await readQuizzes([claimed, path.join(dir, 'missing'), main]);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+}
+
+test('ReadQuizzes_SameSlugInTwoRoots_FirstRootWins', async () => {
+  const quizzes = await readFixtureQuizzes();
+  assert.equal(quizzes['gh-7']?.questions.length, 3, 'because the claimed worktree holds the quiz the explain step wrote, as steward.sh reports looks');
+});
+
+test('ReadQuizzes_QuizWithNoQuestions_LeftOut', async () => {
+  const quizzes = await readFixtureQuizzes();
+  assert.equal(quizzes['gh-9'], undefined, 'because a quiz.md with no question is no quiz');
+});
+
+test('ReadQuizzes_MissingRoot_Skipped', async () => {
+  const quizzes = await readFixtureQuizzes();
+  assert.equal(quizzes['gh-8']?.questions.length, 1, 'because a missing root is skipped and the roots after it are still read');
+});
+
+test('ReadQuizzes_ResultBesideTheQuiz_RidesAlong', async () => {
+  const quizzes = await readFixtureQuizzes();
+  assert.equal(quizzes['gh-7']?.result?.right, 1, 'because the result beside the quiz is the last try');
+});
+
+test('ReadQuizzes_UntriedQuiz_ResultNull', async () => {
+  const quizzes = await readFixtureQuizzes();
+  assert.equal(quizzes['gh-8']?.result, null, 'because an untried quiz has no result');
 });

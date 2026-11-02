@@ -2444,6 +2444,10 @@ q2reports="$("$P/scripts/steward.sh" reports "$q2")"; cp "$qreports/quiz.md" "$q
 : > "$FAKE_GH_DIR/calls.log"
 qout="$("$P/scripts/quiz.sh" answer "$q2" 1b 2b 3a)"
 check "quiz answer: a pass with no PR records the pass and asks gh nothing" sh -c "printf '%s' \"$qout\" | grep -q 'quiz passed on $q2: 3 of 3 right\$' && ! grep -q 'pr ready' '$FAKE_GH_DIR/calls.log'"
+"$P/adapters/local/link-pr.sh" "$q2" --help >/dev/null
+: > "$FAKE_GH_DIR/calls.log"
+qout="$("$P/scripts/quiz.sh" answer "$q2" 1b 2b 3a)"
+check "quiz answer: a pr in the state that is not a number is not marked ready" sh -c "printf '%s' \"$qout\" | grep -q 'quiz passed on $q2: 3 of 3 right; .*not marked ready' && ! grep -q 'pr ready' '$FAKE_GH_DIR/calls.log'"
 
 echo "digits stay strings, numbers stay numbers"
 mkdir -p "$work/digits" && cd "$work/digits" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
