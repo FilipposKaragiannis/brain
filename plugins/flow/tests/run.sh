@@ -2203,6 +2203,32 @@ check "session-start: names missing Claude worktree hooks" sh -c "echo '{}' | FL
 printf '{"hooks":{"WorktreeCreate":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-create.sh"}]}],"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh"}]}]}}\n' > .claude/settings.json
 check "init: --check is clean once the hooks are in the settings" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 check "session-start: silent once the hooks are in the settings" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+git worktree add -q --detach ../plugin-wt
+cfg="$work/claude-config"; mkdir -p "$cfg/plugins/cache/m/flow/1.0.0" "$cfg/plugins/cache/m/flow/2.0.0" "$cfg/plugins/cache/m/other/1.0.0"
+registry="$cfg/plugins/installed_plugins.json"
+write_registry() { # write_registry <worktree version> <user version> <user install dir>
+  python3 -c 'import json, sys
+wt, user, user_dir, cache, repo, registry = sys.argv[1:]
+flow = [{"scope": "user", "installPath": user_dir, "version": user, "gitCommitSha": "new"},
+        {"scope": "project", "projectPath": repo + "/../plugin-wt", "installPath": cache + "/flow/1.0.0", "version": wt, "gitCommitSha": "old"},
+        {"scope": "project", "projectPath": "/elsewhere/repo", "installPath": cache + "/flow/1.0.0", "version": "1.0.0", "gitCommitSha": "old"}]
+other = [{"scope": "project", "projectPath": repo + "/../plugin-wt", "installPath": cache + "/other/1.0.0", "version": "1.0.0"}]
+json.dump({"version": 2, "plugins": {"flow@m": flow, "other@m": other}}, open(registry, "w"), indent=2)' "$1" "$2" "$3" "$cfg/plugins/cache/m" "$repo" "$registry"
+}
+write_registry 1.0.0 2.0.0 "$cfg/plugins/cache/m/flow/2.0.0"
+sync_out="$(echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start")"
+check "session-start: lifts a pool worktree's pinned plugin to the newest installed version" [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.0" ]
+check_all "session-start: the lifted record takes the newest install path and commit" '[ "$(jget plugins.flow@m.1.installPath < "$registry")" = "$cfg/plugins/cache/m/flow/2.0.0" ] && [ "$(jget plugins.flow@m.1.gitCommitSha < "$registry")" = new ]'
+check "session-start: says which pin it lifted" sh -c "printf '%s' '$sync_out' | grep -q 'plugin pin lifted: flow@m in plugin-wt: 1.0.0 -> 2.0.0'"
+check "session-start: a record of another repository is left alone" [ "$(jget plugins.flow@m.2.version < "$registry")" = "1.0.0" ]
+check "session-start: a plugin with one version has nothing to lift" [ "$(jget plugins.other@m.0.version < "$registry")" = "1.0.0" ]
+cp "$registry" "$registry.before"
+check "session-start: silent and the registry untouched when nothing is behind" sh -c "[ -z \"\$(echo '{}' | CLAUDE_CONFIG_DIR='$cfg' FLOW_PLUGIN='$plugin_copy' '$start')\" ] && cmp -s '$registry' '$registry.before'"
+write_registry 1.0.0 3.0.0 "$cfg/plugins/cache/m/flow/3.0.0-missing"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "session-start: a newer version missing from the cache is not a target; the next installed one is" [ "$(jget plugins.flow@m.1.version < "$registry")" = "1.0.0" ]
+check "session-start: no registry at all is silent" sh -c "[ -z \"\$(echo '{}' | CLAUDE_CONFIG_DIR='$work/no-such-config' FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+git worktree remove -q --force ../plugin-wt
 rm -rf .claude
 rm .flow/stamp
 check "session-start: no stamp asks for one init" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'no install stamp'"
