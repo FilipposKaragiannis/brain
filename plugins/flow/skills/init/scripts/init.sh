@@ -162,6 +162,8 @@ if [ ! -f .flow/config.yaml ]; then
       echo "#     area: Area"
       echo "#   transitions:"
       echo "#     done: Done                # the transition close takes"
+      echo "#   limit: 500                  # the most issues one list reads"
+      echo "#   answer_from: [you@example.com]  # whose /answer comments clear a gate (default: the token's user)"
       echo "# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism."
       echo "# A claim with no free worktree adds one (named after the last entry, ../$(basename "$main")-wt-<n>)"
       echo "# while the pool is below pool_max, and the steward appends it here. 0 never adds."

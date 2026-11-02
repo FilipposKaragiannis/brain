@@ -10,11 +10,15 @@ export type CommandRunner = (request: CommandRequest) => Promise<CommandResult>;
 
 const OUTPUT_LIMIT_BYTES = 64 * 1024 * 1024;
 
+/** The variable the flow's Jira adapter takes its API token from. */
+export const JIRA_TOKEN = 'JIRA_API_TOKEN';
+
 /** The minimum environment a flow script needs. Nothing the daemon's owner exports leaks through. */
 export function scriptEnvironment(): Record<string, string> {
   const environment: Record<string, string> = { LANG: 'C' };
   // FLOW_PLUGIN passes through so the owner can point the console at a plugin that is not installed.
-  for (const name of ['PATH', 'HOME', 'TMPDIR', 'USER', 'SHELL', 'GH_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK', 'XDG_CONFIG_HOME', 'FLOW_PLUGIN']) {
+  // JIRA_API_TOKEN is the Jira adapter's only way to its token: it never reads one from the config.
+  for (const name of ['PATH', 'HOME', 'TMPDIR', 'USER', 'SHELL', 'GH_TOKEN', 'GITHUB_TOKEN', JIRA_TOKEN, 'SSH_AUTH_SOCK', 'XDG_CONFIG_HOME', 'FLOW_PLUGIN']) {
     const value = process.env[name];
     if (value !== undefined) environment[name] = value;
   }

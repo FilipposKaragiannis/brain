@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, QUIZ_SINCE, REVIEW_ASK, SYNC_SCRIPT, sweepNote } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -42,9 +42,28 @@ test('GateClear_BackNotTrueOrFalse_Rejected', () => {
 });
 
 test('GateClear_WithBadItem_Rejected', () => {
-  for (const item of ['', '-rf', 'gh#1 x', '$(x)', 'github', 'local/../../tmp/x', 'local:7', 'src', 'gh#0']) {
+  for (const item of ['', '-rf', 'gh#1 x', '$(x)', 'github', 'local/../../tmp/x', 'src', 'gh#', 'jira:-1', 'jira:WID 7', 'lin:7']) {
     assert.equal(planAction('gate.clear', { item }, CONTEXT).ok, false, `because "${item}" is not an id an adapter owns, and the adapter name comes from the id prefix`);
   }
+});
+
+test('GateClear_IdClimbingOutOfTheItemsFolder_Rejected', () => {
+  for (const item of ['local:task/../../../README', 'local:task/..', 'local:task/./7', 'local:task//7', 'local:task/7/']) {
+    assert.equal(planAction('gate.clear', { item }, CONTEXT).ok, false, `because the local adapter joins "${item}" onto its items folder, and a . or .. part or an empty one would reach another file`);
+  }
+});
+
+test('GateClear_AbsolutePathAfterThePrefix_Rejected', () => {
+  assert.equal(planAction('gate.clear', { item: 'local:/etc/passwd' }, CONTEXT).ok, false, 'because an id goes on after its prefix with a letter or digit, never a path from the root');
+});
+
+test('GateClear_JiraItemId_PassedToGateSh', () => {
+  assert.equal(planned('gate.clear', { item: 'jira:WID-7' }).args[2], 'jira:WID-7', "because the plugin's jira adapter owns the jira: prefix, so its ids reach the scripts like any other");
+});
+
+test('GateClear_PrefixNoAdapterOwns_ErrorNamesThePrefixesThePluginHas', () => {
+  const result = planAction('gate.clear', { item: 'lin:7' }, CONTEXT);
+  assert.equal(result.ok ? '' : result.error, 'gate.clear needs an item id: gh#, jira: or local: and its number or key', "because the ids an action takes are the ones of the plugin's adapters, read from their prefix files");
 });
 
 test('LocalItemId_Accepted', () => {
@@ -445,6 +464,11 @@ test('StepSync_GithubItem_WritesTheClaimsStepThroughTheAdapter', () => {
 test('StepSync_LocalItem_UsesTheLocalAdapter', () => {
   const context: ActionContext = { ...CONTEXT, worktrees: [{ ...CLEAN, item: 'local:task/7', claimStep: 'review', trackerStep: 'implement' }] };
   assert.equal(planned('item.step-sync', { item: 'local:task/7' }, context).args[0], '/plugins/flow/1.17.0/adapters/local/write-state.sh', "because lib/flow.sh's adapter_for picks the adapter from the id's prefix");
+});
+
+test('StepSync_JiraItem_UsesTheJiraAdapter', () => {
+  const context: ActionContext = { ...CONTEXT, worktrees: [{ ...CLEAN, item: 'jira:WID-7', claimStep: 'review', trackerStep: 'implement' }] };
+  assert.equal(planned('item.step-sync', { item: 'jira:WID-7' }, context).args[0], '/plugins/flow/1.17.0/adapters/jira/write-state.sh', "because the jira: prefix is the jira adapter's, as its prefix file says");
 });
 
 test('StepSync_Prepare_OutputNamesOldAndNewStep', async () => {

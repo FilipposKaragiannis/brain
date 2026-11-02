@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import { JOB_HOSTS_TITLE, ProjectHeader } from '../src/ProjectHeader.tsx';
+import { JOB_HOSTS_TITLE, NOT_READ, ProjectHeader } from '../src/ProjectHeader.tsx';
 import { snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
@@ -40,9 +40,23 @@ test('GithubAdapter_TrackerFieldLinksGithubIssues', () => {
 });
 
 test('LocalProject_TrackerSaysLocalAndNothingLinks', () => {
-  render(<ProjectHeader project={{ ...PROJECT, repo: null, repoUrl: null, trackerUrl: null, adapter: 'local' }} />);
+  render(<ProjectHeader project={{ ...PROJECT, repo: null, repoUrl: null, adapter: 'local', trackers: [{ name: 'local', url: null, error: null }] }} />);
   expect(field('Tracker').textContent, 'because a local tracker has no page, only its name').toBe('Trackerlocal');
   expect(screen.queryAllByRole('link').map((link) => link.textContent), 'because a local project has no repository or tracker page to open').toEqual([]);
+});
+
+const JIRA = { name: 'jira', url: 'https://acme.atlassian.net/browse/WID', error: null };
+
+test('JiraBesideGithub_TrackersFieldLinksBoth', () => {
+  render(<ProjectHeader project={{ ...PROJECT, trackers: [...PROJECT.trackers, JIRA] }} />);
+  const links = within(field('Trackers')).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')]);
+  expect(links, 'because the flow reads both, and each opens on its own items').toEqual([['GitHub issues', 'https://github.com/owner/project/issues'], ['Jira', 'https://acme.atlassian.net/browse/WID']]);
+});
+
+test('TrackerTheBoardCouldNotRead_MarkedWithWhyInItsTitle', () => {
+  render(<ProjectHeader project={{ ...PROJECT, trackers: [...PROJECT.trackers, { ...JIRA, error: 'JIRA_API_TOKEN is not set' }] }} />);
+  const mark = within(field('Trackers')).getByText(`(${NOT_READ})`);
+  expect([mark.getAttribute('title'), mark.className.includes('tone-failing')], 'because its items are missing from the board, and the owner needs the reason to fix it').toEqual(['JIRA_API_TOKEN is not set', true]);
 });
 
 test('Header_BaseBranch_ShownInMono', () => {

@@ -366,6 +366,7 @@ a.button.primary { color: var(--panel); }
 .project-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .project-field dt { font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .project-field dd { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tracker-not-read { color: var(--failing); font-size: 12px; cursor: help; }
 .project-name { font-weight: 700; color: var(--ink); }
 @media (max-width: 600px) { .project-bar { flex-wrap: wrap; } .project-fields { gap: 8px 16px; } }
 

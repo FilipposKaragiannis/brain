@@ -17,6 +17,9 @@ export type FlowConfig = {
   /** The trackers the flow reads, as `adapters_configured` in lib/flow.sh says: `trackers`, else every one under `adapters` and local. */
   trackers: string[];
   repo: string | null;
+  /** `jira.site` and `jira.project`: where a Jira item's page is (`<site>/browse/<KEY>`); null when unset. */
+  jiraSite: string | null;
+  jiraProject: string | null;
   pool: string[];
   poolMax: number | null;
   schedule: Record<string, string>;
@@ -94,7 +97,12 @@ export type FlowHomeFacts = {
   quizzes: Record<string, Quiz>;
   /** The names in the plugin's `scripts/` folder, so an action can see a script a checkout has before its version says so; null with no plugin or an unreadable folder. */
   pluginScripts: string[] | null;
+  /** The id prefix of each adapter folder of the plugin (`adapters/<name>/prefix`), as lib/flow.sh routes ids; empty with no plugin. */
+  adapterPrefixes: AdapterPrefix[];
 };
+
+/** One adapter folder of the flow plugin and the id prefix it owns: `github` and `gh#`. */
+export type AdapterPrefix = { adapter: string; prefix: string };
 
 const PLUGIN_LOOKUP_TIMEOUT_MS = 5000;
 /** Short on purpose: the list only improves the parse, and the whole files source waits for it. */
@@ -152,6 +160,8 @@ export function parseFlowConfig(source: string): FlowConfig {
     adapter: yamlString(map, 'adapters.default') ?? 'local',
     trackers: trackersOf(map),
     repo: yamlString(map, 'github.repo'),
+    jiraSite: yamlString(map, 'jira.site'),
+    jiraProject: yamlString(map, 'jira.project'),
     pool: yamlList(map, 'pool'),
     poolMax: poolMax === null ? null : Number(poolMax),
     schedule,
@@ -418,7 +428,33 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const stoppedHosts = await readStoppedHosts(flowHome);
   const quizzes = await readQuizzes([...new Set([...claims.map((claim) => claim.worktreePath), ...pool, root])]);
   const pluginScripts = pluginRoot === null ? null : await readPluginScripts(pluginRoot);
-  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps, quizzes, pluginScripts };
+  const prefixFiles = pluginRoot === null ? [] : await readAdapterPrefixes(pluginRoot);
+  const adapterPrefixes = prefixFiles.length > 0 ? prefixFiles : PREFIXES_BEFORE_PREFIX_FILES;
+  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps, quizzes, pluginScripts, adapterPrefixes };
+}
+
+/** The ids a plugin owned before its adapters had prefix files (before flow 1.28.0): GitHub's and the local tracker's. */
+export const PREFIXES_BEFORE_PREFIX_FILES: AdapterPrefix[] = [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'local', prefix: 'local:' }];
+
+/** An adapter folder's name as it goes into a path: lower case letters, digits and dashes. */
+const ADAPTER_NAME = /^[a-z][a-z0-9-]*$/;
+/** A prefix as adapters/README.md has them: letters and digits, then `#` or `:` (`gh#`, `local:`, `jira:`). */
+const PREFIX_SHAPE = /^[A-Za-z][A-Za-z0-9]*[#:]$/;
+
+/**
+ * The first line of each `adapters/<name>/prefix` under the plugin, sorted by adapter, the way
+ * lib/flow.sh's `adapter_for` routes an id; a folder without a prefix of that shape is left out,
+ * and an unreadable `adapters/` gives none.
+ */
+export async function readAdapterPrefixes(pluginRoot: string): Promise<AdapterPrefix[]> {
+  let names: string[];
+  try { names = (await readdir(path.join(pluginRoot, 'adapters'))).sort(); } catch { return []; }
+  const found: AdapterPrefix[] = [];
+  for (const adapter of names.filter((name) => ADAPTER_NAME.test(name))) {
+    const prefix = ((await readText(path.join(pluginRoot, 'adapters', adapter, 'prefix'))) ?? '').split('\n')[0]?.trim() ?? '';
+    if (PREFIX_SHAPE.test(prefix)) found.push({ adapter, prefix });
+  }
+  return found;
 }
 
 /** The file names under the plugin's `scripts/`, sorted; null when the folder cannot be read. */

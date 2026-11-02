@@ -2,7 +2,10 @@
 import calendar, json, os, sys, time
 as_json, pool_text, reminder = sys.argv[1] == "1", sys.argv[2], int(sys.argv[3])
 log = sys.argv[4] if len(sys.argv) > 4 else ""
-items, runs, gates = (json.loads(l) for l in sys.stdin.read().split("\n")[:3])
+lines = sys.stdin.read().split("\n")
+items, runs, gates = (json.loads(l) for l in lines[:3])
+# Each tracker whose list failed: {"tracker", "code", "message"}, the adapter's last stderr line.
+tracker_errors = json.loads(lines[3]) if len(lines) > 3 and lines[3].strip() else []
 pool = []
 for line in pool_text.splitlines():
     parts = line.split(None, 4)
@@ -57,7 +60,12 @@ for name in ("runs.1.jsonl", "runs.jsonl"):
         s["tokens"] += sum(u.get(k) for k in TOKENS.get(r.get("host"), ()) if isinstance(u.get(k), int))
 if as_json:
     print(json.dumps({"pool": pool, "items": items, "runs": runs, "gates": gates,
-                      "overlaps": [list(o) for o in overlap], "spend": spend}, indent=2)); sys.exit()
+                      "overlaps": [list(o) for o in overlap], "spend": spend, "tracker_errors": tracker_errors}, indent=2)); sys.exit()
+if tracker_errors:
+    print("## Trackers not read")
+    for e in tracker_errors:
+        print("- %s (exit %s): %s" % (e["tracker"], e["code"], e["message"] or "no reason given"))
+    print()
 print("## Pool")
 print("| worktree | branch | item | step | last event | state |")
 print("|---|---|---|---|---|---|")

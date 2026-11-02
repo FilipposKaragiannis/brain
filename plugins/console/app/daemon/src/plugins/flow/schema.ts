@@ -59,7 +59,7 @@ export type FieldSpec = {
   /** A concrete example, shown greyed in the empty control (lines of a list on their own lines). */
   placeholder?: string;
   /** Read by one tracker's adapter only: the form hides it while no tracker of the project is that one. */
-  adapter?: 'github';
+  adapter?: TrackerAdapter;
   /**
    * A map under fixed names (`github.status`: backlog, ready, …): one labelled box per name, an
    * empty box leaves the name out, and no other name passes the check.
@@ -151,6 +151,9 @@ export function scheduleJob(name: string): string {
   return name.split('-')[0] ?? name;
 }
 const ADAPTERS = ['github', 'local', 'jira'];
+/** The adapters with keys of their own in the file, each shown only while it is a tracker of the project. */
+export const TRACKER_ADAPTERS = ['github', 'jira'] as const;
+export type TrackerAdapter = (typeof TRACKER_ADAPTERS)[number];
 
 const RELOAD_SCHEDULE: FollowUp = {
   note: 'The schedule launchd runs is written at install: run jobs.sh install to reload it.',
@@ -173,6 +176,7 @@ const capitalised = (word: string): string => `${word.charAt(0).toUpperCase()}${
 const READ_FROM = 'Where items come from';
 const TRACKERS = 'Where new items go';
 const GITHUB = 'GitHub';
+const JIRA = 'Jira';
 const DEPRECATED_READY = 'Deprecated: flow reads ready.needs and ready.priority_order for every tracker, and this key only while that one is unset. Set it and clear this.';
 const CHANNELS = 'Channels';
 const WHEN_TO_NOTIFY = 'When to notify';
@@ -221,7 +225,7 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('adapters.epic', 'enum', 'Tracker', 'Tracker for epics', 'Sends new epics to this tracker instead of the default one.', { values: ADAPTERS, part: TRACKERS }),
   field('adapters.task', 'enum', 'Tracker', 'Tracker for tasks', 'Sends new tasks to this tracker instead of the default one.', { values: ADAPTERS, part: TRACKERS }),
   field('adapters.bug', 'enum', 'Tracker', 'Tracker for bugs', 'Sends new bugs to this tracker instead of the default one, such as local to keep bugs off GitHub.', { values: ADAPTERS, part: TRACKERS }),
-  field('github.repo', 'string', 'Tracker', 'GitHub repository', 'The owner/name repository whose issues and pull requests the flow reads and writes. Unset, the repository of the checkout\'s origin, as gh repo view names it.', { part: GITHUB, adapter: 'github', placeholder: 'acme/app' }),
+  field('github.repo', 'string', 'Tracker', 'GitHub repository', 'The owner/name repository whose pull requests the flow reads and writes, whatever tracker holds the items, and whose issues it reads while github is a tracker. Unset, the repository of the checkout\'s origin, as gh repo view names it; the console reads pull requests only when it is set.', { part: GITHUB, placeholder: 'acme/app' }),
   field('github.limit', 'number', 'Tracker', 'Issues per board read', 'How many issues one board read lists before it stops and says so. Unset, 500.', { min: 1, max: 5000, part: GITHUB, adapter: 'github', placeholder: '500' }),
   field('github.types', 'boolean', 'Tracker', 'Use GitHub issue types', 'When on, an item\'s kind sets the GitHub issue type (Epic, Task, Bug) instead of a label.', { part: GITHUB, adapter: 'github' }),
   field('github.fields', 'map', 'Tracker', 'Issue field names', 'The organisation\'s issue fields the flow fills in, by their name on GitHub. Without a size field the size goes in a size: label; without a priority field an item has no priority; without an area field the body names the area.', {
@@ -231,6 +235,20 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('github.project', 'number', 'Tracker', 'GitHub project number', 'The number of a GitHub Projects board, from its URL (…/projects/<n>). The flow moves each item\'s card to the Status that says where the item is: Backlog, Ready, Needs you, In progress or In review. Unset leaves projects alone.', { min: 1, part: GITHUB, adapter: 'github', placeholder: '7' }),
   field('github.status', 'map', 'Tracker', 'Project status names', 'The Status options of that board, when yours are named differently. An empty box keeps the name shown in it.', { part: GITHUB, adapter: 'github', keys: GITHUB_STATUS }),
   field('github.answer_from', 'list', 'Tracker', 'Who may answer gates', 'The GitHub logins whose /answer comments on an issue clear its gate; empty, only the signed-in gh user\'s answers count.', { part: GITHUB, adapter: 'github', placeholder: 'octocat\nmonalisa' }),
+  field('jira.site', 'string', 'Tracker', 'Jira site', 'The https address of the Jira Cloud site the items live on. The API token is JIRA_API_TOKEN in the environment of the console and the jobs, never a key of this file.', { part: JIRA, adapter: 'jira', placeholder: 'https://acme.atlassian.net' }),
+  field('jira.project', 'string', 'Tracker', 'Jira project key', 'The key of the project whose issues are the items; ids read jira:<KEY>-<n>.', { part: JIRA, adapter: 'jira', placeholder: 'WID' }),
+  field('jira.email', 'string', 'Tracker', 'Jira login', 'The email of the Jira account the API token belongs to.', { part: JIRA, adapter: 'jira', placeholder: 'you@acme.com' }),
+  field('jira.types', 'map', 'Tracker', 'Issue type of each kind', 'The issue type an epic, a task and a bug are created as and read back from; an issue of any other type reads as a task. An empty box keeps the name shown in it.', {
+    part: JIRA, adapter: 'jira',
+    keys: [{ name: 'epic', label: 'Epic type', placeholder: 'Epic' }, { name: 'task', label: 'Task type', placeholder: 'Task' }, { name: 'bug', label: 'Bug type', placeholder: 'Bug' }],
+  }),
+  field('jira.fields', 'map', 'Tracker', 'Custom field names', 'The custom fields, by name or id (customfield_10040), that hold the size and the area. Without a size field the size goes in a size: label; without an area field the area is not kept.', {
+    part: JIRA, adapter: 'jira',
+    keys: [{ name: 'size', label: 'Size field', placeholder: 'Size' }, { name: 'area', label: 'Area field', placeholder: 'Area' }],
+  }),
+  field('jira.transitions.done', 'string', 'Tracker', 'Transition that closes', 'The workflow transition the flow takes to close an item. Unset, the first transition named Done.', { part: JIRA, adapter: 'jira', placeholder: 'Done' }),
+  field('jira.limit', 'number', 'Tracker', 'Jira issues per board read', 'How many issues one board read lists before it stops and says so. Unset, 500.', { min: 1, max: 5000, part: JIRA, adapter: 'jira', placeholder: '500' }),
+  field('jira.answer_from', 'list', 'Tracker', 'Who may answer gates on Jira', 'The Jira account ids or emails whose /answer comments on an issue clear its gate; empty, only the API token\'s own user\'s answers count.', { part: JIRA, adapter: 'jira', placeholder: 'you@acme.com\n5b10a2844c20165700ede21g' }),
   field('ready.needs', 'list', 'Readiness', 'Fields an item needs to start', 'The fields an unstarted item must have filled before the next job will take it, on every tracker.', { values: READY_NEEDS }),
   field('ready.priority_order', 'list', 'Readiness', 'Priority order', 'The priorities from most to least urgent, on every tracker; the next job takes ready items in this order, items with no priority last.', { placeholder: 'P0\nP1\nP2' }),
   field('github.ready_needs', 'list', 'Readiness', 'Fields an item needs (deprecated)', DEPRECATED_READY, { values: READY_NEEDS, deprecated: DEPRECATED_READY, part: 'Deprecated' }),

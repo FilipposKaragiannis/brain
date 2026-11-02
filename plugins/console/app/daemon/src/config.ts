@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ProjectDefinition } from './project.ts';
@@ -102,6 +102,24 @@ function storedToken(stateDir: string): string {
 export function privateFolder(folder: string): void {
   mkdirSync(folder, { recursive: true, mode: PRIVATE_FOLDER_MODE });
   chmodSync(folder, PRIVATE_FOLDER_MODE);
+}
+
+/**
+ * Writes the file with `mode` from its first byte: the text goes to a new temp file beside it,
+ * created with that mode (`wx`, so never through a file already there), then renamed over it. A
+ * file that held a secret is never readable more widely while it is written, and one that was
+ * (an older 0644 plist) is replaced, not written in place.
+ */
+export function writeFileWithMode(file: string, text: string, mode: number): void {
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+  try {
+    writeFileSync(temp, text, { mode, flag: 'wx' });
+    chmodSync(temp, mode);
+    renameSync(temp, file);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw error;
+  }
 }
 
 /** The page to open, with the token in it: only ever printed to the owner's terminal, never logged. */

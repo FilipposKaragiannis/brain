@@ -16,3 +16,13 @@ test('ScriptEnvironment_PassesFlowPluginAndDropsTheRest', () => {
     if (before.secret === undefined) delete process.env.CONSOLE_TEST_SECRET; else process.env.CONSOLE_TEST_SECRET = before.secret;
   }
 });
+
+test('ScriptEnvironment_JiraToken_PassedToTheFlowScripts', () => {
+  const before = process.env.JIRA_API_TOKEN;
+  process.env.JIRA_API_TOKEN = 'jira-secret';
+  try {
+    assert.equal(scriptEnvironment().JIRA_API_TOKEN, 'jira-secret', 'because the Jira adapter refuses to run without it and reads it nowhere else');
+  } finally {
+    if (before === undefined) delete process.env.JIRA_API_TOKEN; else process.env.JIRA_API_TOKEN = before;
+  }
+});

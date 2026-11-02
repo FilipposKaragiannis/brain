@@ -6,6 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import type { ActionContext } from '../src/actionPlan.ts';
 import { ActionRunner, childProcessSpawner, realScheduler } from '../src/actions.ts';
+import { readAdapterPrefixes } from '../src/collectors/flowHome.ts';
 import { silentLogger } from '../src/log.ts';
 import type { ActionRecord } from '../src/snapshot.ts';
 import { until } from './fakeSpawner.ts';
@@ -21,7 +22,7 @@ test('StepSyncAction_LocalTracker_IssueTakesTheClaimsStep', { skip: !existsSync(
     execFileSync('sh', [path.join(FLOW_PLUGIN, 'adapters', 'local', 'write-state.sh'), 'local:task/1', 'step=implement'], { cwd: root, stdio: 'ignore' });
     const worktree = path.join(root, 'wt');
     const context: ActionContext = {
-      root, pluginRoot: FLOW_PLUGIN, pluginVersion: null, pluginScripts: null, repo: null, jobsHost: 'claude', pool: [worktree], outsideWorktrees: [], processCwds: [], sessions: [], terminal: null, installedTerminals: [], base: 'main',
+      root, pluginRoot: FLOW_PLUGIN, pluginVersion: null, pluginScripts: null, adapterPrefixes: await readAdapterPrefixes(FLOW_PLUGIN), repo: null, jobsHost: 'claude', pool: [worktree], outsideWorktrees: [], processCwds: [], sessions: [], terminal: null, installedTerminals: [], base: 'main',
       worktrees: [{ name: 'wt', path: worktree, item: 'local:task/1', claimBase: null, dirtyFiles: 0, behindBase: 0, agentPids: [], step: 'review', claimStep: 'review', trackerStep: 'implement' }],
       runItems: [], gateItems: [], worktreeSteps: { implement: true, review: true }, nextJob: null,
     };

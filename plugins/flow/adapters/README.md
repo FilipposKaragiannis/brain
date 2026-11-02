@@ -32,9 +32,11 @@ starts the id, `adapter <op> <id|name> [args]` runs `adapters/<name>/<op>.sh`, a
 `slug_item <slug>` reverses it through each adapter's `slug.sed`, so the reverse must be unique:
 `s/^gh-\([0-9][0-9]*\)$/gh#\1/p`.
 
-Still named by hand: `scripts/steward.sh` `item_id` checks the exact shape of `gh#` and `local:`
-ids and takes any other adapter's id by its prefix; `scripts/_slack.py` links only `gh#` and
-`local:` ids; the console's `actionPlan.ts` (`ITEM_ID`, `ADAPTER_OF_PREFIX`) acts only on those two.
+`scripts/_slack.py` reads the prefix files too, to set ids as code and to say a gate is answered on
+the tracker when the item's adapter has `answers.sh`; so does the console (`readAdapterPrefixes`),
+to take an id in an action and route it to its adapter. Still named by hand: `scripts/steward.sh`
+`item_id` checks the exact shape of `gh#` and `local:` ids and takes any other adapter's id by its
+prefix.
 
 ## Operations
 
@@ -48,9 +50,9 @@ ids and takes any other adapter's id by its prefix; `scripts/_slack.py` links on
 | `comment` | `<id> [--body TEXT]` | nothing; the text is `--body` or stdin |
 | `link-pr` | `<id> <url>` | nothing; `state.pr` reads the url, `state.pr_host` the host that ran it (claude or codex, else unset), and a comment names it |
 | `write-state` | `<id> key=value...` | nothing; each key reads back (below) |
-| `sync` | `[id]` | optional: moves the tracker's own board to the flow state, one line per change; exit 0 with nothing to do. `jobs/next.sh` runs it each round |
+| `sync` | `[id]` | optional: moves the tracker's own board to the flow state, one line per change; exit 0 with nothing to do. `jobs/next.sh` runs it each round. A tracker whose board shows the flow state already (Jira's labels) has none |
 | `vocabulary` | | optional: `{"types": [...], "areas": [...]}`, the names a new item may use; the intake job reads it |
-| `answers` | | optional: clears each gate the owner answered on the tracker through `scripts/gate.sh clear`, prints each cleared id; `jobs/next.sh` runs it |
+| `answers` | | optional: clears each gate the owner answered on the tracker (a comment after the gate's `**Gate: <gate>**` comment whose first word is `/answer`, by an owner the adapter trusts; never the merge gate) through `scripts/gate.sh clear`, prints each cleared id; `jobs/next.sh` runs it, and a Slack gate message says to answer on the issue |
 
 `kind` is `epic`, `task` or `bug`. `create` puts a value the tracker has no place for nowhere
 and says so on stderr (`--type` on a tracker without types, `--priority` without a field for it);
@@ -142,14 +144,28 @@ The `jira` adapter reaches Jira Cloud through its REST API v3 with `curl`. Name 
 | `jira.fields.size`, `jira.fields.area` | unset | a custom field, by id (`customfield_10040`) or name, for the size and the area; unset, the size is a label and the area is not kept |
 | `jira.transitions.done` | the first transition named `Done` | the transition `close` takes |
 | `jira.limit` | `500` | the most issues `list` reads |
+| `jira.answer_from` | the token's user | the account ids or emails whose `/answer` comments clear a gate |
 
 The token is `JIRA_API_TOKEN` in the environment, never a config key; without it every script
-refuses before it calls Jira. It reaches `curl` on stdin, never on its command line. Ids are
+refuses before it calls Jira. It reaches `curl` on stdin, never on its command line. The
+scheduled jobs run in a login `zsh`, so export it in `~/.zprofile` or `~/.zshenv`; the console
+passes its own environment's token to the scripts it runs. Ids are
 `jira:<KEY>-<n>`. A Jira blocker is a Blocks link; a blocker in another tracker, or a Jira one
 whose link Jira refused, is a `Blocked by: <id>, <id>` line in the description, and then the item
 carries no `open_blockers`.
-`link-pr` adds the PR as a remote link and a comment. There is no `sync`, `vocabulary` or
-`answers` yet: the owner clears a Jira item's gate with `scripts/gate.sh`.
+`link-pr` adds the PR as a remote link and a comment.
+
+`answers` reads the comments of each open issue at a gate (`GET .../issue/<KEY>/comment`) and
+takes an `/answer` by the token's own user (`GET /rest/api/3/myself`) or by an account id or email
+in `jira.answer_from`; Jira's REST API has no reactions, so the `Gate cleared: ...` comment
+`gate.sh` writes is the receipt. `vocabulary` lists the project's issue types without sub-tasks
+(`GET /rest/api/3/project/<KEY>`) and, for a `jira.fields.area` field of options, the values a new
+task may pick (`GET /rest/api/3/issue/createmeta/<KEY>/issuetypes/<id>`); a free-text area field
+has none. There is no `sync`: GitHub's moves a card on a Projects board, a second place that does
+not follow the issue, while a Jira board's columns are the issues' own workflow statuses, whose
+transitions each project shapes (with screens and conditions) and which no flow key maps. The flow
+state shows on the card as the `step:` and `gate:` labels, which a board's quick filters and
+swimlanes can use, and `close` takes the item to Done.
 
 ## Where the two adapters differed
 

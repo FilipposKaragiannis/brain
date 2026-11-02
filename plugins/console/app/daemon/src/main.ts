@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { daemonEntry, runCli } from './cli.ts';
 import type { CliDependencies } from './cli.ts';
-import { DEFAULT_STATE_DIR, privateFolder } from './config.ts';
+import { DEFAULT_STATE_DIR, privateFolder, writeFileWithMode } from './config.ts';
 import { runDaemon } from './daemon.ts';
 import type { LaunchdDependencies } from './launchd.ts';
 import { listDirs } from './selfCheck.ts';
@@ -64,7 +64,7 @@ const launchd: LaunchdDependencies = {
     execFile(launchctl, args, { encoding: 'utf8' }, (error, stdout, stderr) => resolve({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : 1, stdout, stderr }));
   }),
   files: {
-    write: (file, text) => writeFileSync(file, text), remove: (file) => rmSync(file, { force: true }), exists: existsSync,
+    write: (file, text, mode) => { if (mode === undefined) writeFileSync(file, text); else writeFileWithMode(file, text, mode); }, remove: (file) => rmSync(file, { force: true }), exists: existsSync,
     read: (file) => readFileSync(file, 'utf8'), mkdir: (folder) => { mkdirSync(folder, { recursive: true }); }, privateFolder,
   },
   portHolder,

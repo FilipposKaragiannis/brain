@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { BoardFacts, BoardItem, BoardSpend } from './collectors/board.ts';
 import { UNRANKED } from './collectors/board.ts';
-import type { ClaimRecord, FlowHomeFacts, GateRecord, ReviewRecord, RunRecord } from './collectors/flowHome.ts';
+import type { ClaimRecord, FlowConfig, FlowHomeFacts, GateRecord, ReviewRecord, RunRecord } from './collectors/flowHome.ts';
 import { poolPaths } from './collectors/flowHome.ts';
 import type { GitFacts, GitWorktree } from './collectors/git.ts';
 import type { JobFacts, JobRunRecord, JobStatusRow, JobStatusRun, JobWorkerRow } from './collectors/jobs.ts';
@@ -14,7 +14,7 @@ import {
 } from './snapshot.ts';
 import type {
   Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, NewerConsole,
-  ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, SessionRef, Snapshot, SourceName, StoppedHost, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
+  ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
 export type ReconcileInput = {
@@ -47,6 +47,10 @@ const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_DAY = 86400;
 const GITHUB = 'https://github.com';
 const GITHUB_ADAPTER = 'github';
+const JIRA_ADAPTER = 'jira';
+/** What follows `jira:` in a Jira item's id: its issue key, WID-7. */
+const JIRA_KEY = /^jira:([A-Z][A-Z0-9_]*-[0-9]+)$/;
+const GITHUB_NUMBER = /^gh#([1-9][0-9]*)$/;
 /** Items the next job never takes on their own; readiness counts the work under them. */
 const EPIC = 'epic';
 /** The merge gate: the one gate that asks a person to merge a ready pull request. */
@@ -172,7 +176,7 @@ function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Wor
       claim: context.claim === null ? null : toClaim(context.claim),
       claimAgeSeconds: context.claim === null ? null : ageSeconds(context.claim.claimedAt, now),
       item: context.claim?.item || null,
-      itemUrl: boardItem?.url || null,
+      itemUrl: boardItem?.url || itemPage(context.claim?.item ?? '', input.flow.config),
       itemTitle: boardItem?.title || null,
       gate: context.gate?.gate ?? null,
       staleReason: staleReason(context, flags, input.flow.config.base, now),
@@ -751,14 +755,46 @@ function jobHostsOf(jobs: Job[], jobsHost: string): string[] {
   return hosts.size === 0 ? [jobsHost] : [...hosts].sort();
 }
 
+/** A Jira site's address without a trailing slash, or null when it is no https address (the adapter refuses any other). */
+function jiraSite(config: FlowConfig): string | null {
+  const site = config.jiraSite?.replace(/\/+$/, '') ?? '';
+  return site.startsWith('https://') && site.length > 'https://'.length ? site : null;
+}
+
+/** An item's issue page from its id and the config, for an item the board has not listed: GitHub's issue, or Jira's `<site>/browse/<KEY>`. */
+export function itemPage(id: string, config: FlowConfig): string | null {
+  const number = GITHUB_NUMBER.exec(id)?.[1];
+  if (number !== undefined) return config.repo === null ? null : `${GITHUB}/${config.repo}/issues/${number}`;
+  const key = JIRA_KEY.exec(id)?.[1];
+  const site = jiraSite(config);
+  return key === undefined || site === null ? null : `${site}/browse/${key}`;
+}
+
+/** The page of one tracker's items: GitHub's issues, a Jira project's, none for local. */
+function trackerPage(tracker: string, config: FlowConfig): string | null {
+  if (tracker === GITHUB_ADAPTER) return config.repo === null ? null : `${GITHUB}/${config.repo}/issues`;
+  const site = jiraSite(config);
+  if (tracker === JIRA_ADAPTER) return site === null || config.jiraProject === null ? null : `${site}/browse/${encodeURIComponent(config.jiraProject)}`;
+  return null;
+}
+
+/** Each tracker the flow reads, with its page and why the board could not read it, as the board told the last time. */
+function trackersOf(input: ReconcileInput): TrackerInfo[] {
+  const { config } = input.flow;
+  const errors = input.board?.trackerErrors ?? [];
+  return config.trackers.map((name) => ({
+    name, url: trackerPage(name, config),
+    error: errors.find((error) => error.tracker === name)?.message ?? null,
+  }));
+}
+
 function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
   const { config } = input.flow;
   const repoUrl = config.repo === null ? null : `${GITHUB}/${config.repo}`;
   return {
     id: input.project.id, name: input.project.name, root: input.project.root, flowHome: input.flow.flowHome,
     base: config.base, repo: config.repo, repoUrl,
-    trackerUrl: config.trackers.includes(GITHUB_ADAPTER) && repoUrl !== null ? `${repoUrl}/issues` : null,
-    adapter: config.adapter, pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
+    adapter: config.adapter, trackers: trackersOf(input), pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
     jobHosts: jobHostsOf(jobs, config.jobsHost), plugins: input.plugins ?? [],
   };
 }

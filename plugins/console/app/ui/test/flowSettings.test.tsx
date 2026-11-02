@@ -3,7 +3,7 @@ import { afterEach, expect, test } from 'vitest';
 import type { FlowConfigDocument, FlowConfigSaved } from '../../daemon/src/plugins/flow/schema.ts';
 import { fieldAt, schemaSections } from '../../daemon/src/plugins/flow/schema.ts';
 import type { FlowShown } from '../src/screens/FlowSettings.tsx';
-import { FlowSettings, NO_GITHUB, TRACKED_NOTE } from '../src/screens/FlowSettings.tsx';
+import { FlowSettings, NO_GITHUB, NO_JIRA, TRACKED_NOTE } from '../src/screens/FlowSettings.tsx';
 import { actionRecord, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, HTTP_OK } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
@@ -303,11 +303,26 @@ function namedGroup(page: string, path: string): HTMLElement {
   return within(group(page)).getByRole('group', { name: label(path) });
 }
 
-test('TrackerPage_NoTrackerUsesGithub_GitHubPartHiddenWithANote', async () => {
-  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ github: { repo: 'acme/app' } }));
-  expect([within(group('Tracker')).queryByLabelText(label('github.repo')), within(group('Tracker')).queryByText(NO_GITHUB)], 'because adapters.default falls back to local, and the GitHub keys do nothing while no tracker is GitHub').toEqual([null, expect.anything()]);
+test('TrackerPage_NoTrackerUsesGithub_GitHubIssueFieldsHiddenWithANote', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ github: { limit: 300 } }));
+  expect([within(group('Tracker')).queryByLabelText(label('github.limit')), within(group('Tracker')).queryByText(NO_GITHUB)], 'because adapters.default falls back to local, and the GitHub issue keys do nothing while no tracker is GitHub').toEqual([null, expect.anything()]);
   fireEvent.change(within(group('Tracker')).getByLabelText(label('adapters.bug')), { target: { value: 'github' } });
-  expect([(within(group('Tracker')).getByLabelText(label('github.repo')) as HTMLInputElement).value, within(group('Tracker')).queryByText(NO_GITHUB)], 'because one kind sent to GitHub is enough for its settings to count').toEqual(['acme/app', null]);
+  expect([(within(group('Tracker')).getByLabelText(label('github.limit')) as HTMLInputElement).value, within(group('Tracker')).queryByText(NO_GITHUB)], 'because one kind sent to GitHub is enough for its settings to count').toEqual(['300', null]);
+});
+
+test('TrackerPage_NoTrackerUsesGithub_RepositoryStillShows', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ trackers: ['jira'], github: { repo: 'acme/app' } }));
+  expect((within(group('Tracker')).getByLabelText(label('github.repo')) as HTMLInputElement).value, 'because the PRs live on GitHub whatever tracker holds the items').toBe('acme/app');
+});
+
+test('TrackerPage_NoTrackerUsesJira_JiraPartHiddenWithANote', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ jira: { project: 'WID' } }));
+  expect([within(group('Tracker')).queryByLabelText(label('jira.project')), within(group('Tracker')).queryByText(NO_JIRA)], 'because the Jira keys do nothing while no tracker is Jira').toEqual([null, expect.anything()]);
+});
+
+test('TrackerPage_TrackersNamesJira_JiraFieldsShow', async () => {
+  await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues({ trackers: ['jira'], jira: { site: 'https://acme.atlassian.net', project: 'WID' } }));
+  expect([(within(group('Tracker')).getByLabelText(label('jira.site')) as HTMLInputElement).value, (within(group('Tracker')).getByLabelText(label('jira.project')) as HTMLInputElement).value, within(group('Tracker')).queryByText(NO_JIRA)], 'because the flow reads Jira while trackers names it, so its site and project are set here').toEqual(['https://acme.atlassian.net', 'WID', null]);
 });
 
 test('TrackerPage_TrackersNamesGithub_GitHubPartShows', async () => {
@@ -340,7 +355,7 @@ test('ReadyNeeds_SavedEmptyBesideTheDeprecatedGithubKey_StartsWithNothingTicked'
 test('Pages_Read_FieldsUnderTheirPartsHeadings', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withValues(ON_GITHUB));
   const parts = (page: string): string[] => within(group(page)).getAllByRole('region').map((region) => region.getAttribute('aria-label') ?? '');
-  expect([parts('Tracker'), parts('Notifications'), parts('Agents')], 'because a page groups its keys the way the owner thinks of them: where items go, the channels, each AI provider').toEqual([['Where items come from', 'Where new items go', 'GitHub'], ['Channels', 'When to notify'], ['Claude', 'Codex']]);
+  expect([parts('Tracker'), parts('Notifications'), parts('Agents')], 'because a page groups its keys the way the owner thinks of them: where items go, the channels, each AI provider').toEqual([['Where items come from', 'Where new items go', 'GitHub', 'Jira'], ['Channels', 'When to notify'], ['Claude', 'Codex']]);
   const channels = within(group('Notifications')).getByRole('region', { name: 'Channels' });
   expect([within(channels).queryByLabelText(label('notify.desktop')) !== null, within(channels).queryByLabelText(label('notify.slack_webhook')) !== null], 'because desktop banners and Slack are both channels').toEqual([true, true]);
   expect(within(group('Agents')).getByRole('region', { name: 'Claude' }).textContent, 'because the permission mode applies to Claude sessions only').toContain(label('jobs.permission_mode'));
