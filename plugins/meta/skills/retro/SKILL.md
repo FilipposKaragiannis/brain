@@ -13,7 +13,8 @@ home and a specific change. Three routed improvements beat a page of observation
 ## 1. Collect
 
 - **The lessons log** `.flow/lessons.jsonl` in the project (one JSON line per escalation and per
-  review blocker, with `kind`, `item`, `step`, `rule`, `text`). Read the lines since the last
+  review blocker, with `kind`, `item`, `step`, `rule`, `text`). It stays on this machine under
+  `.flow/`, which is excluded from git: never commit it or `retros.log`. Read the lines since the last
   retro (the last line of `.flow/retros.log`, written in step 4; all lines on the first run).
 - **The session** (manual form): the goal, what changed, which skills and agents ran.
 - **The lenses**: repetitive work; bottlenecks (prompts, denied tools, slow loops, round-trips

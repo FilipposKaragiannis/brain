@@ -247,9 +247,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "#   answers: docs/answers.md  # answered questions (default answers.md beside the notes)"
       echo "#   dropped: docs/dropped.md  # dropped notes with their reasons (default dropped.md beside the notes)"
       echo "#   rules: .flow/intake.md    # how a note becomes an item (default: this file if it exists, else flow's rules)"
-      echo "# The retro job commits .flow/lessons.jsonl and .flow/retros.log and pushes them after each run:"
-      echo "# retro:"
-      echo "#   commit: false             # to keep them uncommitted"
+      echo "# The retro job's lessons log (.flow/lessons.jsonl, .flow/retros.log) stays on this machine under .flow/."
     } > .flow/config.yaml
     [ -s .flow/config.yaml ] || die "could not write .flow/config.yaml"
     note ".flow/config.yaml written from the repository (adapters, base, pool). Review it."
@@ -350,6 +348,7 @@ EOF_TRACKERS
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
 $(host_jobs_problems)
 EOF_JOBS
+  [ -z "$(cfg retro.commit)" ] || echo "init: note: .flow/config.yaml sets retro.commit, which is unused: the retro job commits nothing, as the lessons stay on this machine under .flow/; remove the key"
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
 # Missing worktree hooks are a note: the flow runs without them. So is an entry an older init
