@@ -77,9 +77,8 @@ Facts to answer with:
   `AbandonProcessGroup`, or launchd ends the workers with the run; an agent installed before
   1.21.1 lacks it, and `status` says `reinstall: jobs.sh install <job>` until it is reinstalled.
 - An idle run (nothing ready, no new notes, no open PR) ends at once and spends no model time.
-- Each `retro` run, quiet or not, commits `lessons.jsonl` and `retros.log` on the base branch and
-  pushes them, as `intake` does the notes, so a cloud session reads the same lessons
-  (`retro.commit: false` turns it off).
+- The `retro` job commits nothing: `lessons.jsonl` and `retros.log` stay on this machine under
+  `.flow/`, which is excluded from git, so each clone keeps its own lessons.
 - The `health` job (every 15 minutes in the config `flow:init` writes) checks each claim and spends
   no model while all is well: it clears a dead run's record, releases an empty claim, resumes
   cut-off work up to `jobs.health.max_resumes` times, then raises an escalation gate, syncs clean
