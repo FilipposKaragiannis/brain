@@ -273,8 +273,9 @@ pick_check() {
   [ -n "$(cfg "pick.$1.query")" ] || return 0
   [ "$(printf '%s\n' "$_pick_trackers" | grep -c .)" = 1 ] \
     || die "pick.$1.query is one tracker's own search: set pick.$1.trackers to exactly one tracker, not ${_pick_trackers:-none}" 2
+  # An empty field is unset: Settings saves a field it clears as an empty value, not as no key.
   for _field in $PICK_NEUTRAL; do
-    ! yaml_keys "$(config_file)" "pick.$1" | grep -qx "$_field" \
+    [ -z "$(cfg "pick.$1.$_field")" ] \
       || die "pick.$1.query goes to $_pick_trackers as written, so the filter takes no $_field; put it in the query" 2
   done
 }
@@ -283,8 +284,9 @@ pick_check() {
 # saying the fields it maps (adapters/<adapter>/pick-fields).
 pick_mapped() {
   _mapped="$(cat "$FLOW_PLUGIN/adapters/$2/pick-fields" 2>/dev/null)"
+  # An empty field is unset, as in pick_check, so a cleared field the adapter cannot map is no refusal.
   for _field in $(yaml_keys "$(config_file)" "pick.$1"); do
-    [ "$_field" = trackers ] && continue
+    [ "$_field" = trackers ] || [ -z "$(cfg "pick.$1.$_field")" ] && continue
     case " $_mapped " in *" $_field "*) ;; *) die "pick.$1.$_field: the $2 adapter maps $(printf '%s' "${_mapped:-no field}" | sed 's/ /, /g; s/, \([^,]*\)$/ and \1/'), not $_field" 2 ;; esac
   done
 }

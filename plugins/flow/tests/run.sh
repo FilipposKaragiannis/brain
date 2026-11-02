@@ -481,6 +481,19 @@ d["issues"]["WID-90"] = {"key": "WID-90", "properties": {}, "comments": [], "rem
     {"type": "text", "text": " and "}, {"type": "inlineCard", "attrs": {"url": "https://acme.atlassian.net/browse/WID-7"}}]}]}}}
 json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
 check_all "jira: a description keeps its link targets and smart links" '[ "$(jira_run "$P/adapters/jira/read.sh" jira:WID-90 | jget body)" = "[the spec](https://docs.test/spec) and https://acme.atlassian.net/browse/WID-7" ]'
+# A filter narrows the list to two epics whose three open children it leaves out; jira.limit 2
+# must not cut the child count short, or the second epic reads as having none, and as ready.
+jira_config https://acme.atlassian.net
+printf '  limit: 2\npick:\n  epics:\n    labels: [picked]\n' >> .flow/config.yaml
+pe1="$(jira_run "$P/adapters/jira/create.sh" epic "Picked epic one")"; pe2="$(jira_run "$P/adapters/jira/create.sh" epic "Picked epic two")"
+for parent in "$pe1" "$pe1" "$pe2"; do jira_run "$P/adapters/jira/create.sh" task "Unpicked child" --parent "$parent" >/dev/null; done
+python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+for key in sys.argv[2:]: d["issues"][key]["fields"]["labels"] = ["picked"]
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${pe1#jira:}" "${pe2#jira:}"
+picked_children="$(jira_run "$P/adapters/jira/list.sh" --pick epics | python3 -c 'import json,sys; counts={i["id"]: i["open_children"] for i in json.load(sys.stdin)}; print(counts.get(sys.argv[1]), counts.get(sys.argv[2]))' "$pe1" "$pe2")"
+check "jira: a filter's epics count every open child, past jira.limit" [ "$picked_children" = "2 1" ]
+check "jira: so an epic with an open child the filter left out is not ready" sh -c "! env PATH='$work/jirabin:$PATH' FAKE_JIRA_DIR='$work/jira' FLOW_JIRA_RETRY_WAIT='0 0' JIRA_API_TOKEN=run-token '$P/adapters/jira/list-ready.sh' --pick epics | grep -q '\"$pe2\"'"
 jira_config http://acme.atlassian.net
 site_err="$(jira_run "$P/adapters/jira/list.sh" 2>&1 >/dev/null)"; code=$?
 check_all "jira: a jira.site that is not https is refused" '[ "$code" -ne 0 ] && printf "%s" "$site_err" | grep -q "jira.site in .flow/config.yaml must be"'
@@ -1689,6 +1702,21 @@ pick_config '  raw:
     assignee: me'
 "$P/scripts/next.sh" --pick raw >/dev/null 2>"$work/pick.err"; code=$?
 check "pick: a query beside a neutral field is refused (exit 2)" sh -c "[ $code -eq 2 ] && grep -q 'pick.raw.query goes to github as written, so the filter takes no assignee' '$work/pick.err'"
+pick_config '  raw:
+    query: label:api
+    trackers: [github]
+    assignee: ""
+    labels: []
+    status:'
+"$P/scripts/next.sh" --pick raw >/dev/null 2>"$work/pick.err"; code=$?
+check "pick: neutral fields Settings cleared beside a query are unset, so the filter passes to its tracker" sh -c "! grep -q 'so the filter takes no' '$work/pick.err' && grep -q 'pick.raw.trackers names github, which the flow does not read' '$work/pick.err'"
+pick_config '  mine:
+    assignee: me
+    labels: []
+    query: ""'
+out="$("$P/scripts/next.sh" --json --pick mine 2>"$work/pick.err")"
+check "pick: a cleared field the adapter cannot map is unset, so the filter still picks" [ "$(printf '%s' "$out" | jget item)" = "$km2" ]
+unpick "$out"
 pick_config '  raw:
     query: status = Open
     trackers: [local]'

@@ -73,6 +73,12 @@ export type FieldSpec = {
    * turns the list into this field first.
    */
   plainList?: string;
+  /**
+   * An empty value is no value (a pick filter's field): a save of "" or [] takes the key out, as
+   * flow reads an empty key the same as none and a key left behind would read as set to a reader
+   * of the file.
+   */
+  emptyUnset?: true;
 };
 
 /** One fixed name of a map: the name the file writes, what the form calls it, and an example. */
@@ -348,7 +354,7 @@ function pickField(path: string): FieldSpec | undefined {
   const [name = '', key = '', ...rest] = path.slice(PICK_PREFIX.length).split('.');
   const known = PICK_FIELDS.find((each) => each.name === key);
   if (!PICK_NAME.test(name) || known === undefined || (rest.length > 0 && known.type !== 'list')) return undefined;
-  return field(`${PICK_PREFIX}${name}.${key}`, known.type, 'Readiness', known.label, known.help, { ...known.extra, part: `Pick filter ${name}` });
+  return field(`${PICK_PREFIX}${name}.${key}`, known.type, 'Readiness', known.label, known.help, { ...known.extra, part: `Pick filter ${name}`, emptyUnset: true });
 }
 
 /** The fields of every pick filter a parsed file holds, each filter's in the form's order, filters in file order. */

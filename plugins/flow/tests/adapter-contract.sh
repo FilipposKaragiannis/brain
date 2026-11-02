@@ -352,7 +352,7 @@ if type "set_$name" >/dev/null 2>&1; then
   check "a query without exactly one tracker exits 2" '[ "$(code_of "$A/list.sh" --pick loose)" = 2 ]'
   check "a query beside a neutral field exits 2" '[ "$(code_of "$A/list.sh" --pick mixed)" = 2 ]'
   pick_config '  own:
-    query: '"'$(type "query_$name" >/dev/null 2>&1 && "query_$name" picked)'"'
+    query: '"'$(type "query_$name" >/dev/null 2>&1 && "query_$name" picked || printf %s "label = picked")'"'
     trackers: ['"$name"']'
   if grep -qw query "$A/pick-fields"; then
     check "query goes to the tracker as written and keeps what its search keeps" 'listed "$pa" "$A/list-ready.sh" --pick own && ! listed "$pb" "$A/list-ready.sh" --pick own'

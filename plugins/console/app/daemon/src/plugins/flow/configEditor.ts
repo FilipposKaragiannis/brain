@@ -302,8 +302,11 @@ export class FlowConfigEditor {
     const parsed = parseDocument(current);
     if (!parsed.ok) return { ok: false, error: `the file is not in the flat format, so change it in Raw YAML: ${parsed.error}` };
     let text = current;
-    for (const change of changes) {
-      const spec = fieldAt(change.path);
+    for (const sent of changes) {
+      const spec = fieldAt(sent.path);
+      // A cleared field the form sends as "" or [] is taken out, so a query filter is not left
+      // with an empty assignee beside it.
+      const change = spec?.emptyUnset === true && (sent.value === '' || (Array.isArray(sent.value) && sent.value.length === 0)) ? { ...sent, value: null } : sent;
       if (spec !== undefined) {
         const checked = checkChange(spec, change.value);
         if (!checked.ok) return checked;

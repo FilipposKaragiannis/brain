@@ -153,12 +153,13 @@ def pick_conditions():
     return conditions
 
 
-def children_of(issues, narrowed, limit):
+def children_of(issues, narrowed):
     """Each listed issue's open children. A list a filter narrowed can leave a child out, so its
-    children are searched for apart."""
+    children are searched for apart, every page of them: a count cut at jira.limit would read a
+    parent with open children as having none, and so as ready."""
     rows = issues
     if narrowed and issues:
-        rows, _ = search("parent in (%s) AND statusCategory != Done" % ", ".join(i["key"] for i in issues), ["parent", "status"], limit)
+        rows, _ = search("parent in (%s) AND statusCategory != Done" % ", ".join(i["key"] for i in issues), ["parent", "status"], sys.maxsize)
     children = {}
     for issue in rows:
         parent = issue["fields"].get("parent")
@@ -186,7 +187,7 @@ def cmd_list(args):
         sys.stderr.write("flow: stopped at jira.limit %d issues; raise it in .flow/config.yaml\n" % limit)
         if os.environ.get("FLOW_LIST_WHOLE"):
             sys.exit(1)
-    children = children_of(issues, bool(picked), limit)
+    children = children_of(issues, bool(picked))
     kinds = {k.lower() for k in pick_values("KINDS")}
     items = [to_item(issue, fields, children.get(issue["key"], 0)) for issue in issues]
     print(json.dumps([i for i in items if (not kind or i["kind"] == kind) and (not kinds or i["kind"] in kinds)]))
