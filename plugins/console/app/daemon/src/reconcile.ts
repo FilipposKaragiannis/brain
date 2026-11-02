@@ -636,7 +636,7 @@ function pullAttention(pulls: PullRequest[]): AttentionRow[] {
   return pulls.flatMap((pull) => {
     const row = PULL_ATTENTION[pull.state];
     if (row === undefined) return [];
-    return [{ kind: row.kind, id: pull.item ?? `#${pull.number}`, title: `#${pull.number} ${row.title}`, detail: pull.title, worktree: pull.worktree, sinceAt: pull.updatedAt, ageSeconds: pull.idleSeconds, action: null }];
+    return [{ kind: row.kind, gate: null, id: pull.item ?? `#${pull.number}`, title: `#${pull.number} ${row.title}`, detail: pull.title, worktree: pull.worktree, sinceAt: pull.updatedAt, ageSeconds: pull.idleSeconds, action: null }];
   });
 }
 
@@ -675,7 +675,7 @@ function nextInLine(item: Item, items: Item[]): boolean {
 
 function needsFieldAttention(items: Item[]): AttentionRow[] {
   return items.filter((item) => nextInLine(item, items)).map((item) => ({
-    kind: 'needs-field' as const, id: item.id, title: item.title || item.id, detail: `needs ${item.needs.join(' and ')}`,
+    kind: 'needs-field' as const, gate: null, id: item.id, title: item.title || item.id, detail: `needs ${item.needs.join(' and ')}`,
     worktree: item.worktree, sinceAt: null, ageSeconds: null, action: null,
   }));
 }
@@ -689,7 +689,7 @@ function stoppedHostAttention(stopped: StoppedHost, now: Date): AttentionRow {
   const said = stopped.said === '' ? '' : `: ${stopped.said}`;
   const gate = stopped.item === null ? '' : `, or when the gate on ${stopped.item} clears`;
   return {
-    kind: 'host-stopped', id: stopped.host, title: `${stopped.host} is stopped on ${cause}`,
+    kind: 'host-stopped', gate: null, id: stopped.host, title: `${stopped.host} is stopped on ${cause}`,
     detail: `${stopped.host} stopped on ${cause}${said}. No ${stopped.host} session starts until you clear it${gate}.`,
     worktree: null, sinceAt: stopped.at, ageSeconds: ageSeconds(stopped.at, now),
     action: { kind: 'host.clear', args: { host: stopped.host }, label: `Clear ${stopped.host}` },
@@ -701,21 +701,21 @@ type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; items: Item[]; r
 function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts }: AttentionSources, now: Date): AttentionRow[] {
   const rows: AttentionRow[] = stoppedHosts.map((stopped) => stoppedHostAttention(stopped, now));
   for (const gate of gates) {
-    rows.push({ kind: 'gate', id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds, action: null });
+    rows.push({ kind: 'gate', gate: gate.gate, id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds, action: null });
   }
   for (const run of runs.filter((entry) => !entry.alive)) {
-    rows.push({ kind: 'dead-run', id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now), action: null });
+    rows.push({ kind: 'dead-run', gate: null, id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now), action: null });
   }
   for (const worktree of worktrees.filter((entry) => entry.flags.includes('stale-branch') || entry.flags.includes('idle'))) {
-    rows.push({ kind: 'stale', id: worktree.item ?? worktree.name, title: `${worktree.name} is stale`, detail: worktree.staleReason ?? '', worktree: worktree.name, sinceAt: worktree.claim?.claimedAt ?? null, ageSeconds: worktree.claimAgeSeconds, action: null });
+    rows.push({ kind: 'stale', gate: null, id: worktree.item ?? worktree.name, title: `${worktree.name} is stale`, detail: worktree.staleReason ?? '', worktree: worktree.name, sinceAt: worktree.claim?.claimedAt ?? null, ageSeconds: worktree.claimAgeSeconds, action: null });
   }
   for (const job of jobs.filter((entry) => entry.last !== null && entry.last.exit !== null && entry.last.exit !== 0)) {
-    rows.push({ kind: 'job-failed', id: job.name, title: `${job.name} job failed`, detail: job.last?.result ?? '', worktree: null, sinceAt: job.last?.at ?? null, ageSeconds: ageSeconds(job.last?.at ?? null, now), action: null });
+    rows.push({ kind: 'job-failed', gate: null, id: job.name, title: `${job.name} job failed`, detail: job.last?.result ?? '', worktree: null, sinceAt: job.last?.at ?? null, ageSeconds: ageSeconds(job.last?.at ?? null, now), action: null });
   }
   rows.push(...pullAttention(pulls));
   rows.push(...needsFieldAttention(items));
   for (const disagreement of disagreements) {
-    rows.push({ kind: 'disagreement', id: disagreement.item ?? disagreement.worktree ?? 'project', title: disagreement.sources.join(' vs '), detail: disagreement.message, worktree: disagreement.worktree, sinceAt: null, ageSeconds: null, action: null });
+    rows.push({ kind: 'disagreement', gate: null, id: disagreement.item ?? disagreement.worktree ?? 'project', title: disagreement.sources.join(' vs '), detail: disagreement.message, worktree: disagreement.worktree, sinceAt: null, ageSeconds: null, action: null });
   }
   return rows.sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
