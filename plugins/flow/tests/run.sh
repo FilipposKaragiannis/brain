@@ -2174,11 +2174,18 @@ namedcfg '  - ../shop-box-1\n' 'worktree_name: ../{repo}-box\n'
 check "worktree_name: one with no {n} is refused, exit 2, with the reason" sh -c "[ $code = 2 ] && grep -q 'worktree_name ../{repo}-box has no {n}' '$work/named.out'"
 check "worktree_name: a refused add creates nothing" sh -c "[ ! -e ../shop-box ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool)\" = ../shop-box-1 ]"
 nm2="$("$P/scripts/new.sh" task "Named again")"
-"$P/scripts/steward.sh" claim "$nm2" > "$work/named.out" 2>&1
+"$P/scripts/steward.sh" claim "$nm2" > "$work/named.out" 2>&1; code=$?
 check "worktree_name: a claim that would grow with one with no {n} says why" grep -q 'worktree_name ../{repo}-box has no {n}' "$work/named.out"
+check "worktree_name: a claim refused for no {n} exits 2, a config refusal, not 3 for a full pool" [ "$code" = 2 ]
+check "worktree_name: a claim refused for no {n} does not blame pool_max, which is not reached" sh -c "! grep -q pool_max '$work/named.out'"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../shop-box-1\npool_max: 1\nworktree_name: ../{repo}-box-{n}\nnotify:\n  desktop: false\n' > .flow/config.yaml
+"$P/scripts/steward.sh" claim "$nm2" > "$work/named.out" 2>&1; code=$?
+check "worktree_name: a claim with a full pool still exits 3 with the pool_max message, the template unused" sh -c "[ $code = 3 ] && grep -q 'the pool is at pool_max (1)' '$work/named.out'"
 namedcfg '  - ../shop-box-1\n' 'worktree_name: ../slots/{n}/checkout\n'
 "$P/scripts/steward.sh" add > "$work/named.out" 2>&1; code=$?
 check "worktree_name: one whose numbers all give the same idle branch is refused, exit 2, with the reason" sh -c "[ $code = 2 ] && grep -q 'gives every new pool worktree the idle branch main-checkout' '$work/named.out'"
+"$P/scripts/steward.sh" claim "$nm2" > "$work/named.out" 2>&1; code=$?
+check "worktree_name: a claim refused for a shared idle branch exits 2 with the reason and no pool_max message" sh -c "[ $code = 2 ] && grep -q 'idle branch main-checkout' '$work/named.out' && ! grep -q pool_max '$work/named.out'"
 check "worktree_name: a refused add for a shared idle branch creates nothing" sh -c "[ ! -e ../slots ] && [ \"\$(. '$P/lib/flow.sh'; yaml_get .flow/config.yaml pool)\" = ../shop-box-1 ]"
 namedcfg '  - ../shop-box-1\n' 'worktree_name: ../slots/checkout-{n}\n'
 "$P/scripts/steward.sh" add >/dev/null 2>&1; "$P/scripts/steward.sh" add >/dev/null 2>&1
