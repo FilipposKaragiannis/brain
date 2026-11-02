@@ -273,6 +273,25 @@ reports_dir() {
 
 claim_file() { printf '%s/.flow/claim.json' "${1:-$(repo_root)}"; }
 
+# step_write <item> key=value...: adapter write-state, and when a step= pair is among them, the same
+# step into the item's claim in the pool, so the claim and the issue never disagree while the
+# item waits between runs. An item no pool worktree claims has no claim to follow.
+step_write() {
+  sw_item="$1"
+  adapter write-state "$@" || return
+  sw_step=""
+  for sw_kv in "$@"; do case "$sw_kv" in step=*) sw_step="${sw_kv#step=}" ;; esac; done
+  [ -n "$sw_step" ] || return 0
+  sw_wt="$("$FLOW_PLUGIN/scripts/steward.sh" find "$sw_item" 2>/dev/null)"
+  [ -n "$sw_wt" ] && [ -f "$sw_wt/.flow/claim.json" ] || return 0
+  sw_new="$sw_wt/.flow/claim.json.$$"
+  if json_set "$(cat "$sw_wt/.flow/claim.json")" step "$(json_string "$sw_step")" > "$sw_new" && [ -s "$sw_new" ]; then
+    mv "$sw_new" "$sw_wt/.flow/claim.json"
+  else
+    rm -f "$sw_new"; echo "flow: could not write step $sw_step to the claim in $sw_wt" >&2
+  fi
+}
+
 # profile_select <kind> <size>: the profile from profiles.json; the caller applies overrides.
 profile_select() {
   profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
