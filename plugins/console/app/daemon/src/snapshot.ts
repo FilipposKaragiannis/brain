@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 6;
+export const SNAPSHOT_SCHEMA_VERSION = 7;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -244,6 +244,8 @@ export type Gate = {
   plan: GatePlan | null;
   /** The item's issue body as the board last read it, or null before a board read. */
   body: string | null;
+  /** The quiz the explain step wrote for the item, with its last result, or null when the item has none. */
+  quiz: Quiz | null;
   /**
    * The session that raised the gate, found from the host's transcripts in the claimed worktree
    * (of those written at or after 30 minutes before the raise, the one that started latest no later
@@ -254,6 +256,24 @@ export type Gate = {
 };
 
 export type GatePlan = { file: string; text: string };
+
+/** One choice of a quiz question: its letter and its text. */
+export type QuizChoice = { key: string; text: string };
+/**
+ * One question of the quiz the explain step wrote: multiple choice, the right letter from the
+ * file's answer key (null when the key leaves it out, so it is never right), and the `Because:`
+ * line that says why the right choice is right (null when the file has none).
+ */
+export type QuizQuestion = { number: number; text: string; choices: QuizChoice[]; answer: string | null; because: string | null };
+/** The last try `quiz.sh answer` graded: when, the score, and the letter given per question number. */
+export type QuizResult = { at: string; right: number; total: number; passed: boolean; given: Record<string, string> };
+/**
+ * The owner's quiz on an item's change, `<reports>/quiz.md` as the explain step wrote it (the
+ * claimed worktree's reports, else a pool worktree's, else the main one's), with the last result
+ * from `<reports>/quiz.json` or null before a try. The page grades a try itself for the instant
+ * result and runs `quiz.answer`, which keeps the result and marks the draft PR ready on a pass.
+ */
+export type Quiz = { file: string; title: string | null; questions: QuizQuestion[]; result: QuizResult | null };
 
 export type Run = {
   item: string;
@@ -306,6 +326,8 @@ export type PullRequest = {
   idleSeconds: number;
   /** The health job's review record for the pull (`.flow/reviews/<n>.review.json`), or null with none. */
   review: PullReview | null;
+  /** The quiz of the pull's item, with its last result; null with no item or no quiz. A draft with a quiz goes ready when the owner passes it. */
+  quiz: Quiz | null;
 };
 
 /**
@@ -504,6 +526,7 @@ export type ActionKind =
   | 'job.uninstall'
   | 'pr.merge'
   | 'pr.review'
+  | 'quiz.answer'
   | 'host.clear'
   | 'terminal.open'
   | 'refresh';

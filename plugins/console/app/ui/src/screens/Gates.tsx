@@ -8,6 +8,7 @@ import { choiceAnswers, composeGateMessage, gateAsk, gateBrief, initialChoices, 
 import type { GateChoice, Verdict } from '../gateAnswer.ts';
 import { AskReview } from '../askReview.tsx';
 import { Markdown } from '../Markdown.tsx';
+import { QuizPanel } from '../Quiz.tsx';
 import { routeHash } from '../route.ts';
 import type { ActionRecord } from '../actions.ts';
 import { pullTone } from '../status.ts';
@@ -178,6 +179,7 @@ function DecisionHead({ gate, snapshot, answered, summary }: { gate: Gate; snaps
     item !== undefined && item.step !== '' ? `step ${item.step}` : null,
     gate.questions.length > 1 ? `${gate.questions.length} questions` : null,
     gate.plan !== null ? gate.plan.file.split('/').at(-1) ?? null : null,
+    gate.quiz === null ? null : gate.quiz.result?.passed === true ? 'quiz passed' : `quiz: ${gate.quiz.questions.length} ${gate.quiz.questions.length === 1 ? 'question' : 'questions'}`,
   ].filter((fact): fact is string => fact !== null);
   return (
     <div className="decision-head">
@@ -214,6 +216,7 @@ export function DecisionCard({ gate, snapshot, draft, onAnswer }: { gate: Gate; 
       <DecisionHead gate={gate} snapshot={snapshot} answered={false} summary={short && summary !== '' ? summary : null} />
       <div className="decision-body">
         {gate.pull !== null && <GatePull pull={gate.pull} />}
+        {gate.quiz !== null && <QuizPanel item={gate.item} quiz={gate.quiz} />}
         {!short && <GateDocument title="The agent's summary" file={null} text={summary} open={false} />}
         {lead === 'plan' && gate.plan !== null && <GateDocument title="Plan" file={gate.plan.file} text={gate.plan.text} open />}
         {lead === 'issue' && gate.body !== null && <GateDocument title="Spec" file={null} text={gate.body} open />}
@@ -387,7 +390,8 @@ function MergeForm({ gate, ask, reviewers, onAnswer }: { gate: Gate; ask: string
       <fieldset className="question">
         <legend>{ask}</legend>
         {pull === null && <p className="muted decision-help">No open pull request found for {gate.item}. Merge it on GitHub. The next sweep clears the gate.</p>}
-        {pull !== null && !ready && <p className="muted decision-help">PR #{pull.number} is not ready to merge: {pull.state}. The gate waits until it is.</p>}
+        {pull !== null && !ready && pull.state === 'draft' && gate.quiz !== null && gate.quiz.result?.passed !== true && <p className="muted decision-help">PR #{pull.number} is a draft until you pass the quiz above; then it goes ready for review.</p>}
+        {pull !== null && !ready && !(pull.state === 'draft' && gate.quiz !== null && gate.quiz.result?.passed !== true) && <p className="muted decision-help">PR #{pull.number} is not ready to merge: {pull.state}. The gate waits until it is.</p>}
         {pull !== null && ready && (
           <div className="decision-actions">
             <button type="button" className="button primary" onClick={() => onAnswer({ kind: 'merge', pr: pull.number, said: { verb: `Merged PR #${pull.number}`, message: '' } }, { choices: [], note: '', mode: null })}>Merge PR #{pull.number}</button>

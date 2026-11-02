@@ -58,7 +58,7 @@ test('ItemWithoutPrField_PullMatchedByBranch_ShowsInPrColumn', () => {
   const pull: PullRequest = {
     number: 31, title: 'Seven', url: 'https://github.com/owner/project/pull/31', branch: 'flow/gh-7', base: 'main', author: 'owner', draft: false,
     state: 'checks-failing', checks: { passed: 1, failed: 1, pending: 0 }, reviewDecision: '', unresolvedThreads: 0, mergeable: 'MERGEABLE',
-    item: 'gh#7', worktree: 'p-wt-1', createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 60, idleSeconds: 60, review: null,
+    item: 'gh#7', worktree: 'p-wt-1', createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 60, idleSeconds: 60, review: null, quiz: null,
   };
   renderBoard([SPENT], null, [pull]);
   expect(within(row('Seven')).getByRole('link', { name: '#31' }), 'because a PR found by the claimed branch is still the item\'s PR').not.toBeNull();

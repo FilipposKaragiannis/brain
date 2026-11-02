@@ -92,7 +92,7 @@ PLAYBOOKS = [
             {"cmd": ("flow:next", "local:task/1"),
              "say": "One implementer per phase. Independent phases run in parallel in temporary worktrees and rebase onto the task branch. Then tests, deep review, verify, a plain-language explainer with a quiz, a draft PR.",
              "who": ["implementer", "test-writer", "verifier", "pr-creator"],
-             "stop": ("merge", "Answer the quiz on the PR. Merge it.")},
+             "stop": ("merge", "Pass the quiz in the console. Merge it.")},
             {"cmd": ("flow:gate", 'local:task/1 "merged"'),
              "say": "Closes the gate."},
             {"cmd": ("flow:steward", "release local:task/1"),

@@ -454,6 +454,23 @@ a.button.primary { color: var(--panel); }
 .disagreement-explain { margin: 0; font-size: 13px; color: var(--ink-soft); }
 
 /* Gate card extras */
+.quiz { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.quiz-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.quiz-line h3 { margin: 0; font-size: 13px; font-weight: 700; }
+.quiz-line .muted { font-size: 12px; max-width: 60ch; }
+.quiz-buttons { margin-left: auto; display: flex; gap: 6px; }
+.quiz-form .question legend .mono { font-weight: 400; }
+.quiz-results { display: flex; flex-direction: column; gap: 10px; }
+.quiz-answer { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.quiz-answer.wrong { border-color: var(--failing); }
+.quiz-mark { width: 22px; height: 22px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; color: var(--panel); background: var(--running); }
+.quiz-mark.wrong { background: var(--failing); }
+.quiz-answer-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 76ch; }
+.quiz-answer-body .question-text, .quiz-answer-body .question-text > p { display: inline; margin: 0; }
+.quiz-because { color: var(--ink-soft); }
+.quiz .decision-actions .strong { font-size: 13px; }
+.quiz-note { font-size: 12px; color: var(--tone-ink); flex-basis: 100%; }
+.pull-quiz { padding: 0 18px 12px; }
 .gate-pull { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; gap: 4px; }
 .gate-pull p { margin: 0; }
 .gate-pull-line { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }

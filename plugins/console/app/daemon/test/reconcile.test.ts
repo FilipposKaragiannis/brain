@@ -114,6 +114,34 @@ test('Gate_AgeOverdueWorktreeAndQuestions', async () => {
   assert.equal(gate?.questions.length, 2, 'because the plugin lists two questions for the gate');
 });
 
+test('GateOfAnItemWithAQuiz_CarriesTheQuizAndItsLastTry', async () => {
+  const [gate] = (await snapshot()).gates;
+  assert.equal(gate?.quiz?.questions.length, 2, 'because the Gates page offers the quiz the explain step wrote in the claimed worktree');
+  assert.equal(gate?.quiz?.result?.right, 1, 'because the owner sees how the last try went');
+});
+
+/** The fixture's pulls with gh#7, whose worktree holds a quiz, naming pull 23 as its PR. */
+async function pullsWithTheQuizItemNamingPull23(): Promise<Snapshot['pulls']> {
+  const facts = await input();
+  const seven = facts.board!.items.find((item) => item.id === 'gh#7')!;
+  seven.state = { ...seven.state, pr: 'https://example/pull/23' };
+  return reconcile(facts).pulls;
+}
+
+test('Pull_NamedByAnItemWithAQuiz_CarriesTheQuiz', async () => {
+  const pulls = await pullsWithTheQuizItemNamingPull23();
+  assert.equal(pulls.find((pull) => pull.number === 23)?.quiz?.title, 'Quiz for gh#7', 'because the pull the item names is the item\'s, so its card offers the quiz');
+});
+
+test('Pull_WithNoItem_NoQuiz', async () => {
+  const pulls = await pullsWithTheQuizItemNamingPull23();
+  assert.equal(pulls.find((pull) => pull.number === 22)?.quiz, null, 'because a pull with no item has no quiz');
+});
+
+test('Pull_ForkBranchNamedLikeTheClaim_NoQuiz', async () => {
+  assert.equal((await snapshot()).pulls.find((pull) => pull.number === 23)?.quiz, null, 'because a fork branch named like the claim is not the item\'s pull, so it gets no quiz either');
+});
+
 test('Items_StateFromEngagementThenBoard', async () => {
   const states = Object.fromEntries((await snapshot()).items.map((item) => [item.id, item.state]));
   assert.equal(states['gh#7'], 'needs-you', 'because its worktree waits at a gate');

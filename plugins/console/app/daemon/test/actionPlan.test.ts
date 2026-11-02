@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, REVIEW_ASK, SYNC_SCRIPT, sweepNote } from '../src/actionPlan.ts';
+import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, QUIZ_SINCE, REVIEW_ASK, SYNC_SCRIPT, sweepNote } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -173,6 +173,28 @@ test('PrReview_AsksOneReviewerThroughComments', () => {
   assert.equal(planAction('pr.review', { pr: '41', reviewer: 'codex' }, { ...CONTEXT, repo: null }).ok, false, 'because the ask is a GitHub comment');
   assert.equal(planAction('pr.review', { pr: '41', reviewer: 'codex' }, { ...CONTEXT, pluginVersion: '1.26.0' }).ok, false, 'because flow 1.26.0 ignores the name and would ask every reviewer');
   assert.equal(planAction('pr.review', { pr: '41', reviewer: 'codex' }, { ...CONTEXT, pluginVersion: '1.27.0' }).ok, true, 'because 1.27.0 asks the one named');
+});
+
+test('QuizAnswer_RunsQuizScriptWithOneLetterPerQuestion', () => {
+  const plan = planned('quiz.answer', { item: 'gh#7', answers: '1b 2a 3c' });
+  assert.match(plan.args[0] ?? '', /scripts\/quiz\.sh$/, 'because the flow grades its own quiz and keeps the result');
+  assert.deepEqual(plan.args.slice(1), ['answer', 'gh#7', '1b', '2a', '3c'], 'because quiz.sh takes the answers as separate words');
+  assert.deepEqual(plan.locks, ['item:gh#7'], 'because a try and a gate clear of one item never overlap');
+  assert.deepEqual(plan.refresh, ['files', 'pulls'], 'because the result lands in the reports and a pass marks the draft ready');
+});
+
+test('QuizAnswer_BadItemOrAnswers_Rejected', () => {
+  assert.equal(planAction('quiz.answer', { item: 'gh#7', answers: 'b a c' }, CONTEXT).ok, false, 'because the console always names the question each letter answers');
+  assert.equal(planAction('quiz.answer', { item: 'gh#7', answers: '1b; rm -rf /' }, CONTEXT).ok, false, 'because nothing but letters and numbers reaches the script');
+  assert.equal(planAction('quiz.answer', { item: 'gh#7', answers: '' }, CONTEXT).ok, false, 'because an empty try grades nothing');
+  assert.equal(planAction('quiz.answer', { item: 'seven', answers: '1b' }, CONTEXT).ok, false, 'because only an item id reaches the script');
+});
+
+test('QuizAnswer_NeedsAFlowWithQuizScript', () => {
+  assert.equal(planAction('quiz.answer', { item: 'gh#7', answers: '1b' }, { ...CONTEXT, pluginVersion: '1.27.1' }).ok, false, 'because flow 1.27.1 has no quiz.sh to run, and with its scripts unread the version decides');
+  assert.equal(planAction('quiz.answer', { item: 'gh#7', answers: '1b' }, { ...CONTEXT, pluginVersion: QUIZ_SINCE }).ok, true, 'because the first flow with quiz.sh takes it');
+  assert.equal(planAction('quiz.answer', { item: 'gh#7', answers: '1b' }, { ...CONTEXT, pluginVersion: '1.27.1', pluginScripts: ['gate.sh', 'quiz.sh'] }).ok, true, 'because a checkout has the script before its version says so, and the folder is the truth');
+  assert.equal(planAction('quiz.answer', { item: 'gh#7', answers: '1b' }, { ...CONTEXT, pluginVersion: QUIZ_SINCE, pluginScripts: ['gate.sh'] }).ok, false, 'because a plugin folder without the script cannot run it, whatever its version claims');
 });
 
 test('AnyScriptAction_WithoutPlugin_Rejected', () => {

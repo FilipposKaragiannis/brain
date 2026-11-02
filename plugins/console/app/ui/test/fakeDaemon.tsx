@@ -125,7 +125,7 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 6,
+    schema: 7,
     takenAt,
     project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', trackerUrl: 'https://github.com/owner/project/issues', adapter: 'github', pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', jobHosts: ['claude'], plugins: [installedPlugin('flow', '1.17.0', '1.17.0'), installedPlugin('standards', '1.3.0', '1.3.0')], poolMax: 9, reviewers: ['codex', 'claude'] },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
@@ -182,7 +182,7 @@ export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo 
 }
 
 export function waitingGate(item: string, gate: string): Gate {
-  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null, session: null };
+  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null, quiz: null, session: null };
 }
 
 export function boardDisagreement(item: string): Disagreement {

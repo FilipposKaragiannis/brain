@@ -48,7 +48,7 @@ for i in json.load(sys.stdin):
   targets="$(cat "$(job_log_dir)/$job.targets")"; rm -f "$(job_log_dir)/$job.targets"
 fi
 [ -n "$targets" ] || { job_say "quiet: no open PR"; exit 0; }
-# prepare_pr <target>: chase its silent reviewers (not on a draft, which waits on its quiz) and
+# prepare_pr <target>: chase its silent reviewers (not on a draft, which waits on its quiz in the console) and
 # print the brief's note when the PR conflicts with its base. Model free.
 prepare_pr() {
   if adapter_for "$1" >/dev/null; then pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)"; else pull="$1"; fi

@@ -1,6 +1,6 @@
 ---
 name: explain
-description: Explain an item's change in plain language as a self-contained HTML page with diagrams, plus a short quiz the owner answers on the PR before merge. Optional step, on by default for L tasks. Use when the user asks to explain a change or when the next step of an item is explain.
+description: Explain an item's change in plain language as a self-contained HTML page with diagrams, plus a short quiz the owner takes in the console before merge. Optional step, on by default for L tasks. Use when the user asks to explain a change or when the next step of an item is explain.
 disable-model-invocation: true
 ---
 
@@ -31,20 +31,27 @@ Inputs: the diff (`git diff <base>...HEAD`), `plan.md`, `design.md`, `verify.md`
 ## The quiz (`quiz.md`)
 
 Three to five questions a reader of the page can answer, each pinning one thing the owner
-must understand before merging: a behaviour change, a decision, a risk. Multiple choice with
-one right answer, or a one-line answer with a clear key. Format:
+must understand before merging: a behaviour change, a decision, a risk. Multiple choice only,
+two to four choices, one right answer, and a `Because:` line that says why the right choice is
+right (the owner reads it with their result). Format:
 
 ```markdown
 <!-- flow:quiz -->
 ## Quiz for <item>
 1. <question>
-   a) ... b) ... c) ...
+   a) <choice>
+   b) <choice>
+   c) <choice>
+   Because: <why the right choice is right, one or two sentences>
 ...
 <!-- answers: 1b 2a 3c -->
 ```
 
-The PR creator posts it as the first comment of a draft PR; the comments step grades the
-owner's answer and marks the PR ready on a pass.
+Then run `"$P/scripts/quiz.sh" show <item>` and fix the file until every question lists its
+choices, its answer and its Because line. The owner takes the quiz in the console, on the Gates
+and Pull requests pages (`quiz.sh answer` from a terminal), which grades it, keeps the result
+as `<reports>/quiz.json` and marks the draft PR ready on a pass. Nothing of the quiz goes on the
+PR.
 
 ## Result
 

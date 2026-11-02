@@ -167,8 +167,8 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 6 since an item carries `spend` and a pull
-`review` (below). One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 7 since a gate and a pull carry
+`quiz` (below). One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`), `disagreements` and `newerConsole`
@@ -249,6 +249,15 @@ snapshots.
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
   or null. A merge gate whose PR still
   has an unresolved thread shows it there.
+- A gate and a pull carry `quiz`: the quiz the flow's explain step wrote for the item,
+  `<reports>/quiz.md` (the claimed worktree's reports first, then each pool worktree's, then the
+  main one's, as `steward.sh reports` looks), parsed as `{file, title, questions, result}`. Each
+  question is `{number, text, choices: [{key, text}], answer, because}`: the right letter from the
+  file's `<!-- answers: 1b 2a -->` key (null when the key leaves it out, so it is never right) and
+  the `Because:` line that says why. `result` is the last try `quiz.sh answer` kept beside it,
+  `<reports>/quiz.json`, as `{at, right, total, passed, given}` (the letter given per question
+  number), or null before a try. A pull's quiz is its item's; null with no item or no quiz. The
+  `files` source reads them with the gates.
 - A gate carries `session`: the `{host, id, transcript, resume}` of the session that raised it, or
   null. Only for a claude or codex gate on a claimed worktree (a step run from the root shares its
   folder with the owner's own sessions): of the transcripts in that worktree (`<claude
@@ -454,6 +463,7 @@ on every state change and at most twice a second while output arrives.
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
 | `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
+| `quiz.answer` | `item`, `answers` (`1b 2a 3c`: a letter per question number) | `quiz.sh answer <item> 1b 2a 3c` (flow 1.29.0): grades the try against the key in `<reports>/quiz.md`, writes `<reports>/quiz.json`, logs one `quiz` event, and on a pass marks the item's draft PR ready for review (`comments.sh ready`) when it has one on GitHub. Refused on an older flow, which has no quiz.sh | the item | `finished`; `files` and `pulls` are re-read |
 | `pr.review` | `pr`, `reviewer` (a name or GitHub login, `@` optional) | `comments.sh request-review <pr> <ask> <reviewer>` (flow 1.27.0): one mention comment with the flow's request marker, Copilot through the reviewers API, so the health job tracks and chases it; the ask is the PR step's own. Refused on flow before 1.27.0, whose script would ask every reviewer | the PR | `finished` |
 | `terminal.open` | `path`, `job?`, `session?`, `gate?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command; with `gate` (an item, `path` optional) one with the resume command of the gate's located `session` | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
@@ -670,7 +680,13 @@ its kind asks, the PR with its state and unresolved review threads when the item
 questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
 matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; Discuss with the
 agent resumes the newest agent on the item in `agents` or `ended` by its pid, else the gate's
-`session` with `gate`, and is left out with neither), Worktrees (filter
+`session` with `gate`, and is left out with neither; a gate whose item
+has a quiz shows it as a panel: a line with how many questions or the last try's score, Take the
+quiz, which opens one radio group per question and a Check my answers button that grades the
+letters on the page and runs `quiz.answer`; the results mark each question right or wrong, show
+the right choice for a wrong one and each question's Because line, and say that a pass sends the
+draft PR ready; a failed try has Take it again, a kept result has See results; a merge gate on a
+draft with a quiz still to pass says so in place of the merge button), Worktrees (filter
 chips with counts for all, running, needs you, stale, claimed and free, the pool size and base,
 and Reserve, Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
 branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
@@ -708,7 +724,9 @@ only while it has none; and the latest events), Pull requests (a head line of ho
 from the `pulls` source: its state, item, agent or worktree and ages; four cells for checks,
 conflicts, review and threads; the reviewers asked by a mention, each silent one "has not answered
 yet" and each that cannot review with its own reply and the way out; Merge on a PR in state
-`mergeable`, else why not; and, on a PR that is not a draft, "Ask for review from" with the
+`mergeable`, else why not (a draft whose item has a quiz still to pass says it goes ready when the
+quiz is passed); the same quiz panel as the Gates card when the PR's item has one; and, on a PR
+that is not a draft, "Ask for review from" with the
 project's reviewers and "other…" for a GitHub login, whose Ask runs `pr.review`; a merge gate's
 card has the same ask. Before that source is read, or off GitHub, a table of the items with a
 PR) and
