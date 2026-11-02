@@ -375,13 +375,23 @@ def area_options(types, area):
     task = next((t for t in types if t.get("name") == type_names()["task"]), None)
     if not task or area["type"] != "option":
         return []
-    path = "/rest/api/3/issue/createmeta/%s/issuetypes/%s" % (setting("PROJECT"), task["id"])
-    status, page = call("GET", path, query={"maxResults": 200})
-    expect(status, page, "read the fields a new %s takes" % task["name"])
-    # The docs name the list "results"; Jira Cloud answers with "fields". Either is taken.
-    fields = page.get("fields") or page.get("results") or []
-    found = next((f for f in fields if f.get("fieldId") == area["id"]), {})
+    found = createmeta_field(task, area["id"]) or {}
     return [v.get("value") or v.get("name") for v in found.get("allowedValues") or [] if v.get("value") or v.get("name")]
+
+
+def createmeta_field(issue_type, field_id):
+    """The field as the create screen of the type has it, page by page until it turns up; None when no page has it."""
+    path = "/rest/api/3/issue/createmeta/%s/issuetypes/%s" % (setting("PROJECT"), issue_type["id"])
+    start = 0
+    while True:
+        status, page = call("GET", path, query={"startAt": start, "maxResults": PAGE_SIZE})
+        expect(status, page, "read the fields a new %s takes" % issue_type["name"])
+        # The docs name the list "results"; Jira Cloud answers with "fields". Either is taken.
+        batch = page.get("fields") or page.get("results") or []
+        found = next((f for f in batch if f.get("fieldId") == field_id), None)
+        start += len(batch)
+        if found is not None or not batch or page.get("isLast") or start >= page.get("total", 0):
+            return found
 
 
 def cmd_vocabulary(args):

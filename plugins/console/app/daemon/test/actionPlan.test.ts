@@ -47,6 +47,16 @@ test('GateClear_WithBadItem_Rejected', () => {
   }
 });
 
+test('GateClear_IdClimbingOutOfTheItemsFolder_Rejected', () => {
+  for (const item of ['local:task/../../../README', 'local:task/..', 'local:task/./7', 'local:task//7', 'local:task/7/']) {
+    assert.equal(planAction('gate.clear', { item }, CONTEXT).ok, false, `because the local adapter joins "${item}" onto its items folder, and a . or .. part or an empty one would reach another file`);
+  }
+});
+
+test('GateClear_AbsolutePathAfterThePrefix_Rejected', () => {
+  assert.equal(planAction('gate.clear', { item: 'local:/etc/passwd' }, CONTEXT).ok, false, 'because an id goes on after its prefix with a letter or digit, never a path from the root');
+});
+
 test('GateClear_JiraItemId_PassedToGateSh', () => {
   assert.equal(planned('gate.clear', { item: 'jira:WID-7' }).args[2], 'jira:WID-7', "because the plugin's jira adapter owns the jira: prefix, so its ids reach the scripts like any other");
 });

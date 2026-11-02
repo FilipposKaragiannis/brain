@@ -206,6 +206,8 @@ const MESSAGE_LIMIT_CHARS = 10000;
  * plugin's adapters own, nothing else reaches a script.
  */
 const ID_REST = /^[A-Za-z0-9][A-Za-z0-9:#/_.-]{0,127}$/;
+/** Path parts an id never has: an adapter may join the id onto a folder (the local one does), so `..` would leave it. */
+const NOT_AN_ID_PART = new Set(['', '.', '..']);
 /** A job's log name: a schedule (`next`, `next-nightly`) or one of its workers (`next-2`, `next-nightly-2`). */
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
@@ -246,7 +248,12 @@ const fail = (error: string): PlanResult => ({ ok: false, error });
 /** The adapter that owns an id, by the prefix that starts it as lib/flow.sh's `adapter_for` routes it; null for no id of the plugin's adapters. */
 export function adapterOfItem(id: string, prefixes: AdapterPrefix[]): string | null {
   const owner = prefixes.find(({ prefix }) => id.startsWith(prefix));
-  return owner !== undefined && ID_REST.test(id.slice(owner.prefix.length)) ? owner.adapter : null;
+  return owner !== undefined && isIdRest(id.slice(owner.prefix.length)) ? owner.adapter : null;
+}
+
+/** Id characters only, and no empty, `.` or `..` part between slashes, so no id climbs out of an adapter's folder. */
+function isIdRest(rest: string): boolean {
+  return ID_REST.test(rest) && !rest.split('/').some((part) => NOT_AN_ID_PART.has(part));
 }
 
 function isItemId(id: string, context: ActionContext): boolean {

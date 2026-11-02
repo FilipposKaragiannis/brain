@@ -493,6 +493,9 @@ c.append({"id": str(len(c) + 1), "author": {"accountId": "acct-" + sys.argv[3].s
 json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${1#jira:}" "$2" "$3"; }
 jira_area_config
 check_all "jira vocabulary: the project's issue types without sub-tasks, and the options of the area field" '[ "$(jira_run "$P/adapters/jira/vocabulary.sh")" = "{\"types\": [\"Epic\", \"Task\", \"Bug\", \"Story\", \"Feature\"], \"areas\": [\"Bots\", \"Debugging\"]}" ]'
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["createmeta_page"]=1; json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
+check_all "jira vocabulary: the area field on a later page of the create metadata is still found" '[ "$(jira_run "$P/adapters/jira/vocabulary.sh" | jget areas)" = "[\"Bots\", \"Debugging\"]" ]'
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d.pop("createmeta_page"); json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json"
 jira_gated="$(jira_run "$P/adapters/jira/create.sh" task "Gated")"
 jira_comment_as "$jira_gated" flow@acme.test "/answer before the gate"
 jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "1. Which way?" >/dev/null 2>&1

@@ -590,7 +590,8 @@ the gate was raised in (a `path`, when given, must be it) with the resume comman
 An item is an id that starts with the prefix of one of the plugin's adapters (the first line of
 `adapters/<name>/prefix`, read with the flow files; `gh#` and `local:` for a plugin before flow
 1.28.0, which has none), followed by a letter or digit and at most 127 of letters, digits and
-`:#/_.-`: `gh#12`, `local:task/7`, `jira:WID-7`. A release target is an item or the name of a pool worktree,
+`:#/_.-`, with no empty, `.` or `..` part between slashes (an adapter may join the id onto a
+folder): `gh#12`, `local:task/7`, `jira:WID-7`. A release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
 never changes what runs. A second action on a held lock is refused with 409 and recorded as
 `rejected`. At most four run at once, stops aside: `run.stop` and `job.stop` start on a full

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { readConfig, startReport } from '../src/config.ts';
+import { readConfig, startReport, writeFileWithMode } from '../src/config.ts';
 import type { ConfigPaths } from '../src/settings.ts';
 import { FIXTURE_ROOT, FIXTURES } from './fakeRunner.ts';
 
@@ -155,4 +155,37 @@ test('ConfigFlag_ReadsThatFileAndNotTheDefaultOne', () => {
     assert.deepEqual([result.config.paths.configFile, result.config.paths.legacyProjectsFile], [file, path.join(folder, 'projects.json')], 'because a second daemon must read and write its own settings, never the owner\'s ~/.config/brain-console');
     assert.deepEqual([result.config.projects[0]?.root, result.config.port], [FIXTURE_ROOT, 7477], 'because the projects and the port come from the file the flag names');
   } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+const OWNER_ONLY = 0o600;
+const PERMISSIONS = 0o777;
+
+test('WriteFileWithMode_NewFile_OwnerOnlyUnderAnOpenUmask', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-private-write-'));
+  const before = process.umask(0o022);
+  try {
+    writeFileWithMode(path.join(dir, 'agent.plist'), 'secret', OWNER_ONLY);
+    assert.equal(statSync(path.join(dir, 'agent.plist')).mode & PERMISSIONS, OWNER_ONLY, 'because the plist may hold JIRA_API_TOKEN, and a 022 umask would leave it 0644');
+  } finally { process.umask(before); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('WriteFileWithMode_Existing0644File_ReplacedNotWrittenInPlace', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-private-write-'));
+  try {
+    const file = path.join(dir, 'agent.plist');
+    writeFileSync(file, 'old');
+    chmodSync(file, 0o644);
+    const old = statSync(file).ino;
+    writeFileWithMode(file, 'secret', OWNER_ONLY);
+    const now = statSync(file);
+    assert.deepEqual([now.mode & PERMISSIONS, now.ino !== old, readFileSync(file, 'utf8')], [OWNER_ONLY, true, 'secret'], 'because the token must never sit in the old 0644 file, even for the moment before a chmod');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('WriteFileWithMode_Written_NoTempFileLeft', () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-private-write-'));
+  try {
+    writeFileWithMode(path.join(dir, 'agent.plist'), 'secret', OWNER_ONLY);
+    assert.deepEqual(readdirSync(dir), ['agent.plist'], 'because the temp file is renamed onto the plist, not copied');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

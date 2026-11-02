@@ -4,7 +4,8 @@ and says so on stderr. A Blocks link posted with inwardIssue A and outwardIssue 
 A reads it back as an outwardIssue B ("blocks"), B as an inwardIssue A ("is blocked by").
 Comments keep their author, the user the -K login names (/rest/api/3/myself answers the same), so
 answers.sh can tell the owner's /answer from anyone else's. The project (types, plus a sub-task
-type) and the createmeta of each type (the option fields' allowedValues) feed vocabulary.sh."""
+type) and the createmeta of each type (the option fields' allowedValues) feed vocabulary.sh; the
+createmeta answers in pages of at most createmeta_page fields (default 50), as Jira caps them."""
 import json, re, sys
 from urllib.parse import parse_qs, urlsplit
 
@@ -80,9 +81,10 @@ if path == "/rest/api/3/project/" + project and method == "GET":
                  + [{"id": "10900", "name": "Subtask", "subtask": True}]})
 m = re.match(r"/rest/api/3/issue/createmeta/%s/issuetypes/(\d+)$" % project, path)
 if m and method == "GET":
-    answer(200, {"startAt": 0, "maxResults": 200, "total": len(options),
-                 "fields": [{"fieldId": f, "name": f, "allowedValues": [{"id": str(n), "value": v} for n, v in enumerate(values)]}
-                            for f, values in options.items()]})
+    every = [{"fieldId": f, "name": f, "allowedValues": [{"id": str(n), "value": v} for n, v in enumerate(values)]}
+             for f, values in options.items()]
+    start, size = int(query.get("startAt", 0)), min(int(query.get("maxResults", 50)), data.get("createmeta_page", 50))
+    answer(200, {"startAt": start, "maxResults": size, "total": len(every), "fields": every[start:start + size]})
 if path == "/rest/api/3/issue" and method == "POST":
     f = body["fields"]
     if f["project"]["key"] != project:
