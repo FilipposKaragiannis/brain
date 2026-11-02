@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 8;
+export const SNAPSHOT_SCHEMA_VERSION = 9;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -437,6 +437,8 @@ export type Disagreement = {
 
 export type AttentionRow = {
   kind: AttentionKind;
+  /** The gate's kind on a `gate` row (`merge`, `escalation`, `plan-approval` …), which its chip shows; null on every other row. */
+  gate: string | null;
   id: string;
   title: string;
   detail: string;

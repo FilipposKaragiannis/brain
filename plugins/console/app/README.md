@@ -168,8 +168,9 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 8 since `project.trackers`
-took the place of `trackerUrl` (7 when a gate and a pull took `quiz`, below). One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 9 since an attention row took
+`gate` (8 when `project.trackers` took the place of `trackerUrl`, 7 when a gate and a pull took
+`quiz`, below). One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`), `disagreements` and `newerConsole`
@@ -289,6 +290,8 @@ snapshots.
   sibling under the same parent has started or is done, or it blocks an item that has started.
   Every other item waiting on a field is backlog and gets no row. The row's `detail` names the
   fields: "needs priority", "needs priority and size".
+- An attention row carries `gate`: the gate's kind on a `gate` row (`merge`, `escalation`,
+  `plan-approval` …), which its chip shows, and null on every other row.
 
 One status language, used by worktrees and items alike:
 
@@ -327,9 +330,11 @@ Every open pull request carries one state, the first that holds:
 | `approved` | approval is satisfied (approved, or no review required) but a review thread is unresolved, or GitHub does not let it merge yet (merge state `BLOCKED`, `BEHIND`, `UNKNOWN`, or `mergeable` not `MERGEABLE`) |
 | `mergeable` | checks green, approval satisfied, no unresolved thread, `MERGEABLE`, merge state `CLEAN`, `HAS_HOOKS` or `UNSTABLE`: ready to merge |
 
-A PR belongs to the item whose `pr` field names it (a number, or its URL compared without case or
-scheme), else to the item claimed on its head branch unless the PR comes from a fork, and that
-gives its worktree. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
+The PRs are those of `github.repo`, read whatever tracker holds the items (local, GitHub or Jira),
+since the flow opens every item's PR there. A PR belongs to the item whose `pr` field names it (a
+number such as `#20`, or its URL compared without case or scheme), whichever tracker holds it,
+else to the item claimed on its head branch unless the PR comes from a fork, and that gives its
+worktree. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
 (`pr-failing`, `pr-changes-requested`, `pr-mergeable`), and `counts` carries `pullsFailing`,
 `pullsChangesRequested` and `pullsMergeable`. A PR's `review` is the health job's record for it,
 `.flow/reviews/<n>.review.json`: `{state, waiting, cannot, at}`, where `cannot` lists the
@@ -671,8 +676,10 @@ worktrees; a
 readiness line from `readiness` that says what runs, or why nothing does: how many items the next
 job could take, how many next-in-line items lack a field and how many more in the backlog do, how
 many wait at gates and how many are blocked; Needs you, a list oldest first where each row has
-its kind, its item and title over what it waits on, how long it has waited with a bar that turns
-late at a day and old at two, and one button that settles it (the row's own action, else Decide,
+its kind on a chip (a gate row names its gate there, `merge`, `escalation`, `plan-approval` …, so
+a clipped title loses nothing; the PR rows come from the `pulls` source, so they show wherever
+`github.repo` is set, whatever the trackers), its item and title over what it waits on, how long
+it has waited with a bar that turns late at a day and old at two, and one button that settles it (the row's own action, else Decide,
 Open PR, Fix, Fill in or Open), with the next-in-line items that lack a field folded after five;
 beside it Running now, each agent's step, item, worktree, host and PR with its age, the last line
 of the first claude transcript, and the scheduled jobs in the order they run next; then the latest

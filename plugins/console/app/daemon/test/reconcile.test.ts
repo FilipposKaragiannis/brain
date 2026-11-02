@@ -228,6 +228,16 @@ test('Attention_OldestFirstWithFailedJob', async () => {
   assert.ok(rows.some((row) => row.kind === 'job-failed' && row.id === 'health'), 'because the health job exited 1 last time');
 });
 
+test('GateAttentionRow_CarriesTheGateKind', async () => {
+  const row = (await snapshot()).attention.find((entry) => entry.kind === 'gate');
+  assert.equal(row?.gate, 'ambiguity', 'because the row\'s chip names the gate, which a clipped title may hide');
+});
+
+test('PullAttentionRow_CarriesNoGateKind', async () => {
+  const row = (await snapshot()).attention.find((entry) => entry.kind === 'pr-mergeable');
+  assert.equal(row?.gate, null, 'because only a gate row has a gate kind, so every other chip names its own kind');
+});
+
 test('NoBoardYet_EngagedItemsStillListed', async () => {
   const facts = await input();
   facts.board = null;

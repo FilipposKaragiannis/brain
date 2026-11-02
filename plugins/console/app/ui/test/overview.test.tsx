@@ -26,11 +26,11 @@ function failingPull(number: number): PullRequest {
 }
 
 function gateRow(id: string, ageSeconds: number): AttentionRow {
-  return { kind: 'gate', id, title: `Plan for ${id}`, detail: 'plan', worktree: null, sinceAt: TAKEN_AT, ageSeconds, action: null };
+  return { kind: 'gate', gate: 'plan-approval', id, title: `Plan for ${id}`, detail: 'plan', worktree: null, sinceAt: TAKEN_AT, ageSeconds, action: null };
 }
 
 function needsField(id: string): AttentionRow {
-  return { kind: 'needs-field', id, title: `Item ${id}`, detail: 'needs priority', worktree: null, sinceAt: null, ageSeconds: null, action: null };
+  return { kind: 'needs-field', gate: null, id, title: `Item ${id}`, detail: 'needs priority', worktree: null, sinceAt: null, ageSeconds: null, action: null };
 }
 
 test('ClaimedPoolCell_ShowsTheItemTitle', () => {
@@ -108,7 +108,7 @@ test('Activity_ShowAllLeadsToTheActivityScreen', () => {
 });
 
 test('StoppedHostRow_CarriesItsClearButton', () => {
-  const stopped: AttentionRow = { kind: 'host-stopped', id: 'codex', title: 'codex is stopped', detail: 'usage limit', worktree: null, sinceAt: TAKEN_AT, ageSeconds: 60, action: { kind: 'host.clear', args: { host: 'codex' }, label: 'Clear codex' } };
+  const stopped: AttentionRow = { kind: 'host-stopped', gate: null, id: 'codex', title: 'codex is stopped', detail: 'usage limit', worktree: null, sinceAt: TAKEN_AT, ageSeconds: 60, action: { kind: 'host.clear', args: { host: 'codex' }, label: 'Clear codex' } };
   renderOverview({ ...snapshotAt(TAKEN_AT, 1), attention: [stopped] });
   expect(screen.queryByRole('button', { name: 'Clear codex' }), 'because the row is settled from where it is seen').not.toBeNull();
 });

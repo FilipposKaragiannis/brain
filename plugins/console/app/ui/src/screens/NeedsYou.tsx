@@ -49,14 +49,14 @@ export function NeedsYou({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
   );
 }
 
-/** One row: its kind, the item and title over what it waits on, how long it has waited, and the one button that settles it. */
+/** One row: its kind (a gate's own kind on a gate row), the item and title over what it waits on, how long it has waited, and the one button that settles it. */
 function AttentionLine({ row, snapshot, go }: { row: AttentionRow; snapshot: Snapshot; go: (route: Route) => void }) {
   const destination = rowTarget(row, snapshot.project.id);
   const { tone, percent } = lateness(row.ageSeconds);
   const meta = [row.detail, row.worktree].filter((part) => part !== null && part !== '').join(' · ');
   return (
     <li className="attention-row">
-      <Chip tone={attentionTone(row.kind)}>{row.kind}</Chip>
+      <Chip tone={attentionTone(row.kind)}>{row.gate ?? row.kind}</Chip>
       <div className="attention-what">
         <div className="attention-line">
           <ItemLink id={row.id} pages={snapshot} />
