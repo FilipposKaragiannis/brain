@@ -493,13 +493,23 @@ function namesPull(field: string | null, pull: { number: number; url: string }):
 
 type PullLink = { item: string | null; worktree: string | null };
 
+/** What the flow's task branches start with, before the item's slug. */
+const TASK_BRANCH_PREFIX = 'flow/';
+
 function linkPull(pull: PullFact, items: Item[], contexts: WorktreeContext[]): PullLink {
   const named = items.find((item) => namesPull(item.pr, pull));
   if (named !== undefined) return { item: named.id, worktree: named.worktree };
   if (pull.crossRepository) return { item: null, worktree: null };
   const claimed = contexts.find((context) => context.claim !== null && context.claim.branch === pull.branch);
   if (claimed !== undefined) return { item: claimed.claim?.item ?? null, worktree: claimed.name };
+  const onTaskBranch = items.find((item) => item.status === 'open' && item.pr === null && taskBranch(item.id) === pull.branch);
+  if (onTaskBranch !== undefined) return { item: onTaskBranch.id, worktree: onTaskBranch.worktree };
   return { item: null, worktree: null };
+}
+
+/** The branch the flow works an item on, `flow/<slug>`: `flow/gh-134` for gh#134. */
+function taskBranch(item: string): string {
+  return `${TASK_BRANCH_PREFIX}${itemSlug(item)}`;
 }
 
 /** The states a reviewer asked by a mention and not yet answered turns into `in-review`: GitHub alone would call the pull further along. */
@@ -519,7 +529,7 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
     return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
     draft: pull.draft, state, checks: pull.checks, reviewDecision: pull.reviewDecision,
-    unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, ...linked,
+    unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, mergeState: pull.mergeState, ...linked,
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
     review: record === undefined ? null : { state: record.state, waiting: record.waiting, cannot: record.cannot, at: record.at },

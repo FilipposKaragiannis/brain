@@ -240,6 +240,18 @@ test('SweepFails_NotRunAgain', async () => {
   } finally { copy.cleanUp(); }
 });
 
+test('PullOnAnItemsTaskBranch_ItemRecordedNoPr_SnapshotLinksTheItem', async () => {
+  const board = JSON.parse(BOARD_JSON) as { items: Array<{ id: string; url: string }> };
+  const twelve = board.items.find((item) => item.id === 'gh#12')!;
+  board.items.push({ ...twelve, id: 'gh#310', url: 'https://example/310' });
+  const runner: CommandRunner = async (request) =>
+    request.command === 'sh' && (request.args[0] ?? '').endsWith('board.sh') ? { code: 0, stdout: JSON.stringify(board), stderr: '', timedOut: false } : fakeRunner(request);
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  await readEverySource(monitor);
+  assert.equal(monitor.snapshot?.pulls.find((pull) => pull.number === 560)?.item, 'gh#310', 'because #560 is opened from flow/gh-310, the task branch of gh#310, whose link-pr never recorded it');
+  monitor.stop();
+});
+
 test('FilesRead_PluginReaderForTheRoot_SnapshotCarriesItsPlugins', async () => {
   const plugins = [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: '1.27.0' }];
   const monitor = new ProjectMonitor({
