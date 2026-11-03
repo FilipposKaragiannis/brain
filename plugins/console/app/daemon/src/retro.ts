@@ -17,6 +17,18 @@ const READ_SO_FAR = /^\d+$/;
 /** The length of the `YYYY-MM-DD` day that opens an ISO time. */
 const DAY_LENGTH = 10;
 
+/**
+ * The local calendar day of a retros.log time, as `date +%F` names the report of that run: the
+ * daemon runs on the machine the job ran on, so its timezone is the job's. A time that does not
+ * parse keeps the day it opens with.
+ */
+function localDay(at: string): string {
+  const time = new Date(at);
+  if (Number.isNaN(time.getTime())) return at.slice(0, DAY_LENGTH);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())}`;
+}
+
 /** The lessons, the line count the retro counts against, and every retro run, newest first. */
 export type RetroFacts = { lessons: Lesson[]; lessonLines: number; retros: RetroRun[] };
 
@@ -78,13 +90,13 @@ export function parseRetrosLog(source: string): LogLine[] {
 /**
  * Every retro, newest first: each log line with the lessons it read (its count less the line
  * before's, or its whole count when the log was reset, as retro.sh counts) and the report of its
- * day, which the last run of that day wrote; then each report no line names, as a run of its own.
+ * local day, which the last run of that day wrote; then each report no line names, as a run of its own.
  */
 export function retroRuns(lines: LogLine[], reports: Report[]): RetroRun[] {
   const lastOfDay = new Map<string, number>();
-  lines.forEach((line, index) => lastOfDay.set(line.at.slice(0, DAY_LENGTH), index));
+  lines.forEach((line, index) => lastOfDay.set(localDay(line.at), index));
   const logged: RetroRun[] = lines.map((line, index) => {
-    const date = line.at.slice(0, DAY_LENGTH);
+    const date = localDay(line.at);
     const before = index === 0 ? 0 : lines[index - 1]!.readSoFar;
     const lessonsRead = line.readSoFar >= before ? line.readSoFar - before : line.readSoFar;
     const report = lastOfDay.get(date) === index ? reports.find((each) => each.date === date) ?? null : null;

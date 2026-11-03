@@ -73,6 +73,17 @@ test('RetroRuns_ReportNoLineNames_IsARunOfItsOwn', () => {
   assert.deepEqual(runs.map((run) => [run.date, run.at]), [['2026-10-19', '2026-10-19T07:00:00Z'], ['2026-10-08', null]], 'because a report whose run wrote no log line is still a retro the owner wants to read');
 });
 
+test('RetroRuns_RunPastMidnightLocally_TakesTheReportOfItsLocalDay', () => {
+  const zone = process.env.TZ;
+  process.env.TZ = 'Europe/Athens';
+  try {
+    const runs = retroRuns(parseRetrosLog('2026-10-18T22:00:00Z\t3\n'), [report('2026-10-19')]);
+    assert.deepEqual(runs.map((run) => [run.date, run.report?.text ?? null]), [['2026-10-19', '# Retro 2026-10-19']], 'because retro.sh names the report by the local date +%F, which in Athens is already the 19th');
+  } finally {
+    if (zone === undefined) delete process.env.TZ; else process.env.TZ = zone;
+  }
+});
+
 test('RetroRuns_NewestFirst', () => {
   const runs = retroRuns(parseRetrosLog('2026-10-05T07:00:00Z\t1\n2026-10-19T07:00:00Z\t3\n'), [report('2026-10-12')]);
   assert.deepEqual(runs.map((run) => run.date), ['2026-10-19', '2026-10-12', '2026-10-05'], 'because the page shows the latest retro first');
