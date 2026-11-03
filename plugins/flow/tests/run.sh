@@ -2208,6 +2208,10 @@ check "Init_CommittedSettingsWithAFlowHook_LeavesThatFileAsItIs" cmp -s .claude/
 printf '{"hooks":' > .claude/settings.local.json
 FLOW_PLUGIN="$plugin_copy" "$init" > "$work/hooks-init.out" 2>&1; code=$?
 check "Init_LocalSettingsNotJson_RefusedWithTheFileAndLeftAsItIs" sh -c "[ $code = 1 ] && grep -q 'refused: .claude/settings.local.json is not valid JSON' '$work/hooks-init.out' && [ \"\$(cat .claude/settings.local.json)\" = '{\"hooks\":' ]"
+printf '{"hooks":{"WorktreeRemove":[{"hooks":[{"type":"command","command":".flow/hooks/worktree-remove.sh","timeout":30},{"type":"command","command":"./scripts/cleanup-session.sh"}]}]}}\n' > .claude/settings.local.json
+FLOW_PLUGIN="$plugin_copy" "$init" >/dev/null 2>&1
+check_all "Init_MixedGroupWithAFlowHook_KeepsTheUnrelatedCommand" '[ "$(jget hooks.WorktreeRemove.0.hooks.1.command < .claude/settings.local.json)" = ./scripts/cleanup-session.sh ]'
+check_all "Init_MixedGroupWithAFlowHook_FlowCommandIsTheNewOne" '[ "$(jget hooks.WorktreeRemove < .claude/settings.local.json | grep -o "worktree-remove.sh" | wc -l | tr -d " ")" = 1 ] && jget hooks.WorktreeRemove.0.hooks.0.command < .claude/settings.local.json | grep -qF "worktree list --porcelain"'
 rm -rf .claude
 rm .flow/stamp
 check "session-start: no stamp asks for one init" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'no install stamp'"

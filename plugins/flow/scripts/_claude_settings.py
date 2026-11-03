@@ -1,14 +1,16 @@
 """The Claude worktree hook entries flow:init keeps in this user's .claude/settings.local.json.
 
   _claude_settings.py merge <settings file> <out file> <create command> <remove command>
-      Writes to the out file the settings with flow's WorktreeCreate and WorktreeRemove entries in
-      place of any flow entry the file had (a group whose command runs .flow/hooks/worktree-*),
-      every other key and hook group kept. A missing or empty file counts as {}. Exit 0 when the
-      file already holds exactly those entries (nothing written), 1 when the out file was
-      written, 2 when the settings file is not a JSON object (the reason on stderr).
+      Writes to the out file the settings with flow's WorktreeCreate and WorktreeRemove commands in
+      place of any flow hook the file had (a hook whose command runs .flow/hooks/worktree-*),
+      every other key, group and hook kept, a flow hook's own group settings and sibling hooks
+      too. A missing or empty file counts as {}. Exit 0 when the file already holds exactly those
+      commands (nothing written), 1 when the out file was written, 2 when the settings file is not
+      a JSON object (the reason on stderr).
   _claude_settings.py committed <settings file>
-      Prints the flow hook groups a shared settings file still carries, as indented JSON shaped
-      like the settings' own hooks key, or nothing when it has none or cannot be read.
+      Prints the hook groups with a flow hook that a shared settings file still carries, as
+      indented JSON shaped like the settings' own hooks key, or nothing when it has none or cannot
+      be read.
 """
 import copy, json, sys
 
@@ -37,11 +39,17 @@ def load(path):
     return settings
 
 
-def is_flow_group(group):
+def is_flow_hook(hook):
+    return isinstance(hook, dict) and FLOW_HOOK_MARK in str(hook.get("command", ""))
+
+
+def group_hooks(group):
     hooks = group.get("hooks") if isinstance(group, dict) else None
-    if not isinstance(hooks, list):
-        return False
-    return any(isinstance(hook, dict) and FLOW_HOOK_MARK in str(hook.get("command", "")) for hook in hooks)
+    return hooks if isinstance(hooks, list) else []
+
+
+def has_flow_hook(group):
+    return any(is_flow_hook(hook) for hook in group_hooks(group))
 
 
 def flow_group(command):
@@ -58,15 +66,30 @@ def event_groups(settings, path, event):
     return groups
 
 
-def with_flow_group(groups, command):
-    """The groups with flow's in the place of the first flow group (last when there is none), and
-    no other flow group, so a rerun on a file with other hooks keeps their order."""
+def replace_flow_hooks(hooks, command):
+    """The hooks with the first flow hook running the command (its other keys kept) and every later
+    flow hook dropped; with no command, every flow hook dropped. Other hooks stay in their place."""
+    kept = []
+    for hook in hooks:
+        if not is_flow_hook(hook):
+            kept.append(hook)
+        elif command is not None:
+            kept.append({**hook, "type": "command", "command": command}); command = None
+    return kept
+
+
+def with_flow_hook(groups, command):
+    """The groups with flow's command on the first flow hook (a new group last when there is none)
+    and no other flow hook. A group keeps its own settings and its other hooks, and goes only when
+    it held nothing but flow hooks that were dropped."""
     result, placed = [], False
     for group in groups:
-        if not is_flow_group(group):
-            result.append(group)
-        elif not placed:
-            result.append(flow_group(command)); placed = True
+        if not has_flow_hook(group):
+            result.append(group); continue
+        kept = replace_flow_hooks(group_hooks(group), None if placed else command)
+        placed = True
+        if kept:
+            result.append({**group, "hooks": kept})
     return result if placed else result + [flow_group(command)]
 
 
@@ -75,7 +98,7 @@ def merge(path, out_path, create_command, remove_command):
     merged = copy.deepcopy(settings)
     for event, command in zip(EVENTS, (create_command, remove_command)):
         groups = event_groups(settings, path, event)
-        merged.setdefault("hooks", {})[event] = with_flow_group(groups, command)
+        merged.setdefault("hooks", {})[event] = with_flow_hook(groups, command)
     if merged == settings:
         return 0
     with open(out_path, "w", encoding="utf-8") as out_file:
@@ -86,7 +109,7 @@ def merge(path, out_path, create_command, remove_command):
 def committed(path):
     try:
         settings = load(path)
-        found = {event: [group for group in event_groups(settings, path, event) if is_flow_group(group)] for event in EVENTS}
+        found = {event: [group for group in event_groups(settings, path, event) if has_flow_hook(group)] for event in EVENTS}
     except SettingsProblem:
         return 0
     found = {event: groups for event, groups in found.items() if groups}
