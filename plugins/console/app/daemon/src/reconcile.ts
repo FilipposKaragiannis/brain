@@ -8,6 +8,7 @@ import type { JobFacts, JobRunRecord, JobStatusRow, JobStatusRun, JobWorkerRow }
 import type { AgentProcess, EndedProcess, ProcessFacts } from './collectors/processes.ts';
 import type { PullFact, PullFacts } from './collectors/pulls.ts';
 import { parseGateQuestions } from './gateMessage.ts';
+import { lessonsSinceRetro } from './retro.ts';
 import { itemSlug } from './syncNote.ts';
 import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
@@ -730,9 +731,9 @@ function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreeme
   return rows.sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
 
-type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; pulls: PullRequest[]; disagreements: Disagreement[] };
+type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; pulls: PullRequest[]; disagreements: Disagreement[]; lessonsSinceRetro: number };
 
-function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }: CountSources): Counts {
+function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements, lessonsSinceRetro }: CountSources): Counts {
   const pool = worktrees.filter((entry) => entry.role === 'pool');
   const count = (state: WorktreeState): number => pool.filter((entry) => entry.state === state).length;
   const itemCount = (state: ItemState): number => items.filter((entry) => entry.state === state).length;
@@ -744,6 +745,7 @@ function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreemen
     disagreements: disagreements.length,
     pullsMergeable: pullCount('mergeable'), pullsFailing: pullCount('checks-failing'), pullsChangesRequested: pullCount('changes-requested'),
     needsField: items.filter((item) => nextInLine(item, items)).length,
+    lessonsSinceRetro,
   };
 }
 
@@ -831,11 +833,13 @@ export function reconcile(read: ReconcileInput): Snapshot {
     takenAt: input.now.toISOString(),
     project: projectInfo(input, jobs),
     sources: input.sources,
-    counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }),
+    counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements, lessonsSinceRetro: lessonsSinceRetro(input.flow.retro) }),
     readiness: buildReadiness(items),
     attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
     worktrees, items, gates, runs, agents, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     events: input.flow.events,
+    lessons: input.flow.retro.lessons,
+    retros: input.flow.retro.retros,
     disagreements,
     newerConsole: input.newerConsole ?? null,
   };
