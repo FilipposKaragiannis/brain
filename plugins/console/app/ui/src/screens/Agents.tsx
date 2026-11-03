@@ -10,8 +10,9 @@ import { ActionButton, Chip, Dot, Empty, Module, SessionButton, SourceFreshness,
 
 /**
  * What runs. Flow's own runs are cards with their transcript as a live terminal, a run record
- * whose process is confirmed gone is a card that says what to do, and one whose process was not
- * found yet (still starting, or the process list could not be read) a card that says why; under
+ * whose process is confirmed gone is a card that says what to do, one whose process was not
+ * found yet (still starting, or the process list could not be read) a card that says why, and one
+ * whose owner still runs but whose agent was not located a card from its record alone; under
  * them the owner's own sessions fold away, then the agents and sessions that ended in the last
  * day. Jobs and their schedules have a page of their own.
  */
@@ -19,9 +20,11 @@ export function Agents({ snapshot }: { snapshot: Snapshot }) {
   const runs = snapshot.agents.filter((agent) => agent.kind === 'agent');
   const sessions = snapshot.agents.filter((agent) => agent.kind === 'session');
   const dead = snapshot.runs.filter((run) => run.liveness === 'dead');
-  const unseen = snapshot.runs.filter((run) => (run.liveness === 'unknown' || run.liveness === 'starting') && !runs.some((agent) => agent.item === run.item));
-  const live = dead.length + unseen.length + runs.length;
-  const aside = [`${runs.length} running`, dead.length > 0 ? `${dead.length} without a process` : null, unseen.length > 0 ? `${unseen.length} not seen yet` : null].filter((part) => part !== null).join(' · ');
+  const unlocated = (run: Run) => !runs.some((agent) => runOf(agent, [run]) !== null);
+  const unseen = snapshot.runs.filter((run) => (run.liveness === 'unknown' || run.liveness === 'starting') && unlocated(run));
+  const owned = snapshot.runs.filter((run) => run.liveness === 'alive' && unlocated(run));
+  const live = dead.length + unseen.length + owned.length + runs.length;
+  const aside = [`${runs.length + owned.length} running`, dead.length > 0 ? `${dead.length} without a process` : null, unseen.length > 0 ? `${unseen.length} not seen yet` : null].filter((part) => part !== null).join(' · ');
   const jobs = routeHash({ projectId: snapshot.project.id, screen: 'jobs', detail: null });
   return (
     <div className="screen agents-screen">
@@ -30,6 +33,7 @@ export function Agents({ snapshot }: { snapshot: Snapshot }) {
           <div className="run-cards">
             {dead.map((run) => <DeadRunCard key={`${run.item}-${run.worktree}`} run={run} snapshot={snapshot} />)}
             {unseen.map((run) => <UnseenRunCard key={`${run.item}-${run.worktree}`} run={run} processList={snapshot.processList} snapshot={snapshot} />)}
+            {owned.map((run) => <UnlocatedRunCard key={`${run.item}-${run.worktree}`} run={run} snapshot={snapshot} />)}
             {runs.map((agent, index) => <RunCard key={agent.pid} agent={agent} snapshot={snapshot} startOpen={index === 0} />)}
           </div>
         )}
@@ -158,6 +162,26 @@ function UnseenRunCard({ run, processList, snapshot }: { run: Run; processList: 
         <span className="muted">{run.startedAt === null ? '' : <>since <Since at={run.startedAt} /></>}</span>
       </header>
       <p className="run-card-say">{why}</p>
+    </article>
+  );
+}
+
+/**
+ * A live run whose agent was not located: the pid its record names still runs, but no agent
+ * process works in its worktree (the agent's lookup failed, or the owner has not started it yet).
+ * Its record is all there is to show. No Resume: flow refuses one for a live run.
+ */
+function UnlocatedRunCard({ run, snapshot }: { run: Run; snapshot: Snapshot }) {
+  const owner = run.pid === null ? 'Its owner' : `Its owner, pid ${run.pid},`;
+  return (
+    <article className="run-card unseen" aria-label={`Run record for ${run.item}`}>
+      <header className="run-card-head">
+        <Dot tone="running" />
+        <span className="run-card-title"><span className="strong">{run.step}</span> · <ItemLink id={run.item} pages={snapshot} /></span>
+        <span className="run-card-tags"><span className="tag mono">{run.worktree}</span><span className="tag">{run.host}</span><span className="tag">alive, agent not located</span></span>
+        <span className="muted">{run.startedAt === null ? '' : <>since <Since at={run.startedAt} /></>}</span>
+      </header>
+      <p className="run-card-say">{owner} still runs, but no agent process was found in {run.worktree}, so there is no transcript to show. The run is alive and not resumable.</p>
     </article>
   );
 }

@@ -161,6 +161,14 @@ test('RunStillStarting_OffersNoResume', async () => {
   expect([screen.getByRole('article', { name: 'Run record for gh#9' }).textContent?.includes('starting'), screen.queryByRole('button', { name: 'Resume' })], 'because a run within the health job\'s grace has not had time to show its process').toEqual([true, null]);
 });
 
+test('AliveRunWithNoLocatedAgent_ShowsItsRecordWithoutResume', async () => {
+  const run: Run = { item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: 19487, liveness: 'alive' };
+  await renderSnapshot({ runs: [run] });
+  const card = screen.getByRole('article', { name: 'Run record for gh#9' });
+  expect([card.textContent?.includes('alive, agent not located'), card.textContent?.includes('wt-3'), screen.queryByText(/No flow run is going/)], 'because a run whose owner still runs is going, even when its agent was not located').toEqual([true, true, null]);
+  expect([screen.queryByRole('button', { name: 'Resume' }), screen.queryByRole('button', { name: /Open session/ })], 'because flow refuses to resume a live run, and there is no located session to open').toEqual([null, null]);
+});
+
 test('Runs_OnlyTheFirstCardStartsOpen', async () => {
   const daemon = new FakeDaemon();
   transcriptAt(daemon, 12);
