@@ -979,3 +979,15 @@ test('ProjectPicks_FromTheConfig', async () => {
   facts.flow.config.picks = [mine];
   assert.deepEqual(reconcile(facts).project.picks, [mine], 'because the Jobs page offers the filters the config names');
 });
+
+test('Snapshot_Lessons_EveryLessonOfTheFlowHome', async () => {
+  assert.deepEqual((await snapshot()).lessons.map((lesson) => lesson.rule), ['T-09', null, 'T-09', 'N-05'], 'because the Retro page groups every lesson by kind then rule');
+});
+
+test('Snapshot_Retros_NewestFirstWithTheReportNoLineNames', async () => {
+  assert.deepEqual((await snapshot()).retros.map((run) => run.date), ['2026-10-19', '2026-10-15', '2026-10-08'], 'because each retro shows, latest first, and a report without its log line too');
+});
+
+test('Counts_LessonsSinceRetro_ThoseAfterTheLastRetrosCount', async () => {
+  assert.equal((await snapshot()).counts.lessonsSinceRetro, 2, 'because the last retro read three lines, the cut-short one among them, so the lessons on lines four and five are new');
+});

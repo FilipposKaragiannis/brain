@@ -310,3 +310,27 @@ test('Picks_ANameFlowRefuses_LeftOut', () => {
 test('Picks_NoneInTheConfig_Empty', () => {
   assert.deepEqual(parseFlowConfig('base: main\n').picks, [], 'because without filters every run takes every ready item');
 });
+
+test('FlowHome_LessonsLog_EveryLessonReadMalformedLinesSkipped', async () => {
+  const { retro } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.deepEqual(retro.lessons.map((lesson) => [lesson.line, lesson.item]), [[1, 'gh#7'], [2, 'gh#9'], [4, 'gh#9'], [5, 'gh#7']], 'because lessons.jsonl in the flow home holds the lessons, and a cut-short line or an array is skipped without failing the source');
+});
+
+test('FlowHome_RetrosLog_EachRunWithTheLessonsItRead', async () => {
+  const { retro } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.deepEqual(retro.retros.filter((run) => run.at !== null).map((run) => [run.date, run.lessonsRead]), [['2026-10-19', 1], ['2026-10-15', 2]], 'because retros.log has a line per retro with the lessons read to date, and the hand-written line is skipped');
+});
+
+test('FlowHome_RetroReport_ReadWithTheRunOfItsDay', async () => {
+  const { retro } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.match(retro.retros[0]?.report?.text ?? '', /T-09 broken twice/, 'because reports/retro-<date>.md is the report of the retro that ran that day');
+});
+
+test('FlowHome_NoLessonsOrRetroFiles_EmptyRetroFacts', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'console-retro-'));
+  try {
+    mkdirSync(path.join(root, '.flow'));
+    const { retro } = await readFlowHome(root, fakeRunner);
+    assert.deepEqual(retro, { lessons: [], lessonLines: 0, retros: [] }, 'because the files stay on the machine that ran the flow, so a missing one is no lesson and no retro');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

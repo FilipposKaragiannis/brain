@@ -168,12 +168,13 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 9 since an attention row took
-`gate` (8 when `project.trackers` took the place of `trackerUrl`, 7 when a gate and a pull took
-`quiz`, below). One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 10 since the snapshot took
+`lessons`, `retros` and `counts.lessonsSinceRetro` (9 when an attention row took `gate`, 8 when
+`project.trackers` took the place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
+One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
-(the latest 200, each with `at`, `item`, `kind` and `message`), `disagreements` and `newerConsole`
+(the latest 200, each with `at`, `item`, `kind` and `message`), `lessons`, `retros`, `disagreements` and `newerConsole`
 (`{running, cached}` while the plugin cache holds a newer console with an install script than the
 one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
 banner while it is set). Timestamps are
@@ -292,6 +293,23 @@ snapshots.
   fields: "needs priority", "needs priority and size".
 - An attention row carries `gate`: the gate's kind on a `gate` row (`merge`, `escalation`,
   `plan-approval` …), which its chip shows, and null on every other row.
+- `lessons` is every lesson in `<flow home>/lessons.jsonl` (one JSON object per line, written by
+  the flow's `lesson.sh`), oldest first, each `{line, at, kind, item, step, rule, text, host}`:
+  `at` the line's `time`, an empty field null, an empty kind `other`. `line` is the lesson's
+  place among the file's non-empty lines, as `grep -c .` counts them, a malformed line included;
+  a line that is not a JSON object is skipped, never a failed source.
+- `retros` is every retro, newest first, each `{date, at, lessonsRead, lessonsReadSoFar, findings,
+  applied, report}`. A line of `<flow home>/retros.log` (`<time>\t<lessons read so far>\t<findings>\t<applied>`,
+  the meta retro skill's step 4) is one run: `date` the day of its time, `lessonsReadSoFar` its
+  second column, `lessonsRead` that less the line before's (its whole count when it is smaller,
+  the file having been reset, as the retro job counts), `findings` and `applied` the last two
+  columns as written. A line without a time and a whole count is skipped. `report` is
+  `<flow home>/reports/retro-<date>.md` as `{file, text}`, held by the last run of its day, else
+  null; a report no line names is a run of its own with `at`, `lessonsRead` and
+  `lessonsReadSoFar` null. `counts.lessonsSinceRetro` is how many lessons sit on a line past the
+  last run's `lessonsReadSoFar`, every lesson with no run or with a count past the file's lines.
+  Since flow 1.31.0 these files stay on the machine under `.flow/` and out of git; a missing one
+  is no lesson and no retro.
 
 One status language, used by worktrees and items alike:
 
@@ -344,7 +362,7 @@ Null without a record.
 ## Sources and cadence
 | Source | How | Every |
 |---|---|---|
-| `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
+| `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, `lessons.jsonl`, `retros.log`, `reports/retro-*.md`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
 | `git` | `git worktree list`, per worktree ahead/behind the base, dirty files, last commit | 30s, and after a file change |
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
