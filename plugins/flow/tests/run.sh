@@ -1099,6 +1099,64 @@ check "a jobs.host other than claude or codex fails the job early, exit 2" sh -c
 check "jobs.sh run refuses a bad jobs.host, exit 2" sh -c "'$P/scripts/jobs.sh' run comments 2>&1; [ \$? = 2 ]"
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
 check "the unattended loop keeps mapping the roster's names for codex" sh -c "FLOW_PLUGIN='$P' sh -c '. \"$P/lib/flow.sh\"; . \"$P/lib/host.sh\"; host_run codex . hi opus high' && grep -q 'exec .*-m gpt-6-sol' '$HOST_LOG'"
+# Passes at once: jobs.comments_workers or --workers N runs each PR's pass in its own worker.
+cp .flow/config.yaml "$work/config.workers"
+# The fake gh has one PR: both items link it, and each pass keeps its own seen file by item.
+par="$("$P/adapters/github/create.sh" task "A second PR")"
+"$P/adapters/github/write-state.sh" "$par" step=pr >/dev/null && "$P/adapters/github/link-pr.sh" "$par" https://gh/pull/90 >/dev/null
+# The host waits up to 10 s for a second pass to start, so passes at once both start before either ends.
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf 'start %s\n' "\$*" >> "$work/overlap.log"
+i=0; while [ "\$(grep -c '^start' "$work/overlap.log")" -lt 2 ] && [ "\$i" -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done
+printf 'end %s\n' "\$*" >> "$work/overlap.log"
+EOF
+jobscfg '  comments_workers: 2\n'; bump 2026-10-25T03:00:00Z; : > "$work/overlap.log"
+"$P/jobs/comments.sh" claude >/dev/null 2>&1; code=$?
+check_all "comments job: jobs.comments_workers 2 starts both PRs' passes before either ends, because each worker takes its own PR" '[ "$code" -eq 0 ] && [ "$(head -n 2 "$work/overlap.log" | grep -c "^start")" = 2 ] && grep -q "^start .*comments gh#21\." "$work/overlap.log" && grep -q "^start .*comments $par\." "$work/overlap.log"'
+check "comments job: the result line counts the passes of every worker" sh -c "tail -1 .flow/log/comments.log | grep -q 'done: 2 PR(s), 0 unchanged\$' && grep '\"job\":\"comments\"' .flow/log/runs.jsonl | tail -1 | grep -q '\"result\":\"done: 2 PR(s), 0 unchanged\"'"
+check "comments job: each pass lets its item's lock go, and the run's files go with it" sh -c "! ls -d .flow/item:*.lock >/dev/null 2>&1 && ! ls .flow/log/comments.out.* >/dev/null 2>&1"
+printf "$okhost" > "$work/bin/claude"; jobscfg ''; : > "$HOST_LOG"
+"$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1
+check "comments job: --workers 2 with nothing new sums the unchanged PRs, because each worker's pass is counted" sh -c "[ ! -s '$HOST_LOG' ] && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 2 PR(s)\$'"
+# A pass whose item's lock another holds skips that PR, as in use; the other worker's pass runs.
+mkdir ".flow/item:$(item_slug "$par").lock" && echo $$ > ".flow/item:$(item_slug "$par").lock/pid"
+bump 2026-10-25T03:10:00Z; : > "$HOST_LOG"
+"$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1; code=$?
+check_all "comments job: a held item lock skips that PR's pass, because no two passes work one item at once" '[ "$code" -eq 0 ] && ! grep -q "comments $par\." "$HOST_LOG" && grep -q "comments gh#21\." "$HOST_LOG" && grep -q "$par: another pass works on $par (its lock is held), skipped" .flow/log/comments.log'
+check "comments job: a PR skipped for its held lock counts as in use in the result line" sh -c "tail -1 .flow/log/comments.log | grep -q 'done: 1 PR(s), 0 unchanged, 1 in use by another session\$'"
+check "comments job: a lock the run did not take is left to its holder" [ -d ".flow/item:$(item_slug "$par").lock" ]
+rm -rf ".flow/item:$(item_slug "$par").lock"
+check "comments job: --workers 0 is refused, exit 2" sh -c "'$P/jobs/comments.sh' claude --workers 0 2>/dev/null; [ \$? = 2 ]"
+# A pass the host stops ends its own worker; the pass already running in the other one finishes.
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf 'start %s\n' "\$*" >> "$work/overlap.log"
+i=0; while [ "\$(grep -c '^start' "$work/overlap.log")" -lt 2 ] && [ "\$i" -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done
+case "\$*" in
+  *"comments gh#21."*) FLOW_HOST_GATES=1 sh -c '. "\$FLOW_PLUGIN/lib/flow.sh"; . "\$FLOW_PLUGIN/lib/host.sh"; host_stop claude spend-limit "API Error: 422 ExceededBudget"'
+    printf 'end %s\n' "\$*" >> "$work/overlap.log"; exit 1 ;;
+esac
+i=0; while ! grep -q '^end .*comments gh#21\.' "$work/overlap.log" && [ "\$i" -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done
+printf 'end %s\n' "\$*" >> "$work/overlap.log"
+EOF
+bump 2026-10-25T03:20:00Z; : > "$work/overlap.log"
+"$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1; code=$?
+check_all "comments job: a pass the host stopped ends only its worker, because the other pass in flight finishes" '[ "$code" -eq 0 ] && tail -n 1 "$work/overlap.log" | grep -q "^end .*comments $par\." && ! grep -q "$par: pass failed" .flow/log/comments.log'
+check "comments job: with no pass failed, the host's stop is the run's last word" sh -c "grep '\"job\":\"comments\"' .flow/log/runs.jsonl | tail -1 | grep -q '\"exit\":0,\"result\":\"stopped: claude is stopped since '"
+"$P/scripts/gate.sh" clear claude >/dev/null
+printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"
+"$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1
+check_all "comments job: after the clear only the stopped pass's PR runs again, because the finished pass kept its activity" 'grep -q "comments gh#21\." "$HOST_LOG" && ! grep -q "comments $par\." "$HOST_LOG"'
+# A failed pass beside one that completes: the run exits 1 and names the failed PR.
+printf '#!/bin/sh\ncase "$*" in *"comments gh#21."*) exit 1 ;; esac\n' > "$work/bin/claude"
+bump 2026-10-25T03:30:00Z
+"$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1; code=$?
+check "comments job: one failed pass among workers fails the run, exit 1, the line summing both" sh -c "[ $code -eq 1 ] && tail -1 .flow/log/comments.log | grep -q 'failed: gh#21 cut short or failed, of 2 PR(s), 0 unchanged\$'"
+# A pass by hand that completes clears the failure and the resume note it left on gh#21.
+printf "$okhost" > "$work/bin/claude"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
+"$P/adapters/github/write-state.sh" "$par" pr= >/dev/null; "$P/adapters/github/close.sh" "$par" >/dev/null 2>&1
+cp "$work/config.workers" .flow/config.yaml
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude >/dev/null
