@@ -2213,6 +2213,56 @@ FLOW_PLUGIN="$plugin_copy" "$init" >/dev/null 2>&1
 check_all "Init_MixedGroupWithAFlowHook_KeepsTheUnrelatedCommand" '[ "$(jget hooks.WorktreeRemove.0.hooks.1.command < .claude/settings.local.json)" = ./scripts/cleanup-session.sh ]'
 check_all "Init_MixedGroupWithAFlowHook_FlowCommandIsTheNewOne" '[ "$(jget hooks.WorktreeRemove < .claude/settings.local.json | grep -o "worktree-remove.sh" | wc -l | tr -d " ")" = 1 ] && jget hooks.WorktreeRemove.0.hooks.0.command < .claude/settings.local.json | grep -qF "worktree list --porcelain"'
 rm -rf .claude
+echo "session-start: the pool worktrees' plugin pins"
+git worktree add -q --detach ../plugin-wt
+cfg="$work/claude-config"; mkdir -p "$cfg/plugins/cache/m/flow/1.0.0" "$cfg/plugins/cache/m/flow/2.0.0" "$cfg/plugins/cache/m/other/1.0.0"
+registry="$cfg/plugins/installed_plugins.json"
+write_registry() { # write_registry <worktree version> <user version> <user install dir>
+  python3 -c 'import json, sys
+wt, user, user_dir, cache, repo, registry = sys.argv[1:]
+flow = [{"scope": "user", "installPath": user_dir, "version": user, "gitCommitSha": "new"},
+        {"scope": "project", "projectPath": repo + "/../plugin-wt", "installPath": cache + "/flow/1.0.0", "version": wt, "gitCommitSha": "old"},
+        {"scope": "project", "projectPath": "/elsewhere/repo", "installPath": cache + "/flow/1.0.0", "version": "1.0.0", "gitCommitSha": "old"}]
+other = [{"scope": "project", "projectPath": repo + "/../plugin-wt", "installPath": cache + "/other/1.0.0", "version": "1.0.0"}]
+json.dump({"version": 2, "plugins": {"flow@m": flow, "other@m": other}}, open(registry, "w"), indent=2)' "$1" "$2" "$3" "$cfg/plugins/cache/m" "$repo" "$registry"
+}
+write_registry 1.0.0 2.0.0 "$cfg/plugins/cache/m/flow/2.0.0"
+sync_out="$(echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start")"
+check "SessionStart_WorktreePinBehindTheNewestInstalled_Lifted" [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.0" ]
+check_all "SessionStart_LiftedPin_TakesTheNewestInstallPathAndCommit" '[ "$(jget plugins.flow@m.1.installPath < "$registry")" = "$cfg/plugins/cache/m/flow/2.0.0" ] && [ "$(jget plugins.flow@m.1.gitCommitSha < "$registry")" = new ]'
+check "SessionStart_LiftedPin_SaysWhichPinItLifted" sh -c "printf '%s' '$sync_out' | grep -q 'plugin pin lifted: flow@m in plugin-wt: 1.0.0 -> 2.0.0'"
+check "SessionStart_RecordOfAnotherRepository_LeftAlone" [ "$(jget plugins.flow@m.2.version < "$registry")" = "1.0.0" ]
+check "SessionStart_PluginWithOneVersion_NothingToLift" [ "$(jget plugins.other@m.0.version < "$registry")" = "1.0.0" ]
+cp "$registry" "$registry.before"
+check "SessionStart_NothingBehind_SilentAndRegistryUntouched" sh -c "[ -z \"\$(echo '{}' | CLAUDE_CONFIG_DIR='$cfg' FLOW_PLUGIN='$plugin_copy' '$start')\" ] && cmp -s '$registry' '$registry.before'"
+write_registry 1.0.0 3.0.0 "$cfg/plugins/cache/m/flow/3.0.0-missing"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "SessionStart_NewerVersionMissingFromTheCache_NotATarget" [ "$(jget plugins.flow@m.1.version < "$registry")" = "1.0.0" ]
+check "SessionStart_NoRegistry_Silent" sh -c "[ -z \"\$(echo '{}' | CLAUDE_CONFIG_DIR='$work/no-such-config' FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
+write_registry 1.0.0 2.0.0 "$cfg/plugins/cache/m/flow/2.0.0"
+python3 -c 'import fcntl, sys, time
+lock = open(sys.argv[1] + ".lock", "w"); fcntl.flock(lock, fcntl.LOCK_EX); time.sleep(2)' "$registry" &
+holder=$!; sleep 0.5
+started="$(date +%s)"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+waited=$(( $(date +%s) - started ))
+wait "$holder"
+check_all "SessionStart_SyncInFlight_NextOneWaitsThenLifts" '[ "$waited" -ge 1 ] && [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.0" ]'
+check "SessionStart_AfterALift_NoTemporaryFileLeft" sh -c "! ls '$cfg/plugins/' | grep -q '\\.tmp$'"
+mkdir -p "$cfg/plugins/cache/m/flow/2.0.0-rc.1" "$cfg/plugins/cache/m/flow/2.0.3-beta2"
+write_registry 2.0.0 2.0.0-rc.1 "$cfg/plugins/cache/m/flow/2.0.0-rc.1"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "SessionStart_PrereleaseOfTheSameRelease_DoesNotReplaceIt" [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.0" ]
+write_registry 2.0.0 2.0.3-beta2 "$cfg/plugins/cache/m/flow/2.0.3-beta2"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "SessionStart_NewerPrerelease_LiftsAnOlderRelease" [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.3-beta2" ]
+write_registry 2.0.3-beta2 2.0.9 "$cfg/plugins/cache/m/flow/2.0.0"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "SessionStart_DigitsInAPrereleaseTag_DoNotOutrankARelease" [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.9" ]
+write_registry 1.0.0 main "$cfg/plugins/cache/m/flow/2.0.0"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "SessionStart_VersionNotSemantic_NeverATarget" [ "$(jget plugins.flow@m.1.version < "$registry")" = "1.0.0" ]
+git worktree remove -q --force ../plugin-wt
 rm .flow/stamp
 check "session-start: no stamp asks for one init" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'no install stamp'"
 printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 0\n' > .flow/config.yaml

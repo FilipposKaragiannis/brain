@@ -67,7 +67,8 @@ that did not fail for an infrastructure reason and counts those BLOCKED runs apa
 `worktree_copy` and `worktree_setup`, gates, notify), the notify and unattended-run scripts, the
 Codex rules and agents, and reports the config gaps. It stamps what it wrote
 (`.flow/stamp`), refuses to replace a guarded copy edited by hand, and a `SessionStart` hook asks for
-`init` when the stamp is behind the plugin. `flow:next` runs the next
+`init` when the stamp is behind the plugin and lifts the pool worktrees' pinned plugin versions to the
+newest installed (`scripts/_plugins.py`; Claude pins per directory). `flow:next` runs the next
 step of an item in a fresh subagent; `advance.sh` applies the step's result file; gates stop
 the run and notify. `flow:board` shows the pool, items, gates and overlaps; `flow:steward`
 claims and releases pool worktrees, reserves one for the owner's manual work (`steward.sh
