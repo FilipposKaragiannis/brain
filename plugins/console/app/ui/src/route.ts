@@ -1,5 +1,5 @@
 /** The screens of one project, and `settings`, which belongs to the daemon and lives at `#/settings`. */
-export type Screen = 'overview' | 'gates' | 'board' | 'worktrees' | 'agents' | 'jobs' | 'pulls' | 'activity' | 'settings';
+export type Screen = 'overview' | 'gates' | 'board' | 'worktrees' | 'agents' | 'jobs' | 'pulls' | 'activity' | 'retro' | 'settings';
 
 export const SCREENS: { screen: Screen; label: string }[] = [
   { screen: 'overview', label: 'Overview' },
@@ -10,6 +10,7 @@ export const SCREENS: { screen: Screen; label: string }[] = [
   { screen: 'jobs', label: 'Jobs' },
   { screen: 'pulls', label: 'Pull requests' },
   { screen: 'activity', label: 'Activity' },
+  { screen: 'retro', label: 'Retro' },
 ];
 
 export const SETTINGS_HASH = '#/settings';

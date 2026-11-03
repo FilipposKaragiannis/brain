@@ -225,3 +225,20 @@ test('RunningNow_Header_LinksToAgentsAndJobs', () => {
   expect(within(running).getByRole('link', { name: 'Agents' }).getAttribute('href'), 'because the runs live on the Agents page').toMatch(/\/agents$/);
   expect(within(running).getByRole('link', { name: 'Jobs' }).getAttribute('href'), 'because the scheduled jobs listed here live on the Jobs page').toMatch(/\/jobs$/);
 });
+
+/** The Overview of a project whose last retro was followed by three lessons. */
+function renderWithLessonsSinceRetro(): void {
+  const base = snapshotAt(TAKEN_AT, 0);
+  const retro = { date: '2026-10-19', at: '2026-10-19T07:00:31Z', lessonsRead: 1, lessonsReadSoFar: 3, findings: '', applied: '', report: null };
+  renderOverview({ ...base, retros: [retro], counts: { ...base.counts, lessonsSinceRetro: 3 } });
+}
+
+test('Overview_LessonsSinceTheLastRetro_Counted', () => {
+  renderWithLessonsSinceRetro();
+  expect(screen.getByLabelText('Lessons').textContent, 'because the owner sees what the next retro will read without opening the page').toMatch(/3 lessons since the last retro/);
+});
+
+test('Overview_LessonsLine_LinksToTheRetroPage', () => {
+  renderWithLessonsSinceRetro();
+  expect(within(screen.getByLabelText('Lessons')).getByRole('link', { name: 'Retro' }).getAttribute('href'), 'because the count leads to the lessons themselves').toBe('#/project/retro');
+});

@@ -153,3 +153,12 @@ test('App_DaemonRunsTheNewestConsole_NoBanner', async () => {
   await renderWithSnapshot(snapshotAt(TAKEN_AT, 0));
   expect(screen.queryByText(UPDATE_NOTICE), 'because the notice goes once the daemon runs the newest cached version').toBeNull();
 });
+
+test('App_Nav_LinksTheRetroPage', async () => {
+  window.location.hash = '#/foosbrawl/overview';
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL] }));
+  renderApp(daemon);
+  await flush(0);
+  expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Retro' }).getAttribute('href'), 'because the Retro page is reached from the nav like every project page').toBe('#/foosbrawl/retro');
+});

@@ -687,13 +687,15 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Eight project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
+imports). Nine project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
 Needs you, Running, Stale, Checks red and Free, each with a line under its count: the oldest wait
 and its item, the steps running on which items, the stale worktrees, the red PRs and the free
 worktrees; a
 readiness line from `readiness` that says what runs, or why nothing does: how many items the next
 job could take, how many next-in-line items lack a field and how many more in the backlog do, how
-many wait at gates and how many are blocked; Needs you, a list oldest first where each row has
+many wait at gates and how many are blocked; under it a line with the lessons since the last
+retro (`counts.lessonsSinceRetro`, "No lesson since the last retro." at none) and a Retro link to
+that page; Needs you, a list oldest first where each row has
 its kind on a chip (a gate row names its gate there, `merge`, `escalation`, `plan-approval` …, so
 a clipped title loses nothing; the PR rows come from the `pulls` source, so they show wherever
 `github.repo` is set, whatever the trackers), its item and title over what it waits on, how long
@@ -769,7 +771,15 @@ card has the same ask. Before that source is read, or off GitHub, a table of the
 PR) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
-10 s). A row above every screen holds the project's fields, each a small uppercase label over its
+10 s), and Retro (`#/<project>/retro`, its nav entry saying "<n> new" while lessons wait for a
+retro: a head line with the lessons in all, those since the last retro and when the last retro
+ran, and "Run retro now" with a host picker (the retro schedule's host, else `jobsHost`), which
+runs `job.start` with `job: retro` and the config's model and effort; Lessons, by kind then by
+rule, the kinds and rules with the most lessons first and the lessons naming no rule last, each
+with its text, item, step, host and day, the lessons since the last retro first and All a tab
+away; Retros, newest first, each with its day and time, the lessons it read and the log's findings
+and applied columns, its report rendered as markdown, the newest open and the others folded). A
+row above every screen holds the project's fields, each a small uppercase label over its
 value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker, or
 Trackers for several (each tracker the flow reads: "GitHub issues" and "Jira" linked to their
 items, "local" plain; one the board could not read followed by "(not read)", its title the reason), Base branch
