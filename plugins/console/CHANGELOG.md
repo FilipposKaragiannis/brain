@@ -1,5 +1,10 @@
 # console
 
+## 0.15.2 (2026-11-03)
+
+- The flow settings no longer offer `retro.commit` (Commit the retro lessons): the retro job
+  commits nothing now, as its lessons stay on this machine under `.flow/`.
+
 ## 0.15.1 (2026-11-02)
 
 - A gate's row in Needs you names its gate on the chip (`merge`, `escalation`, `plan-approval`
