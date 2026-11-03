@@ -1496,6 +1496,12 @@ check_all "the recreated worktree starts on its idle branch at the base tip, set
 rm "$g3/setup.txt" && "$P/scripts/steward.sh" release "$n3" >/dev/null 2>&1 && git worktree remove --force ../app-wt-3
 "$P/scripts/steward.sh" add ../app-wt-3 > "$work/recreate.out" 2>&1; code=$?
 check_all "add recreates a pool path missing on disk in place, without a second pool entry" '[ "$code" -eq 0 ] && [ "$(git -C ../app-wt-3 symbolic-ref --short HEAD)" = main-wt-3 ] && [ "$(git -C ../app-wt-3 rev-parse HEAD)" = "$(git rev-parse main)" ] && [ "$(grep -c app-wt-3 .flow/config.yaml)" = 1 ] && grep -q "recreated ../app-wt-3, already in the pool" "$work/recreate.out"'
+"$P/scripts/steward.sh" claim "$n3" >/dev/null 2>&1
+sed -i.bak 's|^  - ../app-wt-3$|&\
+  - ../trees/app-wt-4|' .flow/config.yaml && rm -f .flow/config.yaml.bak
+n4="$("$P/scripts/new.sh" task "Fourth")"
+g4="$("$P/scripts/steward.sh" claim "$n4" 2>/dev/null)"; code=$?
+check_all "claim recreates a pool path whose parent folder is missing too and prints it without .." '[ "$code" -eq 0 ] && [ -d ../trees/app-wt-4 ] && [ "$g4" = "$(cd ../trees/app-wt-4 && pwd -P)" ] && ! printf "%s" "$g4" | grep -qF .. && [ "$("$P/scripts/steward.sh" find "$n4")" = "$g4" ]'
 
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t

@@ -161,14 +161,15 @@ cmd_claim() {
 }
 
 # free_worktree: the first pool worktree with no claim, no reservation and a clean tree, or a
-# pool path missing on disk, recreated (one git cannot add is skipped, saying why); else one
-# grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name exits 2 inside
+# pool path missing on disk, recreated and printed resolved (one git cannot add is skipped,
+# saying why); else one grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name exits 2 inside
 # grow_pool, before the pool_max message, so claim and reserve pass the template's reason through.
 free_worktree() {
   for p in $(pool_paths); do
     if [ ! -d "$p" ]; then
       pool_recreate "$p" >&2 || continue
-      printf '%s\n' "$p"; return 0
+      # A path whose parent was missing too is still spelt with .. here; resolve it now it exists.
+      (cd "$p" && pwd); return 0
     fi
     [ -z "$(json_get "$(claim_of "$p")" item)" ] && [ -z "$(reserved_by "$p")" ] || continue
     dirty "$p" && continue
