@@ -20,7 +20,7 @@ function renderOverview(snapshot: Snapshot, go: (route: Route) => void = ignoreR
 function failingPull(number: number): PullRequest {
   return {
     number, title: `PR ${number}`, url: `https://github.com/owner/project/pull/${number}`, branch: `b${number}`, base: 'main', author: 'o', draft: false, state: 'checks-failing',
-    checks: { passed: 0, failed: 1, pending: 0 }, reviewDecision: null, unresolvedThreads: 0, mergeable: null, item: null, worktree: null,
+    checks: { passed: 0, failed: 1, pending: 0 }, reviewDecision: null, unresolvedThreads: 0, mergeable: null, mergeState: null, item: null, worktree: null,
     createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 0, idleSeconds: 0, review: null, quiz: null,
   };
 }
@@ -224,4 +224,21 @@ test('RunningNow_Header_LinksToAgentsAndJobs', () => {
   const running = screen.getByRole('heading', { name: 'Running now' }).closest('section, article, details, div.module') as HTMLElement;
   expect(within(running).getByRole('link', { name: 'Agents' }).getAttribute('href'), 'because the runs live on the Agents page').toMatch(/\/agents$/);
   expect(within(running).getByRole('link', { name: 'Jobs' }).getAttribute('href'), 'because the scheduled jobs listed here live on the Jobs page').toMatch(/\/jobs$/);
+});
+
+/** The Overview of a project whose last retro was followed by three lessons. */
+function renderWithLessonsSinceRetro(): void {
+  const base = snapshotAt(TAKEN_AT, 0);
+  const retro = { date: '2026-10-19', at: '2026-10-19T07:00:31Z', lessonsRead: 1, lessonsReadSoFar: 3, findings: '', applied: '', report: null };
+  renderOverview({ ...base, retros: [retro], counts: { ...base.counts, lessonsSinceRetro: 3 } });
+}
+
+test('Overview_LessonsSinceTheLastRetro_Counted', () => {
+  renderWithLessonsSinceRetro();
+  expect(screen.getByLabelText('Lessons').textContent, 'because the owner sees what the next retro will read without opening the page').toMatch(/3 lessons since the last retro/);
+});
+
+test('Overview_LessonsLine_LinksToTheRetroPage', () => {
+  renderWithLessonsSinceRetro();
+  expect(within(screen.getByLabelText('Lessons')).getByRole('link', { name: 'Retro' }).getAttribute('href'), 'because the count leads to the lessons themselves').toBe('#/project/retro');
 });

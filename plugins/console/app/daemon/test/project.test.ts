@@ -3,10 +3,10 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import type { Logger } from '../src/log.ts';
+import type { LogFields, Logger } from '../src/log.ts';
 import { silentLogger } from '../src/log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
-import type { CommandRunner } from '../src/collectors/exec.ts';
+import type { CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 import { BOARD_JSON, FIXTURES, FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
@@ -103,6 +103,9 @@ test('Monitor_DisagreementHeldAfterBothStoresRead_Shown', async () => {
   assert.equal(gateVsLabels(monitor), true, 'because the gate file and the labels were both read again and still disagree');
 });
 
+/** A ps listing that worked and holds no claude, codex or unattended loop. */
+const NO_HOSTS = '    1 12-00:00:00 /sbin/launchd\n';
+
 /** The fixture runner, except that the plugin lookup every files read starts with waits until the test lets it go. */
 function heldFilesRead(): { runner: CommandRunner; hold: () => void; release: () => void; noAgents: () => void } {
   let gate: Promise<void> | null = null;
@@ -110,7 +113,7 @@ function heldFilesRead(): { runner: CommandRunner; hold: () => void; release: ()
   let agents = true;
   const runner: CommandRunner = async (request) => {
     if (request.command === 'sh' && request.args[0] === '-c' && gate !== null) await gate;
-    if (request.command === 'ps' && !agents) return { code: 0, stdout: '', stderr: '', timedOut: false };
+    if (request.command === 'ps' && !agents) return { code: 0, stdout: NO_HOSTS, stderr: '', timedOut: false };
     return fakeRunner(request);
   };
   return {
@@ -163,6 +166,82 @@ test('ActionContext_PoolWorktreesRunsAndProcessFolders_FromTheLatestRead', async
   assert.equal(context.processCwds.includes('/elsewhere'), false, 'because a codex working in another folder on the machine is not this project\'s to open');
   assert.deepEqual(context.outsideWorktrees.sort(), [FIXTURE_ROOT, path.join(FIXTURES, 'project-side')].sort(), 'because the main checkout and the side worktree git lists are rows with the button');
   monitor.stop();
+});
+
+/** The fixture monitor with ps and lsof answering as the test sets them (the fixture's answer while unset), and every log line kept. */
+function lookupMonitor(): { monitor: ProjectMonitor; answer: { ps: CommandResult | null; lsof: CommandResult | null }; logged: Array<[string, LogFields]> } {
+  const answer: { ps: CommandResult | null; lsof: CommandResult | null } = { ps: null, lsof: null };
+  const runner: CommandRunner = async (request) => (request.command === 'ps' || request.command === 'lsof' ? answer[request.command] : null) ?? fakeRunner(request);
+  const logged: Array<[string, LogFields]> = [];
+  const keep = (event: string, fields: LogFields): void => { logged.push([event, fields]); };
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: { info: keep, warn: keep, error: keep }, cadence: DEFAULT_CADENCE });
+  return { monitor, answer, logged };
+}
+
+const PS_TIMED_OUT: CommandResult = { code: null, stdout: '', stderr: '', timedOut: true };
+const LSOF_EMPTY: CommandResult = { code: 1, stdout: '', stderr: '', timedOut: false };
+const wt3Agents = (monitor: ProjectMonitor): number[] => monitor.snapshot?.worktrees.find((worktree) => worktree.name === 'project-wt-3')?.agents.map((agent) => agent.pid) ?? [];
+
+test('Monitor_PsTimesOutOnce_LastAgentsStandAndTheRunIsNotDead', async () => {
+  const { monitor, answer } = lookupMonitor();
+  await readEverySource(monitor);
+  answer.ps = PS_TIMED_OUT;
+  await monitor.refresh('processes');
+  assert.deepEqual([wt3Agents(monitor), monitor.snapshot?.runs[0]?.liveness], [[100], 'alive'], 'because a ps that timed out says nothing new, so the agent seen ten seconds ago still stands');
+});
+
+test('Monitor_PsTimesOut_ProcessesSourceRedWithTheReason', async () => {
+  const { monitor, answer } = lookupMonitor();
+  await readEverySource(monitor);
+  answer.ps = PS_TIMED_OUT;
+  await monitor.refresh('processes');
+  assert.deepEqual([monitor.snapshot?.sources.processes.ok, monitor.snapshot?.sources.processes.error], [false, 'process list unavailable: ps timed out after 10s'], 'because the sources strip says the process list is missing and why');
+});
+
+test('Monitor_LsofMissesTheAgentOnce_AgentStaysWhereItWasSeen', async () => {
+  const { monitor, answer } = lookupMonitor();
+  await readEverySource(monitor);
+  answer.lsof = LSOF_EMPTY;
+  await monitor.refresh('processes');
+  assert.deepEqual([wt3Agents(monitor), monitor.snapshot?.processList.status], [[100], 'partial'], 'because ps still lists pid 100, so only its directory is unknown this time, and it was in project-wt-3');
+});
+
+test('Monitor_LookupWorksAgain_ListCompleteAndSourceGreen', async () => {
+  const { monitor, answer } = lookupMonitor();
+  await readEverySource(monitor);
+  answer.ps = PS_TIMED_OUT;
+  await monitor.refresh('processes');
+  answer.ps = null;
+  await monitor.refresh('processes');
+  assert.deepEqual([monitor.snapshot?.processList.status, monitor.snapshot?.sources.processes.ok, monitor.snapshot?.sources.processes.error], ['complete', true, null], 'because the next read that works restores the whole picture');
+});
+
+test('Monitor_RunProcessesGoneInAFullRead_RunDead', async () => {
+  const { monitor, answer } = lookupMonitor();
+  await readEverySource(monitor);
+  answer.ps = { code: 0, stdout: NO_HOSTS, stderr: '', timedOut: false };
+  await monitor.refresh('processes');
+  assert.deepEqual([monitor.snapshot?.runs[0]?.liveness, monitor.snapshot?.worktrees.find((worktree) => worktree.name === 'project-wt-3')?.flags.includes('dead-run')], ['dead', true], 'because ps worked and lists neither the agent nor the owner, and the run started past the grace, so it is truly gone');
+});
+
+test('Monitor_LookupFailsTwice_LoggedOnceWithTheDiagnostics', async () => {
+  const { monitor, answer, logged } = lookupMonitor();
+  await readEverySource(monitor);
+  answer.ps = PS_TIMED_OUT;
+  await monitor.refresh('processes');
+  await monitor.refresh('processes');
+  const failed = logged.filter(([event]) => event === 'processes.lookup.failed').map(([, fields]) => [fields['command'], fields['timedOut'], fields['code'], fields['reason']]);
+  assert.deepEqual(failed, [['ps', true, null, 'ps timed out after 10s']], 'because the log must say which lookup failed and how, once for a failure that lasts');
+});
+
+test('Monitor_LookupRecovers_RecoveryLogged', async () => {
+  const { monitor, answer, logged } = lookupMonitor();
+  await readEverySource(monitor);
+  answer.lsof = LSOF_EMPTY;
+  await monitor.refresh('processes');
+  answer.lsof = null;
+  await monitor.refresh('processes');
+  assert.equal(logged.filter(([event]) => event === 'processes.lookup.recovered').length, 1, 'because the log shows how long an intermittent miss lasted');
 });
 
 /**
@@ -238,6 +317,18 @@ test('SweepFails_NotRunAgain', async () => {
     await copy.monitor.refresh('pulls');
     assert.equal(copy.sweeps.length, 1, 'because a sweep that fails would fail every minute; the health job sweeps again on its own schedule');
   } finally { copy.cleanUp(); }
+});
+
+test('PullOnAnItemsTaskBranch_ItemRecordedNoPr_SnapshotLinksTheItem', async () => {
+  const board = JSON.parse(BOARD_JSON) as { items: Array<{ id: string; url: string }> };
+  const twelve = board.items.find((item) => item.id === 'gh#12')!;
+  board.items.push({ ...twelve, id: 'gh#310', url: 'https://example/310' });
+  const runner: CommandRunner = async (request) =>
+    request.command === 'sh' && (request.args[0] ?? '').endsWith('board.sh') ? { code: 0, stdout: JSON.stringify(board), stderr: '', timedOut: false } : fakeRunner(request);
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  await readEverySource(monitor);
+  assert.equal(monitor.snapshot?.pulls.find((pull) => pull.number === 560)?.item, 'gh#310', 'because #560 is opened from flow/gh-310, the task branch of gh#310, whose link-pr never recorded it');
+  monitor.stop();
 });
 
 test('FilesRead_PluginReaderForTheRoot_SnapshotCarriesItsPlugins', async () => {

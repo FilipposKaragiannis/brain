@@ -33,3 +33,7 @@ test('ParseRoute_JobsHash_IsTheJobsScreen', () => {
 test('ParseRoute_OldAgentsHash_IsStillTheAgentsScreen', () => {
   expect(parseRoute('#/foosbrawl/agents').screen, 'because a bookmark from before the split still opens the runs').toBe('agents');
 });
+
+test('ParseRoute_RetroHash_IsTheRetroPage', () => {
+  expect(parseRoute('#/foosbrawl/retro'), 'because the lessons and the retros have a page of their own').toEqual({ projectId: 'foosbrawl', screen: 'retro', detail: null });
+});

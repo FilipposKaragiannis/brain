@@ -6,6 +6,7 @@ import { readFlowHome } from '../src/collectors/flowHome.ts';
 import { readGit } from '../src/collectors/git.ts';
 import { parseJobStatus } from '../src/collectors/jobs.ts';
 import { readProcesses } from '../src/collectors/processes.ts';
+import type { ProcessFacts } from '../src/collectors/processes.ts';
 import type { PullFact } from '../src/collectors/pulls.ts';
 import { readPulls } from '../src/collectors/pulls.ts';
 import { landedMergeGates, pullState, reconcile, runOutcome, runReason } from '../src/reconcile.ts';
@@ -26,7 +27,7 @@ async function input(): Promise<ReconcileInput> {
     project: { id: 'project', name: 'project', root: FIXTURE_ROOT },
     flow: await readFlowHome(FIXTURE_ROOT, fakeRunner),
     git: await readGit(FIXTURE_ROOT, 'main', fakeRunner),
-    processes: await readProcesses(fakeRunner),
+    processes: await readProcesses(fakeRunner, () => NOW),
     jobs: { jobs: parseJobStatus(JOBS_JSON), runs: [] },
     board: parseBoard(BOARD_JSON),
     pulls: await readPulls(FIXTURE_ROOT, 'example/fixture', fakeRunner),
@@ -37,6 +38,9 @@ async function input(): Promise<ReconcileInput> {
 async function snapshot(): Promise<Snapshot> { return reconcile(await input()); }
 
 const worktree = (picture: Snapshot, name: string) => picture.worktrees.find((entry) => entry.name === name);
+
+/** A process read that worked and found no claude, codex or unattended loop at all. */
+const NOTHING_RUNS: ProcessFacts = { agents: [], hosts: [], list: { status: 'complete' } };
 
 test('WorktreeWithAgentProcess_IsRunning', async () => {
   const running = worktree(await snapshot(), 'project-wt-3');
@@ -208,12 +212,87 @@ test('Disagreements_DeadRunGateLabelsAndMergeless', async () => {
 
 test('RunWithoutProcess_IsDeadAndFlagged', async () => {
   const facts = await input();
-  facts.processes = { agents: [] };
+  facts.processes = NOTHING_RUNS;
   const picture = reconcile(facts);
-  assert.equal(picture.runs[0]?.alive, false, 'because no process sits in the worktree');
+  assert.equal(picture.runs[0]?.liveness, 'dead', 'because a full process read found no agent in the worktree and no owner, 14 minutes after the run started');
   assert.ok(worktree(picture, 'project-wt-3')?.flags.includes('dead-run'), 'because the card must say the run is a ghost');
   assert.equal(worktree(picture, 'project-wt-3')?.state, 'claimed', 'because a dead run is not running');
   assert.ok(picture.attention.some((row) => row.kind === 'dead-run'), 'because a ghost run needs a human');
+});
+
+/** The read behind the false dead runs: ps timed out, so it knows nothing about any process. */
+const PS_TIMED_OUT: ProcessFacts = {
+  agents: [], hosts: [],
+  list: { status: 'unavailable', reason: 'ps timed out after 10s', lookup: { command: 'ps', code: null, timedOut: true, durationMs: 10004, stderr: '' } },
+};
+
+/** The fixture's processes with lsof giving no directory for gh#9's agent (100), so ps saw it but not where it works. */
+async function lsofMissedTheAgent(): Promise<ProcessFacts> {
+  return readProcesses(async (request) => (request.command === 'lsof' ? { code: 0, stdout: '', stderr: '', timedOut: false } : fakeRunner(request)), () => NOW);
+}
+
+const deadClaims = (picture: Snapshot): unknown[] => [
+  worktree(picture, 'project-wt-3')?.flags.includes('dead-run'),
+  picture.attention.some((row) => row.kind === 'dead-run'),
+  picture.disagreements.some((entry) => entry.sources.join(' vs ') === 'run record vs process list'),
+];
+
+test('ProcessListUnavailable_RunIsUnknown', async () => {
+  const facts = await input();
+  facts.processes = PS_TIMED_OUT;
+  assert.equal(reconcile(facts).runs[0]?.liveness, 'unknown', 'because a ps that timed out cannot tell a live run from a dead one');
+});
+
+test('ProcessListUnavailable_NoDeadRunFlagRowOrDisagreement', async () => {
+  const facts = await input();
+  facts.processes = PS_TIMED_OUT;
+  assert.deepEqual(deadClaims(reconcile(facts)), [false, false, false], 'because a failed lookup must never put a dead run on the card, on Needs you or among the disagreements');
+});
+
+test('ProcessListUnavailable_SnapshotSaysWhy', async () => {
+  const facts = await input();
+  facts.processes = PS_TIMED_OUT;
+  const { processList } = reconcile(facts);
+  assert.equal(processList.status === 'unavailable' ? processList.reason : processList.status, 'ps timed out after 10s', 'because the page shows why the process list is missing instead of a dead run');
+});
+
+test('ProcessesNotReadYet_RunIsUnknown', async () => {
+  const facts = await input();
+  facts.processes = null;
+  assert.equal(reconcile(facts).runs[0]?.liveness, 'unknown', 'because before the first process read nothing says the run has no process');
+});
+
+test('LsofMissedTheAgent_OwnerStillRuns_RunIsAlive', async () => {
+  const facts = await input();
+  facts.processes = await lsofMissedTheAgent();
+  const picture = reconcile(facts);
+  assert.deepEqual([picture.runs[0]?.liveness, worktree(picture, 'project-wt-3')?.state], ['alive', 'running'], 'because the pid the run record names (99) still runs the unattended loop, which started before the record');
+});
+
+test('LsofMissedTheAgent_NoOwnerPid_RunIsUnknown', async () => {
+  const facts = await input();
+  facts.processes = await lsofMissedTheAgent();
+  facts.flow.runs = facts.flow.runs.map((run) => ({ ...run, pid: null }));
+  assert.equal(reconcile(facts).runs[0]?.liveness, 'unknown', 'because an agent ps listed may be working in the worktree, so its missing directory proves nothing');
+});
+
+test('FullReadNoAgentInTheWorktree_OwnerStillRuns_RunIsAlive', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, hosts: [{ pid: 99, command: '/bin/sh /x/flow/scripts/run-unattended.sh next', startedAt: '2026-10-24T18:00:04Z' }] };
+  assert.equal(reconcile(facts).runs[0]?.liveness, 'alive', 'because the owner the record names is alive, as flow\'s own liveness test finds it, wherever its worker works');
+});
+
+test('OwnerPidReusedByALaterProcess_RunIsDead', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, hosts: [{ pid: 99, command: '/usr/local/bin/claude --session-id other', startedAt: '2026-10-24T18:10:00Z' }] };
+  assert.equal(reconcile(facts).runs[0]?.liveness, 'dead', 'because the process with that pid started eight minutes after the record, so it is not the run\'s owner');
+});
+
+test('RunYoungerThanTheGrace_NoProcess_IsStarting', async () => {
+  const facts = { ...(await input()), now: new Date('2026-10-24T18:06:30Z') };
+  facts.processes = NOTHING_RUNS;
+  const picture = reconcile(facts);
+  assert.deepEqual([picture.runs[0]?.liveness, ...deadClaims(picture)], ['starting', false, false, false], 'because a run five minutes old is within the health job\'s 10m grace, which counts it as running');
 });
 
 test('Jobs_StateFromRows', async () => {
@@ -349,6 +428,38 @@ test('Pulls_ClaimBranch_LinksItemAndWorktree', async () => {
 
 test('Pulls_ForkOnClaimedBranchName_NoLink', async () => {
   assert.equal(pullNumbered(await snapshot(), 23)?.item, null, 'because a fork branch named like a claim is someone else\'s branch');
+});
+
+/** The facts with pull #560 opened from `branch` instead of its fixture head. */
+const withPull560On = (facts: ReconcileInput, branch: string): ReconcileInput => ({
+  ...facts, pulls: { pulls: (facts.pulls?.pulls ?? []).map((pull) => (pull.number === 560 ? { ...pull, branch } : pull)) },
+});
+
+test('Pulls_NoPrRecorded_LinksTheOpenItemOnItsTaskBranch', async () => {
+  const facts = withPull560On(await input(), 'flow/gh-12');
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, 'gh#12', 'because flow/gh-12 is the branch the flow works gh#12 on, and gh#12 recorded no PR');
+});
+
+test('Pulls_TaskBranchSlug_ColonAndSlashBecomeDashes', async () => {
+  const facts = withPull560On(await input(), 'flow/local-task-3');
+  const twelve = facts.board!.items.find((item) => item.id === 'gh#12')!;
+  facts.board!.items.push({ ...twelve, id: 'local:task/3' });
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, 'local:task/3', 'because item_slug turns each :, / and # of the id into a dash');
+});
+
+test('Pulls_TaskBranchOfAClosedItem_NoLink', async () => {
+  const facts = withPull560On(await input(), 'flow/gh-12');
+  facts.board!.items.find((item) => item.id === 'gh#12')!.status = 'closed';
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, null, 'because a closed item\'s branch name says nothing about an open pull');
+});
+
+test('Pulls_TaskBranchOfAnItemThatNamesAnotherPull_NoLink', async () => {
+  const facts = withPull560On(await input(), 'flow/gh-20');
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, null, 'because gh#20 records #20 as its PR, so a second pull on its branch name is not its');
+});
+
+test('Pulls_MergeState_CarriedAsGithubSaysIt', async () => {
+  assert.equal(pullNumbered(await snapshot(), 21)?.mergeState, 'BLOCKED', 'because the card offers a force merge only where GitHub blocks the merge');
 });
 
 test('OpenedAndUpdatedTimes_GiveAgeAndIdleSeconds', async () => {
@@ -740,7 +851,7 @@ test('Disagreement_PullsUnreadDoneItem_NoMergeButton', async () => {
 async function stepMismatchNoRun(): Promise<ReconcileInput> {
   const facts = withBoardItem(await input(), 'gh#9', { step: 'review' });
   facts.flow.runs = [];
-  facts.processes = { agents: [] };
+  facts.processes = NOTHING_RUNS;
   return facts;
 }
 const stepMismatchOf = (picture: Snapshot) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === 'claim vs issue state' && entry.message.includes('the claim says step'));
@@ -767,7 +878,7 @@ const settledWith = (settler: DisagreementSettler, facts: ReconcileInput, marks:
 
 test('Lag_StepMismatchWhileARunGoes_Hidden', async () => {
   const live = withBoardItem(await input(), 'gh#9', { step: 'review' });
-  const recordOnly = { ...live, processes: { agents: [] } };
+  const recordOnly = { ...live, processes: NOTHING_RUNS };
   const processOnly = { ...live, flow: { ...live.flow, runs: [] } };
   for (const [facts, because] of [[live, 'a run record and an agent'], [recordOnly, 'a run record'], [processOnly, 'an agent in its worktree']] as const) {
     const settler = new DisagreementSettler();
@@ -796,7 +907,7 @@ test('Lag_StepMismatchWithoutAnyRun_FollowsTheSettleRule', async () => {
 
 test('Disagreement_DeadRun_ActionRunsHealth', async () => {
   const facts = await input();
-  facts.processes = { agents: [] };
+  facts.processes = NOTHING_RUNS;
   assert.equal(disagreementOf(reconcile(facts), 'run record vs process list')?.action?.kind, 'steward.health', 'because the health job clears a run record whose process is gone');
 });
 
@@ -978,4 +1089,16 @@ test('ProjectPicks_FromTheConfig', async () => {
   const mine = { name: 'mine', assignee: 'me', status: [], labels: [], kinds: [], trackers: [], query: '' };
   facts.flow.config.picks = [mine];
   assert.deepEqual(reconcile(facts).project.picks, [mine], 'because the Jobs page offers the filters the config names');
+});
+
+test('Snapshot_Lessons_EveryLessonOfTheFlowHome', async () => {
+  assert.deepEqual((await snapshot()).lessons.map((lesson) => lesson.rule), ['T-09', null, 'T-09', 'N-05'], 'because the Retro page groups every lesson by kind then rule');
+});
+
+test('Snapshot_Retros_NewestFirstWithTheReportNoLineNames', async () => {
+  assert.deepEqual((await snapshot()).retros.map((run) => run.date), ['2026-10-19', '2026-10-15', '2026-10-08'], 'because each retro shows, latest first, and a report without its log line too');
+});
+
+test('Counts_LessonsSinceRetro_ThoseAfterTheLastRetrosCount', async () => {
+  assert.equal((await snapshot()).counts.lessonsSinceRetro, 2, 'because the last retro read three lines, the cut-short one among them, so the lessons on lines four and five are new');
 });

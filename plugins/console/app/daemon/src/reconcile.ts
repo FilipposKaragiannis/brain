@@ -5,16 +5,17 @@ import type { ClaimRecord, FlowConfig, FlowHomeFacts, GateRecord, ReviewRecord, 
 import { poolPaths } from './collectors/flowHome.ts';
 import type { GitFacts, GitWorktree } from './collectors/git.ts';
 import type { JobFacts, JobRunRecord, JobStatusRow, JobStatusRun, JobWorkerRow } from './collectors/jobs.ts';
-import type { AgentProcess, EndedProcess, ProcessFacts } from './collectors/processes.ts';
+import type { AgentProcess, EndedProcess, HostProcess, ProcessFacts } from './collectors/processes.ts';
 import type { PullFact, PullFacts } from './collectors/pulls.ts';
 import { parseGateQuestions } from './gateMessage.ts';
+import { lessonsSinceRetro } from './retro.ts';
 import { itemSlug } from './syncNote.ts';
 import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
   Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, NewerConsole,
-  ProcessInfo, ProjectInfo, PullRequest, PullState, Readiness, Run, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
+  ProcessInfo, ProcessListStatus, ProjectInfo, PullRequest, PullState, Readiness, Run, RunLiveness, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
 export type ReconcileInput = {
@@ -59,6 +60,10 @@ const PULL_PATH = /^(.*\/pull\/\d+)/;
 /** GitHub's merge states that let a merge through; UNSTABLE means only checks no rule requires are red. */
 const MERGE_READY_STATES = ['CLEAN', 'HAS_HOOKS', 'UNSTABLE'];
 const PULL_NUMBER = /^#?(\d+)$/;
+/** The process list before its first read: nothing in it proves a run dead. */
+const PROCESSES_NOT_READ: ProcessListStatus = { status: 'unavailable', reason: 'not read yet', lookup: null };
+/** How much later than its record a process may seem to start and still own the run: ps rounds its elapsed time down and the record keeps whole seconds. */
+const OWNER_START_SLACK_SECONDS = 5;
 const STATE_ORDER: Record<ItemState, number> = {
   'needs-you': 0, running: 1, stale: 2, claimed: 3, 'in-review': 4, ready: 5, blocked: 6, backlog: 7, done: 8,
 };
@@ -78,12 +83,39 @@ type WorktreeContext = {
   claim: ClaimRecord | null;
   gate: GateRecord | null;
   run: RunRecord | null;
+  /** How alive the run is, or null with no run. */
+  liveness: RunLiveness | null;
   agents: AgentProcess[];
   sessions: AgentProcess[];
 };
 
 function under(cwd: string, worktreePath: string): boolean {
   return cwd === worktreePath || cwd.startsWith(worktreePath + path.sep);
+}
+
+/**
+ * The pid the run record names still runs a process that can own a run (a claude, a codex or the
+ * unattended loop), and that process started no later than the record, so a pid a later process
+ * reused is not taken for the owner. A record without a start time is judged by the command alone.
+ */
+function ownerRuns(run: RunRecord, hosts: HostProcess[]): boolean {
+  const owner = run.pid === null ? undefined : hosts.find((host) => host.pid === run.pid);
+  if (owner === undefined) return false;
+  const recorded = Date.parse(run.startedAt ?? '');
+  return Number.isNaN(recorded) || Date.parse(owner.startedAt) <= recorded + OWNER_START_SLACK_SECONDS * MILLISECONDS_PER_SECOND;
+}
+
+/**
+ * A run is alive with an agent in its worktree or its owner still running, the two ways flow's
+ * `_health.py alive` finds one; with neither it is unknown unless the process list was read in
+ * full, starting within the health job's grace, and dead only after both.
+ */
+function runLiveness(run: RunRecord, agents: AgentProcess[], input: ReconcileInput): RunLiveness {
+  if (agents.length > 0 || ownerRuns(run, input.processes?.hosts ?? [])) return 'alive';
+  if ((input.processes?.list ?? PROCESSES_NOT_READ).status !== 'complete') return 'unknown';
+  const age = ageSeconds(run.startedAt, input.now);
+  if (age !== null && age <= input.flow.config.healthGraceSeconds) return 'starting';
+  return 'dead';
 }
 
 function worktreeContexts(input: ReconcileInput): WorktreeContext[] {
@@ -95,6 +127,8 @@ function worktreeContexts(input: ReconcileInput): WorktreeContext[] {
   return known.map((worktreePath) => {
     const claim = input.flow.claims.find((entry) => path.resolve(entry.worktreePath) === worktreePath) ?? null;
     const name = path.basename(worktreePath);
+    const run = input.flow.runs.find((entry) => path.resolve(entry.worktree) === worktreePath || (claim !== null && entry.item === claim.item)) ?? null;
+    const agents = processes.filter((process) => process.kind === 'agent' && under(process.cwd, worktreePath));
     return {
       path: worktreePath,
       name,
@@ -102,8 +136,9 @@ function worktreeContexts(input: ReconcileInput): WorktreeContext[] {
       git: gitByPath.get(worktreePath) ?? null,
       claim,
       gate: claim === null ? null : input.flow.gates.find((gate) => gate.item === claim.item) ?? null,
-      run: input.flow.runs.find((run) => path.resolve(run.worktree) === worktreePath || (claim !== null && run.item === claim.item)) ?? null,
-      agents: processes.filter((process) => process.kind === 'agent' && under(process.cwd, worktreePath)),
+      run,
+      liveness: run === null ? null : runLiveness(run, agents, input),
+      agents,
       sessions: processes.filter((process) => process.kind === 'session' && under(process.cwd, worktreePath)),
     };
   });
@@ -130,7 +165,7 @@ function worktreeFlags(context: WorktreeContext, now: Date): WorktreeFlag[] {
   const claimAge = flowClaim ? ageSeconds(context.claim?.claimedAt ?? null, now) : null;
   const quiet = context.agents.length === 0 && context.run === null && context.gate === null;
   if (quiet && claimAge !== null && claimAge >= STALE_IDLE_HOURS * SECONDS_PER_HOUR) flags.push('idle');
-  if (context.run !== null && context.agents.length === 0) flags.push('dead-run');
+  if (context.liveness === 'dead') flags.push('dead-run');
   if (context.role === 'pool' && context.claim === null && context.agents.length > 0) flags.push('agent-without-claim');
   if (context.sessions.length > 0) flags.push('session');
   return flags;
@@ -271,7 +306,7 @@ function buildRuns(input: ReconcileInput, contexts: WorktreeContext[]): Run[] {
     const context = contexts.find((entry) => entry.run === run) ?? null;
     return {
       item: run.item, step: run.step, profile: run.profile, worktree: path.basename(run.worktree), host: run.host,
-      startedAt: run.startedAt, alive: context !== null && context.agents.length > 0,
+      startedAt: run.startedAt, pid: run.pid, liveness: context?.liveness ?? runLiveness(run, [], input),
     };
   });
 }
@@ -493,13 +528,23 @@ function namesPull(field: string | null, pull: { number: number; url: string }):
 
 type PullLink = { item: string | null; worktree: string | null };
 
+/** What the flow's task branches start with, before the item's slug. */
+const TASK_BRANCH_PREFIX = 'flow/';
+
 function linkPull(pull: PullFact, items: Item[], contexts: WorktreeContext[]): PullLink {
   const named = items.find((item) => namesPull(item.pr, pull));
   if (named !== undefined) return { item: named.id, worktree: named.worktree };
   if (pull.crossRepository) return { item: null, worktree: null };
   const claimed = contexts.find((context) => context.claim !== null && context.claim.branch === pull.branch);
   if (claimed !== undefined) return { item: claimed.claim?.item ?? null, worktree: claimed.name };
+  const onTaskBranch = items.find((item) => item.status === 'open' && item.pr === null && taskBranch(item.id) === pull.branch);
+  if (onTaskBranch !== undefined) return { item: onTaskBranch.id, worktree: onTaskBranch.worktree };
   return { item: null, worktree: null };
+}
+
+/** The branch the flow works an item on, `flow/<slug>`: `flow/gh-134` for gh#134. */
+function taskBranch(item: string): string {
+  return `${TASK_BRANCH_PREFIX}${itemSlug(item)}`;
 }
 
 /** The states a reviewer asked by a mention and not yet answered turns into `in-review`: GitHub alone would call the pull further along. */
@@ -519,7 +564,7 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
     return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
     draft: pull.draft, state, checks: pull.checks, reviewDecision: pull.reviewDecision,
-    unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, ...linked,
+    unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, mergeState: pull.mergeState, ...linked,
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
     review: record === undefined ? null : { state: record.state, waiting: record.waiting, cannot: record.cannot, at: record.at },
@@ -577,7 +622,7 @@ function buildDisagreements(input: ReconcileInput, contexts: WorktreeContext[], 
   const out: Disagreement[] = [];
   const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
   for (const context of contexts) {
-    if (context.run !== null && context.agents.length === 0) {
+    if (context.run !== null && context.liveness === 'dead') {
       out.push({
         item: context.run.item, worktree: context.name, sources: ['run record', 'process list'],
         message: `${context.run.item} has a run record in ${context.name} but no agent process. The health job clears it after the grace.`,
@@ -703,7 +748,7 @@ function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreeme
   for (const gate of gates) {
     rows.push({ kind: 'gate', gate: gate.gate, id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds, action: null });
   }
-  for (const run of runs.filter((entry) => !entry.alive)) {
+  for (const run of runs.filter((entry) => entry.liveness === 'dead')) {
     rows.push({ kind: 'dead-run', gate: null, id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now), action: null });
   }
   for (const worktree of worktrees.filter((entry) => entry.flags.includes('stale-branch') || entry.flags.includes('idle'))) {
@@ -720,9 +765,9 @@ function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreeme
   return rows.sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
 
-type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; pulls: PullRequest[]; disagreements: Disagreement[] };
+type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; pulls: PullRequest[]; disagreements: Disagreement[]; lessonsSinceRetro: number };
 
-function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }: CountSources): Counts {
+function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements, lessonsSinceRetro }: CountSources): Counts {
   const pool = worktrees.filter((entry) => entry.role === 'pool');
   const count = (state: WorktreeState): number => pool.filter((entry) => entry.state === state).length;
   const itemCount = (state: ItemState): number => items.filter((entry) => entry.state === state).length;
@@ -734,6 +779,7 @@ function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreemen
     disagreements: disagreements.length,
     pullsMergeable: pullCount('mergeable'), pullsFailing: pullCount('checks-failing'), pullsChangesRequested: pullCount('changes-requested'),
     needsField: items.filter((item) => nextInLine(item, items)).length,
+    lessonsSinceRetro,
   };
 }
 
@@ -821,11 +867,13 @@ export function reconcile(read: ReconcileInput): Snapshot {
     takenAt: input.now.toISOString(),
     project: projectInfo(input, jobs),
     sources: input.sources,
-    counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements }),
+    counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements, lessonsSinceRetro: lessonsSinceRetro(input.flow.retro) }),
     readiness: buildReadiness(items),
     attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
-    worktrees, items, gates, runs, agents, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
+    worktrees, items, gates, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     events: input.flow.events,
+    lessons: input.flow.retro.lessons,
+    retros: input.flow.retro.retros,
     disagreements,
     newerConsole: input.newerConsole ?? null,
   };

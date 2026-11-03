@@ -146,6 +146,24 @@ test('WorktreeReserve_BadName_Rejected', () => {
   }
 });
 
+test('WorktreeReserve_WithTarget_PassesThePoolPath', () => {
+  assert.deepEqual(planned('worktree.reserve', { target: 'app-wt-3' }).args.slice(1), ['reserve', '/p/app-wt-3'], 'because the steward resolves a bare name against the cwd, so the console hands it the pool path');
+});
+
+test('WorktreeReserve_WithTargetAndName_PassesBoth', () => {
+  assert.deepEqual(planned('worktree.reserve', { target: 'app-wt-3', name: 'Ada Lovelace' }).args.slice(1), ['reserve', '/p/app-wt-3', '--name', 'Ada Lovelace'], 'because the worktree is a positional argument and the name its option');
+});
+
+test('WorktreeReserve_WithTarget_HoldsThePoolAndTheWorktree', () => {
+  assert.deepEqual(planned('worktree.reserve', { target: 'app-wt-3' }).locks, ['pool', 'worktree:/p/app-wt-3'], 'because a release of the same worktree takes the same worktree lock');
+});
+
+test('WorktreeReserve_TargetNotAPoolName_Rejected', () => {
+  for (const target of ['', 'src', '/p/app-wt-3', '../app-wt-3', '/p/app-side', 'app-side', 'app-wt-9', '--name', 'gh#5']) {
+    assert.equal(planAction('worktree.reserve', { target }, CONTEXT).ok, false, `because "${target}" is not the name of a pool worktree, and a reserve outside the pool is out of scope`);
+  }
+});
+
 test('StewardSweep_RunsTheSweepUnderItsOwnLock', () => {
   assert.deepEqual(planned('steward.sweep', {}).args.slice(1), ['sweep', '--lock'], 'because --lock takes the sweep lock the next and health jobs take, and exits at once when one runs');
 });
@@ -180,6 +198,18 @@ test('PrMerge_UsesGhWithSquashByDefault', () => {
   assert.equal(planAction('pr.merge', { pr: '41', method: 'force' }, CONTEXT).ok, false, 'because only the three gh methods exist');
   assert.equal(planAction('pr.merge', { pr: '41' }, { ...CONTEXT, repo: null }).ok, false, 'because gh needs a repo');
   assert.deepEqual(plan.refresh, ['board', 'git', 'pulls'], 'because a merge changes the issue, the branches and the pull list');
+});
+
+test('PrMergeForced_AdminAddedToGhMerge', () => {
+  const plan = planned('pr.merge', { pr: '41', force: 'true' });
+  assert.deepEqual(plan.args, ['pr', 'merge', '41', '--repo', 'o/r', '--squash', '--delete-branch', '--admin'], 'because --admin is what merges past the checks and rules branch protection requires');
+  assert.deepEqual(plan.locks, ['pr:41'], 'because a forced merge is still one merge of that PR');
+});
+
+test('PrMergeForceNotTrue_NoAdmin', () => {
+  for (const force of ['false', 'yes', '']) {
+    assert.equal(planned('pr.merge', { pr: '41', force }).args.includes('--admin'), false, `because only the literal true forces, not "${force}"`);
+  }
 });
 
 test('PrReview_AsksOneReviewerThroughComments', () => {
@@ -556,6 +586,40 @@ test('JobStart_OtherJob_RunsItsOwnScriptWithModelAndEffort', () => {
   const plan = planned('job.start', { job: 'intake', host: 'codex', model: 'gpt-6-luna', effort: 'low' });
   assert.deepEqual(plan.args, ['/p/app/.flow/jobs/intake.sh', 'codex', '--model', 'gpt-6-luna', '--effort', 'low'], 'because every job takes the host first and its own model and effort');
   assert.deepEqual([plan.locks, plan.outcome], [['job:intake'], 'finished'], 'because the run takes that job\'s lock and ends in place');
+});
+
+test('JobStartCommentsWithAnItem_TheItemAfterTheHostLockedWithTheJob', () => {
+  const plan = planned('job.start', { job: 'comments', host: 'codex', item: 'gh#12' });
+  assert.deepEqual(plan.args, ['/p/app/.flow/jobs/comments.sh', 'codex', 'gh#12'], 'because comments.sh runs its pass on the one item named after the host');
+  assert.deepEqual([plan.detach, plan.timeoutMs], [true, 0], 'because a pass that merges the base in and answers threads outlasts a request');
+  assert.deepEqual(plan.locks, ['item:gh#12', 'job:comments'], 'because the pass edits the item\'s branch and holds the comments job lock as a scheduled run does');
+});
+
+test('JobStartCommentsWithAPr_ThePrIsTheTargetUnderTheItemLock', () => {
+  const plan = planned('job.start', { job: 'comments', host: 'claude', item: 'gh#12', pr: '139' });
+  assert.deepEqual(plan.args, ['/p/app/.flow/jobs/comments.sh', 'claude', '139'], 'because an item linked to its PR only by its task branch has no recorded PR, so the pass is named by the PR the card knows');
+  assert.deepEqual(plan.locks, ['item:gh#12', 'job:comments'], 'because the pass still edits that item\'s branch');
+});
+
+test('JobStartPr_WithoutAnItemOrOnAnotherJobOrNotANumber_Rejected', () => {
+  const cases: Array<[Record<string, string>, RegExp]> = [
+    [{ job: 'comments', host: 'claude', pr: '139' }, /pr needs the item/],
+    [{ job: 'next', host: 'claude', item: 'gh#12', pr: '139' }, /pr is for the comments job/],
+    [{ job: 'comments', host: 'claude', item: 'gh#12', pr: '#139' }, /pr must be a PR number/],
+  ];
+  for (const [args, error] of cases) {
+    const result = planAction('job.start', args, CONTEXT);
+    assert.match(result.ok ? '' : result.error, error, `because ${JSON.stringify(args)} would run a pass with no lock, on the wrong job or on no PR`);
+  }
+});
+
+test('JobStartComments_PullsReadAgain', () => {
+  assert.ok(planned('job.start', { job: 'comments', host: 'codex', item: 'gh#12' }).refresh.includes('pulls'), 'because the pass changes the PR, and its card should show it');
+});
+
+test('JobStartCommentsWithWorkers_Rejected', () => {
+  const result = planAction('job.start', { job: 'comments', host: 'claude', item: 'gh#12', workers: '2' }, CONTEXT);
+  assert.match(result.ok ? '' : result.error, /workers is for the next job/, 'because only next.sh runs workers');
 });
 
 test('JobStart_OtherJobWithNextOptions_Rejected', () => {
