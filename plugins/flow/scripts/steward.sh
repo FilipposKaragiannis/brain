@@ -3,10 +3,14 @@
 #   steward.sh pool                              list the pool with claim, branch and dirt
 #   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
 #   steward.sh find <item>                       print the claimed path, or nothing
-#   steward.sh reserve [--name <who>]            claim a free pool worktree for manual work, with
+#   steward.sh reserve [<worktree>] [--name <who>]
+#                                                claim a free pool worktree for manual work, with
 #                                                no item, under <who> (default: git user.name, else
-#                                                $USER); print its path. claim, sweep, health and
-#                                                next leave it alone until release frees it
+#                                                $USER); print its path. <worktree> (a pool path or
+#                                                name) takes that one, and exits 3 with the reason
+#                                                when it is claimed, reserved, dirty or not in the
+#                                                pool. claim, sweep, health and next leave it alone
+#                                                until release frees it
 #   steward.sh release <item|path> [--force]     back to its idle branch (<base>-wt-<n>) at the base
 #                                                tip, delete the task branch, clear the claim; a
 #                                                closed item's reports go too
@@ -169,18 +173,45 @@ claim_lock() {
   flow_lock claim || die "the claim lock is busy (another claim or reserve is taking a worktree); try again" 75
 }
 
-# cmd_reserve: the owner's own claim, with no item, under the claim lock.
+# named_worktree <path or name>: the pool worktree a path or a folder name names, when it is free:
+# no claim, no reservation and a clean tree. Else exit 3 with the reason, so reserve never takes a
+# worktree the flow or someone else holds.
+named_worktree() {
+  nw_want="$1"; nw_abs=""
+  case "$nw_want" in */*) nw_abs="$(cd "$nw_want" 2>/dev/null && pwd -P)" ;; esac
+  for p in $(pool_paths); do
+    if [ -n "$nw_abs" ]; then
+      [ "$p" = "$nw_want" ] || [ "$(cd "$p" 2>/dev/null && pwd -P)" = "$nw_abs" ] || continue
+    else
+      [ "$(basename "$p")" = "$nw_want" ] || continue
+    fi
+    nw_name="$(basename "$p")"
+    [ -d "$p" ] || die "$nw_name is in the pool but its folder is missing ($p)" 3
+    nw_item="$(json_get "$(claim_of "$p")" item)"
+    [ -z "$nw_item" ] || die "$nw_name is claimed by $nw_item" 3
+    nw_who="$(reserved_by "$p")"
+    [ -z "$nw_who" ] || die "$nw_name is reserved by $nw_who" 3
+    dirty "$p" && die "$nw_name has uncommitted changes" 3
+    printf '%s\n' "$p"; return 0
+  done
+  die "$nw_want is not a worktree in the pool ($(config_file))" 3
+}
+
+# cmd_reserve: the owner's own claim, with no item, under the claim lock: the named worktree, else
+# the first free one.
 cmd_reserve() {
-  who=""
+  who=""; want=""
   while [ $# -gt 0 ]; do case "$1" in
     --name) [ $# -ge 2 ] && [ -n "$2" ] || die "--name needs a name" 2; who="$2"; shift 2 ;;
-    *) die "unknown option $1" 2 ;;
+    -*) die "unknown option $1" 2 ;;
+    *) [ -z "$want" ] || die "reserve takes one worktree, got $want and $1" 2; [ -n "$1" ] || die "the worktree to reserve is empty" 2; want="$1"; shift ;;
   esac; done
   [ -n "$who" ] || who="$(git -C "$main" config user.name 2>/dev/null)"
   [ -n "$who" ] || who="${USER:-}"
   [ -n "$who" ] || die "no name to reserve under: pass --name <who>" 2
   claim_lock
-  free="$(free_worktree)" || exit $?
+  if [ -n "$want" ]; then free="$(named_worktree "$want")" || exit $?
+  else free="$(free_worktree)" || exit $?; fi
   mkdir -p "$free/.flow"
   json_obj "item=" "reserved=$who" "worktree=$free" "name=$(basename "$free")" "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock

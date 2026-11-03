@@ -2971,6 +2971,28 @@ check "release: a reserved worktree is freed" [ ! -f "$rw1/.flow/claim.json" ]
 check "reserve: with no --name the reservation is under git user.name" [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Grace Hopper" ]
 "$P/scripts/steward.sh" reserve --name >/dev/null 2>&1; code=$?
 check "reserve: --name with no name is bad usage (exit 2)" [ "$code" -eq 2 ]
+rv="$("$P/scripts/steward.sh" reserve wt-2 --name "Ada Lovelace")"
+check_all "reserve by name: takes the named pool worktree under --name" '[ "$rv" = "$rw2" ] && [ "$(jget reserved < "$rw2/.flow/claim.json")" = "Ada Lovelace" ]'
+"$P/scripts/steward.sh" release "$rw2" >/dev/null 2>&1
+check "reserve by path: an absolute pool path takes that worktree" [ "$("$P/scripts/steward.sh" reserve "$rw2")" = "$rw2" ]
+"$P/scripts/steward.sh" release "$rw2" >/dev/null 2>&1
+check "reserve by path: a relative pool path takes that worktree" [ "$("$P/scripts/steward.sh" reserve ../wt-2)" = "$rw2" ]
+"$P/scripts/steward.sh" release "$rw2" >/dev/null 2>&1
+"$P/scripts/steward.sh" reserve wt-1 --name "Ada Lovelace" > "$rroot/reserve.out" 2>&1; code=$?
+check_all "reserve by name: a reserved worktree exits 3 and names who holds it" '[ "$code" -eq 3 ] && grep -q "wt-1 is reserved by Grace Hopper" "$rroot/reserve.out" && [ "$(jget reserved < "$rw1/.flow/claim.json")" = "Grace Hopper" ]'
+rd="$("$P/adapters/local/create.sh" task "Claimed before a reserve by name" --size S --body "x")"
+"$P/scripts/steward.sh" claim "$rd" >/dev/null
+"$P/scripts/steward.sh" reserve wt-2 > "$rroot/reserve.out" 2>&1; code=$?
+check_all "reserve by name: a claimed worktree exits 3 and names the item" '[ "$code" -eq 3 ] && grep -q "wt-2 is claimed by $rd" "$rroot/reserve.out" && [ -z "$(jget reserved < "$rw2/.flow/claim.json")" ]'
+"$P/scripts/steward.sh" release "$rd" >/dev/null 2>&1
+printf 'draft\n' > "$rw2/draft.txt"
+"$P/scripts/steward.sh" reserve wt-2 > "$rroot/reserve.out" 2>&1; code=$?
+check_all "reserve by name: a dirty worktree exits 3, says so and is not reserved" '[ "$code" -eq 3 ] && grep -q "wt-2 has uncommitted changes" "$rroot/reserve.out" && [ ! -f "$rw2/.flow/claim.json" ]'
+rm -f "$rw2/draft.txt"
+"$P/scripts/steward.sh" reserve wt-9 > "$rroot/reserve.out" 2>&1; code=$?
+check_all "reserve by name: a worktree outside the pool exits 3 and says so" '[ "$code" -eq 3 ] && grep -q "wt-9 is not a worktree in the pool" "$rroot/reserve.out"'
+"$P/scripts/steward.sh" reserve wt-1 wt-2 >/dev/null 2>&1; code=$?
+check_all "reserve by name: two worktrees is bad usage (exit 2) and reserves nothing" '[ "$code" -eq 2 ] && [ ! -f "$rw2/.flow/claim.json" ]'
 rc="$("$P/adapters/local/create.sh" task "Claimed by the worktree hook" --size S --body "x")"
 sleep 30 & held=$!
 mkdir -p .flow/claim.lock && echo "$held" > .flow/claim.lock/pid

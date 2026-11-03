@@ -86,7 +86,29 @@ test('AgentWithASession_OpenSessionSendsItsPidAndSaysEnterWaits', async () => {
   expect(button.getAttribute('title'), 'because a live run cannot be resumed yet, so the command waits for Enter').toBe(OPEN_SESSION_LIVE);
   await act(async () => { fireEvent.click(button); });
   expect(posted, 'because the daemon finds the session by the pid and opens it in that folder').toEqual([{ kind: 'terminal.open', args: { path: '/p-wt/wt-3', session: '100' } }]);
-  expect(screen.getAllByRole('button', { name: 'Open in Terminal' }).length, 'because a plain shell at the folder stays next to it').toBe(1);
+});
+
+test('RunWithASession_NoOpenInTerminal', async () => {
+  await renderAgents([{ ...agent(100, 'agent', '/p-wt/wt-3'), session: SESSION }]);
+  expect(within(screen.getByRole('article', { name: 'Run 100' })).queryByRole('button', { name: 'Open in Terminal' }), 'because Open session opens a terminal in the same folder, so one button does').toBeNull();
+});
+
+test('OwnSessionWithASession_NoOpenInTerminal', async () => {
+  await renderAgents([{ ...agent(104, 'session', '/p-wt/wt-2'), session: SESSION }]);
+  const row = screen.getByRole('listitem', { name: 'Session 104' });
+  expect([within(row).queryByRole('button', { name: 'Open session' }) !== null, within(row).queryByRole('button', { name: 'Open in Terminal' })], 'because the session row opens its session and nothing beside it').toEqual([true, null]);
+});
+
+test('EndedWithASession_NoOpenInTerminal', async () => {
+  await renderAgents([], [{ ...agent(200, 'agent', '/p-wt/wt-3'), session: SESSION, endedAt: '2026-10-24T18:10:00Z' }]);
+  const table = screen.getByRole('table', { name: 'Ended agents and sessions' });
+  expect([within(table).queryByRole('button', { name: 'Open session' }) !== null, within(table).queryByRole('button', { name: 'Open in Terminal' })], 'because resuming the ended session opens the terminal there').toEqual([true, null]);
+});
+
+test('EndedWithoutASession_KeepsOpenInTerminal', async () => {
+  await renderAgents([], [{ ...agent(201, 'session', '/p-wt/wt-3'), endedAt: '2026-10-24T18:10:00Z' }]);
+  const table = screen.getByRole('table', { name: 'Ended agents and sessions' });
+  expect(within(table).queryByRole('button', { name: 'Open in Terminal' }), 'because with nothing to resume a plain shell at the folder is the way in').not.toBeNull();
 });
 
 test('AgentWithoutASession_NoOpenSession', async () => {

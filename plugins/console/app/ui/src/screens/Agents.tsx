@@ -83,8 +83,7 @@ function RunCard({ agent, snapshot, startOpen }: { agent: Agent; snapshot: Snaps
           <footer className="buttons run-card-foot" title={agent.cwd}>
             {claude && <button type="button" className="button" aria-pressed={full} onClick={() => setFull((shown) => !shown)}>{full ? 'Last lines' : 'Full log'}</button>}
             {pull !== null && <ExternalLink url={pull.url} className="button">PR #{pull.number}</ExternalLink>}
-            {agent.session !== null && <SessionButton path={agent.cwd} pid={agent.pid} alive />}
-            <TerminalButton path={agent.cwd} />
+            <OpenButton path={agent.cwd} pid={agent.pid} hasSession={agent.session !== null} alive />
             {agent.item !== null && (
               <span className="run-stop">
                 <ActionButton kind="run.stop" args={{ item: agent.item }} label="Stop this run" primary={false} title={STOP_HELP} />
@@ -202,8 +201,7 @@ function Sessions({ sessions, snapshot }: { sessions: Agent[]; snapshot: Snapsho
             <span>{session.item === null ? '' : <ItemLink id={session.item} pages={snapshot} />}</span>
             <span className="mono"><Age seconds={session.elapsedSeconds} takenAt={snapshot.takenAt} /></span>
             <span className="buttons">
-              {session.session !== null && <SessionButton path={session.cwd} pid={session.pid} alive />}
-              <TerminalButton path={session.cwd} />
+              <OpenButton path={session.cwd} pid={session.pid} hasSession={session.session !== null} alive />
             </span>
           </li>
         ))}
@@ -235,11 +233,19 @@ function EndedRow({ agent, pages }: { agent: EndedAgent; pages: ItemPages }) {
       <td>{agent.item === null ? '—' : <ItemLink id={agent.item} pages={pages} />}</td>
       <td className="mono">{clockTime(agent.endedAt)}</td>
       <td className="buttons" title={agent.cwd}>
-        {agent.session !== null && <SessionButton path={agent.cwd} pid={agent.pid} alive={false} />}
-        <TerminalButton path={agent.cwd} />
+        <OpenButton path={agent.cwd} pid={agent.pid} hasSession={agent.session !== null} alive={false} />
       </td>
     </tr>
   );
+}
+
+/**
+ * One button to the folder a process works in: Open session when its session can be resumed,
+ * which opens a terminal there too, else Open in Terminal. Two buttons to the same folder would
+ * leave the owner guessing which one to press.
+ */
+function OpenButton({ path, pid, hasSession, alive }: { path: string; pid: number; hasSession: boolean; alive: boolean }) {
+  return hasSession ? <SessionButton path={path} pid={pid} alive={alive} /> : <TerminalButton path={path} />;
 }
 
 /** The run record an agent works for: the one in its worktree, else the one for its item. */

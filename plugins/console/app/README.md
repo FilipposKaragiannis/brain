@@ -509,7 +509,7 @@ on every state change and at most twice a second while output arrives.
 | `run.resume` | `item` | `steward.sh resume <item>`: clears a dead run's record and starts its step again, as the health job does | the item | `started` |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
-| `worktree.reserve` | `name?` | `steward.sh reserve [--name <name>]`: a free worktree with no item under the name, git `user.name` when none is given; claim, sweep, health and next pass over it until a release | the pool | `finished` |
+| `worktree.reserve` | `target?` (a pool worktree's name), `name?` | `steward.sh reserve [<pool path>] [--name <name>]`: the target worktree, else the first free one, with no item under the name, git `user.name` when none is given; the steward refuses a target that is claimed, reserved or dirty, exit 3; claim, sweep, health and next pass over it until a release | the pool, and the worktree with a target | `finished` |
 | `worktree.sync` | `target` | `daemon/scripts/sync.sh <worktree> <base>` (below) | the item and the worktree | `finished`; on a conflict the record's `conflict` |
 | `sync.handoff` | `target`, `refs?` | writes the item's sync note, then `jobs/next.sh` as `run.start` with the item (below) | the item and the next job | `started` while the run goes, `finished` once it ends well |
 | `item.step-sync` | `item` | `adapters/<adapter>/write-state.sh <item> step=<claim's step> last_event=<when> step <old> -> <new>, set by the console from the claim in <worktree>` (below) | the item | `finished`; `board` and `files` are re-read |
@@ -753,7 +753,7 @@ the right choice for a wrong one and each question's Because line, and say that 
 draft PR ready; a failed try has Take it again, a kept result has See results; a merge gate on a
 draft with a quiz still to pass says so in place of the merge button), Worktrees (filter
 chips with counts for all, running, needs you, stale, claimed and free, the pool size and base,
-and Reserve, Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
+and Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
 branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
 its agents and sessions with pid, host and age and the command on hover, a Watch button to the
 run or a Decide button to the gate, "The run may still go (process list unavailable: <reason>)"
@@ -765,7 +765,10 @@ which runs `sync.handoff` with the conflict's refs, or while a run record names 
 note is there "A run is going; the sync step runs first when it starts", and between an accepted
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
 <refs>" whenever `syncPending` is set, so a note the health job wrote shows too), Open in
-Terminal on every card and Release on a claimed one, a reserved one saying who reserved it; then the worktrees outside the pool, the
+Terminal on every card, Reserve (`worktree.reserve` with the card's worktree as `target`) on a
+free one, and Release in its place on a claimed one, a reserved one saying "reserved by <who>"
+and its Release saying it gives the reservation back; each button's running and outcome states
+show on its own card; then the worktrees outside the pool, the
 project root included, in a table with their branch and Open in Terminal), Board (`#/<project>/board/<item>`: the open items with filters for
 under way, in review, ready, blocked and backlog, each row with its state, step, worktree, PR and
 spend, a head line summing the spend of the rows shown, a banner (`role="alert"`) for each
@@ -774,12 +777,13 @@ its fields, its PR and who that waits on, and its cost, sessions and tokens), Ag
 the page: a card per live run, the first open and the
 others folded to their header, each with its step, item, worktree, host and PR, its stats
 (started, last commit, transcript size and turns, pid) and its transcript as a terminal of the
-last 12 lines, with Full log (the last 2000 lines in a box that scrolls), Open session, Open in
-Terminal and Stop this run (`run.stop`); a `dead` run is a dashed card with Resume
-(`run.resume`); a run whose process was not found but may still go is a dashed card with no
-button that says why: "process list unavailable: <reason>" (or incomplete) while `liveness` is
-`unknown`, or that it is still starting within the grace; with no run, a link to Jobs. Then your own sessions, folded, and the runs
-ended in the last day), Jobs (`#/<project>/jobs`, a main column and a side column. Schedules: a
+last 12 lines, with Full log (the last 2000 lines in a box that scrolls), Open session when the
+run has a session to resume, else Open in Terminal, and Stop this run (`run.stop`); a `dead` run is
+a dashed card with Resume (`run.resume`); a run whose process was not found but may still go is a
+dashed card with no button that says why: "process list unavailable: <reason>" (or incomplete)
+while `liveness` is `unknown`, or that it is still starting within the grace; with no run, a link
+to Jobs. Then your own sessions, folded, and the runs ended in the last day, each row with Open
+session or, with no session to resume, Open in Terminal), Jobs (`#/<project>/jobs`, a main column and a side column. Schedules: a
 card per schedule with its state, timing, host and args, the last
 run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Open in Terminal in the row; its
 history and workers open in a box of fixed height that scrolls; the jobs with no schedule fold

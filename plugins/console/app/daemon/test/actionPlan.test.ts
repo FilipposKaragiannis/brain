@@ -146,6 +146,24 @@ test('WorktreeReserve_BadName_Rejected', () => {
   }
 });
 
+test('WorktreeReserve_WithTarget_PassesThePoolPath', () => {
+  assert.deepEqual(planned('worktree.reserve', { target: 'app-wt-3' }).args.slice(1), ['reserve', '/p/app-wt-3'], 'because the steward resolves a bare name against the cwd, so the console hands it the pool path');
+});
+
+test('WorktreeReserve_WithTargetAndName_PassesBoth', () => {
+  assert.deepEqual(planned('worktree.reserve', { target: 'app-wt-3', name: 'Ada Lovelace' }).args.slice(1), ['reserve', '/p/app-wt-3', '--name', 'Ada Lovelace'], 'because the worktree is a positional argument and the name its option');
+});
+
+test('WorktreeReserve_WithTarget_HoldsThePoolAndTheWorktree', () => {
+  assert.deepEqual(planned('worktree.reserve', { target: 'app-wt-3' }).locks, ['pool', 'worktree:/p/app-wt-3'], 'because a release of the same worktree takes the same worktree lock');
+});
+
+test('WorktreeReserve_TargetNotAPoolName_Rejected', () => {
+  for (const target of ['', 'src', '/p/app-wt-3', '../app-wt-3', '/p/app-side', 'app-side', 'app-wt-9', '--name', 'gh#5']) {
+    assert.equal(planAction('worktree.reserve', { target }, CONTEXT).ok, false, `because "${target}" is not the name of a pool worktree, and a reserve outside the pool is out of scope`);
+  }
+});
+
 test('StewardSweep_RunsTheSweepUnderItsOwnLock', () => {
   assert.deepEqual(planned('steward.sweep', {}).args.slice(1), ['sweep', '--lock'], 'because --lock takes the sweep lock the next and health jobs take, and exits at once when one runs');
 });

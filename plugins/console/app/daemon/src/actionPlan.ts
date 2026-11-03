@@ -170,7 +170,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'run.stop': ['item'], 'run.resume': ['item'],
   'worktree.claim': ['item'],
   'worktree.release': ['target', 'force'],
-  'worktree.reserve': ['name'],
+  'worktree.reserve': ['target', 'name'],
   'worktree.sync': ['target'],
   'sync.handoff': ['target', 'refs'],
   'item.step-sync': ['item'],
@@ -273,10 +273,15 @@ function script(context: ActionContext, name: string): string {
   return path.join(context.pluginRoot ?? '', 'scripts', name);
 }
 
+/** The path of the pool worktree with this folder name, or null when the pool has none. */
+function poolWorktree(name: string, context: ActionContext): string | null {
+  return context.pool.find((worktree) => path.basename(worktree) === name) ?? null;
+}
+
 /** A release target: an item id, passed as is, or the name of a pool worktree, passed as its path. */
 function releaseTarget(target: string, context: ActionContext): string | null {
   if (isItemId(target, context)) return target;
-  return context.pool.find((worktree) => path.basename(worktree) === target) ?? null;
+  return poolWorktree(target, context);
 }
 
 /**
@@ -363,11 +368,16 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       return sh('steward.sh', ['release', target, ...force], ['pool', `${isItemId(target, context) ? 'item' : 'worktree'}:${target}`], STEWARD_TIMEOUT_MS, ['files', 'git']);
     }
     // A worktree with no item under the owner's name (git user.name when no name is given), which
-    // claim, sweep, health and next pass over until a release.
+    // claim, sweep, health and next pass over until a release. A target (a pool worktree's name,
+    // passed as its path) reserves that one, and the steward refuses it when it is not free;
+    // without one the steward takes the first free worktree.
     case 'worktree.reserve': {
+      const target = args['target'] === undefined ? null : poolWorktree(args['target'], context);
+      if (args['target'] !== undefined && target === null) return fail('worktree.reserve takes the name of a pool worktree as its target');
       const name = args['name'];
       if (name !== undefined && !RESERVE_NAME.test(name)) return fail("worktree.reserve takes a name of letters, digits, spaces and .'_-, up to 64 characters");
-      return sh('steward.sh', ['reserve', ...(name === undefined ? [] : ['--name', name])], ['pool'], STEWARD_TIMEOUT_MS, ['files', 'git']);
+      const locks = target === null ? ['pool'] : ['pool', `worktree:${target}`];
+      return sh('steward.sh', ['reserve', ...(target === null ? [] : [target]), ...(name === undefined ? [] : ['--name', name])], locks, STEWARD_TIMEOUT_MS, ['files', 'git']);
     }
     case 'steward.health': return handOn('health', ['job:health'], ['jobs', 'files', 'git']);
     // The sweep the next and health jobs run, now: under the pool lock as a release, and the health

@@ -18,7 +18,8 @@ export const HAND_TO_THE_FLOW = 'Hand to the flow';
 export const HAND_TO_THE_FLOW_TITLE = "Writes the sync note and starts the item's run. The flow's sync step merges, resolves what it can, and raises an escalation gate if a choice is yours.";
 export const RUN_GOING_SYNC_FIRST = 'A run is going; the sync step runs first when it starts';
 export const HANDING_OFF = 'Handing off to the flow: the sync note shows here once it is read';
-export const RESERVE_TITLE = 'Takes a free worktree for your own work, under your git name. The flow leaves it alone until you release it.';
+export const RESERVE_TITLE = 'Takes this worktree for your own work, under your git name. The flow leaves it alone until you release it.';
+export const RELEASE_RESERVED_TITLE = 'Gives your reservation back: the worktree returns to the pool and the flow may claim it again.';
 export const SWEEP_TITLE = 'Frees the worktrees whose PR merged or whose item closed, and clears their merge gates.';
 
 type Filter = 'all' | 'running' | 'needs-you' | 'stale' | 'claimed' | 'free';
@@ -49,7 +50,6 @@ export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
           ))}
         </div>
         <span className="worktree-base muted">{pool.length} in the pool{snapshot.project.poolMax !== null && snapshot.project.poolMax > pool.length ? `, grows to ${snapshot.project.poolMax}` : ''} · base {snapshot.project.base}</span>
-        <ActionButton kind="worktree.reserve" args={{}} label="Reserve" primary={false} title={RESERVE_TITLE} />
         <ActionButton kind="steward.health" args={{}} label="Run health" primary={false} />
         <ActionButton kind="steward.sweep" args={{}} label="Sweep" primary={false} title={SWEEP_TITLE} />
       </div>
@@ -137,11 +137,24 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
       <footer className="buttons worktree-card-foot">
         <PrimaryLink worktree={worktree} snapshot={snapshot} />
         <TerminalButton path={worktree.path} />
-        {worktree.claim !== null && <ActionButton kind="worktree.release" args={{ target: worktree.name }} label="Release" primary={false} />}
+        <HoldButton worktree={worktree} />
       </footer>
       {worktree.state === 'running' && <div className="worktree-stripes run-stripes" aria-hidden="true" />}
     </article>
   );
+}
+
+/**
+ * Reserve on a free card, Release on a claimed or reserved one, in the same place. Each names its
+ * card's worktree, so its running and outcome states show on that card only. Each shows the newer
+ * outcome of either, so a reserve's feedback, a refusal above all, outlives the swap to Release.
+ */
+function HoldButton({ worktree }: { worktree: Worktree }) {
+  const args = { target: worktree.name };
+  if (worktree.claim?.reserved) return <ActionButton kind="worktree.release" args={args} label="Release" primary={false} title={RELEASE_RESERVED_TITLE} sharesOutcomeWith="worktree.reserve" />;
+  if (worktree.claim !== null) return <ActionButton kind="worktree.release" args={args} label="Release" primary={false} sharesOutcomeWith="worktree.reserve" />;
+  if (worktree.state === 'free') return <ActionButton kind="worktree.reserve" args={args} label="Reserve" primary={false} title={RESERVE_TITLE} sharesOutcomeWith="worktree.release" />;
+  return null;
 }
 
 /** What the card's top right says: how long a run has gone, how long the claim has waited, or the base a free worktree sits at. */
