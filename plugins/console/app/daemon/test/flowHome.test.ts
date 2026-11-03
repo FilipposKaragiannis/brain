@@ -96,7 +96,7 @@ test('FlowHome_GatesRunsClaimsEvents', async () => {
   const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
   assert.deepEqual(facts.gates.map((gate) => [gate.item, gate.gate]), [['gh#7', 'ambiguity']], 'because one gate record waits');
   assert.equal(facts.runs[0]?.item, 'gh#9', 'because one run record exists');
-  assert.ok(facts.runs[0]?.startedAt, 'because the record mtime stands in for the start time');
+  assert.equal(facts.runs[0]?.startedAt, '2026-10-24T18:01:30Z', 'because the record says when next.sh started the run');
   assert.deepEqual(facts.claims.map((claim) => claim.item).sort(), ['gh#5', 'gh#7', 'gh#9'], 'because every pool worktree with a claim.json is claimed');
   assert.equal(facts.events[0]?.kind, 'comments', 'because events come newest first');
 });
@@ -309,4 +309,51 @@ test('Picks_ANameFlowRefuses_LeftOut', () => {
 
 test('Picks_NoneInTheConfig_Empty', () => {
   assert.deepEqual(parseFlowConfig('base: main\n').picks, [], 'because without filters every run takes every ready item');
+});
+
+test('FlowHome_RunRecord_CarriesItsOwnerPid', async () => {
+  const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.equal(facts.runs[0]?.pid, 99, 'because the pid next.sh wrote is how a live run is told from a dead one when its agent cannot be placed');
+});
+
+test('FlowHome_RunRecordWithoutStarted_FileTimeStandsIn', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'console-run-'));
+  try {
+    mkdirSync(path.join(root, '.flow', 'runs'), { recursive: true });
+    writeFileSync(path.join(root, '.flow', 'runs', 'gh-3.json'), JSON.stringify({ item: 'gh#3', step: 'implement', worktree: '/w' }));
+    const facts = await readFlowHome(root, fakeRunner);
+    assert.ok(Date.parse(facts.runs[0]?.startedAt ?? '') > Date.parse('2026-01-01T00:00:00Z'), 'because an older flow wrote no start, and the file was written when the run began');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('FlowConfig_HealthGrace_UnsetIsTenMinutes', () => {
+  assert.equal(parseFlowConfig('base: main\n').healthGraceSeconds, 600, 'because steward.sh counts a run without a process as starting for 10m by default');
+});
+
+test('FlowConfig_HealthGrace_ReadAsFlowReadsADuration', () => {
+  assert.deepEqual(['90s', '2h', '15'].map((grace) => parseFlowConfig(`jobs:\n  health:\n    grace: ${grace}\n`).healthGraceSeconds), [90, 7200, 900], 'because a bare number is minutes, as _health.py seconds reads it');
+});
+
+test('FlowHome_LessonsLog_EveryLessonReadMalformedLinesSkipped', async () => {
+  const { retro } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.deepEqual(retro.lessons.map((lesson) => [lesson.line, lesson.item]), [[1, 'gh#7'], [2, 'gh#9'], [4, 'gh#9'], [5, 'gh#7']], 'because lessons.jsonl in the flow home holds the lessons, and a cut-short line or an array is skipped without failing the source');
+});
+
+test('FlowHome_RetrosLog_EachRunWithTheLessonsItRead', async () => {
+  const { retro } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.deepEqual(retro.retros.filter((run) => run.at !== null).map((run) => [run.date, run.lessonsRead]), [['2026-10-19', 1], ['2026-10-15', 2]], 'because retros.log has a line per retro with the lessons read to date, and the hand-written line is skipped');
+});
+
+test('FlowHome_RetroReport_ReadWithTheRunOfItsDay', async () => {
+  const { retro } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.match(retro.retros[0]?.report?.text ?? '', /T-09 broken twice/, 'because reports/retro-<date>.md is the report of the retro that ran that day');
+});
+
+test('FlowHome_NoLessonsOrRetroFiles_EmptyRetroFacts', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'console-retro-'));
+  try {
+    mkdirSync(path.join(root, '.flow'));
+    const { retro } = await readFlowHome(root, fakeRunner);
+    assert.deepEqual(retro, { lessons: [], lessonLines: 0, retros: [] }, 'because the files stay on the machine that ran the flow, so a missing one is no lesson and no retro');
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

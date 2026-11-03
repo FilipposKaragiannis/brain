@@ -1,15 +1,28 @@
-import type { AgentHost, AgentKind, SessionRef } from '../snapshot.ts';
-import { PROCESS_COMMAND_CHARS } from '../snapshot.ts';
-import type { CommandRunner } from './exec.ts';
+import type { AgentHost, AgentKind, ProcessListStatus, ProcessLookup, SessionRef } from '../snapshot.ts';
+import { LOOKUP_STDERR_CHARS, PROCESS_COMMAND_CHARS } from '../snapshot.ts';
+import type { CommandResult, CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
 
 /** `session` is filled in by the monitor's session locator after the read; the process list alone never knows it. */
 export type AgentProcess = { pid: number; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; command: string; session: SessionRef | null };
 /** A process that was in one read and gone from the next, with when the read that missed it started. */
 export type EndedProcess = AgentProcess & { endedAt: string };
-export type ProcessFacts = { agents: AgentProcess[] };
+/**
+ * A process that can own a flow run, as flow's `_health.py is_host` says: a claude or codex (a
+ * host's own servers aside) or the unattended loop. `startedAt` is when ps says it started, so a
+ * pid a later process reused is told from the run's owner.
+ */
+export type HostProcess = { pid: number; command: string; startedAt: string };
+/**
+ * What one process read found: the agents and sessions with their working directory, every
+ * process that can own a run whether or not its directory was found, and how complete the read was.
+ */
+export type ProcessFacts = { agents: AgentProcess[]; hosts: HostProcess[]; list: ProcessListStatus };
 
 const PROCESS_TIMEOUT_MS = 10000;
+const MILLISECONDS_PER_SECOND = 1000;
+/** flow's unattended loop and the jobs that start runs, as `_health.py` matches them (`LOOP`). */
+const UNATTENDED_LOOP = /run-unattended\.sh|jobs\/(next|comments)\.sh/;
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_DAY = 86400;
@@ -109,22 +122,66 @@ export function parseWorkingDirectories(source: string): Map<number, string> {
   return directories;
 }
 
-export async function readProcesses(runner: CommandRunner): Promise<ProcessFacts> {
-  const env = scriptEnvironment();
-  const listing = await runner({ command: 'ps', args: ['-axo', 'pid=,etime=,command='], cwd: '/', timeoutMs: PROCESS_TIMEOUT_MS, env });
-  if (listing.code !== 0) return { agents: [] };
-  const hosts = parseProcessList(listing.stdout)
+/** The lookup as the snapshot and the log carry it. */
+function lookupOf(command: ProcessLookup['command'], result: CommandResult, durationMs: number): ProcessLookup {
+  return { command, code: result.code, timedOut: result.timedOut, durationMs, stderr: result.stderr.trim().slice(0, LOOKUP_STDERR_CHARS) };
+}
+
+/** How a lookup ended, in words: "ps timed out after 10s", "lsof exited 1: <its first stderr line>". */
+function ending(lookup: ProcessLookup): string {
+  if (lookup.timedOut) return `${lookup.command} timed out after ${PROCESS_TIMEOUT_MS / MILLISECONDS_PER_SECOND}s`;
+  const said = lookup.stderr.split('\n')[0] ?? '';
+  const exit = lookup.code === null ? `${lookup.command} ended with no exit code` : `${lookup.command} exited ${lookup.code}`;
+  return said === '' ? exit : `${exit}: ${said}`;
+}
+
+/** A ps that did not list the processes: the whole list is unknown. */
+function unavailable(reason: string, lookup: ProcessLookup): ProcessFacts {
+  return { agents: [], hosts: [], list: { status: 'unavailable', reason, lookup } };
+}
+
+type Timed = { result: CommandResult; durationMs: number };
+
+async function timed(runner: CommandRunner, clock: () => Date, command: ProcessLookup['command'], args: string[]): Promise<Timed> {
+  const started = clock().getTime();
+  const result = await runner({ command, args, cwd: '/', timeoutMs: PROCESS_TIMEOUT_MS, env: scriptEnvironment() });
+  return { result, durationMs: clock().getTime() - started };
+}
+
+/**
+ * Lists the claude and codex processes with their working directory. A ps that fails, times out
+ * or lists nothing gives an `unavailable` list, never an empty one that would read as "nothing
+ * runs"; an lsof that fails, times out or leaves a process out gives a `partial` one naming the
+ * pids it could not place. The clock times the lookups and dates each process's start.
+ */
+export async function readProcesses(runner: CommandRunner, clock: () => Date): Promise<ProcessFacts> {
+  const readAt = clock().getTime();
+  const listing = await timed(runner, clock, 'ps', ['-axo', 'pid=,etime=,command=']);
+  const psLookup = lookupOf('ps', listing.result, listing.durationMs);
+  if (listing.result.code !== 0 || listing.result.timedOut) return unavailable(ending(psLookup), psLookup);
+  const rows = parseProcessList(listing.result.stdout);
+  if (rows.length === 0) return unavailable('ps listed no processes', psLookup);
+  const hosts = rows
+    .filter((row) => hostOf(row.command) !== null || UNATTENDED_LOOP.test(row.command))
+    .map((row) => ({ pid: row.pid, command: row.command.slice(0, PROCESS_COMMAND_CHARS), startedAt: new Date(readAt - row.elapsedSeconds * MILLISECONDS_PER_SECOND).toISOString() }));
+  const candidates = rows
     .map((row) => ({ row, host: hostOf(row.command) }))
     .filter((entry): entry is { row: ProcessRow; host: AgentHost } => entry.host !== null);
-  if (hosts.length === 0) return { agents: [] };
-  const pids = hosts.map(({ row }) => String(row.pid)).join(',');
-  const cwds = await runner({ command: 'lsof', args: ['-a', '-d', 'cwd', '-Fpn', '-p', pids], cwd: '/', timeoutMs: PROCESS_TIMEOUT_MS, env });
-  const directories = parseWorkingDirectories(cwds.stdout);
-  return {
-    agents: hosts.flatMap(({ row, host }) => {
-      const cwd = directories.get(row.pid);
-      if (cwd === undefined) return [];
-      return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null }];
-    }),
-  };
+  if (candidates.length === 0) return { agents: [], hosts, list: { status: 'complete' } };
+  const pids = candidates.map(({ row }) => String(row.pid)).join(',');
+  const cwds = await timed(runner, clock, 'lsof', ['-a', '-d', 'cwd', '-Fpn', '-p', pids]);
+  // lsof exits 1 when one of the pids has ended since ps, and still prints the others, so only a
+  // pid it gave no directory for, or a timeout, makes the read partial.
+  const directories = cwds.result.timedOut ? new Map<number, string>() : parseWorkingDirectories(cwds.result.stdout);
+  const agents = candidates.flatMap(({ row, host }) => {
+    const cwd = directories.get(row.pid);
+    if (cwd === undefined) return [];
+    return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null }];
+  });
+  const unplaced = candidates.map(({ row }) => row.pid).filter((pid) => !directories.has(pid));
+  if (unplaced.length === 0) return { agents, hosts, list: { status: 'complete' } };
+  const lsofLookup = lookupOf('lsof', cwds.result, cwds.durationMs);
+  const missing = `no working directory for ${unplaced.length === 1 ? 'pid' : 'pids'} ${unplaced.join(', ')}`;
+  const reason = lsofLookup.code === 0 && !lsofLookup.timedOut ? `lsof gave ${missing}` : `${ending(lsofLookup)}; ${missing}`;
+  return { agents, hosts, list: { status: 'partial', reason, unplaced, lookup: lsofLookup } };
 }

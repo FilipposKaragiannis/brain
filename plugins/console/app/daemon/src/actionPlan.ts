@@ -164,7 +164,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'gate.clear': ['item', 'message', 'back'],
   'run.start': ['item', 'maxSteps'],
   'job.run': ['job'], 'job.stop': ['job'], 'job.pause': ['job'], 'job.resume': ['job'],
-  'job.start': ['job', 'host', 'item', 'workers', 'maxSteps', 'model', 'effort', 'pick'],
+  'job.start': ['job', 'host', 'item', 'pr', 'workers', 'maxSteps', 'model', 'effort', 'pick'],
   'job.schedule': ['job', 'schedule'],
   'job.unschedule': ['job'],
   'run.stop': ['item'], 'run.resume': ['item'],
@@ -178,7 +178,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'steward.sweep': [],
   'jobs.install': [],
   'job.uninstall': ['job'],
-  'pr.merge': ['pr', 'method'],
+  'pr.merge': ['pr', 'method', 'force'],
   'pr.review': ['pr', 'reviewer'],
   'quiz.answer': ['item', 'answers'],
   'host.clear': ['host'],
@@ -418,7 +418,10 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       if (!PR_NUMBER.test(pr)) return fail('pr.merge needs a PR number');
       if (!MERGE_METHODS.includes(method)) return fail(`method must be one of ${MERGE_METHODS.join(', ')}`);
       if (context.repo === null) return fail('pr.merge needs github.repo in .flow/config.yaml');
-      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch'], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
+      // --admin merges with the owner's rights past what branch protection requires: failing or
+      // missing checks, a missing approval, a branch behind its base. Only the literal true forces.
+      const admin = args['force'] === 'true' ? ['--admin'] : [];
+      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch', ...admin], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
     }
     // quiz.sh grades the try against the key in <reports>/quiz.md, keeps <reports>/quiz.json, logs
     // one event and marks the item's draft PR ready on a pass; the page re-reads files and pulls.
@@ -446,15 +449,27 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
   }
 }
 
+/** The comments job, whose pass on one item's PR changes that PR, so the pulls are read again after it. */
+const COMMENTS_JOB = 'comments';
+/** The jobs that take one item: next works it, comments runs its pass on that item's PR. */
+const ITEM_JOBS = ['next', COMMENTS_JOB];
+/** What a job run changes: the jobs, the agents, the run records and the tracker. */
+const JOB_REFRESH: string[] = ['jobs', 'processes', 'files', 'board'];
+
 /**
  * `job.start`: one custom run of a job, outside its schedules, on `host` (required) through the
  * project's own `.flow/jobs/<job>.sh`, the script launchd runs, detached like `run.start` with an
  * item, under the job's lock. Every job takes `model` and `effort` (`--model X --effort Y`, which
- * replace jobs.<host>.model and .effort for that run); only next takes `item`, `workers` and
- * `maxSteps`: `jobs/next.sh <host> [item] [--workers N] [--max-steps M]`, under the item's lock
- * too. A next run of the queue that starts workers (`workers` above 1, or `jobs.workers` set and
- * no `workers`) hands its work on and ends, so it is `started` and its sources are read again;
- * a run in place is `finished` when it ends. Refused while the next job is paused, since next.sh
+ * replace jobs.<host>.model and .effort for that run); next and comments take `item`
+ * (`jobs/comments.sh <host> <item>` runs the pass on that one item's PR now, merging its base in
+ * first when it conflicts), under the item's lock too; comments with an item also takes `pr`, the
+ * PR that item's card shows, passed as the target in place of the item (`jobs/comments.sh <host>
+ * <pr>`, which finds the item from the PR's branch) so a PR the item never recorded still gets its
+ * pass and conflict brief, under the same item lock; only next takes `workers` and `maxSteps`:
+ * `jobs/next.sh <host> [item] [--workers N] [--max-steps M]`. A next run of the queue that
+ * starts workers (`workers` above 1, or `jobs.workers` set and no `workers`) hands its work on and
+ * ends, so it is `started` and its sources are read again; a run in place is `finished` when it
+ * ends. Refused while the next job is paused, since next.sh
  * would exit at once, and for an item with more than one worker, which next.sh refuses: workers
  * run the queue. `job` may be left out for next. next also takes `pick`, a filter's name
  * (`--pick <name>`), which narrows the queue and so is refused beside an item; jobs/next.sh
@@ -464,13 +479,18 @@ function planJobStart(args: Record<string, string>, context: ActionContext): Pla
   const job = args['job'] ?? 'next';
   if (!FLOW_JOBS.includes(job)) return fail(`job.start runs one of ${FLOW_JOBS.join(', ')}${job === '' ? '' : `, not ${job}`}`);
   if (job !== 'next') {
-    const extra = ['item', 'workers', 'maxSteps', 'pick'].find((key) => args[key] !== undefined);
+    const extra = ['workers', 'maxSteps', 'pick'].find((key) => args[key] !== undefined);
     if (extra !== undefined) return fail(`${extra} is for the next job; ${job} takes a host, a model and an effort`);
+    if (!ITEM_JOBS.includes(job) && args['item'] !== undefined) return fail(`item is for the next job or the comments job; ${job} takes a host, a model and an effort`);
   }
   const host = args['host'] ?? '';
   if (!HOSTS.includes(host)) return fail(`job.start needs a host: ${HOSTS.join(' or ')}`);
   const item = args['item'] ?? '';
   if (item !== '' && !isItemId(item, context)) return fail(`job.start takes ${itemIdShape(context)}, or none for the queue`);
+  const pr = args['pr'];
+  if (pr !== undefined && job !== COMMENTS_JOB) return fail(`pr is for the comments job; ${job} takes an item`);
+  if (pr !== undefined && item === '') return fail('pr needs the item it belongs to, whose lock the pass holds');
+  if (pr !== undefined && !PR_NUMBER.test(pr)) return fail('pr must be a PR number');
   const { workers, maxSteps, model, effort, pick } = args;
   if (pick !== undefined && !PICK_NAME.test(pick)) return fail('pick must be a filter name from pick in .flow/config.yaml: letters, digits, _ and -');
   if (pick !== undefined && item !== '') return fail('pick narrows the queue; drop the item, or the filter');
@@ -492,9 +512,9 @@ function planJobStart(args: Record<string, string>, context: ActionContext): Pla
   return {
     ok: true,
     plan: {
-      command: 'sh', args: [script, host, ...(item === '' ? [] : [item]), ...flags], cwd: context.root,
+      command: 'sh', args: [script, host, ...(pr !== undefined ? [pr] : item === '' ? [] : [item]), ...flags], cwd: context.root,
       locks: [...(item === '' ? [] : [`item:${item}`]), `job:${job}`], timeoutMs: 0, detach: true,
-      refresh: ['jobs', 'processes', 'files', 'board'], refreshAgainMs: handsOn ? HANDED_ON_REFRESH_MS : null, outcome: handsOn ? 'started' : 'finished',
+      refresh: job === COMMENTS_JOB ? [...JOB_REFRESH, 'pulls'] : JOB_REFRESH, refreshAgainMs: handsOn ? HANDED_ON_REFRESH_MS : null, outcome: handsOn ? 'started' : 'finished',
     },
   };
 }

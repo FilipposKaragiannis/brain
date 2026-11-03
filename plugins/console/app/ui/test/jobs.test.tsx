@@ -45,7 +45,7 @@ test('JobsScreen_AnySnapshot_SideHoldsTheRunOncePanelAndEvents', async () => {
 });
 
 test('JobsScreen_WithRuns_ShowsNoRunCards', async () => {
-  await renderSnapshot({ jobs: [JOB], runs: [{ item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, alive: false }] });
+  await renderSnapshot({ jobs: [JOB], runs: [{ item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'dead' }] });
   expect(screen.queryByRole('heading', { name: 'Runs' }), 'because the runs live on the Agents page').toBeNull();
 });
 

@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import type { ActionRecord, Worktree } from '../../daemon/src/snapshot.ts';
+import type { ActionRecord, Run, Worktree } from '../../daemon/src/snapshot.ts';
 import { RELEASE_RESERVED_TITLE, Worktrees } from '../src/screens/Worktrees.tsx';
 import { actionRecord, claudeSession, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
@@ -133,9 +133,17 @@ test('BranchFarBehind_Dirty_SaysItInWordsWithNoButton', () => {
 
 test('BranchFarBehind_RunRecord_NoMergeButton', () => {
   const Wrapper = new FakeDaemon().screenWrapper();
-  const run = { item: 'gh#344', step: 'implement', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, alive: false };
+  const run: Run = { item: 'gh#344', step: 'implement', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'dead' };
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [BEHIND], runs: [run] }} /></Wrapper>);
   expect(screen.queryByRole('button', { name: /Merge/ }), 'because a run record holds the item and the daemon would refuse').toBeNull();
+});
+
+test('RunWhoseProcessIsUnknown_CardSaysTheProcessListIsIncomplete', () => {
+  const Wrapper = new FakeDaemon().screenWrapper();
+  const run: Run = { item: 'gh#344', step: 'implement', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, pid: 19487, liveness: 'unknown' };
+  const processList = { status: 'partial' as const, reason: 'lsof timed out after 10s; no working directory for pid 23465', unplaced: [23465], lookup: { command: 'lsof' as const, code: null, timedOut: true, durationMs: 10002, stderr: '' } };
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [{ ...BEHIND, state: 'running', flags: [] }], runs: [run], processList }} /></Wrapper>);
+  expect(screen.getByText(/may still go/).textContent, 'because the card says why the run is not shown dead').toMatch(/process list incomplete: lsof timed out after 10s; no working directory for pid 23465/);
 });
 
 const FILES = ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts', 'f.ts', 'g.ts'];
@@ -169,7 +177,7 @@ test('SyncConflicted_HandToTheFlow_PostsTheHandoffWithTheRefs', async () => {
 });
 
 test('SyncConflicted_RunGoingAndNoteThere_SaysTheSyncRunsFirst', async () => {
-  const run = { item: 'gh#344', step: 'sync', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, alive: true };
+  const run: Run = { item: 'gh#344', step: 'sync', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'alive' };
   await renderWithActions([{ ...BEHIND, syncPending: ['origin/epic/gh-300'] }], [conflictedSync(['a.ts'])], { runs: [run] });
   expect(screen.queryByRole('button', { name: 'Hand to the flow' }), 'because a second run would be refused while one goes').toBeNull();
   expect(screen.queryByText('A run is going; the sync step runs first when it starts'), 'because the note is already there for the run').not.toBeNull();
