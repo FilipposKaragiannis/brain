@@ -3,11 +3,16 @@ import { AskReview } from '../askReview.tsx';
 import { Age } from '../clock.tsx';
 import { ExternalLink, ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
-import { healthCells, mergeBlockedReason, PULL_STATE_LABEL, pullRowsFromItems } from '../pulls.ts';
+import { forceMergeOffered, healthCells, mergeBlockedReason, PULL_STATE_LABEL, pullRowsFromItems } from '../pulls.ts';
 import type { PullRequestRow } from '../pulls.ts';
 import { QuizPanel } from '../Quiz.tsx';
 import { itemTone, pullTone } from '../status.ts';
-import { ActionButton, Chip, Dot, Empty, Module, SourceFreshness } from '../ui.tsx';
+import { ActionButton, Chip, Dot, Empty, Module, SourceFreshness, useActionsView } from '../ui.tsx';
+
+/** The flow job whose pass on one item's PR merges the base in first when the PR conflicts. */
+const COMMENTS_JOB = 'comments';
+/** What Force merge does, on its title: gh's admin merge, past what branch protection requires. */
+const FORCE_MERGE_TITLE = 'Merges with gh pr merge --admin, past the checks and rules GitHub requires';
 
 /**
  * Open pull requests from the daemon's `pulls` source, one card each: where it stands, its
@@ -71,9 +76,26 @@ function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot })
       {review !== null && (review.cannot.length > 0 || review.waiting.length > 0) && <Reviewers review={review} pr={pull.number} />}
       <footer className="pull-foot">
         {blocked === null ? <ActionButton kind="pr.merge" args={{ pr: String(pull.number) }} label="Merge" primary={true} /> : <span className="muted">{blocked}</span>}
+        {forceMergeOffered(pull) && <span className="pull-force"><ActionButton kind="pr.merge" args={{ pr: String(pull.number), force: 'true' }} label="Force merge" primary={false} title={FORCE_MERGE_TITLE} /></span>}
+        {pull.state === 'conflicts' && pull.item !== null && <ResolveConflicts pull={pull} item={pull.item} host={snapshot.project.jobsHost} />}
         {!pull.draft && <AskReview pr={pull.number} reviewers={snapshot.project.reviewers} />}
       </footer>
     </section>
+  );
+}
+
+/**
+ * Hands a conflicting pull to the flow now: one comments pass on its item, which merges the base
+ * in first, as the scheduled job would on its next run. While that pass runs the card says so.
+ */
+function ResolveConflicts({ pull, item, host }: { pull: PullRequest; item: string; host: string }) {
+  const actions = useActionsView();
+  const running = actions.busy('job.start', { job: COMMENTS_JOB, item });
+  return (
+    <span className="pull-resolve">
+      <ActionButton kind="job.start" args={{ job: COMMENTS_JOB, host, item }} label="Resolve conflicts" primary={false} title={`Runs the comments job on ${item} now; it merges ${pull.base} into ${pull.branch} first`} />
+      {running && <span className="muted">A comments pass is running on {item}: it merges {pull.base} in first.</span>}
+    </span>
   );
 }
 
