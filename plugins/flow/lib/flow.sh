@@ -80,38 +80,12 @@ flow_home() {
   printf '%s/.flow' "$main"
 }
 
-# claude_hooks_present [root]: the project's Claude settings name both flow worktree hooks. A plugin
-# cannot provide them (the worktree is created before plugins load), so init prints the entry
-# and the install check and the session-start hook report it missing.
+# claude_hooks_present [root]: this user's Claude settings in the root name both flow worktree
+# hooks. A plugin cannot provide them (the worktree is created before plugins load), so init
+# writes them to .claude/settings.local.json and the session-start hook reports them missing.
 claude_hooks_present() {
-  _r="${1:-.}"; _f="$(cat "$_r/.claude/settings.json" "$_r/.claude/settings.local.json" 2>/dev/null)"
+  _f="$(cat "${1:-.}/.claude/settings.local.json" 2>/dev/null)"
   printf '%s' "$_f" | grep -q 'worktree-create.sh' && printf '%s' "$_f" | grep -q 'worktree-remove.sh'
-}
-
-# claude_worktree_hook <create|remove>: the shell command init prints for .claude/settings.json.
-# The settings are committed, so the command must also work in the clone of a teammate without
-# flow. It runs the main worktree's .flow/hooks wrapper when there is one (found from a linked
-# worktree too), and otherwise does what Claude does with no hook: a git worktree under
-# .claude/worktrees on branch worktree-<name> (reused when it exists, so a name can be opened
-# again), and git worktree remove, with the branch deleted when it is merged or unchanged
-# (git branch -d refuses otherwise, and the branch stays). Skipping is not enough:
-# a WorktreeCreate hook that prints no path fails the session, and a WorktreeRemove hook that
-# exits 0 counts as removed and leaves the folder.
-claude_worktree_hook() {
-  if [ "$1" = create ]; then cat <<'EOF'
-m="$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"; [ ! -f "$m/.flow/hooks/worktree-create.sh" ] || exec "$m/.flow/hooks/worktree-create.sh"; n="$(sed -n 's/.*"name" *: *"\([^"]*\)".*/\1/p' | head -n 1)"; d="$CLAUDE_PROJECT_DIR/.claude/worktrees/${n:-session}"; b="worktree-${n:-session}"; if [ -d "$d" ]; then :; elif git -C "$CLAUDE_PROJECT_DIR" show-ref --verify -q "refs/heads/$b"; then git -C "$CLAUDE_PROJECT_DIR" worktree add -q "$d" "$b" >&2; else git -C "$CLAUDE_PROJECT_DIR" worktree add -q -b "$b" "$d" >&2; fi && printf '%s\n' "$d"
-EOF
-  else cat <<'EOF'
-m="$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain 2>/dev/null | sed -n '1s/^worktree //p')"; [ ! -f "$m/.flow/hooks/worktree-remove.sh" ] || exec "$m/.flow/hooks/worktree-remove.sh"; p="$(sed -n 's/.*"worktree_path" *: *"\([^"]*\)".*/\1/p' | head -n 1)"; [ -z "$p" ] || { b="$(git -C "$p" symbolic-ref --short -q HEAD)"; git -C "$CLAUDE_PROJECT_DIR" worktree remove "$p" >&2 && case "$b" in worktree-*) git -C "$CLAUDE_PROJECT_DIR" branch -d "$b" >/dev/null 2>&1 || true ;; esac; }
-EOF
-  fi
-}
-
-# claude_hooks_fall_back [root]: the project's hook entries are the ones above, which work in a
-# clone without flow. Entries an older init printed call the wrapper alone and fail there.
-claude_hooks_fall_back() {
-  _r="${1:-.}"; _f="$(cat "$_r/.claude/settings.json" "$_r/.claude/settings.local.json" 2>/dev/null)"
-  printf '%s' "$_f" | grep -qF '.claude/worktrees/' && printf '%s' "$_f" | grep -qF 'worktree remove'
 }
 
 # flow_exclude: the clone's own ignore file, info/exclude in the common git directory. Every linked

@@ -5,9 +5,11 @@
 # runs), .flow/notify.sh, .flow/run-unattended.sh, .flow/jobs/*.sh and .flow/hooks/*.sh (wrappers,
 # always replaced; they hold no path or version, so a plugin update leaves them as they are), the
 # Codex rules/flow.rules and agents/<flow agents>.toml (replaced, unless edited by hand since: then
-# refused, exit 1, --force replaces), a marked block in .git/info/exclude covering .flow/, and
-# .flow/stamp (what it wrote; see stamp.sh). Flow is one user's tool, so nothing it writes is
-# tracked: .flow/ is excluded in this clone only, and init never commits or edits the index.
+# refused, exit 1, --force replaces), the Claude worktree hook entries in
+# .claude/settings.local.json (merged, every other key kept), a marked block in .git/info/exclude
+# covering .flow/ and that file, and .flow/stamp (what it wrote; see stamp.sh). Flow is one user's
+# tool, so nothing it writes is tracked: both are excluded in this clone only, and init never
+# commits or edits the index.
 # The Codex files go to the repo's .codex/ when it has one, else to the user's ~/.codex
 # ($CODEX_HOME); --user-codex picks ~/.codex, and a later run keeps the place the stamp records.
 # --check reports drift and hand edits and writes nothing (exit 1 on either). --source-hash
@@ -247,9 +249,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "#   answers: docs/answers.md  # answered questions (default answers.md beside the notes)"
       echo "#   dropped: docs/dropped.md  # dropped notes with their reasons (default dropped.md beside the notes)"
       echo "#   rules: .flow/intake.md    # how a note becomes an item (default: this file if it exists, else flow's rules)"
-      echo "# The retro job commits .flow/lessons.jsonl and .flow/retros.log and pushes them after each run:"
-      echo "# retro:"
-      echo "#   commit: false             # to keep them uncommitted"
+      echo "# The retro job's lessons log (.flow/lessons.jsonl, .flow/retros.log) stays on this machine under .flow/."
     } > .flow/config.yaml
     [ -s .flow/config.yaml ] || die "could not write .flow/config.yaml"
     note ".flow/config.yaml written from the repository (adapters, base, pool). Review it."
@@ -272,12 +272,27 @@ done
 # 3. Claude worktree hooks. A plugin's WorktreeCreate hook does not fire for `claude --worktree`
 # (verified 2026-10-10: the worktree is created before plugins load), so the project settings
 # must name the hook. Stable wrappers under .flow/hooks/ keep the settings entry path-free.
+# The entries go to this user's .claude/settings.local.json, not the shared settings.json: flow is
+# one user's tool, and a teammate without it gets Claude's own worktree with no entry at all.
 for h in create remove; do
   tmp="$scratch/wt-$h"
   printf '#!/bin/sh\n# Written by flow:init. Claude Worktree%s hook: lands --worktree sessions in the pool.\n. "$(dirname "$0")/../plugin.sh"\nexec "$FLOW_PLUGIN/hooks/worktree-%s.sh" "$@"\n' "$( [ "$h" = create ] && echo Create || echo Remove )" "$h" > "$tmp"
   install_file "$tmp" ".flow/hooks/worktree-$h.sh" 755
 done
-settings_has_hook=0; claude_hooks_present && settings_has_hook=1
+# claude_hook_command <create|remove>: runs the main worktree's wrapper, found from a linked
+# worktree too (Claude reads the settings of the checkout it starts in), and nothing else.
+claude_hook_command() { printf 'exec "$(git -C "$CLAUDE_PROJECT_DIR" worktree list --porcelain | sed -n "1s/^worktree //p")/.flow/hooks/worktree-%s.sh"' "$1"; }
+claude_local=".claude/settings.local.json"
+settings_problem="$(python3 -I "$plugin/scripts/_claude_settings.py" merge "$claude_local" "$scratch/settings.local.json" \
+  "$(claude_hook_command create)" "$(claude_hook_command remove)" 2>&1)"; settings_code=$?
+if [ "$settings_code" -eq 1 ] && [ -f "$scratch/settings.local.json" ]; then
+  if [ "$check" -eq 1 ]; then drifted "$claude_local: the flow WorktreeCreate and WorktreeRemove entries are missing or changed"
+  else mkdir -p .claude && cp "$scratch/settings.local.json" "$claude_local" && note "$claude_local: the flow WorktreeCreate and WorktreeRemove entries"; fi
+elif [ "$settings_code" -ne 0 ]; then
+  if [ "$check" -eq 1 ]; then drifted "${settings_problem:-$claude_local could not be read}"
+  else refused=1; echo "init: refused: ${settings_problem:-$claude_local could not be read}; fix it and re-run init to add the flow worktree hooks"; fi
+fi
+committed_hooks="$(python3 -I "$plugin/scripts/_claude_settings.py" committed .claude/settings.json 2>/dev/null)"
 
 # 4. Codex: rules and agents (Codex cannot load agents or rules from a plugin). In the repo's
 # .codex/ when it has one, where the team already keeps its Codex layer; else in the user's own
@@ -301,6 +316,7 @@ tmp="$scratch/exclude"
   [ -f "$exclude" ] && awk '/^# flow:begin/{skip=1} !skip{print} /^# flow:end/{skip=0}' "$exclude"
   echo "# flow:begin (written by flow:init; flow is this clone's own tool, so none of .flow/ is committed)"
   echo ".flow/"
+  echo ".claude/settings.local.json"
   echo "# flow:end"
 } > "$tmp"
 if [ "$check" -eq 1 ] && ! { [ -f "$exclude" ] && awk '/^# flow:begin/{on=1; next} /^# flow:end/{on=0} on' "$exclude" | grep -qxF '.flow/'; }; then
@@ -350,14 +366,14 @@ EOF_TRACKERS
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
 $(host_jobs_problems)
 EOF_JOBS
+  [ -z "$(cfg retro.commit)" ] || echo "init: note: .flow/config.yaml sets retro.commit, which is unused: the retro job commits nothing, as the lessons stay on this machine under .flow/; remove the key"
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
-# Missing worktree hooks are a note: the flow runs without them. So is an entry an older init
-# printed: it calls the wrapper alone, so claude --worktree fails in a clone without flow.
-settings_fall_back=0; claude_hooks_fall_back && settings_fall_back=1
-if [ "$check" -eq 1 ] && [ -d .claude ]; then
-  if [ "$settings_has_hook" -eq 0 ]; then echo "init: note: .claude/settings.json has no WorktreeCreate and WorktreeRemove hooks, so claude --worktree lands outside the pool (init prints the entry under Next)"
-  elif [ "$settings_fall_back" -eq 0 ]; then echo "init: note: the worktree hooks in .claude/settings.json call .flow/hooks alone, so claude --worktree fails in a clone without flow (init prints the entry that falls back under Next)"; fi
+# A flow hook entry an older init printed for the shared settings is the owner's to remove: the
+# file is committed, so init never edits it.
+if [ "$check" -eq 1 ] && [ -n "$committed_hooks" ]; then
+  echo "init: note: .claude/settings.json still carries flow worktree hooks; remove them (they are in $claude_local now). The entry:"
+  printf '%s\n' "$committed_hooks" | sed 's/^/    /'
 fi
 echo "init: Codex rules and agents: $codex_dir ($codex_why)"
 
@@ -382,14 +398,10 @@ elif [ "$gitignore_moved" -eq 1 ]; then
   echo "  - commit the .gitignore change: the flow block is in .git/info/exclude now"
 fi
 [ "$codex_dir" = .codex ] && [ -n "$(git status --porcelain -- .codex)" ] && echo "  - commit .codex/: the team's Codex reads the flow rules and agents from there (init --user-codex puts them in ~/.codex instead)"
-if [ "$settings_has_hook" -eq 0 ] || [ "$settings_fall_back" -eq 0 ]; then
-  if [ "$settings_has_hook" -eq 0 ]; then echo "  - Claude: add the worktree hooks to .claude/settings.json so --worktree lands in the pool"
-  else echo "  - Claude: replace the worktree hooks in .claude/settings.json with these, so --worktree also works in a clone without flow"; fi
-  echo "    (a plugin cannot provide them: the worktree is created before plugins load; where .flow/hooks"
-  echo "    is missing they make the worktree as Claude does with no hook):"
-  # printf, not echo: the JSON strings hold backslashes that sh's echo would read as escapes.
-  printf '      "hooks": { "WorktreeCreate": [ { "hooks": [ { "type": "command", "command": %s } ] } ],\n' "$(json_string "$(claude_worktree_hook create)")"
-  printf '                 "WorktreeRemove": [ { "hooks": [ { "type": "command", "command": %s } ] } ] }\n' "$(json_string "$(claude_worktree_hook remove)")"
+if [ -n "$committed_hooks" ]; then
+  echo "  - Claude: remove the flow worktree hooks from .claude/settings.json and commit that: init wrote"
+  echo "    them to $claude_local, which is yours alone, and never edits the shared file. The entry:"
+  printf '%s\n' "$committed_hooks" | sed 's/^/      /'
 fi
 if [ -d .codex ]; then
   echo "  - Codex: trust the project .codex layer and every pool worktree in ~/.codex/config.toml:"

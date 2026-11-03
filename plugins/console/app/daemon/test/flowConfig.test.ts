@@ -116,8 +116,8 @@ test('NewKeyUnderAMapHoldingOnlyAComment_Added_GoesAfterTheComment', () => {
 });
 
 test('NewTopLevelKey_Added_GoesAtTheEnd', () => {
-  const after = edited(FOOSBRAWL, 'retro.commit', 'scalar', false);
-  assert.ok(after.endsWith('retro:\n  commit: false\n'), 'because a key with no section yet is appended at the end, the final newline kept');
+  const after = edited(FOOSBRAWL, 'jira.project', 'scalar', 'FOO');
+  assert.ok(after.endsWith('jira:\n  project: FOO\n'), 'because a key with no section yet is appended at the end, the final newline kept');
 });
 
 test('MapKey_Changed_ChangedChildrenRewrittenAndNewOnesAdded', () => {
