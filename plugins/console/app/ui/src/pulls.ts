@@ -109,3 +109,17 @@ export function mergeBlockedReason(pull: PullRequest): string | null {
     case 'approved': return 'Approved; merge waits for open threads or GitHub\'s merge check.';
   }
 }
+
+/** GitHub's merge states that refuse a plain merge which `gh pr merge --admin` goes past: a rule not met, or a branch behind its base. */
+const GITHUB_BLOCKING_MERGE_STATES = ['BLOCKED', 'BEHIND'];
+
+/**
+ * Whether the card offers Force merge, which merges past what branch protection requires: on a
+ * pull whose checks fail, or one that is approved while GitHub still blocks the merge. Never on a
+ * draft, a conflict (nothing can merge it), running checks or requested changes, which a reviewer
+ * or a run is still answering.
+ */
+export function forceMergeOffered(pull: PullRequest): boolean {
+  if (pull.state === 'checks-failing') return true;
+  return pull.state === 'approved' && GITHUB_BLOCKING_MERGE_STATES.includes(pull.mergeState ?? '');
+}

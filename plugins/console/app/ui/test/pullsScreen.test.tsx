@@ -9,7 +9,7 @@ afterEach(cleanup);
 function pull(number: number, change: Partial<PullRequest>): PullRequest {
   return {
     number, title: `Pull ${number}`, url: `https://github.com/owner/project/pull/${number}`, branch: `flow/gh-${number}`, base: 'main', author: 'owner',
-    draft: false, state: 'mergeable', checks: { passed: 5, failed: 0, pending: 0 }, reviewDecision: 'APPROVED', unresolvedThreads: 0, mergeable: 'MERGEABLE',
+    draft: false, state: 'mergeable', checks: { passed: 5, failed: 0, pending: 0 }, reviewDecision: 'APPROVED', unresolvedThreads: 0, mergeable: 'MERGEABLE', mergeState: 'CLEAN',
     item: null, worktree: null, createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 3600, idleSeconds: 600, review: null, quiz: null, ...change,
   };
 }
@@ -58,7 +58,7 @@ function recordingDaemon(): { daemon: FakeDaemon; posted: Array<{ kind: string; 
   const daemon = new FakeDaemon();
   const posted: Array<{ kind: string; args: Record<string, string> }> = [];
   daemon.answer('POST', '/api/projects/project/actions', (body) => {
-    const action = body as { kind: 'pr.review'; args: Record<string, string> };
+    const action = body as { kind: 'pr.review' | 'pr.merge' | 'job.start'; args: Record<string, string> };
     posted.push(action);
     return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord(`a${posted.length}`, 'running', action.args), kind: action.kind } } };
   });
@@ -88,4 +88,55 @@ test('AskForReview_OtherLogin_AskedWithoutItsAt', async () => {
 test('DraftPull_NoAskForReview', () => {
   renderPulls([pull(20, { draft: true, state: 'draft' })]);
   expect(within(card(20)).queryByLabelText('Ask for review from'), 'because a draft is not ready for a review yet').toBeNull();
+});
+
+const forceMerge = (number: number): HTMLElement | null => within(card(number)).queryByRole('button', { name: 'Force merge' });
+
+test('FailingPull_ForceMerge_PostsPrMergeWithForce', async () => {
+  const { daemon, posted } = recordingDaemon();
+  renderPulls([pull(22, { state: 'checks-failing', checks: { passed: 3, failed: 2, pending: 0 } })], daemon);
+  await act(async () => { fireEvent.click(forceMerge(22)!); });
+  expect(posted, 'because a force merge is the same merge with force, which the daemon turns into gh pr merge --admin').toEqual([{ kind: 'pr.merge', args: { pr: '22', force: 'true' } }]);
+});
+
+test('ForceMerge_NeverThePrimaryButton', () => {
+  renderPulls([pull(22, { state: 'checks-failing', checks: { passed: 3, failed: 2, pending: 0 } })]);
+  expect(forceMerge(22)?.classList.contains('primary'), 'because merging past the rules is never the action the card leads with').toBe(false);
+});
+
+test('ApprovedPullGithubBlocks_ForceMergeOffered', () => {
+  renderPulls([pull(23, { state: 'approved', mergeState: 'BLOCKED' })]);
+  expect(forceMerge(23), 'because GitHub refuses the plain merge, and only an admin merge goes past its rule').not.toBeNull();
+});
+
+test('ApprovedPullWaitingOnlyOnThreads_NoForceMerge', () => {
+  renderPulls([pull(23, { state: 'approved', mergeState: 'CLEAN', unresolvedThreads: 1 })]);
+  expect(forceMerge(23), 'because GitHub would merge it; the open thread is the flow\'s own wait, not a block to force past').toBeNull();
+});
+
+test('PullsNoAdminMergeCanHelp_NoForceMerge', () => {
+  renderPulls([
+    pull(30, { state: 'conflicts', mergeable: 'CONFLICTING' }), pull(31, { state: 'draft', draft: true }),
+    pull(32, { state: 'checks-pending', checks: { passed: 3, failed: 0, pending: 1 } }), pull(33, { state: 'changes-requested', reviewDecision: 'CHANGES_REQUESTED' }),
+  ]);
+  for (const number of [30, 31, 32, 33]) expect(forceMerge(number), `because #${number} is a conflict, a draft, running checks or requested changes, which no admin merge should skip`).toBeNull();
+});
+
+test('ConflictingPull_ResolveConflicts_StartsTheCommentsPassOnItsItemAndPr', async () => {
+  const { daemon, posted } = recordingDaemon();
+  renderPulls([pull(30, { state: 'conflicts', mergeable: 'CONFLICTING', item: 'gh#30' })], daemon);
+  await act(async () => { fireEvent.click(within(card(30)).getByRole('button', { name: 'Resolve conflicts' })); });
+  expect(posted, 'because the comments job merges the base in first on a conflicting PR, run now on the jobs host for this one item, named by the PR the item may not have recorded').toEqual([{ kind: 'job.start', args: { job: 'comments', host: 'claude', item: 'gh#30', pr: '30' } }]);
+});
+
+test('ConflictingPull_PassRunning_CardSaysSo', async () => {
+  const { daemon } = recordingDaemon();
+  renderPulls([pull(30, { state: 'conflicts', mergeable: 'CONFLICTING', item: 'gh#30' })], daemon);
+  await act(async () => { fireEvent.click(within(card(30)).getByRole('button', { name: 'Resolve conflicts' })); });
+  expect(card(30).textContent, 'because the owner sees the conflict is being handled while the pass runs').toMatch(/A comments pass is running on gh#30: it merges main in first\./);
+});
+
+test('ConflictingPullWithNoItem_NoResolveConflicts', () => {
+  renderPulls([pull(30, { state: 'conflicts', mergeable: 'CONFLICTING', item: null })]);
+  expect(within(card(30)).queryByRole('button', { name: 'Resolve conflicts' }), 'because the comments pass is run for an item, and this PR has none').toBeNull();
 });

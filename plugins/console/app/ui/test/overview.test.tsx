@@ -20,7 +20,7 @@ function renderOverview(snapshot: Snapshot, go: (route: Route) => void = ignoreR
 function failingPull(number: number): PullRequest {
   return {
     number, title: `PR ${number}`, url: `https://github.com/owner/project/pull/${number}`, branch: `b${number}`, base: 'main', author: 'o', draft: false, state: 'checks-failing',
-    checks: { passed: 0, failed: 1, pending: 0 }, reviewDecision: null, unresolvedThreads: 0, mergeable: null, item: null, worktree: null,
+    checks: { passed: 0, failed: 1, pending: 0 }, reviewDecision: null, unresolvedThreads: 0, mergeable: null, mergeState: null, item: null, worktree: null,
     createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 0, idleSeconds: 0, review: null, quiz: null,
   };
 }

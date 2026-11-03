@@ -334,6 +334,8 @@ export type PullRequest = {
   reviewDecision: string | null;
   unresolvedThreads: number;
   mergeable: string | null;
+  /** GitHub's merge state status (`CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`, …), or null when GitHub gave none. */
+  mergeState: string | null;
   item: string | null;
   worktree: string | null;
   createdAt: string;
