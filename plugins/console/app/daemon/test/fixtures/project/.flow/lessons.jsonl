@@ -1,0 +1,7 @@
+{"time":"2026-10-12T09:14:00Z","kind":"review-blocker","item":"gh#7","step":"implement","rule":"T-09","text":"Two behaviours in one test.","host":"claude"}
+{"time":"2026-10-14T10:02:00Z","kind":"escalation","item":"gh#9","step":"plan","rule":"","text":"The spec named no tracker for the follow-up.","host":"codex"}
+{"time":"2026-10-16T08:30:00Z","kind":"review-blocker" this line was cut short
+{"time":"2026-10-20T11:47:00Z","kind":"review-blocker","item":"gh#9","step":"implement","rule":"T-09","text":"A test asserted three things.","host":"claude"}
+{"time":"2026-10-22T16:05:00Z","kind":"correction","item":"gh#7","step":"review","rule":"N-05","text":"degPerSec is an abbreviation.","host":"claude"}
+
+["an array is no lesson"]

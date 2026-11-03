@@ -9,6 +9,8 @@ import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
 import type { FlowEvent, GatePlan, GateQuestion, PickFilter, PluginSource, Quiz, StoppedHost } from '../snapshot.ts';
 import { readQuizzes } from '../quiz.ts';
+import { readRetroFacts } from '../retro.ts';
+import type { RetroFacts } from '../retro.ts';
 
 /** The parts of .flow/config.yaml the snapshot needs. */
 export type FlowConfig = {
@@ -108,6 +110,8 @@ export type FlowHomeFacts = {
   pluginScripts: string[] | null;
   /** The id prefix of each adapter folder of the plugin (`adapters/<name>/prefix`), as lib/flow.sh routes ids; empty with no plugin. */
   adapterPrefixes: AdapterPrefix[];
+  /** The lessons log, `retros.log` and the retro reports under the flow home; empty when the files are missing. */
+  retro: RetroFacts;
 };
 
 /** One adapter folder of the flow plugin and the id prefix it owns: `github` and `gh#`. */
@@ -468,7 +472,8 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const pluginScripts = pluginRoot === null ? null : await readPluginScripts(pluginRoot);
   const prefixFiles = pluginRoot === null ? [] : await readAdapterPrefixes(pluginRoot);
   const adapterPrefixes = prefixFiles.length > 0 ? prefixFiles : PREFIXES_BEFORE_PREFIX_FILES;
-  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps, quizzes, pluginScripts, adapterPrefixes };
+  const retro = await readRetroFacts(flowHome);
+  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps, quizzes, pluginScripts, adapterPrefixes, retro };
 }
 
 /** The ids a plugin owned before its adapters had prefix files (before flow 1.28.0): GitHub's and the local tracker's. */

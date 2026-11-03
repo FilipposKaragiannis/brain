@@ -3,6 +3,7 @@ import { Age, clockTime, formatDuration } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
 import { readinessSentence } from '../readiness.ts';
+import { lessonsSentence } from '../retro.ts';
 import type { Route } from '../route.ts';
 import { routeHash } from '../route.ts';
 import { countTone, jobTone, worktreeTone } from '../status.ts';
@@ -37,6 +38,7 @@ export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
         ))}
       </section>
       <p className="readiness" aria-label="Readiness">{readinessSentence(snapshot.readiness, counts, snapshot.worktrees)}</p>
+      <p className="readiness lessons-line" aria-label="Lessons">{lessonsSentence(snapshot)} <a className="module-link" href={routeHash({ projectId, screen: 'retro', detail: null })}>Retro</a></p>
       <div className="columns">
         <NeedsYou snapshot={snapshot} go={go} />
         <aside className="overview-side" aria-label="Live">

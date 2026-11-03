@@ -168,13 +168,14 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 10 since a run's `liveness`
-took the place of `alive` and the snapshot took `processList` (9 when an attention row took
-`gate`, 8 when `project.trackers` took the place of `trackerUrl`, 7 when a gate and a pull took
-`quiz`, below). One `Snapshot` per project: `project`, `sources`
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 11 since a run's `liveness`
+took the place of `alive` and the snapshot took `processList` (10 when the snapshot took
+`lessons`, `retros` and `counts.lessonsSinceRetro`, 9 when an attention row took `gate`, 8 when
+`project.trackers` took the place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
+One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `processList`, `ended`, `jobs`, `pulls`, `events`
-(the latest 200, each with `at`, `item`, `kind` and `message`), `disagreements` and `newerConsole`
+(the latest 200, each with `at`, `item`, `kind` and `message`), `lessons`, `retros`, `disagreements` and `newerConsole`
 (`{running, cached}` while the plugin cache holds a newer console with an install script than the
 one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
 banner while it is set). Timestamps are
@@ -315,6 +316,23 @@ snapshots.
   fields: "needs priority", "needs priority and size".
 - An attention row carries `gate`: the gate's kind on a `gate` row (`merge`, `escalation`,
   `plan-approval` …), which its chip shows, and null on every other row.
+- `lessons` is every lesson in `<flow home>/lessons.jsonl` (one JSON object per line, written by
+  the flow's `lesson.sh`), oldest first, each `{line, at, kind, item, step, rule, text, host}`:
+  `at` the line's `time`, an empty field null, an empty kind `other`. `line` is the lesson's
+  place among the file's non-empty lines, as `grep -c .` counts them, a malformed line included;
+  a line that is not a JSON object is skipped, never a failed source.
+- `retros` is every retro, newest first, each `{date, at, lessonsRead, lessonsReadSoFar, findings,
+  applied, report}`. A line of `<flow home>/retros.log` (`<time>\t<lessons read so far>\t<findings>\t<applied>`,
+  the meta retro skill's step 4) is one run: `date` the day of its time, `lessonsReadSoFar` its
+  second column, `lessonsRead` that less the line before's (its whole count when it is smaller,
+  the file having been reset, as the retro job counts), `findings` and `applied` the last two
+  columns as written. A line without a time and a whole count is skipped. `report` is
+  `<flow home>/reports/retro-<date>.md` as `{file, text}`, held by the last run of its day, else
+  null; a report no line names is a run of its own with `at`, `lessonsRead` and
+  `lessonsReadSoFar` null. `counts.lessonsSinceRetro` is how many lessons sit on a line past the
+  last run's `lessonsReadSoFar`, every lesson with no run or with a count past the file's lines.
+  Since flow 1.31.0 these files stay on the machine under `.flow/` and out of git; a missing one
+  is no lesson and no retro.
 
 One status language, used by worktrees and items alike:
 
@@ -356,8 +374,11 @@ Every open pull request carries one state, the first that holds:
 The PRs are those of `github.repo`, read whatever tracker holds the items (local, GitHub or Jira),
 since the flow opens every item's PR there. A PR belongs to the item whose `pr` field names it (a
 number such as `#20`, or its URL compared without case or scheme), whichever tracker holds it,
-else to the item claimed on its head branch unless the PR comes from a fork, and that gives its
-worktree. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
+else to the item claimed on its head branch unless the PR comes from a fork, else to the open item
+that records no PR whose task branch, `flow/<slug>` with the flow's `item_slug` (`gh#134` is
+`flow/gh-134`, `local:task/3` is `flow/local-task-3`), is its head branch, so a PR whose `link-pr`
+failed still finds its item; that gives its worktree. A PR's `mergeState` is GitHub's merge state
+status as read (`CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`, …), null when GitHub gave none. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
 (`pr-failing`, `pr-changes-requested`, `pr-mergeable`), and `counts` carries `pullsFailing`,
 `pullsChangesRequested` and `pullsMergeable`. A PR's `review` is the health job's record for it,
 `.flow/reviews/<n>.review.json`: `{state, waiting, cannot, at}`, where `cannot` lists the
@@ -367,7 +388,7 @@ Null without a record.
 ## Sources and cadence
 | Source | How | Every |
 |---|---|---|
-| `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
+| `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, `lessons.jsonl`, `retros.log`, `reports/retro-*.md`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
 | `git` | `git worktree list`, per worktree ahead/behind the base, dirty files, last commit | 30s, and after a file change |
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd, and every process that can own a run (those and flow's unattended loop) with its start; a lookup that fails or times out (10s each) makes the list `partial` or `unavailable` (`processList`), never empty. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
@@ -481,7 +502,7 @@ on every state change and at most twice a second while output arrives.
 | `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
 | `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
 | `job.stop` | `job` | `jobs.sh stop <job>` | a stop lock of the job's own, so it reaches a run `job.start` holds | `finished` |
-| `job.start` | `job?` (next), `host`, `model?`, `effort?`; for next also `item?`, `workers?`, `maxSteps?`, `pick?` (a filter's name, not with an item) | `.flow/jobs/<job>.sh <host> [item] [--workers N] [--max-steps M] [--model X] [--effort Y] [--pick NAME]`, detached: one run outside the schedules (below) | the job, and the item when given | `finished` once it ends; `started` for a next run that hands the queue to workers |
+| `job.start` | `job?` (next), `host`, `model?`, `effort?`; for next and comments also `item?`; for comments with an item also `pr?`, then the target in place of the item; for next also `workers?`, `maxSteps?`, `pick?` (a filter's name, not with an item) | `.flow/jobs/<job>.sh <host> [item] [--workers N] [--max-steps M] [--model X] [--effort Y] [--pick NAME]`, detached: one run outside the schedules (below) | the job, and the item when given | `finished` once it ends; `started` for a next run that hands the queue to workers; a comments run re-reads `pulls` too |
 | `job.schedule` | `job` (a schedule name), `schedule` | writes `jobs.schedule.<job>` through the flow config editor, then `jobs.sh install <job>` | the schedule | `finished`; `jobs` and `files` are re-read |
 | `job.unschedule` | `job` (a schedule name) | `jobs.sh uninstall <job>`, then takes `jobs.schedule.<job>` out of the config | the schedule | `finished`; `jobs` and `files` are re-read |
 | `run.stop` | `item` | `steward.sh stop <item>`: ends the run's processes and removes its record, keeping the claim and the worktree | a stop lock of the item's own, so it reaches a run `run.start` or `job.start` holds | `finished` |
@@ -497,7 +518,7 @@ on every state change and at most twice a second while output arrives.
 | `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
-| `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
+| `pr.merge` | `pr`, `method?` (squash), `force?` | `gh pr merge <pr> --repo <repo> --<method> --delete-branch`, then `--admin` when `force` is `true`: the owner's rights merge past what branch protection requires (failing or missing checks, a missing approval, a branch behind) | the PR | `finished` |
 | `quiz.answer` | `item`, `answers` (`1b 2a 3c`: a letter per question number) | `quiz.sh answer <item> 1b 2a 3c` (flow 1.29.0): grades the try against the key in `<reports>/quiz.md`, writes `<reports>/quiz.json`, logs one `quiz` event, and on a pass marks the item's draft PR ready for review (`comments.sh ready`) when it has one on GitHub. Refused on an older flow, which has no quiz.sh | the item | `finished`; `files` and `pulls` are re-read |
 | `pr.review` | `pr`, `reviewer` (a name or GitHub login, `@` optional) | `comments.sh request-review <pr> <ask> <reviewer>` (flow 1.27.0): one mention comment with the flow's request marker, Copilot through the reviewers API, so the health job tracks and chases it; the ask is the PR step's own. Refused on flow before 1.27.0, whose script would ask every reviewer | the PR | `finished` |
 | `terminal.open` | `path`, `job?`, `session?`, `gate?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command; with `gate` (an item, `path` optional) one with the resume command of the gate's located `session` | none | `finished` |
@@ -515,8 +536,9 @@ an item) also re-reads its sources a second time five seconds after it returns
 (`ActionPlan.refreshAgainMs`), so the run it started shows; a daemon that stops drops the wait.
 
 `job.start` runs any of the five jobs once with its own host, model and effort, which replace
-`jobs.<host>.model` and `.effort` for that run (flow 1.26.0); `item`, `workers` and `maxSteps` are
-next's alone and refused for the others. It is refused while next is paused, since next.sh would
+`jobs.<host>.model` and `.effort` for that run (flow 1.26.0); `item` is next's and comments' (a
+comments run with an item is that item's pass now, which merges the base in first when its PR
+conflicts), `workers` and `maxSteps` are next's alone, and each is refused for the others. It is refused while next is paused, since next.sh would
 exit at once, and for an item with more than one worker. `job.schedule` takes a schedule name, a job
 or `<job>-<label>` with a label of a lowercase letter then letters and digits, and a schedule line
 as `_jobs.py` reads it: `every <n>m|h`, `daily HH:MM` or `weekly <day> HH:MM`, then an optional
@@ -692,13 +714,15 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Eight project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
+imports). Nine project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
 Needs you, Running, Stale, Checks red and Free, each with a line under its count: the oldest wait
 and its item, the steps running on which items, the stale worktrees, the red PRs and the free
 worktrees; a
 readiness line from `readiness` that says what runs, or why nothing does: how many items the next
 job could take, how many next-in-line items lack a field and how many more in the backlog do, how
-many wait at gates and how many are blocked; Needs you, a list oldest first where each row has
+many wait at gates and how many are blocked; under it a line with the lessons since the last
+retro (`counts.lessonsSinceRetro`, "No lesson since the last retro." at none) and a Retro link to
+that page; Needs you, a list oldest first where each row has
 its kind on a chip (a gate row names its gate there, `merge`, `escalation`, `plan-approval` …, so
 a clipped title loses nothing; the PR rows come from the `pulls` source, so they show wherever
 `github.repo` is set, whatever the trackers), its item and title over what it waits on, how long
@@ -770,14 +794,29 @@ from the `pulls` source: its state, item, agent or worktree and ages; four cells
 conflicts, review and threads; the reviewers asked by a mention, each silent one "has not answered
 yet" and each that cannot review with its own reply and the way out; Merge on a PR in state
 `mergeable`, else why not (a draft whose item has a quiz still to pass says it goes ready when the
-quiz is passed); the same quiz panel as the Gates card when the PR's item has one; and, on a PR
-that is not a draft, "Ask for review from" with the
-project's reviewers and "other…" for a GitHub login, whose Ask runs `pr.review`; a merge gate's
+quiz is passed); Force merge, a red outlined button that is never the primary one, on a PR in
+state `checks-failing` or `approved` with GitHub's merge state `BLOCKED` or `BEHIND`, which runs
+`pr.merge` with `force=true` (never on `conflicts`, `draft`, `checks-pending` or
+`changes-requested`); Resolve conflicts on a PR in state `conflicts` with an item, which runs
+`job.start` for the comments job on `jobsHost` with that item and the PR's number (the item may have
+no PR recorded when the card found it by its task branch), and while it runs the card says a
+comments pass is running and merges the base in first; the same quiz panel as the Gates card when
+the PR's item has one; and, on a PR that is not a draft, "Ask for review from" with the project's
+reviewers, then each of codex, claude and copilot not among them, then "other…" for a GitHub
+login, whose Ask runs `pr.review`; a merge gate's
 card has the same ask. Before that source is read, or off GitHub, a table of the items with a
 PR) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
-10 s). A row above every screen holds the project's fields, each a small uppercase label over its
+10 s), and Retro (`#/<project>/retro`, its nav entry saying "<n> new" while lessons wait for a
+retro: a head line with the lessons in all, those since the last retro and when the last retro
+ran, and "Run retro now" with a host picker (the retro schedule's host, else `jobsHost`), which
+runs `job.start` with `job: retro` and the config's model and effort; Lessons, by kind then by
+rule, the kinds and rules with the most lessons first and the lessons naming no rule last, each
+with its text, item, step, host and day, the lessons since the last retro first and All a tab
+away; Retros, newest first, each with its day and time, the lessons it read and the log's findings
+and applied columns, its report rendered as markdown, the newest open and the others folded). A
+row above every screen holds the project's fields, each a small uppercase label over its
 value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker, or
 Trackers for several (each tracker the flow reads: "GitHub issues" and "Jira" linked to their
 items, "local" plain; one the board could not read followed by "(not read)", its title the reason), Base branch

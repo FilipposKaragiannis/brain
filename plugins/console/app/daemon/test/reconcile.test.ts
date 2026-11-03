@@ -430,6 +430,38 @@ test('Pulls_ForkOnClaimedBranchName_NoLink', async () => {
   assert.equal(pullNumbered(await snapshot(), 23)?.item, null, 'because a fork branch named like a claim is someone else\'s branch');
 });
 
+/** The facts with pull #560 opened from `branch` instead of its fixture head. */
+const withPull560On = (facts: ReconcileInput, branch: string): ReconcileInput => ({
+  ...facts, pulls: { pulls: (facts.pulls?.pulls ?? []).map((pull) => (pull.number === 560 ? { ...pull, branch } : pull)) },
+});
+
+test('Pulls_NoPrRecorded_LinksTheOpenItemOnItsTaskBranch', async () => {
+  const facts = withPull560On(await input(), 'flow/gh-12');
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, 'gh#12', 'because flow/gh-12 is the branch the flow works gh#12 on, and gh#12 recorded no PR');
+});
+
+test('Pulls_TaskBranchSlug_ColonAndSlashBecomeDashes', async () => {
+  const facts = withPull560On(await input(), 'flow/local-task-3');
+  const twelve = facts.board!.items.find((item) => item.id === 'gh#12')!;
+  facts.board!.items.push({ ...twelve, id: 'local:task/3' });
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, 'local:task/3', 'because item_slug turns each :, / and # of the id into a dash');
+});
+
+test('Pulls_TaskBranchOfAClosedItem_NoLink', async () => {
+  const facts = withPull560On(await input(), 'flow/gh-12');
+  facts.board!.items.find((item) => item.id === 'gh#12')!.status = 'closed';
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, null, 'because a closed item\'s branch name says nothing about an open pull');
+});
+
+test('Pulls_TaskBranchOfAnItemThatNamesAnotherPull_NoLink', async () => {
+  const facts = withPull560On(await input(), 'flow/gh-20');
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, null, 'because gh#20 records #20 as its PR, so a second pull on its branch name is not its');
+});
+
+test('Pulls_MergeState_CarriedAsGithubSaysIt', async () => {
+  assert.equal(pullNumbered(await snapshot(), 21)?.mergeState, 'BLOCKED', 'because the card offers a force merge only where GitHub blocks the merge');
+});
+
 test('OpenedAndUpdatedTimes_GiveAgeAndIdleSeconds', async () => {
   const twenty = pullNumbered(await snapshot(), 20);
   assert.deepEqual([twenty?.ageSeconds, twenty?.idleSeconds], [375364, 22564], 'because it was opened at 10:00 four days before now and last touched at noon today');
@@ -1057,4 +1089,16 @@ test('ProjectPicks_FromTheConfig', async () => {
   const mine = { name: 'mine', assignee: 'me', status: [], labels: [], kinds: [], trackers: [], query: '' };
   facts.flow.config.picks = [mine];
   assert.deepEqual(reconcile(facts).project.picks, [mine], 'because the Jobs page offers the filters the config names');
+});
+
+test('Snapshot_Lessons_EveryLessonOfTheFlowHome', async () => {
+  assert.deepEqual((await snapshot()).lessons.map((lesson) => lesson.rule), ['T-09', null, 'T-09', 'N-05'], 'because the Retro page groups every lesson by kind then rule');
+});
+
+test('Snapshot_Retros_NewestFirstWithTheReportNoLineNames', async () => {
+  assert.deepEqual((await snapshot()).retros.map((run) => run.date), ['2026-10-19', '2026-10-15', '2026-10-08'], 'because each retro shows, latest first, and a report without its log line too');
+});
+
+test('Counts_LessonsSinceRetro_ThoseAfterTheLastRetrosCount', async () => {
+  assert.equal((await snapshot()).counts.lessonsSinceRetro, 2, 'because the last retro read three lines, the cut-short one among them, so the lessons on lines four and five are new');
 });

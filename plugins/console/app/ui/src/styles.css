@@ -646,7 +646,7 @@ a.tag { color: var(--accent); }
 .job-facts { margin: 0; font-size: 12px; color: var(--ink-soft); display: flex; flex-direction: column; gap: 2px; }
 .job-facts code { font-family: var(--mono); overflow-wrap: anywhere; }
 .start-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-soft); }
-.start-form input, .start-form select { font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
+.start-form input, .start-form select, .retro-run select { font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0; }
 .start-say { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--ink-soft); }
 .prefixed { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .prefixed input { flex: 1 1 auto; width: 100%; }
@@ -690,6 +690,8 @@ a.tag { color: var(--accent); }
 .pull-cannot q { font-style: italic; }
 .pull-cannot-help { flex-basis: 100%; padding-left: 16px; }
 .pull-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 18px; background: var(--panel-soft); }
+.pull-force .button { color: var(--failing); border-color: var(--failing); }
+.pull-resolve { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 @media (max-width: 720px) {
   .pull-health { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .pull-age { margin-left: 0; }
@@ -782,3 +784,17 @@ a.tag { color: var(--accent); }
 .flow-schedule { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .flow-schedule-form { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
 .flow-schedule-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Retro: the lessons by kind and rule, and each retro with its report */
+.retro-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.retro-run { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.retro-run .field { flex-direction: row; align-items: center; }
+.lessons-line { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px; padding-block: 8px; font-size: 13px; }
+.lesson-groups { display: flex; flex-direction: column; gap: 18px; padding: 14px 18px; }
+.lesson-kind h3 { margin: 0 0 8px; font-size: 14px; }
+.lesson-rule { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--line); }
+.lesson-rule h4 { margin: 0 0 4px; font-size: 13px; }
+.lesson-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.lesson { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.retro-runs { list-style: none; margin: 0; padding: 14px 18px; display: flex; flex-direction: column; gap: 10px; }
+.retro-run-card .markdown { max-width: 76ch; padding-bottom: 12px; }

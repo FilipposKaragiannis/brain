@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 10;
+export const SNAPSHOT_SCHEMA_VERSION = 11;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -382,6 +382,8 @@ export type PullRequest = {
   reviewDecision: string | null;
   unresolvedThreads: number;
   mergeable: string | null;
+  /** GitHub's merge state status (`CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`, …), or null when GitHub gave none. */
+  mergeState: string | null;
   item: string | null;
   worktree: string | null;
   createdAt: string;
@@ -515,6 +517,36 @@ export type Counts = {
   pullsChangesRequested: number;
   /** The `needs-field` attention rows: items next in line for work under way that lack a field. Same as `readiness.nextInLineMissingField`. */
   needsField: number;
+  /** The lessons recorded after the last retro read the log, the ones the next retro will read. */
+  lessonsSinceRetro: number;
+};
+
+/**
+ * One lesson the flow recorded (`<flow home>/lessons.jsonl`, written by `lesson.sh`): an
+ * escalation, a review blocker, a correction or another kind, with the item, step and rule it
+ * came from (null where the line leaves them empty). `line` is its place among the file's
+ * counted lines, malformed ones included, which a retro's `lessonsReadSoFar` is measured against.
+ */
+export type Lesson = { line: number; at: string | null; kind: string; item: string | null; step: string | null; rule: string | null; text: string; host: string | null };
+
+/** A retro's report, `<flow home>/reports/retro-<date>.md`, as markdown. */
+export type RetroReport = { file: string; text: string };
+
+/**
+ * One retro: a line of `<flow home>/retros.log`, or a report no line names. `date` is the day it
+ * ran. `at`, `lessonsRead` (the lessons this run read) and `lessonsReadSoFar` (the lessons read
+ * to date) are null for a report with no log line; `findings` and `applied` are the log's third
+ * and fourth columns as written, empty when absent. `report` is the report of its day, held by the
+ * last run of that day, or null.
+ */
+export type RetroRun = {
+  date: string;
+  at: string | null;
+  lessonsRead: number | null;
+  lessonsReadSoFar: number | null;
+  findings: string;
+  applied: string;
+  report: RetroReport | null;
 };
 
 /**
@@ -561,6 +593,10 @@ export type Snapshot = {
   stoppedHosts: StoppedHost[];
   pulls: PullRequest[];
   events: FlowEvent[];
+  /** Every lesson in the flow home's lessons log, oldest first. */
+  lessons: Lesson[];
+  /** Every retro, newest first. */
+  retros: RetroRun[];
   disagreements: Disagreement[];
   newerConsole: NewerConsole | null;
 };
