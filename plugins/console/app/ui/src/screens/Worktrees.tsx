@@ -145,13 +145,14 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
 
 /**
  * Reserve on a free card, Release on a claimed or reserved one, in the same place. Each names its
- * card's worktree, so its running and outcome states show on that card only.
+ * card's worktree, so its running and outcome states show on that card only. Each shows the newer
+ * outcome of either, so a reserve's feedback, a refusal above all, outlives the swap to Release.
  */
 function HoldButton({ worktree }: { worktree: Worktree }) {
   const args = { target: worktree.name };
-  if (worktree.claim?.reserved) return <ActionButton kind="worktree.release" args={args} label="Release" primary={false} title={RELEASE_RESERVED_TITLE} />;
-  if (worktree.claim !== null) return <ActionButton kind="worktree.release" args={args} label="Release" primary={false} />;
-  if (worktree.state === 'free') return <ActionButton kind="worktree.reserve" args={args} label="Reserve" primary={false} title={RESERVE_TITLE} />;
+  if (worktree.claim?.reserved) return <ActionButton kind="worktree.release" args={args} label="Release" primary={false} title={RELEASE_RESERVED_TITLE} sharesOutcomeWith="worktree.reserve" />;
+  if (worktree.claim !== null) return <ActionButton kind="worktree.release" args={args} label="Release" primary={false} sharesOutcomeWith="worktree.reserve" />;
+  if (worktree.state === 'free') return <ActionButton kind="worktree.reserve" args={args} label="Reserve" primary={false} title={RESERVE_TITLE} sharesOutcomeWith="worktree.release" />;
   return null;
 }
 

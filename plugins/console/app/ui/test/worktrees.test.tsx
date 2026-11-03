@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, expect, test } from 'vitest';
 import type { ActionRecord, Worktree } from '../../daemon/src/snapshot.ts';
 import { RELEASE_RESERVED_TITLE, Worktrees } from '../src/screens/Worktrees.tsx';
-import { actionRecord, claudeSession, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { actionRecord, claudeSession, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -292,4 +292,30 @@ test('ClaimedCard_ReleaseAndNoReserve', () => {
   renderWorktrees([{ ...poolWorktree('wt-2'), state: 'claimed', claim: CLAIM, item: 'gh#344' }]);
   const card = screen.getByRole('article', { name: 'wt-2' });
   expect([within(card).queryByRole('button', { name: 'Reserve' }), within(card).queryByRole('button', { name: 'Release' }) !== null], 'because a worktree the flow holds is released, never reserved').toEqual([null, true]);
+});
+
+/** A free wt-3 card whose Reserve the daemon answers with `answer`, and a way to show the screen over other worktrees afterwards. */
+async function pressReserveThenRefresh(answer: { status: number; body: unknown }) {
+  const daemon = new FakeDaemon();
+  daemon.answer('POST', ACTIONS_PATH, () => answer);
+  const Wrapper = daemon.screenWrapper();
+  const view = (worktrees: Worktree[]) => <Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees }} /></Wrapper>;
+  const rendered = render(view([poolWorktree('wt-3')]));
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Reserve' })); });
+  return { refresh: (worktrees: Worktree[]) => rendered.rerender(view(worktrees)) };
+}
+
+const RESERVED_WT3: Worktree = { ...RESERVED, name: 'wt-3' };
+
+test('FreeCard_ReserveRefused_RefusalStaysWhenTheCardTurnsToRelease', async () => {
+  const { refresh } = await pressReserveThenRefresh({ status: HTTP_CONFLICT, body: { error: 'wt-3 is already claimed' } });
+  refresh([RESERVED_WT3]);
+  const card = screen.getByRole('article', { name: 'wt-3' });
+  expect([within(card).queryByRole('button', { name: 'Release' }) !== null, within(card).queryByText('wt-3 is already claimed') !== null], 'because the refresh that turns the card to Release must not hide why the reserve was refused').toEqual([true, true]);
+});
+
+test('FreeCard_ReserveEnded_OutcomeStaysWhenTheCardTurnsToRelease', async () => {
+  const { refresh } = await pressReserveThenRefresh({ status: HTTP_ACCEPTED, body: { action: reserving('r4', 'failed', 'wt-3') } });
+  refresh([RESERVED_WT3]);
+  expect(within(screen.getByRole('article', { name: 'wt-3' })).queryByText('failed (exit 1)'), "because the reserve's outcome belongs to the card, not to the Reserve button").not.toBeNull();
 });

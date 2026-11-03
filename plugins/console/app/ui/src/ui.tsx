@@ -83,11 +83,15 @@ export function SessionButton({ path, pid, alive }: { path: string; pid: number;
 export const OUTCOME_SHOWN_MS = 8000;
 export const FAILURE_SHOWN_MS = 30000;
 
-/** A button that runs one action, stays disabled while that action runs, and says for a while how it ended. */
-export function ActionButton({ kind, args, label, primary, title }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean; title?: string | undefined }) {
+/**
+ * A button that runs one action, stays disabled while that action runs, and says for a while how it
+ * ended. With `sharesOutcomeWith`, it says how the newer of its own press and a press of that other
+ * kind ended, so a button that takes the place of another keeps the feedback of the press before it.
+ */
+export function ActionButton({ kind, args, label, primary, title, sharesOutcomeWith }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean; title?: string | undefined; sharesOutcomeWith?: ActionKind | undefined }) {
   const actions = useActionsView();
   const busy = actions.busy(kind, args);
-  const outcome = useFadingOutcome(actions.outcome(kind, args));
+  const outcome = useFadingOutcome(newerOutcome(actions.outcome(kind, args), sharesOutcomeWith === undefined ? null : actions.outcome(sharesOutcomeWith, args)));
   return (
     <span className="action">
       <button type="button" className={primary ? 'button primary' : 'button'} disabled={busy} title={title} onClick={() => { void actions.run(kind, args); }}>
@@ -117,6 +121,12 @@ function useFadingOutcome(outcome: ActionOutcome | null): ActionOutcome | null {
   if (outcome.kind === 'started' && outcome.record.state === 'running') return outcome;
   const failed = outcome.kind === 'refused' || outcome.record.state === 'failed' || outcome.record.state === 'rejected';
   return now - seen.at < (failed ? FAILURE_SHOWN_MS : OUTCOME_SHOWN_MS) ? outcome : null;
+}
+
+function newerOutcome(own: ActionOutcome | null, other: ActionOutcome | null): ActionOutcome | null {
+  if (own === null) return other;
+  if (other === null) return own;
+  return other.press > own.press ? other : own;
 }
 
 function outcomeKey(outcome: ActionOutcome | null): string | null {
