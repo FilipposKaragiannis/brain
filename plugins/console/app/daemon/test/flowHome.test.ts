@@ -96,7 +96,7 @@ test('FlowHome_GatesRunsClaimsEvents', async () => {
   const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
   assert.deepEqual(facts.gates.map((gate) => [gate.item, gate.gate]), [['gh#7', 'ambiguity']], 'because one gate record waits');
   assert.equal(facts.runs[0]?.item, 'gh#9', 'because one run record exists');
-  assert.ok(facts.runs[0]?.startedAt, 'because the record mtime stands in for the start time');
+  assert.equal(facts.runs[0]?.startedAt, '2026-10-24T18:01:30Z', 'because the record says when next.sh started the run');
   assert.deepEqual(facts.claims.map((claim) => claim.item).sort(), ['gh#5', 'gh#7', 'gh#9'], 'because every pool worktree with a claim.json is claimed');
   assert.equal(facts.events[0]?.kind, 'comments', 'because events come newest first');
 });
@@ -309,6 +309,29 @@ test('Picks_ANameFlowRefuses_LeftOut', () => {
 
 test('Picks_NoneInTheConfig_Empty', () => {
   assert.deepEqual(parseFlowConfig('base: main\n').picks, [], 'because without filters every run takes every ready item');
+});
+
+test('FlowHome_RunRecord_CarriesItsOwnerPid', async () => {
+  const facts = await readFlowHome(FIXTURE_ROOT, fakeRunner);
+  assert.equal(facts.runs[0]?.pid, 99, 'because the pid next.sh wrote is how a live run is told from a dead one when its agent cannot be placed');
+});
+
+test('FlowHome_RunRecordWithoutStarted_FileTimeStandsIn', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'console-run-'));
+  try {
+    mkdirSync(path.join(root, '.flow', 'runs'), { recursive: true });
+    writeFileSync(path.join(root, '.flow', 'runs', 'gh-3.json'), JSON.stringify({ item: 'gh#3', step: 'implement', worktree: '/w' }));
+    const facts = await readFlowHome(root, fakeRunner);
+    assert.ok(Date.parse(facts.runs[0]?.startedAt ?? '') > Date.parse('2026-01-01T00:00:00Z'), 'because an older flow wrote no start, and the file was written when the run began');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('FlowConfig_HealthGrace_UnsetIsTenMinutes', () => {
+  assert.equal(parseFlowConfig('base: main\n').healthGraceSeconds, 600, 'because steward.sh counts a run without a process as starting for 10m by default');
+});
+
+test('FlowConfig_HealthGrace_ReadAsFlowReadsADuration', () => {
+  assert.deepEqual(['90s', '2h', '15'].map((grace) => parseFlowConfig(`jobs:\n  health:\n    grace: ${grace}\n`).healthGraceSeconds), [90, 7200, 900], 'because a bare number is minutes, as _health.py seconds reads it');
 });
 
 test('FlowHome_LessonsLog_EveryLessonReadMalformedLinesSkipped', async () => {

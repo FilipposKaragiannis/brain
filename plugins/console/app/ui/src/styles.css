@@ -572,6 +572,7 @@ a.button { color: inherit; text-decoration: none; display: inline-block; }
 .run-cards { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
 .run-card { border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); box-shadow: var(--shadow-card); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .run-card.dead { border-style: dashed; border-color: var(--needs-you); background: var(--panel); }
+.run-card.unseen { border-style: dashed; background: var(--panel); }
 .run-card.folded { gap: 0; }
 .fold-toggle { border: none; background: none; color: var(--ink-soft); cursor: pointer; padding: 0 2px; font-size: 12px; line-height: 1; transition: transform 0.15s; }
 .fold-toggle[aria-expanded='true'] { transform: rotate(90deg); }

@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 10;
+export const SNAPSHOT_SCHEMA_VERSION = 11;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -23,7 +23,7 @@ export type WorktreeRole = 'main' | 'pool' | 'outside';
  * - `behind`: its branch is at least one commit behind the base.
  * - `stale-branch`: a claimed branch is so far behind the base (`STALE_BEHIND_BASE_COMMITS`) that it needs the base merged in; the worktree is stale.
  * - `idle`: claimed for `STALE_IDLE_HOURS` or more with no run, no agent and no gate; the worktree is stale.
- * - `dead-run`: a run record names the worktree but no agent process is in it.
+ * - `dead-run`: a run record names the worktree and its run is `dead` (see `RunLiveness`).
  * - `agent-without-claim`: an unattended agent works in a pool worktree nobody claimed.
  * - `session`: an interactive claude or codex (yours or an app's) has its working directory in the worktree.
  */
@@ -291,15 +291,63 @@ export type QuizResult = { at: string; right: number; total: number; passed: boo
  */
 export type Quiz = { file: string; title: string | null; questions: QuizQuestion[]; result: QuizResult | null };
 
+/**
+ * Whether a run's process is there, as far as the process list can tell.
+ * - `alive`: an agent process works in its worktree, or the pid its record names still runs a
+ *   claude, a codex or flow's unattended loop that started no later than the record.
+ * - `starting`: no process of it was found, but the record is younger than the health job's grace
+ *   (`jobs.health.grace`, 10m by default), which the health job also counts as running.
+ * - `unknown`: no process of it was found, but the process list was not read in full
+ *   (`processList`), so the miss proves nothing.
+ * - `dead`: the process list was read in full, no process of the run is there and the grace has
+ *   passed. Only a dead run is resumable, flagged `dead-run` and listed on Needs you.
+ */
+export type RunLiveness = 'alive' | 'starting' | 'unknown' | 'dead';
+
 export type Run = {
   item: string;
   step: string;
   profile: string;
   worktree: string;
   host: string;
+  /** The record's `started`, else when its file was last written. */
   startedAt: string | null;
-  alive: boolean;
+  /** The run's owner as its record names it (the unattended loop, or the session that started it); null when an older flow wrote none. */
+  pid: number | null;
+  liveness: RunLiveness;
 };
+
+/**
+ * One process lookup that failed or came back short, for the log and the page: the command, its
+ * exit code (null when it had none, as on a timeout), whether it timed out, how long it took, and
+ * the start of what it wrote to stderr, cut to `LOOKUP_STDERR_CHARS`.
+ */
+export type ProcessLookup = { command: 'ps' | 'lsof'; code: number | null; timedOut: boolean; durationMs: number; stderr: string };
+
+/** How much of a failed lookup's stderr the snapshot and the log carry. */
+export const LOOKUP_STDERR_CHARS = 300;
+
+/**
+ * How far the last process read can be trusted to say that nothing runs somewhere.
+ * - `complete`: ps listed the processes and lsof gave every claude and codex its working directory.
+ * - `partial`: ps listed them, but lsof failed, timed out or left out the `unplaced` pids, so the
+ *   agents those pids were last seen as stay in the list and a worktree with none proves nothing.
+ * - `unavailable`: ps failed, timed out or listed nothing, or the processes were not read yet
+ *   (`lookup` null); the agents are the last full read's.
+ */
+export type ProcessListStatus =
+  | { status: 'complete' }
+  | { status: 'partial'; reason: string; unplaced: number[]; lookup: ProcessLookup }
+  | { status: 'unavailable'; reason: string; lookup: ProcessLookup | null };
+
+/** What the page and the `processes` source say of a process list not read in full, or null for a complete one. */
+export function processListProblem(list: ProcessListStatus): string | null {
+  switch (list.status) {
+    case 'complete': return null;
+    case 'partial': return `process list incomplete: ${list.reason}`;
+    case 'unavailable': return `process list unavailable: ${list.reason}`;
+  }
+}
 
 export type Agent = {
   pid: number;
@@ -537,6 +585,8 @@ export type Snapshot = {
   gates: Gate[];
   runs: Run[];
   agents: Agent[];
+  /** How complete the last process read was: a run is judged dead only after a complete one. */
+  processList: ProcessListStatus;
   /** Agents and sessions with a transcript that ended in the last day while the daemon watched, newest first. */
   ended: EndedAgent[];
   jobs: Job[];

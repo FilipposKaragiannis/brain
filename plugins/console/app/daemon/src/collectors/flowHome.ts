@@ -26,6 +26,8 @@ export type FlowConfig = {
   poolMax: number | null;
   schedule: Record<string, string>;
   behindBase: number | null;
+  /** `jobs.health.grace` in seconds: how long a run record with no process still counts as starting, 10m by default as in steward.sh. */
+  healthGraceSeconds: number;
   /** jobs.host: the CLI the jobs run unattended, claude by default. */
   jobsHost: string;
   /**
@@ -56,7 +58,12 @@ export type GateRecord = { item: string; gate: string; message: string; time: st
  */
 export type ReviewRecord = { pr: number; state: string; waiting: string[]; cannot: ReviewCannot[]; at: string };
 export type ReviewCannot = { reviewer: string; said: string };
-export type RunRecord = { item: string; step: string; profile: string; worktree: string; host: string; startedAt: string | null };
+/**
+ * One record in .flow/runs. `startedAt` is the record's `started`, else when its file was last
+ * written; `pid` is the run's owner next.sh wrote (the unattended loop, or the session that called
+ * it), null when an older flow wrote none.
+ */
+export type RunRecord = { item: string; step: string; profile: string; worktree: string; host: string; startedAt: string | null; pid: number | null };
 export type ClaimRecord = {
   worktreePath: string;
   item: string;
@@ -136,6 +143,17 @@ export function poolPaths(root: string, config: FlowConfig): string[] {
 }
 
 const JOB_HOSTS = ['claude', 'codex'];
+/** steward.sh's default for `jobs.health.grace`, 10m. */
+const DEFAULT_HEALTH_GRACE_SECONDS = 600;
+/** A duration as flow's `_health.py seconds` takes it: a number with s, m, h or d, minutes when bare. */
+const DURATION = /^(\d+)([smhd]?)$/;
+const DURATION_UNIT_SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400, '': 60 };
+
+/** The seconds a flow duration names, or the fallback when it is unset or not one flow takes (the health job refuses it then). */
+function durationSeconds(value: string | null, fallback: number): number {
+  const found = DURATION.exec((value ?? '').trim());
+  return found === null ? fallback : Number(found[1]) * (DURATION_UNIT_SECONDS[found[2] ?? ''] ?? 0);
+}
 
 function jobsHostOf(value: string | null): string {
   return value !== null && JOB_HOSTS.includes(value) ? value : 'claude';
@@ -172,6 +190,7 @@ export function parseFlowConfig(source: string): FlowConfig {
     poolMax: poolMax === null ? null : Number(poolMax),
     schedule,
     behindBase: behindBase === null ? null : Number(behindBase),
+    healthGraceSeconds: durationSeconds(yamlString(map, 'jobs.health.grace'), DEFAULT_HEALTH_GRACE_SECONDS),
     jobsHost: jobsHostOf(yamlString(map, 'jobs.host')),
     jobsWorkers: (yamlString(map, 'jobs.workers') ?? '').trim() !== '' || Object.keys(yamlMap(map, 'jobs.workers')).length > 0,
     reviewers: reviewersOf([...yamlList(map, 'reviews.reviewers'), ...REVIEWER_LISTS.flatMap((list) => yamlList(map, `reviews.reviewers.${list}`))]),
@@ -418,7 +437,8 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const config = parseFlowConfig(configSource);
   const records = await readJsonFiles(path.join(flowHome, 'gates'));
   const runs = (await readJsonFiles(path.join(flowHome, 'runs'))).map(({ value, modifiedAt }) => ({
-    item: text(value, 'item'), step: text(value, 'step'), profile: text(value, 'profile'), worktree: text(value, 'worktree'), host: text(value, 'host'), startedAt: modifiedAt,
+    item: text(value, 'item'), step: text(value, 'step'), profile: text(value, 'profile'), worktree: text(value, 'worktree'), host: text(value, 'host'),
+    startedAt: text(value, 'started') || modifiedAt, pid: typeof value['pid'] === 'number' ? value['pid'] : null,
   }));
   const reviews = (await readJsonFiles(path.join(flowHome, 'reviews')))
     .filter(({ file }) => file.endsWith('.review.json'))

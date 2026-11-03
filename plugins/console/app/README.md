@@ -168,12 +168,13 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 10 since the snapshot took
-`lessons`, `retros` and `counts.lessonsSinceRetro` (9 when an attention row took `gate`, 8 when
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 11 since a run's `liveness`
+took the place of `alive` and the snapshot took `processList` (10 when the snapshot took
+`lessons`, `retros` and `counts.lessonsSinceRetro`, 9 when an attention row took `gate`, 8 when
 `project.trackers` took the place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
 One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
-a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `ended`, `jobs`, `pulls`, `events`
+a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `processList`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`), `lessons`, `retros`, `disagreements` and `newerConsole`
 (`{running, cached}` while the plugin cache holds a newer console with an install script than the
 one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
@@ -242,6 +243,28 @@ snapshots.
   are kept in memory and forgotten fourteen days after the file was last written. `resume` is the argv
   that opens it again: `["claude", "--resume", id]` or `["codex", "resume", id]`. The home folder
   and the clock are injected (`daemon/src/collectors/sessions.ts`).
+- `processList` says how far the last process read can be trusted to say that nothing runs
+  somewhere: `{status: "complete"}` when ps listed the processes and lsof gave every claude and
+  codex its working directory; `{status: "partial", reason, unplaced, lookup}` when ps listed them
+  but lsof failed, timed out or left out the `unplaced` pids; `{status: "unavailable", reason,
+  lookup}` when ps failed, timed out or listed nothing (`lookup` null before the first read).
+  `lookup` is the command that failed, `{command, code, timedOut, durationMs, stderr}`, its stderr
+  cut to 300 characters. A read that is not complete never empties the picture: with ps down the
+  last read's agents stand, and an agent lsof could not place stays where it was last seen while
+  ps still lists its pid. The `processes` source is then red, its error "process list
+  unavailable: ps timed out after 10s" or "process list incomplete: lsof gave no working directory
+  for pid 23465", and the daemon logs `processes.lookup.failed` with the command, exit code,
+  timeout, duration and stderr once per reason, then `processes.lookup.recovered` once a read is
+  complete again.
+- A run carries `pid`, the owner its record names (the unattended loop, or the session that ran
+  next.sh; null from an older flow), `startedAt`, the record's `started` (else its file time), and
+  `liveness`, flow's `_health.py alive` rule with the health job's grace: `alive` when an agent
+  works in its worktree or the record's pid still runs a claude, a codex or the unattended loop
+  that started no later than the record (5 seconds' slack for ps's rounding; a pid a later process
+  reused is not the owner); else `unknown` while `processList` is not complete, since a miss then
+  proves nothing; else `starting` while the record is younger than `jobs.health.grace` (10m by
+  default, read as flow reads a duration); else `dead`. Only a dead run gets the `dead-run` flag,
+  the `dead-run` attention row, the run record vs process list disagreement and a Resume button.
 - `ended` lists the agents and sessions with a session that left the process list while the
   daemon watched, in the last 24 hours, at most 10, newest first: an `agents` entry plus `endedAt`
   (when the read that missed it ran). It lives in the daemon's memory, so a restart empties it.
@@ -315,7 +338,7 @@ One status language, used by worktrees and items alike:
 
 | State | Meaning |
 |---|---|
-| `running` | an unattended agent process (`claude -p`, `codex exec`) has its cwd in the worktree, or a live run record |
+| `running` | an unattended agent process (`claude -p`, `codex exec`) has its cwd in the worktree, or a run record whose run is not `dead` |
 | `needs-you` | its item has a gate record in `.flow/gates` |
 | `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate; never a reservation |
 | `claimed` | claimed, idle, nothing waits on you |
@@ -330,7 +353,7 @@ Flags add detail without changing the state:
 | `behind` | its branch is at least one commit behind the base |
 | `stale-branch` | a claimed branch is 20 or more commits behind the base, so it needs the base merged in |
 | `idle` | claimed for 72h or more with no run, no agent and no gate |
-| `dead-run` | a run record names it but no agent process is in it |
+| `dead-run` | a run record names it and its run is `dead`: a complete process read found no agent in it and no owner, past the grace |
 | `agent-without-claim` | an unattended agent works in a pool worktree nobody claimed |
 | `session` | an interactive session is open in the folder (see below) |
 
@@ -367,7 +390,7 @@ Null without a record.
 |---|---|---|
 | `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, `lessons.jsonl`, `retros.log`, `reports/retro-*.md`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
 | `git` | `git worktree list`, per worktree ahead/behind the base, dirty files, last commit | 30s, and after a file change |
-| `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
+| `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd, and every process that can own a run (those and flow's unattended loop) with its start; a lookup that fails or times out (10s each) makes the list `partial` or `unavailable` (`processList`), never empty. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
 | `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project without `github.repo` reports `ok` with `error: "not applicable: …"` and is never read; whatever tracker holds the items, the flow keeps their PRs on GitHub, so the tracker does not matter | 60s |
@@ -666,7 +689,7 @@ person has to look:
 
 | Stores | Usually right | Action |
 |---|---|---|
-| run record vs process list | the process list: the run ended or crashed | `steward.health`, "Run the health check" |
+| run record vs process list (only for a `dead` run) | the process list: the run ended or crashed | `steward.health`, "Run the health check" |
 | process list vs claim | the process list: something runs there unclaimed | none |
 | claim vs issue state (step) | the claim: it is the agent's own record, written first | `item.step-sync` with the item, "Set the issue's step to the claim's"; none when the claim names the sync step, which leaves the issue at the item's own step |
 | claim vs issue state (worktree) | the claim: it lives in the worktree itself | none |
@@ -733,7 +756,8 @@ chips with counts for all, running, needs you, stale, claimed and free, the pool
 and Reserve, Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
 branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
 its agents and sessions with pid, host and age and the command on hover, a Watch button to the
-run or a Decide button to the gate, why it is stale and the way
+run or a Decide button to the gate, "The run may still go (process list unavailable: <reason>)"
+while its run's `liveness` is `unknown`, why it is stale and the way
 out (for a branch far behind, a "Merge <base> in" button that runs `worktree.sync` when the
 worktree is clean, has no run record and no agent, else the same words without the button;
 after a sync that conflicted, the conflicting files folded after five and "Hand to the flow",
@@ -751,8 +775,10 @@ the page: a card per live run, the first open and the
 others folded to their header, each with its step, item, worktree, host and PR, its stats
 (started, last commit, transcript size and turns, pid) and its transcript as a terminal of the
 last 12 lines, with Full log (the last 2000 lines in a box that scrolls), Open session, Open in
-Terminal and Stop this run (`run.stop`); a run record with no process is a dashed card with
-Resume (`run.resume`); with no run, a link to Jobs. Then your own sessions, folded, and the runs
+Terminal and Stop this run (`run.stop`); a `dead` run is a dashed card with Resume
+(`run.resume`); a run whose process was not found but may still go is a dashed card with no
+button that says why: "process list unavailable: <reason>" (or incomplete) while `liveness` is
+`unknown`, or that it is still starting within the grace; with no run, a link to Jobs. Then your own sessions, folded, and the runs
 ended in the last day), Jobs (`#/<project>/jobs`, a main column and a side column. Schedules: a
 card per schedule with its state, timing, host and args, the last
 run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Open in Terminal in the row; its

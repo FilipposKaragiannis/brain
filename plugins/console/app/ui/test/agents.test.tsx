@@ -103,7 +103,7 @@ test('EndedAgent_OpenSessionSaysItResumes', async () => {
 test('LiveRun_ShowsItsStepAndOpensItsTranscript', async () => {
   const daemon = new FakeDaemon();
   transcriptAt(daemon, 12);
-  const run: Run = { item: 'gh#9', step: 'verify', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, alive: true };
+  const run: Run = { item: 'gh#9', step: 'verify', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'alive' };
   await renderSnapshot({ agents: [{ ...agent(100, 'agent', '/p-wt/wt-3'), worktree: 'wt-3', item: 'gh#9', session: SESSION }], runs: [run] }, daemon);
   const card = screen.getByRole('article', { name: 'Run 100' });
   expect(card.textContent, 'because the card says which step of which item runs').toMatch(/verify · gh#9/);
@@ -115,7 +115,7 @@ test('FullLog_ReadsTheWholeTranscript', async () => {
   const daemon = new FakeDaemon();
   transcriptAt(daemon, 12);
   transcriptAt(daemon, 2000);
-  const run: Run = { item: 'gh#9', step: 'verify', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, alive: true };
+  const run: Run = { item: 'gh#9', step: 'verify', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'alive' };
   await renderSnapshot({ agents: [{ ...agent(100, 'agent', '/p-wt/wt-3'), worktree: 'wt-3', item: 'gh#9', session: SESSION }], runs: [run] }, daemon);
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Full log' })); });
   expect(screen.getByRole('button', { name: 'Last lines' }).getAttribute('aria-pressed'), 'because the full log is a mode of the card the owner can leave').toBe('true');
@@ -123,7 +123,7 @@ test('FullLog_ReadsTheWholeTranscript', async () => {
 });
 
 test('StopThisRun_NamesTheItemAndSaysWhatStays', async () => {
-  const run: Run = { item: 'gh#9', step: 'verify', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, alive: true };
+  const run: Run = { item: 'gh#9', step: 'verify', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'alive' };
   const posted = await renderSnapshot({ agents: [{ ...agent(100, 'agent', '/p-wt/wt-3'), worktree: 'wt-3', item: 'gh#9' }], runs: [run] });
   const stop = screen.getByRole('button', { name: 'Stop this run' });
   expect(stop.getAttribute('title'), 'because the owner must know the worktree survives').toBe(STOP_HELP);
@@ -132,7 +132,7 @@ test('StopThisRun_NamesTheItemAndSaysWhatStays', async () => {
 });
 
 test('RunRecordWithoutAProcess_OffersToResume', async () => {
-  const run: Run = { item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, alive: false };
+  const run: Run = { item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'dead' };
   const posted = await renderSnapshot({ runs: [run] });
   const card = screen.getByRole('article', { name: 'Run record for gh#9' });
   expect(card.textContent, 'because a dead record is a warning, not a failure, and says what Resume does').toMatch(/record, no process.*starts implement again in wt-3/);
@@ -140,10 +140,39 @@ test('RunRecordWithoutAProcess_OffersToResume', async () => {
   expect(posted, 'because flow clears the record and resumes the step where it stopped').toEqual([{ kind: 'run.resume', args: { item: 'gh#9' } }]);
 });
 
+/** The process list on the day of the false dead run: ps timed out, so nothing is known about any process. */
+const PS_TIMED_OUT: Snapshot['processList'] = { status: 'unavailable', reason: 'ps timed out after 10s', lookup: { command: 'ps', code: null, timedOut: true, durationMs: 10004, stderr: '' } };
+
+test('RunWhoseProcessIsUnknown_SaysTheProcessListIsUnavailable', async () => {
+  const run: Run = { item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: 19487, liveness: 'unknown' };
+  await renderSnapshot({ runs: [run], processList: PS_TIMED_OUT });
+  expect(screen.getByRole('article', { name: 'Run record for gh#9' }).textContent, 'because a failed lookup is said as one, never as a run that ended').toMatch(/process list unavailable: ps timed out after 10s/);
+});
+
+test('RunWhoseProcessIsUnknown_OffersNoResume', async () => {
+  const run: Run = { item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: 19487, liveness: 'unknown' };
+  await renderSnapshot({ runs: [run], processList: PS_TIMED_OUT });
+  expect(screen.queryByRole('button', { name: 'Resume' }), 'because flow refuses to resume a run that is still alive, as it did on task 33').toBeNull();
+});
+
+test('RunStillStarting_OffersNoResume', async () => {
+  const run: Run = { item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'starting' };
+  await renderSnapshot({ runs: [run] });
+  expect([screen.getByRole('article', { name: 'Run record for gh#9' }).textContent?.includes('starting'), screen.queryByRole('button', { name: 'Resume' })], 'because a run within the health job\'s grace has not had time to show its process').toEqual([true, null]);
+});
+
+test('AliveRunWithNoLocatedAgent_ShowsItsRecordWithoutResume', async () => {
+  const run: Run = { item: 'gh#9', step: 'implement', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: TAKEN_AT, pid: 19487, liveness: 'alive' };
+  await renderSnapshot({ runs: [run] });
+  const card = screen.getByRole('article', { name: 'Run record for gh#9' });
+  expect([card.textContent?.includes('alive, agent not located'), card.textContent?.includes('wt-3'), screen.queryByText(/No flow run is going/)], 'because a run whose owner still runs is going, even when its agent was not located').toEqual([true, true, null]);
+  expect([screen.queryByRole('button', { name: 'Resume' }), screen.queryByRole('button', { name: /Open session/ })], 'because flow refuses to resume a live run, and there is no located session to open').toEqual([null, null]);
+});
+
 test('Runs_OnlyTheFirstCardStartsOpen', async () => {
   const daemon = new FakeDaemon();
   transcriptAt(daemon, 12);
-  const runs: Run[] = [9, 10].map((n) => ({ item: `gh#${n}`, step: 'verify', profile: 'default', worktree: `wt-${n}`, host: 'claude', startedAt: TAKEN_AT, alive: true }));
+  const runs: Run[] = [9, 10].map((n) => ({ item: `gh#${n}`, step: 'verify', profile: 'default', worktree: `wt-${n}`, host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'alive' }));
   await renderSnapshot({ agents: [{ ...agent(100, 'agent', '/p-wt/wt-9'), worktree: 'wt-9', item: 'gh#9' }, { ...agent(101, 'agent', '/p-wt/wt-10'), worktree: 'wt-10', item: 'gh#10' }], runs }, daemon);
   expect(screen.getByRole('button', { name: 'Fold run 100' }).getAttribute('aria-expanded'), 'because the first run shows its transcript').toBe('true');
   expect(screen.queryByRole('list', { name: 'Transcript of pid 101' }), 'because the rest stay folded, so the list stays short').toBeNull();
