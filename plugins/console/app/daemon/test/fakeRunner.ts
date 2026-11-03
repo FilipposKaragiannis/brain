@@ -17,7 +17,9 @@ const WORKTREE_LIST = [
   `worktree ${FIXTURES}/project-side\nHEAD 5555555\ndetached\n`,
 ].join('\n');
 
+/** gh#9's run: its owner, the unattended loop (99), and its agent in project-wt-3 (100). */
 const PROCESSES = [
+  `   99   16:00 /bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/9.9.9/scripts/run-unattended.sh next`,
   `  100   15:42 /usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto`,
   `  104   02:00 /usr/local/bin/claude --session-id abc --permission-mode auto`,
   `  101 01-02:03:04 /Users/x/.local/bin/claude daemon run --origin transient`,

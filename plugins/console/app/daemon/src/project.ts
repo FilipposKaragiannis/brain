@@ -25,7 +25,7 @@ import { ageSeconds, landedMergeGates, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
 import type { Freshness, InstalledPlugin, Job, NewerConsole, SessionRef, Snapshot, SourceName } from './snapshot.ts';
-import { ENDED_KEPT } from './snapshot.ts';
+import { ENDED_KEPT, processListProblem } from './snapshot.ts';
 
 /** How often each source is re-read, in milliseconds. File changes also trigger `files` and `git` at once. */
 export type Cadence = { filesMs: number; gitMs: number; processesMs: number; jobsMs: number; boardMs: number; pullsMs: number };
@@ -45,6 +45,16 @@ const SWEEP_LOCK_HELD = 75;
 export type ProjectDefinition = { id: string; name: string; root: string };
 
 type Reading<T> = { facts: T | null; freshness: Freshness };
+
+/**
+ * What a read that ran says beside its facts. `ok` false: the facts are incomplete and the source
+ * shows red with the error. `ok` true with an error: a note that leaves the source green, such as
+ * a source that does not apply to the project.
+ */
+type ReadOutcome = { ok: boolean; error: string | null };
+
+const READ_CLEAN: ReadOutcome = { ok: true, error: null };
+const noted = (error: string | null): ReadOutcome => ({ ok: true, error });
 
 type Facts = {
   files: Reading<FlowHomeFacts>;
@@ -105,6 +115,8 @@ export class ProjectMonitor {
   private fingerprint = '';
   private readonly gateQuestions: GateQuestionCache = new Map();
   private gateListError: string | null = null;
+  /** Why the last process read was not complete, as last logged, so a lasting failure is logged once and its end once. */
+  private processProblem: string | null = null;
   /** The config's deprecation warnings last logged, so each is logged once per change. */
   private deprecated = '';
   private current: Snapshot | null = null;
@@ -229,10 +241,10 @@ export class ProjectMonitor {
     this.reads.started += 1;
     const sequence = this.reads.started;
     try {
-      const notApplicable = await this.collect(source);
-      this.facts[source].freshness = { at: startedAt.toISOString(), ageSeconds: 0, ok: true, error: notApplicable };
-      this.reads.completed[source] = Math.max(this.reads.completed[source], sequence);
-      this.reads.failing[source] = false;
+      const outcome = await this.collect(source);
+      this.facts[source].freshness = { at: startedAt.toISOString(), ageSeconds: 0, ok: outcome.ok, error: outcome.error };
+      if (outcome.ok) this.reads.completed[source] = Math.max(this.reads.completed[source], sequence);
+      this.reads.failing[source] = !outcome.ok;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.facts[source].freshness = { ...this.facts[source].freshness, ok: false, error: message };
@@ -272,8 +284,8 @@ export class ProjectMonitor {
     await Promise.all([this.refresh('git'), this.refresh('board')]);
   }
 
-  /** Reads one source into the facts. Returns why the source does not apply to this project, or null when it was read. */
-  private async collect(source: SourceName): Promise<string | null> {
+  /** Reads one source into the facts, and says whether the facts are complete. */
+  private async collect(source: SourceName): Promise<ReadOutcome> {
     const root = this.project.root;
     const flow = this.facts.files.facts;
     switch (source) {
@@ -289,31 +301,60 @@ export class ProjectMonitor {
         const deprecated = flowHome.config.deprecated.join('; ');
         if (deprecated !== '' && deprecated !== this.deprecated) this.log.warn('config.deprecated', { project: this.project.id, warning: deprecated });
         this.deprecated = deprecated;
-        return flowHome.gateListError === null ? null : `gate questions: ${flowHome.gateListError}`;
+        return noted(flowHome.gateListError === null ? null : `gate questions: ${flowHome.gateListError}`);
       }
-      case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return null;
-      case 'processes': {
-        const listed = await readProcesses(this.runner);
-        const sessions = await this.sessions.assign(listed.agents);
-        const agents = listed.agents.map((agent, index) => ({ ...agent, session: sessions[index] ?? null }));
-        this.noteEnded(agents);
-        this.facts.processes.facts = { agents };
-        return null;
-      }
+      case 'git': this.facts.git.facts = await readGit(root, flow?.config.base ?? 'main', this.runner); return READ_CLEAN;
+      case 'processes': return this.collectProcesses();
       case 'jobs':
         if (flow?.pluginRoot == null) throw new Error('no flow plugin found for the project');
-        this.facts.jobs.facts = await readJobs(root, flow.pluginRoot, this.runner); return null;
+        this.facts.jobs.facts = await readJobs(root, flow.pluginRoot, this.runner); return READ_CLEAN;
       case 'board':
         if (flow?.pluginRoot == null) throw new Error('no flow plugin found for the project');
-        this.facts.board.facts = await readBoard(root, flow.pluginRoot, this.runner, flow.config.trackers); return null;
+        this.facts.board.facts = await readBoard(root, flow.pluginRoot, this.runner, flow.config.trackers); return READ_CLEAN;
       // The flow keeps every item's PR on GitHub, whatever tracker holds the item (comments.sh,
       // the sweep in steward.sh), so the pulls are read wherever github.repo names the repository.
       case 'pulls':
         if (flow === null) throw new Error('the flow files are not read yet');
         this.facts.pulls.facts = null;
-        if (flow.config.repo === null) return 'not applicable: no github.repo in .flow/config.yaml';
-        this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return null;
+        if (flow.config.repo === null) return noted('not applicable: no github.repo in .flow/config.yaml');
+        this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return READ_CLEAN;
     }
+  }
+
+  /**
+   * Reads the processes. A read that was not complete never empties the picture: with no list at
+   * all the last read's agents stand, and an agent lsof could not place this time stays where it
+   * was last seen while ps still lists its pid. Only a pid ps no longer lists has ended.
+   */
+  private async collectProcesses(): Promise<ReadOutcome> {
+    const listed = await readProcesses(this.runner, this.clock);
+    const previous = this.facts.processes.facts;
+    this.logProcessList(listed);
+    if (listed.list.status === 'unavailable') {
+      this.facts.processes.facts = { agents: previous?.agents ?? [], hosts: previous?.hosts ?? [], list: listed.list };
+      return { ok: false, error: processListProblem(listed.list) };
+    }
+    const sessions = await this.sessions.assign(listed.agents);
+    const unplaced = new Set(listed.list.status === 'partial' ? listed.list.unplaced : []);
+    const kept = (previous?.agents ?? []).filter((agent) => unplaced.has(agent.pid));
+    const agents = [...listed.agents.map((agent, index) => ({ ...agent, session: sessions[index] ?? null })), ...kept];
+    this.noteEnded(agents);
+    this.facts.processes.facts = { agents, hosts: listed.hosts, list: listed.list };
+    const problem = processListProblem(listed.list);
+    return problem === null ? READ_CLEAN : { ok: false, error: problem };
+  }
+
+  /** Logs a process read that was not complete, with the lookup that failed, once per reason, and once when the list is whole again. */
+  private logProcessList(listed: ProcessFacts): void {
+    const problem = processListProblem(listed.list);
+    if (problem === this.processProblem) return;
+    this.processProblem = problem;
+    if (listed.list.status === 'complete') { this.log.info('processes.lookup.recovered', { project: this.project.id }); return; }
+    const lookup = listed.list.lookup;
+    this.log.warn('processes.lookup.failed', {
+      project: this.project.id, status: listed.list.status, reason: listed.list.reason,
+      command: lookup?.command ?? null, code: lookup?.code ?? null, timedOut: lookup?.timedOut ?? null, durationMs: lookup?.durationMs ?? null, stderr: lookup?.stderr ?? null,
+    });
   }
 
   private rebuild(publish: boolean): void {

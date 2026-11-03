@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { CommandRunner } from '../src/collectors/exec.ts';
+import type { CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 import { hostOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories, readProcesses } from '../src/collectors/processes.ts';
 import { PROCESS_COMMAND_CHARS } from '../src/snapshot.ts';
+
+const NOW = new Date('2026-11-03T13:21:22Z');
 
 test('Elapsed_DaysHoursMinutesSeconds', () => {
   assert.equal(parseElapsed('01-02:03:04'), 93784, 'because 1 day, 2 hours, 3 minutes and 4 seconds is 93784 seconds');
@@ -71,6 +73,58 @@ test('ReadProcesses_LongCommand_TrimmedTo200', async () => {
   const runner: CommandRunner = async (request) => request.command === 'ps'
     ? { code: 0, stdout: `  100 00:10 /usr/local/bin/claude -p ${'x'.repeat(400)}\n`, stderr: '', timedOut: false }
     : { code: 0, stdout: 'p100\nfcwd\nn/w\n', stderr: '', timedOut: false };
-  const { agents } = await readProcesses(runner);
+  const { agents } = await readProcesses(runner, () => NOW);
   assert.equal(agents[0]?.command.length, PROCESS_COMMAND_CHARS, 'because a prompt can be pages long and the card needs the start of it');
+});
+
+/** A live implement run as seen on task 33: its owner loop (19487) and its claude worker (23465). */
+const RUN_LISTING = [
+  `19487 25:43 /bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/1.31.0/scripts/run-unattended.sh next`,
+  `23465 24:39 /Users/x/.local/bin/claude -p /flow:next local:task/33 --permission-mode auto`,
+].join('\n');
+const WORKER_CWD = 'p23465\nfcwd\nn/work/TophatContextService-wt-1\n';
+const answered = (stdout: string): CommandResult => ({ code: 0, stdout, stderr: '', timedOut: false });
+const TIMED_OUT: CommandResult = { code: null, stdout: '', stderr: '', timedOut: true };
+
+/** A runner whose ps and lsof answer as given. */
+const lookups = (ps: CommandResult, lsof: CommandResult): CommandRunner => async (request) => (request.command === 'ps' ? ps : lsof);
+
+test('ReadProcesses_PsExitsNonZero_ListUnavailableNotEmpty', async () => {
+  const { list } = await readProcesses(lookups({ code: 1, stdout: '', stderr: 'ps: Operation not permitted\n', timedOut: false }, answered(WORKER_CWD)), () => NOW);
+  assert.deepEqual(list.status === 'unavailable' ? list.reason : list.status, 'ps exited 1: ps: Operation not permitted', 'because a failed ps knows nothing, and an empty list would say every run is dead');
+});
+
+test('ReadProcesses_PsTimesOut_ListUnavailableWithTheTimeout', async () => {
+  const { list } = await readProcesses(lookups(TIMED_OUT, answered(WORKER_CWD)), () => NOW);
+  assert.deepEqual(list.status === 'unavailable' ? [list.reason, list.lookup?.timedOut] : list.status, ['ps timed out after 10s', true], 'because a ps cut off by its timeout has no exit code and lists nothing, which is not "nothing runs"');
+});
+
+test('ReadProcesses_PsListsNothing_ListUnavailable', async () => {
+  const { list } = await readProcesses(lookups(answered(''), answered(WORKER_CWD)), () => NOW);
+  assert.equal(list.status, 'unavailable', 'because a machine always runs some process, so an empty listing is a failed read, as flow\'s _health.py procs says');
+});
+
+test('ReadProcesses_LsofTimesOut_ListPartialNamingTheWorker', async () => {
+  const { list } = await readProcesses(lookups(answered(RUN_LISTING), TIMED_OUT), () => NOW);
+  assert.deepEqual(list.status === 'partial' ? [list.reason, list.unplaced] : list.status, ['lsof timed out after 10s; no working directory for pid 23465', [23465]], 'because ps saw the worker, and only where it works is unknown');
+});
+
+test('ReadProcesses_LsofFails_ListPartial', async () => {
+  const { list } = await readProcesses(lookups(answered(RUN_LISTING), { code: 1, stdout: '', stderr: 'lsof: no pwd entry\n', timedOut: false }), () => NOW);
+  assert.equal(list.status === 'partial' ? list.reason : list.status, 'lsof exited 1: lsof: no pwd entry; no working directory for pid 23465', 'because the log and the page say which lookup failed and how');
+});
+
+test('ReadProcesses_LsofLeavesOutAPid_ListPartial', async () => {
+  const { list } = await readProcesses(lookups(answered(RUN_LISTING), answered('')), () => NOW);
+  assert.equal(list.status === 'partial' ? list.reason : list.status, 'lsof gave no working directory for pid 23465', 'because a pid ps listed is never dropped as if it did not run');
+});
+
+test('ReadProcesses_EveryHostPlaced_ListComplete', async () => {
+  const { agents, list } = await readProcesses(lookups(answered(RUN_LISTING), answered(WORKER_CWD)), () => NOW);
+  assert.deepEqual([list.status, agents.map((agent) => agent.cwd)], ['complete', ['/work/TophatContextService-wt-1']], 'because ps and lsof both answered for every claude, so a worktree with no agent truly has none');
+});
+
+test('ReadProcesses_UnattendedLoop_ListedAsAHostWithItsStart', async () => {
+  const { hosts } = await readProcesses(lookups(answered(RUN_LISTING), TIMED_OUT), () => NOW);
+  assert.deepEqual(hosts.find((host) => host.pid === 19487)?.startedAt, '2026-11-03T12:55:39.000Z', 'because the loop owns the run, and its start (25:43 before the read) tells it from a later process that reused the pid');
 });
