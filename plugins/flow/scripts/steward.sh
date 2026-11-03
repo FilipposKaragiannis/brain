@@ -14,7 +14,8 @@
 #   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
 #   steward.sh tmp remove <path>                 remove it and its branch
 #   steward.sh add [path]                        add a worktree to the pool (git worktree add,
-#                                                pool entry in config.yaml, copies and setup)
+#                                                pool entry in config.yaml, copies and setup); a
+#                                                pool path missing on disk is recreated in place
 #   steward.sh setup <path>                      run worktree_copy and worktree_setup there
 #   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
 #                                                worktree and every pool worktree
@@ -50,6 +51,9 @@
 # refused with its reason, exit 2. worktree_copy lists ignored paths copied from the main
 # worktree when the new one lacks them (.claude/settings.local.json); worktree_setup lists
 # commands run in the new worktree. Both run on add and on setup.
+# A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
+# counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
+# copies and the setup, and health names it with the command that recreates it now.
 # Never resets a worktree with uncommitted changes: release exits 3 and says so (escalate).
 . "$(dirname "$0")/../lib/flow.sh"
 
@@ -57,11 +61,18 @@ home="$(flow_home)"
 main="$(dirname "$home")"
 base_branch="$(cfg_or base main)"
 
+# pool_paths: the pool entries as absolute paths. One missing on disk is spelt from its parent
+# folder, so it carries no .. and names the folder a recreate makes (Claude Code refuses a
+# worktree path with .. in it).
 pool_paths() {
   cfg pool | while read -r p; do
     [ -n "$p" ] || continue
-    case "$p" in /*) printf '%s\n' "$p" ;; *) printf '%s\n' "$(cd "$main" && cd "$p" 2>/dev/null && pwd || printf '%s/%s' "$main" "$p")" ;; esac
+    case "$p" in /*) if [ -d "$p" ]; then printf '%s\n' "$p"; else printf '%s\n' "$(pool_spelling "$p")"; fi ;; *) printf '%s\n' "$(cd "$main" && cd "$p" 2>/dev/null && pwd || pool_spelling "$main/$p")" ;; esac
   done
+}
+# pool_spelling <path>: the path with its parent folder resolved, as is when the parent is gone too.
+pool_spelling() {
+  ps_parent="$(cd "$(dirname "$1")" 2>/dev/null && pwd)" && printf '%s/%s' "$ps_parent" "$(basename "$1")" || printf '%s' "$1"
 }
 
 base_ref() {
@@ -149,12 +160,16 @@ cmd_claim() {
   printf '%s\n' "$free"
 }
 
-# free_worktree: the first pool worktree with no claim, no reservation and a clean tree, else one
+# free_worktree: the first pool worktree with no claim, no reservation and a clean tree, or a
+# pool path missing on disk, recreated (one git cannot add is skipped, saying why); else one
 # grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name exits 2 inside
 # grow_pool, before the pool_max message, so claim and reserve pass the template's reason through.
 free_worktree() {
   for p in $(pool_paths); do
-    [ -d "$p" ] || continue
+    if [ ! -d "$p" ]; then
+      pool_recreate "$p" >&2 || continue
+      printf '%s\n' "$p"; return 0
+    fi
     [ -z "$(json_get "$(claim_of "$p")" item)" ] && [ -z "$(reserved_by "$p")" ] || continue
     dirty "$p" && continue
     printf '%s\n' "$p"; return 0
@@ -443,6 +458,17 @@ pool_worktree_add() {
   else git -C "$main" worktree add -q --no-track -B "$pa_branch" "$1" "$(base_ref)"; fi
 }
 
+# pool_recreate <path>: a pool worktree whose folder is gone comes back on its idle branch at the
+# base tip, with the copies and the setup. git's record of the missing folder is pruned first, or
+# git would refuse the path and the idle branch that record still holds. Returns 1, with git's
+# reason, when git cannot add it (a record locked against pruning, say).
+pool_recreate() {
+  git -C "$main" worktree prune 2>/dev/null
+  pool_worktree_add "$1" || { echo "flow: cannot recreate the pool worktree $1, which is missing on disk" >&2; return 1; }
+  run_setup "$1"
+  echo "flow: recreated $(basename "$1"), which was missing on disk, on $(git -C "$1" symbolic-ref --short -q HEAD || echo "a detached HEAD") at $(base_ref)" >&2
+}
+
 # grow_pool: add one worktree when the pool is below pool_max; print its path. Returns 1 when the
 # pool is full or git cannot add the worktree; exits 2 when next_pool_path refuses worktree_name.
 grow_pool() {
@@ -458,9 +484,15 @@ grow_pool() {
   (cd "$abs" && pwd)
 }
 
+# cmd_add [path]: a new pool worktree, or a pool path missing on disk recreated in place (its
+# entry is already there, so none is appended).
 cmd_add() {
   rel="${1:-$(next_pool_path)}" || exit
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
+  if [ ! -e "$abs" ] && pool_paths | grep -qxF -- "$(pool_spelling "$abs")"; then
+    pool_recreate "$(pool_spelling "$abs")" || die "cannot recreate worktree $rel"
+    echo "recreated $rel, already in the pool in $(config_file)."; return 0
+  fi
   pool_worktree_add "$abs" || die "cannot add worktree $rel"
   pool_add_entry "$rel"
   run_setup "$abs"
@@ -661,6 +693,14 @@ health_free() {
   elif [ "$dry" -eq 1 ]; then health_say pool "would fast-forward free $hf_name to $base_branch"
   elif git -C "$1" merge -q --ff-only "$hf_tip" >/dev/null 2>&1; then health_say pool "fast-forwarded free $hf_name to $base_branch"
   else health_say pool "could not fast-forward free $hf_name"; fi
+}
+
+# health_missing <path>: a pool path missing on disk is no claim's and no run's; the next claim
+# recreates it. Said once while it holds, with the command that recreates it now.
+health_missing() {
+  hm_name="$(basename "$1")"
+  health_changed "missing-$hm_name" missing || return 0
+  health_say pool "$hm_name is in the pool but missing on disk; the next claim recreates it on $(idle_branch "$1") at $base_branch, or recreate it now: steward.sh add $1"
 }
 
 # health_resume <item> <step> <path>: start the step again in the background, where the dead run
@@ -1032,7 +1072,8 @@ cmd_health() {
     else health_changed fetch failed && health_say pool "git fetch origin failed; branches are not synced this run"; fi
   fi
   for p in $(pool_paths); do
-    [ -d "$p" ] || continue
+    if [ ! -d "$p" ]; then health_missing "$p"; claimable=$((claimable + 1)); continue; fi
+    health_cleared "missing-$(basename "$p")"
     reserver="$(reserved_by "$p")"
     if [ -n "$reserver" ]; then
       claims=$((claims + 1)); holders="$holders$(basename "$p") (reserved) $reserver works in it by hand
@@ -1168,5 +1209,5 @@ case "$cmd" in
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,42p' "$0"; exit 2 ;;
+  *) sed -n '2,43p' "$0"; exit 2 ;;
 esac

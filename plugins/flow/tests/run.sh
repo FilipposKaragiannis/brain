@@ -412,6 +412,7 @@ check_all "WorktreeRemove keeps a dirty worktree (exit 3)" '[ "$code" -eq 3 ] &&
 rm "$path/keep.txt"
 printf '{"worktree_path":"%s","cwd":"%s"}' "$path" "$PWD" | "$P/hooks/worktree-remove.sh" >/dev/null 2>&1; code=$?
 check_all "WorktreeRemove releases a clean worktree" '[ "$code" -eq 0 ] && [ ! -f "$path/.flow/claim.json" ]'
+check_all "WorktreeRemove leaves the pool path in place, on its idle branch at the base, registered with git" '[ -d "$path" ] && [ "$(git -C "$path" symbolic-ref --short HEAD)" = "main-$(basename "$path")" ] && [ "$(git -C "$path" rev-parse HEAD)" = "$(git rev-parse main)" ] && git worktree list --porcelain | grep -qx "worktree $path"'
 adhoc="$(printf '{"name":"bold-oak","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
 check_all "WorktreeCreate ad hoc name" '[ -d "$adhoc" ] && [ "$(jget item < "$adhoc/.flow/claim.json")" = "adhoc:bold-oak" ]'
 "$P/scripts/steward.sh" release "$adhoc" --force >/dev/null 2>&1
@@ -1488,6 +1489,13 @@ rm "$g2/setup.txt"
 check "setup re-runs on demand" sh -c "'$P/scripts/steward.sh' setup '$g2' >/dev/null && [ -f '$g2/setup.txt' ]"
 "$P/scripts/steward.sh" add >/dev/null 2>&1
 check_all "add without a path takes the next name" '[ -d ../app-wt-3 ] && [ "$(yaml_get .flow/config.yaml pool | tail -1)" = ../app-wt-3 ]'
+rm -rf ../app-wt-3
+g3="$("$P/scripts/steward.sh" claim "$n3" 2>"$work/recreate.err")"; code=$?
+check_all "claim takes a pool path missing on disk (git still lists it) as free and recreates it" '[ "$code" -eq 0 ] && [ "$g3" = "$(cd ../app-wt-3 && pwd -P)" ] && [ "$(git -C "$g3" symbolic-ref --short HEAD)" = "flow/$(item_slug "$n3")" ] && grep -q "recreated app-wt-3, which was missing on disk, on main-wt-3 at main" "$work/recreate.err"'
+check_all "the recreated worktree starts on its idle branch at the base tip, set up, its pool entry not repeated" '[ "$(git rev-parse --verify -q refs/heads/main-wt-3)" = "$(git rev-parse main)" ] && [ "$(cat "$g3/setup.txt")" = ran ] && [ "$(cat "$g3/local")" = secret ] && [ "$(grep -c app-wt-3 .flow/config.yaml)" = 1 ]'
+rm "$g3/setup.txt" && "$P/scripts/steward.sh" release "$n3" >/dev/null 2>&1 && git worktree remove --force ../app-wt-3
+"$P/scripts/steward.sh" add ../app-wt-3 > "$work/recreate.out" 2>&1; code=$?
+check_all "add recreates a pool path missing on disk in place, without a second pool entry" '[ "$code" -eq 0 ] && [ "$(git -C ../app-wt-3 symbolic-ref --short HEAD)" = main-wt-3 ] && [ "$(git -C ../app-wt-3 rev-parse HEAD)" = "$(git rev-parse main)" ] && [ "$(grep -c app-wt-3 .flow/config.yaml)" = 1 ] && grep -q "recreated ../app-wt-3, already in the pool" "$work/recreate.out"'
 
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -1927,6 +1935,12 @@ git -C ../wt-3 switch -q -c side origin/main~1
 hs > "$hroot/out" 2>&1
 check_all "health: a free worktree on another branch is said, not moved" 'grep -q "wt-3 is free but on the branch side, so it is not moved" "$hroot/out" && [ "$(git -C ../wt-3 symbolic-ref --short HEAD)" = side ]'
 git -C ../wt-3 switch -q main-wt-3 && git -C ../wt-3 branch -q -D side && rm -f .flow/health/free-wt-3-branch.seen
+git worktree remove --force ../wt-3
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check_all "health: a pool path missing on disk is a finding with the recreate hint, said once, and counts as free" 'grep -q "^pool: wt-3 is in the pool but missing on disk; the next claim recreates it on main-wt-3 at main, or recreate it now: steward.sh add $(cd .. && pwd -P)/wt-3$" "$hroot/out" && grep -q "0 claimed.*3 free.*1 finding(s)" "$hroot/out" && ! grep -q "missing on disk" "$hroot/out2" && [ ! -d ../wt-3 ]'
+"$P/scripts/steward.sh" add "$(cd .. && pwd -P)/wt-3" >/dev/null 2>&1
+hs > "$hroot/out" 2>&1
+check_all "health: the hint recreates it on its idle branch at the base tip, and health is quiet again" '[ "$(git -C ../wt-3 symbolic-ref --short HEAD)" = main-wt-3 ] && [ "$(git -C ../wt-3 rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && [ "$(grep -c wt-3 .flow/config.yaml)" = 1 ] && grep -q "nothing to do" "$hroot/out" && [ ! -f .flow/health/missing-wt-3.seen ]'
 
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
