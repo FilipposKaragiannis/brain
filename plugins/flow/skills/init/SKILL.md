@@ -1,6 +1,6 @@
 ---
 name: init
-description: Install or refresh the flow plugin in this repository. Writes .flow/config.yaml (adapters, base branch, worktree pool and its growth, gates, notifications), the notify, unattended-run and worktree-hook scripts, the Codex rules and agents (in the repo's .codex/ or the user's ~/.codex), and an ignore block in .git/info/exclude so nothing of flow is tracked, then walks the owner through the config gaps. Use when a repo adopts the flow, after a plugin update, or to check the install is current (init --check is the one drift check).
+description: Install or refresh the flow plugin in this repository. Writes .flow/config.yaml (adapters, base branch, worktree pool and its growth, gates, notifications), the notify, unattended-run and worktree-hook scripts, the Claude worktree hook entries in .claude/settings.local.json, the Codex rules and agents (in the repo's .codex/ or the user's ~/.codex), and an ignore block in .git/info/exclude so nothing of flow is tracked, then walks the owner through the config gaps. Use when a repo adopts the flow, after a plugin update, or to check the install is current (init --check is the one drift check).
 disable-model-invocation: true
 ---
 
@@ -23,7 +23,8 @@ Install the flow plugin into the current repository, or refresh it after a plugi
    the `Gaps` list as is, what the owner reviews by hand, where the Codex rules and agents went
    (the `Codex rules and agents:` line), and that nothing is committed: `.flow/` stays out of git.
    When it prints a `git rm --cached` command for files an earlier install committed, pass it on
-   as is; never run it.
+   as is; never run it. When it says `.claude/settings.json` still carries flow worktree hooks,
+   pass on the entry it prints for the owner to remove and commit; never edit that file.
    When the installer says the pool lists more worktrees than the default `pool_max`, say so first:
    each listed worktree becomes a task slot, so the owner trims the list or keeps it.
 3. **On a first install, end that same message with the config questions**, one numbered list,
@@ -43,25 +44,30 @@ Install the flow plugin into the current repository, or refresh it after a plugi
 
 | Target | Content | Re-run |
 |---|---|---|
-| `.flow/config.yaml` | adapters (where each kind of new item goes), `trackers` (the trackers board, next and health read), `ready` (`ready.needs` and `ready.priority_order`, for every tracker), base, github repo, pool (the linked worktrees under the main worktree's parent folder, not those under `.claude/worktrees` or `.flow/tmp`), `pool_max` and a commented `worktree_name`, `worktree_copy` and `worktree_setup`, `auto_gates`, gates, feel-test paths, notify, reviews, jobs (`jobs.claude` and `jobs.codex`: model and effort per host) | written once, never overwritten; `--check` reports a gap with its line when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist, an `adapters` value `trackers` leaves out, an `auto_gates` entry other than `plan-approval`, a `jobs.host` other than claude or codex, an effort the host does not take). Missing Claude worktree hooks are a note, not a gap. It does not ask an existing config for `jobs.claude` or `jobs.codex`, and notes once that `jobs.model`/`jobs.effort` are deprecated when they are set |
+| `.flow/config.yaml` | adapters (where each kind of new item goes), `trackers` (the trackers board, next and health read), `ready` (`ready.needs` and `ready.priority_order`, for every tracker), base, github repo, pool (the linked worktrees under the main worktree's parent folder, not those under `.claude/worktrees` or `.flow/tmp`), `pool_max` and a commented `worktree_name`, `worktree_copy` and `worktree_setup`, `auto_gates`, gates, feel-test paths, notify, reviews, jobs (`jobs.claude` and `jobs.codex`: model and effort per host) | written once, never overwritten; `--check` reports a gap with its line when the flow cannot run with it (empty pool with `pool_max` 0, empty base, an adapter that does not exist, an `adapters` value `trackers` leaves out, an `auto_gates` entry other than `plan-approval`, a `jobs.host` other than claude or codex, an effort the host does not take). It does not ask an existing config for `jobs.claude` or `jobs.codex`, and notes once that `jobs.model`/`jobs.effort` are deprecated when they are set |
 | `.flow/plugin.sh` | finds the installed plugin when a wrapper runs: `$FLOW_PLUGIN`, else the newest flow in the Claude plugin cache, else the Codex one | replaced |
 | `.flow/notify.sh` | wrapper around the plugin notify script | replaced |
 | `.flow/run-unattended.sh` | the unattended loop for `claude` or `codex` | replaced |
-| `.flow/hooks/worktree-*.sh` | Claude `WorktreeCreate`/`WorktreeRemove` wrappers; the owner adds the printed entry to `.claude/settings.json` | replaced |
+| `.flow/hooks/worktree-*.sh` | Claude `WorktreeCreate`/`WorktreeRemove` wrappers | replaced |
+| `.claude/settings.local.json` | the `WorktreeCreate` and `WorktreeRemove` entries that run the main worktree's `.flow/hooks` wrappers and nothing else (a plugin cannot provide them: the worktree is created before plugins load). Created when missing, `.claude/` too; merged into a file that exists, every other key and hook kept | entries replaced; `--check` reports a missing or changed entry as drift; a file that is not JSON is refused |
 | `<codex>/rules/flow.rules` | git and gh allowed outside the Codex sandbox | replaced |
 | `<codex>/agents/*.toml` | the flow agents for Codex | replaced |
-| `.git/info/exclude` | a marked block that ignores all of `.flow/` in this clone and its linked worktrees | block replaced |
+| `.git/info/exclude` | a marked block that ignores all of `.flow/` and `.claude/settings.local.json` in this clone and its linked worktrees | block replaced |
 | `.gitignore` | the flow block an older init wrote: removed when every line in it is one init wrote; a block the owner added to is left and named | block removed |
 | `.flow/stamp` | a hash of the plugin's install set, then one hash per guarded copy | rewritten |
 
 **Nothing is tracked.** Flow is one user's tool: everything under `.flow/` is ignored through the
 clone's own `.git/info/exclude`, which every linked worktree shares and nobody commits, so a
 teammate without flow carries none of it. From a linked worktree, flow reads the config and state
-in the main worktree's `.flow` (`flow_home`). Only what a host needs stays in the repository: the
-`.claude/settings.json` hook entry init prints (it runs `.flow/hooks` when the clone has them and
-otherwise makes the worktree as Claude does with no hook, so `claude --worktree` works without
-flow) and, when the repository keeps a `.codex/`, the Codex files. A repository that committed
-`.flow/` before gets the `git rm -r --cached` command that stops it; init never runs it.
+in the main worktree's `.flow` (`flow_home`). The Claude worktree hooks go to
+`.claude/settings.local.json`, the user's own settings: Claude ignores that file in git by default
+(it adds it to the ignore rules when it creates the file), and init lists it in the exclude block
+too, since init may create it first. A teammate without flow has no entry, and `claude --worktree`
+makes Claude's own worktree. Init never edits the committed `.claude/settings.json`: when it still
+carries a flow hook entry an older init printed, "Next" and `--check` say to remove it and print
+it. Only what a host needs stays in the repository: when it keeps a `.codex/`, the Codex files. A
+repository that committed `.flow/` before gets the `git rm -r --cached` command that stops it;
+init never runs it.
 
 **Where the Codex files go (`<codex>`).** `--user-codex` puts them in `~/.codex` (`$CODEX_HOME`
 when set), where Codex reads the user's own rules and agents in every project. Without it they go
