@@ -577,6 +577,24 @@ test('JobStartCommentsWithAnItem_TheItemAfterTheHostLockedWithTheJob', () => {
   assert.deepEqual(plan.locks, ['item:gh#12', 'job:comments'], 'because the pass edits the item\'s branch and holds the comments job lock as a scheduled run does');
 });
 
+test('JobStartCommentsWithAPr_ThePrIsTheTargetUnderTheItemLock', () => {
+  const plan = planned('job.start', { job: 'comments', host: 'claude', item: 'gh#12', pr: '139' });
+  assert.deepEqual(plan.args, ['/p/app/.flow/jobs/comments.sh', 'claude', '139'], 'because an item linked to its PR only by its task branch has no recorded PR, so the pass is named by the PR the card knows');
+  assert.deepEqual(plan.locks, ['item:gh#12', 'job:comments'], 'because the pass still edits that item\'s branch');
+});
+
+test('JobStartPr_WithoutAnItemOrOnAnotherJobOrNotANumber_Rejected', () => {
+  const cases: Array<[Record<string, string>, RegExp]> = [
+    [{ job: 'comments', host: 'claude', pr: '139' }, /pr needs the item/],
+    [{ job: 'next', host: 'claude', item: 'gh#12', pr: '139' }, /pr is for the comments job/],
+    [{ job: 'comments', host: 'claude', item: 'gh#12', pr: '#139' }, /pr must be a PR number/],
+  ];
+  for (const [args, error] of cases) {
+    const result = planAction('job.start', args, CONTEXT);
+    assert.match(result.ok ? '' : result.error, error, `because ${JSON.stringify(args)} would run a pass with no lock, on the wrong job or on no PR`);
+  }
+});
+
 test('JobStartComments_PullsReadAgain', () => {
   assert.ok(planned('job.start', { job: 'comments', host: 'codex', item: 'gh#12' }).refresh.includes('pulls'), 'because the pass changes the PR, and its card should show it');
 });

@@ -86,14 +86,15 @@ function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot })
 
 /**
  * Hands a conflicting pull to the flow now: one comments pass on its item, which merges the base
- * in first, as the scheduled job would on its next run. While that pass runs the card says so.
+ * in first, as the scheduled job would on its next run. The PR goes along, since an item linked by
+ * its task branch alone has no PR recorded for the job to find. While that pass runs the card says so.
  */
 function ResolveConflicts({ pull, item, host }: { pull: PullRequest; item: string; host: string }) {
   const actions = useActionsView();
   const running = actions.busy('job.start', { job: COMMENTS_JOB, item });
   return (
     <span className="pull-resolve">
-      <ActionButton kind="job.start" args={{ job: COMMENTS_JOB, host, item }} label="Resolve conflicts" primary={false} title={`Runs the comments job on ${item} now; it merges ${pull.base} into ${pull.branch} first`} />
+      <ActionButton kind="job.start" args={{ job: COMMENTS_JOB, host, item, pr: String(pull.number) }} label="Resolve conflicts" primary={false} title={`Runs the comments job on ${item} now; it merges ${pull.base} into ${pull.branch} first`} />
       {running && <span className="muted">A comments pass is running on {item}: it merges {pull.base} in first.</span>}
     </span>
   );

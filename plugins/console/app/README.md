@@ -461,7 +461,7 @@ on every state change and at most twice a second while output arrives.
 | `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
 | `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
 | `job.stop` | `job` | `jobs.sh stop <job>` | a stop lock of the job's own, so it reaches a run `job.start` holds | `finished` |
-| `job.start` | `job?` (next), `host`, `model?`, `effort?`; for next and comments also `item?`; for next also `workers?`, `maxSteps?`, `pick?` (a filter's name, not with an item) | `.flow/jobs/<job>.sh <host> [item] [--workers N] [--max-steps M] [--model X] [--effort Y] [--pick NAME]`, detached: one run outside the schedules (below) | the job, and the item when given | `finished` once it ends; `started` for a next run that hands the queue to workers; a comments run re-reads `pulls` too |
+| `job.start` | `job?` (next), `host`, `model?`, `effort?`; for next and comments also `item?`; for comments with an item also `pr?`, then the target in place of the item; for next also `workers?`, `maxSteps?`, `pick?` (a filter's name, not with an item) | `.flow/jobs/<job>.sh <host> [item] [--workers N] [--max-steps M] [--model X] [--effort Y] [--pick NAME]`, detached: one run outside the schedules (below) | the job, and the item when given | `finished` once it ends; `started` for a next run that hands the queue to workers; a comments run re-reads `pulls` too |
 | `job.schedule` | `job` (a schedule name), `schedule` | writes `jobs.schedule.<job>` through the flow config editor, then `jobs.sh install <job>` | the schedule | `finished`; `jobs` and `files` are re-read |
 | `job.unschedule` | `job` (a schedule name) | `jobs.sh uninstall <job>`, then takes `jobs.schedule.<job>` out of the config | the schedule | `finished`; `jobs` and `files` are re-read |
 | `run.stop` | `item` | `steward.sh stop <item>`: ends the run's processes and removes its record, keeping the claim and the worktree | a stop lock of the item's own, so it reaches a run `run.start` or `job.start` holds | `finished` |
@@ -752,7 +752,8 @@ quiz is passed); Force merge, a red outlined button that is never the primary on
 state `checks-failing` or `approved` with GitHub's merge state `BLOCKED` or `BEHIND`, which runs
 `pr.merge` with `force=true` (never on `conflicts`, `draft`, `checks-pending` or
 `changes-requested`); Resolve conflicts on a PR in state `conflicts` with an item, which runs
-`job.start` for the comments job on `jobsHost` with that item, and while it runs the card says a
+`job.start` for the comments job on `jobsHost` with that item and the PR's number (the item may have
+no PR recorded when the card found it by its task branch), and while it runs the card says a
 comments pass is running and merges the base in first; the same quiz panel as the Gates card when
 the PR's item has one; and, on a PR that is not a draft, "Ask for review from" with the project's
 reviewers, then each of codex, claude and copilot not among them, then "other…" for a GitHub

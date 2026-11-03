@@ -122,11 +122,11 @@ test('PullsNoAdminMergeCanHelp_NoForceMerge', () => {
   for (const number of [30, 31, 32, 33]) expect(forceMerge(number), `because #${number} is a conflict, a draft, running checks or requested changes, which no admin merge should skip`).toBeNull();
 });
 
-test('ConflictingPull_ResolveConflicts_StartsTheCommentsPassOnItsItem', async () => {
+test('ConflictingPull_ResolveConflicts_StartsTheCommentsPassOnItsItemAndPr', async () => {
   const { daemon, posted } = recordingDaemon();
   renderPulls([pull(30, { state: 'conflicts', mergeable: 'CONFLICTING', item: 'gh#30' })], daemon);
   await act(async () => { fireEvent.click(within(card(30)).getByRole('button', { name: 'Resolve conflicts' })); });
-  expect(posted, 'because the comments job merges the base in first on a conflicting PR, run now on the jobs host for this one item').toEqual([{ kind: 'job.start', args: { job: 'comments', host: 'claude', item: 'gh#30' } }]);
+  expect(posted, 'because the comments job merges the base in first on a conflicting PR, run now on the jobs host for this one item, named by the PR the item may not have recorded').toEqual([{ kind: 'job.start', args: { job: 'comments', host: 'claude', item: 'gh#30', pr: '30' } }]);
 });
 
 test('ConflictingPull_PassRunning_CardSaysSo', async () => {

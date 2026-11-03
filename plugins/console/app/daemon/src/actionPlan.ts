@@ -164,7 +164,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'gate.clear': ['item', 'message', 'back'],
   'run.start': ['item', 'maxSteps'],
   'job.run': ['job'], 'job.stop': ['job'], 'job.pause': ['job'], 'job.resume': ['job'],
-  'job.start': ['job', 'host', 'item', 'workers', 'maxSteps', 'model', 'effort', 'pick'],
+  'job.start': ['job', 'host', 'item', 'pr', 'workers', 'maxSteps', 'model', 'effort', 'pick'],
   'job.schedule': ['job', 'schedule'],
   'job.unschedule': ['job'],
   'run.stop': ['item'], 'run.resume': ['item'],
@@ -452,7 +452,10 @@ const JOB_REFRESH: string[] = ['jobs', 'processes', 'files', 'board'];
  * item, under the job's lock. Every job takes `model` and `effort` (`--model X --effort Y`, which
  * replace jobs.<host>.model and .effort for that run); next and comments take `item`
  * (`jobs/comments.sh <host> <item>` runs the pass on that one item's PR now, merging its base in
- * first when it conflicts), under the item's lock too; only next takes `workers` and `maxSteps`:
+ * first when it conflicts), under the item's lock too; comments with an item also takes `pr`, the
+ * PR that item's card shows, passed as the target in place of the item (`jobs/comments.sh <host>
+ * <pr>`, which finds the item from the PR's branch) so a PR the item never recorded still gets its
+ * pass and conflict brief, under the same item lock; only next takes `workers` and `maxSteps`:
  * `jobs/next.sh <host> [item] [--workers N] [--max-steps M]`. A next run of the queue that
  * starts workers (`workers` above 1, or `jobs.workers` set and no `workers`) hands its work on and
  * ends, so it is `started` and its sources are read again; a run in place is `finished` when it
@@ -474,6 +477,10 @@ function planJobStart(args: Record<string, string>, context: ActionContext): Pla
   if (!HOSTS.includes(host)) return fail(`job.start needs a host: ${HOSTS.join(' or ')}`);
   const item = args['item'] ?? '';
   if (item !== '' && !isItemId(item, context)) return fail(`job.start takes ${itemIdShape(context)}, or none for the queue`);
+  const pr = args['pr'];
+  if (pr !== undefined && job !== COMMENTS_JOB) return fail(`pr is for the comments job; ${job} takes an item`);
+  if (pr !== undefined && item === '') return fail('pr needs the item it belongs to, whose lock the pass holds');
+  if (pr !== undefined && !PR_NUMBER.test(pr)) return fail('pr must be a PR number');
   const { workers, maxSteps, model, effort, pick } = args;
   if (pick !== undefined && !PICK_NAME.test(pick)) return fail('pick must be a filter name from pick in .flow/config.yaml: letters, digits, _ and -');
   if (pick !== undefined && item !== '') return fail('pick narrows the queue; drop the item, or the filter');
@@ -495,7 +502,7 @@ function planJobStart(args: Record<string, string>, context: ActionContext): Pla
   return {
     ok: true,
     plan: {
-      command: 'sh', args: [script, host, ...(item === '' ? [] : [item]), ...flags], cwd: context.root,
+      command: 'sh', args: [script, host, ...(pr !== undefined ? [pr] : item === '' ? [] : [item]), ...flags], cwd: context.root,
       locks: [...(item === '' ? [] : [`item:${item}`]), `job:${job}`], timeoutMs: 0, detach: true,
       refresh: job === COMMENTS_JOB ? [...JOB_REFRESH, 'pulls'] : JOB_REFRESH, refreshAgainMs: handsOn ? HANDED_ON_REFRESH_MS : null, outcome: handsOn ? 'started' : 'finished',
     },
