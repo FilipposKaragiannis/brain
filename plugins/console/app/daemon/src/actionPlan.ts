@@ -421,7 +421,10 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       // --admin merges with the owner's rights past what branch protection requires: failing or
       // missing checks, a missing approval, a branch behind its base. Only the literal true forces.
       const admin = args['force'] === 'true' ? ['--admin'] : [];
-      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, '--delete-branch', ...admin], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
+      // No --delete-branch: since gh 2.103 it removes the linked worktree that holds the branch,
+      // which is the pool worktree. The sweep frees the worktree and deletes the local branch, and
+      // the repository deletes merged head branches itself.
+      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, ...admin], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
     }
     // quiz.sh grades the try against the key in <reports>/quiz.md, keeps <reports>/quiz.json, logs
     // one event and marks the item's draft PR ready on a pass; the page re-reads files and pulls.
