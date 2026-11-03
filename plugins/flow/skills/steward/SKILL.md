@@ -13,7 +13,7 @@ path `codex plugin list` prints for `flow`). Call it `$P`. The script is `"$P/sc
 | claim for an item | `steward.sh claim <item> [--base <branch>]` prints the path |
 | reserve one for manual work | `steward.sh reserve [--name <who>]` takes a free worktree with no item under `<who>` (default: git `user.name`, else `$USER`) and prints its path; with none free it grows the pool or, at `pool_max`, exits 3, as `claim` does. `claim`, `sweep`, `health` and the `next` job never take or free it; `pool` and `board` show it reserved by that name |
 | release after merge | `steward.sh release <item or path>`; add `--force` only when the owner says the unmerged branch may go. A reserved worktree is released by its path |
-| add a worktree | `steward.sh add [path]`: adds it, appends it under `pool:` in `.flow/config.yaml`, copies the `worktree_copy` files and runs `worktree_setup` |
+| add a worktree | `steward.sh add [path]`: adds it, appends it under `pool:` in `.flow/config.yaml`, copies the `worktree_copy` files and runs `worktree_setup`. A pool path missing on disk is recreated in place, its entry kept |
 | set up a worktree again | `steward.sh setup <path or item>`: the copies and the setup commands, on demand |
 | temporary worktree for a phase | `steward.sh tmp add <item> <phase>` from the task branch; `steward.sh tmp remove <path>` after the phase is rebased onto the task branch |
 | where an item's reports are | `steward.sh reports <item>` prints the folder (and creates it): the claimed worktree's, else the one that already exists, else the main worktree's |
@@ -28,7 +28,13 @@ path `codex plugin list` prints for `flow`). Call it `$P`. The script is `"$P/sc
 `claude --worktree gh-310` (or `local-task-3`: the item id with `#`, `:` and `/` as dashes),
 `EnterWorktree` and `isolation: worktree` all land in the pool through the plugin's
 `WorktreeCreate` hook, which claims a free pool worktree for that item. Leaving the session
-releases it through `WorktreeRemove` unless it holds uncommitted work. Codex has no equivalent:
+releases it through `WorktreeRemove` unless it holds uncommitted work; the folder stays in the
+pool, on its idle branch at the base tip. A sub-agent's worktree (`isolation: worktree`) is kept
+when the agent finishes and Claude Code runs no `WorktreeRemove` for it, so its claim stays until
+`steward.sh release <path>` (or, for an item's claim, `sweep` or `health`) frees it. A pool path
+removed from disk anyway (a session without the `WorktreeRemove` entry falls back to
+`git worktree remove`) counts as free: the next claim recreates it on its idle branch, `health`
+names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
 `codex exec -C <worktree>` after `steward.sh claim`.
 
 ## Rules
