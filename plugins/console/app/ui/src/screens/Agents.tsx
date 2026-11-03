@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Agent, EndedAgent, PullRequest, Run, Snapshot, Worktree } from '../../../daemon/src/snapshot.ts';
+import type { Agent, EndedAgent, ProcessListStatus, PullRequest, Run, Snapshot, Worktree } from '../../../daemon/src/snapshot.ts';
+import { processListProblem } from '../../../daemon/src/snapshot.ts';
 import { Age, clockTime, Since } from '../clock.tsx';
 import { ExternalLink, ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
@@ -8,23 +9,27 @@ import { FULL_LINES, RunStream, TAIL_LINES, transcriptSize, useTranscript } from
 import { ActionButton, Chip, Dot, Empty, Module, SessionButton, SourceFreshness, TerminalButton } from '../ui.tsx';
 
 /**
- * What runs. Flow's own runs are cards with their transcript as a live terminal, and a run record
- * without a process is a card that says what to do; under them the owner's own sessions fold away,
- * then the agents and sessions that ended in the last day. Jobs and their schedules have a page of
- * their own.
+ * What runs. Flow's own runs are cards with their transcript as a live terminal, a run record
+ * whose process is confirmed gone is a card that says what to do, and one whose process was not
+ * found yet (still starting, or the process list could not be read) a card that says why; under
+ * them the owner's own sessions fold away, then the agents and sessions that ended in the last
+ * day. Jobs and their schedules have a page of their own.
  */
 export function Agents({ snapshot }: { snapshot: Snapshot }) {
   const runs = snapshot.agents.filter((agent) => agent.kind === 'agent');
   const sessions = snapshot.agents.filter((agent) => agent.kind === 'session');
-  const dead = snapshot.runs.filter((run) => !run.alive);
-  const live = dead.length + runs.length;
+  const dead = snapshot.runs.filter((run) => run.liveness === 'dead');
+  const unseen = snapshot.runs.filter((run) => (run.liveness === 'unknown' || run.liveness === 'starting') && !runs.some((agent) => agent.item === run.item));
+  const live = dead.length + unseen.length + runs.length;
+  const aside = [`${runs.length} running`, dead.length > 0 ? `${dead.length} without a process` : null, unseen.length > 0 ? `${unseen.length} not seen yet` : null].filter((part) => part !== null).join(' · ');
   const jobs = routeHash({ projectId: snapshot.project.id, screen: 'jobs', detail: null });
   return (
     <div className="screen agents-screen">
-      <Module className="runs" title="Runs" aside={<span className="muted">{runs.length} running{dead.length > 0 ? ` · ${dead.length} without a process` : ''}</span>} footer={<SourceFreshness name="processes" freshness={snapshot.sources.processes} />}>
+      <Module className="runs" title="Runs" aside={<span className="muted">{aside}</span>} footer={<SourceFreshness name="processes" freshness={snapshot.sources.processes} />}>
         {live === 0 ? <Empty>No flow run is going. Start one on <a href={jobs}>Jobs</a>, with Run once or Run now on a job, or from the board.</Empty> : (
           <div className="run-cards">
             {dead.map((run) => <DeadRunCard key={`${run.item}-${run.worktree}`} run={run} snapshot={snapshot} />)}
+            {unseen.map((run) => <UnseenRunCard key={`${run.item}-${run.worktree}`} run={run} processList={snapshot.processList} snapshot={snapshot} />)}
             {runs.map((agent, index) => <RunCard key={agent.pid} agent={agent} snapshot={snapshot} startOpen={index === 0} />)}
           </div>
         )}
@@ -130,6 +135,29 @@ function DeadRunCard({ run, snapshot }: { run: Run; snapshot: Snapshot }) {
         <ActionButton kind="run.resume" args={{ item: run.item }} label="Resume" primary />
         {path !== null && <TerminalButton path={path} />}
       </footer>
+    </article>
+  );
+}
+
+/**
+ * A run record whose process was not found, but which may still go: the process list could not be
+ * read in full, or the run is younger than the health job's grace. No Resume: flow refuses one for
+ * a live run, and the console says a run ended only once a full read finds no process of it.
+ */
+function UnseenRunCard({ run, processList, snapshot }: { run: Run; processList: ProcessListStatus; snapshot: Snapshot }) {
+  const problem = processListProblem(processList);
+  const why = run.liveness === 'unknown' && problem !== null
+    ? `This run may still go (${problem}). It is called dead only once a full read finds no process of it.`
+    : 'Its process has not shown in the process list yet. The health job counts a run this young as starting, and so does the console.';
+  return (
+    <article className="run-card unseen" aria-label={`Run record for ${run.item}`}>
+      <header className="run-card-head">
+        <span className="dot-dashed" aria-hidden="true" />
+        <span className="run-card-title"><span className="strong">{run.step}</span> · <ItemLink id={run.item} pages={snapshot} /></span>
+        <span className="run-card-tags"><span className="tag mono">{run.worktree}</span><span className="tag">{run.host}</span><span className="tag">{run.liveness === 'unknown' ? 'process unknown' : 'starting'}</span></span>
+        <span className="muted">{run.startedAt === null ? '' : <>since <Since at={run.startedAt} /></>}</span>
+      </header>
+      <p className="run-card-say">{why}</p>
     </article>
   );
 }

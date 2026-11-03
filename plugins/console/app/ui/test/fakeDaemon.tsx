@@ -125,13 +125,13 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 9,
+    schema: 10,
     takenAt,
     project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', adapter: 'github', trackers: [{ name: 'github', url: 'https://github.com/owner/project/issues', error: null }], pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', jobHosts: ['claude'], plugins: [installedPlugin('flow', '1.17.0', '1.17.0'), installedPlugin('standards', '1.3.0', '1.3.0')], poolMax: 9, reviewers: ['codex', 'claude'], picks: [] },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
     counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0 },
     readiness: { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0 },
-    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], ended: [], jobs: [], stoppedHosts: [], events: [], disagreements: [], pulls: [],
+    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], processList: { status: 'complete' }, ended: [], jobs: [], stoppedHosts: [], events: [], disagreements: [], pulls: [],
     newerConsole: null,
   };
 }

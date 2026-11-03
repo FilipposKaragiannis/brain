@@ -60,7 +60,7 @@ export function Overview({ snapshot, go }: { snapshot: Snapshot; go: (route: Rou
 export function tiles(snapshot: Snapshot): Tile[] {
   const counts = snapshot.counts;
   const oldest = [...snapshot.attention].sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1))[0];
-  const runs = snapshot.runs.filter((run) => run.alive);
+  const runs = snapshot.runs.filter((run) => run.liveness !== 'dead');
   const stale = snapshot.worktrees.filter((worktree) => worktree.state === 'stale');
   const free = snapshot.worktrees.filter((worktree) => worktree.role === 'pool' && worktree.state === 'free');
   const failing = snapshot.pulls.filter((pull) => pull.state === 'checks-failing');

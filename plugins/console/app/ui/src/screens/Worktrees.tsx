@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { ActionRecord, ProcessInfo, Snapshot, SyncConflict, Worktree } from '../../../daemon/src/snapshot.ts';
+import { processListProblem } from '../../../daemon/src/snapshot.ts';
 import { Age, formatDuration, useLiveSeconds } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import { routeHash } from '../route.ts';
@@ -160,6 +161,9 @@ function PrimaryLink({ worktree, snapshot }: { worktree: Worktree; snapshot: Sna
 }
 
 function worktreeNote(worktree: Worktree, snapshot: Snapshot) {
+  const problem = processListProblem(snapshot.processList);
+  const unknownRun = worktree.item !== null && snapshot.runs.some((run) => run.item === worktree.item && run.liveness === 'unknown');
+  if (unknownRun && problem !== null) return <span>The run may still go ({problem}); it is called dead only once a full read finds no process of it.</span>;
   if (worktree.state === 'stale') {
     return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action"><StaleWayOut worktree={worktree} snapshot={snapshot} /></span></>;
   }
