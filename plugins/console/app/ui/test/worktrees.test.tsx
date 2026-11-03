@@ -1,7 +1,7 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { ActionRecord, Worktree } from '../../daemon/src/snapshot.ts';
-import { Worktrees } from '../src/screens/Worktrees.tsx';
+import { RELEASE_RESERVED_TITLE, Worktrees } from '../src/screens/Worktrees.tsx';
 import { actionRecord, claudeSession, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
@@ -214,11 +214,6 @@ async function pressToolbar(label: string, answer: ActionRecord) {
   return { posted };
 }
 
-test('Toolbar_Reserve_PostsAReserveWithNoName', async () => {
-  const { posted } = await pressToolbar('Reserve', { ...actionRecord('r1', 'running', {}), kind: 'worktree.reserve' });
-  expect(posted, "because the daemon reserves under the owner's git name when none is given").toEqual([{ kind: 'worktree.reserve', args: {} }]);
-});
-
 test('Toolbar_Sweep_PostsASweep', async () => {
   const { posted } = await pressToolbar('Sweep', { ...actionRecord('w1', 'running', {}), kind: 'steward.sweep' });
   expect(posted, 'because Sweep runs the steward sweep now, not on the next schedule').toEqual([{ kind: 'steward.sweep', args: {} }]);
@@ -244,4 +239,57 @@ test('ReservedCard_HasRelease', async () => {
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [RESERVED] }} /></Wrapper>);
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Release' })); });
   expect(posted, 'because the owner frees a reservation the way any claim is freed').toEqual([{ kind: 'worktree.release', args: { target: 'wt-4' } }]);
+});
+
+/** The Worktrees screen over `worktrees`, with the daemon answering a press on `name`'s Reserve with `answer`. */
+async function pressReserve(worktrees: Worktree[], name: string, answer: ActionRecord) {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: answer } }; });
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees }} /></Wrapper>);
+  await act(async () => { fireEvent.click(within(screen.getByRole('article', { name })).getByRole('button', { name: 'Reserve' })); });
+  return { posted };
+}
+
+const reserving = (id: string, state: ActionRecord['state'], target: string): ActionRecord => ({ ...actionRecord(id, state, {}), kind: 'worktree.reserve', args: { target } });
+
+test('Toolbar_HasNoReserve', () => {
+  renderWorktrees([RESERVED, { ...poolWorktree('wt-2'), state: 'claimed', claim: CLAIM, item: 'gh#344' }]);
+  expect(screen.queryByRole('button', { name: 'Reserve' }), 'because Reserve sits on each free card, so the owner picks the worktree they get').toBeNull();
+});
+
+test('FreeCard_Reserve_PostsAReserveOfThatWorktree', async () => {
+  const { posted } = await pressReserve([poolWorktree('wt-2'), poolWorktree('wt-3')], 'wt-3', reserving('r1', 'running', 'wt-3'));
+  expect(posted, "because the card's Reserve takes that worktree, not the first free one").toEqual([{ kind: 'worktree.reserve', args: { target: 'wt-3' } }]);
+});
+
+test('FreeCard_EveryOneHasReserve', () => {
+  renderWorktrees([poolWorktree('wt-2'), poolWorktree('wt-3')]);
+  expect(screen.getAllByRole('article').map((card) => within(card).queryByRole('button', { name: 'Reserve' }) !== null), 'because any free worktree can be the one the owner takes').toEqual([true, true]);
+});
+
+test('FreeCard_ReserveRunning_ShowsOnThatCardOnly', async () => {
+  await pressReserve([poolWorktree('wt-2'), poolWorktree('wt-3')], 'wt-3', reserving('r2', 'running', 'wt-3'));
+  expect((within(screen.getByRole('article', { name: 'wt-3' })).getByRole('button', { name: 'Reserve…' }) as HTMLButtonElement).disabled, 'because the pressed card waits for its own reserve').toBe(true);
+  expect((within(screen.getByRole('article', { name: 'wt-2' })).getByRole('button', { name: 'Reserve' }) as HTMLButtonElement).disabled, 'because a reserve of another worktree does not hold this one').toBe(false);
+});
+
+test('FreeCard_ReserveFailed_ShowsTheOutcomeOnThatCard', async () => {
+  await pressReserve([poolWorktree('wt-2'), poolWorktree('wt-3')], 'wt-3', reserving('r3', 'failed', 'wt-3'));
+  expect(within(screen.getByRole('article', { name: 'wt-3' })).queryByText('failed (exit 1)'), 'because the owner sees on the card they pressed that the steward refused it').not.toBeNull();
+  expect(within(screen.getByRole('article', { name: 'wt-2' })).queryByText('failed (exit 1)'), 'because the other card was not pressed').toBeNull();
+});
+
+test('ReservedCard_ReleaseInPlaceOfReserve', () => {
+  renderWorktrees([RESERVED]);
+  const card = screen.getByRole('article', { name: 'wt-4' });
+  expect(within(card).queryByRole('button', { name: 'Reserve' }), 'because a reserved worktree is no longer free to take').toBeNull();
+  expect(within(card).getByRole('button', { name: 'Release' }).getAttribute('title'), "because the button gives back the owner's own reservation, not a flow claim").toBe(RELEASE_RESERVED_TITLE);
+});
+
+test('ClaimedCard_ReleaseAndNoReserve', () => {
+  renderWorktrees([{ ...poolWorktree('wt-2'), state: 'claimed', claim: CLAIM, item: 'gh#344' }]);
+  const card = screen.getByRole('article', { name: 'wt-2' });
+  expect([within(card).queryByRole('button', { name: 'Reserve' }), within(card).queryByRole('button', { name: 'Release' }) !== null], 'because a worktree the flow holds is released, never reserved').toEqual([null, true]);
 });
