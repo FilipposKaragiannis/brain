@@ -137,6 +137,26 @@ test('Pull_NamedByAnItemWithAQuiz_CarriesTheQuiz', async () => {
   assert.equal(pulls.find((pull) => pull.number === 23)?.quiz?.title, 'Quiz for gh#7', 'because the pull the item names is the item\'s, so its card offers the quiz');
 });
 
+/** The fixture with gh#7, claimed in project-wt-2 where an interactive claude sits, naming pull 23 as its open PR. */
+async function sessionBesideItsItemsOpenPull(): Promise<Snapshot> {
+  const facts = await input();
+  const seven = facts.board!.items.find((item) => item.id === 'gh#7')!;
+  seven.state = { ...seven.state, pr: 'https://example/pull/23' };
+  return reconcile(facts);
+}
+
+test('PoolWorktreeWithASessionAndItsItemsOpenPull_CommentsSkipped', async () => {
+  assert.ok(worktree(await sessionBesideItsItemsOpenPull(), 'project-wt-2')?.flags.includes('comments-skipped'), "because flow's comments job never edits under a session, so it skips the item's PR while one works there");
+});
+
+test('PoolWorktreeWithASessionAndNoOpenPull_NotCommentsSkipped', async () => {
+  assert.equal(worktree(await snapshot(), 'project-wt-2')?.flags.includes('comments-skipped'), false, 'because the only pull on its branch is a fork, so the comments job has no PR of the item to skip');
+});
+
+test('PoolWorktreeWithAnOpenPullAndNoSession_NotCommentsSkipped', async () => {
+  assert.equal(worktree(await snapshot(), 'project-wt-3')?.flags.includes('comments-skipped'), false, 'because nobody types in it, so the comments job addresses pull 21 there');
+});
+
 test('Pull_WithNoItem_NoQuiz', async () => {
   const pulls = await pullsWithTheQuizItemNamingPull23();
   assert.equal(pulls.find((pull) => pull.number === 22)?.quiz, null, 'because a pull with no item has no quiz');

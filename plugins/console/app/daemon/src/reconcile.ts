@@ -222,6 +222,18 @@ function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Wor
   });
 }
 
+/**
+ * Adds `comments-skipped` to each pool worktree whose session shares it with its item's open PR:
+ * flow's comments job never edits under another session, so it skips that PR until the session goes.
+ */
+function withCommentsSkipped(worktrees: Worktree[], pulls: PullRequest[]): Worktree[] {
+  return worktrees.map((worktree) => (commentsSkipped(worktree, pulls) ? { ...worktree, flags: [...worktree.flags, 'comments-skipped'] } : worktree));
+}
+
+function commentsSkipped(worktree: Worktree, pulls: PullRequest[]): boolean {
+  return worktree.role === 'pool' && worktree.item !== null && worktree.flags.includes('session') && pulls.some((pull) => pull.item === worktree.item);
+}
+
 function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate: GateRecord | null, inReview = false): ItemState {
   if (worktree !== null && worktree.state !== 'free' && worktree.state !== 'outside') return worktree.state;
   if (gate !== null) return 'needs-you';
@@ -852,13 +864,14 @@ export function reconcile(read: ReconcileInput): Snapshot {
   const held = heldMergeGates(read);
   const input = held.size === 0 ? read : { ...read, flow: { ...read.flow, gates: read.flow.gates.filter((gate) => !held.has(gate.item)) } };
   const contexts = worktreeContexts(input);
-  const worktrees = buildWorktrees(contexts, input);
-  const items = buildItems(input, worktrees, held);
+  const built = buildWorktrees(contexts, input);
+  const items = buildItems(input, built, held);
   const runs = buildRuns(input, contexts);
   const agents = buildAgents(input, contexts);
   const ended = buildEnded(input, contexts);
   const jobs = buildJobs(input);
   const pulls = buildPulls(input, items, contexts);
+  const worktrees = withCommentsSkipped(built, pulls);
   const gates = buildGates(input, contexts, items, pulls);
   const found = buildDisagreements(input, contexts, items, pulls);
   const disagreements = input.settle === undefined ? found : input.settle(found);
