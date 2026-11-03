@@ -182,6 +182,18 @@ test('PrMerge_UsesGhWithSquashByDefault', () => {
   assert.deepEqual(plan.refresh, ['board', 'git', 'pulls'], 'because a merge changes the issue, the branches and the pull list');
 });
 
+test('PrMergeForced_AdminAddedToGhMerge', () => {
+  const plan = planned('pr.merge', { pr: '41', force: 'true' });
+  assert.deepEqual(plan.args, ['pr', 'merge', '41', '--repo', 'o/r', '--squash', '--delete-branch', '--admin'], 'because --admin is what merges past the checks and rules branch protection requires');
+  assert.deepEqual(plan.locks, ['pr:41'], 'because a forced merge is still one merge of that PR');
+});
+
+test('PrMergeForceNotTrue_NoAdmin', () => {
+  for (const force of ['false', 'yes', '']) {
+    assert.equal(planned('pr.merge', { pr: '41', force }).args.includes('--admin'), false, `because only the literal true forces, not "${force}"`);
+  }
+});
+
 test('PrReview_AsksOneReviewerThroughComments', () => {
   const plan = planned('pr.review', { pr: '41', reviewer: '@codex' });
   assert.deepEqual(plan.args.slice(1), ['request-review', '41', REVIEW_ASK, 'codex'], 'because comments.sh posts the mention with the request marker the health job tracks, and takes the name without its @');
@@ -556,6 +568,40 @@ test('JobStart_OtherJob_RunsItsOwnScriptWithModelAndEffort', () => {
   const plan = planned('job.start', { job: 'intake', host: 'codex', model: 'gpt-6-luna', effort: 'low' });
   assert.deepEqual(plan.args, ['/p/app/.flow/jobs/intake.sh', 'codex', '--model', 'gpt-6-luna', '--effort', 'low'], 'because every job takes the host first and its own model and effort');
   assert.deepEqual([plan.locks, plan.outcome], [['job:intake'], 'finished'], 'because the run takes that job\'s lock and ends in place');
+});
+
+test('JobStartCommentsWithAnItem_TheItemAfterTheHostLockedWithTheJob', () => {
+  const plan = planned('job.start', { job: 'comments', host: 'codex', item: 'gh#12' });
+  assert.deepEqual(plan.args, ['/p/app/.flow/jobs/comments.sh', 'codex', 'gh#12'], 'because comments.sh runs its pass on the one item named after the host');
+  assert.deepEqual([plan.detach, plan.timeoutMs], [true, 0], 'because a pass that merges the base in and answers threads outlasts a request');
+  assert.deepEqual(plan.locks, ['item:gh#12', 'job:comments'], 'because the pass edits the item\'s branch and holds the comments job lock as a scheduled run does');
+});
+
+test('JobStartCommentsWithAPr_ThePrIsTheTargetUnderTheItemLock', () => {
+  const plan = planned('job.start', { job: 'comments', host: 'claude', item: 'gh#12', pr: '139' });
+  assert.deepEqual(plan.args, ['/p/app/.flow/jobs/comments.sh', 'claude', '139'], 'because an item linked to its PR only by its task branch has no recorded PR, so the pass is named by the PR the card knows');
+  assert.deepEqual(plan.locks, ['item:gh#12', 'job:comments'], 'because the pass still edits that item\'s branch');
+});
+
+test('JobStartPr_WithoutAnItemOrOnAnotherJobOrNotANumber_Rejected', () => {
+  const cases: Array<[Record<string, string>, RegExp]> = [
+    [{ job: 'comments', host: 'claude', pr: '139' }, /pr needs the item/],
+    [{ job: 'next', host: 'claude', item: 'gh#12', pr: '139' }, /pr is for the comments job/],
+    [{ job: 'comments', host: 'claude', item: 'gh#12', pr: '#139' }, /pr must be a PR number/],
+  ];
+  for (const [args, error] of cases) {
+    const result = planAction('job.start', args, CONTEXT);
+    assert.match(result.ok ? '' : result.error, error, `because ${JSON.stringify(args)} would run a pass with no lock, on the wrong job or on no PR`);
+  }
+});
+
+test('JobStartComments_PullsReadAgain', () => {
+  assert.ok(planned('job.start', { job: 'comments', host: 'codex', item: 'gh#12' }).refresh.includes('pulls'), 'because the pass changes the PR, and its card should show it');
+});
+
+test('JobStartCommentsWithWorkers_Rejected', () => {
+  const result = planAction('job.start', { job: 'comments', host: 'claude', item: 'gh#12', workers: '2' }, CONTEXT);
+  assert.match(result.ok ? '' : result.error, /workers is for the next job/, 'because only next.sh runs workers');
 });
 
 test('JobStart_OtherJobWithNextOptions_Rejected', () => {

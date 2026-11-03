@@ -351,8 +351,11 @@ Every open pull request carries one state, the first that holds:
 The PRs are those of `github.repo`, read whatever tracker holds the items (local, GitHub or Jira),
 since the flow opens every item's PR there. A PR belongs to the item whose `pr` field names it (a
 number such as `#20`, or its URL compared without case or scheme), whichever tracker holds it,
-else to the item claimed on its head branch unless the PR comes from a fork, and that gives its
-worktree. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
+else to the item claimed on its head branch unless the PR comes from a fork, else to the open item
+that records no PR whose task branch, `flow/<slug>` with the flow's `item_slug` (`gh#134` is
+`flow/gh-134`, `local:task/3` is `flow/local-task-3`), is its head branch, so a PR whose `link-pr`
+failed still finds its item; that gives its worktree. A PR's `mergeState` is GitHub's merge state
+status as read (`CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`, …), null when GitHub gave none. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
 (`pr-failing`, `pr-changes-requested`, `pr-mergeable`), and `counts` carries `pullsFailing`,
 `pullsChangesRequested` and `pullsMergeable`. A PR's `review` is the health job's record for it,
 `.flow/reviews/<n>.review.json`: `{state, waiting, cannot, at}`, where `cannot` lists the
@@ -476,7 +479,7 @@ on every state change and at most twice a second while output arrives.
 | `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
 | `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
 | `job.stop` | `job` | `jobs.sh stop <job>` | a stop lock of the job's own, so it reaches a run `job.start` holds | `finished` |
-| `job.start` | `job?` (next), `host`, `model?`, `effort?`; for next also `item?`, `workers?`, `maxSteps?`, `pick?` (a filter's name, not with an item) | `.flow/jobs/<job>.sh <host> [item] [--workers N] [--max-steps M] [--model X] [--effort Y] [--pick NAME]`, detached: one run outside the schedules (below) | the job, and the item when given | `finished` once it ends; `started` for a next run that hands the queue to workers |
+| `job.start` | `job?` (next), `host`, `model?`, `effort?`; for next and comments also `item?`; for comments with an item also `pr?`, then the target in place of the item; for next also `workers?`, `maxSteps?`, `pick?` (a filter's name, not with an item) | `.flow/jobs/<job>.sh <host> [item] [--workers N] [--max-steps M] [--model X] [--effort Y] [--pick NAME]`, detached: one run outside the schedules (below) | the job, and the item when given | `finished` once it ends; `started` for a next run that hands the queue to workers; a comments run re-reads `pulls` too |
 | `job.schedule` | `job` (a schedule name), `schedule` | writes `jobs.schedule.<job>` through the flow config editor, then `jobs.sh install <job>` | the schedule | `finished`; `jobs` and `files` are re-read |
 | `job.unschedule` | `job` (a schedule name) | `jobs.sh uninstall <job>`, then takes `jobs.schedule.<job>` out of the config | the schedule | `finished`; `jobs` and `files` are re-read |
 | `run.stop` | `item` | `steward.sh stop <item>`: ends the run's processes and removes its record, keeping the claim and the worktree | a stop lock of the item's own, so it reaches a run `run.start` or `job.start` holds | `finished` |
@@ -492,7 +495,7 @@ on every state change and at most twice a second while output arrives.
 | `jobs.install` | | `jobs.sh install`: writes and loads the schedule of every job `jobs.schedule` names | every job (`job:next`, `job:comments`, `job:intake`, `job:retro`, `job:health`) | `finished`; `jobs` is re-read; a job install left as it was because it was running ("left as it is" in the output) is named in the record's `note` |
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
-| `pr.merge` | `pr`, `method?` (squash) | `gh pr merge <pr> --repo <repo> --<method> --delete-branch` | the PR | `finished` |
+| `pr.merge` | `pr`, `method?` (squash), `force?` | `gh pr merge <pr> --repo <repo> --<method> --delete-branch`, then `--admin` when `force` is `true`: the owner's rights merge past what branch protection requires (failing or missing checks, a missing approval, a branch behind) | the PR | `finished` |
 | `quiz.answer` | `item`, `answers` (`1b 2a 3c`: a letter per question number) | `quiz.sh answer <item> 1b 2a 3c` (flow 1.29.0): grades the try against the key in `<reports>/quiz.md`, writes `<reports>/quiz.json`, logs one `quiz` event, and on a pass marks the item's draft PR ready for review (`comments.sh ready`) when it has one on GitHub. Refused on an older flow, which has no quiz.sh | the item | `finished`; `files` and `pulls` are re-read |
 | `pr.review` | `pr`, `reviewer` (a name or GitHub login, `@` optional) | `comments.sh request-review <pr> <ask> <reviewer>` (flow 1.27.0): one mention comment with the flow's request marker, Copilot through the reviewers API, so the health job tracks and chases it; the ask is the PR step's own. Refused on flow before 1.27.0, whose script would ask every reviewer | the PR | `finished` |
 | `terminal.open` | `path`, `job?`, `session?`, `gate?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command; with `gate` (an item, `path` optional) one with the resume command of the gate's located `session` | none | `finished` |
@@ -510,8 +513,9 @@ an item) also re-reads its sources a second time five seconds after it returns
 (`ActionPlan.refreshAgainMs`), so the run it started shows; a daemon that stops drops the wait.
 
 `job.start` runs any of the five jobs once with its own host, model and effort, which replace
-`jobs.<host>.model` and `.effort` for that run (flow 1.26.0); `item`, `workers` and `maxSteps` are
-next's alone and refused for the others. It is refused while next is paused, since next.sh would
+`jobs.<host>.model` and `.effort` for that run (flow 1.26.0); `item` is next's and comments' (a
+comments run with an item is that item's pass now, which merges the base in first when its PR
+conflicts), `workers` and `maxSteps` are next's alone, and each is refused for the others. It is refused while next is paused, since next.sh would
 exit at once, and for an item with more than one worker. `job.schedule` takes a schedule name, a job
 or `<job>-<label>` with a label of a lowercase letter then letters and digits, and a schedule line
 as `_jobs.py` reads it: `every <n>m|h`, `daily HH:MM` or `weekly <day> HH:MM`, then an optional
@@ -764,9 +768,16 @@ from the `pulls` source: its state, item, agent or worktree and ages; four cells
 conflicts, review and threads; the reviewers asked by a mention, each silent one "has not answered
 yet" and each that cannot review with its own reply and the way out; Merge on a PR in state
 `mergeable`, else why not (a draft whose item has a quiz still to pass says it goes ready when the
-quiz is passed); the same quiz panel as the Gates card when the PR's item has one; and, on a PR
-that is not a draft, "Ask for review from" with the
-project's reviewers and "other…" for a GitHub login, whose Ask runs `pr.review`; a merge gate's
+quiz is passed); Force merge, a red outlined button that is never the primary one, on a PR in
+state `checks-failing` or `approved` with GitHub's merge state `BLOCKED` or `BEHIND`, which runs
+`pr.merge` with `force=true` (never on `conflicts`, `draft`, `checks-pending` or
+`changes-requested`); Resolve conflicts on a PR in state `conflicts` with an item, which runs
+`job.start` for the comments job on `jobsHost` with that item and the PR's number (the item may have
+no PR recorded when the card found it by its task branch), and while it runs the card says a
+comments pass is running and merges the base in first; the same quiz panel as the Gates card when
+the PR's item has one; and, on a PR that is not a draft, "Ask for review from" with the project's
+reviewers, then each of codex, claude and copilot not among them, then "other…" for a GitHub
+login, whose Ask runs `pr.review`; a merge gate's
 card has the same ask. Before that source is read, or off GitHub, a table of the items with a
 PR) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
