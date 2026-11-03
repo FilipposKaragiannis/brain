@@ -2238,6 +2238,19 @@ waited=$(( $(date +%s) - started ))
 wait "$holder"
 check_all "session-start: a sync in flight makes the next one wait for it, then lift" '[ "$waited" -ge 1 ] && [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.0" ]'
 check "session-start: the registry's temporary file is gone after a lift" sh -c "! ls '$cfg/plugins/' | grep -q '\\.tmp$'"
+mkdir -p "$cfg/plugins/cache/m/flow/2.0.0-rc.1" "$cfg/plugins/cache/m/flow/2.0.3-beta2"
+write_registry 2.0.0 2.0.0-rc.1 "$cfg/plugins/cache/m/flow/2.0.0-rc.1"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "session-start: a prerelease ranks below its release, so 2.0.0-rc.1 does not replace 2.0.0" [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.0" ]
+write_registry 2.0.0 2.0.3-beta2 "$cfg/plugins/cache/m/flow/2.0.3-beta2"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "session-start: a newer prerelease still lifts an older release (2.0.0 to 2.0.3-beta2)" [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.3-beta2" ]
+write_registry 2.0.3-beta2 2.0.9 "$cfg/plugins/cache/m/flow/2.0.0"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "session-start: digits inside a prerelease tag do not outrank a release (2.0.3-beta2 lifts to 2.0.9)" [ "$(jget plugins.flow@m.1.version < "$registry")" = "2.0.9" ]
+write_registry 1.0.0 main "$cfg/plugins/cache/m/flow/2.0.0"
+echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
+check "session-start: a record whose version is not a semantic version is never a target" [ "$(jget plugins.flow@m.1.version < "$registry")" = "1.0.0" ]
 git worktree remove -q --force ../plugin-wt
 rm -rf .claude
 rm .flow/stamp

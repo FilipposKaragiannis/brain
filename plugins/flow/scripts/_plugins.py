@@ -39,20 +39,35 @@ def worktree_paths(root):
 
 
 def version_key(record):
-    key = []
-    for piece in str(record.get("version", "0")).split("."):
-        digits = "".join(character for character in piece if character.isdigit())
-        key.append(int(digits) if digits else 0)
-    return tuple(key)
+    """Semantic version precedence; None for a version that is not one. A prerelease sorts
+    below its release, and its identifiers compare numerically when numeric, else as text,
+    numeric ones first."""
+    text = str(record.get("version", "")).split("+", 1)[0]
+    core, _, prerelease = text.partition("-")
+    numbers = core.split(".")
+    if len(numbers) != 3 or not all(number.isdigit() for number in numbers):
+        return None
+    release = tuple(int(number) for number in numbers)
+    if not prerelease:
+        return (release, 1, ())
+    identifiers = tuple(
+        (0, int(identifier), "") if identifier.isdigit() else (1, 0, identifier)
+        for identifier in prerelease.split(".")
+    )
+    return (release, 0, identifiers)
 
 
 def newest_installed(records):
-    installed = [record for record in records if os.path.isdir(record.get("installPath", ""))]
+    installed = [
+        record for record in records
+        if version_key(record) is not None and os.path.isdir(record.get("installPath", ""))
+    ]
     return max(installed, key=version_key) if installed else None
 
 
 def lift(record, newest):
-    if version_key(record) >= version_key(newest):
+    current = version_key(record)
+    if current is None or current >= version_key(newest):
         return False
     for field in LIFTED_FIELDS:
         if field in newest:
