@@ -193,7 +193,7 @@ test('SweepNote_LockHeld_SaysASweepRunsAlready', () => {
 test('PrMerge_UsesGhWithSquashByDefault', () => {
   const plan = planned('pr.merge', { pr: '41' });
   assert.equal(plan.command, 'gh', 'because the flow has no merge script yet');
-  assert.deepEqual(plan.args, ['pr', 'merge', '41', '--repo', 'o/r', '--squash', '--delete-branch'], 'because squash is the house default and the branch goes with the PR');
+  assert.deepEqual(plan.args, ['pr', 'merge', '41', '--repo', 'o/r', '--squash'], 'because squash is the house default, and gh 2.103\'s --delete-branch runs git worktree remove on the worktree that holds the branch, the pool worktree: the sweep frees it and deletes the local branch, and the repository deletes merged head branches');
   assert.deepEqual(planned('pr.merge', { pr: '41', method: 'rebase' }).args.includes('--rebase'), true, 'because the method can be chosen');
   assert.equal(planAction('pr.merge', { pr: '41', method: 'force' }, CONTEXT).ok, false, 'because only the three gh methods exist');
   assert.equal(planAction('pr.merge', { pr: '41' }, { ...CONTEXT, repo: null }).ok, false, 'because gh needs a repo');
@@ -202,7 +202,7 @@ test('PrMerge_UsesGhWithSquashByDefault', () => {
 
 test('PrMergeForced_AdminAddedToGhMerge', () => {
   const plan = planned('pr.merge', { pr: '41', force: 'true' });
-  assert.deepEqual(plan.args, ['pr', 'merge', '41', '--repo', 'o/r', '--squash', '--delete-branch', '--admin'], 'because --admin is what merges past the checks and rules branch protection requires');
+  assert.deepEqual(plan.args, ['pr', 'merge', '41', '--repo', 'o/r', '--squash', '--admin'], 'because --admin is what merges past the checks and rules branch protection requires, and --delete-branch would remove the pool worktree that holds the branch');
   assert.deepEqual(plan.locks, ['pr:41'], 'because a forced merge is still one merge of that PR');
 });
 
