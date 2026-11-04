@@ -168,10 +168,11 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 11 since a run's `liveness`
-took the place of `alive` and the snapshot took `processList` (10 when the snapshot took
-`lessons`, `retros` and `counts.lessonsSinceRetro`, 9 when an attention row took `gate`, 8 when
-`project.trackers` took the place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 12 since a worktree took the
+`comments-skipped` flag (11 when a run's `liveness` took the place of `alive` and the snapshot
+took `processList`, 10 when the snapshot took `lessons`, `retros` and `counts.lessonsSinceRetro`,
+9 when an attention row took `gate`, 8 when `project.trackers` took the place of `trackerUrl`, 7
+when a gate and a pull took `quiz`, below).
 One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `processList`, `ended`, `jobs`, `pulls`, `events`
@@ -356,6 +357,7 @@ Flags add detail without changing the state:
 | `dead-run` | a run record names it and its run is `dead`: a complete process read found no agent in it and no owner, past the grace |
 | `agent-without-claim` | an unattended agent works in a pool worktree nobody claimed |
 | `session` | an interactive session is open in the folder (see below) |
+| `comments-skipped` | a pool worktree with a `session` whose claimed item has an open PR: flow's comments job skips that PR while the session stays, so its review comments wait |
 
 Every open pull request carries one state, the first that holds:
 
@@ -732,7 +734,8 @@ beside it Running now, each agent's step, item, worktree, host and PR with its a
 of the first claude transcript, and the scheduled jobs in the order they run next; then the latest
 12 events with Show all; the disagreements, only when there are some, with what each store says
 and the button that settles it; the pool map, a cell per worktree with its item, title and what it
-waits on, striped while it runs; and the sources strip, with a small refresh button at the right of its
+waits on, striped while it runs, and under it "The comments job skips N worktree(s): <names> (a
+session works there)" with a link to Worktrees while a worktree has `comments-skipped`; and the sources strip, with a small refresh button at the right of its
 title that posts `/refresh` for every source, turns while the request is out and a moment after, and
 shows a refusal beside it; and at the bottom a footer in small muted type, "Plugins from
 <marketplace>", a row per plugin of `plugins` (flow first, then by name) with a Claude Code and a
@@ -804,7 +807,8 @@ state `checks-failing` or `approved` with GitHub's merge state `BLOCKED` or `BEH
 `changes-requested`); Resolve conflicts on a PR in state `conflicts` with an item, which runs
 `job.start` for the comments job on `jobsHost` with that item and the PR's number (the item may have
 no PR recorded when the card found it by its task branch), and while it runs the card says a
-comments pass is running and merges the base in first; the same quiz panel as the Gates card when
+comments pass is running and merges the base in first; "The comments job skips this PR while a
+session works in <worktree>" while the PR's worktree has `comments-skipped`; the same quiz panel as the Gates card when
 the PR's item has one; and, on a PR that is not a draft, "Ask for review from" with the project's
 reviewers, then each of codex, claude and copilot not among them, then "other…" for a GitHub
 login, whose Ask runs `pr.review`; a merge gate's

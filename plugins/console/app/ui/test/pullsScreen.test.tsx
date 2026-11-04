@@ -1,8 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import type { PullRequest } from '../../daemon/src/snapshot.ts';
+import type { PullRequest, Worktree } from '../../daemon/src/snapshot.ts';
 import { Pulls } from '../src/screens/Pulls.tsx';
-import { actionRecord, FakeDaemon, HTTP_ACCEPTED, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { actionRecord, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -14,9 +14,9 @@ function pull(number: number, change: Partial<PullRequest>): PullRequest {
   };
 }
 
-function renderPulls(pulls: PullRequest[], daemon = new FakeDaemon()): void {
+function renderPulls(pulls: PullRequest[], daemon = new FakeDaemon(), worktrees: Worktree[] = []): void {
   const Wrapper = daemon.screenWrapper();
-  render(<Wrapper><Pulls snapshot={{ ...snapshotAt(TAKEN_AT, 0), pulls }} /></Wrapper>);
+  render(<Wrapper><Pulls snapshot={{ ...snapshotAt(TAKEN_AT, 0), pulls, worktrees }} /></Wrapper>);
 }
 
 const card = (number: number): HTMLElement => screen.getByRole('region', { name: `PR #${number}` });
@@ -139,4 +139,19 @@ test('ConflictingPull_PassRunning_CardSaysSo', async () => {
 test('ConflictingPullWithNoItem_NoResolveConflicts', () => {
   renderPulls([pull(30, { state: 'conflicts', mergeable: 'CONFLICTING', item: null })]);
   expect(within(card(30)).queryByRole('button', { name: 'Resolve conflicts' }), 'because the comments pass is run for an item, and this PR has none').toBeNull();
+});
+
+/** PR 24 of gh#24, claimed in wt-4, with these flags on wt-4. */
+function renderPullInWorktreeFlagged(flags: Worktree['flags']): void {
+  renderPulls([pull(24, { item: 'gh#24', worktree: 'wt-4' })], new FakeDaemon(), [{ ...poolWorktree('wt-4'), state: 'claimed', item: 'gh#24', flags }]);
+}
+
+test('PullWhoseWorktreeHoldsASession_SaysTheCommentsJobSkipsIt', () => {
+  renderPullInWorktreeFlagged(['session', 'comments-skipped']);
+  expect(card(24).textContent, 'because the owner learns why the comments on the PR stay unaddressed').toMatch(/The comments job skips this PR while a session works in wt-4/);
+});
+
+test('PullWhoseWorktreeIsNotSkipped_NoSkipLine', () => {
+  renderPullInWorktreeFlagged([]);
+  expect(card(24).textContent, 'because the comments job addresses a PR whose worktree nobody works in').not.toMatch(/The comments job skips/);
 });

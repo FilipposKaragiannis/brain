@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 11;
+export const SNAPSHOT_SCHEMA_VERSION = 12;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -26,8 +26,10 @@ export type WorktreeRole = 'main' | 'pool' | 'outside';
  * - `dead-run`: a run record names the worktree and its run is `dead` (see `RunLiveness`).
  * - `agent-without-claim`: an unattended agent works in a pool worktree nobody claimed.
  * - `session`: an interactive claude or codex (yours or an app's) has its working directory in the worktree.
+ * - `comments-skipped`: a pool worktree with a `session` whose claimed item has an open PR; flow's
+ *   comments job skips that PR while the session stays, so its review comments wait.
  */
-export type WorktreeFlag = 'dirty' | 'behind' | 'stale-branch' | 'idle' | 'dead-run' | 'agent-without-claim' | 'session';
+export type WorktreeFlag = 'dirty' | 'behind' | 'stale-branch' | 'idle' | 'dead-run' | 'agent-without-claim' | 'session' | 'comments-skipped';
 /** `in-review`: every step ran and its merge gate waits on reviewers, not on you (see `PullRequest.review`). */
 export type ItemState = 'running' | 'needs-you' | 'stale' | 'claimed' | 'in-review' | 'ready' | 'blocked' | 'backlog' | 'done';
 /** `overdue`: its interval has passed but launchd has not started it, usually because the Mac slept. */

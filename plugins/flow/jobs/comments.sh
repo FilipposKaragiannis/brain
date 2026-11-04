@@ -9,6 +9,8 @@
 # merges the base in first.
 # An item waiting at a gate other than merge is skipped, and so is an item whose worktree another
 # session works in (the health job's process scan), named or not: the pass would edit under it.
+# The owner is told once per PR while it stays in use (event comments-skipped): the item, the PR,
+# the worktree and what works there; again only after a pass addressed the PR.
 # A PR whose activity (last update, head commit, mergeable, unresolved threads, their comments,
 # the threads whose last word is not the flow's reply, and the time the item's last gate was
 # cleared) matches the last pass's is skipped with no model. Threads still waiting on a
@@ -101,8 +103,9 @@ cut_short() { tail -n 20 "$1" 2>/dev/null | grep -m1 -E "$CUT_SHORT"; }
 # Per PR, beside the last good pass's activity (<pr>): <pr>.forced, the awaiting set a pass was
 # forced for; <pr>.fails, the count of failed passes in a row, whatever they changed (a pass cut
 # short after one reply changes the activity each time), cleared only by a pass that completes;
-# <pr>.told and
-# <pr>.told-fails, what the owner was last told. Each is said once.
+# <pr>.told and <pr>.told-fails, what the owner was last told. Each is said once. The in-use
+# marker, pr-<number>.told-in-use, is keyed by the PR's number, so the item and the PR's number or
+# URL, as a run by hand names it, share one; it goes when a pass addresses the PR.
 seen_file() { printf '%s/%s.seen/%s' "$(job_log_dir)" "$job" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
 max_fails="$(cfg_or jobs.comments.max_failures 3)"
 case "$max_fails" in ''|*[!0-9]*) die "jobs.comments.max_failures takes a whole number" 2 ;; esac
@@ -145,7 +148,7 @@ list_procs() {
 # first time a target holds a worktree, or before the workers start when passes run at once.
 # When they cannot be listed, every worktree counts as in use, as the steward counts it.
 in_use() {
-  in_use_why=""
+  in_use_why=""; iu_how=""
   iu_item="$(item_of "$1")"; [ -n "$iu_item" ] || return 0
   iu_wt="$("$FLOW_PLUGIN/scripts/steward.sh" find "$iu_item" 2>/dev/null)"; [ -n "$iu_wt" ] || return 0
   list_procs
@@ -155,6 +158,31 @@ in_use() {
 }
 # once <file> <value>: true the first time <value> is seen for <file>, and records it.
 once() { [ "$(cat "$1" 2>/dev/null)" != "$2" ] && printf '%s\n' "$2" > "$1"; }
+# pr_of <target>: the PR a target names: the item's recorded PR, or the target itself.
+pr_of() { if adapter_for "$1" >/dev/null; then json_get "$(adapter read "$1" 2>/dev/null)" state.pr; else printf '%s' "$1"; fi; }
+# in_use_marker <target> <pr>: the told-in-use marker of the PR <target> names, keyed by the PR's
+# number (<pr> as a number, #<n> or URL); by the target when no PR is known.
+in_use_marker() {
+  im_pr="${2##*/}"; im_pr="${im_pr#\#}"
+  case "$im_pr" in ''|*[!0-9]*) seen_file "$1" ;; *) seen_file "pr-$im_pr" ;; esac
+  printf '.told-in-use'
+}
+# session_named <how>: the host and pid of the process _health.py alive named ("process 4242"),
+# as "claude (process 4242)", or the words as they came when the process list lacks it.
+session_named() {
+  sn_host="$(awk -F '\t' -v pid="${1##* }" '$1 == pid { split($3, words, " "); n = split(words[1], parts, "/"); print parts[n]; exit }' "$procs" 2>/dev/null)"
+  if [ -n "$sn_host" ]; then printf '%s (%s)' "$sn_host" "$1"; else printf '%s' "$1"; fi
+}
+# tell_in_use <target>: tells the owner once per streak that the PR waits on the session in_use
+# found ($iu_item, $iu_wt, $iu_how). Nothing when the processes could not be listed: no session
+# is known then.
+tell_in_use() {
+  [ -n "$iu_how" ] || return 0
+  ti_pr="$(pr_of "$1")"; ti_f="$(in_use_marker "$1" "$ti_pr")"; mkdir -p "$(dirname "$ti_f")"
+  ti_pr="${ti_pr##*/}"; ti_pr="${ti_pr#\#}"
+  once "$ti_f" "$iu_wt" || return 0
+  "$FLOW_PLUGIN/scripts/notify.sh" --event comments-skipped "$iu_item: the comments job skips PR #$ti_pr while $(session_named "$iu_how") works in $iu_wt. Its review comments wait until that session leaves the worktree." >/dev/null 2>&1 || true
+}
 # outcome <word>: what this pass came to, in its slot, for the run's result line: addressed,
 # failed, unchanged, busy or stopped.
 outcome() { printf '%s\n' "$1" > "$slot/outcome"; }
@@ -162,7 +190,7 @@ outcome() { printf '%s\n' "$1" > "$slot/outcome"; }
 pass() {
   t="$1"
   in_use "$t"
-  if [ -n "$in_use_why" ]; then job_say "$t: $in_use_why, skipped" >/dev/null; outcome busy; return 0; fi
+  if [ -n "$in_use_why" ]; then job_say "$t: $in_use_why, skipped" >/dev/null; tell_in_use "$t"; outcome busy; return 0; fi
   note="$(prepare_pr "$t")"
   activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$t")"; mkdir -p "$(dirname "$f")"
   fails=0
@@ -196,7 +224,7 @@ pass() {
     fi
   fi
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
-  job_say "addressing $t"
+  job_say "addressing $t"; rm -f "$(in_use_marker "$t" "$pull")"
   # The output goes to the log as it comes, so a pass killed half way keeps what it said.
   { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$rnote Unattended: nobody answers questions; collect owner decisions in the report and stop.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"

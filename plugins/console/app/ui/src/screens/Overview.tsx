@@ -186,7 +186,19 @@ function Pool({ snapshot }: { snapshot: Snapshot }) {
       {pool.length === 0 ? <Empty>No pool worktrees.</Empty> : (
         <div className="pool-map">{pool.map((worktree) => <PoolCell key={worktree.name} worktree={worktree} pages={snapshot} takenAt={snapshot.takenAt} href={href} />)}</div>
       )}
+      <CommentsSkipped pool={pool} href={href} />
     </Module>
+  );
+}
+
+/** The pool worktrees whose PR the comments job skips while a session works in them, with a link to their cards. */
+function CommentsSkipped({ pool, href }: { pool: Worktree[]; href: string }) {
+  const skipped = pool.filter((worktree) => worktree.flags.includes('comments-skipped')).map((worktree) => worktree.name);
+  if (skipped.length === 0) return null;
+  return (
+    <p className="pool-skipped" aria-label="Comments skipped">
+      The comments job skips {skipped.length} {skipped.length === 1 ? 'worktree' : 'worktrees'}: {names(skipped)} (a session works there). <a className="module-link" href={href}>Worktrees</a>
+    </p>
   );
 }
 

@@ -2680,14 +2680,28 @@ printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(updatedAt='2026-10-25T01:30:00Z'); json.dump(d, open(p,'w'))"
 : > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: an item whose worktree another session works in is skipped, and the log says which" sh -c "[ ! -s '$work/host77.log' ] && grep -q '90: another session works in .*app-wt-.* (process 4242), skipped' .flow/log/comments.log && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 0 PR(s), 1 in use by another session'"
+check "comments job: the owner is told the item, the PR, the worktree and what works there" grep -q 'comments-skipped	gh#77: the comments job skips PR #90 while claude (process 4242) works in .*app-wt-' .flow/events.log
+"$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: the owner is told once while the session stays in the worktree" [ "$(grep -c '	comments-skipped	' .flow/events.log)" = 1 ]
 : > "$FLOW_HEALTH_PROCS"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: once that session ends, the pass runs" grep -q 'comments 90' "$work/host77.log"
+printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: a session back in the worktree after a pass addressed the PR is told again" [ "$(grep -c '	comments-skipped	' .flow/events.log)" = 2 ]
+: > "$FLOW_HEALTH_PROCS"
 # A PR from a local item's branch (flow/local-task-1) names its item too, so it is skipped the same way.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/$(item_slug "$mg")', updatedAt='2026-10-25T01:45:00Z'); json.dump(d, open(p,'w'))"
 printf '{"item":"%s","branch":"flow/%s","base":"main"}\n' "$mg" "$(item_slug "$mg")" > "$wm/.flow/claim.json"
 printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"
 : > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: a PR from a local item's branch whose worktree another session works in is skipped" sh -c "[ ! -s '$work/host77.log' ] && tail -2 .flow/log/comments.log | grep -q '90: another session works in .*app-wt-.* (process 4242), skipped'"
+# The item and its PR's number name one PR, so they share the in-use marker: told once, cleared by either.
+told="$(grep -c '	comments-skipped	' .flow/events.log)"
+"$P/jobs/comments.sh" claude "$mg" >/dev/null 2>&1
+check "comments job: a run named by the item after one named by its PR number tells the owner nothing new" [ "$(grep -c '	comments-skipped	' .flow/events.log)" = "$told" ]
+: > "$FLOW_HEALTH_PROCS"; "$P/jobs/comments.sh" claude "$mg" >/dev/null 2>&1
+printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "comments job: a pass named by the item clears the marker a run named by the PR number reads" [ "$(grep -c '	comments-skipped	' .flow/events.log)" = "$((told + 1))" ]
+check "comments job: the in-use marker is keyed by the PR number" sh -c "ls .flow/log/comments.seen/ | grep -qx 'pr-90.told-in-use' && ! ls .flow/log/comments.seen/ | grep -q '^90.told-in-use'"
 : > "$FLOW_HEALTH_PROCS"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 # P2-7: a reports folder in a worktree another item holds gets no dirty-tree note.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-78', updatedAt='2026-10-25T02:00:00Z'); json.dump(d, open(p,'w'))"
