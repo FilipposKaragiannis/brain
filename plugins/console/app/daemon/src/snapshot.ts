@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 12;
+export const SNAPSHOT_SCHEMA_VERSION = 13;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -381,7 +381,17 @@ export type PullRequest = {
   draft: boolean;
   state: PullState;
   checks: { passed: number; failed: number; pending: number };
+  /** Each check on the head by its latest run, the failed ones first, then the running, then the passed. */
+  checkRuns: PullCheck[];
+  /** The head commit, or null when GitHub gave none. */
+  head: string | null;
+  /** GitHub's auto-merge, armed from the card or on GitHub: it merges with `method` once every requirement is met. Null when not armed. */
+  autoMerge: { method: string; at: string } | null;
   reviewDecision: string | null;
+  /** How many reviewers' latest review requests changes; without a required review GitHub's `reviewDecision` stays null for them. */
+  changesRequested: number;
+  /** How many reviews are requested on GitHub and not given yet. */
+  reviewsRequested: number;
   unresolvedThreads: number;
   mergeable: string | null;
   /** GitHub's merge state status (`CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`, …), or null when GitHub gave none. */
@@ -398,12 +408,34 @@ export type PullRequest = {
   quiz: Quiz | null;
 };
 
+/** One check on a pull's head: its latest run's outcome, when it ended (or started, while it runs), and its run's page. */
+export type PullCheck = { name: string; outcome: 'passed' | 'failed' | 'pending'; at: string | null; url: string | null };
+
+/** A pull merged since local midnight, newest first, with the item it carried when one is known. */
+export type MergedPull = { number: number; title: string; url: string; branch: string; item: string | null; createdAt: string; mergedAt: string };
+
 /**
  * The health job's verdict on a pull at the merge gate, up to one health interval old: `state`
  * (`in-review`, `changes-requested` or `ready`), the reviewers asked by a mention who have not
  * answered, and each reviewer that replied it cannot review here, with its reply.
  */
 export type PullReview = { state: string; waiting: string[]; cannot: Array<{ reviewer: string; said: string }>; at: string };
+
+/** Reviewers the flow asks through GitHub's reviewers API (`_reviews.py`), so the live pull shows their request. */
+const GITHUB_ASKED_REVIEWERS = ['copilot'];
+
+/**
+ * Whether a reviewer asked by a mention has not answered yet. GitHub cannot see that ask, so its
+ * own merge rules, `--auto` among them, would merge past it.
+ */
+export function mentionReviewWaiting(waiting: readonly string[]): boolean {
+  return waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+}
+
+/** Whether a review asks for changes: GitHub's decision says so, or, with no review required, a reviewer's latest review does. */
+export function reviewChangesRequested(pull: { reviewDecision: string | null; changesRequested: number }): boolean {
+  return pull.reviewDecision === 'CHANGES_REQUESTED' || (pull.reviewDecision === null && pull.changesRequested > 0);
+}
 
 export type JobRun = {
   at: string;
@@ -594,6 +626,8 @@ export type Snapshot = {
   jobs: Job[];
   stoppedHosts: StoppedHost[];
   pulls: PullRequest[];
+  /** The pulls merged today (since local midnight), newest first; empty until the pulls are read. */
+  mergedToday: MergedPull[];
   events: FlowEvent[];
   /** Every lesson in the flow home's lessons log, oldest first. */
   lessons: Lesson[];
@@ -631,6 +665,7 @@ export type ActionKind =
   | 'jobs.install'
   | 'job.uninstall'
   | 'pr.merge'
+  | 'pr.auto-merge'
   | 'pr.review'
   | 'quiz.answer'
   | 'host.clear'

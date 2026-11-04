@@ -1,4 +1,4 @@
-import type { Agent, FlowEvent, Job, PullRequest, Run, Snapshot, SourceName, Worktree } from '../../../daemon/src/snapshot.ts';
+import type { Agent, Job, PullRequest, Run, Snapshot, SourceName, Worktree } from '../../../daemon/src/snapshot.ts';
 import { Age, clockTime, formatDuration } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
@@ -6,7 +6,7 @@ import { readinessSentence } from '../readiness.ts';
 import { lessonsSentence } from '../retro.ts';
 import type { Route } from '../route.ts';
 import { routeHash } from '../route.ts';
-import { countTone, jobTone, worktreeTone } from '../status.ts';
+import { countTone, eventTone, jobTone, worktreeTone } from '../status.ts';
 import type { Tone } from '../status.ts';
 import { PluginsFooter } from '../PluginsFooter.tsx';
 import { SourcesRefresh } from '../SourcesRefresh.tsx';
@@ -243,11 +243,4 @@ function Events({ snapshot }: { snapshot: Snapshot }) {
       )}
     </Module>
   );
-}
-
-function eventTone(event: FlowEvent): Tone {
-  if (/fail|dead|error|refus/i.test(event.kind)) return 'failing';
-  if (/gate|ambiguity|approval|escalation|feel-test|decomposition/i.test(event.kind)) return 'needs-you';
-  if (/start|resume|step|claim/i.test(event.kind)) return 'running';
-  return 'quiet';
 }

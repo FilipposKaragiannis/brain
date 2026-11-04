@@ -5,16 +5,18 @@
 # ones, and runs the flow `comments` skill once per PR in a fresh host session from the main
 # worktree (the skill spawns the comment-addresser in the task's worktree). Before that, with no
 # model: a reviewer of the PR's author host silent past reviews.chase_after is asked again
-# (comments.sh chase), and a PR that conflicts with its base is named in the brief so the skill
-# merges the base in first.
+# (comments.sh chase), a PR that conflicts with its base is named in the brief so the skill
+# merges the base in first, and the checks failing on the PR's head are named so it fixes them.
 # An item waiting at a gate other than merge is skipped, and so is an item whose worktree another
 # session works in (the health job's process scan), named or not: the pass would edit under it.
 # The owner is told once per PR while it stays in use (event comments-skipped): the item, the PR,
 # the worktree and what works there; again only after a pass addressed the PR.
 # A PR whose activity (last update, head commit, mergeable, unresolved threads, their comments,
-# the threads whose last word is not the flow's reply, and the time the item's last gate was
-# cleared) matches the last pass's is skipped with no model. Threads still waiting on a
-# reply get one more pass, then the owner is told once. A named PR always runs. A pass's own
+# the threads whose last word is not the flow's reply, the time the item's last gate was
+# cleared, and the checks failing on the head) matches the last pass's is skipped with no model.
+# A check that goes red on a head gets one pass; one the pass could not fix leaves the line as it
+# was, so a flaky or broken check is not tried again until the head changes. Threads still waiting
+# on a reply get one more pass, then the owner is told once. A named PR always runs. A pass's own
 # replies count as activity, so one quiet pass follows each working one. A pass the host cut short
 # (a non-zero exit, or the host stopping the addresser at its background-task ceiling) is failed:
 # its activity is not kept, the next run tries it again, and the job exits 1; after
@@ -66,16 +68,30 @@ for i in json.load(sys.stdin):
 fi
 [ -n "$targets" ] || { job_say "quiet: no open PR"; exit 0; }
 # prepare_pr <target>: chase its silent reviewers (not on a draft, which waits on its quiz in the console) and
-# print the brief's note when the PR conflicts with its base. Model free.
+# print the brief's notes: the PR conflicts with its base, checks fail on its head. Model free.
 prepare_pr() {
   if adapter_for "$1" >/dev/null; then pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)"; else pull="$1"; fi
   [ -n "$pull" ] && state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pull" 2>/dev/null)" || return 0
   [ "$(json_get "$state" isDraft)" = "true" ] || chase_reviewers "$1" "$pull"
+  conflict_note "$1" "$pull"
+  checks_note "$1" "$pull"
+}
+conflict_note() { # conflict_note <target> <pr>, with $state read
   [ "$(json_get "$state" mergeable)" = "CONFLICTING" ] || return 0
   base="$(json_get "$state" baseRefName)"
-  case "$base" in ""|*[!A-Za-z0-9._/-]*) job_say "$1: $pull conflicts with a base named oddly, not merged" >/dev/null; return 0 ;; esac
-  job_say "$1: $pull conflicts with $base" >/dev/null
+  case "$base" in ""|*[!A-Za-z0-9._/-]*) job_say "$1: $2 conflicts with a base named oddly, not merged" >/dev/null; return 0 ;; esac
+  job_say "$1: $2 conflicts with $base" >/dev/null
   printf ' The PR conflicts with its base %s: run the Conflicts step first.' "$base"
+}
+# checks_note <target> <pr>, with $state read. A draft too: its red check is its own change's, the
+# quiz does not wait on it, and a fix while the owner takes the quiz leaves the PR green when it
+# goes ready.
+checks_note() {
+  failing="$("$FLOW_PLUGIN/scripts/comments.sh" failing-checks "$2" 2>/dev/null | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
+  [ -n "$failing" ] || return 0
+  head="$(json_get "$state" headRefOid | cut -c1-8)"; head="${head:-the head}"
+  job_say "$1: checks fail on $head of $2: $failing" >/dev/null
+  printf ' Checks fail on %s: %s: run the Checks step.' "$head" "$failing"
 }
 chase_reviewers() { # chase_reviewers <target> <pr>
   "$FLOW_PLUGIN/scripts/comments.sh" chase "$2" 2>&1 | while IFS= read -r line; do job_say "$1: $line" >/dev/null; done
@@ -85,6 +101,8 @@ chase_reviewers() { # chase_reviewers <target> <pr>
 # flow's reply, space separated, and they are part of the line. So is the time the item's last
 # gate was cleared (gate.sh clear), once one was: a pass that stopped at a gate left the PR as it
 # was, and the owner's answer is what is new. A line with no clear is the line before 1.23.0.
+# The checks failing on the head close the line only when one fails, so a PR with none keeps the
+# line it had before failing checks were read, and gets no extra pass after the upgrade.
 activity() {
   awaiting=""; cleared=""
   if adapter_for "$1" >/dev/null; then
@@ -92,8 +110,10 @@ activity() {
   else pull="$1"; fi
   [ -n "$pull" ] && act="$("$FLOW_PLUGIN/scripts/comments.sh" activity "$pull" 2>/dev/null)" || return 0
   awaiting="$(json_list "$act" awaiting | tr '\n' ' ' | sed 's/ $//')"
-  printf '%s %s %s threads:%s comments:%s awaiting:%s%s' "$(json_get "$act" updatedAt)" "$(json_get "$act" headRefOid)" "$(json_get "$act" mergeable)" \
-    "$(json_get "$act" unresolved)" "$(json_get "$act" review_comments)" "$(printf '%s' "$awaiting" | tr ' ' ',')" "${cleared:+ cleared:$cleared}"
+  failing="$(json_list "$act" failing | tr '\n' ',' | sed 's/,$//')"
+  printf '%s %s %s threads:%s comments:%s awaiting:%s%s%s' "$(json_get "$act" updatedAt)" "$(json_get "$act" headRefOid)" "$(json_get "$act" mergeable)" \
+    "$(json_get "$act" unresolved)" "$(json_get "$act" review_comments)" "$(printf '%s' "$awaiting" | tr ' ' ',')" "${cleared:+ cleared:$cleared}" \
+    "${failing:+ failing:$failing}"
 }
 # cut_short <output file>: the host's own line when it stopped the pass's background work (Claude
 # prints it when a subagent outlives its ceiling after the last turn), or nothing. Only a line that

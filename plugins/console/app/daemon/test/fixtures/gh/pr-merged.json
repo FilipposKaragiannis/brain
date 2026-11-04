@@ -1,0 +1,5 @@
+[
+  { "number": 19, "title": "Nineteen", "url": "https://github.com/example/fixture/pull/19", "headRefName": "flow/gh-9", "createdAt": "2026-10-20T09:00:00Z", "mergedAt": "2026-10-24T17:48:00Z" },
+  { "number": 18, "title": "Eighteen", "url": "https://github.com/example/fixture/pull/18", "headRefName": "someone/branch", "createdAt": "2026-10-24T13:00:00Z", "mergedAt": "2026-10-24T14:57:00Z" },
+  { "number": 17, "title": "Seventeen", "url": "https://github.com/example/fixture/pull/17", "headRefName": "flow/gh-5", "createdAt": "2026-10-20T09:00:00Z", "mergedAt": "2026-10-22T12:00:00Z" }
+]

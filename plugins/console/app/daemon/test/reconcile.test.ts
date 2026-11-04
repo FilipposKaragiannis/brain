@@ -30,7 +30,7 @@ async function input(): Promise<ReconcileInput> {
     processes: await readProcesses(fakeRunner, () => NOW),
     jobs: { jobs: parseJobStatus(JOBS_JSON), runs: [] },
     board: parseBoard(BOARD_JSON),
-    pulls: await readPulls(FIXTURE_ROOT, 'example/fixture', fakeRunner),
+    pulls: await readPulls(FIXTURE_ROOT, 'example/fixture', fakeRunner, NOW),
     sources: { files: fresh, git: fresh, processes: fresh, jobs: fresh, board: fresh, pulls: fresh },
   };
 }
@@ -347,7 +347,7 @@ test('NoBoardYet_EngagedItemsStillListed', async () => {
 const READY: PullFact = {
   number: 30, title: 'Thirty', url: 'https://example/pull/30', branch: 'flow/gh-30', base: 'main', author: 'someone',
   draft: false, crossRepository: false, mergeable: 'MERGEABLE', mergeState: 'CLEAN', reviewDecision: 'APPROVED', changesRequested: 0, reviewsRequested: 0,
-  checks: { passed: 3, failed: 0, pending: 0 }, unresolvedThreads: 0,
+  checks: { passed: 3, failed: 0, pending: 0 }, checkRuns: [], head: null, autoMerge: null, unresolvedThreads: 0,
   createdAt: '2026-10-23T18:16:04Z', updatedAt: '2026-10-24T17:16:04Z',
 };
 const ready = (change: Partial<PullFact>): PullFact => ({ ...READY, ...change });
@@ -452,7 +452,7 @@ test('Pulls_ForkOnClaimedBranchName_NoLink', async () => {
 
 /** The facts with pull #560 opened from `branch` instead of its fixture head. */
 const withPull560On = (facts: ReconcileInput, branch: string): ReconcileInput => ({
-  ...facts, pulls: { pulls: (facts.pulls?.pulls ?? []).map((pull) => (pull.number === 560 ? { ...pull, branch } : pull)) },
+  ...facts, pulls: { merged: [], pulls: (facts.pulls?.pulls ?? []).map((pull) => (pull.number === 560 ? { ...pull, branch } : pull)) },
 });
 
 test('Pulls_NoPrRecorded_LinksTheOpenItemOnItsTaskBranch', async () => {
@@ -508,7 +508,7 @@ test('Disagreement_DonePullMergeableWithMergeGate_None', async () => {
 
 test('Disagreement_DonePullNotMergeable_None', async () => {
   const facts = await input();
-  facts.pulls = { pulls: (facts.pulls?.pulls ?? []).map((pull) => (pull.number === 20 ? { ...pull, unresolvedThreads: 1 } : pull)) };
+  facts.pulls = { merged: [], pulls: (facts.pulls?.pulls ?? []).map((pull) => (pull.number === 20 ? { ...pull, unresolvedThreads: 1 } : pull)) };
   assert.deepEqual(mergeDisagreements(reconcile(facts)), [], 'because a pull with an open thread is not ready, so nothing is missing a merge gate');
 });
 
@@ -667,7 +667,7 @@ test('PullState_ReviewStillRequested_ReviewPending', () => {
 const mergeGateOn20 = async (pull: Partial<PullFact>, reviews: ReconcileInput['flow']['reviews'] = []): Promise<ReconcileInput> => {
   const facts = withBoardItem(await input(), 'gh#20', { gate: 'merge' });
   facts.flow = { ...facts.flow, reviews, gates: [{ item: 'gh#20', gate: 'merge', message: 'Merge #20', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null }] };
-  facts.pulls = { pulls: (facts.pulls?.pulls ?? []).map((entry) => (entry.number === 20 ? { ...entry, ...pull } : entry)) };
+  facts.pulls = { merged: [], pulls: (facts.pulls?.pulls ?? []).map((entry) => (entry.number === 20 ? { ...entry, ...pull } : entry)) };
   return facts;
 };
 const shownAtMergeGate = (picture: Snapshot): boolean[] => [
@@ -1121,4 +1121,31 @@ test('Snapshot_Retros_NewestFirstWithTheReportNoLineNames', async () => {
 
 test('Counts_LessonsSinceRetro_ThoseAfterTheLastRetrosCount', async () => {
   assert.equal((await snapshot()).counts.lessonsSinceRetro, 2, 'because the last retro read three lines, the cut-short one among them, so the lessons on lines four and five are new');
+});
+
+test('MergedToday_LinkedByTaskBranch', async () => {
+  const merged = (await snapshot()).mergedToday;
+  assert.deepEqual(merged.map((pull) => [pull.number, pull.item]), [[19, 'gh#9'], [18, null]], 'because a merged pull carries the item whose task branch was its head, and none for a branch no item names');
+});
+
+test('MergedToday_ClosedItem_NamedByItsTaskBranch', async () => {
+  const facts = await input();
+  facts.pulls = { pulls: facts.pulls?.pulls ?? [], merged: [
+    { number: 40, title: 'Forty', url: 'https://github.com/example/fixture/pull/40', branch: 'flow/gh-140', createdAt: '2026-10-24T09:00:00Z', mergedAt: '2026-10-24T17:00:00Z' },
+    { number: 41, title: 'Forty-one', url: 'https://github.com/example/fixture/pull/41', branch: 'flow/local-task-3', createdAt: '2026-10-24T09:00:00Z', mergedAt: '2026-10-24T16:00:00Z' },
+  ] };
+  assert.deepEqual(reconcile(facts).mergedToday.map((pull) => pull.item), ['gh#140', 'local:task/3'], 'because a merged item is often closed and off the board, and its task branch still names it');
+});
+
+test('MergedToday_PullsNotRead_Empty', async () => {
+  const facts = await input();
+  facts.pulls = null;
+  assert.deepEqual(reconcile(facts).mergedToday, [], 'because nothing merged is known before the pulls are read');
+});
+
+test('Pull_ReviewHoldFacts_CarriedForTheCard', async () => {
+  const facts = await input();
+  facts.pulls = { pulls: [ready({ reviewDecision: null, changesRequested: 1, reviewsRequested: 2, checks: { passed: 2, failed: 1, pending: 0 } })], merged: [] };
+  const pull = pullNumbered(reconcile(facts), 30);
+  assert.deepEqual([pull?.state, pull?.changesRequested, pull?.reviewsRequested], ['checks-failing', 1, 2], 'because the card keeps Merge when green off for a review hold a failing check hides from the state');
 });

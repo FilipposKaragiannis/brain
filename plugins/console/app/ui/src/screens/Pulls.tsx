@@ -1,23 +1,30 @@
-import type { PullRequest, PullReview, Snapshot } from '../../../daemon/src/snapshot.ts';
+import type { MergedPull, PullRequest, PullReview, Snapshot } from '../../../daemon/src/snapshot.ts';
 import { AskReview } from '../askReview.tsx';
-import { Age } from '../clock.tsx';
+import { Age, clockTime, formatDuration } from '../clock.tsx';
 import { ExternalLink, ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
-import { forceMergeOffered, healthCells, mergeBlockedReason, PULL_STATE_LABEL, pullRowsFromItems } from '../pulls.ts';
-import type { PullRequestRow } from '../pulls.ts';
+import { autoMergeOffered, checkRows, forceMergeOffered, healthCells, mergeBlockedReason, pullRowsFromItems, pullTimeline, SHORT_SHA } from '../pulls.ts';
+import type { CheckRow, PullRequestRow } from '../pulls.ts';
 import { QuizPanel } from '../Quiz.tsx';
-import { itemTone, pullTone } from '../status.ts';
+import { itemTone } from '../status.ts';
+import type { Tone } from '../status.ts';
 import { ActionButton, Chip, Dot, Empty, Module, SourceFreshness, useActionsView } from '../ui.tsx';
 
-/** The flow job whose pass on one item's PR merges the base in first when the PR conflicts. */
+/** The flow job whose pass on one item's PR merges the base in first when the PR conflicts, and fixes its failing checks. */
 const COMMENTS_JOB = 'comments';
+const MILLISECONDS_PER_SECOND = 1000;
+/** What a check row's mark and tone are, by its outcome. */
+const CHECK_MARK: Record<CheckRow['outcome'], { mark: string; tone: Tone }> = {
+  failed: { mark: '✕', tone: 'failing' }, pending: { mark: '•', tone: 'running' }, passed: { mark: '✓', tone: 'ready' },
+};
 /** What Force merge does, on its title: gh's admin merge, past what branch protection requires. */
 const FORCE_MERGE_TITLE = 'Merges with gh pr merge --admin, past the checks and rules GitHub requires';
 
 /**
  * Open pull requests from the daemon's `pulls` source, one card each: where it stands, its
- * health, its reviewers and the merge. Until that source has been read once, or on a project it
- * does not apply to, the items that carry a PR stand in as a table.
+ * health, its checks, its reviewers, what happened to it today and the merge; then the pulls
+ * merged today. Until that source has been read once, or on a project it does not apply to, the
+ * items that carry a PR stand in as a table.
  */
 export function Pulls({ snapshot }: { snapshot: Snapshot }) {
   const pullsRead = snapshot.sources.pulls.at !== null && snapshot.sources.pulls.error === null;
@@ -33,17 +40,31 @@ export function Pulls({ snapshot }: { snapshot: Snapshot }) {
   }
   const inReview = snapshot.pulls.filter((pull) => pull.state === 'in-review').length;
   const mergeable = snapshot.pulls.filter((pull) => pull.state === 'mergeable').length;
+  const merged = snapshot.mergedToday.length;
   return (
     <div className="screen">
-      <p className="pulls-summary" aria-label="Summary">
-        <span>{snapshot.pulls.length} open{inReview > 0 ? ` · ${inReview} in review` : ''}{mergeable > 0 ? ` · ${mergeable} ready to merge` : ''}</span>
-        <SourceFreshness name="pulls" freshness={snapshot.sources.pulls} />
-      </p>
+      <div className="pulls-summary">
+        <p aria-label="Summary">
+          <span>{snapshot.pulls.length} open{inReview > 0 ? ` · ${inReview} in review` : ''}{mergeable > 0 ? ` · ${mergeable} ready to merge` : ''} · {merged} merged today</span>
+          <SourceFreshness name="pulls" freshness={snapshot.sources.pulls} />
+        </p>
+        <RunCommentsJob snapshot={snapshot} />
+      </div>
       {snapshot.pulls.length === 0
         ? <Module className="pulls" title="Pull requests" aside={null} footer={null}><Empty>No open pull request.</Empty></Module>
         : snapshot.pulls.map((pull) => <PullCard key={pull.number} pull={pull} snapshot={snapshot} />)}
+      {merged > 0 && <MergedToday merged={snapshot.mergedToday} pages={snapshot} />}
     </div>
   );
+}
+
+/** One comments pass over every open PR now: the installed schedule handed to launchd, else a run on the project's host. */
+function RunCommentsJob({ snapshot }: { snapshot: Snapshot }) {
+  const job = snapshot.jobs.find((entry) => entry.name === COMMENTS_JOB);
+  if (job === undefined) return null;
+  return job.installed
+    ? <ActionButton kind="job.run" args={{ job: COMMENTS_JOB }} label="Run comments job now" primary={false} />
+    : <ActionButton kind="job.start" args={{ job: COMMENTS_JOB, host: snapshot.project.jobsHost }} label="Run comments job now" primary={false} />;
 }
 
 function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot }) {
@@ -55,17 +76,17 @@ function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot })
   return (
     <section className="module pull-card" aria-label={`PR #${pull.number}`}>
       <header className="pull-head">
-        <ExternalLink url={pull.url} className="mono pull-number">#{pull.number}</ExternalLink>
+        <span className="mono pull-number">#{pull.number}</span>
         <h2 className="clip" title={pull.title}>{pull.title}</h2>
-        <Chip tone={pullTone(pull.state)}>{PULL_STATE_LABEL[pull.state]}</Chip>
         {pull.item !== null && <ItemLink id={pull.item} pages={snapshot} />}
+        <span className="chip mono pull-branch">{pull.branch} → {pull.base}</span>
         {agent !== null
           ? <span className="chip tone-running"><Dot tone="running" />agent in {pull.worktree} · <Age seconds={agent.elapsedSeconds} takenAt={snapshot.takenAt} /></span>
           : pull.worktree !== null && <span className="muted mono">{pull.worktree}</span>}
-        <span className="muted pull-age">opened <Age seconds={pull.ageSeconds} takenAt={snapshot.takenAt} /> ago · idle <Age seconds={pull.idleSeconds} takenAt={snapshot.takenAt} /></span>
+        <ExternalLink url={pull.url} className="pull-open">Open on GitHub</ExternalLink>
       </header>
       <div className="pull-health">
-        {healthCells(pull).map((cell) => (
+        {healthCells(pull, snapshot.takenAt).map((cell) => (
           <div key={cell.label} className={`pull-cell tone-${cell.tone}`}>
             <span className="pull-cell-label"><Dot tone={cell.tone} />{cell.label}</span>
             <span className="pull-cell-value">{cell.value}</span>
@@ -77,14 +98,90 @@ function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot })
         <p className="pull-skipped muted">The comments job skips this PR while a session works in {worktree.name}; its review comments wait until that session leaves.</p>
       )}
       {pull.quiz !== null && pull.item !== null && <div className="pull-quiz"><QuizPanel item={pull.item} quiz={pull.quiz} /></div>}
-      {review !== null && (review.cannot.length > 0 || review.waiting.length > 0) && <Reviewers review={review} pr={pull.number} />}
+      <div className="pull-body">
+        <div className="pull-column">
+          <h3>{pull.head === null ? 'Checks' : <>Checks on <span className="mono">{pull.head.slice(0, SHORT_SHA)}</span></>}</h3>
+          <Checks rows={checkRows(pull.checkRuns)} />
+          <h3>Reviewers</h3>
+          {review !== null && (review.cannot.length > 0 || review.waiting.length > 0)
+            ? <Reviewers review={review} pr={pull.number} />
+            : <p className="muted pull-none">No reviewer the flow asked is waiting.</p>}
+        </div>
+        <div className="pull-column">
+          <h3>Today</h3>
+          <Timeline pull={pull} snapshot={snapshot} />
+        </div>
+      </div>
       <footer className="pull-foot">
-        {blocked === null ? <ActionButton kind="pr.merge" args={{ pr: String(pull.number) }} label="Merge" primary={true} /> : <span className="muted">{blocked}</span>}
+        {blocked === null
+          ? <ActionButton kind="pr.merge" args={{ pr: String(pull.number) }} label="Merge now" primary={true} />
+          : <button type="button" className="button" disabled={true}>Merge now</button>}
+        {autoMergeOffered(pull) && <AutoMerge pull={pull} />}
+        {pull.state === 'checks-failing' && pull.item !== null && <FixChecks pull={pull} item={pull.item} host={snapshot.project.jobsHost} />}
         {forceMergeOffered(pull) && <span className="pull-force"><ActionButton kind="pr.merge" args={{ pr: String(pull.number), force: 'true' }} label="Force merge" primary={false} title={FORCE_MERGE_TITLE} /></span>}
         {pull.state === 'conflicts' && pull.item !== null && <ResolveConflicts pull={pull} item={pull.item} host={snapshot.project.jobsHost} />}
+        {pull.autoMerge !== null
+          ? <span className="chip tone-ready pull-armed"><Dot tone="ready" />Armed · {pull.autoMerge.method.toLowerCase()}-merges when its checks and reviews pass</span>
+          : blocked !== null && <span className="muted pull-blocked">{blocked}</span>}
         {!pull.draft && <AskReview pr={pull.number} reviewers={snapshot.project.reviewers} />}
       </footer>
     </section>
+  );
+}
+
+/** Each failed and running check on its own row, with a link to its run; the passed ones folded. */
+function Checks({ rows }: { rows: CheckRow[] }) {
+  if (rows.length === 0) return <p className="muted pull-none">No check reported.</p>;
+  return (
+    <ul className="pull-checks" aria-label="Checks">
+      {rows.map((row) => (
+        <li key={row.name} className={`tone-${CHECK_MARK[row.outcome].tone}`}>
+          <span className="pull-check-mark" aria-hidden="true">{CHECK_MARK[row.outcome].mark}</span>
+          <span className="strong pull-check-name">{row.url === null ? row.name : <ExternalLink url={row.url} className="">{row.name}</ExternalLink>}</span>
+          <span className="muted">{row.sub}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** What happened to the pull today, newest first, from the flow's events on its item. */
+function Timeline({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot }) {
+  const entries = pullTimeline(pull, snapshot.events, snapshot.takenAt);
+  if (entries.length === 0) return <p className="muted pull-none">{pull.item === null ? 'No item: the flow logs nothing for this PR.' : `Nothing happened on ${pull.item} today.`}</p>;
+  return (
+    <ol className="pull-timeline" aria-label="Today">
+      {entries.map((entry, index) => (
+        <li key={`${entry.at}:${index}`}>
+          <span className="mono muted">{clockTime(entry.at)}</span>
+          <Dot tone={entry.tone} />
+          <span className="pull-timeline-text">{entry.text}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Arms GitHub's auto-merge on the pull, which squash-merges it once its checks and reviews pass, or takes it back. */
+function AutoMerge({ pull }: { pull: PullRequest }) {
+  const pr = String(pull.number);
+  return pull.autoMerge === null
+    ? <ActionButton kind="pr.auto-merge" args={{ pr }} label="Merge when green" primary={false} title="Turns on GitHub's auto-merge: it squash-merges the PR once its checks and reviews pass" />
+    : <ActionButton kind="pr.auto-merge" args={{ pr, off: 'true' }} label="Disarm" primary={false} title="Turns GitHub's auto-merge off for this PR" />;
+}
+
+/**
+ * Hands a pull whose checks fail to the flow now: one comments pass on its item, which reads the
+ * failed runs, fixes the change and pushes, as the scheduled job does once per failing head.
+ */
+function FixChecks({ pull, item, host }: { pull: PullRequest; item: string; host: string }) {
+  const actions = useActionsView();
+  const running = actions.busy('job.start', { job: COMMENTS_JOB, item });
+  return (
+    <span className="pull-fix">
+      <ActionButton kind="job.start" args={{ job: COMMENTS_JOB, host, item, pr: String(pull.number) }} label="Ask the agent to fix the checks" primary={false} title={`Runs the comments job on ${item} now; it reads the failed runs and fixes ${pull.branch}`} />
+      {running && <span className="muted">A comments pass is running on {item}: it fixes the failing checks.</span>}
+    </span>
   );
 }
 
@@ -120,6 +217,26 @@ function Reviewers({ review, pr }: { review: PullReview; pr: number }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** The pulls merged today, newest first: when, how long each was open, and its branch. */
+function MergedToday({ merged, pages }: { merged: MergedPull[]; pages: ItemPages }) {
+  return (
+    <Module className="pulls-merged" title="Merged today" aside={<span className="muted">{merged.length}</span>} footer={null}>
+      <ul className="pull-merged" aria-label="Merged today">
+        {merged.map((pull) => (
+          <li key={pull.number}>
+            <span className="pull-check-mark tone-ready" aria-hidden="true">✓</span>
+            <ExternalLink url={pull.url} className="mono strong">#{pull.number}</ExternalLink>
+            <span className="clip pull-merged-title" title={pull.title}>{pull.item !== null && <><ItemLink id={pull.item} pages={pages} /> </>}{pull.title}</span>
+            <span className="mono muted">{clockTime(pull.mergedAt)}</span>
+            <span className="muted">open {formatDuration(Math.max(0, Math.floor((Date.parse(pull.mergedAt) - Date.parse(pull.createdAt)) / MILLISECONDS_PER_SECOND)))}</span>
+            <span className="mono muted clip">{pull.branch}</span>
+          </li>
+        ))}
+      </ul>
+    </Module>
   );
 }
 

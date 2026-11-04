@@ -156,7 +156,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.start', 'job.stop', 'job.pause', 'job.resume',
   'job.schedule', 'job.unschedule', 'run.stop', 'run.resume',
-  'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.review', 'quiz.answer', 'host.clear', 'terminal.open', 'refresh',
+  'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.auto-merge', 'pr.review', 'quiz.answer', 'host.clear', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -179,6 +179,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'jobs.install': [],
   'job.uninstall': ['job'],
   'pr.merge': ['pr', 'method', 'force'],
+  'pr.auto-merge': ['pr', 'method', 'off'],
   'pr.review': ['pr', 'reviewer'],
   'quiz.answer': ['item', 'answers'],
   'host.clear': ['host'],
@@ -425,6 +426,17 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       // which is the pool worktree. The sweep frees the worktree and deletes the local branch, and
       // the repository deletes merged head branches itself.
       return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, `--${method}`, ...admin], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['board', 'git', 'pulls'], refreshAgainMs: null, outcome: 'finished' } };
+    }
+    // GitHub's auto-merge: armed, GitHub merges the pull itself once its checks and reviews pass;
+    // off=true disarms it. No --delete-branch, for the reason pr.merge gives.
+    case 'pr.auto-merge': {
+      const pr = args['pr'] ?? '';
+      const method = args['method'] ?? 'squash';
+      if (!PR_NUMBER.test(pr)) return fail('pr.auto-merge needs a PR number');
+      if (!MERGE_METHODS.includes(method)) return fail(`method must be one of ${MERGE_METHODS.join(', ')}`);
+      if (context.repo === null) return fail('pr.auto-merge needs github.repo in .flow/config.yaml');
+      const how = args['off'] === 'true' ? ['--disable-auto'] : ['--auto', `--${method}`];
+      return { ok: true, plan: { command: 'gh', args: ['pr', 'merge', pr, '--repo', context.repo, ...how], cwd: context.root, locks: [`pr:${pr}`], timeoutMs: MERGE_TIMEOUT_MS, detach: false, refresh: ['pulls'], refreshAgainMs: null, outcome: 'finished' } };
     }
     // quiz.sh grades the try against the key in <reports>/quiz.md, keeps <reports>/quiz.json, logs
     // one event and marks the item's draft PR ready on a pass; the page re-reads files and pulls.

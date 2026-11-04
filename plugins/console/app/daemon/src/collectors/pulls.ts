@@ -4,6 +4,12 @@ import { scriptEnvironment } from './exec.ts';
 /** How a pull request's checks stand: each check counted once, by its latest run. */
 export type CheckCounts = { passed: number; failed: number; pending: number };
 
+/** One check on the pull's head by its latest run: when it ended (or started, while it runs) and the page of its run. */
+export type CheckRun = { name: string; outcome: keyof CheckCounts; at: string | null; url: string | null };
+
+/** GitHub's auto-merge on the pull: the method it merges with once every requirement is met, and since when. */
+export type AutoMerge = { method: string; at: string };
+
 /** One open pull request as the console needs it. No `gh` shape leaks past this file. */
 export type PullFact = {
   number: number;
@@ -21,12 +27,20 @@ export type PullFact = {
   /** Reviews asked and not given yet: a reviewer still requested on the pull. */
   reviewsRequested: number;
   checks: CheckCounts;
+  /** The checks one by one: failed first, then running, then passed. */
+  checkRuns: CheckRun[];
+  /** The head commit, or null when GitHub gave none. */
+  head: string | null;
+  autoMerge: AutoMerge | null;
   unresolvedThreads: number;
   createdAt: string;
   updatedAt: string;
 };
 
-export type PullFacts = { pulls: PullFact[] };
+/** A pull merged since local midnight. */
+export type MergedFact = { number: number; title: string; url: string; branch: string; createdAt: string; mergedAt: string };
+
+export type PullFacts = { pulls: PullFact[]; merged: MergedFact[] };
 
 const GH_TIMEOUT_MS = 60000;
 const MILLISECONDS_PER_SECOND = 1000;
@@ -35,7 +49,9 @@ const PAGE_SIZE = 100;
 const PULL_FIELDS = [
   'number', 'title', 'url', 'headRefName', 'baseRefName', 'isDraft', 'isCrossRepository', 'mergeable', 'mergeStateStatus',
   'reviewDecision', 'statusCheckRollup', 'updatedAt', 'createdAt', 'author', 'latestReviews', 'reviewRequests',
+  'headRefOid', 'autoMergeRequest',
 ].join(',');
+const MERGED_FIELDS = ['number', 'title', 'url', 'headRefName', 'createdAt', 'mergedAt'].join(',');
 const PASSED_CONCLUSIONS = ['SUCCESS', 'NEUTRAL', 'SKIPPED'];
 const PENDING_STATUSES = ['PENDING', 'EXPECTED'];
 /** gh prints this start time for a run that is queued and has not started. */
@@ -44,6 +60,7 @@ const NOT_STARTED_PREFIX = '0001-';
 type RollupEntry = {
   __typename?: string; name?: string; context?: string; workflowName?: string;
   status?: string; conclusion?: string | null; state?: string; startedAt?: string | null;
+  completedAt?: string | null; detailsUrl?: string; targetUrl?: string;
 };
 type ListedPull = {
   number?: number; title?: string; url?: string; headRefName?: string; baseRefName?: string;
@@ -52,7 +69,10 @@ type ListedPull = {
   author?: { login?: string } | null;
   latestReviews?: { state?: string }[] | null;
   reviewRequests?: unknown[] | null;
+  headRefOid?: string;
+  autoMergeRequest?: { mergeMethod?: string; enabledAt?: string } | null;
 };
+type ListedMerged = { number?: number; title?: string; url?: string; headRefName?: string; createdAt?: string; mergedAt?: string };
 type ThreadsResponse = {
   data?: { repository?: Record<string, { reviewThreads?: { nodes?: { isResolved?: boolean }[] } } | null> | null };
 };
@@ -70,6 +90,8 @@ function checkOutcome(entry: RollupEntry): keyof CheckCounts {
 }
 
 const notStarted = (entry: RollupEntry): boolean => !entry.startedAt || entry.startedAt.startsWith(NOT_STARTED_PREFIX);
+/** A run's time, or null when gh gives none or year one: a run not started or not finished has year one. */
+const runTime = (at: string | null | undefined): string | null => !at || at.startsWith(NOT_STARTED_PREFIX) ? null : at;
 
 /** True when `entry` is a later run than `seen`: a queued run is the latest, and on a tie the unfinished one wins. */
 function newer(entry: RollupEntry, seen: RollupEntry): boolean {
@@ -81,16 +103,33 @@ function newer(entry: RollupEntry, seen: RollupEntry): boolean {
 }
 
 /** A re-run lists a check twice; only the latest run of each workflow and name counts. */
-export function countChecks(rollup: RollupEntry[]): CheckCounts {
+function latestRuns(rollup: RollupEntry[]): RollupEntry[] {
   const latest = new Map<string, RollupEntry>();
   for (const entry of rollup) {
     const key = `${entry.workflowName ?? ''}/${entry.name ?? entry.context ?? ''}`;
     const seen = latest.get(key);
     if (seen === undefined || newer(entry, seen)) latest.set(key, entry);
   }
+  return [...latest.values()];
+}
+
+export function countChecks(rollup: RollupEntry[]): CheckCounts {
   const counts: CheckCounts = { passed: 0, failed: 0, pending: 0 };
-  for (const entry of latest.values()) counts[checkOutcome(entry)] += 1;
+  for (const entry of latestRuns(rollup)) counts[checkOutcome(entry)] += 1;
   return counts;
+}
+
+const OUTCOME_ORDER: Array<keyof CheckCounts> = ['failed', 'pending', 'passed'];
+
+/** Each check by its latest run, the failed ones first, then the running, then the passed, by name within each. */
+export function checkRuns(rollup: RollupEntry[]): CheckRun[] {
+  const runs = latestRuns(rollup).map((entry): CheckRun => ({
+    name: entry.name ?? entry.context ?? '',
+    outcome: checkOutcome(entry),
+    at: runTime(entry.completedAt) ?? runTime(entry.startedAt),
+    url: orNull(entry.detailsUrl ?? entry.targetUrl),
+  }));
+  return runs.sort((a, b) => OUTCOME_ORDER.indexOf(a.outcome) - OUTCOME_ORDER.indexOf(b.outcome) || a.name.localeCompare(b.name));
 }
 
 function toPullFact(listed: ListedPull): PullFact {
@@ -109,16 +148,39 @@ function toPullFact(listed: ListedPull): PullFact {
     changesRequested: (listed.latestReviews ?? []).filter((review) => review.state === 'CHANGES_REQUESTED').length,
     reviewsRequested: (listed.reviewRequests ?? []).length,
     checks: countChecks(listed.statusCheckRollup ?? []),
+    checkRuns: checkRuns(listed.statusCheckRollup ?? []),
+    head: orNull(listed.headRefOid),
+    autoMerge: autoMerge(listed.autoMergeRequest),
     unresolvedThreads: 0,
     createdAt: listed.createdAt ?? '',
     updatedAt: listed.updatedAt ?? '',
   };
 }
 
+function autoMerge(request: ListedPull['autoMergeRequest']): AutoMerge | null {
+  if (request === null || request === undefined) return null;
+  return { method: request.mergeMethod ?? '', at: request.enabledAt ?? '' };
+}
+
 /** `gh pr list --json` into pull facts, before the thread counts are known. */
 export function parsePullList(source: string): PullFact[] {
   const parsed: unknown = JSON.parse(source);
   return Array.isArray(parsed) ? (parsed as ListedPull[]).map(toPullFact) : [];
+}
+
+/** `gh pr list --state merged --json` into the pulls merged at or after `since`; GitHub's search goes by the day, so the time is checked here. */
+export function parseMergedList(source: string, since: Date): MergedFact[] {
+  const parsed: unknown = JSON.parse(source);
+  if (!Array.isArray(parsed)) return [];
+  return (parsed as ListedMerged[])
+    .map((listed) => ({ number: listed.number ?? 0, title: listed.title ?? '', url: listed.url ?? '', branch: listed.headRefName ?? '', createdAt: listed.createdAt ?? '', mergedAt: listed.mergedAt ?? '' }))
+    .filter((merged) => Date.parse(merged.mergedAt) >= since.getTime())
+    .sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
+}
+
+/** Local midnight of the day `now` falls on: where the page's "today" starts. */
+export function startOfDay(now: Date): Date {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
 const alias = (pullNumber: number): string => `pr${pullNumber}`;
@@ -144,7 +206,7 @@ function failure(command: string, result: CommandResult): Error {
   return new Error(`${command} failed: ${reason}`);
 }
 
-export async function readPulls(root: string, repo: string, runner: CommandRunner): Promise<PullFacts> {
+export async function readPulls(root: string, repo: string, runner: CommandRunner, now: Date): Promise<PullFacts> {
   const env = scriptEnvironment();
   const listing = await runner({
     command: 'gh',
@@ -152,8 +214,16 @@ export async function readPulls(root: string, repo: string, runner: CommandRunne
     cwd: root, timeoutMs: GH_TIMEOUT_MS, env,
   });
   if (listing.code !== 0 || listing.timedOut) throw failure('gh pr list', listing);
+  const since = startOfDay(now);
+  const mergedListing = await runner({
+    command: 'gh',
+    args: ['pr', 'list', '--repo', repo, '--state', 'merged', '--search', `merged:>=${since.toISOString().slice(0, 10)}`, '--limit', String(PAGE_SIZE), '--json', MERGED_FIELDS],
+    cwd: root, timeoutMs: GH_TIMEOUT_MS, env,
+  });
+  if (mergedListing.code !== 0 || mergedListing.timedOut) throw failure('gh pr list --state merged', mergedListing);
+  const merged = parseMergedList(mergedListing.stdout, since);
   const pulls = parsePullList(listing.stdout);
-  if (pulls.length === 0) return { pulls };
+  if (pulls.length === 0) return { pulls, merged };
   const [owner, name] = repo.split('/');
   const numbers = pulls.map((pull) => pull.number);
   const threads = await runner({
@@ -163,5 +233,5 @@ export async function readPulls(root: string, repo: string, runner: CommandRunne
   });
   if (threads.code !== 0 || threads.timedOut) throw failure('gh api graphql (review threads)', threads);
   const counts = parseThreadCounts(threads.stdout, numbers);
-  return { pulls: pulls.map((pull) => ({ ...pull, unresolvedThreads: counts.get(pull.number) ?? 0 })) };
+  return { pulls: pulls.map((pull) => ({ ...pull, unresolvedThreads: counts.get(pull.number) ?? 0 })), merged };
 }

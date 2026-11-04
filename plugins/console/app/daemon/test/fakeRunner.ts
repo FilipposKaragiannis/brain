@@ -66,6 +66,8 @@ export const LOCAL_BOARD_JSON = readFileSync(path.join(FIXTURES, 'local', 'board
  * on a later one (two job ids). #21, #22 and the fork #23 are built by hand in the same shape.
  */
 export const PULL_LIST_JSON = readFileSync(path.join(FIXTURES, 'gh', 'pr-list.json'), 'utf8');
+/** `gh pr list --state merged --json`: #19 on gh#9's task branch and #18 on a branch no item names, both merged on the fixture's day, and #17 two days before. */
+export const MERGED_LIST_JSON = readFileSync(path.join(FIXTURES, 'gh', 'pr-merged.json'), 'utf8');
 export const REVIEW_THREADS_JSON = readFileSync(path.join(FIXTURES, 'gh', 'review-threads.json'), 'utf8');
 
 /** The fixture gate's record, so the fake list echoes the message the daemon read. */
@@ -103,7 +105,7 @@ export const fakeRunner: CommandRunner = async (request: CommandRequest): Promis
   if (request.command === 'git' && first === 'rev-list') return ok(request.cwd.endsWith('project-wt-4') ? '35\t4\n' : '0\t2\n');
   if (request.command === 'git' && first === 'status') return ok(request.cwd.endsWith('project-wt-3') ? ' M a.cs\n?? b.cs\n' : '');
   if (request.command === 'git' && first === 'log') return ok('2026-10-24T18:10:00+01:00\n');
-  if (request.command === 'gh' && first === 'pr') return ok(PULL_LIST_JSON);
+  if (request.command === 'gh' && first === 'pr') return ok(request.args.includes('merged') ? MERGED_LIST_JSON : PULL_LIST_JSON);
   if (request.command === 'gh' && first === 'api') return ok(REVIEW_THREADS_JSON);
   if (request.command === 'ps') return ok(PROCESSES);
   if (request.command === 'lsof') return ok(CWDS);

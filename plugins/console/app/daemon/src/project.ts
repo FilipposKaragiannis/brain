@@ -317,7 +317,7 @@ export class ProjectMonitor {
         if (flow === null) throw new Error('the flow files are not read yet');
         this.facts.pulls.facts = null;
         if (flow.config.repo === null) return noted('not applicable: no github.repo in .flow/config.yaml');
-        this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner); return READ_CLEAN;
+        this.facts.pulls.facts = await readPulls(root, flow.config.repo, this.runner, this.clock()); return READ_CLEAN;
     }
   }
 

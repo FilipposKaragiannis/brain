@@ -41,7 +41,7 @@ function renderGate(gate: Gate, daemon = new FakeDaemon()): void {
 function pull(change: Partial<PullRequest>): PullRequest {
   return {
     number: 90, title: 'Charge shot', url: DRAFT_PULL.url, branch: 'flow/gh-7', base: 'main', author: 'owner', draft: true, state: 'draft',
-    checks: { passed: 0, failed: 0, pending: 0 }, reviewDecision: null, unresolvedThreads: 0, mergeable: 'MERGEABLE', mergeState: 'CLEAN', item: 'gh#7', worktree: null,
+    checks: { passed: 0, failed: 0, pending: 0 }, checkRuns: [], head: null, autoMerge: null, changesRequested: 0, reviewsRequested: 0, reviewDecision: null, unresolvedThreads: 0, mergeable: 'MERGEABLE', mergeState: 'CLEAN', item: 'gh#7', worktree: null,
     createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 600, idleSeconds: 60, review: null, quiz: null, ...change,
   };
 }

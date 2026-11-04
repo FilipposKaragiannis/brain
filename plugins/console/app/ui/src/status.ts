@@ -1,4 +1,4 @@
-import type { AttentionKind, Freshness, ItemState, Job, PullState, WorktreeState } from '../../daemon/src/snapshot.ts';
+import type { AttentionKind, FlowEvent, Freshness, ItemState, Job, PullState, WorktreeState } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord, ActionState } from './actions.ts';
 
 /**
@@ -78,4 +78,12 @@ export function freshnessTone(freshness: Freshness): Tone {
 
 export function countTone(count: number, tone: Tone): Tone {
   return count > 0 ? tone : 'quiet';
+}
+
+/** How a flow event went, from its kind: a failure, a question for you, work starting, or news. */
+export function eventTone(event: FlowEvent): Tone {
+  if (/fail|dead|error|refus/i.test(event.kind)) return 'failing';
+  if (/gate|ambiguity|approval|escalation|feel-test|decomposition/i.test(event.kind)) return 'needs-you';
+  if (/start|resume|step|claim/i.test(event.kind)) return 'running';
+  return 'quiet';
 }

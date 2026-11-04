@@ -168,11 +168,12 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 12 since a worktree took the
-`comments-skipped` flag (11 when a run's `liveness` took the place of `alive` and the snapshot
-took `processList`, 10 when the snapshot took `lessons`, `retros` and `counts.lessonsSinceRetro`,
-9 when an attention row took `gate`, 8 when `project.trackers` took the place of `trackerUrl`, 7
-when a gate and a pull took `quiz`, below).
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 13 since a pull took `checkRuns`,
+`head`, `autoMerge`, `changesRequested` and `reviewsRequested` and the snapshot took `mergedToday`
+(12 when a worktree took the `comments-skipped` flag, 11 when a run's `liveness` took the place of
+`alive` and the snapshot took `processList`, 10 when the snapshot took `lessons`, `retros` and
+`counts.lessonsSinceRetro`, 9 when an attention row took `gate`, 8 when `project.trackers` took the
+place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
 One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `processList`, `ended`, `jobs`, `pulls`, `events`
@@ -395,7 +396,7 @@ Null without a record.
 | `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd, and every process that can own a run (those and flow's unattended loop) with its start; a lookup that fails or times out (10s each) makes the list `partial` or `unavailable` (`processList`), never empty. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
-| `pulls` | `gh pr list` for the open PRs of `github.repo`, then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project without `github.repo` reports `ok` with `error: "not applicable: …"` and is never read; whatever tracker holds the items, the flow keeps their PRs on GitHub, so the tracker does not matter | 60s |
+| `pulls` | `gh pr list` for the open PRs of `github.repo` (with each check's latest run, the head commit and GitHub's auto-merge), `gh pr list --state merged` for those merged since local midnight (`mergedToday`), then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project without `github.repo` reports `ok` with `error: "not applicable: …"` and is never read; whatever tracker holds the items, the flow keeps their PRs on GitHub, so the tracker does not matter | 60s |
 
 ¹ Flow 1.18.0 and later. The parse is kept per gate until its message changes, so a waiting gate
 costs no process after its first read. An older plugin is not asked. A list that fails, times out
@@ -521,6 +522,7 @@ on every state change and at most twice a second while output arrives.
 | `job.uninstall` | `job` (one of the five) | `jobs.sh uninstall <job>`: unloads its launchd agent and removes its schedule file | the job | `finished`; `jobs` is re-read |
 | `host.clear` | `host` | `gate.sh clear <host>`: removes the host's stopped flag, so its sessions start again | the host | `finished` |
 | `pr.merge` | `pr`, `method?` (squash), `force?` | `gh pr merge <pr> --repo <repo> --<method>`, then `--admin` when `force` is `true`: the owner's rights merge past what branch protection requires (failing or missing checks, a missing approval, a branch behind). No `--delete-branch`, which since gh 2.103 removes the pool worktree that holds the branch: the sweep frees the worktree and the branch after the merge | the PR | `finished` |
+| `pr.auto-merge` | `pr`, `method?` (squash), `off?` | `gh pr merge <pr> --repo <repo> --auto --<method>`: GitHub merges the PR itself once its checks and reviews pass; `off=true` runs `--disable-auto` instead. No `--delete-branch`, as for `pr.merge` | the PR | `finished` |
 | `quiz.answer` | `item`, `answers` (`1b 2a 3c`: a letter per question number) | `quiz.sh answer <item> 1b 2a 3c` (flow 1.29.0): grades the try against the key in `<reports>/quiz.md`, writes `<reports>/quiz.json`, logs one `quiz` event, and on a pass marks the item's draft PR ready for review (`comments.sh ready`) when it has one on GitHub. Refused on an older flow, which has no quiz.sh | the item | `finished`; `files` and `pulls` are re-read |
 | `pr.review` | `pr`, `reviewer` (a name or GitHub login, `@` optional) | `comments.sh request-review <pr> <ask> <reviewer>` (flow 1.27.0): one mention comment with the flow's request marker, Copilot through the reviewers API, so the health job tracks and chases it; the ask is the PR step's own. Refused on flow before 1.27.0, whose script would ask every reviewer | the PR | `finished` |
 | `terminal.open` | `path`, `job?`, `session?`, `gate?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command; with `gate` (an item, `path` optional) one with the resume command of the gate's located `session` | none | `finished` |
@@ -796,12 +798,22 @@ name. The side column holds a
 card per stopped host with Clear (`host.clear`), the panel that adds a schedule of any job or runs
 it once (`job.schedule`, `job.start`): a Job picker, then the name, the timing and the job's
 settings, where only next takes an item and limits, an empty name making the job's own schedule
-only while it has none; and the latest events), Pull requests (a head line of how many are open, in review and ready to merge, then a card per PR
-from the `pulls` source: its state, item, agent or worktree and ages; four cells for checks,
-conflicts, review and threads; the reviewers asked by a mention, each silent one "has not answered
-yet" and each that cannot review with its own reply and the way out; Merge on a PR in state
-`mergeable`, else why not (a draft whose item has a quiz still to pass says it goes ready when the
-quiz is passed); Force merge, a red outlined button that is never the primary one, on a PR in
+only while it has none; and the latest events), Pull requests (a head line of how many are open, in review, ready to merge and merged today,
+with Run comments job now when the project has a comments job: `job.run` for an installed schedule,
+else `job.start` on `jobsHost`; then a card per PR from the `pulls` source: its number, title,
+item, `branch → base`, agent or worktree and Open on GitHub; six cells for state (when it opened
+and how long it has been idle), checks, conflicts (with the head commit), review, threads and the
+item's quiz; two columns below: "Checks on <head>", each failed and running check on its own row
+linked to its run and the passed ones folded into one, then the reviewers asked by a mention, each
+silent one "has not answered yet" and each that cannot review with its own reply and the way out;
+and "Today", the flow's events on the PR's item since local midnight and its opening when that was
+today, newest first; Merge now, enabled on a PR in state `mergeable`, else disabled with why not
+beside it (a draft whose item has a quiz still to pass says it goes ready when the quiz is
+passed); Merge when green on a PR that is not a draft, a conflict or ready now, which runs
+`pr.auto-merge` (GitHub's auto-merge, squash), and on an armed PR Disarm and an "Armed" note in
+place of why not; Ask the agent to fix the checks on a PR in state `checks-failing` with an item,
+which runs `job.start` for the comments job on that item and PR (its Checks step reads the failed
+runs and fixes them); Force merge, a red outlined button that is never the primary one, on a PR in
 state `checks-failing` or `approved` with GitHub's merge state `BLOCKED` or `BEHIND`, which runs
 `pr.merge` with `force=true` (never on `conflicts`, `draft`, `checks-pending` or
 `changes-requested`); Resolve conflicts on a PR in state `conflicts` with an item, which runs
@@ -812,8 +824,9 @@ session works in <worktree>" while the PR's worktree has `comments-skipped`; the
 the PR's item has one; and, on a PR that is not a draft, "Ask for review from" with the project's
 reviewers, then each of codex, claude and copilot not among them, then "other…" for a GitHub
 login, whose Ask runs `pr.review`; a merge gate's
-card has the same ask. Before that source is read, or off GitHub, a table of the items with a
-PR) and
+card has the same ask; under the cards, Merged today: each PR merged since local midnight with its
+item, the time, how long it was open and its branch. Before that source is read, or off GitHub, a
+table of the items with a PR) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
 10 s), and Retro (`#/<project>/retro`, its nav entry saying "<n> new" while lessons wait for a

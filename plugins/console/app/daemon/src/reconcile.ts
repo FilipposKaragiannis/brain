@@ -12,9 +12,10 @@ import { lessonsSinceRetro } from './retro.ts';
 import { itemSlug } from './syncNote.ts';
 import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
+  mentionReviewWaiting, reviewChangesRequested,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, NewerConsole,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, MergedPull, NewerConsole,
   ProcessInfo, ProcessListStatus, ProjectInfo, PullRequest, PullState, Readiness, Run, RunLiveness, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
@@ -442,10 +443,6 @@ function approvalSatisfied(pull: PullFact): boolean {
   return pull.reviewDecision === null || pull.reviewDecision === 'APPROVED';
 }
 
-function changesRequested(pull: PullFact): boolean {
-  return pull.reviewDecision === 'CHANGES_REQUESTED' || (pull.reviewDecision === null && pull.changesRequested > 0);
-}
-
 function mergesCleanly(pull: PullFact): boolean {
   return pull.unresolvedThreads === 0 && pull.mergeable === 'MERGEABLE' && MERGE_READY_STATES.includes(pull.mergeState ?? '');
 }
@@ -454,7 +451,7 @@ export function pullState(pull: PullFact): PullState {
   if (pull.draft) return 'draft';
   if (pull.mergeable === 'CONFLICTING' || pull.mergeState === 'DIRTY') return 'conflicts';
   if (pull.checks.failed > 0) return 'checks-failing';
-  if (changesRequested(pull)) return 'changes-requested';
+  if (reviewChangesRequested(pull)) return 'changes-requested';
   if (pull.checks.pending > 0) return 'checks-pending';
   if (!approvalSatisfied(pull) || pull.reviewsRequested > 0) return 'review-pending';
   if (!mergesCleanly(pull)) return 'approved';
@@ -463,8 +460,6 @@ export function pullState(pull: PullFact): PullState {
 
 /** The health job's review verdicts that keep a merge gate from the owner (flow's `_health.py review`). */
 const HELD_REVIEW_STATES = ['in-review', 'changes-requested'];
-/** Reviewers the flow asks through GitHub's reviewers API (`_reviews.py`), so the live pull shows their request. */
-const GITHUB_ASKED_REVIEWERS = ['copilot'];
 
 /** The pull number an item's `pr` field names, by number or by URL. */
 function namedPullNumber(field: string): number | null {
@@ -493,7 +488,7 @@ function heldMergeGates(input: ReconcileInput): Set<string> {
     const pullNumber = pull?.number ?? (input.pulls === null && named !== null ? namedPullNumber(named) : null);
     if (pullNumber === null) continue;
     const record = input.flow.reviews.find((entry) => entry.pr === pullNumber);
-    const heldLive = pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting(record));
+    const heldLive = pull !== undefined && (reviewChangesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting(record));
     const heldByRecord = pull === undefined && record !== undefined && HELD_REVIEW_STATES.includes(record.state);
     if (heldLive || heldByRecord) held.add(gate.item);
   }
@@ -564,7 +559,7 @@ const MENTION_REVIEW_OVERRIDES: PullState[] = ['review-pending', 'approved', 'me
 
 /** Whether the record names a reviewer asked by a mention who has not answered, which GitHub's own review state cannot show. */
 function mentionWaiting(record: ReviewRecord | undefined): boolean {
-  return record !== undefined && record.waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+  return record !== undefined && mentionReviewWaiting(record.waiting);
 }
 
 function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeContext[]): PullRequest[] {
@@ -575,13 +570,40 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
     const linked = linkPull(pull, items, contexts);
     return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
-    draft: pull.draft, state, checks: pull.checks, reviewDecision: pull.reviewDecision,
+    draft: pull.draft, state, checks: pull.checks, checkRuns: pull.checkRuns, head: pull.head, autoMerge: pull.autoMerge, reviewDecision: pull.reviewDecision,
+    changesRequested: pull.changesRequested, reviewsRequested: pull.reviewsRequested,
     unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, mergeState: pull.mergeState, ...linked,
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
     review: record === undefined ? null : { state: record.state, waiting: record.waiting, cannot: record.cannot, at: record.at },
     quiz: linked.item === null ? null : input.flow.quizzes[itemSlug(linked.item)] ?? null,
     };
+  });
+}
+
+/** A task branch's item, the flow's `slug_item`: `flow/gh-12` is gh#12, `flow/local-task-1` is local:task/1. */
+const TASK_BRANCH_ITEM: Array<[RegExp, (found: RegExpExecArray) => string]> = [
+  [/^flow\/gh-(\d+)$/, (found) => `gh#${found[1]}`],
+  [/^flow\/local-([a-z]+)-(\d+)$/, (found) => `local:${found[1]}/${found[2]}`],
+];
+
+function taskBranchItem(branch: string): string | null {
+  for (const [shape, item] of TASK_BRANCH_ITEM) {
+    const found = shape.exec(branch);
+    if (found !== null) return item(found);
+  }
+  return null;
+}
+
+/**
+ * The item a merged pull carried: the one whose `pr` names it, else the one whose task branch is
+ * its head, else the item its task branch names, since a merged item is often closed and gone
+ * from the board.
+ */
+function buildMergedToday(input: ReconcileInput, items: Item[]): MergedPull[] {
+  return (input.pulls?.merged ?? []).map((merged) => {
+    const item = items.find((entry) => namesPull(entry.pr, merged)) ?? items.find((entry) => taskBranch(entry.id) === merged.branch);
+    return { number: merged.number, title: merged.title, url: merged.url, branch: merged.branch, item: item?.id ?? taskBranchItem(merged.branch), createdAt: merged.createdAt, mergedAt: merged.mergedAt };
   });
 }
 
@@ -884,6 +906,7 @@ export function reconcile(read: ReconcileInput): Snapshot {
     readiness: buildReadiness(items),
     attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
     worktrees, items, gates, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
+    mergedToday: buildMergedToday(input, items),
     events: input.flow.events,
     lessons: input.flow.retro.lessons,
     retros: input.flow.retro.retros,
