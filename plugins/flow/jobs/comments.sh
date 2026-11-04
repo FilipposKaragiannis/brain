@@ -88,8 +88,9 @@ cut_short() { tail -n 20 "$1" 2>/dev/null | grep -m1 -E "$CUT_SHORT"; }
 # Per PR, beside the last good pass's activity (<pr>): <pr>.forced, the awaiting set a pass was
 # forced for; <pr>.fails, the count of failed passes in a row, whatever they changed (a pass cut
 # short after one reply changes the activity each time), cleared only by a pass that completes;
-# <pr>.told, <pr>.told-fails and <pr>.told-in-use, what the owner was last told. Each is said
-# once; the in-use marker goes when a pass addresses the PR.
+# <pr>.told and <pr>.told-fails, what the owner was last told. Each is said once. The in-use
+# marker, pr-<number>.told-in-use, is keyed by the PR's number, so the item and the PR's number or
+# URL, as a run by hand names it, share one; it goes when a pass addresses the PR.
 seen_file() { printf '%s/%s.seen/%s' "$(job_log_dir)" "$job" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
 max_fails="$(cfg_or jobs.comments.max_failures 3)"
 case "$max_fails" in ''|*[!0-9]*) die "jobs.comments.max_failures takes a whole number" 2 ;; esac
@@ -138,6 +139,13 @@ in_use() {
 once() { [ "$(cat "$1" 2>/dev/null)" != "$2" ] && printf '%s\n' "$2" > "$1"; }
 # pr_of <target>: the PR a target names: the item's recorded PR, or the target itself.
 pr_of() { if adapter_for "$1" >/dev/null; then json_get "$(adapter read "$1" 2>/dev/null)" state.pr; else printf '%s' "$1"; fi; }
+# in_use_marker <target> <pr>: the told-in-use marker of the PR <target> names, keyed by the PR's
+# number (<pr> as a number, #<n> or URL); by the target when no PR is known.
+in_use_marker() {
+  im_pr="${2##*/}"; im_pr="${im_pr#\#}"
+  case "$im_pr" in ''|*[!0-9]*) seen_file "$1" ;; *) seen_file "pr-$im_pr" ;; esac
+  printf '.told-in-use'
+}
 # session_named <how>: the host and pid of the process _health.py alive named ("process 4242"),
 # as "claude (process 4242)", or the words as they came when the process list lacks it.
 session_named() {
@@ -149,9 +157,9 @@ session_named() {
 # is known then.
 tell_in_use() {
   [ -n "$iu_how" ] || return 0
-  ti_f="$(seen_file "$1")"; mkdir -p "$(dirname "$ti_f")"
-  ti_pr="$(pr_of "$1")"; ti_pr="${ti_pr##*/}"; ti_pr="${ti_pr#\#}"
-  once "$ti_f.told-in-use" "$iu_wt" || return 0
+  ti_pr="$(pr_of "$1")"; ti_f="$(in_use_marker "$1" "$ti_pr")"; mkdir -p "$(dirname "$ti_f")"
+  ti_pr="${ti_pr##*/}"; ti_pr="${ti_pr#\#}"
+  once "$ti_f" "$iu_wt" || return 0
   "$FLOW_PLUGIN/scripts/notify.sh" --event comments-skipped "$iu_item: the comments job skips PR #$ti_pr while $(session_named "$iu_how") works in $iu_wt. Its review comments wait until that session leaves the worktree." >/dev/null 2>&1 || true
 }
 addressed=0; unchanged=0; busy=0; failed=""; procs=""
@@ -191,7 +199,7 @@ for t in $targets; do
     fi
   fi
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
-  job_say "addressing $t"; rm -f "$f.told-in-use"
+  job_say "addressing $t"; rm -f "$(in_use_marker "$t" "$pull")"
   # The output goes to the log as it comes, so a pass killed half way keeps what it said.
   { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$rnote Unattended: nobody answers questions; collect owner decisions in the report and stop.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
