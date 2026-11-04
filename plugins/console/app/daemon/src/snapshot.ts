@@ -388,6 +388,10 @@ export type PullRequest = {
   /** GitHub's auto-merge, armed from the card or on GitHub: it merges with `method` once every requirement is met. Null when not armed. */
   autoMerge: { method: string; at: string } | null;
   reviewDecision: string | null;
+  /** How many reviewers' latest review requests changes; without a required review GitHub's `reviewDecision` stays null for them. */
+  changesRequested: number;
+  /** How many reviews are requested on GitHub and not given yet. */
+  reviewsRequested: number;
   unresolvedThreads: number;
   mergeable: string | null;
   /** GitHub's merge state status (`CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`, …), or null when GitHub gave none. */
@@ -426,6 +430,11 @@ const GITHUB_ASKED_REVIEWERS = ['copilot'];
  */
 export function mentionReviewWaiting(waiting: readonly string[]): boolean {
   return waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+}
+
+/** Whether a review asks for changes: GitHub's decision says so, or, with no review required, a reviewer's latest review does. */
+export function reviewChangesRequested(pull: { reviewDecision: string | null; changesRequested: number }): boolean {
+  return pull.reviewDecision === 'CHANGES_REQUESTED' || (pull.reviewDecision === null && pull.changesRequested > 0);
 }
 
 export type JobRun = {

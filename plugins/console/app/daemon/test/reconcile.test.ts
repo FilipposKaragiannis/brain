@@ -1142,3 +1142,10 @@ test('MergedToday_PullsNotRead_Empty', async () => {
   facts.pulls = null;
   assert.deepEqual(reconcile(facts).mergedToday, [], 'because nothing merged is known before the pulls are read');
 });
+
+test('Pull_ReviewHoldFacts_CarriedForTheCard', async () => {
+  const facts = await input();
+  facts.pulls = { pulls: [ready({ reviewDecision: null, changesRequested: 1, reviewsRequested: 2, checks: { passed: 2, failed: 1, pending: 0 } })], merged: [] };
+  const pull = pullNumbered(reconcile(facts), 30);
+  assert.deepEqual([pull?.state, pull?.changesRequested, pull?.reviewsRequested], ['checks-failing', 1, 2], 'because the card keeps Merge when green off for a review hold a failing check hides from the state');
+});

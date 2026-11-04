@@ -169,11 +169,11 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 
 ## The snapshot
 `daemon/src/snapshot.ts` is the contract; `schema` is its version, 13 since a pull took `checkRuns`,
-`head` and `autoMerge` and the snapshot took `mergedToday` (12 when a worktree took the
-`comments-skipped` flag, 11 when a run's `liveness` took the place of `alive` and the snapshot
-took `processList`, 10 when the snapshot took `lessons`, `retros` and `counts.lessonsSinceRetro`,
-9 when an attention row took `gate`, 8 when `project.trackers` took the place of `trackerUrl`, 7
-when a gate and a pull took `quiz`, below).
+`head`, `autoMerge`, `changesRequested` and `reviewsRequested` and the snapshot took `mergedToday`
+(12 when a worktree took the `comments-skipped` flag, 11 when a run's `liveness` took the place of
+`alive` and the snapshot took `processList`, 10 when the snapshot took `lessons`, `retros` and
+`counts.lessonsSinceRetro`, 9 when an attention row took `gate`, 8 when `project.trackers` took the
+place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
 One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
 a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `processList`, `ended`, `jobs`, `pulls`, `events`

@@ -9,7 +9,7 @@ afterEach(cleanup);
 function pull(number: number, change: Partial<PullRequest>): PullRequest {
   return {
     number, title: `Pull ${number}`, url: `https://github.com/owner/project/pull/${number}`, branch: `flow/gh-${number}`, base: 'main', author: 'owner',
-    draft: false, state: 'mergeable', checks: { passed: 5, failed: 0, pending: 0 }, checkRuns: [], head: null, autoMerge: null, reviewDecision: 'APPROVED', unresolvedThreads: 0, mergeable: 'MERGEABLE', mergeState: 'CLEAN',
+    draft: false, state: 'mergeable', checks: { passed: 5, failed: 0, pending: 0 }, checkRuns: [], head: null, autoMerge: null, changesRequested: 0, reviewsRequested: 0, reviewDecision: 'APPROVED', unresolvedThreads: 0, mergeable: 'MERGEABLE', mergeState: 'CLEAN',
     item: null, worktree: null, createdAt: TAKEN_AT, updatedAt: TAKEN_AT, ageSeconds: 3600, idleSeconds: 600, review: null, quiz: null, ...change,
   };
 }
@@ -209,9 +209,20 @@ test('MentionReviewerYetToAnswer_NoMergeWhenGreen', () => {
   for (const number of [33, 34, 35]) expect(within(card(number)).queryByRole('button', { name: 'Merge when green' }), `because GitHub cannot see the mention, so #${number} would merge before codex answers`).toBeNull();
 });
 
-test('GitHubAskedReviewerYetToAnswer_MergeWhenGreenStays', () => {
-  renderPulls([pull(36, { state: 'review-pending', review: { state: 'in-review', waiting: ['Copilot'], cannot: [], at: TAKEN_AT } })]);
-  expect(within(card(36)).getByRole('button', { name: 'Merge when green' }), 'because GitHub holds the merge for a review it requested itself').toBeTruthy();
+test('RequiredReviewNotGivenYet_MergeWhenGreenStays', () => {
+  renderPulls([pull(36, { state: 'review-pending', reviewDecision: 'REVIEW_REQUIRED' })]);
+  expect(within(card(36)).getByRole('button', { name: 'Merge when green' }), 'because branch protection holds the auto-merge for a review it requires').toBeTruthy();
+});
+
+test('ReviewHoldGitHubDoesNotEnforce_NoMergeWhenGreen', () => {
+  const failing = { state: 'checks-failing', checks: { passed: 3, failed: 1, pending: 0 } } as const;
+  renderPulls([
+    pull(38, { ...failing, reviewDecision: null, changesRequested: 1 }),
+    pull(39, { ...failing, reviewDecision: 'CHANGES_REQUESTED', changesRequested: 1 }),
+    pull(40, { state: 'review-pending', reviewDecision: null, reviewsRequested: 1, review: { state: 'in-review', waiting: ['Copilot'], cannot: [], at: TAKEN_AT } }),
+    pull(41, { ...failing, unresolvedThreads: 2 }),
+  ]);
+  for (const number of [38, 39, 40, 41]) expect(within(card(number)).queryByRole('button', { name: 'Merge when green' }), `because GitHub's auto-merge would merge #${number} past an optional review, request or open thread`).toBeNull();
 });
 
 test('ArmedPullWithMentionReviewerYetToAnswer_StillOffersDisarm', () => {

@@ -12,7 +12,7 @@ import { lessonsSinceRetro } from './retro.ts';
 import { itemSlug } from './syncNote.ts';
 import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
-  mentionReviewWaiting,
+  mentionReviewWaiting, reviewChangesRequested,
 } from './snapshot.ts';
 import type {
   Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, MergedPull, NewerConsole,
@@ -443,10 +443,6 @@ function approvalSatisfied(pull: PullFact): boolean {
   return pull.reviewDecision === null || pull.reviewDecision === 'APPROVED';
 }
 
-function changesRequested(pull: PullFact): boolean {
-  return pull.reviewDecision === 'CHANGES_REQUESTED' || (pull.reviewDecision === null && pull.changesRequested > 0);
-}
-
 function mergesCleanly(pull: PullFact): boolean {
   return pull.unresolvedThreads === 0 && pull.mergeable === 'MERGEABLE' && MERGE_READY_STATES.includes(pull.mergeState ?? '');
 }
@@ -455,7 +451,7 @@ export function pullState(pull: PullFact): PullState {
   if (pull.draft) return 'draft';
   if (pull.mergeable === 'CONFLICTING' || pull.mergeState === 'DIRTY') return 'conflicts';
   if (pull.checks.failed > 0) return 'checks-failing';
-  if (changesRequested(pull)) return 'changes-requested';
+  if (reviewChangesRequested(pull)) return 'changes-requested';
   if (pull.checks.pending > 0) return 'checks-pending';
   if (!approvalSatisfied(pull) || pull.reviewsRequested > 0) return 'review-pending';
   if (!mergesCleanly(pull)) return 'approved';
@@ -492,7 +488,7 @@ function heldMergeGates(input: ReconcileInput): Set<string> {
     const pullNumber = pull?.number ?? (input.pulls === null && named !== null ? namedPullNumber(named) : null);
     if (pullNumber === null) continue;
     const record = input.flow.reviews.find((entry) => entry.pr === pullNumber);
-    const heldLive = pull !== undefined && (changesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting(record));
+    const heldLive = pull !== undefined && (reviewChangesRequested(pull) || pull.reviewsRequested > 0 || mentionWaiting(record));
     const heldByRecord = pull === undefined && record !== undefined && HELD_REVIEW_STATES.includes(record.state);
     if (heldLive || heldByRecord) held.add(gate.item);
   }
@@ -575,6 +571,7 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
     return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
     draft: pull.draft, state, checks: pull.checks, checkRuns: pull.checkRuns, head: pull.head, autoMerge: pull.autoMerge, reviewDecision: pull.reviewDecision,
+    changesRequested: pull.changesRequested, reviewsRequested: pull.reviewsRequested,
     unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, mergeState: pull.mergeState, ...linked,
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,

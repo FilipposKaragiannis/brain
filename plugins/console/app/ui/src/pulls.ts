@@ -1,5 +1,5 @@
 import type { FlowEvent, Item, ItemState, PullCheck, PullRequest, PullState } from '../../daemon/src/snapshot.ts';
-import { mentionReviewWaiting } from '../../daemon/src/snapshot.ts';
+import { mentionReviewWaiting, reviewChangesRequested } from '../../daemon/src/snapshot.ts';
 import { clockTime, formatDuration } from './clock.tsx';
 import { eventTone, pullTone } from './status.ts';
 import type { Tone } from './status.ts';
@@ -159,14 +159,24 @@ export function pullTimeline(pull: PullRequest, events: readonly FlowEvent[], ta
 }
 
 /**
+ * Whether a review holds the pull that GitHub's auto-merge may merge past: it waits only for what
+ * branch protection requires, so not for a reviewer asked by a mention, a review requested but
+ * not required, an optional request for changes or an open thread. The plain Merge waits for each.
+ */
+function reviewHolds(pull: PullRequest): boolean {
+  if (pull.review !== null && mentionReviewWaiting(pull.review.waiting)) return true;
+  return reviewChangesRequested(pull) || pull.reviewsRequested > 0 || pull.unresolvedThreads > 0;
+}
+
+/**
  * Whether the card offers Merge when green, GitHub's auto-merge: on a pull that waits for checks
- * or a review to pass. Never on a draft or a conflict, which no wait can merge, nor on a pull
- * ready to merge now, nor while a reviewer asked by a mention has not answered: GitHub would merge
- * past that review. An armed pull always offers Disarm.
+ * or a required review to pass. Never on a draft or a conflict, which no wait can merge, nor on a
+ * pull ready to merge now, nor while a review holds it (`reviewHolds`), whatever its checks show.
+ * An armed pull always offers Disarm.
  */
 export function autoMergeOffered(pull: PullRequest): boolean {
   if (pull.autoMerge !== null) return true;
-  if (pull.review !== null && mentionReviewWaiting(pull.review.waiting)) return false;
+  if (reviewHolds(pull)) return false;
   return !['draft', 'conflicts', 'mergeable'].includes(pull.state);
 }
 
