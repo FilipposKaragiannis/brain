@@ -154,8 +154,13 @@ test('CheckRuns_Mixed_FailedFirstThenRunningThenPassed', () => {
 });
 
 test('CheckRuns_Queued_NoTime', () => {
-  const [run] = checkRuns([{ __typename: 'CheckRun', name: 'queued', status: 'QUEUED', conclusion: null, startedAt: NOT_STARTED }]);
+  const [run] = checkRuns([{ __typename: 'CheckRun', name: 'queued', status: 'QUEUED', conclusion: null, startedAt: NOT_STARTED, completedAt: NOT_STARTED }]);
   assert.equal(run?.at, null, 'because gh prints year one for a run that has not started');
+});
+
+test('CheckRuns_RunningWithYearOneCompletion_TimeIsItsStart', () => {
+  const [run] = byNumber(21)?.checkRuns ?? [];
+  assert.equal(run?.at, '2026-10-24T18:00:00Z', 'because gh prints year one as the completion of a run still going, which is no time');
 });
 
 test('ListedPull_HeadAndAutoMerge_Read', () => {

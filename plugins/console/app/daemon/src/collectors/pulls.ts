@@ -90,6 +90,8 @@ function checkOutcome(entry: RollupEntry): keyof CheckCounts {
 }
 
 const notStarted = (entry: RollupEntry): boolean => !entry.startedAt || entry.startedAt.startsWith(NOT_STARTED_PREFIX);
+/** A run's time, or null when gh gives none or year one: a run not started or not finished has year one. */
+const runTime = (at: string | null | undefined): string | null => !at || at.startsWith(NOT_STARTED_PREFIX) ? null : at;
 
 /** True when `entry` is a later run than `seen`: a queued run is the latest, and on a tie the unfinished one wins. */
 function newer(entry: RollupEntry, seen: RollupEntry): boolean {
@@ -124,7 +126,7 @@ export function checkRuns(rollup: RollupEntry[]): CheckRun[] {
   const runs = latestRuns(rollup).map((entry): CheckRun => ({
     name: entry.name ?? entry.context ?? '',
     outcome: checkOutcome(entry),
-    at: orNull(entry.completedAt ?? undefined) ?? (notStarted(entry) ? null : orNull(entry.startedAt ?? undefined)),
+    at: runTime(entry.completedAt) ?? runTime(entry.startedAt),
     url: orNull(entry.detailsUrl ?? entry.targetUrl),
   }));
   return runs.sort((a, b) => OUTCOME_ORDER.indexOf(a.outcome) - OUTCOME_ORDER.indexOf(b.outcome) || a.name.localeCompare(b.name));
