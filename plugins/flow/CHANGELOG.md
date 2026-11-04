@@ -1,5 +1,52 @@
 # flow
 
+## 1.32.0 (2026-11-04)
+
+- The `comments` pass fixes the checks failing on a PR's head. A new Checks step, after
+  Conflicts, spawns the `implementer` to read the failed logs, fix the cause in the task branch,
+  build and test, then the `verifier`; on a pass it pushes (never force) and re-requests review.
+  A failure that is not the change's (infra, a flake, a check red on the base too) gets no code
+  change: the report says so, and an unattended pass stops on it.
+- `comments.sh failing-checks <pr>` prints the checks failing on the PR's head, one name per
+  line, sorted: the latest run of each check only, so a re-run that passed does not count, and a
+  pending one waits. `comments.sh activity` carries them as `failing`.
+- The comments job names the failing checks and the head in the brief ("Checks fail on
+  <sha8>: A, B: run the Checks step."), drafts included. Its activity line ends in
+  ` failing:<names>` only when a check fails, so a check gone red on the same head gets one pass,
+  one the pass cannot fix is not tried again until the head changes, and a PR with no failing
+  check keeps the line it had and gets no extra pass after the upgrade.
+- A pool path listed in `.flow/config.yaml` but missing on disk counts as free. A claim (or a
+  reserve) recreates it on its idle branch at the base tip, pruning git's stale record of the
+  folder first, and runs the `worktree_copy` copies and `worktree_setup`, instead of failing with
+  "every pool entry is claimed, reserved, dirty or missing". Two pool worktrees vanished this way
+  after Claude worktree sessions ended.
+- `steward.sh health` names a missing pool path once while it holds, with the command that
+  recreates it now, and counts it as free. `steward.sh add <path>` recreates a missing pool path
+  in place without a second pool entry.
+- The `WorktreeRemove` hook still only releases: the folder stays, on its idle branch at the base
+  tip, with no claim. Claude Code 2.1.317 reads its exit 0 as removed and leaves the folder alone;
+  it keeps a sub-agent's hook-made worktree and runs no `WorktreeRemove` for it. A session with no
+  `WorktreeRemove` entry falls back to `git worktree remove`, which is how a pool folder can still
+  go; the next claim brings it back. The hook's header and the `steward` skill say so.
+- `steward.sh reserve [<worktree>] [--name <who>]` takes an optional pool worktree, by its path or
+  its folder name, and reserves that one when it has no claim, no reservation and a clean tree.
+  A claimed, reserved, dirty or unknown one exits 3 with the reason (`wt-2 is claimed by gh#5`,
+  `wt-1 is reserved by Ada`, `wt-2 has uncommitted changes`, `wt-9 is not a worktree in the
+  pool`). With no worktree it takes the first free one, as before.
+- The comments job tells the owner once when it skips a PR because another session works in the
+  item's worktree (`notify.sh --event comments-skipped`): the item, the PR, the worktree and the
+  process there, such as `claude (process 4242)`. A `pr-<n>.told-in-use` marker beside the job's
+  seen files holds it while the session stays, keyed by the PR number so the item and the PR's
+  number name one marker; a pass that addresses the PR clears it, so the next streak is told
+  again. No word when the processes cannot be listed.
+- The comments job addresses up to N PRs at once: `jobs/comments.sh <host> --workers N`, or
+  `jobs.comments_workers: N` in `.flow/config.yaml` for its schedules; unset or 1 keeps one pass
+  after another. It stays one run under the job lock, the processes listed once, and its result
+  line sums the passes. Each pass holds its item's lock (`<flow home>/item:<slug>.lock`, no
+  wait), so no two passes work one item at once: a held one skips the PR, counted in use. A pass
+  the stopped host ends lets the passes in flight finish and starts no other; the run exits 1
+  when any pass failed. An unknown option to the job is refused, exit 2.
+
 ## 1.31.0 (2026-11-03)
 
 - `flow:init` writes the Claude `WorktreeCreate` and `WorktreeRemove` entries to this user's

@@ -1,5 +1,75 @@
 # console
 
+## 0.16.0 (2026-11-04)
+
+- The Pull requests screen follows the prototype. Each card's head names its branch and base and
+  links Open on GitHub; six health cells (state, checks, conflicts, review, threads, quiz); a
+  "Checks on <head>" list with each failed or running check linked to its run and the passed ones
+  folded; the reviewers; a "Today" timeline of the flow's events on the PR's item; Merge now,
+  disabled with the reason while the PR is not ready.
+- Merge when green arms GitHub's auto-merge (`pr.auto-merge`, `gh pr merge --auto --squash`), and
+  Disarm takes it back (`--disable-auto`); an armed card says so. It is not offered while a
+  review holds the PR that GitHub would merge past: a reviewer asked by a mention, a requested or
+  optional review, a request for changes or an open thread.
+- Ask the agent to fix the checks, on a PR whose checks fail, runs the comments pass on its item
+  and PR now; the pass's new Checks step fixes them.
+- The head line counts the PRs merged today and offers Run comments job now; a Merged today list
+  under the cards shows each with its item, time, how long it was open and its branch.
+- The `pulls` source reads each check's latest run, the head commit, the auto-merge and the PRs
+  merged since local midnight. The snapshot is schema 13: `PullRequest` gains `checkRuns`, `head`,
+  `autoMerge`, `changesRequested` and `reviewsRequested`, and the snapshot gains `mergedToday`.
+- A failed process lookup never reports a live run dead. A ps that fails, times out or lists
+  nothing makes the process list `unavailable`, and an lsof that fails, times out or gives a pid
+  no working directory makes it `partial`, never an empty list that reads as "nothing runs"; the
+  last read's agents stand meanwhile. The snapshot carries it as `processList` with the reason
+  and the failed lookup, the `processes` source turns red ("process list unavailable: ps timed
+  out after 10s"), and the daemon logs `processes.lookup.failed` with the command, exit code,
+  timeout, duration and stderr, then `processes.lookup.recovered`.
+- A run's `alive` is now `liveness`, by flow's own rule: `alive` while an agent works in its
+  worktree or the pid its record names still runs a claude, codex or the unattended loop that
+  started no later than the record; `unknown` while the process list is not complete; `starting`
+  within `jobs.health.grace`; `dead` only after that. Only a dead run gets the `dead-run` flag,
+  the Needs you row, the disagreement and Resume; Agents and Worktrees say why the others are not
+  shown dead, and Agents shows an alive run whose agent was not located as a card from its record.
+  The snapshot is schema 11.
+- A Pull requests card offers Force merge (`pr.merge` with `force=true`, which adds `--admin` to
+  `gh pr merge`) on a PR whose checks fail, or that is approved while GitHub blocks the merge.
+- A conflicting PR's card offers Resolve conflicts: one comments pass for its item now
+  (`job.start` with job comments, the item and the PR, which `jobs/comments.sh` takes as the
+  target, so an item that recorded no PR still gets the pass), which merges the base in first;
+  the card says the pass is running while it runs.
+- The review ask offers the project's reviewers, then each of codex, claude and copilot not among
+  them, then a GitHub login.
+- A PR whose item recorded no PR links to the open item whose task branch `flow/<slug>` is its
+  head branch. Each pull in the snapshot carries GitHub's `mergeState`.
+- Each free worktree card has its own Reserve button, which reserves that worktree; the toolbar's
+  Reserve, which took whichever worktree was free, is gone. A reserved card says "reserved by
+  <who>" and shows Release in the same place, with a title saying it gives the reservation back.
+  The button's running and outcome states show on the card that was pressed. It needs the flow
+  release whose `steward.sh reserve` takes a worktree; an older steward refuses it as an unknown
+  option, and the card says so.
+- `worktree.reserve` takes an optional `target`, the name of a pool worktree, and passes its path
+  to the steward. A target that is not a pool worktree is refused.
+- On the Agents page a run, one of your sessions or an agent ended in the last day shows only
+  Open session when it has a session to resume, and Open in Terminal only when it has none: both
+  opened a terminal in the same folder. Worktree cards and job rows keep Open in Terminal.
+- A pool worktree whose claimed item has an open PR and that holds an interactive session carries
+  the `comments-skipped` flag: flow's comments job skips that PR while the session stays, so its
+  review comments wait (schema 12).
+- The Overview's Pool module says "The comments job skips N worktree(s): <names> (a session works
+  there)" with a link to Worktrees, and the PR card says "The comments job skips this PR while a
+  session works in <worktree>".
+- A Retro page (`#/<project>/retro`, in the nav) shows what the flow learnt: a head line with the
+  lessons in all, those since the last retro and when the last retro ran; the lessons grouped by
+  kind then rule, each with its item and step; and every retro with the lessons it read and its
+  report rendered. "Run retro now" starts the retro job through `job.start`, and the Overview
+  counts the lessons since the last retro with a link to the page.
+- The `files` source reads `lessons.jsonl`, `retros.log` and `reports/retro-<date>.md` from the
+  flow home; the snapshot carries `lessons`, `retros` and `counts.lessonsSinceRetro` (schema 10).
+  A missing file is no lesson and no retro, and a malformed line is skipped.
+- Merge and Force merge no longer pass `--delete-branch` to `gh pr merge`: since gh 2.103 it
+  removed the pool worktree that held the branch. The sweep frees the worktree and the branch.
+
 ## 0.15.2 (2026-11-03)
 
 - The flow settings no longer offer `retro.commit` (Commit the retro lessons): the retro job
