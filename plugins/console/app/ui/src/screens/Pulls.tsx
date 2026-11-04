@@ -68,7 +68,8 @@ function RunCommentsJob({ snapshot }: { snapshot: Snapshot }) {
 }
 
 function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot }) {
-  const agent = snapshot.worktrees.find((worktree) => worktree.name === pull.worktree)?.agents[0] ?? null;
+  const worktree = snapshot.worktrees.find((entry) => entry.name === pull.worktree) ?? null;
+  const agent = worktree?.agents[0] ?? null;
   const quizPending = pull.quiz !== null && pull.quiz.result?.passed !== true;
   const blocked = pull.state === 'draft' && quizPending ? 'A draft until you pass the quiz above; then it goes ready for review.' : mergeBlockedReason(pull);
   const review = pull.review;
@@ -93,6 +94,9 @@ function PullCard({ pull, snapshot }: { pull: PullRequest; snapshot: Snapshot })
           </div>
         ))}
       </div>
+      {worktree !== null && worktree.flags.includes('comments-skipped') && (
+        <p className="pull-skipped muted">The comments job skips this PR while a session works in {worktree.name}; its review comments wait until that session leaves.</p>
+      )}
       {pull.quiz !== null && pull.item !== null && <div className="pull-quiz"><QuizPanel item={pull.item} quiz={pull.quiz} /></div>}
       <div className="pull-body">
         <div className="pull-column">

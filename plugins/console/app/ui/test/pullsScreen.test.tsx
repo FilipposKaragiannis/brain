@@ -1,8 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import type { FlowEvent, Job, MergedPull, PullRequest, Snapshot } from '../../daemon/src/snapshot.ts';
+import type { FlowEvent, Job, MergedPull, PullRequest, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
 import { Pulls } from '../src/screens/Pulls.tsx';
-import { actionRecord, FakeDaemon, HTTP_ACCEPTED, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { actionRecord, FakeDaemon, HTTP_ACCEPTED, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -229,4 +229,19 @@ test('RunCommentsJobNow_InstalledSchedule_HandedToLaunchd', async () => {
 test('NoCommentsJob_NoRunNowButton', () => {
   renderPulls([pull(21, {})]);
   expect(screen.queryByRole('button', { name: 'Run comments job now' }), 'because there is no comments job to run').toBeNull();
+});
+
+/** PR 24 of gh#24, claimed in wt-4, with these flags on wt-4. */
+function renderPullInWorktreeFlagged(flags: Worktree['flags']): void {
+  renderPulls([pull(24, { item: 'gh#24', worktree: 'wt-4' })], new FakeDaemon(), { worktrees: [{ ...poolWorktree('wt-4'), state: 'claimed', item: 'gh#24', flags }] });
+}
+
+test('PullWhoseWorktreeHoldsASession_SaysTheCommentsJobSkipsIt', () => {
+  renderPullInWorktreeFlagged(['session', 'comments-skipped']);
+  expect(card(24).textContent, 'because the owner learns why the comments on the PR stay unaddressed').toMatch(/The comments job skips this PR while a session works in wt-4/);
+});
+
+test('PullWhoseWorktreeIsNotSkipped_NoSkipLine', () => {
+  renderPullInWorktreeFlagged([]);
+  expect(card(24).textContent, 'because the comments job addresses a PR whose worktree nobody works in').not.toMatch(/The comments job skips/);
 });

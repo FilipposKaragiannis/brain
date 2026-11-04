@@ -12,5 +12,5 @@ bump: minor
 - The head line counts the PRs merged today and offers Run comments job now; a Merged today list
   under the cards shows each with its item, time, how long it was open and its branch.
 - The `pulls` source reads each check's latest run, the head commit, the auto-merge and the PRs
-  merged since local midnight. The snapshot is schema 12: `PullRequest` gains `checkRuns`, `head`
+  merged since local midnight. The snapshot is schema 13: `PullRequest` gains `checkRuns`, `head`
   and `autoMerge`, and the snapshot gains `mergedToday`.

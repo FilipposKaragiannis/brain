@@ -125,7 +125,7 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 12,
+    schema: 13,
     takenAt,
     project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', adapter: 'github', trackers: [{ name: 'github', url: 'https://github.com/owner/project/issues', error: null }], pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', jobHosts: ['claude'], plugins: [installedPlugin('flow', '1.17.0', '1.17.0'), installedPlugin('standards', '1.3.0', '1.3.0')], poolMax: 9, reviewers: ['codex', 'claude'], picks: [] },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },

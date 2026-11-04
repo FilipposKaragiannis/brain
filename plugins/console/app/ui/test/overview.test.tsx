@@ -242,3 +242,24 @@ test('Overview_LessonsLine_LinksToTheRetroPage', () => {
   renderWithLessonsSinceRetro();
   expect(within(screen.getByLabelText('Lessons')).getByRole('link', { name: 'Retro' }).getAttribute('href'), 'because the count leads to the lessons themselves').toBe('#/project/retro');
 });
+
+/** The Overview of a pool where wt-2 holds a session beside its item's open PR, and wt-3 does not. */
+function renderWithCommentsSkipped(): void {
+  const skipped = { ...poolWorktree('wt-2'), state: 'claimed' as const, item: 'gh#268', flags: ['session' as const, 'comments-skipped' as const] };
+  renderOverview({ ...snapshotAt(TAKEN_AT, 0), worktrees: [skipped, poolWorktree('wt-3')] });
+}
+
+test('PoolWithACommentsSkippedWorktree_NamesIt', () => {
+  renderWithCommentsSkipped();
+  expect(screen.getByLabelText('Comments skipped').textContent, 'because the owner learns which PR waits on their own open session').toMatch(/The comments job skips 1 worktree: wt-2 \(a session works there\)/);
+});
+
+test('CommentsSkippedLine_LinksToWorktrees', () => {
+  renderWithCommentsSkipped();
+  expect(within(screen.getByLabelText('Comments skipped')).getByRole('link', { name: 'Worktrees' }).getAttribute('href'), 'because the worktree cards show the session that holds the PR').toBe('#/project/worktrees');
+});
+
+test('PoolWithNoCommentsSkippedWorktree_NoSkippedLine', () => {
+  renderOverview({ ...snapshotAt(TAKEN_AT, 0), worktrees: [{ ...poolWorktree('wt-2'), flags: ['session'] }] });
+  expect(screen.queryByLabelText('Comments skipped'), 'because a session in a worktree whose item has no open PR holds nothing back').toBeNull();
+});
