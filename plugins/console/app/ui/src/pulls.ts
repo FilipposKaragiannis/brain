@@ -1,4 +1,5 @@
 import type { FlowEvent, Item, ItemState, PullCheck, PullRequest, PullState } from '../../daemon/src/snapshot.ts';
+import { mentionReviewWaiting } from '../../daemon/src/snapshot.ts';
 import { clockTime, formatDuration } from './clock.tsx';
 import { eventTone, pullTone } from './status.ts';
 import type { Tone } from './status.ts';
@@ -160,10 +161,13 @@ export function pullTimeline(pull: PullRequest, events: readonly FlowEvent[], ta
 /**
  * Whether the card offers Merge when green, GitHub's auto-merge: on a pull that waits for checks
  * or a review to pass. Never on a draft or a conflict, which no wait can merge, nor on a pull
- * ready to merge now.
+ * ready to merge now, nor while a reviewer asked by a mention has not answered: GitHub would merge
+ * past that review. An armed pull always offers Disarm.
  */
 export function autoMergeOffered(pull: PullRequest): boolean {
-  return pull.autoMerge !== null || !['draft', 'conflicts', 'mergeable'].includes(pull.state);
+  if (pull.autoMerge !== null) return true;
+  if (pull.review !== null && mentionReviewWaiting(pull.review.waiting)) return false;
+  return !['draft', 'conflicts', 'mergeable'].includes(pull.state);
 }
 
 /** Why Merge is not offered on a pull that is not ready, in one sentence, or null when it is ready. */

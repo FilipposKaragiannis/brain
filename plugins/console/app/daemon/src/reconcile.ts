@@ -12,6 +12,7 @@ import { lessonsSinceRetro } from './retro.ts';
 import { itemSlug } from './syncNote.ts';
 import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
+  mentionReviewWaiting,
 } from './snapshot.ts';
 import type {
   Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, MergedPull, NewerConsole,
@@ -463,8 +464,6 @@ export function pullState(pull: PullFact): PullState {
 
 /** The health job's review verdicts that keep a merge gate from the owner (flow's `_health.py review`). */
 const HELD_REVIEW_STATES = ['in-review', 'changes-requested'];
-/** Reviewers the flow asks through GitHub's reviewers API (`_reviews.py`), so the live pull shows their request. */
-const GITHUB_ASKED_REVIEWERS = ['copilot'];
 
 /** The pull number an item's `pr` field names, by number or by URL. */
 function namedPullNumber(field: string): number | null {
@@ -564,7 +563,7 @@ const MENTION_REVIEW_OVERRIDES: PullState[] = ['review-pending', 'approved', 'me
 
 /** Whether the record names a reviewer asked by a mention who has not answered, which GitHub's own review state cannot show. */
 function mentionWaiting(record: ReviewRecord | undefined): boolean {
-  return record !== undefined && record.waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+  return record !== undefined && mentionReviewWaiting(record.waiting);
 }
 
 function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeContext[]): PullRequest[] {

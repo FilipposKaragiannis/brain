@@ -417,6 +417,17 @@ export type MergedPull = { number: number; title: string; url: string; branch: s
  */
 export type PullReview = { state: string; waiting: string[]; cannot: Array<{ reviewer: string; said: string }>; at: string };
 
+/** Reviewers the flow asks through GitHub's reviewers API (`_reviews.py`), so the live pull shows their request. */
+const GITHUB_ASKED_REVIEWERS = ['copilot'];
+
+/**
+ * Whether a reviewer asked by a mention has not answered yet. GitHub cannot see that ask, so its
+ * own merge rules, `--auto` among them, would merge past it.
+ */
+export function mentionReviewWaiting(waiting: readonly string[]): boolean {
+  return waiting.some((reviewer) => !GITHUB_ASKED_REVIEWERS.includes(reviewer.toLowerCase()));
+}
+
 export type JobRun = {
   at: string;
   seconds: number;

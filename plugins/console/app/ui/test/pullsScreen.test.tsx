@@ -203,6 +203,22 @@ test('PullsNoWaitCanMerge_NoMergeWhenGreen', () => {
   for (const number of [30, 31, 32]) expect(within(card(number)).queryByRole('button', { name: 'Merge when green' }), `because #${number} is a conflict, a draft or ready now`).toBeNull();
 });
 
+test('MentionReviewerYetToAnswer_NoMergeWhenGreen', () => {
+  const waiting = { state: 'in-review', waiting: ['codex'], cannot: [], at: TAKEN_AT };
+  renderPulls([pull(33, { state: 'in-review', review: waiting }), pull(34, { state: 'checks-pending', checks: { passed: 3, failed: 0, pending: 1 }, review: waiting }), pull(35, { state: 'checks-failing', checks: { passed: 3, failed: 1, pending: 0 }, review: waiting })]);
+  for (const number of [33, 34, 35]) expect(within(card(number)).queryByRole('button', { name: 'Merge when green' }), `because GitHub cannot see the mention, so #${number} would merge before codex answers`).toBeNull();
+});
+
+test('GitHubAskedReviewerYetToAnswer_MergeWhenGreenStays', () => {
+  renderPulls([pull(36, { state: 'review-pending', review: { state: 'in-review', waiting: ['Copilot'], cannot: [], at: TAKEN_AT } })]);
+  expect(within(card(36)).getByRole('button', { name: 'Merge when green' }), 'because GitHub holds the merge for a review it requested itself').toBeTruthy();
+});
+
+test('ArmedPullWithMentionReviewerYetToAnswer_StillOffersDisarm', () => {
+  renderPulls([pull(37, { state: 'in-review', autoMerge: { method: 'SQUASH', at: TAKEN_AT }, review: { state: 'in-review', waiting: ['codex'], cannot: [], at: TAKEN_AT } })]);
+  expect(within(card(37)).getByRole('button', { name: 'Disarm' }), 'because an armed merge can always be taken back').toBeTruthy();
+});
+
 test('FailingPull_FixChecks_StartsTheCommentsPassOnItsItemAndPr', async () => {
   const { daemon, posted } = recordingDaemon();
   renderPulls([pull(22, { state: 'checks-failing', checks: { passed: 3, failed: 2, pending: 0 }, item: 'gh#22' })], daemon);
