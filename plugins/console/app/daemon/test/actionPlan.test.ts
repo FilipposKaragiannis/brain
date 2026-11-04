@@ -212,6 +212,19 @@ test('PrMergeForceNotTrue_NoAdmin', () => {
   }
 });
 
+test('PrAutoMerge_ArmsGhAutoMergeWithSquash', () => {
+  const plan = planned('pr.auto-merge', { pr: '41' });
+  assert.deepEqual(plan.args, ['pr', 'merge', '41', '--repo', 'o/r', '--auto', '--squash'], 'because GitHub merges the pull itself once its checks and reviews pass, squashed as a merge from the card would be');
+  assert.deepEqual(plan.locks, ['pr:41'], 'because arming and merging one PR never overlap');
+  assert.deepEqual(plan.refresh, ['pulls'], 'because only the pull changes until GitHub merges it');
+});
+
+test('PrAutoMergeOff_DisablesAuto', () => {
+  assert.deepEqual(planned('pr.auto-merge', { pr: '41', off: 'true' }).args, ['pr', 'merge', '41', '--repo', 'o/r', '--disable-auto'], 'because Disarm takes the armed merge back');
+  assert.equal(planAction('pr.auto-merge', { pr: 'x' }, CONTEXT).ok, false, 'because gh needs a PR number');
+  assert.equal(planAction('pr.auto-merge', { pr: '41' }, { ...CONTEXT, repo: null }).ok, false, 'because gh needs a repo');
+});
+
 test('PrReview_AsksOneReviewerThroughComments', () => {
   const plan = planned('pr.review', { pr: '41', reviewer: '@codex' });
   assert.deepEqual(plan.args.slice(1), ['request-review', '41', REVIEW_ASK, 'codex'], 'because comments.sh posts the mention with the request marker the health job tracks, and takes the name without its @');

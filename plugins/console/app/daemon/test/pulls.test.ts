@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { CommandResult, CommandRunner } from '../src/collectors/exec.ts';
-import { countChecks, parsePullList, parseThreadCounts, readPulls, threadsQuery } from '../src/collectors/pulls.ts';
-import { FIXTURE_ROOT, PULL_LIST_JSON, REVIEW_THREADS_JSON, fakeRunner } from './fakeRunner.ts';
+import { checkRuns, countChecks, parseMergedList, parsePullList, parseThreadCounts, readPulls, startOfDay, threadsQuery } from '../src/collectors/pulls.ts';
+import { FIXTURE_ROOT, MERGED_LIST_JSON, PULL_LIST_JSON, REVIEW_THREADS_JSON, fakeRunner } from './fakeRunner.ts';
 
 const REPO = 'example/fixture';
 const FIXTURE_NUMBERS = [560, 20, 21, 22, 23];
 const MAXIMUM_PULLS = 100;
 const NOT_STARTED = '0001-01-01T00:00:00Z';
+const NOW = new Date('2026-10-24T18:16:04Z');
 
 const result = (code: number | null, stdout: string, stderr: string, timedOut: boolean): CommandResult => ({ code, stdout, stderr, timedOut });
 const listThen = (threads: CommandResult): CommandRunner => async (request) => (request.args[0] === 'pr' ? result(0, PULL_LIST_JSON, '', false) : threads);
@@ -106,31 +107,79 @@ test('ThreadsQuery_OneAliasPerPull', () => {
 });
 
 test('ReadPulls_Fixture_ThreadsJoinedByNumber', async () => {
-  const { pulls } = await readPulls(FIXTURE_ROOT, REPO, fakeRunner);
+  const { pulls } = await readPulls(FIXTURE_ROOT, REPO, fakeRunner, NOW);
   assert.deepEqual(pulls.map((pull) => [pull.number, pull.unresolvedThreads]), [[560, 1], [20, 0], [21, 2], [22, 0], [23, 0]], 'because each pull gets the unresolved count of its own alias');
 });
 
 test('ReadPulls_ListFails_ErrorCarriesStderr', async () => {
-  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, always(result(1, '', 'HTTP 401: Bad credentials\n', false))), /gh pr list failed: HTTP 401: Bad credentials/, 'because the freshness error must say why GitHub refused');
+  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, always(result(1, '', 'HTTP 401: Bad credentials\n', false)), NOW), /gh pr list failed: HTTP 401: Bad credentials/, 'because the freshness error must say why GitHub refused');
 });
 
 test('ReadPulls_ListFailsSilently_ErrorCarriesExitCode', async () => {
-  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, always(result(4, '', '', false))), /gh pr list failed: exit code 4/, 'because an empty stderr still has an exit code to show');
+  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, always(result(4, '', '', false)), NOW), /gh pr list failed: exit code 4/, 'because an empty stderr still has an exit code to show');
 });
 
 test('ReadPulls_ListTimesOut_SaysTimedOut', async () => {
-  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, always(result(null, '', '', true))), /^Error: gh pr list timed out after 60s$/, 'because a killed gh has no exit code to show');
+  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, always(result(null, '', '', true)), NOW), /^Error: gh pr list timed out after 60s$/, 'because a killed gh has no exit code to show');
 });
 
 test('ReadPulls_GraphqlFails_ErrorCarriesStderr', async () => {
-  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, listThen(result(1, '', 'gh: Something went wrong', false))), /review threads\) failed: gh: Something went wrong/, 'because a half-read pull list must not pass as fresh');
+  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, listThen(result(1, '', 'gh: Something went wrong', false)), NOW), /review threads\) failed: gh: Something went wrong/, 'because a half-read pull list must not pass as fresh');
 });
 
 test('ReadPulls_GraphqlTimesOut_SaysTimedOut', async () => {
-  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, listThen(result(null, '', '', true))), /review threads\) timed out after 60s/, 'because the threads query has the same timeout');
+  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, listThen(result(null, '', '', true)), NOW), /review threads\) timed out after 60s/, 'because the threads query has the same timeout');
 });
 
 test('ReadPulls_NoOpenPulls_EmptyWithoutGraphql', async () => {
   const runner: CommandRunner = async (request) => (request.args[0] === 'pr' ? result(0, '[]', '', false) : result(1, '', 'an empty threads query is invalid', false));
-  assert.deepEqual(await readPulls(FIXTURE_ROOT, REPO, runner), { pulls: [] }, 'because a repo with no open pulls has nothing to show and no threads to ask about');
+  assert.deepEqual(await readPulls(FIXTURE_ROOT, REPO, runner, NOW), { pulls: [], merged: [] }, 'because a repo with no open pulls has nothing to show and no threads to ask about');
+});
+
+test('CheckRuns_ReRunPassed_OnlyTheLatestRunListed', () => {
+  const runs = byNumber(20)?.checkRuns ?? [];
+  assert.equal(runs.filter((run) => run.outcome === 'failed').length, byNumber(20)?.checks.failed, 'because the list and the counts read the same latest runs');
+});
+
+test('CheckRuns_Mixed_FailedFirstThenRunningThenPassed', () => {
+  const runs = checkRuns([
+    { __typename: 'CheckRun', name: 'b-pass', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-24T10:00:00Z', completedAt: '2026-10-24T10:05:00Z' },
+    { __typename: 'CheckRun', name: 'a-pass', status: 'COMPLETED', conclusion: 'SUCCESS', startedAt: '2026-10-24T10:00:00Z', completedAt: '2026-10-24T10:04:00Z' },
+    { __typename: 'CheckRun', name: 'running', status: 'IN_PROGRESS', conclusion: null, startedAt: '2026-10-24T10:00:00Z' },
+    { __typename: 'StatusContext', context: 'ci/legacy', state: 'ERROR', targetUrl: 'https://ci.example/1' },
+  ]);
+  assert.deepEqual(runs.map((run) => [run.name, run.outcome]), [['ci/legacy', 'failed'], ['running', 'pending'], ['a-pass', 'passed'], ['b-pass', 'passed']], 'because the card names what failed before what still runs and what passed');
+  assert.equal(runs[1]?.at, '2026-10-24T10:00:00Z', 'because a running check has only its start');
+  assert.equal(runs[0]?.url, 'https://ci.example/1', 'because a status context links its target');
+});
+
+test('CheckRuns_Queued_NoTime', () => {
+  const [run] = checkRuns([{ __typename: 'CheckRun', name: 'queued', status: 'QUEUED', conclusion: null, startedAt: NOT_STARTED }]);
+  assert.equal(run?.at, null, 'because gh prints year one for a run that has not started');
+});
+
+test('ListedPull_HeadAndAutoMerge_Read', () => {
+  const [pull] = parsePullList(JSON.stringify([{ number: 7, headRefOid: 'e85e542c0000', autoMergeRequest: { mergeMethod: 'SQUASH', enabledAt: '2026-10-24T18:00:00Z' } }]));
+  assert.equal(pull?.head, 'e85e542c0000', 'because the card names the commit its checks ran on');
+  assert.deepEqual(pull?.autoMerge, { method: 'SQUASH', at: '2026-10-24T18:00:00Z' }, 'because an armed pull says so and since when');
+  assert.equal(parsePullList(JSON.stringify([{ number: 8, autoMergeRequest: null }]))[0]?.autoMerge, null, 'because gh gives null when auto-merge is off');
+});
+
+test('MergedList_BeforeLocalMidnight_Dropped', () => {
+  const merged = parseMergedList(MERGED_LIST_JSON, startOfDay(NOW));
+  assert.deepEqual(merged.map((pull) => pull.number), [19, 18], 'because the search goes by the day in UTC, and only what merged since local midnight is today, newest first');
+});
+
+test('ReadPulls_AsksForMergedSinceTheDay', async () => {
+  const asked: string[][] = [];
+  const runner: CommandRunner = async (request) => { asked.push(request.args); return fakeRunner(request); };
+  const { merged } = await readPulls(FIXTURE_ROOT, REPO, runner, NOW);
+  const search = asked.find((args) => args.includes('merged'));
+  assert.equal(search?.[search.indexOf('--search') + 1], `merged:>=${startOfDay(NOW).toISOString().slice(0, 10)}`, 'because GitHub searches by date, and the UTC date of local midnight never starts after it');
+  assert.deepEqual(merged.map((pull) => pull.number), [19, 18], 'because the merged list comes with the open one');
+});
+
+test('ReadPulls_MergedListFails_ErrorSaysSo', async () => {
+  const runner: CommandRunner = async (request) => (request.args.includes('merged') ? result(1, '', 'HTTP 502', false) : fakeRunner(request));
+  await assert.rejects(readPulls(FIXTURE_ROOT, REPO, runner, NOW), /gh pr list --state merged failed: HTTP 502/, 'because a half-read source must not pass as fresh');
 });

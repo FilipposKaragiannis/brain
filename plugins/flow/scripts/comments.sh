@@ -11,7 +11,10 @@
 #                                               mergeable, unresolved threads, their comments, and awaiting: the
 #                                               last comment ids of the unresolved threads whose last comment does
 #                                               not carry the reply marker (in a thread with no marker at all, a
-#                                               last reply by the flow's login is ours: replies before 1.19.0)
+#                                               last reply by the flow's login is ours: replies before 1.19.0),
+#                                               and failing: the checks failing-checks prints
+#   comments.sh failing-checks <pr>             the checks failing on the PR's head, one name per line, sorted: the
+#                                               latest run of each only; nothing when none fails or all are pending
 #   comments.sh reviewers [--host claude|codex] the reviewers each round asks on a PR that host wrote, one per line:
 #                                               reviews.reviewers.<host>, else .default, else a plain reviews.reviewers
 #                                               list; no host, the default list
@@ -64,6 +67,29 @@ print("gh#" + gh.group(1) if gh else "local:%s/%s" % local.groups() if local els
 # pr_reviewers <pr>: the reviewers of the PR's author host. Only a map per host asks who wrote it.
 pr_reviewers() {
   if [ -n "$(yaml_keys "$(config_file)" reviews.reviewers)" ]; then reviewers "$(author_host "$1")"; else reviewers ""; fi
+}
+# failing_of: the JSON of gh pr view --json statusCheckRollup on stdin; the names of the checks
+# whose latest run failed, one per line, sorted. A check run passes on SUCCESS, NEUTRAL or SKIPPED
+# and waits until COMPLETED; a status passes on SUCCESS and waits on PENDING or EXPECTED; anything
+# else failed. Re-runs share a name: the one started last counts, and one not started yet is last.
+failing_of() {
+  python3 -I -c '
+import json, sys
+NOT_STARTED = "9999"
+latest = {}
+for c in json.load(sys.stdin).get("statusCheckRollup") or []:
+    run = c.get("__typename") == "CheckRun" or "conclusion" in c
+    name = " ".join(str(c.get("name") if run else c.get("context") or "").split())
+    if not name: continue
+    started = c.get("startedAt") or ""
+    started = NOT_STARTED if not started or started.startswith("0001") else started
+    key = (run, c.get("workflowName") or "", name)
+    if key not in latest or started >= latest[key][0]: latest[key] = (started, c)
+def failed(run, c):
+    if run:
+        return (c.get("status") or "").upper() == "COMPLETED" and (c.get("conclusion") or "").upper() not in ("SUCCESS", "NEUTRAL", "SKIPPED")
+    return (c.get("state") or "").upper() not in ("SUCCESS", "PENDING", "EXPECTED")
+for name in sorted({key[2] for key, (_, c) in latest.items() if failed(key[0], c)}): print(name)'
 }
 # The ask goes to bots verbatim: no markers that would count as a request or a chase, no extra mentions.
 plain_ask() { printf '%s' "$1" | sed 's/<!--//g; s/-->//g; s/@\([A-Za-z0-9]\)/\1/g'; }
@@ -182,9 +208,14 @@ print(json.dumps([{"id": c["id"], "author": c["user"]["login"], "body": c["body"
     status=$?; rm -rf "$scratch"; exit $status ;;
   chase)
     chase_pr "$(pr_number "$2")" ;;
+  failing-checks)
+    [ $# -eq 2 ] || die "usage: comments.sh failing-checks <pr>" 2
+    rollup="$(gh pr view "$(pr_number "$2")" -R "$repo" --json statusCheckRollup)" || exit 1
+    printf '%s' "$rollup" | failing_of ;;
   activity)
     pull="$(pr_number "$2")"
-    st="$(gh pr view "$pull" -R "$repo" --json updatedAt,headRefOid,mergeable)" &&
+    st="$(gh pr view "$pull" -R "$repo" --json updatedAt,headRefOid,mergeable,statusCheckRollup)" &&
+      failing="$(printf '%s' "$st" | failing_of)" &&
       th="$("$0" threads "$pull")" || exit 1
     # A thread with no marker anywhere may hold a reply from before 1.19.0: there the flow's login
     # speaks for it. Read once, only then, through the job's per-run cache when it gives one.
@@ -199,7 +230,7 @@ sys.exit(0 if any(marker not in "".join([t["body"] or ""] + [r["body"] or "" for
     fi
     python3 -I -c '
 import json, sys
-state, threads, marker, me = json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3], sys.argv[4]
+state, threads, marker, me, failing = json.loads(sys.argv[1]), json.loads(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 def last(t):
     return t["replies"][-1] if t["replies"] else {"id": t["comment_id"], "body": t["body"], "author": t["author"]}
 def ours(t):
@@ -211,6 +242,6 @@ waiting = [last(t)["id"] for t in threads if not ours(t)]
 print(json.dumps({"updatedAt": state.get("updatedAt", ""), "headRefOid": state.get("headRefOid", ""),
                   "mergeable": state.get("mergeable", ""), "unresolved": len(threads),
                   "review_comments": sum(1 + len(t["replies"]) for t in threads),
-                  "awaiting": waiting}))' "$st" "$th" "$REPLY_MARKER" "$me" ;;
-  *) sed -n '2,24p' "$0"; exit 2 ;;
+                  "awaiting": waiting, "failing": failing.splitlines()}))' "$st" "$th" "$REPLY_MARKER" "$me" "$failing" ;;
+  *) sed -n '2,27p' "$0"; exit 2 ;;
 esac

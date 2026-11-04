@@ -1047,6 +1047,52 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a base name with shell characters never reaches the brief" sh -c "! grep -q 'touch x' '$HOST_LOG' && grep -q 'conflicts with a base named oddly' .flow/log/comments.log"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['baseRefName']='main'; d['pr']['mergeable']='MERGEABLE'; json.dump(d, open(p,'w'))"
+# Checks on the head: the latest run of each check counts; one red check gets one pass, not a loop.
+rollup() { python3 - "$FAKE_GH_DIR/issues.json" "$1" <<'PY6'
+import json, sys
+d = json.load(open(sys.argv[1])); d["pr"]["headRefOid"] = "c0ffee1234567890"
+run = lambda name, status, conclusion, started: {"__typename": "CheckRun", "name": name, "workflowName": "ci", "status": status,
+                                                  "conclusion": conclusion, "startedAt": started}
+status = lambda context, state: {"__typename": "StatusContext", "context": context, "state": state, "startedAt": "2026-11-01T10:00:00Z"}
+d["pr"]["statusCheckRollup"] = {
+    "green": [run("build", "COMPLETED", "SUCCESS", "2026-11-01T10:00:00Z"), run("lint", "COMPLETED", "SKIPPED", "2026-11-01T10:00:00Z"),
+              status("deploy/preview", "SUCCESS")],
+    "red": [run("test (macos)", "COMPLETED", "FAILURE", "2026-11-01T10:00:00Z"), run("build", "COMPLETED", "SUCCESS", "2026-11-01T10:00:00Z"),
+            status("deploy/preview", "ERROR"), run("lint", "IN_PROGRESS", "", "2026-11-01T10:00:00Z"), status("ci/expected", "EXPECTED")],
+    "rerun-passed": [run("test (macos)", "COMPLETED", "FAILURE", "2026-11-01T10:00:00Z"), run("test (macos)", "COMPLETED", "SUCCESS", "2026-11-01T11:00:00Z")],
+    "rerun-queued": [run("test (macos)", "COMPLETED", "FAILURE", "2026-11-01T10:00:00Z"), run("test (macos)", "QUEUED", None, "0001-01-01T00:00:00Z")],
+    "rerun-failed": [run("test (macos)", "COMPLETED", "SUCCESS", "2026-11-01T10:00:00Z"), run("test (macos)", "COMPLETED", "TIMED_OUT", "2026-11-01T11:00:00Z")],
+    "none": [],
+}[sys.argv[2]]
+json.dump(d, open(sys.argv[1], "w"))
+PY6
+}
+rollup green
+check "failing-checks: nothing when every check passed or was skipped" [ -z "$("$P/scripts/comments.sh" failing-checks 90)" ]
+rollup none
+check "failing-checks: nothing when the head has no checks" [ -z "$("$P/scripts/comments.sh" failing-checks 90)" ]
+rollup rerun-passed
+check "failing-checks: a failed check whose re-run passed does not count" [ -z "$("$P/scripts/comments.sh" failing-checks 90)" ]
+rollup rerun-queued
+check "failing-checks: a failed check whose re-run has not started yet waits" [ -z "$("$P/scripts/comments.sh" failing-checks 90)" ]
+rollup rerun-failed
+check "failing-checks: a passed check whose re-run failed counts" [ "$("$P/scripts/comments.sh" failing-checks 90)" = "test (macos)" ]
+rollup red
+check "failing-checks: the failed check runs and statuses, one per line, sorted; pending ones wait" [ "$("$P/scripts/comments.sh" failing-checks 90 | tr '\n' '|')" = "deploy/preview|test (macos)|" ]
+check "activity: lists the failing checks" sh -c "'$P/scripts/comments.sh' activity 90 | python3 -c 'import json,sys; a=json.load(sys.stdin); assert a[\"failing\"]==[\"deploy/preview\",\"test (macos)\"], a'"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].pop('statusCheckRollup'); json.dump(d, open(p,'w'))"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null; line_before="$(cat .flow/log/comments.seen/gh_21)"
+rollup green; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a PR with no failing check keeps the activity line it had before, so no extra pass" sh -c "[ ! -s '$HOST_LOG' ] && [ \"\$(cat .flow/log/comments.seen/gh_21)\" = '$line_before' ]"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
+check "comments job: green checks put no checks note in the brief" sh -c "grep -q 'comments gh#21' '$HOST_LOG' && ! grep -q 'Checks step' '$HOST_LOG'"
+rollup red; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a check gone red on the same head starts a pass" grep -q 'comments gh#21' "$HOST_LOG"
+check "comments job: the brief names the failing checks and the head" grep -q 'gh#21. Checks fail on c0ffee12: deploy/preview, test (macos): run the Checks step.' "$HOST_LOG"
+check "comments job: the activity line closes on the failing checks" sh -c "grep -q ' failing:deploy/preview,test (macos)\$' .flow/log/comments.seen/gh_21"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a red check the pass could not fix is not tried again on the same head" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: nothing new since the last pass, skipped' .flow/log/comments.log"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].pop('statusCheckRollup'); d['pr'].pop('headRefOid'); json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" codex >/dev/null
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec --json -C $realrepo -s workspace-write' '$HOST_LOG'"

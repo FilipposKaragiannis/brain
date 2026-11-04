@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 11;
+export const SNAPSHOT_SCHEMA_VERSION = 12;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -379,6 +379,12 @@ export type PullRequest = {
   draft: boolean;
   state: PullState;
   checks: { passed: number; failed: number; pending: number };
+  /** Each check on the head by its latest run, the failed ones first, then the running, then the passed. */
+  checkRuns: PullCheck[];
+  /** The head commit, or null when GitHub gave none. */
+  head: string | null;
+  /** GitHub's auto-merge, armed from the card or on GitHub: it merges with `method` once every requirement is met. Null when not armed. */
+  autoMerge: { method: string; at: string } | null;
   reviewDecision: string | null;
   unresolvedThreads: number;
   mergeable: string | null;
@@ -395,6 +401,12 @@ export type PullRequest = {
   /** The quiz of the pull's item, with its last result; null with no item or no quiz. A draft with a quiz goes ready when the owner passes it. */
   quiz: Quiz | null;
 };
+
+/** One check on a pull's head: its latest run's outcome, when it ended (or started, while it runs), and its run's page. */
+export type PullCheck = { name: string; outcome: 'passed' | 'failed' | 'pending'; at: string | null; url: string | null };
+
+/** A pull merged since local midnight, newest first, with the item it carried when one is known. */
+export type MergedPull = { number: number; title: string; url: string; branch: string; item: string | null; createdAt: string; mergedAt: string };
 
 /**
  * The health job's verdict on a pull at the merge gate, up to one health interval old: `state`
@@ -592,6 +604,8 @@ export type Snapshot = {
   jobs: Job[];
   stoppedHosts: StoppedHost[];
   pulls: PullRequest[];
+  /** The pulls merged today (since local midnight), newest first; empty until the pulls are read. */
+  mergedToday: MergedPull[];
   events: FlowEvent[];
   /** Every lesson in the flow home's lessons log, oldest first. */
   lessons: Lesson[];
@@ -629,6 +643,7 @@ export type ActionKind =
   | 'jobs.install'
   | 'job.uninstall'
   | 'pr.merge'
+  | 'pr.auto-merge'
   | 'pr.review'
   | 'quiz.answer'
   | 'host.clear'

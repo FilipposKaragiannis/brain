@@ -14,7 +14,7 @@ import {
   ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, NewerConsole,
+  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, MergedPull, NewerConsole,
   ProcessInfo, ProcessListStatus, ProjectInfo, PullRequest, PullState, Readiness, Run, RunLiveness, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
@@ -563,13 +563,39 @@ function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeCont
     const linked = linkPull(pull, items, contexts);
     return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
-    draft: pull.draft, state, checks: pull.checks, reviewDecision: pull.reviewDecision,
+    draft: pull.draft, state, checks: pull.checks, checkRuns: pull.checkRuns, head: pull.head, autoMerge: pull.autoMerge, reviewDecision: pull.reviewDecision,
     unresolvedThreads: pull.unresolvedThreads, mergeable: pull.mergeable, mergeState: pull.mergeState, ...linked,
     createdAt: pull.createdAt, updatedAt: pull.updatedAt,
     ageSeconds: ageSeconds(pull.createdAt, input.now) ?? 0, idleSeconds: ageSeconds(pull.updatedAt, input.now) ?? 0,
     review: record === undefined ? null : { state: record.state, waiting: record.waiting, cannot: record.cannot, at: record.at },
     quiz: linked.item === null ? null : input.flow.quizzes[itemSlug(linked.item)] ?? null,
     };
+  });
+}
+
+/** A task branch's item, the flow's `slug_item`: `flow/gh-12` is gh#12, `flow/local-task-1` is local:task/1. */
+const TASK_BRANCH_ITEM: Array<[RegExp, (found: RegExpExecArray) => string]> = [
+  [/^flow\/gh-(\d+)$/, (found) => `gh#${found[1]}`],
+  [/^flow\/local-([a-z]+)-(\d+)$/, (found) => `local:${found[1]}/${found[2]}`],
+];
+
+function taskBranchItem(branch: string): string | null {
+  for (const [shape, item] of TASK_BRANCH_ITEM) {
+    const found = shape.exec(branch);
+    if (found !== null) return item(found);
+  }
+  return null;
+}
+
+/**
+ * The item a merged pull carried: the one whose `pr` names it, else the one whose task branch is
+ * its head, else the item its task branch names, since a merged item is often closed and gone
+ * from the board.
+ */
+function buildMergedToday(input: ReconcileInput, items: Item[]): MergedPull[] {
+  return (input.pulls?.merged ?? []).map((merged) => {
+    const item = items.find((entry) => namesPull(entry.pr, merged)) ?? items.find((entry) => taskBranch(entry.id) === merged.branch);
+    return { number: merged.number, title: merged.title, url: merged.url, branch: merged.branch, item: item?.id ?? taskBranchItem(merged.branch), createdAt: merged.createdAt, mergedAt: merged.mergedAt };
   });
 }
 
@@ -871,6 +897,7 @@ export function reconcile(read: ReconcileInput): Snapshot {
     readiness: buildReadiness(items),
     attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
     worktrees, items, gates, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
+    mergedToday: buildMergedToday(input, items),
     events: input.flow.events,
     lessons: input.flow.retro.lessons,
     retros: input.flow.retro.retros,
