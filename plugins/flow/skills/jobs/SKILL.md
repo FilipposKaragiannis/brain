@@ -28,10 +28,10 @@ the path `codex plugin list` prints for `flow`). Run from the main worktree.
 1. Show `status` and `history` tables as they print. Under the table, one line per job that
    failed or waits on a gate, saying what to do.
 2. A schedule is `every 30m [args]`, `daily 02:00 [args]` or `weekly sun 03:00 [args]`; the
-   args go to the job (`next`: `--workers 2 --max-steps 15`). Args that begin with `claude` or
-   `codex` run that schedule on that host instead of `jobs.host`; another plain word there is
-   refused as a misspelled host, while an item id (`gh#12`, `local:task/3`) or an option is an
-   arg as before. Edit the config, show the diff, then install.
+   args go to the job (`next`: `--workers 2 --max-steps 15`; `comments`: `--workers 3`). Args
+   that begin with `claude` or `codex` run that schedule on that host instead of `jobs.host`;
+   another plain word there is refused as a misspelled host, while an item id (`gh#12`,
+   `local:task/3`) or an option is an arg as before. Edit the config, show the diff, then install.
 3. A schedule's name is a job (`next`, `comments`, `intake`, `retro`, `health`) or a job, a dash
    and a label of a lowercase letter then lowercase letters and digits (`next-codex`,
    `next-gh81`), so one job runs on several schedules, each with its own args and host. Each one
@@ -77,6 +77,12 @@ Facts to answer with:
   `AbandonProcessGroup`, or launchd ends the workers with the run; an agent installed before
   1.21.1 lacks it, and `status` says `reinstall: jobs.sh install <job>` until it is reinstalled.
 - An idle run (nothing ready, no new notes, no open PR) ends at once and spends no model time.
+- A `comments` run with `--workers N`, or `jobs.comments_workers: N` in `.flow/config.yaml`,
+  addresses up to N PRs at once, one pass per PR; unset or 1 is one after another. It stays one
+  run with one lock and one result line, summed across the passes. Each pass holds its item's
+  lock, so no two passes work one item at once; a PR whose lock is held is skipped as in use.
+  A pass the stopped host ends lets the passes in flight finish and starts no other; the run
+  fails when any pass failed.
 - The `retro` job commits nothing: `lessons.jsonl` and `retros.log` stay on this machine under
   `.flow/`, which is excluded from git, so each clone keeps its own lessons.
 - The `health` job (every 15 minutes in the config `flow:init` writes) checks each claim and spends
