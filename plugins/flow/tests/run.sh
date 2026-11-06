@@ -2054,6 +2054,30 @@ check_all "health: a pool path missing on disk is a finding with the recreate hi
 "$P/scripts/steward.sh" add "$(cd .. && pwd -P)/wt-3" >/dev/null 2>&1
 hs > "$hroot/out" 2>&1
 check_all "health: the hint recreates it on its idle branch at the base tip, and health is quiet again" '[ "$(git -C ../wt-3 symbolic-ref --short HEAD)" = main-wt-3 ] && [ "$(git -C ../wt-3 rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && [ "$(grep -c wt-3 .flow/config.yaml)" = 1 ] && grep -q "nothing to do" "$hroot/out" && [ ! -f .flow/health/missing-wt-3.seen ]'
+git -C "$hroot/other" fetch -q origin && git -C "$hroot/other" checkout -q -B main origin/main && printf 'hello\n' > "$hroot/other/README.md" && git -C "$hroot/other" commit -qam readme && git -C "$hroot/other" push -q origin main
+hs >/dev/null 2>&1
+git -C ../wt-2 read-tree -u --reset origin/main~1
+hs > "$hroot/out" 2>&1
+check_all "health: changes in a free worktree that the base already held are said once and kept on the first run" 'grep -q "^pool: wt-2 is free but has 1 uncommitted change(s), each already in main.s history; the next health run discards them if they stay unchanged and no session works there$" "$hroot/out" && [ "$(cat ../wt-2/README.md)" = hi ] && grep -q "2 free" "$hroot/out"'
+hs --dry-run > "$hroot/out" 2>&1
+check_all "health --dry-run: says it would discard unchanged redundant changes and keeps them" 'grep -q "would discard the 1 uncommitted change(s) in free wt-2" "$hroot/out" && [ "$(cat ../wt-2/README.md)" = hi ]'
+printf '999999\t%s\tclaude\n' "$(cd ../wt-2 && pwd -P)" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check_all "health: redundant changes stay while a session works in the free worktree" '[ "$(cat ../wt-2/README.md)" = hi ] && ! grep -q "discard" "$hroot/out"'
+: > "$FLOW_HEALTH_PROCS"; pings_before="$(pings)"
+hs > "$hroot/out" 2>&1
+check_all "health: unchanged redundant changes are discarded on the next run, and the owner is told" 'grep -q "^pool: discarded the 1 uncommitted change(s) in free wt-2, each already in main.s history$" "$hroot/out" && [ -z "$(git -C ../wt-2 status --porcelain)" ] && [ "$(cat ../wt-2/README.md)" = hello ] && [ "$(pings)" -gt "$pings_before" ] && grep -q "3 free" "$hroot/out" && [ ! -f .flow/health/free-wt-2.seen ]'
+git -C ../wt-2 read-tree -u --reset origin/main~1
+hs >/dev/null 2>&1; git -C ../wt-2 rm -q --cached README.md
+hs > "$hroot/out" 2>&1
+check_all "health: redundant changes that moved since the last run restart the wait" 'grep -q "wt-2 is free but has 2 uncommitted change(s), each already" "$hroot/out" && ! grep -q discarded "$hroot/out" && [ -n "$(git -C ../wt-2 status --porcelain)" ]'
+git -C ../wt-2 reset -q --hard && git -C ../wt-2 clean -fdq && printf 'mine\n' > ../wt-2/README.md && printf 'new\n' > ../wt-2/scratch.txt
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check_all "health: changes holding anything of their own are said once with the path, and never discarded" 'grep -q "^pool: wt-2 is free but has uncommitted changes, so no claim can use it: the disk version of README.md is not in origin/main$" "$hroot/out" && ! grep -q "wt-2" "$hroot/out2" && [ "$(cat ../wt-2/README.md)" = mine ] && [ -f ../wt-2/scratch.txt ]'
+git -C ../wt-2 checkout -q -- README.md
+hs > "$hroot/out" 2>&1
+check_all "health: an untracked file the base never held keeps the changes" 'grep -q "so no claim can use it: untracked file scratch.txt is not in origin/main" "$hroot/out" && [ -f ../wt-2/scratch.txt ]'
+rm -f ../wt-2/scratch.txt; hs >/dev/null 2>&1
 
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
