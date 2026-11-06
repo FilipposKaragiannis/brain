@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import type { Agent, EndedAgent, ProcessListStatus, PullRequest, Run, Snapshot, Worktree } from '../../../daemon/src/snapshot.ts';
-import { processListProblem } from '../../../daemon/src/snapshot.ts';
-import { Age, clockTime, Since } from '../clock.tsx';
+import type { Agent, EndedAgent, ProcessListStatus, PullRequest, Run, Server, Snapshot, Worktree } from '../../../daemon/src/snapshot.ts';
+import { processListProblem, sessionStale } from '../../../daemon/src/snapshot.ts';
+import { Age, clockTime, formatDuration, Since, useLiveSeconds, useNow } from '../clock.tsx';
 import { ExternalLink, ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
 import { routeHash } from '../route.ts';
@@ -13,8 +13,8 @@ import { ActionButton, Chip, Dot, Empty, Module, SessionButton, SourceFreshness,
  * whose process is confirmed gone is a card that says what to do, one whose process was not
  * found yet (still starting, or the process list could not be read) a card that says why, and one
  * whose owner still runs but whose agent was not located a card from its record alone; under
- * them the owner's own sessions fold away, then the agents and sessions that ended in the last
- * day. Jobs and their schedules have a page of their own.
+ * them the owner's own sessions fold away (open, stale ones first, while any is stale), then the
+ * hosts' own servers working in the project, then the agents and sessions that ended in the last day. Jobs and their schedules have a page of their own.
  */
 export function Agents({ snapshot }: { snapshot: Snapshot }) {
   const runs = snapshot.agents.filter((agent) => agent.kind === 'agent');
@@ -39,6 +39,7 @@ export function Agents({ snapshot }: { snapshot: Snapshot }) {
         )}
       </Module>
       <Sessions sessions={sessions} snapshot={snapshot} />
+      <Servers snapshot={snapshot} />
       {snapshot.ended.length > 0 && <Ended snapshot={snapshot} />}
     </div>
   );
@@ -185,28 +186,108 @@ function UnlocatedRunCard({ run, snapshot }: { run: Run; snapshot: Snapshot }) {
   );
 }
 
-/** The owner's own sessions, folded: they are not flow's work, but they can be resumed from here. */
+const MILLISECONDS_PER_SECOND = 1000;
+
+/** What Stop session does, on its title. */
+export const STOP_SESSION_HELP = 'Sends SIGTERM to this claude or codex process, once the daemon has checked that the pid is still this session. Never a kill -9. A claude session can be resumed later from Ended in the last day.';
+
+/**
+ * The owner's own sessions, folded: they are not flow's work, but they can be resumed or stopped
+ * from here. A stale one (idle for `jobs.health.stale_session`, or, saying nothing of being idle,
+ * running that long) comes first and opens the fold by itself, with the count in its heading:
+ * flow's comments job skips the PR of a worktree a session sits in, so a forgotten one holds it up.
+ */
 function Sessions({ sessions, snapshot }: { sessions: Agent[]; snapshot: Snapshot }) {
+  const now = useNow();
+  const [shown, setShown] = useState<boolean | null>(null);
   if (sessions.length === 0) return null;
+  const isStale = (session: Agent): boolean => sessionStale(session, snapshot.project.staleSessionSeconds, now);
+  const stale = sessions.filter(isStale);
+  const ordered = [...stale, ...sessions.filter((session) => !isStale(session))];
+  const count = stale.length === 0 ? `${sessions.length}` : `${sessions.length} · ${stale.length} stale`;
   return (
-    <details className="module fold sessions">
-      <summary className="module-head"><h2>Your sessions ({sessions.length})</h2><span className="muted">Claude and Codex you started yourself</span></summary>
+    <details className="module fold sessions" open={shown ?? stale.length > 0} onToggle={(event) => setShown(event.currentTarget.open)}>
+      <summary className="module-head"><h2>Your sessions ({count})</h2><span className="muted">Claude and Codex you started yourself</span></summary>
       <ul className="row-list" aria-label="Your sessions">
-        {sessions.map((session) => (
+        {ordered.map((session) => (
           <li key={session.pid} aria-label={`Session ${session.pid}`}>
-            <Dot tone="quiet" />
+            <Dot tone={isStale(session) ? 'stale' : 'quiet'} />
             <span className="mono">{session.pid}</span>
             <span>{session.host}</span>
             <span className="mono clip" title={session.cwd}>{session.worktree ?? session.cwd}</span>
             <span>{session.item === null ? '' : <ItemLink id={session.item} pages={snapshot} />}</span>
-            <span className="mono"><Age seconds={session.elapsedSeconds} takenAt={snapshot.takenAt} /></span>
+            <SessionActivity session={session} takenAt={snapshot.takenAt} />
+            {isStale(session) && <span className="tag tag-warn" title={`Idle (or, saying nothing of being idle, running) for ${formatDuration(snapshot.project.staleSessionSeconds)} or more: jobs.health.stale_session`}>stale</span>}
             <span className="buttons">
               <OpenButton path={session.cwd} pid={session.pid} hasSession={session.session !== null} alive />
+              <StopSessionButton session={session} />
             </span>
           </li>
         ))}
       </ul>
     </details>
+  );
+}
+
+/**
+ * What a session is doing, as claude's sessions file says: busy, or idle and for how long. A
+ * session that says neither (Codex, or claude with no sessions file of its own) shows how long it
+ * has run; so does the title of the others.
+ */
+function SessionActivity({ session, takenAt }: { session: Agent; takenAt: string }) {
+  const now = useNow();
+  const running = useLiveSeconds(session.elapsedSeconds, takenAt);
+  const title = `running ${formatDuration(running)}`;
+  if (session.activity === null) return <span className="mono" title={`${title}; it says nothing of being busy or idle`}>{formatDuration(running)}</span>;
+  if (session.activity.status === 'busy') return <span title={title}>busy</span>;
+  const idle = Math.max(0, Math.floor((now - Date.parse(session.activity.since)) / MILLISECONDS_PER_SECOND));
+  return <span className="mono" title={`${title}; idle since ${new Date(session.activity.since).toLocaleString()}`}>idle {formatDuration(idle)}</span>;
+}
+
+/**
+ * Stop session in two presses, so one stray click never ends someone's session: the first arms
+ * it and says what it will do, Stop it sends the action (SIGTERM, after the daemon checks the pid
+ * is still this session, started when the page says), Cancel puts the button back.
+ */
+function StopSessionButton({ session }: { session: Agent }) {
+  const [armed, setArmed] = useState(false);
+  if (!armed) return <button type="button" className="button" title={STOP_SESSION_HELP} onClick={() => setArmed(true)}>Stop session</button>;
+  return (
+    <span className="stop-confirm" role="group" aria-label={`Confirm stopping session ${session.pid}`}>
+      <span className="muted">SIGTERM to pid {session.pid}?</span>
+      <ActionButton kind="session.stop" args={{ pid: String(session.pid), startedAt: session.startedAt }} label="Stop it" primary title={STOP_SESSION_HELP} />
+      <button type="button" className="button" onClick={() => setArmed(false)}>Cancel</button>
+    </span>
+  );
+}
+
+/**
+ * The Claude and Codex servers working in this project's folders, folded and read-only, so the
+ * owner knows what runs: they are never sessions, and nothing here acts on them.
+ */
+function Servers({ snapshot }: { snapshot: Snapshot }) {
+  if (snapshot.servers.length === 0) return null;
+  return (
+    <details className="module fold servers">
+      <summary className="module-head"><h2>Servers ({snapshot.servers.length})</h2><span className="muted">Claude and Codex background servers</span></summary>
+      <p className="muted servers-note">Not sessions: the hosts' own servers working in this project. The comments and health jobs ignore them.</p>
+      <ul className="row-list" aria-label="Servers">
+        {snapshot.servers.map((server) => <ServerRow key={server.pid} server={server} takenAt={snapshot.takenAt} />)}
+      </ul>
+    </details>
+  );
+}
+
+function ServerRow({ server, takenAt }: { server: Server; takenAt: string }) {
+  const running = useLiveSeconds(server.elapsedSeconds, takenAt);
+  return (
+    <li aria-label={`Server ${server.pid}`} title={server.command}>
+      <Dot tone="quiet" />
+      <span>{server.label}</span>
+      <span className="mono">{server.pid}</span>
+      <span className="mono clip">{server.worktree}</span>
+      <span className="mono" title={`running since ${new Date(server.startedAt).toLocaleString()}`}>{formatDuration(running)}</span>
+    </li>
   );
 }
 

@@ -28,6 +28,8 @@ export type FlowConfig = {
   behindBase: number | null;
   /** `jobs.health.grace` in seconds: how long a run record with no process still counts as starting, 10m by default as in steward.sh. */
   healthGraceSeconds: number;
+  /** `jobs.health.stale_session` in seconds: how long a session may sit idle (or, with no status, run) before it is stale, 24h by default as in steward.sh. */
+  staleSessionSeconds: number;
   /** jobs.host: the CLI the jobs run unattended, claude by default. */
   jobsHost: string;
   /**
@@ -145,6 +147,8 @@ export function poolPaths(root: string, config: FlowConfig): string[] {
 const JOB_HOSTS = ['claude', 'codex'];
 /** steward.sh's default for `jobs.health.grace`, 10m. */
 const DEFAULT_HEALTH_GRACE_SECONDS = 600;
+/** steward.sh's default for `jobs.health.stale_session`, 24h. */
+const DEFAULT_STALE_SESSION_SECONDS = 86400;
 /** A duration as flow's `_health.py seconds` takes it: a number with s, m, h or d, minutes when bare. */
 const DURATION = /^(\d+)([smhd]?)$/;
 const DURATION_UNIT_SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400, '': 60 };
@@ -191,6 +195,7 @@ export function parseFlowConfig(source: string): FlowConfig {
     schedule,
     behindBase: behindBase === null ? null : Number(behindBase),
     healthGraceSeconds: durationSeconds(yamlString(map, 'jobs.health.grace'), DEFAULT_HEALTH_GRACE_SECONDS),
+    staleSessionSeconds: durationSeconds(yamlString(map, 'jobs.health.stale_session'), DEFAULT_STALE_SESSION_SECONDS),
     jobsHost: jobsHostOf(yamlString(map, 'jobs.host')),
     jobsWorkers: (yamlString(map, 'jobs.workers') ?? '').trim() !== '' || Object.keys(yamlMap(map, 'jobs.workers')).length > 0,
     reviewers: reviewersOf([...yamlList(map, 'reviews.reviewers'), ...REVIEWER_LISTS.flatMap((list) => yamlList(map, `reviews.reviewers.${list}`))]),

@@ -21,7 +21,7 @@ Route one sentence to the flow skill that does it. You translate; the skills act
    | approve, confirm, sign off, answer a waiting gate; "what is waiting on me" | `gate` |
    | reviewers commented, address the comments | `comments` |
    | file my notes, triage the notes file, turn a backlog file into issues | `intake` |
-   | free, claim, reserve or add a worktree; a conflict in one | `steward` |
+   | free, claim, reserve or add a worktree; a conflict in one; stale or old sessions, what holds a worktree | `steward` |
    | run unattended, on its own, in the background, "a one-off unattended run", "N in parallel" | **Unattended**, below |
    | a repeating or scheduled unattended run, "keep working the backlog", "every 30 minutes" | **Unattended**, below |
    | the scheduled jobs: when they ran or run next, what they did; run, stop, pause, resume or schedule one | `jobs` |

@@ -5,6 +5,7 @@ import { compareVersions } from './cli.ts';
 import { checkSchedule, FLOW_JOBS, SCHEDULE_NAME, scheduleJob } from './plugins/flow/schema.ts';
 import { syncConflict, syncRefs, writeSyncNote } from './syncNote.ts';
 import type { AdapterPrefix } from './collectors/flowHome.ts';
+import type { HostProcess } from './collectors/processes.ts';
 import { sessionLaunch, terminalLaunch } from './terminal.ts';
 
 /** What a sync needs to know of one pool worktree, from the latest snapshot. */
@@ -32,6 +33,9 @@ export type SyncFacts = {
 /** A process's session as the snapshot lists it: where it ran, how to resume it, and whether the process still runs. */
 export type SessionFacts = { pid: number; cwd: string; session: SessionRef; alive: boolean };
 
+/** An interactive session the snapshot lists running: its pid, and when its process started. */
+export type LiveSessionFacts = { pid: number; startedAt: string };
+
 /** The session the daemon located for a waiting gate from the transcripts on disk, and the worktree its step ran in. */
 export type GateSessionFacts = { item: string; cwd: string; session: SessionRef };
 
@@ -57,6 +61,14 @@ export type ActionContext = {
   sessions: SessionFacts[];
   /** The sessions located for the gates the snapshot shows waiting; absent or empty, a gate's session cannot be opened. */
   gateSessions?: GateSessionFacts[];
+  /** The interactive sessions (not flow's agents) the snapshot lists running; absent or empty, `session.stop` has none to stop. */
+  liveSessions?: LiveSessionFacts[];
+  /**
+   * Reads the interactive session that runs as a pid now, with when it started, or null when none
+   * does (see `readSession` in collectors/processes.ts). Absent where no process reader is wired,
+   * and then `session.stop` is refused.
+   */
+  readSession?: (pid: number) => Promise<HostProcess | null>;
   /** The terminal chosen in Settings, or null for the first installed one. */
   terminal: TerminalSetting | null;
   /** The terminals installed, first choice first. */
@@ -156,7 +168,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.start', 'job.stop', 'job.pause', 'job.resume',
   'job.schedule', 'job.unschedule', 'run.stop', 'run.resume',
-  'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.auto-merge', 'pr.review', 'quiz.answer', 'host.clear', 'terminal.open', 'refresh',
+  'session.stop', 'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.auto-merge', 'pr.review', 'quiz.answer', 'host.clear', 'terminal.open', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -168,6 +180,7 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'job.schedule': ['job', 'schedule'],
   'job.unschedule': ['job'],
   'run.stop': ['item'], 'run.resume': ['item'],
+  'session.stop': ['pid', 'startedAt'],
   'worktree.claim': ['item'],
   'worktree.release': ['target', 'force'],
   'worktree.reserve': ['target', 'name'],
@@ -225,6 +238,13 @@ const REVIEWER_NAME = /^@?[A-Za-z0-9_.-]+$/;
 const ONE_REVIEWER_SINCE = '1.27.0';
 export const REVIEW_ASK = "please review the diff line by line for correctness, and check the implementation against the item's acceptance lines.";
 const PID = /^[1-9][0-9]*$/;
+/**
+ * Two reads of one process's start agree to within this: ps gives its elapsed time to the second,
+ * read at a different moment each time. A pid a later process took started minutes or days apart.
+ */
+const SAME_START_MS = 10 * SECOND_MS;
+/** By path, so a `kill` earlier on the PATH is never the one that runs. */
+const KILL = '/bin/kill';
 const MAX_STEPS = /^[1-9][0-9]{0,2}$/;
 const MERGE_METHODS = ['squash', 'merge', 'rebase'];
 /** The hosts flow runs sessions on; `gate.sh clear` takes one by name, and `jobs/next.sh` one as its first argument. */
@@ -300,6 +320,7 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
   }
   if (kind === 'terminal.open') return planTerminal(args, context);
   if (kind === 'worktree.sync') return planSync(args, context);
+  if (kind === 'session.stop') return planSessionStop(args, context);
   if (context.pluginRoot === null) return fail('no flow plugin found for the project');
   if (kind === 'sync.handoff') return planHandoff(args, context);
   if (kind === 'item.step-sync') return planStepSync(args, context);
@@ -462,6 +483,44 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       return sh('comments.sh', ['request-review', pr, REVIEW_ASK, reviewer.replace(/^@/, '')], [`pr:${pr}`], SCRIPT_TIMEOUT_MS, ['pulls']);
     }
   }
+}
+
+function sameStart(left: string, right: string): boolean {
+  return Math.abs(Date.parse(left) - Date.parse(right)) <= SAME_START_MS;
+}
+
+/**
+ * `session.stop`: SIGTERM to an interactive claude or codex session the snapshot lists, never
+ * SIGKILL and never a flow run (Stop this run ends those and clears their record). `startedAt` is
+ * the session's start as the page showed it. Refused unless the latest snapshot lists that pid as
+ * a session started then; and just before the signal, with the lock held, the daemon reads the pid
+ * again and stops nothing unless it still runs a claude or codex session started then, so a pid
+ * that a later process took is never signalled.
+ */
+function planSessionStop(args: Record<string, string>, context: ActionContext): PlanResult {
+  const pid = args['pid'] ?? '';
+  const asked = args['startedAt'] ?? '';
+  if (!PID.test(pid)) return fail('session.stop needs the pid of a session the console lists');
+  if (Number.isNaN(Date.parse(asked))) return fail('session.stop needs startedAt: when the session started, as the page shows it');
+  const listed = (context.liveSessions ?? []).find((entry) => String(entry.pid) === pid);
+  if (listed === undefined) return fail(`pid ${pid} is not a session the console lists running, so nothing was stopped; a flow run stops with Stop this run`);
+  if (!sameStart(listed.startedAt, asked)) return fail(`pid ${pid} is now a session started at ${listed.startedAt}, not the one started at ${asked}, so nothing was stopped`);
+  const read = context.readSession;
+  if (read === undefined) return fail('the console cannot read the process list for this project, so it cannot check the pid before stopping it');
+  const prepare = async (): Promise<Awaited<ReturnType<NonNullable<ActionPlan['prepare']>>>> => {
+    const running = await read(Number(pid));
+    if (running === null) throw new Error(`pid ${pid} no longer runs a claude or codex session, so nothing was stopped`);
+    if (!sameStart(running.startedAt, asked)) throw new Error(`pid ${pid} now runs a session started at ${running.startedAt}, not the one started at ${asked}, so nothing was stopped`);
+    return {
+      output: `console: pid ${pid} is still the session started at ${running.startedAt} (${running.command}); sending it SIGTERM\n`,
+      event: { name: 'session.stop', fields: { pid: Number(pid), startedAt: running.startedAt, command: running.command } },
+    };
+  };
+  return {
+    ok: true,
+    // A session given SIGTERM can take a moment to exit, so the processes are read once more after it.
+    plan: { command: KILL, args: ['-s', 'TERM', pid], cwd: context.root, locks: [`session:${pid}`], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: ['processes'], refreshAgainMs: HANDED_ON_REFRESH_MS, outcome: 'finished', prepare },
+  };
 }
 
 /** The comments job, whose pass on one item's PR changes that PR, so the pulls are read again after it. */

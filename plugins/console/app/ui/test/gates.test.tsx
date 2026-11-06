@@ -291,7 +291,7 @@ test('MergeGateWithAFailingPull_NoMergeButton', () => {
 });
 
 test('GateWithASessionOnItsItem_OffersDiscuss', () => {
-  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', elapsedSeconds: 60, command: 'claude -p', session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
+  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: 'claude -p', activity: null, session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
   renderGate(PLAN_GATE, new FakeDaemon(), { ended: [ended] });
   expect(screen.queryByRole('button', { name: 'Discuss with the agent' }), 'because the owner may want to talk the plan through before deciding').not.toBeNull();
 });
@@ -313,7 +313,7 @@ test('GateWithALocatedSessionAndNoAgent_DiscussOpensTheGatesSession', async () =
 
 test('GateWithALocatedSessionAndAnEndedAgent_DiscussOpensTheAgentsSession', async () => {
   const { daemon, posted } = recordingDaemon();
-  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', elapsedSeconds: 60, command: 'claude -p', session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
+  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: 'claude -p', activity: null, session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
   renderGate({ ...PLAN_GATE, session: { host: 'claude', id: '9a9a', transcript: '/h/9a9a.jsonl', resume: ['claude', '--resume', '9a9a'] } }, daemon, { ended: [ended] });
   act(() => { daemon.latestStream().open(); });
   await press('Discuss with the agent');

@@ -39,6 +39,11 @@
 #                                                empty claim, finish a split, resume cut-off work,
 #                                                sync branches, remind on old gates, say when the
 #                                                pool is stuck
+#   steward.sh sessions [--stale]                list the claude and codex sessions working in the
+#                                                main worktree and the pool: pid, host, worktree,
+#                                                item, busy or idle and for how long; a stale one
+#                                                (idle past jobs.health.stale_session, 24h) ends in
+#                                                the kill command. --stale lists only those
 #   steward.sh stop <item>                       end the item's run: its process and every one under
 #                                                it; the record goes, so health does not resume it;
 #                                                the claim, the worktree and its changes stay
@@ -1058,10 +1063,73 @@ health_next_runs() {
 }
 
 # health_settings: the jobs.health settings and the host library; a bad setting exits 2.
+# session_rows <procs file> <stale seconds>: _health.py sessions over the main worktree and every
+# pool worktree on disk, each row followed by the item the worktree's claim holds (or -).
+session_rows() {
+  sr_old="$IFS"; IFS='
+'
+  # shellcheck disable=SC2046
+  set -- "$1" "$2" "$main" $(pool_paths | while read -r sr_p; do [ -d "$sr_p" ] && printf '%s\n' "$sr_p"; done)
+  IFS="$sr_old"
+  hpy sessions "$@" | while IFS="$(printf '\t')" read -r sr_pid sr_host sr_kind sr_dir sr_state sr_secs sr_stale; do
+    sr_item="$(json_get "$(claim_of "$sr_dir")" item)"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$sr_pid" "$sr_host" "$sr_kind" "$sr_dir" "$sr_state" "$sr_secs" "$sr_stale" "${sr_item:--}"
+  done
+}
+
+# session_how <state> <seconds>: "busy", "idle 3d 2h", or "running 7d 2h" for a host with no status.
+session_how() {
+  case "$1" in busy) echo busy ;; idle) echo "idle $(hpy ago "$(($(date +%s) - $2))" | sed 's/ ago$//')" ;;
+    *) echo "running $(hpy ago "$(($(date +%s) - $2))" | sed 's/ ago$//')" ;; esac
+}
+
+# health_sessions: a claude or codex session idle in the main worktree or the pool past
+# jobs.health.stale_session (no status: alive that long) is said once while it stays, with the
+# command that ends it. One in a claimed worktree also holds the item's PR back from the comments
+# job, which skips a worktree another session works in, so the line says that too.
+health_sessions() {
+  hs_keys=""
+  session_rows "$procs" "$stale_session" > "$home/health/.sessions.$$"
+  while IFS="$(printf '\t')" read -r hs_pid hs_host hs_kind hs_dir hs_state hs_secs hs_stale hs_item; do
+    [ "$hs_stale" = 1 ] || continue
+    hs_keys="$hs_keys stale-session-$hs_pid"
+    health_changed "stale-session-$hs_pid" stale || continue
+    hs_msg="$hs_host process $hs_pid ($hs_kind) in $(basename "$hs_dir") is $(session_how "$hs_state" "$hs_secs")"
+    [ "$hs_item" = - ] || [ "$hs_dir" = "$main" ] || hs_msg="$hs_msg; it holds $hs_item, so the comments job skips that PR while it runs"
+    hs_msg="$hs_msg. End it if nobody uses it: kill $hs_pid"
+    health_say pool "stale session: $hs_msg"
+    health_notify "Stale session: $hs_msg"
+  done < "$home/health/.sessions.$$"
+  rm -f "$home/health/.sessions.$$"
+  [ "$dry" -eq 1 ] && return 0
+  for hs_f in "$home"/health/stale-session-*.seen; do
+    [ -f "$hs_f" ] || continue
+    hs_k="$(basename "$hs_f" .seen)"
+    case " $hs_keys " in *" $hs_k "*) ;; *) rm -f "$hs_f" ;; esac
+  done
+}
+
+# cmd_sessions [--stale]: the sessions table, stale ones first, each stale one with its kill command.
+cmd_sessions() {
+  only=0
+  while [ $# -gt 0 ]; do case "$1" in --stale) only=1; shift ;; *) die "unknown option $1" 2 ;; esac; done
+  stale_session="$(hpy seconds jobs.health.stale_session "$(cfg_or jobs.health.stale_session 24h)")" || exit 2
+  run_procs
+  session_rows "$procs" "$stale_session" > "$home/health/.sessions.$$"; run_procs_done
+  printf '%-7s %-7s %-8s %-24s %-10s %-16s %s\n' pid host kind worktree item state ''
+  sort -t "$(printf '\t')" -k7,7r -k6,6nr "$home/health/.sessions.$$" | while IFS="$(printf '\t')" read -r cs_pid cs_host cs_kind cs_dir cs_state cs_secs cs_stale cs_item; do
+    [ "$only" -eq 0 ] || [ "$cs_stale" = 1 ] || continue
+    cs_end=""; [ "$cs_stale" = 1 ] && cs_end="STALE: kill $cs_pid"
+    printf '%-7s %-7s %-8s %-24s %-10s %-16s %s\n' "$cs_pid" "$cs_host" "$cs_kind" "$(basename "$cs_dir")" "$cs_item" "$(session_how "$cs_state" "$cs_secs")" "$cs_end"
+  done
+  rm -f "$home/health/.sessions.$$"
+}
+
 health_settings() {
   . "$FLOW_PLUGIN/lib/host.sh"
   grace="$(hpy seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
   reminder="$(hpy seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
+  stale_session="$(hpy seconds jobs.health.stale_session "$(cfg_or jobs.health.stale_session 24h)")" || exit 2
   max_resumes="$(cfg_or jobs.health.max_resumes 3)"; behind_base="$(cfg_or jobs.health.behind_base 20)"; push="$(cfg_or jobs.health.push false)"
   case "$max_resumes$behind_base" in *[!0-9]*) die "jobs.health.max_resumes and jobs.health.behind_base take whole numbers" 2 ;; esac
 }
@@ -1126,6 +1194,7 @@ cmd_health() {
   health_splits
   health_pressure
   health_next_runs
+  [ "$procs_ok" -eq 0 ] || health_sessions
   [ "${FLOW_HEALTH_PROCS:-}" = "$procs" ] || rm -f "$procs"
   echo "health: $claims claimed ($running running, $gated at a gate$([ "$reviewing" -eq 0 ] || echo ", $reviewing in review")), $claimable free, $waiting gate(s) waiting; $([ "$facts" -eq 0 ] && echo "nothing to do" || echo "$facts finding(s)")"
 }
@@ -1238,8 +1307,9 @@ case "$cmd" in
   keep-whole) [ $# -ge 1 ] || die "usage: keep-whole <item>" 2; cmd_keep_whole "$1" ;;
   kept-whole) [ $# -ge 1 ] || die "usage: kept-whole <item>" 2; kept_whole "$1" ;;
   health) cmd_health "$@" ;;
+  sessions) cmd_sessions "$@" ;;
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,43p' "$0"; exit 2 ;;
+  *) sed -n '2,48p' "$0"; exit 2 ;;
 esac

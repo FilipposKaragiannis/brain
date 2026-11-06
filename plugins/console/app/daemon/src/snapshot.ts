@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 13;
+export const SNAPSHOT_SCHEMA_VERSION = 14;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -14,6 +14,7 @@ export const STALE_IDLE_HOURS = 72;
 export const GATE_OVERDUE_HOURS = 24;
 /** How many events the snapshot carries, newest first. */
 export const EVENTS_KEPT = 200;
+const MILLISECONDS_PER_SECOND = 1000;
 
 export type WorktreeState = 'running' | 'needs-you' | 'stale' | 'claimed' | 'free' | 'outside';
 export type WorktreeRole = 'main' | 'pool' | 'outside';
@@ -114,6 +115,8 @@ export type ProjectInfo = {
   reviewers: string[];
   /** The pick filters `pick.<name>` names, by name: the Jobs page offers them to next runs, Readiness lists them. */
   picks: PickFilter[];
+  /** `jobs.health.stale_session` in seconds, 24h by default: how long a session may sit idle (or, with no status, run) before it is stale. */
+  staleSessionSeconds: number;
 };
 
 /**
@@ -351,6 +354,13 @@ export function processListProblem(list: ProcessListStatus): string | null {
   }
 }
 
+/**
+ * What claude's `~/.claude/sessions/<pid>.json` says the session is doing: working on a turn
+ * (`busy`) or waiting for its owner (`idle`), and since when (its `statusUpdatedAt`). Only read
+ * when the file's pid and start match the process; Codex writes no such file.
+ */
+export type SessionActivity = { status: 'idle' | 'busy'; since: string };
+
 export type Agent = {
   pid: number;
   host: AgentHost;
@@ -359,9 +369,42 @@ export type Agent = {
   worktree: string | null;
   item: string | null;
   elapsedSeconds: number;
+  /** When ps says the process started, as the read that found it worked it out: a stop is refused once the pid names a process started at another time. */
+  startedAt: string;
   command: string;
   /** Its transcript and how to resume it, or null when none was found. */
   session: SessionRef | null;
+  /** Whether it is busy or idle and since when, or null when that is unknown (Codex, or no sessions file for this process). */
+  activity: SessionActivity | null;
+};
+
+/**
+ * A session is stale once it has sat idle for `staleSeconds` (`jobs.health.stale_session`), or,
+ * with no status to go by, once its process has run that long; a busy one never is. Flow's
+ * comments job skips the PR of a worktree a session sits in, so a stale one holds that PR up.
+ * `now` is epoch milliseconds, so a page can keep judging on its own clock between snapshots.
+ */
+export function sessionStale(agent: Pick<Agent, 'kind' | 'startedAt' | 'activity'>, staleSeconds: number, now: number): boolean {
+  if (agent.kind !== 'session') return false;
+  if (agent.activity?.status === 'busy') return false;
+  const since = Date.parse(agent.activity?.since ?? agent.startedAt);
+  return !Number.isNaN(since) && now - since >= staleSeconds * MILLISECONDS_PER_SECOND;
+}
+
+/**
+ * A claude or codex host's own server working in one of this project's worktrees: the Claude
+ * daemon, Claude's MCP server, the Codex app server, its pid loop or its exec server. Never an
+ * agent or a session, so flow's comments and health jobs pass it by, and the page offers no action on it.
+ */
+export type Server = {
+  pid: number;
+  host: AgentHost;
+  /** What it is in plain words, such as "Codex app server". */
+  label: string;
+  worktree: string;
+  startedAt: string;
+  elapsedSeconds: number;
+  command: string;
 };
 
 /** An agent or session that ended while the daemon watched, kept so its session can still be opened. */
@@ -621,6 +664,8 @@ export type Snapshot = {
   agents: Agent[];
   /** How complete the last process read was: a run is judged dead only after a complete one. */
   processList: ProcessListStatus;
+  /** The hosts' own servers working in this project's worktrees, which are never agents or sessions. */
+  servers: Server[];
   /** Agents and sessions with a transcript that ended in the last day while the daemon watched, newest first. */
   ended: EndedAgent[];
   jobs: Job[];
@@ -654,6 +699,7 @@ export type ActionKind =
   | 'job.unschedule'
   | 'run.stop'
   | 'run.resume'
+  | 'session.stop'
   | 'worktree.claim'
   | 'worktree.release'
   | 'worktree.reserve'

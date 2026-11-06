@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
-import type { AgentHost, SessionRef, TranscriptLine, TranscriptTurn } from '../snapshot.ts';
+import type { AgentHost, SessionActivity, SessionRef, TranscriptLine, TranscriptTurn } from '../snapshot.ts';
 import { TRANSCRIPT_LINE_CHARS } from '../snapshot.ts';
 
 /** What the locator reads of the disk. Injected so a test can hand it a home in a temp folder. */
@@ -31,6 +31,9 @@ export type SessionLocatorDependencies = { home: string; clock: () => Date; file
 
 /** A process the locator looks a session up for: its pid, host, working directory and age. */
 export type SessionProcess = { pid: number; host: AgentHost; cwd: string; elapsedSeconds: number };
+
+/** What the locator found for one process: its session, and whether it is busy or idle (claude's sessions file only); null where unknown. */
+export type LocatedSession = { session: SessionRef | null; activity: SessionActivity | null };
 
 /** A waiting gate the locator looks the raising session up for: its item, when it was raised, its host (`claude`, `codex`) and the folder its step ran in. */
 export type GateLookup = { item: string; raisedAt: string; host: string; cwd: string };
@@ -111,16 +114,28 @@ export function codexMeta(head: string): { cwd: string; id: string; startedMs: n
   }
 }
 
+const SESSION_STATUSES: readonly string[] = ['idle', 'busy'];
+
+/** Its `status` (idle or busy) since its `statusUpdatedAt` (epoch milliseconds), or null when either is missing or not one claude writes. */
+function activityOf(status: unknown, updatedMs: unknown): SessionActivity | null {
+  if (typeof status !== 'string' || !SESSION_STATUSES.includes(status)) return null;
+  if (typeof updatedMs !== 'number' || !Number.isFinite(updatedMs)) return null;
+  return { status: status as SessionActivity['status'], since: new Date(updatedMs).toISOString() };
+}
+
 /** `~/.claude/sessions/<pid>.json` as claude writes it for every running process. */
-export function claudeSessionsFile(text: string): { pid: number; sessionId: string; cwd: string; procStart: string | null } | null {
+export function claudeSessionsFile(text: string): { pid: number; sessionId: string; cwd: string; procStart: string | null; activity: SessionActivity | null } | null {
   try {
-    const parsed = JSON.parse(text) as { pid?: unknown; sessionId?: unknown; cwd?: unknown; procStart?: unknown };
+    const parsed = JSON.parse(text) as { pid?: unknown; sessionId?: unknown; cwd?: unknown; procStart?: unknown; status?: unknown; statusUpdatedAt?: unknown };
     if (typeof parsed.pid !== 'number' || typeof parsed.sessionId !== 'string' || typeof parsed.cwd !== 'string') return null;
-    return { pid: parsed.pid, sessionId: parsed.sessionId, cwd: parsed.cwd, procStart: typeof parsed.procStart === 'string' ? parsed.procStart : null };
+    return {
+      pid: parsed.pid, sessionId: parsed.sessionId, cwd: parsed.cwd, procStart: typeof parsed.procStart === 'string' ? parsed.procStart : null,
+      activity: activityOf(parsed.status, parsed.statusUpdatedAt),
+    };
   } catch { return null; }
 }
 
-type Found = { session: SessionRef | null; certain: boolean };
+type Found = LocatedSession & { certain: boolean };
 type GateScan = { session: SessionRef | null; scannedAt: number };
 type Remembered = { startedMs: number; session: SessionRef | null; scannedAt: number };
 type CodexMeta = { cwd: string; id: string; startedMs: number | null };
@@ -130,8 +145,9 @@ type CodexMeta = { cwd: string; id: string; startedMs: number | null };
  * session: a running `claude -p` cannot be attached to, but `claude --resume <id>` opens the
  * same session once it ends.
  *
- * Claude writes `~/.claude/sessions/<pid>.json` (its sessionId, cwd and procStart) for every
- * running process, so that answers first, checked against the process's folder and start. Only
+ * Claude writes `~/.claude/sessions/<pid>.json` (its sessionId, cwd, procStart, and whether it is
+ * busy or idle since when) for every running process, so that answers first, checked against the
+ * process's folder and start; only that file tells a session's activity. Only
  * without it does the locator fall back to file times: the newest transcript in the folder
  * written at or after the process started. Codex's `session_index.jsonl` holds ids and thread
  * names but no folder, so its session files under `~/.codex/sessions/<day>/` are read instead:
@@ -158,18 +174,21 @@ export class SessionLocator {
 
   constructor(dependencies: SessionLocatorDependencies) { this.deps = dependencies; }
 
-  /** The session of each process, in the same order; null where none was found or another process holds it. */
-  async assign(processes: SessionProcess[]): Promise<(SessionRef | null)[]> {
+  /**
+   * The session of each process and its activity, in the same order; the session is null where
+   * none was found or another process holds it, the activity null without a sessions file of its own.
+   */
+  async assign(processes: SessionProcess[]): Promise<LocatedSession[]> {
     const now = this.deps.clock().getTime();
     this.forget(processes, now);
     const found: Found[] = [];
     for (const process of processes) found.push(await this.find(process, now));
     const claimed = new Set(found.flatMap((entry) => (entry.certain && entry.session !== null ? [entry.session.transcript] : [])));
-    return found.map((entry) => {
-      if (entry.session === null || entry.certain) return entry.session;
-      if (claimed.has(entry.session.transcript)) return null;
-      claimed.add(entry.session.transcript);
-      return entry.session;
+    return found.map(({ session, activity, certain }) => {
+      if (session === null || certain) return { session, activity };
+      if (claimed.has(session.transcript)) return { session: null, activity };
+      claimed.add(session.transcript);
+      return { session, activity };
     });
   }
 
@@ -223,17 +242,17 @@ export class SessionLocator {
     const startedMs = now - process.elapsedSeconds * MILLISECONDS_PER_SECOND - START_SLACK_MS;
     if (process.host === 'claude') {
       const fromFile = await this.claudeFromSessionsFile(process, startedMs);
-      if (fromFile !== null) return { session: fromFile, certain: true };
+      if (fromFile !== null) return { ...fromFile, certain: true };
     }
     const remembered = this.scanned.get(process.pid);
     const same = remembered !== undefined && Math.abs(remembered.startedMs - startedMs) <= SAME_PROCESS_MS;
-    if (same && (remembered.session !== null || now - remembered.scannedAt < RESCAN_MS)) return { session: remembered.session, certain: false };
+    if (same && (remembered.session !== null || now - remembered.scannedAt < RESCAN_MS)) return { session: remembered.session, activity: null, certain: false };
     const session = process.host === 'claude' ? await this.claudeScan(process.cwd, startedMs, null) : await this.codexScan(process.cwd, startedMs, now, null);
     this.scanned.set(process.pid, { startedMs, session, scannedAt: now });
-    return { session, certain: false };
+    return { session, activity: null, certain: false };
   }
 
-  private async claudeFromSessionsFile(process: SessionProcess, startedMs: number): Promise<SessionRef | null> {
+  private async claudeFromSessionsFile(process: SessionProcess, startedMs: number): Promise<{ session: SessionRef; activity: SessionActivity | null } | null> {
     const text = await this.deps.files.head(path.join(this.deps.home, '.claude', 'sessions', `${process.pid}.json`), SESSIONS_FILE_BYTES);
     const entry = text === null ? null : claudeSessionsFile(text);
     if (entry === null || entry.pid !== process.pid || !SESSION_ID.test(entry.sessionId) || path.resolve(entry.cwd) !== path.resolve(process.cwd)) return null;
@@ -241,7 +260,7 @@ export class SessionLocator {
     const started = entry.procStart === null ? Number.NaN : Date.parse(entry.procStart);
     if (!Number.isNaN(started) && Math.abs(started - (startedMs + START_SLACK_MS)) > SAME_PROCESS_MS) return null;
     const transcript = path.join(claudeProjectFolder(this.deps.home, process.cwd), `${entry.sessionId}${TRANSCRIPT_EXTENSION}`);
-    return { host: 'claude', id: entry.sessionId, transcript, resume: resumeCommand('claude', entry.sessionId) };
+    return { session: { host: 'claude', id: entry.sessionId, transcript, resume: resumeCommand('claude', entry.sessionId) }, activity: entry.activity };
   }
 
   /**
@@ -316,7 +335,7 @@ export class SessionLocator {
 }
 
 /** A locator that finds nothing, for a monitor built without one (tests that do not look at sessions). */
-export const noSessions: Pick<SessionLocator, 'assign' | 'gates'> = { assign: async (processes) => processes.map(() => null), gates: async (gates) => gates.map(() => null) };
+export const noSessions: Pick<SessionLocator, 'assign' | 'gates'> = { assign: async (processes) => processes.map(() => ({ session: null, activity: null })), gates: async (gates) => gates.map(() => null) };
 
 /** A user line that opens with a tag such as `<task-notification>` or `<local-command-stdout>` is the host's wrapper. */
 const WRAPPER_TAG = /^<[a-z][a-z0-9-]*[\s>/]/;

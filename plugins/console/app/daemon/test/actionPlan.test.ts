@@ -790,3 +790,52 @@ test('JobStartWithAFilter_ANameFlowRefuses_Rejected', () => {
     assert.equal(planAction('job.start', { job: 'next', host: 'claude', pick }, CONTEXT).ok, false, `because pick_check refuses "${pick}" as a filter name`);
   }
 });
+
+/** The interactive claude that sat in foosbrawl-wt-10 for twelve days, as the snapshot lists it. */
+const IDLE_SESSION_START = '2026-10-24T20:34:48.000Z';
+/** The same pid, taken since by a process started a week later. */
+const LATER_START = '2026-10-31T09:00:00.000Z';
+const runningAs = (startedAt: string | null) => async (pid: number) => (startedAt === null ? null : { pid, command: '/Users/x/.local/bin/claude --permission-mode auto', startedAt });
+const STOPPABLE: ActionContext = { ...CONTEXT, liveSessions: [{ pid: 62102, startedAt: IDLE_SESSION_START }], readSession: runningAs(IDLE_SESSION_START) };
+const stopAsked = { pid: '62102', startedAt: IDLE_SESSION_START };
+
+test('SessionStop_ListedSession_SigtermToThatPidOnly', () => {
+  const plan = planned('session.stop', stopAsked, STOPPABLE);
+  assert.deepEqual([plan.command, ...plan.args], ['/bin/kill', '-s', 'TERM', '62102'], 'because a stop asks the session to end with SIGTERM, never kill -9, and names the pid alone, never its group');
+  assert.deepEqual([plan.locks, plan.refresh], [['session:62102'], ['processes']], 'because two stops of one session never race, and the session leaves the process list once it ends');
+});
+
+test('SessionStop_SameSessionStillRuns_PrepareSaysWhatItSignals', async () => {
+  const prepared = await planned('session.stop', stopAsked, STOPPABLE).prepare?.();
+  assert.match(prepared?.output ?? '', /pid 62102 is still the session started at 2026-10-24T20:34:48.000Z .*sending it SIGTERM/, 'because the owner sees that the pid was checked before it was signalled');
+});
+
+test('SessionStop_PidTakenByALaterProcessSincePlanned_PrepareStopsNothing', async () => {
+  const plan = planned('session.stop', stopAsked, { ...STOPPABLE, readSession: runningAs(LATER_START) });
+  await assert.rejects(async () => plan.prepare?.(), /now runs a session started at 2026-10-31T09:00:00.000Z.*nothing was stopped/, 'because a pid reused after the snapshot names a process the owner never chose');
+});
+
+test('SessionStop_SessionEndedSincePlanned_PrepareStopsNothing', async () => {
+  const plan = planned('session.stop', stopAsked, { ...STOPPABLE, readSession: runningAs(null) });
+  await assert.rejects(async () => plan.prepare?.(), /no longer runs a claude or codex session, so nothing was stopped/, 'because a pid that runs nothing, or something other than a session, is never signalled');
+});
+
+test('SessionStop_StartTheSnapshotDoesNotShow_Refused', () => {
+  const result = planAction('session.stop', { pid: '62102', startedAt: LATER_START }, STOPPABLE);
+  assert.match(refusal(result), /not the one started at 2026-10-31T09:00:00.000Z, so nothing was stopped/, 'because the page asked to stop a session the daemon no longer sees under that pid');
+});
+
+test('SessionStop_PidNotAListedSession_Refused', () => {
+  assert.match(refusal(planAction('session.stop', { pid: '100', startedAt: IDLE_SESSION_START }, STOPPABLE)), /not a session the console lists running/, 'because only a session the snapshot lists may be signalled, and a flow run stops with Stop this run');
+});
+
+test('SessionStop_BadPidOrStart_Refused', () => {
+  for (const args of [{ pid: '-1', startedAt: IDLE_SESSION_START }, { pid: '0', startedAt: IDLE_SESSION_START }, { pid: '62102 1', startedAt: IDLE_SESSION_START }, { pid: '62102', startedAt: 'yesterday' }, { pid: '62102' }]) {
+    assert.equal(planAction('session.stop', args, STOPPABLE).ok, false, `because ${JSON.stringify(args)} does not name one process and its start; kill -1 would signal every process the owner has`);
+  }
+});
+
+test('SessionStop_NoProcessReader_Refused', () => {
+  const { readSession: _reader, ...unread } = STOPPABLE;
+  assert.match(refusal(planAction('session.stop', stopAsked, unread)), /cannot check the pid before stopping it/, 'because a pid that cannot be checked again is never signalled');
+});

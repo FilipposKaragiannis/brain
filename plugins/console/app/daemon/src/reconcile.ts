@@ -16,7 +16,7 @@ import {
 } from './snapshot.ts';
 import type {
   Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, MergedPull, NewerConsole,
-  ProcessInfo, ProcessListStatus, ProjectInfo, PullRequest, PullState, Readiness, Run, RunLiveness, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
+  ProcessInfo, ProcessListStatus, ProjectInfo, PullRequest, PullState, Readiness, Run, RunLiveness, Server, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
 export type ReconcileInput = {
@@ -330,8 +330,17 @@ function buildAgents(input: ReconcileInput, contexts: WorktreeContext[]): Agent[
     if (context === null) return [];
     return [{
       pid: agent.pid, host: agent.host, kind: agent.kind, cwd: agent.cwd, worktree: context.name, item: context.claim?.item ?? null,
-      elapsedSeconds: agent.elapsedSeconds, command: agent.command, session: agent.session,
+      elapsedSeconds: agent.elapsedSeconds, startedAt: agent.startedAt, command: agent.command, session: agent.session, activity: agent.activity,
     }];
+  });
+}
+
+/** The hosts' own servers whose working directory is in one of this project's worktrees, as the sessions are scoped. */
+function buildServers(input: ReconcileInput, contexts: WorktreeContext[]): Server[] {
+  return (input.processes?.servers ?? []).flatMap((server) => {
+    const context = contexts.find((entry) => under(server.cwd, entry.path)) ?? null;
+    if (context === null) return [];
+    return [{ pid: server.pid, host: server.host, label: server.label, worktree: context.name, startedAt: server.startedAt, elapsedSeconds: server.elapsedSeconds, command: server.command }];
   });
 }
 
@@ -346,7 +355,7 @@ function buildEnded(input: ReconcileInput, contexts: WorktreeContext[]): EndedAg
       if (context === null) return [];
       return [{
         pid: process.pid, host: process.host, kind: process.kind, cwd: process.cwd, worktree: context.name, item: context.claim?.item ?? null,
-        elapsedSeconds: process.elapsedSeconds, command: process.command, session: process.session, endedAt: process.endedAt,
+        elapsedSeconds: process.elapsedSeconds, startedAt: process.startedAt, command: process.command, session: process.session, activity: process.activity, endedAt: process.endedAt,
       }];
     })
     .slice(0, ENDED_KEPT);
@@ -876,7 +885,7 @@ function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
     base: config.base, repo: config.repo, repoUrl,
     adapter: config.adapter, trackers: trackersOf(input), pluginVersion: input.flow.pluginVersion, pluginRoot: input.flow.pluginRoot, pluginSource: input.flow.pluginSource, jobsHost: config.jobsHost, poolMax: config.poolMax, reviewers: config.reviewers,
     jobHosts: jobHostsOf(jobs, config.jobsHost), plugins: input.plugins ?? [],
-    picks: config.picks,
+    picks: config.picks, staleSessionSeconds: config.staleSessionSeconds,
   };
 }
 
@@ -890,6 +899,7 @@ export function reconcile(read: ReconcileInput): Snapshot {
   const items = buildItems(input, built, held);
   const runs = buildRuns(input, contexts);
   const agents = buildAgents(input, contexts);
+  const servers = buildServers(input, contexts);
   const ended = buildEnded(input, contexts);
   const jobs = buildJobs(input);
   const pulls = buildPulls(input, items, contexts);
@@ -905,7 +915,7 @@ export function reconcile(read: ReconcileInput): Snapshot {
     counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements, lessonsSinceRetro: lessonsSinceRetro(input.flow.retro) }),
     readiness: buildReadiness(items),
     attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
-    worktrees, items, gates, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
+    worktrees, items, gates, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, servers, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     mergedToday: buildMergedToday(input, items),
     events: input.flow.events,
     lessons: input.flow.retro.lessons,

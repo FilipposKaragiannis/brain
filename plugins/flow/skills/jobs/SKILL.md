@@ -82,7 +82,9 @@ Facts to answer with:
   run with one lock and one result line, summed across the passes. Each pass holds its item's
   lock, so no two passes work one item at once; a PR whose lock is held is skipped as in use.
   A pass the stopped host ends lets the passes in flight finish and starts no other; the run
-  fails when any pass failed.
+  fails when any pass failed. The result line names each PR that got no pass and why: nothing
+  new, waits on you (threads still unanswered after two passes, or failing passes), in use (the
+  session in its worktree and how long it has idled) or at a gate. Red CI never holds a PR back.
 - The `retro` job commits nothing: `lessons.jsonl` and `retros.log` stay on this machine under
   `.flow/`, which is excluded from git, so each clone keeps its own lessons.
 - The `health` job (every 15 minutes in the config `flow:init` writes) checks each claim and spends
@@ -92,7 +94,9 @@ Facts to answer with:
   `jobs.health.push: true`), merges the base into a branch more than `jobs.health.behind_base`
   commits behind it, with no PR and no gate, hands a merge that conflicts or a diverged branch to the
   `sync` step of the item's next run, reminds on gates older than
-  `jobs.health.gate_reminder` and says when the pool is full. `notify.health: false` mutes it.
+  `jobs.health.gate_reminder` and says when the pool is full. It names once each claude or codex
+  session idle in the main worktree or the pool past `jobs.health.stale_session` (24h), with its
+  kill command; `steward.sh sessions` lists them all. `notify.health: false` mutes it.
 - A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
   still busy from the last schedule is skipped, which shows as `skipped`. `--worker` takes only
   a number, so every worker shows in `status` and obeys the pause. A named schedule's workers are

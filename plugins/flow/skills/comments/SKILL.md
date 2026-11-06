@@ -37,10 +37,14 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    the failed logs (`gh pr checks <pr>`, `gh run view <run> --log-failed`), find the cause, fix it
    in the task branch, build and run the tests, commit as `fix: make <check> pass`. Then the
    `verifier`; on `pass` run `git push origin "HEAD:<headRefName>"` (never force) and re-request
-   review (step 8) naming the fix. A failure that is not the change's (infra, a flake, a check
-   red on the base too), or a check still red on the head of an earlier `fix: make <check> pass`
-   → no code change: say so in the report and, unattended, stop on it (a gate only when the owner
-   must decide). A dirty tree or a failing verify → leave the fix unpushed, report it, stop.
+   review (step 8) naming the fix. A failure that is not the change's (infra, billing, a flake,
+   a check red on the base too), or a check still red on the head of an earlier `fix: make
+   <check> pass` → no code change: say so in the report and go on to step 4 (a gate only when
+   the owner must decide). A dirty tree or a failing verify → leave the fix unpushed, report it,
+   go on to step 4.
+   A red check never ends the pass: the threads are addressed whatever CI says. A pass that
+   leaves a thread for "the next pass" leaves it for good: the comments job gives a thread that
+   still waits one more pass, then stops trying it.
 4. **Threads**: `comments.sh threads <pr>` lists the unresolved review threads. None, no new
    plain comment since the last pass (`comments.sh issue-comments`, compare with
    `<reports>/comments.json`), no merge in step 2 and no checks fixed in step 3 → stop, "quiet".

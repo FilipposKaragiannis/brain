@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import type { ActionRecord, Agent, EndedAgent, Job, Run, SessionRef, Snapshot } from '../../daemon/src/snapshot.ts';
-import { Agents, STOP_HELP } from '../src/screens/Agents.tsx';
+import type { ActionRecord, Agent, EndedAgent, Job, Run, Server, SessionRef, Snapshot } from '../../daemon/src/snapshot.ts';
+import { Agents, STOP_HELP, STOP_SESSION_HELP } from '../src/screens/Agents.tsx';
 import { OPEN_SESSION_ENDED, OPEN_SESSION_LIVE } from '../src/ui.tsx';
 import { FakeDaemon, HTTP_ACCEPTED, HTTP_OK, actionRecord, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
@@ -10,7 +10,7 @@ afterEach(cleanup);
 const ACTIONS_PATH = '/api/projects/project/actions';
 
 function agent(pid: number, kind: Agent['kind'], cwd: string): Agent {
-  return { pid, host: 'claude', kind, cwd, worktree: null, item: null, elapsedSeconds: 60, command: `claude ${pid}`, session: null };
+  return { pid, host: 'claude', kind, cwd, worktree: null, item: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: `claude ${pid}`, session: null, activity: null };
 }
 
 const JOB: Job = { name: 'next', job: 'next', host: 'claude', configured: true, state: 'scheduled', schedule: 'every 30m', args: '', installed: true, loaded: true, paused: false, running: [], last: null, recent: [], workers: [], next: '18:30', runsThisWeek: 0, failedThisWeek: 0 };
@@ -200,4 +200,112 @@ test('Runs_OnlyTheFirstCardStartsOpen', async () => {
   expect(screen.queryByRole('list', { name: 'Transcript of pid 101' }), 'because the rest stay folded, so the list stays short').toBeNull();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open run 101' })); });
   expect(screen.getByRole('button', { name: 'Fold run 101' }), 'because the owner opens the one they want').not.toBeNull();
+});
+
+const HOUR_MS = 3600 * 1000;
+/** A moment `hours` before the snapshot was taken. */
+const hoursBefore = (hours: number): string => new Date(Date.parse(TAKEN_AT) - hours * HOUR_MS).toISOString();
+
+/** The interactive claude that sat in foosbrawl-wt-10, idle for three days and two hours. */
+function idleSession(pid: number, idleHours: number): Agent {
+  return { ...agent(pid, 'session', `/p-wt/wt-${pid}`), worktree: `wt-${pid}`, startedAt: hoursBefore(12 * 24), elapsedSeconds: 12 * 24 * 3600, activity: { status: 'idle', since: hoursBefore(idleHours) } };
+}
+
+test('IdleSession_RowSaysForHowLong', async () => {
+  await renderAgents([idleSession(62102, 74)]);
+  expect(screen.getByRole('listitem', { name: 'Session 62102' }).textContent, 'because the owner needs to see the session has waited on nobody for days').toContain('idle 3d 2h');
+});
+
+test('BusySession_SaysBusyAndIsNeverStale', async () => {
+  await renderAgents([{ ...idleSession(62102, 74), activity: { status: 'busy', since: hoursBefore(30) } }]);
+  const row = screen.getByRole('listitem', { name: 'Session 62102' });
+  expect([row.textContent?.includes('busy'), within(row).queryByText('stale')], 'because a session at work is not forgotten, however long it has run').toEqual([true, null]);
+});
+
+test('SessionThatSaysNothingOfBeingIdle_ShowsHowLongItHasRun', async () => {
+  await renderAgents([{ ...agent(7, 'session', '/p-wt/wt-3'), host: 'codex', elapsedSeconds: 5 * 3600 + 7 * 60, startedAt: hoursBefore(5) }]);
+  expect(screen.getByRole('listitem', { name: 'Session 7' }).textContent, 'because Codex writes no status, so its age is all there is').toContain('5h 07m');
+});
+
+test('SessionIdlePastTheLimit_TaggedStale', async () => {
+  await renderAgents([idleSession(62102, 25)]);
+  expect(within(screen.getByRole('listitem', { name: 'Session 62102' })).queryByText('stale'), 'because idle past jobs.health.stale_session (24h here) is stale').not.toBeNull();
+});
+
+test('SessionIdleUnderTheLimit_NotStale', async () => {
+  await renderAgents([idleSession(62102, 23)]);
+  expect(within(screen.getByRole('listitem', { name: 'Session 62102' })).queryByText('stale'), 'because a session idle for less than the limit may just be waiting on its owner at lunch').toBeNull();
+});
+
+test('SessionWithNoStatusRunningPastTheLimit_TaggedStale', async () => {
+  await renderAgents([{ ...agent(7, 'session', '/p-wt/wt-3'), host: 'codex', elapsedSeconds: 30 * 3600, startedAt: hoursBefore(30) }]);
+  expect(within(screen.getByRole('listitem', { name: 'Session 7' })).queryByText('stale'), 'because with no idle signal a session is judged by how long its process has run').not.toBeNull();
+});
+
+test('StaleSession_FoldOpensWithTheCountInItsHeading', async () => {
+  await renderAgents([agent(104, 'session', '/a'), idleSession(62102, 74)]);
+  const fold = screen.getByText('Your sessions (2 · 1 stale)').closest('details')!;
+  expect(fold.open, 'because a stale session holds up its worktree\'s PR, so the owner must not have to go looking for it').toBe(true);
+});
+
+test('StaleSession_ListedFirst', async () => {
+  await renderAgents([agent(104, 'session', '/a'), idleSession(62102, 74)]);
+  const rows = within(screen.getByRole('list', { name: 'Your sessions' })).getAllByRole('listitem');
+  expect(rows.map((row) => row.getAttribute('aria-label')), 'because the one to deal with comes first').toEqual(['Session 62102', 'Session 104']);
+});
+
+test('StopSession_FirstPress_OnlyAsksToConfirm', async () => {
+  const posted = await renderAgents([idleSession(62102, 74)]);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Stop session' })); });
+  expect([posted, screen.getByRole('group', { name: 'Confirm stopping session 62102' }).textContent], 'because one stray click must never end a session').toEqual([[], expect.stringContaining('SIGTERM to pid 62102?')]);
+});
+
+test('StopSession_Confirmed_SendsThePidAndTheStartThePageShows', async () => {
+  const posted = await renderAgents([idleSession(62102, 74)]);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Stop session' })); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Stop it' })); });
+  expect(posted, 'because the daemon signals the pid only while it still runs the session started then').toEqual([{ kind: 'session.stop', args: { pid: '62102', startedAt: hoursBefore(12 * 24) } }]);
+});
+
+test('StopSession_Cancelled_ButtonBackAndNothingSent', async () => {
+  const posted = await renderAgents([idleSession(62102, 74)]);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Stop session' })); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Cancel' })); });
+  expect([posted, screen.getByRole('button', { name: 'Stop session' }).getAttribute('title')], 'because Cancel disarms the stop and says nothing to the daemon').toEqual([[], STOP_SESSION_HELP]);
+});
+
+/** The Codex app server pid 64347 that works in foosbrawl-wt-10, up for two days and three hours. */
+const APP_SERVER: Server = { pid: 64347, host: 'codex', label: 'Codex app server', worktree: 'foosbrawl-wt-10', startedAt: hoursBefore(51), elapsedSeconds: 51 * 3600, command: '/x/codex app-server --listen unix:///tmp/codex.sock' };
+
+test('Servers_FoldAfterTheSessionsUnderACount', async () => {
+  await renderSnapshot({ agents: [agent(104, 'session', '/a')], servers: [APP_SERVER] });
+  const fold = screen.getByText('Servers (1)').closest('details')!;
+  const sessions = screen.getByText('Your sessions (1)').closest('details')!;
+  expect([fold.open, sessions.compareDocumentPosition(fold) & Node.DOCUMENT_POSITION_FOLLOWING], 'because the servers are only for knowing what runs, so they sit folded under the sessions').toEqual([false, Node.DOCUMENT_POSITION_FOLLOWING]);
+});
+
+test('Servers_RowShowsLabelPidWorktreeAndRunningFor', async () => {
+  await renderSnapshot({ servers: [APP_SERVER] });
+  const row = screen.getByRole('listitem', { name: 'Server 64347' });
+  expect(['Codex app server', '64347', 'foosbrawl-wt-10', '2d 3h'].map((part) => row.textContent?.includes(part)), 'because the owner tells what runs, where and for how long from the row').toEqual([true, true, true, true]);
+});
+
+test('Servers_CommandOnHover', async () => {
+  await renderSnapshot({ servers: [APP_SERVER] });
+  expect(screen.getByRole('listitem', { name: 'Server 64347' }).getAttribute('title'), 'because the full command is there for whoever wants it, without crowding the row').toBe(APP_SERVER.command);
+});
+
+test('Servers_NoActions', async () => {
+  await renderSnapshot({ servers: [APP_SERVER] });
+  expect(within(screen.getByRole('list', { name: 'Servers' })).queryAllByRole('button'), 'because the list only says what runs; a server is never stopped or opened from here').toEqual([]);
+});
+
+test('Servers_SaysTheyAreNotSessions', async () => {
+  await renderSnapshot({ servers: [APP_SERVER] });
+  expect(screen.getByText(/Not sessions/).textContent, 'because a server in a worktree could pass for someone at work there').toContain('The comments and health jobs ignore them.');
+});
+
+test('Servers_None_FoldHidden', async () => {
+  await renderSnapshot({ agents: [agent(104, 'session', '/a')] });
+  expect(screen.queryByText(/^Servers/), 'because an empty fold says nothing, as the sessions and ended folds hide when empty').toBeNull();
 });

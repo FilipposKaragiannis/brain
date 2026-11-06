@@ -334,6 +334,14 @@ test('FlowConfig_HealthGrace_ReadAsFlowReadsADuration', () => {
   assert.deepEqual(['90s', '2h', '15'].map((grace) => parseFlowConfig(`jobs:\n  health:\n    grace: ${grace}\n`).healthGraceSeconds), [90, 7200, 900], 'because a bare number is minutes, as _health.py seconds reads it');
 });
 
+test('FlowConfig_StaleSession_UnsetIsADay', () => {
+  assert.equal(parseFlowConfig('base: main\n').staleSessionSeconds, 86400, 'because steward.sh calls a session stale after 24h idle by default');
+});
+
+test('FlowConfig_StaleSession_ReadAsFlowReadsADuration', () => {
+  assert.deepEqual(['90m', '2d', '36h', 'soon'].map((limit) => parseFlowConfig(`jobs:\n  health:\n    stale_session: ${limit}\n`).staleSessionSeconds), [5400, 172800, 129600, 86400], 'because the console calls a session stale when the health job does, and a value flow refuses leaves the default');
+});
+
 test('FlowHome_LessonsLog_EveryLessonReadMalformedLinesSkipped', async () => {
   const { retro } = await readFlowHome(FIXTURE_ROOT, fakeRunner);
   assert.deepEqual(retro.lessons.map((lesson) => [lesson.line, lesson.item]), [[1, 'gh#7'], [2, 'gh#9'], [4, 'gh#9'], [5, 'gh#7']], 'because lessons.jsonl in the flow home holds the lessons, and a cut-short line or an array is skipped without failing the source');

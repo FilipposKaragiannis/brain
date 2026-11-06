@@ -506,6 +506,29 @@ test('SyncHandoff_NoteCannotBeWritten_FailsAndTheRunNeverStarts', async () => {
   } finally { await cleanup(); }
 });
 
+/** A session the snapshot lists started at `listed`, whose pid ps now says started at `running`. */
+function stoppable(listed: string, running: string): ActionContext {
+  return { ...CONTEXT, liveSessions: [{ pid: 62102, startedAt: listed }], readSession: async (pid) => ({ pid, command: '/Users/x/.local/bin/claude', startedAt: running }) };
+}
+
+test('SessionStop_PidTakenByAnotherProcess_FailsAndNothingIsSignalled', async () => {
+  const { actions, processes, cleanup } = await runner(stoppable('2026-10-24T20:34:48.000Z', '2026-10-25T08:59:00.000Z'), PLAIN);
+  try {
+    const record = actionOf(actions.request('session.stop', { pid: '62102', startedAt: '2026-10-24T20:34:48.000Z' }));
+    await announced(actions, record.id, notRunning);
+    assert.deepEqual([actions.get(record.id)?.state, processes.length], ['failed', 0], 'because kill never runs once the pid names a process other than the session the owner chose');
+  } finally { await cleanup(); }
+});
+
+test('SessionStop_SameSession_KillRunsOnceChecked', async () => {
+  const { actions, processes, cleanup } = await runner(stoppable('2026-10-24T20:34:48.000Z', '2026-10-24T20:34:49.000Z'), PLAIN);
+  try {
+    const record = actionOf(actions.request('session.stop', { pid: '62102', startedAt: '2026-10-24T20:34:48.000Z' }));
+    await announced(actions, record.id, (seen) => seen.outputTail.includes('SIGTERM'));
+    assert.deepEqual(processes[0]?.plan.args, ['-s', 'TERM', '62102'], 'because a start a second off is the same process read at another moment, so the session gets its SIGTERM');
+  } finally { await cleanup(); }
+});
+
 test('ActionRecord_NotASync_ConflictIsNull', async () => {
   const { actions, processes, cleanup } = await runner(CONTEXT, PLAIN);
   try {

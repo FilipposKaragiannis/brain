@@ -12,7 +12,7 @@ import { readGit } from './collectors/git.ts';
 import type { JobFacts } from './collectors/jobs.ts';
 import { readJobs } from './collectors/jobs.ts';
 import type { EndedProcess, ProcessFacts } from './collectors/processes.ts';
-import { readProcesses } from './collectors/processes.ts';
+import { readProcesses, readSession } from './collectors/processes.ts';
 import type { SessionLocator } from './collectors/sessions.ts';
 import { noSessions } from './collectors/sessions.ts';
 import type { ActionContext } from './actionPlan.ts';
@@ -158,6 +158,8 @@ export class ProjectMonitor {
         ...(this.current?.agents ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: true }])),
         ...(this.current?.ended ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: false }])),
       ],
+      liveSessions: (this.current?.agents ?? []).filter((agent) => agent.kind === 'session').map((agent) => ({ pid: agent.pid, startedAt: agent.startedAt })),
+      readSession: (pid) => readSession(this.runner, this.clock, pid),
       gateSessions: (this.current?.gates ?? []).flatMap((gate) => {
         const found = this.gateSessions.get(gateSessionKey(gate.item, gate.raisedAt));
         return found === undefined ? [] : [{ item: gate.item, cwd: found.cwd, session: found.session }];
@@ -331,15 +333,15 @@ export class ProjectMonitor {
     const previous = this.facts.processes.facts;
     this.logProcessList(listed);
     if (listed.list.status === 'unavailable') {
-      this.facts.processes.facts = { agents: previous?.agents ?? [], hosts: previous?.hosts ?? [], list: listed.list };
+      this.facts.processes.facts = { agents: previous?.agents ?? [], servers: previous?.servers ?? [], hosts: previous?.hosts ?? [], list: listed.list };
       return { ok: false, error: processListProblem(listed.list) };
     }
     const sessions = await this.sessions.assign(listed.agents);
     const unplaced = new Set(listed.list.status === 'partial' ? listed.list.unplaced : []);
     const kept = (previous?.agents ?? []).filter((agent) => unplaced.has(agent.pid));
-    const agents = [...listed.agents.map((agent, index) => ({ ...agent, session: sessions[index] ?? null })), ...kept];
+    const agents = [...listed.agents.map((agent, index) => ({ ...agent, session: sessions[index]?.session ?? null, activity: sessions[index]?.activity ?? null })), ...kept];
     this.noteEnded(agents);
-    this.facts.processes.facts = { agents, hosts: listed.hosts, list: listed.list };
+    this.facts.processes.facts = { agents, servers: listed.servers, hosts: listed.hosts, list: listed.list };
     const problem = processListProblem(listed.list);
     return problem === null ? READ_CLEAN : { ok: false, error: problem };
   }
@@ -381,12 +383,13 @@ export class ProjectMonitor {
 
   /** What counts as a change: the facts and the disagreements that settled, without the counters that move on every read. */
   private fingerprintOf(): string {
-    const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd, session }) => ({ pid, host, cwd, session: session?.id ?? null }));
+    const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd, session, activity }) => ({ pid, host, cwd, session: session?.id ?? null, activity }));
+    const servers = (this.facts.processes.facts?.servers ?? []).map(({ pid, cwd }) => [pid, cwd]);
     const ended = this.ended.map(({ pid, endedAt }) => [pid, endedAt]);
     const errors = (Object.keys(this.facts) as SourceName[]).map((name) => this.facts[name].freshness.error);
     const disagreements = (this.current?.disagreements ?? []).map(disagreementKey);
     const gateSessions = [...this.gateSessions].map(([key, found]) => [key, found.session.id]);
-    return JSON.stringify([this.facts.files.facts, this.installed, gateSessions, this.facts.git.facts, agents, ended, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements, this.current?.newerConsole ?? null]);
+    return JSON.stringify([this.facts.files.facts, this.installed, gateSessions, this.facts.git.facts, agents, servers, ended, this.facts.jobs.facts, this.facts.board.facts, this.facts.pulls.facts, errors, disagreements, this.current?.newerConsole ?? null]);
   }
 
   /**
