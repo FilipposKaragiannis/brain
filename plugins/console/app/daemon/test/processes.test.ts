@@ -16,6 +16,10 @@ test('HostOf_AgentsOnly', () => {
   assert.equal(hostOf('/opt/codex exec --cd here'), 'codex', 'because codex exec is how the flow starts a Codex agent');
   assert.equal(hostOf('/Users/x/.local/bin/claude daemon run --origin transient'), null, 'because the host daemon works in no worktree');
   assert.equal(hostOf('/opt/codex app-server --listen unix://'), null, 'because the app server is not an agent');
+  assert.equal(hostOf('/x/claude -p mcp configuration is broken --permission-mode auto'), 'claude', 'because a prompt that starts with a server word is still an unattended run');
+  assert.equal(hostOf('/opt/codex exec daemon crashes on startup'), 'codex', 'because codex exec runs an agent whatever its prompt says');
+  assert.equal(hostOf('/x/claude --permission-mode auto daemon'), 'claude', 'because only the subcommand names a server, not a later word');
+  assert.equal(serverOf('/x/claude -p mcp configuration is broken'), null, 'because an unattended run is never listed as a server');
   assert.equal(hostOf('/Users/x/.local/bin/claude mcp serve'), null, 'because Claude\'s MCP server serves another client from wherever it was started');
   assert.equal(hostOf('/usr/bin/python3 claude.py'), null, 'because only the executable name counts');
 });

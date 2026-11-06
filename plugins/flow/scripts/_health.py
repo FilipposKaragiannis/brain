@@ -48,10 +48,11 @@ there as JSON, for the console."""
 import calendar, glob, json, os, re, subprocess, sys, time
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
-# A host's own servers, never an agent: the first words after the executable that are not options.
-SERVICE = {"daemon", "mcp", "app-server", "exec-server", "pid-update-loop"}
+# A host's own servers, never an agent: the subcommand, the first word after the executable that is
+# not an option (`codex app-server daemon pid-update-loop` is app-server's). Never an unattended run:
+# `claude -p mcp is broken` or `codex exec daemon fails` is an agent whose prompt names a server.
+SERVICE = {"daemon", "mcp", "app-server", "exec-server"}
 OPTIONS_WITH_VALUE = {"-c", "--config"}
-SUBCOMMAND_WORDS = 2
 UNATTENDED = re.compile(r" (-p|--print|exec)( |$)")
 LOOP = re.compile(r"run-unattended\.sh|jobs/(next|comments)\.sh")
 DURATION = re.compile(r"(\d+)([smhd]?)")
@@ -74,19 +75,23 @@ def split_command(command):
     return [executable] + tokens[index:] if executable else []
 
 
-def subcommands(words):
-    found, index = [], 1
-    while index < len(words) and len(found) < SUBCOMMAND_WORDS:
+def subcommand(words):
+    index = 1
+    while index < len(words):
         word = words[index]
-        index += 2 if word in OPTIONS_WITH_VALUE else 1
         if not word.startswith("-"):
-            found.append(word)
-    return found
+            return word
+        index += 2 if word in OPTIONS_WITH_VALUE else 1
+    return ""
+
+
+def is_server(words):
+    return subcommand(words) in SERVICE and not UNATTENDED.search(" ".join(words))
 
 
 def is_agent(command):
     words = split_command(command)
-    return bool(words) and bool(AGENT.search(words[0])) and not SERVICE.intersection(subcommands(words))
+    return bool(words) and bool(AGENT.search(words[0])) and not is_server(words)
 
 
 def is_host(command):

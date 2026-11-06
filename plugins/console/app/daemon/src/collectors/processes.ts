@@ -41,10 +41,12 @@ const UNATTENDED_CODEX = / exec( |$)/;
  * Host daemons and servers that are never an agent or a session, wherever their cwd is: the
  * Claude daemon (`claude daemon run`), Claude's MCP server (`claude mcp serve`), and the Codex desktop app's `codex app-server --listen
  * unix://…`, its `codex app-server daemon pid-update-loop` and its cloud `exec-server`. Matched
- * only against the first words after the executable, so a prompt that mentions one is still an agent.
+ * only against the subcommand, the first word after the executable that is not an option, and
+ * never in an unattended run: `claude -p mcp is broken` or `codex exec daemon fails` is an agent
+ * whose prompt names a server.
  */
-const NOT_AN_AGENT = ['daemon', 'mcp', 'app-server', 'exec-server', 'pid-update-loop'];
-/** How many of the first words after the executable name a host's server. */
+const NOT_AN_AGENT = ['daemon', 'mcp', 'app-server', 'exec-server'];
+/** How many of the first words after the executable a server's label reads (`app-server daemon`). */
 const SUBCOMMAND_WORDS = 2;
 /** Options that take a value: `codex -c key=value app-server`. */
 const OPTIONS_WITH_VALUE = ['-c', '--config'];
@@ -123,20 +125,20 @@ function hostCommand(command: string): { host: AgentHost; words: string[] } | nu
   return { host: name as AgentHost, words: subcommands(args) };
 }
 
-function isServer(words: string[]): boolean {
-  return words.some((word) => NOT_AN_AGENT.includes(word));
+function isServer(host: AgentHost, words: string[], command: string): boolean {
+  return NOT_AN_AGENT.includes(words[0] ?? '') && kindOf(host, command) !== 'agent';
 }
 
 export function hostOf(command: string): AgentHost | null {
   const parsed = hostCommand(command);
-  if (parsed === null || isServer(parsed.words)) return null;
+  if (parsed === null || isServer(parsed.host, parsed.words, command)) return null;
   return parsed.host;
 }
 
 /** The host and plain name of a claude or codex server, or null for anything else (an agent, a session, another program). */
 export function serverOf(command: string): { host: AgentHost; label: string } | null {
   const parsed = hostCommand(command);
-  if (parsed === null || !isServer(parsed.words)) return null;
+  if (parsed === null || !isServer(parsed.host, parsed.words, command)) return null;
   const { host, words } = parsed;
   const known = SERVER_LABELS.find((entry) => entry.host === host && entry.words.every((word, index) => words[index] === word));
   return { host, label: known?.label ?? `${HOST_NAMES[host]} ${words.join(' ')}` };

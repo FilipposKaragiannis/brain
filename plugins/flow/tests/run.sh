@@ -2203,6 +2203,11 @@ printf '7672\t%s\t/x/bin/codex app-server --listen unix:// --managed-daemon\n767
 check "alive: the Codex app's app-server, its daemon and exec-server in a worktree are not a session there" [ -z "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" ]
 printf '7676\t%s\t/x/bin/codex -c features.a=true\n' "$we" > "$FLOW_HEALTH_PROCS"
 check "alive: a Codex session in a worktree, an option before no subcommand, is one" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7676" ]
+# A prompt that starts with a server word is still an unattended run, never the host's server.
+printf '7679\t%s\t/x/bin/claude -p mcp configuration is broken --permission-mode auto\n' "$we" > "$FLOW_HEALTH_PROCS"
+check "alive: claude -p whose prompt starts with mcp is a run" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7679" ]
+printf '7680\t%s\t/x/bin/codex exec daemon crashes on startup\n' "$we" > "$FLOW_HEALTH_PROCS"
+check "alive: codex exec whose prompt starts with daemon is a run" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7680" ]
 printf '7677\t%s\t/x/bin/claude mcp serve\n' "$we" > "$FLOW_HEALTH_PROCS"
 check "alive: Claude's MCP server in a worktree is not a session there" [ -z "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" ]
 # ps prints a command unquoted, and the desktop app keeps its CLI under Application Support.
