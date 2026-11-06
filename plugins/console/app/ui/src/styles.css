@@ -126,6 +126,7 @@ h1, h2 { margin: 0; }
 .button.primary { background: var(--ink); color: var(--panel); border-color: var(--ink); }
 .button:disabled { opacity: 0.55; cursor: progress; }
 .action { display: inline-flex; align-items: center; gap: 6px; }
+.stop-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 /* A square button that holds only an icon, as tall as .button; .small for a module's title row. */
 .icon-button { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); background: var(--panel); color: var(--ink-soft); border-radius: 8px; cursor: pointer; }
@@ -241,6 +242,7 @@ h1, h2 { margin: 0; }
 .pool-name { display: flex; justify-content: space-between; align-items: center; font-weight: 600; color: var(--ink); text-decoration: none; }
 .pool-stripes.run-stripes { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 0; }
 .pool-skipped { margin: 0; padding: 0 16px 12px; font-size: 13px; }
+.running-stale { margin: 0; padding: 10px 16px 0; font-size: 13px; }
 .pool-legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--muted); }
 .pool-legend > span { display: inline-flex; align-items: center; gap: 5px; }
 .pool-legend .dot { animation: none; }
@@ -623,6 +625,7 @@ a.tag { color: var(--accent); }
 .row-list { list-style: none; margin: 0; padding: 6px 0; }
 .row-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 16px; font-size: 13px; }
 .row-list li .clip { flex: 1 1 140px; max-width: none; min-width: 0; }
+.servers-note { margin: 0; padding: 10px 16px 0; font-size: 13px; }
 .row-list li .buttons { margin-left: auto; }
 .row-list.compact { padding: 2px 0; }
 .row-list.compact li { padding: 3px 0; font-size: 12px; gap: 4px 10px; }

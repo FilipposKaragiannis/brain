@@ -1,5 +1,6 @@
 import type { Agent, Job, PullRequest, Run, Snapshot, SourceName, Worktree } from '../../../daemon/src/snapshot.ts';
-import { Age, clockTime, formatDuration } from '../clock.tsx';
+import { sessionStale } from '../../../daemon/src/snapshot.ts';
+import { Age, clockTime, formatDuration, useNow } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
 import { readinessSentence } from '../readiness.ts';
@@ -85,7 +86,7 @@ function names(list: string[]): string {
   return list.length > NAMES_LISTED ? `${shown} and ${list.length - NAMES_LISTED} more` : shown;
 }
 
-/** The flow's own runs as they go, with the last line of a claude run, then the jobs due next. */
+/** The flow's own runs as they go, with the last line of a claude run, a line on stale sessions, then the jobs due next. */
 function RunningNow({ snapshot }: { snapshot: Snapshot }) {
   const agents = snapshot.agents.filter((agent) => agent.kind === 'agent');
   const agentsHref = routeHash({ projectId: snapshot.project.id, screen: 'agents', detail: null });
@@ -98,12 +99,25 @@ function RunningNow({ snapshot }: { snapshot: Snapshot }) {
           {agents.map((agent, index) => <RunningAgent key={agent.pid} agent={agent} snapshot={snapshot} lastLine={index === 0} />)}
         </ul>
       )}
+      <StaleSessions snapshot={snapshot} href={agentsHref} />
       {jobs.length > 0 && (
         <ul className="due-list" aria-label="Scheduled jobs">
           {jobs.map((job) => <li key={job.name} className={`tone-${jobTone(job)}`}><JobMark job={job} /><span className="due-name">{job.name}{job.workers.length > 1 ? ` ×${job.workers.length}` : ''}</span><span className="due-when">{jobWhen(job)}</span></li>)}
         </ul>
       )}
     </Module>
+  );
+}
+
+/** The owner's sessions gone stale (see `sessionStale`), named by worktree, with a link to Agents, where they can be stopped; nothing while none is. */
+function StaleSessions({ snapshot, href }: { snapshot: Snapshot; href: string }) {
+  const now = useNow();
+  const stale = snapshot.agents.filter((agent) => sessionStale(agent, snapshot.project.staleSessionSeconds, now));
+  if (stale.length === 0) return null;
+  return (
+    <p className="running-stale" aria-label="Stale sessions">
+      {stale.length} stale {stale.length === 1 ? 'session' : 'sessions'}: {names(stale.map((agent) => agent.worktree ?? agent.cwd))}. <a className="module-link" href={href}>Agents</a>
+    </p>
   );
 }
 

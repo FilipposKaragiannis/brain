@@ -27,7 +27,11 @@
 # its own PR; unset or 1 runs them one after another. The job lock stays one per run. Each pass
 # holds the item's lock (<flow home>/item:<item slug>.lock, no wait), so no two passes work one
 # item at once: a held one skips the PR, counted in use. The processes are listed once per run.
-# The result line sums every pass. A pass the stopped host refused or cut ends its own worker,
+# The result line names every open PR and what it came to: addressed, nothing new, waits on you
+# (threads still unanswered after two passes, or passes failing in a row), in use (the session in
+# its worktree and how long it has been idle) or at a gate. A red check never holds a PR back: the
+# pass fixes the checks it can, then addresses the threads whatever CI says.
+# A pass the stopped host refused or cut ends its own worker,
 # no new pass starts, and the passes in flight finish; the run exits 1 when any pass failed. The
 # passes' host output goes to the log as it comes, so lines of passes at once interleave there.
 set -u
@@ -47,7 +51,7 @@ out="$(job_log_dir)/$job.out.$$"
 trap 'c=$?; rm -rf "$out.run"; rm -f "$out.login" "$out.procs" "$out.procs.failed"; job_end $c' EXIT
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
-targets=""
+targets=""; gated=""; rm -f "$(job_log_dir)/$job.gated"
 if [ -n "$one" ]; then
   targets="$one"
 else
@@ -60,13 +64,17 @@ for i in json.load(sys.stdin):
     if i.get("status") == "open" and pr: print(i["id"], pr, (i.get("state") or {}).get("gate") or "none")'
   done | while read -r item pr gate; do
     # A gate other than merge is the owner's to answer first: a pass would stop at it again.
-    case "$gate" in none|merge) ;; *) job_say "$item: waits at the $gate gate, skipped" >/dev/null; continue ;; esac
+    case "$gate" in none|merge) ;; *) job_say "$item: waits at the $gate gate, skipped" >/dev/null; printf '%s (%s gate)\n' "$item" "$gate" >> "$(job_log_dir)/$job.gated"; continue ;; esac
     state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pr" 2>/dev/null)" || { job_say "$item: cannot read $pr" >/dev/null; continue; }
     if [ "$(json_get "$state" state)" = "OPEN" ]; then echo "$item"; else job_say "$item: $pr is $(json_get "$state" state), skipped" >/dev/null; fi
   done > "$(job_log_dir)/$job.targets"
   targets="$(cat "$(job_log_dir)/$job.targets")"; rm -f "$(job_log_dir)/$job.targets"
+  gated="$(cat "$(job_log_dir)/$job.gated" 2>/dev/null | tr '\n' ',' | sed 's/,$//; s/,/, /g')"; rm -f "$(job_log_dir)/$job.gated"
 fi
-[ -n "$targets" ] || { job_say "quiet: no open PR"; exit 0; }
+if [ -z "$targets" ]; then
+  if [ -n "$gated" ]; then job_say "quiet: no open PR to address; at a gate: $gated"; else job_say "quiet: no open PR"; fi
+  exit 0
+fi
 # prepare_pr <target>: chase its silent reviewers (not on a draft, which waits on its quiz in the console) and
 # print the brief's notes: the PR conflicts with its base, checks fail on its head. Model free.
 prepare_pr() {
@@ -91,7 +99,7 @@ checks_note() {
   [ -n "$failing" ] || return 0
   head="$(json_get "$state" headRefOid | cut -c1-8)"; head="${head:-the head}"
   job_say "$1: checks fail on $head of $2: $failing" >/dev/null
-  printf ' Checks fail on %s: %s: run the Checks step.' "$head" "$failing"
+  printf ' Checks fail on %s: %s: run the Checks step, then the threads whatever it finds.' "$head" "$failing"
 }
 chase_reviewers() { # chase_reviewers <target> <pr>
   "$FLOW_PLUGIN/scripts/comments.sh" chase "$2" 2>&1 | while IFS= read -r line; do job_say "$1: $line" >/dev/null; done
@@ -174,7 +182,7 @@ in_use() {
   list_procs
   if [ -f "$procs.failed" ]; then in_use_why="the processes cannot be listed, so a session may be working in $iu_wt"; return 0; fi
   iu_how="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$procs" "$iu_item" "$iu_wt" "" 2>/dev/null)"
-  [ -z "$iu_how" ] || in_use_why="another session works in $iu_wt ($iu_how)"
+  [ -z "$iu_how" ] || in_use_why="another session works in $iu_wt ($(session_named "$iu_how"))"
 }
 # once <file> <value>: true the first time <value> is seen for <file>, and records it.
 once() { [ "$(cat "$1" 2>/dev/null)" != "$2" ] && printf '%s\n' "$2" > "$1"; }
@@ -187,11 +195,13 @@ in_use_marker() {
   case "$im_pr" in ''|*[!0-9]*) seen_file "$1" ;; *) seen_file "pr-$im_pr" ;; esac
   printf '.told-in-use'
 }
-# session_named <how>: the host and pid of the process _health.py alive named ("process 4242"),
-# as "claude (process 4242)", or the words as they came when the process list lacks it.
+# session_named <how>: the process _health.py alive named ("process 4242"), as a person reads it:
+# "claude process 4242, idle 3d 2h" (busy, or running for a host that keeps no status); the words
+# as they came when the process list lacks it.
 session_named() {
-  sn_host="$(awk -F '\t' -v pid="${1##* }" '$1 == pid { split($3, words, " "); n = split(words[1], parts, "/"); print parts[n]; exit }' "$procs" 2>/dev/null)"
-  if [ -n "$sn_host" ]; then printf '%s (%s)' "$sn_host" "$1"; else printf '%s' "$1"; fi
+  sn_pid="${1##* }"
+  case "$sn_pid" in ''|*[!0-9]*) printf '%s' "$1"; return 0 ;; esac
+  python3 -I "$FLOW_PLUGIN/scripts/_health.py" session "$procs" "$sn_pid" 2>/dev/null || printf '%s' "$1"
 }
 # tell_in_use <target>: tells the owner once per streak that the PR waits on the session in_use
 # found ($iu_item, $iu_wt, $iu_how). Nothing when the processes could not be listed: no session
@@ -201,16 +211,20 @@ tell_in_use() {
   ti_pr="$(pr_of "$1")"; ti_f="$(in_use_marker "$1" "$ti_pr")"; mkdir -p "$(dirname "$ti_f")"
   ti_pr="${ti_pr##*/}"; ti_pr="${ti_pr#\#}"
   once "$ti_f" "$iu_wt" || return 0
-  "$FLOW_PLUGIN/scripts/notify.sh" --event comments-skipped "$iu_item: the comments job skips PR #$ti_pr while $(session_named "$iu_how") works in $iu_wt. Its review comments wait until that session leaves the worktree." >/dev/null 2>&1 || true
+  "$FLOW_PLUGIN/scripts/notify.sh" --event comments-skipped "$iu_item: the comments job skips PR #$ti_pr while $(session_named "$iu_how") works in $iu_wt. Its review comments wait until that session leaves the worktree; if nobody uses it, end it: kill ${iu_how##* }." >/dev/null 2>&1 || true
 }
-# outcome <word>: what this pass came to, in its slot, for the run's result line: addressed,
-# failed, unchanged, busy or stopped.
-outcome() { printf '%s\n' "$1" > "$slot/outcome"; }
+# outcome <word> [<why>]: what this pass came to, in its slot, for the run's result line:
+# addressed, failed, unchanged, waits (on the owner), busy or stopped, and why.
+outcome() { printf '%s\t%s\n' "$1" "${2:-}" > "$slot/outcome"; }
 # pass <target>: one pass on one PR, its outcome in $slot.
 pass() {
   t="$1"
   in_use "$t"
-  if [ -n "$in_use_why" ]; then job_say "$t: $in_use_why, skipped" >/dev/null; tell_in_use "$t"; outcome busy; return 0; fi
+  if [ -n "$in_use_why" ]; then
+    job_say "$t: $in_use_why, skipped" >/dev/null; tell_in_use "$t"
+    if [ -n "$iu_how" ]; then outcome busy "$(session_named "$iu_how") in $(basename "$iu_wt")"; else outcome busy "processes not listed"; fi
+    return 0
+  fi
   note="$(prepare_pr "$t")"
   activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$t")"; mkdir -p "$(dirname "$f")"
   fails=0
@@ -218,7 +232,7 @@ pass() {
   if [ -z "$one" ] && [ "$fails" -ge "$max_fails" ]; then
     job_say "$t: $fails passes in a row failed, skipped until a pass run by hand completes" >/dev/null
     once "$f.told-fails" "$fails" && tell "$t: the comments pass failed $fails times in a row on $pull, so the job stops trying it. Read $(job_log_dir)/$job.log, then run it by hand: jobs/comments.sh <host> $t. A pass that completes lets the job try it again."
-    outcome unchanged; return 0
+    outcome waits "$fails passes in a row failed"; return 0
   fi
   if [ -z "$one" ] && [ -n "$seen" ] && [ "$seen" = "$(cat "$f" 2>/dev/null)" ]; then
     if [ -z "$awaiting" ]; then
@@ -227,7 +241,7 @@ pass() {
     if [ "$(cat "$f.forced" 2>/dev/null)" = "$awaiting" ]; then
       job_say "$t: open thread(s) $awaiting still wait on a reply after a pass, skipped" >/dev/null
       once "$f.told" "$awaiting" && tell "$t: review thread(s) on $pull still wait on a reply after two passes (last comments $awaiting). Answer them, or run the pass by hand: jobs/comments.sh <host> $t."
-      outcome unchanged; return 0
+      outcome waits "thread(s) $awaiting unanswered after two passes"; return 0
     fi
     printf '%s\n' "$awaiting" > "$f.forced"
     job_say "$t: open thread(s) $awaiting still wait on a reply, one more pass" >/dev/null
@@ -246,7 +260,7 @@ pass() {
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
   job_say "addressing $t"; rm -f "$(in_use_marker "$t" "$pull")"
   # The output goes to the log as it comes, so a pass killed half way keeps what it said.
-  { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$rnote Unattended: nobody answers questions; collect owner decisions in the report and stop.")" 2>&1
+  { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR
@@ -285,7 +299,7 @@ pass() {
 locked_pass() {
   lp_item="$(item_of "$1")"
   if [ -n "$lp_item" ] && ! FLOW_LOCK_WAIT=0 flow_lock "item:$(item_slug "$lp_item")"; then
-    job_say "$1: another pass works on $lp_item (its lock is held), skipped" >/dev/null; outcome busy; return 0
+    job_say "$1: another pass works on $lp_item (its lock is held), skipped" >/dev/null; outcome busy "another pass holds its lock"; return 0
   fi
   pass "$1"
   flow_unlock || true
@@ -315,20 +329,31 @@ if [ "$workers" -gt 1 ] && [ -z "$one" ]; then
 else
   (worker)
 fi
-addressed=0; unchanged=0; busy=0; failed=""; n=0
+# The result line: what each target came to, grouped, each PR named with why it got no pass.
+addressed=0; done_list=""; failed=""; unchanged=0; same=""; waits=0; waits_list=""; busy=0; busy_list=""; n=0
+tab="$(printf '\t')"
 for t in $targets; do
   n=$((n + 1))
-  case "$(cat "$run/$n/outcome" 2>/dev/null)" in
-    addressed) addressed=$((addressed + 1)) ;;
+  oc="$(cat "$run/$n/outcome" 2>/dev/null)"; word="${oc%%"$tab"*}"; why=""
+  case "$oc" in *"$tab"*) why="${oc#*"$tab"}" ;; esac
+  case "$word" in
+    addressed) addressed=$((addressed + 1)); done_list="$done_list, $t" ;;
     failed) addressed=$((addressed + 1)); failed="$failed $t" ;;
-    unchanged) unchanged=$((unchanged + 1)) ;;
-    busy) busy=$((busy + 1)) ;;
+    unchanged) unchanged=$((unchanged + 1)); same="$same, $t" ;;
+    waits) waits=$((waits + 1)); waits_list="$waits_list, $t ($why)" ;;
+    busy) busy=$((busy + 1)); busy_list="$busy_list, $t${why:+ ($why)}" ;;
   esac
 done
 [ ! -f "$run/stopped" ] || [ -n "$failed" ] || { job_last="$(cat "$run/stopped")"; exit 0; }
-in_use_said=""; [ "$busy" -eq 0 ] || in_use_said=", $busy in use by another session"
-[ "$addressed" -gt 0 ] || { job_say "quiet: nothing new on $unchanged PR(s)$in_use_said"; exit 0; }
-if [ -n "$failed" ]; then
-  job_say "failed:$failed cut short or failed, of $addressed PR(s), $unchanged unchanged$in_use_said"; exit 1
+rest=""
+[ "$unchanged" -eq 0 ] || rest="$rest; nothing new on $unchanged PR(s): ${same#, }"
+[ "$waits" -eq 0 ] || rest="$rest; $waits wait on you: ${waits_list#, }"
+[ "$busy" -eq 0 ] || rest="$rest; $busy in use: ${busy_list#, }"
+[ -z "$gated" ] || rest="$rest; at a gate: $gated"
+if [ "$addressed" -eq 0 ]; then
+  rest="${rest#; }"; job_say "quiet: ${rest:-nothing to address}"; exit 0
 fi
-job_say "done: $addressed PR(s), $unchanged unchanged$in_use_said"
+if [ -n "$failed" ]; then
+  job_say "failed:$failed cut short or failed, of $addressed PR(s) addressed$rest"; exit 1
+fi
+job_say "done: $addressed PR(s) addressed: ${done_list#, }$rest"

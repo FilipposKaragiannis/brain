@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { CommandResult, CommandRunner } from '../src/collectors/exec.ts';
-import { hostOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories, readProcesses } from '../src/collectors/processes.ts';
+import { hostOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories, readProcesses, readSession, serverOf } from '../src/collectors/processes.ts';
 import { PROCESS_COMMAND_CHARS } from '../src/snapshot.ts';
 
 const NOW = new Date('2026-11-03T13:21:22Z');
@@ -16,6 +16,11 @@ test('HostOf_AgentsOnly', () => {
   assert.equal(hostOf('/opt/codex exec --cd here'), 'codex', 'because codex exec is how the flow starts a Codex agent');
   assert.equal(hostOf('/Users/x/.local/bin/claude daemon run --origin transient'), null, 'because the host daemon works in no worktree');
   assert.equal(hostOf('/opt/codex app-server --listen unix://'), null, 'because the app server is not an agent');
+  assert.equal(hostOf('/x/claude -p mcp configuration is broken --permission-mode auto'), 'claude', 'because a prompt that starts with a server word is still an unattended run');
+  assert.equal(hostOf('/opt/codex exec daemon crashes on startup'), 'codex', 'because codex exec runs an agent whatever its prompt says');
+  assert.equal(hostOf('/x/claude --permission-mode auto daemon'), 'claude', 'because only the subcommand names a server, not a later word');
+  assert.equal(serverOf('/x/claude -p mcp configuration is broken'), null, 'because an unattended run is never listed as a server');
+  assert.equal(hostOf('/Users/x/.local/bin/claude mcp serve'), null, 'because Claude\'s MCP server serves another client from wherever it was started');
   assert.equal(hostOf('/usr/bin/python3 claude.py'), null, 'because only the executable name counts');
 });
 
@@ -127,4 +132,104 @@ test('ReadProcesses_EveryHostPlaced_ListComplete', async () => {
 test('ReadProcesses_UnattendedLoop_ListedAsAHostWithItsStart', async () => {
   const { hosts } = await readProcesses(lookups(answered(RUN_LISTING), TIMED_OUT), () => NOW);
   assert.deepEqual(hosts.find((host) => host.pid === 19487)?.startedAt, '2026-11-03T12:55:39.000Z', 'because the loop owns the run, and its start (25:43 before the read) tells it from a later process that reused the pid');
+});
+
+const SESSION_CWD = 'p62102\nfcwd\nn/work/projects/foosbrawl-wt-10\n';
+/** The interactive claude that sat in foosbrawl-wt-10 for twelve days. */
+const IDLE_SESSION = '62102 12-16:46:34 /Users/x/.local/bin/claude --permission-mode auto';
+
+test('ReadProcesses_Session_CarriesItsStartFromTheRead', async () => {
+  const { agents } = await readProcesses(lookups(answered(IDLE_SESSION), answered(SESSION_CWD)), () => NOW);
+  assert.equal(agents[0]?.startedAt, '2026-10-21T20:34:48.000Z', 'because a stop names the session by its start, 12 days 16:46:34 before the read, so a pid taken by a later process is told apart');
+});
+
+test('ReadSession_SameInteractiveSession_ItsStart', async () => {
+  const found = await readSession(lookups(answered(IDLE_SESSION), answered('')), () => NOW, 62102);
+  assert.deepEqual([found?.pid, found?.startedAt], [62102, '2026-10-21T20:34:48.000Z'], 'because the stop checks the pid still runs the session started then');
+});
+
+test('ReadSession_PidGone_Null', async () => {
+  const found = await readSession(lookups({ code: 1, stdout: '', stderr: '', timedOut: false }, answered('')), () => NOW, 62102);
+  assert.equal(found, null, 'because ps -p exits 1 for a pid that no longer runs, and there is nothing to stop');
+});
+
+test('ReadSession_PsTimesOut_Null', async () => {
+  assert.equal(await readSession(lookups(TIMED_OUT, answered('')), () => NOW, 62102), null, 'because a pid ps could not read is never signalled');
+});
+
+for (const [name, what, row] of [
+  ['UnattendedAgent', 'an unattended agent', '62102 00:30 /usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto'],
+  ['ClaudeDaemon', 'the claude daemon', '62102 00:30 /Users/x/.local/bin/claude daemon run --origin transient'],
+  ['CodexAppServer', 'the Codex app server', `62102 00:30 ${CODEX_RELEASE} app-server --listen unix:///tmp/codex.sock`],
+  ['AnotherProgram', 'another program', '62102 00:30 /usr/bin/vim notes.md'],
+] as const) {
+  test(`ReadSession_PidNowRuns${name}_Null`, async () => {
+    assert.equal(await readSession(lookups(answered(row), answered('')), () => NOW, 62102), null, `because the pid now runs ${what}, which Stop session must never signal`);
+  });
+}
+
+const CODEX_APP = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
+
+for (const [name, command, label] of [
+  ['CodexAppServer', `${CODEX_RELEASE} app-server --listen unix:///tmp/codex.sock`, 'Codex app server'],
+  ['CodexPidLoop', `${CODEX_RELEASE} app-server daemon pid-update-loop`, 'Codex app server pid loop'],
+  ['CodexExecServer', `${CODEX_APP} exec-server --listen stdio`, 'Codex exec server'],
+  ['ClaudeDaemon', '/Users/x/.local/bin/claude daemon run --origin transient', 'Claude daemon'],
+  ['ClaudeMcpServer', '/Users/x/.local/bin/claude mcp serve', 'Claude MCP server'],
+] as const) {
+  test(`ServerOf_${name}_NamedPlainly`, () => {
+    assert.equal(serverOf(command)?.label, label, `because the owner reads "${label}", not the command, to know what runs`);
+  });
+}
+
+test('ServerOf_AgentSessionOrOtherProgram_Null', () => {
+  assert.deepEqual(
+    [serverOf('/usr/local/bin/claude -p fix the daemon restart'), serverOf('/Users/x/.local/bin/claude --permission-mode auto'), serverOf('/usr/bin/vim daemon.md')],
+    [null, null, null],
+    'because agents and sessions are listed as such, and a program that is neither host serves nothing of theirs',
+  );
+});
+
+/** pid 64347 and 56354 work in foosbrawl-wt-10; the app bundle's servers (701, 702) work in the home folder. */
+const SERVER_LISTING = [
+  `64347 2-03:00:00 ${CODEX_RELEASE} app-server --listen unix:///tmp/codex.sock`,
+  `56354 2-03:00:01 ${CODEX_RELEASE} app-server daemon pid-update-loop`,
+  `701 05:00 ${CODEX_APP} app-server --analytics-default-enabled`,
+  IDLE_SESSION,
+].join('\n');
+const SERVER_CWDS = 'p64347\nfcwd\nn/work/projects/foosbrawl-wt-10\np56354\nfcwd\nn/work/projects/foosbrawl-wt-10\np701\nfcwd\nn/Users/x\n' + SESSION_CWD;
+
+test('ReadProcesses_Servers_InTheSameLsofAsTheSessions', async () => {
+  const asked: string[][] = [];
+  const runner: CommandRunner = async (request) => {
+    if (request.command === 'lsof') asked.push(request.args);
+    return request.command === 'ps' ? answered(SERVER_LISTING) : answered(SERVER_CWDS);
+  };
+  await readProcesses(runner, () => NOW);
+  assert.deepEqual(asked.map((args) => args.at(-1)), ['62102,64347,56354,701'], 'because one lsof call finds where the sessions and the servers work');
+});
+
+test('ReadProcesses_Servers_ListedApartFromTheAgents', async () => {
+  const { agents, servers } = await readProcesses(lookups(answered(SERVER_LISTING), answered(SERVER_CWDS)), () => NOW);
+  assert.deepEqual(
+    [agents.map((agent) => agent.pid), servers.map((server) => [server.pid, server.label, server.cwd])],
+    [[62102], [[64347, 'Codex app server', '/work/projects/foosbrawl-wt-10'], [56354, 'Codex app server pid loop', '/work/projects/foosbrawl-wt-10'], [701, 'Codex app server', '/Users/x']]],
+    'because a server is never an agent or a session, yet the owner still sees what runs',
+  );
+});
+
+test('ReadProcesses_Server_CarriesItsStartAndElapsed', async () => {
+  const { servers } = await readProcesses(lookups(answered(SERVER_LISTING), answered(SERVER_CWDS)), () => NOW);
+  const server = servers.find((entry) => entry.pid === 64347);
+  assert.deepEqual([server?.elapsedSeconds, server?.startedAt], [183600, '2026-11-01T10:21:22.000Z'], 'because "running for" counts from the start ps gives, 2 days 3 hours before the read');
+});
+
+test('ReadProcesses_LsofMissesAServer_LeftOutAndListComplete', async () => {
+  const { servers, list } = await readProcesses(lookups(answered(SERVER_LISTING), answered(SESSION_CWD)), () => NOW);
+  assert.deepEqual([servers, list.status], [[], 'complete'], 'because a server is only shown, so one with no known folder is left out without marking the run picture incomplete');
+});
+
+test('ReadProcesses_OnlyServers_StillLooksUpWhereTheyWork', async () => {
+  const { agents, servers } = await readProcesses(lookups(answered(SERVER_LISTING.split('\n').slice(0, 1).join('\n')), answered(SERVER_CWDS)), () => NOW);
+  assert.deepEqual([agents, servers.map((server) => server.pid)], [[], [64347]], 'because a machine with no agent may still run a server in the project');
 });

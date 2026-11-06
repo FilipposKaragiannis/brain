@@ -1,10 +1,13 @@
-import type { AgentHost, AgentKind, ProcessListStatus, ProcessLookup, SessionRef } from '../snapshot.ts';
+import type { AgentHost, AgentKind, ProcessListStatus, ProcessLookup, SessionActivity, SessionRef } from '../snapshot.ts';
 import { LOOKUP_STDERR_CHARS, PROCESS_COMMAND_CHARS } from '../snapshot.ts';
 import type { CommandResult, CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
 
-/** `session` is filled in by the monitor's session locator after the read; the process list alone never knows it. */
-export type AgentProcess = { pid: number; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; command: string; session: SessionRef | null };
+/**
+ * `startedAt` is when ps says it started, worked out at the read. `session` and `activity` are
+ * filled in by the monitor's session locator after the read; the process list alone never knows them.
+ */
+export type AgentProcess = { pid: number; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; startedAt: string; command: string; session: SessionRef | null; activity: SessionActivity | null };
 /** A process that was in one read and gone from the next, with when the read that missed it started. */
 export type EndedProcess = AgentProcess & { endedAt: string };
 /**
@@ -17,7 +20,12 @@ export type HostProcess = { pid: number; command: string; startedAt: string };
  * What one process read found: the agents and sessions with their working directory, every
  * process that can own a run whether or not its directory was found, and how complete the read was.
  */
-export type ProcessFacts = { agents: AgentProcess[]; hosts: HostProcess[]; list: ProcessListStatus };
+export type ProcessFacts = { agents: AgentProcess[]; servers: ServerProcess[]; hosts: HostProcess[]; list: ProcessListStatus };
+/**
+ * A claude or codex host's own server (`NOT_AN_AGENT`): never an agent or a session, only shown
+ * so the owner knows what runs. `label` names it in plain words, such as "Codex app server".
+ */
+export type ServerProcess = { pid: number; host: AgentHost; label: string; cwd: string; elapsedSeconds: number; startedAt: string; command: string };
 
 const PROCESS_TIMEOUT_MS = 10000;
 const MILLISECONDS_PER_SECOND = 1000;
@@ -31,12 +39,14 @@ const UNATTENDED_CLAUDE = / (-p|--print)( |$)/;
 const UNATTENDED_CODEX = / exec( |$)/;
 /**
  * Host daemons and servers that are never an agent or a session, wherever their cwd is: the
- * Claude daemon (`claude daemon run`), and the Codex desktop app's `codex app-server --listen
+ * Claude daemon (`claude daemon run`), Claude's MCP server (`claude mcp serve`), and the Codex desktop app's `codex app-server --listen
  * unix://…`, its `codex app-server daemon pid-update-loop` and its cloud `exec-server`. Matched
- * only against the first words after the executable, so a prompt that mentions one is still an agent.
+ * only against the subcommand, the first word after the executable that is not an option, and
+ * never in an unattended run: `claude -p mcp is broken` or `codex exec daemon fails` is an agent
+ * whose prompt names a server.
  */
-const NOT_AN_AGENT = ['daemon', 'app-server', 'exec-server', 'pid-update-loop'];
-/** How many of the first words after the executable name a host's server. */
+const NOT_AN_AGENT = ['daemon', 'mcp', 'app-server', 'exec-server'];
+/** How many of the first words after the executable a server's label reads (`app-server daemon`). */
 const SUBCOMMAND_WORDS = 2;
 /** Options that take a value: `codex -c key=value app-server`. */
 const OPTIONS_WITH_VALUE = ['-c', '--config'];
@@ -47,6 +57,15 @@ const OPTIONS_WITH_VALUE = ['-c', '--config'];
  */
 const PATH_WITH_SPACES = ['.app/', 'Application Support/'];
 const HOSTS: string[] = ['claude', 'codex'];
+/** What each server is called, by its host and its first words; the first match names it. */
+const SERVER_LABELS: { host: AgentHost; words: string[]; label: string }[] = [
+  { host: 'codex', words: ['app-server', 'daemon'], label: 'Codex app server pid loop' },
+  { host: 'codex', words: ['app-server'], label: 'Codex app server' },
+  { host: 'codex', words: ['exec-server'], label: 'Codex exec server' },
+  { host: 'claude', words: ['daemon'], label: 'Claude daemon' },
+  { host: 'claude', words: ['mcp'], label: 'Claude MCP server' },
+];
+const HOST_NAMES: Record<AgentHost, string> = { claude: 'Claude', codex: 'Codex' };
 
 /** The executable and its arguments. ps prints the command unquoted, so a path with spaces is rejoined. */
 function splitCommand(command: string): { executable: string; args: string[] } {
@@ -98,12 +117,31 @@ export function parseElapsed(elapsed: string): number {
   return seconds + (days === undefined ? 0 : Number(days) * SECONDS_PER_DAY);
 }
 
-export function hostOf(command: string): AgentHost | null {
+/** The host a command runs and the first words after it, or null when it runs neither claude nor codex. */
+function hostCommand(command: string): { host: AgentHost; words: string[] } | null {
   const { executable, args } = splitCommand(command);
   const name = executable.slice(executable.lastIndexOf('/') + 1);
   if (!HOSTS.includes(name)) return null;
-  if (subcommands(args).some((word) => NOT_AN_AGENT.includes(word))) return null;
-  return name as AgentHost;
+  return { host: name as AgentHost, words: subcommands(args) };
+}
+
+function isServer(host: AgentHost, words: string[], command: string): boolean {
+  return NOT_AN_AGENT.includes(words[0] ?? '') && kindOf(host, command) !== 'agent';
+}
+
+export function hostOf(command: string): AgentHost | null {
+  const parsed = hostCommand(command);
+  if (parsed === null || isServer(parsed.host, parsed.words, command)) return null;
+  return parsed.host;
+}
+
+/** The host and plain name of a claude or codex server, or null for anything else (an agent, a session, another program). */
+export function serverOf(command: string): { host: AgentHost; label: string } | null {
+  const parsed = hostCommand(command);
+  if (parsed === null || !isServer(parsed.host, parsed.words, command)) return null;
+  const { host, words } = parsed;
+  const known = SERVER_LABELS.find((entry) => entry.host === host && entry.words.every((word, index) => words[index] === word));
+  return { host, label: known?.label ?? `${HOST_NAMES[host]} ${words.join(' ')}` };
 }
 
 export function kindOf(host: AgentHost, command: string): AgentKind {
@@ -137,7 +175,12 @@ function ending(lookup: ProcessLookup): string {
 
 /** A ps that did not list the processes: the whole list is unknown. */
 function unavailable(reason: string, lookup: ProcessLookup): ProcessFacts {
-  return { agents: [], hosts: [], list: { status: 'unavailable', reason, lookup } };
+  return { agents: [], servers: [], hosts: [], list: { status: 'unavailable', reason, lookup } };
+}
+
+/** When a row's process started, from its elapsed time at the read. */
+function startOf(row: ProcessRow, readAt: number): string {
+  return new Date(readAt - row.elapsedSeconds * MILLISECONDS_PER_SECOND).toISOString();
 }
 
 type Timed = { result: CommandResult; durationMs: number };
@@ -149,7 +192,8 @@ async function timed(runner: CommandRunner, clock: () => Date, command: ProcessL
 }
 
 /**
- * Lists the claude and codex processes with their working directory. A ps that fails, times out
+ * Lists the claude and codex processes with their working directory, the hosts' own servers
+ * apart from the agents and sessions. A ps that fails, times out
  * or lists nothing gives an `unavailable` list, never an empty one that would read as "nothing
  * runs"; an lsof that fails, times out or leaves a process out gives a `partial` one naming the
  * pids it could not place. The clock times the lookups and dates each process's start.
@@ -163,25 +207,51 @@ export async function readProcesses(runner: CommandRunner, clock: () => Date): P
   if (rows.length === 0) return unavailable('ps listed no processes', psLookup);
   const hosts = rows
     .filter((row) => hostOf(row.command) !== null || UNATTENDED_LOOP.test(row.command))
-    .map((row) => ({ pid: row.pid, command: row.command.slice(0, PROCESS_COMMAND_CHARS), startedAt: new Date(readAt - row.elapsedSeconds * MILLISECONDS_PER_SECOND).toISOString() }));
+    .map((row) => ({ pid: row.pid, command: row.command.slice(0, PROCESS_COMMAND_CHARS), startedAt: startOf(row, readAt) }));
   const candidates = rows
     .map((row) => ({ row, host: hostOf(row.command) }))
     .filter((entry): entry is { row: ProcessRow; host: AgentHost } => entry.host !== null);
-  if (candidates.length === 0) return { agents: [], hosts, list: { status: 'complete' } };
-  const pids = candidates.map(({ row }) => String(row.pid)).join(',');
+  const serving = rows
+    .map((row) => ({ row, server: serverOf(row.command) }))
+    .filter((entry): entry is { row: ProcessRow; server: { host: AgentHost; label: string } } => entry.server !== null);
+  if (candidates.length === 0 && serving.length === 0) return { agents: [], servers: [], hosts, list: { status: 'complete' } };
+  const pids = [...candidates, ...serving].map(({ row }) => String(row.pid)).join(',');
   const cwds = await timed(runner, clock, 'lsof', ['-a', '-d', 'cwd', '-Fpn', '-p', pids]);
   // lsof exits 1 when one of the pids has ended since ps, and still prints the others, so only a
-  // pid it gave no directory for, or a timeout, makes the read partial.
+  // pid it gave no directory for, or a timeout, makes the read partial. A server it could not
+  // place is left out without that: the servers are only shown, never acted on.
   const directories = cwds.result.timedOut ? new Map<number, string>() : parseWorkingDirectories(cwds.result.stdout);
   const agents = candidates.flatMap(({ row, host }) => {
     const cwd = directories.get(row.pid);
     if (cwd === undefined) return [];
-    return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null }];
+    return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, startedAt: startOf(row, readAt), command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null, activity: null }];
+  });
+  const servers = serving.flatMap(({ row, server }) => {
+    const cwd = directories.get(row.pid);
+    if (cwd === undefined) return [];
+    return [{ pid: row.pid, host: server.host, label: server.label, cwd, elapsedSeconds: row.elapsedSeconds, startedAt: startOf(row, readAt), command: row.command.slice(0, PROCESS_COMMAND_CHARS) }];
   });
   const unplaced = candidates.map(({ row }) => row.pid).filter((pid) => !directories.has(pid));
-  if (unplaced.length === 0) return { agents, hosts, list: { status: 'complete' } };
+  if (unplaced.length === 0) return { agents, servers, hosts, list: { status: 'complete' } };
   const lsofLookup = lookupOf('lsof', cwds.result, cwds.durationMs);
   const missing = `no working directory for ${unplaced.length === 1 ? 'pid' : 'pids'} ${unplaced.join(', ')}`;
   const reason = lsofLookup.code === 0 && !lsofLookup.timedOut ? `lsof gave ${missing}` : `${ending(lsofLookup)}; ${missing}`;
-  return { agents, hosts, list: { status: 'partial', reason, unplaced, lookup: lsofLookup } };
+  return { agents, servers, hosts, list: { status: 'partial', reason, unplaced, lookup: lsofLookup } };
+}
+
+/**
+ * The interactive claude or codex session that runs as `pid` now, with when it started, or null
+ * when ps lists no such pid, ps fails, or the pid runs anything else (an unattended agent, a
+ * host's server, another program). A stop reads it again just before its signal, so a pid that a
+ * later process took is never signalled.
+ */
+export async function readSession(runner: CommandRunner, clock: () => Date, pid: number): Promise<HostProcess | null> {
+  const readAt = clock().getTime();
+  const listing = await runner({ command: 'ps', args: ['-o', 'pid=,etime=,command=', '-p', String(pid)], cwd: '/', timeoutMs: PROCESS_TIMEOUT_MS, env: scriptEnvironment() });
+  if (listing.code !== 0 || listing.timedOut) return null;
+  const row = parseProcessList(listing.stdout).find((entry) => entry.pid === pid);
+  if (row === undefined) return null;
+  const host = hostOf(row.command);
+  if (host === null || kindOf(host, row.command) !== 'session') return null;
+  return { pid, command: row.command.slice(0, PROCESS_COMMAND_CHARS), startedAt: startOf(row, readAt) };
 }

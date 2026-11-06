@@ -970,6 +970,7 @@ printf "$okhost" > "$work/bin/claude"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: after three failed passes in a row the job stops trying the PR" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: 3 passes in a row failed, skipped until a pass run by hand completes' .flow/log/comments.log"
 check "comments job: the owner is told once about the failing PR" [ "$(grep -c 'comments	gh#21: the comments pass failed 3 times in a row' .flow/events.log)" = 1 ]
+check "comments job: the result line says the failing PR waits on the owner" sh -c "tail -1 .flow/log/comments.log | grep -q 'quiet: 1 wait on you: gh#21 (3 passes in a row failed)\$'"
 bump 2026-10-24T16:55:00Z; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: activity a cut-short pass may have made does not restart the retries" [ ! -s "$HOST_LOG" ]
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null; "$P/jobs/comments.sh" claude >/dev/null
@@ -989,6 +990,7 @@ check "comments job: a new review thread starts a pass" grep -q 'comments gh#21'
 check "comments job: a thread still awaiting a reply gets one more pass" sh -c "grep -q 'comments gh#21' '$HOST_LOG' && grep -q 'gh#21: open thread(s) 901 still wait on a reply, one more pass' .flow/log/comments.log"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: then the same awaiting threads are skipped, and the owner told once" sh -c "[ ! -s '$HOST_LOG' ] && [ \"\$(grep -c 'comments	gh#21: review thread(s) on .* still wait on a reply after two passes' .flow/events.log)\" = 1 ]"
+check "comments job: the result line says the PR waits on the owner and why, not that nothing is new" sh -c "tail -1 .flow/log/comments.log | grep -q 'quiet: 1 wait on you: gh#21 (thread(s) 901 unanswered after two passes)\$'"
 # The extra pass a stopped host refuses is not spent: after the clear it runs.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].append({'databaseId': 904, 'body': 'Still drops it.', 'author': {'login': 'chatgpt-codex-connector'}, 'createdAt': 't'}); json.dump(d, open(p,'w'))"
 "$P/jobs/comments.sh" claude >/dev/null
@@ -1024,6 +1026,7 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 "$P/adapters/github/write-state.sh" 'gh#21' gate=ambiguity
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: an item waiting at a gate is skipped, threads or not" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: waits at the ambiguity gate, skipped' .flow/log/comments.log"
+check "comments job: the result line names the PR at a gate" sh -c "tail -1 .flow/log/comments.log | grep -q 'quiet: no open PR to address; at a gate: gh#21 (ambiguity gate)\$'"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "comments job: a named PR runs at a gate" grep -q 'comments gh#21' "$HOST_LOG"
 "$P/adapters/github/write-state.sh" 'gh#21' gate=merge
@@ -1088,7 +1091,7 @@ check "comments job: a PR with no failing check keeps the activity line it had b
 check "comments job: green checks put no checks note in the brief" sh -c "grep -q 'comments gh#21' '$HOST_LOG' && ! grep -q 'Checks step' '$HOST_LOG'"
 rollup red; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a check gone red on the same head starts a pass" grep -q 'comments gh#21' "$HOST_LOG"
-check "comments job: the brief names the failing checks and the head" grep -q 'gh#21. Checks fail on c0ffee12: deploy/preview, test (macos): run the Checks step.' "$HOST_LOG"
+check "comments job: the brief names the failing checks and the head" grep -q 'gh#21. Checks fail on c0ffee12: deploy/preview, test (macos): run the Checks step, then the threads whatever it finds.' "$HOST_LOG"
 check "comments job: the activity line closes on the failing checks" sh -c "grep -q ' failing:deploy/preview,test (macos)\$' .flow/log/comments.seen/gh_21"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a red check the pass could not fix is not tried again on the same head" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: nothing new since the last pass, skipped' .flow/log/comments.log"
@@ -1160,17 +1163,17 @@ EOF
 jobscfg '  comments_workers: 2\n'; bump 2026-10-25T03:00:00Z; : > "$work/overlap.log"
 "$P/jobs/comments.sh" claude >/dev/null 2>&1; code=$?
 check_all "comments job: jobs.comments_workers 2 starts both PRs' passes before either ends, because each worker takes its own PR" '[ "$code" -eq 0 ] && [ "$(head -n 2 "$work/overlap.log" | grep -c "^start")" = 2 ] && grep -q "^start .*comments gh#21\." "$work/overlap.log" && grep -q "^start .*comments $par\." "$work/overlap.log"'
-check "comments job: the result line counts the passes of every worker" sh -c "tail -1 .flow/log/comments.log | grep -q 'done: 2 PR(s), 0 unchanged\$' && grep '\"job\":\"comments\"' .flow/log/runs.jsonl | tail -1 | grep -q '\"result\":\"done: 2 PR(s), 0 unchanged\"'"
+check_all "comments job: the result line counts and names the passes of every worker" 'tail -1 .flow/log/comments.log | grep -q "done: 2 PR(s) addressed: [^;]*\$" && tail -1 .flow/log/comments.log | grep -q "gh#21" && tail -1 .flow/log/comments.log | grep -q "$par" && grep "\"job\":\"comments\"" .flow/log/runs.jsonl | tail -1 | grep -q "\"result\":\"done: 2 PR(s) addressed: "' 
 check "comments job: each pass lets its item's lock go, and the run's files go with it" sh -c "! ls -d .flow/item:*.lock >/dev/null 2>&1 && ! ls .flow/log/comments.out.* >/dev/null 2>&1"
 printf "$okhost" > "$work/bin/claude"; jobscfg ''; : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1
-check "comments job: --workers 2 with nothing new sums the unchanged PRs, because each worker's pass is counted" sh -c "[ ! -s '$HOST_LOG' ] && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 2 PR(s)\$'"
+check_all "comments job: --workers 2 with nothing new sums and names the unchanged PRs, because each worker's pass is counted" '[ ! -s "$HOST_LOG" ] && tail -1 .flow/log/comments.log | grep -q "quiet: nothing new on 2 PR(s): [^;]*\$" && tail -1 .flow/log/comments.log | grep -q "$par"' 
 # A pass whose item's lock another holds skips that PR, as in use; the other worker's pass runs.
 mkdir ".flow/item:$(item_slug "$par").lock" && echo $$ > ".flow/item:$(item_slug "$par").lock/pid"
 bump 2026-10-25T03:10:00Z; : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1; code=$?
 check_all "comments job: a held item lock skips that PR's pass, because no two passes work one item at once" '[ "$code" -eq 0 ] && ! grep -q "comments $par\." "$HOST_LOG" && grep -q "comments gh#21\." "$HOST_LOG" && grep -q "$par: another pass works on $par (its lock is held), skipped" .flow/log/comments.log'
-check "comments job: a PR skipped for its held lock counts as in use in the result line" sh -c "tail -1 .flow/log/comments.log | grep -q 'done: 1 PR(s), 0 unchanged, 1 in use by another session\$'"
+check_all "comments job: a PR skipped for its held lock is named in use in the result line" 'tail -1 .flow/log/comments.log | grep -q "done: 1 PR(s) addressed: gh#21; 1 in use: $par (another pass holds its lock)\$"' 
 check "comments job: a lock the run did not take is left to its holder" [ -d ".flow/item:$(item_slug "$par").lock" ]
 rm -rf ".flow/item:$(item_slug "$par").lock"
 check "comments job: --workers 0 is refused, exit 2" sh -c "'$P/jobs/comments.sh' claude --workers 0 2>/dev/null; [ \$? = 2 ]"
@@ -1198,7 +1201,7 @@ check_all "comments job: after the clear only the stopped pass's PR runs again, 
 printf '#!/bin/sh\ncase "$*" in *"comments gh#21."*) exit 1 ;; esac\n' > "$work/bin/claude"
 bump 2026-10-25T03:30:00Z
 "$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1; code=$?
-check "comments job: one failed pass among workers fails the run, exit 1, the line summing both" sh -c "[ $code -eq 1 ] && tail -1 .flow/log/comments.log | grep -q 'failed: gh#21 cut short or failed, of 2 PR(s), 0 unchanged\$'"
+check "comments job: one failed pass among workers fails the run, exit 1, the line summing both" sh -c "[ $code -eq 1 ] && tail -1 .flow/log/comments.log | grep -q 'failed: gh#21 cut short or failed, of 2 PR(s) addressed\$'"
 # A pass by hand that completes clears the failure and the resume note it left on gh#21.
 printf "$okhost" > "$work/bin/claude"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
 "$P/adapters/github/write-state.sh" "$par" pr= >/dev/null; "$P/adapters/github/close.sh" "$par" >/dev/null 2>&1
@@ -2195,6 +2198,46 @@ printf '7671\t\tclaude daemon run --spawned-by {"cwd":"%s"}\n4243\t\tvim %s/READ
 hs --wait > "$hroot/out" 2>&1
 check "health: the same record is a dead run once only a daemon, an editor or a tail names it" grep -q "$e: dead run of implement cleared" "$hroot/out"
 : > "$FLOW_HEALTH_PROCS"
+# The Codex desktop app's servers keep the folder they started in for days: never a session there.
+printf '7672\t%s\t/x/bin/codex app-server --listen unix:// --managed-daemon\n7673\t%s\t/x/bin/codex app-server daemon pid-update-loop\n7674\t%s\t/x/codex -c features.a=true app-server\n7675\t%s\t/x/codex exec-server\n' "$we" "$we" "$we" "$we" > "$FLOW_HEALTH_PROCS"
+check "alive: the Codex app's app-server, its daemon and exec-server in a worktree are not a session there" [ -z "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" ]
+printf '7676\t%s\t/x/bin/codex -c features.a=true\n' "$we" > "$FLOW_HEALTH_PROCS"
+check "alive: a Codex session in a worktree, an option before no subcommand, is one" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7676" ]
+# A prompt that starts with a server word is still an unattended run, never the host's server.
+printf '7679\t%s\t/x/bin/claude -p mcp configuration is broken --permission-mode auto\n' "$we" > "$FLOW_HEALTH_PROCS"
+check "alive: claude -p whose prompt starts with mcp is a run" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7679" ]
+printf '7680\t%s\t/x/bin/codex exec daemon crashes on startup\n' "$we" > "$FLOW_HEALTH_PROCS"
+check "alive: codex exec whose prompt starts with daemon is a run" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7680" ]
+printf '7677\t%s\t/x/bin/claude mcp serve\n' "$we" > "$FLOW_HEALTH_PROCS"
+check "alive: Claude's MCP server in a worktree is not a session there" [ -z "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" ]
+# ps prints a command unquoted, and the desktop app keeps its CLI under Application Support.
+printf '7678\t%s\t/Users/x/Library/Application Support/Claude/claude-code/2.1.308/a93d/claude.app/Contents/MacOS/claude --output-format stream-json\n' "$we" > "$FLOW_HEALTH_PROCS"
+check "alive: a Claude desktop session, its CLI under a path with a space, is one" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7678" ]
+# A stale session: Claude's status file says idle for 3 days. A stand-in process gives ps a real pid.
+sleep 300 & idler=$!
+mkdir -p "$HOME/.claude/sessions"
+idle_file() { # idle_file <status> <seconds ago> [<cwd>]
+  python3 -c 'import json, sys, time; now = time.time(); json.dump({"pid": int(sys.argv[1]), "cwd": sys.argv[4], "startedAt": int(now * 1000), "status": sys.argv[2], "statusUpdatedAt": int((now - int(sys.argv[3])) * 1000)}, open(sys.argv[5], "w"))' \
+    "$idler" "$1" "$2" "${3:-$we}" "$HOME/.claude/sessions/$idler.json"
+}
+idle_file idle 259300
+printf '%s\t%s\tclaude\n' "$idler" "$we" > "$FLOW_HEALTH_PROCS"
+check "session: a Claude session idle for days is named with how long" [ "$(python3 "$P/scripts/_health.py" session "$FLOW_HEALTH_PROCS" "$idler")" = "claude process $idler, idle 3d 0h" ]
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: a session idle past stale_session in a claimed worktree is said once, with what it holds and its kill command" sh -c "grep -q 'pool: stale session: claude process $idler (session) in $(basename "$we") is idle 3d 0h; it holds $e, so the comments job skips that PR while it runs. End it if nobody uses it: kill $idler' '$hroot/out' && ! grep -q 'stale session' '$hroot/out2'"
+check "health: the stale session reaches events.log" grep -q "	health	stale session: claude process $idler" .flow/events.log
+"$P/scripts/steward.sh" sessions > "$hroot/out" 2>&1
+check "sessions: lists the session with its worktree, item, idle time and kill command" sh -c "grep -q '^$idler  *claude  *session  *$(basename "$we")  *$e  *idle 3d 0h  *STALE: kill $idler\$' '$hroot/out'"
+cp .flow/config.yaml "$hroot/config.yaml"; printf '    stale_session: 4d\n' >> .flow/config.yaml
+check "sessions --stale: a session idle less than stale_session is left out" sh -c "! '$P/scripts/steward.sh' sessions --stale | grep -q '^$idler '"
+hs > "$hroot/out" 2>&1; cp "$hroot/config.yaml" .flow/config.yaml
+check "health: a session no longer stale lets its mark go, so the next streak is said again" [ ! -f .flow/health/stale-session-$idler.seen ]
+idle_file busy 259300
+check "sessions: a busy session is never stale" sh -c "'$P/scripts/steward.sh' sessions | grep -q '^$idler .* busy *\$'"
+idle_file idle 259300 /elsewhere
+check "session: a status file for another folder is an earlier process's, so no idle time is read" [ "$(python3 "$P/scripts/_health.py" session "$FLOW_HEALTH_PROCS" "$idler" | sed 's/running .*/running/')" = "claude process $idler, running" ]
+kill "$idler" 2>/dev/null; wait "$idler" 2>/dev/null; rm -f "$HOME/.claude/sessions/$idler.json"
+: > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
 check "health: a record younger than the grace is left alone, whatever its pid" sh -c "[ -f '$(rec "$e")' ] && [ $(facts "$e.*resumed implement") = 1 ]"
 rm -f "$wd/.flow/reports/$(item_slug "$d")/sync.md"; "$P/scripts/steward.sh" release "$d" --force >/dev/null 2>&1
@@ -2725,8 +2768,8 @@ check "comments job: a pass that completes with a clean tree removes the note" [
 printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(updatedAt='2026-10-25T01:30:00Z'); json.dump(d, open(p,'w'))"
 : > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
-check "comments job: an item whose worktree another session works in is skipped, and the log says which" sh -c "[ ! -s '$work/host77.log' ] && grep -q '90: another session works in .*app-wt-.* (process 4242), skipped' .flow/log/comments.log && tail -1 .flow/log/comments.log | grep -q 'quiet: nothing new on 0 PR(s), 1 in use by another session'"
-check "comments job: the owner is told the item, the PR, the worktree and what works there" grep -q 'comments-skipped	gh#77: the comments job skips PR #90 while claude (process 4242) works in .*app-wt-' .flow/events.log
+check "comments job: an item whose worktree another session works in is skipped, and the log says which" sh -c "[ ! -s '$work/host77.log' ] && grep -q '90: another session works in .*app-wt-.* (claude process 4242), skipped' .flow/log/comments.log && tail -1 .flow/log/comments.log | grep -q 'quiet: 1 in use: 90 (claude process 4242 in app-wt-[0-9]*)\$'"
+check "comments job: the owner is told the item, the PR, the worktree and what works there" grep -q 'comments-skipped	gh#77: the comments job skips PR #90 while claude process 4242 works in .*app-wt-.*; if nobody uses it, end it: kill 4242\.' .flow/events.log
 "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: the owner is told once while the session stays in the worktree" [ "$(grep -c '	comments-skipped	' .flow/events.log)" = 1 ]
 : > "$FLOW_HEALTH_PROCS"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
@@ -2739,7 +2782,7 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 printf '{"item":"%s","branch":"flow/%s","base":"main"}\n' "$mg" "$(item_slug "$mg")" > "$wm/.flow/claim.json"
 printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"
 : > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
-check "comments job: a PR from a local item's branch whose worktree another session works in is skipped" sh -c "[ ! -s '$work/host77.log' ] && tail -2 .flow/log/comments.log | grep -q '90: another session works in .*app-wt-.* (process 4242), skipped'"
+check "comments job: a PR from a local item's branch whose worktree another session works in is skipped" sh -c "[ ! -s '$work/host77.log' ] && tail -2 .flow/log/comments.log | grep -q '90: another session works in .*app-wt-.* (claude process 4242), skipped'"
 # The item and its PR's number name one PR, so they share the in-use marker: told once, cleared by either.
 told="$(grep -c '	comments-skipped	' .flow/events.log)"
 "$P/jobs/comments.sh" claude "$mg" >/dev/null 2>&1

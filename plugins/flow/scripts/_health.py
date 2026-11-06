@@ -2,6 +2,8 @@
 
   _health.py procs
   _health.py alive <procs file> <item> <worktree> [<pid>]
+  _health.py session <procs file> <pid>
+  _health.py sessions <procs file> <stale seconds> <folder>...
   _health.py owner
   _health.py activity <worktree> <reports dir> <events.log> <item>
   _health.py runs <runs dir> <procs file> <grace seconds>
@@ -17,9 +19,23 @@ procs prints one line per process: pid, working directory (agent processes only)
 tab separated, and fails when ps lists nothing, so a missing ps never reads as every run dead. A
 run is alive when the pid its record names still runs an agent or the unattended loop, or when
 any other process is an agent working in the worktree, or an agent or the loop names the worktree
-or the item in its command line. An editor, a tail or the claude daemon naming the worktree is
-not a run. A run record carries no pid when an older flow wrote it; the scan
-covers it. Times print in local time.
+or the item in its command line. An editor, a tail or a host's own server naming the worktree is
+not a run: the claude daemon, an MCP server, and the Codex desktop app's app-server, its daemon
+and exec-server, which keep the folder they were started in for days. Only the first two words
+after the executable that are not options say so (`codex -c k=v app-server`), as the console
+reads them. A run record carries no pid when an older flow wrote it; the scan covers it. Times
+print in local time.
+
+session names one process for a line a person reads: `claude process 62102, idle 3d 2h` (idle
+since Claude last changed its status), `claude process 4242, busy`, or `codex process 7, running
+7d 2h` when the host keeps no status. Claude writes ~/.claude/sessions/<pid>.json for each running
+process (in $CLAUDE_CONFIG_DIR when set); it counts only when it names the pid and, when it says
+so, the same start time, so a reused pid never reads an old status.
+
+sessions lists the agents working in or under the given folders, one tab-separated line each:
+pid, host, kind (agent for claude -p and codex exec, else session), the folder, state (busy, idle
+or unknown), the seconds idle (or alive, when unknown), and stale (1 or 0). Idle at least the
+stale seconds is stale; with no status, alive that long is; busy never is.
 
 review judges a PR waiting at the merge gate from comments.sh state (GitHub's review decision,
 latest reviews and pending review requests) and comments.sh reviews (the flow's own requests, one
@@ -32,15 +48,50 @@ there as JSON, for the console."""
 import calendar, glob, json, os, re, subprocess, sys, time
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
-SERVICE = {"daemon", "mcp"}
+# A host's own servers, never an agent: the subcommand, the first word after the executable that is
+# not an option (`codex app-server daemon pid-update-loop` is app-server's). Never an unattended run:
+# `claude -p mcp is broken` or `codex exec daemon fails` is an agent whose prompt names a server.
+SERVICE = {"daemon", "mcp", "app-server", "exec-server"}
+OPTIONS_WITH_VALUE = {"-c", "--config"}
+UNATTENDED = re.compile(r" (-p|--print|exec)( |$)")
 LOOP = re.compile(r"run-unattended\.sh|jobs/(next|comments)\.sh")
 DURATION = re.compile(r"(\d+)([smhd]?)")
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "": 60}
 
 
+# ps prints a command unquoted. The executable runs past a space only while the part beyond it is
+# still an app bundle or the folder the Claude desktop app keeps its CLI in, as the console reads it.
+PATH_WITH_SPACES = (".app/", "Application Support/")
+
+
+def split_command(command):
+    tokens = command.split()
+    executable, index = (tokens[0] if tokens else ""), 1
+    while index < len(tokens):
+        extended = executable + " " + tokens[index]
+        if not any(extended.rfind(m) >= 0 and extended.rfind(m) + len(m) > len(executable) + 1 for m in PATH_WITH_SPACES):
+            break
+        executable, index = extended, index + 1
+    return [executable] + tokens[index:] if executable else []
+
+
+def subcommand(words):
+    index = 1
+    while index < len(words):
+        word = words[index]
+        if not word.startswith("-"):
+            return word
+        index += 2 if word in OPTIONS_WITH_VALUE else 1
+    return ""
+
+
+def is_server(words):
+    return subcommand(words) in SERVICE and not UNATTENDED.search(" ".join(words))
+
+
 def is_agent(command):
-    words = command.split()
-    return bool(words) and bool(AGENT.search(words[0])) and (len(words) < 2 or words[1] not in SERVICE)
+    words = split_command(command)
+    return bool(words) and bool(AGENT.search(words[0])) and not is_server(words)
 
 
 def is_host(command):
@@ -131,6 +182,98 @@ def alive(rows, item, worktree, pid):
     return ""
 
 
+def started(pids):
+    """Per pid: how many seconds it has run, as ps says."""
+    out = {}
+    if not pids:
+        return out
+    for line in run(["ps", "-o", "pid=,etime=", "-p", ",".join(pids)]).splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit():
+            out[parts[0]] = elapsed(parts[1])
+    return out
+
+
+def elapsed(text):
+    days, _, clock = text.rpartition("-")
+    parts = [int(p) for p in clock.split(":") if p.isdigit()][::-1]
+    seconds = sum(p * u for p, u in zip(parts, (1, 60, 3600)))
+    return seconds + (int(days) * 86400 if days.isdigit() else 0)
+
+
+# ps on macOS dates a process that lived through a clock change an hour or two off, so the start
+# Claude recorded only has to fall this near the one ps implies.
+SAME_START_SLACK = 2 * 3600
+
+
+def claude_status(pid, cwd, alive_for, now):
+    """(busy|idle, since epoch) from ~/.claude/sessions/<pid>.json, or None when the file is
+    missing or belongs to an earlier process with the same pid (another folder or start)."""
+    home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    try:
+        with open(os.path.join(home, "sessions", "%s.json" % pid)) as f:
+            record = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or str(record.get("pid")) != str(pid):
+        return None
+    if cwd and isinstance(record.get("cwd"), str) and os.path.realpath(record["cwd"]) != os.path.realpath(cwd):
+        return None
+    began = record.get("startedAt")
+    if isinstance(began, (int, float)) and not isinstance(began, bool) and alive_for:
+        if abs(began // 1000 - (now - alive_for)) > SAME_START_SLACK:
+            return None
+    status, since = record.get("status"), record.get("statusUpdatedAt")
+    if status not in ("busy", "idle") or not isinstance(since, (int, float)) or isinstance(since, bool):
+        return None
+    return status, int(since // 1000)
+
+
+def host_name(command):
+    words = split_command(command)
+    return os.path.basename(words[0]) if words else "?"
+
+
+def describe(pid, cwd, command, alive_for, now):
+    """(busy|idle|unknown, seconds idle, or alive when unknown)."""
+    status = claude_status(pid, cwd, alive_for, now) if host_name(command) == "claude" else None
+    if status is None:
+        return "unknown", alive_for
+    state, since = status
+    return state, max(0, now - since) if state == "idle" else 0
+
+
+def session_line(rows, pid):
+    row = next((r for r in rows if r[0] == pid), None)
+    if row is None:
+        return "process %s" % pid
+    alive_for = started([pid]).get(pid)
+    state, seconds = describe(pid, row[1], row[2], alive_for or 0, int(time.time()))
+    named = "%s process %s" % (host_name(row[2]), pid)
+    if state == "unknown" and alive_for is None:
+        return named
+    return named + ", " + {"busy": "busy", "idle": "idle " + age_of(seconds)}.get(state, "running " + age_of(seconds))
+
+
+def sessions(rows, stale, folders):
+    wts = [(f.rstrip("/"), os.path.realpath(f)) for f in folders]
+    picked = []
+    for number, where, command in rows:
+        if not where or not is_agent(command):
+            continue
+        real = os.path.realpath(where)
+        for given, resolved in wts:
+            if real == resolved or real.startswith(resolved + "/"):
+                picked.append((number, where, command, given))
+                break
+    ages, now = started([n for n, _, _, _ in picked]), int(time.time())
+    for number, where, command, folder in picked:
+        state, seconds = describe(number, where, command, ages.get(number, 0), now)
+        is_stale = state != "busy" and seconds >= stale
+        kind = "agent" if UNATTENDED.search(command) else "session"
+        print("\t".join([number, host_name(command), kind, folder, state, str(seconds), "1" if is_stale else "0"]))
+
+
 def owner():
     pid = os.getppid()
     seen = set()
@@ -180,6 +323,10 @@ def age(then):
     if seconds < 86400:
         return "%dh %02dm" % (seconds // 3600, seconds % 3600 // 60)
     return "%dd %dh" % (seconds // 86400, seconds % 86400 // 3600)
+
+
+def age_of(seconds):
+    return age(int(time.time()) - seconds)
 
 
 def ago(then):
@@ -295,6 +442,10 @@ def main():
         procs()
     elif command == "alive":
         print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else ""))
+    elif command == "session":
+        print(session_line(snapshot(args[0]), args[1]))
+    elif command == "sessions":
+        sessions(snapshot(args[0]), int(args[1]), args[2:])
     elif command == "owner":
         print(owner())
     elif command == "activity":

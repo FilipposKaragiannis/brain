@@ -15,7 +15,7 @@ import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
 import { ProjectRegistry } from '../src/registry.ts';
 import { closeConsoleServer, createConsoleServer } from '../src/server.ts';
-import type { SessionRef, TranscriptLine, TranscriptTurn } from '../src/snapshot.ts';
+import type { SessionActivity, SessionRef, TranscriptLine, TranscriptTurn } from '../src/snapshot.ts';
 import { TRANSCRIPT_LINE_CHARS } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
@@ -40,13 +40,13 @@ const locator = (dir: string, files: SessionFiles = diskSessionFiles) => new Ses
 
 /** The session the locator gives one process on its own. */
 async function one(found: SessionLocator, process: Omit<SessionProcess, 'pid'> & { pid?: number }) {
-  return (await found.assign([{ pid: 4242, ...process }]))[0] ?? null;
+  return (await found.assign([{ pid: 4242, ...process }]))[0]?.session ?? null;
 }
 
-/** `~/.claude/sessions/<pid>.json` in the shape claude writes it (procStart as ps prints lstart, local time). */
-function sessionsFile(dir: string, pid: number, sessionId: string, cwd: string, startedAt: Date): void {
+/** `~/.claude/sessions/<pid>.json` in the shape claude writes it (procStart as ps prints lstart, local time), with any further fields given. */
+function sessionsFile(dir: string, pid: number, sessionId: string, cwd: string, startedAt: Date, more: Record<string, unknown> = {}): void {
   const procStart = startedAt.toString().replace(/^(\w{3}) (\w{3}) (\d{2}) (\d{4}) ([\d:]{8}).*$/, (_all, day, month, date, year, clock) => `${day} ${month} ${Number(date)} ${clock} ${year}`);
-  written(path.join(dir, '.claude', 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId, cwd, startedAt: startedAt.getTime(), procStart, kind: 'interactive', entrypoint: 'cli' }), NOW);
+  written(path.join(dir, '.claude', 'sessions', `${pid}.json`), JSON.stringify({ pid, sessionId, cwd, startedAt: startedAt.getTime(), procStart, kind: 'interactive', entrypoint: 'cli', ...more }), NOW);
 }
 
 test('ClaudeFolder_EveryNonAlphanumericBecomesADash', () => {
@@ -93,6 +93,53 @@ test('SessionsFileFromAnEarlierProcessWithThePid_Ignored', async () => {
   } finally { done(); }
 });
 
+/** When the idle session of the activity tests last changed its status: two days before NOW. */
+const IDLE_SINCE_MS = NOW.getTime() - 2 * 86400 * 1000;
+
+test('ClaudeSessionsFileSaysIdle_ActivityIsIdleSinceItsStatusTime', async () => {
+  const { dir, done } = home();
+  try {
+    sessionsFile(dir, 62102, 'idle-1111', '/p/app-wt-10', new Date(NOW.getTime() - 12 * 86400 * 1000), { status: 'idle', statusUpdatedAt: IDLE_SINCE_MS });
+    const [found] = await locator(dir).assign([{ pid: 62102, host: 'claude', cwd: '/p/app-wt-10', elapsedSeconds: 12 * 86400 }]);
+    assert.deepEqual(found?.activity, { status: 'idle', since: new Date(IDLE_SINCE_MS).toISOString() }, 'because claude\'s sessions file says the session has waited on its owner since its last status change');
+  } finally { done(); }
+});
+
+test('ClaudeSessionsFileSaysBusy_ActivityIsBusy', async () => {
+  const { dir, done } = home();
+  try {
+    sessionsFile(dir, 100, 'busy-1111', '/p/app', new Date(NOW.getTime() - 600 * 1000), { status: 'busy', statusUpdatedAt: NOW.getTime() - MINUTE_MS });
+    const [found] = await locator(dir).assign([{ pid: 100, host: 'claude', cwd: '/p/app', elapsedSeconds: 600 }]);
+    assert.equal(found?.activity?.status, 'busy', 'because a session working on a turn is busy, however long it has run');
+  } finally { done(); }
+});
+
+test('SessionsFileOfAnEarlierProcessWithThePid_NoActivity', async () => {
+  const { dir, done } = home();
+  try {
+    sessionsFile(dir, 100, 'earlier-1', '/p/app', new Date(NOW.getTime() - 5 * 3600 * 1000), { status: 'idle', statusUpdatedAt: IDLE_SINCE_MS });
+    const [found] = await locator(dir).assign([{ pid: 100, host: 'claude', cwd: '/p/app', elapsedSeconds: 60 }]);
+    assert.equal(found?.activity, null, 'because a file left by an earlier process with the same pid says nothing of the one running now');
+  } finally { done(); }
+});
+
+test('ClaudeSessionsFileWithoutAStatus_NoActivity', async () => {
+  const { dir, done } = home();
+  try {
+    sessionsFile(dir, 100, 'older-claude', '/p/app', new Date(NOW.getTime() - 600 * 1000), { status: 'thinking', statusUpdatedAt: NOW.getTime() });
+    const [found] = await locator(dir).assign([{ pid: 100, host: 'claude', cwd: '/p/app', elapsedSeconds: 600 }]);
+    assert.deepEqual([found?.session?.id, found?.activity], ['older-claude', null], 'because a status claude does not write is unknown, and the session still opens');
+  } finally { done(); }
+});
+
+test('CodexProcess_NoActivity', async () => {
+  const { dir, done } = home();
+  try {
+    const [found] = await locator(dir).assign([{ pid: 7, host: 'codex', cwd: '/p/app-wt-3', elapsedSeconds: 600 }]);
+    assert.equal(found?.activity, null, 'because Codex writes no sessions file, so only its age is known');
+  } finally { done(); }
+});
+
 test('TwoClaudeProcessesInOneFolder_OneTranscriptNeverGoesToBoth', async () => {
   const { dir, done } = home();
   try {
@@ -104,7 +151,7 @@ test('TwoClaudeProcessesInOneFolder_OneTranscriptNeverGoesToBoth', async () => {
       { pid: 300, host: 'claude', cwd: '/p/app', elapsedSeconds: 3600 },
       { pid: 101, host: 'claude', cwd: '/p/app', elapsedSeconds: 600 },
     ]);
-    assert.deepEqual(sessions.map((session) => session?.id ?? null), [null, 'owners-2222', null], 'because Open session on the agent must never resume the owner\'s live session, which its sessions file names');
+    assert.deepEqual(sessions.map((found) => found.session?.id ?? null), [null, 'owners-2222', null], 'because Open session on the agent must never resume the owner\'s live session, which its sessions file names');
   } finally { done(); }
 });
 
@@ -118,7 +165,7 @@ test('FolderScan_DoneOncePerProcess', async () => {
     const process = { pid: 100, host: 'claude' as const, cwd: '/p/app', elapsedSeconds: 600 };
     await found.assign([process]);
     const again = await found.assign([process]);
-    assert.deepEqual([listed, again[0]?.id], [1, 'run-1'], 'because the folder can hold hundreds of transcripts and the processes source reads every ten seconds');
+    assert.deepEqual([listed, again[0]?.session?.id], [1, 'run-1'], 'because the folder can hold hundreds of transcripts and the processes source reads every ten seconds');
   } finally { done(); }
 });
 
@@ -460,7 +507,7 @@ function changingProcesses(): { runner: CommandRunner; drop: (pid: number) => vo
   return { runner, drop: (pid) => dropped.add(pid) };
 }
 
-const sessionsByPid = { assign: async (processes: { host: string }[]) => processes.map((process) => (process.host === 'claude' ? SESSION : null)) };
+const sessionsByPid = { assign: async (processes: { host: string }[]) => processes.map((process) => ({ session: process.host === 'claude' ? SESSION : null, activity: null })) };
 
 test('AgentWithATranscript_SnapshotCarriesItsSession', async () => {
   const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid });
@@ -480,6 +527,24 @@ test('AgentGoneFromTheProcessList_ListedAsEndedWithItsSession', async () => {
   await monitor.refresh('processes');
   assert.deepEqual(monitor.snapshot?.ended.map((entry) => [entry.pid, entry.worktree, entry.endedAt, entry.session?.id]), [[100, 'project-wt-3', NOW.toISOString(), SESSION.id]], 'because a run that ended leaves a session the owner can resume');
   assert.deepEqual(monitor.actionContext().sessions.map((entry) => [entry.pid, entry.alive]), [[104, true], [100, false]], 'because an ended run\'s session resumes at once, a live one waits for Enter');
+});
+
+const IDLE: SessionActivity = { status: 'idle', since: '2026-10-22T18:16:04.000Z' };
+const idleSessions = { assign: async (processes: { pid: number }[]) => processes.map((process) => ({ session: null, activity: process.pid === 104 ? IDLE : null })) };
+
+test('SessionWithItsActivity_SnapshotCarriesItAndItsStart', async () => {
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions });
+  await monitor.refresh('files');
+  await monitor.refresh('processes');
+  const session = monitor.snapshot?.agents.find((entry) => entry.pid === 104);
+  assert.deepEqual([session?.activity, session?.startedAt], [IDLE, '2026-10-24T18:14:04.000Z'], 'because the Agents screen says how long the session has sat idle, and a stop names it by its start');
+});
+
+test('ActionContext_LiveSessions_TheSessionsOnlyNotTheRuns', async () => {
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions });
+  await monitor.refresh('files');
+  await monitor.refresh('processes');
+  assert.deepEqual(monitor.actionContext().liveSessions, [{ pid: 104, startedAt: '2026-10-24T18:14:04.000Z' }], 'because Stop session ends the owner\'s own sessions; the run in project-wt-3 stops with Stop this run, which clears its record');
 });
 
 test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async () => {

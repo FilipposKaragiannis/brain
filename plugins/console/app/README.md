@@ -168,15 +168,16 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 13 since a pull took `checkRuns`,
-`head`, `autoMerge`, `changesRequested` and `reviewsRequested` and the snapshot took `mergedToday`
-(12 when a worktree took the `comments-skipped` flag, 11 when a run's `liveness` took the place of
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 14 since an agent took
+`startedAt` and `activity`, the project took `staleSessionSeconds` and the snapshot took `servers` (13 when a pull took `checkRuns`,
+`head`, `autoMerge`, `changesRequested` and `reviewsRequested` and the snapshot took `mergedToday`,
+12 when a worktree took the `comments-skipped` flag, 11 when a run's `liveness` took the place of
 `alive` and the snapshot took `processList`, 10 when the snapshot took `lessons`, `retros` and
 `counts.lessonsSinceRetro`, 9 when an attention row took `gate`, 8 when `project.trackers` took the
 place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
 One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
-a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `processList`, `ended`, `jobs`, `pulls`, `events`
+a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `processList`, `servers`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`), `lessons`, `retros`, `disagreements` and `newerConsole`
 (`{running, cached}` while the plugin cache holds a newer console with an install script than the
 one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
@@ -245,6 +246,16 @@ snapshots.
   are kept in memory and forgotten fourteen days after the file was last written. `resume` is the argv
   that opens it again: `["claude", "--resume", id]` or `["codex", "resume", id]`. The home folder
   and the clock are injected (`daemon/src/collectors/sessions.ts`).
+- `activity` (on every entry of `agents` and `ended`) is `{status, since}` from that same sessions
+  file, taken only on the same pid, cwd and start: `status` is claude's `idle` (waiting on its
+  owner) or `busy`, `since` its `statusUpdatedAt`. Null for codex, which writes no such file, and
+  for a claude without one of its own. `startedAt` is when ps says the process started, worked out
+  at the read that found it.
+- `project.staleSessionSeconds` is `jobs.health.stale_session` in seconds (a flow duration, 24h
+  unset). `sessionStale` in snapshot.ts is the one rule the pages use: a session (never a flow
+  agent) is stale once it has been idle that long, or, with no `activity`, once its process has run
+  that long; a busy one never is. It takes the page's own clock, so a session turns stale between
+  snapshots.
 - `processList` says how far the last process read can be trusted to say that nothing runs
   somewhere: `{status: "complete"}` when ps listed the processes and lsof gave every claude and
   codex its working directory; `{status: "partial", reason, unplaced, lookup}` when ps listed them
@@ -267,6 +278,13 @@ snapshots.
   proves nothing; else `starting` while the record is younger than `jobs.health.grace` (10m by
   default, read as flow reads a duration); else `dead`. Only a dead run gets the `dead-run` flag,
   the `dead-run` attention row, the run record vs process list disagreement and a Resume button.
+- `servers` lists the hosts' own servers, never agents or sessions, whose working directory is in
+  one of the project's worktrees, as the sessions are placed: `{pid, host, label, worktree,
+  startedAt, elapsedSeconds, command}`, `label` one of "Claude daemon", "Claude MCP server", "Codex
+  app server", "Codex app server pid loop" or "Codex exec server" (another server of a host is its
+  host and first words). Found by the same ps and lsof as the agents; one lsof could not place is
+  left out and does not make `processList` partial. Only shown: no action takes a server, and
+  flow's comments and health jobs pass them by.
 - `ended` lists the agents and sessions with a session that left the process list while the
   daemon watched, in the last 24 hours, at most 10, newest first: an `agents` entry plus `endedAt`
   (when the read that missed it ran). It lives in the daemon's memory, so a restart empties it.
@@ -393,7 +411,7 @@ Null without a record.
 |---|---|---|
 | `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, `lessons.jsonl`, `retros.log`, `reports/retro-*.md`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
 | `git` | `git worktree list`, per worktree ahead/behind the base, dirty files, last commit | 30s, and after a file change |
-| `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd, and every process that can own a run (those and flow's unattended loop) with its start; a lookup that fails or times out (10s each) makes the list `partial` or `unavailable` (`processList`), never empty. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent | 10s |
+| `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd, and every process that can own a run (those and flow's unattended loop) with its start; a lookup that fails or times out (10s each) makes the list `partial` or `unavailable` (`processList`), never empty. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, `claude mcp serve`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent; those servers go to `servers` with their cwd from the same lsof | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
 | `pulls` | `gh pr list` for the open PRs of `github.repo` (with each check's latest run, the head commit and GitHub's auto-merge), `gh pr list --state merged` for those merged since local midnight (`mergedToday`), then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project without `github.repo` reports `ok` with `error: "not applicable: …"` and is never read; whatever tracker holds the items, the flow keeps their PRs on GitHub, so the tracker does not matter | 60s |
@@ -510,6 +528,7 @@ on every state change and at most twice a second while output arrives.
 | `job.unschedule` | `job` (a schedule name) | `jobs.sh uninstall <job>`, then takes `jobs.schedule.<job>` out of the config | the schedule | `finished`; `jobs` and `files` are re-read |
 | `run.stop` | `item` | `steward.sh stop <item>`: ends the run's processes and removes its record, keeping the claim and the worktree | a stop lock of the item's own, so it reaches a run `run.start` or `job.start` holds | `finished` |
 | `run.resume` | `item` | `steward.sh resume <item>`: clears a dead run's record and starts its step again, as the health job does | the item | `started` |
+| `session.stop` | `pid`, `startedAt` (the session's start as the page shows it) | `/bin/kill -s TERM <pid>`, never SIGKILL: refused unless the latest snapshot lists that pid as an interactive session started within ten seconds of `startedAt`; just before the signal the daemon reads the pid with `ps -o pid=,etime=,command= -p <pid>` again and fails the action, signalling nothing, unless it still runs a claude or codex session (not a flow agent, not a host's server) started then | `session:<pid>` | `finished`; `processes` is re-read then and five seconds later |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
 | `worktree.reserve` | `target?` (a pool worktree's name), `name?` | `steward.sh reserve [<pool path>] [--name <name>]`: the target worktree, else the first free one, with no item under the name, git `user.name` when none is given; the steward refuses a target that is claimed, reserved or dirty, exit 3; claim, sweep, health and next pass over it until a release | the pool, and the worktree with a target | `finished` |
@@ -648,7 +667,7 @@ An item is an id that starts with the prefix of one of the plugin's adapters (th
 folder): `gh#12`, `local:task/7`, `jira:WID-7`. A release target is an item or the name of a pool worktree,
 which the daemon turns into its path. An argument the kind does not take is refused, so a typo
 never changes what runs. A second action on a held lock is refused with 409 and recorded as
-`rejected`. At most four run at once, stops aside: `run.stop` and `job.stop` start on a full
+`rejected`. At most four run at once, stops aside: `run.stop`, `job.stop` and `session.stop` start on a full
 runner too. Scripts get two minutes, a merge three; a process that
 ignores SIGTERM is killed with its group ten seconds later, and a timed-out action is `failed`
 whatever its exit code. A run started with `run.start` and an item is detached, writes its own output file,
@@ -711,7 +730,7 @@ person has to look:
 | outside | a worktree that is not in the pool: the main checkout or one git knows of elsewhere |
 | dirty | the worktree has files that are not committed |
 | agent | an unattended claude or codex the flow started (`claude -p`, `codex exec`) with its working directory in the worktree |
-| session | an interactive claude or codex whose working directory is in the worktree, yours or an app's (such as the Claude desktop app), not an unattended agent; a host's own background server (the Codex desktop app's `app-server`) is neither |
+| session | an interactive claude or codex whose working directory is in the worktree, yours or an app's (such as the Claude desktop app), not an unattended agent; a host's own background server (the Codex desktop app's `app-server`) is neither, and shows under Servers |
 | disagreement | two places flow state lives say different things, and kept saying it after both were read again |
 | needs-field | an item that is the next step of work already under way (its parent or a sibling has started, or it blocks started work) but lacks a field the tracker asks for (`ready.needs`, such as priority), so the next job passes it over |
 
@@ -733,7 +752,8 @@ a clipped title loses nothing; the PR rows come from the `pulls` source, so they
 it has waited with a bar that turns late at a day and old at two, and one button that settles it (the row's own action, else Decide,
 Open PR, Fix, Fill in or Open), with the next-in-line items that lack a field folded after five;
 beside it Running now, each agent's step, item, worktree, host and PR with its age, the last line
-of the first claude transcript, and the scheduled jobs in the order they run next; then the latest
+of the first claude transcript, "N stale session(s): <worktrees>" with a link to Agents while a
+session is stale, and the scheduled jobs in the order they run next; then the latest
 12 events with Show all; the disagreements, only when there are some, with what each store says
 and the button that settles it; the pool map, a cell per worktree with its item, title and what it
 waits on, striped while it runs, and under it "The comments job skips N worktree(s): <names> (a
@@ -787,8 +807,15 @@ run has a session to resume, else Open in Terminal, and Stop this run (`run.stop
 a dashed card with Resume (`run.resume`); a run whose process was not found but may still go is a
 dashed card with no button that says why: "process list unavailable: <reason>" (or incomplete)
 while `liveness` is `unknown`, or that it is still starting within the grace; with no run, a link
-to Jobs. Then your own sessions, folded, and the runs ended in the last day, each row with Open
-session or, with no session to resume, Open in Terminal), Jobs (`#/<project>/jobs`, a main column and a side column. Schedules: a
+to Jobs. Then your own sessions, folded, each row with its pid, host, worktree, item, `busy`,
+`idle 3d 2h` or (with no `activity`) its age, a `stale` tag past `jobs.health.stale_session`, Open
+session or Open in Terminal, and Stop session, which asks first ("SIGTERM to pid N?" with Stop it
+and Cancel) and then sends `session.stop`; stale sessions come first, and while any is stale the
+fold opens by itself with the count in its heading ("Your sessions (3 · 1 stale)"). Then the
+servers, folded and read-only ("Servers (2)", hidden with none), each row with its label, pid,
+worktree and how long it has run, its command on hover, under a line that says they are not
+sessions and the comments and health jobs ignore them. Then the runs
+ended in the last day, each row with Open session or, with no session to resume, Open in Terminal), Jobs (`#/<project>/jobs`, a main column and a side column. Schedules: a
 card per schedule with its state, timing, host and args, the last
 run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Open in Terminal in the row; its
 history and workers open in a box of fixed height that scrolls; the jobs with no schedule fold

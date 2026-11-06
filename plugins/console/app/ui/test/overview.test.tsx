@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
-import type { AttentionRow, Disagreement, InstalledPlugin, PullRequest, Snapshot } from '../../daemon/src/snapshot.ts';
+import type { Agent, AttentionRow, Disagreement, InstalledPlugin, PullRequest, Snapshot } from '../../daemon/src/snapshot.ts';
 import type { Route } from '../src/route.ts';
 import { Overview, tiles } from '../src/screens/Overview.tsx';
 import { FIELD_ROWS_SHOWN } from '../src/screens/NeedsYou.tsx';
@@ -262,4 +262,26 @@ test('CommentsSkippedLine_LinksToWorktrees', () => {
 test('PoolWithNoCommentsSkippedWorktree_NoSkippedLine', () => {
   renderOverview({ ...snapshotAt(TAKEN_AT, 0), worktrees: [{ ...poolWorktree('wt-2'), flags: ['session'] }] });
   expect(screen.queryByLabelText('Comments skipped'), 'because a session in a worktree whose item has no open PR holds nothing back').toBeNull();
+});
+
+/** An interactive session in `worktree`, idle since `idleHours` before the snapshot. */
+function idleSessionIn(worktree: string, idleHours: number): Agent {
+  const since = new Date(Date.parse(TAKEN_AT) - idleHours * 3600 * 1000).toISOString();
+  return { pid: 62102, host: 'claude', kind: 'session', cwd: `/p-wt/${worktree}`, worktree, item: null, elapsedSeconds: 12 * 86400, startedAt: since, command: 'claude', session: null, activity: { status: 'idle', since } };
+}
+
+test('StaleSession_RunningNowNamesItAndLinksToAgents', () => {
+  renderOverview({ ...snapshotAt(TAKEN_AT, 0), agents: [idleSessionIn('foosbrawl-wt-10', 74)] });
+  const line = screen.getByLabelText('Stale sessions');
+  expect([line.textContent, within(line).getByRole('link', { name: 'Agents' }).getAttribute('href')], 'because a forgotten session holds up its worktree\'s PR, and Agents is where it is stopped').toEqual(['1 stale session: foosbrawl-wt-10. Agents', '#/project/agents']);
+});
+
+test('NoStaleSession_NoStaleLine', () => {
+  renderOverview({ ...snapshotAt(TAKEN_AT, 0), agents: [idleSessionIn('foosbrawl-wt-10', 2)] });
+  expect(screen.queryByLabelText('Stale sessions'), 'because a session idle for two hours is the owner\'s to come back to').toBeNull();
+});
+
+test('FlowRunGoingForDays_NotAStaleSession', () => {
+  renderOverview({ ...snapshotAt(TAKEN_AT, 0), agents: [{ ...idleSessionIn('wt-3', 74), kind: 'agent', activity: null }] });
+  expect(screen.queryByLabelText('Stale sessions'), 'because a flow run is watched by the health job, not left behind by its owner').toBeNull();
 });

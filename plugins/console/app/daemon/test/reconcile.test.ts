@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import { test } from 'node:test';
 import type { BoardItem } from '../src/collectors/board.ts';
 import { parseBoard } from '../src/collectors/board.ts';
@@ -40,7 +41,7 @@ async function snapshot(): Promise<Snapshot> { return reconcile(await input()); 
 const worktree = (picture: Snapshot, name: string) => picture.worktrees.find((entry) => entry.name === name);
 
 /** A process read that worked and found no claude, codex or unattended loop at all. */
-const NOTHING_RUNS: ProcessFacts = { agents: [], hosts: [], list: { status: 'complete' } };
+const NOTHING_RUNS: ProcessFacts = { agents: [], servers: [], hosts: [], list: { status: 'complete' } };
 
 test('WorktreeWithAgentProcess_IsRunning', async () => {
   const running = worktree(await snapshot(), 'project-wt-3');
@@ -242,7 +243,7 @@ test('RunWithoutProcess_IsDeadAndFlagged', async () => {
 
 /** The read behind the false dead runs: ps timed out, so it knows nothing about any process. */
 const PS_TIMED_OUT: ProcessFacts = {
-  agents: [], hosts: [],
+  agents: [], servers: [], hosts: [],
   list: { status: 'unavailable', reason: 'ps timed out after 10s', lookup: { command: 'ps', code: null, timedOut: true, durationMs: 10004, stderr: '' } },
 };
 
@@ -1092,6 +1093,12 @@ test('JobHosts_SchedulesAndWorkers_DistinctAndSorted', async () => {
   assert.deepEqual(reconcile(facts).project.jobHosts, ['claude', 'codex'], 'because the header names each host a schedule or a worker runs on, once each');
 });
 
+test('Project_StaleSessionLimit_FromTheConfig', async () => {
+  const facts = await input();
+  facts.flow.config.staleSessionSeconds = 7200;
+  assert.equal(reconcile(facts).project.staleSessionSeconds, 7200, 'because the page calls a session stale by jobs.health.stale_session, as the health job does');
+});
+
 test('JobHosts_NoJobSaysAHost_JobsHostAlone', async () => {
   const facts = await input();
   facts.flow.config.jobsHost = 'codex';
@@ -1148,4 +1155,34 @@ test('Pull_ReviewHoldFacts_CarriedForTheCard', async () => {
   facts.pulls = { pulls: [ready({ reviewDecision: null, changesRequested: 1, reviewsRequested: 2, checks: { passed: 2, failed: 1, pending: 0 } })], merged: [] };
   const pull = pullNumbered(reconcile(facts), 30);
   assert.deepEqual([pull?.state, pull?.changesRequested, pull?.reviewsRequested], ['checks-failing', 1, 2], 'because the card keeps Merge when green off for a review hold a failing check hides from the state');
+});
+
+/** A Codex app server working at `cwd`, as the process read finds one. */
+const appServer = (pid: number, cwd: string): ProcessFacts['servers'][number] => ({
+  pid, host: 'codex', label: 'Codex app server', cwd, elapsedSeconds: 183600, startedAt: '2026-10-22T15:16:04.000Z', command: '/x/codex app-server --listen unix:///tmp/codex.sock',
+});
+
+test('Servers_InAPoolWorktree_ListedWithIt', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, servers: [appServer(64347, path.resolve(FIXTURE_ROOT, '../project-wt-3/src'))] };
+  assert.deepEqual(reconcile(facts).servers.map((server) => [server.pid, server.label, server.worktree]), [[64347, 'Codex app server', 'project-wt-3']], 'because a server working in the pool is part of what runs for this project');
+});
+
+test('Servers_InTheMainWorktree_Listed', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, servers: [appServer(56354, FIXTURE_ROOT)] };
+  assert.deepEqual(reconcile(facts).servers.map((server) => server.worktree), [path.basename(FIXTURE_ROOT)], 'because the main worktree is the project too');
+});
+
+test('Servers_OutsideTheProject_LeftOut', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, servers: [appServer(701, '/Users/x'), appServer(702, path.resolve(FIXTURE_ROOT, '../project-wt-30'))] };
+  assert.deepEqual(reconcile(facts).servers, [], 'because the Codex app bundle\'s servers in the home folder, or in a folder that only shares a name prefix, are another project\'s or nobody\'s');
+});
+
+test('Servers_NeverAgentsOrSessions', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, servers: [appServer(64347, path.resolve(FIXTURE_ROOT, '../project-wt-3'))] };
+  const picture = reconcile(facts);
+  assert.deepEqual([picture.agents, worktree(picture, 'project-wt-3')?.sessions, worktree(picture, 'project-wt-3')?.flags.includes('session')], [[], [], false], 'because the comments and health jobs pass a server by, and the page must not show it as someone at work');
 });

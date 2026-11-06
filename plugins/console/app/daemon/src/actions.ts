@@ -58,7 +58,7 @@ const RECORDS_KEPT = 200;
 export const RECENT_LISTED = 50;
 const MAX_RUNNING = 4;
 /** Stops never count against MAX_RUNNING: a full runner is when one is most needed. Each holds its own stop lock, so they stay few. */
-const STOP_KINDS: readonly string[] = ['run.stop', 'job.stop'];
+const STOP_KINDS: readonly string[] = ['run.stop', 'job.stop', 'session.stop'];
 /** How often the stream hears about output still arriving. */
 const OUTPUT_EVENT_MS = 500;
 /** How long a process gets after SIGTERM before SIGKILL. */
