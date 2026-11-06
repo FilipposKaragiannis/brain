@@ -33,15 +33,20 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    addresser of the thread the changes belong to (step 6), which continues from them.
 3. **Checks**: the brief names failing checks, or `comments.sh failing-checks <pr>` prints any.
    Step 2 pushed a merge → skip: they ran on the old head, the next pass sees the new one's.
-   Else in the claimed worktree, with a clean tree, spawn the `implementer` with this brief: read
-   the failed logs (`gh pr checks <pr>`, `gh run view <run> --log-failed`), find the cause, fix it
-   in the task branch, build and run the tests, commit as `fix: make <check> pass`. Then the
+   Else in the claimed worktree, with a clean tree, note the head (`git rev-parse HEAD`) and
+   spawn the `implementer` with this brief: read the failed logs (`gh pr checks <pr>`, `gh run
+   view <run> --log-failed`), find the cause, fix it in the task branch, build and run the tests,
+   commit as `fix: make <check> pass`. Then the
    `verifier`; on `pass` run `git push origin "HEAD:<headRefName>"` (never force) and re-request
    review (step 8) naming the fix. A failure that is not the change's (infra, billing, a flake,
    a check red on the base too), or a check still red on the head of an earlier `fix: make
    <check> pass` → no code change: say so in the report and go on to step 4 (a gate only when
-   the owner must decide). A dirty tree or a failing verify → leave the fix unpushed, report it,
-   go on to step 4.
+   the owner must decide). A dirty tree → no fix: report it, go on to step 4. A failing verify →
+   the addressers of step 6 push this branch, so take the attempt off it first: `git switch -c
+   "<headRefName>-rejected-<short sha>"` keeps it (commit what it left uncommitted there as `wip:
+   rejected fix for <check>`), then `git switch "<task branch>"` and `git reset --hard <noted
+   head>`, which drops only the attempt. Never push that branch. Name it in the report and go on
+   to step 4.
    A red check never ends the pass: the threads are addressed whatever CI says. A pass that
    leaves a thread for "the next pass" leaves it for good: the comments job gives a thread that
    still waits one more pass, then stops trying it.
