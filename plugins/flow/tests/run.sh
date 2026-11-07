@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for the flow plugin: config parsing, both adapters (GitHub through a fake gh), the
-# steward, next/advance, gates, re-sizing, overlap, the board and the worktree hooks. Builds a
+# steward, next/advance, gates, re-sizing, overlap, holds, the board and the worktree hooks. Builds a
 # throwaway repo with a two-worktree pool. Run from anywhere. Exit 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -201,8 +201,13 @@ t3="$("$P/adapters/local/create.sh" task "Overlapping" --size S)"
 check "overlapping claim refused? (explicit item runs; pool full)" [ "$code" -ne 0 ]
 "$P/adapters/local/close.sh" "$b2" --comment done
 "$P/scripts/steward.sh" release "$b2" --force >/dev/null 2>&1
-"$P/scripts/next.sh" >/dev/null 2>&1; code=$?
-check "queue skips the overlapping item (exit 5)" [ "$code" -eq 5 ]
+out="$("$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
+check "overlap holds no pick: the queue takes the item whose touches overlap a running one's, as the plan's hold (held_by) is what keeps them apart" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$t3"
+"$P/scripts/next.sh" >/dev/null 2>"$work/nothing.err"; code=$?
+check "nothing ready says why: the running, the blocked and the done items, counted" sh -c "[ $code -eq 5 ] && grep -qx 'nothing ready: 2 running, 1 blocked, 1 done (every step ran)' '$work/nothing.err'"
+# Back as the sections below expect it: t3 neither running nor claimed.
+rm -f ".flow/runs/$(item_slug "$t3").json"; "$P/scripts/steward.sh" release "$t3" --force >/dev/null 2>&1
+"$P/adapters/local/write-state.sh" "$t3" step= profile= last_event=
 
 echo "verify runner"
 mkdir -p .standards
@@ -1709,6 +1714,65 @@ chmod +x "$work/dobin/claude"
 rm -f ".flow/runs/$(item_slug "$pb").json"
 check "next job: the last word counts the steps the run made, even after host output with no newline" sh -c "PATH='$work/dobin:$PATH' '$P/jobs/next.sh' claude --max-steps 1 | grep -q 'done, 1 step'"
 check "jobs: a run that stopped without a step counts as failed in the week, not as work" sh -c "'$P/scripts/jobs.sh' status | grep '^| next ' | grep -q '1 failed'"
+
+echo "holds: an item a plan put behind another waits while that one is open"
+mkdir -p "$work/hold" && cd "$work/hold" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 3\nnotify:\n  desktop: false\n' > .flow/config.yaml
+# The held item is listed first, so a pick meets it before its holder.
+hb="$("$P/scripts/new.sh" task "Held" --size S --body "## Acceptance
+- [ ] b")"
+ha="$("$P/scripts/new.sh" task "Holder" --size S --body "## Acceptance
+- [ ] a")"
+stale="$("$P/adapters/local/list-ready.sh")"
+"$P/adapters/local/write-state.sh" "$hb" "held_by=$ha" "held_reason=changes src/a.c, which $ha rewrites"
+check "ready: an item held behind an open item is not ready" sh -c "! '$P/adapters/local/list-ready.sh' | grep -q '\"$hb\"'"
+"$P/scripts/next.sh" "$hb" >/dev/null 2>"$work/hold.err"; code=$?
+check "a named held item exits 4 and says who it waits behind and why" sh -c "[ $code -eq 4 ] && grep -qx '$hb is held behind $ha: changes src/a.c, which $ha rewrites' '$work/hold.err'"
+out="$("$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
+check "a pick leaves the held item, though it is listed first, and takes its holder" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$ha"
+"$P/scripts/next.sh" >/dev/null 2>"$work/hold.err"; code=$?
+check "nothing ready names the held item and its holder" sh -c "[ $code -eq 5 ] && grep -qx 'nothing ready: 1 running, 1 held ($hb behind $ha)' '$work/hold.err'"
+stale_pick >/dev/null 2>"$work/hold.err"; code=$?
+check "a pick whose ready list is older than the hold passes the held item over, and says so" sh -c "[ $code -eq 5 ] && grep -q '^$hb is held behind $ha: ' '$work/hold.err' && tail -n 1 '$work/hold.err' | grep -qx 'nothing ready: 1 running, 1 passed over (said above)'"
+check "next job: a named held item is a quiet run that says who it waits behind" sh -c "'$P/jobs/next.sh' claude '$hb' | grep -q 'quiet: $hb is held behind $ha: changes src/a.c'"
+"$P/adapters/local/close.sh" "$ha" --comment done
+rm -f ".flow/runs/$(item_slug "$ha").json"; "$P/scripts/steward.sh" release "$ha" --force >/dev/null 2>&1
+out="$("$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
+check "once its holder is closed the held item is picked" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$hb"
+hc="$("$P/scripts/new.sh" task "Held behind nothing" --size S --body "## Acceptance
+- [ ] c")"
+"$P/adapters/local/write-state.sh" "$hc" held_by=local:task/999 "held_reason=gone"
+check "ready: a holder that cannot be found holds nothing" sh -c "'$P/adapters/local/list-ready.sh' | grep -q '\"$hc\"'"
+
+echo "a full pool: one pass with no tracker read per unclaimed item"
+mkdir -p "$work/fullpass" && cd "$work/fullpass" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 3\nnotify:\n  desktop: false\n' > .flow/config.yaml
+# The unclaimed items are listed first, so a pick meets them before the claimed ones.
+for t in one two three; do "$P/scripts/new.sh" task "Unclaimed $t" --size S --body "## Acceptance
+- [ ] $t" >/dev/null; done
+u1=local:task/1
+for t in one two three; do "$P/scripts/new.sh" task "Claimed $t" --size S --body "## Acceptance
+- [ ] $t" >/dev/null; done
+c1=local:task/4; c2=local:task/5; c3=local:task/6
+"$P/scripts/next.sh" "$c1" >/dev/null 2>&1
+"$P/scripts/steward.sh" claim "$c2" >/dev/null 2>&1; "$P/scripts/steward.sh" claim "$c3" >/dev/null 2>&1
+"$P/adapters/local/write-state.sh" "$c2" "held_by=$c1" "held_reason=both rewrite src/a.c"
+# A plugin copy whose local read notes each item it reads: the tracker calls a pick makes.
+counting="$work/plugin-counting"; cp -R "$P" "$counting"; rm -rf "$counting/evals/results"
+printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s/reads.log"\nexec "%s/adapters/local/read.sh" "$@"\n' "$work" "$P" > "$counting/adapters/local/read.sh"
+: > "$work/reads.log"
+out="$(FLOW_PLUGIN="$counting" "$counting/scripts/next.sh" --json 2>/dev/null)"; code=$?
+check "a full pool: after the one claim that found it full, the pick takes the claimed item listed last" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$c3"
+check "a full pool: the unclaimed items after the first are passed with no tracker read" sh -c "[ \"\$(cat '$work/reads.log' | tr '\n' ' ')\" = '$u1 $c3 ' ]"
+: > "$work/reads.log"
+FLOW_PLUGIN="$counting" "$counting/scripts/next.sh" >/dev/null 2>"$work/fullpass.err"; code=$?
+check "a full pool with nothing claimed to run: one read, then exit 3" sh -c "[ $code -eq 3 ] && [ \"\$(cat '$work/reads.log' | tr '\n' ' ')\" = '$u1 ' ]"
+check "a full pool says why: the unclaimed items waiting, and what the claimed ones are doing" sh -c "tail -n 1 '$work/fullpass.err' | grep -qx 'no free worktree for the 3 unclaimed ready item(s), and the pool is at pool_max; the claimed items: 2 running, 1 held ($c2 behind $c1)'"
+check "the pick lock is released after a full-pool pass" [ ! -d .flow/pick.lock ]
+check "next job: a full pool is a quiet run that carries the reason" sh -c "'$P/jobs/next.sh' claude --max-steps 1 | grep -q 'quiet: no free worktree for the 3 unclaimed ready item(s), .* 1 held ($c2 behind $c1)\$'"
+check "health still reads a full pool from the next job's last word" sh -c "python3 '$P/scripts/_health.py' last-next .flow/log | grep -q 'no free worktree'"
 
 echo "parallel runs: the pick lock and --workers"
 mkdir -p "$work/par" && cd "$work/par" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
