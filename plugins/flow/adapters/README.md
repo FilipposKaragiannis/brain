@@ -24,7 +24,8 @@ An id is the prefix and a non-empty rest, in the id characters `A-Za-z0-9:#/_.-`
 `local:task/3`, `jira:WID-7`). No prefix may start another. `lib/flow.sh` routes by the prefix
 files, so a new adapter needs no edit there: `adapter_for <id>` names the adapter whose prefix
 starts the id, `adapter <op> <id|name> [args]` runs `adapters/<name>/<op>.sh`, and
-`scripts/_filter_ready.py` reads the same files to look up a blocker in another tracker.
+`scripts/_filter_ready.py` reads the same files to look up a blocker, or the item `held_by` names,
+in another tracker.
 
 `item_slug` turns an id into a name safe for a branch and a folder (`tr ':/#' '---'`: `gh-12`,
 `local-task-3`, `jira-WID-7`); task branches are `flow/<slug>`, reports live in

@@ -4,10 +4,12 @@
 #   jobs/next.sh <claude|codex> [item] [--max-steps N] [--workers N] [--worker N] [--wait]
 #                [--model <name>] [--effort <level>] [--as <name>] [--pick <name>]
 # The unattended loop (templates/run-unattended.sh) does the work; this adds the lock and the
-# log, and turns "nothing ready" (exit 5) and "gate" (exit 4) into quiet exits so a scheduler
-# does not flag them. Schedule it at the cadence you want new work picked up. With notify.idle
-# true in .flow/config.yaml, the first run that finds nothing ready sends one notification; it
-# stays quiet until a run does work again, so a schedule does not repeat it every time.
+# log, and turns "nothing ready" (exit 5), "no free worktree" (exit 3) and "gate" (exit 4) into
+# quiet exits so a scheduler does not flag them; the quiet line carries the reason next.sh gave
+# (what the ready and the claimed items are doing, who a named item is held behind). Schedule it
+# at the cadence you want new work picked up. With notify.idle true in .flow/config.yaml, the
+# first run that finds nothing ready sends one notification; it stays quiet until a run does work
+# again, so a schedule does not repeat it every time.
 # --workers N starts N loops at once, each on its own ready item and worktree, each with its own
 # lock and log (next-1 ... next-N; next-codex-1 ... for the schedule next-codex): a worker still
 # busy from the last schedule is skipped, a free one starts. The pool caps them: a worker with no worktree left stops quietly. The job starts
@@ -131,6 +133,9 @@ n0="$(wc -l < "$(job_log_dir)/$job.log" 2>/dev/null | tr -d ' ')"; n0="${n0:-0}"
 # ended as if done without one step says so (health counts those).
 steps="$(tail -n +"$((n0 + 1))" "$(job_log_dir)/$job.log" | grep -c 'run-unattended: [^ ]* step [^ ]* in /')"
 ran() { case "$steps" in 0) ;; 1) echo ", 1 step" ;; *) echo ", $steps steps" ;; esac; }
+# next_said <code>: the line next.sh wrote just before the loop reported its exit <code>, from this
+# run's lines: why it picked nothing (3, 5) or why a named item waits (4).
+next_said() { tail -n +"$((n0 + 1))" "$(job_log_dir)/$job.log" | grep -B1 "^run-unattended: next.sh exit $1\$" | tail -n 2 | head -n 1; }
 idle="$(job_log_dir)/next.idle"   # shared by the workers: one notice, not one per worker
 case "$code" in 0|4|6) rm -f "$idle" ;; esac
 if [ "$steps" -eq 0 ] && [ -z "$item" ] && case "$code" in 0|4|6) true ;; *) false ;; esac; then
@@ -143,15 +148,18 @@ case "$code" in
   6) # the reason is the line next.sh wrote just before the loop reported its exit
      said="$(grep -B1 'run-unattended: next.sh exit 6$' "$(job_log_dir)/$job.log" | tail -n 2 | head -n 1 | grep -e 'is split and every child is closed' -e 'is done (every step ran)' -e 'is closed$')"
      job_say "${said:-done}$(ran)" ;;
-  4) job_say "stopped at a gate (see $(flow_home)/gates)$(ran)" ;;
-  5) job_say "quiet: nothing ready"
+  4) said="$(next_said 4 | grep ' is held behind ')"
+     if [ -n "$said" ]; then job_say "quiet: $said$(ran)"; else job_say "stopped at a gate (see $(flow_home)/gates)$(ran)"; fi ;;
+  5) said="$(next_said 5 | grep '^nothing ready')"
+     job_say "quiet: ${said:-nothing ready}"
      if [ "$(cfg notify.idle)" = "true" ] && (set -C; : > "$idle") 2>/dev/null; then
        "$FLOW_PLUGIN/scripts/notify.sh" --event idle "The $host job found nothing ready. File or unblock items, or answer the gates on the board." >/dev/null 2>&1 || true
      fi ;;
   7) # the reason is the line next.sh wrote just before the loop reported its exit, as for 6
      if grep -B1 'run-unattended: next.sh exit 7$' "$(job_log_dir)/$job.log" | tail -n 2 | head -n 1 | grep -q 'another run is picking an item'; then job_say "quiet: another worker held the pick for over ${FLOW_LOCK_WAIT:-60}s"
      else job_say "quiet: a run is in flight"; fi ;;
-  3) job_say "quiet: no free worktree (the pool is at pool_max)" ;;
+  3) said="$(next_said 3 | sed 's/^flow: //' | grep '^no free worktree')"
+     job_say "quiet: ${said:-no free worktree (the pool is at pool_max)}" ;;
   2) # a usage error, as a jobs.<host>.effort the host does not take: the loop's last line names it
      why="$(tail -n +"$((n0 + 1))" "$(job_log_dir)/$job.log" | grep -v '^run-unattended: next.sh exit ' | tail -n 1)"
      job_say "stopped: exit 2${why:+: ${why#run-unattended: }}"; exit 2 ;;
