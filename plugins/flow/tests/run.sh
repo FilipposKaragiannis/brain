@@ -457,6 +457,11 @@ for contract_adapter in github local jira; do
   [ "$code" -eq 0 ] || grep '^  FAIL' "$work/contract-$contract_adapter.out"
 done
 
+echo "holds and the merge before verify (tests/holds.sh)"
+sh "$here/holds.sh" > "$work/holds.out" 2>&1; code=$?
+check "holds: $(tail -n 1 "$work/holds.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/holds.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"

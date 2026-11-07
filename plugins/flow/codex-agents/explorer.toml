@@ -30,7 +30,8 @@ The item (title, body, acceptance lines) and the repo. Read `AGENTS.md` or `CLAU
 ## Output
 A report of at most 400 words to `<reports>/explore.md`: sections Entry points, Seams, Data,
 Tests, Invalidated assumptions, Risks; every claim with `file:line`. Then the result file the
-brief names with status `done` and a three-line summary.
+brief names with status `done`, a three-line summary and `touches`: the globs of the files the
+change will reach (the plan step's hold check reads them).
 
 ## Never
 Never propose a design or a plan. Never edit a file. Never state something you did not read.

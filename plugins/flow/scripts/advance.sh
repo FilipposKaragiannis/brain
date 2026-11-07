@@ -4,6 +4,8 @@
 # Applies a finished step: reads <reports>/<step>.json (flags override), updates attempts, size
 # and touches, moves the state to the next step, raises the gate the profile puts there, and
 # clears the run (a plan-approval gate listed in auto_gates for the item's size is not raised).
+# A plan step also records its changes and, done with a hold, holds the item behind another
+# (hold.sh set; skills/plan/holds.md); done without one, it lifts a hold an earlier plan set.
 # A plan step that ends in tracker-tasks mode with children open splits the item (steward.sh split).
 # Exit codes: 0 next step ready · 4 waiting at a gate, or split and waiting on its children · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
@@ -109,6 +111,22 @@ if [ "$step" = plan ] && { [ "$status" = done ] || { [ "$status" = gate ] && [ "
   fi
   "$FLOW_PLUGIN/scripts/steward.sh" split "$item" >/dev/null 2>&1 || true
   report 4 split "$gate"
+fi
+
+# The plan step's changes (the globs among its touches whose existing behavior it changes) and
+# its hold. Only a plan that is done holds the item; a gate means the plan is not settled.
+if [ "$step" = plan ] && [ -n "$result" ]; then
+  adapter write-state "$item" "changes=$(json_list "$result" changes | tr '\n' ',' | sed 's/,$//')" >/dev/null
+  if [ "$status" = done ]; then
+    holder="$(json_get "$result" hold.behind)"
+    if [ -n "$holder" ] && "$FLOW_PLUGIN/scripts/hold.sh" set "$item" "$holder" "$(json_get "$result" hold.reason)"; then
+      summary="${summary:-plan done.}
+
+Held behind $holder: $(json_get "$result" hold.reason). It starts once $holder closes."
+    elif [ -z "$holder" ] && [ -n "$(state_get "$data" held_by)" ]; then
+      "$FLOW_PLUGIN/scripts/hold.sh" clear "$item" "replanned with no hold on $(state_get "$data" held_by)"
+    fi
+  fi
 fi
 
 case "$status" in
