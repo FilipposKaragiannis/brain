@@ -145,6 +145,25 @@ else
   wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$base")"
 fi
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
+# Verify runs on the code the PR merges: a clean task branch behind its base gets the base merged
+# in first, under the pick lock as the health job's merges are. A merge that conflicts is aborted
+# and handed to the sync step below (sync.md), so verify never runs on an unmerged branch.
+if [ "$step" = verify ] && [ "$(step_field verify worktree)" = true ] && [ ! -s "$reports/sync.md" ] &&
+   [ "$(git -C "$wt" symbolic-ref --short -q HEAD)" = "$branch" ] &&
+   [ -z "$(git -C "$wt" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; then
+  vb="$(json_get "$claim" base)"; [ -n "$vb" ] || vb="$base"
+  git -C "$wt" remote get-url origin >/dev/null 2>&1 && git -C "$wt" fetch -q origin "$vb" 2>/dev/null
+  vref="$vb"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$vb" && vref="origin/$vb"
+  behind="$(git -C "$wt" rev-list --count "HEAD..$vref" 2>/dev/null)"
+  if [ "${behind:-0}" -gt 0 ]; then
+    if git -C "$wt" merge -q --no-edit -m "chore: merge $vref into $branch" "$vref" >/dev/null 2>&1; then
+      printf '%s\t%s\tsync\tmerged %s into %s (%s commits behind) before verify\n' "$(now_iso)" "$item" "$vref" "$branch" "$behind" >> "$home/events.log"
+    else
+      git -C "$wt" merge --abort >/dev/null 2>&1
+      printf '%s\n' "$vref" > "$reports/sync.md"
+    fi
+  fi
+fi
 # A merge the health job could not make cleanly (sync.md, one ref per line) runs first as the sync
 # step. The item keeps its own step, which runs once the sync is done.
 own_step="$step"
@@ -163,6 +182,15 @@ json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$r
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
 adapter write-state "$item" "step=$own_step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock
+
+# A hold (hold.sh, skills/plan/holds.md) ends when its holder closes: the item's own step, not a
+# sync ahead of it, gets the release note, and the hold is lifted.
+released=""; held_by="$(state_get "$data" held_by)"
+if [ -n "$held_by" ] && [ "$step" != sync ] && hdata="$(adapter read "$held_by" 2>/dev/null)" && [ "$(json_get "$hdata" status)" = closed ]; then
+  "$FLOW_PLUGIN/scripts/hold.sh" clear "$item" "$held_by closed" && released="$held_by"
+fi
+# The plan step judges the other open work its touches reach; with none the section is left out.
+others=""; [ "$step" = plan ] && others="$("$FLOW_PLUGIN/scripts/hold.sh" candidates "$item" 2>/dev/null)"
 
 brief="$reports/brief-$step.md"
 {
@@ -187,6 +215,7 @@ brief="$reports/brief-$step.md"
   echo '```json'
   echo '{"status": "done | fail | gate", "summary": "markdown: one headline sentence, then at most six short bullets (scope, order, risks, what changed)", "size": "S|M|L (only when your estimate changed)", "gate": "feel-test | ambiguity (status gate only)", "pr": "the PR URL (pr step only)", "message": "markdown (status gate only): first line, in bold, the decision the owner must make; then short bullets of context; for ambiguity, numbered questions, one per line, each followed by a line Recommended: <your answer>, <why in a clause>", "touches": ["globs you changed or will change"]}'
   echo '```'
+  [ "$step" != plan ] || echo "The plan step adds \`\"changes\": [\"the globs among touches whose existing behavior the plan changes; additive work is not a change\"]\`, and \`\"hold\"\` only as \`$FLOW_PLUGIN/skills/plan/holds.md\` says."
   echo "Then stop. Do not advance the tracker yourself; the orchestrator calls advance.sh."
   echo "Stop with status fail when a check you cannot fix stays red; status gate when the codebase does not answer a question."
   echo
@@ -202,7 +231,7 @@ brief="$reports/brief-$step.md"
   if [ "$step" = sync ]; then
     echo "## The merge"
     echo
-    echo "The health job could not bring \`$branch\` in step on its own. Merge each ref below into it, in this order:"
+    echo "The flow could not bring \`$branch\` in step on its own (the health job, or the merge of the base before verify). Merge each ref below into it, in this order:"
     echo
     sed 's/^/- `/; s/$/`/' "$reports/sync.md"
     echo
@@ -215,6 +244,21 @@ brief="$reports/brief-$step.md"
     echo "Two intents that cannot both hold: \`git merge --abort\` and stop with status gate, gate ambiguity, each file and the choice in the message."
     echo "Checks that stay red after the merge: stop with status fail, the merge committed but not pushed."
     echo "Your own step is $own_step; it runs after this one. Do none of it here."
+    echo
+  fi
+  if [ -n "$released" ]; then
+    rref="$base"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$base" && rref="origin/$base"
+    echo "## The hold is over"
+    echo
+    echo "You were held behind $released, which has closed. First merge \`$rref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $rref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
+    echo
+  fi
+  if [ -n "$others" ]; then
+    echo "## Other open work"
+    echo
+    echo "Open items that hold a claim and change code your touches reach. Judge each by the rule in \`$FLOW_PLUGIN/skills/plan/holds.md\` and report \`hold\` only for a conflict:"
+    echo
+    printf '%s\n' "$others"
     echo
   fi
   if [ -s "$reports/health.md" ] || [ -s "$reports/resume.md" ]; then
