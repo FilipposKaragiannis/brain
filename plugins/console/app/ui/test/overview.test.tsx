@@ -281,6 +281,27 @@ test('NoStaleSession_NoStaleLine', () => {
   expect(screen.queryByLabelText('Stale sessions'), 'because a session idle for two hours is the owner\'s to come back to').toBeNull();
 });
 
+test('WaitingPoolCell_SaysItWaitsForAWorkerAndTheNextStep', () => {
+  const waiting = { ...poolWorktree('wt-5'), state: 'waiting' as const, item: 'gh#30', claim: { item: 'gh#30', branch: 'flow/gh-30', base: 'main', step: 'implement', claimedAt: TAKEN_AT, host: 'claude', reserved: '' } };
+  renderOverview({ ...snapshotAt(TAKEN_AT, 0), worktrees: [waiting] });
+  expect(screen.getByText(/waiting for a worker/).textContent, 'because the pool map must not show a parked claim as live work').toMatch(/^waiting for a worker · next implement/);
+});
+
+test('HeldPoolCell_NamesItsHolderLinked', () => {
+  const held = { ...poolWorktree('wt-6'), state: 'held' as const, item: 'gh#31', heldBy: 'gh#12', heldReason: 'shares src/board.ts' };
+  renderOverview({ ...snapshotAt(TAKEN_AT, 0), worktrees: [held], items: [boardItem('gh#12', 'Twelve')] });
+  expect(screen.getByRole('link', { name: 'gh#12' }).closest('.pool-note')?.textContent, 'because the cell says what it waits behind, as the card and the Board do').toMatch(/^held behind gh#12/);
+});
+
+test('ItemToCloseRow_ListedWithWhatToDoAndDecideOpensIt', () => {
+  const routes: Route[] = [];
+  const close: AttentionRow = { kind: 'close', gate: null, id: 'gh#42', title: 'gh#42 is ready to close', detail: 'Every child is closed: close the parent.', worktree: null, sinceAt: TAKEN_AT, ageSeconds: 600, action: null };
+  renderOverview({ ...snapshotAt(TAKEN_AT, 1), attention: [close] }, (route) => routes.push(route));
+  expect(screen.getByText('gh#42').closest('li')?.textContent, 'because the row says what the owner does').toMatch(/Every child is closed: close the parent\./);
+  fireEvent.click(screen.getByRole('button', { name: 'Decide' }));
+  expect(routes, 'because the Gates screen lists it in Ready to close').toEqual([{ projectId: 'project', screen: 'gates', detail: 'gh#42' }]);
+});
+
 test('FlowRunGoingForDays_NotAStaleSession', () => {
   renderOverview({ ...snapshotAt(TAKEN_AT, 0), agents: [{ ...idleSessionIn('wt-3', 74), kind: 'agent', activity: null }] });
   expect(screen.queryByLabelText('Stale sessions'), 'because a flow run is watched by the health job, not left behind by its owner').toBeNull();

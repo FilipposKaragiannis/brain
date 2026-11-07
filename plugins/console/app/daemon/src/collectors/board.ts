@@ -18,7 +18,12 @@ export type BoardItem = {
   open_children: number;
   parent: string;
   url: string;
-  state: { step: string; gate: string; worktree: string; pr: string; last_event: string; profile: string; attempts: number };
+  /**
+   * The item's flow state. `held_by` is the item this one waits behind (flow's ready filter skips it
+   * until that one closes) and `held_reason` one line on why: empty when the item is free, absent on
+   * a plugin from before the hold keys (flow 1.33.0 and earlier).
+   */
+  state: { step: string; gate: string; worktree: string; pr: string; last_event: string; profile: string; attempts: number; held_by?: string; held_reason?: string };
 };
 
 /** One item's spend from `board.sh --json`: the step sessions in flow's runs.jsonl, summed. */

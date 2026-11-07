@@ -1,9 +1,9 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { EndedAgent, Gate, Job, Snapshot } from '../../daemon/src/snapshot.ts';
-import { Gates } from '../src/screens/Gates.tsx';
+import { Gates, GatesHeading } from '../src/screens/Gates.tsx';
 import type { ActionRecord } from '../src/actions.ts';
-import { actionRecord, boardItem, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, snapshotAt, TAKEN_AT, waitingGate } from './fakeDaemon.tsx';
+import { actionRecord, boardItem, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, readyToClose, snapshotAt, TAKEN_AT, waitingGate } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -50,6 +50,46 @@ const NEXT_JOB: Job = { name: 'next', job: 'next', host: 'claude', configured: t
 async function press(name: string): Promise<void> {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name })); });
 }
+
+function renderGates(snapshot: Snapshot, selected: string | null): void {
+  const Wrapper = new FakeDaemon().screenWrapper();
+  render(<Wrapper><Gates snapshot={snapshot} selected={selected} /></Wrapper>);
+}
+
+const SPLIT_DONE = readyToClose('gh#42', 'children-closed');
+const STEPS_DONE = readyToClose('gh#40', 'steps-done');
+
+test('ItemsToClose_ListedInTheirOwnSectionWithWhatToDo', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 3), gates: [ASKING], toClose: [SPLIT_DONE, STEPS_DONE] }, null);
+  const section = screen.getByLabelText('Ready to close');
+  expect(section.textContent, 'because no gate exists for them, yet they wait on the owner').toMatch(/Every child is closed: close the parent\..*Every step ran: merge or close\./);
+  expect(screen.getByLabelText('Waiting gates').textContent, 'because the gates still come first').toMatch(/^.*ambiguity.*Ready to close/);
+});
+
+test('ItemToClosePicked_CardSaysWhatToDoAndLinksTheIssue', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 1), toClose: [SPLIT_DONE] }, 'gh#42');
+  const card = screen.getByRole('region', { name: 'Close card' });
+  expect(card.textContent, 'because the card says what to do and that no gate asks').toMatch(/Every child is closed: close the parent\..*No gate asks about it/);
+  expect(screen.getByRole('link', { name: 'Open the issue' }).getAttribute('href'), 'because the item is closed on its tracker').toBe('https://github.com/owner/project/issues/42');
+});
+
+test('NoGateButAnItemToClose_PickedByDefault', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 1), toClose: [STEPS_DONE] }, null);
+  expect(screen.queryByRole('region', { name: 'Close card' }), 'because the screen opens on what waits on the owner').not.toBeNull();
+});
+
+test('ItemToCloseWithAMergeablePull_OffersTheMerge', async () => {
+  const { daemon, posted } = recordingDaemon();
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 1), toClose: [{ ...STEPS_DONE, pull: { ...PULL, state: 'mergeable', unresolvedThreads: 0 } }] }} selected="gh#40" /></Wrapper>);
+  await press('Merge #560');
+  expect(posted, 'because every step ran and the merge is what is left').toEqual([{ kind: 'pr.merge', args: { pr: '560' } }]);
+});
+
+test('GatesHeading_CountsGatesAndItemsToClose', () => {
+  render(<GatesHeading snapshot={{ ...snapshotAt(TAKEN_AT, 3), gates: [ASKING], toClose: [SPLIT_DONE, STEPS_DONE] }} />);
+  expect(screen.getByText(/waiting$/).textContent, "because the heading counts what the Overview's needs-you tile counts").toBe('3 waiting');
+});
 
 test('MergeGateWithAPull_LinksThePullRequest', () => {
   renderGate({ ...waitingGate('gh#310', 'merge'), pull: PULL });

@@ -34,6 +34,12 @@ test('ConsoleTrackerErrors_TokenSet_ReportedErrorsKept', () => {
   assert.deepEqual(withConsoleTrackerErrors([JIRA_DOWN], ['jira'], { JIRA_API_TOKEN: 'set' }), [JIRA_DOWN], 'because with the token in place the adapter knows best why it failed');
 });
 
+test('ParseBoard_HoldKeys_KeptInTheState', () => {
+  const item = { id: 'gh#9', kind: 'task', title: 'Nine', size: 'S', priority: 'P1', status: 'open', labels: [], blocked_by: [], open_children: 0, parent: '', url: '', state: { step: 'implement', gate: 'none', worktree: 'wt-3', pr: '', last_event: '', profile: '', attempts: 0, held_by: 'gh#12', held_reason: 'shares src/a.cs' } };
+  const [parsed] = parseBoard(JSON.stringify({ items: [item] })).items;
+  assert.deepEqual([parsed?.state.held_by, parsed?.state.held_reason], ['gh#12', 'shares src/a.cs'], 'because the console shows what a held item waits behind, and why');
+});
+
 test('ConsoleTrackerErrors_NoJiraTracker_NothingAdded', () => {
   assert.deepEqual(withConsoleTrackerErrors([], ['github', 'local'], {}), [], 'because a project off Jira needs no Jira token');
 });

@@ -3,6 +3,8 @@ export const WORDS = {
   dirty: 'The worktree has files that are not committed.',
   agents: 'Unattended claude or codex runs the flow started (claude -p, codex exec) working in this folder.',
   sessions: 'Interactive claude or codex someone is typing into (you, or an app such as the Claude desktop app), with its working directory here. Not an agent.',
+  waiting: 'Claimed and parked between steps: no run, no agent and no gate. A worker of the next job takes its next step.',
+  held: 'It waits behind another item that changes the same code; the next job skips it until that item closes.',
   outside: 'Not in the pool: the main checkout, or another worktree git knows of. The flow never claims or releases these.',
   disagreement: 'Two places flow state lives say different things. A row shows only once both stores were read again and still disagree, so a store that merely lags never shows here.',
   projects: 'The projects the daemon watches, the terminal it opens and its port: add or remove a project there without a restart.',
