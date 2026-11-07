@@ -55,9 +55,9 @@ one per line, which the health job reads one by one into the reads file: one JSO
 the item as read, or {"id": ..., "unreadable": true} when it could not be read or found, or
 {"id": ..., "skip": true} when its tracker failed this run, which leaves its holds alone. holds
 prints one tab-separated line per hold to change: `clear<TAB>item<TAB>holder<TAB>cause` for a
-stale or wrong one (held by itself; the holder closed, unreadable, holding no claim and no run, or
-its changes sharing no path with the item's; in a cycle the newest hold, by its last `held` line in
-events.log), then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
+stale or wrong one (held by itself; the holder unreadable, holding no claim and no run, or its
+changes sharing no path with the item's; in a cycle the newest hold, by its last `held` line in
+events.log). A hold whose holder closed is left alone: next.sh releases it with the merge note, then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
 than the old seconds (seconds a dash when no `held` line dates it, which counts as old)."""
 import calendar, glob, json, os, re, subprocess, sys, time
 
@@ -530,7 +530,10 @@ def holds(items_path, reads_path, claims_path, runs_dir, events, old):
         elif other.get("skip"):
             continue
         elif other.get("status") != "open":
-            clears.append((item_id, holder, "%s is closed" % holder))
+            # A closed holder is a release, not a stale tag: the ready filter already lets the item
+            # through, and next.sh needs held_by to lift the hold and tell the step to merge the
+            # holder's work and check the plan still fits. Health leaves it to next.sh.
+            continue
         elif holder not in claimed and holder not in running:
             clears.append((item_id, holder, "%s holds no worktree and has no run" % holder))
         elif not changes_overlap(changes(item), changes(other)):

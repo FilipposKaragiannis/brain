@@ -2402,14 +2402,14 @@ check_all "health --dry-run: says which holds it would clear and clears none" 'g
 unheld() { grep -q "	$1	unheld	no longer held behind $2: $3\$" .flow/events.log; }
 check_all "health: a hold whose holder's changes no longer share a path is cleared, with an unheld line" '[ -z "$(hheld "$hb")" ] && [ -z "$("$P/adapters/local/read.sh" "$hb" | jget state.held_reason)" ] && unheld "$hb" "$h1" "the changes of $h1 no longer share a path with its own" && grep -q "^$hb: no longer held behind $h1" "$hhroot/out"'
 check_all "health: a hold on the item itself is cleared" '[ -z "$(hheld "$hc")" ] && unheld "$hc" "$hc" "it was held behind itself"'
-check_all "health: a hold behind a closed item is cleared" '[ -z "$(hheld "$hd")" ] && unheld "$hd" "$hk" "$hk is closed"'
+check_all "health: a hold behind a closed item stays for next.sh to release with its merge note" '[ "$(hheld "$hd")" = "$hk" ] && ! grep -q "	$hd	unheld	" .flow/events.log && ! grep -q "^$hd:" "$hhroot/out"'
 check_all "health: a hold behind an item that cannot be read or found is cleared" '[ -z "$(hheld "$he")" ] && unheld "$he" "local:task/99" "local:task/99 cannot be read or found on the tracker"'
 check_all "health: a hold behind an item with no worktree and no run is cleared" '[ -z "$(hheld "$hf")" ] && unheld "$hf" "$h2" "$h2 holds no worktree and has no run"'
 check_all "health: in a cycle the newest hold goes and the older one stays" '[ -z "$(hheld "$hy")" ] && [ "$(hheld "$hx")" = "$hy" ] && unheld "$hy" "$hx" "a cycle: $hx waits behind it in turn, and this hold is the newest"'
 check_all "health: a valid hold under a day stays, unsaid" '[ "$(hheld "$ha")" = "$h1" ] && ! grep -q "^$ha:" "$hhroot/out"'
 check_all "health: a hold behind an item with a run stays; past a day it is a finding with its age and reason, notified" '[ "$(hheld "$hg")" = "$h3" ] && grep -q "^$hg: has waited 30h behind $h3: both change src/g\$" "$hhroot/out" && grep -q "flow: health" "$work/offline.log"'
 check_all "health: a valid hold no held line dates counts as old" '[ "$(hheld "$ho")" = "$h1" ] && grep -q "^$ho: has waited behind $h1 since before events.log dates it: src/a too\$" "$hhroot/out"'
-check "health: each clear and finding counts in the summary" grep -q "8 finding(s)" "$hhroot/out"
+check "health: each clear and finding counts in the summary" grep -q "7 finding(s)" "$hhroot/out"
 "$P/scripts/steward.sh" health > "$hhroot/out" 2>&1
 check_all "health: an old hold is said once while it stays, and nothing is cleared twice" '! grep -q "has waited" "$hhroot/out" && ! grep -q "no longer held" "$hhroot/out" && grep -q "nothing to do" "$hhroot/out"'
 hw "$hg" held_by= held_reason=

@@ -4,6 +4,8 @@ bump: minor
   is `waiting` ("waiting for a worker · next <step>") or, when flow holds its item behind another,
   `held` ("held behind gh#X", linked, with the reason). Board, Overview and Worktrees say it the
   same way, the step reads as the next one, and a held claim is never flagged idle.
+  A hold whose holder the board shows closed reads as `waiting`: flow lets the item through and
+  lifts the tag on its next run.
 - The snapshot carries `heldBy` and `heldReason` on items and worktrees from flow's `held_by` and
   `held_reason`, `counts.waiting`, `counts.held` and `readiness.held`; schema 15.
 - Items to close (every step ran with no gate up, or every child of a split is closed) get their

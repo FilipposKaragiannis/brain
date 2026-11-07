@@ -224,6 +224,19 @@ test('ParkedClaim_Held_HeldBehindItsHolderWithTheReason', async () => {
   assert.equal(picture.counts.held, 1, 'because the pool counts the held worktree');
 });
 
+test('ParkedClaim_HolderClosedOnTheBoard_WaitingNotHeld', async () => {
+  const facts = withBoardItems(await parkedNine({ held_by: 'gh#40', held_reason: 'shares src/a.ts' }), [{ id: 'gh#40', status: 'closed' }]);
+  const picture = reconcile(facts);
+  const nine = worktree(picture, 'project-wt-3');
+  assert.deepEqual([nine?.state, nine?.heldBy], ['waiting', null], "because flow's ready filter lets an item through once its holder closes, and next.sh lifts the tag on its next run");
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'waiting', 'because the Board says the same as the card');
+});
+
+test('ParkedClaim_HolderNotOnTheBoard_StillHeld', async () => {
+  const nine = worktree(reconcile(await parkedNine({ held_by: 'gh#41', held_reason: 'shares src/a.ts' })), 'project-wt-3');
+  assert.deepEqual([nine?.state, nine?.heldBy], ['held', 'gh#41'], 'because a holder the board does not list may still be open, so the hold stands as flow wrote it');
+});
+
 test('HeldClaimSixDaysOld_NotIdle', async () => {
   const nine = worktree(reconcile(await parkedNine(HELD, SIX_DAYS_BEFORE)), 'project-wt-3');
   assert.equal(nine?.state, 'held', 'because a held claim waits on purpose, for its holder to close');

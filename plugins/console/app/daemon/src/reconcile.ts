@@ -973,7 +973,22 @@ function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
   };
 }
 
-export function reconcile(read: ReconcileInput): Snapshot {
+/**
+ * The board with each hold whose holder the board shows closed lifted: flow's ready filter already
+ * lets that item through, and next.sh clears the tag on its next run, so it waits for a worker,
+ * not behind its holder. A holder the board does not list keeps its hold as written.
+ */
+function withReleasedHolds(read: ReconcileInput): ReconcileInput {
+  const items = read.board?.items;
+  if (items === undefined) return read;
+  const closed = new Set(items.filter((item) => item.status !== 'open').map((item) => item.id));
+  if (!items.some((item) => closed.has(item.state.held_by ?? ''))) return read;
+  const lifted = items.map((item) => (closed.has(item.state.held_by ?? '') ? { ...item, state: { ...item.state, held_by: '', held_reason: '' } } : item));
+  return { ...read, board: { ...read.board!, items: lifted } };
+}
+
+export function reconcile(given: ReconcileInput): Snapshot {
+  const read = withReleasedHolds(given);
   // A merge gate whose PR is still in review is not the owner's yet, so it is not shown as one:
   // its worktree is claimed, its item not needs-you, and its pull shows where the review stands.
   const held = heldMergeGates(read);

@@ -1033,9 +1033,10 @@ health_list() {
 }
 
 # health_holds: a planned hold (state.held_by and held_reason) that is stale or wrong is cleared,
-# a line each and an `unheld` line in events.log: the holder is closed or cannot be read or found,
-# holds no worktree and has no run, or its changes no longer share a path with the held item's;
-# a hold on the item itself; in a cycle, the newest hold. A valid hold waiting past a day (from its
+# a line each and an `unheld` line in events.log: the holder cannot be read or found, holds no
+# worktree and has no run, or its changes no longer share a path with the held item's;
+# a hold on the item itself; in a cycle, the newest hold. A hold whose holder closed is left for
+# next.sh, which releases it with the merge note. A valid hold waiting past a day (from its
 # last `held` line in events.log; none counts as old) is said and notified once, so the owner sees
 # it. Only the holders no tracker list holds are read, one read each; a holder whose tracker's list
 # failed this run and whose read fails too keeps its holds as they are.
