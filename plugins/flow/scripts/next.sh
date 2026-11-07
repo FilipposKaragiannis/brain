@@ -145,9 +145,22 @@ else
   wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$base")"
 fi
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
+touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
+# The run's owner: the unattended loop (it exports its pid), else the host session that called this
+# script. The health job reads it to tell a live run from a dead one.
+owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
+# A number in JSON has no leading zero, so the zeros go (never $((...)), which reads 0123 as octal).
+case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; owner="${owner:-0}" ;; esac
+json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
+  "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches" > "$(run_file "$item")"
+sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
+adapter write-state "$item" "step=$step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
+flow_unlock
+
 # Verify runs on the code the PR merges: a clean task branch behind its base gets the base merged
-# in first, under the pick lock as the health job's merges are. A merge that conflicts is aborted
-# and handed to the sync step below (sync.md), so verify never runs on an unmerged branch.
+# in first. It runs after the pick lock: the run record makes the item and its worktree this run's,
+# and a fetch under the lock would keep every other worker waiting. A merge that conflicts is
+# aborted and handed to the sync step below (sync.md), so verify never runs on an unmerged branch.
 if [ "$step" = verify ] && [ "$(step_field verify worktree)" = true ] && [ ! -s "$reports/sync.md" ] &&
    [ "$(git -C "$wt" symbolic-ref --short -q HEAD)" = "$branch" ] &&
    [ -z "$(git -C "$wt" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; then
@@ -170,19 +183,8 @@ own_step="$step"
 if [ "$(step_field "$step" worktree)" = "true" ] && [ -s "$reports/sync.md" ]; then
   step=sync; agent="$(step_field sync agent)"; skill="$(step_field sync skill)"; summary="$(step_field sync summary)"
   json_set "$claim" step "$(json_string sync)" > "$wt/.flow/claim.json"
+  json_set "$(cat "$(run_file "$item")")" step "$(json_string sync)" > "$(run_file "$item").tmp" && mv "$(run_file "$item").tmp" "$(run_file "$item")"
 fi
-touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
-# The run's owner: the unattended loop (it exports its pid), else the host session that called this
-# script. The health job reads it to tell a live run from a dead one.
-owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
-# A number in JSON has no leading zero, so the zeros go (never $((...)), which reads 0123 as octal).
-case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; owner="${owner:-0}" ;; esac
-json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
-  "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches" > "$(run_file "$item")"
-sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
-adapter write-state "$item" "step=$own_step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
-flow_unlock
-
 # A hold (hold.sh, skills/plan/holds.md) ends when its holder closes: the item's own step, not a
 # sync ahead of it, gets the release note, and the hold is lifted.
 released=""; held_by="$(state_get "$data" held_by)"
