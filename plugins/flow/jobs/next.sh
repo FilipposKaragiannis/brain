@@ -1,5 +1,6 @@
 #!/bin/sh
-# Next job: run ready items unattended until a gate, nothing ready, or the step budget.
+# Next job: run ready items unattended until nothing is ready or the step budget; a run with no
+# item named sets an item at a gate down and picks the next ready one, a named item stops at its gate.
 #   jobs/next.sh <claude|codex> [item] [--max-steps N] [--workers N] [--worker N] [--wait]
 #                [--model <name>] [--effort <level>] [--as <name>] [--pick <name>]
 # The unattended loop (templates/run-unattended.sh) does the work; this adds the lock and the
