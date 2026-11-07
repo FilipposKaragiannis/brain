@@ -37,7 +37,8 @@
 #   steward.sh health [--dry-run] [--host H] [--wait] [--model M] [--effort E]
 #                                                check every claim: clear a dead run, release an
 #                                                empty claim, finish a split, resume cut-off work,
-#                                                sync branches, remind on old gates, say when the
+#                                                sync branches, remind on old gates, clear stale
+#                                                or wrong holds and name old ones, say when the
 #                                                pool is stuck
 #   steward.sh sessions [--stale]                list the claude and codex sessions working in the
 #                                                main worktree and the pool: pid, host, worktree,
@@ -626,7 +627,7 @@ cmd_sweep() {
 hpy() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
 
 # health_say <item> <fact>: one line per fact, on stdout and in events.log, of the kind health
-# (resume when the owner resumes a run).
+# (resume when the owner resumes a run, unheld when a hold is cleared).
 health_say() {
   echo "$1: $2"
   facts=$((facts + 1))
@@ -990,14 +991,14 @@ health_gates() {
 # children are all closed, or one whose every step ran and that waits at no gate (its PR was merged
 # by hand, or its merge gate cleared without the sweep closing it). Say each once and notify.
 health_splits() {
-  hs_rows="$(for a in $health_trackers; do adapter list "$a" 2>/dev/null; echo; done | python3 -I -c '
+  hs_rows="$(python3 -I -c '
 import json, sys
 for line in sys.stdin:
     if line.strip():
         for i in json.loads(line):
             s = i.get("state") or {}
             if s.get("step") == "split" and not i.get("open_children"): print("split=" + i["id"])
-            elif s.get("step") == "done" and s.get("gate", "none") in ("", "none"): print("done=" + i["id"])')"
+            elif s.get("step") == "done" and s.get("gate", "none") in ("", "none"): print("done=" + i["id"])' < "$health_items")"
   hs_keys=""
   for hs_row in $hs_rows; do   # no pipe: health_say counts a finding in this shell
     hs_why="${hs_row%%=*}"; hs_id="${hs_row#*=}"
@@ -1018,6 +1019,62 @@ for line in sys.stdin:
   for hs_f in "$home"/health/split-done-*.seen "$home"/health/step-done-*.seen; do
     [ -f "$hs_f" ] || continue
     case " $hs_keys " in *" $(basename "$hs_f" .seen) "*) ;; *) health_cleared "$(basename "$hs_f" .seen)" ;; esac
+  done
+}
+
+# health_list: every tracker's open items, one JSON list per line, in $health_items, which
+# health_splits and health_holds read; the trackers whose list failed go in $health_list_failed.
+health_list() {
+  health_items="$home/health/.items.$$"; health_list_failed=""
+  for a in $health_trackers; do
+    if hl_out="$(adapter list "$a" 2>/dev/null)"; then printf '%s\n' "$hl_out"
+    else health_list_failed="$health_list_failed $a "; fi
+  done > "$health_items"
+}
+
+# health_holds: a planned hold (state.held_by and held_reason) that is stale or wrong is cleared,
+# a line each and an `unheld` line in events.log: the holder is closed or cannot be read or found,
+# holds no worktree and has no run, or its changes no longer share a path with the held item's;
+# a hold on the item itself; in a cycle, the newest hold. A valid hold waiting past a day (from its
+# last `held` line in events.log; none counts as old) is said and notified once, so the owner sees
+# it. Only the holders no tracker list holds are read, one read each; a holder whose tracker's list
+# failed this run and whose read fails too keeps its holds as they are.
+health_holds() {
+  hh_reads="$home/health/.reads.$$"; hh_claims="$home/health/.claims.$$"; hh_out="$home/health/.holds.$$"
+  for hh_p in $(pool_paths); do json_get "$(claim_of "$hh_p")" item; echo; done | grep . > "$hh_claims"
+  : > "$hh_reads"
+  for hh_h in $(hpy holders "$health_items"); do
+    hh_a="$(adapter_for "$hh_h" 2>/dev/null)"
+    if [ -n "$hh_a" ] && hh_data="$(adapter read "$hh_h" 2>/dev/null)" && [ -n "$hh_data" ]; then
+      printf '%s\n' "$hh_data" | tr -d '\n' >> "$hh_reads"
+    else
+      case "$health_list_failed" in *" $hh_a "*) hh_why=skip ;; *) hh_why=unreadable ;; esac
+      json_obj "id=$hh_h" "$hh_why:=true" >> "$hh_reads"
+    fi
+    echo >> "$hh_reads"
+  done
+  hh_keys=""
+  hpy holds "$health_items" "$hh_reads" "$hh_claims" "$home/runs" "$home/events.log" 86400 > "$hh_out"
+  while IFS="$(printf '\t')" read -r hh_what hh_it hh_by hh_a hh_b; do   # no pipe: health_say counts here
+    if [ "$hh_what" = clear ]; then
+      if [ "$dry" -eq 1 ]; then health_say "$hh_it" "would clear its hold behind $hh_by: $hh_a"
+      elif adapter write-state "$hh_it" held_by= held_reason= >/dev/null 2>&1; then
+        health_kind=unheld; health_say "$hh_it" "no longer held behind $hh_by: $hh_a"; health_kind=""
+      else health_say "$hh_it" "could not clear its hold behind $hh_by ($hh_a)"; fi
+      continue
+    fi
+    hh_key="held-old-$(item_slug "$hh_it")"; hh_keys="$hh_keys $hh_key"
+    health_changed "$hh_key" "$hh_by" || continue
+    if [ "$hh_a" != - ]; then hh_msg="has waited $((hh_a / 3600))h behind $hh_by"
+    else hh_msg="has waited behind $hh_by since before events.log dates it"; fi
+    hh_msg="$hh_msg: ${hh_b:-no reason given}"
+    health_say "$hh_it" "$hh_msg"
+    health_notify "$hh_it $hh_msg. It is released once $hh_by closes."
+  done < "$hh_out"
+  rm -f "$hh_out" "$hh_reads" "$hh_claims"
+  for hh_f in "$home"/health/held-old-*.seen; do
+    [ -f "$hh_f" ] || continue
+    case " $hh_keys " in *" $(basename "$hh_f" .seen) "*) ;; *) health_cleared "$(basename "$hh_f" .seen)" ;; esac
   done
 }
 
@@ -1191,7 +1248,10 @@ cmd_health() {
     done
   fi
   health_gates
+  health_list
   health_splits
+  health_holds
+  rm -f "$health_items"
   health_pressure
   health_next_runs
   [ "$procs_ok" -eq 0 ] || health_sessions

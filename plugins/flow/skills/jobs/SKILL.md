@@ -94,9 +94,17 @@ Facts to answer with:
   `jobs.health.push: true`), merges the base into a branch more than `jobs.health.behind_base`
   commits behind it, with no PR and no gate, hands a merge that conflicts or a diverged branch to the
   `sync` step of the item's next run, reminds on gates older than
-  `jobs.health.gate_reminder` and says when the pool is full. It names once each claude or codex
+  `jobs.health.gate_reminder` and says when the pool is full. It clears a stale or wrong planned
+  hold (`held_by`): the holder closed, unreadable, holding no worktree and no run, or its
+  `changes` no longer sharing a path with the held item's; a hold on the item itself; the newest
+  hold in a cycle. Each clear is an `unheld` line in `events.log`. A valid hold waiting over a day
+  is said and notified once. It names once each claude or codex
   session idle in the main worktree or the pool past `jobs.health.stale_session` (24h), with its
   kill command; `steward.sh sessions` lists them all. `notify.health: false` mutes it.
+- A `next` run with no item named works on after a gate: the item at the gate is set down and
+  the run picks the next ready one, until `--max-steps` or nothing is ready; its result line then
+  says it stopped at a gate, with every step it ran. A named item stops at its gate, and an
+  escalation gate or a stopped host ends any run.
 - A worker of `next` (`next-1`, `next-2`) is its own run with its own lock and log; a worker
   still busy from the last schedule is skipped, which shows as `skipped`. `--worker` takes only
   a number, so every worker shows in `status` and obeys the pause. A named schedule's workers are

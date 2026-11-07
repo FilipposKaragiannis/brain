@@ -2295,6 +2295,60 @@ check "jobs: a line in the run history that is not a record is skipped by status
 unset FLOW_HEALTH_PROCS
 cd "$repo"
 
+echo "health: planned holds"
+hhroot="$work/holds"; mkdir -p "$hhroot" && cd "$hhroot" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init
+for n in 1 2 3; do git worktree add -q -b "main-wt-$n" "../hwt-$n"; done
+mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../hwt-1\n  - ../hwt-2\n  - ../hwt-3\nnotify:\n  desktop: true\n' > .flow/config.yaml
+export FLOW_HEALTH_PROCS="$hhroot/procs"; : > "$FLOW_HEALTH_PROCS"
+hnew() { "$P/adapters/local/create.sh" task "$1" --size S --body x; }
+hw() { "$P/adapters/local/write-state.sh" "$@" >/dev/null; }
+hheld() { "$P/adapters/local/read.sh" "$1" | jget state.held_by; }
+# held_line <seconds ago> <item> <holder> <reason>: the line the hold writer appends to events.log.
+held_line() { printf '%s\t%s\theld\tbehind %s: %s\n' "$(python3 -c 'import sys,time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()-int(sys.argv[1]))))' "$1")" "$2" "$3" "$4" >> .flow/events.log; }
+h1="$(hnew "Holder, claimed")"; hw "$h1" "changes=src/a/**"
+"$P/scripts/steward.sh" claim "$h1" >/dev/null
+ha="$(hnew "Valid hold")"; hw "$ha" "changes=src/a/x.cs" "held_by=$h1" "held_reason=both change src/a"; held_line 3600 "$ha" "$h1" "both change src/a"
+hb="$(hnew "Changes apart")"; hw "$hb" "changes=src/b/**" "held_by=$h1" "held_reason=was src/a"; held_line 3600 "$hb" "$h1" "was src/a"
+hc="$(hnew "Held by itself")"; hw "$hc" "changes=src/c/**" "held_by=$hc" "held_reason=self"
+hk="$(hnew "Closed holder")"; hw "$hk" "changes=src/d/**"; "$P/adapters/local/close.sh" "$hk" >/dev/null
+hd="$(hnew "Behind a closed one")"; hw "$hd" "changes=src/d/x" "held_by=$hk" "held_reason=src/d"
+he="$(hnew "Behind a missing one")"; hw "$he" "changes=src/e/x" "held_by=local:task/99" "held_reason=src/e"
+h2="$(hnew "Holder with no claim and no run")"; hw "$h2" "changes=src/f/**"
+hf="$(hnew "Behind an idle one")"; hw "$hf" "changes=src/f/x" "held_by=$h2" "held_reason=src/f"
+h3="$(hnew "Holder with a run")"; hw "$h3" "changes=src/g/**"
+mkdir -p .flow/runs && printf '{"item":"%s","step":"implement","started":"%s"}\n' "$h3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ".flow/runs/$(item_slug "$h3").json"
+hg="$(hnew "Waits long")"; hw "$hg" "changes=src/g/x" "held_by=$h3" "held_reason=both change src/g"; held_line 108000 "$hg" "$h3" "both change src/g"
+hx="$(hnew "Cycle, older")"; hy="$(hnew "Cycle, newer")"
+"$P/scripts/steward.sh" claim "$hx" >/dev/null; "$P/scripts/steward.sh" claim "$hy" >/dev/null
+hw "$hx" "changes=src/h/**" "held_by=$hy" "held_reason=src/h"; held_line 7200 "$hx" "$hy" "src/h"
+hw "$hy" "changes=src/h/y" "held_by=$hx" "held_reason=src/h"; held_line 3600 "$hy" "$hx" "src/h"
+ho="$(hnew "Undated hold")"; hw "$ho" "changes=src/a/o" "held_by=$h1" "held_reason=src/a too"
+events_before="$(wc -l < .flow/events.log | tr -d ' ')"
+"$P/scripts/steward.sh" health --dry-run > "$hhroot/out" 2>&1
+check_all "health --dry-run: says which holds it would clear and clears none" 'grep -q "^$hb: would clear its hold behind $h1: " "$hhroot/out" && [ "$(hheld "$hb")" = "$h1" ] && [ "$(wc -l < .flow/events.log | tr -d " ")" = "$events_before" ]'
+: > "$work/offline.log"
+"$P/scripts/steward.sh" health > "$hhroot/out" 2>&1
+unheld() { grep -q "	$1	unheld	no longer held behind $2: $3\$" .flow/events.log; }
+check_all "health: a hold whose holder's changes no longer share a path is cleared, with an unheld line" '[ -z "$(hheld "$hb")" ] && [ -z "$("$P/adapters/local/read.sh" "$hb" | jget state.held_reason)" ] && unheld "$hb" "$h1" "the changes of $h1 no longer share a path with its own" && grep -q "^$hb: no longer held behind $h1" "$hhroot/out"'
+check_all "health: a hold on the item itself is cleared" '[ -z "$(hheld "$hc")" ] && unheld "$hc" "$hc" "it was held behind itself"'
+check_all "health: a hold behind a closed item is cleared" '[ -z "$(hheld "$hd")" ] && unheld "$hd" "$hk" "$hk is closed"'
+check_all "health: a hold behind an item that cannot be read or found is cleared" '[ -z "$(hheld "$he")" ] && unheld "$he" "local:task/99" "local:task/99 cannot be read or found on the tracker"'
+check_all "health: a hold behind an item with no worktree and no run is cleared" '[ -z "$(hheld "$hf")" ] && unheld "$hf" "$h2" "$h2 holds no worktree and has no run"'
+check_all "health: in a cycle the newest hold goes and the older one stays" '[ -z "$(hheld "$hy")" ] && [ "$(hheld "$hx")" = "$hy" ] && unheld "$hy" "$hx" "a cycle: $hx waits behind it in turn, and this hold is the newest"'
+check_all "health: a valid hold under a day stays, unsaid" '[ "$(hheld "$ha")" = "$h1" ] && ! grep -q "^$ha:" "$hhroot/out"'
+check_all "health: a hold behind an item with a run stays; past a day it is a finding with its age and reason, notified" '[ "$(hheld "$hg")" = "$h3" ] && grep -q "^$hg: has waited 30h behind $h3: both change src/g\$" "$hhroot/out" && grep -q "flow: health" "$work/offline.log"'
+check_all "health: a valid hold no held line dates counts as old" '[ "$(hheld "$ho")" = "$h1" ] && grep -q "^$ho: has waited behind $h1 since before events.log dates it: src/a too\$" "$hhroot/out"'
+check "health: each clear and finding counts in the summary" grep -q "8 finding(s)" "$hhroot/out"
+"$P/scripts/steward.sh" health > "$hhroot/out" 2>&1
+check_all "health: an old hold is said once while it stays, and nothing is cleared twice" '! grep -q "has waited" "$hhroot/out" && ! grep -q "no longer held" "$hhroot/out" && grep -q "nothing to do" "$hhroot/out"'
+hw "$hg" held_by= held_reason=
+"$P/scripts/steward.sh" health >/dev/null 2>&1
+check "health: a hold that went is forgotten, so a new one is said again" sh -c "[ ! -f .flow/health/held-old-$(item_slug "$hg").seen ] && [ -f .flow/health/held-old-$(item_slug "$ho").seen ]"
+unset FLOW_HEALTH_PROCS
+cd "$repo"
+
 # --- init: stamp, guard, session-start nudge (on a copy of the plugin, so the plugin can change). The fake gh stays on PATH; init tolerates it.
 plugin_copy="$work/plugin"; cp -R "$P" "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
@@ -3110,6 +3164,63 @@ check_all "a Claude error result with its words in errors, not result, is logged
 FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
+
+echo "unattended loop: a pick works on after a gate"
+# A plugin copy whose next.sh hands out the items in $GL/queue (a named one as asked) and whose
+# advance.sh exits with the code in $GL/advance.<slug> (0 when none); the gate it stands for is the
+# record the test writes in .flow/gates. The hosts are the stubs above.
+GL="$work/gl"; export GL; mkdir -p "$GL"
+glp="$work/plugin-gl"; cp -R "$P" "$glp"; rm -rf "$glp/evals/results"
+cat > "$glp/scripts/next.sh" <<'STUB'
+#!/bin/sh
+item=""; for a in "$@"; do case "$a" in --*) ;; *) item="$a" ;; esac; done
+if [ -z "$item" ]; then
+  item="$(head -1 "$GL/queue")"; [ -n "$item" ] || { echo "nothing ready" >&2; exit 5; }
+  tail -n +2 "$GL/queue" > "$GL/queue.tmp"; mv "$GL/queue.tmp" "$GL/queue"
+fi
+echo "next $item" >> "$GL/calls"
+printf '{"item":"%s","worktree":"%s","brief":"%s/brief.md","step":"implement","agent":"","model":"","effort":"","skill":""}\n' "$item" "$GL" "$GL"
+STUB
+cat > "$glp/scripts/advance.sh" <<'STUB'
+#!/bin/sh
+echo "advance $1" >> "$GL/calls"
+exit "$(cat "$GL/advance.$(printf '%s' "$1" | tr ':/#' '---')" 2>/dev/null || echo 0)"
+STUB
+chmod +x "$glp/scripts/next.sh" "$glp/scripts/advance.sh"
+gi1="$("$P/scripts/new.sh" task "Gate one" --size S --body x)"; gi2="$("$P/scripts/new.sh" task "Gate two" --size S --body x)"
+# gl_case <items for the queue> -- <item>=<advance exit>[:<gate>]...: a fresh queue, calls and gates.
+gl_case() {
+  : > "$GL/calls"; rm -f "$GL"/advance.* .flow/gates/*.json; : > "$GL/queue"
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do echo "$1" >> "$GL/queue"; shift; done; shift
+  for spec in "$@"; do
+    it="${spec%%=*}"; rest="${spec#*=}"; slug="$(item_slug "$it")"
+    echo "${rest%%:*}" > "$GL/advance.$slug"
+    case "$rest" in *:*) mkdir -p .flow/gates; printf '{"gate":"%s","item":"%s"}\n' "${rest#*:}" "$it" > ".flow/gates/$slug.json" ;; esac
+  done
+}
+gl_calls() { tr '\n' '|' < "$GL/calls"; }
+gl_case "$gi1" "$gi2" -- "$gi1=4:plan-approval" "$gi2=4:merge"
+FLOW_PLUGIN="$glp" PATH="$cpath" "$glp/templates/run-unattended.sh" claude --max-steps 5 > "$work/gl.out" 2>&1; code=$?
+check_all "unattended loop: a picked item at a gate is set down and the next ready one picked, until nothing is left" '[ "$(gl_calls)" = "next $gi1|advance $gi1|next $gi2|advance $gi2|" ] && grep -q "$gi1 waits at the plan-approval gate; picking another item" "$work/gl.out"'
+check_all "unattended loop: a run that reached a gate and then found nothing ends as a gate, exit 4, with its steps" '[ "$code" = 4 ] && tail -1 "$work/gl.out" | grep -q "stopped at a gate: 2 item(s) reached one in 2 step(s), then next.sh had nothing to start (exit 5)"'
+gl_case "$gi1" "$gi2" -- "$gi1=4:plan-approval"
+FLOW_PLUGIN="$glp" PATH="$cpath" "$glp/templates/run-unattended.sh" claude --max-steps 1 > "$work/gl.out" 2>&1; code=$?
+check_all "unattended loop: a gate on the last step the budget allows ends as a gate" '[ "$code" = 4 ] && [ "$(gl_calls)" = "next $gi1|advance $gi1|" ] && tail -1 "$work/gl.out" | grep -q "stopped at a gate: 1 item(s) reached one in 1 step(s), the step budget"'
+gl_case "$gi2" -- "$gi1=4:plan-approval"
+FLOW_PLUGIN="$glp" PATH="$cpath" "$glp/templates/run-unattended.sh" claude "$gi1" --max-steps 5 > "$work/gl.out" 2>&1; code=$?
+check_all "unattended loop: a named item stops at its gate, nothing else picked" '[ "$code" = 4 ] && [ "$(gl_calls)" = "next $gi1|advance $gi1|" ] && tail -1 "$work/gl.out" | grep -q "stopped (exit 4)"'
+gl_case "$gi1" "$gi2" -- "$gi1=4:escalation"
+FLOW_PLUGIN="$glp" PATH="$cpath" "$glp/templates/run-unattended.sh" claude --max-steps 5 > "$work/gl.out" 2>&1; code=$?
+check_all "unattended loop: a pick that escalates ends the run" '[ "$code" = 4 ] && [ "$(gl_calls)" = "next $gi1|advance $gi1|" ]'
+gl_case "$gi1" "$gi2" --
+FAKE_HOST=budget FLOW_PLUGIN="$glp" PATH="$cpath" "$glp/templates/run-unattended.sh" claude --max-steps 5 > "$work/gl.out" 2>&1; code=$?
+check_all "unattended loop: a host stop on a pick ends the run at its escalation gate" '[ "$code" = 4 ] && [ "$(gl_calls)" = "next $gi1|" ] && grep -q "$gi1 stopped at an escalation gate" "$work/gl.out"'
+"$P/scripts/gate.sh" clear "$gi1" "limit raised" >/dev/null 2>&1
+gl_case "$gi1" "$gi2" -- "$gi1=4:plan-approval" "$gi2=4:merge"
+FLOW_PLUGIN="$glp" PATH="$cpath" "$glp/jobs/next.sh" claude --max-steps 5 >/dev/null 2>&1; code=$?
+check_all "next job: a run that worked past a gate says it stopped at a gate, with every step it ran" '[ "$code" = 0 ] && tail -1 .flow/log/next.log | grep -q "stopped at a gate (see .*/gates), 2 steps\$"'
+rm -f .flow/gates/*.json
+for it in "$gi1" "$gi2"; do "$P/adapters/local/close.sh" "$it" >/dev/null 2>&1; done
 
 echo "reserve: the owner's own worktree"
 rroot="$work/reserve"; mkdir -p "$rroot"

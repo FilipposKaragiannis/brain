@@ -82,10 +82,12 @@ the PR thread plumbing. Unattended: `.flow/run-unattended.sh claude|codex`. Sche
 (`jobs/`, installed as `.flow/jobs/*.sh`): `comments` every 5 or 10 minutes while PRs are open
 (a PR with nothing new costs no model; a thread awaiting a reply gets one more pass, a pass the
 host cut short is retried up to three times; the owner is told once when either stays stuck),
-`next` at a chosen cadence (`--workers N` runs N items in parallel, capped by the pool;
-`notify.idle` says once when nothing is ready), `retro` weekly, `health` every 15 minutes
+`next` at a chosen cadence (`--workers N` runs N items in parallel, capped by the pool; a worker
+sets an item at a gate down and picks the next ready one; `notify.idle` says once when nothing is
+ready), `retro` weekly, `health` every 15 minutes
 (`steward.sh health`: clears a dead run, releases an empty claim, resumes cut-off work, syncs clean
-task branches, reminds on old gates, says when the pool is full; no model while all is well); each takes the host as its first
+task branches, reminds on old gates, clears stale or wrong planned holds and names the ones
+waiting over a day, says when the pool is full; no model while all is well); each takes the host as its first
 argument (`jobs.host`), locks against overlap and logs to `.flow/log/`; the sessions a job starts,
 and the `next` steps with no agent, take the model and effort of that host's pair, `jobs.claude.model`/`jobs.claude.effort` or
 `jobs.codex.model`/`jobs.codex.effort`, passed as written (empty is the host's default). Scheduling is the host's job (Claude
