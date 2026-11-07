@@ -1,6 +1,6 @@
 #!/bin/sh
 # local write-state <id> key=value...: set state fields (step, profile, size, worktree, attempts,
-# gate, gate_from, last_event, pr, pr_host, touches, and the last gate's answered, asked, answer,
+# gate, gate_from, last_event, pr, pr_host, touches, changes, held_by, held_reason, and the last gate's answered, asked, answer,
 # answered_at). Lists are comma-separated.
 . "$(dirname "$0")/../../lib/flow.sh"
 [ $# -ge 2 ] || die "usage: write-state <id> key=value..." 2

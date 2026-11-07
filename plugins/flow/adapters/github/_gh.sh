@@ -57,7 +57,7 @@ def labelled(prefix, default):
         if l.startswith(prefix):
             return l[len(prefix):]
     return default
-state.setdefault("attempts", 0); state.setdefault("last_event", ""); state.setdefault("pr", ""); state.setdefault("touches", [])
+state.setdefault("attempts", 0); state.setdefault("last_event", ""); state.setdefault("pr", ""); state.setdefault("touches", []); state.setdefault("changes", []); state.setdefault("held_by", ""); state.setdefault("held_reason", "")
 state["step"] = labelled("step:", state.get("step", ""))
 state["gate"] = labelled("gate:", state.get("gate", "none")) or "none"
 state["worktree"] = labelled("wt:", state.get("worktree", ""))

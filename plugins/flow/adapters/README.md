@@ -95,12 +95,14 @@ that landed. The Jira adapter's waits come from `FLOW_JIRA_RETRY_WAIT`.
 | `type` | string, optional | the tracker's own issue type |
 
 `state` always has `step`, `profile`, `size`, `worktree`, `last_event`, `pr` (strings),
-`attempts` (a number), `touches` (a list of globs) and `gate` (`none` when clear), and, once
-written, `gate_from`, `pr_host` (claude or codex, the host that wrote the PR), `answered`,
-`asked`, `answer` and `answered_at`. Those fifteen are the state keys. `write-state` takes them
-as `key=value` (a dash reads as an underscore): `touches` is comma-separated, `attempts` a whole
+`attempts` (a number), `touches` (a list of globs), `changes` (the globs among them whose existing
+behavior the plan changes, a list), `held_by` (the item this one waits behind, empty when free),
+`held_reason` (one line, why) and `gate` (`none` when clear), and, once written, `gate_from`,
+`pr_host` (claude or codex, the host that wrote the PR), `answered`, `asked`, `answer` and
+`answered_at`. Those eighteen are the state keys. `write-state` takes them as `key=value` (a dash
+reads as an underscore): `touches` and `changes` are comma-separated, `attempts` a whole
 number, an empty value clears a key, `gate=none` clears the gate, `size` sets the item's size
-too. A key outside the fifteen exits 2 and writes nothing.
+too. A key outside the eighteen exits 2 and writes nothing.
 
 ## Config
 
