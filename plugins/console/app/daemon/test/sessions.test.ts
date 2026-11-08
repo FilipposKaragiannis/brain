@@ -590,3 +590,38 @@ test('TranscriptRoute_PidNotListedOrBadLines_Refused', async () => {
     assert.equal((await get('100/transcript?lines=0')).status, 400, 'because lines is a positive count');
   } finally { await close(); }
 });
+
+/** A codex run as flow's host.sh starts it from a job at the project root: `codex exec -C <worktree>`, its cwd the root. */
+const CODEX_FROM_ROOT = `  107    99   05:00 /opt/homebrew/bin/codex exec --json -C ${FIXTURES}/project-wt-3 -s workspace-write -c approval_policy="never" fix nine`;
+
+/** The fixture runner with that codex run added to ps, and lsof placing it at the project root. */
+const codexFromRootRunner: CommandRunner = async (request) => {
+  const result = await fakeRunner(request);
+  if (request.command === 'ps') return { ...result, stdout: `${result.stdout}\n${CODEX_FROM_ROOT}` };
+  if (request.command === 'lsof') return { ...result, stdout: `${result.stdout}p107\nfcwd\nn${FIXTURE_ROOT}\n` };
+  return result;
+};
+
+/** The monitor's agent 107 after a read, with a real locator over a home whose Codex session ran in project-wt-3. */
+async function codexFromRoot(dir: string) {
+  const day = path.join(dir, '.codex', 'sessions', String(NOW.getFullYear()), String(NOW.getMonth() + 1).padStart(2, '0'), String(NOW.getDate()).padStart(2, '0'));
+  written(path.join(day, 'rollout-a-019c-wt3.jsonl'), `${meta('019c-wt3', path.join(FIXTURES, 'project-wt-3'))}\n`, new Date(NOW.getTime() - MINUTE_MS));
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: codexFromRootRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: locator(dir) });
+  await monitor.refresh('files');
+  await monitor.refresh('processes');
+  return monitor.snapshot?.agents.find((entry) => entry.pid === 107);
+}
+
+test('CodexExecWithCdLaunchedFromTheRoot_ListedInTheCdWorktree', async () => {
+  const { dir, done } = home();
+  try {
+    assert.equal((await codexFromRoot(dir))?.worktree, 'project-wt-3', 'because the run works in the worktree its -C names, not the root it was started from');
+  } finally { done(); }
+});
+
+test('CodexExecWithCdLaunchedFromTheRoot_FindsItsSessionByTheCdDirectory', async () => {
+  const { dir, done } = home();
+  try {
+    assert.equal((await codexFromRoot(dir))?.session?.id, '019c-wt3', 'because Codex writes the -C directory as the session\'s cwd, so the session is matched there');
+  } finally { done(); }
+});

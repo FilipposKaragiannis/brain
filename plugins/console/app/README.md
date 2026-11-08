@@ -245,7 +245,10 @@ snapshots.
   process. For codex `~/.codex/session_index.jsonl` has ids and thread
   names but no folder, so the session files under `~/.codex/sessions/<yyyy>/<mm>/<dd>/` (the
   start's day back to fourteen days) are read instead: the newest written since the start whose
-  first line, `session_meta`, names the same cwd; the id is its `payload.id`. Those first lines
+  first line, `session_meta`, names the same cwd; the id is its `payload.id`. A `codex exec`
+  started with `-C <dir>` (or `--cd`), as flow's host.sh starts a Codex run, keeps the cwd it was
+  started in, such as the project root, so its working directory, both for the worktree it is
+  listed under and for this match, is that `<dir>`, resolved against the cwd. Those first lines
   are kept in memory and forgotten fourteen days after the file was last written. `resume` is the argv
   that opens it again: `["claude", "--resume", id]` or `["codex", "resume", id]`. The home folder
   and the clock are injected (`daemon/src/collectors/sessions.ts`).

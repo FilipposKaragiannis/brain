@@ -31,9 +31,9 @@ test('KindOf_UnattendedIsAgentInteractiveIsSession', () => {
   assert.equal(kindOf('codex', '/x/codex --cd /w'), 'session', 'because a plain codex is the owner typing');
 });
 
-test('ProcessList_PidElapsedCommand', () => {
-  const rows = parseProcessList('  100   15:42 /usr/local/bin/claude --x\n  7 01-00:00:01 /bin/sh');
-  assert.deepEqual(rows.map((row) => [row.pid, row.elapsedSeconds]), [[100, 942], [7, 86401]], 'because ps prints pid, etime and the command');
+test('ProcessList_PidPpidElapsedCommand', () => {
+  const rows = parseProcessList('  100    99   15:42 /usr/local/bin/claude --x\n  7     1 01-00:00:01 /bin/sh');
+  assert.deepEqual(rows.map((row) => [row.pid, row.ppid, row.elapsedSeconds]), [[100, 99, 942], [7, 1, 86401]], 'because ps prints pid, ppid, etime and the command');
 });
 
 test('WorkingDirectories_PairPidWithPath', () => {
@@ -76,7 +76,7 @@ test('HostOf_WrapperBeforeTheHost_Never', () => {
 
 test('ReadProcesses_LongCommand_TrimmedTo200', async () => {
   const runner: CommandRunner = async (request) => request.command === 'ps'
-    ? { code: 0, stdout: `  100 00:10 /usr/local/bin/claude -p ${'x'.repeat(400)}\n`, stderr: '', timedOut: false }
+    ? { code: 0, stdout: `  100    99 00:10 /usr/local/bin/claude -p ${'x'.repeat(400)}\n`, stderr: '', timedOut: false }
     : { code: 0, stdout: 'p100\nfcwd\nn/w\n', stderr: '', timedOut: false };
   const { agents } = await readProcesses(runner, () => NOW);
   assert.equal(agents[0]?.command.length, PROCESS_COMMAND_CHARS, 'because a prompt can be pages long and the card needs the start of it');
@@ -84,8 +84,8 @@ test('ReadProcesses_LongCommand_TrimmedTo200', async () => {
 
 /** A live implement run as seen on task 33: its owner loop (19487) and its claude worker (23465). */
 const RUN_LISTING = [
-  `19487 25:43 /bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/1.31.0/scripts/run-unattended.sh next`,
-  `23465 24:39 /Users/x/.local/bin/claude -p /flow:next local:task/33 --permission-mode auto`,
+  `19487     1 25:43 /bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/1.31.0/scripts/run-unattended.sh next`,
+  `23465 19487 24:39 /Users/x/.local/bin/claude -p /flow:next local:task/33 --permission-mode auto`,
 ].join('\n');
 const WORKER_CWD = 'p23465\nfcwd\nn/work/TophatContextService-wt-1\n';
 const answered = (stdout: string): CommandResult => ({ code: 0, stdout, stderr: '', timedOut: false });
@@ -136,7 +136,7 @@ test('ReadProcesses_UnattendedLoop_ListedAsAHostWithItsStart', async () => {
 
 const SESSION_CWD = 'p62102\nfcwd\nn/work/projects/foosbrawl-wt-10\n';
 /** The interactive claude that sat in foosbrawl-wt-10 for twelve days. */
-const IDLE_SESSION = '62102 12-16:46:34 /Users/x/.local/bin/claude --permission-mode auto';
+const IDLE_SESSION = '62102 62090 12-16:46:34 /Users/x/.local/bin/claude --permission-mode auto';
 
 test('ReadProcesses_Session_CarriesItsStartFromTheRead', async () => {
   const { agents } = await readProcesses(lookups(answered(IDLE_SESSION), answered(SESSION_CWD)), () => NOW);
@@ -158,10 +158,10 @@ test('ReadSession_PsTimesOut_Null', async () => {
 });
 
 for (const [name, what, row] of [
-  ['UnattendedAgent', 'an unattended agent', '62102 00:30 /usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto'],
-  ['ClaudeDaemon', 'the claude daemon', '62102 00:30 /Users/x/.local/bin/claude daemon run --origin transient'],
-  ['CodexAppServer', 'the Codex app server', `62102 00:30 ${CODEX_RELEASE} app-server --listen unix:///tmp/codex.sock`],
-  ['AnotherProgram', 'another program', '62102 00:30 /usr/bin/vim notes.md'],
+  ['UnattendedAgent', 'an unattended agent', '62102     1 00:30 /usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto'],
+  ['ClaudeDaemon', 'the claude daemon', '62102     1 00:30 /Users/x/.local/bin/claude daemon run --origin transient'],
+  ['CodexAppServer', 'the Codex app server', `62102     1 00:30 ${CODEX_RELEASE} app-server --listen unix:///tmp/codex.sock`],
+  ['AnotherProgram', 'another program', '62102     1 00:30 /usr/bin/vim notes.md'],
 ] as const) {
   test(`ReadSession_PidNowRuns${name}_Null`, async () => {
     assert.equal(await readSession(lookups(answered(row), answered('')), () => NOW, 62102), null, `because the pid now runs ${what}, which Stop session must never signal`);
@@ -192,9 +192,9 @@ test('ServerOf_AgentSessionOrOtherProgram_Null', () => {
 
 /** pid 64347 and 56354 work in foosbrawl-wt-10; the app bundle's servers (701, 702) work in the home folder. */
 const SERVER_LISTING = [
-  `64347 2-03:00:00 ${CODEX_RELEASE} app-server --listen unix:///tmp/codex.sock`,
-  `56354 2-03:00:01 ${CODEX_RELEASE} app-server daemon pid-update-loop`,
-  `701 05:00 ${CODEX_APP} app-server --analytics-default-enabled`,
+  `64347     1 2-03:00:00 ${CODEX_RELEASE} app-server --listen unix:///tmp/codex.sock`,
+  `56354     1 2-03:00:01 ${CODEX_RELEASE} app-server daemon pid-update-loop`,
+  `701     1 05:00 ${CODEX_APP} app-server --analytics-default-enabled`,
   IDLE_SESSION,
 ].join('\n');
 const SERVER_CWDS = 'p64347\nfcwd\nn/work/projects/foosbrawl-wt-10\np56354\nfcwd\nn/work/projects/foosbrawl-wt-10\np701\nfcwd\nn/Users/x\n' + SESSION_CWD;
@@ -232,4 +232,40 @@ test('ReadProcesses_LsofMissesAServer_LeftOutAndListComplete', async () => {
 test('ReadProcesses_OnlyServers_StillLooksUpWhereTheyWork', async () => {
   const { agents, servers } = await readProcesses(lookups(answered(SERVER_LISTING.split('\n').slice(0, 1).join('\n')), answered(SERVER_CWDS)), () => NOW);
   assert.deepEqual([agents, servers.map((server) => server.pid)], [[], [64347]], 'because a machine with no agent may still run a server in the project');
+});
+
+test('ReadProcesses_Agent_CarriesItsParentPid', async () => {
+  const { agents } = await readProcesses(lookups(answered(RUN_LISTING), answered(WORKER_CWD)), () => NOW);
+  assert.equal(agents[0]?.ppid, 19487, 'because the worker\'s parent is the loop that owns its run, and the agents page walks up to it');
+});
+
+/** How flow's host.sh starts a Codex run: from wherever the job runs, here the project root, with the worktree as `-C`. */
+const CODEX_RUN = (cd: string): string => `31000 19487 02:00 /opt/homebrew/bin/codex exec --json ${cd} -s workspace-write --dangerously-bypass-hook-trust -c approval_policy="never" -m gpt-6-sol fix nine`;
+const PROJECT_ROOT_CWD = 'p31000\nfcwd\nn/work/app\n';
+const agentCwd = async (row: string): Promise<string | undefined> =>
+  (await readProcesses(lookups(answered(row), answered(PROJECT_ROOT_CWD)), () => NOW)).agents[0]?.cwd;
+
+test('ReadProcesses_CodexExecWithCdLaunchedFromTheRoot_WorksInTheCdDirectory', async () => {
+  assert.equal(await agentCwd(CODEX_RUN('-C /work/app-wt-2')), '/work/app-wt-2', 'because codex exec -C keeps the cwd it was started in, and the run works in the worktree it names');
+});
+
+test('ReadProcesses_CodexExecWithLongCd_WorksInTheCdDirectory', async () => {
+  assert.equal(await agentCwd(CODEX_RUN('--cd /work/app-wt-2')), '/work/app-wt-2', 'because --cd is the long spelling of -C');
+});
+
+test('ReadProcesses_CodexExecWithCdJoined_WorksInTheCdDirectory', async () => {
+  assert.equal(await agentCwd(CODEX_RUN('--cd=/work/app-wt-2')), '/work/app-wt-2', 'because --cd=<dir> names the same directory as --cd <dir>');
+});
+
+test('ReadProcesses_CodexExecWithRelativeCd_ResolvedAgainstItsCwd', async () => {
+  assert.equal(await agentCwd(CODEX_RUN('-C ../app-wt-2')), '/work/app-wt-2', 'because codex resolves a relative -C against the folder it was started in');
+});
+
+test('ReadProcesses_CodexExecWithoutCd_WorksInItsCwd', async () => {
+  assert.equal(await agentCwd(CODEX_RUN('')), '/work/app', 'because a codex exec that names no directory works where it was started');
+});
+
+test('ReadProcesses_ClaudeWhosePromptSaysCd_WorksInItsCwd', async () => {
+  const row = '31000 19487 02:00 /usr/local/bin/claude -p fix the -C /work/app-wt-2 option --permission-mode auto';
+  assert.equal(await agentCwd(row), '/work/app', 'because claude has no -C option; the words are its prompt, and claude works where lsof says');
 });

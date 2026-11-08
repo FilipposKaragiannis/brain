@@ -17,16 +17,16 @@ const WORKTREE_LIST = [
   `worktree ${FIXTURES}/project-side\nHEAD 5555555\ndetached\n`,
 ].join('\n');
 
-/** gh#9's run: its owner, the unattended loop (99), and its agent in project-wt-3 (100). */
+/** gh#9's run: its owner, the unattended loop (99), and its agent in project-wt-3 (100), the loop's child. */
 const PROCESSES = [
-  `   99   16:00 /bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/9.9.9/scripts/run-unattended.sh next`,
-  `  100   15:42 /usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto`,
-  `  104   02:00 /usr/local/bin/claude --session-id abc --permission-mode auto`,
-  `  101 01-02:03:04 /Users/x/.local/bin/claude daemon run --origin transient`,
-  `  102   00:09 /opt/codex app-server --listen unix://`,
-  `  103   03:00 /opt/codex exec --cd somewhere`,
-  `  105 13:44:39 /Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex app-server --listen unix:// -c features.api_key_model_discovery=false`,
-  `  106 13:44:38 /Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex app-server daemon pid-update-loop`,
+  `   99     1   16:00 /bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/9.9.9/scripts/run-unattended.sh next`,
+  `  100    99   15:42 /usr/local/bin/claude -p /flow:next gh#9 --permission-mode auto`,
+  `  104    98   02:00 /usr/local/bin/claude --session-id abc --permission-mode auto`,
+  `  101     1 01-02:03:04 /Users/x/.local/bin/claude daemon run --origin transient`,
+  `  102     1   00:09 /opt/codex app-server --listen unix://`,
+  `  103     1   03:00 /opt/codex exec --cd somewhere`,
+  `  105     1 13:44:39 /Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex app-server --listen unix:// -c features.api_key_model_discovery=false`,
+  `  106   105 13:44:38 /Users/x/.codex/packages/app-server-daemon/releases/0.164.0-aarch64-apple-darwin/bin/codex app-server daemon pid-update-loop`,
 ].join('\n');
 
 /** The Codex desktop app's server (105) and its pid loop (106) sit in project-wt-4, as they did on foosbrawl. */
