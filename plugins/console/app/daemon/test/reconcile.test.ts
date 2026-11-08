@@ -1356,7 +1356,7 @@ test('Agent_AtTheRootUnderTheCommentsJob_JobComments', async () => {
 
 /** An agent the process read found at `cwd`, a child of 502 under 501. */
 const agentAt = (cwd: string, job: string | null = null): AgentProcess => ({
-  pid: 503, ppid: 502, parents: [502, 501], job, host: 'claude', kind: 'agent', cwd, elapsedSeconds: 60,
+  pid: 503, parentPid: 502, parents: [502, 501], job, host: 'claude', kind: 'agent', cwd, elapsedSeconds: 60,
   startedAt: '2026-10-24T18:15:04.000Z', command: '/usr/local/bin/claude -p /flow:next gh#12', session: null, activity: null,
 });
 
@@ -1392,4 +1392,26 @@ test('Ended_AgentInAClaimedWorktree_KeepsItsStep', async () => {
   facts.ended = [{ ...agentAt(path.resolve(FIXTURE_ROOT, '../project-wt-3'), 'next'), session: { host: 'claude', id: 's', transcript: '/h/s.jsonl', resume: ['claude', '--resume', 's'] }, endedAt: NOW.toISOString() }];
   const [ended] = reconcile(facts).ended;
   assert.equal(ended?.step, 'implement', 'because an ended agent is listed with what it worked on, as it was while it ran');
+});
+
+const WT3 = path.resolve(FIXTURE_ROOT, '../project-wt-3');
+/** The item and step of the agent with `pid`, or that the picture does not list it. */
+const workOf = (picture: Snapshot, pid: number): [string | null, string | null] | 'not listed' => {
+  const agent = agentOf(picture, pid);
+  return agent === undefined ? 'not listed' : [agent.item, agent.step];
+};
+
+test('Agent_InAnUnclaimedWorktreeWithARun_ItemAndStepFromThatRun', async () => {
+  const facts = await input();
+  facts.flow.claims = facts.flow.claims.filter((claim) => claim.item !== 'gh#9');
+  facts.flow.runs = facts.flow.runs.map((run) => ({ ...run, worktree: WT3 }));
+  facts.processes = { ...NOTHING_RUNS, agents: [agentAt(WT3)] };
+  assert.deepEqual(workOf(reconcile(facts), 503), ['gh#9', 'implement'], "because outside the root a worktree's run is the work of whoever runs there, even with no claim and no owner among its parents");
+});
+
+test('Agent_UnderARunOfAnotherItemThanTheClaim_NoStep', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, agents: [agentAt(WT3)] };
+  facts.flow.runs = [...facts.flow.runs, { item: 'gh#12', step: 'plan', profile: 'feature', worktree: WT3, host: 'claude', startedAt: '2026-10-24T18:15:00Z', pid: 501 }];
+  assert.deepEqual(workOf(reconcile(facts), 503), ['gh#9', null], "because the claim names the item, and a step of another item's run would say the wrong thing about it");
 });

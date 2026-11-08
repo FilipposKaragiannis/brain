@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { CommandResult, CommandRunner } from '../src/collectors/exec.ts';
-import { hostOf, jobOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories, readProcesses, readSession, serverOf } from '../src/collectors/processes.ts';
+import { jobOf } from '../src/collectors/agentContext.ts';
+import { hostOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories, readProcesses, readSession, serverOf } from '../src/collectors/processes.ts';
 import { PROCESS_COMMAND_CHARS } from '../src/snapshot.ts';
 
 const NOW = new Date('2026-11-03T13:21:22Z');
@@ -33,7 +34,7 @@ test('KindOf_UnattendedIsAgentInteractiveIsSession', () => {
 
 test('ProcessList_PidPpidElapsedCommand', () => {
   const rows = parseProcessList('  100    99   15:42 /usr/local/bin/claude --x\n  7     1 01-00:00:01 /bin/sh');
-  assert.deepEqual(rows.map((row) => [row.pid, row.ppid, row.elapsedSeconds]), [[100, 99, 942], [7, 1, 86401]], 'because ps prints pid, ppid, etime and the command');
+  assert.deepEqual(rows.map((row) => [row.pid, row.parentPid, row.elapsedSeconds]), [[100, 99, 942], [7, 1, 86401]], 'because ps prints pid, ppid, etime and the command');
 });
 
 test('WorkingDirectories_PairPidWithPath', () => {
@@ -236,7 +237,7 @@ test('ReadProcesses_OnlyServers_StillLooksUpWhereTheyWork', async () => {
 
 test('ReadProcesses_Agent_CarriesItsParentPid', async () => {
   const { agents } = await readProcesses(lookups(answered(RUN_LISTING), answered(WORKER_CWD)), () => NOW);
-  assert.equal(agents[0]?.ppid, 19487, 'because the worker\'s parent is the loop that owns its run, and the agents page walks up to it');
+  assert.equal(agents[0]?.parentPid, 19487, 'because the worker\'s parent is the loop that owns its run, and the agents page walks up to it');
 });
 
 /** How flow's host.sh starts a Codex run: from wherever the job runs, here the project root, with the worktree as `-C`. */
@@ -268,6 +269,11 @@ test('ReadProcesses_CodexExecWithoutCd_WorksInItsCwd', async () => {
 test('ReadProcesses_ClaudeWhosePromptSaysCd_WorksInItsCwd', async () => {
   const row = '31000 19487 02:00 /usr/local/bin/claude -p fix the -C /work/app-wt-2 option --permission-mode auto';
   assert.equal(await agentCwd(row), '/work/app', 'because claude has no -C option; the words are its prompt, and claude works where lsof says');
+});
+
+test('ReadProcesses_CodexExecWhosePromptSaysCd_WorksInItsCwd', async () => {
+  const row = '31000 19487 02:00 /opt/homebrew/bin/codex exec --json -m gpt-6-sol fix the -C /work/app-wt-2 option';
+  assert.equal(await agentCwd(row), '/work/app', 'because the scan for -C ends at the prompt, so a -C the prompt mentions is not where codex works');
 });
 
 test('JobOf_UnattendedLoop_Next', () => {

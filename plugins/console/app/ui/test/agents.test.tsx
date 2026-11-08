@@ -249,6 +249,19 @@ test('RunWithoutATranscript_SaysNoneWasFound', async () => {
   expect(screen.getByRole('article', { name: 'Run 100' }).querySelector('.stream-note')!.textContent, 'because with no session located there is nothing to read, and the card says so instead of asking').toBe('No transcript was found for this run.');
 });
 
+test('FoldedRunWithoutATranscript_ShowsNoLatestLine', async () => {
+  await renderAgents([agent(100, 'agent', '/p-wt/wt-2'), { ...codexRun(101), session: null }]);
+  expect(screen.queryByLabelText('Latest line of run 101'), 'because a run with no session located has no line to show, and its folded card asks for none').toBeNull();
+});
+
+test('RunStarted_IsWhenItsProcessStarted', async () => {
+  const processStart = new Date(2026, 9, 24, 18, 15).toISOString();
+  const run: Run = { item: 'gh#9', step: 'verify', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: new Date(2026, 9, 24, 17, 2).toISOString(), pid: null, liveness: 'alive' };
+  await renderSnapshot({ agents: [{ ...agent(100, 'agent', '/p-wt/wt-3'), worktree: 'wt-3', item: 'gh#9', startedAt: processStart }], runs: [run] });
+  const started = within(screen.getByRole('article', { name: 'Run 100' })).getByText('Started').nextElementSibling!;
+  expect(started.textContent, "because the card says when this agent's process started, not when the run record of its worktree did").toBe('18:15');
+});
+
 const HOUR_MS = 3600 * 1000;
 /** A moment `hours` before the snapshot was taken. */
 const hoursBefore = (hours: number): string => new Date(Date.parse(TAKEN_AT) - hours * HOUR_MS).toISOString();

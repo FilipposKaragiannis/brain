@@ -8,7 +8,8 @@ import { planAction } from '../src/actionPlan.ts';
 import type { ActionContext } from '../src/actionPlan.ts';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
-import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseCodexTranscript, parseCodexTranscriptLines, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator } from '../src/collectors/sessions.ts';
+import { parseCodexTranscript } from '../src/collectors/codexTranscript.ts';
+import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator, transcriptTailStart } from '../src/collectors/sessions.ts';
 import type { GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
@@ -406,11 +407,22 @@ test('ReadTranscript_ManyLinesAskedOfASmallTail_TheTailGrowsUntilItHoldsThem', a
     const file = path.join(dir, 'run.jsonl');
     const entry = (index: number): string => JSON.stringify({ type: 'assistant', isSidechain: false, timestamp: `2026-10-24T18:00:${String(index % 60).padStart(2, '0')}.000Z`, message: { role: 'assistant', content: [{ type: 'text', text: `step ${index}\n${'detail '.repeat(100)}` }] } });
     writeFileSync(file, `${Array.from({ length: 50 }, (_, index) => entry(index)).join('\n')}\n`);
-    const read = await readTranscript(file, { turns: 2, lines: 40 }, 1000);
+    const read = await readTranscript(file, 'claude', { turns: 2, lines: 40 }, 1000);
     assert.deepEqual([read?.lines.length, read?.lines[0]?.text, read?.lines.at(-1)?.text], [40, 'step 10', 'step 49'], 'because 1000 bytes hold one entry, so the tail doubles until it holds the 40 lines asked');
     assert.deepEqual(read?.turns.map((turn) => turn.text.split('\n')[0]), ['step 48', 'step 49'], 'because the turns are capped on their own');
     assert.deepEqual([read?.bytes, read?.turnCount], [statSync(file).size, 50], 'because the size and the entry count are of the whole file');
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+const KILOBYTE = 1024;
+const MEGABYTE = 1024 * KILOBYTE;
+
+test('TranscriptTailStart_OneLine_ReadsASmallTail', () => {
+  assert.equal(transcriptTailStart(1), 64 * KILOBYTE, "because a folded card asks for its latest line on every snapshot, and 64 KB holds it far more often than not; the read doubles when it does not");
+});
+
+test('TranscriptTailStart_ManyLines_CappedAtFourMegabytes', () => {
+  assert.equal(transcriptTailStart(2000), 4 * MEGABYTE, 'because the full log starts where every read used to, and doubles from there');
 });
 
 test('TranscriptEntries_FileGrows_CountedOnwardFromWhereTheLastCountEnded', async () => {
@@ -420,32 +432,55 @@ test('TranscriptEntries_FileGrows_CountedOnwardFromWhereTheLastCountEnded', asyn
     const user = JSON.stringify({ type: 'user', message: { role: 'user', content: 'go' } });
     const progress = JSON.stringify({ type: 'progress', data: { message: { type: 'assistant', message: { content: [] } } } });
     writeFileSync(file, `${user}\n${progress}\n`);
-    assert.equal(await countTranscriptEntries(file, statSync(file).size), 1, "because a progress entry is not a turn, even with a subagent's assistant message inside it");
+    assert.equal(await countTranscriptEntries(file, statSync(file).size, 'claude'), 1, "because a progress entry is not a turn, even with a subagent's assistant message inside it");
     appendFileSync(file, `${user}\n${user.slice(0, 10)}`);
-    assert.equal(await countTranscriptEntries(file, statSync(file).size), 2, 'because the new whole line counts, and the half-written one waits for its end');
+    assert.equal(await countTranscriptEntries(file, statSync(file).size, 'claude'), 2, 'because the new whole line counts, and the half-written one waits for its end');
     appendFileSync(file, `${user.slice(10)}\n`);
-    assert.equal(await countTranscriptEntries(file, statSync(file).size), 3, 'because the line finished since is counted once');
+    assert.equal(await countTranscriptEntries(file, statSync(file).size, 'claude'), 3, 'because the line finished since is counted once');
     writeFileSync(file, `${user}\n`);
-    assert.equal(await countTranscriptEntries(file, statSync(file).size), 1, 'because a file shorter than the last count was replaced, and is counted again');
+    assert.equal(await countTranscriptEntries(file, statSync(file).size, 'claude'), 1, 'because a file shorter than the last count was replaced, and is counted again');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 /** A codex exec run's session as Codex 0.16x writes it: each finished item as an event beside the model's own records, with a command and a tool call that failed. */
 const CODEX_TRANSCRIPT = path.join(FIXTURES, 'transcripts', 'codex.jsonl');
 
-test('CodexTranscriptLines_EachFinishedItemAsOneLineInFileOrder', () => {
-  const lines = parseCodexTranscriptLines(readFileSync(CODEX_TRANSCRIPT, 'utf8'));
-  assert.deepEqual(lines.map((line) => [line.at?.slice(17, 19), line.kind, line.text]), [
-    ['02', 'user', 'Implement gh#9: the score panel.'],
-    ['03', 'think', '**Reading the plan**'],
-    ['04', 'say', 'Reading the plan first.'],
-    ['05', 'tool', 'shell · cat .flow/reports/gh-9/plan.md'],
-    ['07', 'tool', 'shell · npm test -- --grep panel'],
-    ['07', 'result', 'error: exit code 1'],
-    ['08', 'tool', 'codex_apps.github.search_issues · repo:o/r is:pr head:gh-9'],
-    ['08', 'result', 'error: Not signed in.'],
-    ['09', 'say', 'The panel test fails; fixing the layout.'],
-  ], "because each finished item shows once, as its first line: what was said or summarised, the script a command ran, a tool with its first text argument, and a failure after it; the model's own records, Codex's instructions and its token counts show nothing");
+/** The lines of the Codex 0.16x fixture, keyed `<second> <kind>` by when they were written and their kind. */
+function codexLinesAt(): Map<string, string> {
+  return new Map(parseCodexTranscript(readFileSync(CODEX_TRANSCRIPT, 'utf8')).lines.map((line) => [`${line.at?.slice(17, 19)} ${line.kind}`, line.text]));
+}
+
+test('CodexTranscriptLines_OneLinePerFinishedItemInFileOrder', () => {
+  const lines = parseCodexTranscript(readFileSync(CODEX_TRANSCRIPT, 'utf8')).lines;
+  assert.deepEqual(lines.map((line) => `${line.at?.slice(17, 19)} ${line.kind}`), ['02 user', '03 think', '04 say', '05 tool', '07 tool', '07 result', '08 tool', '08 result', '09 say'], "because each finished item shows once, in file order; the model's own records, Codex's instructions and its token counts show nothing");
+});
+
+test('CodexTranscriptLines_UserMessage_WhatThePromptSaid', () => {
+  assert.equal(codexLinesAt().get('02 user'), 'Implement gh#9: the score panel.', 'because a UserMessage is what the owner or the prompt said');
+});
+
+test('CodexTranscriptLines_Reasoning_ItsSummary', () => {
+  assert.equal(codexLinesAt().get('03 think'), '**Reading the plan**', "because a Reasoning item shows its summary's first line");
+});
+
+test('CodexTranscriptLines_AgentMessage_ItsFirstLine', () => {
+  assert.equal(codexLinesAt().get('04 say'), 'Reading the plan first.', 'because what Codex said shows as its first line');
+});
+
+test('CodexTranscriptLines_CommandExecution_ShellAndItsScript', () => {
+  assert.equal(codexLinesAt().get('05 tool'), 'shell · cat .flow/reports/gh-9/plan.md', 'because a command shows the script its shell ran, as the owner would type it');
+});
+
+test('CodexTranscriptLines_FailedCommand_ErrorWithItsExitCode', () => {
+  assert.equal(codexLinesAt().get('07 result'), 'error: exit code 1', 'because a command that failed is followed by its exit code');
+});
+
+test('CodexTranscriptLines_McpToolCall_ServerToolAndFirstTextArgument', () => {
+  assert.equal(codexLinesAt().get('08 tool'), 'codex_apps.github.search_issues · repo:o/r is:pr head:gh-9', 'because a tool call shows its server, its tool and its first text argument');
+});
+
+test('CodexTranscriptLines_FailedToolCall_ErrorWithWhatItSaid', () => {
+  assert.equal(codexLinesAt().get('08 result'), 'error: Not signed in.', "because a tool call that failed is followed by its error's first line");
 });
 
 /** A session from a Codex that writes no finished-item events: the model's records alone. */
@@ -460,7 +495,7 @@ const OLDER_CODEX = [
 ].map((entry) => JSON.stringify(entry)).join('\n');
 
 test('CodexTranscriptLines_NoFinishedItems_ReadFromTheModelRecords', () => {
-  assert.deepEqual(parseCodexTranscriptLines(OLDER_CODEX).map((line) => [line.kind, line.text]), [
+  assert.deepEqual(parseCodexTranscript(OLDER_CODEX).lines.map((line) => [line.kind, line.text]), [
     ['user', 'Fix gh#9.'],
     ['think', 'thinking'],
     ['tool', 'shell · git status'],
@@ -469,7 +504,7 @@ test('CodexTranscriptLines_NoFinishedItems_ReadFromTheModelRecords', () => {
 });
 
 test('CodexTranscript_TextTurnsOfUserAndAssistant_OldestFirst', () => {
-  assert.deepEqual(parseCodexTranscript(readFileSync(CODEX_TRANSCRIPT, 'utf8'), 200).map((turn) => [turn.role, turn.text]), [
+  assert.deepEqual(parseCodexTranscript(readFileSync(CODEX_TRANSCRIPT, 'utf8')).turns(200).map((turn) => [turn.role, turn.text]), [
     ['user', 'Implement gh#9: the score panel.'],
     ['assistant', 'Reading the plan first.\nThen the panel.'],
     ['assistant', 'The panel test fails; fixing the layout.'],

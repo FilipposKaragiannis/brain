@@ -13,7 +13,7 @@ import { filterEvents } from './events.ts';
 import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import { serveStatic } from './static.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
-import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TAIL_BYTES, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX } from './collectors/sessions.ts';
+import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX, transcriptTailStart } from './collectors/sessions.ts';
 
 /**
  * `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code.
@@ -260,7 +260,8 @@ async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: In
   if (agent === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: `no agent or session with pid ${pid} in this project` }); return; }
   if (agent.session === null) { sendJson(response, HTTP_NOT_FOUND, { error: `no transcript found for pid ${pid}` }); return; }
   const wanted = Number(linesText);
-  const read = await readTranscript(agent.session.transcript, { turns: Math.min(wanted, TRANSCRIPT_TURNS_MAX), lines: Math.min(wanted, TRANSCRIPT_LINES_MAX) }, TRANSCRIPT_TAIL_BYTES, agent.session.host);
+  const lines = Math.min(wanted, TRANSCRIPT_LINES_MAX);
+  const read = await readTranscript(agent.session.transcript, agent.session.host, { turns: Math.min(wanted, TRANSCRIPT_TURNS_MAX), lines }, transcriptTailStart(lines));
   if (read === null) { sendJson(response, HTTP_NOT_FOUND, { error: `${agent.session.transcript} cannot be read` }); return; }
   sendJson(response, HTTP_OK, { session: agent.session.id, ...read });
 }
