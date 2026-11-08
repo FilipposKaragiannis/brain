@@ -403,12 +403,33 @@ function buildRuns(input: ReconcileInput, contexts: WorktreeContext[]): Run[] {
   });
 }
 
+/**
+ * The run an agent works for: the one its own process or a parent owns (the record's `pid`, the
+ * unattended loop or the session that ran next.sh) in the worktree it works in; else, outside the
+ * project root, that worktree's run. The root is shared by every run of a step without a worktree
+ * and by the owner's own sessions, so there only an owner names the run.
+ */
+function agentRun(agent: AgentProcess, context: WorktreeContext, runs: RunRecord[]): RunRecord | null {
+  const owners = [agent.pid, ...agent.parents];
+  const owned = runs.find((run) => run.pid !== null && owners.includes(run.pid) && path.resolve(run.worktree) === context.path);
+  if (owned !== undefined) return owned;
+  return context.role === 'main' ? null : context.run;
+}
+
+/** What an agent works on: the claimed item, else its run's; the step only from a run of that item. */
+function agentWork(agent: AgentProcess, context: WorktreeContext, runs: RunRecord[]): Pick<Agent, 'item' | 'step' | 'job'> {
+  const run = agentRun(agent, context, runs);
+  const item = context.claim?.item ?? run?.item ?? null;
+  const step = run !== null && run.item === item && run.step !== '' ? run.step : null;
+  return { item, step, job: agent.job };
+}
+
 function buildAgents(input: ReconcileInput, contexts: WorktreeContext[]): Agent[] {
   return (input.processes?.agents ?? []).flatMap((agent) => {
     const context = contexts.find((entry) => under(agent.cwd, entry.path)) ?? null;
     if (context === null) return [];
     return [{
-      pid: agent.pid, host: agent.host, kind: agent.kind, cwd: agent.cwd, worktree: context.name, item: context.claim?.item ?? null,
+      pid: agent.pid, host: agent.host, kind: agent.kind, cwd: agent.cwd, worktree: context.name, ...agentWork(agent, context, input.flow.runs),
       elapsedSeconds: agent.elapsedSeconds, startedAt: agent.startedAt, command: agent.command, session: agent.session, activity: agent.activity,
     }];
   });
@@ -433,7 +454,7 @@ function buildEnded(input: ReconcileInput, contexts: WorktreeContext[]): EndedAg
       const context = contexts.find((entry) => under(process.cwd, entry.path)) ?? null;
       if (context === null) return [];
       return [{
-        pid: process.pid, host: process.host, kind: process.kind, cwd: process.cwd, worktree: context.name, item: context.claim?.item ?? null,
+        pid: process.pid, host: process.host, kind: process.kind, cwd: process.cwd, worktree: context.name, ...agentWork(process, context, input.flow.runs),
         elapsedSeconds: process.elapsedSeconds, startedAt: process.startedAt, command: process.command, session: process.session, activity: process.activity, endedAt: process.endedAt,
       }];
     })

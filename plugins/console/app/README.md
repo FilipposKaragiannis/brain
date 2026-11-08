@@ -168,10 +168,11 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 15 since an item and a
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 16 since an agent took `step`
+and `job` (15 when an item and a
 worktree took `heldBy` and `heldReason`, the states `waiting` and `held` came, `counts` took
 `waiting` and `held`, `readiness` took `held`, an attention row took the kind `close` and the
-snapshot took `toClose` (14 when an agent took
+snapshot took `toClose`, 14 when an agent took
 `startedAt` and `activity`, the project took `staleSessionSeconds` and the snapshot took `servers`, 13 when a pull took `checkRuns`,
 `head`, `autoMerge`, `changesRequested` and `reviewsRequested` and the snapshot took `mergedToday`,
 12 when a worktree took the `comments-skipped` flag, 11 when a run's `liveness` took the place of
@@ -252,6 +253,16 @@ snapshots.
   are kept in memory and forgotten fourteen days after the file was last written. `resume` is the argv
   that opens it again: `["claude", "--resume", id]` or `["codex", "resume", id]`. The home folder
   and the clock are injected (`daemon/src/collectors/sessions.ts`).
+- `item`, `step` and `job` (on every entry of `agents` and `ended`) say what it works on. `item`
+  is the claim on its worktree, else the item of the run it works for; `step` is that run's step.
+  The run it works for is the run record whose `pid` (the unattended loop, or the session that ran
+  next.sh) is the process itself or one of its parents, in the worktree it works in; else, in any
+  worktree but the project root, that worktree's run. The root is shared by every run of a step
+  without a worktree and by the owner's own sessions, so there only the owner names the run.
+  `job` is the flow job it runs under: its nearest parent whose program, or first argument that is
+  not an option, is `run-unattended.sh` (`next`) or `jobs/<name>.sh` (`<name>`, such as
+  `comments` or `health`), walked up through the pids the same ps read lists. Each is null when
+  nothing says it: an agent started by hand at the root has none.
 - `activity` (on every entry of `agents` and `ended`) is `{status, since}` from that same sessions
   file, taken only on the same pid, cwd and start: `status` is claude's `idle` (waiting on its
   owner) or `busy`, `since` its `statusUpdatedAt`. Null for codex, which writes no such file, and
@@ -434,7 +445,7 @@ Null without a record.
 |---|---|---|
 | `files` | `.flow/config.yaml`, `gates/*.json`, `runs/*.json`, each pool worktree's `.flow/claim.json`, `events.log`, `lessons.jsonl`, `retros.log`, `reports/retro-*.md`, the plugin `.flow/plugin.sh` resolves, and `gate.sh list --json` for the questions of a gate whose message it has not parsed yet¹ | 30s, and at once on any change under `.flow` |
 | `git` | `git worktree list`, per worktree ahead/behind the base, dirty files, last commit | 30s, and after a file change |
-| `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd, and every process that can own a run (those and flow's unattended loop) with its start; a lookup that fails or times out (10s each) makes the list `partial` or `unavailable` (`processList`), never empty. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, `claude mcp serve`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent; those servers go to `servers` with their cwd from the same lsof | 10s |
+| `processes` | `ps` + `lsof` for `claude`/`codex` processes and their cwd, each with its parent pids and flow job from the same `ps` (no lookup per agent), and every process that can own a run (those and flow's unattended loop) with its start; a lookup that fails or times out (10s each) makes the list `partial` or `unavailable` (`processList`), never empty. The program is the first word of the command, joined across a space only while the path runs on inside an `.app/` bundle or `Application Support/` (where the Claude desktop app keeps its CLI), so `sh /usr/local/bin/claude` or `node …/claude` is the wrapper, not the host. A host's own servers never count, named by the first two words after the program that are not options (`claude daemon run`, `claude mcp serve`, the Codex desktop app's `codex app-server --listen unix://…`, `codex app-server daemon pid-update-loop`, `codex -c … exec-server`), so a prompt that mentions a daemon is still an agent; those servers go to `servers` with their cwd from the same lsof | 10s |
 | `jobs` | `scripts/jobs.sh status --json` from the project's flow plugin | 60s |
 | `board` | `scripts/board.sh --json` (asks the tracker; tens of seconds on GitHub) | 120s |
 | `pulls` | `gh pr list` for the open PRs of `github.repo` (with each check's latest run, the head commit and GitHub's auto-merge), `gh pr list --state merged` for those merged since local midnight (`mergedToday`), then one `gh api graphql` for their unresolved review threads (the first 100 per PR); a project without `github.repo` reports `ok` with `error: "not applicable: …"` and is never read; whatever tracker holds the items, the flow keeps their PRs on GitHub, so the tracker does not matter | 60s |
@@ -551,7 +562,7 @@ on every state change and at most twice a second while output arrives.
 | `job.unschedule` | `job` (a schedule name) | `jobs.sh uninstall <job>`, then takes `jobs.schedule.<job>` out of the config | the schedule | `finished`; `jobs` and `files` are re-read |
 | `run.stop` | `item` | `steward.sh stop <item>`: ends the run's processes and removes its record, keeping the claim and the worktree | a stop lock of the item's own, so it reaches a run `run.start` or `job.start` holds | `finished` |
 | `run.resume` | `item` | `steward.sh resume <item>`: clears a dead run's record and starts its step again, as the health job does | the item | `started` |
-| `session.stop` | `pid`, `startedAt` (the session's start as the page shows it) | `/bin/kill -s TERM <pid>`, never SIGKILL: refused unless the latest snapshot lists that pid as an interactive session started within ten seconds of `startedAt`; just before the signal the daemon reads the pid with `ps -o pid=,etime=,command= -p <pid>` again and fails the action, signalling nothing, unless it still runs a claude or codex session (not a flow agent, not a host's server) started then | `session:<pid>` | `finished`; `processes` is re-read then and five seconds later |
+| `session.stop` | `pid`, `startedAt` (the session's start as the page shows it) | `/bin/kill -s TERM <pid>`, never SIGKILL: refused unless the latest snapshot lists that pid as an interactive session started within ten seconds of `startedAt`; just before the signal the daemon reads the pid with `ps -o pid=,ppid=,etime=,command= -p <pid>` again and fails the action, signalling nothing, unless it still runs a claude or codex session (not a flow agent, not a host's server) started then | `session:<pid>` | `finished`; `processes` is re-read then and five seconds later |
 | `worktree.claim` | `item` | `steward.sh claim <item>` | the pool and the item | `finished` |
 | `worktree.release` | `target`, `force?` | `steward.sh release <item or pool path> [--force]` | the pool and the item or worktree | `finished` |
 | `worktree.reserve` | `target?` (a pool worktree's name), `name?` | `steward.sh reserve [<pool path>] [--name <name>]`: the target worktree, else the first free one, with no item under the name, git `user.name` when none is given; the steward refuses a target that is claimed, reserved or dirty, exit 3; claim, sweep, health and next pass over it until a release | the pool, and the worktree with a target | `finished` |

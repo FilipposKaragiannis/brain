@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 15;
+export const SNAPSHOT_SCHEMA_VERSION = 16;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -412,7 +412,15 @@ export type Agent = {
   kind: AgentKind;
   cwd: string;
   worktree: string | null;
+  /** The item it works on: the claim on its worktree, else the item of the run it works for (see `step`); null with neither. */
   item: string | null;
+  /**
+   * The step of the run it works for, or null with none: the run its process or a parent owns in
+   * its worktree, or in a worktree other than the project root, that worktree's run.
+   */
+  step: string | null;
+  /** The flow job it runs under (`next`, `comments`, `health`, `intake`, `retro`), from its parent processes; null when started by hand. */
+  job: string | null;
   elapsedSeconds: number;
   /** When ps says the process started, as the read that found it worked it out: a stop is refused once the pid names a process started at another time. */
   startedAt: string;

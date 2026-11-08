@@ -7,11 +7,12 @@ import { readFlowHome } from '../src/collectors/flowHome.ts';
 import { readGit } from '../src/collectors/git.ts';
 import { parseJobStatus } from '../src/collectors/jobs.ts';
 import { readProcesses } from '../src/collectors/processes.ts';
-import type { ProcessFacts } from '../src/collectors/processes.ts';
+import type { AgentProcess, ProcessFacts } from '../src/collectors/processes.ts';
 import type { PullFact } from '../src/collectors/pulls.ts';
 import { readPulls } from '../src/collectors/pulls.ts';
 import { landedMergeGates, pullState, reconcile, runOutcome, runReason } from '../src/reconcile.ts';
 import type { ReconcileInput } from '../src/reconcile.ts';
+import type { CommandRunner } from '../src/collectors/exec.ts';
 import { DisagreementSettler } from '../src/settle.ts';
 import type { ReadMarks } from '../src/settle.ts';
 import type { JobRunRecord, JobStatusRow } from '../src/collectors/jobs.ts';
@@ -1320,4 +1321,75 @@ test('Servers_NeverAgentsOrSessions', async () => {
   facts.processes = { ...NOTHING_RUNS, servers: [appServer(64347, path.resolve(FIXTURE_ROOT, '../project-wt-3'))] };
   const picture = reconcile(facts);
   assert.deepEqual([picture.agents, worktree(picture, 'project-wt-3')?.sessions, worktree(picture, 'project-wt-3')?.flags.includes('session')], [[], [], false], 'because the comments and health jobs pass a server by, and the page must not show it as someone at work');
+});
+
+const agentOf = (picture: Snapshot, pid: number) => picture.agents.find((agent) => agent.pid === pid);
+
+test('Agent_InAClaimedWorktree_ItemFromTheClaim', async () => {
+  assert.equal(agentOf(await snapshot(), 100)?.item, 'gh#9', 'because project-wt-3 is claimed for gh#9');
+});
+
+test('Agent_InAClaimedWorktree_StepFromItsRun', async () => {
+  assert.equal(agentOf(await snapshot(), 100)?.step, 'implement', 'because gh#9\'s run record says the step it runs');
+});
+
+test('Agent_UnderTheUnattendedLoop_JobNext', async () => {
+  assert.equal(agentOf(await snapshot(), 100)?.job, 'next', 'because its parent (99) is the unattended loop, which the next job runs');
+});
+
+/** The comments job at the project root: launchd's shell (500), the job script (501), its subshell (502), and its claude (503). */
+const COMMENTS_AT_ROOT = [
+  `  500     1 03:00 /bin/zsh -lc cd ${FIXTURE_ROOT} && .flow/jobs/comments.sh claude`,
+  `  501   500 02:59 /bin/sh /x/flow/1.34.0/jobs/comments.sh claude`,
+  `  502   501 02:58 /bin/sh /x/flow/1.34.0/jobs/comments.sh claude`,
+  `  503   502 02:57 /usr/local/bin/claude -p /flow:comments gh#7 --permission-mode dontAsk`,
+].join('\n');
+const commentsAtRoot: CommandRunner = async (request) => ({
+  code: 0, stdout: request.command === 'ps' ? COMMENTS_AT_ROOT : `p503\nfcwd\nn${FIXTURE_ROOT}\n`, stderr: '', timedOut: false,
+});
+
+test('Agent_AtTheRootUnderTheCommentsJob_JobComments', async () => {
+  const facts = await input();
+  facts.processes = await readProcesses(commentsAtRoot, () => NOW);
+  assert.equal(agentOf(reconcile(facts), 503)?.job, 'comments', 'because a parent runs jobs/comments.sh, so the agent at the root is the comments job, not anonymous');
+});
+
+/** An agent the process read found at `cwd`, a child of 502 under 501. */
+const agentAt = (cwd: string, job: string | null = null): AgentProcess => ({
+  pid: 503, ppid: 502, parents: [502, 501], job, host: 'claude', kind: 'agent', cwd, elapsedSeconds: 60,
+  startedAt: '2026-10-24T18:15:04.000Z', command: '/usr/local/bin/claude -p /flow:next gh#12', session: null, activity: null,
+});
+
+/** gh#12's run of a step without a worktree, at the project root, owned by `pid`. */
+async function rootRunOwnedBy(pid: number): Promise<ReconcileInput> {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, agents: [agentAt(FIXTURE_ROOT, 'next')] };
+  facts.flow.runs = [...facts.flow.runs, { item: 'gh#12', step: 'plan', profile: 'feature', worktree: FIXTURE_ROOT, host: 'claude', startedAt: '2026-10-24T18:15:00Z', pid }];
+  return facts;
+}
+
+test('Agent_AtTheRootUnderTheRunsOwner_ItemFromThatRun', async () => {
+  assert.equal(agentOf(reconcile(await rootRunOwnedBy(501)), 503)?.item, 'gh#12', 'because the root has no claim, and a parent of the agent (501) owns gh#12\'s run there');
+});
+
+test('Agent_AtTheRootUnderTheRunsOwner_StepFromThatRun', async () => {
+  assert.equal(agentOf(reconcile(await rootRunOwnedBy(501)), 503)?.step, 'plan', 'because the run its parent owns says the step');
+});
+
+test('Agent_AtTheRootBesideAnotherOwnersRun_NoItem', async () => {
+  assert.equal(agentOf(reconcile(await rootRunOwnedBy(4242)), 503)?.item, null, 'because the root is shared: another worker\'s run there is not this agent\'s work');
+});
+
+test('Agent_NoClaimNoRunNoJob_Nulls', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, agents: [agentAt(FIXTURE_ROOT)] };
+  const agent = agentOf(reconcile(facts), 503);
+  assert.deepEqual([agent?.item, agent?.step, agent?.job], [null, null, null], 'because nothing says what an agent started by hand at the root works on');
+});
+
+test('Ended_AgentInAClaimedWorktree_KeepsItsStep', async () => {
+  const facts = await input();
+  facts.ended = [{ ...agentAt(path.resolve(FIXTURE_ROOT, '../project-wt-3'), 'next'), session: { host: 'claude', id: 's', transcript: '/h/s.jsonl', resume: ['claude', '--resume', 's'] }, endedAt: NOW.toISOString() }];
+  const [ended] = reconcile(facts).ended;
+  assert.equal(ended?.step, 'implement', 'because an ended agent is listed with what it worked on, as it was while it ran');
 });

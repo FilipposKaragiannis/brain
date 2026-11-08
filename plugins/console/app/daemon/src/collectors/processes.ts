@@ -5,11 +5,16 @@ import type { CommandResult, CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
 
 /**
- * `ppid` is its parent's pid, as ps gives it. `cwd` is where it works (see `workingDirectory`).
+ * `ppid` is its parent's pid, as ps gives it, and `parents` that parent and every pid above it the
+ * same ps read lists, nearest first. `job` is the flow job it runs under, the nearest parent that
+ * runs a job's script (see `jobOf`), or null. `cwd` is where it works (see `workingDirectory`).
  * `startedAt` is when ps says it started, worked out at the read. `session` and `activity` are
  * filled in by the monitor's session locator after the read; the process list alone never knows them.
  */
-export type AgentProcess = { pid: number; ppid: number; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; startedAt: string; command: string; session: SessionRef | null; activity: SessionActivity | null };
+export type AgentProcess = {
+  pid: number; ppid: number; parents: number[]; job: string | null; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; startedAt: string; command: string;
+  session: SessionRef | null; activity: SessionActivity | null;
+};
 /** A process that was in one read and gone from the next, with when the read that missed it started. */
 export type EndedProcess = AgentProcess & { endedAt: string };
 /**
@@ -35,6 +40,13 @@ const PS_COLUMNS = 'pid=,ppid=,etime=,command=';
 const MILLISECONDS_PER_SECOND = 1000;
 /** flow's unattended loop and the jobs that start runs, as `_health.py` matches them (`LOOP`). */
 const UNATTENDED_LOOP = /run-unattended\.sh|jobs\/(next|comments)\.sh/;
+/** flow's unattended loop, which the next job runs, and a job's own script, `jobs/<name>.sh`. */
+const LOOP_SCRIPT = /(^|\/)run-unattended\.sh$/;
+const JOB_SCRIPT = /(^|\/)jobs\/([a-z][a-z0-9-]*)\.sh$/;
+/** The job the unattended loop runs for. */
+const LOOP_JOB = 'next';
+/** How many parents up an agent's job is looked for; flow's own chain is a handful deep. */
+const MAX_PARENTS = 32;
 const SECONDS_PER_MINUTE = 60;
 const SECONDS_PER_HOUR = 3600;
 const SECONDS_PER_DAY = 86400;
@@ -176,6 +188,39 @@ function workingDirectory(host: AgentHost, kind: AgentKind, command: string, cwd
   return cwd;
 }
 
+/**
+ * The flow job a process runs as its script, or null: `next` for the unattended loop
+ * (`run-unattended.sh`), else `<name>` for `jobs/<name>.sh`. The script is the program or its
+ * first argument that is not an option (`/bin/sh …/jobs/comments.sh claude`), so a shell whose
+ * `-c` string only names the script is not the job. A claude or codex never is, whatever its
+ * prompt names (`claude -p jobs/comments.sh fails`).
+ */
+export function jobOf(command: string): string | null {
+  if (hostCommand(command) !== null) return null;
+  const { executable, args } = splitCommand(command);
+  for (const word of [executable, args.find((arg) => !arg.startsWith('-')) ?? '']) {
+    if (LOOP_SCRIPT.test(word)) return LOOP_JOB;
+    const named = JOB_SCRIPT.exec(word);
+    if (named !== null) return named[2]!;
+  }
+  return null;
+}
+
+/**
+ * The pids above a row, nearest first, and the job of the nearest one that runs a flow job's
+ * script, from the one ps read: a parent ps did not list, a loop or `MAX_PARENTS` ends the chain.
+ */
+function lineage(row: ProcessRow, byPid: Map<number, ProcessRow>): { parents: number[]; job: string | null } {
+  const parents: number[] = [];
+  let job: string | null = null;
+  for (let parent = byPid.get(row.ppid); parent !== undefined && parents.length < MAX_PARENTS; parent = byPid.get(parent.ppid)) {
+    if (parent.pid === row.pid || parents.includes(parent.pid)) break;
+    parents.push(parent.pid);
+    job ??= jobOf(parent.command);
+  }
+  return { parents, job };
+}
+
 /** `lsof -a -d cwd -Fpn` output: `p<pid>` lines followed by `n<path>` lines. */
 export function parseWorkingDirectories(source: string): Map<number, string> {
   const directories = new Map<number, string>();
@@ -248,11 +293,12 @@ export async function readProcesses(runner: CommandRunner, clock: () => Date): P
   // pid it gave no directory for, or a timeout, makes the read partial. A server it could not
   // place is left out without that: the servers are only shown, never acted on.
   const directories = cwds.result.timedOut ? new Map<number, string>() : parseWorkingDirectories(cwds.result.stdout);
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
   const agents = candidates.flatMap(({ row, host }) => {
     const cwd = directories.get(row.pid);
     if (cwd === undefined) return [];
     const kind = kindOf(host, row.command);
-    return [{ pid: row.pid, ppid: row.ppid, host, kind, cwd: workingDirectory(host, kind, row.command, cwd), elapsedSeconds: row.elapsedSeconds, startedAt: startOf(row, readAt), command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null, activity: null }];
+    return [{ pid: row.pid, ppid: row.ppid, ...lineage(row, byPid), host, kind, cwd: workingDirectory(host, kind, row.command, cwd), elapsedSeconds: row.elapsedSeconds, startedAt: startOf(row, readAt), command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null, activity: null }];
   });
   const servers = serving.flatMap(({ row, server }) => {
     const cwd = directories.get(row.pid);

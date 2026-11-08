@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { CommandResult, CommandRunner } from '../src/collectors/exec.ts';
-import { hostOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories, readProcesses, readSession, serverOf } from '../src/collectors/processes.ts';
+import { hostOf, jobOf, kindOf, parseElapsed, parseProcessList, parseWorkingDirectories, readProcesses, readSession, serverOf } from '../src/collectors/processes.ts';
 import { PROCESS_COMMAND_CHARS } from '../src/snapshot.ts';
 
 const NOW = new Date('2026-11-03T13:21:22Z');
@@ -268,4 +268,62 @@ test('ReadProcesses_CodexExecWithoutCd_WorksInItsCwd', async () => {
 test('ReadProcesses_ClaudeWhosePromptSaysCd_WorksInItsCwd', async () => {
   const row = '31000 19487 02:00 /usr/local/bin/claude -p fix the -C /work/app-wt-2 option --permission-mode auto';
   assert.equal(await agentCwd(row), '/work/app', 'because claude has no -C option; the words are its prompt, and claude works where lsof says');
+});
+
+test('JobOf_UnattendedLoop_Next', () => {
+  assert.equal(jobOf('/bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/1.31.0/templates/run-unattended.sh claude'), 'next', 'because the next job runs its steps through the unattended loop');
+});
+
+test('JobOf_JobScript_ItsName', () => {
+  assert.equal(jobOf('/bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/1.34.0/jobs/comments.sh claude'), 'comments', 'because a job is the script jobs/<name>.sh');
+});
+
+test('JobOf_ProjectShimOfAJob_ItsName', () => {
+  assert.equal(jobOf('/bin/sh .flow/jobs/health.sh codex'), 'health', 'because jobs.sh starts a job by the project\'s .flow/jobs/<name>.sh');
+});
+
+test('JobOf_LoginShellWhoseStringNamesTheJob_Null', () => {
+  assert.equal(jobOf('/bin/zsh -lc cd /work/app && .flow/jobs/comments.sh claude'), null, 'because launchd\'s shell only starts the job; the script is its child, nearer the agent');
+});
+
+test('JobOf_ClaudeWhosePromptNamesAJobScript_Null', () => {
+  assert.equal(jobOf('/usr/local/bin/claude -p jobs/comments.sh fails on main'), null, 'because a host\'s prompt naming a script does not make it the job');
+});
+
+test('JobOf_HelperUnderJobs_Null', () => {
+  assert.equal(jobOf('/bin/sh /x/flow/jobs/_job.sh'), null, 'because _job.sh is sourced by the jobs, never a job of its own');
+});
+
+/**
+ * The comments job at the project root on foosbrawl: launchd's shell (500), the job script (501),
+ * its subshell piping the pass to the log (502), and the claude it started (503). 600 is a
+ * claude the owner started by hand from a terminal (599).
+ */
+const JOB_LISTING = [
+  `  500     1 03:00 /bin/zsh -lc cd /work/app && .flow/jobs/comments.sh claude`,
+  `  501   500 02:59 /bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/1.34.0/jobs/comments.sh claude`,
+  `  502   501 02:58 /bin/sh /Users/x/.claude/plugins/cache/brain-plugins/flow/1.34.0/jobs/comments.sh claude`,
+  `  503   502 02:57 /usr/local/bin/claude -p /flow:comments gh#7 --permission-mode dontAsk`,
+  `  599     1 09:00 -zsh`,
+  `  600   599 08:00 /usr/local/bin/claude -p fix the readme --permission-mode auto`,
+].join('\n');
+const JOB_CWDS = 'p503\nfcwd\nn/work/app\np600\nfcwd\nn/work/app\n';
+const listedAgent = async (pid: number) =>
+  (await readProcesses(lookups(answered(JOB_LISTING), answered(JOB_CWDS)), () => NOW)).agents.find((agent) => agent.pid === pid);
+
+test('ReadProcesses_AgentUnderTheCommentsJob_JobComments', async () => {
+  assert.equal((await listedAgent(503))?.job, 'comments', 'because a parent of the agent runs jobs/comments.sh, so the page names the job instead of an anonymous agent at the root');
+});
+
+test('ReadProcesses_AgentStartedByHand_NoJob', async () => {
+  assert.equal((await listedAgent(600))?.job, null, 'because no parent of it runs a flow job');
+});
+
+test('ReadProcesses_Agent_ParentsNearestFirst', async () => {
+  assert.deepEqual((await listedAgent(503))?.parents, [502, 501, 500], 'because the chain runs from the parent up, through every pid the same ps read lists');
+});
+
+test('ReadProcesses_ParentNotListed_ChainEnds', async () => {
+  const { agents } = await readProcesses(lookups(answered(`  700   650 00:10 /usr/local/bin/claude -p one`), answered('p700\nfcwd\nn/w\n')), () => NOW);
+  assert.deepEqual(agents[0]?.parents, [], 'because a parent ps did not list has no row to walk through');
 });
