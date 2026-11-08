@@ -44,7 +44,8 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   owner what is uncommitted (`git -C <path> status --short`) and stop. Do not stash, do not
   discard, do not force. The one exception is `health`'s own: in a free worktree whose every
   change the base branch's history already holds, it discards them on the run after it names
-  them, while they stay unchanged and no session works there.
+  them, while they stay unchanged and no session works there. It restores only the paths it
+  checked and never touches `.flow/`.
 - Never create worktrees outside the pool except `tmp add`, and delete those after the phase.
 - **The pool grows on its own.** A claim with no free worktree adds one while the pool is below
   `pool_max`, named after the last entry (`../app-wt-3` after `../app-wt-2`), appends it to

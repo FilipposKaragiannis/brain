@@ -630,7 +630,7 @@ hpy() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
 # health_say <item> <fact>: one line per fact, on stdout and in events.log, of the kind health
 # (resume when the owner resumes a run).
 health_say() {
-  echo "$1: $2"
+  printf '%s: %s\n' "$1" "$2"
   facts=$((facts + 1))
   [ "$dry" -eq 1 ] && return 0
   printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$([ "$1" = pool ] && echo - || echo "$1")" "${health_kind:-health}" "$2" >> "$home/events.log"
@@ -735,7 +735,8 @@ health_free() {
 # health_free_dirty <path>: uncommitted changes in a free worktree that the base branch's history
 # already holds, path by path (scripts/_redundant.py), are said once, then discarded by the next
 # run that finds them unchanged with no session working there; it returns 0 when it discarded
-# them. Changes holding anything of their own are kept, and said once per first such path.
+# them. The discard checks again and restores only the checked paths, so .flow/ is never touched.
+# Changes holding anything of their own are kept, and said once per first such path.
 health_free_dirty() {
   hd_name="$(basename "$1")"
   hd_found="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" 2>/dev/null)"
@@ -752,12 +753,15 @@ health_free_dirty() {
   fi
   [ "$procs_ok" -eq 1 ] && [ -z "$(hpy alive "$procs" "" "$1" "")" ] || return 1
   if [ "$dry" -eq 1 ]; then health_say pool "would discard the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"; return 1; fi
-  if git -C "$1" reset -q --hard HEAD && git -C "$1" clean -fdq -- . ":!.flow"; then
-    health_say pool "discarded the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"
-    health_notify "Discarded the $hd_count uncommitted change(s) in free $hd_name: each was already in $base_branch's history, so nothing is lost. A claim can use it again."
-    return 0
-  fi
-  health_say pool "could not discard the uncommitted changes in free $hd_name"
+  hd_done="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" --discard "$hd_print" 2>/dev/null)"
+  case "$hd_done" in
+    discarded*)
+      health_say pool "discarded the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"
+      health_notify "Discarded the $hd_count uncommitted change(s) in free $hd_name: each was already in $base_branch's history, so nothing is lost. A claim can use it again."
+      return 0 ;;
+  esac
+  hd_why="${hd_done#kept?}"
+  health_say pool "could not discard the uncommitted changes in free $hd_name${hd_why:+: $hd_why}"
   return 1
 }
 

@@ -2078,6 +2078,16 @@ git -C ../wt-2 checkout -q -- README.md
 hs > "$hroot/out" 2>&1
 check_all "health: an untracked file the base never held keeps the changes" 'grep -q "so no claim can use it: untracked file scratch.txt is not in origin/main" "$hroot/out" && [ -f ../wt-2/scratch.txt ]'
 rm -f ../wt-2/scratch.txt; hs >/dev/null 2>&1
+nl_name="$(printf 'a\nb.txt')"; printf 'unique\n' > "../wt-2/$nl_name"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check_all "health: an untracked file whose name holds a newline is hashed on its own, kept and never discarded" 'grep -qF "so no claim can use it: untracked file a\nb.txt is not in origin/main" "$hroot/out" && ! grep -q discard "$hroot/out2" && [ "$(cat "../wt-2/$nl_name")" = unique ]'
+rm -f "../wt-2/$nl_name"; hs >/dev/null 2>&1
+git -C "$hroot/other" fetch -q origin && git -C "$hroot/other" checkout -q -B main origin/main && mkdir -p "$hroot/other/.flow" && printf 'base\n' > "$hroot/other/.flow/notes.txt" && git -C "$hroot/other" add .flow/notes.txt && git -C "$hroot/other" commit -qm flow-notes && git -C "$hroot/other" push -q origin main
+hs >/dev/null 2>&1
+printf 'hi\n' > ../wt-2/README.md && printf 'mine\n' > ../wt-2/.flow/notes.txt
+hs >/dev/null 2>&1; hs > "$hroot/out" 2>&1
+check_all "health: discarding redundant changes restores only the checked paths and keeps a tracked .flow/ edit" 'grep -q "^pool: discarded the 1 uncommitted change(s) in free wt-2" "$hroot/out" && [ "$(cat ../wt-2/README.md)" = hello ] && [ "$(cat ../wt-2/.flow/notes.txt)" = mine ]'
+git -C ../wt-2 checkout -q -- .flow/notes.txt; hs >/dev/null 2>&1
 
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
