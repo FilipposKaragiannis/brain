@@ -2088,6 +2088,9 @@ printf 'hi\n' > ../wt-2/README.md && printf 'mine\n' > ../wt-2/.flow/notes.txt
 hs >/dev/null 2>&1; hs > "$hroot/out" 2>&1
 check_all "health: discarding redundant changes restores only the checked paths and keeps a tracked .flow/ edit" 'grep -q "^pool: discarded the 1 uncommitted change(s) in free wt-2" "$hroot/out" && [ "$(cat ../wt-2/README.md)" = hello ] && [ "$(cat ../wt-2/.flow/notes.txt)" = mine ]'
 git -C ../wt-2 checkout -q -- .flow/notes.txt; hs >/dev/null 2>&1
+git -C ../wt-2 rm -q --cached README.md
+hs >/dev/null 2>&1; hs > "$hroot/out" 2>&1
+check_all "health: a staged deletion whose file stays on disk is discarded whole, the file kept and tracked again" 'grep -q "^pool: discarded the 2 uncommitted change(s) in free wt-2" "$hroot/out" && [ -z "$(git -C ../wt-2 status --porcelain)" ] && [ "$(cat ../wt-2/README.md)" = hello ]'
 
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"

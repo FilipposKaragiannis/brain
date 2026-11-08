@@ -151,12 +151,8 @@ def discard(worktree, base, expected):
     untracked = [e[5] for e in entries if e[0] == "?"]
     if any(p == ".flow" or p.startswith(".flow/") or not inside(worktree, p) for p in tracked + untracked):
         return "kept\ta checked path is outside what health may discard"
-    if tracked:
-        code, _ = git(worktree, ["--literal-pathspecs", "restore", "--source=HEAD", "--staged", "--worktree",
-                                 "--pathspec-from-file=-", "--pathspec-file-nul"],
-                      ("\0".join(tracked) + "\0").encode("utf-8", "surrogateescape"))
-        if code != 0:
-            return "kept\tgit restore failed"
+    # Untracked files go first: a staged deletion whose file stays on disk is both a tracked and an
+    # untracked entry, and the restore after this puts the HEAD version back in place.
     root = os.path.realpath(worktree)
     for path in untracked:
         full = os.path.join(worktree, path)
@@ -173,6 +169,12 @@ def discard(worktree, base, expected):
             except OSError:
                 break
             parent = os.path.dirname(parent)
+    if tracked:
+        code, _ = git(worktree, ["--literal-pathspecs", "restore", "--source=HEAD", "--staged", "--worktree",
+                                 "--pathspec-from-file=-", "--pathspec-file-nul"],
+                      ("\0".join(tracked) + "\0").encode("utf-8", "surrogateescape"))
+        if code != 0:
+            return "kept\tgit restore failed"
     return "discarded\t%d" % len(entries)
 
 
