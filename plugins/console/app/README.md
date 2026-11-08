@@ -782,10 +782,11 @@ and Run health and Sweep; a card per pool worktree with its name, state and flag
 branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
 its agents and sessions with pid, host and age and the command on hover, a Watch button to the
 run or a Decide button to the gate, "The run may still go (process list unavailable: <reason>)"
-while its run's `liveness` is `unknown`, why it is stale and the way
-out (for a branch far behind, a "Merge <base> in" button that runs `worktree.sync` when the
-worktree is clean, has no run record and no agent, else the same words without the button;
-after a sync that conflicted, the conflicting files folded after five and "Hand to the flow",
+while its run's `liveness` is `unknown`, a "Merge <base> in" button that runs `worktree.sync`
+(on every card, whatever its state, so the owner decides when a branch catches up; disabled with
+the daemon's reason on hover while it is unclaimed, unread by git, has uncommitted files, a run
+record or an agent; primary while the branch is far behind), why it is stale and the way out in
+words (after a sync that conflicted, the conflicting files folded after five and "Hand to the flow",
 which runs `sync.handoff` with the conflict's refs, or while a run record names the item and its
 note is there "A run is going; the sync step runs first when it starts", and between an accepted
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:

@@ -125,17 +125,47 @@ test('BranchFarBehind_Clean_MergeButtonSyncsTheWorktree', async () => {
   expect(posted, 'because the way out of a branch far behind is one press when nothing is in the way').toEqual([{ kind: 'worktree.sync', args: { target: 'wt-7' } }]);
 });
 
-test('BranchFarBehind_Dirty_SaysItInWordsWithNoButton', () => {
+test('BranchFarBehind_Dirty_MergeButtonDisabledWithTheReason', () => {
   renderWorktrees([{ ...BEHIND, dirtyFiles: 2 }]);
-  expect(screen.queryByRole('button', { name: /Merge/ }), 'because the daemon refuses a merge over uncommitted files, so the button would only fail').toBeNull();
+  const button = screen.getByRole('button', { name: 'Merge epic/gh-300 in' });
+  expect([button.hasAttribute('disabled'), button.getAttribute('title')], 'because the daemon refuses a merge over uncommitted files, and the owner must see why').toEqual([true, 'wt-7 has 2 uncommitted files; commit or stash them before merging']);
+});
+
+test('BranchFarBehind_Dirty_WayOutStillSaidInWords', () => {
+  renderWorktrees([{ ...BEHIND, dirtyFiles: 2 }]);
   expect(screen.getByText(/or release the worktree/).textContent, 'because the way out is still said').toMatch(/Merge epic\/gh-300 in/);
 });
 
-test('BranchFarBehind_RunRecord_NoMergeButton', () => {
+test('BranchFarBehind_RunRecord_MergeButtonDisabled', () => {
   const Wrapper = new FakeDaemon().screenWrapper();
   const run: Run = { item: 'gh#344', step: 'implement', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'dead' };
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [BEHIND], runs: [run] }} /></Wrapper>);
-  expect(screen.queryByRole('button', { name: /Merge/ }), 'because a run record holds the item and the daemon would refuse').toBeNull();
+  expect(screen.getByRole('button', { name: 'Merge epic/gh-300 in' }).hasAttribute('disabled'), 'because a run record holds the item and the daemon would refuse').toBe(true);
+});
+
+test('WaitingAtAGate_FarBehind_MergeButtonSyncsTheWorktree', async () => {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('s2', 'running', {}), kind: 'worktree.sync', args: { target: 'wt-7' } } } }; });
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [{ ...BEHIND, state: 'needs-you', flags: ['behind', 'stale-branch'] }] }} /></Wrapper>);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Merge epic/gh-300 in' })); });
+  expect(posted, 'because a gate outranks stale as the card state, and the owner still decides when the branch catches up').toEqual([{ kind: 'worktree.sync', args: { target: 'wt-7' } }]);
+});
+
+test('ClaimedCard_SlightlyBehind_MergeButtonEnabled', () => {
+  renderWorktrees([{ ...poolWorktree('wt-7'), state: 'claimed', flags: ['behind'], behindBase: 3, claim: CLAIM, item: 'gh#344' }]);
+  expect(screen.getByRole('button', { name: 'Merge epic/gh-300 in' }).hasAttribute('disabled'), 'because the owner may catch a branch up before it goes stale').toBe(false);
+});
+
+test('ClaimedCard_SlightlyBehind_MergeButtonNotPrimary', () => {
+  renderWorktrees([{ ...poolWorktree('wt-7'), state: 'claimed', flags: ['behind'], behindBase: 3, claim: CLAIM, item: 'gh#344' }]);
+  expect(screen.getByRole('button', { name: 'Merge epic/gh-300 in' }).className, 'because only a branch far behind calls for the merge').toBe('button');
+});
+
+test('FreeCard_MergeButtonDisabled_SaysItIsNotClaimed', () => {
+  renderWorktrees([poolWorktree('wt-3')]);
+  expect(screen.getByRole('button', { name: 'Merge main in' }).getAttribute('title'), 'because a free worktree has no branch the daemon would bring up to date').toBe('wt-3 is not claimed, so it has no branch to bring up to date');
 });
 
 test('RunWhoseProcessIsUnknown_CardSaysTheProcessListIsIncomplete', () => {

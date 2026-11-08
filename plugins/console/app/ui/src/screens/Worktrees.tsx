@@ -136,6 +136,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
       {(open !== null || worktree.syncPending !== null) && <div className="worktree-note"><SyncNote worktree={worktree} snapshot={snapshot} open={open} /></div>}
       <footer className="buttons worktree-card-foot">
         <PrimaryLink worktree={worktree} snapshot={snapshot} />
+        <SyncButton worktree={worktree} snapshot={snapshot} />
         <TerminalButton path={worktree.path} />
         <HoldButton worktree={worktree} />
       </footer>
@@ -178,7 +179,8 @@ function worktreeNote(worktree: Worktree, snapshot: Snapshot) {
   const unknownRun = worktree.item !== null && snapshot.runs.some((run) => run.item === worktree.item && run.liveness === 'unknown');
   if (unknownRun && problem !== null) return <span>The run may still go ({problem}); it is called dead only once a full read finds no process of it.</span>;
   if (worktree.state === 'stale') {
-    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action"><StaleWayOut worktree={worktree} snapshot={snapshot} /></span></>;
+    const base = worktree.claim?.base || snapshot.project.base;
+    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action">{staleWayOut(worktree.flags.includes('stale-branch'), worktree.flags.includes('idle'), base)}</span></>;
   }
   const session = worktree.sessions[0];
   if (worktree.state === 'free' && session !== undefined) return <FreeWithSession session={session} count={worktree.sessions.length} takenAt={snapshot.takenAt} />;
@@ -186,23 +188,29 @@ function worktreeNote(worktree: Worktree, snapshot: Snapshot) {
 }
 
 /**
- * Whether the console can merge the base in for you: the same checks the daemon makes before a
- * `worktree.sync` (claimed, nothing uncommitted, no run record for its item, no agent in it).
+ * Why the console cannot merge the base in for you, or null when it can: the same checks the
+ * daemon makes before a `worktree.sync` (claimed, read by git, nothing uncommitted, no run record
+ * for its item, no agent in it), in the order it makes them.
  */
-export function canSync(worktree: Worktree, snapshot: Snapshot): boolean {
-  const item = worktree.claim?.item ?? null;
-  return worktree.role === 'pool' && item !== null && worktree.dirtyFiles === 0 && worktree.agents.length === 0 && !snapshot.runs.some((run) => run.item === item);
+function syncBlocker(worktree: Worktree, snapshot: Snapshot): string | null {
+  const item = worktree.claim?.item || null;
+  if (item === null) return `${worktree.name} is not claimed, so it has no branch to bring up to date`;
+  if (worktree.dirtyFiles === null) return `git has not read ${worktree.name} yet`;
+  if (worktree.dirtyFiles > 0) return `${worktree.name} has ${worktree.dirtyFiles} uncommitted ${worktree.dirtyFiles === 1 ? 'file' : 'files'}; commit or stash them before merging`;
+  if (snapshot.runs.some((run) => run.item === item)) return `a run record names ${item}; let the run end before merging`;
+  if (worktree.agents.length > 0) return `an agent works in ${worktree.name}; merging under it would mix with its work`;
+  return null;
 }
 
-/** The way out of a stale worktree: Merge <base> in as a button when the console can do it, else in words. */
-function StaleWayOut({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
+/**
+ * Merge <base> in, on every pool card, so the owner decides when a branch catches up. Disabled with
+ * the daemon's reason while it would refuse; primary while the branch is far behind.
+ */
+function SyncButton({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
   const base = worktree.claim?.base || snapshot.project.base;
-  const behind = worktree.flags.includes('stale-branch');
-  const idle = worktree.flags.includes('idle');
-  if (behind && canSync(worktree, snapshot)) {
-    return <><ActionButton kind="worktree.sync" args={{ target: worktree.name }} label={`Merge ${base} in`} primary />{idle ? " and run the item's next step, or release the worktree." : ', or release the worktree.'}</>;
-  }
-  return <>{staleWayOut(behind, idle, base)}</>;
+  const blocker = syncBlocker(worktree, snapshot);
+  const farBehind = worktree.flags.includes('stale-branch');
+  return <ActionButton kind="worktree.sync" args={{ target: worktree.name }} label={`Merge ${base} in`} primary={farBehind && blocker === null} blockedBy={blocker} />;
 }
 
 function staleWayOut(behind: boolean, idle: boolean, base: string): string {
