@@ -14,8 +14,9 @@ home and a specific change. Three routed improvements beat a page of observation
 
 - **The lessons log** `.flow/lessons.jsonl` in the project (one JSON line per escalation and per
   review blocker, with `kind`, `item`, `step`, `rule`, `text`). It stays on this machine under
-  `.flow/`, which is excluded from git: never commit it or `retros.log`. Read the lines since the last
-  retro (the last line of `.flow/retros.log`, written in step 4; all lines on the first run).
+  `.flow/`, which is excluded from git: never commit it or `retros.log`. Read the lines whose `time` is
+  after the last retro's time (the first column of the last `.flow/retros.log` line, written in
+  step 4; all lines on the first run). Trust the times, not a line count: the log can be rewritten.
 - **The session** (manual form): the goal, what changed, which skills and agents ran.
 - **The lenses**: repetitive work; bottlenecks (prompts, denied tools, slow loops, round-trips
   for ambiguity); corrections the owner made; what worked and should be the default; wrong
@@ -61,8 +62,8 @@ it lands**, with the lesson lines that support it. Then ask which to apply.
   plugin in the same PR (W-06).
 - Project changes: the edits in the project, uncommitted, listed in the report.
 - Append one line to `.flow/retros.log`: `<time>\t<lessons read so far>\t<findings>\t<applied>`,
-  where the second column is the total number of `lessons.jsonl` lines read to date (the
-  scheduled job subtracts it from the line count to find the new lessons).
+  where `<time>` is the UTC time of the run (`date -u +%FT%TZ`; the scheduled job reads the lessons
+  after it next time) and the second column is the `lessons.jsonl` line count now.
 
 ## Unattended
 
