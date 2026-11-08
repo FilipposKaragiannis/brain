@@ -1,5 +1,28 @@
 # console
 
+## 0.18.0 (2026-11-08)
+
+- A claimed pool worktree with no run, no agent and no gate no longer reads as work going on: it
+  is `waiting` ("waiting for a worker · next <step>") or, when flow holds its item behind another,
+  `held` ("held behind gh#X", linked, with the reason). Board, Overview and Worktrees say it the
+  same way, the step reads as the next one, and a held claim is never flagged idle.
+  A hold whose holder is closed reads as `waiting`: flow lets the item through and lifts the tag
+  on its next run. The board lists open items only, so a closed holder is told by the board's
+  `holders` read (flow's `board.sh --json`); one that could not be read keeps its hold. An item at
+  or before its profile's plan step (a plan sent back at its gate) reads as `waiting` too, as flow
+  runs that plan while held.
+- The snapshot carries `heldBy` and `heldReason` on items and worktrees from flow's `held_by` and
+  `held_reason`, `counts.waiting`, `counts.held` and `readiness.held`; schema 15.
+- Items to close (every step ran with no gate up, or every child of a split is closed) get their
+  own Ready to close section on the Gates screen, each saying what to do, with the PR's merge
+  button when it is ready. No flow gate is made up for them, and the Overview's needs-you count,
+  the Gates heading and its nav badge now count the same items.
+- Every pool card on Worktrees carries "Merge <base> in", whatever its state, so a branch far
+  behind under a gate can still be brought up to date from the console. The button is disabled,
+  with the daemon's reason on hover, while the worktree is unclaimed, unread by git, has
+  uncommitted files, a run record or an agent; it is primary while the branch is far behind. The
+  stale card says its way out in words. The health job's own sync notes are unchanged.
+
 ## 0.17.0 (2026-11-06)
 
 - Agents shows how each of your own sessions stands: "busy", "idle 3d 2h" from claude's

@@ -1,5 +1,83 @@
 # flow
 
+## 1.34.0 (2026-11-08)
+
+- The `health` job cleans a free pool worktree whose uncommitted changes are already in the base
+  branch's history. `scripts/_redundant.py` checks each changed path. Its content and mode, both
+  staged and on disk, must be a version the base's history gave that same path, or the path is
+  deleted. The worktree's commit must also be in the base. The first run that finds such changes
+  names them once. The next run discards them if they are unchanged and no session works there, the
+  one that called health included. It checks again, restores only the checked paths and removes only
+  the checked untracked files, so `.flow/` is never touched. It notifies the owner, and a claim can
+  use the worktree again. A free worktree once sat for four days holding a stale index from before a
+  squash merge. Health said so once, and the pool ran one worktree short.
+- Changes with anything of their own stay. A conflict, a submodule, an untracked file or a version
+  the base never had all count, as do more than 200 changed paths, a git command in progress or a
+  file that cannot be hashed. Each file is hashed on its own, so any file name is safe, and from its
+  raw bytes, so a clean filter or an end-of-line rule cannot hide bytes only the disk holds. The
+  health line now names the first such path: `wt-2 is free but has uncommitted changes, so no claim
+  can use it: the disk version of README.md is not in origin/main`.
+- The health job sweeps the planned holds (`state.held_by`): a hold whose holder cannot be read or
+  found, holds no worktree and has no run, or whose `changes` no longer share a path with the held
+  item's is cleared, as is a hold on the item itself and the newest hold in a cycle. A holder with
+  no `changes` (a bugfix or an S task) is judged by its `touches`; with neither, the hold stays. A
+  hold whose holder closed stays, so `next` releases it with the note to merge and recheck the plan.
+  Each clear is a line in the health result and an `unheld` line in `events.log`. A valid hold
+  waiting over a day is said and notified once. Only the holders no tracker list holds are read, one
+  read each.
+- A `next` run with no item named works on after a gate: the item at the gate is set down and
+  the run picks the next ready one, until `--max-steps` or nothing is ready, so a worker no
+  longer sits idle until the next schedule. It ends as a gate (exit 4), and the job
+  says it stopped at a gate with every step it ran. A named item still stops at its gate, and an
+  escalation gate or a stopped host still ends any run.
+- `next.sh` no longer skips a ready item whose `touches` overlap a running item's: the check ran
+  only against in-flight runs and only for items that had recorded touches, so it kept nothing
+  apart and cost parallelism. The plan step's hold (`state.held_by`) replaces it.
+- A held item is not ready past its plan: `filter-ready` holds back an item whose `held_by` names
+  an item that is still open, read through its adapter as a blocker is. A holder closed or not
+  found holds nothing. A named held item exits 4 with `<item> is held behind <holder>: <reason>`;
+  a pick passes it over. The plan and the steps before it still run, so a held plan sent back at
+  its gate is planned again, and the brief says that plan decides the hold anew.
+- Once a claim in a pick finds the pool full, the pick skips every ready item that holds no claim
+  and whose step needs a worktree with no tracker read and no claim attempt, and tries the claimed
+  ones. One pass with a full pool no longer holds the pick lock long enough for the other workers
+  to give up.
+- A pick that finds nothing says why on its last line, and the next job's quiet line carries it:
+  `no free worktree for the N unclaimed ready item(s), and the pool is at pool_max; the claimed
+  items: 2 running, 3 held (gh#1 behind gh#2, ...)`, or `nothing ready: 1 running, 2 blocked`.
+  A named held item is a quiet run that names its holder, not a gate.
+- `board.sh --json` carries `holders`: the status (`open`, `closed` or `unknown`) of each holder
+  an open item is held behind that the open-item list leaves out, read once each.
+- The plan step decides holds. Two items conflict only when both change existing behavior in
+  the same code and the clash would be hard to resolve; additive work, docs and tests never do,
+  and a small overlap in doubt runs in parallel. The rule lives in `skills/plan/holds.md`.
+- `scripts/hold.sh candidates <item>` lists the other open items holding a claim whose `changes`
+  (or `touches`, lacking changes) share a path prefix with the item's touches, with each one's
+  plan report. The plan brief gets an `## Other open work` section only when it lists something;
+  the planner checks its final touches with `--touches` before it reports.
+- The plan result carries `changes` (the globs among `touches` whose existing behavior the plan
+  changes) and, for a conflict, `hold: {behind, reason}`. `advance.sh` writes `changes`, and
+  with a hold `held_by`, `held_reason` and a `held` line in `events.log`; the gate and the
+  comment say it. A replan with no hold lifts an earlier one (`unheld`).
+- `next.sh` lifts a hold once its holder has closed (`unheld` line) and the brief tells the agent
+  to merge the base in first, never rebase, and to stop at an ambiguity gate when the plan no
+  longer fits.
+- A verify run starts on merged code: `next.sh` merges the base into a clean task branch that is
+  behind it before the verify step (an `events.log` `sync` line); a merge that conflicts is
+  aborted and runs as the sync step first.
+- The explorer's design result carries `touches`, so the plan brief can judge other open work
+  before the plan exists.
+- The retro job finds the new lessons by time: every `lessons.jsonl` line whose time is after the
+  last `retros.log` line. A line count missed 26 lessons when a checkout of an old branch that
+  still tracked the log rewrote it.
+- The test-writer brief: settings, budgets, bounds and messages are read from their owner, never
+  copied as literals; no prose pinned; no guard on today's tuning state (step 12, T-01). Step 11
+  no longer asks for a separate not-null assertion, which T-09 blocks; chain from it instead.
+  Locals and lambda parameters state their role (N-04, N-05).
+- The implementer brief: never widen access so a test can reach a member; new implementation
+  types start at the narrowest access; locals and lambda parameters are spelt in full; added
+  tests read owned values from their owner.
+
 ## 1.33.0 (2026-11-06)
 
 - A red check never ends a `comments` pass. The Checks step fixes what is the change's; a failure
