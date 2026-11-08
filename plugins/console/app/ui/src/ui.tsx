@@ -87,14 +87,17 @@ export const FAILURE_SHOWN_MS = 30000;
  * A button that runs one action, stays disabled while that action runs, and says for a while how it
  * ended. With `sharesOutcomeWith`, it says how the newer of its own press and a press of that other
  * kind ended, so a button that takes the place of another keeps the feedback of the press before it.
+ * With `blockedBy`, it stays disabled and says that reason on hover, so a press the daemon would
+ * refuse is visible but never sent.
  */
-export function ActionButton({ kind, args, label, primary, title, sharesOutcomeWith }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean; title?: string | undefined; sharesOutcomeWith?: ActionKind | undefined }) {
+export function ActionButton({ kind, args, label, primary, title, sharesOutcomeWith, blockedBy }: { kind: ActionKind; args: Record<string, string>; label: string; primary: boolean; title?: string | undefined; sharesOutcomeWith?: ActionKind | undefined; blockedBy?: string | null | undefined }) {
   const actions = useActionsView();
   const busy = actions.busy(kind, args);
+  const blocked = blockedBy !== undefined && blockedBy !== null;
   const outcome = useFadingOutcome(newerOutcome(actions.outcome(kind, args), sharesOutcomeWith === undefined ? null : actions.outcome(sharesOutcomeWith, args)));
   return (
     <span className="action">
-      <button type="button" className={primary ? 'button primary' : 'button'} disabled={busy} title={title} onClick={() => { void actions.run(kind, args); }}>
+      <button type="button" className={primary ? 'button primary' : 'button'} disabled={busy || blocked} title={blockedBy ?? title} onClick={() => { void actions.run(kind, args); }}>
         {busy ? `${label}…` : label}
       </button>
       {outcome?.kind === 'refused' && <span className="chip tone-failing" title={outcome.message}>{outcome.message}</span>}
