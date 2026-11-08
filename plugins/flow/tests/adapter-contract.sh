@@ -192,6 +192,10 @@ check "write-state: the worktree reads back" '[ "$(field "$t1" state.worktree)" 
 check "write-state: attempts read back as a number" '[ "$(field "$t1" state.attempts)" = 2 ]'
 check "write-state: the last event reads back whole" '[ "$(field "$t1" state.last_event)" = "2026-11-01T10:00:00Z start implement" ]'
 check "write-state: touches read back as a list" '[ "$(field "$t1" state.touches)" = "[\"src/a/**\", \"docs/*\"]" ]'
+"$A/write-state.sh" "$t1" "changes=src/a/x.cs" held_by=gh#9 "held_reason=shares src/a/x.cs" >/dev/null 2>&1
+check "write-state: changes, held_by and held_reason read back" '[ "$(field "$t1" state.changes)" = "[\"src/a/x.cs\"]" ] && [ "$(field "$t1" state.held_by)" = "gh#9" ] && [ "$(field "$t1" state.held_reason)" = "shares src/a/x.cs" ]'
+"$A/write-state.sh" "$t1" changes= held_by= held_reason= >/dev/null 2>&1
+check "write-state: empty values clear changes and the hold" '[ "$(field "$t1" state.changes)" = "[]" ] && [ -z "$(field "$t1" state.held_by)" ]'
 check "write-state: a new size is the item size too" '[ "$(field "$t1" size)" = M ] && [ "$(field "$t1" state.size)" = M ]'
 "$A/write-state.sh" "$t1" gate=plan-approval gate_from=implement >/dev/null 2>&1
 check "write-state: a gate and its from step read back" '[ "$(field "$t1" state.gate)" = plan-approval ] && [ "$(field "$t1" state.gate_from)" = implement ]'

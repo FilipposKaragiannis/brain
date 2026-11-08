@@ -4,9 +4,11 @@
 # the owner's answer to a cleared gate while it waits on a run (answer_pending; in Health too once
 # it waits past the gate reminder); pending gates; overlapping claims; the spend per item, from
 # the step sessions in log/runs.jsonl; each tracker whose list failed, with why (--json:
-# tracker_errors, [{"tracker", "code", "message"}]). --graph prints a graph model built from every
-# adapter's open items (scripts/_graph.py): the dependency waves of one epic's children, or every
-# open item by priority. --mermaid prints it as a Mermaid flowchart instead of JSON.
+# tracker_errors, [{"tracker", "code", "message"}]); the status of each holder an open item is
+# held behind that the list leaves out (--json: holders, [{"id", "status"}], status open, closed or
+# unknown). --graph prints a graph model built from every adapter's open items (scripts/_graph.py):
+# the dependency waves of one epic's children, or every open item by priority. --mermaid prints it
+# as a Mermaid flowchart instead of JSON.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 as_json=0; graph=""; mermaid=""
@@ -36,7 +38,7 @@ if [ -n "$graph" ]; then
   printf '%s\n' "$lists" | merge_lists | python3 -I "$FLOW_PLUGIN/scripts/_graph.py" "$@" $mermaid
   exit
 fi
-procs="$(mktemp)"; failed="$(mktemp)"; said="$(mktemp)"; trap 'rm -f "$procs" "$failed" "$said"' EXIT
+procs="$(mktemp)"; failed="$(mktemp)"; said="$(mktemp)"; listed="$(mktemp)"; trap 'rm -f "$procs" "$failed" "$said" "$listed"' EXIT
 # A tracker whose list fails is named with its exit code and its last stderr line (a missing token,
 # a refused config key), so the board says why its items are missing instead of showing fewer.
 items="$(for a in $trackers; do
@@ -60,4 +62,13 @@ for l in sys.stdin:
         pass
 print(json.dumps(out))')"
 pool="$("$FLOW_PLUGIN/scripts/steward.sh" pool 2>/dev/null | tail -n +2)"
-printf '%s\n%s\n%s\n%s\n' "$items" "$runs" "$gates" "$tracker_errors" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"
+# The list has open items only, so a holder (state.held_by) it leaves out is read, once each:
+# open, closed, or unknown when it cannot be read. A closed one holds nothing (filter-ready.sh).
+holders="$(printf '%s\n' "$items" > "$listed" && python3 -I "$FLOW_PLUGIN/scripts/_health.py" holders "$listed" | while read -r h; do
+  [ -n "$h" ] || continue
+  hs="$(json_get "$(adapter read "$h" 2>/dev/null)" status 2>/dev/null)"
+  json_obj "id=$h" "status=${hs:-unknown}"; echo
+done | python3 -I -c '
+import json, sys
+print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
+printf '%s\n%s\n%s\n%s\n%s\n' "$items" "$runs" "$gates" "$tracker_errors" "$holders" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"

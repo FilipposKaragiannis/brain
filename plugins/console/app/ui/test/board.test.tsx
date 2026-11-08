@@ -92,3 +92,37 @@ test('EveryTrackerRead_NoBanner', () => {
   renderBoard([NOTHING]);
   expect(screen.queryByRole('alert'), 'because a board that read every tracker has nothing to warn about').toBeNull();
 });
+
+const WAITING: Item = { ...boardItem('gh#30', 'Thirty'), state: 'waiting', step: 'implement', worktree: 'wt-3' };
+const HELD: Item = { ...boardItem('gh#31', 'Thirty-one'), state: 'held', step: 'design', worktree: 'wt-4', heldBy: 'gh#12', heldReason: 'shares src/board.ts, which gh#12 changes' };
+
+test('WaitingItem_StepReadsAsTheNextNotAsLiveWork', () => {
+  renderBoard([WAITING]);
+  expect(row('Thirty').textContent, 'because a claimed item with no run is parked, so its step is the one a worker takes next').toMatch(/waiting.*next: implement/);
+});
+
+test('HeldItem_NamesItsHolderLinkedWithWhyOnHover', () => {
+  renderBoard([HELD, NOTHING]);
+  const holder = within(row('Thirty-one')).getByRole('link', { name: 'gh#12' });
+  expect(holder.getAttribute('href'), 'because the owner opens the item it waits behind').toBe('https://github.com/owner/project/issues/12');
+  expect(holder.closest('[title]')?.getAttribute('title'), 'because the row says why it is held').toBe(HELD.heldReason);
+});
+
+test('WaitingFilter_ParkedItemsOnly_UnderWayKeepsLiveWork', () => {
+  renderBoard([SPENT, WAITING, HELD, NOTHING]);
+  const ids = (): Array<string | null | undefined> => screen.getAllByRole('row').slice(1).map((each) => each.querySelector('td')?.textContent);
+  fireEvent.click(screen.getByRole('button', { name: /^Waiting/ }));
+  expect(ids(), 'because parked items get a filter of their own').toEqual(['gh#30', 'gh#31']);
+  fireEvent.click(screen.getByRole('button', { name: /^Under way/ }));
+  expect(ids(), 'because under way must not count parked items as work going on').toEqual(['gh#7']);
+});
+
+test('PickedHeldItem_DetailSaysWhatItWaitsBehindAndWhy', () => {
+  renderBoard([HELD], 'gh#31');
+  expect(screen.getByLabelText('Waits for').textContent, 'because the detail reads the same as the Worktrees card').toBe('held behind gh#12: shares src/board.ts, which gh#12 changes');
+});
+
+test('PickedWaitingItem_DetailSaysItWaitsForAWorker', () => {
+  renderBoard([WAITING], 'gh#30');
+  expect(screen.getByLabelText('Waits for').textContent, 'because the step it shows is the next one, not one going on').toBe('waiting for a worker · next implement');
+});

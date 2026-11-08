@@ -21,10 +21,13 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
    `adapters/README.md`, Pick filters), when the user asks for their own items or a named filter.
    Exit 2 names the filters there are, or what the filter has wrong; say so and stop.
    Exit 0 prints JSON: `item, step, agent, skill, worktree, branch, brief, reports, model, effort`.
-   Exit 3: no free worktree, and every ready item left needs a new one; say which worktrees
-   hold what (`steward.sh pool`) and stop.
-   Exit 4: the item waits at a gate; tell the user what the gate asks and stop.
-   Exit 5: nothing is ready; say so and stop. Exit 6: the item is done; say so and stop.
+   Exit 3: no free worktree, and every ready item left needs a new one; give the reason its
+   last stderr line names (the unclaimed items waiting, what the claimed ones are doing), say
+   which worktrees hold what (`steward.sh pool`) and stop.
+   Exit 4: the item waits at a gate, or is held behind another open item (the line names the
+   holder and why); tell the user what the gate asks, or what it waits behind, and stop.
+   Exit 5: nothing is ready; give the reason the last stderr line names and stop. Exit 6: the
+   item is done; say so and stop.
    Exit 7: a run is already in flight for it; show the run file and stop (another session may be on it).
 2. **Run the step in a fresh subagent.** The brief file is the whole task. Spawn the agent
    named in `agent` (Claude: the Agent tool with `subagent_type` = that name; Codex: spawn the
@@ -45,7 +48,7 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
 
 ## Rules
 
-- Never start an item that overlaps a claimed item's `touches`; `next.sh` refuses, do not override.
+- Never start an item held behind another (`state.held_by`) past its plan while that one is open; `next.sh` refuses, do not override. Its plan, sent back at the gate, still runs and decides the hold anew.
 - Never reset or release a worktree yourself; the steward does that, and never with uncommitted changes.
 - A re-size by one step continues; two steps or into L stops at a plan-approval gate. Do not argue with it.
 - Unattended runs use `.flow/run-unattended.sh`, which drives this same loop from a shell.

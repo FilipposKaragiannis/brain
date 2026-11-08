@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Agent, Gate, GateQuestion, Snapshot } from '../../../daemon/src/snapshot.ts';
+import type { Agent, Gate, GateQuestion, ReadyToClose, Snapshot } from '../../../daemon/src/snapshot.ts';
 import { ExternalLink, trackerUrl } from '../links.tsx';
 import { Age, formatDuration } from '../clock.tsx';
 import { gateKey, useGateAnswers } from '../gateAnswers.tsx';
@@ -58,9 +58,13 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
   const isAnswered = (gate: Gate): boolean => answered[gate.item]?.gate.raisedAt === gate.raisedAt;
   const waiting = [...snapshot.gates].filter((gate) => !isAnswered(gate)).sort((left, right) => right.ageSeconds - left.ageSeconds);
   const done = Object.values(answered).filter((entry) => !waiting.some((gate) => gate.item === entry.gate.item)).sort((left, right) => right.at.getTime() - left.at.getTime());
-  const pick = selected ?? waiting[0]?.item ?? done[0]?.gate.item ?? null;
+  const toClose = snapshot.toClose;
+  const pick = selected ?? waiting[0]?.item ?? toClose[0]?.item ?? done[0]?.gate.item ?? null;
   const current = waiting.find((gate) => gate.item === pick);
-  const answeredCurrent = current === undefined ? done.find((entry) => entry.gate.item === pick) : undefined;
+  // An item to close now outranks an answer this console still holds for it: a split's
+  // decomposition gate answered here is followed, once its children close, by its close card.
+  const closing = current === undefined ? toClose.find((entry) => entry.item === pick) : undefined;
+  const answeredCurrent = current === undefined && closing === undefined ? done.find((entry) => entry.gate.item === pick) : undefined;
   const nextGate = waiting.find((gate) => gate.item !== pick) ?? null;
 
   return (
@@ -69,6 +73,13 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
         <section className="gate-picks" aria-label="Waiting gates">
           {waiting.length === 0 && <div className="gate-panel"><Empty>No gate waits on you.</Empty></div>}
           {waiting.map((gate) => <GatePick key={gate.item} gate={gate} snapshot={snapshot} selected={gate.item === pick} />)}
+          {toClose.length > 0 && (
+            <div className="gate-panel close-list" aria-label="Ready to close">
+              <h3>Ready to close <span className="muted">{toClose.length}</span></h3>
+              <p className="muted">No flow gate asks about these, and the next job never takes them again: they wait for you.</p>
+              {toClose.map((entry) => <ClosePick key={entry.item} entry={entry} snapshot={snapshot} selected={entry.item === pick} />)}
+            </div>
+          )}
           <AnsweredToday snapshot={snapshot} done={done} pick={pick} />
         </section>
         {current !== undefined && (
@@ -76,7 +87,8 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
             onAnswer={(decision, draft) => answer(current, decision, draft)} />
         )}
         {answeredCurrent !== undefined && <AnsweredCard entry={answeredCurrent} snapshot={snapshot} nextGate={nextGate} onRetry={() => retry(answeredCurrent)} />}
-        {current === undefined && answeredCurrent === undefined && pick !== null && (
+        {closing !== undefined && <CloseCard entry={closing} snapshot={snapshot} />}
+        {current === undefined && answeredCurrent === undefined && closing === undefined && pick !== null && (
           <section className="decision-card" aria-label="Decision card">
             <Empty>That gate was cleared. {waiting.length > 0 ? 'Pick another from the list.' : 'Nothing else waits on you.'}</Empty>
           </section>
@@ -123,11 +135,16 @@ function AnsweredToday({ snapshot, done, pick }: { snapshot: Snapshot; done: Ans
   );
 }
 
+/** What the Gates screen lists: the gates and the items to close, the same set the Overview's needs-you count counts. */
+export function waitingOnYou(snapshot: Snapshot): number {
+  return snapshot.gates.length + snapshot.toClose.length;
+}
+
 /** The count and the line beside the page title on the Gates screen. */
 export function GatesHeading({ snapshot }: { snapshot: Snapshot }) {
   return (
     <>
-      <span className="badge tone-needs-you">{snapshot.gates.length} waiting</span>
+      <span className="badge tone-needs-you">{waitingOnYou(snapshot)} waiting</span>
       <span className="page-note">Pick one. Your answer goes on the issue and the run continues.</span>
     </>
   );
@@ -163,6 +180,71 @@ function GatePick({ gate, snapshot, selected }: { gate: Gate; snapshot: Snapshot
         <span className="age-bar"><span className={tone} style={{ width: `${percent}%` }} /></span>
       </span>
     </a>
+  );
+}
+
+/** One item to close in the list: its chip, item, how long since its last event, title, and what to do. */
+function ClosePick({ entry, snapshot, selected }: { entry: ReadyToClose; snapshot: Snapshot; selected: boolean }) {
+  return (
+    <a className={selected ? 'gate-pick selected' : 'gate-pick'} href={routeHash({ projectId: snapshot.project.id, screen: 'gates', detail: entry.item })} aria-current={selected ? 'true' : undefined}>
+      <span className="gate-pick-line">
+        <Chip tone="needs-you">close</Chip>
+        <span className="mono muted">{entry.item}</span>
+        {entry.ageSeconds !== null && <span className="gate-age fresh"><Age seconds={entry.ageSeconds} takenAt={snapshot.takenAt} /></span>}
+      </span>
+      <span className="gate-pick-title">{entry.title || entry.item}</span>
+      <span className="gate-pick-foot"><span>{entry.todo}</span></span>
+    </a>
+  );
+}
+
+/** Why the item is the owner's to finish, beyond the one-line to-do. */
+const CLOSE_WHY: Record<ReadyToClose['reason'], string> = {
+  'children-closed': 'It was split into tracker tasks and every one of them is closed, so the parent has nothing left to run.',
+  'steps-done': 'Every step of the flow ran and no merge gate is up, so the next job will not take it again.',
+};
+
+/**
+ * An item to close: what to do and why, its open PR (with a merge button once it is ready), and its
+ * issue, where it is closed. No flow gate exists for it, so nothing here clears one.
+ */
+function CloseCard({ entry, snapshot }: { entry: ReadyToClose; snapshot: Snapshot }) {
+  const projectId = snapshot.project.id;
+  const item = snapshot.items.find((each) => each.id === entry.item);
+  const facts = [
+    entry.ageSeconds === null ? null : `last event ${formatDuration(entry.ageSeconds)} ago`,
+    item !== undefined && item.size !== '' ? `size ${item.size}` : null,
+    item !== undefined && item.step !== '' ? `step ${item.step}` : null,
+  ].filter((fact): fact is string => fact !== null);
+  const pull = entry.pull;
+  return (
+    <section className="decision-card" aria-label="Close card">
+      <div className="decision-head">
+        <div className="decision-head-line">
+          <Chip tone="needs-you">ready to close</Chip>
+          <span className="mono muted">{entry.item}</span>
+          <span className="decision-links">
+            <ExternalLink url={entry.url ?? trackerUrl(snapshot, entry.item)} className="">Issue</ExternalLink>
+            {entry.worktree !== null && <a href={routeHash({ projectId, screen: 'worktrees', detail: null })}>{entry.worktree}</a>}
+          </span>
+        </div>
+        <h2>{entry.title || entry.item}</h2>
+        {facts.length > 0 && <div className="facts">{facts.map((fact) => <span key={fact} className="fact">{fact}</span>)}</div>}
+      </div>
+      <div className="decision-body">
+        {pull !== null && <GatePull pull={pull} />}
+        <div className="decision">
+          <fieldset className="question">
+            <legend>{entry.todo}</legend>
+            <p className="muted decision-help">{CLOSE_WHY[entry.reason]} No gate asks about it: close it on the tracker{entry.reason === 'steps-done' ? ' once its PR is merged, or close it unmerged' : ''}.</p>
+            <div className="decision-actions">
+              {pull !== null && pull.state === 'mergeable' && <ActionButton kind="pr.merge" args={{ pr: String(pull.number) }} label={`Merge #${pull.number}`} primary />}
+              <ExternalLink url={entry.url ?? trackerUrl(snapshot, entry.item)} className="button">Open the issue</ExternalLink>
+            </div>
+          </fieldset>
+        </div>
+      </div>
+    </section>
   );
 }
 

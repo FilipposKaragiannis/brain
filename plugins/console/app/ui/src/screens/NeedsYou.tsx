@@ -16,7 +16,7 @@ const FULL_BAR_HOURS = 72;
 
 /** The word on a row's button, which opens the screen where the row is settled. */
 const VERBS: Record<AttentionKind, string> = {
-  'gate': 'Decide', 'dead-run': 'Open', 'stale': 'Fix', 'disagreement': 'Open', 'job-failed': 'Open',
+  'gate': 'Decide', 'close': 'Decide', 'dead-run': 'Open', 'stale': 'Fix', 'disagreement': 'Open', 'job-failed': 'Open',
   'pr-failing': 'Open PR', 'pr-changes-requested': 'Open PR', 'pr-mergeable': 'Open PR', 'needs-field': 'Fill in', 'host-stopped': 'Open',
 };
 
@@ -93,7 +93,7 @@ function lateness(ageSeconds: number | null): { tone: 'fresh' | 'late' | 'old'; 
 }
 
 function rowTarget(row: AttentionRow, projectId: string): Route | null {
-  if (row.kind === 'gate') return { projectId, screen: 'gates', detail: row.id };
+  if (row.kind === 'gate' || row.kind === 'close') return { projectId, screen: 'gates', detail: row.id };
   if (row.kind.startsWith('pr-')) return { projectId, screen: 'pulls', detail: null };
   if (row.kind === 'host-stopped' || row.kind === 'job-failed') return { projectId, screen: 'jobs', detail: null };
   if (row.worktree !== null) return { projectId, screen: 'worktrees', detail: null };

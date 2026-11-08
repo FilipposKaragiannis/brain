@@ -24,7 +24,8 @@ An id is the prefix and a non-empty rest, in the id characters `A-Za-z0-9:#/_.-`
 `local:task/3`, `jira:WID-7`). No prefix may start another. `lib/flow.sh` routes by the prefix
 files, so a new adapter needs no edit there: `adapter_for <id>` names the adapter whose prefix
 starts the id, `adapter <op> <id|name> [args]` runs `adapters/<name>/<op>.sh`, and
-`scripts/_filter_ready.py` reads the same files to look up a blocker in another tracker.
+`scripts/_filter_ready.py` reads the same files to look up a blocker, or the item `held_by` names,
+in another tracker.
 
 `item_slug` turns an id into a name safe for a branch and a folder (`tr ':/#' '---'`: `gh-12`,
 `local-task-3`, `jira-WID-7`); task branches are `flow/<slug>`, reports live in
@@ -95,13 +96,15 @@ that landed. The Jira adapter's waits come from `FLOW_JIRA_RETRY_WAIT`.
 | `type` | string, optional | the tracker's own issue type |
 
 `state` always has `step`, `profile`, `size`, `worktree`, `last_event`, `pr` (strings),
-`attempts` (a number), `touches` (a list of globs) and `gate` (`none` when clear), and, once
-written, `gate_from`, `pr_host` (claude or codex, the host that wrote the PR), `answered`,
-`asked`, `answer`, `answered_at` and `answer_pending` (`next` or `comments`, what carries out the
-answer to a cleared gate; empty once a run took it). Those sixteen are the state keys.
-`write-state` takes them as `key=value` (a dash reads as an underscore): `touches` is
-comma-separated, `attempts` a whole number, an empty value clears a key, `gate=none` clears the
-gate, `size` sets the item's size too. A key outside the sixteen exits 2 and writes nothing.
+`attempts` (a number), `touches` (a list of globs), `changes` (the globs among them whose existing
+behavior the plan changes, a list), `held_by` (the item this one waits behind, empty when free),
+`held_reason` (one line, why) and `gate` (`none` when clear), and, once written, `gate_from`,
+`pr_host` (claude or codex, the host that wrote the PR), `answered`, `asked`, `answer`,
+`answered_at` and `answer_pending` (`next` or `comments`, what carries out the answer to a cleared
+gate; empty once a run took it). Those nineteen are the state keys. `write-state` takes them as
+`key=value` (a dash reads as an underscore): `touches` and `changes` are comma-separated,
+`attempts` a whole number, an empty value clears a key, `gate=none` clears the gate, `size` sets
+the item's size too. A key outside the nineteen exits 2 and writes nothing.
 
 ## Config
 

@@ -15,8 +15,8 @@ import {
   mentionReviewWaiting, reviewChangesRequested,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, MergedPull, NewerConsole,
-  ProcessInfo, ProcessListStatus, ProjectInfo, PullRequest, PullState, Readiness, Run, RunLiveness, Server, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
+  Agent, AttentionRow, CloseReason, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, MergedPull, NewerConsole,
+  ProcessInfo, ProcessListStatus, ProjectInfo, PullRequest, PullState, Readiness, ReadyToClose, Run, RunLiveness, Server, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
 export type ReconcileInput = {
@@ -65,8 +65,14 @@ const PULL_NUMBER = /^#?(\d+)$/;
 const PROCESSES_NOT_READ: ProcessListStatus = { status: 'unavailable', reason: 'not read yet', lookup: null };
 /** How much later than its record a process may seem to start and still own the run: ps rounds its elapsed time down and the record keeps whole seconds. */
 const OWNER_START_SLACK_SECONDS = 5;
+/** What needs you, then live work, then work parked between steps (waiting before held behind another), then the rest. */
 const STATE_ORDER: Record<ItemState, number> = {
-  'needs-you': 0, running: 1, stale: 2, claimed: 3, 'in-review': 4, ready: 5, blocked: 6, backlog: 7, done: 8,
+  'needs-you': 0, running: 1, stale: 2, waiting: 3, held: 4, claimed: 5, 'in-review': 6, ready: 7, blocked: 8, backlog: 9, done: 10,
+};
+/** What the owner does with an item to close, by why. */
+const CLOSE_TODO: Record<CloseReason, string> = {
+  'children-closed': 'Every child is closed: close the parent.',
+  'steps-done': 'Every step ran: merge or close.',
 };
 
 export function ageSeconds(from: string | null, now: Date): number | null {
@@ -88,7 +94,27 @@ type WorktreeContext = {
   liveness: RunLiveness | null;
   agents: AgentProcess[];
   sessions: AgentProcess[];
+  /** The claimed item as the board lists it, or null with no claim, no item or the board unread. */
+  item: BoardItem | null;
+  /** Its merge gate waits on reviewers, so the gate is left out (see `heldMergeGates`). */
+  inReview: boolean;
 };
+
+/** The item this one waits behind, or '' when it is free (or the plugin predates the hold keys). */
+function heldBy(item: BoardItem | null | undefined): string {
+  return item?.state.held_by ?? '';
+}
+
+/**
+ * Why an open item is the owner's to close, or null: every step ran, or it is split and every
+ * child is closed. The flow's ready list leaves both out, so nothing else moves them on.
+ */
+function closeReason(item: BoardItem): CloseReason | null {
+  if (item.status !== 'open') return null;
+  if (item.state.step === 'done') return 'steps-done';
+  if (item.state.step === 'split' && item.open_children === 0) return 'children-closed';
+  return null;
+}
 
 function under(cwd: string, worktreePath: string): boolean {
   return cwd === worktreePath || cwd.startsWith(worktreePath + path.sep);
@@ -119,8 +145,9 @@ function runLiveness(run: RunRecord, agents: AgentProcess[], input: ReconcileInp
   return 'dead';
 }
 
-function worktreeContexts(input: ReconcileInput): WorktreeContext[] {
+function worktreeContexts(input: ReconcileInput, inReview: Set<string>): WorktreeContext[] {
   const root = path.resolve(input.project.root);
+  const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
   const pool = poolPaths(root, input.flow.config);
   const gitByPath = new Map((input.git?.worktrees ?? []).map((entry) => [path.resolve(entry.path), entry]));
   const known = [root, ...pool, ...[...gitByPath.keys()].filter((entry) => entry !== root && !pool.includes(entry)).sort()];
@@ -141,6 +168,8 @@ function worktreeContexts(input: ReconcileInput): WorktreeContext[] {
       liveness: run === null ? null : runLiveness(run, agents, input),
       agents,
       sessions: processes.filter((process) => process.kind === 'session' && under(process.cwd, worktreePath)),
+      item: claim === null || claim.item === '' ? null : board.get(claim.item) ?? null,
+      inReview: claim !== null && inReview.has(claim.item),
     };
   });
 }
@@ -150,8 +179,25 @@ function worktreeState(context: WorktreeContext, flags: WorktreeFlag[]): Worktre
   if (context.agents.length > 0 || (context.run !== null && !flags.includes('dead-run'))) return 'running';
   if (context.gate !== null) return 'needs-you';
   if (flags.includes('stale-branch') || flags.includes('idle')) return 'stale';
-  if (context.claim !== null) return 'claimed';
-  return 'free';
+  if (context.claim === null) return 'free';
+  if (!parked(context)) return 'claimed';
+  if (context.item !== null && closeReason(context.item) !== null) return 'needs-you';
+  return heldBy(context.item) === '' ? 'waiting' : 'held';
+}
+
+/**
+ * A flow claim on an open item with no run record, no agent and no gate: parked between steps until
+ * a worker takes the next one, or until the item it waits behind closes. A reservation, a merge
+ * gate that waits on reviewers, a dead run's record and a closed item the sweep has yet to free
+ * are not parked.
+ */
+function parked(context: WorktreeContext): boolean {
+  const claim = context.claim;
+  if (claim === null || claim.reserved !== '' || claim.item === '') return false;
+  if (context.run !== null || context.agents.length > 0 || context.gate !== null || context.inReview) return false;
+  if (context.item === null) return true;
+  // A split item's work is its children's: while one is open, no worker takes the parent.
+  return context.item.status === 'open' && (context.item.state.step !== 'split' || context.item.open_children === 0);
 }
 
 function worktreeFlags(context: WorktreeContext, now: Date): WorktreeFlag[] {
@@ -164,7 +210,8 @@ function worktreeFlags(context: WorktreeContext, now: Date): WorktreeFlag[] {
   const flowClaim = context.claim !== null && context.claim.reserved === '';
   if (flowClaim && behind >= STALE_BEHIND_BASE_COMMITS) flags.push('stale-branch');
   const claimAge = flowClaim ? ageSeconds(context.claim?.claimedAt ?? null, now) : null;
-  const quiet = context.agents.length === 0 && context.run === null && context.gate === null;
+  // A held claim waits on purpose, for its holder to close, so its age alone is not idleness.
+  const quiet = context.agents.length === 0 && context.run === null && context.gate === null && heldBy(context.item) === '';
   if (quiet && claimAge !== null && claimAge >= STALE_IDLE_HOURS * SECONDS_PER_HOUR) flags.push('idle');
   if (context.liveness === 'dead') flags.push('dead-run');
   if (context.role === 'pool' && context.claim === null && context.agents.length > 0) flags.push('agent-without-claim');
@@ -193,10 +240,10 @@ function toClaim(record: ClaimRecord): Claim {
 
 function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Worktree[] {
   const { now } = input;
-  const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
   return contexts.map((context) => {
     const flags = worktreeFlags(context, now);
-    const boardItem = context.claim === null ? undefined : board.get(context.claim.item);
+    const boardItem = context.item;
+    const holder = heldBy(boardItem);
     return {
       name: context.name,
       path: context.path,
@@ -219,6 +266,8 @@ function buildWorktrees(contexts: WorktreeContext[], input: ReconcileInput): Wor
       agents: context.agents.map(processInfo),
       sessions: context.sessions.map(processInfo),
       syncPending: context.claim?.syncPending ?? null,
+      heldBy: holder || null,
+      heldReason: holder === '' ? null : boardItem?.state.held_reason || null,
     };
   });
 }
@@ -236,16 +285,19 @@ function commentsSkipped(worktree: Worktree, pulls: PullRequest[]): boolean {
 }
 
 function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate: GateRecord | null, inReview = false): ItemState {
+  // A done item whose merge gate waits on its reviewers is in review: not the owner's, not blocked, claimed or not.
+  if (worktree !== null && worktree.state === 'claimed' && inReview) return 'in-review';
   if (worktree !== null && worktree.state !== 'free' && worktree.state !== 'outside') return worktree.state;
   if (gate !== null) return 'needs-you';
   if (boardItem === null) return 'claimed';
   if (boardItem.status !== 'open') return 'done';
-  // A done item whose merge gate waits on its reviewers is in review: not the owner's, not blocked.
   if (inReview) return 'in-review';
   // The flow's ready list leaves these out: every step ran, or the item is split. The owner
   // merges or closes a done item and a split one whose children are closed; open children block.
-  if (boardItem.state.step === 'done') return 'needs-you';
-  if (boardItem.state.step === 'split') return boardItem.open_children > 0 ? 'blocked' : 'needs-you';
+  if (closeReason(boardItem) !== null) return 'needs-you';
+  if (boardItem.state.step === 'split') return 'blocked';
+  // The flow's ready list skips a held item until the one it waits behind closes.
+  if (heldBy(boardItem) !== '') return 'held';
   if (boardItem.open_blockers.length > 0) return 'blocked';
   if (boardItem.needs.length > 0) return 'backlog';
   return 'ready';
@@ -268,6 +320,7 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
       pr: boardItem.state.pr || null, url: boardItem.url || null, parent: boardItem.parent || null,
       blockedBy: boardItem.blocked_by, openBlockers: boardItem.open_blockers, openChildren: boardItem.open_children,
       needs: boardItem.needs, rank: boardItem.rank, lastEvent: boardItem.state.last_event || null,
+      heldBy: heldBy(boardItem) || null, heldReason: heldBy(boardItem) === '' ? null : boardItem.state.held_reason || null,
       // A gate raised again since the clear is the owner's again: no answer waits on a run then.
       answerPending: (gate === null && boardItem.state.answer_pending) || null,
       spend: itemSpend(input.board?.spend[boardItem.id]),
@@ -279,8 +332,8 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
     items.push({
       id, title: '', kind: '', size: '', priority: '', status: 'open', state: itemState(null, worktree, gate),
       step: worktree?.claim?.step ?? '', gate: gate?.gate ?? 'none', worktree: worktree?.name ?? null, pr: null, url: null,
-      parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: UNRANKED, lastEvent: null, answerPending: null,
-      spend: itemSpend(input.board?.spend[id]),
+      parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: UNRANKED, lastEvent: null,
+      heldBy: null, heldReason: null, answerPending: null, spend: itemSpend(input.board?.spend[id]),
     });
   }
   return items.sort((left, right) => STATE_ORDER[left.state] - STATE_ORDER[right.state] || left.rank - right.rank || left.id.localeCompare(right.id));
@@ -314,6 +367,32 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[], items: I
       session: input.gateSession?.(gate.item, gate.time) ?? null,
     }))
     .sort((left, right) => right.ageSeconds - left.ageSeconds);
+}
+
+/** When a flow event happened, from the `<iso time> <what>` a `last_event` holds, or null when it opens with no time. */
+function eventTime(lastEvent: string | null): string | null {
+  const first = lastEvent?.split(/\s/, 1)[0] ?? '';
+  return first !== '' && !Number.isNaN(Date.parse(first)) ? first : null;
+}
+
+/**
+ * The items that need you with no gate up: every step ran, or every child of a split is closed.
+ * Each is `needs-you`, and with the gates they are everything that is, so the Gates screen and the
+ * needs-you count list the same set. Oldest last event first.
+ */
+function buildToClose(input: ReconcileInput, items: Item[], pulls: PullRequest[]): ReadyToClose[] {
+  const gated = new Set(input.flow.gates.map((gate) => gate.item));
+  const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
+  return items.flatMap((item) => {
+    const boardItem = board.get(item.id);
+    const reason = boardItem === undefined ? null : closeReason(boardItem);
+    if (item.state !== 'needs-you' || gated.has(item.id) || reason === null) return [];
+    const sinceAt = eventTime(item.lastEvent);
+    return [{
+      item: item.id, title: item.title, url: item.url, reason, todo: CLOSE_TODO[reason], worktree: item.worktree,
+      pull: gatePull(item.id, items, pulls), sinceAt, ageSeconds: ageSeconds(sinceAt, input.now),
+    }];
+  }).sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
 
 function buildRuns(input: ReconcileInput, contexts: WorktreeContext[]): Run[] {
@@ -786,12 +865,15 @@ function stoppedHostAttention(stopped: StoppedHost, now: Date): AttentionRow {
   };
 }
 
-type AttentionSources = { gates: Gate[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[]; stoppedHosts: StoppedHost[] };
+type AttentionSources = { gates: Gate[]; toClose: ReadyToClose[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[]; stoppedHosts: StoppedHost[] };
 
-function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts }: AttentionSources, now: Date): AttentionRow[] {
+function buildAttention({ gates, toClose, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts }: AttentionSources, now: Date): AttentionRow[] {
   const rows: AttentionRow[] = stoppedHosts.map((stopped) => stoppedHostAttention(stopped, now));
   for (const gate of gates) {
     rows.push({ kind: 'gate', gate: gate.gate, id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds, action: null });
+  }
+  for (const close of toClose) {
+    rows.push({ kind: 'close', gate: null, id: close.item, title: `${close.item} is ready to close`, detail: close.todo, worktree: close.worktree, sinceAt: close.sinceAt, ageSeconds: close.ageSeconds, action: null });
   }
   for (const run of runs.filter((entry) => entry.liveness === 'dead')) {
     rows.push({ kind: 'dead-run', gate: null, id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now), action: null });
@@ -810,15 +892,16 @@ function buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreeme
   return rows.sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
 
-type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; pulls: PullRequest[]; disagreements: Disagreement[]; lessonsSinceRetro: number };
+type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; toClose: ReadyToClose[]; pulls: PullRequest[]; disagreements: Disagreement[]; lessonsSinceRetro: number };
 
-function buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements, lessonsSinceRetro }: CountSources): Counts {
+function buildCounts({ worktrees, items, agents, jobs, gates, toClose, pulls, disagreements, lessonsSinceRetro }: CountSources): Counts {
   const pool = worktrees.filter((entry) => entry.role === 'pool');
   const count = (state: WorktreeState): number => pool.filter((entry) => entry.state === state).length;
   const itemCount = (state: ItemState): number => items.filter((entry) => entry.state === state).length;
   const pullCount = (state: PullState): number => pulls.filter((entry) => entry.state === state).length;
   return {
-    needsYou: gates.length, running: count('running'), stale: count('stale'), claimed: count('claimed'), free: count('free'),
+    needsYou: gates.length + toClose.length, running: count('running'), stale: count('stale'),
+    waiting: count('waiting'), held: count('held'), claimed: count('claimed'), free: count('free'),
     agents: agents.filter((entry) => entry.kind === 'agent').length, jobsRunning: jobs.filter((entry) => entry.state === 'running').length,
     itemsReady: itemCount('ready'), itemsBlocked: itemCount('blocked'), itemsBacklog: itemCount('backlog'), itemsDone: itemCount('done'),
     disagreements: disagreements.length,
@@ -836,6 +919,7 @@ function buildReadiness(items: Item[]): Readiness {
     waitingOnField: open.filter((item) => item.state === 'backlog' && waitsOnField(item)).length,
     nextInLineMissingField: open.filter((item) => nextInLine(item, items)).length,
     blocked: open.filter((item) => item.state === 'blocked').length,
+    held: open.filter((item) => item.state === 'held').length,
     gated: open.filter((item) => item.state === 'needs-you').length,
   };
 }
@@ -891,12 +975,35 @@ function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
   };
 }
 
-export function reconcile(read: ReconcileInput): Snapshot {
+/**
+ * The board with each hold that keeps nothing back lifted, as flow's ready filter judges it: a
+ * holder that closed (next.sh clears the tag on the item's next run), and an item at or before its
+ * profile's plan step (a plan sent back runs again while held, and decides the hold anew). Each
+ * waits for a worker, not behind its holder; the console's view changes, flow's state does not.
+ * The board lists open items only, so a holder it leaves out is told by its `holders` read. A
+ * holder whose status is unknown keeps its hold as written.
+ */
+function withReleasedHolds(read: ReconcileInput): ReconcileInput {
+  const items = read.board?.items;
+  if (items === undefined) return read;
+  const closed = new Set([
+    ...items.filter((item) => item.status !== 'open').map((item) => item.id),
+    ...Object.entries(read.board?.holders ?? {}).filter(([, status]) => status === 'closed').map(([id]) => id),
+  ]);
+  const planning = (item: BoardItem): boolean => (read.flow.planSteps?.[item.state.profile] ?? []).includes(item.state.step);
+  const free = (item: BoardItem): boolean => (item.state.held_by ?? '') !== '' && (closed.has(item.state.held_by ?? '') || planning(item));
+  if (!items.some(free)) return read;
+  const lifted = items.map((item) => (free(item) ? { ...item, state: { ...item.state, held_by: '', held_reason: '' } } : item));
+  return { ...read, board: { ...read.board!, items: lifted } };
+}
+
+export function reconcile(given: ReconcileInput): Snapshot {
+  const read = withReleasedHolds(given);
   // A merge gate whose PR is still in review is not the owner's yet, so it is not shown as one:
   // its worktree is claimed, its item not needs-you, and its pull shows where the review stands.
   const held = heldMergeGates(read);
   const input = held.size === 0 ? read : { ...read, flow: { ...read.flow, gates: read.flow.gates.filter((gate) => !held.has(gate.item)) } };
-  const contexts = worktreeContexts(input);
+  const contexts = worktreeContexts(input, held);
   const built = buildWorktrees(contexts, input);
   const items = buildItems(input, built, held);
   const runs = buildRuns(input, contexts);
@@ -907,6 +1014,7 @@ export function reconcile(read: ReconcileInput): Snapshot {
   const pulls = buildPulls(input, items, contexts);
   const worktrees = withCommentsSkipped(built, pulls);
   const gates = buildGates(input, contexts, items, pulls);
+  const toClose = buildToClose(input, items, pulls);
   const found = buildDisagreements(input, contexts, items, pulls);
   const disagreements = input.settle === undefined ? found : input.settle(found);
   return {
@@ -914,10 +1022,10 @@ export function reconcile(read: ReconcileInput): Snapshot {
     takenAt: input.now.toISOString(),
     project: projectInfo(input, jobs),
     sources: input.sources,
-    counts: buildCounts({ worktrees, items, agents, jobs, gates, pulls, disagreements, lessonsSinceRetro: lessonsSinceRetro(input.flow.retro) }),
+    counts: buildCounts({ worktrees, items, agents, jobs, gates, toClose, pulls, disagreements, lessonsSinceRetro: lessonsSinceRetro(input.flow.retro) }),
     readiness: buildReadiness(items),
-    attention: buildAttention({ gates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
-    worktrees, items, gates, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, servers, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
+    attention: buildAttention({ gates, toClose, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
+    worktrees, items, gates, toClose, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, servers, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     mergedToday: buildMergedToday(input, items),
     events: input.flow.events,
     lessons: input.flow.retro.lessons,

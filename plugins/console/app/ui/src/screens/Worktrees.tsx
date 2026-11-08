@@ -3,6 +3,7 @@ import type { ActionRecord, ProcessInfo, Snapshot, SyncConflict, Worktree } from
 import { processListProblem } from '../../../daemon/src/snapshot.ts';
 import { Age, formatDuration, useLiveSeconds } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
+import { isParked } from '../parked.tsx';
 import { routeHash } from '../route.ts';
 import { worktreeTone } from '../status.ts';
 import type { Tone } from '../status.ts';
@@ -22,15 +23,19 @@ export const RESERVE_TITLE = 'Takes this worktree for your own work, under your 
 export const RELEASE_RESERVED_TITLE = 'Gives your reservation back: the worktree returns to the pool and the flow may claim it again.';
 export const SWEEP_TITLE = 'Frees the worktrees whose PR merged or whose item closed, and clears their merge gates.';
 
-type Filter = 'all' | 'running' | 'needs-you' | 'stale' | 'claimed' | 'free';
+type Filter = 'all' | 'running' | 'needs-you' | 'stale' | 'waiting' | 'held' | 'claimed' | 'free';
 const FILTERS: { filter: Filter; label: string; tone: Tone }[] = [
   { filter: 'all', label: 'All', tone: 'quiet' },
   { filter: 'running', label: 'Running', tone: 'running' },
   { filter: 'needs-you', label: 'Needs you', tone: 'needs-you' },
   { filter: 'stale', label: 'Stale', tone: 'stale' },
+  { filter: 'waiting', label: 'Waiting', tone: 'quiet' },
+  { filter: 'held', label: 'Held', tone: 'quiet' },
   { filter: 'claimed', label: 'Claimed', tone: 'quiet' },
   { filter: 'free', label: 'Free', tone: 'quiet' },
 ];
+/** Filters shown only while a worktree is in their state: the rarer ones. */
+const SHOWN_WHEN_SOME: Filter[] = ['held', 'claimed'];
 
 /** The pool as cards with a filter by state, then the worktrees outside it under their own heading. */
 export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
@@ -43,7 +48,7 @@ export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
     <div className="screen">
       <div className="worktree-tools">
         <div className="filter-chips" role="group" aria-label="Show">
-          {FILTERS.filter((each) => each.filter !== 'claimed' || count('claimed') > 0).map((each) => (
+          {FILTERS.filter((each) => !SHOWN_WHEN_SOME.includes(each.filter) || count(each.filter) > 0).map((each) => (
             <button key={each.filter} type="button" className={`filter-chip tone-${each.tone}`} aria-pressed={filter === each.filter} onClick={() => setFilter(each.filter)}>
               {each.filter !== 'all' && <Dot tone={each.tone} />}{each.label} <span className="filter-count">{count(each.filter)}</span>
             </button>
@@ -108,7 +113,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
     <article className={`worktree-card tone-${tone}${worktree.state === 'stale' ? ' hatched' : ''}`} aria-label={worktree.name}>
       <header className="worktree-card-head">
         <span className="mono strong worktree-name" title={worktree.path}>{worktree.name}</span>
-        <Chip tone={tone}>{worktree.state}</Chip>
+        <span title={worktree.state === 'waiting' ? WORDS.waiting : worktree.state === 'held' ? WORDS.held : undefined}><Chip tone={tone}>{worktree.state}</Chip></span>
         <Flags flags={worktree.flags} />
         <span className="worktree-right mono"><CardRight worktree={worktree} snapshot={snapshot} /></span>
       </header>
@@ -119,7 +124,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
         <div className="mono muted clip-line" title={branch}>{branch}</div>
       </div>
       <dl className="worktree-stats">
-        <div><dt>step</dt><dd>{worktree.claim?.step ?? '—'}</dd></div>
+        <div><dt>{isParked(worktree.state) ? 'next step' : 'step'}</dt><dd>{worktree.claim?.step || '—'}</dd></div>
         <div title={WORDS.dirty}><dt>tree</dt><dd className={worktree.dirtyFiles !== null && worktree.dirtyFiles > 0 ? 'tone-needs-you tone-text' : undefined}>{worktree.dirtyFiles === null ? '—' : worktree.dirtyFiles === 0 ? 'clean' : `${worktree.dirtyFiles} ${worktree.dirtyFiles === 1 ? 'file' : 'files'}`}</dd></div>
         <div title={`Commits behind ${worktree.claim?.base || snapshot.project.base}; ahead ${worktree.aheadOfBase ?? '—'}`}>
           <dt><span>behind {worktree.claim?.base || snapshot.project.base}</span><span className={`tone-${behindTone} tone-text`}>{worktree.behindBase ?? '—'}</span></dt>
@@ -136,6 +141,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
       {(open !== null || worktree.syncPending !== null) && <div className="worktree-note"><SyncNote worktree={worktree} snapshot={snapshot} open={open} /></div>}
       <footer className="buttons worktree-card-foot">
         <PrimaryLink worktree={worktree} snapshot={snapshot} />
+        <SyncButton worktree={worktree} snapshot={snapshot} />
         <TerminalButton path={worktree.path} />
         <HoldButton worktree={worktree} />
       </footer>
@@ -178,31 +184,51 @@ function worktreeNote(worktree: Worktree, snapshot: Snapshot) {
   const unknownRun = worktree.item !== null && snapshot.runs.some((run) => run.item === worktree.item && run.liveness === 'unknown');
   if (unknownRun && problem !== null) return <span>The run may still go ({problem}); it is called dead only once a full read finds no process of it.</span>;
   if (worktree.state === 'stale') {
-    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action"><StaleWayOut worktree={worktree} snapshot={snapshot} /></span></>;
+    const base = worktree.claim?.base || snapshot.project.base;
+    return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action">{staleWayOut(worktree.flags.includes('stale-branch'), worktree.flags.includes('idle'), base)}</span></>;
   }
+  if (worktree.state === 'held' && worktree.heldBy !== null) return <HeldNote worktree={worktree} holder={worktree.heldBy} snapshot={snapshot} />;
+  if (worktree.state === 'waiting') return <span>Waiting for a worker: no run, no agent and no gate. The next job's next free worker runs {worktree.claim?.step ? <span className="mono">{worktree.claim.step}</span> : 'its next step'} here.</span>;
+  const close = worktree.gate === null ? snapshot.toClose.find((entry) => entry.item === worktree.item) : undefined;
+  if (worktree.state === 'needs-you' && close !== undefined) return <span>Ready to close, though no gate asks. {close.todo}</span>;
   const session = worktree.sessions[0];
   if (worktree.state === 'free' && session !== undefined) return <FreeWithSession session={session} count={worktree.sessions.length} takenAt={snapshot.takenAt} />;
   return null;
 }
 
-/**
- * Whether the console can merge the base in for you: the same checks the daemon makes before a
- * `worktree.sync` (claimed, nothing uncommitted, no run record for its item, no agent in it).
- */
-export function canSync(worktree: Worktree, snapshot: Snapshot): boolean {
-  const item = worktree.claim?.item ?? null;
-  return worktree.role === 'pool' && item !== null && worktree.dirtyFiles === 0 && worktree.agents.length === 0 && !snapshot.runs.some((run) => run.item === item);
+/** A held card: the item it waits behind, linked, why, and that the next job passes it by meanwhile. */
+function HeldNote({ worktree, holder, snapshot }: { worktree: Worktree; holder: string; snapshot: Snapshot }) {
+  return (
+    <span>
+      Held behind <ItemLink id={holder} pages={snapshot} />{worktree.heldReason !== null && <>: {worktree.heldReason}</>}. The next job skips it until {holder} closes{worktree.claim?.step ? <>, then runs <span className="mono">{worktree.claim.step}</span></> : null}.
+    </span>
+  );
 }
 
-/** The way out of a stale worktree: Merge <base> in as a button when the console can do it, else in words. */
-function StaleWayOut({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
+/**
+ * Why the console cannot merge the base in for you, or null when it can: the same checks the
+ * daemon makes before a `worktree.sync` (claimed, read by git, nothing uncommitted, no run record
+ * for its item, no agent in it), in the order it makes them.
+ */
+function syncBlocker(worktree: Worktree, snapshot: Snapshot): string | null {
+  const item = worktree.claim?.item || null;
+  if (item === null) return `${worktree.name} is not claimed, so it has no branch to bring up to date`;
+  if (worktree.dirtyFiles === null) return `git has not read ${worktree.name} yet`;
+  if (worktree.dirtyFiles > 0) return `${worktree.name} has ${worktree.dirtyFiles} uncommitted ${worktree.dirtyFiles === 1 ? 'file' : 'files'}; commit or stash them before merging`;
+  if (snapshot.runs.some((run) => run.item === item)) return `a run record names ${item}; let the run end before merging`;
+  if (worktree.agents.length > 0) return `an agent works in ${worktree.name}; merging under it would mix with its work`;
+  return null;
+}
+
+/**
+ * Merge <base> in, on every pool card, so the owner decides when a branch catches up. Disabled with
+ * the daemon's reason while it would refuse; primary while the branch is far behind.
+ */
+function SyncButton({ worktree, snapshot }: { worktree: Worktree; snapshot: Snapshot }) {
   const base = worktree.claim?.base || snapshot.project.base;
-  const behind = worktree.flags.includes('stale-branch');
-  const idle = worktree.flags.includes('idle');
-  if (behind && canSync(worktree, snapshot)) {
-    return <><ActionButton kind="worktree.sync" args={{ target: worktree.name }} label={`Merge ${base} in`} primary />{idle ? " and run the item's next step, or release the worktree." : ', or release the worktree.'}</>;
-  }
-  return <>{staleWayOut(behind, idle, base)}</>;
+  const blocker = syncBlocker(worktree, snapshot);
+  const farBehind = worktree.flags.includes('stale-branch');
+  return <ActionButton kind="worktree.sync" args={{ target: worktree.name }} label={`Merge ${base} in`} primary={farBehind && blocker === null} blockedBy={blocker} />;
 }
 
 function staleWayOut(behind: boolean, idle: boolean, base: string): string {

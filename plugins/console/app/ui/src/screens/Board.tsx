@@ -1,16 +1,19 @@
 import { useState } from 'react';
 import type { Item, ItemState, Snapshot } from '../../../daemon/src/snapshot.ts';
 import { ExternalLink, ItemLink } from '../links.tsx';
+import { isParked, ParkedLine } from '../parked.tsx';
 import { PULL_STATE_LABEL, namesSaid, pullLabel, pullUrl } from '../pulls.ts';
 import { routeHash } from '../route.ts';
 import { formatCost, formatTokens, spendCell, spendTotal } from '../spend.ts';
 import { itemTone } from '../status.ts';
+import { WORDS } from '../words.ts';
 import { Chip, Empty, Module, SourceFreshness } from '../ui.tsx';
 
 /** The board's filters: each names the item states it keeps. */
 const FILTERS: Array<{ label: string; states: ItemState[] }> = [
-  { label: 'All open', states: ['needs-you', 'running', 'stale', 'claimed', 'in-review', 'ready', 'blocked', 'backlog'] },
+  { label: 'All open', states: ['needs-you', 'running', 'stale', 'waiting', 'held', 'claimed', 'in-review', 'ready', 'blocked', 'backlog'] },
   { label: 'Under way', states: ['needs-you', 'running', 'stale', 'claimed'] },
+  { label: 'Waiting', states: ['waiting', 'held'] },
   { label: 'In review', states: ['in-review'] },
   { label: 'Ready', states: ['ready'] },
   { label: 'Blocked', states: ['blocked'] },
@@ -86,8 +89,8 @@ function ItemTable({ items, snapshot, selected }: { items: Item[]; snapshot: Sna
             <tr key={item.id} className={item.id === selected ? 'selected' : undefined}>
               <td><ItemLink id={item.id} pages={snapshot} /></td>
               <td className="clip strong"><a href={routeHash({ projectId: snapshot.project.id, screen: 'board', detail: item.id })} title={item.title} aria-current={item.id === selected ? 'true' : undefined}>{item.title || item.id}</a></td>
-              <td><Chip tone={itemTone(item.state)}>{STATE_LABEL[item.state] ?? item.state}</Chip></td>
-              <td className="mono">{item.step || '—'}{item.answerPending !== null && <span className="muted"> · {answerWaits(item.answerPending)}</span>}</td>
+              <td><StateCell item={item} snapshot={snapshot} /></td>
+              <td className="mono"><StepCell item={item} />{item.answerPending !== null && <span className="muted"> · {answerWaits(item.answerPending)}</span>}</td>
               <td className="mono">{item.worktree ?? '—'}</td>
               <td><PullCell item={item} snapshot={snapshot} /></td>
               <td className="mono number" title={item.spend === null ? undefined : `${item.spend.sessions} sessions · ${item.spend.tokens} tokens`}>{spendCell(item.spend)}</td>
@@ -97,6 +100,19 @@ function ItemTable({ items, snapshot, selected }: { items: Item[]; snapshot: Sna
       </table>
     </div>
   );
+}
+
+/** The state chip; a held item names what it waits behind, linked, with why on hover. */
+function StateCell({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
+  const chip = <Chip tone={itemTone(item.state)}>{STATE_LABEL[item.state] ?? item.state}</Chip>;
+  if (item.state !== 'held' || item.heldBy === null) return item.state === 'waiting' ? <span title={WORDS.waiting}>{chip}</span> : chip;
+  return <span className="held-cell" title={item.heldReason ?? WORDS.held}>{chip} <span className="muted">behind</span> <ItemLink id={item.heldBy} pages={snapshot} /></span>;
+}
+
+/** The step: the live one, or for parked work the one it runs next, said as such so it never reads as work going on. */
+function StepCell({ item }: { item: Item }) {
+  if (item.step === '') return <>—</>;
+  return isParked(item.state) ? <span className="muted" title={WORDS.waiting}>next: {item.step}</span> : <>{item.step}</>;
 }
 
 /** The item's open PR as the pulls source matched it (by its `pr` field or its claimed branch), else the item's own `pr` field. */
@@ -110,9 +126,10 @@ function PullCell({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
 function ItemDetail({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
   const pull = snapshot.pulls.find((entry) => entry.item === item.id) ?? null;
   const close = routeHash({ projectId: snapshot.project.id, screen: 'board', detail: null });
+  const parked = isParked(item.state);
   const facts: Array<[string, string]> = [
     ['Kind', [item.kind, item.size, item.priority].filter((part) => part !== '').join(' · ') || '—'],
-    ['Step', item.step || '—'],
+    [parked ? 'Next step' : 'Step', item.step || '—'],
     ['Gate', item.gate === 'none' || item.gate === '' ? (item.answerPending === null ? '—' : `cleared, ${answerWaits(item.answerPending)}`) : item.gate],
     ['Worktree', item.worktree ?? '—'],
     ['Parent', item.parent ?? '—'],
@@ -123,6 +140,11 @@ function ItemDetail({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
     <Module className="item-detail" title={<><ItemLink id={item.id} pages={snapshot} /><span className="clip">{item.title}</span></>} aside={<a href={close} aria-label="Close">Close</a>} footer={<SourceFreshness name="board" freshness={snapshot.sources.board} />}>
       <div className="item-detail-body">
         <Chip tone={itemTone(item.state)}>{STATE_LABEL[item.state] ?? item.state}</Chip>
+        {(parked || item.heldBy !== null) && (
+          <p className="parked-line" aria-label="Waits for">
+            <ParkedLine heldBy={item.heldBy} step={item.step} pages={snapshot} />{item.heldReason !== null && <span className="muted">: {item.heldReason}</span>}
+          </p>
+        )}
         <dl className="item-facts">
           {facts.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
           {pull !== null && (

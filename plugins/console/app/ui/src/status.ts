@@ -4,7 +4,7 @@ import type { ActionRecord, ActionState } from './actions.ts';
 /**
  * The console's one status language. Every state anywhere on the page maps to one of eight tones:
  * green pulse for running, orange breathing for needs-you, purple hatching for stale, grey for
- * free or claimed, red for failing, teal for ready (a pull that can merge), blue for review (changes
+ * free, claimed or parked (waiting for a worker, or held behind another item), red for failing, teal for ready (a pull that can merge), blue for review (changes
  * asked on a pull) and pink for mixed (two stores that disagree).
  */
 export type Tone = 'running' | 'needs-you' | 'stale' | 'quiet' | 'failing' | 'ready' | 'review' | 'mixed';
@@ -14,7 +14,7 @@ export function worktreeTone(state: WorktreeState): Tone {
     case 'running': return 'running';
     case 'needs-you': return 'needs-you';
     case 'stale': return 'stale';
-    case 'claimed': case 'free': case 'outside': return 'quiet';
+    case 'waiting': case 'held': case 'claimed': case 'free': case 'outside': return 'quiet';
   }
 }
 
@@ -25,13 +25,14 @@ export function itemTone(state: ItemState): Tone {
     case 'stale': return 'stale';
     // A reviewer is at work on it: live work, though not an agent of the flow's.
     case 'in-review': return 'running';
-    case 'claimed': case 'ready': case 'blocked': case 'backlog': case 'done': return 'quiet';
+    // Parked between steps: nothing works on it, so it must not read as live work.
+    case 'waiting': case 'held': case 'claimed': case 'ready': case 'blocked': case 'backlog': case 'done': return 'quiet';
   }
 }
 
 export function attentionTone(kind: AttentionKind): Tone {
   switch (kind) {
-    case 'gate': return 'needs-you';
+    case 'gate': case 'close': return 'needs-you';
     case 'stale': return 'stale';
     case 'dead-run': case 'job-failed': case 'pr-failing': case 'host-stopped': return 'failing';
     case 'disagreement': return 'mixed';

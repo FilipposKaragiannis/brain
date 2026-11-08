@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, expect, test } from 'vitest';
 import type { ActionRecord, Run, Worktree } from '../../daemon/src/snapshot.ts';
 import { RELEASE_RESERVED_TITLE, Worktrees } from '../src/screens/Worktrees.tsx';
-import { actionRecord, claudeSession, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, poolWorktree, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { actionRecord, boardItem, claudeSession, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, poolWorktree, readyToClose, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -125,17 +125,47 @@ test('BranchFarBehind_Clean_MergeButtonSyncsTheWorktree', async () => {
   expect(posted, 'because the way out of a branch far behind is one press when nothing is in the way').toEqual([{ kind: 'worktree.sync', args: { target: 'wt-7' } }]);
 });
 
-test('BranchFarBehind_Dirty_SaysItInWordsWithNoButton', () => {
+test('BranchFarBehind_Dirty_MergeButtonDisabledWithTheReason', () => {
   renderWorktrees([{ ...BEHIND, dirtyFiles: 2 }]);
-  expect(screen.queryByRole('button', { name: /Merge/ }), 'because the daemon refuses a merge over uncommitted files, so the button would only fail').toBeNull();
+  const button = screen.getByRole('button', { name: 'Merge epic/gh-300 in' });
+  expect([button.hasAttribute('disabled'), button.getAttribute('title')], 'because the daemon refuses a merge over uncommitted files, and the owner must see why').toEqual([true, 'wt-7 has 2 uncommitted files; commit or stash them before merging']);
+});
+
+test('BranchFarBehind_Dirty_WayOutStillSaidInWords', () => {
+  renderWorktrees([{ ...BEHIND, dirtyFiles: 2 }]);
   expect(screen.getByText(/or release the worktree/).textContent, 'because the way out is still said').toMatch(/Merge epic\/gh-300 in/);
 });
 
-test('BranchFarBehind_RunRecord_NoMergeButton', () => {
+test('BranchFarBehind_RunRecord_MergeButtonDisabled', () => {
   const Wrapper = new FakeDaemon().screenWrapper();
   const run: Run = { item: 'gh#344', step: 'implement', profile: 'default', worktree: '/p-wt/wt-7', host: 'claude', startedAt: TAKEN_AT, pid: null, liveness: 'dead' };
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [BEHIND], runs: [run] }} /></Wrapper>);
-  expect(screen.queryByRole('button', { name: /Merge/ }), 'because a run record holds the item and the daemon would refuse').toBeNull();
+  expect(screen.getByRole('button', { name: 'Merge epic/gh-300 in' }).hasAttribute('disabled'), 'because a run record holds the item and the daemon would refuse').toBe(true);
+});
+
+test('WaitingAtAGate_FarBehind_MergeButtonSyncsTheWorktree', async () => {
+  const daemon = new FakeDaemon();
+  const posted: unknown[] = [];
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('s2', 'running', {}), kind: 'worktree.sync', args: { target: 'wt-7' } } } }; });
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [{ ...BEHIND, state: 'needs-you', flags: ['behind', 'stale-branch'] }] }} /></Wrapper>);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Merge epic/gh-300 in' })); });
+  expect(posted, 'because a gate outranks stale as the card state, and the owner still decides when the branch catches up').toEqual([{ kind: 'worktree.sync', args: { target: 'wt-7' } }]);
+});
+
+test('ClaimedCard_SlightlyBehind_MergeButtonEnabled', () => {
+  renderWorktrees([{ ...poolWorktree('wt-7'), state: 'claimed', flags: ['behind'], behindBase: 3, claim: CLAIM, item: 'gh#344' }]);
+  expect(screen.getByRole('button', { name: 'Merge epic/gh-300 in' }).hasAttribute('disabled'), 'because the owner may catch a branch up before it goes stale').toBe(false);
+});
+
+test('ClaimedCard_SlightlyBehind_MergeButtonNotPrimary', () => {
+  renderWorktrees([{ ...poolWorktree('wt-7'), state: 'claimed', flags: ['behind'], behindBase: 3, claim: CLAIM, item: 'gh#344' }]);
+  expect(screen.getByRole('button', { name: 'Merge epic/gh-300 in' }).className, 'because only a branch far behind calls for the merge').toBe('button');
+});
+
+test('FreeCard_MergeButtonDisabled_SaysItIsNotClaimed', () => {
+  renderWorktrees([poolWorktree('wt-3')]);
+  expect(screen.getByRole('button', { name: 'Merge main in' }).getAttribute('title'), 'because a free worktree has no branch the daemon would bring up to date').toBe('wt-3 is not claimed, so it has no branch to bring up to date');
 });
 
 test('RunWhoseProcessIsUnknown_CardSaysTheProcessListIsIncomplete', () => {
@@ -326,4 +356,40 @@ test('FreeCard_ReserveEnded_OutcomeStaysWhenTheCardTurnsToRelease', async () => 
   const { refresh } = await pressReserveThenRefresh({ status: HTTP_ACCEPTED, body: { action: reserving('r4', 'failed', 'wt-3') } });
   refresh([RESERVED_WT3]);
   expect(within(screen.getByRole('article', { name: 'wt-3' })).queryByText('failed (exit 1)'), "because the reserve's outcome belongs to the card, not to the Reserve button").not.toBeNull();
+});
+
+const PARKED: Worktree = { ...poolWorktree('wt-5'), state: 'waiting', item: 'gh#30', claim: { item: 'gh#30', branch: 'flow/gh-30', base: 'main', step: 'implement', claimedAt: TAKEN_AT, host: 'claude', reserved: '' } };
+const HELD_CARD: Worktree = { ...PARKED, name: 'wt-6', state: 'held', item: 'gh#31', heldBy: 'gh#12', heldReason: 'shares src/board.ts, which gh#12 changes' };
+
+test('WaitingCard_SaysItWaitsForAWorkerAndTheNextStep', () => {
+  renderWorktrees([PARKED]);
+  const card = screen.getByRole('article', { name: 'wt-5' });
+  expect(card.textContent, 'because a claim with no run must not read as work going on').toMatch(/Waiting for a worker.*runs implement here/);
+  expect(within(card).queryByText('next step'), 'because the step shown is the one a worker takes next').not.toBeNull();
+});
+
+test('HeldCard_NamesItsHolderLinkedAndWhy', () => {
+  const Wrapper = new FakeDaemon().screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [HELD_CARD], items: [boardItem('gh#12', 'Twelve')] }} /></Wrapper>);
+  const card = screen.getByRole('article', { name: 'wt-6' });
+  expect(within(card).getByRole('link', { name: 'gh#12' }).getAttribute('href'), 'because the owner opens what it waits behind').toBe('https://github.com/owner/project/issues/12');
+  expect(card.textContent, 'because the card says why, and when it moves again').toMatch(/Held behind gh#12: shares src\/board\.ts, which gh#12 changes\. The next job skips it until gh#12 closes, then runs implement\./);
+});
+
+test('Filters_WaitingAndHeldCountedApart', () => {
+  renderWorktrees([PARKED, HELD_CARD, poolWorktree('wt-2')]);
+  expect([screen.getByRole('button', { name: /^Waiting/ }).textContent, screen.getByRole('button', { name: /^Held/ }).textContent], 'because waiting for a worker and held behind another item are different waits').toEqual(['Waiting 1', 'Held 1']);
+});
+
+test('NothingHeld_NoHeldFilter', () => {
+  renderWorktrees([PARKED]);
+  expect(screen.queryByRole('button', { name: /^Held/ }), 'because a chip for a state no card is in is noise').toBeNull();
+});
+
+test('ItemToCloseOnACard_SaysWhatToDoAndDecideOpensIt', () => {
+  const done: Worktree = { ...PARKED, name: 'wt-8', state: 'needs-you', item: 'gh#40' };
+  const Wrapper = new FakeDaemon().screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 1), worktrees: [done], toClose: [{ ...readyToClose('gh#40', 'steps-done'), worktree: 'wt-8' }] }} /></Wrapper>);
+  expect(screen.getByRole('article', { name: 'wt-8' }).textContent, 'because no gate explains why it needs you').toMatch(/Ready to close, though no gate asks\. Every step ran: merge or close\./);
+  expect(screen.getByRole('link', { name: 'Decide' }).getAttribute('href'), 'because the Gates screen lists it').toBe('#/project/gates/gh%2340');
 });

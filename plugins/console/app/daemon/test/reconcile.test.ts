@@ -93,7 +93,8 @@ test('MainAndSideWorktrees_AreOutsideThePool', async () => {
 test('Counts_FollowPoolStates', async () => {
   const { counts } = await snapshot();
   assert.equal(counts.agents, 1, 'because a session is not an agent');
-  assert.deepEqual([counts.needsYou, counts.running, counts.stale, counts.free], [1, 1, 1, 0], 'because the pool holds one of each and nothing free');
+  assert.deepEqual([counts.running, counts.stale, counts.free], [1, 1, 0], 'because the pool holds one of each and nothing free');
+  assert.equal(counts.needsYou, 2, "because gh#7 waits at a gate and gh#20 ran every step with no merge gate, so it is the owner's to close");
 });
 
 test('Gate_PluginQuestions_Shown', async () => {
@@ -187,6 +188,140 @@ test('Items_NothingLeftToRun_NotReady', async () => {
   assert.equal(states['gh#40'], 'needs-you', 'because every step ran and the owner merges or closes it; the next job never takes it');
   assert.equal(states['gh#41'], 'blocked', 'because a split item waits on its open children');
   assert.equal(states['gh#42'], 'needs-you', 'because a split item whose children are closed is the owner\'s to close');
+});
+
+/** gh#9, claimed in project-wt-3, between steps: its run ended, no process works anywhere, and the board's state of it changed as given. */
+async function parkedNine(change: Partial<BoardItem['state']> = {}, claimedAt: string | null = null): Promise<ReconcileInput> {
+  const facts = withBoardItem(await input(), 'gh#9', change);
+  facts.processes = NOTHING_RUNS;
+  facts.flow = {
+    ...facts.flow, runs: [],
+    claims: facts.flow.claims.map((claim) => (claim.item === 'gh#9' && claimedAt !== null ? { ...claim, claimedAt } : claim)),
+  };
+  return facts;
+}
+const HELD = { held_by: 'gh#12', held_reason: 'shares src/ui/board.ts, which gh#12 changes' };
+const SIX_DAYS_BEFORE = '2026-10-18T18:00:00Z';
+
+test('ParkedClaim_NotHeld_WaitingForAWorker', async () => {
+  const picture = reconcile(await parkedNine());
+  assert.equal(worktree(picture, 'project-wt-3')?.state, 'waiting', 'because a claim with no run, no agent and no gate is parked until a worker takes its next step, not work going on');
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'waiting', 'because the Board must not show a parked item as live work');
+  assert.deepEqual([picture.counts.waiting, picture.counts.claimed], [1, 0], 'because the pool counts it as waiting, not as a bare claim');
+});
+
+test('ParkedClaim_PluginBeforeTheHoldKeys_NotHeld', async () => {
+  const nine = worktree(reconcile(await parkedNine()), 'project-wt-3');
+  assert.deepEqual([nine?.heldBy, nine?.heldReason], [null, null], 'because a state without held_by holds nothing');
+});
+
+test('ParkedClaim_Held_HeldBehindItsHolderWithTheReason', async () => {
+  const picture = reconcile(await parkedNine(HELD));
+  const nine = worktree(picture, 'project-wt-3');
+  assert.deepEqual([nine?.state, nine?.heldBy, nine?.heldReason], ['held', 'gh#12', HELD.held_reason], 'because the card says which item it waits behind and why');
+  const item = picture.items.find((entry) => entry.id === 'gh#9');
+  assert.deepEqual([item?.state, item?.heldBy, item?.heldReason], ['held', 'gh#12', HELD.held_reason], 'because the Board says the same as the card');
+  assert.equal(picture.counts.held, 1, 'because the pool counts the held worktree');
+});
+
+test('ParkedClaim_HolderClosedOnTheBoard_WaitingNotHeld', async () => {
+  const facts = withBoardItems(await parkedNine({ held_by: 'gh#40', held_reason: 'shares src/a.ts' }), [{ id: 'gh#40', status: 'closed' }]);
+  const picture = reconcile(facts);
+  const nine = worktree(picture, 'project-wt-3');
+  assert.deepEqual([nine?.state, nine?.heldBy], ['waiting', null], "because flow's ready filter lets an item through once its holder closes, and next.sh lifts the tag on its next run");
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'waiting', 'because the Board says the same as the card');
+});
+
+test('ParkedClaim_HolderClosedOffTheBoard_WaitingNotHeld', async () => {
+  const facts = await parkedNine({ held_by: 'gh#41', held_reason: 'shares src/a.ts' });
+  facts.board = { ...facts.board!, holders: { 'gh#41': 'closed' } };
+  const nine = worktree(reconcile(facts), 'project-wt-3');
+  assert.deepEqual([nine?.state, nine?.heldBy], ['waiting', null], 'because the board lists open items only, and its holders read says this holder closed');
+});
+
+test('ParkedClaim_HolderUnknownOffTheBoard_StillHeld', async () => {
+  const facts = await parkedNine({ held_by: 'gh#41', held_reason: 'shares src/a.ts' });
+  facts.board = { ...facts.board!, holders: { 'gh#41': 'unknown' } };
+  assert.equal(worktree(reconcile(facts), 'project-wt-3')?.state, 'held', 'because a holder that could not be read may still be open');
+});
+
+test('ParkedClaimHeldAtItsPlan_WaitingNotHeld', async () => {
+  const facts = await parkedNine({ ...HELD, step: 'plan', profile: 'task-M' });
+  facts.flow = { ...facts.flow, planSteps: { 'task-M': ['design', 'plan'] } };
+  const picture = reconcile(facts);
+  assert.deepEqual([worktree(picture, 'project-wt-3')?.state, worktree(picture, 'project-wt-3')?.heldBy], ['waiting', null], "because a plan sent back runs again while held, as flow's ready filter lets it, and decides the hold anew");
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'waiting', 'because the Board says the same as the card');
+});
+
+test('ParkedClaimHeldPastItsPlan_StillHeld', async () => {
+  const facts = await parkedNine({ ...HELD, step: 'implement', profile: 'task-M' });
+  facts.flow = { ...facts.flow, planSteps: { 'task-M': ['design', 'plan'] } };
+  assert.equal(worktree(reconcile(facts), 'project-wt-3')?.state, 'held', 'because a hold keeps back every step after the plan while its holder is open');
+});
+
+test('ParkedClaim_HolderNotOnTheBoard_StillHeld', async () => {
+  const nine = worktree(reconcile(await parkedNine({ held_by: 'gh#41', held_reason: 'shares src/a.ts' })), 'project-wt-3');
+  assert.deepEqual([nine?.state, nine?.heldBy], ['held', 'gh#41'], 'because a holder the board does not list may still be open, so the hold stands as flow wrote it');
+});
+
+test('HeldClaimSixDaysOld_NotIdle', async () => {
+  const nine = worktree(reconcile(await parkedNine(HELD, SIX_DAYS_BEFORE)), 'project-wt-3');
+  assert.equal(nine?.state, 'held', 'because a held claim waits on purpose, for its holder to close');
+  assert.equal(nine?.flags.includes('idle'), false, 'because its age alone says nothing went wrong');
+});
+
+test('FreeClaimSixDaysOld_StillStale', async () => {
+  assert.equal(worktree(reconcile(await parkedNine({}, SIX_DAYS_BEFORE)), 'project-wt-3')?.state, 'stale', 'because a claim nothing holds back and nobody worked for six days is idle');
+});
+
+test('ItemHeldWithNoWorktree_HeldNotReady', async () => {
+  const picture = reconcile(withBoardItem(await input(), 'gh#12', HELD));
+  assert.equal(picture.items.find((item) => item.id === 'gh#12')?.state, 'held', "because flow's ready filter skips a held item until its holder closes");
+  assert.deepEqual([picture.readiness.ready, picture.readiness.held], [0, 1], 'because the readiness line must not offer a held item to the next job');
+});
+
+test('ItemsByState_ParkedAfterLiveWorkBeforeUnstarted', async () => {
+  const picture = reconcile(withBoardItem(await parkedNine(HELD), 'gh#12', {}));
+  const order = picture.items.map((item) => item.state);
+  assert.ok(order.indexOf('held') > order.indexOf('stale') && order.indexOf('held') < order.indexOf('ready'), 'because parked work sorts after live work and before what nothing has started');
+});
+
+test('ItemsToClose_ListedWithWhatToDo', async () => {
+  const facts = withBoardItems(await input(), [
+    { id: 'gh#40', title: 'Forty', state: { step: 'done', gate: 'none', worktree: '', pr: '', last_event: '2026-10-22T09:00:00Z implement done; every step ran', profile: 'task-S', attempts: 0 } },
+    { id: 'gh#41', title: 'Forty-one', state: { step: 'split', gate: 'none', worktree: '', pr: '', last_event: '', profile: 'task-M', attempts: 0 }, open_children: 2 },
+    { id: 'gh#42', title: 'Forty-two', state: { step: 'split', gate: 'none', worktree: '', pr: '', last_event: '', profile: 'task-M', attempts: 0 }, open_children: 0 },
+  ]);
+  const picture = reconcile(facts);
+  const todo = Object.fromEntries(picture.toClose.map((entry) => [entry.item, entry.todo]));
+  assert.equal(todo['gh#42'], 'Every child is closed: close the parent.', 'because no gate asks the owner to close a split item whose children are done');
+  assert.equal(todo['gh#40'], 'Every step ran: merge or close.', 'because no merge gate asks about an item every step of which ran');
+  assert.equal('gh#41' in todo, false, 'because a split item with open children waits on them, not on the owner');
+  assert.equal(picture.toClose.find((entry) => entry.item === 'gh#40')?.sinceAt, '2026-10-22T09:00:00Z', "because the wait counts from the item's last flow event");
+  assert.deepEqual(picture.attention.filter((row) => row.kind === 'close').map((row) => row.id).sort(), ['gh#20', 'gh#40', 'gh#42'], 'because the Overview lists them with the gates');
+});
+
+test('NeedsYouCount_GatesPlusItemsToClose_EveryNeedsYouItemOnce', async () => {
+  const picture = reconcile(withBoardItems(await input(), [{ id: 'gh#42', state: { step: 'split', gate: 'none', worktree: '', pr: '', last_event: '', profile: 'task-M', attempts: 0 }, open_children: 0 }]));
+  const listed = [...picture.gates.map((gate) => gate.item), ...picture.toClose.map((entry) => entry.item)].sort();
+  assert.equal(picture.counts.needsYou, listed.length, 'because the Overview count and the Gates screen count the same rows');
+  assert.deepEqual(picture.items.filter((item) => item.state === 'needs-you').map((item) => item.id).sort(), listed, 'because every item the Board tags needs you shows on the Gates screen, once');
+});
+
+test('ClaimedItemEveryStepRanNoGate_WorktreeNeedsYou', async () => {
+  const picture = reconcile(await parkedNine({ step: 'done' }));
+  assert.equal(worktree(picture, 'project-wt-3')?.state, 'needs-you', 'because nothing is left for a worker: the owner merges or closes it');
+  assert.equal(picture.toClose.find((entry) => entry.item === 'gh#9')?.worktree, 'project-wt-3', 'because the close card names the worktree the sweep frees after');
+});
+
+test('ClaimedItemAtAMergeGateInReview_InReviewNotWaiting', async () => {
+  const facts = await parkedNine({ step: 'done', gate: 'merge' });
+  facts.flow = { ...facts.flow, gates: [{ item: 'gh#9', gate: 'merge', message: 'Merge #21', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null }] };
+  facts.pulls = { merged: [], pulls: (facts.pulls?.pulls ?? []).map((entry) => (entry.number === 21 ? { ...entry, reviewDecision: 'CHANGES_REQUESTED' } : entry)) };
+  const picture = reconcile(facts);
+  assert.equal(worktree(picture, 'project-wt-3')?.state, 'claimed', 'because its gate waits on reviewers, not on a worker of the next job');
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'in-review', 'because the item waits on its reviewers, worktree or not');
+  assert.equal(picture.toClose.some((entry) => entry.item === 'gh#9'), false, "because a merge gate exists for it, so it is not the owner's to close yet");
 });
 
 test('Items_EngagedFirstThenRank', async () => {
@@ -362,7 +497,7 @@ const READY: PullFact = {
 const ready = (change: Partial<PullFact>): PullFact => ({ ...READY, ...change });
 const pullNumbered = (picture: Snapshot, pullNumber: number) => picture.pulls.find((pull) => pull.number === pullNumber);
 const withBoardItem = (facts: ReconcileInput, id: string, change: Partial<BoardItem['state']>): ReconcileInput => ({
-  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] },
+  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [], holders: {} },
 });
 const mergeDisagreements = (picture: Snapshot) => picture.disagreements.filter((entry) => entry.sources.join(' vs ') === 'issue state vs pull request');
 
@@ -540,12 +675,12 @@ test('FixturePulls_CountedByState', async () => {
 
 const withExtraBoardItem = (facts: ReconcileInput, change: Partial<BoardItem>): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [], holders: {} } };
 };
 /** Adds board items made from gh#12's shape, one per change. */
 const withBoardItems = (facts: ReconcileInput, changes: Partial<BoardItem>[]): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [], holders: {} } };
 };
 const needsFieldIds = (picture: Snapshot): string[] => picture.attention.filter((row) => row.kind === 'needs-field').map((row) => row.id);
 const disagreementOf = (picture: Snapshot, sources: string) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === sources);
@@ -604,7 +739,7 @@ test('NeedsField_ChildOfASplitParentWithADoneSibling_Row', async () => {
 
 test('NeedsField_BlocksAnItemInProgress_Row', async () => {
   const facts = withBoardItems(withBoardItem(await input(), 'gh#9', {}), [{ id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], parent: '' }]);
-  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {}, spend: {}, trackerErrors: [] } };
+  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {}, spend: {}, trackerErrors: [], holders: {} } };
   assert.deepEqual(needsFieldIds(reconcile(blocking)), ['gh#14'], 'because gh#9 is being worked and waits on it');
 });
 
@@ -633,7 +768,7 @@ test('NeedsField_Counted', async () => {
 });
 
 test('Readiness_Fixture_OneBucketPerOpenItem', async () => {
-  assert.deepEqual((await snapshot()).readiness, { ready: 1, waitingOnField: 0, blocked: 1, gated: 2, nextInLineMissingField: 0 }, 'because gh#12 is ready, gh#13 is blocked, gh#7 waits at a gate, gh#20 ran every step and waits on its owner, and the running and stale items are in none');
+  assert.deepEqual((await snapshot()).readiness, { ready: 1, waitingOnField: 0, blocked: 1, held: 0, gated: 2, nextInLineMissingField: 0 }, 'because gh#12 is ready, gh#13 is blocked, gh#7 waits at a gate, gh#20 ran every step and waits on its owner, and the running and stale items are in none');
 });
 
 test('Readiness_ItemWaitingOnField_Counted', async () => {
@@ -952,7 +1087,7 @@ test('Worktree_SyncNoteOfItsClaim_ShownAsSyncPending', async () => {
 
 test('GateItemWithABody_GateCarriesIt', async () => {
   const facts = await input();
-  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' }, spend: {}, trackerErrors: [] } });
+  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' }, spend: {}, trackerErrors: [], holders: {} } });
   assert.equal(picture.gates.find((gate) => gate.item === 'gh#7')?.body, '## Spec', 'because the card shows the issue the gate is about');
 });
 

@@ -9,7 +9,7 @@ repo="$(gh_repo)"; n="$(issue_number "$1")" || exit 2; shift
 for kv in "$@"; do
   case "$kv" in *=*) ;; *) die "expected key=value, got $kv" 2 ;; esac
   case "$(printf '%s' "${kv%%=*}" | tr - _)" in
-    step|profile|size|worktree|attempts|gate|gate_from|last_event|pr|pr_host|touches|answered|asked|answer|answered_at|answer_pending) ;;
+    step|profile|size|worktree|attempts|gate|gate_from|last_event|pr|pr_host|touches|changes|held_by|held_reason|answered|asked|answer|answered_at|answer_pending) ;;
     *) die "unknown state key ${kv%%=*}" 2 ;;
   esac
 done
@@ -23,7 +23,7 @@ import json, sys
 data = json.load(sys.stdin)["data"]
 for kv in sys.argv[1:]:
     k, v = kv.split("=", 1); k = k.replace("-", "_")
-    if k == "touches": data[k] = [x for x in v.split(",") if x.strip()]
+    if k in ("touches", "changes"): data[k] = [x for x in v.split(",") if x.strip()]
     elif k == "attempts": data[k] = int(v or 0)
     else: data[k] = v
 data.setdefault("gate", "none")

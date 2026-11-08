@@ -17,4 +17,4 @@ bump: minor
   answer waits on the comments job, it says so instead of "merge or close it".
 - The board shows a waiting answer in the gate column (`none, answer waits on the comments job`),
   and in Health once it has waited past `jobs.health.gate_reminder`.
-- Adapters: `answer_pending` is the sixteenth state key on github, jira and local.
+- Adapters: `answer_pending` is a new state key on github, jira and local.

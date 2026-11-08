@@ -29,7 +29,14 @@ on Codex the path `codex plugin list` prints for `flow`).
 Spawn each subagent by its roster name with the step brief from `next.sh` when you have one,
 else a brief of the same shape: item, step, worktree, reports path, inputs, and the result
 file contract (`<reports>/<step>.json` with `status`, `summary`, `size`, `gate`, `message`,
-`touches`). Run them one at a time; the architect needs the explorer's report.
+`touches`; the plan step adds `changes` and, for a conflict, `hold`). Run them one at a time; the
+architect needs the explorer's report. The design result carries the exploration's `touches`.
+
+A plan may wait behind other open work: the plan step's brief lists it under `## Other open
+work`, the planner checks its final touches with `scripts/hold.sh candidates`, and judges each
+item by the rule in [holds.md](holds.md). `advance.sh` writes the hold; the item starts once its
+holder closes, with the base merged in first. Only the plan step decides holds: bugs and S tasks
+have none.
 
 The architect runs only where its cost pays: L tasks and epics. The brief's `Architect:` line
 says yes or no (`next.sh` reads `architect.<profile>` in `$P/profiles.json`; without a brief,

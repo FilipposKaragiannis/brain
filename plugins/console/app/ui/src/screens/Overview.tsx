@@ -4,6 +4,7 @@ import { Age, clockTime, formatDuration, useNow } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
 import { readinessSentence } from '../readiness.ts';
+import { isParked, ParkedLine } from '../parked.tsx';
 import { lessonsSentence } from '../retro.ts';
 import type { Route } from '../route.ts';
 import { routeHash } from '../route.ts';
@@ -192,7 +193,7 @@ function Pool({ snapshot }: { snapshot: Snapshot }) {
   const href = routeHash({ projectId: snapshot.project.id, screen: 'worktrees', detail: null });
   const legend = (
     <span className="pool-legend">
-      {(['running', 'needs-you', 'stale', 'quiet'] as const).map((tone) => <span key={tone}><Dot tone={tone} />{tone === 'quiet' ? 'free' : tone.replace('-', ' ')}</span>)}
+      {(['running', 'needs-you', 'stale', 'quiet'] as const).map((tone) => <span key={tone}><Dot tone={tone} />{tone === 'quiet' ? 'waiting or free' : tone.replace('-', ' ')}</span>)}
     </span>
   );
   return (
@@ -224,7 +225,7 @@ function PoolCell({ worktree, pages, takenAt, href }: { worktree: Worktree; page
       {worktree.item === null
         ? <span className="pool-item">{worktree.state}</span>
         : <span className="pool-item"><ItemLink id={worktree.item} pages={pages} />{worktree.itemTitle !== null && <span className="pool-title">{worktree.itemTitle}</span>}</span>}
-      <span className="pool-note">{poolNote(worktree)}{worktree.claimAgeSeconds !== null && worktree.state !== 'free' && <> · <Age seconds={worktree.claimAgeSeconds} takenAt={takenAt} /></>}</span>
+      <span className="pool-note">{isParked(worktree.state) ? <ParkedLine heldBy={worktree.heldBy} step={worktree.claim?.step ?? ''} pages={pages} /> : poolNote(worktree)}{worktree.claimAgeSeconds !== null && worktree.state !== 'free' && <> · <Age seconds={worktree.claimAgeSeconds} takenAt={takenAt} /></>}</span>
       {worktree.state === 'running' && <div className="pool-stripes run-stripes" aria-hidden="true" />}
     </div>
   );
