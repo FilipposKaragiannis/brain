@@ -3,6 +3,7 @@ import { afterEach, expect, test } from 'vitest';
 import type { ActionRecord, Agent, EndedAgent, Job, Run, Server, SessionRef, Snapshot } from '../../daemon/src/snapshot.ts';
 import { Agents, STOP_HELP, STOP_SESSION_HELP } from '../src/screens/Agents.tsx';
 import { OPEN_SESSION_ENDED, OPEN_SESSION_LIVE } from '../src/ui.tsx';
+import { WORDS } from '../src/words.ts';
 import { FakeDaemon, HTTP_ACCEPTED, HTTP_OK, actionRecord, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
@@ -10,7 +11,7 @@ afterEach(cleanup);
 const ACTIONS_PATH = '/api/projects/project/actions';
 
 function agent(pid: number, kind: Agent['kind'], cwd: string): Agent {
-  return { pid, host: 'claude', kind, cwd, worktree: null, item: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: `claude ${pid}`, session: null, activity: null };
+  return { pid, host: 'claude', kind, cwd, worktree: null, item: null, step: null, job: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: `claude ${pid}`, session: null, activity: null };
 }
 
 const JOB: Job = { name: 'next', job: 'next', host: 'claude', configured: true, state: 'scheduled', schedule: 'every 30m', args: '', installed: true, loaded: true, paused: false, running: [], last: null, recent: [], workers: [], next: '18:30', runsThisWeek: 0, failedThisWeek: 0 };
@@ -200,6 +201,65 @@ test('Runs_OnlyTheFirstCardStartsOpen', async () => {
   expect(screen.queryByRole('list', { name: 'Transcript of pid 101' }), 'because the rest stay folded, so the list stays short').toBeNull();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open run 101' })); });
   expect(screen.getByRole('button', { name: 'Fold run 101' }), 'because the owner opens the one they want').not.toBeNull();
+});
+
+const CODEX_SESSION: SessionRef = { host: 'codex', id: '019c-wt3', transcript: '/h/.codex/sessions/2026/10/24/rollout-019c-wt3.jsonl', resume: ['codex', 'resume', '019c-wt3'] };
+const CODEX_LINES = [{ at: TAKEN_AT, kind: 'tool', text: 'shell · npm test -- --grep panel' }, { at: TAKEN_AT, kind: 'say', text: 'The panel test fails; fixing the layout.' }];
+
+/** A codex exec run of the next job, on gh#9's implement step in wt-3, with its session located. */
+function codexRun(pid: number): Agent {
+  return { ...agent(pid, 'agent', '/p-wt/wt-3'), host: 'codex', worktree: 'wt-3', item: 'gh#9', step: 'implement', job: 'next', session: CODEX_SESSION };
+}
+
+function codexTranscriptAt(daemon: FakeDaemon, pid: number, lines: number): void {
+  daemon.answer('GET', `/api/projects/project/agents/${pid}/transcript?lines=${lines}`, () => ({ status: HTTP_OK, body: { turns: [], lines: CODEX_LINES, bytes: 4_342, turnCount: 6 } }));
+}
+
+test('CodexRun_TitleSaysItsStepAndItem', async () => {
+  await renderAgents([codexRun(100)]);
+  expect(screen.getByRole('article', { name: 'Run 100' }).querySelector('.run-card-title')!.textContent, 'because a codex run says what it works on as a claude run does, from its own step and item').toBe('implement · gh#9');
+});
+
+test('CodexRun_TaggedWithItsJob', async () => {
+  await renderAgents([codexRun(100)]);
+  expect(within(screen.getByRole('article', { name: 'Run 100' })).getByText('job next').getAttribute('title'), 'because the card says which flow job started the run, and what that means').toBe(WORDS.job);
+});
+
+test('Run_TaggedHeadless', async () => {
+  await renderAgents([codexRun(100)]);
+  expect(within(screen.getByRole('article', { name: 'Run 100' })).getByText('headless').getAttribute('title'), 'because no one types into a flow run, and the tag says so').toBe(WORDS.headless);
+});
+
+test('CodexRun_ShowsItsTranscript', async () => {
+  const daemon = new FakeDaemon();
+  codexTranscriptAt(daemon, 100, 12);
+  await renderAgents([codexRun(100)], [], daemon);
+  expect(screen.getByRole('list', { name: 'Transcript of pid 100' }).textContent, 'because the daemon reads a Codex session as lines too, so a codex run is followed like a claude one').toMatch(/tool.*shell · npm test -- --grep panel.*say.*The panel test fails; fixing the layout\./);
+});
+
+test('FoldedRun_ShowsItsLatestLine', async () => {
+  const daemon = new FakeDaemon();
+  codexTranscriptAt(daemon, 101, 1);
+  await renderAgents([agent(100, 'agent', '/p-wt/wt-2'), codexRun(101)], [], daemon);
+  expect(screen.getByLabelText('Latest line of run 101').textContent, 'because a folded run still says what it is doing now').toBe('sayThe panel test fails; fixing the layout.');
+});
+
+test('RunWithoutATranscript_SaysNoneWasFound', async () => {
+  await renderAgents([{ ...codexRun(100), session: null }]);
+  expect(screen.getByRole('article', { name: 'Run 100' }).querySelector('.stream-note')!.textContent, 'because with no session located there is nothing to read, and the card says so instead of asking').toBe('No transcript was found for this run.');
+});
+
+test('FoldedRunWithoutATranscript_ShowsNoLatestLine', async () => {
+  await renderAgents([agent(100, 'agent', '/p-wt/wt-2'), { ...codexRun(101), session: null }]);
+  expect(screen.queryByLabelText('Latest line of run 101'), 'because a run with no session located has no line to show, and its folded card asks for none').toBeNull();
+});
+
+test('RunStarted_IsWhenItsProcessStarted', async () => {
+  const processStart = new Date(2026, 9, 24, 18, 15).toISOString();
+  const run: Run = { item: 'gh#9', step: 'verify', profile: 'default', worktree: 'wt-3', host: 'claude', startedAt: new Date(2026, 9, 24, 17, 2).toISOString(), pid: null, liveness: 'alive' };
+  await renderSnapshot({ agents: [{ ...agent(100, 'agent', '/p-wt/wt-3'), worktree: 'wt-3', item: 'gh#9', startedAt: processStart }], runs: [run] });
+  const started = within(screen.getByRole('article', { name: 'Run 100' })).getByText('Started').nextElementSibling!;
+  expect(started.textContent, "because the card says when this agent's process started, not when the run record of its worktree did").toBe('18:15');
 });
 
 const HOUR_MS = 3600 * 1000;

@@ -383,7 +383,7 @@ export class ProjectMonitor {
 
   /** What counts as a change: the facts and the disagreements that settled, without the counters that move on every read. */
   private fingerprintOf(): string {
-    const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd, session, activity }) => ({ pid, host, cwd, session: session?.id ?? null, activity }));
+    const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd, parents, job, session, activity }) => ({ pid, host, cwd, parents, job, session: session?.id ?? null, activity }));
     const servers = (this.facts.processes.facts?.servers ?? []).map(({ pid, cwd }) => [pid, cwd]);
     const ended = this.ended.map(({ pid, endedAt }) => [pid, endedAt]);
     const errors = (Object.keys(this.facts) as SourceName[]).map((name) => this.facts[name].freshness.error);

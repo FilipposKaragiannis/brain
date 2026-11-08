@@ -2,7 +2,9 @@ import { createReadStream } from 'node:fs';
 import { open, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentHost, SessionActivity, SessionRef, TranscriptLine, TranscriptTurn } from '../snapshot.ts';
-import { TRANSCRIPT_LINE_CHARS } from '../snapshot.ts';
+import { isCodexEntry, parseCodexTranscript } from './codexTranscript.ts';
+import type { ParsedTranscript } from './transcriptLine.ts';
+import { firstLine } from './transcriptLine.ts';
 
 /** What the locator reads of the disk. Injected so a test can hand it a home in a temp folder. */
 export type SessionFiles = {
@@ -347,6 +349,8 @@ export const TRANSCRIPT_TURNS_MAX = 200;
 export const TRANSCRIPT_LINES_MAX = 2000;
 /** A transcript can run to tens of megabytes; the last turns are in its tail. */
 export const TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024;
+/** How much tail a read starts with per line asked, so a folded card's one line reads 64 KB, not 4 MB. */
+const TRANSCRIPT_TAIL_BYTES_PER_LINE = 64 * 1024;
 /** How far the tail grows, doubling, when it holds fewer lines than asked: long tool results make few lines of many bytes. */
 const TRANSCRIPT_TAIL_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -403,15 +407,14 @@ export async function readTranscriptTail(file: string): Promise<string | null> {
   return (await tailOf(file, TRANSCRIPT_TAIL_BYTES))?.text ?? null;
 }
 
+/** The tail a read of `lines` lines starts with: 64 KB a line, at most 4 MB; the read doubles it while it holds too few. */
+export function transcriptTailStart(lines: number): number {
+  return Math.min(TRANSCRIPT_TAIL_BYTES, Math.max(TRANSCRIPT_TAIL_BYTES_PER_LINE, lines * TRANSCRIPT_TAIL_BYTES_PER_LINE));
+}
+
 /** A transcript entry as far as the readers look into it. */
 type TranscriptEntry = { type?: unknown; isMeta?: unknown; isSidechain?: unknown; isCompactSummary?: unknown; timestamp?: unknown; message?: { role?: unknown; content?: unknown } };
 type ContentPart = { type?: unknown; text?: unknown; thinking?: unknown; name?: unknown; input?: unknown; is_error?: unknown; content?: unknown };
-
-/** The first line of a text with something on it, trimmed and capped at `TRANSCRIPT_LINE_CHARS`. */
-function firstLine(text: string): string {
-  const line = text.split('\n').map((entry) => entry.trim()).find((entry) => entry !== '') ?? '';
-  return line.length <= TRANSCRIPT_LINE_CHARS ? line : `${line.slice(0, TRANSCRIPT_LINE_CHARS - 1)}…`;
-}
 
 /** The tools whose detail is a field of their own; any other tool shows its description or its first text input. */
 const TOOL_DETAIL: Record<string, string> = { Bash: 'command', Read: 'file_path', Edit: 'file_path', MultiEdit: 'file_path', Write: 'file_path', Grep: 'pattern', Glob: 'pattern', WebFetch: 'url' };
@@ -484,6 +487,13 @@ export function parseTranscriptLines(source: string): TranscriptLine[] {
   return lines;
 }
 
+/** How each host's transcript is read: its text parsed into lines and turns, and which of its entries count. */
+type TranscriptFormat = { parse: (source: string) => ParsedTranscript; isEntry: (line: string) => boolean };
+const TRANSCRIPT_FORMATS: Record<AgentHost, TranscriptFormat> = {
+  claude: { parse: (source) => ({ lines: parseTranscriptLines(source), turns: (limit) => parseTranscript(source, limit) }), isEntry: isTurnEntry },
+  codex: { parse: parseCodexTranscript, isEntry: isCodexEntry },
+};
+
 /** What `GET .../agents/<pid>/transcript` returns of a transcript, beside the session id. */
 export type TranscriptRead = { turns: TranscriptTurn[]; lines: TranscriptLine[]; bytes: number; turnCount: number };
 
@@ -503,12 +513,14 @@ function isTurnEntry(line: string): boolean {
 }
 
 /**
- * The user and assistant entries in the whole transcript file: every one, tool calls, tool results,
- * side chains and the host's wrapper turns included. A transcript only grows, so the count is kept
- * per file and a read streams only what was written since; a file shorter than the count's end
+ * The entries in the whole transcript file that `host`'s format counts: for claude every user and
+ * assistant entry, tool calls, tool results, side chains and the host's wrapper turns included; for
+ * Codex its model records other than its own instructions. A transcript only grows, so the count is
+ * kept per file and a read streams only what was written since; a file shorter than the count's end
  * was replaced, and is counted again from the start.
  */
-export async function countTranscriptEntries(file: string, size: number): Promise<number> {
+export async function countTranscriptEntries(file: string, size: number, host: AgentHost): Promise<number> {
+  const { isEntry } = TRANSCRIPT_FORMATS[host];
   const known = counted.get(file);
   let { offset, count } = known !== undefined && known.offset <= size ? known : { offset: 0, count: 0 };
   if (offset < size) {
@@ -519,7 +531,7 @@ export async function countTranscriptEntries(file: string, size: number): Promis
       carry = lines.pop() ?? '';
       for (const line of lines) {
         at += Buffer.byteLength(line) + 1;
-        if (isTurnEntry(line)) count += 1;
+        if (isEntry(line)) count += 1;
       }
     }
     offset = at;
@@ -531,21 +543,23 @@ export async function countTranscriptEntries(file: string, size: number): Promis
 }
 
 /**
- * The last `turns` turns with text and the last `lines` lines of a claude transcript, its size in
- * bytes and its count of user and assistant entries; null when it cannot be read. The tail read
- * starts at `tailBytes` (4 MB) and doubles, up to 64 MB or the whole file, while it holds fewer
- * lines than asked.
+ * The last `turns` turns with text and the last `lines` lines of `host`'s transcript (claude or
+ * Codex), its size in bytes and its count of entries (claude's user and assistant entries, Codex's
+ * model records); null when it cannot be read. The tail read starts at `tailBytes` (see
+ * `transcriptTailStart`) and doubles, up to 64 MB or the whole file, while it holds fewer lines than
+ * asked. The text of each tail is parsed once for its lines and its turns.
  */
-export async function readTranscript(file: string, wanted: { turns: number; lines: number }, tailBytes = TRANSCRIPT_TAIL_BYTES): Promise<TranscriptRead | null> {
+export async function readTranscript(file: string, host: AgentHost, wanted: { turns: number; lines: number }, tailBytes: number): Promise<TranscriptRead | null> {
+  const format = TRANSCRIPT_FORMATS[host];
   let bytes = tailBytes;
   for (;;) {
     const tail = await tailOf(file, bytes);
     if (tail === null) return null;
-    const lines = parseTranscriptLines(tail.text);
-    if (lines.length >= wanted.lines || tail.whole || bytes >= TRANSCRIPT_TAIL_MAX_BYTES) {
+    const parsed = format.parse(tail.text);
+    if (parsed.lines.length >= wanted.lines || tail.whole || bytes >= TRANSCRIPT_TAIL_MAX_BYTES) {
       let turnCount: number;
-      try { turnCount = await countTranscriptEntries(file, tail.size); } catch { return null; }
-      return { turns: parseTranscript(tail.text, wanted.turns), lines: lines.slice(-wanted.lines), bytes: tail.size, turnCount };
+      try { turnCount = await countTranscriptEntries(file, tail.size, host); } catch { return null; }
+      return { turns: parsed.turns(wanted.turns), lines: parsed.lines.slice(-wanted.lines), bytes: tail.size, turnCount };
     }
     bytes = Math.min(bytes * 2, TRANSCRIPT_TAIL_MAX_BYTES);
   }

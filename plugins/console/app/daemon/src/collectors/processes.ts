@@ -2,12 +2,20 @@ import type { AgentHost, AgentKind, ProcessListStatus, ProcessLookup, SessionAct
 import { LOOKUP_STDERR_CHARS, PROCESS_COMMAND_CHARS } from '../snapshot.ts';
 import type { CommandResult, CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
+import { lineage, workingDirectory } from './agentContext.ts';
+import { hostCommand } from './commandLine.ts';
 
 /**
+ * `parentPid` is its parent's pid, as ps gives it, and `parents` that parent and every pid above it
+ * the same ps read lists, nearest first. `job` is the flow job it runs under, the nearest parent
+ * that runs a job's script (see `jobOf`), or null. `cwd` is where it works (see `workingDirectory`).
  * `startedAt` is when ps says it started, worked out at the read. `session` and `activity` are
  * filled in by the monitor's session locator after the read; the process list alone never knows them.
  */
-export type AgentProcess = { pid: number; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; startedAt: string; command: string; session: SessionRef | null; activity: SessionActivity | null };
+export type AgentProcess = {
+  pid: number; parentPid: number; parents: number[]; job: string | null; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; startedAt: string; command: string;
+  session: SessionRef | null; activity: SessionActivity | null;
+};
 /** A process that was in one read and gone from the next, with when the read that missed it started. */
 export type EndedProcess = AgentProcess & { endedAt: string };
 /**
@@ -28,6 +36,8 @@ export type ProcessFacts = { agents: AgentProcess[]; servers: ServerProcess[]; h
 export type ServerProcess = { pid: number; host: AgentHost; label: string; cwd: string; elapsedSeconds: number; startedAt: string; command: string };
 
 const PROCESS_TIMEOUT_MS = 10000;
+/** The columns both ps reads ask for, in the order `parseProcessList` reads them. */
+const PS_COLUMNS = 'pid=,ppid=,etime=,command=';
 const MILLISECONDS_PER_SECOND = 1000;
 /** flow's unattended loop and the jobs that start runs, as `_health.py` matches them (`LOOP`). */
 const UNATTENDED_LOOP = /run-unattended\.sh|jobs\/(next|comments)\.sh/;
@@ -46,17 +56,6 @@ const UNATTENDED_CODEX = / exec( |$)/;
  * whose prompt names a server.
  */
 const NOT_AN_AGENT = ['daemon', 'mcp', 'app-server', 'exec-server'];
-/** How many of the first words after the executable a server's label reads (`app-server daemon`). */
-const SUBCOMMAND_WORDS = 2;
-/** Options that take a value: `codex -c key=value app-server`. */
-const OPTIONS_WITH_VALUE = ['-c', '--config'];
-/**
- * App bundles and the folder the Claude desktop app keeps its CLI in. The executable runs past a
- * space only while the part beyond it is still one of these paths, so `sh /usr/local/bin/claude`
- * or `node …/claude` is a wrapper, never the host.
- */
-const PATH_WITH_SPACES = ['.app/', 'Application Support/'];
-const HOSTS: string[] = ['claude', 'codex'];
 /** What each server is called, by its host and its first words; the first match names it. */
 const SERVER_LABELS: { host: AgentHost; words: string[]; label: string }[] = [
   { host: 'codex', words: ['app-server', 'daemon'], label: 'Codex app server pid loop' },
@@ -67,45 +66,15 @@ const SERVER_LABELS: { host: AgentHost; words: string[]; label: string }[] = [
 ];
 const HOST_NAMES: Record<AgentHost, string> = { claude: 'Claude', codex: 'Codex' };
 
-/** The executable and its arguments. ps prints the command unquoted, so a path with spaces is rejoined. */
-function splitCommand(command: string): { executable: string; args: string[] } {
-  const tokens = command.split(' ').filter((token) => token.length > 0);
-  let executable = tokens[0] ?? '';
-  let next = 1;
-  while (next < tokens.length) {
-    const extended = `${executable} ${tokens[next]}`;
-    const spansTheSpace = PATH_WITH_SPACES.some((marker) => {
-      const at = extended.lastIndexOf(marker);
-      return at >= 0 && at + marker.length > executable.length + 1;
-    });
-    if (!spansTheSpace) break;
-    executable = extended;
-    next += 1;
-  }
-  return { executable, args: tokens.slice(next) };
-}
+type ProcessRow = { pid: number; parentPid: number; elapsedSeconds: number; command: string };
 
-/** The first words after the executable that are not options, such as `app-server daemon`. */
-function subcommands(args: string[]): string[] {
-  const words: string[] = [];
-  for (let index = 0; index < args.length && words.length < SUBCOMMAND_WORDS; index += 1) {
-    const arg = args[index]!;
-    if (OPTIONS_WITH_VALUE.includes(arg)) { index += 1; continue; }
-    if (arg.startsWith('-')) continue;
-    words.push(arg);
-  }
-  return words;
-}
-
-type ProcessRow = { pid: number; elapsedSeconds: number; command: string };
-
-/** `ps -axo pid=,etime=,command=` rows. etime is `[[dd-]hh:]mm:ss`. */
+/** `ps -o pid=,ppid=,etime=,command=` rows. etime is `[[dd-]hh:]mm:ss`. */
 export function parseProcessList(source: string): ProcessRow[] {
   const rows: ProcessRow[] = [];
   for (const line of source.split('\n')) {
-    const match = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/.exec(line);
     if (match === null) continue;
-    rows.push({ pid: Number(match[1]), elapsedSeconds: parseElapsed(match[2]!), command: match[3]! });
+    rows.push({ pid: Number(match[1]), parentPid: Number(match[2]), elapsedSeconds: parseElapsed(match[3]!), command: match[4]! });
   }
   return rows;
 }
@@ -115,14 +84,6 @@ export function parseElapsed(elapsed: string): number {
   const parts = (clock ?? '').split(':').map(Number).reverse();
   const seconds = (parts[0] ?? 0) + (parts[1] ?? 0) * SECONDS_PER_MINUTE + (parts[2] ?? 0) * SECONDS_PER_HOUR;
   return seconds + (days === undefined ? 0 : Number(days) * SECONDS_PER_DAY);
-}
-
-/** The host a command runs and the first words after it, or null when it runs neither claude nor codex. */
-function hostCommand(command: string): { host: AgentHost; words: string[] } | null {
-  const { executable, args } = splitCommand(command);
-  const name = executable.slice(executable.lastIndexOf('/') + 1);
-  if (!HOSTS.includes(name)) return null;
-  return { host: name as AgentHost, words: subcommands(args) };
 }
 
 function isServer(host: AgentHost, words: string[], command: string): boolean {
@@ -200,7 +161,7 @@ async function timed(runner: CommandRunner, clock: () => Date, command: ProcessL
  */
 export async function readProcesses(runner: CommandRunner, clock: () => Date): Promise<ProcessFacts> {
   const readAt = clock().getTime();
-  const listing = await timed(runner, clock, 'ps', ['-axo', 'pid=,etime=,command=']);
+  const listing = await timed(runner, clock, 'ps', ['-axo', PS_COLUMNS]);
   const psLookup = lookupOf('ps', listing.result, listing.durationMs);
   if (listing.result.code !== 0 || listing.result.timedOut) return unavailable(ending(psLookup), psLookup);
   const rows = parseProcessList(listing.result.stdout);
@@ -221,10 +182,12 @@ export async function readProcesses(runner: CommandRunner, clock: () => Date): P
   // pid it gave no directory for, or a timeout, makes the read partial. A server it could not
   // place is left out without that: the servers are only shown, never acted on.
   const directories = cwds.result.timedOut ? new Map<number, string>() : parseWorkingDirectories(cwds.result.stdout);
+  const byPid = new Map(rows.map((row) => [row.pid, row]));
   const agents = candidates.flatMap(({ row, host }) => {
     const cwd = directories.get(row.pid);
     if (cwd === undefined) return [];
-    return [{ pid: row.pid, host, kind: kindOf(host, row.command), cwd, elapsedSeconds: row.elapsedSeconds, startedAt: startOf(row, readAt), command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null, activity: null }];
+    const kind = kindOf(host, row.command);
+    return [{ pid: row.pid, parentPid: row.parentPid, ...lineage(row, byPid), host, kind, cwd: workingDirectory(host, kind, row.command, cwd), elapsedSeconds: row.elapsedSeconds, startedAt: startOf(row, readAt), command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null, activity: null }];
   });
   const servers = serving.flatMap(({ row, server }) => {
     const cwd = directories.get(row.pid);
@@ -247,7 +210,7 @@ export async function readProcesses(runner: CommandRunner, clock: () => Date): P
  */
 export async function readSession(runner: CommandRunner, clock: () => Date, pid: number): Promise<HostProcess | null> {
   const readAt = clock().getTime();
-  const listing = await runner({ command: 'ps', args: ['-o', 'pid=,etime=,command=', '-p', String(pid)], cwd: '/', timeoutMs: PROCESS_TIMEOUT_MS, env: scriptEnvironment() });
+  const listing = await runner({ command: 'ps', args: ['-o', PS_COLUMNS, '-p', String(pid)], cwd: '/', timeoutMs: PROCESS_TIMEOUT_MS, env: scriptEnvironment() });
   if (listing.code !== 0 || listing.timedOut) return null;
   const row = parseProcessList(listing.stdout).find((entry) => entry.pid === pid);
   if (row === undefined) return null;

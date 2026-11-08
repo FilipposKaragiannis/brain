@@ -104,7 +104,7 @@ test('Monitor_DisagreementHeldAfterBothStoresRead_Shown', async () => {
 });
 
 /** A ps listing that worked and holds no claude, codex or unattended loop. */
-const NO_HOSTS = '    1 12-00:00:00 /sbin/launchd\n';
+const NO_HOSTS = '    1     0 12-00:00:00 /sbin/launchd\n';
 
 /** The fixture runner, except that the plugin lookup every files read starts with waits until the test lets it go. */
 function heldFilesRead(): { runner: CommandRunner; hold: () => void; release: () => void; noAgents: () => void } {

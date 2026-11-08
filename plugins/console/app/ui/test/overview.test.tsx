@@ -267,7 +267,7 @@ test('PoolWithNoCommentsSkippedWorktree_NoSkippedLine', () => {
 /** An interactive session in `worktree`, idle since `idleHours` before the snapshot. */
 function idleSessionIn(worktree: string, idleHours: number): Agent {
   const since = new Date(Date.parse(TAKEN_AT) - idleHours * 3600 * 1000).toISOString();
-  return { pid: 62102, host: 'claude', kind: 'session', cwd: `/p-wt/${worktree}`, worktree, item: null, elapsedSeconds: 12 * 86400, startedAt: since, command: 'claude', session: null, activity: { status: 'idle', since } };
+  return { pid: 62102, host: 'claude', kind: 'session', cwd: `/p-wt/${worktree}`, worktree, item: null, step: null, job: null, elapsedSeconds: 12 * 86400, startedAt: since, command: 'claude', session: null, activity: { status: 'idle', since } };
 }
 
 test('StaleSession_RunningNowNamesItAndLinksToAgents', () => {

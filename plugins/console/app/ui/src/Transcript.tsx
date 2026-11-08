@@ -14,14 +14,19 @@ export type TranscriptRead =
   | { kind: 'read'; lines: TranscriptLine[]; bytes: number; turnCount: number }
   | { kind: 'failed'; message: string };
 
+/** What a card shows of an agent whose transcript the daemon did not find, without asking for it. */
+export const NO_TRANSCRIPT: TranscriptRead = { kind: 'failed', message: 'No transcript was found for this run' };
+
 /**
- * An agent's claude transcript as lines (what it said, thought and ran), read again with every
- * snapshot (`takenAt`), so the card follows the run.
+ * An agent's claude or Codex transcript as lines (what it said, thought and ran), read again with
+ * every snapshot (`takenAt`), so the card follows the run. With `lines` null nothing is asked: the
+ * agent has no transcript to read.
  */
-export function useTranscript(projectId: string, pid: number, takenAt: string, lines: number): TranscriptRead {
+export function useTranscript(projectId: string, pid: number, takenAt: string, lines: number | null): TranscriptRead {
   const { api } = useServices();
   const [read, setRead] = useState<TranscriptRead>({ kind: 'reading' });
   useEffect(() => {
+    if (lines === null) return undefined;
     let cancelled = false;
     void api.request(projectPath(projectId, `/agents/${pid}/transcript?lines=${lines}`), 'GET', null).then((response) => {
       if (cancelled) return;
@@ -34,7 +39,7 @@ export function useTranscript(projectId: string, pid: number, takenAt: string, l
     });
     return () => { cancelled = true; };
   }, [api, projectId, pid, takenAt, lines]);
-  return read;
+  return lines === null ? NO_TRANSCRIPT : read;
 }
 
 /** The transcript as a terminal: time, what kind of line, and its text; the last row says the run is live. */
