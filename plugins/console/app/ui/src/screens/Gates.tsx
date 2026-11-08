@@ -61,8 +61,10 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
   const toClose = snapshot.toClose;
   const pick = selected ?? waiting[0]?.item ?? toClose[0]?.item ?? done[0]?.gate.item ?? null;
   const current = waiting.find((gate) => gate.item === pick);
-  const answeredCurrent = current === undefined ? done.find((entry) => entry.gate.item === pick) : undefined;
-  const closing = current === undefined && answeredCurrent === undefined ? toClose.find((entry) => entry.item === pick) : undefined;
+  // An item to close now outranks an answer this console still holds for it: a split's
+  // decomposition gate answered here is followed, once its children close, by its close card.
+  const closing = current === undefined ? toClose.find((entry) => entry.item === pick) : undefined;
+  const answeredCurrent = current === undefined && closing === undefined ? done.find((entry) => entry.gate.item === pick) : undefined;
   const nextGate = waiting.find((gate) => gate.item !== pick) ?? null;
 
   return (

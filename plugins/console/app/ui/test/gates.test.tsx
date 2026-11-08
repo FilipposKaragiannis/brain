@@ -73,6 +73,16 @@ test('ItemToClosePicked_CardSaysWhatToDoAndLinksTheIssue', () => {
   expect(screen.getByRole('link', { name: 'Open the issue' }).getAttribute('href'), 'because the item is closed on its tracker').toBe('https://github.com/owner/project/issues/42');
 });
 
+test('SplitGateAnsweredHereThenChildrenClosed_CloseCardNotTheOldAnswer', async () => {
+  const { daemon } = recordingDaemon();
+  const Wrapper = daemon.screenWrapper();
+  const split: Gate = { ...waitingGate('gh#42', 'decomposition'), message: 'Four tasks.', questions: [] };
+  const view = render(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 1), gates: [split] }} selected={split.item} /></Wrapper>);
+  await press('Approve');
+  view.rerender(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 2), gates: [], toClose: [SPLIT_DONE] }} selected={split.item} /></Wrapper>);
+  expect(screen.queryByRole('region', { name: 'Close card' }), 'because what waits on the owner now is closing the parent, not the split they already approved').not.toBeNull();
+});
+
 test('NoGateButAnItemToClose_PickedByDefault', () => {
   renderGates({ ...snapshotAt(TAKEN_AT, 1), toClose: [STEPS_DONE] }, null);
   expect(screen.queryByRole('region', { name: 'Close card' }), 'because the screen opens on what waits on the owner').not.toBeNull();
