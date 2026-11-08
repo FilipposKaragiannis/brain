@@ -7,3 +7,4 @@
 - **M-05 Async all the way.** [hard] Never block on a task (`.Result`, `.Wait()`, `.GetAwaiter().GetResult()`). Needing to is a design smell: make the caller async.
 - **M-06 Every async method takes a cancellation token.** [hard] *Why:* work that cannot be cancelled leaks on shutdown and in tests.
 - **M-07 Readability over cleverness.** [judgement] Named types and explicit steps beat terse chains and implicit conversions.
+- **M-08 No hidden side effects.** [hard] A method changes only what its name says it changes. A method that decides, checks or computes returns its result and the caller assigns it. It writes through a parameter only when its name says it changes that argument. *Why:* the caller reads the name, not the body, so a write the name hides is a change nobody sees.

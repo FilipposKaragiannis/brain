@@ -26,6 +26,8 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    body; a judgement rule you disagree with is declared, not ignored. A new implementation type
    starts at the narrowest access the project's rules allow, and locals and lambda parameters
    are spelt in full like any name (`serviceProvider`, `simulation`, never `sp`, `sim`).
+   A method writes an argument only when its name says so (M-08), even where the file
+   around it threads state through `ref`: a method that decides returns its result.
 3. Minimal diff (W-04): only what the phase needs. No drive-by renames, refactors or error
    handling for impossible cases. When the plan is wrong, ambiguous or impossible, stop with
    status `gate` and gate `ambiguity` instead of improvising.

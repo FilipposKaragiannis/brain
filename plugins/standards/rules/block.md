@@ -30,6 +30,7 @@ declared in the commit message, the PR body and the review (U-02). Language conv
 - M-04 Single constructor per type.
 - M-05 Async all the way.
 - M-06 Every async method takes a cancellation token.
+- M-08 No hidden side effects.
 - N-04 Names state the role.
 - N-05 No abbreviations.
 - N-06 No magic numbers.

@@ -281,6 +281,12 @@
     "section": "3. Methods and control flow",
     "file": "common/05-methods.md"
   },
+  "M-08": {
+    "title": "No hidden side effects",
+    "tag": "hard",
+    "section": "3. Methods and control flow",
+    "file": "common/05-methods.md"
+  },
   "N-01": {
     "title": "Files over 300 lines smell",
     "tag": "signal",
@@ -559,6 +565,12 @@
   },
   "CS-12": {
     "title": "`",
+    "tag": "convention",
+    "section": "Appendix A. C#",
+    "file": "csharp.md"
+  },
+  "CS-13": {
+    "title": "A parameter is `ref` only when the method's name says it changes that argument (M-08)",
     "tag": "convention",
     "section": "Appendix A. C#",
     "file": "csharp.md"

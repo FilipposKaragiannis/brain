@@ -12,3 +12,4 @@
 - **CS-10** Tests: NUnit or xUnit with FluentAssertions; because-strings on every assertion; `[TestCase]` for genuine data variants.
 - **CS-11** Doc comments are `///`, on public APIs and boundaries only: above `public` declarations and on `interface` and `enum` members.
 - **CS-12** `.editorconfig` severities drive the Roslyn style and usage analyzers; `dotnet format` is the formatter.
+- **CS-13** A parameter is `ref` only when the method's name says it changes that argument (M-08). A method that decides takes `in` or a value and returns a result, a `readonly struct` when it carries more than one value.
