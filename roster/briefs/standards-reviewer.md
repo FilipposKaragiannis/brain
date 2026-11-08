@@ -11,6 +11,9 @@ Read the full rule text for every rule you cite.
 
 ## How to review
 1. Run the diff command. Read the touched hunks and enough surrounding code to judge them.
+   Every signature that now lets a method write an argument it only read before (a value or
+   `in` turned `ref`, a new mutable parameter) is checked against M-08, whatever the file
+   around it does.
 2. Walk the hard rules first, then the signals, then the judgement rules. Check each hunk against
    the sections that apply (design, state, methods, naming, tests, comments, formatting, workflow).
 3. Check glossary terms: the diff uses the canonical words. Check ADRs: the diff contradicts none.
