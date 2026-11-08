@@ -2064,6 +2064,9 @@ check_all "health --dry-run: says it would discard unchanged redundant changes a
 printf '999999\t%s\tclaude\n' "$(cd ../wt-2 && pwd -P)" > "$FLOW_HEALTH_PROCS"
 hs > "$hroot/out" 2>&1
 check_all "health: redundant changes stay while a session works in the free worktree" '[ "$(cat ../wt-2/README.md)" = hi ] && ! grep -q "discard" "$hroot/out"'
+printf '%s\t%s\tclaude\n' "$$" "$(cd ../wt-2 && pwd -P)" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check_all "health: redundant changes stay while the session that called health works in the free worktree" '[ "$(cat ../wt-2/README.md)" = hi ] && ! grep -q "discard" "$hroot/out"'
 : > "$FLOW_HEALTH_PROCS"; pings_before="$(pings)"
 hs > "$hroot/out" 2>&1
 check_all "health: unchanged redundant changes are discarded on the next run, and the owner is told" 'grep -q "^pool: discarded the 1 uncommitted change(s) in free wt-2, each already in main.s history$" "$hroot/out" && [ -z "$(git -C ../wt-2 status --porcelain)" ] && [ "$(cat ../wt-2/README.md)" = hello ] && [ "$(pings)" -gt "$pings_before" ] && grep -q "3 free" "$hroot/out" && [ ! -f .flow/health/free-wt-2.seen ]'

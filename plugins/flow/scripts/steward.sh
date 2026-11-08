@@ -751,7 +751,8 @@ health_free_dirty() {
     health_changed "free-$hd_name" "redundant $hd_print" && health_say pool "$hd_name is free but has $hd_count uncommitted change(s), each already in $base_branch's history; the next health run discards them if they stay unchanged and no session works there"
     return 1
   fi
-  [ "$procs_ok" -eq 1 ] && [ -z "$(hpy alive "$procs" "" "$1" "")" ] || return 1
+  # A destructive step: a session that called health from inside the worktree counts too.
+  [ "$procs_ok" -eq 1 ] && [ -z "$(hpy present "$procs" "" "$1" "")" ] || return 1
   if [ "$dry" -eq 1 ]; then health_say pool "would discard the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"; return 1; fi
   hd_done="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" --discard "$hd_print" 2>/dev/null)"
   case "$hd_done" in
