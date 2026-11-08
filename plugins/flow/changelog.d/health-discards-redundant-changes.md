@@ -12,5 +12,6 @@ bump: minor
 - Changes with anything of their own stay. A conflict, a submodule, an untracked file or a
   version the base never had all count, as do more than 200 changed paths, a git command in
   progress or a file that cannot be hashed. Each file is hashed on its own, so any file name is
-  safe. The health line now names the first such path: `wt-2 is free but has uncommitted
+  safe, and from its raw bytes, so a clean filter or an end-of-line rule cannot hide bytes only the
+  disk holds. The health line now names the first such path: `wt-2 is free but has uncommitted
   changes, so no claim can use it: the disk version of README.md is not in origin/main`.

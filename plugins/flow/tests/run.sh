@@ -2091,6 +2091,12 @@ git -C ../wt-2 checkout -q -- .flow/notes.txt; hs >/dev/null 2>&1
 git -C ../wt-2 rm -q --cached README.md
 hs >/dev/null 2>&1; hs > "$hroot/out" 2>&1
 check_all "health: a staged deletion whose file stays on disk is discarded whole, the file kept and tracked again" 'grep -q "^pool: discarded the 2 uncommitted change(s) in free wt-2" "$hroot/out" && [ -z "$(git -C ../wt-2 status --porcelain)" ] && [ "$(cat ../wt-2/README.md)" = hello ]'
+common="$(cd ../wt-2 && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$common/info"
+printf 'README.md filter=strip\n' > "$common/info/attributes"; git -C ../wt-2 config filter.strip.clean 'grep -v SECRET'
+printf 'hello\nSECRET\n' > ../wt-2/README.md
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check_all "health: bytes a clean filter strips are hashed raw, so the file is kept and never discarded" 'grep -q "so no claim can use it: the disk version of README.md is not in origin/main" "$hroot/out" && ! grep -q discard "$hroot/out2" && grep -q SECRET ../wt-2/README.md'
+rm -f "$common/info/attributes"; git -C ../wt-2 config --unset filter.strip.clean; git -C ../wt-2 checkout -q -- README.md; hs >/dev/null 2>&1
 
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"

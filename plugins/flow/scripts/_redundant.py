@@ -67,7 +67,9 @@ def disk_mode(worktree, path):
 
 
 def disk_blobs(worktree, paths):
-    """The blob each path holds on disk, hashed one path at a time so any file name is safe. A
+    """The blob each path holds on disk, hashed one path at a time so any file name is safe, from
+    its raw bytes (--no-filters): a clean filter or an end-of-line rule could make bytes only the
+    disk holds hash as a version the base had. A file that matches only once filtered is kept. A
     path that cannot be hashed is missing from the result, which assess treats as kept."""
     blobs = {}
     for path in paths:
@@ -76,7 +78,7 @@ def disk_blobs(worktree, paths):
             target = os.readlink(full).encode("utf-8", "surrogateescape")
             code, out = git(worktree, ["hash-object", "--stdin"], target)
         else:
-            code, out = git(worktree, ["hash-object", "--", path])
+            code, out = git(worktree, ["hash-object", "--no-filters", "--", path])
         out = out.strip()
         if code == 0 and len(out) in (40, 64) and all(c in "0123456789abcdef" for c in out):
             blobs[path] = out
