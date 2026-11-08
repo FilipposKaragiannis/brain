@@ -7,6 +7,7 @@ import type { ItemPages } from '../links.tsx';
 import { routeHash } from '../route.ts';
 import { FULL_LINES, RunStream, TAIL_LINES, transcriptSize, useTranscript } from '../Transcript.tsx';
 import { ActionButton, Chip, Dot, Empty, Module, SessionButton, SourceFreshness, TerminalButton } from '../ui.tsx';
+import { WORDS } from '../words.ts';
 
 /**
  * What runs. Flow's own runs are cards with their transcript as a live terminal, a run record
@@ -45,9 +46,13 @@ export function Agents({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
+/** How many lines a folded card asks for: the latest, shown under its header. */
+const LATEST_LINES = 1;
+
 /**
- * One live flow run: its step and item, where it runs, its PR, and its transcript as a live
- * terminal. It folds to its header, so several runs stay a short list; only the first starts open.
+ * One live flow run, claude or Codex: its step and item (or the job it runs under), where it runs,
+ * that it is headless, how long it has run, its PR, and its transcript as a live terminal. It folds
+ * to its header and its latest line, so several runs stay a short list; only the first starts open.
  */
 function RunCard({ agent, snapshot, startOpen }: { agent: Agent; snapshot: Snapshot; startOpen: boolean }) {
   const [open, setOpen] = useState(startOpen);
@@ -55,34 +60,41 @@ function RunCard({ agent, snapshot, startOpen }: { agent: Agent; snapshot: Snaps
   const run = runOf(agent, snapshot.runs);
   const pull = pullOf(agent.item, snapshot.pulls);
   const worktree = snapshot.worktrees.find((candidate) => candidate.name === agent.worktree) ?? null;
-  const claude = agent.session?.host === 'claude';
+  const hasTranscript = agent.session !== null;
+  const wanted = !hasTranscript ? null : !open ? LATEST_LINES : full ? FULL_LINES : TAIL_LINES;
+  const read = useTranscript(snapshot.project.id, agent.pid, snapshot.takenAt, wanted);
+  const latest = read.kind === 'read' ? read.lines.at(-1) ?? null : null;
   return (
     <article className={open ? 'run-card' : 'run-card folded'} aria-label={`Run ${agent.pid}`}>
       <header className="run-card-head">
         <button type="button" className="fold-toggle" aria-expanded={open} aria-label={open ? `Fold run ${agent.pid}` : `Open run ${agent.pid}`} onClick={() => setOpen((shown) => !shown)}>▸</button>
         <Dot tone="running" />
         <span className="run-card-title">
-          <span className="strong">{run?.step ?? 'agent'}</span>
+          <span className="strong">{agent.step ?? run?.step ?? 'agent'}</span>
           {agent.item !== null && <> · <ItemLink id={agent.item} pages={snapshot} /></>}
         </span>
         <span className="run-card-tags">
           {agent.worktree !== null && <span className="tag mono">{agent.worktree}</span>}
           <span className="tag">{agent.host}</span>
+          <span className="tag" title={WORDS.headless}>headless</span>
+          {agent.job !== null && <span className="tag" title={WORDS.job}>job {agent.job}</span>}
           {pull !== null && <ExternalLink url={pull.url} className="tag">PR #{pull.number}</ExternalLink>}
         </span>
-        <span className="mono strong run-card-age"><Age seconds={agent.elapsedSeconds} takenAt={snapshot.takenAt} /></span>
+        <span className="mono strong run-card-age" title="Running for"><Age seconds={agent.elapsedSeconds} takenAt={snapshot.takenAt} /></span>
       </header>
+      {!open && latest !== null && (
+        <p className={`run-card-latest kind-${latest.kind}`} aria-label={`Latest line of run ${agent.pid}`}>
+          <span className="stream-kind">{latest.kind}</span>
+          <span className="stream-text" title={latest.text}>{latest.text}</span>
+        </p>
+      )}
       {open && (
         <>
-          {claude ? <ClaudeRun agent={agent} run={run} worktree={worktree} snapshot={snapshot} full={full} /> : (
-            <>
-              <RunStats run={run} agent={agent} worktree={worktree} transcript={null} />
-              <p className="run-card-say">The console reads Claude transcripts only. Open the session to follow this {agent.host} run.</p>
-            </>
-          )}
+          <RunStats agent={agent} worktree={worktree} transcript={read.kind === 'read' ? read : null} />
+          <RunStream read={read} pid={agent.pid} full={full} />
           <div className="run-stripes" aria-hidden="true" />
           <footer className="buttons run-card-foot" title={agent.cwd}>
-            {claude && <button type="button" className="button" aria-pressed={full} onClick={() => setFull((shown) => !shown)}>{full ? 'Last lines' : 'Full log'}</button>}
+            {hasTranscript && <button type="button" className="button" aria-pressed={full} onClick={() => setFull((shown) => !shown)}>{full ? 'Last lines' : 'Full log'}</button>}
             {pull !== null && <ExternalLink url={pull.url} className="button">PR #{pull.number}</ExternalLink>}
             <OpenButton path={agent.cwd} pid={agent.pid} hasSession={agent.session !== null} alive />
             {agent.item !== null && (
@@ -99,21 +111,11 @@ function RunCard({ agent, snapshot, startOpen }: { agent: Agent; snapshot: Snaps
 
 export const STOP_HELP = 'Ends this run and clears its record. The worktree keeps its commits and changes, and the item stays at its step for a later run.';
 
-function ClaudeRun({ agent, run, worktree, snapshot, full }: { agent: Agent; run: Run | null; worktree: Worktree | null; snapshot: Snapshot; full: boolean }) {
-  const read = useTranscript(snapshot.project.id, agent.pid, snapshot.takenAt, full ? FULL_LINES : TAIL_LINES);
-  return (
-    <>
-      <RunStats run={run} agent={agent} worktree={worktree} transcript={read.kind === 'read' ? read : null} />
-      <RunStream read={read} pid={agent.pid} full={full} />
-    </>
-  );
-}
-
-/** When it started, its last commit, how big its transcript is, and its pid. */
-function RunStats({ run, agent, worktree, transcript }: { run: Run | null; agent: Agent; worktree: Worktree | null; transcript: { bytes: number; turnCount: number } | null }) {
+/** When its process started, its last commit, how big its transcript is, and its pid. */
+function RunStats({ agent, worktree, transcript }: { agent: Agent; worktree: Worktree | null; transcript: { bytes: number; turnCount: number } | null }) {
   return (
     <dl className="run-card-stats">
-      <div><dt>Started</dt><dd className="mono">{run?.startedAt == null ? '—' : clockTime(run.startedAt)}</dd></div>
+      <div><dt>Started</dt><dd className="mono">{clockTime(agent.startedAt)}</dd></div>
       <div><dt>Last commit</dt><dd className="mono">{worktree?.head == null ? '—' : `${worktree.head.slice(0, 8)}${worktree.lastCommitAt === null ? '' : ` · ${clockTime(worktree.lastCommitAt)}`}`}</dd></div>
       <div><dt>Transcript</dt><dd>{transcript === null ? '—' : `${transcriptSize(transcript.bytes)} · ${transcript.turnCount} turns`}</dd></div>
       <div><dt>Pid</dt><dd className="mono" title={agent.command}>{agent.pid}</dd></div>

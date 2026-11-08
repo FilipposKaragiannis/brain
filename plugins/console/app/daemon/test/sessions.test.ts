@@ -8,7 +8,7 @@ import { planAction } from '../src/actionPlan.ts';
 import type { ActionContext } from '../src/actionPlan.ts';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
-import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator } from '../src/collectors/sessions.ts';
+import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseCodexTranscript, parseCodexTranscriptLines, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator } from '../src/collectors/sessions.ts';
 import type { GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
@@ -430,6 +430,52 @@ test('TranscriptEntries_FileGrows_CountedOnwardFromWhereTheLastCountEnded', asyn
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+/** A codex exec run's session as Codex 0.16x writes it: each finished item as an event beside the model's own records, with a command and a tool call that failed. */
+const CODEX_TRANSCRIPT = path.join(FIXTURES, 'transcripts', 'codex.jsonl');
+
+test('CodexTranscriptLines_EachFinishedItemAsOneLineInFileOrder', () => {
+  const lines = parseCodexTranscriptLines(readFileSync(CODEX_TRANSCRIPT, 'utf8'));
+  assert.deepEqual(lines.map((line) => [line.at?.slice(17, 19), line.kind, line.text]), [
+    ['02', 'user', 'Implement gh#9: the score panel.'],
+    ['03', 'think', '**Reading the plan**'],
+    ['04', 'say', 'Reading the plan first.'],
+    ['05', 'tool', 'shell · cat .flow/reports/gh-9/plan.md'],
+    ['07', 'tool', 'shell · npm test -- --grep panel'],
+    ['07', 'result', 'error: exit code 1'],
+    ['08', 'tool', 'codex_apps.github.search_issues · repo:o/r is:pr head:gh-9'],
+    ['08', 'result', 'error: Not signed in.'],
+    ['09', 'say', 'The panel test fails; fixing the layout.'],
+  ], "because each finished item shows once, as its first line: what was said or summarised, the script a command ran, a tool with its first text argument, and a failure after it; the model's own records, Codex's instructions and its token counts show nothing");
+});
+
+/** A session from a Codex that writes no finished-item events: the model's records alone. */
+const OLDER_CODEX = [
+  { timestamp: '2026-10-24T18:10:01.000Z', type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'You are Codex.' }] } },
+  { timestamp: '2026-10-24T18:10:01.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>\n<cwd>/p/app-wt-3</cwd>\n</environment_context>' }] } },
+  { timestamp: '2026-10-24T18:10:02.000Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Fix gh#9.' }] } },
+  { timestamp: '2026-10-24T18:10:03.000Z', type: 'response_item', payload: { type: 'reasoning', summary: [], encrypted_content: 'x' } },
+  { timestamp: '2026-10-24T18:10:04.000Z', type: 'response_item', payload: { type: 'function_call', name: 'shell', arguments: JSON.stringify({ command: ['bash', '-lc', 'git status'] }), call_id: 'c1' } },
+  { timestamp: '2026-10-24T18:10:05.000Z', type: 'response_item', payload: { type: 'function_call_output', call_id: 'c1', output: 'clean' } },
+  { timestamp: '2026-10-24T18:10:06.000Z', type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'The tree is clean.' }] } },
+].map((entry) => JSON.stringify(entry)).join('\n');
+
+test('CodexTranscriptLines_NoFinishedItems_ReadFromTheModelRecords', () => {
+  assert.deepEqual(parseCodexTranscriptLines(OLDER_CODEX).map((line) => [line.kind, line.text]), [
+    ['user', 'Fix gh#9.'],
+    ['think', 'thinking'],
+    ['tool', 'shell · git status'],
+    ['say', 'The tree is clean.'],
+  ], "because an older Codex writes only the model's records: its messages, reasoning and calls each make a line, while its instructions, the context it puts in a user message and a call's output make none");
+});
+
+test('CodexTranscript_TextTurnsOfUserAndAssistant_OldestFirst', () => {
+  assert.deepEqual(parseCodexTranscript(readFileSync(CODEX_TRANSCRIPT, 'utf8'), 200).map((turn) => [turn.role, turn.text]), [
+    ['user', 'Implement gh#9: the score panel.'],
+    ['assistant', 'Reading the plan first.\nThen the panel.'],
+    ['assistant', 'The panel test fails; fixing the layout.'],
+  ], "because a turn is a message with text, whole, and Codex's context and the model's duplicate of each message are not");
+});
+
 const SESSION: SessionRef = { host: 'claude', id: '8f3c2a10-5b7e-4c1d-9a0b-1e2f3a4b5c6d', transcript: TRANSCRIPT, resume: ['claude', '--resume', '8f3c2a10-5b7e-4c1d-9a0b-1e2f3a4b5c6d'] };
 const CONTEXT: ActionContext = {
   root: '/p/app', pluginRoot: '/plugins/flow/1.19.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2'], outsideWorktrees: [], processCwds: ['/p/app-wt-2'],
@@ -555,10 +601,10 @@ test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async ()
   assert.deepEqual(monitor.actionContext().gateSessions, [{ item: 'gh#7', cwd: path.join(FIXTURES, 'project-wt-2'), session: SESSION }], 'because terminal.open resumes only a session located for a waiting gate, in its worktree');
 });
 
-async function transcriptServer(): Promise<{ base: string; close: () => Promise<void> }> {
+async function transcriptServer(runner: CommandRunner = fakeRunner, sessions: typeof sessionsByPid = sessionsByPid): Promise<{ base: string; close: () => Promise<void> }> {
   const { spawner } = plainSpawner();
   const registry = new ProjectRegistry((project) => {
-    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid });
+    const monitor = new ProjectMonitor({ project, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions });
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: os.tmpdir(), onRefresh: () => {} });
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: async () => {}, log: silentLogger }) };
   }, silentLogger);
@@ -624,4 +670,29 @@ test('CodexExecWithCdLaunchedFromTheRoot_FindsItsSessionByTheCdDirectory', async
   try {
     assert.equal((await codexFromRoot(dir))?.session?.id, '019c-wt3', 'because Codex writes the -C directory as the session\'s cwd, so the session is matched there');
   } finally { done(); }
+});
+
+const CODEX_SESSION: SessionRef = { host: 'codex', id: '019c-wt3', transcript: CODEX_TRANSCRIPT, resume: ['codex', 'resume', '019c-wt3'] };
+const codexSessionsByHost = { assign: async (processes: { host: string }[]) => processes.map((process) => ({ session: process.host === 'codex' ? CODEX_SESSION : null, activity: null })) };
+
+/** `GET .../agents/107/transcript?lines=3` of the codex exec run from the root, its session the codex fixture. */
+async function codexTranscript(): Promise<{ status: number; body: { lines: TranscriptLine[]; turnCount: number } }> {
+  const { base, close } = await transcriptServer(codexFromRootRunner, codexSessionsByHost);
+  try {
+    const response = await fetch(`${base}/api/projects/project/agents/107/transcript?lines=3`, { headers: { authorization: 'Bearer tok' } });
+    return { status: response.status, body: (await response.json()) as { lines: TranscriptLine[]; turnCount: number } };
+  } finally { await close(); }
+}
+
+test('TranscriptRoute_CodexAgent_LastLinesOfItsSession', async () => {
+  const { status, body } = await codexTranscript();
+  assert.deepEqual([status, body.lines.map((line) => [line.kind, line.text])], [200, [
+    ['tool', 'codex_apps.github.search_issues · repo:o/r is:pr head:gh-9'],
+    ['result', 'error: Not signed in.'],
+    ['say', 'The panel test fails; fixing the layout.'],
+  ]], 'because a codex run shows on its card the way a claude run does, read from its own session file');
+});
+
+test('TranscriptRoute_CodexAgent_CountsTheModelsRecords', async () => {
+  assert.equal((await codexTranscript()).body.turnCount, 6, "because every message, call, output and reasoning the model wrote counts, and Codex's own instructions do not");
 });

@@ -484,6 +484,176 @@ export function parseTranscriptLines(source: string): TranscriptLine[] {
   return lines;
 }
 
+/** A Codex session entry as far as the readers look into it: `{timestamp, type, payload}`, one per line. */
+type CodexEntry = { timestamp?: unknown; type?: unknown; payload?: CodexPayload };
+type CodexPayload = { type?: unknown; role?: unknown; item?: CodexItem; content?: unknown; summary?: unknown; name?: unknown; arguments?: unknown; input?: unknown };
+type CodexItem = {
+  type?: unknown; content?: unknown; summary_text?: unknown; command?: unknown; status?: unknown; exit_code?: unknown;
+  server?: unknown; tool?: unknown; arguments?: unknown; result?: unknown; error?: unknown; kind?: unknown; query?: unknown;
+};
+/** A Codex message, tool call or reasoning entry: what its readable record (`item_completed`) or its model record (`response_item`) holds. */
+type CodexMessage = { role: TranscriptTurn['role']; text: string };
+
+/** Codex 0.16x writes each finished item as an `item_completed` event beside the model's own `response_item`; a file with any reads from those alone. */
+const CODEX_ITEM_EVENT = '"type":"item_completed"';
+/** What Codex writes at the top of a user message that is its own context, not the owner talking: the AGENTS.md it read, or a tag such as `<environment_context>`. */
+const CODEX_AGENTS_PREAMBLE = '# AGENTS.md instructions';
+const CODEX_WRAPPER_TAG = /^<[a-z][a-z0-9_-]*[\s>/]/;
+/** The model record of a developer message or the tool list: Codex's own instructions, never a turn. */
+const CODEX_DEVELOPER = 'developer';
+const CODEX_TOOL_LIST = 'additional_tools';
+/** A shell flag that makes the next argument the script: `zsh -lc "<script>"`. */
+const SHELL_SCRIPT_FLAGS: readonly string[] = ['-c', '-lc'];
+
+/** The strings of a list, or of the `text` fields of its parts (`input_text`, `output_text`, `text`, `Text`, `summary_text` alike). */
+function codexTexts(content: unknown): string[] {
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((part: unknown) => {
+    if (typeof part === 'string') return [part];
+    const text = part !== null && typeof part === 'object' ? (part as { text?: unknown }).text : undefined;
+    return typeof text === 'string' ? [text] : [];
+  });
+}
+
+/** A command as the owner would type it: the script of `<shell> -lc "<script>"`, else the words joined. */
+function shellCommand(command: unknown): string {
+  if (typeof command === 'string') return command;
+  if (!Array.isArray(command)) return '';
+  const words = command.filter((word): word is string => typeof word === 'string');
+  return words.length === 3 && SHELL_SCRIPT_FLAGS.includes(words[1]!) ? words[2]! : words.join(' ');
+}
+
+/** `<name> · <detail>` capped to one line, or the name alone when the detail is empty. */
+function namedLine(name: string, detail: string): string {
+  const shown = firstLine(detail);
+  return firstLine(shown === '' ? name : `${name} · ${shown}`);
+}
+
+/** The message of a readable record: what the owner or the prompt said (`UserMessage`) or what Codex said (`AgentMessage`). */
+function codexItemMessage(item: CodexItem): CodexMessage | null {
+  if (item.type !== 'UserMessage' && item.type !== 'AgentMessage') return null;
+  const text = codexTexts(item.content).join('\n').trim();
+  return text === '' ? null : { role: item.type === 'UserMessage' ? 'user' : 'assistant', text };
+}
+
+/** The message of a model record: an assistant's output text, or a user's input text without Codex's own context parts. */
+function codexResponseMessage(payload: CodexPayload): CodexMessage | null {
+  if (payload.type !== 'message' || (payload.role !== 'user' && payload.role !== 'assistant')) return null;
+  const parts = codexTexts(payload.content).filter((text) => payload.role === 'assistant' || (!CODEX_WRAPPER_TAG.test(text.trim()) && !text.startsWith(CODEX_AGENTS_PREAMBLE)));
+  const text = parts.join('\n').trim();
+  return text === '' ? null : { role: payload.role, text };
+}
+
+/** The lines of one readable record: a message, its reasoning, a command or tool it ran, and an `error:` line after one that failed. */
+function codexItemLines(item: CodexItem, at: string | null): TranscriptLine[] {
+  const message = codexItemMessage(item);
+  if (message !== null) return [{ at, kind: message.role === 'user' ? 'user' : 'say', text: firstLine(message.text) }];
+  if (item.type === 'Reasoning') return [{ at, kind: 'think', text: firstLine(codexTexts(item.summary_text).join('\n')) || 'thinking' }];
+  if (item.type === 'CommandExecution') {
+    const ran: TranscriptLine = { at, kind: 'tool', text: namedLine('shell', shellCommand(item.command)) };
+    const failed = item.status === 'failed' || (typeof item.exit_code === 'number' && item.exit_code !== 0);
+    return failed ? [ran, { at, kind: 'result', text: `error: exit code ${typeof item.exit_code === 'number' ? item.exit_code : 'unknown'}` }] : [ran];
+  }
+  if (item.type === 'McpToolCall') {
+    const name = [item.server, item.tool].filter((part): part is string => typeof part === 'string' && part !== '').join('.') || 'tool';
+    const args = item.arguments !== null && typeof item.arguments === 'object' ? Object.values(item.arguments as Record<string, unknown>) : [];
+    const called: TranscriptLine = { at, kind: 'tool', text: namedLine(name, args.find((value): value is string => typeof value === 'string') ?? '') };
+    const result = item.result !== null && typeof item.result === 'object' ? item.result as { isError?: unknown; content?: unknown } : {};
+    if (item.status !== 'failed' && result.isError !== true) return [called];
+    const said = typeof item.error === 'string' ? item.error : codexTexts(result.content).join('\n');
+    return [called, { at, kind: 'result', text: firstLine(`error: ${firstLine(said) || 'no output'}`) }];
+  }
+  if (item.type === 'Extension') return [{ at, kind: 'tool', text: namedLine(typeof item.kind === 'string' && item.kind !== '' ? item.kind : 'tool', typeof item.query === 'string' ? item.query : '') }];
+  return [];
+}
+
+/** The detail of a model record's tool call: the command it runs, else its first text argument, else its raw input. */
+function codexCallDetail(payload: CodexPayload): string {
+  if (typeof payload.input === 'string') return payload.input;
+  if (typeof payload.arguments !== 'string') return '';
+  let args: unknown;
+  try { args = JSON.parse(payload.arguments); } catch { return payload.arguments; }
+  if (args === null || typeof args !== 'object' || Array.isArray(args)) return '';
+  const record = args as Record<string, unknown>;
+  const command = shellCommand(record['cmd'] ?? record['command']);
+  return command !== '' ? command : Object.values(record).find((value): value is string => typeof value === 'string') ?? '';
+}
+
+/** The line of one model record: a message, a tool call with its command, or its reasoning; outputs and Codex's own instructions make none. */
+function codexResponseLine(payload: CodexPayload, at: string | null): TranscriptLine | null {
+  const message = codexResponseMessage(payload);
+  if (message !== null) return { at, kind: message.role === 'user' ? 'user' : 'say', text: firstLine(message.text) };
+  if (payload.type === 'function_call' || payload.type === 'custom_tool_call') return { at, kind: 'tool', text: namedLine(typeof payload.name === 'string' && payload.name !== '' ? payload.name : 'tool', codexCallDetail(payload)) };
+  if (payload.type === 'reasoning') return { at, kind: 'think', text: firstLine(codexTexts(payload.summary).join('\n')) || 'thinking' };
+  return null;
+}
+
+/** Each entry of a Codex session's text with its time, in file order; a line cut by the tail or not JSON is skipped. */
+function codexEntries(source: string): { at: string | null; entry: CodexEntry }[] {
+  const entries: { at: string | null; entry: CodexEntry }[] = [];
+  for (const raw of source.split('\n')) {
+    if (raw.trim() === '') continue;
+    try {
+      const entry = JSON.parse(raw) as CodexEntry;
+      if (entry !== null && typeof entry === 'object') entries.push({ at: typeof entry.timestamp === 'string' ? entry.timestamp : null, entry });
+    } catch { continue; }
+  }
+  return entries;
+}
+
+/** The readable record of an entry, or null when it is not one (an `event_msg` of type `item_completed`). */
+function completedItem(entry: CodexEntry): CodexItem | null {
+  return entry.type === 'event_msg' && entry.payload?.type === 'item_completed' && entry.payload.item !== null && typeof entry.payload.item === 'object' ? entry.payload.item : null;
+}
+
+/** The model record of an entry, or null when it is not one. */
+function responseItem(entry: CodexEntry): CodexPayload | null {
+  return entry.type === 'response_item' && entry.payload !== null && typeof entry.payload === 'object' ? entry.payload : null;
+}
+
+/**
+ * A Codex session (`~/.codex/sessions/<day>/rollout-*.jsonl`) as lines, in file order: what was
+ * said, the reasoning's summary (or that it thought), each command with its script and each tool
+ * with its first text argument, and an `error:` line after one that failed. A text that holds any
+ * `item_completed` event (Codex 0.16x) is read from those alone, as they say each command plainly;
+ * an older one from its `response_item` entries (messages, tool calls, reasoning), where a tool's
+ * failure is not written plainly and so not shown. Codex's own instructions and the context it puts
+ * in a user message (AGENTS.md, a tag-wrapped environment) make no line.
+ */
+export function parseCodexTranscriptLines(source: string): TranscriptLine[] {
+  const entries = codexEntries(source);
+  if (source.includes(CODEX_ITEM_EVENT)) return entries.flatMap(({ at, entry }) => { const item = completedItem(entry); return item === null ? [] : codexItemLines(item, at); });
+  return entries.flatMap(({ at, entry }) => { const payload = responseItem(entry); const line = payload === null ? null : codexResponseLine(payload, at); return line === null ? [] : [line]; });
+}
+
+/** The last `limit` turns with text in a Codex session, oldest first: its user and assistant messages, read the way the lines are. */
+export function parseCodexTranscript(source: string, limit: number): TranscriptTurn[] {
+  const items = source.includes(CODEX_ITEM_EVENT);
+  const turns = codexEntries(source).flatMap(({ at, entry }) => {
+    const item = items ? completedItem(entry) : null;
+    const payload = items ? null : responseItem(entry);
+    const message = item !== null ? codexItemMessage(item) : payload !== null ? codexResponseMessage(payload) : null;
+    return message === null ? [] : [{ at, role: message.role, text: message.text }];
+  });
+  return turns.slice(-limit);
+}
+
+/** Whether one line of a Codex session is a model record other than Codex's own instructions; the cheap substring test skips parsing the rest. */
+function isCodexEntry(line: string): boolean {
+  if (!line.includes('"type":"response_item"')) return false;
+  try {
+    const entry = JSON.parse(line) as CodexEntry;
+    return entry.type === 'response_item' && entry.payload?.role !== CODEX_DEVELOPER && entry.payload?.type !== CODEX_TOOL_LIST;
+  } catch { return false; }
+}
+
+/** How each host's transcript is read: its lines, its turns with text, and which of its entries count. */
+type TranscriptFormat = { lines: (source: string) => TranscriptLine[]; turns: (source: string, limit: number) => TranscriptTurn[]; isEntry: (line: string) => boolean };
+const TRANSCRIPT_FORMATS: Record<AgentHost, TranscriptFormat> = {
+  claude: { lines: parseTranscriptLines, turns: parseTranscript, isEntry: isTurnEntry },
+  codex: { lines: parseCodexTranscriptLines, turns: parseCodexTranscript, isEntry: isCodexEntry },
+};
+
 /** What `GET .../agents/<pid>/transcript` returns of a transcript, beside the session id. */
 export type TranscriptRead = { turns: TranscriptTurn[]; lines: TranscriptLine[]; bytes: number; turnCount: number };
 
@@ -503,12 +673,12 @@ function isTurnEntry(line: string): boolean {
 }
 
 /**
- * The user and assistant entries in the whole transcript file: every one, tool calls, tool results,
- * side chains and the host's wrapper turns included. A transcript only grows, so the count is kept
- * per file and a read streams only what was written since; a file shorter than the count's end
- * was replaced, and is counted again from the start.
+ * The entries in the whole transcript file that `isEntry` counts: for claude (the default) every
+ * user and assistant entry, tool calls, tool results, side chains and the host's wrapper turns
+ * included. A transcript only grows, so the count is kept per file and a read streams only what was
+ * written since; a file shorter than the count's end was replaced, and is counted again from the start.
  */
-export async function countTranscriptEntries(file: string, size: number): Promise<number> {
+export async function countTranscriptEntries(file: string, size: number, isEntry: (line: string) => boolean = isTurnEntry): Promise<number> {
   const known = counted.get(file);
   let { offset, count } = known !== undefined && known.offset <= size ? known : { offset: 0, count: 0 };
   if (offset < size) {
@@ -519,7 +689,7 @@ export async function countTranscriptEntries(file: string, size: number): Promis
       carry = lines.pop() ?? '';
       for (const line of lines) {
         at += Buffer.byteLength(line) + 1;
-        if (isTurnEntry(line)) count += 1;
+        if (isEntry(line)) count += 1;
       }
     }
     offset = at;
@@ -531,21 +701,22 @@ export async function countTranscriptEntries(file: string, size: number): Promis
 }
 
 /**
- * The last `turns` turns with text and the last `lines` lines of a claude transcript, its size in
- * bytes and its count of user and assistant entries; null when it cannot be read. The tail read
- * starts at `tailBytes` (4 MB) and doubles, up to 64 MB or the whole file, while it holds fewer
- * lines than asked.
+ * The last `turns` turns with text and the last `lines` lines of a claude or (with `host` codex) a
+ * Codex transcript, its size in bytes and its count of entries (claude's user and assistant
+ * entries, Codex's model records); null when it cannot be read. The tail read starts at
+ * `tailBytes` (4 MB) and doubles, up to 64 MB or the whole file, while it holds fewer lines than asked.
  */
-export async function readTranscript(file: string, wanted: { turns: number; lines: number }, tailBytes = TRANSCRIPT_TAIL_BYTES): Promise<TranscriptRead | null> {
+export async function readTranscript(file: string, wanted: { turns: number; lines: number }, tailBytes = TRANSCRIPT_TAIL_BYTES, host: AgentHost = 'claude'): Promise<TranscriptRead | null> {
+  const format = TRANSCRIPT_FORMATS[host];
   let bytes = tailBytes;
   for (;;) {
     const tail = await tailOf(file, bytes);
     if (tail === null) return null;
-    const lines = parseTranscriptLines(tail.text);
+    const lines = format.lines(tail.text);
     if (lines.length >= wanted.lines || tail.whole || bytes >= TRANSCRIPT_TAIL_MAX_BYTES) {
       let turnCount: number;
-      try { turnCount = await countTranscriptEntries(file, tail.size); } catch { return null; }
-      return { turns: parseTranscript(tail.text, wanted.turns), lines: lines.slice(-wanted.lines), bytes: tail.size, turnCount };
+      try { turnCount = await countTranscriptEntries(file, tail.size, format.isEntry); } catch { return null; }
+      return { turns: format.turns(tail.text, wanted.turns), lines: lines.slice(-wanted.lines), bytes: tail.size, turnCount };
     }
     bytes = Math.min(bytes * 2, TRANSCRIPT_TAIL_MAX_BYTES);
   }

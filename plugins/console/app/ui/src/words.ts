@@ -2,6 +2,8 @@
 export const WORDS = {
   dirty: 'The worktree has files that are not committed.',
   agents: 'Unattended claude or codex runs the flow started (claude -p, codex exec) working in this folder.',
+  headless: 'Started by the flow with claude -p or codex exec: no one types into it, and it ends when its step does.',
+  job: 'The flow job (next, comments, health, intake or retro) whose process started this agent.',
   sessions: 'Interactive claude or codex someone is typing into (you, or an app such as the Claude desktop app), with its working directory here. Not an agent.',
   waiting: 'Claimed and parked between steps: no run, no agent and no gate. A worker of the next job takes its next step.',
   held: 'It waits behind another item that changes the same code; the next job skips it until that item closes.',

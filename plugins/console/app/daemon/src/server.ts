@@ -13,7 +13,7 @@ import { filterEvents } from './events.ts';
 import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import { serveStatic } from './static.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
-import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX } from './collectors/sessions.ts';
+import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TAIL_BYTES, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX } from './collectors/sessions.ts';
 
 /**
  * `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code.
@@ -243,10 +243,11 @@ async function openRoute(known: KnownFile[], options: ServerOptions, request: In
 }
 
 /**
- * An agent's or session's claude transcript, `{session, turns, lines, bytes, turnCount}`: the last
- * turns with text (`[{at, role, text}]`), the last entries as one line each (`[{at, kind, text}]`,
- * what it said, thought, ran and failed at, and what the user said), the file's size in bytes, and
- * how many user and assistant entries the whole file holds. Only for a pid the snapshot lists
+ * An agent's or session's claude or Codex transcript, `{session, turns, lines, bytes, turnCount}`:
+ * the last turns with text (`[{at, role, text}]`), the last entries as one line each (`[{at, kind,
+ * text}]`, what it said, thought, ran and failed at, and what the user said), the file's size in
+ * bytes, and how many entries the whole file holds (claude's user and assistant entries, Codex's
+ * model records). Only for a pid the snapshot lists
  * (running, or ended in the last day), so the file read is always one the daemon found itself.
  * `?lines=N` is how many of each, 20 by default; at most 200 turns and 2000 lines.
  */
@@ -258,9 +259,8 @@ async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: In
   const agent = [...(snapshot?.agents ?? []), ...(snapshot?.ended ?? [])].find((entry) => String(entry.pid) === pid);
   if (agent === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: `no agent or session with pid ${pid} in this project` }); return; }
   if (agent.session === null) { sendJson(response, HTTP_NOT_FOUND, { error: `no transcript found for pid ${pid}` }); return; }
-  if (agent.session.host !== 'claude') { sendJson(response, HTTP_BAD_REQUEST, { error: 'the console reads claude transcripts only' }); return; }
   const wanted = Number(linesText);
-  const read = await readTranscript(agent.session.transcript, { turns: Math.min(wanted, TRANSCRIPT_TURNS_MAX), lines: Math.min(wanted, TRANSCRIPT_LINES_MAX) });
+  const read = await readTranscript(agent.session.transcript, { turns: Math.min(wanted, TRANSCRIPT_TURNS_MAX), lines: Math.min(wanted, TRANSCRIPT_LINES_MAX) }, TRANSCRIPT_TAIL_BYTES, agent.session.host);
   if (read === null) { sendJson(response, HTTP_NOT_FOUND, { error: `${agent.session.transcript} cannot be read` }); return; }
   sendJson(response, HTTP_OK, { session: agent.session.id, ...read });
 }

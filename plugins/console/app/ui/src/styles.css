@@ -605,6 +605,8 @@ a.tag { color: var(--accent); }
 /* The run's transcript as a terminal: time, kind, text */
 .run-stream { background: var(--terminal); color: var(--terminal-ink); border-radius: 8px; padding: 10px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.75; min-height: 180px; }
 .run-stream.full { max-height: 70vh; overflow-y: auto; }
+/* A folded run's latest transcript line: one row of its terminal under the header */
+.run-card-latest { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; margin: 8px 0 0; background: var(--terminal); color: var(--terminal-ink); border-radius: 6px; padding: 4px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.75; }
 .stream-note { margin: 0; color: #8f98a4; }
 .stream-lines { list-style: none; margin: 0; padding: 0; }
 .stream-line { display: grid; grid-template-columns: 64px 52px minmax(0, 1fr); gap: 10px; }
