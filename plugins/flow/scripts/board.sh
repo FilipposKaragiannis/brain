@@ -1,12 +1,14 @@
 #!/bin/sh
 # board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every tracker read, every claim. The pool
-# with item, step and last event; open items with their state and blockers; pending gates;
-# overlapping claims; the spend per item, from the step sessions in log/runs.jsonl; each tracker
-# whose list failed, with why (--json: tracker_errors, [{"tracker", "code", "message"}]); the status
-# of each holder an open item is held behind that the list leaves out (--json: holders,
-# [{"id", "status"}], status open, closed or unknown). --graph prints a graph model built from
-# every adapter's open items (scripts/_graph.py): the dependency waves of one epic's children, or
-# every open item by priority. --mermaid prints it as a Mermaid flowchart instead of JSON.
+# with item, step and last event; open items with their state and blockers, and in the gate column
+# the owner's answer to a cleared gate while it waits on a run (answer_pending; in Health too once
+# it waits past the gate reminder); pending gates; overlapping claims; the spend per item, from
+# the step sessions in log/runs.jsonl; each tracker whose list failed, with why (--json:
+# tracker_errors, [{"tracker", "code", "message"}]); the status of each holder an open item is
+# held behind that the list leaves out (--json: holders, [{"id", "status"}], status open, closed or
+# unknown). --graph prints a graph model built from every adapter's open items (scripts/_graph.py):
+# the dependency waves of one epic's children, or every open item by priority. --mermaid prints it
+# as a Mermaid flowchart instead of JSON.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 as_json=0; graph=""; mermaid=""

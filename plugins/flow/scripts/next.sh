@@ -121,7 +121,10 @@ if [ -n "$holder" ] && ! printf '%s\n' "$upto_plan" | grep -qx "$step" \
   why="$(state_get "$data" held_reason)"
   pass_over "$item is held behind $holder${why:+: $why}" 4
 fi
-[ "$step" = "done" ] && pass_over "$item is done (every step ran). Merge or close it." 6
+if [ "$step" = "done" ]; then
+  [ "$(state_get "$data" answer_pending)" != comments ] || pass_over "$item is done; its answer to the last gate waits on the comments job: jobs/comments.sh <host> $item" 6
+  pass_over "$item is done (every step ran). Merge or close it." 6
+fi
 # A split item (steward.sh split) runs no step: its children do the work.
 if [ "$step" = split ]; then
   kids="$(json_get "$data" open_children)"
@@ -161,7 +164,9 @@ case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; o
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
   "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches" > "$(run_file "$item")"
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
-adapter write-state "$item" "step=$step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
+# The run takes the answer to the last gate (answer_pending, gate.sh clear): its brief carries it.
+taken=""; [ -z "$(state_get "$data" answer_pending)" ] || taken="answer_pending="
+adapter write-state "$item" "step=$step" "profile=$profile" "$sized" ${taken:+"$taken"} "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock
 
 # Verify runs on the code the PR merges: a clean task branch behind its base gets the base merged

@@ -321,6 +321,8 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
       blockedBy: boardItem.blocked_by, openBlockers: boardItem.open_blockers, openChildren: boardItem.open_children,
       needs: boardItem.needs, rank: boardItem.rank, lastEvent: boardItem.state.last_event || null,
       heldBy: heldBy(boardItem) || null, heldReason: heldBy(boardItem) === '' ? null : boardItem.state.held_reason || null,
+      // A gate raised again since the clear is the owner's again: no answer waits on a run then.
+      answerPending: (gate === null && boardItem.state.answer_pending) || null,
       spend: itemSpend(input.board?.spend[boardItem.id]),
     });
   }
@@ -331,7 +333,7 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
       id, title: '', kind: '', size: '', priority: '', status: 'open', state: itemState(null, worktree, gate),
       step: worktree?.claim?.step ?? '', gate: gate?.gate ?? 'none', worktree: worktree?.name ?? null, pr: null, url: null,
       parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: UNRANKED, lastEvent: null,
-      heldBy: null, heldReason: null, spend: itemSpend(input.board?.spend[id]),
+      heldBy: null, heldReason: null, answerPending: null, spend: itemSpend(input.board?.spend[id]),
     });
   }
   return items.sort((left, right) => STATE_ORDER[left.state] - STATE_ORDER[right.state] || left.rank - right.rank || left.id.localeCompare(right.id));

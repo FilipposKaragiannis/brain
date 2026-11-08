@@ -15,6 +15,22 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 1. **Resolve the PR**: from the argument, or the item's state `pr`. `comments.sh state <pr>`:
    merged or closed → release is the steward's job; report and stop.
    The item is the one the PR's branch names (`flow/gh-310` is `gh#310`).
+   **Answer**: the brief names the owner's answer to the item's last gate ("The owner answered
+   the <gate> gate: ..."), or run outside the job, the item's state has `answer_pending:
+   comments` with `asked` and `answer`. Carry it out first: it settles what a gate an earlier
+   pass raised asked (how a conflict resolves, which fix a check gets). Work on the PR's own
+   branch, in the claimed worktree, the way steps 2 and 3 do (`implementer`, `verifier`, push,
+   re-request review). An answer that asks for work outside that branch (another branch, the
+   PR's base among them; the tracker; another item) is no step's: do none of it, and raise
+   `"$P/scripts/gate.sh" raise <item> escalation` with a first line in bold, **No step acts on
+   this answer: do it by hand, then clear the gate with no answer**, then the answer and what it
+   asks for. Once the answer is carried out (pushed) or raised again as a gate, and only then,
+   write the line the brief names to the file it names: that is how the job knows to take the
+   answer, so it is never carried twice. A dirty tree, a failing verify or anything else that
+   leaves the answer undone: write nothing and report why; the answer stays pending, and the job
+   counts the pass as failed and tries again. Run outside the job, no file is named: once it is
+   done, clear the marker yourself, `"$P/adapters/<github|jira|local>/write-state.sh" <item>
+   answer_pending=`.
 2. **Conflicts**: `state` says `mergeable: CONFLICTING` → in the claimed worktree
    (`"$P/scripts/steward.sh" find <item>`, claim when released), with a clean tree, spawn the
    `implementer` with this brief: `git fetch origin`, `git merge "origin/<baseRefName>"` into the
@@ -52,7 +68,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    still waits one more pass, then stops trying it.
 4. **Threads**: `comments.sh threads <pr>` lists the unresolved review threads. None, no new
    plain comment since the last pass (`comments.sh issue-comments`, compare with
-   `<reports>/comments.json`), no merge in step 2 and no checks fixed in step 3 → stop, "quiet".
+   `<reports>/comments.json`), no answer carried out, no merge in step 2 and no checks fixed in
+   step 3 → stop, "quiet".
 5. **Grade each thread** yourself, reading the code at the line as it is now:
    - `valid`: a real defect, a broken rule, a spec miss, or a better design at equal cost.
    - `nit`: style or wording with no behaviour change.
@@ -78,8 +95,9 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    item's `pr_host`, recorded by `link-pr`, else the PR body's footer.
 9. Delete `<reports>/comments-resume.md` once every thread of this pass is addressed or replied
    to, and the interrupted work is committed or named in a reply.
-10. Report once: the conflict merge, the checks fixed or left red and why, threads addressed
-   (valid, nit, wrong counts), commits, the owner's decisions pending, the quiz state.
+10. Report once: the owner's answer carried out or raised again, the conflict merge, the checks
+   fixed or left red and why, threads addressed (valid, nit, wrong counts), commits, the owner's
+   decisions pending, the quiz state.
 
 Never batch threads into one commit. Never resolve a thread without a reply. Never mark the
 PR ready without a passed quiz (`<reports>/quiz.json`) when one exists.

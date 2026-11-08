@@ -35,7 +35,7 @@ PREFIX = "jira:"
 KEY = re.compile(r"^[A-Z][A-Z0-9_]*-[0-9]+$")
 STATE_PROPERTY = "flow-state"
 STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_event", "pr", "pr_host", "touches",
-              "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "gate_from"]
+              "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "answer_pending", "gate_from"]
 LABEL_PREFIXES = {"step": "step:", "gate": "gate:", "worktree": "wt:", "profile": "flow:", "size": "size:"}
 FIELDS = ["summary", "description", "status", "issuetype", "priority", "labels", "parent", "issuelinks"]
 FOREIGN_BLOCKERS = re.compile(r"(?m)^Blocked by: (.+)$")

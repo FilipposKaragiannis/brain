@@ -24,7 +24,9 @@ path `codex plugin list` prints for `flow`). Call it `$P`.
    draw nothing and show the error as is. A list cut at `github.limit` is one: tell the user to
    raise it in `.flow/config.yaml`.
 3. A `## Health` section appears when something is stale: a run record with no live process
-   (the pool row says `dead run`, not `running on <host>`) or a gate waiting past the reminder.
+   (the pool row says `dead run`, not `running on <host>`), a gate waiting past the reminder, or
+   an answer that has waited past it on the run that carries it out (the gate column says
+   `none, answer waits on next` or `on the comments job` while one waits).
    Say what it means in one line and that the `health` job clears and resumes it, or run
    `"$P/scripts/steward.sh" health --dry-run`.
 4. When a gate waits, say in one line per gate what the owner must do, and how to clear it:

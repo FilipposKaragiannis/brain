@@ -200,9 +200,11 @@ check "write-state: a new size is the item size too" '[ "$(field "$t1" size)" = 
 "$A/write-state.sh" "$t1" gate=plan-approval gate_from=implement >/dev/null 2>&1
 check "write-state: a gate and its from step read back" '[ "$(field "$t1" state.gate)" = plan-approval ] && [ "$(field "$t1" state.gate_from)" = implement ]'
 check "list-ready leaves out an item at a gate" '! listed "$t1" "$A/list-ready.sh"'
-"$A/write-state.sh" "$t1" gate=none gate_from= "answered=plan-approval" "asked=Which way?" "answer=the short way" answered_at=2026-11-01T11:00:00Z >/dev/null 2>&1
+"$A/write-state.sh" "$t1" gate=none gate_from= "answered=plan-approval" "asked=Which way?" "answer=the short way" answered_at=2026-11-01T11:00:00Z answer_pending=next >/dev/null 2>&1
 check "write-state: gate none clears the gate" '[ "$(field "$t1" state.gate)" = none ]'
-check "write-state: the answer keys read back" '[ "$(field "$t1" state.answered)" = plan-approval ] && [ "$(field "$t1" state.asked)" = "Which way?" ] && [ "$(field "$t1" state.answer)" = "the short way" ] && [ "$(field "$t1" state.answered_at)" = 2026-11-01T11:00:00Z ]'
+check "write-state: the answer keys read back" '[ "$(field "$t1" state.answered)" = plan-approval ] && [ "$(field "$t1" state.asked)" = "Which way?" ] && [ "$(field "$t1" state.answer)" = "the short way" ] && [ "$(field "$t1" state.answered_at)" = 2026-11-01T11:00:00Z ] && [ "$(field "$t1" state.answer_pending)" = next ]'
+"$A/write-state.sh" "$t1" answer_pending= >/dev/null 2>&1
+check "write-state: an empty answer_pending says no answer waits" '[ -z "$(field "$t1" state.answer_pending)" ]'
 check "list-ready names the item again once its gate is cleared" 'listed "$t1" "$A/list-ready.sh"'
 "$A/write-state.sh" "$t1" step= worktree= touches= >/dev/null 2>&1
 check "write-state: empty values clear the step, the worktree and the touches" '[ -z "$(field "$t1" state.step)" ] && [ -z "$(field "$t1" state.worktree)" ] && [ "$(field "$t1" state.touches)" = "[]" ]'

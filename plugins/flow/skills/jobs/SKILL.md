@@ -85,6 +85,11 @@ Facts to answer with:
   fails when any pass failed. The result line names each PR that got no pass and why: nothing
   new, waits on you (threads still unanswered after two passes, or failing passes), in use (the
   session in its worktree and how long it has idled) or at a gate. Red CI never holds a PR back.
+  An owner's answer to a gate cleared on an item at `done` waits on the comments job
+  (`answer_pending: comments`, on the board): the next pass carries it in its brief whatever
+  else changed. It is taken only when the pass confirms it carried the answer out or raised it
+  again as a gate, and only while no newer answer came in the meantime; a pass that ends without
+  that confirmation counts as failed, so after `jobs.comments.max_failures` the owner is told.
 - The `retro` job commits nothing: `lessons.jsonl` and `retros.log` stay on this machine under
   `.flow/`, which is excluded from git, so each clone keeps its own lessons.
 - The `health` job (every 15 minutes in the config `flow:init` writes) checks each claim and spends

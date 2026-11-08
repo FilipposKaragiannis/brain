@@ -341,6 +341,14 @@ test('Items_Spend_FromTheBoardOrNull', async () => {
   assert.deepEqual([spend['gh#12'], spend['gh#13']], [null, null], 'because an item with no session has no spend, and a malformed entry is dropped, not shown as $0');
 });
 
+test('Items_AnswerPending_FromTheBoardUntilAGateIsRaisedAgain', async () => {
+  const facts = withBoardItem(withBoardItem(await input(), 'gh#9', { answer_pending: 'comments' }), 'gh#7', { answer_pending: 'next' });
+  const pending = (picture: Snapshot, id: string) => picture.items.find((item) => item.id === id)?.answerPending;
+  assert.equal(pending(reconcile(facts), 'gh#9'), 'comments', 'because a cleared gate whose answer waits on a run must show on the board');
+  assert.equal(pending(reconcile(await input()), 'gh#9'), null, 'because an item with no answer waiting, or an older plugin, shows none');
+  assert.equal(pending(reconcile(facts), 'gh#7'), null, 'because a gate raised again since the clear (gh#7 has a gate record) waits on the owner, not on a run');
+});
+
 test('OlderBoard_NoSpend_ItemsHaveNone', () => {
   assert.deepEqual(parseBoard(LOCAL_BOARD_JSON).spend, {}, 'because a plugin before flow 1.22.0 prints no spend');
 });

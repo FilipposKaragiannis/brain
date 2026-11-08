@@ -47,6 +47,18 @@ test('InReviewItem_ShowsInReviewNeverBlocked', () => {
   expect(row('Twenty').textContent).not.toMatch(/blocked/);
 });
 
+test('ClearedGate_AnswerWaitingOnTheCommentsJob_ShowsInRowAndDetail', () => {
+  const answered: Item = { ...REVIEWED, answerPending: 'comments' };
+  renderBoard([answered], 'gh#20');
+  expect(row('Twenty').textContent, 'because a cleared gate whose answer no run took yet must not sit unseen').toMatch(/done · answer waits on the comments job/);
+  expect(screen.getByText('Gate').nextElementSibling?.textContent, 'because the detail says the gate was cleared and what carries the answer out').toBe('cleared, answer waits on the comments job');
+});
+
+test('NoAnswerWaiting_RowShowsTheStepAlone', () => {
+  renderBoard([REVIEWED]);
+  expect(row('Twenty').textContent, 'because only an answer that waits on a run is named').not.toMatch(/answer waits/);
+});
+
 test('PickedItem_DetailShowsSessionsAndTokens', () => {
   renderBoard([SPENT], 'gh#7');
   const spend = screen.getByLabelText('Spend');

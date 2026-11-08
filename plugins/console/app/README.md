@@ -309,6 +309,11 @@ snapshots.
   tokens}`, summed over the step sessions `board.sh --json` counts from `log/runs.jsonl`, or null
   when it has none or the plugin prints no `spend`. Codex reports no cost, so a codex session adds
   sessions and tokens but no dollars.
+- An item's `answerPending` is what carries out the owner's answer to its cleared gate until a run
+  takes it: `next` (its next step) or `comments` (the comments job, for an item at done with a
+  PR), from the board's `answer_pending`; null when none waits, when a gate record says the gate
+  was raised again, or on a plugin too old to record one. The Board shows it beside the step and
+  in the item's Gate fact, so an answer never waits unseen.
 - An item whose merge gate waits on review is `in-review`, not `blocked`: its PR has changes
   requested, a reviewer requested, or a reviewer the flow asked by a mention that has not
   answered. Its gate leaves `gates` and the attention list while that lasts.
