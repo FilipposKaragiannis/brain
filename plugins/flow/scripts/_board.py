@@ -6,6 +6,7 @@ lines = sys.stdin.read().split("\n")
 items, runs, gates = (json.loads(l) for l in lines[:3])
 # Each tracker whose list failed: {"tracker", "code", "message"}, the adapter's last stderr line.
 tracker_errors = json.loads(lines[3]) if len(lines) > 3 and lines[3].strip() else []
+holders = json.loads(lines[4]) if len(lines) > 4 and lines[4].strip() else []
 pool = []
 for line in pool_text.splitlines():
     parts = line.split(None, 4)
@@ -60,7 +61,7 @@ for name in ("runs.1.jsonl", "runs.jsonl"):
         s["tokens"] += sum(u.get(k) for k in TOKENS.get(r.get("host"), ()) if isinstance(u.get(k), int))
 if as_json:
     print(json.dumps({"pool": pool, "items": items, "runs": runs, "gates": gates,
-                      "overlaps": [list(o) for o in overlap], "spend": spend, "tracker_errors": tracker_errors}, indent=2)); sys.exit()
+                      "overlaps": [list(o) for o in overlap], "spend": spend, "tracker_errors": tracker_errors, "holders": holders}, indent=2)); sys.exit()
 if tracker_errors:
     print("## Trackers not read")
     for e in tracker_errors:

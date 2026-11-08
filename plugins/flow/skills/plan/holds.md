@@ -26,5 +26,7 @@ In the result file, `changes`: the globs among your `touches` whose existing beh
 changes (additive work is left out; empty when the plan only adds). With a conflict, also
 `"hold": {"behind": "<the other item's id>", "reason": "<one line: the code both change and why
 merging would be hard>"}`. One hold at most, behind the item whose clash is the hardest. No
-conflict: no `hold` key. The flow writes the hold and keeps the item back until that item
-closes; the run after it merges the base in and checks the plan still fits.
+conflict: no `hold` key. The flow writes the hold and keeps the steps after the plan back until
+that item closes; the run after it merges the base in and checks the plan still fits. A plan sent
+back at its gate runs again while the item is held, and decides anew: report the `hold` to keep
+it, leave it out and the hold is lifted.

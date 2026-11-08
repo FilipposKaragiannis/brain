@@ -107,15 +107,20 @@ gate="$(state_get "$data" gate)"
 if [ -n "$gate" ] && [ "$gate" != "none" ]; then
   pass_over "$item waits at gate '$gate'. Answer it, then: gate.sh clear $item" 4
 fi
-# A plan put the item behind another (state.held_by): it waits while that one is open. A holder
-# closed or not found holds nothing, as in filter-ready.sh; the health job clears the stale hold.
+step="$(state_get "$data" step)"
+[ -n "$step" ] || step="$(profile_steps "$profile" | head -1)"
+# A plan put the item behind another (state.held_by): its steps after the plan wait while that one
+# is open. The plan and the steps before it still run (a plan sent back is planned again, and that
+# plan decides the hold anew), as in filter-ready.sh. A holder closed or not found holds nothing;
+# next.sh lifts its hold below with the release note.
 holder="$(state_get "$data" held_by)"
-if [ -n "$holder" ] && [ "$(json_get "$(adapter read "$holder" 2>/dev/null)" status)" = open ]; then
+upto_plan="$(profile_steps "$profile" | sed '/^plan$/q')"
+printf '%s\n' "$upto_plan" | grep -qx plan || upto_plan=""
+if [ -n "$holder" ] && ! printf '%s\n' "$upto_plan" | grep -qx "$step" \
+    && [ "$(json_get "$(adapter read "$holder" 2>/dev/null)" status)" = open ]; then
   why="$(state_get "$data" held_reason)"
   pass_over "$item is held behind $holder${why:+: $why}" 4
 fi
-step="$(state_get "$data" step)"
-[ -n "$step" ] || step="$(profile_steps "$profile" | head -1)"
 [ "$step" = "done" ] && pass_over "$item is done (every step ran). Merge or close it." 6
 # A split item (steward.sh split) runs no step: its children do the work.
 if [ "$step" = split ]; then
@@ -195,6 +200,8 @@ if [ -n "$held_by" ] && [ "$step" != sync ] && hdata="$(adapter read "$held_by" 
 fi
 # The plan step judges the other open work its touches reach; with none the section is left out.
 others=""; [ "$step" = plan ] && others="$("$FLOW_PLUGIN/scripts/hold.sh" candidates "$item" 2>/dev/null)"
+# A plan run again while the item is still held (sent back at the gate) decides the hold anew.
+still_held=""; [ "$step" = plan ] && [ -n "$held_by" ] && [ -z "$released" ] && still_held="$held_by"
 
 brief="$reports/brief-$step.md"
 {
@@ -255,6 +262,12 @@ brief="$reports/brief-$step.md"
     echo "## The hold is over"
     echo
     echo "You were held behind $released, which has closed. First merge \`$rref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $rref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
+    echo
+  fi
+  if [ -n "$still_held" ]; then
+    echo "## The hold now"
+    echo
+    echo "An earlier plan held this item behind $still_held: $(state_get "$data" held_reason). Your plan decides again: report \`hold\` behind it to keep the hold, or leave \`hold\` out and the hold is lifted."
     echo
   fi
   if [ -n "$others" ]; then

@@ -94,6 +94,18 @@ check "advance: a plan with no hold writes changes only, and lifts a hold an ear
 "$P/scripts/hold.sh" set "$f" "$f" "itself" 2>/dev/null; code2=$?
 check "hold set: a closed holder or the item itself is refused, nothing written" "[ $code1 -eq 1 ] && [ $code2 -eq 1 ] && [ -z \"\$(st '$f' held_by)\" ] && ! grep -q \"	$f	held	behind $g\" '$events'"
 
+echo "holds: a held plan sent back"
+"$P/scripts/gate.sh" clear "$c" --back "plan around the token loop" >/dev/null 2>&1
+check "send back: the ready filter lets a held item at its plan step through" \
+  "\"\$L/list-ready.sh\" | grep -q '\"$c\"'"
+"$P/scripts/next.sh" "$c" >/dev/null 2>&1; code=$?
+check "send back: the plan runs again while the holder is open, and its brief says the plan decides the hold" \
+  "[ $code -eq 0 ] && [ \"\$(st '$c' held_by)\" = '$a' ] && grep -q '^## The hold now' '$rc/brief-plan.md' && grep -q 'held this item behind $a: both rewrite the token loop' '$rc/brief-plan.md'"
+printf '{"status":"done","summary":"planned","touches":["src/parse/**"],"changes":["src/parse/errors.py"],"hold":{"behind":"%s","reason":"both rewrite the token loop"}}\n' "$a" > "$rc/plan.json"
+"$P/scripts/advance.sh" "$c" >/dev/null 2>&1
+check "send back: past the plan the hold keeps the item back again" \
+  "[ \"\$(st '$c' gate)\" = plan-approval ] && ! \"\$L/list-ready.sh\" | grep -q '\"$c\"'"
+
 echo "holds: release"
 "$P/scripts/gate.sh" clear "$c" approved >/dev/null 2>&1
 "$P/scripts/next.sh" "$c" >/dev/null 2>&1
@@ -101,6 +113,8 @@ rc="$(dirname "$rc")/$(slug "$c")"
 check "release: while the holder is open the hold stays and the brief says nothing of it" "[ \"\$(st '$c' held_by)\" = '$a' ] && ! grep -q 'hold is over' '$rc/brief-implement.md'"
 rm -f ".flow/runs/$(slug "$c").json"
 "$L/close.sh" "$a"
+check "board: a holder the open-item list leaves out is read once and named with its status" \
+  "[ \"\$('$P/scripts/board.sh' --json | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)[\"holders\"]))')\" = '[{\"id\": \"$a\", \"status\": \"closed\"}]' ]"
 "$P/scripts/next.sh" "$c" >/dev/null 2>&1
 check "release: once the holder closed the brief says merge the base first and check the plan" \
   "grep -q '^## The hold is over' '$rc/brief-implement.md' && grep -q 'You were held behind $a, which has closed. First merge \`main\` into the branch' '$rc/brief-implement.md' && grep -q 'never rebase' '$rc/brief-implement.md' && grep -q 'gate ambiguity' '$rc/brief-implement.md'"

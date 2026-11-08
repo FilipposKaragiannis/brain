@@ -974,14 +974,18 @@ function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
 }
 
 /**
- * The board with each hold whose holder the board shows closed lifted: flow's ready filter already
- * lets that item through, and next.sh clears the tag on its next run, so it waits for a worker,
- * not behind its holder. A holder the board does not list keeps its hold as written.
+ * The board with each hold whose holder is closed lifted: flow's ready filter already lets that item
+ * through, and next.sh clears the tag on its next run, so it waits for a worker, not behind its
+ * holder. The board lists open items only, so a holder it leaves out is told by its `holders`
+ * read. A holder whose status is unknown keeps its hold as written.
  */
 function withReleasedHolds(read: ReconcileInput): ReconcileInput {
   const items = read.board?.items;
   if (items === undefined) return read;
-  const closed = new Set(items.filter((item) => item.status !== 'open').map((item) => item.id));
+  const closed = new Set([
+    ...items.filter((item) => item.status !== 'open').map((item) => item.id),
+    ...Object.entries(read.board?.holders ?? {}).filter(([, status]) => status === 'closed').map(([id]) => id),
+  ]);
   if (!items.some((item) => closed.has(item.state.held_by ?? ''))) return read;
   const lifted = items.map((item) => (closed.has(item.state.held_by ?? '') ? { ...item, state: { ...item.state, held_by: '', held_reason: '' } } : item));
   return { ...read, board: { ...read.board!, items: lifted } };

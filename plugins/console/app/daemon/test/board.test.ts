@@ -19,6 +19,15 @@ test('ParseBoard_TrackerErrorWithoutATracker_LeftOut', () => {
   assert.deepEqual(board.trackerErrors, [], 'because an error the console cannot pin on a tracker would show against none');
 });
 
+test('ParseBoard_Holders_ReadByIdAndMalformedLeftOut', () => {
+  const board = parseBoard(JSON.stringify({ items: [], holders: [{ id: 'gh#40', status: 'closed' }, { id: 'gh#41' }, null, 'gh#42'] }));
+  assert.deepEqual(board.holders, { 'gh#40': 'closed' }, 'because board.sh reads each holder the open-item list leaves out, and an entry without an id and a status says nothing');
+});
+
+test('ParseBoard_NoHolders_None', () => {
+  assert.deepEqual(parseBoard(JSON.stringify({ items: [] })).holders, {}, 'because a plugin before the holders read reports none');
+});
+
 test('ConsoleTrackerErrors_JiraWithoutTokenInTheConsole_NamesTheVariable', () => {
   const [error] = withConsoleTrackerErrors([], ['github', 'jira'], {});
   assert.equal(error?.tracker, 'jira', 'because the Jira items are the ones that go missing');

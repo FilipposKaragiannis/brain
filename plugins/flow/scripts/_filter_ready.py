@@ -47,6 +47,21 @@ def blocker_open(item_id):
 def holder_open(item_id):
     return status_of(item_id) == "open"
 
+try:
+    with open(os.path.join(plugin, "profiles.json"), encoding="utf-8") as f:
+        PROFILES = json.load(f).get("profiles", {})
+except (OSError, ValueError):
+    PROFILES = {}
+
+def hold_applies(state):
+    """A hold keeps back only the steps after the plan: the plan and the steps before it still run,
+    because a plan sent back is planned again and decides the hold anew. An item with no known
+    profile, or a profile with no plan, is held at every step."""
+    steps = [s for s in PROFILES.get(state.get("profile", ""), []) if isinstance(s, str)]
+    if "plan" not in steps:
+        return True
+    return state.get("step", "") not in steps[:steps.index("plan") + 1]
+
 def held_back(item):
     """Why an open item is not ready, in one word, or None when it is ready."""
     state = item.get("state", {})
@@ -65,7 +80,7 @@ def held_back(item):
             return "blocked"
     elif any(blocker_open(b) for b in item.get("blocked_by", [])):
         return "blocked"
-    if state.get("held_by") and holder_open(state["held_by"]):
+    if state.get("held_by") and hold_applies(state) and holder_open(state["held_by"]):
         return "held"
     return None
 

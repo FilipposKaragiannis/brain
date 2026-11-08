@@ -6,7 +6,8 @@
 # own adapter's read operation, so a local item can wait on a GitHub issue and the other way round.
 # A blocker that cannot be read still holds. The item a plan put this one behind (state.held_by)
 # is looked up the same way but holds only while it reads open: a holder closed or not found frees
-# the item, and the health job clears the stale hold. With FLOW_READY_NOTES naming a file, each
+# the item, and next.sh or the health job lifts the tag. A hold keeps back only the steps after
+# the profile's plan, so a plan sent back runs again. With FLOW_READY_NOTES naming a file, each
 # open item held back is appended to it as a JSON line, {"id", "worktree", "why"} (why: gate,
 # needs, children, split, done, blocked or held; a held one adds held_by and held_reason), so
 # next.sh can say why a pick found nothing.

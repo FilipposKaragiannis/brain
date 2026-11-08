@@ -48,7 +48,7 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
 
 ## Rules
 
-- Never start an item held behind another (`state.held_by`) while that one is open; `next.sh` refuses, do not override.
+- Never start an item held behind another (`state.held_by`) past its plan while that one is open; `next.sh` refuses, do not override. Its plan, sent back at the gate, still runs and decides the hold anew.
 - Never reset or release a worktree yourself; the steward does that, and never with uncommitted changes.
 - A re-size by one step continues; two steps or into L stops at a plan-approval gate. Do not argue with it.
 - Unattended runs use `.flow/run-unattended.sh`, which drives this same loop from a shell.

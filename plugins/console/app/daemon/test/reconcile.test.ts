@@ -232,6 +232,19 @@ test('ParkedClaim_HolderClosedOnTheBoard_WaitingNotHeld', async () => {
   assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'waiting', 'because the Board says the same as the card');
 });
 
+test('ParkedClaim_HolderClosedOffTheBoard_WaitingNotHeld', async () => {
+  const facts = await parkedNine({ held_by: 'gh#41', held_reason: 'shares src/a.ts' });
+  facts.board = { ...facts.board!, holders: { 'gh#41': 'closed' } };
+  const nine = worktree(reconcile(facts), 'project-wt-3');
+  assert.deepEqual([nine?.state, nine?.heldBy], ['waiting', null], 'because the board lists open items only, and its holders read says this holder closed');
+});
+
+test('ParkedClaim_HolderUnknownOffTheBoard_StillHeld', async () => {
+  const facts = await parkedNine({ held_by: 'gh#41', held_reason: 'shares src/a.ts' });
+  facts.board = { ...facts.board!, holders: { 'gh#41': 'unknown' } };
+  assert.equal(worktree(reconcile(facts), 'project-wt-3')?.state, 'held', 'because a holder that could not be read may still be open');
+});
+
 test('ParkedClaim_HolderNotOnTheBoard_StillHeld', async () => {
   const nine = worktree(reconcile(await parkedNine({ held_by: 'gh#41', held_reason: 'shares src/a.ts' })), 'project-wt-3');
   assert.deepEqual([nine?.state, nine?.heldBy], ['held', 'gh#41'], 'because a holder the board does not list may still be open, so the hold stands as flow wrote it');
@@ -462,7 +475,7 @@ const READY: PullFact = {
 const ready = (change: Partial<PullFact>): PullFact => ({ ...READY, ...change });
 const pullNumbered = (picture: Snapshot, pullNumber: number) => picture.pulls.find((pull) => pull.number === pullNumber);
 const withBoardItem = (facts: ReconcileInput, id: string, change: Partial<BoardItem['state']>): ReconcileInput => ({
-  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] },
+  ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === id ? { ...item, state: { ...item.state, ...change } } : item)), bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [], holders: {} },
 });
 const mergeDisagreements = (picture: Snapshot) => picture.disagreements.filter((entry) => entry.sources.join(' vs ') === 'issue state vs pull request');
 
@@ -640,12 +653,12 @@ test('FixturePulls_CountedByState', async () => {
 
 const withExtraBoardItem = (facts: ReconcileInput, change: Partial<BoardItem>): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), { ...template, id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], url: 'https://example/14', parent: 'gh#7', ...change }], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [], holders: {} } };
 };
 /** Adds board items made from gh#12's shape, one per change. */
 const withBoardItems = (facts: ReconcileInput, changes: Partial<BoardItem>[]): ReconcileInput => {
   const template = (facts.board?.items ?? []).find((item) => item.id === 'gh#12')!;
-  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [] } };
+  return { ...facts, board: { items: [...(facts.board?.items ?? []), ...changes.map((change) => ({ ...template, ...change }))], bodies: facts.board?.bodies ?? {}, spend: facts.board?.spend ?? {}, trackerErrors: [], holders: {} } };
 };
 const needsFieldIds = (picture: Snapshot): string[] => picture.attention.filter((row) => row.kind === 'needs-field').map((row) => row.id);
 const disagreementOf = (picture: Snapshot, sources: string) => picture.disagreements.find((entry) => entry.sources.join(' vs ') === sources);
@@ -704,7 +717,7 @@ test('NeedsField_ChildOfASplitParentWithADoneSibling_Row', async () => {
 
 test('NeedsField_BlocksAnItemInProgress_Row', async () => {
   const facts = withBoardItems(withBoardItem(await input(), 'gh#9', {}), [{ id: 'gh#14', title: 'Fourteen', priority: '', needs: ['priority'], parent: '' }]);
-  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {}, spend: {}, trackerErrors: [] } };
+  const blocking = { ...facts, board: { items: (facts.board?.items ?? []).map((item) => (item.id === 'gh#9' ? { ...item, blocked_by: ['gh#14'] } : item)), bodies: {}, spend: {}, trackerErrors: [], holders: {} } };
   assert.deepEqual(needsFieldIds(reconcile(blocking)), ['gh#14'], 'because gh#9 is being worked and waits on it');
 });
 
@@ -1052,7 +1065,7 @@ test('Worktree_SyncNoteOfItsClaim_ShownAsSyncPending', async () => {
 
 test('GateItemWithABody_GateCarriesIt', async () => {
   const facts = await input();
-  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' }, spend: {}, trackerErrors: [] } });
+  const picture = reconcile({ ...facts, board: { items: facts.board?.items ?? [], bodies: { 'gh#7': '## Spec' }, spend: {}, trackerErrors: [], holders: {} } });
   assert.equal(picture.gates.find((gate) => gate.item === 'gh#7')?.body, '## Spec', 'because the card shows the issue the gate is about');
 });
 
