@@ -11,8 +11,8 @@
 # item's next run), reminds on gates pending past jobs.health.gate_reminder, and says once when
 # the pool is full and the next job has no worktree to start in. It clears a planned hold
 # (state.held_by) that is stale or wrong: the holder unreadable, holding no worktree and no run,
-# or its changes no longer sharing a path with the held item's; a hold on itself; the newest hold
-# in a cycle. Each clear is an `unheld` line in events.log. A hold whose holder closed stays:
+# or its changes (touches, when it records none) no longer sharing a path with the held item's; a
+# hold on itself; the newest hold in a cycle. Each clear is an `unheld` line in events.log. A hold whose holder closed stays:
 # next.sh releases it with the note to merge the holder's work and check the plan. A valid hold waiting over a day is
 # said and notified once. Only the holders no tracker list holds are read. Each fact is a line
 # in the log and in events.log. Nothing to do: one quiet line, no notification. Schedule it every 15

@@ -514,7 +514,12 @@ def holds(items_path, reads_path, claims_path, runs_dir, events, old):
         except (OSError, ValueError, AttributeError):
             pass
     times, now = held_times(events), int(time.time())
-    changes = lambda item: [c for c in (item.get("state") or {}).get("changes") or [] if isinstance(c, str)]
+    # What an item changes: its plan's `changes`, or its `touches` when it has none (a bugfix or an
+    # S task runs no plan step), as hold.sh candidates judges a holder.
+    def changes(item):
+        state = item.get("state") or {}
+        globs = [c for c in state.get("changes") or [] if isinstance(c, str) and c]
+        return globs or [t for t in state.get("touches") or [] if isinstance(t, str) and t]
     clears, kept = [], {}
     for item_id in sorted(items):
         item = items[item_id]
@@ -536,7 +541,7 @@ def holds(items_path, reads_path, claims_path, runs_dir, events, old):
             continue
         elif holder not in claimed and holder not in running:
             clears.append((item_id, holder, "%s holds no worktree and has no run" % holder))
-        elif not changes_overlap(changes(item), changes(other)):
+        elif changes(item) and changes(other) and not changes_overlap(changes(item), changes(other)):
             clears.append((item_id, holder, "the changes of %s no longer share a path with its own" % holder))
         else:
             kept[item_id] = holder

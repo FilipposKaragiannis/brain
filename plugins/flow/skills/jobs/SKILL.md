@@ -96,8 +96,8 @@ Facts to answer with:
   `sync` step of the item's next run, reminds on gates older than
   `jobs.health.gate_reminder` and says when the pool is full. It clears a stale or wrong planned
   hold (`held_by`): the holder unreadable, holding no worktree and no run, or its `changes` no
-  longer sharing a path with the held item's; a hold on the item itself; the newest hold in a
-  cycle. Each clear is an `unheld` line in `events.log`. A hold whose holder closed stays for
+  longer sharing a path with the held item's (`touches` stand in when no `changes` are recorded,
+  and with neither the hold stays); a hold on the item itself; the newest hold in a cycle. Each clear is an `unheld` line in `events.log`. A hold whose holder closed stays for
   `next` to release with its merge note. A valid hold waiting over a day
   is said and notified once. It names once each claude or codex
   session idle in the main worktree or the pool past `jobs.health.stale_session` (24h), with its

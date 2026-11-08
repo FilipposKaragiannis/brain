@@ -2393,6 +2393,12 @@ hx="$(hnew "Cycle, older")"; hy="$(hnew "Cycle, newer")"
 "$P/scripts/steward.sh" claim "$hx" >/dev/null; "$P/scripts/steward.sh" claim "$hy" >/dev/null
 hw "$hx" "changes=src/h/**" "held_by=$hy" "held_reason=src/h"; held_line 7200 "$hx" "$hy" "src/h"
 hw "$hy" "changes=src/h/y" "held_by=$hx" "held_reason=src/h"; held_line 3600 "$hy" "$hx" "src/h"
+h4="$(hnew "Holder with touches, no changes")"; hw "$h4" "touches=src/t/**"
+printf '{"item":"%s","step":"implement","started":"%s"}\n' "$h4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ".flow/runs/$(item_slug "$h4").json"
+ht="$(hnew "Behind a bugfix")"; hw "$ht" "changes=src/t/x" "held_by=$h4" "held_reason=both change src/t"; held_line 3600 "$ht" "$h4" "both change src/t"
+h5="$(hnew "Holder with nothing recorded")"
+printf '{"item":"%s","step":"implement","started":"%s"}\n' "$h5" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ".flow/runs/$(item_slug "$h5").json"
+hn="$(hnew "Behind one with nothing recorded")"; hw "$hn" "changes=src/n/x" "held_by=$h5" "held_reason=src/n"; held_line 3600 "$hn" "$h5" "src/n"
 ho="$(hnew "Undated hold")"; hw "$ho" "changes=src/a/o" "held_by=$h1" "held_reason=src/a too"
 events_before="$(wc -l < .flow/events.log | tr -d ' ')"
 "$P/scripts/steward.sh" health --dry-run > "$hhroot/out" 2>&1
@@ -2406,6 +2412,8 @@ check_all "health: a hold behind a closed item stays for next.sh to release with
 check_all "health: a hold behind an item that cannot be read or found is cleared" '[ -z "$(hheld "$he")" ] && unheld "$he" "local:task/99" "local:task/99 cannot be read or found on the tracker"'
 check_all "health: a hold behind an item with no worktree and no run is cleared" '[ -z "$(hheld "$hf")" ] && unheld "$hf" "$h2" "$h2 holds no worktree and has no run"'
 check_all "health: in a cycle the newest hold goes and the older one stays" '[ -z "$(hheld "$hy")" ] && [ "$(hheld "$hx")" = "$hy" ] && unheld "$hy" "$hx" "a cycle: $hx waits behind it in turn, and this hold is the newest"'
+check_all "health: a holder with no changes is judged by its touches, as hold.sh candidates does, so its hold stays" '[ "$(hheld "$ht")" = "$h4" ] && ! grep -q "^$ht:" "$hhroot/out"'
+check_all "health: a holder that records neither changes nor touches keeps its hold, as nothing says they parted" '[ "$(hheld "$hn")" = "$h5" ] && ! grep -q "^$hn:" "$hhroot/out"'
 check_all "health: a valid hold under a day stays, unsaid" '[ "$(hheld "$ha")" = "$h1" ] && ! grep -q "^$ha:" "$hhroot/out"'
 check_all "health: a hold behind an item with a run stays; past a day it is a finding with its age and reason, notified" '[ "$(hheld "$hg")" = "$h3" ] && grep -q "^$hg: has waited 30h behind $h3: both change src/g\$" "$hhroot/out" && grep -q "flow: health" "$work/offline.log"'
 check_all "health: a valid hold no held line dates counts as old" '[ "$(hheld "$ho")" = "$h1" ] && grep -q "^$ho: has waited behind $h1 since before events.log dates it: src/a too\$" "$hhroot/out"'
