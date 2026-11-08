@@ -27,7 +27,8 @@ T-13), and the public interfaces the plan names.
 3. Each test: name `Scenario_ExpectedOutcome`; one behaviour and one reason to fail; an
    assertion with a because-string that states the invariant; expected values worked out by
    hand or from an independent source, never recomputed with the code's own formula; values
-   chosen so a wrong answer is visibly wrong.
+   chosen so a wrong answer is visibly wrong. Locals and lambda parameters state their role
+   too (N-04, N-05): `left` and `right`, `simulation`, never `a`, `b`, `sim`.
 4. Levels per T-04: unit on every change; an integration test where a boundary is crossed; a
    regression test named after the bug for a fix. Collapse same-path variants into one
    data-driven test with rows that each probe a real boundary.
@@ -45,8 +46,15 @@ T-13), and the public interfaces the plan names.
 10. A double that counts calls may drive a loop, never an assertion, and never a setup guard
     (T-08). The outcome assertions already fail when the call is missing.
 11. A test must not pass on nothing (T-01). No `?.` ahead of an assertion: a null skips it, so
-    assert not-null first or assert the whole value. Before comparing two recordings, streams or
+    assert the whole value, or chain from one not-null assertion into the behaviour assertion so
+    a null fails that one assertion. A separate not-null assertion ahead of the behaviour
+    assertion is a second reason to fail (T-09). Before comparing two recordings, streams or
     collections, assert the one under test is not empty: two empty sides are equal.
+12. A test must not break when a tuned value moves (T-01). A value the code owns (a setting, a
+    budget, a band bound, a message) is read from its owner, never copied as a literal; a test
+    that only checks a constant against its own literal is deleted. Assert on a value or a named
+    marker, never on report or card prose. Never branch or guard on today's tuning state (a
+    target still short): build the state the test needs, or derive the expectation from it.
 
 ## Output
 Tests committed, `<reports>/tests.md` with the behaviour list and which test pins each line,

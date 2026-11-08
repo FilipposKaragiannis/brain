@@ -1256,9 +1256,12 @@ check "retro job: no lessons is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" review-blocker 'local:task/9' "Magic number" --rule N-06 >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify failed 3 times" >/dev/null
 : > "$HOST_LOG"
-check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new' && grep -q '/meta:retro Unattended.*Read the 2 lessons.*2 lines, 0 read before' '$HOST_LOG'"
+check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new' && grep -q '/meta:retro Unattended.*Read the 2 lessons.*2 lines; the new ones are those with a time after the start' '$HOST_LOG'"
 printf '%s\t2\t1\t1\n' "$(date -u +%FT%TZ)" > "$home2/retros.log"
 check "retro job: retros.log marks the lessons read" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude --min-lessons 1 | grep -q 'quiet: 0 new'"
+printf '2000-01-01T00:00:00Z\t5\t1\t1\n' > "$home2/retros.log"
+check "retro job: a rewritten log shorter than the lines read still runs over the lessons newer than the last retro" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new'"
+printf '%s\t2\t1\t1\n' "$(date -u +%FT%TZ)" > "$home2/retros.log"
 # A clone of an origin with .flow/ excluded, as init leaves it, and one new lesson to read.
 mkdir -p "$work/lessons" && git init -q --bare "$work/lessons/origin.git" && git clone -q "$work/lessons/origin.git" "$work/lessons/app" 2>/dev/null
 (cd "$work/lessons/app" && git config user.email t@t && git config user.name t && printf '.flow/\n' >> .git/info/exclude &&
@@ -2123,6 +2126,52 @@ check_all "health: a pool path missing on disk is a finding with the recreate hi
 "$P/scripts/steward.sh" add "$(cd .. && pwd -P)/wt-3" >/dev/null 2>&1
 hs > "$hroot/out" 2>&1
 check_all "health: the hint recreates it on its idle branch at the base tip, and health is quiet again" '[ "$(git -C ../wt-3 symbolic-ref --short HEAD)" = main-wt-3 ] && [ "$(git -C ../wt-3 rev-parse HEAD)" = "$(git rev-parse origin/main)" ] && [ "$(grep -c wt-3 .flow/config.yaml)" = 1 ] && grep -q "nothing to do" "$hroot/out" && [ ! -f .flow/health/missing-wt-3.seen ]'
+git -C "$hroot/other" fetch -q origin && git -C "$hroot/other" checkout -q -B main origin/main && printf 'hello\n' > "$hroot/other/README.md" && git -C "$hroot/other" commit -qam readme && git -C "$hroot/other" push -q origin main
+hs >/dev/null 2>&1
+git -C ../wt-2 read-tree -u --reset origin/main~1
+hs > "$hroot/out" 2>&1
+check_all "health: changes in a free worktree that the base already held are said once and kept on the first run" 'grep -q "^pool: wt-2 is free but has 1 uncommitted change(s), each already in main.s history; the next health run discards them if they stay unchanged and no session works there$" "$hroot/out" && [ "$(cat ../wt-2/README.md)" = hi ] && grep -q "2 free" "$hroot/out"'
+hs --dry-run > "$hroot/out" 2>&1
+check_all "health --dry-run: says it would discard unchanged redundant changes and keeps them" 'grep -q "would discard the 1 uncommitted change(s) in free wt-2" "$hroot/out" && [ "$(cat ../wt-2/README.md)" = hi ]'
+printf '999999\t%s\tclaude\n' "$(cd ../wt-2 && pwd -P)" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check_all "health: redundant changes stay while a session works in the free worktree" '[ "$(cat ../wt-2/README.md)" = hi ] && ! grep -q "discard" "$hroot/out"'
+printf '%s\t%s\tclaude\n' "$$" "$(cd ../wt-2 && pwd -P)" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check_all "health: redundant changes stay while the session that called health works in the free worktree" '[ "$(cat ../wt-2/README.md)" = hi ] && ! grep -q "discard" "$hroot/out"'
+: > "$FLOW_HEALTH_PROCS"; pings_before="$(pings)"
+hs > "$hroot/out" 2>&1
+check_all "health: unchanged redundant changes are discarded on the next run, and the owner is told" 'grep -q "^pool: discarded the 1 uncommitted change(s) in free wt-2, each already in main.s history$" "$hroot/out" && [ -z "$(git -C ../wt-2 status --porcelain)" ] && [ "$(cat ../wt-2/README.md)" = hello ] && [ "$(pings)" -gt "$pings_before" ] && grep -q "3 free" "$hroot/out" && [ ! -f .flow/health/free-wt-2.seen ]'
+git -C ../wt-2 read-tree -u --reset origin/main~1
+hs >/dev/null 2>&1; git -C ../wt-2 rm -q --cached README.md
+hs > "$hroot/out" 2>&1
+check_all "health: redundant changes that moved since the last run restart the wait" 'grep -q "wt-2 is free but has 2 uncommitted change(s), each already" "$hroot/out" && ! grep -q discarded "$hroot/out" && [ -n "$(git -C ../wt-2 status --porcelain)" ]'
+git -C ../wt-2 reset -q --hard && git -C ../wt-2 clean -fdq && printf 'mine\n' > ../wt-2/README.md && printf 'new\n' > ../wt-2/scratch.txt
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check_all "health: changes holding anything of their own are said once with the path, and never discarded" 'grep -q "^pool: wt-2 is free but has uncommitted changes, so no claim can use it: the disk version of README.md is not in origin/main$" "$hroot/out" && ! grep -q "wt-2" "$hroot/out2" && [ "$(cat ../wt-2/README.md)" = mine ] && [ -f ../wt-2/scratch.txt ]'
+git -C ../wt-2 checkout -q -- README.md
+hs > "$hroot/out" 2>&1
+check_all "health: an untracked file the base never held keeps the changes" 'grep -q "so no claim can use it: untracked file scratch.txt is not in origin/main" "$hroot/out" && [ -f ../wt-2/scratch.txt ]'
+rm -f ../wt-2/scratch.txt; hs >/dev/null 2>&1
+nl_name="$(printf 'a\nb.txt')"; printf 'unique\n' > "../wt-2/$nl_name"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check_all "health: an untracked file whose name holds a newline is hashed on its own, kept and never discarded" 'grep -qF "so no claim can use it: untracked file a\nb.txt is not in origin/main" "$hroot/out" && ! grep -q discard "$hroot/out2" && [ "$(cat "../wt-2/$nl_name")" = unique ]'
+rm -f "../wt-2/$nl_name"; hs >/dev/null 2>&1
+git -C "$hroot/other" fetch -q origin && git -C "$hroot/other" checkout -q -B main origin/main && mkdir -p "$hroot/other/.flow" && printf 'base\n' > "$hroot/other/.flow/notes.txt" && git -C "$hroot/other" add .flow/notes.txt && git -C "$hroot/other" commit -qm flow-notes && git -C "$hroot/other" push -q origin main
+hs >/dev/null 2>&1
+printf 'hi\n' > ../wt-2/README.md && printf 'mine\n' > ../wt-2/.flow/notes.txt
+hs >/dev/null 2>&1; hs > "$hroot/out" 2>&1
+check_all "health: discarding redundant changes restores only the checked paths and keeps a tracked .flow/ edit" 'grep -q "^pool: discarded the 1 uncommitted change(s) in free wt-2" "$hroot/out" && [ "$(cat ../wt-2/README.md)" = hello ] && [ "$(cat ../wt-2/.flow/notes.txt)" = mine ]'
+git -C ../wt-2 checkout -q -- .flow/notes.txt; hs >/dev/null 2>&1
+git -C ../wt-2 rm -q --cached README.md
+hs >/dev/null 2>&1; hs > "$hroot/out" 2>&1
+check_all "health: a staged deletion whose file stays on disk is discarded whole, the file kept and tracked again" 'grep -q "^pool: discarded the 2 uncommitted change(s) in free wt-2" "$hroot/out" && [ -z "$(git -C ../wt-2 status --porcelain)" ] && [ "$(cat ../wt-2/README.md)" = hello ]'
+common="$(cd ../wt-2 && cd "$(git rev-parse --git-common-dir)" && pwd)"; mkdir -p "$common/info"
+printf 'README.md filter=strip\n' > "$common/info/attributes"; git -C ../wt-2 config filter.strip.clean 'grep -v SECRET'
+printf 'hello\nSECRET\n' > ../wt-2/README.md
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check_all "health: bytes a clean filter strips are hashed raw, so the file is kept and never discarded" 'grep -q "so no claim can use it: the disk version of README.md is not in origin/main" "$hroot/out" && ! grep -q discard "$hroot/out2" && grep -q SECRET ../wt-2/README.md'
+rm -f "$common/info/attributes"; git -C ../wt-2 config --unset filter.strip.clean; git -C ../wt-2 checkout -q -- README.md; hs >/dev/null 2>&1
 
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"

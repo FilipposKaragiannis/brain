@@ -178,8 +178,11 @@ def ancestors():
     return found
 
 
-def alive(rows, item, worktree, pid):
-    own = ancestors()
+def alive(rows, item, worktree, pid, skip_self=True):
+    """The process that holds the item or works in the worktree, or "". A run's liveness skips
+    this script's own ancestors (the health job runs under a host); a destructive check passes
+    skip_self=False, so a session that called health from that worktree still counts."""
+    own = ancestors() if skip_self else set()
     for number, _, command in rows:
         if number == pid and is_host(command):
             return "pid %s" % number
@@ -573,6 +576,8 @@ def main():
         procs()
     elif command == "alive":
         print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else ""))
+    elif command == "present":
+        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "", skip_self=False))
     elif command == "session":
         print(session_line(snapshot(args[0]), args[1]))
     elif command == "sessions":
