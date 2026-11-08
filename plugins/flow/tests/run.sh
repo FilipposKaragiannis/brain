@@ -1246,9 +1246,12 @@ check "retro job: no lessons is quiet" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" review-blocker 'local:task/9' "Magic number" --rule N-06 >/dev/null
 FLOW_HOME="$home2" "$P/scripts/lesson.sh" escalation 'local:task/9' "verify failed 3 times" >/dev/null
 : > "$HOST_LOG"
-check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new' && grep -q '/meta:retro Unattended.*Read the 2 lessons.*2 lines, 0 read before' '$HOST_LOG'"
+check "retro job: new lessons run the skill" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new' && grep -q '/meta:retro Unattended.*Read the 2 lessons.*2 lines; the new ones are those with a time after the start' '$HOST_LOG'"
 printf '%s\t2\t1\t1\n' "$(date -u +%FT%TZ)" > "$home2/retros.log"
 check "retro job: retros.log marks the lessons read" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude --min-lessons 1 | grep -q 'quiet: 0 new'"
+printf '2000-01-01T00:00:00Z\t5\t1\t1\n' > "$home2/retros.log"
+check "retro job: a rewritten log shorter than the lines read still runs over the lessons newer than the last retro" sh -c "FLOW_HOME='$home2' '$P/jobs/retro.sh' claude | grep -q 'running over 2 new'"
+printf '%s\t2\t1\t1\n' "$(date -u +%FT%TZ)" > "$home2/retros.log"
 # A clone of an origin with .flow/ excluded, as init leaves it, and one new lesson to read.
 mkdir -p "$work/lessons" && git init -q --bare "$work/lessons/origin.git" && git clone -q "$work/lessons/origin.git" "$work/lessons/app" 2>/dev/null
 (cd "$work/lessons/app" && git config user.email t@t && git config user.name t && printf '.flow/\n' >> .git/info/exclude &&
