@@ -38,7 +38,8 @@
 #                                                check every claim: clear a dead run, release an
 #                                                empty claim, finish a split, resume cut-off work,
 #                                                sync branches, remind on old gates, say when the
-#                                                pool is stuck
+#                                                pool is stuck, discard a free worktree's changes
+#                                                the base's history already holds
 #   steward.sh sessions [--stale]                list the claude and codex sessions working in the
 #                                                main worktree and the pool: pid, host, worktree,
 #                                                item, busy or idle and for how long; a stale one
@@ -63,7 +64,8 @@
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.
-# Never resets a worktree with uncommitted changes: release exits 3 and says so (escalate).
+# Never resets a worktree with uncommitted changes: release exits 3 and says so (escalate). The one
+# exception is health's, for a free worktree whose changes the base's history already holds.
 . "$(dirname "$0")/../lib/flow.sh"
 
 home="$(flow_home)"
@@ -628,7 +630,7 @@ hpy() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" "$@"; }
 # health_say <item> <fact>: one line per fact, on stdout and in events.log, of the kind health
 # (resume when the owner resumes a run).
 health_say() {
-  echo "$1: $2"
+  printf '%s: %s\n' "$1" "$2"
   facts=$((facts + 1))
   [ "$dry" -eq 1 ] && return 0
   printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$([ "$1" = pool ] && echo - || echo "$1")" "${health_kind:-health}" "$2" >> "$home/events.log"
@@ -704,14 +706,12 @@ health_branch_state() {
 }
 
 # health_free <path>: a free pool worktree sits on its idle branch at the base branch tip; one
-# left detached (a pool from before 1.24.0) moves onto it. A dirty one, one on another branch and
-# one holding commits the base lacks are only said.
+# left detached (a pool from before 1.24.0) moves onto it. A dirty one goes through
+# health_free_dirty first. One on another branch and one holding commits the base lacks are only
+# said.
 health_free() {
   hf_name="$(basename "$1")"
-  if dirty "$1"; then
-    health_changed "free-$hf_name" dirty && health_say pool "$hf_name is free but has uncommitted changes, so no claim can use it"
-    return 0
-  fi
+  if dirty "$1"; then health_free_dirty "$1" || return 0; fi
   health_cleared "free-$hf_name"
   hf_idle="$(idle_branch "$1")"; hf_on="$(git -C "$1" symbolic-ref --short -q HEAD)"
   hf_tip="$(git -C "$1" rev-parse -q --verify "$(base_ref)" 2>/dev/null)"; hf_head="$(git -C "$1" rev-parse -q --verify HEAD 2>/dev/null)"
@@ -730,6 +730,40 @@ health_free() {
   elif [ "$dry" -eq 1 ]; then health_say pool "would fast-forward free $hf_name to $base_branch"
   elif git -C "$1" merge -q --ff-only "$hf_tip" >/dev/null 2>&1; then health_say pool "fast-forwarded free $hf_name to $base_branch"
   else health_say pool "could not fast-forward free $hf_name"; fi
+}
+
+# health_free_dirty <path>: uncommitted changes in a free worktree that the base branch's history
+# already holds, path by path (scripts/_redundant.py), are said once, then discarded by the next
+# run that finds them unchanged with no session working there; it returns 0 when it discarded
+# them. The discard checks again and restores only the checked paths, so .flow/ is never touched.
+# Changes holding anything of their own are kept, and said once per first such path.
+health_free_dirty() {
+  hd_name="$(basename "$1")"
+  hd_found="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" 2>/dev/null)"
+  case "$hd_found" in
+    redundant*) ;;
+    *) hd_why="${hd_found#kept?}"; hd_why="${hd_why:-they could not be checked}"
+       health_changed "free-$hd_name" "dirty: $hd_why" && health_say pool "$hd_name is free but has uncommitted changes, so no claim can use it: $hd_why"
+       return 1 ;;
+  esac
+  hd_print="$(printf '%s' "$hd_found" | cut -f2)"; hd_count="$(printf '%s' "$hd_found" | cut -f3)"
+  if [ "$(cat "$home/health/free-$hd_name.seen" 2>/dev/null)" != "redundant $hd_print" ]; then
+    health_changed "free-$hd_name" "redundant $hd_print" && health_say pool "$hd_name is free but has $hd_count uncommitted change(s), each already in $base_branch's history; the next health run discards them if they stay unchanged and no session works there"
+    return 1
+  fi
+  # A destructive step: a session that called health from inside the worktree counts too.
+  [ "$procs_ok" -eq 1 ] && [ -z "$(hpy present "$procs" "" "$1" "")" ] || return 1
+  if [ "$dry" -eq 1 ]; then health_say pool "would discard the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"; return 1; fi
+  hd_done="$(python3 -I "$FLOW_PLUGIN/scripts/_redundant.py" "$1" "$(base_ref)" --discard "$hd_print" 2>/dev/null)"
+  case "$hd_done" in
+    discarded*)
+      health_say pool "discarded the $hd_count uncommitted change(s) in free $hd_name, each already in $base_branch's history"
+      health_notify "Discarded the $hd_count uncommitted change(s) in free $hd_name: each was already in $base_branch's history, so nothing is lost. A claim can use it again."
+      return 0 ;;
+  esac
+  hd_why="${hd_done#kept?}"
+  health_say pool "could not discard the uncommitted changes in free $hd_name${hd_why:+: $hd_why}"
+  return 1
 }
 
 # health_missing <path>: a pool path missing on disk is no claim's and no run's; the next claim
