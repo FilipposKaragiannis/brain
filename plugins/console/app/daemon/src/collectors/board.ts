@@ -18,7 +18,8 @@ export type BoardItem = {
   open_children: number;
   parent: string;
   url: string;
-  state: { step: string; gate: string; worktree: string; pr: string; last_event: string; profile: string; attempts: number };
+  /** `answer_pending`: what carries out the owner's answer to a cleared gate; absent on an older plugin. */
+  state: { step: string; gate: string; worktree: string; pr: string; last_event: string; profile: string; attempts: number; answer_pending?: string };
 };
 
 /** One item's spend from `board.sh --json`: the step sessions in flow's runs.jsonl, summed. */

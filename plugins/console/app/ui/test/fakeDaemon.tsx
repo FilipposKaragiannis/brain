@@ -165,7 +165,7 @@ function WithActions({ children }: { children: ReactNode }) {
 export function boardItem(id: string, title: string): Item {
   return {
     id, title, kind: 'task', size: 'M', priority: 'P2', status: 'open', state: 'ready', step: '', gate: 'none', worktree: null, pr: null,
-    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null, spend: null,
+    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null, answerPending: null, spend: null,
   };
 }
 

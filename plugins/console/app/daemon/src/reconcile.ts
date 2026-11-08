@@ -268,6 +268,8 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
       pr: boardItem.state.pr || null, url: boardItem.url || null, parent: boardItem.parent || null,
       blockedBy: boardItem.blocked_by, openBlockers: boardItem.open_blockers, openChildren: boardItem.open_children,
       needs: boardItem.needs, rank: boardItem.rank, lastEvent: boardItem.state.last_event || null,
+      // A gate raised again since the clear is the owner's again: no answer waits on a run then.
+      answerPending: (gate === null && boardItem.state.answer_pending) || null,
       spend: itemSpend(input.board?.spend[boardItem.id]),
     });
   }
@@ -277,7 +279,7 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
     items.push({
       id, title: '', kind: '', size: '', priority: '', status: 'open', state: itemState(null, worktree, gate),
       step: worktree?.claim?.step ?? '', gate: gate?.gate ?? 'none', worktree: worktree?.name ?? null, pr: null, url: null,
-      parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: UNRANKED, lastEvent: null,
+      parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: UNRANKED, lastEvent: null, answerPending: null,
       spend: itemSpend(input.board?.spend[id]),
     });
   }

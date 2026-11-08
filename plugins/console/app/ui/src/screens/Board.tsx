@@ -63,6 +63,14 @@ export function trackerNotRead(tracker: string, error: string): string {
   return `The ${tracker} items are not on the board: ${error}`;
 }
 
+/**
+ * What an owner's answer to a cleared gate waits on, so it never sits unseen: the item's next step
+ * (`next`), or the comments job's next pass for an item at done with a PR (`comments`).
+ */
+export function answerWaits(owner: string): string {
+  return `answer waits on ${owner === 'comments' ? 'the comments job' : owner}`;
+}
+
 /** `1 item`, `3 items`. */
 function counted(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`;
@@ -79,7 +87,7 @@ function ItemTable({ items, snapshot, selected }: { items: Item[]; snapshot: Sna
               <td><ItemLink id={item.id} pages={snapshot} /></td>
               <td className="clip strong"><a href={routeHash({ projectId: snapshot.project.id, screen: 'board', detail: item.id })} title={item.title} aria-current={item.id === selected ? 'true' : undefined}>{item.title || item.id}</a></td>
               <td><Chip tone={itemTone(item.state)}>{STATE_LABEL[item.state] ?? item.state}</Chip></td>
-              <td className="mono">{item.step || '—'}</td>
+              <td className="mono">{item.step || '—'}{item.answerPending !== null && <span className="muted"> · {answerWaits(item.answerPending)}</span>}</td>
               <td className="mono">{item.worktree ?? '—'}</td>
               <td><PullCell item={item} snapshot={snapshot} /></td>
               <td className="mono number" title={item.spend === null ? undefined : `${item.spend.sessions} sessions · ${item.spend.tokens} tokens`}>{spendCell(item.spend)}</td>
@@ -105,7 +113,7 @@ function ItemDetail({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
   const facts: Array<[string, string]> = [
     ['Kind', [item.kind, item.size, item.priority].filter((part) => part !== '').join(' · ') || '—'],
     ['Step', item.step || '—'],
-    ['Gate', item.gate === 'none' || item.gate === '' ? '—' : item.gate],
+    ['Gate', item.gate === 'none' || item.gate === '' ? (item.answerPending === null ? '—' : `cleared, ${answerWaits(item.answerPending)}`) : item.gate],
     ['Worktree', item.worktree ?? '—'],
     ['Parent', item.parent ?? '—'],
     ['Blocked by', item.openBlockers.length === 0 ? '—' : item.openBlockers.join(', ')],

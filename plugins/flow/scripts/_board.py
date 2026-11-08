@@ -86,10 +86,19 @@ def step_of(i):
         kids = i.get("open_children", 0)
         return "split, waiting on %d child%s" % (kids, "" if kids == 1 else "ren") if kids else "split, every child closed"
     return step
+# answer_pending (gate.sh clear): what carries out the owner's answer to a cleared gate, until a
+# run takes it. The board says so, so an answer never waits unseen.
+OWNERS = {"next": "next", "comments": "the comments job"}
+def owner_of(i):
+    o = i["state"].get("answer_pending") or ""
+    return OWNERS.get(o, o)
+def gate_of(i):
+    gate = i["state"].get("gate") or "none"
+    return "none, answer waits on %s" % owner_of(i) if gate == "none" and owner_of(i) else gate
 for i in sorted(items, key=lambda i: i.get("rank", 999)):
     s = i["state"]
     print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (i["id"], i["kind"], i.get("priority", ""), i.get("size") or s.get("size", ""), i["title"][:50],
-          step_of(i), s.get("gate") or "none", s.get("worktree") or "-", ", ".join(i.get("blocked_by", [])) or "-"))
+          step_of(i), gate_of(i), s.get("worktree") or "-", ", ".join(i.get("blocked_by", [])) or "-"))
 if spend:
     print("\n## Spend (unattended step sessions)")
     print("| item | cost | sessions | tokens |")
@@ -103,12 +112,17 @@ if gates:
 now = time.time()
 waiting = [g for g in gates if now - epoch(g["time"]) > reminder]
 dead = [r for r in runs if not r["alive"] and not r["starting"]]
-if dead or waiting:
+# An answer that waited past the gate reminder: no run took it.
+unanswered = [i for i in items if (i["state"].get("gate") or "none") == "none" and owner_of(i)
+              and epoch(i["state"].get("answered_at")) and now - epoch(i["state"].get("answered_at")) > reminder]
+if dead or waiting or unanswered:
     print("\n## Health")
     for r in dead:
         print("- %s: dead run of %s, no process since the record was written (%s ago)" % (r["item"], r["step"], age(r["age"])))
     for g in waiting:
         print("- %s: waiting %s at the %s gate" % (g["item"], age(now - epoch(g["time"])), g["gate"]))
+    for i in unanswered:
+        print("- %s: the answer to its gate has waited %s on %s" % (i["id"], age(now - epoch(i["state"]["answered_at"])), owner_of(i)))
 if overlap:
     print("\n## Overlapping claims")
     for a, b in overlap:

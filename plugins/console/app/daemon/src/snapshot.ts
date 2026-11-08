@@ -232,6 +232,12 @@ export type Item = {
   needs: string[];
   rank: number;
   lastEvent: string | null;
+  /**
+   * What carries out the owner's answer to the item's cleared gate until a run takes it: `next`
+   * (the item's next step) or `comments` (the comments job, for an item at done with a PR); null
+   * when no answer waits, or on a plugin too old to record one.
+   */
+  answerPending: string | null;
   /** What the item's step sessions cost, from `board.sh --json` (flow 1.22.0 and later); null with no session or an older plugin. */
   spend: ItemSpend | null;
 };

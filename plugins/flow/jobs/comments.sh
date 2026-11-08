@@ -7,6 +7,8 @@
 # model: a reviewer of the PR's author host silent past reviews.chase_after is asked again
 # (comments.sh chase), a PR that conflicts with its base is named in the brief so the skill
 # merges the base in first, and the checks failing on the PR's head are named so it fixes them.
+# An owner's answer that waits on this job (answer_pending comments: a gate cleared on an item at
+# done) is named in the brief too, always gets a pass, and is taken when that pass completes.
 # An item waiting at a gate other than merge is skipped, and so is an item whose worktree another
 # session works in (the health job's process scan), named or not: the pass would edit under it.
 # The owner is told once per PR while it stays in use (event comments-skipped): the item, the PR,
@@ -156,6 +158,17 @@ resume_note() {
   rn_dir="$("$FLOW_PLUGIN/scripts/steward.sh" reports "$rn_item" 2>/dev/null)" || return 1
   printf '%s/comments-resume.md' "$rn_dir"
 }
+# answer_note <target>: sets $answer_item and $answer to the brief's note on the owner's answer to
+# the item's last gate, when it waits on this job (answer_pending comments: gate.sh clear at done);
+# nothing else. A pass that completes takes it.
+answer_note() {
+  answer=""; answer_item="$(item_of "$1")"; [ -n "$answer_item" ] || return 0
+  an_data="$(adapter read "$answer_item" 2>/dev/null)"
+  [ "$(json_get "$an_data" state.answer_pending)" = comments ] || return 0
+  an_gate="$(json_get "$an_data" state.answered)"
+  answer="$(printf ' The owner answered the %s gate: %s. Run the Answer step first.' "${an_gate:-last}" \
+    "$(json_get "$an_data" state.answer | tr '\n' ' ' | sed 's/[. ]*$//')")"
+}
 # claimed_by <worktree> <item>: the worktree's claim names the item, so its changes are this
 # item's. A released item's reports can sit in a pool worktree another item now holds.
 claimed_by() { [ "$(json_get "$(cat "$1/.flow/claim.json" 2>/dev/null)" item)" = "$2" ]; }
@@ -227,6 +240,7 @@ pass() {
   fi
   note="$(prepare_pr "$t")"
   activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$t")"; mkdir -p "$(dirname "$f")"
+  answer_note "$t"
   fails=0
   [ -f "$f.fails" ] && { read -r fails _ < "$f.fails"; case "$fails" in ''|*[!0-9]*) fails=0 ;; esac; }
   if [ -z "$one" ] && [ "$fails" -ge "$max_fails" ]; then
@@ -234,7 +248,7 @@ pass() {
     once "$f.told-fails" "$fails" && tell "$t: the comments pass failed $fails times in a row on $pull, so the job stops trying it. Read $(job_log_dir)/$job.log, then run it by hand: jobs/comments.sh <host> $t. A pass that completes lets the job try it again."
     outcome waits "$fails passes in a row failed"; return 0
   fi
-  if [ -z "$one" ] && [ -n "$seen" ] && [ "$seen" = "$(cat "$f" 2>/dev/null)" ]; then
+  if [ -z "$one" ] && [ -z "$answer" ] && [ -n "$seen" ] && [ "$seen" = "$(cat "$f" 2>/dev/null)" ]; then
     if [ -z "$awaiting" ]; then
       job_say "$t: nothing new since the last pass, skipped" >/dev/null; outcome unchanged; return 0
     fi
@@ -260,7 +274,7 @@ pass() {
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
   job_say "addressing $t"; rm -f "$(in_use_marker "$t" "$pull")"
   # The output goes to the log as it comes, so a pass killed half way keeps what it said.
-  { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
+  { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$answer$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR
@@ -280,6 +294,12 @@ pass() {
     if [ -n "$resume" ]; then
       rwt="${resume%/.flow/reports/*}"
       { claimed_by "$rwt" "$rn_item" && dirty_tree "$rwt"; } || rm -f "$resume"
+    fi
+    # The pass took the owner's answer: carried out, or raised again as a gate when no step of it
+    # could (the comments skill's Answer step). A failed pass leaves it waiting for the next.
+    if [ -n "$answer" ]; then
+      adapter write-state "$answer_item" answer_pending= >/dev/null 2>&1 \
+        || job_say "$t: could not mark the answer to its gate taken; the next pass carries it again" >/dev/null
     fi
     outcome addressed
   else

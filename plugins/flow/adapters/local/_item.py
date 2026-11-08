@@ -27,7 +27,7 @@ import sys
 from datetime import datetime, timezone
 
 STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_event", "pr", "pr_host", "touches",
-              "answered", "asked", "answer", "answered_at", "gate_from"]
+              "answered", "asked", "answer", "answered_at", "answer_pending", "gate_from"]
 LIST_KEYS = {"blocked_by", "labels", "touches"}
 INT_KEYS = {"attempts"}
 # The rank of an item with no priority: after every ranked one.

@@ -27,8 +27,15 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
    The step that raised the gate runs again, its brief carrying the owner's note. A note is
    required. Works for `interview`, `decomposition`, `plan-approval` and `feel-test` (which goes
    back to the step that wrote the code).
-3. **Say what happens next**: `next <item>` continues from the step after the gate, or runs the
-   sent-back step again.
+3. **Say what happens next**, as `gate.sh clear` prints it. The answer waits on what carries it
+   out (the item's `answer_pending`, which the board shows in its gate column until a run takes
+   it): `next <item>` continues from the step after the gate, or runs the sent-back step again;
+   on an item at `done` with an open PR, the comments job's next pass carries the answer out (run
+   it now with `jobs/comments.sh <host> <item>`), or raises an escalation gate when the answer
+   asks for work outside the PR's branch. An answer no step acts on (the item at `done` with no
+   PR or a merged or closed one, or a send-back to `done`) fails, exit 1, and the gate stays:
+   tell the owner to do it by hand, then clear the gate with no answer (`gate.sh clear <item>`),
+   which carries nothing out.
 
 Each answer also leaves one `answered` line in `<flow home>/events.log`, which the console lists
 as "Answered today".

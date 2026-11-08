@@ -183,7 +183,9 @@ check_all "clear: one answered line in events.log with the gate and the answer" 
 printf '{"status":"gate","gate":"ambiguity","message":"A or B?"}\n' > "$r2/implement.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
 check_all "agent raises ambiguity" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "ambiguity" ] && grep -q '\''A or B'\'' .flow/gates/local-task-2.json'
-"$P/scripts/gate.sh" clear "$t2" "A" >/dev/null
+"$P/scripts/gate.sh" clear "$t2" "A" > "$work/answer.out"
+check_all "clear at a step next runs: the answer waits on next, and the clear says to run it" '[ "$("$P/adapters/local/read.sh" "$t2" | jget state.answer_pending)" = next ] && grep -q "run next $t2" "$work/answer.out"'
+check "board: a cleared gate whose answer waits on a run shows it" sh -c "'$P/scripts/board.sh' | grep -q '| $t2 | .* | none, answer waits on next |'"
 b2="$("$P/adapters/local/create.sh" bug "Small bug" --size S)"
 "$P/scripts/steward.sh" release "$t1" >/dev/null
 "$P/scripts/next.sh" "$b2" >/dev/null
@@ -197,6 +199,7 @@ echo "overlap"
 t3="$("$P/adapters/local/create.sh" task "Overlapping" --size S)"
 "$P/adapters/local/write-state.sh" "$t3" touches=src/a/sub/**
 "$P/scripts/next.sh" "$t2" >/dev/null
+check "next takes the answer: a run starts with it in its brief, nothing waits" [ -z "$("$P/adapters/local/read.sh" "$t2" | jget state.answer_pending)" ]
 "$P/scripts/next.sh" "$t3" >/dev/null 2>&1; code=$?
 check "overlapping claim refused? (explicit item runs; pool full)" [ "$code" -ne 0 ]
 "$P/adapters/local/close.sh" "$b2" --comment done
@@ -1043,6 +1046,27 @@ check "comments job: an item at the escalation gate is skipped as gated" sh -c "
 check "comments job: a cleared gate is new activity, so the item is picked up again" grep -q 'comments gh#21' "$HOST_LOG"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: the clear counts once: the run after it finds nothing new" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: nothing new since the last pass, skipped' .flow/log/comments.log"
+# gh#157: a gate a comments pass raised on an item past its last step. Its PR is open, so the
+# comments job owns the answer: the clear says so, the board shows it waiting, and the next pass
+# carries it in its brief and takes it.
+"$P/adapters/github/write-state.sh" 'gh#21' step=done
+"$P/scripts/gate.sh" raise 'gh#21' ambiguity "1. Merge main into epic/525 first?" >/dev/null 2>&1
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
+"$P/scripts/gate.sh" clear 'gh#21' "Go with a, merge main into epic/525" > "$work/answer.out" 2>&1; code=$?
+check_all "clear at done with a merged PR: refused out loud, as no comments pass comes, and the gate stays" '[ "$code" = 1 ] && grep -q "no step acts on this answer: gh#21 is done and its PR .* is merged" "$work/answer.out" && [ "$("$P/adapters/github/read.sh" "gh#21" | jget state.gate)" = ambiguity ]'
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='OPEN'; json.dump(d, open(p,'w'))"
+"$P/scripts/gate.sh" clear 'gh#21' "Go with a, merge main into epic/525" > "$work/answer.out" 2>&1; code=$?
+check_all "clear at done with an open PR: the answer waits on the comments job, and the clear says so, not next" '[ "$code" = 0 ] && [ "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" = comments ] && grep -q "the comments job" "$work/answer.out" && ! grep -q "run next" "$work/answer.out"'
+check "board: an answer that waits on the comments job shows on its item" sh -c "'$P/scripts/board.sh' | grep -q '| gh#21 | .* | none, answer waits on the comments job |'"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: the owner's answer goes in the pass's brief" grep -q "comments gh#21.* The owner answered the ambiguity gate: Go with a, merge main into epic/525\." "$HOST_LOG"
+check "comments job: a pass that completes takes the answer" [ -z "$("$P/adapters/github/read.sh" 'gh#21' | jget state.answer_pending)" ]
+"$P/adapters/github/write-state.sh" 'gh#21' answer_pending=comments
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: an answer still waiting gets a pass though nothing else on the PR is new" grep -q "comments gh#21.* The owner answered the ambiguity gate" "$HOST_LOG"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a taken answer is not briefed again" sh -c "! grep -q 'The owner answered' '$HOST_LOG'"
+"$P/adapters/github/write-state.sh" 'gh#21' step=pr
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['mergeable']='CONFLICTING'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a PR that conflicts with its base is named in the brief" grep -q 'gh#21. The PR conflicts with its base main: run the Conflicts step first.' "$HOST_LOG"
@@ -3232,6 +3256,21 @@ FLOW_LOCK_WAIT=1 "$P/scripts/steward.sh" reserve --name "Ada Lovelace" >/dev/nul
 check_all "reserve: an allocation in flight makes it wait, then exit 75 with nothing reserved" '[ "$code" -eq 75 ] && [ ! -f "$rw2/.flow/claim.json" ]'
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 check_all "claim: once the holder is gone it takes the free worktree and frees the claim lock" '[ "$("$P/scripts/steward.sh" claim "$rc")" = "$rw2" ] && [ ! -d .flow/claim.lock ]'
+
+echo "a cleared gate whose answer no step owns (gh#157)"
+# An item past its last step, with no PR: no step acts on the answer, so the clear fails out loud
+# and the gate stays.
+dn="$("$P/adapters/local/create.sh" task "Done, its PR merged by hand" --size S)"; "$P/adapters/local/write-state.sh" "$dn" step=done
+"$P/scripts/gate.sh" raise "$dn" ambiguity "1. Merge main into epic/525 first?" >/dev/null 2>&1
+"$P/scripts/gate.sh" clear "$dn" "Go with a, merge main into epic/525" > "$work/answer.out" 2>&1; code=$?
+check_all "clear at done with no PR: refused out loud, the gate and its record stay" '[ "$code" = 1 ] && grep -q "no step acts on this answer" "$work/answer.out" && [ "$("$P/adapters/local/read.sh" "$dn" | jget state.gate)" = ambiguity ] && [ -f .flow/gates/$(item_slug "$dn").json ] && [ -z "$("$P/adapters/local/read.sh" "$dn" | jget state.answer)" ]'
+"$P/scripts/gate.sh" clear "$dn" --back "Merge it again" > "$work/answer.out" 2>&1; code=$?
+check_all "send back at done: refused, no step runs the done step again" '[ "$code" = 1 ] && grep -q "no step to send back to" "$work/answer.out" && [ "$("$P/adapters/local/read.sh" "$dn" | jget state.gate)" = ambiguity ]'
+"$P/scripts/gate.sh" clear "$dn" > "$work/answer.out" 2>&1; code=$?
+check_all "clear at done with no answer (done by hand): cleared, nothing waits" '[ "$code" = 0 ] && [ "$("$P/adapters/local/read.sh" "$dn" | jget state.gate)" = none ] && [ -z "$("$P/adapters/local/read.sh" "$dn" | jget state.answer_pending)" ] && ! grep -q "run next" "$work/answer.out"'
+"$P/adapters/local/write-state.sh" "$dn" step=plan answer_pending=next answered_at=2026-01-01T00:00:00Z
+check "board: an answer no run took past the gate reminder is named in Health" sh -c "'$P/scripts/board.sh' | grep -q '^- $dn: the answer to its gate has waited .* on next\$'"
+"$P/adapters/local/close.sh" "$dn" >/dev/null
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1
