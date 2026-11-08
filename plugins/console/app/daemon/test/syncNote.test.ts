@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { readWorktreeSteps } from '../src/collectors/flowHome.ts';
+import { readPlanSteps, readWorktreeSteps } from '../src/collectors/flowHome.ts';
 import { parseSyncNote, readSyncNote, reportsDir, syncConflict, syncNotePath, syncNoteText, writeSyncNote } from '../src/syncNote.ts';
 
 /**
@@ -125,4 +125,11 @@ test('WorktreeSteps_FlowsStepTable_ReadsEachStepsWorktreeFlag', async () => {
   const steps = await readWorktreeSteps(PLUGIN);
   assert.deepEqual([steps?.['implement'], steps?.['sync'], steps?.['grill']], [true, true, false], "because next.sh runs the sync step only ahead of a step whose step_field worktree is true");
   assert.equal(await readWorktreeSteps('/nonexistent'), null, 'because an unreadable table is unknown, not every step outside the worktree');
+});
+
+test('PlanSteps_FlowsProfiles_EachProfileWithAPlanUpToIt', async () => {
+  const steps = await readPlanSteps(PLUGIN);
+  assert.deepEqual(steps?.['task-M'], ['design', 'plan'], "because flow's ready filter lets a held item through at its plan and the steps before it");
+  assert.equal(steps?.['bugfix'], undefined, 'because a profile with no plan step never runs past a hold');
+  assert.equal(await readPlanSteps('/nonexistent'), null, 'because unreadable profiles are unknown');
 });

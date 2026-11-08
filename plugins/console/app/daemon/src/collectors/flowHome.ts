@@ -103,6 +103,12 @@ export type FlowHomeFacts = {
    */
   worktreeSteps: Record<string, boolean> | null;
   /**
+   * By profile, its steps up to and including `plan`, for each profile in the plugin's
+   * profiles.json that has one: a hold (`state.held_by`) keeps back only the steps after these,
+   * as flow's ready filter judges it. Null when the plugin or its profiles could not be read.
+   */
+  planSteps: Record<string, string[]> | null;
+  /**
    * The quiz of every item that has one (`<root>/.flow/reports/<slug>/quiz.md` with its
    * `quiz.json`), by item slug, the claimed worktree's copy first, then the pool's, then the
    * main worktree's.
@@ -472,13 +478,14 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   }
   const pluginSource: PluginSource | null = pluginRoot === null ? null : scriptEnvironment()['FLOW_PLUGIN'] !== undefined ? 'FLOW_PLUGIN' : 'installed';
   const worktreeSteps = pluginRoot === null ? null : await readWorktreeSteps(pluginRoot);
+  const planSteps = pluginRoot === null ? null : await readPlanSteps(pluginRoot);
   const stoppedHosts = await readStoppedHosts(flowHome);
   const quizzes = await readQuizzes([...new Set([...claims.map((claim) => claim.worktreePath), ...pool, root])]);
   const pluginScripts = pluginRoot === null ? null : await readPluginScripts(pluginRoot);
   const prefixFiles = pluginRoot === null ? [] : await readAdapterPrefixes(pluginRoot);
   const adapterPrefixes = prefixFiles.length > 0 ? prefixFiles : PREFIXES_BEFORE_PREFIX_FILES;
   const retro = await readRetroFacts(flowHome);
-  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps, quizzes, pluginScripts, adapterPrefixes, retro };
+  return { flowHome, config, gates, reviews, runs, claims, events, pluginRoot, pluginVersion, pluginSource, gateListError, stoppedHosts, worktreeSteps, planSteps, quizzes, pluginScripts, adapterPrefixes, retro };
 }
 
 /** The ids a plugin owned before its adapters had prefix files (before flow 1.28.0): GitHub's and the local tracker's. */
@@ -508,6 +515,21 @@ export async function readAdapterPrefixes(pluginRoot: string): Promise<AdapterPr
 /** The file names under the plugin's `scripts/`, sorted; null when the folder cannot be read. */
 export async function readPluginScripts(pluginRoot: string): Promise<string[] | null> {
   try { return (await readdir(path.join(pluginRoot, 'scripts'))).sort(); } catch { return null; }
+}
+
+/** By profile, its steps up to and including `plan`, for the profiles in the plugin's profiles.json that have one; null when unreadable. */
+export async function readPlanSteps(pluginRoot: string): Promise<Record<string, string[]> | null> {
+  const source = await readText(path.join(pluginRoot, 'profiles.json'));
+  if (source === null) return null;
+  try {
+    const profiles = (JSON.parse(source) as { profiles?: unknown }).profiles;
+    if (typeof profiles !== 'object' || profiles === null) return null;
+    return Object.fromEntries(Object.entries(profiles as Record<string, unknown>).flatMap(([name, steps]) => {
+      const names = Array.isArray(steps) ? steps.filter((step): step is string => typeof step === 'string') : [];
+      const plan = names.indexOf('plan');
+      return plan < 0 ? [] : [[name, names.slice(0, plan + 1)]];
+    }));
+  } catch { return null; }
 }
 
 /** The `worktree` flag of every step in the plugin's profiles.json, as next.sh's `step_field` reads it; null when unreadable. */

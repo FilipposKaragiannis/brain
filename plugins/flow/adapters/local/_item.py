@@ -27,8 +27,8 @@ import sys
 from datetime import datetime, timezone
 
 STATE_KEYS = ["step", "profile", "size", "worktree", "attempts", "gate", "last_event", "pr", "pr_host", "touches",
-              "answered", "asked", "answer", "answered_at", "gate_from"]
-LIST_KEYS = {"blocked_by", "labels", "touches"}
+              "changes", "held_by", "held_reason", "answered", "asked", "answer", "answered_at", "gate_from"]
+LIST_KEYS = {"blocked_by", "labels", "touches", "changes"}
 INT_KEYS = {"attempts"}
 # The rank of an item with no priority: after every ranked one.
 NO_RANK = 999
@@ -143,7 +143,7 @@ def needs(meta):
 
 
 def to_json(path, meta, body, children=None):
-    state = {k: meta.get(k, [] if k == "touches" else (0 if k == "attempts" else "")) for k in STATE_KEYS}
+    state = {k: meta.get(k, [] if k in ("touches", "changes") else (0 if k == "attempts" else "")) for k in STATE_KEYS}
     if not state["gate"]:
         state["gate"] = "none"
     return {

@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 14;
+export const SNAPSHOT_SCHEMA_VERSION = 15;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -16,7 +16,15 @@ export const GATE_OVERDUE_HOURS = 24;
 export const EVENTS_KEPT = 200;
 const MILLISECONDS_PER_SECOND = 1000;
 
-export type WorktreeState = 'running' | 'needs-you' | 'stale' | 'claimed' | 'free' | 'outside';
+/**
+ * Where a pool worktree stands, the first that holds: an agent or a live run works in it
+ * (`running`); its item waits at a gate or is the owner's to close (`needs-you`); it is `stale`;
+ * its flow claim has no run, no agent and no gate and its item waits behind another (`held`, see
+ * `Worktree.heldBy`) or for a worker of the next job to take its next step, `claim.step`
+ * (`waiting`); a claim nothing better places (`claimed`: a reservation, a merge gate that waits on
+ * reviewers, a dead run, a closed item the sweep has not freed yet); no claim (`free`).
+ */
+export type WorktreeState = 'running' | 'needs-you' | 'stale' | 'waiting' | 'held' | 'claimed' | 'free' | 'outside';
 export type WorktreeRole = 'main' | 'pool' | 'outside';
 /**
  * Detail on a worktree card; flags never change the state on their own.
@@ -31,8 +39,12 @@ export type WorktreeRole = 'main' | 'pool' | 'outside';
  *   comments job skips that PR while the session stays, so its review comments wait.
  */
 export type WorktreeFlag = 'dirty' | 'behind' | 'stale-branch' | 'idle' | 'dead-run' | 'agent-without-claim' | 'session' | 'comments-skipped';
-/** `in-review`: every step ran and its merge gate waits on reviewers, not on you (see `PullRequest.review`). */
-export type ItemState = 'running' | 'needs-you' | 'stale' | 'claimed' | 'in-review' | 'ready' | 'blocked' | 'backlog' | 'done';
+/**
+ * `in-review`: every step ran and its merge gate waits on reviewers, not on you (see `PullRequest.review`).
+ * `waiting` and `held` are its worktree's; an item with no worktree is `held` while `heldBy` names an item.
+ * `needs-you`: a gate, or an item the owner closes (see `ReadyToClose`).
+ */
+export type ItemState = 'running' | 'needs-you' | 'stale' | 'waiting' | 'held' | 'claimed' | 'in-review' | 'ready' | 'blocked' | 'backlog' | 'done';
 /** `overdue`: its interval has passed but launchd has not started it, usually because the Mac slept. */
 export type JobState = 'running' | 'overdue' | 'scheduled' | 'paused' | 'not-installed' | 'not-loaded';
 export type AgentHost = 'claude' | 'codex';
@@ -49,8 +61,9 @@ export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 
  * under the same parent has started or is done, or it blocks an item that has started. Other
  * items waiting on a field are backlog and get no row. `host-stopped`: flow stopped a host on a
  * spend limit or an auth error (`stoppedHosts`), and no session starts on it until it is cleared.
+ * `close`: an item no gate asks about that only the owner can finish (`toClose`).
  */
-export type AttentionKind = 'gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable' | 'needs-field' | 'host-stopped';
+export type AttentionKind = 'gate' | 'close' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable' | 'needs-field' | 'host-stopped';
 /**
  * Where an open pull request stands, the first that holds: a draft, merge conflicts, a failing
  * check, changes requested, a check still running, no approval yet, a reviewer the flow asked by
@@ -210,6 +223,10 @@ export type Worktree = {
    * The health job writes it for a merge it cannot make cleanly, `sync.handoff` for a conflicted sync.
    */
   syncPending: string[] | null;
+  /** The item the claimed item waits behind, from the board (`held_by`), or null when it is free, unclaimed or the board is unread. */
+  heldBy: string | null;
+  /** Why it waits, one line (`held_reason`); null when it is not held. */
+  heldReason: string | null;
 };
 
 export type Item = {
@@ -232,6 +249,10 @@ export type Item = {
   needs: string[];
   rank: number;
   lastEvent: string | null;
+  /** The item this one waits behind (`held_by`); flow's ready filter skips it until that one closes. Null when it is free. */
+  heldBy: string | null;
+  /** Why it waits, one line (`held_reason`); null when it is not held. */
+  heldReason: string | null;
   /** What the item's step sessions cost, from `board.sh --json` (flow 1.22.0 and later); null with no session or an older plugin. */
   spend: ItemSpend | null;
 };
@@ -277,6 +298,30 @@ export type Gate = {
 };
 
 export type GatePlan = { file: string; text: string };
+
+/**
+ * Why an open item is the owner's to close with no gate asking: it was split into tracker tasks and
+ * every one is closed (`children-closed`), or every step ran (`steps-done`, step `done`) and no merge
+ * gate is up. Flow's next job never takes either again.
+ */
+export type CloseReason = 'children-closed' | 'steps-done';
+
+/**
+ * An open item that needs the owner to close it, on the Gates screen beside the gates though no
+ * flow gate exists for it: `todo` says what to do in one sentence, `pull` is its open PR as a gate
+ * carries one, `sinceAt` the time of its last flow event (null when that has none).
+ */
+export type ReadyToClose = {
+  item: string;
+  title: string;
+  url: string | null;
+  reason: CloseReason;
+  todo: string;
+  worktree: string | null;
+  pull: Gate['pull'];
+  sinceAt: string | null;
+  ageSeconds: number | null;
+};
 
 /** One choice of a quiz question: its letter and its text. */
 export type QuizChoice = { key: string; text: string };
@@ -577,9 +622,14 @@ export type AttentionRow = {
 };
 
 export type Counts = {
+  /** The gates plus the items to close (`gates.length + toClose.length`): what the Gates screen lists. */
   needsYou: number;
   running: number;
   stale: number;
+  /** Pool worktrees parked between steps until a worker takes the next one. */
+  waiting: number;
+  /** Pool worktrees whose item waits behind another. */
+  held: number;
   claimed: number;
   free: number;
   agents: number;
@@ -627,11 +677,11 @@ export type RetroRun = {
 };
 
 /**
- * Why open work does or does not run, over open items that are not epics. The first four are
+ * Why open work does or does not run, over open items that are not epics. The first five are
  * buckets, each item in one at most: `ready` the next job can take it; `waitingOnField` nothing
  * blocks it but a field it needs is empty (the whole backlog of them); `blocked` an open item
- * blocks it; `gated` it waits on you at a gate. Items already running, claimed or stale are in
- * none. `nextInLineMissingField` is the part of `waitingOnField` that is the next step of work
+ * blocks it; `held` it waits behind another item, with a worktree or without; `gated` it waits on
+ * you, at a gate or to be closed. Items already running, waiting, claimed or stale are in none. `nextInLineMissingField` is the part of `waitingOnField` that is the next step of work
  * already under way (the `needs-field` rows), so a reader can say "164 backlog items lack a
  * field; 4 of them are the next step of work in progress".
  */
@@ -639,6 +689,7 @@ export type Readiness = {
   ready: number;
   waitingOnField: number;
   blocked: number;
+  held: number;
   gated: number;
   nextInLineMissingField: number;
 };
@@ -660,6 +711,8 @@ export type Snapshot = {
   worktrees: Worktree[];
   items: Item[];
   gates: Gate[];
+  /** The open items the owner closes with no gate asking, oldest first; with `gates`, what needs you. */
+  toClose: ReadyToClose[];
   runs: Run[];
   agents: Agent[];
   /** How complete the last process read was: a run is judged dead only after a complete one. */

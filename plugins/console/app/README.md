@@ -168,8 +168,11 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 14 since an agent took
-`startedAt` and `activity`, the project took `staleSessionSeconds` and the snapshot took `servers` (13 when a pull took `checkRuns`,
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 15 since an item and a
+worktree took `heldBy` and `heldReason`, the states `waiting` and `held` came, `counts` took
+`waiting` and `held`, `readiness` took `held`, an attention row took the kind `close` and the
+snapshot took `toClose` (14 when an agent took
+`startedAt` and `activity`, the project took `staleSessionSeconds` and the snapshot took `servers`, 13 when a pull took `checkRuns`,
 `head`, `autoMerge`, `changesRequested` and `reviewsRequested` and the snapshot took `mergedToday`,
 12 when a worktree took the `comments-skipped` flag, 11 when a run's `liveness` took the place of
 `alive` and the snapshot took `processList`, 10 when the snapshot took `lessons`, `retros` and
@@ -177,7 +180,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
 One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
-a human, oldest first), `worktrees`, `items`, `gates`, `runs`, `agents`, `processList`, `servers`, `ended`, `jobs`, `pulls`, `events`
+a human, oldest first), `worktrees`, `items`, `gates`, `toClose`, `runs`, `agents`, `processList`, `servers`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`), `lessons`, `retros`, `disagreements` and `newerConsole`
 (`{running, cached}` while the plugin cache holds a newer console with an install script than the
 one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
@@ -288,6 +291,20 @@ snapshots.
 - `ended` lists the agents and sessions with a session that left the process list while the
   daemon watched, in the last 24 hours, at most 10, newest first: an `agents` entry plus `endedAt`
   (when the read that missed it ran). It lives in the daemon's memory, so a restart empties it.
+- An item and the worktree that holds its claim carry `heldBy` and `heldReason`: the item it
+  waits behind and why, in one line, from the item state's `held_by` and `held_reason` (flow
+  writes them when another item changes the same code, its `changes` globs, and clears them once
+  that item closes; the next job skips a held item meanwhile). Both null when it is free, and on a
+  plugin from before the hold keys (flow 1.33.0 and earlier).
+- `toClose` lists the open items that no step and no gate will move again, oldest first: an item
+  at step `done` with no gate up, and a split item (step `split`) whose children are all closed.
+  Each is `{item, title, url, reason, todo, worktree, pull, sinceAt, ageSeconds}`: `reason`
+  `steps-done` or `children-closed`, `todo` the one line on what to do ("Every step ran: merge or
+  close." or "Every child is closed: close the parent."), `pull` the item's PR as a gate shows it,
+  `sinceAt` the time of its board `last_event`. The item and its worktree are `needs-you` and it
+  gets a `close` attention row, but no gate is made up for it: the Gates screen lists it on its
+  own. An item at step done whose merge gate waits on review is `in-review` and not in the list.
+  `counts.needsYou` is `gates` plus `toClose`, so it counts every `needs-you` item once.
 - An item's `url` is its tracker page, from the board. Its `spend` is `{costUsd, sessions,
   tokens}`, summed over the step sessions `board.sh --json` counts from `log/runs.jsonl`, or null
   when it has none or the plugin prints no `spend`. Codex reports no cost, so a codex session adds
@@ -320,10 +337,11 @@ snapshots.
   comes from the files on disk, so it outlives a restart that empties `ended`. Looked up with the
   `files` source and kept per item and `raisedAt` while the gate waits (a miss is scanned again a
   minute later).
-- `readiness` is `{ready, waitingOnField, blocked, gated, nextInLineMissingField}` over open
-  items that are not epics. The first four are buckets, each item in one at most: the next job can
+- `readiness` is `{ready, waitingOnField, blocked, gated, held, nextInLineMissingField}` over open
+  items that are not epics. The first five are buckets, each item in one at most: the next job can
   take it, only an empty field stops it (the whole backlog of such items), an open item blocks it,
-  it waits at a gate. Running, claimed and stale items count in none, so the Overview can say in
+  it waits on you (a gate, or an item to close), it is held behind another item. Running, waiting,
+  claimed and stale items count in none, so the Overview can say in
   one line why nothing runs. `nextInLineMissingField` is the part of `waitingOnField` that is the
   next step of work already under way, so the UI can say "164 backlog items lack a field; 4 of
   them are the next step of work in progress".
@@ -359,9 +377,11 @@ One status language, used by worktrees and items alike:
 | State | Meaning |
 |---|---|
 | `running` | an unattended agent process (`claude -p`, `codex exec`) has its cwd in the worktree, or a run record whose run is not `dead` |
-| `needs-you` | its item has a gate record in `.flow/gates` |
-| `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate; never a reservation |
-| `claimed` | claimed, idle, nothing waits on you |
+| `needs-you` | its item has a gate record in `.flow/gates`, or is in `toClose` |
+| `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate and no hold; never a reservation |
+| `waiting` | a flow claim with no run, no agent and no gate on an open item that has a step to run: parked until a worker of the next job takes its next step (`claim.step`) |
+| `held` | as `waiting`, but the item is held behind another (`heldBy`): the next job skips it until that item closes |
+| `claimed` | a claim nothing moves on its own: a reservation, a merge gate waiting on reviewers (the item is `in-review`), a dead run, or a closed item the sweep has not freed yet |
 | `free` | no claim |
 | `outside` | the main worktree or one not in the pool |
 
@@ -723,9 +743,12 @@ person has to look:
 | Word | Meaning |
 |---|---|
 | free | a pool worktree nobody has claimed; the next job may take it |
-| claimed | a pool worktree holds an item (its `.flow/claim.json`), but nothing runs and nothing waits on you |
+| waiting | a pool worktree holds an item with a step left, but no run, no agent and no gate: it waits for a worker of the next job, which runs the step shown next; not work going on |
+| held | waiting, but behind another item that changes the same code: the next job skips it until that item closes |
+| claimed | a pool worktree holds an item (its `.flow/claim.json`) that neither a worker nor you will move on its own: a reservation, a PR in review, a dead run |
+| ready to close | an open item no step or gate will move again: every step ran, or every child of a split is closed; you merge or close it |
 | running | an unattended agent works in the worktree, or a live run record says one does |
-| needs-you | the item waits at a gate: a question only you can answer, or a merge only you can make |
+| needs-you | the item waits at a gate (a question only you can answer, or a merge only you can make), or is ready to close |
 | stale | claimed, but its branch is 20 or more commits behind the base, or nothing has happened in it for 72 hours; `staleReason` says which |
 | outside | a worktree that is not in the pool: the main checkout or one git knows of elsewhere |
 | dirty | the worktree has files that are not committed |
@@ -742,8 +765,9 @@ Needs you, Running, Stale, Checks red and Free, each with a line under its count
 and its item, the steps running on which items, the stale worktrees, the red PRs and the free
 worktrees; a
 readiness line from `readiness` that says what runs, or why nothing does: how many items the next
-job could take, how many next-in-line items lack a field and how many more in the backlog do, how
-many wait at gates and how many are blocked; under it a line with the lessons since the last
+job could take, how many claimed items wait for a worker, how many are held behind other items,
+how many next-in-line items lack a field and how many more in the backlog do, how
+many wait on you and how many are blocked; under it a line with the lessons since the last
 retro (`counts.lessonsSinceRetro`, "No lesson since the last retro." at none) and a Retro link to
 that page; Needs you, a list oldest first where each row has
 its kind on a chip (a gate row names its gate there, `merge`, `escalation`, `plan-approval` …, so
@@ -756,7 +780,7 @@ of the first claude transcript, "N stale session(s): <worktrees>" with a link to
 session is stale, and the scheduled jobs in the order they run next; then the latest
 12 events with Show all; the disagreements, only when there are some, with what each store says
 and the button that settles it; the pool map, a cell per worktree with its item, title and what it
-waits on, striped while it runs, and under it "The comments job skips N worktree(s): <names> (a
+waits on ("waiting for a worker · next <step>", or "held behind <item>" linked), striped while it runs, and under it "The comments job skips N worktree(s): <names> (a
 session works there)" with a link to Worktrees while a worktree has `comments-skipped`; and the sources strip, with a small refresh button at the right of its
 title that posts `/refresh` for every source, turns while the request is out and a moment after, and
 shows a refusal beside it; and at the bottom a footer in small muted type, "Plugins from
@@ -776,10 +800,15 @@ quiz, which opens one radio group per question and a Check my answers button tha
 letters on the page and runs `quiz.answer`; the results mark each question right or wrong, show
 the right choice for a wrong one and each question's Because line, and say that a pass sends the
 draft PR ready; a failed try has Take it again, a kept result has See results; a merge gate on a
-draft with a quiz still to pass says so in place of the merge button), Worktrees (filter
-chips with counts for all, running, needs you, stale, claimed and free, the pool size and base,
+draft with a quiz still to pass says so in place of the merge button; under the gates a Ready to
+close panel lists `toClose`, each with what to do, and its card says why, links the issue and the
+PR and offers "Merge #N" once that PR is mergeable; the heading and the nav badge count gates and
+items to close, as the Overview's Needs you tile does), Worktrees (filter
+chips with counts for all, running, needs you, stale, waiting, held, claimed and free (held and
+claimed only while some card is), the pool size and base,
 and Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
-branch, head and PR, its step, how many files are dirty and a bar of how far it is behind base,
+branch, head and PR, its step ("next step" on a waiting or held card, which says it waits for a
+worker, or what it is held behind and why, linked), how many files are dirty and a bar of how far it is behind base,
 its agents and sessions with pid, host and age and the command on hover, a Watch button to the
 run or a Decide button to the gate, "The run may still go (process list unavailable: <reason>)"
 while its run's `liveness` is `unknown`, why it is stale and the way
@@ -795,7 +824,8 @@ free one, and Release in its place on a claimed one, a reserved one saying "rese
 and its Release saying it gives the reservation back; each button's running and outcome states
 show on its own card; then the worktrees outside the pool, the
 project root included, in a table with their branch and Open in Terminal), Board (`#/<project>/board/<item>`: the open items with filters for
-under way, in review, ready, blocked and backlog, each row with its state, step, worktree, PR and
+under way, waiting (waiting and held), in review, ready, blocked and backlog, each row with its
+state ("held behind <item>" with the reason on hover), step ("next: <step>" while parked), worktree, PR and
 spend, a head line summing the spend of the rows shown, a banner (`role="alert"`) for each
 tracker the board could not read saying why its items are missing, and an item's detail beside the list:
 its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across

@@ -6,7 +6,7 @@ const COUNTS = snapshotAt(TAKEN_AT, 0).counts;
 
 test('NothingRuns_SaysWhatEachBucketWaitsOn', () => {
   const sentence = readinessSentence(readiness({ waitingOnField: 168, nextInLineMissingField: 4, gated: 4, blocked: 26 }), COUNTS, []);
-  expect(sentence, 'because the owner reads in one line why no agent works').toBe('Nothing runs: 4 items that are next in line lack a field, 164 more in the backlog lack one, 4 wait at gates, 26 are blocked.');
+  expect(sentence, 'because the owner reads in one line why no agent works').toBe('Nothing runs: 4 items that are next in line lack a field, 164 more in the backlog lack one, 4 wait on you, 26 are blocked.');
 });
 
 test('NoneNextInLine_SaysTheBacklogLacksAField', () => {
@@ -21,7 +21,7 @@ test('OnlyNextInLineLacksAField_NoBacklogClause', () => {
 
 test('OneItemInEachBucket_SpeaksInTheSingular', () => {
   const sentence = readinessSentence(readiness({ ready: 1, waitingOnField: 2, nextInLineMissingField: 1, gated: 1, blocked: 1 }), COUNTS, []);
-  expect(sentence, 'because "1 items wait" reads as a bug').toBe('Nothing runs: 1 item is ready for the next job, 1 next in line lacks a field, 1 more in the backlog lacks one, 1 waits at a gate, 1 is blocked.');
+  expect(sentence, 'because "1 items wait" reads as a bug').toBe('Nothing runs: 1 item is ready for the next job, 1 next in line lacks a field, 1 more in the backlog lacks one, 1 waits on you, 1 is blocked.');
 });
 
 test('AWorktreeRuns_NamesItsItem', () => {
@@ -37,4 +37,14 @@ test('AJobRunsWithNoWorktree_SaysAJobRuns', () => {
 
 test('NoOpenWork_SaysNothingWaits', () => {
   expect(readinessSentence(readiness({}), COUNTS, []), 'because an empty board must not read like a stall').toBe('Nothing runs, and no open item waits.');
+});
+
+test('ParkedWork_SaysItWaitsForAWorkerOrBehindAnotherItem', () => {
+  const waiting = [{ ...poolWorktree('wt-1'), state: 'waiting' as const, item: 'gh#1' }, { ...poolWorktree('wt-2'), state: 'waiting' as const, item: 'gh#2' }];
+  const sentence = readinessSentence(readiness({ held: 1, ready: 2 }), COUNTS, waiting);
+  expect(sentence, 'because claimed items with no run are parked, not working, and the line must say what they wait for').toBe('Nothing runs: 2 claimed items wait for a worker, 1 is held behind another item, 2 are ready for the next job.');
+});
+
+test('OnlyHeld_SaysHeldFirst', () => {
+  expect(readinessSentence(readiness({ held: 2 }), COUNTS, []), 'because a held item is not ready for the next job').toBe('Nothing runs: 2 items are held behind others.');
 });

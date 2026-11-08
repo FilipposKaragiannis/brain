@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Disagreement, Readiness, FlowEvent, Gate, InstalledPlugin, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
+import type { Disagreement, Readiness, ReadyToClose, FlowEvent, Gate, InstalledPlugin, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord } from '../src/actions.ts';
 import type { Api, ApiResponse, HttpMethod, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
@@ -125,13 +125,13 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 14,
+    schema: 15,
     takenAt,
     project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', adapter: 'github', trackers: [{ name: 'github', url: 'https://github.com/owner/project/issues', error: null }], pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', jobHosts: ['claude'], plugins: [installedPlugin('flow', '1.17.0', '1.17.0'), installedPlugin('standards', '1.3.0', '1.3.0')], poolMax: 9, reviewers: ['codex', 'claude'], picks: [], staleSessionSeconds: 86400 },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
-    counts: { needsYou, running: 0, stale: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0, lessonsSinceRetro: 0 },
-    readiness: { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0 },
-    attention: [], worktrees: [], items: [], gates: [], runs: [], agents: [], processList: { status: 'complete' }, servers: [], ended: [], jobs: [], stoppedHosts: [], events: [], lessons: [], retros: [], disagreements: [], pulls: [], mergedToday: [],
+    counts: { needsYou, running: 0, stale: 0, waiting: 0, held: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0, lessonsSinceRetro: 0 },
+    readiness: { ready: 0, waitingOnField: 0, blocked: 0, held: 0, gated: 0, nextInLineMissingField: 0 },
+    attention: [], worktrees: [], items: [], gates: [], toClose: [], runs: [], agents: [], processList: { status: 'complete' }, servers: [], ended: [], jobs: [], stoppedHosts: [], events: [], lessons: [], retros: [], disagreements: [], pulls: [], mergedToday: [],
     newerConsole: null,
   };
 }
@@ -165,7 +165,7 @@ function WithActions({ children }: { children: ReactNode }) {
 export function boardItem(id: string, title: string): Item {
   return {
     id, title, kind: 'task', size: 'M', priority: 'P2', status: 'open', state: 'ready', step: '', gate: 'none', worktree: null, pr: null,
-    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null, spend: null,
+    url: `https://github.com/owner/project/issues/${id.replace(/^gh#/, '')}`, parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: 1, lastEvent: null, heldBy: null, heldReason: null, spend: null,
   };
 }
 
@@ -173,7 +173,7 @@ export function boardItem(id: string, title: string): Item {
 export function poolWorktree(name: string): Worktree {
   return {
     name, path: `/p-wt/${name}`, role: 'pool', state: 'free', flags: [], branch: null, head: null, aheadOfBase: 0, behindBase: 0, dirtyFiles: 0,
-    lastCommitAt: null, claim: null, claimAgeSeconds: null, item: null, itemUrl: null, itemTitle: null, gate: null, staleReason: null, agents: [], sessions: [], syncPending: null,
+    lastCommitAt: null, claim: null, claimAgeSeconds: null, item: null, itemUrl: null, itemTitle: null, gate: null, staleReason: null, agents: [], sessions: [], syncPending: null, heldBy: null, heldReason: null,
   };
 }
 
@@ -183,6 +183,12 @@ export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo 
 
 export function waitingGate(item: string, gate: string): Gate {
   return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null, quiz: null, session: null };
+}
+
+/** An item to close with no gate up: every child of a split closed, or every step ran. */
+export function readyToClose(item: string, reason: ReadyToClose['reason']): ReadyToClose {
+  const todo = reason === 'children-closed' ? 'Every child is closed: close the parent.' : 'Every step ran: merge or close.';
+  return { item, title: `Item ${item}`, url: `https://github.com/owner/project/issues/${item.replace(/^gh#/, '')}`, reason, todo, worktree: null, pull: null, sinceAt: TAKEN_AT, ageSeconds: 7200 };
 }
 
 export function boardDisagreement(item: string): Disagreement {
@@ -199,5 +205,5 @@ export function flowEvent(item: string | null, kind: string, message: string): F
 
 /** Readiness with every bucket empty but the ones a test names. */
 export function readiness(buckets: Partial<Readiness>): Readiness {
-  return { ready: 0, waitingOnField: 0, blocked: 0, gated: 0, nextInLineMissingField: 0, ...buckets };
+  return { ready: 0, waitingOnField: 0, blocked: 0, held: 0, gated: 0, nextInLineMissingField: 0, ...buckets };
 }

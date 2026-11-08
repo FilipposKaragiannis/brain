@@ -3,6 +3,7 @@ import type { ActionRecord, ProcessInfo, Snapshot, SyncConflict, Worktree } from
 import { processListProblem } from '../../../daemon/src/snapshot.ts';
 import { Age, formatDuration, useLiveSeconds } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
+import { isParked } from '../parked.tsx';
 import { routeHash } from '../route.ts';
 import { worktreeTone } from '../status.ts';
 import type { Tone } from '../status.ts';
@@ -22,15 +23,19 @@ export const RESERVE_TITLE = 'Takes this worktree for your own work, under your 
 export const RELEASE_RESERVED_TITLE = 'Gives your reservation back: the worktree returns to the pool and the flow may claim it again.';
 export const SWEEP_TITLE = 'Frees the worktrees whose PR merged or whose item closed, and clears their merge gates.';
 
-type Filter = 'all' | 'running' | 'needs-you' | 'stale' | 'claimed' | 'free';
+type Filter = 'all' | 'running' | 'needs-you' | 'stale' | 'waiting' | 'held' | 'claimed' | 'free';
 const FILTERS: { filter: Filter; label: string; tone: Tone }[] = [
   { filter: 'all', label: 'All', tone: 'quiet' },
   { filter: 'running', label: 'Running', tone: 'running' },
   { filter: 'needs-you', label: 'Needs you', tone: 'needs-you' },
   { filter: 'stale', label: 'Stale', tone: 'stale' },
+  { filter: 'waiting', label: 'Waiting', tone: 'quiet' },
+  { filter: 'held', label: 'Held', tone: 'quiet' },
   { filter: 'claimed', label: 'Claimed', tone: 'quiet' },
   { filter: 'free', label: 'Free', tone: 'quiet' },
 ];
+/** Filters shown only while a worktree is in their state: the rarer ones. */
+const SHOWN_WHEN_SOME: Filter[] = ['held', 'claimed'];
 
 /** The pool as cards with a filter by state, then the worktrees outside it under their own heading. */
 export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
@@ -43,7 +48,7 @@ export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
     <div className="screen">
       <div className="worktree-tools">
         <div className="filter-chips" role="group" aria-label="Show">
-          {FILTERS.filter((each) => each.filter !== 'claimed' || count('claimed') > 0).map((each) => (
+          {FILTERS.filter((each) => !SHOWN_WHEN_SOME.includes(each.filter) || count(each.filter) > 0).map((each) => (
             <button key={each.filter} type="button" className={`filter-chip tone-${each.tone}`} aria-pressed={filter === each.filter} onClick={() => setFilter(each.filter)}>
               {each.filter !== 'all' && <Dot tone={each.tone} />}{each.label} <span className="filter-count">{count(each.filter)}</span>
             </button>
@@ -108,7 +113,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
     <article className={`worktree-card tone-${tone}${worktree.state === 'stale' ? ' hatched' : ''}`} aria-label={worktree.name}>
       <header className="worktree-card-head">
         <span className="mono strong worktree-name" title={worktree.path}>{worktree.name}</span>
-        <Chip tone={tone}>{worktree.state}</Chip>
+        <span title={worktree.state === 'waiting' ? WORDS.waiting : worktree.state === 'held' ? WORDS.held : undefined}><Chip tone={tone}>{worktree.state}</Chip></span>
         <Flags flags={worktree.flags} />
         <span className="worktree-right mono"><CardRight worktree={worktree} snapshot={snapshot} /></span>
       </header>
@@ -119,7 +124,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
         <div className="mono muted clip-line" title={branch}>{branch}</div>
       </div>
       <dl className="worktree-stats">
-        <div><dt>step</dt><dd>{worktree.claim?.step ?? '—'}</dd></div>
+        <div><dt>{isParked(worktree.state) ? 'next step' : 'step'}</dt><dd>{worktree.claim?.step || '—'}</dd></div>
         <div title={WORDS.dirty}><dt>tree</dt><dd className={worktree.dirtyFiles !== null && worktree.dirtyFiles > 0 ? 'tone-needs-you tone-text' : undefined}>{worktree.dirtyFiles === null ? '—' : worktree.dirtyFiles === 0 ? 'clean' : `${worktree.dirtyFiles} ${worktree.dirtyFiles === 1 ? 'file' : 'files'}`}</dd></div>
         <div title={`Commits behind ${worktree.claim?.base || snapshot.project.base}; ahead ${worktree.aheadOfBase ?? '—'}`}>
           <dt><span>behind {worktree.claim?.base || snapshot.project.base}</span><span className={`tone-${behindTone} tone-text`}>{worktree.behindBase ?? '—'}</span></dt>
@@ -180,9 +185,22 @@ function worktreeNote(worktree: Worktree, snapshot: Snapshot) {
   if (worktree.state === 'stale') {
     return <><span className="stale-reason">Stale: {worktree.staleReason ?? 'see the flags'}.</span> <span className="call-to-action"><StaleWayOut worktree={worktree} snapshot={snapshot} /></span></>;
   }
+  if (worktree.state === 'held' && worktree.heldBy !== null) return <HeldNote worktree={worktree} holder={worktree.heldBy} snapshot={snapshot} />;
+  if (worktree.state === 'waiting') return <span>Waiting for a worker: no run, no agent and no gate. The next job's next free worker runs {worktree.claim?.step ? <span className="mono">{worktree.claim.step}</span> : 'its next step'} here.</span>;
+  const close = worktree.gate === null ? snapshot.toClose.find((entry) => entry.item === worktree.item) : undefined;
+  if (worktree.state === 'needs-you' && close !== undefined) return <span>Ready to close, though no gate asks. {close.todo}</span>;
   const session = worktree.sessions[0];
   if (worktree.state === 'free' && session !== undefined) return <FreeWithSession session={session} count={worktree.sessions.length} takenAt={snapshot.takenAt} />;
   return null;
+}
+
+/** A held card: the item it waits behind, linked, why, and that the next job passes it by meanwhile. */
+function HeldNote({ worktree, holder, snapshot }: { worktree: Worktree; holder: string; snapshot: Snapshot }) {
+  return (
+    <span>
+      Held behind <ItemLink id={holder} pages={snapshot} />{worktree.heldReason !== null && <>: {worktree.heldReason}</>}. The next job skips it until {holder} closes{worktree.claim?.step ? <>, then runs <span className="mono">{worktree.claim.step}</span></> : null}.
+    </span>
+  );
 }
 
 /**

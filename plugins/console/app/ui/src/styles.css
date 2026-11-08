@@ -277,6 +277,9 @@ h1, h2 { margin: 0; }
 .answered-row { display: flex; gap: 8px; color: var(--muted); text-decoration: none; border-radius: 6px; }
 .answered-row:hover, .answered-row.selected { color: var(--ink); }
 .answered-row > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Items to close: no gate asks, so they sit in a panel of their own under the gates. */
+.close-list { gap: 8px; }
+.close-list .gate-pick-foot > span:first-child { flex: 1 1 auto; min-width: 0; }
 
 .decision-card { flex: 999 1 520px; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .decision-head { padding: 16px 20px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
@@ -752,6 +755,9 @@ a.tag { color: var(--accent); }
 .item-facts > div { display: contents; }
 .item-facts dt { color: var(--muted); }
 .item-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* Parked work: what it waits for, so its step never reads as work going on. */
+.parked-line { margin: 0; font-size: 13px; }
+.held-cell { white-space: nowrap; }
 
 /* Ask one reviewer for a review of a PR. */
 .ask-review { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }

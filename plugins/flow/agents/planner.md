@@ -55,11 +55,19 @@ before the slices they block, and verify every blocker edge came back from a `re
    phases (each with concrete items, an autonomous verification with the expected result, its
    `touches` globs, and `independent: yes|no`), the test seams, the docs to update, risks.
 3. Re-estimate the size from the plan. Report it in the result file when it changed.
-4. Write the union of the phase `touches` to the result file so the board can show overlaps.
+4. Write the union of the phase `touches` to the result file so the board can show overlaps,
+   and `changes`: the globs among them whose existing behavior the plan changes (additive work
+   is not a change).
+5. Check for a hold. Run `scripts/hold.sh candidates <item> --touches <the union, comma-separated>`
+   under the plugin path the brief names; it lists the other open work your touches reach, as
+   the brief's `## Other open work` section does from the touches known before the plan.
+   Nothing listed: no hold, done. Else judge each item by the rule in the plugin's
+   `skills/plan/holds.md` and add `hold` to the result only for a conflict.
 
 ## Output
 The plan or the epic body as above, then the result file the brief names: status `done` with
-a one-paragraph summary, the size, and `touches`; or status `gate`.
+a one-paragraph summary, the size, `touches`, `changes`, and `hold` when one conflicts; or
+status `gate`.
 
 ## Never
 Never plan horizontally by layer. Never leave a phase without an acceptance check. Never

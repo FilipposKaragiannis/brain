@@ -14,6 +14,8 @@
   _health.py ago <epoch>
   _health.py spawn <log> <command>...
   _health.py review <state json> <review rows file> [<record path>]
+  _health.py holders <items file>
+  _health.py holds <items file> <reads file> <claims file> <runs dir> <events.log> <old seconds>
 
 procs prints one line per process: pid, working directory (agent processes only) and command,
 tab separated, and fails when ps lists nothing, so a missing ps never reads as every run dead. A
@@ -44,7 +46,19 @@ JSON row per reviewer). It prints `state<TAB>changes-requested|in-review|ready`,
 <reply>` per reviewer that replied it cannot review. Changes requested wins; a pending request or
 an unanswered flow request is in review. A required approval alone is not: at the merge gate
 that approval is the owner's. With a record path it also writes {pr, state, waiting, cannot, at}
-there as JSON, for the console."""
+there as JSON, for the console.
+
+holders and holds judge the planned holds (state.held_by and held_reason) for steward.sh health.
+The items file holds one JSON list of open items per line, as each tracker's list prints them.
+holders prints the items a hold names that no list holds (closed, missing, or another tracker's),
+one per line, which the health job reads one by one into the reads file: one JSON object per line,
+the item as read, or {"id": ..., "unreadable": true} when it could not be read or found, or
+{"id": ..., "skip": true} when its tracker failed this run, which leaves its holds alone. holds
+prints one tab-separated line per hold to change: `clear<TAB>item<TAB>holder<TAB>cause` for a
+stale or wrong one (held by itself; the holder unreadable, holding no claim and no run, or its
+changes sharing no path with the item's; in a cycle the newest hold, by its last `held` line in
+events.log). A hold whose holder closed is left alone: next.sh releases it with the merge note, then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
+than the old seconds (seconds a dash when no `held` line dates it, which counts as old)."""
 import calendar, glob, json, os, re, subprocess, sys, time
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
@@ -439,6 +453,123 @@ def review(state, rows, record=None):
         os.replace(record + ".tmp", record)
 
 
+def prefix(glob_text):
+    return glob_text.split("*", 1)[0]
+
+
+def changes_overlap(a, b):
+    """Two lists of globs can name the same file: one's literal prefix starts the other's, as
+    touches_overlap in lib/flow.sh judges it."""
+    return any(prefix(x).startswith(prefix(y)) or prefix(y).startswith(prefix(x)) for x in a if x for y in b if y)
+
+
+def open_items(path):
+    items = {}
+    for line in open(path) if os.path.exists(path) else []:
+        try:
+            rows = json.loads(line) if line.strip() else []
+        except ValueError:
+            continue
+        for item in rows if isinstance(rows, list) else []:
+            if isinstance(item, dict) and item.get("id") and item.get("status", "open") == "open":
+                items[item["id"]] = item
+    return items
+
+
+def held_by(item):
+    return str((item.get("state") or {}).get("held_by") or "").strip()
+
+
+def holders(path):
+    items, seen = open_items(path), set()
+    for item_id, item in items.items():
+        holder = held_by(item)
+        if holder and holder != item_id and holder not in items and holder not in seen:
+            seen.add(holder)
+            print(holder)
+
+
+def held_times(events):
+    """Per item, the epoch of its newest `held` line in events.log."""
+    out = {}
+    for line in open(events) if os.path.exists(events) else []:
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) >= 3 and parts[2] == "held":
+            out[parts[1]] = max(out.get(parts[1], 0), epoch(parts[0]))
+    return out
+
+
+def holds(items_path, reads_path, claims_path, runs_dir, events, old):
+    items = open_items(items_path)
+    reads = {}
+    for line in open(reads_path) if os.path.exists(reads_path) else []:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("id"):
+            reads[row["id"]] = row
+    claimed = {l.strip() for l in open(claims_path)} if os.path.exists(claims_path) else set()
+    running = set()
+    for f in glob.glob(os.path.join(runs_dir, "*.json")):
+        try:
+            running.add(json.load(open(f)).get("item", ""))
+        except (OSError, ValueError, AttributeError):
+            pass
+    times, now = held_times(events), int(time.time())
+    # What an item changes: its plan's `changes`, or its `touches` when it has none (a bugfix or an
+    # S task runs no plan step), as hold.sh candidates judges a holder.
+    def changes(item):
+        state = item.get("state") or {}
+        globs = [c for c in state.get("changes") or [] if isinstance(c, str) and c]
+        return globs or [t for t in state.get("touches") or [] if isinstance(t, str) and t]
+    clears, kept = [], {}
+    for item_id in sorted(items):
+        item = items[item_id]
+        holder = held_by(item)
+        if not holder:
+            continue
+        if holder == item_id:
+            clears.append((item_id, holder, "it was held behind itself"))
+            continue
+        other = items.get(holder) or reads.get(holder)
+        if other is None or other.get("unreadable"):
+            clears.append((item_id, holder, "%s cannot be read or found on the tracker" % holder))
+        elif other.get("skip"):
+            continue
+        elif other.get("status") != "open":
+            # A closed holder is a release, not a stale tag: the ready filter already lets the item
+            # through, and next.sh needs held_by to lift the hold and tell the step to merge the
+            # holder's work and check the plan still fits. Health leaves it to next.sh.
+            continue
+        elif holder not in claimed and holder not in running:
+            clears.append((item_id, holder, "%s holds no worktree and has no run" % holder))
+        elif changes(item) and changes(other) and not changes_overlap(changes(item), changes(other)):
+            clears.append((item_id, holder, "the changes of %s no longer share a path with its own" % holder))
+        else:
+            kept[item_id] = holder
+    # A cycle among the holds left: the newest hold in it goes, which frees the rest.
+    for start in sorted(kept):
+        path, at = [], start
+        while at in kept and at not in path:
+            path.append(at)
+            at = kept[at]
+        if at not in path:
+            continue
+        cycle = path[path.index(at):]
+        newest = max(cycle, key=lambda i: (times.get(i, 0), i))
+        others = ", ".join(i for i in cycle if i != newest)
+        clears.append((newest, kept.pop(newest), "a cycle: %s waits behind it in turn, and this hold is the newest" % others))
+    for item_id, holder, cause in clears:
+        print("clear\t%s\t%s\t%s" % (item_id, holder, cause))
+    for item_id in sorted(kept):
+        since = times.get(item_id, 0)
+        if since and now - since <= old:
+            continue
+        reason = str((items[item_id].get("state") or {}).get("held_reason") or "").replace("\t", " ").replace("\n", " ")
+        print("old\t%s\t%s\t%s\t%s" % (item_id, kept[item_id], now - since if since else "-", reason))
+
+
 def main():
     command, args = sys.argv[1], sys.argv[2:]
     if command == "procs":
@@ -470,6 +601,10 @@ def main():
     elif command == "review":
         rows = [json.loads(line) for line in open(args[1]) if line.strip()]
         review(json.loads(args[0]), rows, args[2] if len(args) > 2 else None)
+    elif command == "holders":
+        holders(args[0])
+    elif command == "holds":
+        holds(args[0], args[1], args[2], args[3], args[4], int(args[5]))
     elif command == "spawn":
         spawn(args[0], args[1:])
     else:

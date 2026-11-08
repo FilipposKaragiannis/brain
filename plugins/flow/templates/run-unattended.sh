@@ -16,6 +16,12 @@
 # the pair; an effort the host does not take stops the loop before it claims an item (exit 2).
 # --pick picks each new item through the filter pick.<name> (next.sh --pick); the item a step
 # continues is named, so it takes no filter.
+# A run started with no item keeps working after a gate: an item that reaches one (advance.sh exit
+# 4, a gate or a split waiting on its children) is set down and next.sh picks another ready item,
+# until the step budget or next.sh has nothing. A run once past a gate that then finds nothing
+# (next.sh exit 3, 5 or 7), or whose last budgeted step reached the gate, ends as a gate does,
+# exit 4, so the job says it stopped at a gate and how many steps ran. A run for a named item
+# stops at its gate, and an escalation gate or a host stop ends any run, as before.
 set -u
 host="${1:-}"; shift || true
 [ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>] [--pick <name>]" >&2; exit 2; }
@@ -44,6 +50,7 @@ else bad="$(host_jobs_pair_problem "$host")"; fi
 host_jobs_pair "$host"
 [ -z "$once_model" ] || jobs_model="$once_model"
 [ -z "$once_effort" ] || jobs_effort="$once_effort"
+named="$item"; gated=0
 n=0
 while [ "$n" -lt "$max" ]; do
   n=$((n + 1))
@@ -51,7 +58,13 @@ while [ "$n" -lt "$max" ]; do
   [ -z "$stopped" ] || { echo "run-unattended: $stopped"; exit 4; }
   if [ -n "$item" ]; then set -- "$item"; else set -- ${pick:+--pick "$pick"}; fi
   step="$("$plugin/scripts/next.sh" --json --embed-agent "$@")"; code=$?
-  [ "$code" -eq 0 ] || { echo "run-unattended: next.sh exit $code"; exit "$code"; }
+  if [ "$code" -ne 0 ]; then
+    echo "run-unattended: next.sh exit $code"
+    case "$code" in 3|5|7) if [ "$gated" -gt 0 ]; then
+      echo "run-unattended: stopped at a gate: $gated item(s) reached one in $((n - 1)) step(s), then next.sh had nothing to start (exit $code)"; exit 4
+    fi ;; esac
+    exit "$code"
+  fi
   get() { printf '%s' "$step" | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1], ""))' "$1"; }
   item="$(get item)"; wt="$(get worktree)"; brief="$(get brief)"; model="$(get model)"; effort="$(get effort)"; agent="$(get agent)"
   names=roster
@@ -78,6 +91,17 @@ No $host session starts, on any item, until the gate on $on clears. $(host_stop_
     exit 4
   fi
   "$plugin/scripts/advance.sh" "$item"; code=$?
+  # A picked item at a gate is set down and the loop picks another; an escalation gate ends the run.
+  if [ "$code" -eq 4 ] && [ -z "$named" ]; then
+    at="$(json_get "$(cat "$(flow_home)/gates/$(item_slug "$item").json" 2>/dev/null)" gate)"
+    if [ "$at" != escalation ]; then
+      gated=$((gated + 1))
+      if [ -n "$at" ]; then echo "run-unattended: $item waits at the $at gate; picking another item"
+      else echo "run-unattended: $item waits on its children; picking another item"; fi
+      item=""; [ "$n" -lt "$max" ] || { echo "run-unattended: stopped at a gate: $gated item(s) reached one in $n step(s), the step budget"; exit 4; }
+      continue
+    fi
+  fi
   [ "$code" -eq 0 ] || { echo "run-unattended: stopped (exit $code)"; exit "$code"; }
 done
 echo "run-unattended: step budget $max reached"

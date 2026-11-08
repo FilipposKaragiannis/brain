@@ -1,20 +1,25 @@
 #!/bin/sh
 # next.sh [item] [--json] [--embed-agent] [--pick <name>]: prepare the next step of one item. Without an item,
-# picks the first ready item, by rank (ready.priority_order), from every tracker read that no run holds and that does not overlap a
-# claim. --pick narrows the items read to the filter pick.<name> in .flow/config.yaml (pick_trackers
-# in lib/flow.sh) before readiness, blockers, gates and the order apply; an unknown name exits 2.
+# picks the first ready item, by rank (ready.priority_order), from every tracker read that no run holds.
+# Items whose touches overlap may run side by side: the plan step puts an item behind another
+# (state.held_by), and a held item is not ready (filter-ready.sh). --pick narrows the items read
+# to the filter pick.<name> in .flow/config.yaml (pick_trackers in lib/flow.sh) before
+# readiness, blockers, gates and the order apply; an unknown name exits 2.
 # Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
-# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, or split
+# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, or split
 # and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
-# gate, done, or split) and tries the next ready one, since the ready list it came from can be
-# older than the item's state. A pick whose claim finds the pool full skips that item too and
-# tries one that already holds a claim, or whose step needs no worktree. With nothing left it
-# exits 3 when a claim found the pool full, else 5. The retry re-runs this script with exec, so
-# it keeps the pid; the skip list, the pool-full mark and the cached ready list count only when
-# FLOW_NEXT_PID names this process.
+# gate, held, done, or split) and tries the next ready one, since the ready list it came from can
+# be older than the item's state. A pick whose claim finds the pool full skips that item too, and
+# from then on every item that holds no claim and whose step needs a worktree, with no tracker
+# read and no claim attempt (scripts/_pick.py); it tries one that already holds a claim, or whose
+# step needs no worktree. With nothing left it exits 3 when a claim found the pool full, else 5,
+# and its last line says why: how many unclaimed items wait for a worktree, and what the claimed
+# (or the ready) items are doing: running, held behind whom, at a gate, blocked. The retry
+# re-runs this script with exec, so it keeps the pid; the skip list, the pool-full mark and the
+# cached ready list count only when FLOW_NEXT_PID names this process.
 . "$(dirname "$0")/../lib/flow.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
@@ -40,7 +45,7 @@ pick_again() {
   [ "$as_json" -eq 1 ] && set -- "$@" --json
   [ "$embed" -eq 1 ] && set -- "$@" --embed-agent
   [ -n "$pick" ] && set -- "$@" --pick "$pick"
-  printf '%s\n' "$ready" > "$ready_cache"
+  printf '%s\n%s\n' "$ready" "$notready" > "$ready_cache"
   FLOW_NEXT_PID=$$ FLOW_NEXT_SKIP="${FLOW_NEXT_SKIP:-} $item" FLOW_NEXT_FULL="${FLOW_NEXT_FULL:-}" exec "$0" "$@"
 }
 # pass_over <message> <code>: a picked item has nothing to run; say why and pick again. A named
@@ -48,28 +53,23 @@ pick_again() {
 pass_over() { echo "$1" >&2; [ -z "$named" ] || exit "$2"; pick_again; }
 run_file() { printf '%s/runs/%s.json' "$home" "$(item_slug "$1")"; }
 
-claimed_touches() {
-  # touches globs of every claimed item, except $1, one per line
-  for f in "$home"/runs/*.json; do
-    [ -f "$f" ] || continue
-    other="$(json_get "$(cat "$f")" item)"
-    [ "$other" = "$1" ] && continue
-    json_list "$(cat "$f")" touches
-  done
-}
-
 # The ready list is read before the pick lock is taken: listing a tracker can take a minute, and
 # a worker that waits that long on the lock gives up. The lock covers what must not race: the
-# run records, the claim and the item's state, all read under it.
+# run records, the claim and the item's state, all read under it. Beside the ready list come the
+# items the filter held back and why (FLOW_READY_NOTES in filter-ready.sh), for the reason a pick
+# that finds nothing gives. The cache holds both, a line each.
+notready=""
 if [ -z "$item" ] && [ -f "$ready_cache" ]; then
-  ready="$(cat "$ready_cache")"; rm -f "$ready_cache"
+  ready="$(sed -n 1p "$ready_cache")"; notready="$(sed -n 2p "$ready_cache")"; rm -f "$ready_cache"
 elif [ -z "$item" ]; then
   ready_rules
   trackers="$(adapters_configured)" || exit 2
   # shellcheck disable=SC2086
   [ -z "$pick" ] || trackers="$(pick_trackers "$pick" $trackers)" || exit 2
-  ready="$(for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | python3 -I -c '
-import json, sys
+  notes="$home/runs/.notes.$$"; rm -f "$notes"
+  listed="$(FLOW_READY_NOTES="$notes"; export FLOW_READY_NOTES
+    for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | python3 -I -c '
+import json, os, sys
 seen, out = set(), []
 for line in sys.stdin:
     line = line.strip()
@@ -78,27 +78,22 @@ for line in sys.stdin:
         if i["id"] not in seen:
             seen.add(i["id"]); out.append(i)
 out.sort(key=lambda i: i.get("rank", 999))
-print(json.dumps(out))')"
+print(json.dumps(out))
+notes = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()] if os.path.exists(sys.argv[1]) else []
+print(json.dumps(notes))' "$notes")"
+  rm -f "$notes"
+  ready="$(printf '%s\n' "$listed" | sed -n 1p)"; notready="$(printf '%s\n' "$listed" | sed -n 2p)"
 fi
 # Two runs started together must not pick the same item or claim the same worktree: the pick, the
 # claim and the run record happen under one lock. The brief is written after it is released.
 flow_lock pick || { echo "another run is picking an item for over ${FLOW_LOCK_WAIT:-60}s; try again" >&2; exit 7; }
 if [ -z "$item" ]; then
-  n="$(json_length "$ready" "")"
-  i=0
-  while [ "$i" -lt "$n" ]; do
-    cand="$(json_get "$ready" "$i")"; cid="$(json_get "$cand" id)"
-    i=$((i + 1))
-    [ -f "$(run_file "$cid")" ] && continue
-    case " ${FLOW_NEXT_SKIP:-} " in *" $cid "*) continue ;; esac
-    mine="$(json_list "$cand" state.touches)"
-    if [ -n "$mine" ] && touches_overlap "$mine" "$(claimed_touches "$cid")"; then continue; fi
-    item="$cid"; break
-  done
-  if [ -z "$item" ]; then
-    [ -z "${FLOW_NEXT_FULL:-}" ] || { echo "no free worktree: every ready item left needs one, and the pool is at pool_max" >&2; exit 3; }
-    echo "nothing ready: every ready item is running, overlaps a claim, has nothing left to run, or there is none" >&2; exit 5
-  fi
+  item="$(printf '%s\n%s\n' "$ready" "$notready" | python3 -I "$FLOW_PLUGIN/scripts/_pick.py" "$FLOW_PLUGIN" "$home/runs" "${FLOW_NEXT_FULL:-}" "${FLOW_NEXT_SKIP:-}")"; code=$?
+  case "$code" in
+    0) ;;
+    3|5) echo "$item" >&2; exit "$code" ;;
+    *) die "the pick failed (scripts/_pick.py exit $code)" ;;
+  esac
 fi
 
 data="$(adapter read "$item")" || die "cannot read $item"
@@ -114,6 +109,18 @@ if [ -n "$gate" ] && [ "$gate" != "none" ]; then
 fi
 step="$(state_get "$data" step)"
 [ -n "$step" ] || step="$(profile_steps "$profile" | head -1)"
+# A plan put the item behind another (state.held_by): its steps after the plan wait while that one
+# is open. The plan and the steps before it still run (a plan sent back is planned again, and that
+# plan decides the hold anew), as in filter-ready.sh. A holder closed or not found holds nothing;
+# next.sh lifts its hold below with the release note.
+holder="$(state_get "$data" held_by)"
+upto_plan="$(profile_steps "$profile" | sed '/^plan$/q')"
+printf '%s\n' "$upto_plan" | grep -qx plan || upto_plan=""
+if [ -n "$holder" ] && ! printf '%s\n' "$upto_plan" | grep -qx "$step" \
+    && [ "$(json_get "$(adapter read "$holder" 2>/dev/null)" status)" = open ]; then
+  why="$(state_get "$data" held_reason)"
+  pass_over "$item is held behind $holder${why:+: $why}" 4
+fi
 [ "$step" = "done" ] && pass_over "$item is done (every step ran). Merge or close it." 6
 # A split item (steward.sh split) runs no step: its children do the work.
 if [ "$step" = split ]; then
@@ -135,7 +142,7 @@ base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
   wt="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item" --base "$base")" || {
     code=$?
-    if [ "$code" -eq 3 ] && [ -z "$named" ]; then FLOW_NEXT_FULL=1; pick_again; fi
+    if [ "$code" -eq 3 ] && [ -z "$named" ]; then FLOW_NEXT_FULL="$item"; pick_again; fi
     exit "$code"
   }
   branch="$(json_get "$(cat "$wt/.flow/claim.json")" branch)"
@@ -145,13 +152,6 @@ else
   wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$base")"
 fi
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
-# A merge the health job could not make cleanly (sync.md, one ref per line) runs first as the sync
-# step. The item keeps its own step, which runs once the sync is done.
-own_step="$step"
-if [ "$(step_field "$step" worktree)" = "true" ] && [ -s "$reports/sync.md" ]; then
-  step=sync; agent="$(step_field sync agent)"; skill="$(step_field sync skill)"; summary="$(step_field sync summary)"
-  json_set "$claim" step "$(json_string sync)" > "$wt/.flow/claim.json"
-fi
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
 # script. The health job reads it to tell a live run from a dead one.
@@ -161,8 +161,47 @@ case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; o
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
   "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches" > "$(run_file "$item")"
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
-adapter write-state "$item" "step=$own_step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
+adapter write-state "$item" "step=$step" "profile=$profile" "$sized" "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock
+
+# Verify runs on the code the PR merges: a clean task branch behind its base gets the base merged
+# in first. It runs after the pick lock: the run record makes the item and its worktree this run's,
+# and a fetch under the lock would keep every other worker waiting. A merge that conflicts is
+# aborted and handed to the sync step below (sync.md), so verify never runs on an unmerged branch.
+if [ "$step" = verify ] && [ "$(step_field verify worktree)" = true ] && [ ! -s "$reports/sync.md" ] &&
+   [ "$(git -C "$wt" symbolic-ref --short -q HEAD)" = "$branch" ] &&
+   [ -z "$(git -C "$wt" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; then
+  vb="$(json_get "$claim" base)"; [ -n "$vb" ] || vb="$base"
+  git -C "$wt" remote get-url origin >/dev/null 2>&1 && git -C "$wt" fetch -q origin "$vb" 2>/dev/null
+  vref="$vb"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$vb" && vref="origin/$vb"
+  behind="$(git -C "$wt" rev-list --count "HEAD..$vref" 2>/dev/null)"
+  if [ "${behind:-0}" -gt 0 ]; then
+    if git -C "$wt" merge -q --no-edit -m "chore: merge $vref into $branch" "$vref" >/dev/null 2>&1; then
+      printf '%s\t%s\tsync\tmerged %s into %s (%s commits behind) before verify\n' "$(now_iso)" "$item" "$vref" "$branch" "$behind" >> "$home/events.log"
+    else
+      git -C "$wt" merge --abort >/dev/null 2>&1
+      printf '%s\n' "$vref" > "$reports/sync.md"
+    fi
+  fi
+fi
+# A merge the health job could not make cleanly (sync.md, one ref per line) runs first as the sync
+# step. The item keeps its own step, which runs once the sync is done.
+own_step="$step"
+if [ "$(step_field "$step" worktree)" = "true" ] && [ -s "$reports/sync.md" ]; then
+  step=sync; agent="$(step_field sync agent)"; skill="$(step_field sync skill)"; summary="$(step_field sync summary)"
+  json_set "$claim" step "$(json_string sync)" > "$wt/.flow/claim.json"
+  json_set "$(cat "$(run_file "$item")")" step "$(json_string sync)" > "$(run_file "$item").tmp" && mv "$(run_file "$item").tmp" "$(run_file "$item")"
+fi
+# A hold (hold.sh, skills/plan/holds.md) ends when its holder closes: the item's own step, not a
+# sync ahead of it, gets the release note, and the hold is lifted.
+released=""; held_by="$(state_get "$data" held_by)"
+if [ -n "$held_by" ] && [ "$step" != sync ] && hdata="$(adapter read "$held_by" 2>/dev/null)" && [ "$(json_get "$hdata" status)" = closed ]; then
+  "$FLOW_PLUGIN/scripts/hold.sh" clear "$item" "$held_by closed" && released="$held_by"
+fi
+# The plan step judges the other open work its touches reach; with none the section is left out.
+others=""; [ "$step" = plan ] && others="$("$FLOW_PLUGIN/scripts/hold.sh" candidates "$item" 2>/dev/null)"
+# A plan run again while the item is still held (sent back at the gate) decides the hold anew.
+still_held=""; [ "$step" = plan ] && [ -n "$held_by" ] && [ -z "$released" ] && still_held="$held_by"
 
 brief="$reports/brief-$step.md"
 {
@@ -187,6 +226,7 @@ brief="$reports/brief-$step.md"
   echo '```json'
   echo '{"status": "done | fail | gate", "summary": "markdown: one headline sentence, then at most six short bullets (scope, order, risks, what changed)", "size": "S|M|L (only when your estimate changed)", "gate": "feel-test | ambiguity (status gate only)", "pr": "the PR URL (pr step only)", "message": "markdown (status gate only): first line, in bold, the decision the owner must make; then short bullets of context; for ambiguity, numbered questions, one per line, each followed by a line Recommended: <your answer>, <why in a clause>", "touches": ["globs you changed or will change"]}'
   echo '```'
+  [ "$step" != plan ] || echo "The plan step adds \`\"changes\": [\"the globs among touches whose existing behavior the plan changes; additive work is not a change\"]\`, and \`\"hold\"\` only as \`$FLOW_PLUGIN/skills/plan/holds.md\` says."
   echo "Then stop. Do not advance the tracker yourself; the orchestrator calls advance.sh."
   echo "Stop with status fail when a check you cannot fix stays red; status gate when the codebase does not answer a question."
   echo
@@ -202,7 +242,7 @@ brief="$reports/brief-$step.md"
   if [ "$step" = sync ]; then
     echo "## The merge"
     echo
-    echo "The health job could not bring \`$branch\` in step on its own. Merge each ref below into it, in this order:"
+    echo "The flow could not bring \`$branch\` in step on its own (the health job, or the merge of the base before verify). Merge each ref below into it, in this order:"
     echo
     sed 's/^/- `/; s/$/`/' "$reports/sync.md"
     echo
@@ -215,6 +255,27 @@ brief="$reports/brief-$step.md"
     echo "Two intents that cannot both hold: \`git merge --abort\` and stop with status gate, gate ambiguity, each file and the choice in the message."
     echo "Checks that stay red after the merge: stop with status fail, the merge committed but not pushed."
     echo "Your own step is $own_step; it runs after this one. Do none of it here."
+    echo
+  fi
+  if [ -n "$released" ]; then
+    rref="$base"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$base" && rref="origin/$base"
+    echo "## The hold is over"
+    echo
+    echo "You were held behind $released, which has closed. First merge \`$rref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $rref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
+    echo
+  fi
+  if [ -n "$still_held" ]; then
+    echo "## The hold now"
+    echo
+    echo "An earlier plan held this item behind $still_held: $(state_get "$data" held_reason). Your plan decides again: report \`hold\` behind it to keep the hold, or leave \`hold\` out and the hold is lifted."
+    echo
+  fi
+  if [ -n "$others" ]; then
+    echo "## Other open work"
+    echo
+    echo "Open items that hold a claim and change code your touches reach. Judge each by the rule in \`$FLOW_PLUGIN/skills/plan/holds.md\` and report \`hold\` only for a conflict:"
+    echo
+    printf '%s\n' "$others"
     echo
   fi
   if [ -s "$reports/health.md" ] || [ -s "$reports/resume.md" ]; then

@@ -18,7 +18,12 @@ export type BoardItem = {
   open_children: number;
   parent: string;
   url: string;
-  state: { step: string; gate: string; worktree: string; pr: string; last_event: string; profile: string; attempts: number };
+  /**
+   * The item's flow state. `held_by` is the item this one waits behind (flow's ready filter skips it
+   * until that one closes) and `held_reason` one line on why: empty when the item is free, absent on
+   * a plugin from before the hold keys (flow 1.33.0 and earlier).
+   */
+  state: { step: string; gate: string; worktree: string; pr: string; last_event: string; profile: string; attempts: number; held_by?: string; held_reason?: string };
 };
 
 /** One item's spend from `board.sh --json`: the step sessions in flow's runs.jsonl, summed. */
@@ -32,10 +37,11 @@ export type TrackerError = { tracker: string; code: number | null; message: stri
 
 /**
  * The items, each item's body by id (kept apart so only the screens that show a body carry one),
- * each item's spend by id, empty on a plugin before flow 1.22.0, and the trackers that could not
- * be read, whose items are missing.
+ * each item's spend by id, empty on a plugin before flow 1.22.0, the trackers that could not be
+ * read, whose items are missing, and by id the status (open, closed or unknown) of each holder an
+ * item is held behind that the open-item list leaves out, empty on a plugin before the holders.
  */
-export type BoardFacts = { items: BoardItem[]; bodies: Record<string, string>; spend: Record<string, BoardSpend>; trackerErrors: TrackerError[] };
+export type BoardFacts = { items: BoardItem[]; bodies: Record<string, string>; spend: Record<string, BoardSpend>; trackerErrors: TrackerError[]; holders: Record<string, string> };
 
 /** The tracker that reads its token from the console's environment, and the variable. */
 const JIRA_ADAPTER = 'jira';
@@ -55,7 +61,7 @@ type AdapterItem = Omit<BoardItem, 'rank' | 'needs' | 'open_blockers'> & Partial
  * items on this board.
  */
 export function parseBoard(source: string): BoardFacts {
-  const parsed = JSON.parse(source) as { items?: unknown; spend?: unknown; tracker_errors?: unknown };
+  const parsed = JSON.parse(source) as { items?: unknown; spend?: unknown; tracker_errors?: unknown; holders?: unknown };
   const items = Array.isArray(parsed.items) ? (parsed.items as AdapterItem[]) : [];
   const bodies = Object.fromEntries(items.filter((item) => typeof item.body === 'string').map((item) => [item.id, item.body as string]));
   const open = new Set(items.filter((item) => item.status === 'open').map((item) => item.id));
@@ -69,7 +75,17 @@ export function parseBoard(source: string): BoardFacts {
     bodies,
     spend: parseSpend(parsed.spend),
     trackerErrors: parseTrackerErrors(parsed.tracker_errors),
+    holders: parseHolders(parsed.holders),
   };
+}
+
+/** `holders`, keeping the entries with a string id and status; absent before the plugin read them. */
+function parseHolders(value: unknown): Record<string, string> {
+  if (!Array.isArray(value)) return {};
+  return Object.fromEntries(value.flatMap((entry: unknown) => {
+    const holder = entry as { id?: unknown; status?: unknown } | null;
+    return holder !== null && typeof holder === 'object' && typeof holder.id === 'string' && typeof holder.status === 'string' ? [[holder.id, holder.status]] : [];
+  }));
 }
 
 /** `tracker_errors`, keeping the entries that name a tracker; absent before the plugin reported them. */

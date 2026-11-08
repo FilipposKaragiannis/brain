@@ -19,6 +19,15 @@ test('ParseBoard_TrackerErrorWithoutATracker_LeftOut', () => {
   assert.deepEqual(board.trackerErrors, [], 'because an error the console cannot pin on a tracker would show against none');
 });
 
+test('ParseBoard_Holders_ReadByIdAndMalformedLeftOut', () => {
+  const board = parseBoard(JSON.stringify({ items: [], holders: [{ id: 'gh#40', status: 'closed' }, { id: 'gh#41' }, null, 'gh#42'] }));
+  assert.deepEqual(board.holders, { 'gh#40': 'closed' }, 'because board.sh reads each holder the open-item list leaves out, and an entry without an id and a status says nothing');
+});
+
+test('ParseBoard_NoHolders_None', () => {
+  assert.deepEqual(parseBoard(JSON.stringify({ items: [] })).holders, {}, 'because a plugin before the holders read reports none');
+});
+
 test('ConsoleTrackerErrors_JiraWithoutTokenInTheConsole_NamesTheVariable', () => {
   const [error] = withConsoleTrackerErrors([], ['github', 'jira'], {});
   assert.equal(error?.tracker, 'jira', 'because the Jira items are the ones that go missing');
@@ -32,6 +41,12 @@ test('ConsoleTrackerErrors_JiraWithoutToken_StandsInForTheAdaptersError', () => 
 
 test('ConsoleTrackerErrors_TokenSet_ReportedErrorsKept', () => {
   assert.deepEqual(withConsoleTrackerErrors([JIRA_DOWN], ['jira'], { JIRA_API_TOKEN: 'set' }), [JIRA_DOWN], 'because with the token in place the adapter knows best why it failed');
+});
+
+test('ParseBoard_HoldKeys_KeptInTheState', () => {
+  const item = { id: 'gh#9', kind: 'task', title: 'Nine', size: 'S', priority: 'P1', status: 'open', labels: [], blocked_by: [], open_children: 0, parent: '', url: '', state: { step: 'implement', gate: 'none', worktree: 'wt-3', pr: '', last_event: '', profile: '', attempts: 0, held_by: 'gh#12', held_reason: 'shares src/a.cs' } };
+  const [parsed] = parseBoard(JSON.stringify({ items: [item] })).items;
+  assert.deepEqual([parsed?.state.held_by, parsed?.state.held_reason], ['gh#12', 'shares src/a.cs'], 'because the console shows what a held item waits behind, and why');
 });
 
 test('ConsoleTrackerErrors_NoJiraTracker_NothingAdded', () => {
