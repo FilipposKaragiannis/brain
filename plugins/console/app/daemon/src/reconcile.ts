@@ -974,10 +974,12 @@ function projectInfo(input: ReconcileInput, jobs: Job[]): ProjectInfo {
 }
 
 /**
- * The board with each hold whose holder is closed lifted: flow's ready filter already lets that item
- * through, and next.sh clears the tag on its next run, so it waits for a worker, not behind its
- * holder. The board lists open items only, so a holder it leaves out is told by its `holders`
- * read. A holder whose status is unknown keeps its hold as written.
+ * The board with each hold that keeps nothing back lifted, as flow's ready filter judges it: a
+ * holder that closed (next.sh clears the tag on the item's next run), and an item at or before its
+ * profile's plan step (a plan sent back runs again while held, and decides the hold anew). Each
+ * waits for a worker, not behind its holder; the console's view changes, flow's state does not.
+ * The board lists open items only, so a holder it leaves out is told by its `holders` read. A
+ * holder whose status is unknown keeps its hold as written.
  */
 function withReleasedHolds(read: ReconcileInput): ReconcileInput {
   const items = read.board?.items;
@@ -986,8 +988,10 @@ function withReleasedHolds(read: ReconcileInput): ReconcileInput {
     ...items.filter((item) => item.status !== 'open').map((item) => item.id),
     ...Object.entries(read.board?.holders ?? {}).filter(([, status]) => status === 'closed').map(([id]) => id),
   ]);
-  if (!items.some((item) => closed.has(item.state.held_by ?? ''))) return read;
-  const lifted = items.map((item) => (closed.has(item.state.held_by ?? '') ? { ...item, state: { ...item.state, held_by: '', held_reason: '' } } : item));
+  const planning = (item: BoardItem): boolean => (read.flow.planSteps?.[item.state.profile] ?? []).includes(item.state.step);
+  const free = (item: BoardItem): boolean => (item.state.held_by ?? '') !== '' && (closed.has(item.state.held_by ?? '') || planning(item));
+  if (!items.some(free)) return read;
+  const lifted = items.map((item) => (free(item) ? { ...item, state: { ...item.state, held_by: '', held_reason: '' } } : item));
   return { ...read, board: { ...read.board!, items: lifted } };
 }
 

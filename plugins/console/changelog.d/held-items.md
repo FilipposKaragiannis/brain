@@ -6,7 +6,9 @@ bump: minor
   same way, the step reads as the next one, and a held claim is never flagged idle.
   A hold whose holder is closed reads as `waiting`: flow lets the item through and lifts the tag
   on its next run. The board lists open items only, so a closed holder is told by the board's
-  `holders` read (flow's `board.sh --json`); one that could not be read keeps its hold.
+  `holders` read (flow's `board.sh --json`); one that could not be read keeps its hold. An item at
+  or before its profile's plan step (a plan sent back at its gate) reads as `waiting` too, as flow
+  runs that plan while held.
 - The snapshot carries `heldBy` and `heldReason` on items and worktrees from flow's `held_by` and
   `held_reason`, `counts.waiting`, `counts.held` and `readiness.held`; schema 15.
 - Items to close (every step ran with no gate up, or every child of a split is closed) get their

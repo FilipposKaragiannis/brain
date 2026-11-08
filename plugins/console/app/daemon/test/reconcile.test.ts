@@ -245,6 +245,20 @@ test('ParkedClaim_HolderUnknownOffTheBoard_StillHeld', async () => {
   assert.equal(worktree(reconcile(facts), 'project-wt-3')?.state, 'held', 'because a holder that could not be read may still be open');
 });
 
+test('ParkedClaimHeldAtItsPlan_WaitingNotHeld', async () => {
+  const facts = await parkedNine({ ...HELD, step: 'plan', profile: 'task-M' });
+  facts.flow = { ...facts.flow, planSteps: { 'task-M': ['design', 'plan'] } };
+  const picture = reconcile(facts);
+  assert.deepEqual([worktree(picture, 'project-wt-3')?.state, worktree(picture, 'project-wt-3')?.heldBy], ['waiting', null], "because a plan sent back runs again while held, as flow's ready filter lets it, and decides the hold anew");
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'waiting', 'because the Board says the same as the card');
+});
+
+test('ParkedClaimHeldPastItsPlan_StillHeld', async () => {
+  const facts = await parkedNine({ ...HELD, step: 'implement', profile: 'task-M' });
+  facts.flow = { ...facts.flow, planSteps: { 'task-M': ['design', 'plan'] } };
+  assert.equal(worktree(reconcile(facts), 'project-wt-3')?.state, 'held', 'because a hold keeps back every step after the plan while its holder is open');
+});
+
 test('ParkedClaim_HolderNotOnTheBoard_StillHeld', async () => {
   const nine = worktree(reconcile(await parkedNine({ held_by: 'gh#41', held_reason: 'shares src/a.ts' })), 'project-wt-3');
   assert.deepEqual([nine?.state, nine?.heldBy], ['held', 'gh#41'], 'because a holder the board does not list may still be open, so the hold stands as flow wrote it');
