@@ -9,10 +9,13 @@ bump: minor
   `done` fails the same way. The merge gate, a clear with no answer and a decomposition gate that
   lets a split stand carry nothing out.
 - The comments job names a waiting answer in the pass's brief ("The owner answered the <gate>
-  gate: ..."), always gives it a pass, and takes it when the pass completes. The comments skill
-  gains an Answer step: it carries the answer out on the PR's branch, or raises an escalation gate
-  when the answer asks for work elsewhere, such as merging main into the PR's base. Before, a gate
-  a comments pass raised on a done item was cleared and nothing read the answer.
+  gate: ..."), always gives it a pass, and takes it only when the pass confirms it carried the
+  answer out or raised it again as a gate. It confirms by writing the answer's time to a file the
+  brief names. A pass that ends without that is a failed pass, and the answer stays pending. A
+  newer answer that came while the pass ran is kept for the next pass. The comments skill gains an
+  Answer step: it carries the answer out on the PR's branch, or raises an escalation gate when the
+  answer asks for work elsewhere, such as merging main into the PR's base. Before, a gate a
+  comments pass raised on a done item was cleared and nothing read the answer.
 - `next.sh` takes the answer when it starts the step whose brief carries it. On a done item whose
   answer waits on the comments job, it says so instead of "merge or close it".
 - The board shows a waiting answer in the gate column (`none, answer waits on the comments job`),

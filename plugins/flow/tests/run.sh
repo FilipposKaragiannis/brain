@@ -1058,7 +1058,7 @@ check "comments job: a cleared gate is new activity, so the item is picked up ag
 check "comments job: the clear counts once: the run after it finds nothing new" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: nothing new since the last pass, skipped' .flow/log/comments.log"
 # gh#157: a gate a comments pass raised on an item past its last step. Its PR is open, so the
 # comments job owns the answer: the clear says so, the board shows it waiting, and the next pass
-# carries it in its brief and takes it.
+# carries it in its brief and takes it once the pass confirms it carried it out.
 "$P/adapters/github/write-state.sh" 'gh#21' step=done
 "$P/scripts/gate.sh" raise 'gh#21' ambiguity "1. Merge main into epic/525 first?" >/dev/null 2>&1
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
@@ -1068,14 +1068,38 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 "$P/scripts/gate.sh" clear 'gh#21' "Go with a, merge main into epic/525" > "$work/answer.out" 2>&1; code=$?
 check_all "clear at done with an open PR: the answer waits on the comments job, and the clear says so, not next" '[ "$code" = 0 ] && [ "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" = comments ] && grep -q "the comments job" "$work/answer.out" && ! grep -q "run next" "$work/answer.out"'
 check "board: an answer that waits on the comments job shows on its item" sh -c "'$P/scripts/board.sh' | grep -q '| gh#21 | .* | none, answer waits on the comments job |'"
+# Fake passes: one that only logs (it carried nothing out), and one that confirms the answer the
+# way the skill's Answer step does, writing the line the brief names to the file it names.
+cp "$work/bin/claude" "$work/claude.before"
+printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/claude"
+cat > "$work/confirm-host" <<'HOST'
+#!/bin/sh
+printf '%s\t%s\t%s\n' "$0" "$PWD" "$*" >> "$HOST_LOG"
+rec="$(printf '%s' "$*" | sed -n 's/.*write the line \([^ ]*\) to \([^ ]*\)\. .*/\1 \2/p')"
+[ -z "$rec" ] || printf '%s\n' "${rec%% *}" > "${rec#* }"
+HOST
+chmod +x "$work/confirm-host"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
-check "comments job: the owner's answer goes in the pass's brief" grep -q "comments gh#21.* The owner answered the ambiguity gate: Go with a, merge main into epic/525\." "$HOST_LOG"
-check "comments job: a pass that completes takes the answer" [ -z "$("$P/adapters/github/read.sh" 'gh#21' | jget state.answer_pending)" ]
+check "comments job: the owner's answer goes in the pass's brief" grep -q "comments gh#21.* The owner answered the ambiguity gate: Go with a, merge main into epic/525\. Run the Answer step first; once it is carried out or raised again as a gate, write the line 20[0-9T:-]*Z to .*\.answer\." "$HOST_LOG"
+check_all "comments job: a pass that ends without confirming the answer leaves it pending, and counts as failed" '[ "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" = comments ] && grep -q "gh#21: pass failed, the pass did not confirm it carried out the owner.s answer" .flow/log/comments.log'
+cp "$work/confirm-host" "$work/bin/claude"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check "comments job: a pass that confirms it carried the answer out takes it" [ -z "$("$P/adapters/github/read.sh" 'gh#21' | jget state.answer_pending)" ]
 "$P/adapters/github/write-state.sh" 'gh#21' answer_pending=comments
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: an answer still waiting gets a pass though nothing else on the PR is new" grep -q "comments gh#21.* The owner answered the ambiguity gate" "$HOST_LOG"
+# The owner clears a newer gate while the pass runs (gate.sh clear takes no item lock): the pass
+# confirms the answer it was given, and the newer one still waits for the next pass.
+"$P/adapters/github/write-state.sh" 'gh#21' answer_pending=comments
+{ cat "$work/confirm-host"; printf '"%s/adapters/github/write-state.sh" "gh#21" answered_at=2026-11-09T09:00:00Z "answer=Merge it by hand after all" answer_pending=comments >/dev/null\n' "$P"; } > "$work/bin/claude"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check_all "comments job: a newer answer that came while the pass ran is not taken with the old one" '[ "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" = comments ] && grep -q "gh#21: a newer answer to its gate came while the pass ran" .flow/log/comments.log'
+cp "$work/confirm-host" "$work/bin/claude"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
+check_all "comments job: the next pass carries the newer answer and takes it" 'grep -q "comments gh#21.* The owner answered the ambiguity gate: Merge it by hand after all\. .*write the line 2026-11-09T09:00:00Z to" "$HOST_LOG" && [ -z "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" ]'
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a taken answer is not briefed again" sh -c "! grep -q 'The owner answered' '$HOST_LOG'"
+cp "$work/claude.before" "$work/bin/claude"
 "$P/adapters/github/write-state.sh" 'gh#21' step=pr
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['mergeable']='CONFLICTING'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null

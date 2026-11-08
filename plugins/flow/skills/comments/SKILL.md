@@ -24,7 +24,13 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    PR's base among them; the tracker; another item) is no step's: do none of it, and raise
    `"$P/scripts/gate.sh" raise <item> escalation` with a first line in bold, **No step acts on
    this answer: do it by hand, then clear the gate with no answer**, then the answer and what it
-   asks for. The job takes the answer when the pass completes, so it is never carried twice.
+   asks for. Once the answer is carried out (pushed) or raised again as a gate, and only then,
+   write the line the brief names to the file it names: that is how the job knows to take the
+   answer, so it is never carried twice. A dirty tree, a failing verify or anything else that
+   leaves the answer undone: write nothing and report why; the answer stays pending, and the job
+   counts the pass as failed and tries again. Run outside the job, no file is named: once it is
+   done, clear the marker yourself, `"$P/adapters/<github|jira|local>/write-state.sh" <item>
+   answer_pending=`.
 2. **Conflicts**: `state` says `mergeable: CONFLICTING` → in the claimed worktree
    (`"$P/scripts/steward.sh" find <item>`, claim when released), with a clean tree, spawn the
    `implementer` with this brief: `git fetch origin`, `git merge "origin/<baseRefName>"` into the

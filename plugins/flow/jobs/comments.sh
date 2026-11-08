@@ -8,7 +8,10 @@
 # (comments.sh chase), a PR that conflicts with its base is named in the brief so the skill
 # merges the base in first, and the checks failing on the PR's head are named so it fixes them.
 # An owner's answer that waits on this job (answer_pending comments: a gate cleared on an item at
-# done) is named in the brief too, always gets a pass, and is taken when that pass completes.
+# done) is named in the brief too and always gets a pass. The pass confirms it carried the answer
+# out, or raised it again as a gate, by writing the answer's time (answered_at) to the file the
+# brief names; only then is the answer taken, and only while that same answer still waits. A pass
+# that ends without the confirmation is a failed pass: the answer stays pending.
 # An item waiting at a gate other than merge is skipped, and so is an item whose worktree another
 # session works in (the health job's process scan), named or not: the pass would edit under it.
 # The owner is told once per PR while it stays in use (event comments-skipped): the item, the PR,
@@ -158,16 +161,32 @@ resume_note() {
   rn_dir="$("$FLOW_PLUGIN/scripts/steward.sh" reports "$rn_item" 2>/dev/null)" || return 1
   printf '%s/comments-resume.md' "$rn_dir"
 }
-# answer_note <target>: sets $answer_item and $answer to the brief's note on the owner's answer to
-# the item's last gate, when it waits on this job (answer_pending comments: gate.sh clear at done);
-# nothing else. A pass that completes takes it.
+# answer_note <target> <record>: sets $answer_item, $answer_at and $answer to the brief's note on
+# the owner's answer to the item's last gate, when it waits on this job (answer_pending comments:
+# gate.sh clear at done); nothing else. $answer_at, the clear's time, names the answer: the pass
+# writes it to <record> once it carried the answer out or raised it again as a gate.
 answer_note() {
-  answer=""; answer_item="$(item_of "$1")"; [ -n "$answer_item" ] || return 0
+  answer=""; answer_at=""; answer_item="$(item_of "$1")"; [ -n "$answer_item" ] || return 0
   an_data="$(adapter read "$answer_item" 2>/dev/null)"
   [ "$(json_get "$an_data" state.answer_pending)" = comments ] || return 0
   an_gate="$(json_get "$an_data" state.answered)"
-  answer="$(printf ' The owner answered the %s gate: %s. Run the Answer step first.' "${an_gate:-last}" \
-    "$(json_get "$an_data" state.answer | tr '\n' ' ' | sed 's/[. ]*$//')")"
+  answer_at="$(json_get "$an_data" state.answered_at)"; answer_at="${answer_at:-unknown}"
+  answer="$(printf ' The owner answered the %s gate: %s. Run the Answer step first; once it is carried out or raised again as a gate, write the line %s to %s.' \
+    "${an_gate:-last}" "$(json_get "$an_data" state.answer | tr '\n' ' ' | sed 's/[. ]*$//')" "$answer_at" "$2")"
+}
+# answer_taken <record>: the pass confirmed the answer named $answer_at (answer_note).
+answer_taken() { [ "$(head -n 1 "$1" 2>/dev/null)" = "$answer_at" ]; }
+# take_answer <target>: the answer is taken, unless a newer one came while the pass ran (gate.sh
+# clear takes no item lock): only the same answer, by its answered_at, is marked taken.
+take_answer() {
+  ta_data="$(adapter read "$answer_item" 2>/dev/null)"
+  [ "$(json_get "$ta_data" state.answer_pending)" = comments ] || return 0
+  ta_at="$(json_get "$ta_data" state.answered_at)"
+  if [ "${ta_at:-unknown}" != "$answer_at" ]; then
+    job_say "$1: a newer answer to its gate came while the pass ran; it waits for the next pass" >/dev/null; return 0
+  fi
+  adapter write-state "$answer_item" answer_pending= >/dev/null 2>&1 \
+    || job_say "$1: could not mark the answer to its gate taken; the next pass carries it again" >/dev/null
 }
 # claimed_by <worktree> <item>: the worktree's claim names the item, so its changes are this
 # item's. A released item's reports can sit in a pool worktree another item now holds.
@@ -240,7 +259,7 @@ pass() {
   fi
   note="$(prepare_pr "$t")"
   activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$t")"; mkdir -p "$(dirname "$f")"
-  answer_note "$t"
+  rm -f "$f.answer"; answer_note "$t" "$f.answer"
   fails=0
   [ -f "$f.fails" ] && { read -r fails _ < "$f.fails"; case "$fails" in ''|*[!0-9]*) fails=0 ;; esac; }
   if [ -z "$one" ] && [ "$fails" -ge "$max_fails" ]; then
@@ -285,7 +304,8 @@ pass() {
   fi
   why=""
   if [ "$code" -ne 0 ]; then why="host exit $code"
-  elif [ -n "$(cut_short "$out")" ]; then why="the host stopped the addresser before it finished"; fi
+  elif [ -n "$(cut_short "$out")" ]; then why="the host stopped the addresser before it finished"
+  elif [ -n "$answer" ] && ! answer_taken "$f.answer"; then why="the pass did not confirm it carried out the owner's answer"; fi
   if [ -z "$why" ]; then
     [ -z "$seen" ] || printf '%s\n' "$seen" > "$f"
     rm -f "$f.fails" "$f.told-fails"
@@ -295,12 +315,9 @@ pass() {
       rwt="${resume%/.flow/reports/*}"
       { claimed_by "$rwt" "$rn_item" && dirty_tree "$rwt"; } || rm -f "$resume"
     fi
-    # The pass took the owner's answer: carried out, or raised again as a gate when no step of it
-    # could (the comments skill's Answer step). A failed pass leaves it waiting for the next.
-    if [ -n "$answer" ]; then
-      adapter write-state "$answer_item" answer_pending= >/dev/null 2>&1 \
-        || job_say "$t: could not mark the answer to its gate taken; the next pass carries it again" >/dev/null
-    fi
+    # The pass confirmed the owner's answer: carried out, or raised again as a gate when no step
+    # of it could (the comments skill's Answer step). A failed pass leaves it waiting for the next.
+    [ -z "$answer" ] || take_answer "$t"
     outcome addressed
   else
     rm -f "$f"
