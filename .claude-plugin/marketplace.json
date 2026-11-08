@@ -9,7 +9,7 @@
       "name": "console",
       "source": "./plugins/console",
       "description": "The Brain Console: a local daemon and web page that show every flow project on this machine live and run its actions.",
-      "version": "0.18.0"
+      "version": "0.19.0"
     },
     {
       "name": "craft",
@@ -21,7 +21,7 @@
       "name": "flow",
       "source": "./plugins/flow",
       "description": "The work flow: pick the next ready item, plan, implement, test, review, verify and open a PR, with agents in worktrees and human gates only where a human adds value.",
-      "version": "1.34.0"
+      "version": "1.35.0"
     },
     {
       "name": "meta",
@@ -33,7 +33,7 @@
       "name": "standards",
       "source": "./plugins/standards",
       "description": "Coding standards as enforceable rules: rule ids, a rules block for CLAUDE.md and AGENTS.md, commit hooks, a delivery gate and the two-axis review.",
-      "version": "1.3.0"
+      "version": "1.4.0"
     }
   ]
 }
