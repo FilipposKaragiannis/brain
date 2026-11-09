@@ -3517,6 +3517,13 @@ check "a step whose session ends with no result file counts one failed attempt (
 silent_last='Every write was denied, so no report was written.'
 nr_file=".flow/items/$(printf '%s' "${nr#local:}").md"
 check "a step whose session ends with no result file comments the session's last message on the item (gh#169)" grep -qF "$silent_last" "$nr_file"
+# A Codex session a dropped stream stops: its error comes after its last agent message.
+printf '%s\n' '{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"reading the code"}}' \
+  '{"type":"error","message":"stream disconnected before completion"}' > "$work/codex-drop.out"
+: > "$work/codex-drop.err"
+python3 -I "$P/scripts/_host.py" codex "$work/codex-drop.out" "$work/codex-drop.err" 1 "$work/codex-drop.sum" > "$work/codex-drop.stdout" 2>/dev/null
+check "a codex session that ends on an error has that error as its last message, because the comment and the gate quote why it stopped (gh#169)" [ "$(jget last < "$work/codex-drop.sum")" = "stream disconnected before completion" ]
+check "a codex session's error stays off stdout, because stdout is what the session printed (gh#169)" [ "$(cat "$work/codex-drop.stdout")" = "reading the code" ]
 # Three silent sessions in a row on a fresh item: the attempt limit from profiles.json.
 max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
 ng="$("$P/scripts/new.sh" task "Ends with no result, every time" --size S --body "## Acceptance
