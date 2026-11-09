@@ -7,9 +7,9 @@ stdout is one event per line. Prints the text the session would have printed wit
 flags (Claude's result, Codex's agent messages; a line that is not the host's JSON passes as it
 is), Codex's errors to stderr, and writes the summary file: one JSON object with the usage the
 host reported (Claude's usage block as given, the sum of Codex's turn usage), the cost when the
-host reports one, the models that ran, and the cause when a failed session stopped on a spend
-limit or an auth error, with the host's line that says so. Only a failed session has a cause:
-a session that ended well may quote those lines."""
+host reports one, the models that ran, the session's last message (last), and the cause when a
+failed session stopped on a spend limit or an auth error, with the host's line that says so. Only
+a failed session has a cause: a session that ended well may quote those lines."""
 import json, re, sys
 
 # The host's own words for a limit on spend and for a login that does not work, from the claude
@@ -23,6 +23,8 @@ AUTH = re.compile(r"please run /login|not logged in|invalid api key|invalid auth
                   r"|login expired|session expired|authentication required|authentication_error|disabled api key authentication"
                   r"|401 unauthorized|unexpected status 401|refresh token was rejected|token refresh failed"
                   r"|auth is missing|failed to refresh token", re.I)
+# The longest last message the summary keeps: enough to quote in a comment or a gate.
+LAST_MESSAGE_CHARS = 1000
 
 
 def objects(text):
@@ -96,6 +98,12 @@ def cause(lines):
     return "", ""
 
 
+def last_message(text):
+    """The last thing the session printed that is not blank, cut to LAST_MESSAGE_CHARS."""
+    message = next((entry.strip() for entry in reversed(text) if entry and entry.strip()), "")
+    return message[:LAST_MESSAGE_CHARS]
+
+
 def main():
     host, out_path, err_path, code, summary_path = sys.argv[1:6]
     out = open(out_path, encoding="utf-8", errors="replace").read()
@@ -110,7 +118,7 @@ def main():
         lines = [l for s in said for l in s.splitlines()] + err.splitlines()[-40:] + [l for l in text if l][-20:]
         found = cause(lines)
     summary = {"usage": usage, "cost_usd": cost if isinstance(cost, (int, float)) else None,
-               "models": models, "cause": found[0], "said": found[1]}
+               "models": models, "last": last_message(text), "cause": found[0], "said": found[1]}
     with open(summary_path, "w") as f:
         json.dump(summary, f)
 

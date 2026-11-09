@@ -152,6 +152,11 @@ Facts to answer with:
   stopped host refuses, or whose own session stops it, ends there, its status line saying the
   host is stopped and why; that stop names no item (the comments job's item waits at the merge
   gate, which an escalation gate would replace), so `gate.sh clear <host>` lifts it.
+- A step session of `next` that ends with no result file (every write denied, or it stopped
+  short) fails its step: the run writes a fail result quoting the session's last message, so the
+  item counts a failed attempt, says so in its comment, and at `max_attempts` reaches the
+  escalation gate, which quotes that message. The result stays in the reports, so `health` keeps
+  the claim instead of releasing it as empty.
 - `health` does not resume a run a spend limit or an auth error stopped: the escalation gate
   ended that run, as every gate does, so no run record is left. Once the gate clears, the next
   `next` run continues the item at the step the stop cut short, in the worktree as the run left

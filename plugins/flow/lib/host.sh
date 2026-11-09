@@ -14,9 +14,10 @@
 # Both hosts print JSON (claude --output-format json, codex --json), which scripts/_host.py turns
 # back into the text they would have printed; stderr streams as it comes. After the run,
 # host_usage holds the usage the host reported as JSON (with cost_usd and the models that ran),
-# empty when it reported none, and host_cause is spend-limit or auth when the session failed on
-# one, with host_said the host's line. That cause stops the host (host_stop): every later host_run
-# on it refuses, exit 75, until the owner clears it (gate.sh clear).
+# empty when it reported none, host_last the session's last message, and host_cause is
+# spend-limit or auth when the session failed on one, with host_said the host's line. That cause
+# stops the host (host_stop): every later host_run on it refuses, exit 75, until the owner clears
+# it (gate.sh clear).
 command -v flow_home >/dev/null 2>&1 || . "$FLOW_PLUGIN/lib/flow.sh"
 host_check() {
   case "${1:-}" in claude|codex) command -v "$1" >/dev/null 2>&1 || { echo "flow: $1 is not installed" >&2; return 1; } ;;
@@ -40,7 +41,7 @@ host_skill_prompt() {
 host_codex_model() { printf '%s' "$1" | sed 's/^sonnet$/gpt-6-luna/; s/^opus$/gpt-6-sol/; s/^fable$/gpt-6-astra/; s/^haiku$/gpt-6-luna/'; }
 host_run() {
   host="$1"; dir="$2"; prompt="$3"; model="${4:-}"; effort="${5:-}"; names="${6:-roster}"
-  host_usage=""; host_cause=""; host_said=""
+  host_usage=""; host_cause=""; host_said=""; host_last=""
   case "$host" in claude|codex) ;; *) echo "flow: host must be claude or codex" >&2; return 2 ;; esac
   _stop="$(host_stopped "$host")"
   [ -z "$_stop" ] || { echo "flow: $_stop" >&2; return 75; }
@@ -61,7 +62,7 @@ host_run() {
   python3 -I "$FLOW_PLUGIN/scripts/_host.py" "$host" "$_hr" "$_hr.err" "$_code" "$_hr.sum"
   if [ -s "$_hr.sum" ]; then
     _sum="$(cat "$_hr.sum")"
-    host_cause="$(json_get "$_sum" cause)"; host_said="$(json_get "$_sum" said)"
+    host_cause="$(json_get "$_sum" cause)"; host_said="$(json_get "$_sum" said)"; host_last="$(json_get "$_sum" last)"
     [ -z "$(json_get "$_sum" usage)$(json_get "$_sum" cost_usd)" ] || host_usage="$_sum"
   fi
   rm -f "$_hr" "$_hr.err" "$_hr.code" "$_hr.sum"

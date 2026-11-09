@@ -22,6 +22,11 @@
 # (next.sh exit 3, 5 or 7), or whose last budgeted step reached the gate, ends as a gate does,
 # exit 4, so the job says it stopped at a gate and how many steps ran. A run for a named item
 # stops at its gate, and an escalation gate or a host stop ends any run, as before.
+# A step session that writes no result (it exits with <reports>/<step>.json missing or as it was
+# before the session, as when every write was denied) fails its step: the loop writes that fail
+# result, quoting the session's last message, so advance.sh counts the attempt and raises the
+# escalation gate at max_attempts as for any fail, and the result in the reports keeps the claim
+# from the health job's empty-claim release.
 set -u
 host="${1:-}"; shift || true
 [ "$host" = "claude" ] || [ "$host" = "codex" ] || { echo "usage: run-unattended.sh <claude|codex> [item] [--max-steps N] [--model <name>] [--effort <level>] [--pick <name>]" >&2; exit 2; }
@@ -50,6 +55,15 @@ else bad="$(host_jobs_pair_problem "$host")"; fi
 host_jobs_pair "$host"
 [ -z "$once_model" ] || jobs_model="$once_model"
 [ -z "$once_effort" ] || jobs_effort="$once_effort"
+# result_stamp <file>: when, how large and which file it is, so a rewrite shows; empty when missing.
+result_stamp() {
+  python3 -I -c 'import os, sys
+try:
+    file_status = os.stat(sys.argv[1])
+except OSError:
+    sys.exit(0)
+print(file_status.st_mtime_ns, file_status.st_size, file_status.st_ino)' "$1"
+}
 named="$item"; gated=0
 n=0
 while [ "$n" -lt "$max" ]; do
@@ -72,6 +86,8 @@ while [ "$n" -lt "$max" ]; do
   echo "run-unattended: $item step $(get step) in $wt"
   prompt="Follow the brief in $brief exactly. Work in $wt."
   skill="$(get skill)"; [ -n "$skill" ] && [ -z "$agent" ] && prompt="$(host_skill_prompt "$host" flow "$skill" "$item. $prompt")"
+  reports="$(get reports)"; result_file="$reports/$(get step).json"
+  result_before="$(result_stamp "$result_file")"
   t0="$(date +%s)"
   host_run "$host" "$wt" "$prompt" "$model" "$effort" "$names"; hcode=$?
   shown="$model"; [ "$names" = as-is ] || [ "$host" != codex ] || shown="$(host_codex_model "$model")"
@@ -89,6 +105,10 @@ while [ "$n" -lt "$max" ]; do
 No $host session starts, on any item, until the gate on $on clears. $(host_stop_fix "$host" "$host_cause"), then clear the gate." >/dev/null
     echo "run-unattended: $item stopped at an escalation gate: $host failed on $(host_cause_said "$host_cause")"
     exit 4
+  fi
+  if [ -n "$reports" ] && { [ ! -f "$result_file" ] || [ "$(result_stamp "$result_file")" = "$result_before" ]; }; then
+    json_obj "status=fail" "summary=The $(get step) session ended with no result file ($result_file). Its last message: ${host_last:-none}" > "$result_file"
+    echo "run-unattended: $item step $(get step) ended with no result file; counted as a failed attempt"
   fi
   "$plugin/scripts/advance.sh" "$item"; code=$?
   # A picked item at a gate is set down and the loop picks another; an escalation gate ends the run.
