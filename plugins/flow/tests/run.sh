@@ -3488,11 +3488,42 @@ check "board: an answer no run took past the gate reminder is named in Health" s
 
 echo "a step with no result file (gh#169)"
 # The session exits 0 but writes no <step>.json, as when every write is denied. That is a failed
-# attempt on the item, not a silent stop the health job later undoes.
+# attempt on the item, not a silent stop the health job later undoes. Its own repo, so no
+# claim or reservation left by an earlier section fills the pool.
+mkdir -p "$work/noresult" && cd "$work/noresult" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+git worktree add -q -b main-wt-1 ../nr-wt-1 && git worktree add -q -b main-wt-2 ../nr-wt-2
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../nr-wt-1\n  - ../nr-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
 nr="$("$P/scripts/new.sh" task "Ends with no result" --size S --body "## Acceptance
 - [ ] n")"
 FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$nr" --max-steps 1 > "$work/noresult.out" 2>&1
 check "a step whose session ends with no result file counts one failed attempt (gh#169)" [ "$("$P/adapters/local/read.sh" "$nr" | jget state.attempts)" = 1 ]
+# The silent stub's last message, as the stub above prints it.
+silent_last='Every write was denied, so no report was written.'
+nr_file=".flow/items/$(printf '%s' "${nr#local:}").md"
+check "a step whose session ends with no result file comments the session's last message on the item (gh#169)" grep -qF "$silent_last" "$nr_file"
+# Three silent sessions in a row on a fresh item: the attempt limit from profiles.json.
+max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
+ng="$("$P/scripts/new.sh" task "Ends with no result, every time" --size S --body "## Acceptance
+- [ ] g")"
+n=1
+while [ "$n" -lt "$max_attempts" ]; do
+  FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$ng" --max-steps 1 >> "$work/noresult-gate.out" 2>&1
+  n=$((n + 1))
+done
+check "a silent session short of the attempt limit raises no gate (gh#169)" [ "$("$P/adapters/local/read.sh" "$ng" | jget state.gate)" = none ]
+FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$ng" --max-steps 1 >> "$work/noresult-gate.out" 2>&1
+check "the silent session that reaches the attempt limit raises the escalation gate (gh#169)" [ "$("$P/adapters/local/read.sh" "$ng" | jget state.gate)" = escalation ]
+check_all "the escalation gate for a silent session quotes its last message (gh#169)" 'jget message < ".flow/gates/$(item_slug "$ng").json" | grep -qF "$silent_last"'
+check "a silent session that reaches the escalation gate keeps its claim (gh#169)" sh -c "[ -f \"\$('$P/scripts/steward.sh' find '$ng')/.flow/claim.json\" ]"
+# Health releases a claim that holds nothing and has been quiet past jobs.health.grace. A short
+# grace and a wait past it put the item from the first check in that window.
+printf 'jobs:\n  health:\n    grace: 1s\n' >> .flow/config.yaml
+nr_wt="$("$P/scripts/steward.sh" find "$nr")"
+sleep 2
+: > "$work/noresult-procs"
+FLOW_HEALTH_PROCS="$work/noresult-procs" "$P/jobs/health.sh" claude > "$work/noresult-health.out" 2>&1
+check "the health job keeps the claim of an item whose last run ended with no result (gh#169)" [ -f "$nr_wt/.flow/claim.json" ]
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1
