@@ -3196,7 +3196,8 @@ printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ..
 # Host stubs that print what each host prints with the flags host_run passes: Claude one result
 # object, Codex one event per line. FAKE_HOST picks the session: ok does the step (it writes the
 # report the brief names), budget and auth fail as the hosts do on a spend limit and a login,
-# other fails on something else, quote ends well with text that quotes a limit.
+# other fails on something else, quote ends well with text that quotes a limit, silent ends well
+# and writes no report (a session whose writes were all denied).
 mkdir -p "$work/costbin"; export COST_LOG="$work/cost.log"
 cat > "$work/costbin/claude" <<'STUB'
 #!/bin/sh
@@ -3207,6 +3208,7 @@ case "${FAKE_HOST:-ok}" in
   other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
   errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
   quote) echo '{"type":"result","subtype":"success","is_error":false,"result":"Done. The old log said: Credit balance is too low."}'; exit 0 ;;
+  silent) echo '{"type":"result","subtype":"success","is_error":false,"result":"Every write was denied, so no report was written."}'; exit 0 ;;
 esac
 brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
 report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" 2>/dev/null | head -1)"
@@ -3483,6 +3485,14 @@ check_all "clear at done with no answer (done by hand): cleared, nothing waits" 
 "$P/adapters/local/write-state.sh" "$dn" step=plan answer_pending=next answered_at=2026-01-01T00:00:00Z
 check "board: an answer no run took past the gate reminder is named in Health" sh -c "'$P/scripts/board.sh' | grep -q '^- $dn: the answer to its gate has waited .* on next\$'"
 "$P/adapters/local/close.sh" "$dn" >/dev/null
+
+echo "a step with no result file (gh#169)"
+# The session exits 0 but writes no <step>.json, as when every write is denied. That is a failed
+# attempt on the item, not a silent stop the health job later undoes.
+nr="$("$P/scripts/new.sh" task "Ends with no result" --size S --body "## Acceptance
+- [ ] n")"
+FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$nr" --max-steps 1 > "$work/noresult.out" 2>&1
+check "a step whose session ends with no result file counts one failed attempt (gh#169)" [ "$("$P/adapters/local/read.sh" "$nr" | jget state.attempts)" = 1 ]
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1
