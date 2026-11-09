@@ -1,6 +1,8 @@
 #!/bin/sh
 # board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every tracker read, every claim. The pool
-# with item, step and last event; open items with their state and blockers, and in the gate column
+# with item, step and last event; open items with their state and open blockers (--json:
+# open_blockers on every item, the tracker's own list, else those of blocked_by the lists hold as
+# open; a claimed item waits on them at every step), and in the gate column
 # the owner's answer to a cleared gate while it waits on a run (answer_pending; in Health too once
 # it waits past the gate reminder); pending gates; overlapping claims; the spend per item, from
 # the step sessions in log/runs.jsonl; each tracker whose list failed, with why (--json:

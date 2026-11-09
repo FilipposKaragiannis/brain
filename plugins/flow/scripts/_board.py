@@ -14,6 +14,11 @@ for line in pool_text.splitlines():
         pool.append({"worktree": parts[0], "branch": parts[1], "item": parts[2] if parts[2] != "-" else "",
                      "step": parts[3] if parts[3] != "-" else "", "state": parts[4] if len(parts) > 4 else ""})
 by_id = {i["id"]: i for i in items}
+# Each item's open blockers: the tracker's own list when it keeps one (open_blockers), else those of
+# blocked_by the lists hold as open. A claimed item waits on them at every step (next.sh).
+for i in items:
+    if "open_blockers" not in i:
+        i["open_blockers"] = [b for b in i.get("blocked_by", []) if by_id.get(b, {}).get("status", "closed") == "open"]
 running = {r["item"]: r for r in runs}
 def epoch(iso):
     try:
@@ -99,7 +104,7 @@ def gate_of(i):
 for i in sorted(items, key=lambda i: i.get("rank", 999)):
     s = i["state"]
     print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (i["id"], i["kind"], i.get("priority", ""), i.get("size") or s.get("size", ""), i["title"][:50],
-          step_of(i), gate_of(i), s.get("worktree") or "-", ", ".join(i.get("blocked_by", [])) or "-"))
+          step_of(i), gate_of(i), s.get("worktree") or "-", ", ".join(i["open_blockers"]) or "-"))
 if spend:
     print("\n## Spend (unattended step sessions)")
     print("| item | cost | sessions | tokens |")

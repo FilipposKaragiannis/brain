@@ -1816,6 +1816,12 @@ sed -i.bak "s|^blocked_by: .*|blocked_by: [\"$blocker\"]|" ".flow/items/${waitin
 "$P/scripts/next.sh" "$waiting" >/dev/null 2>"$work/gh168.err"; code=$?
 check "Gh168_ClaimedItemWithOpenNativeBlocker_IsPassedOverWithNoRun: a claimed item at pr blocked by an open item exits 4 and starts no run, so no attempt can be counted" \
   sh -c "[ $code -eq 4 ] && [ ! -f '.flow/runs/$(item_slug "$waiting").json' ]"
+"$P/scripts/board.sh" --json > "$work/gh168.board" 2>/dev/null
+check "Gh168_ClaimedBlockedItem_BoardJsonListsItsOpenBlockers: the board's model names the open item a claimed item waits on" \
+  sh -c "python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); i=[i for i in d[\"items\"] if i[\"id\"]==sys.argv[2]]; assert i and i[0][\"open_blockers\"]==[sys.argv[3]]' '$work/gh168.board' '$waiting' '$blocker'"
+waiting_wt="$(basename "$("$P/scripts/steward.sh" find "$waiting")")"
+check "Gh168_ClaimedBlockedItem_BoardRowShowsItsWorktreeAndBlocker: the board's row for a claimed item blocked by an open item shows its worktree and the blocker" \
+  sh -c "'$P/scripts/board.sh' 2>/dev/null | grep -qF '| $waiting_wt | $blocker |'"
 # The blocker waits at a gate, so a pick has nothing ready and says why.
 "$P/adapters/local/write-state.sh" "$blocker" gate=ambiguity
 "$P/scripts/next.sh" >/dev/null 2>"$work/gh168.pick"; code=$?
