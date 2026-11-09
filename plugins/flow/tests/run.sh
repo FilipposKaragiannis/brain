@@ -2149,7 +2149,22 @@ d = json.load(open(p)); d["claimed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", ti
 remote_commit() { git -C "$hroot/other" fetch -q origin && git -C "$hroot/other" checkout -q -B "$1" "origin/$1" && printf '%s\n' "$2" > "$hroot/other/$2.txt" && git -C "$hroot/other" add -- "$2.txt" && git -C "$hroot/other" commit -qm "$2" && git -C "$hroot/other" push -q origin "$1"; }
 facts() { n="$(grep -c "$1" .flow/events.log 2>/dev/null)"; echo "${n:-0}"; }
 pings() { n="$(grep -c 'flow: health' "$work/offline.log" 2>/dev/null)"; echo "${n:-0}"; }
-printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> "%s/host.log"\n' "$hroot" > "$work/bin/claude"; chmod +x "$work/bin/claude"
+# The resumed session dies with its run: it kills the run-unattended loop above it and the loop's
+# subshells (they share its command line), as a crash would, so the run record stays and no
+# result is read. A session that exits with no result is a failed attempt since gh#169, not a
+# dead run, so it cannot stand in for one.
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf '%s\t%s\n' "\$PWD" "\$*" >> "$hroot/host.log"
+ancestor=\$\$; doomed=""
+while [ "\${ancestor:-1}" -gt 1 ]; do
+  ancestor="\$(ps -o ppid= -p "\$ancestor" | tr -d ' ')"
+  case "\$(ps -o command= -p "\${ancestor:-1}")" in *run-unattended.sh*) doomed="\$doomed \$ancestor" ;; esac
+done
+[ -z "\$doomed" ] || kill -9 \$doomed
+exit 0
+EOF
+chmod +x "$work/bin/claude"
 export FLOW_HEALTH_PROCS="$hroot/procs"; : > "$FLOW_HEALTH_PROCS"; : > "$work/offline.log"
 
 hs > "$hroot/out" 2>&1
