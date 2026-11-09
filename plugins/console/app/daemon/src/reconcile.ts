@@ -287,6 +287,8 @@ function commentsSkipped(worktree: Worktree, pulls: PullRequest[]): boolean {
 function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate: GateRecord | null, inReview = false): ItemState {
   // A done item whose merge gate waits on its reviewers is in review: not the owner's, not blocked, claimed or not.
   if (worktree !== null && worktree.state === 'claimed' && inReview) return 'in-review';
+  // The next job passes a claimed item over while a blocker is open, so a claim with no live work waits on that blocker.
+  if (worktree !== null && waitsOnBlocker(worktree.state, boardItem)) return 'blocked';
   if (worktree !== null && worktree.state !== 'free' && worktree.state !== 'outside') return worktree.state;
   if (gate !== null) return 'needs-you';
   if (boardItem === null) return 'claimed';
@@ -301,6 +303,10 @@ function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate:
   if (boardItem.open_blockers.length > 0) return 'blocked';
   if (boardItem.needs.length > 0) return 'backlog';
   return 'ready';
+}
+
+function waitsOnBlocker(state: WorktreeState, boardItem: BoardItem | null): boolean {
+  return (state === 'waiting' || state === 'claimed') && boardItem !== null && boardItem.open_blockers.length > 0;
 }
 
 function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<string>): Item[] {

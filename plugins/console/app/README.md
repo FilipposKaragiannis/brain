@@ -333,6 +333,9 @@ snapshots.
 - An item whose merge gate waits on review is `in-review`, not `blocked`: its PR has changes
   requested, a reviewer requested, or a reviewer the flow asked by a mention that has not
   answered. Its gate leaves `gates` and the attention list while that lasts.
+- A claimed item with no live run whose board item lists open blockers (`open_blockers`) is
+  `blocked`, not `waiting`: flow's next job passes it over until the last blocker closes. A run
+  already under way when the blocker was added stays `running` until it ends.
 - A gate carries `pull`: `{number, url, state, unresolvedThreads}` for its item's open PR (the one
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
   or null. A merge gate whose PR still
