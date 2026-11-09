@@ -92,7 +92,7 @@ check "ClaimedItemBlockedByAnUnreadableItem_BoardRowNamesTheBlocker: a blocker n
   'grep -qF "$unreadable" "$work/board.unreadable.row"'
 
 echo "blockers: a blocker added at pr or verify holds a claimed item, with no attempt and no escalation"
-new_repo steps 4
+new_repo steps 5
 fix="$(new_task "Bot test fix")"
 for at in pr verify; do
   held="$(claimed_at "Docs at $at" "$at" "$fix")"
@@ -121,15 +121,17 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing do
 HOST
 chmod +x "$work/refusing-bin/claude"
 max="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['max_attempts'])" "$P/profiles.json")"
-edge="$(claimed_at "Docs one failure short" pr "$second")"
-"$L/write-state.sh" "$edge" "attempts=$((max - 1))" >/dev/null
-for run in 1 2 3; do PATH="$work/refusing-bin:$PATH" "$P/jobs/next.sh" claude "$edge" >> "$work/job.out" 2>&1; done
-check "NextJobOnBlockedItem_EachRunSaysItIsHeldBehindItsBlocker: each of three job runs reaches the pass-over and says so" \
-  '[ "$(grep -cF "quiet: $edge is held behind $second (blocked by)" "$work/job.out")" -eq 3 ]'
-check "NextJobOnBlockedItemOneFailureShortOfEscalation_RaisesNoGate: an open blocker is never a failure, so the job raises no escalation" \
-  '[ "$("$L/read.sh" "$edge" | jget state.gate)" = none ]'
-check "NextJobOnBlockedItemOneFailureShortOfEscalation_KeepsItsAttemptCount: three job runs behind an open blocker count no attempt" \
-  '[ "$("$L/read.sh" "$edge" | jget state.attempts)" = "$((max - 1))" ]'
+for at in pr verify; do
+  edge="$(claimed_at "Docs at $at one failure short" "$at" "$second")"
+  "$L/write-state.sh" "$edge" "attempts=$((max - 1))" >/dev/null
+  for run in 1 2 3; do PATH="$work/refusing-bin:$PATH" "$P/jobs/next.sh" claude "$edge" >> "$work/job.$at.out" 2>&1; done
+  check "NextJobOnItemBlockedAt${at}_EachRunSaysItIsHeldBehindItsBlocker: each of three job runs at $at reaches the pass-over and says so" \
+    '[ "$(grep -cF "quiet: $edge is held behind $second (blocked by)" "$work/job.$at.out")" -eq 3 ]'
+  check "NextJobOnItemBlockedAt${at}OneFailureShortOfEscalation_RaisesNoGate: an open blocker at $at is never a failure, so the job raises no escalation" \
+    '[ "$("$L/read.sh" "$edge" | jget state.gate)" = none ]'
+  check "NextJobOnItemBlockedAt${at}OneFailureShortOfEscalation_KeepsItsAttemptCount: three job runs at $at behind an open blocker count no attempt" \
+    '[ "$("$L/read.sh" "$edge" | jget state.attempts)" = "$((max - 1))" ]'
+done
 
 [ "$fails" -eq 0 ] && { echo "blockers: ok"; exit 0; }
 echo "blockers: $fails failed"; exit 1
