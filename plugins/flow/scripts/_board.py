@@ -13,11 +13,15 @@ for line in pool_text.splitlines():
     if len(parts) >= 4:
         pool.append({"worktree": parts[0], "branch": parts[1], "item": parts[2] if parts[2] != "-" else "",
                      "step": parts[3] if parts[3] != "-" else "", "state": parts[4] if len(parts) > 4 else ""})
+# Each blocker the lists leave out, as board.sh read it: {"id", "status"}, status open, closed or unknown.
+read_blockers = json.loads(lines[5]) if len(lines) > 5 and lines[5].strip() else []
 by_id = {i["id"]: i for i in items}
-# The lists name open items only, so a blocker they leave out is closed.
+status_of = {blocker["id"]: blocker["status"] for blocker in read_blockers}
+status_of.update((item["id"], item.get("status", "open")) for item in items)
+# Only a blocker the tracker says is closed holds nothing; one it cannot read still holds, as in next.sh.
 for i in items:
     if "open_blockers" not in i:
-        i["open_blockers"] = [b for b in i.get("blocked_by", []) if by_id.get(b, {}).get("status", "closed") == "open"]
+        i["open_blockers"] = [blocker for blocker in i.get("blocked_by", []) if status_of.get(blocker, "unknown") != "closed"]
 running = {r["item"]: r for r in runs}
 def epoch(iso):
     try:

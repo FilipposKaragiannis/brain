@@ -82,6 +82,14 @@ check "LastBlockerClosed_ItemStartsAtItsOwnStep: once its blocker closes, next.s
   '[ "$code" -eq 0 ] && [ "$(jget step < "$(run_file "$waiting")")" = pr ]'
 check "LastBlockerClosed_BriefNamesTheBlockerAndTheBaseToMerge: the resumed step's brief names the closed blocker beside the base it merges first" \
   'grep -F "$blocker" "$(jget reports < "$(run_file "$waiting")")/brief-pr.md" | grep -qF "main"'
+"$P/scripts/board.sh" 2>/dev/null | awk -v row="| $waiting |" 'index($0, row) == 1' > "$work/board.closed.row"
+check "LastBlockerClosed_BoardRowShowsNoBlocker: a blocker the lists leave out because it closed reads as closed, so the row shows none" \
+  'grep -q " | - |\$" "$work/board.closed.row"'
+unreadable="local:task/404"
+behind_unreadable="$(claimed_at "Docs behind a missing item" pr "$unreadable")"
+"$P/scripts/board.sh" 2>/dev/null | awk -v row="| $behind_unreadable |" 'index($0, row) == 1' > "$work/board.unreadable.row"
+check "ClaimedItemBlockedByAnUnreadableItem_BoardRowNamesTheBlocker: a blocker no tracker reads as closed holds the item in next.sh, so the board names it too" \
+  'grep -qF "$unreadable" "$work/board.unreadable.row"'
 
 echo "blockers: a blocker added at pr or verify holds a claimed item, with no attempt and no escalation"
 new_repo steps 4
