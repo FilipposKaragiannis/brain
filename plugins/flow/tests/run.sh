@@ -1801,6 +1801,22 @@ hc="$("$P/scripts/new.sh" task "Held behind nothing" --size S --body "## Accepta
 "$P/adapters/local/write-state.sh" "$hc" held_by=local:task/999 "held_reason=gone"
 check "ready: a holder that cannot be found holds nothing" sh -c "'$P/adapters/local/list-ready.sh' | grep -q '\"$hc\"'"
 
+echo "gh#168: a claimed item waits while a native blocker is open"
+mkdir -p "$work/gh168" && cd "$work/gh168" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 3\nnotify:\n  desktop: false\n' > .flow/config.yaml
+blocker="$("$P/scripts/new.sh" task "Bot test fix" --size S --body "## Acceptance
+- [ ] fixed")"
+waiting="$("$P/scripts/new.sh" task "Docs that wait on the fix" --size S --body "## Acceptance
+- [ ] documented")"
+"$P/scripts/steward.sh" claim "$waiting" >/dev/null 2>&1
+"$P/adapters/local/write-state.sh" "$waiting" step=pr profile=task-S
+# The owner blocks the item after its claim: the edge lands on the tracker, not in the flow state.
+sed -i.bak "s|^blocked_by: .*|blocked_by: [\"$blocker\"]|" ".flow/items/${waiting#local:}.md"
+"$P/scripts/next.sh" "$waiting" >/dev/null 2>"$work/gh168.err"; code=$?
+check "Gh168_ClaimedItemWithOpenNativeBlocker_IsPassedOverWithNoRun: a claimed item at pr blocked by an open item exits 4 and starts no run, so no attempt can be counted" \
+  sh -c "[ $code -eq 4 ] && [ ! -f '.flow/runs/$(item_slug "$waiting").json' ]"
+
 echo "a full pool: one pass with no tracker read per unclaimed item"
 mkdir -p "$work/fullpass" && cd "$work/fullpass" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
