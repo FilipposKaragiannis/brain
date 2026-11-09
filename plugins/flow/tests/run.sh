@@ -1838,6 +1838,63 @@ check_all "Gh168_LastBlockerClosed_ItemStartsAtItsOwnStep: once its blocker clos
 check_all "Gh168_LastBlockerClosed_BriefSaysToMergeTheBaseFirst: the resumed step's brief names the closed blocker and says to merge the base before the step" \
   'grep -qF "You waited on $blocker (blocked by). First merge \`main\`" "$(jget reports < "$waiting_run")/brief-pr.md"'
 
+echo "gh#168: a blocker added at pr or verify holds a claimed item, with no attempt and no escalation"
+mkdir -p "$work/gh168b" && cd "$work/gh168b" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 4\nnotify:\n  desktop: false\n' > .flow/config.yaml
+# gh168_item <title> <step> <blocker...>: a claimed item at <step>, then blocked by the owner after its claim.
+gh168_item() {
+  title="$1"; at="$2"; shift 2
+  claimed="$("$P/scripts/new.sh" task "$title" --size S --body "## Acceptance
+- [ ] done")"
+  "$P/scripts/steward.sh" claim "$claimed" >/dev/null 2>&1
+  "$P/adapters/local/write-state.sh" "$claimed" "step=$at" profile=task-S >/dev/null
+  edges="$(printf '"%s", ' "$@")"
+  sed -i.bak "s|^blocked_by: .*|blocked_by: [${edges%, }]|" ".flow/items/${claimed#local:}.md"
+  echo "$claimed"
+}
+fix="$("$P/scripts/new.sh" task "Bot test fix" --size S --body "## Acceptance
+- [ ] fixed")"
+for at in pr verify; do
+  held="$(gh168_item "Docs at $at" "$at" "$fix")"
+  "$P/scripts/next.sh" "$held" >/dev/null 2>"$work/gh168b.$at.err"; code=$?
+  check "Gh168_ClaimedBlockedItemAt${at}_IsPassedOverWithNoRun: a blocker added at $at exits 4 and starts no run" \
+    sh -c "[ $code -eq 4 ] && [ ! -f '.flow/runs/$(item_slug "$held").json' ]"
+  check "Gh168_ClaimedBlockedItemAt${at}_SaysItIsHeldBehindItsBlocker: the named run says which open item holds it" \
+    grep -qF "held behind $fix (blocked by)" "$work/gh168b.$at.err"
+done
+# Two blockers: closing one leaves the other open, so the item still waits.
+second="$("$P/scripts/new.sh" task "Second fix" --size S --body "## Acceptance
+- [ ] fixed")"
+first="$("$P/scripts/new.sh" task "First fix" --size S --body "## Acceptance
+- [ ] fixed")"
+both="$(gh168_item "Docs behind two fixes" pr "$first" "$second")"
+"$P/adapters/local/close.sh" "$first" --comment fixed >/dev/null
+"$P/scripts/next.sh" "$both" >/dev/null 2>"$work/gh168b.both.err"; code=$?
+check "Gh168_OneOfTwoBlockersClosed_ItemStaysHeld: an item resumes only when its last blocker closes, so one open blocker still holds it" \
+  sh -c "[ $code -eq 4 ] && [ ! -f '.flow/runs/$(item_slug "$both").json' ]"
+check "Gh168_OneOfTwoBlockersClosed_HeldBehindTheOpenOne: the pass-over names the blocker still open" \
+  grep -qF "held behind $second (blocked by)" "$work/gh168b.both.err"
+# The next job runs a blocked item one failure short of escalation, three times, as gh#769's job did.
+# Its agent sees the open blocker, refuses and reports a failure, as gh#769's agent did.
+mkdir -p "$work/gh168b-bin"
+cat > "$work/gh168b-bin/claude" <<'HOST'
+#!/bin/sh
+brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
+report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" 2>/dev/null | head -1)"
+[ -z "$report" ] || { mkdir -p "$(dirname "$report")" && printf '{"status":"fail","summary":"Nothing done. The blocker is still open."}\n' > "$report"; }
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing done. The blocker is still open."}'
+HOST
+chmod +x "$work/gh168b-bin/claude"
+max="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['max_attempts'])" "$P/profiles.json")"
+edge="$(gh168_item "Docs one failure short" pr "$second")"
+"$P/adapters/local/write-state.sh" "$edge" "attempts=$((max - 1))" >/dev/null
+for run in 1 2 3; do PATH="$work/gh168b-bin:$PATH" "$P/jobs/next.sh" claude "$edge" >/dev/null 2>&1; done
+check "Gh168_NextJobOnBlockedItemOneFailureShortOfEscalation_RaisesNoGate: an open blocker is never a failure, so the job raises no escalation" \
+  [ "$("$P/adapters/local/read.sh" "$edge" | jget state.gate)" = "none" ]
+check "Gh168_NextJobOnBlockedItemOneFailureShortOfEscalation_KeepsItsAttemptCount: three job runs behind an open blocker count no attempt" \
+  [ "$("$P/adapters/local/read.sh" "$edge" | jget state.attempts)" = "$((max - 1))" ]
+
 echo "a full pool: one pass with no tracker read per unclaimed item"
 mkdir -p "$work/fullpass" && cd "$work/fullpass" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
