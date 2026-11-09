@@ -25,7 +25,8 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
    last stderr line names (the unclaimed items waiting, what the claimed ones are doing), say
    which worktrees hold what (`steward.sh pool`) and stop.
    Exit 4: the item waits at a gate, or is held behind another open item (the line names the
-   holder and why); tell the user what the gate asks, or what it waits behind, and stop.
+   holder and why, or the open blockers and `(blocked by)`); tell the user what the gate asks,
+   or what it waits behind, and stop.
    Exit 5: nothing is ready; give the reason the last stderr line names and stop. Exit 6: the
    item is done; say so and stop.
    Exit 7: a run is already in flight for it; show the run file and stop (another session may be on it).
@@ -49,6 +50,7 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
 ## Rules
 
 - Never start an item held behind another (`state.held_by`) past its plan while that one is open; `next.sh` refuses, do not override. Its plan, sent back at the gate, still runs and decides the hold anew.
+- Never start an item, claimed or not, at any step while one of its native blockers (`blocked_by`) is open; `next.sh` refuses, do not override. Once the last one closes, its step runs again and its brief says to merge the base first.
 - Never reset or release a worktree yourself; the steward does that, and never with uncommitted changes.
 - A re-size by one step continues; two steps or into L stops at a plan-approval gate. Do not argue with it.
 - Unattended runs use `.flow/run-unattended.sh`, which drives this same loop from a shell.

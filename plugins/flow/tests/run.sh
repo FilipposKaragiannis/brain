@@ -1816,6 +1816,21 @@ sed -i.bak "s|^blocked_by: .*|blocked_by: [\"$blocker\"]|" ".flow/items/${waitin
 "$P/scripts/next.sh" "$waiting" >/dev/null 2>"$work/gh168.err"; code=$?
 check "Gh168_ClaimedItemWithOpenNativeBlocker_IsPassedOverWithNoRun: a claimed item at pr blocked by an open item exits 4 and starts no run, so no attempt can be counted" \
   sh -c "[ $code -eq 4 ] && [ ! -f '.flow/runs/$(item_slug "$waiting").json' ]"
+# The blocker waits at a gate, so a pick has nothing ready and says why.
+"$P/adapters/local/write-state.sh" "$blocker" gate=ambiguity
+"$P/scripts/next.sh" >/dev/null 2>"$work/gh168.pick"; code=$?
+check "Gh168_PickWithClaimedBlockedItem_SaysItIsHeldBehindItsBlocker: a pick passes the claimed item over as held behind its blocker" \
+  sh -c "[ $code -eq 5 ] && grep -qF '$waiting behind $blocker (blocked by)' '$work/gh168.pick'"
+check "Gh168_PickWithClaimedBlockedItem_StartsNoRunForIt: a pick starts no run for a claimed item whose blocker is open" \
+  [ ! -f ".flow/runs/$(item_slug "$waiting").json" ]
+"$P/adapters/local/write-state.sh" "$blocker" gate=none
+"$P/adapters/local/close.sh" "$blocker" --comment fixed
+"$P/scripts/next.sh" "$waiting" >/dev/null 2>&1; code=$?
+waiting_run=".flow/runs/$(item_slug "$waiting").json"
+check_all "Gh168_LastBlockerClosed_ItemStartsAtItsOwnStep: once its blocker closes, next.sh starts the claimed item at pr again" \
+  '[ "$code" -eq 0 ] && [ "$(jget step < "$waiting_run")" = pr ]'
+check_all "Gh168_LastBlockerClosed_BriefSaysToMergeTheBaseFirst: the resumed step's brief names the closed blocker and says to merge the base before the step" \
+  'grep -qF "You waited on $blocker (blocked by). First merge \`main\`" "$(jget reports < "$waiting_run")/brief-pr.md"'
 
 echo "a full pool: one pass with no tracker read per unclaimed item"
 mkdir -p "$work/fullpass" && cd "$work/fullpass" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t

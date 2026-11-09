@@ -8,10 +8,14 @@
 # Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
-# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, or split
-# and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
+# an open item (blocked_by), or split and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# A native blocker holds an item at every step, claimed or not: an owner may block a claimed item
+# after its claim. The item is passed over "held behind <blocker> (blocked by)" with no run, so no
+# attempt is counted; once the last blocker closes, its own step starts with the note to merge
+# its base first (blocked.md in its reports).
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
-# gate, held, done, or split) and tries the next ready one, since the ready list it came from can
+# gate, held, blocked, done, or split) and tries the next ready one, since the ready list it came from can
 # be older than the item's state. A pick whose claim finds the pool full skips that item too, and
 # from then on every item that holds no claim and whose step needs a worktree, with no tracker
 # read and no claim attempt (scripts/_pick.py); it tries one that already holds a claim, or whose
@@ -52,6 +56,25 @@ pick_again() {
 # item exits with the code.
 pass_over() { echo "$1" >&2; [ -z "$named" ] || exit "$2"; pick_again; }
 run_file() { printf '%s/runs/%s.json' "$home" "$(item_slug "$1")"; }
+# open_blockers <item-json>: the item's open native blockers, comma-separated: the tracker's own
+# list when it keeps one (open_blockers), else each of blocked_by read through its adapter. One
+# that cannot be read still holds, as in filter-ready.sh.
+open_blockers() {
+  if [ -n "$(json_get "$1" open_blockers)" ]; then json_list "$1" open_blockers
+  else
+    json_list "$1" blocked_by | while IFS= read -r blocker; do
+      [ -z "$blocker" ] || [ "$(json_get "$(adapter read "$blocker" </dev/null 2>/dev/null)" status)" = closed ] || printf '%s\n' "$blocker"
+    done
+  fi | paste -sd, - | sed 's/,/, /g'
+}
+# wait_note <item> <blockers>: a claimed item that waits on open blockers keeps their names in
+# blocked.md in its reports, so the step that starts once they close is told to merge its base
+# first. An item that holds no claim has no branch to bring in step.
+wait_note() {
+  waiting_in="$("$FLOW_PLUGIN/scripts/steward.sh" find "$1" </dev/null 2>/dev/null)"
+  [ -n "$waiting_in" ] || return 0
+  mkdir -p "$(reports_dir "$1" "$waiting_in")" && printf '%s\n' "$2" > "$(reports_dir "$1" "$waiting_in")/blocked.md"
+}
 
 # The ready list is read before the pick lock is taken: listing a tracker can take a minute, and
 # a worker that waits that long on the lock gives up. The lock covers what must not race: the
@@ -83,6 +106,13 @@ notes = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()
 print(json.dumps(notes))' "$notes")"
   rm -f "$notes"
   ready="$(printf '%s\n' "$listed" | sed -n 1p)"; notready="$(printf '%s\n' "$listed" | sed -n 2p)"
+  # A claimed item the filter held back for its open blockers waits on them as a named one does.
+  printf '%s\n' "$notready" | python3 -I -c '
+import json, sys
+for note in json.loads(sys.stdin.read() or "[]"):
+    if note["why"] == "blocked" and note.get("worktree"):
+        print(note["id"] + "\t" + ", ".join(note.get("blocked_by", [])))' |
+    while IFS="$(printf '\t')" read -r waiting blockers; do wait_note "$waiting" "$blockers"; done
 fi
 # Two runs started together must not pick the same item or claim the same worktree: the pick, the
 # claim and the run record happen under one lock. The brief is written after it is released.
@@ -130,6 +160,12 @@ if [ "$step" = split ]; then
   kids="$(json_get "$data" open_children)"
   if [ "${kids:-0}" -gt 0 ] 2>/dev/null; then pass_over "$item is split and waits on its $kids open child item(s)" 4; fi
   pass_over "$item is split and every child is closed. Close it." 6
+fi
+# A native blocker (blocked_by on the tracker) holds the item at whatever step it is at.
+blockers="$(open_blockers "$data")"
+if [ -n "$blockers" ]; then
+  wait_note "$item" "$blockers"
+  pass_over "$item is held behind $blockers (blocked by)" 4
 fi
 json_get "$profiles" "steps.$step" >/dev/null 2>&1 || die "unknown step '$step' for $item"
 if [ -f "$(run_file "$item")" ]; then
@@ -203,6 +239,9 @@ released=""; held_by="$(state_get "$data" held_by)"
 if [ -n "$held_by" ] && [ "$step" != sync ] && hdata="$(adapter read "$held_by" 2>/dev/null)" && [ "$(json_get "$hdata" status)" = closed ]; then
   "$FLOW_PLUGIN/scripts/hold.sh" clear "$item" "$held_by closed" && released="$held_by"
 fi
+# A claimed item that waited on open blockers (blocked.md, wait_note) runs again once they closed:
+# its own step, not a sync ahead of it, gets the note to merge its base first, as for a hold.
+unblocked=""; [ "$step" = sync ] || [ ! -s "$reports/blocked.md" ] || unblocked="$(cat "$reports/blocked.md")"
 # The plan step judges the other open work its touches reach; with none the section is left out.
 others=""; [ "$step" = plan ] && others="$("$FLOW_PLUGIN/scripts/hold.sh" candidates "$item" 2>/dev/null)"
 # A plan run again while the item is still held (sent back at the gate) decides the hold anew.
@@ -269,6 +308,14 @@ brief="$reports/brief-$step.md"
     echo "You were held behind $released, which has closed. First merge \`$rref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $rref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
     echo
   fi
+  if [ -n "$unblocked" ]; then
+    uref="$(json_get "$claim" base)"; uref="${uref:-$base}"
+    git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$uref" && uref="origin/$uref"
+    echo "## The wait is over"
+    echo
+    echo "You waited on $unblocked (blocked by). First merge \`$uref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $uref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
+    echo
+  fi
   if [ -n "$still_held" ]; then
     echo "## The hold now"
     echo
@@ -297,9 +344,9 @@ brief="$reports/brief-$step.md"
     awk 'BEGIN{n=0} /^---$/ {n++; next} n>=2 {print}' "$FLOW_PLUGIN/agents/$agent.md"
   fi
 } > "$brief"
-# The resume note is for the one brief after a resume; the branch flags in health.md stay until
-# the health job clears them.
-rm -f "$reports/resume.md"
+# The resume note is for the one brief after a resume, and so is the note that the wait on the
+# blockers is over; the branch flags in health.md stay until the health job clears them.
+rm -f "$reports/resume.md"; [ -z "$unblocked" ] || rm -f "$reports/blocked.md"
 
 out="$(json_obj "item=$item" "title=$(json_get "$data" title)" "kind=$kind" "size=$size" "profile=$profile" "depth=$depth" \
   "architect=$architect" "step=$step" "agent=$agent" "skill=$skill" "worktree=$wt" "branch=$branch" "base=$base" "brief=$brief" "reports=$reports" \

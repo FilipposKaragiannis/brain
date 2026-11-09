@@ -10,7 +10,9 @@ space-separated.
 Prints the first item to try and exits 0. An item with a run in flight is not tried, nor one this
 pick passed over. Once the pool is full, neither is one that holds no claim (state.worktree empty)
 and whose step needs a worktree: it would cost a tracker read and a claim that cannot succeed.
-With nothing left it prints why, one line, and exits 3 when the pool is full, else 5.
+With nothing left it prints why, one line, and exits 3 when the pool is full, else 5. A claimed item
+the filter held back for its open blockers is said as held behind them: "<id> behind <blocker>
+(blocked by)".
 """
 import json, os, sys
 
@@ -73,8 +75,22 @@ def count(n, what):
     return f"{n} {what}"
 
 
+def waits(row):
+    """Why a held-back item waits, as the reason says it: a claimed item blocked by open items is
+    held behind them as a planned hold is behind its holder; any other keeps the filter's word."""
+    if row["why"] == "blocked" and row.get("worktree"):
+        return "held"
+    return row["why"]
+
+
+def behind(row):
+    if row["why"] == "blocked":
+        return f"{', '.join(row.get('blocked_by', []))} (blocked by)"
+    return row["held_by"]
+
+
 def held_list(rows):
-    pairs = [f"{r['id']} behind {r['held_by']}" for r in rows[:5]]
+    pairs = [f"{r['id']} behind {behind(r)}" for r in rows[:5]]
     more = f", and {len(rows) - 5} more" if len(rows) > 5 else ""
     return f"({', '.join(pairs)}{more})"
 
@@ -84,15 +100,16 @@ WHY = [("gate", "at a gate"), ("blocked", "blocked"), ("needs", "missing a field
 
 
 def reasons(rows, live):
-    """The parts of the reason: running, held (each named), then the rest by why."""
+    """The parts of the reason: running, held (each named, a claimed blocked item among them), then
+    the rest by why."""
     parts = []
     if live:
         parts.append(count(live, "running"))
-    held = [r for r in rows if r["why"] == "held"]
+    held = [r for r in rows if waits(r) == "held"]
     if held:
         parts.append(f"{len(held)} held {held_list(held)}")
     for why, said in WHY:
-        n = sum(1 for r in rows if r["why"] == why)
+        n = sum(1 for r in rows if waits(r) == why)
         if n:
             parts.append(f"{n} {said}")
     return parts
