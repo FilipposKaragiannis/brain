@@ -15,6 +15,8 @@ import type { EndedProcess, ProcessFacts } from './collectors/processes.ts';
 import { readProcesses, readSession } from './collectors/processes.ts';
 import type { SessionLocator } from './collectors/sessions.ts';
 import { noSessions } from './collectors/sessions.ts';
+import type { SubagentReader } from './collectors/subagents.ts';
+import { noSubagents } from './collectors/subagents.ts';
 import type { ActionContext } from './actionPlan.ts';
 import type { PluginReader } from './collectors/plugins.ts';
 import { noPlugins } from './collectors/plugins.ts';
@@ -75,6 +77,8 @@ export type ProjectMonitorDependencies = {
   sessions?: Pick<SessionLocator, 'assign'>;
   /** Finds the transcript of the session that raised each waiting gate; left out, no gate has a session. */
   gateSessions?: Pick<SessionLocator, 'gates'>;
+  /** Lists the subagents each process's session runs now; left out, no process has any. */
+  subagents?: Pick<SubagentReader, 'read'>;
   /** Reads the plugins the hosts have for the project, with the files; left out, it has none. */
   plugins?: PluginReader;
   /** A newer console in the plugin cache than the one running, asked on every rebuild; left out, none. */
@@ -95,6 +99,7 @@ export class ProjectMonitor {
   private readonly cadence: Cadence;
   private readonly sessions: Pick<SessionLocator, 'assign'>;
   private readonly gateLocator: Pick<SessionLocator, 'gates'>;
+  private readonly subagents: Pick<SubagentReader, 'read'>;
   /** The session located for each waiting gate, by item and raise time, with the folder it ran in: only gates with one. */
   private gateSessions = new Map<string, { cwd: string; session: SessionRef }>();
   private readonly plugins: PluginReader;
@@ -139,6 +144,7 @@ export class ProjectMonitor {
     this.cadence = dependencies.cadence;
     this.sessions = dependencies.sessions ?? noSessions;
     this.gateLocator = dependencies.gateSessions ?? noSessions;
+    this.subagents = dependencies.subagents ?? noSubagents;
     this.plugins = dependencies.plugins ?? noPlugins;
     this.newerConsole = dependencies.newerConsole ?? (() => null);
   }
@@ -337,9 +343,12 @@ export class ProjectMonitor {
       return { ok: false, error: processListProblem(listed.list) };
     }
     const sessions = await this.sessions.assign(listed.agents);
+    const subagents = await this.subagents.read(listed.agents.map((agent, index) => sessions[index]?.session ?? null));
     const unplaced = new Set(listed.list.status === 'partial' ? listed.list.unplaced : []);
     const kept = (previous?.agents ?? []).filter((agent) => unplaced.has(agent.pid));
-    const agents = [...listed.agents.map((agent, index) => ({ ...agent, session: sessions[index]?.session ?? null, activity: sessions[index]?.activity ?? null })), ...kept];
+    const agents = [...listed.agents.map((agent, index) => ({
+      ...agent, session: sessions[index]?.session ?? null, activity: sessions[index]?.activity ?? null, subagents: subagents[index] ?? [],
+    })), ...kept];
     this.noteEnded(agents);
     this.facts.processes.facts = { agents, servers: listed.servers, hosts: listed.hosts, list: listed.list };
     const problem = processListProblem(listed.list);
@@ -381,9 +390,15 @@ export class ProjectMonitor {
     for (const listener of this.listeners) listener(this.current);
   }
 
-  /** What counts as a change: the facts and the disagreements that settled, without the counters that move on every read. */
+  /**
+   * What counts as a change: the facts and the disagreements that settled, without the counters
+   * that move on every read. A subagent counts by its id and its latest line, never its running time.
+   */
   private fingerprintOf(): string {
-    const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd, parents, job, session, activity }) => ({ pid, host, cwd, parents, job, session: session?.id ?? null, activity }));
+    const agents = (this.facts.processes.facts?.agents ?? []).map(({ pid, host, cwd, parents, job, session, activity, subagents }) => ({
+      pid, host, cwd, parents, job, session: session?.id ?? null, activity,
+      subagents: subagents.map(({ id, latest }) => [id, latest?.at ?? null, latest?.text ?? null]),
+    }));
     const servers = (this.facts.processes.facts?.servers ?? []).map(({ pid, cwd }) => [pid, cwd]);
     const ended = this.ended.map(({ pid, endedAt }) => [pid, endedAt]);
     const errors = (Object.keys(this.facts) as SourceName[]).map((name) => this.facts[name].freshness.error);

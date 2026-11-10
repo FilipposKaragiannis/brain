@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Agent, EndedAgent, ProcessListStatus, PullRequest, Run, Server, Snapshot, Worktree } from '../../../daemon/src/snapshot.ts';
+import type { Agent, EndedAgent, ProcessListStatus, PullRequest, Run, Server, Snapshot, Subagent, Worktree } from '../../../daemon/src/snapshot.ts';
 import { processListProblem, sessionStale } from '../../../daemon/src/snapshot.ts';
 import { Age, clockTime, formatDuration, Since, useLiveSeconds, useNow } from '../clock.tsx';
 import { ExternalLink, ItemLink } from '../links.tsx';
@@ -88,6 +88,7 @@ function RunCard({ agent, snapshot, startOpen }: { agent: Agent; snapshot: Snaps
           <span className="stream-text" title={latest.text}>{latest.text}</span>
         </p>
       )}
+      <SubagentRows subagents={agent.subagents} />
       {open && (
         <>
           <RunStats agent={agent} worktree={worktree} transcript={read.kind === 'read' ? read : null} />
@@ -224,10 +225,49 @@ function Sessions({ sessions, snapshot }: { sessions: Agent[]; snapshot: Snapsho
               <OpenButton path={session.cwd} pid={session.pid} hasSession={session.session !== null} alive />
               <StopSessionButton session={session} />
             </span>
+            <SubagentRows subagents={session.subagents} />
           </li>
         ))}
       </ul>
     </details>
+  );
+}
+
+/**
+ * The subagents a session runs now, nested under its card or row: nothing while it runs none.
+ */
+function SubagentRows({ subagents }: { subagents: Subagent[] }) {
+  if (subagents.length === 0) return null;
+  return (
+    <ul className="subagent-list" aria-label="Subagents">
+      {subagents.map((subagent) => <SubagentRow key={subagent.id} subagent={subagent} />)}
+    </ul>
+  );
+}
+
+/**
+ * One subagent: its type, its task (or that it has none), the folder it works in, how long it has
+ * run, counted on the page's clock from its start (blank when that is unknown), and its latest
+ * transcript line as the run stream shows one.
+ */
+function SubagentRow({ subagent }: { subagent: Subagent }) {
+  const now = useNow();
+  const started = subagent.startedAt === null ? Number.NaN : Date.parse(subagent.startedAt);
+  const running = Number.isNaN(started) ? null : Math.max(0, Math.floor((now - started) / MILLISECONDS_PER_SECOND));
+  const { latest } = subagent;
+  return (
+    <li aria-label={`Subagent ${subagent.type}`}>
+      <span className="strong">{subagent.type}</span>
+      {subagent.task === null ? <span className="muted">no task</span> : <span className="clip" title={subagent.task}>{subagent.task}</span>}
+      {subagent.cwd !== null && <span className="mono clip" title={subagent.cwd}>{subagent.cwd}</span>}
+      <span className="mono" title="Running for">{running === null ? '' : formatDuration(running)}</span>
+      {latest !== null && (
+        <p className={`subagent-latest kind-${latest.kind}`}>
+          <span className="stream-kind">{latest.kind}</span>
+          <span className="stream-text" title={latest.text}>{latest.text}</span>
+        </p>
+      )}
+    </li>
   );
 }
 

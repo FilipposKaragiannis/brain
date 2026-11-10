@@ -6,6 +6,7 @@ import { newestCachedPlugin } from './cli.ts';
 import { childProcessRunner } from './collectors/exec.ts';
 import { pluginReader } from './collectors/plugins.ts';
 import { diskSessionFiles, SessionLocator } from './collectors/sessions.ts';
+import { SubagentReader } from './collectors/subagents.ts';
 import { privateFolder, readConfig, startReport } from './config.ts';
 import { absoluteFlags, startFailure } from './launchd.ts';
 import { stderrLogger } from './log.ts';
@@ -44,12 +45,14 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   const installed = () => installedTerminals(existsSync, os.homedir());
   /** One locator for every project: it caches what it read of the Codex session files. */
   const sessions = new SessionLocator({ home: os.homedir(), clock, files: diskSessionFiles });
+  /** One subagent reader for every project: it caches what it read of the subagents' files. */
+  const subagents = new SubagentReader({ home: os.homedir(), clock, files: diskSessionFiles });
   /** Reads the hosts' plugin files under the home, with each project's files. */
   const plugins = pluginReader(os.homedir());
 
   /** A project's monitor and runner. The runner reads the terminal setting at request time, so a change in Settings counts at once. */
   const serve = (project: ProjectDefinition) => {
-    const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE, sessions, gateSessions: sessions, plugins, newerConsole: () => selfCheck.newerConsole() });
+    const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE, sessions, gateSessions: sessions, subagents, plugins, newerConsole: () => selfCheck.newerConsole() });
     const flowConfig = new FlowConfigEditor({ projectId: project.id, root: project.root, runner: childProcessRunner, refresh: async () => { await Promise.all([monitor.refresh('files'), monitor.refresh('jobs')]); }, log });
     const actions = new ActionRunner({
       projectId: project.id,

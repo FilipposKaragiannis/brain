@@ -12,6 +12,8 @@ export type SessionFiles = {
   modifiedMs(file: string): Promise<number | null>;
   /** The first `bytes` of a file, or null when it cannot be read. */
   head(file: string, bytes: number): Promise<string | null>;
+  /** The last `bytes` of a file from the first whole line in them, or null when it cannot be read. */
+  tail(file: string, bytes: number): Promise<string | null>;
 };
 
 export const diskSessionFiles: SessionFiles = {
@@ -27,6 +29,7 @@ export const diskSessionFiles: SessionFiles = {
       } finally { await handle.close(); }
     } catch { return null; }
   },
+  tail: async (file, bytes) => (await tailOf(file, bytes))?.text ?? null,
 };
 
 export type SessionLocatorDependencies = { home: string; clock: () => Date; files: SessionFiles };
@@ -467,16 +470,18 @@ function userLine(content: unknown, at: string | null): TranscriptLine | null {
 
 /**
  * A claude transcript as lines, in file order, one per user or assistant entry that has one to
- * show (see `assistantLine` and `userLine`); meta lines, compaction summaries and side chains (a
- * subagent's own talk) make none, and a line cut by the tail or not JSON is skipped.
+ * show (see `assistantLine` and `userLine`); meta lines and compaction summaries make none, and a
+ * line cut by the tail or not JSON is skipped. Side chains (a subagent's own talk) make none
+ * either, unless `sidechains` keeps them: every line of a subagent's own transcript is one.
  */
-export function parseTranscriptLines(source: string): TranscriptLine[] {
+export function parseTranscriptLines(source: string, options: { sidechains?: boolean } = {}): TranscriptLine[] {
+  const keepSidechains = options.sidechains === true;
   const lines: TranscriptLine[] = [];
   for (const raw of source.split('\n')) {
     if (raw.trim() === '') continue;
     let entry: TranscriptEntry;
     try { entry = JSON.parse(raw) as TranscriptEntry; } catch { continue; }
-    if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isMeta === true || entry.isSidechain === true || entry.isCompactSummary === true) continue;
+    if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isMeta === true || (entry.isSidechain === true && !keepSidechains) || entry.isCompactSummary === true) continue;
     const at = typeof entry.timestamp === 'string' ? entry.timestamp : null;
     const content = entry.message?.content;
     const line = entry.type === 'assistant'

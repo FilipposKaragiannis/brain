@@ -1395,7 +1395,7 @@ test('Agent_AtTheRootUnderTheCommentsJob_JobComments', async () => {
 /** An agent the process read found at `cwd`, a child of 502 under 501. */
 const agentAt = (cwd: string, job: string | null = null): AgentProcess => ({
   pid: 503, parentPid: 502, parents: [502, 501], job, host: 'claude', kind: 'agent', cwd, elapsedSeconds: 60,
-  startedAt: '2026-10-24T18:15:04.000Z', command: '/usr/local/bin/claude -p /flow:next gh#12', session: null, activity: null,
+  startedAt: '2026-10-24T18:15:04.000Z', command: '/usr/local/bin/claude -p /flow:next gh#12', session: null, activity: null, subagents: [],
 });
 
 /** gh#12's run of a step without a worktree, at the project root, owned by `pid`. */

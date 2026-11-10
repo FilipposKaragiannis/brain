@@ -11,7 +11,7 @@ afterEach(cleanup);
 const ACTIONS_PATH = '/api/projects/project/actions';
 
 function agent(pid: number, kind: Agent['kind'], cwd: string): Agent {
-  return { pid, host: 'claude', kind, cwd, worktree: null, item: null, step: null, job: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: `claude ${pid}`, session: null, activity: null };
+  return { pid, host: 'claude', kind, cwd, worktree: null, item: null, step: null, job: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: `claude ${pid}`, session: null, activity: null, subagents: [] };
 }
 
 const JOB: Job = { name: 'next', job: 'next', host: 'claude', configured: true, state: 'scheduled', schedule: 'every 30m', args: '', installed: true, loaded: true, paused: false, running: [], last: null, recent: [], workers: [], next: '18:30', runsThisWeek: 0, failedThisWeek: 0 };

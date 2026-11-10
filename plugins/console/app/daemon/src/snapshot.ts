@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 16;
+export const SNAPSHOT_SCHEMA_VERSION = 17;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -174,6 +174,15 @@ export type TranscriptTurn = { at: string | null; role: 'user' | 'assistant'; te
  * first line only, capped at `TRANSCRIPT_LINE_CHARS`.
  */
 export type TranscriptLine = { at: string | null; kind: 'say' | 'think' | 'tool' | 'result' | 'user'; text: string };
+
+/**
+ * A subagent a claude or codex session runs now, read from the session's own files: its `type`
+ * (claude's `agentType`, codex's agent role), its `task` (claude's description, codex's task name;
+ * null when it has none), the folder it works in (`cwd`), when it started (`startedAt`, so a page
+ * counts its running time on its own clock), and its latest transcript line. `cwd`, `startedAt`
+ * and `latest` are null where its files do not tell them yet. A finished or stopped one is gone.
+ */
+export type Subagent = { id: string; host: AgentHost; type: string; task: string | null; cwd: string | null; startedAt: string | null; latest: TranscriptLine | null };
 
 /** How much of one transcript line the route returns. */
 export const TRANSCRIPT_LINE_CHARS = 300;
@@ -435,6 +444,8 @@ export type Agent = {
   session: SessionRef | null;
   /** Whether it is busy or idle and since when, or null when that is unknown (Codex, or no sessions file for this process). */
   activity: SessionActivity | null;
+  /** The subagents its session runs now, oldest first; empty without a session, and always for an ended agent. */
+  subagents: Subagent[];
 };
 
 /**
