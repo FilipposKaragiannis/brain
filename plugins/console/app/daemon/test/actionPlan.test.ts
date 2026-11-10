@@ -839,3 +839,22 @@ test('SessionStop_NoProcessReader_Refused', () => {
   const { readSession: _reader, ...unread } = STOPPABLE;
   assert.match(refusal(planAction('session.stop', stopAsked, unread)), /cannot check the pid before stopping it/, 'because a pid that cannot be checked again is never signalled');
 });
+
+test('GateClear_WithOption_PassesTheOptionFlagAndNumber', () => {
+  const plan = planned('gate.clear', { item: 'gh#755', option: '2' });
+  assert.deepEqual(plan.args.slice(1), ['clear', 'gh#755', '--option', '2'], "because gate.sh clear --option N sends option N's own text, never a retyped sentence");
+});
+
+test('GateClear_OptionWithANote_NoteAfterTheNumber', () => {
+  const plan = planned('gate.clear', { item: 'gh#755', option: '1', message: 'Mark the old name deprecated.' });
+  assert.deepEqual(plan.args.slice(1), ['clear', 'gh#755', '--option', '1', 'Mark the old name deprecated.'], 'because gate.sh reads the note after the option number as a second paragraph');
+});
+
+test('GateClear_OptionNotOneToNine_Rejected', () => {
+  for (const option of ['0', '10', 'two', '1.5', '-1', ''])
+    assert.equal(planAction('gate.clear', { item: 'gh#755', option }, CONTEXT).ok, false, `because "${option}" is not an option number gate.sh clear --option takes (1 to 9)`);
+});
+
+test('GateClear_OptionWithBack_Rejected', () => {
+  assert.equal(planAction('gate.clear', { item: 'gh#755', option: '1', message: 'redo it', back: 'true' }, CONTEXT).ok, false, 'because picking an answer and sending the work back are two different clears');
+});

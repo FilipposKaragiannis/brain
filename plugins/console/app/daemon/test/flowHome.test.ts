@@ -365,3 +365,64 @@ test('FlowHome_NoLessonsOrRetroFiles_EmptyRetroFacts', async () => {
     assert.deepEqual(retro, { lessons: [], lessonLines: 0, retros: [] }, 'because the files stay on the machine that ran the flow, so a missing one is no lesson and no retro');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+/** The gate records gh-170 writes beside the message: options, who asks, who answers, a condition and the footer. */
+const OPTIONED_RECORD = {
+  gate: 'ambiguity', item: 'gh#767', message: '**Keep the contact law or replace it?**', time: '2026-11-09T09:40:00Z', host: 'claude',
+  options: [
+    { label: 'Keep the law', text: 'Keep the contact law; tune the friction only.', recommended: true },
+    { label: 'Replace it', text: 'Replace the contact law with the impulse model.', recommended: false },
+  ],
+  raised_by: 'step implement', answered_by: 'comments job, next pass', condition: 'blocked_by:gh#772', footer: 'Clear it: `gate.sh clear gh#767 --option 1`',
+};
+
+/** The gate readFlowHome finds in a project holding `record` as gh-767's only gate. */
+async function gateWith(record: Record<string, unknown>) {
+  const gates = await withProject(async (root) => {
+    writeFileSync(path.join(root, '.flow', 'gates', 'gh-767.json'), JSON.stringify(record));
+    return (await readFlowHome(root, fakeRunner)).gates;
+  });
+  return gates[0] ?? assert.fail('because the project holds one gate record');
+}
+
+test('GateRecordWithOptions_OptionsReadInTheirOrder', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.deepEqual(gate.options, OPTIONED_RECORD.options, 'because option N on the card must be option N that gate.sh clear --option N sends');
+});
+
+test('GateRecordWithRoles_RaisedByRead', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.equal(gate.raisedBy, 'step implement', 'because the card names who asked');
+});
+
+test('GateRecordWithRoles_AnsweredByRead', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.equal(gate.answeredBy, 'comments job, next pass', 'because the card names who carries the answer out');
+});
+
+test('GateRecordWithCondition_ConditionRead', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.equal(gate.condition, 'blocked_by:gh#772', 'because the card says what the health job waits on before it clears the gate itself');
+});
+
+test('GateRecordOptionWithEmptyLabel_NoOptionsAtAll', async () => {
+  const gate = await gateWith({ ...OPTIONED_RECORD, options: [{ label: '', text: 'Keep it.', recommended: false }, OPTIONED_RECORD.options[1]] });
+  assert.deepEqual(gate.options, [], 'because dropping one malformed option would renumber the rest, and a button would send another option than it shows');
+});
+
+const OLDER_RECORD = { gate: 'ambiguity', item: 'gh#767', message: '1. Keep it?', time: '2026-11-09T09:40:00Z', host: 'shell' };
+
+test('GateRecordFromAnOlderFlow_NoOptions', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.deepEqual(gate.options, [], 'because a record written before options existed offers none, so the card shows no buttons');
+});
+
+test('GateRecordFromAnOlderFlow_NoRaisedBy', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.raisedBy, null, 'because an older record names nobody who asked, and the card must not invent one');
+});
+
+test('GateRecordFromAnOlderFlow_NoAnsweredBy', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.answeredBy, null, 'because an older record names nobody who carries the answer, and the card must not invent one');
+});

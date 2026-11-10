@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { EndedAgent, Gate, Job, Snapshot } from '../../daemon/src/snapshot.ts';
 import { Gates, GatesHeading } from '../src/screens/Gates.tsx';
@@ -395,4 +395,79 @@ test('AnsweredHereAndLogged_ListedOnce', async () => {
   await press('Approve');
   view.rerender(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 2), gates: [], events: [{ at: new Date().toISOString(), item: 'gh#514', kind: 'answered', message: 'plan-approval: Approved.' }] }} selected={PLAN_GATE.item} /></Wrapper>);
   expect(screen.getAllByText(/gh#514 plan-approval ·/), 'because the logged line is the same answer as the one given here').toHaveLength(1);
+});
+
+const OPTIONS_GATE: Gate = {
+  ...waitingGate('gh#755', 'ambiguity'),
+  message: '**Phantom friction: which fix?**\n1. Clamp, damp or rewrite?',
+  questions: [{ number: 1, text: 'Clamp, damp or rewrite?', recommended: null }],
+  options: [
+    { label: 'Clamp the velocity', text: 'Clamp the ball velocity at the wall contact.', recommended: true },
+    { label: 'Damp the spin', text: 'Damp the spin by 0.2 per contact.', recommended: false },
+    { label: 'Rewrite the contact', text: 'Rewrite the contact law with impulses.', recommended: false },
+  ],
+};
+
+test('GateWithOptions_OneButtonPerOption', () => {
+  renderGate(OPTIONS_GATE);
+  const group = screen.getByRole('group', { name: 'Pick an answer' });
+  expect(within(group).getAllByRole('button').map((button) => button.textContent), 'because each option the agent offered is one press').toEqual(['1. Clamp the velocity', '2. Damp the spin', '3. Rewrite the contact']);
+});
+
+test('OptionPressed_ClearsWithThatOptionsNumber', async () => {
+  const { daemon, posted } = recordingDaemon();
+  renderGate(OPTIONS_GATE, daemon);
+  await press('2. Damp the spin');
+  expect(posted[0], 'because gate.sh clear --option 2 sends the option text the agent wrote, never a retyped sentence').toEqual({ kind: 'gate.clear', args: { item: 'gh#755', option: '2' } });
+});
+
+test('GateWithoutOptions_NoOptionButtons', () => {
+  renderGate(ASKING);
+  expect(screen.queryByRole('group', { name: 'Pick an answer' }), 'because a gate raised without options, or by an older flow, is answered in words').toBeNull();
+});
+
+test('GateWithRoles_CardSaysWhoRaisedIt', () => {
+  renderGate({ ...ASKING, raisedBy: 'health job', answeredBy: 'step verify' });
+  expect(screen.getByRole('region', { name: 'Decision card' }).textContent, 'because the owner sees who asks').toMatch(/raised by\s*health job/);
+});
+
+test('GateWithRoles_CardSaysWhoCarriesTheAnswerOut', () => {
+  renderGate({ ...ASKING, raisedBy: 'health job', answeredBy: 'comments job, next pass' });
+  expect(screen.getByRole('region', { name: 'Decision card' }).textContent, 'because the owner sees what happens to the answer').toMatch(/answered by\s*comments job, next pass/);
+});
+
+/** gh#767 and its sibling gh#769 asking the same question, folded by the daemon into one row. */
+const FIRST_TWIN: Gate = { ...ASKING, item: 'gh#767', twins: ['gh#769'] };
+const SECOND_TWIN: Gate = { ...ASKING, item: 'gh#769', ageSeconds: ASKING.ageSeconds - 300, twinOf: 'gh#767' };
+
+function renderTwins(daemon: FakeDaemon, first: Gate = FIRST_TWIN, second: Gate = SECOND_TWIN): void {
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 2), gates: [first, second] }} selected={first.item} /></Wrapper>);
+}
+
+test('TwinGates_OneRowInTheWaitingList', () => {
+  renderTwins(new FakeDaemon());
+  expect(within(screen.getByLabelText('Waiting gates')).queryByText('gh#769'), 'because two items asking the same question under one parent are one question to the owner').toBeNull();
+});
+
+test('TwinGates_OneAnswerClearsBothWithTheSameWords', async () => {
+  const { daemon, posted } = recordingDaemon();
+  renderTwins(daemon);
+  fireEvent.change(screen.getByLabelText('Your answer to question 2'), { target: { value: 'No.' } });
+  await press('Send answers');
+  const message = '1. the ball misses the target.\n2. No.';
+  expect(posted.filter((action) => action.kind === 'gate.clear'), 'because a different answer on the twin would be a defect').toEqual([
+    { kind: 'gate.clear', args: { item: 'gh#767', message } },
+    { kind: 'gate.clear', args: { item: 'gh#769', message } },
+  ]);
+});
+
+test('TwinGatesWithOptions_OneOptionPressClearsBoth', async () => {
+  const { daemon, posted } = recordingDaemon();
+  renderTwins(daemon, { ...OPTIONS_GATE, item: 'gh#767', twins: ['gh#769'] }, { ...OPTIONS_GATE, item: 'gh#769', ageSeconds: OPTIONS_GATE.ageSeconds - 300, twinOf: 'gh#767' });
+  await press('1. Clamp the velocity');
+  expect(posted.filter((action) => action.kind === 'gate.clear'), 'because the pick answers every twin with the same option').toEqual([
+    { kind: 'gate.clear', args: { item: 'gh#767', option: '1' } },
+    { kind: 'gate.clear', args: { item: 'gh#769', option: '1' } },
+  ]);
 });

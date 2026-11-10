@@ -17,7 +17,7 @@ import { DisagreementSettler } from '../src/settle.ts';
 import type { ReadMarks } from '../src/settle.ts';
 import type { JobRunRecord, JobStatusRow } from '../src/collectors/jobs.ts';
 import type { Freshness, Snapshot } from '../src/snapshot.ts';
-import { JOB_RUNS_KEPT } from '../src/snapshot.ts';
+import { JOB_RUNS_KEPT, TWIN_WINDOW_HOURS } from '../src/snapshot.ts';
 import { BOARD_JSON, FIXTURE_ROOT, JOBS_JSON, LOCAL_BOARD_JSON, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
@@ -1422,4 +1422,80 @@ test('Agent_UnderARunOfAnotherItemThanTheClaim_NoStep', async () => {
   facts.processes = { ...NOTHING_RUNS, agents: [agentAt(WT3)] };
   facts.flow.runs = [...facts.flow.runs, { item: 'gh#12', step: 'plan', profile: 'feature', worktree: WT3, host: 'claude', startedAt: '2026-10-24T18:15:00Z', pid: 501 }];
   assert.deepEqual(workOf(reconcile(facts), 503), ['gh#9', null], "because the claim names the item, and a step of another item's run would say the wrong thing about it");
+});
+
+/** The ambiguity record gh#767 raised, and the one its sibling gh#769 raised twenty minutes later with the same question. */
+const TWIN_QUESTION = '**Contact law.**\n1. Keep the contact law, or replace it with the impulse model?\nRecommended: keep it, the goldens depend on it.';
+const twinRecord = (item: string, time: string, change: Partial<ReconcileInput['flow']['gates'][number]> = {}): ReconcileInput['flow']['gates'][number] => ({
+  item, gate: 'ambiguity', message: TWIN_QUESTION, time, host: 'claude', questions: null, plan: null,
+  options: [], raisedBy: 'step implement', answeredBy: 'step implement', condition: null, footer: null, ...change,
+});
+const EARLIER_TWIN_AT = '2026-10-24T09:00:00Z';
+const LATER_TWIN_AT = '2026-10-24T09:20:00Z';
+
+/** The fixture with its gates replaced by `gates`, gh#767 and gh#769 under parent gh#760 and gh#771 under parent gh#770. */
+async function twinFacts(gates: ReconcileInput['flow']['gates']): Promise<ReconcileInput> {
+  const facts = withBoardItems(await input(), [
+    { id: 'gh#767', title: 'Ball friction', parent: 'gh#760' },
+    { id: 'gh#769', title: 'Wall friction', parent: 'gh#760' },
+    { id: 'gh#771', title: 'Keeper friction', parent: 'gh#770' },
+  ]);
+  return { ...facts, flow: { ...facts.flow, gates } };
+}
+
+const gateOf = (picture: Snapshot, item: string) => picture.gates.find((gate) => gate.item === item) ?? assert.fail(`because ${item} has a gate record`);
+
+test('TwinGates_SameParentSameQuestion_LaterIsTwinOfEarlier', async () => {
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#769', LATER_TWIN_AT)]));
+  assert.equal(gateOf(picture, 'gh#769').twinOf, 'gh#767', 'because two siblings asking the same question within the window are one question to the owner');
+});
+
+test('TwinGates_SameParentSameQuestion_EarlierListsTheLater', async () => {
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#769', LATER_TWIN_AT)]));
+  assert.deepEqual(gateOf(picture, 'gh#767').twins, ['gh#769'], 'because the row the owner answers must know every gate its answer clears');
+});
+
+test('TwinGates_QuestionDiffersOnlyInCaseSpacingAndEmphasis_StillTwins', async () => {
+  const restyled = '**Contact law.**\n1. keep the  *contact law*, or replace it with the `impulse model`?\nRecommended: keep it, the goldens depend on it.';
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#769', LATER_TWIN_AT, { message: restyled })]));
+  assert.equal(gateOf(picture, 'gh#769').twinOf, 'gh#767', 'because two agents writing the same question differ in markdown and case, not in what they ask');
+});
+
+test('TwinGates_DifferentQuestion_NoTwin', async () => {
+  const other = '**Contact law.**\n1. Keep the wall restitution at 0.8?\nRecommended: yes.';
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#769', LATER_TWIN_AT, { message: other })]));
+  assert.equal(gateOf(picture, 'gh#769').twinOf, null, 'because a different question needs its own answer');
+});
+
+test('TwinGates_DifferentParent_NoTwin', async () => {
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#771', LATER_TWIN_AT)]));
+  assert.equal(gateOf(picture, 'gh#771').twinOf, null, 'because items planned apart may need different answers to the same words');
+});
+
+test('TwinGates_EscalationsWithTheSameText_NoTwin', async () => {
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT, { gate: 'escalation' }), twinRecord('gh#769', LATER_TWIN_AT, { gate: 'escalation' })]));
+  assert.equal(gateOf(picture, 'gh#769').twinOf, null, 'because only ambiguity gates are folded; an escalation is about its own item');
+});
+
+test('TwinGates_RaisedFurtherApartThanTheWindow_NoTwin', async () => {
+  const later = new Date(Date.parse(EARLIER_TWIN_AT) + (TWIN_WINDOW_HOURS + 1) * 3600 * 1000).toISOString();
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#769', later)]));
+  assert.equal(gateOf(picture, 'gh#769').twinOf, null, 'because a question asked again a day later may be asked for a new reason');
+});
+
+test('TwinGates_RaisedJustInsideTheWindow_Twins', async () => {
+  const later = new Date(Date.parse(EARLIER_TWIN_AT) + (TWIN_WINDOW_HOURS - 1) * 3600 * 1000).toISOString();
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#769', later)]));
+  assert.equal(gateOf(picture, 'gh#769').twinOf, 'gh#767', 'because the window, not the twenty minutes of the case seen, bounds the join');
+});
+
+test('TwinGates_CountedOnceInNeedsYou', async () => {
+  const alone = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT)]));
+  const twins = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#769', LATER_TWIN_AT)]));
+  assert.equal(twins.counts.needsYou, alone.counts.needsYou, 'because one answer clears both, so the owner has one thing to do');
+});
+
+test('TwinGates_OneGateRowInAttention', async () => {
+  const picture = reconcile(await twinFacts([twinRecord('gh#767', EARLIER_TWIN_AT), twinRecord('gh#769', LATER_TWIN_AT)]));
+  assert.deepEqual(picture.attention.filter((row) => row.kind === 'gate').map((row) => row.id), ['gh#767'], 'because the Overview lists the question once, under the gate raised first');
 });
