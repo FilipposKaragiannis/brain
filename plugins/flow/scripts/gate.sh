@@ -19,6 +19,11 @@
 #                                           error stopped outside any item's run
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
 #                                           with the claimed worktree, the age and the questions
+#   gate.sh drop <item> <why>               the item closed under the gate (steward.sh sweep): the
+#                                           gate, its record and its gate: label go, no answer
+#                                           recorded; an ambiguity or escalation question nobody
+#                                           answered is posted on the item and printed, marked
+#                                           unanswered, so the owner can file a follow-up
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
 # FLOW_NOW (an ISO time, 2026-10-25T09:00:00Z) stands in for the clock in the age. It exists for
 # tests, like FLOW_HOME.
@@ -157,5 +162,26 @@ $message" >/dev/null
       c="$(cat "$f")"
       printf '%s\t%s\tstopped\t%s: %s\n' "$(json_get "$c" at)" "$(json_get "$c" host)" "$(json_get "$c" cause)" "$(json_get "$c" said)"
     done ;;
-  *) sed -n '2,24p' "$0"; exit 2 ;;
+  drop)
+    [ $# -eq 3 ] || die "usage: gate.sh drop <item> <why>" 2
+    item="$2"; why="$3"; record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""
+    [ -f "$record" ] && { asked="$(json_get "$(cat "$record")" message)"; gate="$(json_get "$(cat "$record")" gate)"; }
+    [ -n "$gate" ] || { gate="$(state_get "$(adapter read "$item" 2>/dev/null)" gate)"; [ "$gate" != none ] || gate=""; }
+    [ -n "$gate" ] || exit 0
+    adapter write-state "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
+      || die "cannot drop the $gate gate of $item; it stays"
+    rm -f "$record"
+    case "$gate" in
+      ambiguity|escalation)
+        quoted="$(printf '%s\n' "${asked:-(the question is in the gate comment above)}" | sed 's/^/> /')"
+        adapter comment "$item" --body "**Unanswered: the $gate gate closed with the item** ($why). Nobody answered it; file a follow-up if the question still stands:
+
+$quoted" >/dev/null || echo "flow: could not post the unanswered $gate question on $item" >&2
+        echo "$item: dropped the $gate gate unanswered ($why); file a follow-up if the question still stands:"
+        printf '%s\n' "$quoted" | sed 's/^/  /' ;;
+      *)
+        adapter comment "$item" --body "Gate dropped: the $gate gate closed with the item ($why)." >/dev/null || echo "flow: could not comment on $item" >&2
+        echo "$item: dropped the $gate gate ($why)" ;;
+    esac ;;
+  *) sed -n '2,29p' "$0"; exit 2 ;;
 esac

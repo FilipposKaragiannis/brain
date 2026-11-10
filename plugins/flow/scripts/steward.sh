@@ -578,7 +578,9 @@ cmd_prune() {
 
 # cmd_sweep: merging on the host is the owner's answer to the merge gate, so nobody has to say it
 # again. Each claimed worktree whose item is closed, or whose linked PR is merged, is released:
-# an open merge gate clears with the PR's URL, an item still open closes (a PR into an epic
+# an open merge gate clears with the PR's URL, any other gate is dropped (gate.sh drop: its
+# label goes, and an unanswered ambiguity or escalation question is posted on the item and
+# printed here, for a follow-up), an item still open closes (a PR into an epic
 # branch does not close its issue), and the task branch goes even when squash-merged, but only
 # while its tip is the PR's head, so a commit made after the merge keeps it. A worktree with
 # uncommitted changes, a run in flight, or an item that cannot be read is left alone.
@@ -617,7 +619,11 @@ cmd_sweep() {
     if [ -f "$home/runs/$(item_slug "$it").json" ]; then echo "$it: kept $name, a run is in flight"; continue; fi
     if dirty "$p"; then echo "$it: kept $name, it has uncommitted changes ($why)"; continue; fi
     if [ "$dry" -eq 1 ]; then echo "$it: would release $name ($why)"; continue; fi
-    [ "$gate" = merge ] && "$FLOW_PLUGIN/scripts/gate.sh" clear "$it" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" >/dev/null && echo "$it: cleared the merge gate"
+    if [ "$gate" = merge ]; then
+      "$FLOW_PLUGIN/scripts/gate.sh" clear "$it" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" >/dev/null && echo "$it: cleared the merge gate"
+    elif { [ -n "$gate" ] && [ "$gate" != none ]; } || [ -f "$home/gates/$(item_slug "$it").json" ]; then
+      "$FLOW_PLUGIN/scripts/gate.sh" drop "$it" "$why"
+    fi
     [ "$status" = closed ] || adapter close "$it" --comment "Closed by flow: $pr is merged." >/dev/null || echo "flow: could not close $it" >&2
     force=""
     [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
@@ -841,6 +847,8 @@ health_claim() {
   [ "$health_gate" != merge ] || health_review "$it" "$(state_get "$data" pr)"
   if [ -n "$health_held" ]; then reviewing=$((reviewing + 1)); holders="$holders$name $it its PR is $health_held, so the merge gate waits on the reviewers
 "
+  elif [ -n "$health_gate" ] && [ "$(json_get "$data" status)" = closed ]; then holders="$holders$name $it closed with its $health_gate gate left open, a defect
+"
   elif [ -n "$health_gate" ]; then gated=$((gated + 1)); holders="$holders$name $it waiting at the $health_gate gate
 "; fi
   ahead="$(git -C "$p" rev-list --count "$(base_ref "$bs")..HEAD" 2>/dev/null)"; ahead="${ahead:-0}"
@@ -998,13 +1006,23 @@ health_empty() {
   flow_unlock
 }
 
-# health_gates: a gate pending longer than gate_reminder says so once per interval.
+# health_gates: a gate pending longer than gate_reminder says so once per interval. A gate on a
+# closed item waits on nobody: it is a defect (the sweep drops the gate of an item it closes),
+# said and notified once while it stays, with the command that drops it.
 health_gates() {
+  gc_keys=""
   for f in "$home"/gates/*.json; do
     [ -f "$f" ] || continue
     g="$(cat "$f")"; gi="$(json_get "$g" item)"; gt="$(json_get "$g" gate)"; since="$(hpy epoch "$(json_get "$g" time)")"
     # A merge gate whose PR is still in review waits on the reviewers, not on the owner.
     case "$health_in_review" in *" $(item_slug "$gi") "*) [ "$gt" = merge ] && continue ;; esac
+    if [ -n "$gi" ] && [ "$(json_get "$(adapter read "$gi" 2>/dev/null)" status 2>/dev/null)" = closed ]; then
+      gc_keys="$gc_keys gate-closed-$(item_slug "$gi")"
+      health_changed "gate-closed-$(item_slug "$gi")" "$gt" || continue
+      health_say "$gi" "defect: closed with its $gt gate still open; nobody is asked. Drop it: gate.sh drop $gi \"closed\""
+      health_notify "$gi is closed with its $gt gate still open, a defect: nobody is asked. Drop it: gate.sh drop $gi \"closed\""
+      continue
+    fi
     waiting=$((waiting + 1))
     [ $((now - since)) -gt "$reminder" ] || continue
     rf="$home/health/$(item_slug "$gi").remind"; sent=0; sent_gate=""
@@ -1018,6 +1036,10 @@ health_gates() {
   for rf in "$home"/health/*.remind; do
     [ -f "$rf" ] || continue
     [ -f "$home/gates/$(basename "$rf" .remind).json" ] || { [ "$dry" -eq 1 ] || rm -f "$rf"; }
+  done
+  for gc_f in "$home"/health/gate-closed-*.seen; do
+    [ -f "$gc_f" ] || continue
+    case " $gc_keys " in *" $(basename "$gc_f" .seen) "*) ;; *) health_cleared "$(basename "$gc_f" .seen)" ;; esac
   done
 }
 

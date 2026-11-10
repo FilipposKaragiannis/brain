@@ -2085,6 +2085,24 @@ sa="$("$P/adapters/local/create.sh" task "Merged with an ambiguity gate open")";
 fake_pr MERGED "$(commit_in "$wa" ambiguous)"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "Sweep_MergedItemWithOpenGate_LeavesNoGate: gate.sh list names no gate of an item the sweep closed (gh#166)" sh -c "gates=\"\$('$P/scripts/gate.sh' list)\" && ! printf '%s\\n' \"\$gates\" | grep -q '	$sa	'"
+se="$("$P/adapters/local/create.sh" task "Merged with an escalation gate open")"; we_="$("$P/scripts/steward.sh" claim "$se")"
+"$P/adapters/local/link-pr.sh" "$se" https://gh/pull/90
+unasked="Which atlas row keeps the NetFriction retune?"
+"$P/scripts/gate.sh" raise "$se" escalation "$unasked" >/dev/null 2>&1
+fake_pr MERGED "$(commit_in "$we_" escalated)"
+"$P/scripts/steward.sh" sweep > "$work/sweep-unanswered.out" 2>/dev/null
+check "Sweep_UnansweredEscalationGate_ReportNamesItUnanswered: the sweep's output names the item's escalation gate unanswered" grep -q "$se: .*escalation gate unanswered" "$work/sweep-unanswered.out"
+check "Sweep_UnansweredEscalationGate_ReportQuotesTheQuestion: the sweep's output quotes the question nobody answered" grep -qF "> $unasked" "$work/sweep-unanswered.out"
+check "Sweep_UnansweredEscalationGate_QuotedOnTheItem: a comment on the closed item marks the question unanswered and quotes it" sh -c "sed -n '/Unanswered: the escalation gate/,\$p' .flow/items/task/${se##*/}.md | grep -qF '$unasked'"
+sg="$("$P/adapters/github/create.sh" task "Merged with a feel-test gate open")"; wg="$("$P/scripts/steward.sh" claim "$sg")"
+"$P/adapters/github/link-pr.sh" "$sg" https://gh/pull/90
+"$P/scripts/gate.sh" raise "$sg" feel-test "Launch it and play a match." >/dev/null 2>&1
+issue_labels() { python3 -c 'import json,sys; print("\n".join(next(i for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2]))["labels"]))' "$FAKE_GH_DIR/issues.json" "${1#gh#}"; }
+check_all "sweep: a gate raised on a GitHub item carries its gate label" 'issue_labels "$sg" | grep -qx gate:feel-test'
+fake_pr MERGED "$(commit_in "$wg" felt)"
+"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+check "sweep: the merged GitHub item is closed" [ "$("$P/adapters/github/read.sh" "$sg" | jget status)" = closed ]
+check_all "Sweep_MergedGitHubItemWithOpenGate_RemovesTheGateLabel: the issue the sweep closed keeps no gate: label" 'labels="$(issue_labels "$sg")" && ! printf "%s\n" "$labels" | grep -q "^gate:"'
 sl="$("$P/adapters/local/create.sh" task "Commit after merge")"; wl="$("$P/scripts/steward.sh" claim "$sl")"
 merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 "$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
@@ -2364,6 +2382,13 @@ check "health: a gate waiting past the reminder interval is reminded once" sh -c
 printf 'escalation 1\n' > ".flow/health/$(item_slug "$b").remind"
 hs > "$hroot/out" 2>&1
 check "health: the next interval reminds again" grep -q "$b: waiting 2d .* at the escalation gate" "$hroot/out"
+waiting_before="$(hs 2>&1 | tail -1 | sed -n 's/.* \([0-9]*\) gate(s) waiting.*/\1/p')"
+gc="$(hitem "Closed under a gate")"; "$P/scripts/gate.sh" raise "$gc" feel-test "Launch it." >/dev/null 2>&1
+"$P/adapters/local/close.sh" "$gc" >/dev/null
+hs > "$hroot/out" 2>&1
+check "HealthGates_GateOnClosedItem_SaidAsADefect: a gate on a closed item is reported as a defect" grep -q "$gc: defect: closed with its feel-test gate" "$hroot/out"
+check "HealthGates_GateOnClosedItem_NotCountedAsWaiting: a gate on a closed item is not counted among the gates waiting" sh -c "[ -n '$waiting_before' ] && tail -1 '$hroot/out' | grep -q ' $waiting_before gate(s) waiting'"
+"$P/scripts/gate.sh" drop "$gc" closed >/dev/null 2>&1
 
 rm -f "$wc2/dirty.txt"; "$P/scripts/steward.sh" release "$c" --force >/dev/null 2>&1
 e="$(hitem "No remote branch")"; we="$(hold "$e")"; commit_in "$we" solo >/dev/null; rm -f "$(rec "$e")"; stale_claim "$we"

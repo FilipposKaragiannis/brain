@@ -52,7 +52,10 @@ as "Answered today".
 | `escalation`, `ambiguity` | the decision, or the fix, in a sentence |
 
 A gate nobody answers is not forgotten: the `health` job reminds once per `jobs.health.gate_reminder`
-(24h) while it waits, and the board's `## Health` section lists it.
+(24h) while it waits, and the board's `## Health` section lists it. An item that closes under a
+gate (its PR merged) loses the gate in the sweep, `gate.sh drop <item> <why>`; an ambiguity or
+escalation question nobody answered is quoted on the closed item, marked unanswered, for a
+follow-up.
 
 ## Answering on the tracker
 
