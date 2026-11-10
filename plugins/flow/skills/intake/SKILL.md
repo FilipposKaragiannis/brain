@@ -61,8 +61,8 @@ out.
    that note names this one when it is filed.
 6. **Needs the owner?** When the rules say so, file it anyway, then raise the gate with the
    questions in the gate skill's format (numbered, one per line, each with its recommended
-   answer): `"$P/scripts/gate.sh" raise <id> ambiguity "<questions>"`. Mark the result
-   `needs_owner`.
+   answer): `"$P/scripts/gate.sh" raise <id> ambiguity "<questions>" --raised-by "intake job"`.
+   Mark the result `needs_owner`.
 
 ## Output
 
