@@ -136,7 +136,7 @@ job_effort() { printf '%s' "${job_e:-}"; }
 # job_host_run <dir> <prompt>: one host session with the jobs' model and effort, names as is.
 job_host_run() { host_run "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is; }
 # job_host_stopped: true when the host is stopped (host_run refused a session, exit 75, or a
-# session's spend limit or auth error stopped it), and the job's line then says so and why. No
+# session's spend limit, auth error or unknown model stopped it), and the job's line then says so and why. No
 # later session of the run would start. The stop names no item, so gate.sh clear <host> lifts it:
 # the comments job's item waits at the merge gate, which an escalation gate would replace.
 job_host_stopped() { _stop="$(host_stopped "$host")"; [ -n "$_stop" ] || return 1; job_say "stopped: $_stop"; }

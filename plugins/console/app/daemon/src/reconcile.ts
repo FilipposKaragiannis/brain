@@ -879,7 +879,7 @@ function needsFieldAttention(items: Item[]): AttentionRow[] {
 }
 
 /** A stop's cause in words, as flow's `host_cause_said` says it. */
-const CAUSE_SAID: Record<string, string> = { 'spend-limit': 'a spend limit', auth: 'an auth error' };
+const CAUSE_SAID: Record<string, string> = { 'spend-limit': 'a spend limit', auth: 'an auth error', model: 'an unknown model' };
 
 /** A stopped host's row: the host, the cause in words and what the host said, with the button that clears it (`gate.sh clear <host>`). */
 function stoppedHostAttention(stopped: StoppedHost, now: Date): AttentionRow {

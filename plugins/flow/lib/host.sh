@@ -15,7 +15,7 @@
 # back into the text they would have printed; stderr streams as it comes. After the run,
 # host_usage holds the usage the host reported as JSON (with cost_usd and the models that ran),
 # empty when it reported none, host_last the session's last message, and host_cause is
-# spend-limit or auth when the session failed on one, with host_said the host's line. That cause
+# spend-limit, auth or model when the session failed on one, with host_said the host's line. That cause
 # stops the host (host_stop): every later host_run on it refuses, exit 75, until the owner clears
 # it (gate.sh clear).
 command -v flow_home >/dev/null 2>&1 || . "$FLOW_PLUGIN/lib/flow.sh"
@@ -70,7 +70,7 @@ host_run() {
   return "$_code"
 }
 
-# A host stopped on a spend limit or an auth error starts no session until the owner clears it:
+# A host stopped on a spend limit, an auth error or an unknown model starts no session until the owner clears it:
 # <flow home>/log/<host>.stopped holds the cause, the host's line, when, and the item whose gate
 # names it (host_stop_item, once the caller raised one). gate.sh clear on that item, or on the
 # host's name, removes it.
@@ -94,11 +94,12 @@ host_stop_item() {
   json_obj "host=$1" "cause=$(json_get "$_s" cause)" "said=$(json_get "$_s" said)" "at=$(json_get "$_s" at)" "item=$2" > "$_f"
 }
 # host_cause_said <cause>: the cause in words.
-host_cause_said() { case "$1" in spend-limit) printf 'a spend limit' ;; auth) printf 'an auth error' ;; *) printf '%s' "$1" ;; esac; }
+host_cause_said() { case "$1" in spend-limit) printf 'a spend limit' ;; auth) printf 'an auth error' ;; model) printf 'an unknown model' ;; *) printf '%s' "$1" ;; esac; }
 # host_stop_fix <host> <cause>: what the owner does before clearing, with no full stop.
 host_stop_fix() {
   case "$2" in
     auth) printf 'Sign %s in again (%s)' "$1" "$([ "$1" = codex ] && echo 'codex login' || echo 'claude, then /login')" ;;
+    model) printf 'Name a model %s knows in jobs.%s.model, or update %s so it knows the roster'"'"'s model' "$1" "$1" "$1" ;;
     *) printf 'Raise the limit or wait for its reset' ;;
   esac
 }

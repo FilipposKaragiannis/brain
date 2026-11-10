@@ -3227,6 +3227,8 @@ case "${FAKE_HOST:-ok}" in
   auth) echo '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}'; exit 1 ;;
   other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
   errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
+  model) echo '[claude-code:unrecognized_model] {"model":"claude-nope-9","query_source":"sdk"}' >&2
+         echo '{"type":"result","subtype":"success","is_error":true,"result":"There'"'"'s an issue with the selected model (claude-nope-9). It may not exist or you may not have access to it. Run --model to pick a different model.","total_cost_usd":0}'; exit 1 ;;
   quote) echo '{"type":"result","subtype":"success","is_error":false,"result":"Done. The old log said: Credit balance is too low."}'; exit 0 ;;
   silent) echo '{"type":"result","subtype":"success","is_error":false,"result":"Every write was denied, so no report was written."}'; exit 0 ;;
 esac
@@ -3242,6 +3244,8 @@ case "${FAKE_HOST:-ok}" in
   auth) echo '{"type":"thread.started","thread_id":"t"}'
         echo '{"type":"error","message":"unexpected status 401 Unauthorized: Your access token could not be refreshed"}'
         echo '{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}'; exit 1 ;;
+  model) echo '{"type":"thread.started","thread_id":"t"}'
+         echo '{"type":"turn.failed","error":{"message":"status 400 model_not_found: The gpt-nope-9 model is not supported when using Codex with a ChatGPT account."}}'; exit 1 ;;
 esac
 brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
 report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" 2>/dev/null | head -1)"
@@ -3357,6 +3361,12 @@ check_all "a Claude login that does not work is an auth stop" '[ "$(jget cause <
 FAKE_HOST=errors PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' > "$work/cost.out" 2>/dev/null
 check_all "a Claude error result with its words in errors, not result, is logged and stops the host" 'grep -q "Credit balance is too low" "$work/cost.out" && [ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ]'
 "$P/scripts/gate.sh" clear claude >/dev/null
+FAKE_HOST=model PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
+check_all "a model claude does not know stops claude, naming the model" '[ "$(jget cause < .flow/log/claude.stopped)" = model ] && grep -q "claude-nope-9" .flow/log/claude.stopped && grep -q "	host-stopped	claude stopped on an unknown model: .*claude-nope-9" .flow/events.log'
+"$P/scripts/gate.sh" clear claude >/dev/null
+FAKE_HOST=model PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run codex . hi' >/dev/null 2>&1
+check_all "a model codex does not have stops codex, naming the model" '[ "$(jget cause < .flow/log/codex.stopped)" = model ] && grep -q "gpt-nope-9" .flow/log/codex.stopped'
+"$P/scripts/gate.sh" clear codex >/dev/null
 FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
