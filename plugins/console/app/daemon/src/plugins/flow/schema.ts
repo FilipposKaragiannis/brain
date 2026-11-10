@@ -98,7 +98,7 @@ export const DEFAULT_JOBS_HOST: JobsHost = 'claude';
 export type HostDefaults = { codex: { model: string | null; effort: string | null; profile: string | null } | null };
 
 /** The roster's Claude names as codex takes them, as `host_codex_model` in the plugin's lib/host.sh maps them. */
-const CODEX_FROM_ROSTER: Record<string, string> = { sonnet: 'gpt-6-luna', opus: 'gpt-6-sol', fable: 'gpt-6-astra', haiku: 'gpt-6-luna' };
+const CODEX_FROM_ROSTER: Record<string, string> = { sonnet: 'gpt-6.1-terra', opus: 'gpt-6.1-sol', fable: 'gpt-6-astra', haiku: 'gpt-6-luna' };
 
 /**
  * What the plugin (flow 1.20.0, `host_jobs_pair` in lib/host.sh) still takes from the deprecated
@@ -169,7 +169,7 @@ const NEXT_CLAIM: FollowUp = { note: 'The pool reads this at the next claim; not
 
 const HOST_SETTINGS: Record<JobsHost, { model: string[]; effort: string[]; cli: string }> = {
   claude: { model: ['opus', 'sonnet', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'], cli: 'Claude' },
-  codex: { model: ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'], effort: ['low', 'medium', 'high', 'xhigh'], cli: 'Codex' },
+  codex: { model: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-luna'], effort: ['low', 'medium', 'high', 'xhigh'], cli: 'Codex' },
 };
 /** `low, medium or high`: a list as a sentence says it. */
 const saidList = (values: string[]): string => values.length < 2 ? values.join('') : `${values.slice(0, -1).join(', ')} or ${values[values.length - 1]}`;

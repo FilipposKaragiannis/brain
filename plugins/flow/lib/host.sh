@@ -38,7 +38,7 @@ host_permission_mode() {
 host_skill_prompt() {
   case "$1" in codex) printf '$%s %s' "$3" "$4" ;; *) printf '/%s:%s %s' "$2" "$3" "$4" ;; esac
 }
-host_codex_model() { printf '%s' "$1" | sed 's/^sonnet$/gpt-6-luna/; s/^opus$/gpt-6-sol/; s/^fable$/gpt-6-astra/; s/^haiku$/gpt-6-luna/'; }
+host_codex_model() { printf '%s' "$1" | sed 's/^sonnet$/gpt-6.1-terra/; s/^opus$/gpt-6.1-sol/; s/^fable$/gpt-6-astra/; s/^haiku$/gpt-6-luna/'; }
 host_run() {
   host="$1"; dir="$2"; prompt="$3"; model="${4:-}"; effort="${5:-}"; names="${6:-roster}"
   host_usage=""; host_cause=""; host_said=""; host_last=""

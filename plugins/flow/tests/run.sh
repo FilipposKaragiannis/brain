@@ -1181,7 +1181,7 @@ check "the old jobs.model and jobs.effort are a fallback, with one deprecation w
 jobscfg() { printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n%b' "$1" > .flow/config.yaml; }
 deprecated() { grep -c 'jobs.model and jobs.effort are deprecated' .flow/log/comments.log; }
 jobscfg '  model: opus\n  effort: high\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" codex 'gh#21' >/dev/null
-check "the fallback maps the old model for codex: opus is gpt-6-sol" sh -c "grep -q 'exec .*-m gpt-6-sol -c model_reasoning_effort=\"high\"' '$HOST_LOG'"
+check "the fallback maps the old model for codex: opus is gpt-6.1-sol" sh -c "grep -q 'exec .*-m gpt-6.1-sol -c model_reasoning_effort=\"high\"' '$HOST_LOG'"
 jobscfg '  model: haiku\n  effort: low\n  claude:\n    model: claude-opus-x\n    effort: xhigh\n'; : > "$HOST_LOG"; before="$(deprecated)"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "jobs.claude.model and jobs.claude.effort reach claude as --model and --effort, as is" sh -c "grep -q 'gh#21.*--model claude-opus-x --effort xhigh' '$HOST_LOG'"
 check "with jobs.claude set, the old keys are not read and no warning is logged" [ "$(deprecated)" = "$before" ]
@@ -1210,7 +1210,7 @@ jobscfg '  host: vim\n'; : > "$HOST_LOG"
 check "a jobs.host other than claude or codex fails the job early, exit 2" sh -c "[ $code = 2 ] && grep -q 'jobs.host is vim; it must be claude or codex' '$work/job.err' && [ ! -s '$HOST_LOG' ]"
 check "jobs.sh run refuses a bad jobs.host, exit 2" sh -c "'$P/scripts/jobs.sh' run comments 2>&1; [ \$? = 2 ]"
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
-check "the unattended loop keeps mapping the roster's names for codex" sh -c "FLOW_PLUGIN='$P' sh -c '. \"$P/lib/flow.sh\"; . \"$P/lib/host.sh\"; host_run codex . hi opus high' && grep -q 'exec .*-m gpt-6-sol' '$HOST_LOG'"
+check "the unattended loop keeps mapping the roster's names for codex" sh -c "FLOW_PLUGIN='$P' sh -c '. \"$P/lib/flow.sh\"; . \"$P/lib/host.sh\"; host_run codex . hi opus high' && grep -q 'exec .*-m gpt-6.1-sol' '$HOST_LOG'"
 # Passes at once: jobs.comments_workers or --workers N runs each PR's pass in its own worker.
 cp .flow/config.yaml "$work/config.workers"
 # The fake gh has one PR: both items link it, and each pass keeps its own seen file by item.
