@@ -168,8 +168,9 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 16 since an agent took `step`
-and `job` (15 when an item and a
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 17 since a gate took `options`,
+`raisedBy`, `answeredBy`, `condition`, `footer`, `twinOf` and `twins` (16 when an agent took `step`
+and `job`, 15 when an item and a
 worktree took `heldBy` and `heldReason`, the states `waiting` and `held` came, `counts` took
 `waiting` and `held`, `readiness` took `held`, an attention row took the kind `close` and the
 snapshot took `toClose`, 14 when an agent took
@@ -320,7 +321,8 @@ snapshots.
   `sinceAt` the time of its board `last_event`. The item and its worktree are `needs-you` and it
   gets a `close` attention row, but no gate is made up for it: the Gates screen lists it on its
   own. An item at step done whose merge gate waits on review is `in-review` and not in the list.
-  `counts.needsYou` is `gates` plus `toClose`, so it counts every `needs-you` item once.
+  `counts.needsYou` is `gates` (a twin counted once, below) plus `toClose`, so it counts every
+  `needs-you` item once.
 - An item's `url` is its tracker page, from the board. Its `spend` is `{costUsd, sessions,
   tokens}`, summed over the step sessions `board.sh --json` counts from `log/runs.jsonl`, or null
   when it has none or the plugin prints no `spend`. Codex reports no cost, so a codex session adds
@@ -358,6 +360,22 @@ snapshots.
   comes from the files on disk, so it outlives a restart that empties `ended`. Looked up with the
   `files` source and kept per item and `raisedAt` while the gate waits (a miss is scanned again a
   minute later).
+- A gate carries what the flow's gate record (`<flow home>/gates/<item>.json`, flow ADR 0003)
+  says beyond the message: `options`, the answers the agent offered, each `{label, text,
+  recommended}` in the record's order (1 to 9, at most one recommended; any bad entry and the gate
+  has none, since a skipped one would shift option N); `raisedBy` (`step plan`, `health job`,
+  `owner` …); `answeredBy`, who carries the answer out (`step plan`, `comments job, next pass`,
+  `nobody: ...`); `condition`, what the health job watches to clear the gate on its own
+  (`blocked_by:<item>`, `pr:#<number> conflicting`, `ci:down`); and `footer`, the line the tracker
+  comment ends with, the exact clear command. A record from a plugin older than them gives `[]` and
+  nulls, and an empty string reads as null. The record is per machine, so a gate raised on another
+  host shows none of them.
+- Twins are ambiguity gates on items under one parent that ask the same question (the questions'
+  text joined, else the message, lowercased, without `*`, `_` and backticks, whitespace collapsed),
+  raised within `TWIN_WINDOW_HOURS` (24) of the earliest. Each later gate's `twinOf` names the earliest
+  item, and the earliest's `twins` lists the later items in raise order; both null and empty on a
+  gate with no twin. `gates` keeps every gate, while the attention list and `counts.needsYou`
+  skip a gate whose `twinOf` is set, so a twin set is one row.
 - `readiness` is `{ready, waitingOnField, blocked, gated, held, nextInLineMissingField}` over open
   items that are not epics. The first five are buckets, each item in one at most: the next job can
   take it, only an empty field stops it (the whole backlog of such items), an open item blocks it,
@@ -559,7 +577,7 @@ on every state change and at most twice a second while output arrives.
 
 | Kind | Args | Runs | Lock | Outcome when done |
 |---|---|---|---|---|
-| `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item | `finished` |
+| `gate.clear` | `item`, `message?`, `back?`, `option?` | `gate.sh clear <item> [<message>]`; with `back` `true`, `gate.sh clear <item> --back <message>` (a message needed); with `option` (1 to 9), `gate.sh clear <item> --option N [<message>]`, the message as a note under option N's text (refused beside `back`) | the item | `finished` |
 | `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item and the next job | with an item `started` while the run goes, `finished` once it ends well; without one `started` |
 | `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
 | `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
@@ -813,7 +831,13 @@ from (`FLOW_PLUGIN` or the installed plugin, with its folder), or "No plugins fo
 or ~/.codex." with none), Gates (a decision card per gate, one line on what
 its kind asks, the PR with its state and unresolved review threads when the item has one, the
 questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
-matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; Discuss with the
+matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; chips for who
+raised the gate, who answers it and what it waits on, when the gate has them; a gate with
+`options` shows one button per option with its text, the recommended one primary and marked,
+which runs `gate.clear` with `option`, and a field whose text goes with a clicked option as its
+note or alone through Send my own answer, while a gate without shows its `footer`; a twin set is
+one row, "answers N items", whose answer runs one `gate.clear` per item, a refused one a line on
+the first card that links to its own card with Retry; Discuss with the
 agent resumes the newest agent on the item in `agents` or `ended` by its pid, else the gate's
 `session` with `gate`, and is left out with neither; a gate whose item
 has a quiz shows it as a panel: a line with how many questions or the last try's score, Take the

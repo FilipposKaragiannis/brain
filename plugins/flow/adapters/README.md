@@ -106,6 +106,12 @@ gate; empty once a run took it). Those nineteen are the state keys. `write-state
 `attempts` a whole number, an empty value clears a key, `gate=none` clears the gate, `size` sets
 the item's size too. A key outside the nineteen exits 2 and writes nothing.
 
+A gate's own data is not tracker state: the options it offers, who raised it, who carries the
+answer out, the condition it waits on and its footer live in the gate's record in the flow home,
+`<flow home>/gates/<item>.json`, which `scripts/gate.sh raise` writes through `scripts/notify.sh`
+and `gate.sh list` reads (ADR 0003). Of a waiting gate the tracker holds `gate` and `gate_from`
+only, so an adapter stores no more for a gate than it did.
+
 ## Config
 
 The flow reads `adapters.default` (default `local`) and `adapters.<kind>` to pick where a new
