@@ -103,20 +103,114 @@ export function transcriptStart(head: string): number | null {
   return epochMs(FIRST_TIMESTAMP.exec(head)?.[1]);
 }
 
-/** The cwd, id and start (its `timestamp`, null without one) of a Codex session file, from its first line (`session_meta`). */
-export function codexMeta(head: string): { cwd: string; id: string; startedMs: number | null } | null {
+/**
+ * What a Codex session file's first line (`session_meta`) says: its cwd, its own id, its start
+ * (its `timestamp`, null without one), and the root session it belongs to (`rootId`, its own id
+ * for a root). A subagent's rollout (`subagent`) also names the thread that spawned it
+ * (`parentId`), its task path (`/root/probe`), role and nickname as spawned, and the ordinal its
+ * own history starts at (the lines before it replay its parent's); each null where not written.
+ */
+export type CodexMeta = {
+  cwd: string; id: string; startedMs: number | null; rootId: string; parentId: string | null; subagent: boolean;
+  agentPath: string | null; agentRole: string | null; agentNickname: string | null; historyStart: number | null;
+};
+
+/** The fields of a `session_meta` payload the readers look at; `source` is `"exec"` for a root and `{ subagent: { thread_spawn } }` for a spawned child. */
+type CodexMetaPayload = {
+  cwd?: unknown; id?: unknown; session_id?: unknown; parent_thread_id?: unknown; thread_source?: unknown;
+  agent_path?: unknown; agent_nickname?: unknown; subagent_history_start_ordinal?: unknown; source?: unknown;
+};
+type CodexSpawn = { agent_path?: unknown; agent_nickname?: unknown; agent_role?: unknown };
+
+const CODEX_SUBAGENT_THREAD = 'subagent';
+/** A spawned child's `source`, which comes before the base instructions on its first line. */
+const CODEX_SUBAGENT_SOURCE = '"source":{"subagent"';
+
+/** A value when it is a string with something in it, else null. */
+function textOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value !== '' ? value : null;
+}
+
+/** The `source.subagent` of a spawned child's payload, or null for a root. */
+function subagentSource(source: unknown): { thread_spawn?: unknown } | null {
+  if (source === null || typeof source !== 'object') return null;
+  const subagent = (source as { subagent?: unknown }).subagent;
+  return subagent !== null && typeof subagent === 'object' ? subagent as { thread_spawn?: unknown } : null;
+}
+
+/** How the child was spawned (`source.subagent.thread_spawn`), empty where not written. */
+function spawnOf(source: unknown): CodexSpawn {
+  const spawn = subagentSource(source)?.thread_spawn;
+  return spawn !== null && typeof spawn === 'object' ? spawn as CodexSpawn : {};
+}
+
+/** A `session_meta` payload as a `CodexMeta`, or null without its cwd and id. */
+function metaOfPayload(payload: CodexMetaPayload, startedMs: number | null): CodexMeta | null {
+  if (typeof payload.cwd !== 'string' || typeof payload.id !== 'string') return null;
+  const spawn = spawnOf(payload.source);
+  const ordinal = payload.subagent_history_start_ordinal;
+  return {
+    cwd: payload.cwd, id: payload.id, startedMs,
+    rootId: textOrNull(payload.session_id) ?? payload.id,
+    parentId: textOrNull(payload.parent_thread_id),
+    subagent: payload.thread_source === CODEX_SUBAGENT_THREAD || subagentSource(payload.source) !== null,
+    agentPath: textOrNull(spawn.agent_path) ?? textOrNull(payload.agent_path),
+    agentRole: textOrNull(spawn.agent_role),
+    agentNickname: textOrNull(spawn.agent_nickname) ?? textOrNull(payload.agent_nickname),
+    historyStart: typeof ordinal === 'number' && Number.isInteger(ordinal) ? ordinal : null,
+  };
+}
+
+/** The first `"<name>":"<text>"` in a line, its text unescaped; undefined when there is none. */
+function quotedField(line: string, name: string): string | undefined {
+  const raw = new RegExp(`"${name}":"((?:[^"\\\\]|\\\\.)*)"`).exec(line)?.[1];
+  if (raw === undefined) return undefined;
+  try { return JSON.parse(`"${raw}"`) as string; } catch { return undefined; }
+}
+
+/** The payload fields of a first line cut by the head, read by their keys: all but the history start come before the long base instructions. */
+function cutPayload(line: string): CodexMetaPayload {
+  const ordinal = /"subagent_history_start_ordinal":(\d+)/.exec(line)?.[1];
+  return {
+    cwd: quotedField(line, 'cwd'),
+    id: /"payload":\{[^{}]*?"id":"([^"]+)"/.exec(line)?.[1],
+    session_id: quotedField(line, 'session_id'),
+    parent_thread_id: quotedField(line, 'parent_thread_id'),
+    thread_source: quotedField(line, 'thread_source'),
+    agent_path: quotedField(line, 'agent_path'),
+    agent_nickname: quotedField(line, 'agent_nickname'),
+    source: line.includes(CODEX_SUBAGENT_SOURCE) ? { subagent: { thread_spawn: { agent_role: quotedField(line, 'agent_role') } } } : undefined,
+    subagent_history_start_ordinal: ordinal === undefined ? undefined : Number(ordinal),
+  };
+}
+
+/** A Codex session file's first line (`session_meta`) as a `CodexMeta`, or null when it is none. */
+export function codexMeta(head: string): CodexMeta | null {
   const line = head.split('\n')[0] ?? '';
-  try {
-    const parsed = JSON.parse(line) as { timestamp?: unknown; type?: unknown; payload?: { cwd?: unknown; id?: unknown } };
-    if (parsed.type !== 'session_meta' || typeof parsed.payload?.cwd !== 'string' || typeof parsed.payload.id !== 'string') return null;
-    return { cwd: parsed.payload.cwd, id: parsed.payload.id, startedMs: epochMs(parsed.timestamp) };
-  } catch {
-    // A first line longer than the head: the timestamp, id and cwd come before the long base instructions.
-    const cwd = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(line)?.[1];
-    const id = /"payload":\{[^{}]*?"id":"([^"]+)"/.exec(line)?.[1];
-    if (!line.includes('"session_meta"') || cwd === undefined || id === undefined) return null;
-    try { return { cwd: JSON.parse(`"${cwd}"`) as string, id, startedMs: transcriptStart(line) }; } catch { return null; }
+  let parsed: unknown;
+  try { parsed = JSON.parse(line); } catch {
+    // A first line longer than the head: the timestamp, ids and cwd come before the long base instructions.
+    return line.includes('"session_meta"') ? metaOfPayload(cutPayload(line), transcriptStart(line)) : null;
   }
+  if (parsed === null || typeof parsed !== 'object') return null;
+  const entry = parsed as { timestamp?: unknown; type?: unknown; payload?: unknown };
+  if (entry.type !== 'session_meta' || entry.payload === null || typeof entry.payload !== 'object') return null;
+  return metaOfPayload(entry.payload as CodexMetaPayload, epochMs(entry.timestamp));
+}
+
+/** A Codex session file's first line, read from its head; null when it cannot be read or is no `session_meta`. */
+export async function readCodexMeta(files: SessionFiles, file: string): Promise<CodexMeta | null> {
+  const head = await files.head(file, CODEX_HEAD_BYTES);
+  return head === null ? null : codexMeta(head);
+}
+
+/** Codex's day folders (`~/.codex/sessions/YYYY/MM/DD`, local time) from the day of `since`, at most 14 days back, to the day after `now`. */
+export function codexDayFolders(home: string, since: number, now: number): string[] {
+  const root = path.join(home, '.codex', 'sessions');
+  const from = Math.max(since, now - CODEX_DAYS_BACK * MILLISECONDS_PER_DAY);
+  const days = new Set<string>();
+  for (let at = from; at <= now + MILLISECONDS_PER_DAY; at += MILLISECONDS_PER_DAY) days.add(dayFolder(new Date(at)));
+  return [...days].map((day) => path.join(root, day));
 }
 
 const SESSION_STATUSES: readonly string[] = ['idle', 'busy'];
@@ -143,7 +237,6 @@ export function claudeSessionsFile(text: string): { pid: number; sessionId: stri
 type Found = LocatedSession & { certain: boolean };
 type GateScan = { session: SessionRef | null; scannedAt: number };
 type Remembered = { startedMs: number; session: SessionRef | null; scannedAt: number };
-type CodexMeta = { cwd: string; id: string; startedMs: number | null };
 
 /**
  * Finds the session a claude or codex process writes, so the console can hand the owner its
@@ -291,23 +384,19 @@ export class SessionLocator {
 
   /**
    * The Codex session file of a folder written at or after `writtenSince`: the newest written, or
-   * with `startedBy` (a gate) the latest started of those that started by then.
+   * with `startedBy` (a gate) the latest started of those that started by then. A subagent's rollout
+   * is never one: the root's process runs it and writes it, often more lately than the root's own.
    */
   private async codexScan(cwd: string, writtenSince: number, now: number, startedBy: number | null): Promise<SessionRef | null> {
-    const root = path.join(this.deps.home, '.codex', 'sessions');
-    const from = Math.max(writtenSince - MILLISECONDS_PER_DAY, now - CODEX_DAYS_BACK * MILLISECONDS_PER_DAY);
-    const days = new Set<string>();
-    for (let at = from; at <= now + MILLISECONDS_PER_DAY; at += MILLISECONDS_PER_DAY) days.add(dayFolder(new Date(at)));
     let best: { file: string; rank: number; modified: number; id: string } | null = null;
-    for (const day of days) {
-      const folder = path.join(root, day);
+    for (const folder of codexDayFolders(this.deps.home, writtenSince - MILLISECONDS_PER_DAY, now)) {
       for (const name of await this.deps.files.list(folder)) {
         if (!name.endsWith(TRANSCRIPT_EXTENSION)) continue;
         const file = path.join(folder, name);
         const modified = await this.deps.files.modifiedMs(file);
         if (modified === null || modified < writtenSince || (startedBy === null && best !== null && modified <= best.modified)) continue;
         const meta = await this.meta(file, modified);
-        if (meta === null || !SESSION_ID.test(meta.id) || path.resolve(meta.cwd) !== path.resolve(cwd)) continue;
+        if (meta === null || meta.subagent || !SESSION_ID.test(meta.id) || path.resolve(meta.cwd) !== path.resolve(cwd)) continue;
         const rank = startedBy === null ? modified : meta.startedMs;
         if (rank === null || (startedBy !== null && rank > startedBy)) continue;
         if (best === null || rank > best.rank || (rank === best.rank && modified > best.modified)) best = { file, rank, modified, id: meta.id };
@@ -319,8 +408,7 @@ export class SessionLocator {
   private async meta(file: string, modified: number): Promise<CodexMeta | null> {
     const kept = this.codexMetas.get(file);
     if (kept !== undefined) { kept.modified = modified; return kept.meta; }
-    const head = await this.deps.files.head(file, CODEX_HEAD_BYTES);
-    const meta = head === null ? null : codexMeta(head);
+    const meta = await readCodexMeta(this.deps.files, file);
     this.codexMetas.set(file, { meta, modified });
     return meta;
   }

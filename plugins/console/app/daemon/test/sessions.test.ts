@@ -10,7 +10,7 @@ import { ActionRunner, realScheduler } from '../src/actions.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
 import { parseCodexTranscript } from '../src/collectors/codexTranscript.ts';
 import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator, transcriptTailStart } from '../src/collectors/sessions.ts';
-import type { GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
+import type { CodexMeta, GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
@@ -202,7 +202,40 @@ test('CodexSessionFilesRemembered_ForgottenAfterFourteenDays', async () => {
 
 test('CodexMeta_FirstLineLongerThanTheHead_StillRead', () => {
   const line = meta('019c-long', '/p/app-wt-3').replace('You are Codex.', 'x'.repeat(1000));
-  assert.deepEqual(codexMeta(line.slice(0, 400)), { cwd: '/p/app-wt-3', id: '019c-long', startedMs: Date.parse('2026-10-24T18:00:00Z') }, 'because the timestamp, id and cwd come before the long base instructions the head may cut');
+  const read = codexMeta(line.slice(0, 400));
+  assert.deepEqual(read === null ? null : [read.cwd, read.id, read.startedMs], ['/p/app-wt-3', '019c-long', Date.parse('2026-10-24T18:00:00Z')], 'because the timestamp, id and cwd come before the long base instructions the head may cut');
+});
+
+const CODEX_SUBAGENT_FIXTURES = path.join(FIXTURES, 'subagents', 'codex');
+/** The first line of a fixture rollout of the captured `codex exec` run. */
+const firstLineOf = (fixture: string) => readFileSync(path.join(CODEX_SUBAGENT_FIXTURES, fixture), 'utf8').split('\n')[0] ?? '';
+/** What a first line says of where a rollout sits among its session's subagents. */
+const spawnFields = (meta: CodexMeta | null) => meta === null ? null : { rootId: meta.rootId, parentId: meta.parentId, subagent: meta.subagent, agentPath: meta.agentPath, agentRole: meta.agentRole, agentNickname: meta.agentNickname, historyStart: meta.historyStart };
+
+test('CodexMeta_RootSessionFirstLine_ItsOwnRootAndNoSubagent', () => {
+  assert.deepEqual(spawnFields(codexMeta(firstLineOf('parent.jsonl'))), { rootId: '019d-root', parentId: null, subagent: false, agentPath: null, agentRole: null, agentNickname: null, historyStart: null }, 'because a root session\'s session_id is its own id, and it was spawned by nobody');
+});
+
+test('CodexMeta_SubagentFirstLine_ItsRootParentAndSpawn', () => {
+  assert.deepEqual(spawnFields(codexMeta(firstLineOf('child-depth2.jsonl'))), { rootId: '019d-root', parentId: '019d-probe', subagent: true, agentPath: '/root/probe/deeper', agentRole: 'explorer', agentNickname: 'Ada', historyStart: 16 }, 'because a child\'s session_meta names the root session, the thread that spawned it, how it was spawned and where its own history starts');
+});
+
+test('CodexMeta_SubagentFirstLineCutByTheHead_ItsRootParentAndSpawnStillRead', () => {
+  const line = firstLineOf('child-depth2.jsonl');
+  const cut = line.slice(0, line.indexOf('"model_provider"'));
+  assert.deepEqual(spawnFields(codexMeta(cut)), { rootId: '019d-root', parentId: '019d-probe', subagent: true, agentPath: '/root/probe/deeper', agentRole: 'explorer', agentNickname: 'Ada', historyStart: null }, 'because the ids and the spawn come before the long base instructions the head may cut; the history start comes after them');
+});
+
+test('CodexProcess_ParentAndANewerWrittenLiveChildInItsCwd_TheParentIsItsSession', async () => {
+  const { dir, done } = home();
+  try {
+    const day = path.join(dir, '.codex', 'sessions', String(NOW.getFullYear()), String(NOW.getMonth() + 1).padStart(2, '0'), String(NOW.getDate()).padStart(2, '0'));
+    const parent = path.join(day, 'rollout-parent.jsonl');
+    written(parent, readFileSync(path.join(CODEX_SUBAGENT_FIXTURES, 'parent.jsonl'), 'utf8'), new Date(NOW.getTime() - 2 * MINUTE_MS));
+    written(path.join(day, 'rollout-child.jsonl'), readFileSync(path.join(CODEX_SUBAGENT_FIXTURES, 'child-live.jsonl'), 'utf8'), new Date(NOW.getTime() - MINUTE_MS));
+    const session = await one(locator(dir), { host: 'codex', cwd: '/work/example', elapsedSeconds: 600 });
+    assert.deepEqual(session, { host: 'codex', id: '019d-root', transcript: parent, resume: ['codex', 'resume', '019d-root'] }, 'because the root\'s process writes its subagents\' rollouts in the same folder, often more lately than its own, and Open session must resume the root');
+  } finally { done(); }
 });
 
 /** A gate raised two hours before NOW in a pool worktree, so a transcript can be older than the raise or written around it. */
