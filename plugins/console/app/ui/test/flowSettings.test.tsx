@@ -256,8 +256,8 @@ test('AgentsPage_NoClaudeMapAndOldModelSet_ShowsWhatThePluginRunsAndHostDefaultW
 
 test('AgentsPage_NoCodexMapAndOldModelSet_ShowsTheMappedName', async () => {
   await renderFlowSettings(() => ({ status: HTTP_OK, body: saved({}) }), withJobs({ host: 'codex', model: 'opus', effort: 'max' }));
-  expect((within(agents()).getByLabelText(label('jobs.codex.model')) as HTMLSelectElement).value, 'because the plugin maps the roster name opus to gpt-6-sol for codex').toBe('gpt-6-sol');
-  expect(within(agents()).getByLabelText(label('jobs.codex.model')).closest('.flow-field')!.textContent, 'because the value comes from the old key').toMatch(/now gpt-6-sol, from the deprecated jobs\.model/);
+  expect((within(agents()).getByLabelText(label('jobs.codex.model')) as HTMLSelectElement).value, 'because the plugin maps the roster name opus to gpt-6.1-sol for codex').toBe('gpt-6.1-sol');
+  expect(within(agents()).getByLabelText(label('jobs.codex.model')).closest('.flow-field')!.textContent, 'because the value comes from the old key').toMatch(/now gpt-6.1-sol, from the deprecated jobs\.model/);
   expect(within(agents()).getByLabelText(label('jobs.codex.effort')).closest('.flow-field')!.textContent, 'because the old effort counts too, even one codex refuses').toMatch(/now max, from the deprecated jobs\.effort/);
 });
 
