@@ -64,9 +64,7 @@ gates_json() {
 
 RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>]"
 CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <note>"
-# How long a clear waits for another clear of the same item to finish.
-CLEAR_LOCK_SECONDS=10
-# Who carries an answer out, as the record and the console name it.
+CLEAR_LOCK_WAIT_SECONDS=10
 CARRIER_SWEEP="the sweep, once the PR merges"
 CARRIER_CHILDREN="nobody: the children carry the work"
 CARRIER_COMMENTS="comments job, next pass"
@@ -105,6 +103,28 @@ raised_by_default() {
   elif [ -n "$run_step" ]; then printf 'step %s' "$run_step"
   elif [ -n "$3" ]; then printf 'step %s' "$3"
   else printf 'owner'; fi
+}
+
+# lock_gate_clears <item>: holds the item's clear lock until gate.sh exits, so the owner and the
+# health job never clear one gate twice: the second reads the record after the first removed it.
+# Dies, exit 75, when another clear held it over CLEAR_LOCK_WAIT_SECONDS.
+lock_gate_clears() {
+  FLOW_LOCK_WAIT="$CLEAR_LOCK_WAIT_SECONDS" flow_lock "gate-$(item_slug "$1")" \
+    || die "another clear of $1 has held its gate for over ${CLEAR_LOCK_WAIT_SECONDS}s; try again" 75
+}
+
+# clear_met <item> <gate> <step> <asked> <note> <record>: clears the gate because its condition
+# ended (the health job): not the owner's answer, so no answered line and nothing pending; the
+# item keeps its step, so the next pass runs it. Exits 0.
+clear_met() {
+  met_at="$(now_iso)"
+  adapter write-state "$1" "gate=none" "gate_from=" "attempts=0" "answered=$2, condition met" "asked=$4" "answer=$5" \
+    "answer_pending=" "last_event=$met_at gate cleared by health: $5" >/dev/null
+  adapter comment "$1" --body "Gate cleared by the health job: $5" >/dev/null
+  rm -f "$6"
+  if step_runs "$3"; then echo "gate cleared on $1: $5; run next $1 to continue"
+  else echo "gate cleared on $1: $5; nothing runs on it (step ${3:-none})"; fi
+  exit 0
 }
 
 # raise_options <item> <options>: the options as _gates.py normalises them, else [] with the
@@ -200,10 +220,7 @@ $footer" >/dev/null
       [ -f "$(host_stop_file "$item")" ] || { echo "$item is not stopped"; exit 0; }
       rm -f "$(host_stop_file "$item")"; echo "$item starts sessions again"; exit 0 ;;
     esac
-    # One clear of an item at a time (the health job and the owner can race); the record is read
-    # once the lock is held, so the second finds it gone.
-    FLOW_LOCK_WAIT="$CLEAR_LOCK_SECONDS" flow_lock "gate-$(item_slug "$item")" \
-      || die "another clear of $item has held its gate for over ${CLEAR_LOCK_SECONDS}s; try again" 75
+    lock_gate_clears "$item"
     record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""; record_json=""
     [ -f "$record" ] && { record_json="$(cat "$record")"; asked="$(json_get "$record_json" message)"; gate="$(json_get "$record_json" gate)"; }
     if [ "$mode" = met ]; then
@@ -229,12 +246,6 @@ $given"
     answered_as="$gate"; answered_line="${gate:-gate}: $message"
     [ "$mode" != option ] || { answered_as="$gate, option $option_number ($option_label)"; answered_line="$gate (option $option_number): $option_text"; }
     step="$(state_get "$data" step)"; from="$(state_get "$data" gate_from)"; pr="$(state_get "$data" pr)"
-    # Who carries out the answer (answer_carrier), kept in answer_pending until a run takes it (the
-    # board shows it): next, when the item's step is one it runs; the comments job, at done with an
-    # open PR (a gate a comments pass raised). The merge gate's answer is the merge itself; a clear
-    # with no answer, one that lets a split stand, or one because the gate's condition ended,
-    # carries nothing out. Any other answer no step acts on: the clear fails and the gate stays, so
-    # an answer is never dropped in silence.
     pending=""
     if [ "$mode" = back ]; then
       [ -n "$from" ] || die "$item has no step to send back to (its gate predates gate_from); clear it with the change instead" 2
@@ -271,18 +282,7 @@ $given"
       rm -f "$record"
       echo "gate sent back on $item; run next $item to run $from again"; exit 0
     fi
-    if [ "$mode" = met ]; then
-      # Not the owner's answer: no answered line, nothing pending, and the item keeps its step, so
-      # the next pass runs it.
-      met_at="$(now_iso)"
-      adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate, condition met" "asked=$asked" "answer=$given" \
-        "answer_pending=" "last_event=$met_at gate cleared by health: $given" >/dev/null
-      adapter comment "$item" --body "Gate cleared by the health job: $given" >/dev/null
-      rm -f "$record"
-      if step_runs "$step"; then echo "gate cleared on $item: $given; run next $item to continue"
-      else echo "gate cleared on $item: $given; nothing runs on it (step ${step:-none})"; fi
-      exit 0
-    fi
+    [ "$mode" != met ] || clear_met "$item" "$gate" "$step" "$asked" "$given" "$record"
     # The question and the answer stay in the state, so the next step's brief carries them.
     # answered_at stays too: the comments job counts a clear as new activity on the item's PR.
     cleared_at="$(now_iso)"

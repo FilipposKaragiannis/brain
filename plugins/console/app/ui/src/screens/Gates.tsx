@@ -63,8 +63,8 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
   const done = Object.values(answered).filter((entry) => !unanswered.some((gate) => gate.item === entry.gate.item)).sort((left, right) => right.at.getTime() - left.at.getTime());
   const toClose = snapshot.toClose;
   const pick = selected ?? waiting[0]?.gate.item ?? toClose[0]?.item ?? done[0]?.gate.item ?? null;
-  // A twin's item opens the row that answers it.
-  const current = waiting.find((row) => row.gate.item === pick || row.twins.some((twin) => twin.item === pick));
+  const answersItem = (row: OwnGate): boolean => row.gate.item === pick || row.twins.some((twin) => twin.item === pick);
+  const current = waiting.find(answersItem);
   // An item to close now outranks an answer this console still holds for it: a split's
   // decomposition gate answered here is followed, once its children close, by its close card.
   const closing = current === undefined ? toClose.find((entry) => entry.item === pick) : undefined;
@@ -303,8 +303,8 @@ type DecisionCardProps = { gate: Gate; twins: Gate[]; snapshot: Snapshot; draft:
 export function DecisionCard({ gate, twins, snapshot, draft, onAnswer }: DecisionCardProps) {
   const form = formOf(gate);
   const choosing = form === 'answers' && gate.options.length > 0;
-  // Only an answers form without options asks the numbered questions; the rest keep them in the summary.
-  const { brief, numbered } = form === 'answers' && !choosing ? gateBrief(gate.message) : { brief: gate.message.trim(), numbered: false };
+  const asksNumberedQuestions = form === 'answers' && !choosing;
+  const { brief, numbered } = asksNumberedQuestions ? gateBrief(gate.message) : { brief: gate.message.trim(), numbered: false };
   const { ask: written, rest } = gateAsk(brief);
   const ask = written ?? DEFAULT_ASKS[gate.gate] ?? GATE_KINDS[gate.gate] ?? 'Answer the gate.';
   // Answers lead with the ask in the head; a verdict or a merge asks it over its buttons.

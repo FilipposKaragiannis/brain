@@ -96,11 +96,12 @@ export function GateAnswersProvider({ children }: { children: ReactNode }) {
     void actions.run(action.kind, action.args).then((outcome) => change(gate.item, (entry) => ({ ...entry, clear: stepOf(outcome) })));
   };
 
-  // One answer for a set of twins: each item is cleared on its own, so one refusal leaves the others cleared.
-  const answer = (gate: Gate, twins: Gate[], decision: Decision, draft: Draft): void => {
+  const clearEachTwinOnItsOwn = (gates: Gate[], decision: Decision, draft: Draft): void => {
     const at = new Date();
-    [gate, ...twins].forEach((each) => send(each, decision, draft, at));
+    gates.forEach((each) => send(each, decision, draft, at));
   };
+
+  const answer = (gate: Gate, twins: Gate[], decision: Decision, draft: Draft): void => clearEachTwinOnItsOwn([gate, ...twins], decision, draft);
 
   const retry = (entry: Answered): void => {
     setDrafts((all) => ({ ...all, [gateKey(entry.gate)]: entry.draft }));
