@@ -221,6 +221,12 @@ test('ParkedClaim_OpenBlocker_BlockedNotWaiting', async () => {
   assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'blocked', 'because the next job passes a claimed item over while a blocker is open, so it waits on that blocker, not on a worker');
 });
 
+test('ParkedClaim_OpenBlocker_CountedAsBlocked', async () => {
+  const unblocked = reconcile(await parkedNine()).counts.itemsBlocked;
+  const blocked = reconcile(withOpenBlockers(await parkedNine(), 'gh#9', ['gh#12'])).counts.itemsBlocked;
+  assert.equal(blocked, unblocked + 1, 'because the Overview tile counts the same blocked items the Board shows, so a claimed item behind an open blocker adds one');
+});
+
 test('RunningClaim_OpenBlocker_StillRunning', async () => {
   const picture = reconcile(withOpenBlockers(await input(), 'gh#9', ['gh#12']));
   assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'running', 'because a run that started before the blocker was added is live work until it ends');
