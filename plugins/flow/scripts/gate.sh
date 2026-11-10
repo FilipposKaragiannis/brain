@@ -30,10 +30,11 @@
 #                                           is the answer, the note a second paragraph under it;
 #                                           exit 2 with no record on this host, no options, n out
 #                                           of range, or with --back
-#   gate.sh clear <item> --met <note>       the gate's condition no longer holds (the health job):
+#   gate.sh clear <item> --met <condition>  the condition the health job read no longer holds:
 #                                           nothing waits on a run, the item keeps its step; exit 2
-#                                           when the gate has no condition; "already cleared",
-#                                           exit 0, when its record is gone
+#                                           when the gate has no condition, exit 1 when it waits on
+#                                           another one; "already cleared", exit 0, when its record
+#                                           is gone
 #                                           Each clear of an item waits for another one to finish
 #                                           (exit 75 after 10s) and reads the record after it
 #   gate.sh clear <claude|codex>            start sessions on a host a spend limit or an auth
@@ -65,7 +66,7 @@ gates_json() {
 }
 
 RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>]"
-CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <note>"
+CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <condition>"
 
 case "${1:-}" in
   raise)
@@ -114,7 +115,7 @@ $footer" >/dev/null
     case "$mode:$option_number:$given" in
       back::--option|option:--back:*|option:*:--back) die "gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step" 2 ;;
       back::) die "gate.sh clear --back needs a message: what to change" 2 ;;
-      met::) die "gate.sh clear --met needs a note: the condition that no longer holds" 2 ;;
+      met::) die "gate.sh clear --met needs the condition that no longer holds" 2 ;;
     esac
     # A host stopped on a spend limit or an auth error (lib/host.sh) starts sessions again when
     # the gate that names it clears, or when the owner clears the host by name.
@@ -128,7 +129,9 @@ $footer" >/dev/null
     case "$mode" in
       met)
         [ -n "$record_json" ] || { echo "gate already cleared on $item"; exit 0; }
-        [ -n "$(json_get "$record_json" condition)" ] || die "the ${gate:-gate} gate on $item waits on no condition, so only the owner's answer clears it: gate.sh clear $item \"<answer>\"" 2 ;;
+        recorded_condition="$(json_get "$record_json" condition)"
+        [ -n "$recorded_condition" ] || die "the ${gate:-gate} gate on $item waits on no condition, so only the owner's answer clears it: gate.sh clear $item \"<answer>\"" 2
+        [ "$recorded_condition" = "$given" ] || die "the ${gate:-gate} gate on $item waits on $recorded_condition, not $given, so it stays; the health job reads it on its next pass" ;;
       option) option_answer="$(picked_option_answer "$option_number" "$given")" || exit $? ;;
     esac
     data="$(adapter read "$item" 2>/dev/null)"
@@ -157,5 +160,5 @@ $footer" >/dev/null
       c="$(cat "$f")"
       printf '%s\t%s\tstopped\t%s: %s\n' "$(json_get "$c" at)" "$(json_get "$c" host)" "$(json_get "$c" cause)" "$(json_get "$c" said)"
     done ;;
-  *) sed -n '2,47p' "$0"; exit 2 ;;
+  *) sed -n '2,48p' "$0"; exit 2 ;;
 esac

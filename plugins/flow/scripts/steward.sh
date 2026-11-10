@@ -1037,7 +1037,7 @@ health_conditions() {
     gate_item="$(json_get "$gate_record" item)"; gate_name="$(json_get "$gate_record" gate)"
     condition_met "$gate_item" "$gate_condition" || continue
     if [ "$dry" -eq 1 ]; then health_say "$gate_item" "would clear the $gate_name gate: $gate_condition no longer holds"; continue; fi
-    if "$FLOW_PLUGIN/scripts/gate.sh" clear "$gate_item" --met "$gate_condition no longer holds" >/dev/null 2>&1; then
+    if "$FLOW_PLUGIN/scripts/gate.sh" clear "$gate_item" --met "$gate_condition" >/dev/null 2>&1; then
       health_say "$gate_item" "cleared the $gate_name gate: $gate_condition no longer holds"
     else health_say "$gate_item" "could not clear the $gate_name gate, though $gate_condition no longer holds; the next health run tries again"; fi
   done

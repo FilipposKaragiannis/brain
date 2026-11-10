@@ -3623,7 +3623,7 @@ check "condition pr conflicting: a PR GitHub has not judged yet (UNKNOWN) keeps 
 opr mergeable '"MERGEABLE"'; hpass
 check "condition pr conflicting: the PR merging cleanly again clears the gate" [ "$(ostate "$oi" gate)" = none ]
 check "clear --met: an item at done keeps no answer waiting on a run" [ -z "$(ostate "$oi" answer_pending)" ]
-"$P/scripts/gate.sh" clear "$oi" --met "pr:#90 conflicting no longer holds" >/dev/null 2>&1; code=$?
+"$P/scripts/gate.sh" clear "$oi" --met "pr:#90 conflicting" >/dev/null 2>&1; code=$?
 check "clear --met on a gate already cleared: exit 0" [ "$code" -eq 0 ]
 
 oj="$(oitem 'CI is down')"; "$P/adapters/local/write-state.sh" "$oj" step=done
@@ -3631,6 +3631,9 @@ oj="$(oitem 'CI is down')"; "$P/adapters/local/write-state.sh" "$oj" step=done
 "$P/scripts/gate.sh" raise "$oj" escalation "**CI is down.**" --condition "ci:down" >/dev/null 2>&1
 opr statusCheckRollup '[{"__typename": "CheckRun", "name": "test", "workflowName": "ci", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-11-09T10:00:00Z"}]'; hpass
 check "condition ci:down: a failing check keeps the gate" [ "$(ostate "$oj" gate)" = escalation ]
+"$P/scripts/gate.sh" clear "$oj" --met "pr:#90 conflicting" >/dev/null 2>&1; code=$?
+check "clear --met naming another condition than the record's: refused, exit 1" [ "$code" -eq 1 ]
+check "clear --met naming another condition than the record's: the gate stays" [ "$(ostate "$oj" gate)" = escalation ]
 opr statusCheckRollup '[{"__typename": "CheckRun", "name": "test", "workflowName": "ci", "status": "COMPLETED", "conclusion": "SUCCESS", "startedAt": "2026-11-09T11:00:00Z"}]'; hpass
 check "condition ci:down: no failing check clears the gate" [ "$(ostate "$oj" gate)" = none ]
 
@@ -3638,7 +3641,7 @@ check "condition ci:down: no failing check clears the gate" [ "$(ostate "$oj" ga
 ok="$(oitem 'Gate from a result file')"
 okj="$("$P/scripts/next.sh" "$ok" --json 2>/dev/null)"; okr="$(printf '%s' "$okj" | jget reports)"; okstep="$(printf '%s' "$okj" | jget step)"
 python3 -c 'import json,sys; json.dump({"status": "gate", "gate": "ambiguity", "message": "**Keep the name or rename?**", "options": json.loads(sys.argv[1]), "condition": "ci:down"}, open(sys.argv[2], "w"))' "$OPTIONS" "$okr/$okstep.json"
-"$P/scripts/advance.sh" "$ok" >/dev/null 2>&1; code=$?
+"$P/scripts/advance.sh" "$ok" >/dev/null 2>&1
 check "advance: a result file with options raises the gate with them" python3 -c 'import json,sys; assert json.loads(sys.argv[1]) == json.loads(sys.argv[2])' "$(ogate "$ok" options)" "$OPTIONS"
 check "advance: a result file with a condition raises the gate with it" [ "$(ogate "$ok" condition)" = "ci:down" ]
 check "advance: the gate names the step that raised it" [ "$(ogate "$ok" raised_by)" = "step $okstep" ]

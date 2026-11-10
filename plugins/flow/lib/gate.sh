@@ -211,16 +211,16 @@ clear_back() {
   echo "gate sent back on $item; run next $item to run $from again"
 }
 
-# clear_met <note>: the gate clears because its condition ended (the health job): not the owner's
-# answer, so no answered line and nothing pending; the item keeps its step, so the next pass runs
-# it.
+# clear_met <condition>: the gate clears because the condition it waits on ended (the health
+# job): not the owner's answer, so no answered line and nothing pending; the item keeps its step,
+# so the next pass runs it.
 clear_met() {
   release_hosts_stopped_for "$item"
-  met_at="$(now_iso)"
-  adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate, condition met" "asked=$asked" "answer=$1" \
-    "answer_pending=" "last_event=$met_at gate cleared by health: $1" >/dev/null
-  adapter comment "$item" --body "Gate cleared by the health job: $1" >/dev/null
+  met_note="$1 no longer holds"; met_at="$(now_iso)"
+  adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate, condition met" "asked=$asked" "answer=$met_note" \
+    "answer_pending=" "last_event=$met_at gate cleared by health: $met_note" >/dev/null
+  adapter comment "$item" --body "Gate cleared by the health job: $met_note" >/dev/null
   rm -f "$record"
-  step_runs "$step" && { echo "gate cleared on $item: $1; run next $item to continue"; return 0; }
-  echo "gate cleared on $item: $1; nothing runs on it (step ${step:-none})"
+  step_runs "$step" && { echo "gate cleared on $item: $met_note; run next $item to continue"; return 0; }
+  echo "gate cleared on $item: $met_note; nothing runs on it (step ${step:-none})"
 }

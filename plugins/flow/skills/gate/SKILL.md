@@ -41,10 +41,11 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
    item's `answered` reads `<gate>, option n (<label>)`. It exits 2, and the gate stays, when this
    host has no record of the gate (the record lives on the host that raised it: answer in words
    there or here), when the gate has no options, when n is not one of them, or with `--back`.
-   **A condition that ended**: `gate.sh clear <item> --met "<note>"` is the health job's clear of
-   a gate whose `condition` no longer holds. It carries nothing out and the item keeps its step;
-   it exits 2 on a gate with no condition, and says "already cleared" when the gate is gone. Not
-   for the owner's answers.
+   **A condition that ended**: `gate.sh clear <item> --met "<condition>"` is the health job's
+   clear of a gate whose `condition` no longer holds. It carries nothing out and the item keeps
+   its step; it exits 2 on a gate with no condition, exits 1 when the record now waits on another
+   condition than the one named, and says "already cleared" when the gate is gone. Not for the
+   owner's answers.
    Clears of one item take turns: a second one waits (up to 10s, then exit 75) and finds the
    gate as the first left it.
 3. **Say what happens next**, as `gate.sh clear` prints it. The answer waits on what carries it
