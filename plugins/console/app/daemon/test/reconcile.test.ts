@@ -211,6 +211,27 @@ test('ParkedClaim_NotHeld_WaitingForAWorker', async () => {
   assert.deepEqual([picture.counts.waiting, picture.counts.claimed], [1, 0], 'because the pool counts it as waiting, not as a bare claim');
 });
 
+/** The facts with the board's open_blockers of one item set as given. */
+function withOpenBlockers(facts: ReconcileInput, id: string, openBlockers: string[]): ReconcileInput {
+  return { ...facts, board: { ...facts.board!, items: facts.board!.items.map((item) => (item.id === id ? { ...item, open_blockers: openBlockers } : item)) } };
+}
+
+test('ParkedClaim_OpenBlocker_BlockedNotWaiting', async () => {
+  const picture = reconcile(withOpenBlockers(await parkedNine(), 'gh#9', ['gh#12']));
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'blocked', 'because the next job passes a claimed item over while a blocker is open, so it waits on that blocker, not on a worker');
+});
+
+test('ParkedClaim_OpenBlocker_CountedAsBlocked', async () => {
+  const unblocked = reconcile(await parkedNine()).counts.itemsBlocked;
+  const blocked = reconcile(withOpenBlockers(await parkedNine(), 'gh#9', ['gh#12'])).counts.itemsBlocked;
+  assert.equal(blocked, unblocked + 1, 'because the Overview tile counts the same blocked items the Board shows, so a claimed item behind an open blocker adds one');
+});
+
+test('RunningClaim_OpenBlocker_StillRunning', async () => {
+  const picture = reconcile(withOpenBlockers(await input(), 'gh#9', ['gh#12']));
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'running', 'because a run that started before the blocker was added is live work until it ends');
+});
+
 test('ParkedClaim_PluginBeforeTheHoldKeys_NotHeld', async () => {
   const nine = worktree(reconcile(await parkedNine()), 'project-wt-3');
   assert.deepEqual([nine?.heldBy, nine?.heldReason], [null, null], 'because a state without held_by holds nothing');
@@ -269,6 +290,15 @@ test('HeldClaimSixDaysOld_NotIdle', async () => {
   const nine = worktree(reconcile(await parkedNine(HELD, SIX_DAYS_BEFORE)), 'project-wt-3');
   assert.equal(nine?.state, 'held', 'because a held claim waits on purpose, for its holder to close');
   assert.equal(nine?.flags.includes('idle'), false, 'because its age alone says nothing went wrong');
+});
+
+test('BlockedClaimSixDaysOld_BlockedNotIdle', async () => {
+  const unblocked = reconcile(await parkedNine({}, SIX_DAYS_BEFORE)).counts.itemsBlocked;
+  const picture = reconcile(withOpenBlockers(await parkedNine({}, SIX_DAYS_BEFORE), 'gh#9', ['gh#12']));
+  const nine = worktree(picture, 'project-wt-3');
+  assert.equal(nine?.flags.includes('idle'), false, 'because a claim behind an open blocker waits on purpose, so its age alone says nothing went wrong');
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'blocked', 'because the Board lists the item as blocked with its worktree, not as stale');
+  assert.equal(picture.counts.itemsBlocked, unblocked + 1, 'because the Overview tile counts the blocked item the Board shows');
 });
 
 test('FreeClaimSixDaysOld_StillStale', async () => {

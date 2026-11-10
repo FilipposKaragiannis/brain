@@ -210,8 +210,10 @@ function worktreeFlags(context: WorktreeContext, now: Date): WorktreeFlag[] {
   const flowClaim = context.claim !== null && context.claim.reserved === '';
   if (flowClaim && behind >= STALE_BEHIND_BASE_COMMITS) flags.push('stale-branch');
   const claimAge = flowClaim ? ageSeconds(context.claim?.claimedAt ?? null, now) : null;
-  // A held claim waits on purpose, for its holder to close, so its age alone is not idleness.
-  const quiet = context.agents.length === 0 && context.run === null && context.gate === null && heldBy(context.item) === '';
+  // A held claim waits on purpose, for its holder to close, and a claim behind an open blocker
+  // waits for that blocker to close, so its age alone is not idleness. Behind base still is stale.
+  const waitsOnPurpose = heldBy(context.item) !== '' || (context.item?.open_blockers.length ?? 0) > 0;
+  const quiet = context.agents.length === 0 && context.run === null && context.gate === null && !waitsOnPurpose;
   if (quiet && claimAge !== null && claimAge >= STALE_IDLE_HOURS * SECONDS_PER_HOUR) flags.push('idle');
   if (context.liveness === 'dead') flags.push('dead-run');
   if (context.role === 'pool' && context.claim === null && context.agents.length > 0) flags.push('agent-without-claim');
@@ -287,6 +289,8 @@ function commentsSkipped(worktree: Worktree, pulls: PullRequest[]): boolean {
 function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate: GateRecord | null, inReview = false): ItemState {
   // A done item whose merge gate waits on its reviewers is in review: not the owner's, not blocked, claimed or not.
   if (worktree !== null && worktree.state === 'claimed' && inReview) return 'in-review';
+  // The next job passes a claimed item over while a blocker is open, so a claim with no live work waits on that blocker.
+  if (worktree !== null && waitsOnBlocker(worktree.state, boardItem)) return 'blocked';
   if (worktree !== null && worktree.state !== 'free' && worktree.state !== 'outside') return worktree.state;
   if (gate !== null) return 'needs-you';
   if (boardItem === null) return 'claimed';
@@ -301,6 +305,10 @@ function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate:
   if (boardItem.open_blockers.length > 0) return 'blocked';
   if (boardItem.needs.length > 0) return 'backlog';
   return 'ready';
+}
+
+function waitsOnBlocker(state: WorktreeState, boardItem: BoardItem | null): boolean {
+  return (state === 'waiting' || state === 'claimed') && boardItem !== null && boardItem.open_blockers.length > 0;
 }
 
 function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<string>): Item[] {

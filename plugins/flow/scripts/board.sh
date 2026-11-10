@@ -1,6 +1,8 @@
 #!/bin/sh
 # board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every tracker read, every claim. The pool
-# with item, step and last event; open items with their state and blockers, and in the gate column
+# with item, step and last event; open items with their state and open blockers (--json:
+# open_blockers on every item, the tracker's own list, else those of blocked_by not read as closed,
+# as next.sh judges them; a claimed item waits on them at every step), and in the gate column
 # the owner's answer to a cleared gate while it waits on a run (answer_pending; in Health too once
 # it waits past the gate reminder); pending gates; overlapping claims; the spend per item, from
 # the step sessions in log/runs.jsonl; each tracker whose list failed, with why (--json:
@@ -71,4 +73,21 @@ holders="$(printf '%s\n' "$items" > "$listed" && python3 -I "$FLOW_PLUGIN/script
 done | python3 -I -c '
 import json, sys
 print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
-printf '%s\n%s\n%s\n%s\n%s\n' "$items" "$runs" "$gates" "$tracker_errors" "$holders" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"
+# A blocker the lists leave out (closed, missing, or another tracker's) of an item whose tracker
+# keeps no open_blockers list is read, once each, as next.sh reads it (lib/blockers.sh): open,
+# closed, or unknown when it cannot be read. Only a closed one holds nothing.
+blockers="$(python3 -I -c '
+import json, sys
+items = json.load(open(sys.argv[1]))
+listed, seen = {item["id"] for item in items}, set()
+for item in items:
+    for blocker in [] if "open_blockers" in item else item.get("blocked_by", []):
+        if blocker not in listed and blocker not in seen:
+            seen.add(blocker)
+            print(blocker)' "$listed" | while read -r blocker; do
+  blocker_status="$(json_get "$(adapter read "$blocker" </dev/null 2>/dev/null)" status 2>/dev/null)"
+  json_obj "id=$blocker" "status=${blocker_status:-unknown}"; echo
+done | python3 -I -c '
+import json, sys
+print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
+printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$items" "$runs" "$gates" "$tracker_errors" "$holders" "$blockers" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"

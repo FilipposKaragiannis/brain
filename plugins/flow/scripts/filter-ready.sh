@@ -9,7 +9,7 @@
 # the item, and next.sh or the health job lifts the tag. A hold keeps back only the steps after
 # the profile's plan, so a plan sent back runs again. With FLOW_READY_NOTES naming a file, each
 # open item held back is appended to it as a JSON line, {"id", "worktree", "why"} (why: gate,
-# needs, children, split, done, blocked or held; a held one adds held_by and held_reason), so
-# next.sh can say why a pick found nothing.
+# needs, children, split, done, blocked or held; a held one adds held_by and held_reason, a
+# blocked one blocked_by, its open blockers), so next.sh can say why a pick found nothing.
 . "$(dirname "$0")/../lib/flow.sh"
 python3 -I "$FLOW_PLUGIN/scripts/_filter_ready.py" "$FLOW_PLUGIN"

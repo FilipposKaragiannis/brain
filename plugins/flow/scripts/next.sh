@@ -8,10 +8,11 @@
 # Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
-# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, or split
-# and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
+# an open item (blocked_by), or split and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
-# gate, held, done, or split) and tries the next ready one, since the ready list it came from can
+# gate, held, blocked, done, or split) and tries the next ready one, since the ready list it came from can
 # be older than the item's state. A pick whose claim finds the pool full skips that item too, and
 # from then on every item that holds no claim and whose step needs a worktree, with no tracker
 # read and no claim attempt (scripts/_pick.py); it tries one that already holds a claim, or whose
@@ -21,6 +22,7 @@
 # re-runs this script with exec, so it keeps the pid; the skip list, the pool-full mark and the
 # cached ready list count only when FLOW_NEXT_PID names this process.
 . "$(dirname "$0")/../lib/flow.sh"
+. "$FLOW_PLUGIN/lib/blockers.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 item=""; as_json=0; embed=0; pick=""
@@ -83,6 +85,7 @@ notes = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.strip()
 print(json.dumps(notes))' "$notes")"
   rm -f "$notes"
   ready="$(printf '%s\n' "$listed" | sed -n 1p)"; notready="$(printf '%s\n' "$listed" | sed -n 2p)"
+  wait_notes "$notready"
 fi
 # Two runs started together must not pick the same item or claim the same worktree: the pick, the
 # claim and the run record happen under one lock. The brief is written after it is released.
@@ -130,6 +133,11 @@ if [ "$step" = split ]; then
   kids="$(json_get "$data" open_children)"
   if [ "${kids:-0}" -gt 0 ] 2>/dev/null; then pass_over "$item is split and waits on its $kids open child item(s)" 4; fi
   pass_over "$item is split and every child is closed. Close it." 6
+fi
+blockers="$(open_blockers "$data")"
+if [ -n "$blockers" ]; then
+  wait_note "$item" "$blockers"
+  pass_over "$item is held behind $blockers (blocked by)" 4
 fi
 json_get "$profiles" "steps.$step" >/dev/null 2>&1 || die "unknown step '$step' for $item"
 if [ -f "$(run_file "$item")" ]; then
@@ -203,6 +211,8 @@ released=""; held_by="$(state_get "$data" held_by)"
 if [ -n "$held_by" ] && [ "$step" != sync ] && hdata="$(adapter read "$held_by" 2>/dev/null)" && [ "$(json_get "$hdata" status)" = closed ]; then
   "$FLOW_PLUGIN/scripts/hold.sh" clear "$item" "$held_by closed" && released="$held_by"
 fi
+# The item's own step, not a sync ahead of it, gets the note to merge its base first, as for a hold.
+unblocked=""; [ "$step" = sync ] || unblocked="$(wait_over "$reports")"
 # The plan step judges the other open work its touches reach; with none the section is left out.
 others=""; [ "$step" = plan ] && others="$("$FLOW_PLUGIN/scripts/hold.sh" candidates "$item" 2>/dev/null)"
 # A plan run again while the item is still held (sent back at the gate) decides the hold anew.
@@ -269,6 +279,14 @@ brief="$reports/brief-$step.md"
     echo "You were held behind $released, which has closed. First merge \`$rref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $rref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
     echo
   fi
+  if [ -n "$unblocked" ]; then
+    uref="$(json_get "$claim" base)"; uref="${uref:-$base}"
+    git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$uref" && uref="origin/$uref"
+    echo "## The wait is over"
+    echo
+    echo "You waited on $unblocked (blocked by). First merge \`$uref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $uref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
+    echo
+  fi
   if [ -n "$still_held" ]; then
     echo "## The hold now"
     echo
@@ -297,9 +315,9 @@ brief="$reports/brief-$step.md"
     awk 'BEGIN{n=0} /^---$/ {n++; next} n>=2 {print}' "$FLOW_PLUGIN/agents/$agent.md"
   fi
 } > "$brief"
-# The resume note is for the one brief after a resume; the branch flags in health.md stay until
-# the health job clears them.
-rm -f "$reports/resume.md"
+# The resume note is for the one brief after a resume, and so is the note that the wait on the
+# blockers is over; the branch flags in health.md stay until the health job clears them.
+rm -f "$reports/resume.md"; [ -z "$unblocked" ] || rm -f "$reports/blocked.md"
 
 out="$(json_obj "item=$item" "title=$(json_get "$data" title)" "kind=$kind" "size=$size" "profile=$profile" "depth=$depth" \
   "architect=$architect" "step=$step" "agent=$agent" "skill=$skill" "worktree=$wt" "branch=$branch" "base=$base" "brief=$brief" "reports=$reports" \
