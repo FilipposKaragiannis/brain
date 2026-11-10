@@ -129,17 +129,24 @@ test('PickedWaitingItem_DetailSaysItWaitsForAWorker', () => {
 
 const ESCALATED: Item = { ...boardItem('gh#50', 'Fifty'), state: 'needs-you', gate: 'escalation' };
 
-function renderPicked(item: Item, gates: Snapshot['gates']): void {
+const IN_REVIEW: Item = { ...boardItem('gh#51', 'Fifty-one'), state: 'in-review', gate: 'merge' };
+
+function renderPicked(item: Item, gates: Snapshot['gates'], labelGates: Snapshot['labelGates'] = []): void {
   const Wrapper = new FakeDaemon().screenWrapper();
-  render(<Wrapper><Board snapshot={{ ...snapshotAt(TAKEN_AT, 1), items: [item], gates }} selected={item.id} /></Wrapper>);
+  render(<Wrapper><Board snapshot={{ ...snapshotAt(TAKEN_AT, 1), items: [item], gates, labelGates }} selected={item.id} /></Wrapper>);
 }
 
 test('PickedItemGatedOnlyByItsLabel_GateFactSaysLabelOnly', () => {
-  renderPicked(ESCALATED, []);
+  renderPicked(ESCALATED, [], [{ item: 'gh#50', title: 'Fifty', url: null, gate: 'escalation', worktree: null, sinceAt: null, ageSeconds: null }]);
   expect(screen.getByText('Gate').nextElementSibling?.textContent, 'because no record backs the label, so no question was recorded').toMatch(/escalation.*label only/);
 });
 
 test('PickedItemWithAGateRecord_GateFactIsTheBareGateName', () => {
   renderPicked(ESCALATED, [waitingGate('gh#50', 'escalation')]);
   expect(screen.getByText('Gate').nextElementSibling?.textContent, 'because a recorded gate holds its question, so nothing is missing').toBe('escalation');
+});
+
+test('PickedItemWithMergeGateHeldInReview_GateFactIsTheBareGateName', () => {
+  renderPicked(IN_REVIEW, []);
+  expect(screen.getByText('Gate').nextElementSibling?.textContent, 'because a merge gate held for review was recorded, so only a labelGates entry means label only').toBe('merge');
 });

@@ -122,11 +122,15 @@ function PullCell({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
   return item.pr === null ? <>—</> : <ExternalLink url={pullUrl(item.pr, snapshot.project.repo)} className="mono">{pullLabel(item.pr)}</ExternalLink>;
 }
 
-/** The item's gate: none, an answer still waiting, the gate a record raised, or a tracker label no record backs, so no question was asked. */
+/**
+ * The item's gate: none, an answer still waiting, a tracker label no record backs (the daemon's
+ * `labelGates`), so no question was asked, or else the gate itself, a record shown on the Gates
+ * screen or a merge gate held while its PR is in review.
+ */
 function gateFact(item: Item, snapshot: Snapshot): string {
   if (item.gate === 'none' || item.gate === '') return item.answerPending === null ? '—' : `cleared, ${answerWaits(item.answerPending)}`;
-  if (snapshot.gates.some((gate) => gate.item === item.id)) return item.gate;
-  return `${item.gate} (label only, no question recorded)`;
+  if (snapshot.labelGates.some((entry) => entry.item === item.id)) return `${item.gate} (label only, no question recorded)`;
+  return item.gate;
 }
 
 /** One item: its fields, its pull and where its review stands, and what its sessions cost. */
