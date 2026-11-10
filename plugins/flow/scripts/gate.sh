@@ -25,6 +25,17 @@
 #   gate.sh clear <item> --back <message>   the owner sends the work back: the gate's from step
 #                                           runs again, with the message in its brief; exit 1
 #                                           when no run does that step again (done)
+#   gate.sh clear <item> --option <n> [<note>]
+#                                           the owner picks option n of the gate record: its text
+#                                           is the answer, the note a second paragraph under it;
+#                                           exit 2 with no record on this host, no options, n out
+#                                           of range, or with --back
+#   gate.sh clear <item> --met <note>       the gate's condition no longer holds (the health job):
+#                                           nothing waits on a run, the item keeps its step; exit 2
+#                                           when the gate has no condition; "already cleared",
+#                                           exit 0, when its record is gone
+#                                           Each clear of an item waits for another one to finish
+#                                           (exit 75 after 10s) and reads the record after it
 #   gate.sh clear <claude|codex>            start sessions on a host a spend limit or an auth
 #                                           error stopped outside any item's run
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
@@ -52,6 +63,9 @@ gates_json() {
 }
 
 RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>]"
+CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <note>"
+# How long a clear waits for another clear of the same item to finish.
+CLEAR_LOCK_SECONDS=10
 # Who carries an answer out, as the record and the console name it.
 CARRIER_SWEEP="the sweep, once the PR merges"
 CARRIER_CHILDREN="nobody: the children carry the work"
@@ -179,11 +193,19 @@ $footer" >/dev/null
     "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" "options:=$options" "raised_by=$raised_by" \
       "answered_by=$answered_by" "$condition_field" "footer=$footer" ;;
   clear)
-    [ $# -ge 2 ] || die "usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message>" 2
-    item="$2"; back=0
-    [ "${3:-}" = --back ] && { back=1; shift; }
+    [ $# -ge 2 ] || die "$CLEAR_USAGE" 2
+    item="$2"; mode=answer; option_number=""
+    case "${3:-}" in
+      --back) mode=back; shift ;;
+      --option) [ $# -ge 4 ] || die "$CLEAR_USAGE" 2; mode=option; option_number="$4"; shift 2 ;;
+      --met) mode=met; shift ;;
+    esac
     message="${3:-cleared}"; given="${3:-}"
-    [ "$back" -eq 0 ] || [ -n "$given" ] || die "gate.sh clear --back needs a message: what to change" 2
+    case "$mode:$given" in
+      back:--option|option:--back) die "gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step" 2 ;;
+      back:) die "gate.sh clear --back needs a message: what to change" 2 ;;
+      met:) die "gate.sh clear --met needs a note: the condition that no longer holds" 2 ;;
+    esac
     # A host stopped on a spend limit or an auth error (lib/host.sh) starts sessions again when
     # the gate that names it clears, or when the owner clears the host by name.
     . "$FLOW_PLUGIN/lib/host.sh"
@@ -191,22 +213,48 @@ $footer" >/dev/null
       [ -f "$(host_stop_file "$item")" ] || { echo "$item is not stopped"; exit 0; }
       rm -f "$(host_stop_file "$item")"; echo "$item starts sessions again"; exit 0 ;;
     esac
-    record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""
-    [ -f "$record" ] && { asked="$(json_get "$(cat "$record")" message)"; gate="$(json_get "$(cat "$record")" gate)"; }
+    # One clear of an item at a time (the health job and the owner can race); the record is read
+    # once the lock is held, so the second finds it gone.
+    FLOW_LOCK_WAIT="$CLEAR_LOCK_SECONDS" flow_lock "gate-$(item_slug "$item")" \
+      || die "another clear of $item has held its gate for over ${CLEAR_LOCK_SECONDS}s; try again" 75
+    record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""; record_json=""
+    [ -f "$record" ] && { record_json="$(cat "$record")"; asked="$(json_get "$record_json" message)"; gate="$(json_get "$record_json" gate)"; }
+    if [ "$mode" = met ]; then
+      [ -n "$record_json" ] || { echo "gate already cleared on $item"; exit 0; }
+      [ -n "$(json_get "$record_json" condition)" ] || die "the ${gate:-gate} gate on $item waits on no condition, so only the owner's answer clears it: gate.sh clear $item \"<answer>\"" 2
+    fi
+    if [ "$mode" = option ]; then
+      [ -n "$record_json" ] || die "$item has no gate record on this host: the record lives in the flow home of the host that raised the gate. Pick the option there, or answer in words: gate.sh clear $item \"<answer>\"" 2
+      option_count="$(json_length "$record_json" options)"
+      [ "$option_count" -gt 0 ] || die "the ${gate:-gate} gate on $item has no options recorded; answer in words: gate.sh clear $item \"<answer>\"" 2
+      case "$option_number" in ''|0*|*[!0-9]*) option_number=0 ;; esac
+      [ "$option_number" -ge 1 ] && [ "$option_number" -le "$option_count" ] \
+        || die "the ${gate:-gate} gate on $item has options 1 to $option_count; --option takes one of them" 2
+      option_text="$(json_get "$record_json" "options.$((option_number - 1)).text")"
+      option_label="$(json_get "$record_json" "options.$((option_number - 1)).label")"
+      message="$option_text"; [ -z "$given" ] || message="$option_text
+
+$given"
+      given="$message"
+    fi
     data="$(adapter read "$item" 2>/dev/null)"
     [ -n "$gate" ] || { gate="$(state_get "$data" gate)"; [ "$gate" != none ] || gate=""; }
+    answered_as="$gate"; answered_line="${gate:-gate}: $message"
+    [ "$mode" != option ] || { answered_as="$gate, option $option_number ($option_label)"; answered_line="$gate (option $option_number): $option_text"; }
     step="$(state_get "$data" step)"; from="$(state_get "$data" gate_from)"; pr="$(state_get "$data" pr)"
     # Who carries out the answer (answer_carrier), kept in answer_pending until a run takes it (the
     # board shows it): next, when the item's step is one it runs; the comments job, at done with an
     # open PR (a gate a comments pass raised). The merge gate's answer is the merge itself; a clear
-    # with no answer, or one that lets a split stand, carries nothing out. Any other answer no step
-    # acts on: the clear fails and the gate stays, so an answer is never dropped in silence.
+    # with no answer, one that lets a split stand, or one because the gate's condition ended,
+    # carries nothing out. Any other answer no step acts on: the clear fails and the gate stays, so
+    # an answer is never dropped in silence.
     pending=""
-    if [ "$back" -eq 1 ]; then
+    if [ "$mode" = back ]; then
       [ -n "$from" ] || die "$item has no step to send back to (its gate predates gate_from); clear it with the change instead" 2
       [ "$step" != split ] || die "$item is already split into tracker tasks; close its children to keep it whole, then clear the gate" 2
       step_runs "$from" || die "$item has no step to send back to: its ${gate:-gate} gate judges the $from step, which no run does again. Do it by hand, then clear the gate with no answer: gate.sh clear $item"
       pending=next
+    elif [ "$mode" = met ]; then :
     elif [ -z "$given" ] && ! step_runs "$step"; then :
     else
       case "$(answer_carrier "$step" "$gate" "$pr")" in
@@ -225,7 +273,7 @@ $footer" >/dev/null
     done
     # One events.log line per answer, so the console can list what was answered today.
     answered_event() { mkdir -p "$home"; printf '%s\t%s\tanswered\t%s\n' "$(now_iso)" "$item" "$(printf '%s' "$1" | tr '\n' ' ')" >> "$home/events.log"; }
-    if [ "$back" -eq 1 ]; then
+    if [ "$mode" = back ]; then
       # The question and the answer stay in the state, so the from step's brief carries them, and
       # answered_at dates the answer that waits on next (the board's Health).
       sent_at="$(now_iso)"
@@ -236,13 +284,25 @@ $footer" >/dev/null
       rm -f "$record"
       echo "gate sent back on $item; run next $item to run $from again"; exit 0
     fi
+    if [ "$mode" = met ]; then
+      # Not the owner's answer: no answered line, nothing pending, and the item keeps its step, so
+      # the next pass runs it.
+      met_at="$(now_iso)"
+      adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate, condition met" "asked=$asked" "answer=$given" \
+        "answer_pending=" "last_event=$met_at gate cleared by health: $given" >/dev/null
+      adapter comment "$item" --body "Gate cleared by the health job: $given" >/dev/null
+      rm -f "$record"
+      if step_runs "$step"; then echo "gate cleared on $item: $given; run next $item to continue"
+      else echo "gate cleared on $item: $given; nothing runs on it (step ${step:-none})"; fi
+      exit 0
+    fi
     # The question and the answer stay in the state, so the next step's brief carries them.
     # answered_at stays too: the comments job counts a clear as new activity on the item's PR.
     cleared_at="$(now_iso)"
-    adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate" "asked=$asked" "answer=$message" \
+    adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$answered_as" "asked=$asked" "answer=$message" \
       "answered_at=$cleared_at" "answer_pending=$pending" "last_event=$cleared_at gate cleared: $message" >/dev/null
     adapter comment "$item" --body "Gate cleared: $message" >/dev/null
-    answered_event "${gate:-gate}: $message"
+    answered_event "$answered_line"
     rm -f "$home/gates/$(item_slug "$item").json"
     # The split happened when the plan step ended (advance.sh). Clearing the gate never splits; an
     # owner who closed the children to keep the item whole gets its plan step back.
@@ -276,5 +336,5 @@ $footer" >/dev/null
       c="$(cat "$f")"
       printf '%s\t%s\tstopped\t%s: %s\n' "$(json_get "$c" at)" "$(json_get "$c" host)" "$(json_get "$c" cause)" "$(json_get "$c" said)"
     done ;;
-  *) sed -n '2,36p' "$0"; exit 2 ;;
+  *) sed -n '2,47p' "$0"; exit 2 ;;
 esac

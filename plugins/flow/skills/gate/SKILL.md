@@ -33,6 +33,20 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
    The step that raised the gate runs again, its brief carrying the owner's note. A note is
    required. Works for `interview`, `decomposition`, `plan-approval` and `feel-test` (which goes
    back to the step that wrote the code).
+   **An option**: when the gate lists `options` and the owner picks one by its number:
+   ```
+   "$P/scripts/gate.sh" clear <item> --option <n> ["<note>"]
+   ```
+   The answer is option n's `text`, with the owner's note, if any, as a second paragraph; the
+   item's `answered` reads `<gate>, option n (<label>)`. It exits 2, and the gate stays, when this
+   host has no record of the gate (the record lives on the host that raised it: answer in words
+   there or here), when the gate has no options, when n is not one of them, or with `--back`.
+   **A condition that ended**: `gate.sh clear <item> --met "<note>"` is the health job's clear of
+   a gate whose `condition` no longer holds. It carries nothing out and the item keeps its step;
+   it exits 2 on a gate with no condition, and says "already cleared" when the gate is gone. Not
+   for the owner's answers.
+   Clears of one item take turns: a second one waits (up to 10s, then exit 75) and finds the
+   gate as the first left it.
 3. **Say what happens next**, as `gate.sh clear` prints it. The answer waits on what carries it
    out (the item's `answer_pending`, which the board shows in its gate column until a run takes
    it): `next <item>` continues from the step after the gate, or runs the sent-back step again;
