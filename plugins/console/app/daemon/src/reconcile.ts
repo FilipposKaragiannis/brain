@@ -210,8 +210,10 @@ function worktreeFlags(context: WorktreeContext, now: Date): WorktreeFlag[] {
   const flowClaim = context.claim !== null && context.claim.reserved === '';
   if (flowClaim && behind >= STALE_BEHIND_BASE_COMMITS) flags.push('stale-branch');
   const claimAge = flowClaim ? ageSeconds(context.claim?.claimedAt ?? null, now) : null;
-  // A held claim waits on purpose, for its holder to close, so its age alone is not idleness.
-  const quiet = context.agents.length === 0 && context.run === null && context.gate === null && heldBy(context.item) === '';
+  // A held claim waits on purpose, for its holder to close, and a claim behind an open blocker
+  // waits for that blocker to close, so its age alone is not idleness. Behind base still is stale.
+  const waitsOnPurpose = heldBy(context.item) !== '' || (context.item?.open_blockers.length ?? 0) > 0;
+  const quiet = context.agents.length === 0 && context.run === null && context.gate === null && !waitsOnPurpose;
   if (quiet && claimAge !== null && claimAge >= STALE_IDLE_HOURS * SECONDS_PER_HOUR) flags.push('idle');
   if (context.liveness === 'dead') flags.push('dead-run');
   if (context.role === 'pool' && context.claim === null && context.agents.length > 0) flags.push('agent-without-claim');

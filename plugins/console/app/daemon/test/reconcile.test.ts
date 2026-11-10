@@ -292,6 +292,15 @@ test('HeldClaimSixDaysOld_NotIdle', async () => {
   assert.equal(nine?.flags.includes('idle'), false, 'because its age alone says nothing went wrong');
 });
 
+test('BlockedClaimSixDaysOld_BlockedNotIdle', async () => {
+  const unblocked = reconcile(await parkedNine({}, SIX_DAYS_BEFORE)).counts.itemsBlocked;
+  const picture = reconcile(withOpenBlockers(await parkedNine({}, SIX_DAYS_BEFORE), 'gh#9', ['gh#12']));
+  const nine = worktree(picture, 'project-wt-3');
+  assert.equal(nine?.flags.includes('idle'), false, 'because a claim behind an open blocker waits on purpose, so its age alone says nothing went wrong');
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'blocked', 'because the Board lists the item as blocked with its worktree, not as stale');
+  assert.equal(picture.counts.itemsBlocked, unblocked + 1, 'because the Overview tile counts the blocked item the Board shows');
+});
+
 test('FreeClaimSixDaysOld_StillStale', async () => {
   assert.equal(worktree(reconcile(await parkedNine({}, SIX_DAYS_BEFORE)), 'project-wt-3')?.state, 'stale', 'because a claim nothing holds back and nobody worked for six days is idle');
 });
