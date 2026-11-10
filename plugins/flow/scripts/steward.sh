@@ -1010,17 +1010,17 @@ condition_met() {
   condition_in_grammar "$2" || return 2
   case "$2" in
     blocked_by:*)
-      cm_data="$(adapter read "${2#blocked_by:}" 2>/dev/null)" || return 2
-      case "$(json_get "$cm_data" status)" in closed) return 0 ;; open) return 1 ;; *) return 2 ;; esac ;;
+      blocker_item="$(adapter read "${2#blocked_by:}" 2>/dev/null)" || return 2
+      case "$(json_get "$blocker_item" status)" in closed) return 0 ;; open) return 1 ;; *) return 2 ;; esac ;;
     "pr:#"*" conflicting")
-      cm_pr="${2#pr:}"; cm_pr="${cm_pr% conflicting}"
-      cm_state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$cm_pr" 2>/dev/null)" || return 2
-      case "$(json_get "$cm_state" mergeable)" in MERGEABLE) return 0 ;; CONFLICTING|UNKNOWN) return 1 ;; *) return 2 ;; esac ;;
+      condition_pr="${2#pr:}"; condition_pr="${condition_pr% conflicting}"
+      condition_state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$condition_pr" 2>/dev/null)" || return 2
+      case "$(json_get "$condition_state" mergeable)" in MERGEABLE) return 0 ;; CONFLICTING|UNKNOWN) return 1 ;; *) return 2 ;; esac ;;
     ci:down)
-      cm_data="$(adapter read "$1" 2>/dev/null)" || return 2
-      cm_pr="$(state_get "$cm_data" pr)"; [ -n "$cm_pr" ] || return 2
-      cm_failing="$("$FLOW_PLUGIN/scripts/comments.sh" failing-checks "$cm_pr" 2>/dev/null)" || return 2
-      [ -z "$cm_failing" ] && return 0
+      gated_item="$(adapter read "$1" 2>/dev/null)" || return 2
+      condition_pr="$(state_get "$gated_item" pr)"; [ -n "$condition_pr" ] || return 2
+      condition_failing="$("$FLOW_PLUGIN/scripts/comments.sh" failing-checks "$condition_pr" 2>/dev/null)" || return 2
+      [ -z "$condition_failing" ] && return 0
       return 1 ;;
   esac
   return 2
@@ -1030,16 +1030,16 @@ condition_met() {
 # alone, so the gate is cleared here once condition_met reads it ended. Run before the pool loop,
 # so the claims it frees count as no longer at a gate in this pass.
 health_conditions() {
-  for hc_f in "$home"/gates/*.json; do
-    [ -f "$hc_f" ] || continue
-    hc_g="$(cat "$hc_f")"; hc_cond="$(json_get "$hc_g" condition)"
-    [ -n "$hc_cond" ] || continue
-    hc_item="$(json_get "$hc_g" item)"; hc_gate="$(json_get "$hc_g" gate)"
-    condition_met "$hc_item" "$hc_cond" || continue
-    if [ "$dry" -eq 1 ]; then health_say "$hc_item" "would clear the $hc_gate gate: $hc_cond no longer holds"; continue; fi
-    if "$FLOW_PLUGIN/scripts/gate.sh" clear "$hc_item" --met "$hc_cond no longer holds" >/dev/null 2>&1; then
-      health_say "$hc_item" "cleared the $hc_gate gate: $hc_cond no longer holds"
-    else health_say "$hc_item" "could not clear the $hc_gate gate, though $hc_cond no longer holds; the next health run tries again"; fi
+  for gate_file in "$home"/gates/*.json; do
+    [ -f "$gate_file" ] || continue
+    gate_record="$(cat "$gate_file")"; gate_condition="$(json_get "$gate_record" condition)"
+    [ -n "$gate_condition" ] || continue
+    gate_item="$(json_get "$gate_record" item)"; gate_name="$(json_get "$gate_record" gate)"
+    condition_met "$gate_item" "$gate_condition" || continue
+    if [ "$dry" -eq 1 ]; then health_say "$gate_item" "would clear the $gate_name gate: $gate_condition no longer holds"; continue; fi
+    if "$FLOW_PLUGIN/scripts/gate.sh" clear "$gate_item" --met "$gate_condition no longer holds" >/dev/null 2>&1; then
+      health_say "$gate_item" "cleared the $gate_name gate: $gate_condition no longer holds"
+    else health_say "$gate_item" "could not clear the $gate_name gate, though $gate_condition no longer holds; the next health run tries again"; fi
   done
 }
 
@@ -1056,8 +1056,8 @@ health_gates() {
     rf="$home/health/$(item_slug "$gi").remind"; sent=0; sent_gate=""
     [ -f "$rf" ] && read -r sent_gate sent < "$rf"
     [ "$sent_gate" = "$gt" ] && [ $((now - sent)) -lt "$reminder" ] && continue
-    gc="$(json_get "$g" condition)"
-    msg="waiting $(health_ago "$since" | sed 's/ ago$//') at the $gt gate${gc:+ (waits on $gc; the health job clears it when that ends)}: $(json_get "$g" message | head -1)"
+    waiting_condition="$(json_get "$g" condition)"
+    msg="waiting $(health_ago "$since" | sed 's/ ago$//') at the $gt gate${waiting_condition:+ (waits on $waiting_condition; the health job clears it when that ends)}: $(json_get "$g" message | head -1)"
     health_say "$gi" "$msg"
     health_notify "$gi $msg. Answer with: flow:gate $gi \"<answer>\""
     [ "$dry" -eq 1 ] || printf '%s %s\n' "$gt" "$now" > "$rf"
