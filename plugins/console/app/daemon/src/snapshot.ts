@@ -61,7 +61,7 @@ export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 
  * blocker, and either its parent has started (a step, a worktree, a PR or a gate), a sibling
  * under the same parent has started or is done, or it blocks an item that has started. Other
  * items waiting on a field are backlog and get no row. `host-stopped`: flow stopped a host on a
- * spend limit or an auth error (`stoppedHosts`), and no session starts on it until it is cleared.
+ * spend limit, an auth error or an unknown model (`stoppedHosts`), and no session starts on it until it is cleared.
  * `close`: an item no gate asks about that only the owner can finish (`toClose`). `label-gate`: an
  * item gated only by its tracker label, with no gate record and so no question (`labelGates`).
  */
@@ -608,7 +608,7 @@ export type Job = {
 };
 
 /**
- * A host flow stopped on a spend limit or an auth error (`<flow home>/log/<host>.stopped`, flow
+ * A host flow stopped on a spend limit, an auth error or an unknown model (`<flow home>/log/<host>.stopped`, flow
  * 1.22.0 and later): no session starts on it until the owner clears it with `gate.sh clear <host>`.
  */
 export type StoppedHost = { host: string; cause: string; said: string; at: string | null; item: string | null };

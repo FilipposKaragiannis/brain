@@ -157,7 +157,7 @@ Facts to answer with:
   item counts a failed attempt, says so in its comment, and at `max_attempts` reaches the
   escalation gate, which quotes that message. The result stays in the reports, so `health` keeps
   the claim instead of releasing it as empty.
-- `health` does not resume a run a spend limit or an auth error stopped: the escalation gate
+- `health` does not resume a run a spend limit, an auth error or an unknown model stopped: the escalation gate
   ended that run, as every gate does, so no run record is left. Once the gate clears, the next
   `next` run continues the item at the step the stop cut short, in the worktree as the run left
   it, with the gate's question and answer in the step's brief. `health` resumes only a run that

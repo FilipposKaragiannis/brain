@@ -9,7 +9,7 @@ is), Codex's errors to stderr, and writes the summary file: one JSON object with
 host reported (Claude's usage block as given, the sum of Codex's turn usage), the cost when the
 host reports one, the models that ran, the session's last message (last: what it printed or the
 error it stopped on, whichever came last), and the cause when a failed session stopped on a spend
-limit or an auth error, with the host's line that says so. Only a failed session has a cause: a
+limit, an auth error or a model the host does not know, with the host's line that says so. Only a failed session has a cause: a
 session that ended well may quote those lines."""
 import json, re, sys
 
@@ -24,6 +24,10 @@ AUTH = re.compile(r"please run /login|not logged in|invalid api key|invalid auth
                   r"|login expired|session expired|authentication required|authentication_error|disabled api key authentication"
                   r"|401 unauthorized|unexpected status 401|refresh token was rejected|token refresh failed"
                   r"|auth is missing|failed to refresh token", re.I)
+# A model the host does not have: claude's unrecognized_model and its result text, Codex's
+# model_not_found and its message for a model the account cannot use.
+MODEL = re.compile(r"unrecognized_model|issue with the selected model|model_not_found"
+                   r"|model is not supported when using codex", re.I)
 # The longest last message the summary keeps: enough to quote in a comment or a gate.
 LAST_MESSAGE_CHARS = 1000
 
@@ -95,8 +99,8 @@ def codex(out, said):
 
 
 def cause(lines):
-    """spend-limit or auth, and the line that says so; the spend limit wins when both show."""
-    for name, pattern in (("spend-limit", SPEND), ("auth", AUTH)):
+    """spend-limit, auth or model, and the line that says so; the first in that order wins."""
+    for name, pattern in (("spend-limit", SPEND), ("auth", AUTH), ("model", MODEL)):
         for line in lines:
             if pattern.search(line):
                 return name, line.strip()[:300]

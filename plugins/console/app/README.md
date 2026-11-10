@@ -507,8 +507,8 @@ the pool keys (`pool`, `pool_max`, `worktree_copy`, `worktree_setup`) count at t
 The Agents page holds, per host, the model and effort of every unattended session
 on that host without an agent of its own: the steps with no agent (design, implement, review,
 explain) and the comments, intake and retro jobs (flow 1.20.0): `jobs.claude.model` (opus, sonnet, haiku,
-fable), `jobs.claude.effort` (low, medium, high, xhigh, max), `jobs.codex.model` (gpt-6-astra,
-gpt-6-sol, gpt-6-luna) and `jobs.codex.effort` (low, medium, high, xhigh), where empty or unset
+fable), `jobs.claude.effort` (low, medium, high, xhigh, max), `jobs.codex.model` (gpt-6.1-sol,
+gpt-6.1-terra, gpt-6-astra, gpt-6-luna) and `jobs.codex.effort` (low, medium, high, xhigh), where empty or unset
 takes the host's own default; they need no follow-up, the next job run reads the file. The two
 models are `enumOrText`, since the plugin passes any model name on and checks only the efforts
 and the host. The old `jobs.model` and `jobs.effort` are deprecated: the plugin still reads them
@@ -979,7 +979,7 @@ another page, and one save bar at the bottom counts the unsaved changes and whic
 with Discard and Save changes, which sends them all in one write. On Agents, both hosts' model and effort dropdowns show, each listing its values and "host default"
 for empty and, for a model, "other…" that opens a text field (a name off the list starts there),
 the help under it naming the default (for codex the one `hostDefaults` read, "On this machine
-that is gpt-6-sol"). While a host has no map and a
+that is gpt-6.1-sol"). While a host has no map and a
 deprecated key is set, its dropdown starts at what the jobs really run with, under it "now opus,
 from the deprecated jobs.model". A save of either of a host's pair writes both, "host default" as an
 empty line, so the `jobs.<host>` map is there and the fallback ends. A deprecated `jobs.model` or

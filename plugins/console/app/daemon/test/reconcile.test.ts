@@ -1314,6 +1314,13 @@ test('StoppedHostOnAuthForAGate_CauseInWordsAndTheGateNamed', async () => {
   assert.equal(row?.detail, 'codex stopped on an auth error: Not logged in. No codex session starts until you clear it, or when the gate on gh#7 clears.', 'because clearing the gate that names the stop starts the host again too');
 });
 
+test('StoppedHostOnAnUnknownModel_CauseInWords', async () => {
+  const facts = await input();
+  facts.flow.stoppedHosts = [{ host: 'codex', cause: 'model', said: 'model_not_found: gpt-nope-9', at: null, item: null }];
+  const row = reconcile(facts).attention.find((entry) => entry.kind === 'host-stopped');
+  assert.equal(row?.title, 'codex is stopped on an unknown model', 'because flow says the model cause as an unknown model');
+});
+
 test('NoStoppedHost_NoRowAndOtherRowsHaveNoAction', async () => {
   const picture = await snapshot();
   assert.deepEqual([picture.stoppedHosts, picture.attention.filter((row) => row.action !== null)], [[], []], 'because only a stopped host has a button on its row');

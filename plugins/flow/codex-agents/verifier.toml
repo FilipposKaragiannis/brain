@@ -1,6 +1,6 @@
 name = "verifier"
 description = "Runs the project checks and writes .flow/reports/<item>/verify.json. Use before any PR. Never edits code."
-model = "gpt-6-luna"
+model = "gpt-6.1-terra"
 model_reasoning_effort = "low"
 sandbox_mode = "workspace-write"
 developer_instructions = """
