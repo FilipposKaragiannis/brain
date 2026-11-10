@@ -317,7 +317,7 @@ test('ClaimedItemEveryStepRanNoGate_WorktreeNeedsYou', async () => {
 
 test('ClaimedItemAtAMergeGateInReview_InReviewNotWaiting', async () => {
   const facts = await parkedNine({ step: 'done', gate: 'merge' });
-  facts.flow = { ...facts.flow, gates: [{ item: 'gh#9', gate: 'merge', message: 'Merge #21', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null }] };
+  facts.flow = { ...facts.flow, gates: [{ item: 'gh#9', gate: 'merge', message: 'Merge #21', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null, options: [], raisedBy: null, answeredBy: null, condition: null, footer: null }] };
   facts.pulls = { merged: [], pulls: (facts.pulls?.pulls ?? []).map((entry) => (entry.number === 21 ? { ...entry, reviewDecision: 'CHANGES_REQUESTED' } : entry)) };
   const picture = reconcile(facts);
   assert.equal(worktree(picture, 'project-wt-3')?.state, 'claimed', 'because its gate waits on reviewers, not on a worker of the next job');
@@ -811,7 +811,7 @@ test('PullState_ReviewStillRequested_ReviewPending', () => {
 /** gh#20 at the merge gate: done, naming the open pull #20, with the pull and the health job's review records changed as given. */
 const mergeGateOn20 = async (pull: Partial<PullFact>, reviews: ReconcileInput['flow']['reviews'] = []): Promise<ReconcileInput> => {
   const facts = withBoardItem(await input(), 'gh#20', { gate: 'merge' });
-  facts.flow = { ...facts.flow, reviews, gates: [{ item: 'gh#20', gate: 'merge', message: 'Merge #20', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null }] };
+  facts.flow = { ...facts.flow, reviews, gates: [{ item: 'gh#20', gate: 'merge', message: 'Merge #20', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null, options: [], raisedBy: null, answeredBy: null, condition: null, footer: null }] };
   facts.pulls = { merged: [], pulls: (facts.pulls?.pulls ?? []).map((entry) => (entry.number === 20 ? { ...entry, ...pull } : entry)) };
   return facts;
 };
@@ -904,7 +904,7 @@ test('OtherGate_PullInReview_StillShown', async () => {
 /** gh#7, claimed in project-wt-2, at the merge gate and naming the pull given. */
 const mergeGateOn7 = async (pr: string): Promise<ReconcileInput> => {
   const facts = withBoardItem(await input(), 'gh#7', { gate: 'merge', pr });
-  facts.flow = { ...facts.flow, gates: [{ item: 'gh#7', gate: 'merge', message: 'Merge it', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null }] };
+  facts.flow = { ...facts.flow, gates: [{ item: 'gh#7', gate: 'merge', message: 'Merge it', time: '2026-10-24T10:00:00Z', host: 'shell', questions: null, plan: null, options: [], raisedBy: null, answeredBy: null, condition: null, footer: null }] };
   return facts;
 };
 

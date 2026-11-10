@@ -173,7 +173,7 @@ export const ACTION_KINDS: ActionKind[] = [
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
 const ARGUMENTS: Record<ActionKind, string[]> = {
-  'gate.clear': ['item', 'message', 'back'],
+  'gate.clear': ['item', 'message', 'back', 'option'],
   'run.start': ['item', 'maxSteps'],
   'job.run': ['job'], 'job.stop': ['job'], 'job.pause': ['job'], 'job.resume': ['job'],
   'job.start': ['job', 'host', 'item', 'pr', 'workers', 'maxSteps', 'model', 'effort', 'pick'],
@@ -225,6 +225,8 @@ const NOT_AN_ID_PART = new Set(['', '.', '..']);
 /** A job's log name: a schedule (`next`, `next-nightly`) or one of its workers (`next-2`, `next-nightly-2`). */
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
+/** An option of a gate as `gate.sh clear --option N` takes it: 1 to 9, the most a record offers. */
+const GATE_OPTION = /^[1-9]$/;
 /** A quiz try as quiz.sh takes it: a letter per question number, `1b 2a 3c`, space separated. */
 const QUIZ_ANSWERS = /^[1-9][0-9]?[a-h]( [1-9][0-9]?[a-h])*$/;
 /** The first flow version with `scripts/quiz.sh`. */
@@ -340,6 +342,12 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
       // back=true sends the work back: the step the gate judges runs again, with the message in its brief.
       const back = args['back'] ?? 'false';
       if (back !== 'true' && back !== 'false') return fail('back must be true or false');
+      const option = args['option'];
+      if (option !== undefined) {
+        if (back === 'true') return fail('an option answers the gate; it cannot also send the work back');
+        if (!GATE_OPTION.test(option)) return fail('option must be a number from 1 to 9');
+        return sh('gate.sh', ['clear', item, '--option', option, ...(message === '' ? [] : [message])], [`item:${item}`], SCRIPT_TIMEOUT_MS, ['files', 'board']);
+      }
       if (back === 'true') {
         if (message.trim() === '') return fail('sending a gate back needs a message: what to change');
         return sh('gate.sh', ['clear', item, '--back', message], [`item:${item}`], SCRIPT_TIMEOUT_MS, ['files', 'board']);
