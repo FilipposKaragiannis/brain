@@ -4,17 +4,21 @@ import { parseCodexTranscript } from './codexTranscript.ts';
 import type { CodexMeta, SessionFiles } from './sessions.ts';
 import { codexDayFolders, readCodexMeta } from './sessions.ts';
 import type { SubagentReaderDependencies } from './subagents.ts';
+import type { UsedEntry } from './subagentWindow.ts';
+import { forgetUnused, LIVE_WINDOW_MS } from './subagentWindow.ts';
 
-/** What the codex reader keeps between reads, by rollout path: each first line, which never changes. Entries for files a read did not ask about go. */
-export type CodexSubagentCache = { metas: Map<string, CodexMeta> };
+/**
+ * What the codex reader keeps between reads, by rollout path: each first line, which never
+ * changes, with when a read last used it (`seenMs`). An entry no read used within the live window
+ * goes; one reader serves every project, so an entry that only another project's read uses is kept.
+ */
+export type CodexSubagentCache = { metas: Map<string, CodexMeta & UsedEntry> };
 
 /** An empty cache, one per reader. */
 export function codexSubagentCache(): CodexSubagentCache {
   return { metas: new Map() };
 }
 
-/** A child rollout not written for this long is not at work, whatever its last turn says. */
-const LIVE_WINDOW_MS = 10 * 60000;
 /** How much of a child rollout is read for its last turn event and its latest line. */
 const CHILD_TAIL_BYTES = 64 * 1024;
 const ROLLOUT_EXTENSION = '.jsonl';
@@ -29,8 +33,6 @@ const UNKNOWN_START = Number.MAX_SAFE_INTEGER;
 
 /** A child rollout of one of the sessions read, with its first line. */
 type Child = { file: string; meta: CodexMeta };
-/** The fresh children a scan found, and every rollout whose first line it asked about. */
-type Scan = { children: Child[]; asked: Set<string> };
 /** A rollout line as far as the reader looks into it. */
 type RolloutEntry = { type?: unknown; ordinal?: unknown; payload?: { type?: unknown } };
 
@@ -40,11 +42,11 @@ type RolloutEntry = { type?: unknown; ordinal?: unknown; payload?: { type?: unkn
  * process: its first line names the root session (`session_id`), so the folders are scanned from
  * the earliest start of the sessions read to today for rollouts written in the last 10 minutes
  * whose first line is a subagent of one of them. One is live while its last turn has not
- * completed. The first lines read are kept for as long as each read asks about them.
+ * completed. The first lines read are kept until no read used them for the live window.
  */
 export async function codexSubagents(sessions: readonly SessionRef[], dependencies: SubagentReaderDependencies, cache: CodexSubagentCache): Promise<Subagent[][]> {
-  const { children, asked } = sessions.length === 0 ? { children: [], asked: new Set<string>() } : await scanFreshChildren(sessions, dependencies, cache);
-  forgetUnasked(cache, asked);
+  forgetUnused(cache.metas, dependencies.clock().getTime());
+  const children = sessions.length === 0 ? [] : await scanFreshChildren(sessions, dependencies, cache);
   const rows = new Map<string, Subagent[]>();
   for (const child of children) {
     const row = await liveRow(child, dependencies.files);
@@ -54,14 +56,12 @@ export async function codexSubagents(sessions: readonly SessionRef[], dependenci
 }
 
 /** The children of the sessions read whose rollouts were written within the live window, from the earliest start of those sessions on. */
-async function scanFreshChildren(sessions: readonly SessionRef[], dependencies: SubagentReaderDependencies, cache: CodexSubagentCache): Promise<Scan> {
+async function scanFreshChildren(sessions: readonly SessionRef[], dependencies: SubagentReaderDependencies, cache: CodexSubagentCache): Promise<Child[]> {
   const now = dependencies.clock().getTime();
   const roots = new Set(sessions.map((session) => session.id));
-  const asked = new Set<string>();
   let since = now;
   for (const session of sessions) {
-    asked.add(session.transcript);
-    since = Math.min(since, (await cachedMeta(session.transcript, dependencies.files, cache))?.startedMs ?? 0);
+    since = Math.min(since, (await cachedMeta(session.transcript, dependencies.files, cache, now))?.startedMs ?? 0);
   }
   const children: Child[] = [];
   for (const folder of codexDayFolders(dependencies.home, since, now)) {
@@ -69,26 +69,20 @@ async function scanFreshChildren(sessions: readonly SessionRef[], dependencies: 
       const file = path.join(folder, name);
       const modified = name.endsWith(ROLLOUT_EXTENSION) ? await dependencies.files.modifiedMs(file) : null;
       if (modified === null || now - modified > LIVE_WINDOW_MS) continue;
-      asked.add(file);
-      const meta = await cachedMeta(file, dependencies.files, cache);
+      const meta = await cachedMeta(file, dependencies.files, cache, now);
       if (meta !== null && meta.subagent && meta.id !== meta.rootId && roots.has(meta.rootId)) children.push({ file, meta });
     }
   }
-  return { children, asked };
+  return children;
 }
 
-/** A rollout's first line from the cache, read and kept there on its first ask; one that cannot be read yet is asked again next time. */
-async function cachedMeta(file: string, files: SessionFiles, cache: CodexSubagentCache): Promise<CodexMeta | null> {
+/** A rollout's first line from the cache, read and kept there on its first ask, stamped as used at `now`; one that cannot be read yet is asked again next time. */
+async function cachedMeta(file: string, files: SessionFiles, cache: CodexSubagentCache, now: number): Promise<CodexMeta | null> {
   const kept = cache.metas.get(file);
-  if (kept !== undefined) return kept;
+  if (kept !== undefined) { kept.seenMs = now; return kept; }
   const meta = await readCodexMeta(files, file);
-  if (meta !== null) cache.metas.set(file, meta);
+  if (meta !== null) cache.metas.set(file, { ...meta, seenMs: now });
   return meta;
-}
-
-/** Forgets the first lines of the rollouts a read did not ask about, so the cache holds only the live ones. */
-function forgetUnasked(cache: CodexSubagentCache, asked: ReadonlySet<string>): void {
-  for (const file of [...cache.metas.keys()]) if (!asked.has(file)) cache.metas.delete(file);
 }
 
 /** A child's row while it is at work, or null once its last turn completed or its rollout cannot be read. */

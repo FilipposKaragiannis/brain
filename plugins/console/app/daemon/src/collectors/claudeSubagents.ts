@@ -3,6 +3,8 @@ import type { SessionRef, Subagent, TranscriptLine } from '../snapshot.ts';
 import type { SessionFiles } from './sessions.ts';
 import { parseTranscriptLines } from './sessions.ts';
 import type { SubagentReaderDependencies } from './subagents.ts';
+import type { UsedEntry } from './subagentWindow.ts';
+import { forgetUnused, LIVE_WINDOW_MS } from './subagentWindow.ts';
 
 /** What a subagent's `agent-<id>.meta.json` says, as read at the meta's `modifiedMs`; `about` is null once it finished or was stopped. */
 export type ClaudeSubagentMeta = { modifiedMs: number; about: { type: string; task: string | null } | null };
@@ -17,15 +19,10 @@ export type ClaudeSubagentStart = { cwd: string | null; startedAt: string | null
  * project, so an entry that only another project's read uses is kept.
  */
 export type ClaudeSubagentCache = {
-  metas: Map<string, ClaudeSubagentMeta & { seenMs: number }>;
-  starts: Map<string, ClaudeSubagentStart & { seenMs: number }>;
+  metas: Map<string, ClaudeSubagentMeta & UsedEntry>;
+  starts: Map<string, ClaudeSubagentStart & UsedEntry>;
 };
 
-/**
- * A subagent counts as live while its transcript was written this recently. A meta without
- * `finished` is no proof: a crashed or stopped session leaves those behind for days.
- */
-export const LIVE_WINDOW_MS = 10 * 60000;
 /** A meta file is a few hundred bytes; this much is read of it. */
 const META_BYTES = 64 * 1024;
 /** A transcript's first line carries the whole prompt ahead of its cwd and timestamp; this much is read to find them. */
@@ -55,17 +52,11 @@ export function claudeSubagentCache(): ClaudeSubagentCache {
  */
 export async function claudeSubagents(sessions: readonly SessionRef[], dependencies: SubagentReaderDependencies, cache: ClaudeSubagentCache): Promise<Subagent[][]> {
   const reading: Reading = { files: dependencies.files, cache, now: dependencies.clock().getTime() };
-  forgetUnused(reading);
+  forgetUnused(cache.metas, reading.now);
+  forgetUnused(cache.starts, reading.now);
   const rows: Subagent[][] = [];
   for (const session of sessions) rows.push(await sessionSubagents(session, reading));
   return rows;
-}
-
-/** Drops the cache entries no read used within the live window. */
-function forgetUnused({ cache, now }: Reading): void {
-  const oldest = now - LIVE_WINDOW_MS;
-  for (const [file, entry] of [...cache.metas]) if (entry.seenMs < oldest) cache.metas.delete(file);
-  for (const [file, entry] of [...cache.starts]) if (entry.seenMs < oldest) cache.starts.delete(file);
 }
 
 async function sessionSubagents(session: SessionRef, reading: Reading): Promise<Subagent[]> {

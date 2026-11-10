@@ -10,8 +10,10 @@ export type SubagentReaderDependencies = { home: string; clock: () => Date; file
 
 /**
  * Lists the subagents each claude and codex session runs now. Each host's reader gets every
- * session of its host in one call, on every read, so its cache forgets the files a read no longer
- * sees; the caches live as long as this reader.
+ * session of its host in one call, on every read. One reader serves every project and each
+ * project reads only its own sessions, so the caches forget a file once no read used it for the
+ * live window (`LIVE_WINDOW_MS`), not when one read leaves it out; the caches live as long as
+ * this reader.
  */
 export class SubagentReader {
   private readonly dependencies: SubagentReaderDependencies;
