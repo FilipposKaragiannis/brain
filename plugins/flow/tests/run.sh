@@ -2077,6 +2077,14 @@ check "sweep: a merged PR releases its worktree" sh -c "printf '%s' '$out' | gre
 check "sweep: the merge gate clears with the PR" sh -c "[ \"\$('$P/adapters/local/read.sh' '$sm' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"gate\"])')\" = none ] && [ ! -f .flow/gates/$(item_slug "$sm").json ] && grep -q 'Gate cleared: merged: https://gh/pull/90' .flow/items/task/${sm##*/}.md"
 check "sweep: the item closes when the merge did not close it" [ "$("$P/adapters/local/read.sh" "$sm" | jget status)" = closed ]
 check "sweep: a squash-merged branch at the PR's head is deleted" sh -c "! git -C '$wm' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sm")"
+# gh#166: a PR merged while a gate other than merge was open. The sweep closes the item, so the
+# gate must go with it: gate.sh list never names a closed item.
+sa="$("$P/adapters/local/create.sh" task "Merged with an ambiguity gate open")"; wa="$("$P/scripts/steward.sh" claim "$sa")"
+"$P/adapters/local/link-pr.sh" "$sa" https://gh/pull/90
+"$P/scripts/gate.sh" raise "$sa" ambiguity "Which row owns the retune?" >/dev/null 2>&1
+fake_pr MERGED "$(commit_in "$wa" ambiguous)"
+"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+check "Sweep_MergedItemWithOpenGate_LeavesNoGate: gate.sh list names no gate of an item the sweep closed (gh#166)" sh -c "gates=\"\$('$P/scripts/gate.sh' list)\" && ! printf '%s\\n' \"\$gates\" | grep -q '	$sa	'"
 sl="$("$P/adapters/local/create.sh" task "Commit after merge")"; wl="$("$P/scripts/steward.sh" claim "$sl")"
 merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 "$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
