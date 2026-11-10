@@ -1,9 +1,19 @@
 #!/bin/sh
 # Human gates.
-#   gate.sh raise <item> <gate> <message> [<from step>]
-#                                           record the gate in the tracker, notify, stop the run;
+#   gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>]
+#                 [--raised-by <who>]       record the gate in the tracker, notify, stop the run;
 #                                           <from step> is the step whose work the gate judges
-#                                           (default: the item's step now), where --back returns
+#                                           (default: the item's step now), where --back returns.
+#                                           --options: a JSON array of 1 to 9 {label, text,
+#                                           recommended}, at most one recommended; --condition:
+#                                           blocked_by:<item>, pr:#<n> conflicting or ci:down, what
+#                                           the gate waits on; --raised-by: who asks (default: the
+#                                           step of the run in flight, else the item's step, else
+#                                           owner). A malformed --options or --condition is dropped
+#                                           with a warning and the gate still raises. The record
+#                                           keeps who carries the answer out and a footer with the
+#                                           command, which the tracker comment and the notification
+#                                           carry under the message
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
 #                                           on the decomposition gate of a split task whose
 #                                           children are all closed, the plan step runs again;
@@ -18,7 +28,9 @@
 #   gate.sh clear <claude|codex>            start sessions on a host a spend limit or an auth
 #                                           error stopped outside any item's run
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
-#                                           with the claimed worktree, the age and the questions
+#                                           with the claimed worktree, the age, the questions, the
+#                                           options, who raised it, who answers it, its condition
+#                                           and its footer
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
 # FLOW_NOW (an ISO time, 2026-10-25T09:00:00Z) stands in for the clock in the age. It exists for
 # tests, like FLOW_HOME.
@@ -39,19 +51,133 @@ gates_json() {
   done | python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
 }
 
+RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>]"
+# Who carries an answer out, as the record and the console name it.
+CARRIER_SWEEP="the sweep, once the PR merges"
+CARRIER_CHILDREN="nobody: the children carry the work"
+CARRIER_COMMENTS="comments job, next pass"
+CARRIER_OWNER="nobody: do it by hand, then clear with no answer"
+CARRIER_FIRST_STEP="the first step, when next starts the item"
+
+# step_runs <step>: next.sh runs it: a profile step, or the first one of an item not started.
+# json_get prints nothing for a missing key, and exits 0 either way.
+step_runs() { [ -z "$1" ] || [ -n "$(json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "steps.$1")" ]; }
+
+# read_pr_state <pr>: the PR's state as comments.sh reads it (OPEN, MERGED, CLOSED); nothing when
+# it cannot be read.
+read_pr_state() {
+  pr_view="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null)" && json_get "$pr_view" state 2>/dev/null
+}
+
+# answer_carrier <step> <gate> <pr>: who carries an answer to the gate out. The merge gate's
+# answer is the merge itself; next runs a step it knows; a split leaves the work to its children;
+# at done with a PR, the comments job passes on an open one, or one it cannot read (the job logs
+# why it skips it). Anything else no step acts on: the owner does it by hand.
+answer_carrier() {
+  if [ "$2" = merge ]; then echo "$CARRIER_SWEEP"
+  elif step_runs "$1"; then if [ -n "$1" ]; then echo "step $1"; else echo "$CARRIER_FIRST_STEP"; fi
+  elif [ "$1" = split ] && [ "$2" = decomposition ]; then echo "$CARRIER_CHILDREN"
+  elif [ "$1" = done ] && [ -n "$3" ]; then
+    case "$(read_pr_state "$3")" in ""|OPEN) echo "$CARRIER_COMMENTS" ;; *) echo "$CARRIER_OWNER" ;; esac
+  else echo "$CARRIER_OWNER"; fi
+}
+
+# raised_by_default <flag> <item> <step>: who raised the gate: the --raised-by flag, else the step
+# of the run in flight (its record goes once the gate raises), else the item's step, else the owner.
+raised_by_default() {
+  run_record="$home/runs/$(item_slug "$2").json"; run_step=""
+  [ -f "$run_record" ] && run_step="$(json_get "$(cat "$run_record")" step)"
+  if [ -n "$1" ]; then printf '%s' "$1"
+  elif [ -n "$run_step" ]; then printf 'step %s' "$run_step"
+  elif [ -n "$3" ]; then printf 'step %s' "$3"
+  else printf 'owner'; fi
+}
+
+# condition_in_grammar <condition>: 0 when it is one the health job reads: blocked_by:<item>,
+# pr:#<n> conflicting or ci:down.
+condition_in_grammar() {
+  condition_pr="${1#pr:#}"; condition_pr="${condition_pr% conflicting}"
+  case "$1" in
+    ci:down) return 0 ;;
+    blocked_by:*) case "${1#blocked_by:}" in ""|*[[:space:]]*) return 1 ;; esac ;;
+    "pr:#"*" conflicting") case "$condition_pr" in ""|*[!0-9]*) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# raise_options <item> <options>: the options as _gates.py normalises them, else [] with the
+# reason on stderr: the agent that wrote them is gone, and a gate without buttons beats no gate.
+raise_options() {
+  [ -n "$2" ] || { echo "[]"; return 0; }
+  if normalised="$(python3 -I "$FLOW_PLUGIN/scripts/_gates.py" options "$2" 2>&1)"; then printf '%s\n' "$normalised"; return 0; fi
+  echo "flow: $1: --options dropped ($normalised); the gate raises without options" >&2
+  echo "[]"
+}
+
+# raise_condition <item> <condition>: the condition when it is in the grammar, else nothing, with
+# a warning on stderr; the gate raises either way.
+raise_condition() {
+  [ -n "$2" ] || return 0
+  if condition_in_grammar "$2"; then printf '%s' "$2"; return 0; fi
+  echo "flow: $1: --condition dropped (\"$2\" is not blocked_by:<item>, pr:#<n> conflicting or ci:down); the gate raises without it" >&2
+}
+
+# gate_footer <item> <carrier> <condition> <options>: the paragraph under the gate's message on
+# the tracker and in the notification: what clears the gate and the exact command, so an owner on
+# a host without the gate record still has it.
+gate_footer() {
+  footer_option=""; [ "$4" = "[]" ] || footer_option=" (or \`--option N\`)"
+  footer_pr="${3#pr:}"; footer_pr="${footer_pr% conflicting}"
+  case "$3" in
+    blocked_by:*) printf 'Clears itself once %s closes (the health job checks each pass). ' "${3#blocked_by:}" ;;
+    pr:*) printf 'Clears itself once PR %s no longer conflicts (the health job checks each pass). ' "$footer_pr" ;;
+    ci:down) printf 'Clears itself once CI no longer fails (the health job checks each pass). ' ;;
+  esac
+  case "$2" in
+    "$CARRIER_SWEEP") printf 'Merge the PR: the sweep clears this gate once it merges.' ;;
+    "$CARRIER_CHILDREN") printf 'The children carry the work: `gate.sh clear %s` lets the split stand; close the children first to keep it whole.' "$1" ;;
+    "$CARRIER_OWNER") printf 'No step acts on an answer: do it by hand, then `gate.sh clear %s`.' "$1" ;;
+    "$CARRIER_COMMENTS") printf 'Answered by the comments job on its next pass; answer: `gate.sh clear %s "<answer>"`%s.' "$1" "$footer_option" ;;
+    *) printf 'Answered by %s; answer: `gate.sh clear %s "<answer>"`%s.' "$2" "$1" "$footer_option" ;;
+  esac
+}
+
 case "${1:-}" in
   raise)
-    [ $# -ge 4 ] || die "usage: gate.sh raise <item> <gate> <message> [<from step>]" 2
-    item="$2"; gate="$3"; message="$4"; from="${5:-}"
+    [ $# -ge 4 ] || die "$RAISE_USAGE" 2
+    item="$2"; gate="$3"; message="$4"; from=""; shift 4
+    case "${1:-}" in --*) ;; *) [ $# -eq 0 ] || { from="$1"; shift; } ;; esac
+    options_given=""; condition_given=""; raised_by_given=""
+    while [ $# -gt 0 ]; do
+      [ $# -ge 2 ] || die "$RAISE_USAGE" 2
+      case "$1" in
+        --options) options_given="$2" ;;
+        --condition) condition_given="$2" ;;
+        --raised-by) raised_by_given="$2" ;;
+        *) die "$RAISE_USAGE" 2 ;;
+      esac
+      shift 2
+    done
     json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "gates.$gate" >/dev/null 2>&1 || true
-    [ -n "$from" ] || from="$(state_get "$(adapter read "$item" 2>/dev/null)" step)"
+    data="$(adapter read "$item" 2>/dev/null)"; step="$(state_get "$data" step)"
+    [ -n "$from" ] || from="$step"
+    options="$(raise_options "$item" "$options_given")"
+    condition="$(raise_condition "$item" "$condition_given")"
+    raised_by="$(raised_by_default "$raised_by_given" "$item" "$step")"
+    answered_by="$(answer_carrier "$step" "$gate" "$(state_get "$data" pr)")"
+    footer="$(gate_footer "$item" "$answered_by" "$condition" "$options")"
+    condition_field="condition:=null"; [ -z "$condition" ] || condition_field="condition=$condition"
     adapter write-state "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" >/dev/null
     adapter comment "$item" --body "**Gate: $gate**
 
-$message" >/dev/null
+$message
+
+$footer" >/dev/null
     rm -f "$home/runs/$(item_slug "$item").json"
     [ "$gate" = "escalation" ] && "$FLOW_PLUGIN/scripts/lesson.sh" escalation "$item" "$message" >/dev/null
-    "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" ;;
+    "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" "options:=$options" "raised_by=$raised_by" \
+      "answered_by=$answered_by" "$condition_field" "footer=$footer" ;;
   clear)
     [ $# -ge 2 ] || die "usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message>" 2
     item="$2"; back=0
@@ -70,35 +196,28 @@ $message" >/dev/null
     data="$(adapter read "$item" 2>/dev/null)"
     [ -n "$gate" ] || { gate="$(state_get "$data" gate)"; [ "$gate" != none ] || gate=""; }
     step="$(state_get "$data" step)"; from="$(state_get "$data" gate_from)"; pr="$(state_get "$data" pr)"
-    # runs <step>: next.sh runs it: a profile step, or the first one of an item not started.
-    # json_get prints nothing for a missing key, and exits 0 either way.
-    runs() { [ -z "$1" ] || [ -n "$(json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "steps.$1")" ]; }
-    # Who carries out the answer, kept in answer_pending until a run takes it (the board shows it):
-    # next, when the item's step is one it runs; the comments job, at done with a PR (a gate a
-    # comments pass raised). The merge gate's answer is the merge itself; a clear with no answer,
-    # or one that lets a split stand, carries nothing out. Any other answer no step acts on: the
-    # clear fails and the gate stays, so an answer is never dropped in silence.
+    # Who carries out the answer (answer_carrier), kept in answer_pending until a run takes it (the
+    # board shows it): next, when the item's step is one it runs; the comments job, at done with an
+    # open PR (a gate a comments pass raised). The merge gate's answer is the merge itself; a clear
+    # with no answer, or one that lets a split stand, carries nothing out. Any other answer no step
+    # acts on: the clear fails and the gate stays, so an answer is never dropped in silence.
     pending=""
     if [ "$back" -eq 1 ]; then
       [ -n "$from" ] || die "$item has no step to send back to (its gate predates gate_from); clear it with the change instead" 2
       [ "$step" != split ] || die "$item is already split into tracker tasks; close its children to keep it whole, then clear the gate" 2
-      runs "$from" || die "$item has no step to send back to: its ${gate:-gate} gate judges the $from step, which no run does again. Do it by hand, then clear the gate with no answer: gate.sh clear $item"
+      step_runs "$from" || die "$item has no step to send back to: its ${gate:-gate} gate judges the $from step, which no run does again. Do it by hand, then clear the gate with no answer: gate.sh clear $item"
       pending=next
-    elif [ "$gate" = merge ]; then :
-    elif runs "$step"; then pending=next
-    elif [ -z "$given" ]; then :
-    elif [ "$step" = split ] && [ "$gate" = decomposition ]; then :
-    elif [ "$step" = done ] && [ -n "$pr" ]; then
-      # The comments job passes only on an open PR. One it cannot read counts as open: the job
-      # logs why it skips it, and the board shows the answer waiting.
-      pr_state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pr" 2>/dev/null)" && pr_state="$(json_get "$pr_state" state 2>/dev/null)" || pr_state=""
-      case "${pr_state:-OPEN}" in
-        OPEN) pending=comments ;;
-        *) die "no step acts on this answer: $item is done and its PR $pr is $(printf '%s' "$pr_state" | tr '[:upper:]' '[:lower:]'), so no comments pass would carry it out. Do it by hand, then clear the gate with no answer (gate.sh clear $item). The ${gate:-gate} gate stays." ;;
-      esac
+    elif [ -z "$given" ] && ! step_runs "$step"; then :
     else
-      hint=""; [ -n "$from" ] && runs "$from" && hint=", or send it back to $from: gate.sh clear $item --back \"<what to change>\""
-      die "no step acts on this answer: $item is at step ${step:-none} with no PR, so no run would carry it out. Do it by hand, then clear the gate with no answer (gate.sh clear $item)$hint. The ${gate:-gate} gate stays."
+      case "$(answer_carrier "$step" "$gate" "$pr")" in
+        "$CARRIER_SWEEP"|"$CARRIER_CHILDREN") ;;
+        "$CARRIER_COMMENTS") pending=comments ;;
+        "$CARRIER_OWNER")
+          [ "$step" != done ] || [ -z "$pr" ] || die "no step acts on this answer: $item is done and its PR $pr is $(read_pr_state "$pr" | tr '[:upper:]' '[:lower:]'), so no comments pass would carry it out. Do it by hand, then clear the gate with no answer (gate.sh clear $item). The ${gate:-gate} gate stays."
+          hint=""; [ -n "$from" ] && step_runs "$from" && hint=", or send it back to $from: gate.sh clear $item --back \"<what to change>\""
+          die "no step acts on this answer: $item is at step ${step:-none} with no PR, so no run would carry it out. Do it by hand, then clear the gate with no answer (gate.sh clear $item)$hint. The ${gate:-gate} gate stays." ;;
+        *) pending=next ;;
+      esac
     fi
     for h in claude codex; do
       f="$(host_stop_file "$h")"
@@ -157,5 +276,5 @@ $message" >/dev/null
       c="$(cat "$f")"
       printf '%s\t%s\tstopped\t%s: %s\n' "$(json_get "$c" at)" "$(json_get "$c" host)" "$(json_get "$c" cause)" "$(json_get "$c" said)"
     done ;;
-  *) sed -n '2,24p' "$0"; exit 2 ;;
+  *) sed -n '2,36p' "$0"; exit 2 ;;
 esac

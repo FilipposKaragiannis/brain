@@ -13,7 +13,13 @@ the path `codex plugin list` prints for `flow`). The script is `"$P/scripts/gate
    asks. One line per gate: what the owner must decide. Nothing waiting: say so.
    `gate.sh list --json` prints the same gates as one array, oldest first, each with its claimed
    worktree (or null), its age in seconds and its numbered questions with their recommended
-   answers, parsed as in "Asking" below (empty when the message is not numbered questions).
+   answers, parsed as in "Asking" below (empty when the message is not numbered questions). Then
+   `options` (the `{label, text, recommended}` the gate was raised with, `[]` when none),
+   `raised_by` (`step <step>`, a job, or `owner`), `answered_by` (who carries the answer out:
+   `step <step>`, `comments job, next pass`, `the sweep, once the PR merges`, or `nobody: ...`
+   when the owner does it by hand), `condition` (what the gate waits on, or null) and `footer`
+   (the line under the message on the tracker: what clears the gate and the command). A gate
+   raised by an older flow lists `[]` and nulls for these.
 2. **`<item> <answer>`: clear.** Read the gate's message first (the item's last gate comment, or
    `/flow:board`), so the answer fits the question. Then:
    ```
@@ -77,6 +83,24 @@ and why, in one clause, from the code or the spec. The owner can then reply "as 
 2. Is the motion the same for the tap and the depth pass?
    Recommended: the same, until a feel test says otherwise.
 ```
+
+`gate.sh raise <item> <gate> "<message>" [<from step>]` takes three optional flags after those:
+
+- `--options '<json>'`: the choices as data, so the owner can pick one instead of retyping it. A
+  JSON array of 1 to 9 `{"label": "<a few words>", "text": "<the answer as the agent will read
+  it>", "recommended": true|false}`, at most one recommended. Keep the numbered questions in the
+  message too: the options are what a pick sends, the message is what the owner reads.
+- `--condition '<condition>'`: what the gate only waits on, when that is something the health job
+  can watch: `blocked_by:<item id>` (the blocker closes), `pr:#<n> conflicting` (the PR merges
+  cleanly again) or `ci:down` (no check fails; it reads pending checks as not failing, so it may
+  clear before they finish, and the next step sees the real state).
+- `--raised-by '<who>'`: who asks, when it is not a step (`health job`, `comments job`, `intake
+  job`). Left out, it is the step of the run in flight, else the item's step, else `owner`.
+
+A malformed `--options` or `--condition` is dropped with a warning and the gate still raises.
+Who carries the answer out is worked out from the item's step, the gate and its PR; the tracker
+comment and the notification end with a footer saying it and naming the `gate.sh clear` command,
+so an owner on a host without the gate record still knows what to run.
 
 ## Never
 
