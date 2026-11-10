@@ -2149,7 +2149,22 @@ d = json.load(open(p)); d["claimed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", ti
 remote_commit() { git -C "$hroot/other" fetch -q origin && git -C "$hroot/other" checkout -q -B "$1" "origin/$1" && printf '%s\n' "$2" > "$hroot/other/$2.txt" && git -C "$hroot/other" add -- "$2.txt" && git -C "$hroot/other" commit -qm "$2" && git -C "$hroot/other" push -q origin "$1"; }
 facts() { n="$(grep -c "$1" .flow/events.log 2>/dev/null)"; echo "${n:-0}"; }
 pings() { n="$(grep -c 'flow: health' "$work/offline.log" 2>/dev/null)"; echo "${n:-0}"; }
-printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> "%s/host.log"\n' "$hroot" > "$work/bin/claude"; chmod +x "$work/bin/claude"
+# The resumed session dies with its run: it kills the run-unattended loop above it and the loop's
+# subshells (they share its command line), as a crash would, so the run record stays and no
+# result is read. A session that exits with no result is a failed attempt since gh#169, not a
+# dead run, so it cannot stand in for one.
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf '%s\t%s\n' "\$PWD" "\$*" >> "$hroot/host.log"
+ancestor=\$\$; doomed=""
+while [ "\${ancestor:-1}" -gt 1 ]; do
+  ancestor="\$(ps -o ppid= -p "\$ancestor" | tr -d ' ')"
+  case "\$(ps -o command= -p "\${ancestor:-1}")" in *run-unattended.sh*) doomed="\$doomed \$ancestor" ;; esac
+done
+[ -z "\$doomed" ] || kill -9 \$doomed
+exit 0
+EOF
+chmod +x "$work/bin/claude"
 export FLOW_HEALTH_PROCS="$hroot/procs"; : > "$FLOW_HEALTH_PROCS"; : > "$work/offline.log"
 
 hs > "$hroot/out" 2>&1
@@ -3196,7 +3211,8 @@ printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ..
 # Host stubs that print what each host prints with the flags host_run passes: Claude one result
 # object, Codex one event per line. FAKE_HOST picks the session: ok does the step (it writes the
 # report the brief names), budget and auth fail as the hosts do on a spend limit and a login,
-# other fails on something else, quote ends well with text that quotes a limit.
+# other fails on something else, quote ends well with text that quotes a limit, silent ends well
+# and writes no report (a session whose writes were all denied).
 mkdir -p "$work/costbin"; export COST_LOG="$work/cost.log"
 cat > "$work/costbin/claude" <<'STUB'
 #!/bin/sh
@@ -3207,6 +3223,7 @@ case "${FAKE_HOST:-ok}" in
   other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
   errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
   quote) echo '{"type":"result","subtype":"success","is_error":false,"result":"Done. The old log said: Credit balance is too low."}'; exit 0 ;;
+  silent) echo '{"type":"result","subtype":"success","is_error":false,"result":"Every write was denied, so no report was written."}'; exit 0 ;;
 esac
 brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
 report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" 2>/dev/null | head -1)"
@@ -3483,6 +3500,52 @@ check_all "clear at done with no answer (done by hand): cleared, nothing waits" 
 "$P/adapters/local/write-state.sh" "$dn" step=plan answer_pending=next answered_at=2026-01-01T00:00:00Z
 check "board: an answer no run took past the gate reminder is named in Health" sh -c "'$P/scripts/board.sh' | grep -q '^- $dn: the answer to its gate has waited .* on next\$'"
 "$P/adapters/local/close.sh" "$dn" >/dev/null
+
+echo "a step with no result file (gh#169)"
+# The session exits 0 but writes no <step>.json, as when every write is denied. That is a failed
+# attempt on the item, not a silent stop the health job later undoes. Its own repo, so no
+# claim or reservation left by an earlier section fills the pool.
+mkdir -p "$work/noresult" && cd "$work/noresult" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+git worktree add -q -b main-wt-1 ../nr-wt-1 && git worktree add -q -b main-wt-2 ../nr-wt-2
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../nr-wt-1\n  - ../nr-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+nr="$("$P/scripts/new.sh" task "Ends with no result" --size S --body "## Acceptance
+- [ ] n")"
+FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$nr" --max-steps 1 > "$work/noresult.out" 2>&1
+check "a step whose session ends with no result file counts one failed attempt (gh#169)" [ "$("$P/adapters/local/read.sh" "$nr" | jget state.attempts)" = 1 ]
+# The silent stub's last message, as the stub above prints it.
+silent_last='Every write was denied, so no report was written.'
+nr_file=".flow/items/$(printf '%s' "${nr#local:}").md"
+check "a step whose session ends with no result file comments the session's last message on the item (gh#169)" grep -qF "$silent_last" "$nr_file"
+# A Codex session a dropped stream stops: its error comes after its last agent message.
+printf '%s\n' '{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"reading the code"}}' \
+  '{"type":"error","message":"stream disconnected before completion"}' > "$work/codex-drop.out"
+: > "$work/codex-drop.err"
+python3 -I "$P/scripts/_host.py" codex "$work/codex-drop.out" "$work/codex-drop.err" 1 "$work/codex-drop.sum" > "$work/codex-drop.stdout" 2>/dev/null
+check "a codex session that ends on an error has that error as its last message, because the comment and the gate quote why it stopped (gh#169)" [ "$(jget last < "$work/codex-drop.sum")" = "stream disconnected before completion" ]
+check "a codex session's error stays off stdout, because stdout is what the session printed (gh#169)" [ "$(cat "$work/codex-drop.stdout")" = "reading the code" ]
+# Three silent sessions in a row on a fresh item: the attempt limit from profiles.json.
+max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
+ng="$("$P/scripts/new.sh" task "Ends with no result, every time" --size S --body "## Acceptance
+- [ ] g")"
+n=1
+while [ "$n" -lt "$max_attempts" ]; do
+  FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$ng" --max-steps 1 >> "$work/noresult-gate.out" 2>&1
+  n=$((n + 1))
+done
+check "a silent session short of the attempt limit raises no gate (gh#169)" [ "$("$P/adapters/local/read.sh" "$ng" | jget state.gate)" = none ]
+FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$ng" --max-steps 1 >> "$work/noresult-gate.out" 2>&1
+check "the silent session that reaches the attempt limit raises the escalation gate (gh#169)" [ "$("$P/adapters/local/read.sh" "$ng" | jget state.gate)" = escalation ]
+check_all "the escalation gate for a silent session quotes its last message (gh#169)" 'jget message < ".flow/gates/$(item_slug "$ng").json" | grep -qF "$silent_last"'
+check "a silent session that reaches the escalation gate keeps its claim (gh#169)" sh -c "[ -f \"\$('$P/scripts/steward.sh' find '$ng')/.flow/claim.json\" ]"
+# Health releases a claim that holds nothing and has been quiet past jobs.health.grace. A short
+# grace and a wait past it put the item from the first check in that window.
+printf 'jobs:\n  health:\n    grace: 1s\n' >> .flow/config.yaml
+nr_wt="$("$P/scripts/steward.sh" find "$nr")"
+sleep 2
+: > "$work/noresult-procs"
+FLOW_HEALTH_PROCS="$work/noresult-procs" "$P/jobs/health.sh" claude > "$work/noresult-health.out" 2>&1
+check "the health job keeps the claim of an item whose last run ended with no result (gh#169)" [ -f "$nr_wt/.flow/claim.json" ]
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1

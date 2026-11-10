@@ -7,9 +7,10 @@ stdout is one event per line. Prints the text the session would have printed wit
 flags (Claude's result, Codex's agent messages; a line that is not the host's JSON passes as it
 is), Codex's errors to stderr, and writes the summary file: one JSON object with the usage the
 host reported (Claude's usage block as given, the sum of Codex's turn usage), the cost when the
-host reports one, the models that ran, and the cause when a failed session stopped on a spend
-limit or an auth error, with the host's line that says so. Only a failed session has a cause:
-a session that ended well may quote those lines."""
+host reports one, the models that ran, the session's last message (last: what it printed or the
+error it stopped on, whichever came last), and the cause when a failed session stopped on a spend
+limit or an auth error, with the host's line that says so. Only a failed session has a cause: a
+session that ended well may quote those lines."""
 import json, re, sys
 
 # The host's own words for a limit on spend and for a login that does not work, from the claude
@@ -23,6 +24,8 @@ AUTH = re.compile(r"please run /login|not logged in|invalid api key|invalid auth
                   r"|login expired|session expired|authentication required|authentication_error|disabled api key authentication"
                   r"|401 unauthorized|unexpected status 401|refresh token was rejected|token refresh failed"
                   r"|auth is missing|failed to refresh token", re.I)
+# The longest last message the summary keeps: enough to quote in a comment or a gate.
+LAST_MESSAGE_CHARS = 1000
 
 
 def objects(text):
@@ -58,24 +61,28 @@ def claude(out, said):
         usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else None
         cost = obj.get("total_cost_usd")
         models = sorted(obj["modelUsage"]) if isinstance(obj.get("modelUsage"), dict) else []
-    return text, usage, cost, models, failed
+    return text, text, usage, cost, models, failed
 
 
 def codex(out, said):
-    text, usage, models, failed = [], None, [], False
+    # trail: what the session printed and its errors, in the order they came.
+    text, trail, usage, models, failed = [], [], None, [], False
     for obj, line in objects(out):
         if obj is None:
             text.append(line)
+            trail.append(line)
             continue
         kind = obj.get("type")
         item = obj.get("item") if isinstance(obj.get("item"), dict) else {}
         if kind == "item.completed" and item.get("type") == "agent_message" and isinstance(item.get("text"), str):
             text.append(item["text"])
+            trail.append(item["text"])
         elif kind in ("error", "turn.failed"):
             err = obj.get("error") if isinstance(obj.get("error"), dict) else obj
             message = str(err.get("message") or "")
             failed = True
             said.append(message)
+            trail.append(message)
             print(message, file=sys.stderr)
         elif kind == "turn.completed" and isinstance(obj.get("usage"), dict):
             usage = usage or {}
@@ -84,7 +91,7 @@ def codex(out, said):
                     usage[k] = usage.get(k, 0) + v
         if isinstance(obj.get("model"), str) and obj["model"] not in models:
             models.append(obj["model"])
-    return text, usage, None, models, failed
+    return text, trail, usage, None, models, failed
 
 
 def cause(lines):
@@ -96,12 +103,18 @@ def cause(lines):
     return "", ""
 
 
+def last_message(trail):
+    """The last entry of the trail that is not blank, cut to LAST_MESSAGE_CHARS."""
+    message = next((entry.strip() for entry in reversed(trail) if entry and entry.strip()), "")
+    return message[:LAST_MESSAGE_CHARS]
+
+
 def main():
     host, out_path, err_path, code, summary_path = sys.argv[1:6]
     out = open(out_path, encoding="utf-8", errors="replace").read()
     err = open(err_path, encoding="utf-8", errors="replace").read()
     said = []
-    text, usage, cost, models, failed = (claude if host == "claude" else codex)(out, said)
+    text, trail, usage, cost, models, failed = (claude if host == "claude" else codex)(out, said)
     if text:
         print("\n".join(text))
     found = ("", "")
@@ -110,7 +123,7 @@ def main():
         lines = [l for s in said for l in s.splitlines()] + err.splitlines()[-40:] + [l for l in text if l][-20:]
         found = cause(lines)
     summary = {"usage": usage, "cost_usd": cost if isinstance(cost, (int, float)) else None,
-               "models": models, "cause": found[0], "said": found[1]}
+               "models": models, "last": last_message(trail), "cause": found[0], "said": found[1]}
     with open(summary_path, "w") as f:
         json.dump(summary, f)
 
