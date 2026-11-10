@@ -1,5 +1,12 @@
 # console
 
+## 0.19.1 (2026-11-10)
+
+- The Board shows a claimed item as `blocked` while flow holds it behind an open blocker
+  (`open_blockers`, gh#168): flow's next job passes such an item over at every step, so it no
+  longer shows as `waiting` for a worker. A run already under way when the blocker was added stays
+  `running`.
+
 ## 0.19.0 (2026-11-08)
 
 - The Board shows an owner's answer to a cleared gate while it waits on a run (flow's
