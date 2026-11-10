@@ -39,3 +39,16 @@ test('PullRow_Chip_ReadsTheAttentionKind', () => {
   renderRow({ kind: 'pr-mergeable', gate: null, id: 'local:task/27', title: '#20 ready to merge', detail: 'Twenty', worktree: null, sinceAt: TAKEN_AT, ageSeconds: 60, action: null });
   expect(chipText(), 'because a row that is not a gate keeps naming its own kind').toBe('pr-mergeable');
 });
+
+const LABEL_GATE_ROW: AttentionRow = { kind: 'label-gate', gate: 'escalation', id: 'gh#50', title: 'escalation gate on gh#50', detail: 'No question recorded: only the tracker label is set (no gate.sh raise).', worktree: null, sinceAt: TAKEN_AT, ageSeconds: 60, action: null };
+
+test('LabelGateRow_Chip_ReadsTheGateName', () => {
+  renderRow(LABEL_GATE_ROW);
+  expect(chipText(), 'because the chip says which gate the tracker label names').toBe('escalation');
+});
+
+test('LabelGateRow_Open_GoesToItsCardOnTheGatesScreen', () => {
+  const routes = renderRow(LABEL_GATE_ROW);
+  fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+  expect(routes, 'because the label-only card sits on the Gates screen with the other gates').toEqual([{ projectId: 'project', screen: 'gates', detail: 'gh#50' }]);
+});
