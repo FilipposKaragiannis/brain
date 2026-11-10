@@ -201,10 +201,10 @@ $footer" >/dev/null
       --met) mode=met; shift ;;
     esac
     message="${3:-cleared}"; given="${3:-}"
-    case "$mode:$given" in
-      back:--option|option:--back) die "gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step" 2 ;;
-      back:) die "gate.sh clear --back needs a message: what to change" 2 ;;
-      met:) die "gate.sh clear --met needs a note: the condition that no longer holds" 2 ;;
+    case "$mode:$option_number:$given" in
+      back::--option|option:--back:*|option:*:--back) die "gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step" 2 ;;
+      back::) die "gate.sh clear --back needs a message: what to change" 2 ;;
+      met::) die "gate.sh clear --met needs a note: the condition that no longer holds" 2 ;;
     esac
     # A host stopped on a spend limit or an auth error (lib/host.sh) starts sessions again when
     # the gate that names it clears, or when the owner clears the host by name.
