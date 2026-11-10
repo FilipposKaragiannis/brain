@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Gate } from '../../daemon/src/snapshot.ts';
+import type { ActionKind } from './actions.ts';
 import type { GateChoice, Verdict } from './gateAnswer.ts';
 import type { ActionOutcome } from './useActions.ts';
 import { useActionsView } from './ui.tsx';
@@ -20,8 +21,40 @@ export type Said = { verb: string; message: string };
  */
 export type Answered = { gate: Gate; at: Date; draft: Draft; said: Said; merge: boolean; back: boolean; clear: Step; run: Step | null };
 
-/** What the card sends: a gate clear with its message, or a merge. */
-export type Decision = { kind: 'clear'; message: string; back: boolean; said: Said } | { kind: 'merge'; pr: number; said: Said };
+/** What the card sends: a gate clear with its message, one of the agent's options with an optional note, or a merge. */
+export type Decision =
+  | { kind: 'clear'; message: string; back: boolean; said: Said }
+  | { kind: 'option'; number: number; text: string; note: string; said: Said }
+  | { kind: 'merge'; pr: number; said: Said };
+
+type OptionDecision = Extract<Decision, { kind: 'option' }>;
+type Sent = { kind: ActionKind; args: Record<string, string> };
+
+/** The answer an option stands for when it is sent as words: the option's text, then the note. */
+function optionMessage(decision: OptionDecision): string {
+  return [decision.text, decision.note.trim()].filter((part) => part !== '').join('\n\n');
+}
+
+/**
+ * The `gate.clear` for an option on one gate: `option: N` when the gate offers that option with
+ * the same text, the note as its message; else the option's words as the answer, so a twin that
+ * numbers its options differently still gets the answer the owner picked.
+ */
+function optionArgs(gate: Gate, decision: OptionDecision): Record<string, string> {
+  const offered = gate.options[decision.number - 1];
+  if (offered === undefined || offered.text !== decision.text) return { item: gate.item, message: optionMessage(decision) };
+  const option = String(decision.number);
+  return decision.note.trim() === '' ? { item: gate.item, option } : { item: gate.item, option, message: decision.note.trim() };
+}
+
+/** The action a decision runs for one gate. */
+function actionFor(gate: Gate, decision: Decision): Sent {
+  switch (decision.kind) {
+    case 'merge': return { kind: 'pr.merge', args: { pr: String(decision.pr) } };
+    case 'option': return { kind: 'gate.clear', args: optionArgs(gate, decision) };
+    case 'clear': return { kind: 'gate.clear', args: decision.back ? { item: gate.item, message: decision.message, back: 'true' } : { item: gate.item, message: decision.message } };
+  }
+}
 
 /** One raising of a gate: a later gate on the same item is another instance, with no draft of its own. */
 export const gateKey = (gate: Gate): string => `${gate.item}:${gate.raisedAt}`;
@@ -30,7 +63,8 @@ export type GateAnswers = {
   answered: Record<string, Answered>;
   /** Answers brought back after a failed clear, by `gateKey`. */
   drafts: Record<string, Draft>;
-  answer: (gate: Gate, decision: Decision, draft: Draft) => void;
+  /** Sends the decision for the gate and for each twin it answers, one action and one answered entry per item. */
+  answer: (gate: Gate, twins: Gate[], decision: Decision, draft: Draft) => void;
   retry: (entry: Answered) => void;
 };
 
@@ -52,16 +86,20 @@ export function GateAnswersProvider({ children }: { children: ReactNode }) {
     setAnswered((all) => (all[item] === undefined ? all : { ...all, [item]: update(all[item]) }));
   };
 
-  const answer = (gate: Gate, decision: Decision, draft: Draft): void => {
+  const send = (gate: Gate, decision: Decision, draft: Draft, at: Date): void => {
     runsAsked.current.delete(gate.item);
     setDrafts((all) => Object.fromEntries(Object.entries(all).filter(([key]) => key !== gateKey(gate))));
     const merge = decision.kind === 'merge';
     const back = decision.kind === 'clear' && decision.back;
-    setAnswered((all) => ({ ...all, [gate.item]: { gate, at: new Date(), draft, said: decision.said, merge, back, clear: { state: 'sending' }, run: merge ? null : { state: 'waiting' } } }));
-    const sent = decision.kind === 'merge'
-      ? actions.run('pr.merge', { pr: String(decision.pr) })
-      : actions.run('gate.clear', decision.back ? { item: gate.item, message: decision.message, back: 'true' } : { item: gate.item, message: decision.message });
-    void sent.then((outcome) => change(gate.item, (entry) => ({ ...entry, clear: stepOf(outcome) })));
+    setAnswered((all) => ({ ...all, [gate.item]: { gate, at, draft, said: decision.said, merge, back, clear: { state: 'sending' }, run: merge ? null : { state: 'waiting' } } }));
+    const action = actionFor(gate, decision);
+    void actions.run(action.kind, action.args).then((outcome) => change(gate.item, (entry) => ({ ...entry, clear: stepOf(outcome) })));
+  };
+
+  // One answer for a set of twins: each item is cleared on its own, so one refusal leaves the others cleared.
+  const answer = (gate: Gate, twins: Gate[], decision: Decision, draft: Draft): void => {
+    const at = new Date();
+    [gate, ...twins].forEach((each) => send(each, decision, draft, at));
   };
 
   const retry = (entry: Answered): void => {
