@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -7,6 +7,9 @@ import type { LogFields, Logger } from '../src/log.ts';
 import { silentLogger } from '../src/log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
 import type { CommandResult, CommandRunner } from '../src/collectors/exec.ts';
+import { claudeProjectFolder, diskSessionFiles, SessionLocator } from '../src/collectors/sessions.ts';
+import { SubagentReader } from '../src/collectors/subagents.ts';
+import type { Agent } from '../src/snapshot.ts';
 import { BOARD_JSON, FIXTURES, FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
@@ -371,4 +374,94 @@ test('Snapshot_NewerConsoleCached_CarriesTheNotice', async () => {
   const monitor = new ProjectMonitor({ project: { id: 'local', name: 'local', root: LOCAL_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, newerConsole: () => ({ running: '0.9.2', cached: '0.10.0' }) });
   await monitor.refresh('files');
   assert.deepEqual(monitor.snapshot?.newerConsole, { running: '0.9.2', cached: '0.10.0' }, 'because the page shows the same notice as status while the versions differ');
+});
+
+/** A minute after the codex fixture's child last wrote; every fixture file the subagent cases need is stamped a minute before it. */
+const SUBAGENTS_NOW = new Date('2026-11-10T22:12:00Z');
+const SUBAGENT_MINUTE_MS = 60000;
+const SUBAGENT_FIXTURES = path.join(FIXTURES, 'subagents');
+const CLAUDE_SESSION_ID = '00000000-0000-4000-8000-000000000001';
+const CLAUDE_PID = 200;
+const CODEX_PID = 201;
+const CLAUDE_CWD = path.join(FIXTURES, 'project-wt-2');
+const CODEX_CWD = path.join(FIXTURES, 'project-wt-3');
+
+/** Sets a file's write time to `ageMinutes` before SUBAGENTS_NOW. */
+function writtenAgo(file: string, ageMinutes: number): void {
+  const modified = new Date(SUBAGENTS_NOW.getTime() - ageMinutes * SUBAGENT_MINUTE_MS);
+  utimesSync(file, modified, modified);
+}
+
+/** The claude session of CLAUDE_CWD with the subagent fixtures under it: one live, one finished, one gone quiet, one in `workflows/`. */
+function claudeSessionWithSubagents(home: string): void {
+  const folder = claudeProjectFolder(home, CLAUDE_CWD);
+  cpSync(path.join(SUBAGENT_FIXTURES, 'claude', '-work-example', CLAUDE_SESSION_ID), path.join(folder, CLAUDE_SESSION_ID), { recursive: true });
+  const transcript = path.join(folder, `${CLAUDE_SESSION_ID}.jsonl`);
+  writeFileSync(transcript, '{}\n');
+  writtenAgo(transcript, 1);
+  const subagents = path.join(folder, CLAUDE_SESSION_ID, 'subagents');
+  writtenAgo(path.join(subagents, 'agent-a1111111111111111.jsonl'), 1);
+  writtenAgo(path.join(subagents, 'agent-a3333333333333333.jsonl'), 30);
+}
+
+/** The codex root session of CODEX_CWD in today's day folder, with its live `probe` child beside it. */
+function codexSessionWithSubagent(home: string): void {
+  const day = path.join(home, '.codex', 'sessions', String(SUBAGENTS_NOW.getFullYear()), String(SUBAGENTS_NOW.getMonth() + 1).padStart(2, '0'), String(SUBAGENTS_NOW.getDate()).padStart(2, '0'));
+  mkdirSync(day, { recursive: true });
+  const parent = path.join(day, 'rollout-parent.jsonl');
+  writeFileSync(parent, readFileSync(path.join(SUBAGENT_FIXTURES, 'codex', 'parent.jsonl'), 'utf8').replaceAll('/work/example', CODEX_CWD));
+  writtenAgo(parent, 1);
+  const child = path.join(day, 'rollout-child-live.jsonl');
+  copyFileSync(path.join(SUBAGENT_FIXTURES, 'codex', 'child-live.jsonl'), child);
+  writtenAgo(child, 1);
+}
+
+/**
+ * The snapshot's agents after every source is read, with a claude in project-wt-2 and a codex in
+ * project-wt-3 on the process list, a home holding both sessions and their subagents, and the
+ * real session locator and subagent reader.
+ */
+async function agentsWithSubagents(): Promise<Agent[]> {
+  const home = mkdtempSync(path.join(os.tmpdir(), 'console-subagents-home-'));
+  try {
+    claudeSessionWithSubagents(home);
+    codexSessionWithSubagent(home);
+    const processes = `  ${CLAUDE_PID}     1   10:00 /usr/local/bin/claude\n  ${CODEX_PID}     1   10:00 /usr/local/bin/codex\n`;
+    const cwds = `p${CLAUDE_PID}\nfcwd\nn${CLAUDE_CWD}\np${CODEX_PID}\nfcwd\nn${CODEX_CWD}\n`;
+    const answer = (stdout: string): CommandResult => ({ code: 0, stdout, stderr: '', timedOut: false });
+    const runner: CommandRunner = async (request) => {
+      if (request.command === 'ps') return answer(processes);
+      if (request.command === 'lsof') return answer(cwds);
+      return fakeRunner(request);
+    };
+    const clock = (): Date => SUBAGENTS_NOW;
+    const monitor = new ProjectMonitor({
+      project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock, log: silentLogger, cadence: DEFAULT_CADENCE,
+      sessions: new SessionLocator({ home, clock, files: diskSessionFiles }),
+      subagents: new SubagentReader({ home, clock, files: diskSessionFiles }),
+    });
+    await readEverySource(monitor);
+    monitor.stop();
+    return monitor.snapshot?.agents ?? [];
+  } finally { rmSync(home, { recursive: true, force: true }); }
+}
+
+const subagentsOf = (agents: Agent[], pid: number) => agents.find((agent) => agent.pid === pid)?.subagents;
+
+test('Monitor_ClaudeSessionRunsASubagent_AgentListsItWithEveryField', async () => {
+  const agents = await agentsWithSubagents();
+  assert.ok(agents.some((agent) => agent.pid === CLAUDE_PID), 'because the claude in project-wt-2 is an agent of the project');
+  assert.deepEqual(subagentsOf(agents, CLAUDE_PID), [{
+    id: 'a1111111111111111', host: 'claude', type: 'example-reviewer', task: 'Review the example change', cwd: '/work/example',
+    startedAt: '2026-10-24T18:10:00.000Z', latest: { at: '2026-10-24T18:15:30.000Z', kind: 'say', text: 'The example change reads cleanly so far.' },
+  }], 'because the session found for the claude process has one subagent written a minute ago that has not finished, and its meta and transcript give every field');
+});
+
+test('Monitor_CodexSessionRunsASubagent_AgentListsItWithEveryField', async () => {
+  const agents = await agentsWithSubagents();
+  assert.ok(agents.some((agent) => agent.pid === CODEX_PID), 'because the codex in project-wt-3 is an agent of the project');
+  assert.deepEqual(subagentsOf(agents, CODEX_PID), [{
+    id: '019d-probe', host: 'codex', type: 'subagent', task: 'probe (Russell)', cwd: '/work/example',
+    startedAt: '2026-11-10T22:10:29.944Z', latest: { at: '2026-11-10T22:10:36.647Z', kind: 'say', text: 'PONG' },
+  }], 'because the codex process\'s session is the root rollout, not its child, and the live child that names it as its root gives every field');
 });

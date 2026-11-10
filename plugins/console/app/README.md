@@ -168,8 +168,8 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 16 since an agent took `step`
-and `job` (15 when an item and a
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 17 since an agent took
+`subagents` (16 when an agent took `step` and `job`, 15 when an item and a
 worktree took `heldBy` and `heldReason`, the states `waiting` and `held` came, `counts` took
 `waiting` and `held`, `readiness` took `held`, an attention row took the kind `close` and the
 snapshot took `toClose`, 14 when an agent took
@@ -246,9 +246,10 @@ snapshots.
   process. For codex `~/.codex/session_index.jsonl` has ids and thread
   names but no folder, so the session files under `~/.codex/sessions/<yyyy>/<mm>/<dd>/` (the
   start's day back to fourteen days) are read instead: the newest written since the start whose
-  first line, `session_meta`, names the same cwd; the id is its `payload.id`. A `codex exec`
-  started with `-C <dir>` (or `--cd`), as flow's host.sh starts a Codex run, keeps the cwd it was
-  started in, such as the project root, so its working directory, both for the worktree it is
+  first line, `session_meta`, names the same cwd and is not a subagent's; the id is its
+  `payload.id`. A `codex exec` started with `-C <dir>` (or `--cd`), as flow's host.sh starts a
+  Codex run, keeps the cwd it was started in, such as the project root, so its working directory,
+  both for the worktree it is
   listed under and for this match, is that `<dir>`, resolved against the cwd. Only codex's options
   before its prompt count, so a `-C` the prompt mentions does not
   (`daemon/src/collectors/agentContext.ts`). Those first lines are kept in memory and forgotten
@@ -270,6 +271,26 @@ snapshots.
   owner) or `busy`, `since` its `statusUpdatedAt`. Null for codex, which writes no such file, and
   for a claude without one of its own. `startedAt` is when ps says the process started, worked out
   at the read that found it.
+- `subagents` (on every entry of `agents`) is what its session runs now, oldest started first, each
+  `{id, host, type, task, cwd, startedAt, latest}`; empty without a session and always on an entry
+  of `ended`. A subagent is live while its transcript was written in the last 10 minutes
+  (`LIVE_WINDOW_MS`), so one stuck in a single tool call longer than that drops off until it writes
+  again. For claude they are in `<transcript folder>/<session id>/subagents/`: each
+  `agent-<id>.meta.json` (not the `workflows/` folder) whose `agent-<id>.jsonl` is fresh and whose
+  meta says neither `finished` nor `stoppedByUser`; `id` is the `<id>`, `type` the meta's
+  `agentType` (`subagent` without one), `task` its `description`, `cwd` and `startedAt` the
+  transcript's first line, and `latest` the last line of its last 64 KB, read as the transcript
+  route reads lines, side chains included. For codex a subagent is its own rollout in the day
+  folders, run by its root's process: a fresh rollout whose first line is a subagent's
+  (`source.subagent` or `thread_source: "subagent"`) and names the session as its root
+  (`session_id`), at any depth, and whose last `task_started` or `task_complete` event is not
+  `task_complete`; `id` is its `payload.id`, `type` its `agent_role` (`subagent` without one),
+  `task` the last segment of its `agent_path` with its `agent_nickname` in parentheses
+  (`probe (Russell)`; the spawn message is encrypted), `cwd` and `startedAt` its first line, and `latest`
+  its own last line, not one of the parent lines it replays before its
+  `subagent_history_start_ordinal`. The metas and first lines are kept in memory while a read used
+  them in the last 10 minutes; one reader serves every project
+  (`daemon/src/collectors/subagents.ts`, `claudeSubagents.ts`, `codexSubagents.ts`).
 - `project.staleSessionSeconds` is `jobs.health.stale_session` in seconds (a flow duration, 24h
   unset). `sessionStale` in snapshot.ts is the one rule the pages use: a session (never a flow
   agent) is stale once it has been idle that long, or, with no `activity`, once its process has run
@@ -856,6 +877,8 @@ tracker the board could not read saying why its items are missing, and an item's
 its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across
 the page: a card per live run, the first open and the
 others folded to their header and their latest transcript line, claude and codex alike, each with
+the live subagents of its session under that line, open or folded (a row each: type, task or "no
+task", cwd, how long it has run and its latest line), and with
 its step (the agent's own, else its run's), item, worktree, host, a `headless` tag, a `job <name>`
 tag when a flow job started it, how long it has run, and PR, its stats (when its process started,
 last commit, transcript size and turns, pid) and its transcript as a terminal of the last 12
@@ -867,7 +890,7 @@ while `liveness` is `unknown`, or that it is still starting within the grace; wi
 to Jobs. Then your own sessions, folded, each row with its pid, host, worktree, item, `busy`,
 `idle 3d 2h` or (with no `activity`) its age, a `stale` tag past `jobs.health.stale_session`, Open
 session or Open in Terminal, and Stop session, which asks first ("SIGTERM to pid N?" with Stop it
-and Cancel) and then sends `session.stop`; stale sessions come first, and while any is stale the
+and Cancel) and then sends `session.stop`, and its live subagents as on a run card; stale sessions come first, and while any is stale the
 fold opens by itself with the count in its heading ("Your sessions (3 · 1 stale)"). Then the
 servers, folded and read-only ("Servers (2)", hidden with none), each row with its label, pid,
 worktree and how long it has run, its command on hover, under a line that says they are not
