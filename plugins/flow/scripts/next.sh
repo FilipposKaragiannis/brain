@@ -9,7 +9,7 @@
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
-# an open item (blocked_by), or split and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# an open item (blocked_by), split and waiting on its children, or its base: line names a branch not on the remote · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
 # gate, held, blocked, done, or split) and tries the next ready one, since the ready list it came from can
@@ -23,6 +23,7 @@
 # cached ready list count only when FLOW_NEXT_PID names this process.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/blockers.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 item=""; as_json=0; embed=0; pick=""
@@ -151,11 +152,24 @@ depth="$(json_get "$profiles" "review_depth.$profile")"
 architect=no; [ "$(json_get "$profiles" "architect.$profile")" = true ] && architect=yes
 base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
-  wt="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item" --base "$base")" || {
+  # A new claim starts from the item's base (lib/base.sh), resolved here once; an item that holds
+  # a claim keeps the base it was claimed from. A `base:` line naming a missing branch holds the
+  # item: a claim from the config base would put its work on the wrong history.
+  claim_base="$base"; claim_why=""
+  if [ -z "$("$FLOW_PLUGIN/scripts/steward.sh" find "$item")" ]; then
+    resolved="$(resolve_base "$data")"; resolved_code=$?
+    claim_base="$(printf '%s\n' "$resolved" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved" | cut -f2-)"
+    if [ "$resolved_code" -ne 0 ]; then
+      adapter write-state "$item" "last_event=$(now_iso) its base $claim_base is not on the remote" >/dev/null
+      pass_over "$item: its base $claim_base is not on the remote" 4
+    fi
+  fi
+  wt="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item" --base "$claim_base")" || {
     code=$?
     if [ "$code" -eq 3 ] && [ -z "$named" ]; then FLOW_NEXT_FULL="$item"; pick_again; fi
     exit "$code"
   }
+  [ -z "$claim_why" ] || printf '%s\t%s\tclaim\tbase %s (%s)\n' "$(now_iso)" "$item" "$claim_base" "$claim_why" >> "$home/events.log"
   branch="$(json_get "$(cat "$wt/.flow/claim.json")" branch)"
   claim="$(cat "$wt/.flow/claim.json")"
   json_set "$claim" step "$(json_string "$step")" > "$wt/.flow/claim.json"

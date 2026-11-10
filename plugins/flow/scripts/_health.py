@@ -315,6 +315,11 @@ def newest(paths):
     return best
 
 
+# The events.log kinds that are no work on the item: health's own lines, and the claim's base
+# line (the claim's time is claimed_at, which health reads beside this).
+NOT_ACTIVITY = ("health", "claim")
+
+
 def activity(worktree, reports, events, item):
     changed = run(["git", "-C", worktree, "status", "--porcelain", "-z", "--", ".", ":!.flow"])
     names, entries = [], iter(changed.split("\0"))
@@ -328,7 +333,7 @@ def activity(worktree, reports, events, item):
         best = max(best, newest([os.path.join(root, f) for f in files]), newest([root]))
     for line in open(events) if os.path.exists(events) else []:
         parts = line.split("\t")
-        if len(parts) >= 3 and parts[1] == item and parts[2] != "health":
+        if len(parts) >= 3 and parts[1] == item and parts[2] not in NOT_ACTIVITY:
             best = max(best, epoch(parts[0]))
     return best
 

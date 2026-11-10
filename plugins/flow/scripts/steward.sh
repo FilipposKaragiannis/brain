@@ -1,7 +1,9 @@
 #!/bin/sh
 # Worktree steward: the pool, claims, releases and temporary worktrees.
 #   steward.sh pool                              list the pool with claim, branch and dirt
-#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
+#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path; the
+#                                                base (default: the config base) goes in claim.json
+#                                                and the item state
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh reserve [<worktree>] [--name <who>]
 #                                                claim a free pool worktree for manual work, with
@@ -168,7 +170,7 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
-  write_state "$item" "worktree=$(basename "$free")" "last_event=$(now_iso) claimed $(basename "$free")"
+  write_state "$item" "worktree=$(basename "$free")" "base=$base" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
 
