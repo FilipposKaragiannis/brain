@@ -1,9 +1,9 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import type { Item, PullRequest } from '../../daemon/src/snapshot.ts';
+import type { Item, PullRequest, Snapshot } from '../../daemon/src/snapshot.ts';
 import { Board, trackerNotRead } from '../src/screens/Board.tsx';
 import { formatCost, formatTokens } from '../src/spend.ts';
-import { boardItem, FakeDaemon, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
+import { boardItem, FakeDaemon, snapshotAt, TAKEN_AT, waitingGate } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
 
@@ -125,4 +125,21 @@ test('PickedHeldItem_DetailSaysWhatItWaitsBehindAndWhy', () => {
 test('PickedWaitingItem_DetailSaysItWaitsForAWorker', () => {
   renderBoard([WAITING], 'gh#30');
   expect(screen.getByLabelText('Waits for').textContent, 'because the step it shows is the next one, not one going on').toBe('waiting for a worker · next implement');
+});
+
+const ESCALATED: Item = { ...boardItem('gh#50', 'Fifty'), state: 'needs-you', gate: 'escalation' };
+
+function renderPicked(item: Item, gates: Snapshot['gates']): void {
+  const Wrapper = new FakeDaemon().screenWrapper();
+  render(<Wrapper><Board snapshot={{ ...snapshotAt(TAKEN_AT, 1), items: [item], gates }} selected={item.id} /></Wrapper>);
+}
+
+test('PickedItemGatedOnlyByItsLabel_GateFactSaysLabelOnly', () => {
+  renderPicked(ESCALATED, []);
+  expect(screen.getByText('Gate').nextElementSibling?.textContent, 'because no record backs the label, so no question was recorded').toMatch(/escalation.*label only/);
+});
+
+test('PickedItemWithAGateRecord_GateFactIsTheBareGateName', () => {
+  renderPicked(ESCALATED, [waitingGate('gh#50', 'escalation')]);
+  expect(screen.getByText('Gate').nextElementSibling?.textContent, 'because a recorded gate holds its question, so nothing is missing').toBe('escalation');
 });
