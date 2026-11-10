@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 16;
+export const SNAPSHOT_SCHEMA_VERSION = 17;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -42,7 +42,8 @@ export type WorktreeFlag = 'dirty' | 'behind' | 'stale-branch' | 'idle' | 'dead-
 /**
  * `in-review`: every step ran and its merge gate waits on reviewers, not on you (see `PullRequest.review`).
  * `waiting` and `held` are its worktree's; an item with no worktree is `held` while `heldBy` names an item.
- * `needs-you`: a gate, or an item the owner closes (see `ReadyToClose`).
+ * `needs-you`: a gate record, a gate the tracker label names (see `LabelGate`), or an item the owner
+ * closes (see `ReadyToClose`).
  */
 export type ItemState = 'running' | 'needs-you' | 'stale' | 'waiting' | 'held' | 'claimed' | 'in-review' | 'ready' | 'blocked' | 'backlog' | 'done';
 /** `overdue`: its interval has passed but launchd has not started it, usually because the Mac slept. */
@@ -61,9 +62,10 @@ export const SOURCE_NAMES: SourceName[] = ['files', 'git', 'processes', 'jobs', 
  * under the same parent has started or is done, or it blocks an item that has started. Other
  * items waiting on a field are backlog and get no row. `host-stopped`: flow stopped a host on a
  * spend limit or an auth error (`stoppedHosts`), and no session starts on it until it is cleared.
- * `close`: an item no gate asks about that only the owner can finish (`toClose`).
+ * `close`: an item no gate asks about that only the owner can finish (`toClose`). `label-gate`: an
+ * item gated only by its tracker label, with no gate record and so no question (`labelGates`).
  */
-export type AttentionKind = 'gate' | 'close' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable' | 'needs-field' | 'host-stopped';
+export type AttentionKind = 'gate' | 'close' | 'label-gate' | 'dead-run' | 'stale' | 'disagreement' | 'job-failed' | 'pr-failing' | 'pr-changes-requested' | 'pr-mergeable' | 'needs-field' | 'host-stopped';
 /**
  * Where an open pull request stands, the first that holds: a draft, merge conflicts, a failing
  * check, changes requested, a check still running, no approval yet, a reviewer the flow asked by
@@ -325,6 +327,22 @@ export type ReadyToClose = {
   todo: string;
   worktree: string | null;
   pull: Gate['pull'];
+  sinceAt: string | null;
+  ageSeconds: number | null;
+};
+
+/**
+ * An open item whose tracker label names a gate (`gate:<name>`) with no gate record behind it, so
+ * no question was recorded: the label was set by hand, not by `gate.sh raise`. The flow leaves it
+ * out of its ready list, so it needs the owner. `sinceAt` is the time of its last flow event (null
+ * when that has none).
+ */
+export type LabelGate = {
+  item: string;
+  title: string;
+  url: string | null;
+  gate: string;
+  worktree: string | null;
   sinceAt: string | null;
   ageSeconds: number | null;
 };
@@ -636,7 +654,7 @@ export type AttentionRow = {
 };
 
 export type Counts = {
-  /** The gates plus the items to close (`gates.length + toClose.length`): what the Gates screen lists. */
+  /** The gates, the items to close and the label-only gates (`gates.length + toClose.length + labelGates.length`). */
   needsYou: number;
   running: number;
   stale: number;
@@ -725,8 +743,10 @@ export type Snapshot = {
   worktrees: Worktree[];
   items: Item[];
   gates: Gate[];
-  /** The open items the owner closes with no gate asking, oldest first; with `gates`, what needs you. */
+  /** The open items the owner closes with no gate asking, oldest first; with `gates` and `labelGates`, what needs you. */
   toClose: ReadyToClose[];
+  /** The open items gated only by a tracker label, with no gate record, oldest first. */
+  labelGates: LabelGate[];
   runs: Run[];
   agents: Agent[];
   /** How complete the last process read was: a run is judged dead only after a complete one. */
