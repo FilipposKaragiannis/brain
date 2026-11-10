@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import type { Gate, GateOption } from '../../../daemon/src/snapshot.ts';
+import { optionAnswer } from '../gateAnswers.tsx';
 import type { Decision, Draft } from '../gateAnswers.tsx';
 import { Markdown } from '../Markdown.tsx';
 
 /** The decision one option button sends, with the note the owner typed going along with it. */
 function optionDecision(number: number, option: GateOption, note: string): Decision {
-  const message = [option.text, note.trim()].filter((part) => part !== '').join('\n\n');
-  return { kind: 'option', number, text: option.text, note, said: { verb: `Answered with option ${number}`, message } };
+  return { kind: 'option', number, text: option.text, note, said: { verb: `Answered with option ${number}`, message: optionAnswer(option.text, note) } };
 }
 
 /**

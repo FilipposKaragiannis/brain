@@ -405,6 +405,11 @@ test('GateRecordWithCondition_ConditionRead', async () => {
   assert.equal(gate.condition, 'blocked_by:gh#772', 'because the card says what the health job waits on before it clears the gate itself');
 });
 
+test('GateRecordWithFooter_FooterRead', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.equal(gate.footer, OPTIONED_RECORD.footer, 'because the card shows the exact command the tracker comment carries under the message');
+});
+
 test('GateRecordOptionWithEmptyLabel_NoOptionsAtAll', async () => {
   const gate = await gateWith({ ...OPTIONED_RECORD, options: [{ label: '', text: 'Keep it.', recommended: false }, OPTIONED_RECORD.options[1]] });
   assert.deepEqual(gate.options, [], 'because dropping one malformed option would renumber the rest, and a button would send another option than it shows');
@@ -425,4 +430,14 @@ test('GateRecordFromAnOlderFlow_NoRaisedBy', async () => {
 test('GateRecordFromAnOlderFlow_NoAnsweredBy', async () => {
   const gate = await gateWith(OLDER_RECORD);
   assert.equal(gate.answeredBy, null, 'because an older record names nobody who carries the answer, and the card must not invent one');
+});
+
+test('GateRecordFromAnOlderFlow_NoCondition', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.condition, null, 'because an older record waits on no condition, and the card must not say the health job will clear it');
+});
+
+test('GateRecordFromAnOlderFlow_NoFooter', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.footer, null, 'because an older record carries no command, and the card must not show an empty one');
 });

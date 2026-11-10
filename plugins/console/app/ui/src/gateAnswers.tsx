@@ -30,9 +30,9 @@ export type Decision =
 type OptionDecision = Extract<Decision, { kind: 'option' }>;
 type Sent = { kind: ActionKind; args: Record<string, string> };
 
-/** The answer an option stands for when it is sent as words: the option's text, then the note. */
-function optionMessage(decision: OptionDecision): string {
-  return [decision.text, decision.note.trim()].filter((part) => part !== '').join('\n\n');
+/** The answer an option stands for in words, as `gate.sh clear --option N` builds it: the option's text, then the note. */
+export function optionAnswer(text: string, note: string): string {
+  return [text, note.trim()].filter((part) => part !== '').join('\n\n');
 }
 
 /**
@@ -42,7 +42,7 @@ function optionMessage(decision: OptionDecision): string {
  */
 function optionArgs(gate: Gate, decision: OptionDecision): Record<string, string> {
   const offered = gate.options[decision.number - 1];
-  if (offered === undefined || offered.text !== decision.text) return { item: gate.item, message: optionMessage(decision) };
+  if (offered === undefined || offered.text !== decision.text) return { item: gate.item, message: optionAnswer(decision.text, decision.note) };
   const option = String(decision.number);
   return decision.note.trim() === '' ? { item: gate.item, option } : { item: gate.item, option, message: decision.note.trim() };
 }

@@ -1,7 +1,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseEvents } from '../events.ts';
-import { EVENTS_KEPT } from '../snapshot.ts';
+import { EVENTS_KEPT, MOST_GATE_OPTIONS } from '../snapshot.ts';
 import { readSyncNote, reportsDir } from '../syncNote.ts';
 import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
@@ -272,9 +272,6 @@ function optionalText(value: Record<string, unknown>, key: string): string | nul
   const field = value[key];
   return typeof field === 'string' && field !== '' ? field : null;
 }
-
-/** The most options a gate offers, as `_gates.py options` allows: `gate.sh clear --option N` takes one digit. */
-const MOST_GATE_OPTIONS = 9;
 
 function trimmedText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';

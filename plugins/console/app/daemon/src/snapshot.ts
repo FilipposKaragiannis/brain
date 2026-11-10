@@ -274,6 +274,9 @@ export type GateQuestion = {
   recommended: string | null;
 };
 
+/** The most options a gate offers, as `_gates.py options` allows: `gate.sh clear --option N` takes one digit. */
+export const MOST_GATE_OPTIONS = 9;
+
 /** One answer the agent offered with its gate (`options` in its record); option N is the Nth, from 1, as `gate.sh clear --option N` counts. */
 export type GateOption = {
   label: string;
