@@ -107,19 +107,6 @@ raised_by_default() {
   else printf 'owner'; fi
 }
 
-# condition_in_grammar <condition>: 0 when it is one the health job reads: blocked_by:<item>,
-# pr:#<n> conflicting or ci:down.
-condition_in_grammar() {
-  condition_pr="${1#pr:#}"; condition_pr="${condition_pr% conflicting}"
-  case "$1" in
-    ci:down) return 0 ;;
-    blocked_by:*) case "${1#blocked_by:}" in ""|*[[:space:]]*) return 1 ;; esac ;;
-    "pr:#"*" conflicting") case "$condition_pr" in ""|*[!0-9]*) return 1 ;; esac ;;
-    *) return 1 ;;
-  esac
-  return 0
-}
-
 # raise_options <item> <options>: the options as _gates.py normalises them, else [] with the
 # reason on stderr: the agent that wrote them is gone, and a gate without buttons beats no gate.
 raise_options() {
@@ -134,7 +121,7 @@ raise_options() {
 raise_condition() {
   [ -n "$2" ] || return 0
   if condition_in_grammar "$2"; then printf '%s' "$2"; return 0; fi
-  echo "flow: $1: --condition dropped (\"$2\" is not blocked_by:<item>, pr:#<n> conflicting or ci:down); the gate raises without it" >&2
+  echo "flow: $1: --condition dropped (\"$2\" is not blocked_by:<id of an item an adapter owns>, pr:#<n> conflicting or ci:down); the gate raises without it" >&2
 }
 
 # gate_footer <item> <carrier> <condition> <options>: the paragraph under the gate's message on

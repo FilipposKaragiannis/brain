@@ -1001,11 +1001,13 @@ health_empty() {
 
 # condition_met <item> <condition>: 0 when the condition a gate waits on no longer holds, 1 while
 # it holds, 2 when it cannot be read (tracker or GitHub down, no PR, a condition outside the
-# grammar). Only 0 clears a gate: a gate never clears on a read that failed.
+# grammar, checked again here as at raise: a record on disk is not trusted to name an id).
+# Only 0 clears a gate: a gate never clears on a read that failed.
 #   blocked_by:<id>     met when the tracker reads <id> closed, as next.sh reads a holder
 #   pr:#<n> conflicting met when GitHub says the PR is MERGEABLE (UNKNOWN is not yet met)
 #   ci:down             met when no check fails on the item's PR (comments.sh failing-checks)
 condition_met() {
+  condition_in_grammar "$2" || return 2
   case "$2" in
     blocked_by:*)
       cm_data="$(adapter read "${2#blocked_by:}" 2>/dev/null)" || return 2

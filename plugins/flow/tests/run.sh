@@ -3591,6 +3591,30 @@ check "clear --met on a gate with no condition: refused, exit 2" [ "$code" -eq 2
 check "clear --met on a gate with no condition: the gate stays" [ "$(ostate "$oh" gate)" = escalation ]
 "$P/scripts/gate.sh" clear "$oh" >/dev/null 2>&1
 
+# A blocked_by id is read through its adapter by the health job, outside any sandbox: only an id an
+# adapter owns, in that adapter's shape, gets that far. The planted read.sh marks any run of it.
+oplant="$work/gh170-planted"; mkdir -p "$oplant"
+printf '#!/bin/sh\ntouch "%s/ran"\necho "{\\"status\\": \\"closed\\"}"\n' "$oplant" > "$oplant/read.sh"; chmod +x "$oplant/read.sh"
+oclimb="$(printf '../%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24)${oplant#/}"
+on="$(oitem 'A path for a blocker')"; "$P/adapters/local/write-state.sh" "$on" step=implement
+"$P/scripts/gate.sh" raise "$on" escalation "**Waits on a path.**" --condition "blocked_by:$oclimb" >/dev/null 2>&1
+check "condition blocked_by with a path for an id: the gate still raises" [ "$(ostate "$on" gate)" = escalation ]
+check "condition blocked_by with a path for an id: it is dropped" [ "$(ogate "$on" condition)" = null ]
+"$P/scripts/gate.sh" clear "$on" >/dev/null 2>&1
+"$P/scripts/gate.sh" raise "$on" escalation "**Waits on a dotted local id.**" --condition "blocked_by:local:task/../../x" >/dev/null 2>&1
+check "condition blocked_by with .. in a local id: it is dropped" [ "$(ogate "$on" condition)" = null ]
+"$P/scripts/gate.sh" clear "$on" >/dev/null 2>&1
+"$P/scripts/gate.sh" raise "$on" escalation "**Waits on an id no adapter owns.**" --condition "blocked_by:linear:ENG-4" >/dev/null 2>&1
+check "condition blocked_by with an id no adapter owns: it is dropped" [ "$(ogate "$on" condition)" = null ]
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["condition"]=sys.argv[2]; json.dump(d, open(p,"w"))' "$(orecord "$on")" "blocked_by:$oclimb"
+hpass
+check "health on a record whose blocked_by is a path: the path's read.sh never runs" [ ! -f "$oplant/ran" ]
+check "health on a record whose blocked_by is a path: the gate stays" [ "$(ostate "$on" gate)" = escalation ]
+"$P/scripts/gate.sh" clear "$on" >/dev/null 2>&1
+(. "$P/lib/flow.sh"; adapter read "$oclimb") >/dev/null 2>&1; code=$?
+check "adapter with a path for an adapter name: refused, exit 2" [ "$code" -eq 2 ]
+check "adapter with a path for an adapter name: the path's read.sh never runs" [ ! -f "$oplant/ran" ]
+
 oi="$(oitem 'A conflicting PR')"; "$P/adapters/local/write-state.sh" "$oi" step=done
 "$P/adapters/local/link-pr.sh" "$oi" https://github.com/acme/widgets/pull/90
 "$P/scripts/gate.sh" raise "$oi" escalation "**Resolve the conflict on #90.**" --condition "pr:#90 conflicting" >/dev/null 2>&1

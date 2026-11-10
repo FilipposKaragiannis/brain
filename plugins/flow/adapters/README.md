@@ -25,7 +25,10 @@ An id is the prefix and a non-empty rest, in the id characters `A-Za-z0-9:#/_.-`
 files, so a new adapter needs no edit there: `adapter_for <id>` names the adapter whose prefix
 starts the id, `adapter <op> <id|name> [args]` runs `adapters/<name>/<op>.sh`, and
 `scripts/_filter_ready.py` reads the same files to look up a blocker, or the item `held_by` names,
-in another tracker.
+in another tracker. A name `adapter` takes is a folder under `adapters/`, never a path: a first
+argument no prefix owns that has a `/`, starts with a dot or names no folder there exits 2.
+`item_id_shaped <id>` holds an id to its adapter's shape: the adapter owns it and its `slug.sed`
+turns the id's slug back into the id, so a gate's `blocked_by:<id>` condition is never a path.
 
 `item_slug` turns an id into a name safe for a branch and a folder (`tr ':/#' '---'`: `gh-12`,
 `local-task-3`, `jira-WID-7`); task branches are `flow/<slug>`, reports live in
