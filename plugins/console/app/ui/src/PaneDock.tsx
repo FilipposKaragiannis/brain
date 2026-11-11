@@ -31,16 +31,7 @@ export function PaneDock({ projectOnScreen, projects }: { projectOnScreen: strin
     <section className={collapsed ? 'pane-dock collapsed' : 'pane-dock'} aria-label={PANE_DOCK_NAME}>
       <div className="pane-bar">
         <div className="pane-tabs">
-          {views.map((view) => {
-            const label = paneLabel(view, projectOnScreen, projects);
-            const classes = ['pane-tab', view.key === active ? 'active' : '', view.state === 'ended' ? 'ended' : ''].filter((name) => name !== '').join(' ');
-            return (
-              <div key={view.key} className={classes}>
-                <button type="button" className="pane-tab-name" aria-pressed={view.key === active} title={paneTooltip(view)} onClick={() => choose(view.key)}>{label}</button>
-                <button type="button" className="pane-tab-close" aria-label={closePaneName(label)} title={closePaneName(label)} onClick={() => store.close(view.key)}>×</button>
-              </div>
-            );
-          })}
+          {views.map((view) => <PaneTab key={view.key} store={store} view={view} label={paneLabel(view, projectOnScreen, projects)} active={view.key === active} choose={choose} />)}
         </div>
         <button type="button" className="icon-button small pane-dock-toggle" aria-label={PANE_DOCK_TOGGLE} aria-expanded={!collapsed} aria-controls={PANE_BODY_ID} onClick={toggle}>
           <span className="pane-chevron" aria-hidden="true" />
@@ -50,6 +41,16 @@ export function PaneDock({ projectOnScreen, projects }: { projectOnScreen: strin
         {views.map((view) => <PaneSurface key={view.key} store={store} view={view} label={paneLabel(view, projectOnScreen, projects)} shown={!collapsed && view.key === active} />)}
       </div>
     </section>
+  );
+}
+
+function PaneTab({ store, view, label, active, choose }: { store: PaneStore; view: PaneView; label: string; active: boolean; choose: (key: string) => void }) {
+  const classes = `pane-tab${active ? ' active' : ''}${view.state === 'ended' ? ' ended' : ''}`;
+  return (
+    <div className={classes}>
+      <button type="button" className="pane-tab-name" aria-pressed={active} title={paneTooltip(view)} onClick={() => choose(view.key)}>{label}</button>
+      <button type="button" className="pane-tab-close" aria-label={closePaneName(label)} title={closePaneName(label)} onClick={() => store.close(view.key)}>×</button>
+    </div>
   );
 }
 
