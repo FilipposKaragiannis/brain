@@ -177,3 +177,25 @@ test('FinishedChildWithAFinalRecordOver64KiB_NotListed', async () => {
     assert.deepEqual((rows ?? []).map((row) => row.id), [PROBE_ID], 'because a task_complete longer than the first tail read is still the child\'s last turn event, so the read must reach its whole line before calling the child at work');
   } finally { done(); }
 });
+
+/** The live `probe` rollout with its own turn ended by an interrupt: a `turn_aborted` after its own `task_started`. */
+function probeAborted(): string {
+  const live = readFileSync(path.join(CODEX_FIXTURES, 'child-live.jsonl'), 'utf8').trimEnd();
+  const aborted = { timestamp: '2026-11-10T22:10:40.000Z', ordinal: 28, type: 'event_msg', payload: { type: 'turn_aborted', root_turn_id: '019d-id-03', turn_id: '019d-id-13', reason: 'interrupted' } };
+  return `${live}\n${JSON.stringify(aborted)}\n`;
+}
+
+test('ChildWhoseOwnTurnWasAborted_NotListed', async () => {
+  const { dir, day, done } = codexHome({ 'parent.jsonl': 1, 'child-depth2.jsonl': 1 });
+  try {
+    writtenAMinuteAgo(path.join(day, 'rollout-child-live.jsonl'), probeAborted());
+    const reader = new SubagentReader({ home: dir, clock: () => NOW, files: diskSessionFiles });
+    const [rows] = await reader.read([rootSession(day)]);
+    assert.deepEqual((rows ?? []).map((row) => row.id), ['019d-deep'], 'because a child whose own last turn ended in turn_aborted was interrupted and is no longer at work, though its rollout is fresh');
+  } finally { done(); }
+});
+
+test('ChildWhoseOnlyTurnEndIsItsParentsAbortedTurn_StillListed', async () => {
+  const rows = await rootRows({ 'child-replayed.jsonl': 1 });
+  assert.deepEqual(rows.map((row) => row.id), ['019d-fresh'], 'because the turn_aborted before its history start is the parent\'s turn replayed into the child, not the end of a turn of its own');
+});

@@ -28,8 +28,14 @@ const ROLLOUT_EXTENSION = '.jsonl';
 const UNNAMED_ROLE = 'subagent';
 const TASK_STARTED = 'task_started';
 const TASK_COMPLETE = 'task_complete';
-/** The cheap substring test that skips parsing the lines that are no turn event. */
-const TURN_EVENT_MARK = '"task_';
+/** How a turn ends when it is interrupted rather than completed. */
+const TURN_ABORTED = 'turn_aborted';
+/** The turn events: a turn starts, completes or is aborted. */
+const TURN_EVENTS: ReadonlySet<unknown> = new Set([TASK_STARTED, TASK_COMPLETE, TURN_ABORTED]);
+/** The turn events after which the child is no longer at work. */
+const TURN_ENDS: ReadonlySet<string> = new Set([TASK_COMPLETE, TURN_ABORTED]);
+/** The cheap substring tests that skip parsing the lines that are no turn event. */
+const TURN_EVENT_MARKS = ['"task_', `"${TURN_ABORTED}"`];
 /** Where a row without a start sorts: after every row with one. */
 const UNKNOWN_START = Number.MAX_SAFE_INTEGER;
 
@@ -45,8 +51,8 @@ type Reading = { files: SessionFiles; cache: CodexSubagentCache; now: number };
  * oldest started first. A child is its own rollout in Codex's day folders, run by its root's
  * process: its first line names the root session (`session_id`), so the folders are scanned from
  * the earliest start of the sessions read to today for rollouts written in the last 10 minutes
- * whose first line is a subagent of one of them. One is live while its last turn has not
- * completed. The first lines read are kept until no read used them for the live window.
+ * whose first line is a subagent of one of them. One is live while its own last turn has not
+ * completed or been aborted. The first lines read are kept until no read used them for the live window.
  */
 export async function codexSubagents(sessions: readonly SessionRef[], dependencies: SubagentReaderDependencies, cache: CodexSubagentCache): Promise<Subagent[][]> {
   const reading: Reading = { files: dependencies.files, cache, now: dependencies.clock().getTime() };
@@ -106,11 +112,11 @@ async function cachedMeta(file: string, { files, cache, now }: Reading): Promise
   return meta;
 }
 
-/** A child's row while it is at work, or null once its last turn completed or its rollout cannot be read. */
+/** A child's row while it is at work, or null once its own last turn completed or was aborted, or its rollout cannot be read. */
 async function liveRow(child: Child, files: SessionFiles): Promise<Subagent | null> {
   const tail = await wholeLineTail(child.file, files);
-  if (tail === null || !isAtWork(tail)) return null;
   const { meta } = child;
+  if (tail === null || !isAtWork(tail, meta.historyStart)) return null;
   return {
     id: meta.id, host: 'codex', type: meta.agentRole ?? UNNAMED_ROLE, task: taskOf(meta), cwd: meta.cwd,
     startedAt: meta.startedMs === null ? null : new Date(meta.startedMs).toISOString(), latest: latestOwnLine(tail, meta.historyStart),
@@ -132,21 +138,26 @@ async function wholeLineTail(file: string, files: SessionFiles): Promise<string 
   return tail;
 }
 
-/** Whether the last turn event in a tail is not a `task_complete`: a tail with none is in the middle of a long turn. */
-function isAtWork(tail: string): boolean {
+/**
+ * Whether the child's own last turn event in a tail ends no turn: a tail with none is in the
+ * middle of a long turn. The events replayed from its parent before `historyStart` are the
+ * parent's turns, not the child's, so they count for nothing.
+ */
+function isAtWork(tail: string, historyStart: number | null): boolean {
   let last: string | null = null;
   for (const raw of tail.split('\n')) {
-    const event = raw.includes(TURN_EVENT_MARK) ? turnEvent(raw) : null;
+    const event = TURN_EVENT_MARKS.some((mark) => raw.includes(mark)) ? ownTurnEvent(raw, historyStart) : null;
     if (event !== null) last = event;
   }
-  return last !== TASK_COMPLETE;
+  return last === null || !TURN_ENDS.has(last);
 }
 
-/** `task_started` or `task_complete` for a line that is that event, else null. */
-function turnEvent(raw: string): string | null {
+/** `task_started`, `task_complete` or `turn_aborted` for a line of the child's own that is that event, else null. */
+function ownTurnEvent(raw: string, historyStart: number | null): string | null {
   const entry = parsedEntry(raw);
-  const type = entry?.type === 'event_msg' ? entry.payload?.type : undefined;
-  return type === TASK_STARTED || type === TASK_COMPLETE ? type : null;
+  if (entry === null || entry.type !== 'event_msg' || isBeforeHistory(entry, historyStart)) return null;
+  const type = entry.payload?.type;
+  return typeof type === 'string' && TURN_EVENTS.has(type) ? type : null;
 }
 
 /** A rollout line parsed, or null when it is cut or not JSON. */
@@ -168,8 +179,13 @@ function latestOwnLine(tail: string, historyStart: number | null): TranscriptLin
 
 /** Whether a line's ordinal comes before the child's own history. */
 function isReplayed(raw: string, historyStart: number): boolean {
-  const ordinal = parsedEntry(raw)?.ordinal;
-  return typeof ordinal === 'number' && ordinal < historyStart;
+  const entry = parsedEntry(raw);
+  return entry !== null && isBeforeHistory(entry, historyStart);
+}
+
+/** Whether an entry replays the parent's: its ordinal comes before the child's `historyStart`; with no history start or no ordinal it counts as the child's own. */
+function isBeforeHistory(entry: RolloutEntry, historyStart: number | null): boolean {
+  return historyStart !== null && typeof entry.ordinal === 'number' && entry.ordinal < historyStart;
 }
 
 /** The child's task name, the last segment of its path (`/root/probe` is `probe`), with its nickname in parentheses when it has one; null without a path. */
