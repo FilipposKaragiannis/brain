@@ -291,5 +291,50 @@ for tampered_label in $tampered_labels; do
     '[ -z "$("$plugin/scripts/steward.sh" find "$direct")" ]'
 done
 
+echo "base: a letter outside ASCII is refused in a UTF-8 locale too"
+# A UTF-8 locale lets a letter outside ASCII through the ranges A-Za-z, so the refusal rows run
+# in one. C and some C.UTF-8 builds refuse it with no check at all, so they would pass on nothing.
+# A fresh repo, so a full pool cannot pass the item over in place of the name check.
+new_repo accented
+locale_letting_the_letter_through=en_US.UTF-8
+check "UnicodeLocale_LetsTheLetterThroughTheRanges: the rows below can only fail when the locale lets the letter through the ranges" \
+  '[ "$(LC_ALL=$locale_letting_the_letter_through sh -c "case \"\$1\" in *[!A-Za-z0-9._/-]*) echo refused ;; *) echo let-through ;; esac" sh "$name_with_a_letter_outside_ascii")" = let-through ]'
+remote_branch "$name_with_a_letter_outside_ascii"
+accented="$(new_task "Accented plan" "" "base: $name_with_a_letter_outside_ascii
+$body")"
+LC_ALL=$locale_letting_the_letter_through "$plugin/scripts/next.sh" "$accented" >/dev/null 2>&1; accented_code=$?
+check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_ClaimsNoWorktree: the branch is on the remote, but its name is refused whatever the locale" \
+  '[ -z "$("$plugin/scripts/steward.sh" find "$accented")" ]'
+check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_NamedRunExitsWithThePassOverCode: a refused base passes the item over like a missing one" \
+  '[ "$accented_code" -eq 4 ]'
+check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_LastEventSaysTheNameIsNotValid: the refusal is the name check, not a missing branch" \
+  '[ -n "$base_name_refused" ] && state "$accented" last_event | grep -qF -- "$base_name_refused"'
+accented_direct="$(new_task "Accented direct claim")"
+LC_ALL=$locale_letting_the_letter_through "$plugin/scripts/steward.sh" claim "$accented_direct" --base "$name_with_a_letter_outside_ascii" >/dev/null 2>&1; accented_direct_code=$?
+check "StewardClaimWithALetterOutsideAsciiInAUnicodeLocale_ExitsWithTheUsageCode: steward's own claim refuses the name whatever the locale" \
+  '[ "$accented_direct_code" -eq 2 ]'
+
+echo "base: the epic walk stops at a parent id no adapter owns"
+# A parent id with no adapter prefix is read as an adapter name, so a path there would run any
+# read.sh it points at. The planted one leaves a mark when it runs.
+new_repo stray
+mkdir -p "$work/planted"
+cat > "$work/planted/read.sh" <<PLANTED
+#!/bin/sh
+: > "$work/planted.ran"
+echo '{"id": "planted", "kind": "epic", "parent": "", "state": {}}'
+PLANTED
+chmod +x "$work/planted/read.sh"
+climb_to_the_root=""; for level in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do climb_to_the_root="$climb_to_the_root../"; done
+parent_id_no_adapter_owns="$climb_to_the_root${work#/}/planted"
+check "PlantedRead_RunsWhenCalled: the planted script leaves its mark, so its absence below means it never ran" \
+  '"$work/planted/read.sh" >/dev/null && [ -e "$work/planted.ran" ] && rm -f "$work/planted.ran"'
+stray="$("$local_adapter/create.sh" task "Stray child" --size S --body "$body" --parent "$parent_id_no_adapter_owns")"
+"$plugin/scripts/next.sh" "$stray" >/dev/null 2>&1
+check "ChildOfAParentIdNoAdapterOwns_RunsNothingAtThatPath: the walk stops at the id, so the file it names never runs" \
+  '[ ! -e "$work/planted.ran" ]'
+check "ChildOfAParentIdNoAdapterOwns_TakesTheConfigBase: the walk finds no epic past the id, so the claim falls through to the config base" \
+  '[ "$(claim_base "$stray")" = main ]'
+
 [ "$fails" -eq 0 ] && { echo "base: ok"; exit 0; }
 echo "base: $fails failed"; exit 1
