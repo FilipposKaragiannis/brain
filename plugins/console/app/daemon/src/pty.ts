@@ -76,7 +76,7 @@ function ptyHandle(started: PtyProcess): PtyHandle {
         listener(name === null ? exitCode : null, name);
       });
     },
-    write: (bytes) => { started.write(Buffer.from(bytes)); },
+    write: (bytes) => { started.write(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)); },
     resize: (size) => { started.resize(size.columns, size.rows); },
     pause: () => { started.pause(); },
     resume: () => { started.resume(); },
