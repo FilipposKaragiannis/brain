@@ -3487,7 +3487,7 @@ check "board: an answer no run took past the gate reminder is named in Health" s
 echo "gate options, roles and conditions"
 # A gate the owner can act on: options as data, who asks and who answers, and a condition the
 # health job watches. Its own repo with an origin, the local tracker and its own fake gh.
-oroot="$work/gh170"; mkdir -p "$oroot"
+oroot="$work/gate-options"; mkdir -p "$oroot"
 git init -q --bare "$oroot/origin.git" && git clone -q "$oroot/origin.git" "$oroot/app" 2>/dev/null
 cd "$oroot/app" || exit 1
 git config user.email t@t && git config user.name t && git symbolic-ref HEAD refs/heads/main
@@ -3495,7 +3495,7 @@ printf 'hi\n' > README.md && git add -A && git commit -qm init && git push -q -u
 for n in 1 2; do git worktree add -q -b "main-wt-$n" "../wt-$n"; done
 mkdir -p .flow
 printf 'adapters:\n  default: local\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
-export FAKE_GH_DIR="$work/gh170-gh"; mkdir -p "$FAKE_GH_DIR"; cp "$P/tests/_fake_gh.py" "$FAKE_GH_DIR/"
+export FAKE_GH_DIR="$work/gate-options-gh"; mkdir -p "$FAKE_GH_DIR"; cp "$P/tests/_fake_gh.py" "$FAKE_GH_DIR/"
 printf '{"issues": [], "pr": {"number": 90, "state": "OPEN", "isDraft": false, "mergedAt": null, "url": "https://github.com/acme/widgets/pull/90", "headRefName": "flow/local-task-1", "baseRefName": "main", "mergeable": "MERGEABLE", "updatedAt": "2026-11-09T10:00:00Z", "headRefOid": "c0ffee"}}\n' > "$FAKE_GH_DIR/issues.json"
 oitem() { "$P/adapters/local/create.sh" task "$1" --size S --body "x"; }
 ostate() { "$P/adapters/local/read.sh" "$1" | jget "state.$2"; }
@@ -3623,7 +3623,7 @@ check "clear --met on a gate with no condition: the gate stays" [ "$(ostate "$oh
 
 # A blocked_by id is read through its adapter by the health job, outside any sandbox: only an id an
 # adapter owns, in that adapter's shape, gets that far. The planted read.sh marks any run of it.
-oplant="$work/gh170-planted"; mkdir -p "$oplant"
+oplant="$work/gate-options-planted"; mkdir -p "$oplant"
 printf '#!/bin/sh\ntouch "%s/ran"\necho "{\\"status\\": \\"closed\\"}"\n' "$oplant" > "$oplant/read.sh"; chmod +x "$oplant/read.sh"
 oclimb="$(printf '../%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24)${oplant#/}"
 on="$(oitem 'A path for a blocker')"; "$P/adapters/local/write-state.sh" "$on" step=implement

@@ -367,7 +367,7 @@ test('FlowHome_NoLessonsOrRetroFiles_EmptyRetroFacts', async () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-/** The gate records gh-170 writes beside the message: options, who asks, who answers, a condition and the footer. */
+/** The gate records written beside the message: options, who asks, who answers, a condition and the footer. */
 const OPTIONED_RECORD = {
   gate: 'ambiguity', item: 'gh#767', message: '**Keep the contact law or replace it?**', time: '2026-11-09T09:40:00Z', host: 'claude',
   options: [
