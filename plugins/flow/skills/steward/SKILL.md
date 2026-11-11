@@ -10,7 +10,7 @@ path `codex plugin list` prints for `flow`). Call it `$P`. The script is `"$P/sc
 | Ask | Command |
 |---|---|
 | show the pool | `steward.sh pool` |
-| claim for an item | `steward.sh claim <item> [--base <branch>]` prints the path |
+| claim for an item | `steward.sh claim <item> [--base <branch>]` prints the path and records the base (`--base`, else the config `base`) in `.flow/claim.json` and the item state (`base`); `next.sh` passes the base it resolved for the item |
 | reserve one for manual work | `steward.sh reserve [<worktree>] [--name <who>]` takes a free worktree with no item under `<who>` (default: git `user.name`, else `$USER`) and prints its path; with none free it grows the pool or, at `pool_max`, exits 3, as `claim` does. `<worktree>` (a pool path or folder name, such as `app-wt-2`) takes that one when it has no claim, no reservation and a clean tree, and otherwise exits 3 with the reason: claimed by an item, reserved by someone, uncommitted changes, or not in the pool. `claim`, `sweep`, `health` and the `next` job never take or free it; `pool` and `board` show it reserved by that name |
 | release after merge | `steward.sh release <item or path>`; add `--force` only when the owner says the unmerged branch may go. A reserved worktree is released by its path |
 | add a worktree | `steward.sh add [path]`: adds it, appends it under `pool:` in `.flow/config.yaml`, copies the `worktree_copy` files and runs `worktree_setup`. A pool path missing on disk is recreated in place, its entry kept |

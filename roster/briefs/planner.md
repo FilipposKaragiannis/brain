@@ -40,10 +40,13 @@ before the slices they block, and verify every blocker edge came back from a `re
    this item's `blocked_by` to them, and stop with status `gate`, gate `decomposition`.
    `plan.md` must then say `Decomposition: tracker tasks`: the end of this step splits the item
    (its step becomes `split`, it waits on its children and its worktree goes back to the pool).
-   The owner keeps it whole by closing the children and clearing the gate. The children start from the base and open their PRs
-   against it. When this branch holds commits a child needs (an ADR, a design doc), name the
-   branch in that child's `## Notes` ("Merge flow/gh-344 first: it holds ADR 0022") and block
-   the other children on it; its implementer merges the branch in, so its PR carries them.
+   The owner keeps it whole by closing the children and clearing the gate. Each child is
+   claimed from the base its claim resolves (this item's branch while it holds a claim, else
+   the nearest `epic/<n>` branch on the remote among its ancestors, else the config base) and
+   opens its PR against it. When this branch holds commits a child needs (an ADR, a design
+   doc), name the branch in that child's `## Notes` ("Merge flow/gh-344 first: it holds ADR
+   0022") and block the other children on it; its implementer merges the branch in, so its PR
+   carries them.
 2. Write `<reports>/plan.md` from the template in the `flow:plan` skill: goal, non-goals,
    phases (each with concrete items, an autonomous verification with the expected result, its
    `touches` globs, and `independent: yes|no`), the test seams, the docs to update, risks.
