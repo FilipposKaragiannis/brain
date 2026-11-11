@@ -15,8 +15,8 @@
 #   gate.sh clear <item> --back <message>   the owner sends the work back: the gate's from step
 #                                           runs again, with the message in its brief; exit 1
 #                                           when no run does that step again (done)
-#   gate.sh clear <claude|codex>            start sessions on a host a spend limit or an auth
-#                                           error stopped outside any item's run
+#   gate.sh clear <claude|codex>            start sessions on a host a spend limit, an auth
+#                                           error or an unknown model stopped outside any item's run
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
 #                                           with the claimed worktree, the age and the questions
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
@@ -58,7 +58,7 @@ $message" >/dev/null
     [ "${3:-}" = --back ] && { back=1; shift; }
     message="${3:-cleared}"; given="${3:-}"
     [ "$back" -eq 0 ] || [ -n "$given" ] || die "gate.sh clear --back needs a message: what to change" 2
-    # A host stopped on a spend limit or an auth error (lib/host.sh) starts sessions again when
+    # A host stopped on a spend limit, an auth error or an unknown model (lib/host.sh) starts sessions again when
     # the gate that names it clears, or when the owner clears the host by name.
     . "$FLOW_PLUGIN/lib/host.sh"
     case "$item" in claude|codex)

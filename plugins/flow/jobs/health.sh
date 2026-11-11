@@ -17,7 +17,7 @@
 # said and notified once. Only the holders no tracker list holds are read. Each fact is a line
 # in the log and in events.log. Nothing to do: one quiet line, no notification. Schedule it every 15
 # minutes; the lock skips an overlap. --dry-run says what it would do and changes nothing.
-# A run a spend limit or an auth error stopped is not resumed: its escalation gate ended it, and
+# A run a spend limit, an auth error or an unknown model stopped is not resumed: its escalation gate ended it, and
 # the next job continues the item once the gate clears.
 # --model and --effort set the pair a resumed run's steps with no agent run on, instead of
 # jobs.<host>.model and jobs.<host>.effort.

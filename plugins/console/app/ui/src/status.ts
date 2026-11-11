@@ -32,7 +32,7 @@ export function itemTone(state: ItemState): Tone {
 
 export function attentionTone(kind: AttentionKind): Tone {
   switch (kind) {
-    case 'gate': case 'close': return 'needs-you';
+    case 'gate': case 'close': case 'label-gate': return 'needs-you';
     case 'stale': return 'stale';
     case 'dead-run': case 'job-failed': case 'pr-failing': case 'host-stopped': return 'failing';
     case 'disagreement': return 'mixed';

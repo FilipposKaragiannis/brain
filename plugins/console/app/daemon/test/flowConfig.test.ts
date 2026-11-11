@@ -429,7 +429,7 @@ test('JobsHostKeys_InTheSchema_EnumsInTheJobsGroupWithNoFollowUp', () => {
   const expected: [string, string, string[]][] = [
     ['jobs.claude.model', 'enumOrText', ['opus', 'sonnet', 'haiku', 'fable']],
     ['jobs.claude.effort', 'enum', ['low', 'medium', 'high', 'xhigh', 'max']],
-    ['jobs.codex.model', 'enumOrText', ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']],
+    ['jobs.codex.model', 'enumOrText', ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-luna']],
     ['jobs.codex.effort', 'enum', ['low', 'medium', 'high', 'xhigh']],
   ];
   for (const [key, type, values] of expected) {

@@ -8,7 +8,7 @@
 # jobs' pair for the host, jobs.<host>.model and jobs.<host>.effort, so no step runs on the host's
 # bare default unless that pair is empty (lib/host.sh holds the host command lines). Each step
 # session is a line in <flow home>/log/runs.jsonl with its model, effort and usage. A session that
-# fails on a spend limit or an auth error raises the escalation gate on its item, naming the
+# fails on a spend limit, an auth error or an unknown model raises the escalation gate on its item, naming the
 # cause, and stops the host: this loop and every other one start no session on it until the
 # owner clears the gate (exit 4, as for any gate).
 # --model and --effort replace the jobs' pair for this run only: its steps with no agent run on

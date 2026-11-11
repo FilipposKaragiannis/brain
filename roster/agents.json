@@ -1,8 +1,8 @@
 {
   "_readme": "The one source for every agent on both hosts. tools/generate.sh renders plugins/<plugin>/agents/<name>.md for Claude and plugins/<plugin>/codex-agents/<name>.toml for Codex. Model and effort are the owner's decisions of 2026-10-10. Edit here, then run tools/generate.sh. tools/lint.sh fails on drift.",
   "model_map": {
-    "sonnet": "gpt-6-luna",
-    "opus": "gpt-6-sol",
+    "sonnet": "gpt-6.1-terra",
+    "opus": "gpt-6.1-sol",
     "fable": "gpt-6-astra",
     "haiku": "gpt-6-luna"
   },

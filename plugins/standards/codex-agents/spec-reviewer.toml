@@ -1,6 +1,6 @@
 name = "spec-reviewer"
 description = "Reviews a diff against the item's spec and acceptance checks. Use in every review step."
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 developer_instructions = """

@@ -1,6 +1,6 @@
 name = "pr-creator"
 description = "Opens or updates the PR from the verify report and the item, with the house PR body. Use after verify passes."
-model = "gpt-6-luna"
+model = "gpt-6.1-terra"
 model_reasoning_effort = "low"
 sandbox_mode = "read-only"
 developer_instructions = """

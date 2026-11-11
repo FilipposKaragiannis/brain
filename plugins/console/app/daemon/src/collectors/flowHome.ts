@@ -94,7 +94,7 @@ export type FlowHomeFacts = {
   pluginSource: PluginSource | null;
   /** Why `gate.sh list --json` gave no parse this read, or null when it was not needed or worked. */
   gateListError: string | null;
-  /** The hosts flow stopped on a spend limit or an auth error, from `<flow home>/log/<host>.stopped`, claude first. */
+  /** The hosts flow stopped on a spend limit, an auth error or an unknown model, from `<flow home>/log/<host>.stopped`, claude first. */
   stoppedHosts: StoppedHost[];
   /**
    * Whether each step of the plugin's step table (`steps.<step>.worktree` in its profiles.json,

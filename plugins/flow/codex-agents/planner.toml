@@ -1,6 +1,6 @@
 name = "planner"
 description = "Turns a spec and an exploration into an ordered plan of vertical slices with acceptance checks. Use for M and L tasks and epics."
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """

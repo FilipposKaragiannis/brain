@@ -1,6 +1,6 @@
 name = "standards-reviewer"
 description = "Reviews a diff against the coding standards by rule id and grades findings P0 to P2. Use in every review step."
-model = "gpt-6-luna"
+model = "gpt-6.1-terra"
 model_reasoning_effort = "medium"
 sandbox_mode = "read-only"
 developer_instructions = """

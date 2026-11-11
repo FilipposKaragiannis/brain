@@ -15,7 +15,7 @@ export const JOB_KINDS: Record<string, string> = {
   health: 'checks the pool and the gates, and resumes dead runs',
 };
 /** The models flow names for each host (lib/host.sh maps the Claude names to these Codex ones). */
-export const JOB_MODELS: Record<string, string[]> = { claude: ['opus', 'sonnet', 'haiku', 'fable'], codex: ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'] };
+export const JOB_MODELS: Record<string, string[]> = { claude: ['opus', 'sonnet', 'haiku', 'fable'], codex: ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-astra', 'gpt-6-luna'] };
 /** The efforts each host takes, as lib/host.sh checks them. */
 export const JOB_EFFORTS: Record<string, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh'] };
 /** The daemon's limits on a `job.start`. */
