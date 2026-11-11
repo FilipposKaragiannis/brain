@@ -19,8 +19,10 @@ export function codexSubagentCache(): CodexSubagentCache {
   return { metas: new Map() };
 }
 
-/** How much of a child rollout is read for its last turn event and its latest line. */
+/** How much of a child rollout is read first for its last turn event and its latest line. */
 const CHILD_TAIL_BYTES = 64 * 1024;
+/** How far that read grows, doubling, while it holds no whole line: a final record with a long answer can outgrow the first read. */
+const CHILD_TAIL_MAX_BYTES = 4 * 1024 * 1024;
 const ROLLOUT_EXTENSION = '.jsonl';
 /** The type a child spawned without a role shows. */
 const UNNAMED_ROLE = 'subagent';
@@ -106,13 +108,28 @@ async function cachedMeta(file: string, { files, cache, now }: Reading): Promise
 
 /** A child's row while it is at work, or null once its last turn completed or its rollout cannot be read. */
 async function liveRow(child: Child, files: SessionFiles): Promise<Subagent | null> {
-  const tail = await files.tail(child.file, CHILD_TAIL_BYTES);
+  const tail = await wholeLineTail(child.file, files);
   if (tail === null || !isAtWork(tail)) return null;
   const { meta } = child;
   return {
     id: meta.id, host: 'codex', type: meta.agentRole ?? UNNAMED_ROLE, task: taskOf(meta), cwd: meta.cwd,
     startedAt: meta.startedMs === null ? null : new Date(meta.startedMs).toISOString(), latest: latestOwnLine(tail, meta.historyStart),
   };
+}
+
+/**
+ * The tail of a child rollout holding at least one whole line, or null when it cannot be read: a
+ * tail cut inside its one line is empty or a fragment, which says nothing of the last turn, so the
+ * read doubles until a line ends in it or it reaches the cap.
+ */
+async function wholeLineTail(file: string, files: SessionFiles): Promise<string | null> {
+  let bytes = CHILD_TAIL_BYTES;
+  let tail = await files.tail(file, bytes);
+  while (tail !== null && !tail.includes('\n') && bytes < CHILD_TAIL_MAX_BYTES) {
+    bytes *= 2;
+    tail = await files.tail(file, bytes);
+  }
+  return tail;
 }
 
 /** Whether the last turn event in a tail is not a `task_complete`: a tail with none is in the middle of a long turn. */

@@ -166,3 +166,14 @@ test('ParentStartedTheDayBefore_ItsFreshChildInThatDaysFolderListed', async () =
     assert.deepEqual((rows ?? []).map((row) => row.id), [PROBE_ID], 'because codex files a rollout under the day it started, so a session running past midnight keeps children in the day before\'s folder');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('FinishedChildWithAFinalRecordOver64KiB_NotListed', async () => {
+  const { dir, day, done } = codexHome({ 'parent.jsonl': 1, 'child-live.jsonl': 1 });
+  try {
+    const finished = readFileSync(path.join(CODEX_FIXTURES, 'child-finished.jsonl'), 'utf8').replace('"last_agent_message":"DONE"', `"last_agent_message":"${'x'.repeat(70000)}"`);
+    writtenAMinuteAgo(path.join(day, 'rollout-child-finished.jsonl'), finished);
+    const reader = new SubagentReader({ home: dir, clock: () => NOW, files: diskSessionFiles });
+    const [rows] = await reader.read([rootSession(day)]);
+    assert.deepEqual((rows ?? []).map((row) => row.id), [PROBE_ID], 'because a task_complete longer than the first tail read is still the child\'s last turn event, so the read must reach its whole line before calling the child at work');
+  } finally { done(); }
+});
