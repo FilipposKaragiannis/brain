@@ -9,7 +9,7 @@ import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
 import type { CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 import { claudeProjectFolder, diskSessionFiles, SessionLocator } from '../src/collectors/sessions.ts';
 import { SubagentReader } from '../src/collectors/subagents.ts';
-import type { Agent } from '../src/snapshot.ts';
+import type { Agent, Subagent, TranscriptLine } from '../src/snapshot.ts';
 import { BOARD_JSON, FIXTURES, FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
@@ -464,4 +464,49 @@ test('Monitor_CodexSessionRunsASubagent_AgentListsItWithEveryField', async () =>
     id: '019d-probe', host: 'codex', type: 'subagent', task: 'probe (Russell)', cwd: '/work/example',
     startedAt: '2026-11-10T22:10:29.944Z', latest: { at: '2026-11-10T22:10:36.647Z', kind: 'say', text: 'PONG' },
   }], 'because the codex process\'s session is the root rollout, not its child, and the live child that names it as its root gives every field');
+});
+
+/** A reviewer that every session the fake reader is asked about runs, with its latest line as the test sets it. */
+function reviewerSaying(latest: TranscriptLine): Subagent {
+  return { id: 'a1111111111111111', host: 'claude', type: 'example-reviewer', task: 'Review the example change', cwd: '/work/example', startedAt: '2026-10-24T18:10:00.000Z', latest };
+}
+
+const FIRST_LINE: TranscriptLine = { at: '2026-10-24T18:15:30.000Z', kind: 'say', text: 'The example change reads cleanly so far.' };
+const NEXT_LINE: TranscriptLine = { at: '2026-10-24T18:15:58.000Z', kind: 'tool', text: 'Read · /work/example/src/app.ts' };
+
+/** The fixture monitor over a subagent reader that lists the reviewer, saying `line.latest`, under every agent; read once from every source. */
+async function monitorWithAReviewer(line: { latest: TranscriptLine }): Promise<ProjectMonitor> {
+  const monitor = new ProjectMonitor({
+    project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE,
+    subagents: { read: async (sessions) => sessions.map(() => [reviewerSaying(line.latest)]) },
+  });
+  await readEverySource(monitor);
+  return monitor;
+}
+
+test('Monitor_SubagentReaderListsARow_TheAgentCarriesIt', async () => {
+  const monitor = await monitorWithAReviewer({ latest: FIRST_LINE });
+  monitor.stop();
+  const subagents = (monitor.snapshot?.agents ?? []).filter((agent) => agent.pid === 100).map((agent) => agent.subagents);
+  assert.deepEqual(subagents, [[reviewerSaying(FIRST_LINE)]], 'because the monitor puts on each agent what the subagent reader lists for its session');
+});
+
+test('Monitor_SubagentWritesANewLatestLine_SnapshotSent', async () => {
+  const line = { latest: FIRST_LINE };
+  const monitor = await monitorWithAReviewer(line);
+  let sent = 0;
+  monitor.onChange(() => { sent += 1; });
+  line.latest = NEXT_LINE;
+  await monitor.refresh('processes');
+  monitor.stop();
+  assert.equal(sent, 1, 'because a subagent\'s new latest line is news the page must show, though nothing else changed');
+});
+
+test('Monitor_SubagentLatestLineUnchanged_NoSnapshotSent', async () => {
+  const monitor = await monitorWithAReviewer({ latest: FIRST_LINE });
+  let sent = 0;
+  monitor.onChange(() => { sent += 1; });
+  await monitor.refresh('processes');
+  monitor.stop();
+  assert.equal(sent, 0, 'because a process read that finds the same subagent saying the same line has nothing new to send');
 });

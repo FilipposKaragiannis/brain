@@ -764,3 +764,27 @@ test('TranscriptRoute_CodexAgent_LastLinesOfItsSession', async () => {
 test('TranscriptRoute_CodexAgent_CountsTheModelsRecords', async () => {
   assert.equal((await codexTranscript()).body.turnCount, 6, "because every message, call, output and reasoning the model wrote counts, and Codex's own instructions do not");
 });
+
+/** One main-chain line and one side-chain line, as a claude transcript holding a subagent's turn writes them. */
+const MAIN_AND_SIDE_CHAIN = [
+  JSON.stringify({ type: 'assistant', isSidechain: false, timestamp: '2026-10-24T18:10:01.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Spawning a reviewer.' }] } }),
+  JSON.stringify({ type: 'assistant', isSidechain: true, timestamp: '2026-10-24T18:10:07.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Reviewing the change.' }] } }),
+].join('\n');
+
+test('TranscriptLines_SideChainLine_DroppedByDefault', () => {
+  assert.deepEqual(parseTranscriptLines(MAIN_AND_SIDE_CHAIN).map((line) => line.text), ['Spawning a reviewer.'], 'because a session\'s own transcript shows its main chain, not the turns of the agents it spawned');
+});
+
+test('TranscriptLinesWithSideChains_SideChainLine_Kept', () => {
+  assert.deepEqual(parseTranscriptLines(MAIN_AND_SIDE_CHAIN, { sidechains: true }).map((line) => line.text), ['Spawning a reviewer.', 'Reviewing the change.'], 'because every line of a subagent\'s own transcript is a side chain, so reading it must keep them');
+});
+
+test('DiskTail_CutMidLine_StartsAtTheFirstWholeLine', async () => {
+  const { dir, done } = home();
+  try {
+    const file = path.join(dir, 'tail.jsonl');
+    written(file, 'first line\nsecond line\nthird line\n', NOW);
+    // 'first line\n' is 11 bytes; the last 30 of the 34 start inside it, at 'st line'.
+    assert.equal(await diskSessionFiles.tail(file, 30), 'second line\nthird line\n', 'because a tail that starts inside a line drops that partial line, so no reader parses half a JSON entry');
+  } finally { done(); }
+});

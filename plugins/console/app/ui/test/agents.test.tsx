@@ -1,7 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, expect, test } from 'vitest';
-import type { ActionRecord, Agent, EndedAgent, Job, Run, Server, SessionRef, Snapshot } from '../../daemon/src/snapshot.ts';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import type { ActionRecord, Agent, EndedAgent, Job, Run, Server, SessionRef, Snapshot, Subagent } from '../../daemon/src/snapshot.ts';
 import { Agents, STOP_HELP, STOP_SESSION_HELP } from '../src/screens/Agents.tsx';
+import { TICK_MS } from '../src/clock.tsx';
 import { OPEN_SESSION_ENDED, OPEN_SESSION_LIVE } from '../src/ui.tsx';
 import { WORDS } from '../src/words.ts';
 import { FakeDaemon, HTTP_ACCEPTED, HTTP_OK, actionRecord, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
@@ -368,4 +369,87 @@ test('Servers_SaysTheyAreNotSessions', async () => {
 test('Servers_None_FoldHidden', async () => {
   await renderSnapshot({ agents: [agent(104, 'session', '/a')] });
   expect(screen.queryByText(/^Servers/), 'because an empty fold says nothing, as the sessions and ended folds hide when empty').toBeNull();
+});
+
+/** A claude reviewer that started six minutes and four seconds before the snapshot was taken. */
+const REVIEWER: Subagent = {
+  id: 'a1111111111111111', host: 'claude', type: 'example-reviewer', task: 'Review the example change', cwd: '/work/example/packages/console/app/daemon',
+  startedAt: '2026-10-24T18:10:00Z', latest: { at: '2026-10-24T18:15:30Z', kind: 'say', text: 'The example change reads cleanly so far.' },
+};
+const EXPLORER: Subagent = { ...REVIEWER, id: 'a2222222222222222', type: 'Explore', task: 'Explore the example module', latest: { at: '2026-10-24T18:15:50Z', kind: 'tool', text: 'Read · /work/example/src/app.ts' } };
+/** A codex child spawned without a task text the page can read. */
+const PROBE: Subagent = { id: '019d-probe', host: 'codex', type: 'subagent', task: null, cwd: '/work/example', startedAt: '2026-10-24T18:15:00Z', latest: null };
+
+const sessionWith = (subagents: Subagent[]): Agent => ({ ...agent(104, 'session', '/p-wt/wt-2'), subagents });
+const subagentRow = (row: HTMLElement, type: string): HTMLElement => within(within(row).getByRole('list', { name: 'Subagents' })).getByRole('listitem', { name: `Subagent ${type}` });
+
+test('ClaudeSessionWithTwoSubagents_BothListedUnderItsRow', async () => {
+  await renderAgents([sessionWith([REVIEWER, EXPLORER])]);
+  const list = within(screen.getByRole('listitem', { name: 'Session 104' })).getByRole('list', { name: 'Subagents' });
+  expect(within(list).getAllByRole('listitem').map((row) => row.getAttribute('aria-label')), 'because each live subagent of the session gets its own row, in the order the daemon gives').toEqual(['Subagent example-reviewer', 'Subagent Explore']);
+});
+
+test('SubagentRow_ShowsItsTypeTaskFolderAndLatestLine', async () => {
+  await renderAgents([sessionWith([REVIEWER])]);
+  const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'example-reviewer');
+  expect(['example-reviewer', 'Review the example change', '/work/example/packages/console/app/daemon', 'The example change reads cleanly so far.'].map((part) => row.textContent?.includes(part)), 'because the owner tells what the subagent is, what it was asked, where it works and what it does now from the row').toEqual([true, true, true, true]);
+});
+
+test('SubagentRow_LatestLineTaggedWithItsKind', async () => {
+  await renderAgents([sessionWith([EXPLORER])]);
+  const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'Explore');
+  expect(row.querySelector('.stream-kind')?.textContent ?? 'no kind shown', 'because the latest line says whether it was a tool call or speech, as the run stream does').toBe('tool');
+});
+
+test('SubagentRow_FullFolderOnHover', async () => {
+  await renderAgents([sessionWith([REVIEWER])]);
+  const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'example-reviewer');
+  expect(within(row).getByText(REVIEWER.cwd!).getAttribute('title'), 'because a long folder is clipped on the row, so the whole path is there on hover').toBe(REVIEWER.cwd);
+});
+
+test('SubagentRow_FullLatestLineOnHover', async () => {
+  await renderAgents([sessionWith([REVIEWER])]);
+  const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'example-reviewer');
+  expect(within(row).getByText(REVIEWER.latest!.text).getAttribute('title'), 'because a long latest line is clipped on the row, so the whole line is there on hover').toBe(REVIEWER.latest!.text);
+});
+
+test('CodexSessionSubagentWithoutATask_SaysNoTask', async () => {
+  await renderAgents([{ ...sessionWith([PROBE]), host: 'codex' }]);
+  const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'subagent');
+  expect(within(row).queryByText('no task'), 'because a codex child\'s task text is encrypted, and an empty gap would read as a missing field').not.toBeNull();
+});
+
+test('RunWithASubagent_ListedOnItsCard', async () => {
+  await renderAgents([{ ...agent(100, 'agent', '/p-wt/wt-3'), worktree: 'wt-3', item: 'gh#9', subagents: [REVIEWER] }]);
+  expect(subagentRow(screen.getByRole('article', { name: 'Run 100' }), 'example-reviewer').textContent, 'because a run spawning reviewers must not look like one idle card').toContain('Review the example change');
+});
+
+test('SessionWithoutSubagents_NoSubagentsList', async () => {
+  await renderAgents([sessionWith([])]);
+  expect(within(screen.getByRole('listitem', { name: 'Session 104' })).queryByRole('list', { name: 'Subagents' }), 'because a session that runs no subagent shows no empty list').toBeNull();
+});
+
+test('SubagentRow_RunningForCountedFromItsStart', async () => {
+  await renderSnapshot({ agents: [sessionWith([REVIEWER])] });
+  const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'example-reviewer');
+  expect(within(row).getByTitle('Running for').textContent, 'because it started at 18:10:00 and the snapshot was taken at 18:16:04').toBe('6m 04s');
+});
+
+test('SubagentWithoutAStart_RunningForBlank', async () => {
+  await renderAgents([sessionWith([{ ...REVIEWER, startedAt: null }])]);
+  const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'example-reviewer');
+  expect(within(row).getByTitle('Running for').textContent, 'because with no start known the page cannot say how long it has run, and must not guess').toBe('');
+});
+
+describe('subagent running for', () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] }); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  test('SubagentRow_RunningForCountsUpWithThePageClock', async () => {
+    let now = Date.parse(TAKEN_AT);
+    await renderSnapshot({ agents: [sessionWith([REVIEWER])] }, new FakeDaemon(), () => now);
+    act(() => { now += 2 * 60 * 1000; vi.advanceTimersByTime(TICK_MS); });
+    const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'example-reviewer');
+    expect(within(row).getByTitle('Running for').textContent, 'because two minutes after the snapshot the page counts on its own clock, with no new snapshot').toBe('8m 04s');
+  });
 });
