@@ -5,6 +5,7 @@
 # clear lock is held: item, record (the record's path), record_json, asked, gate, step, from, pr.
 
 CLEAR_LOCK_WAIT_SECONDS=10
+EXIT_BUSY=75
 CARRIER_SWEEP="the sweep, once the PR merges"
 CARRIER_CHILDREN="nobody: the children carry the work"
 CARRIER_COMMENTS="comments job, next pass"
@@ -12,7 +13,6 @@ CARRIER_OWNER="nobody: do it by hand, then clear with no answer"
 CARRIER_FIRST_STEP="the first step, when next starts the item"
 
 # step_runs <step>: next.sh runs it: a profile step, or the first one of an item not started.
-# json_get prints nothing for a missing key, and exits 0 either way.
 step_runs() { [ -z "$1" ] || [ -n "$(json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "steps.$1")" ]; }
 
 # read_pr_state <pr>: the PR's state as comments.sh reads it (OPEN, MERGED, CLOSED); nothing when
@@ -84,10 +84,10 @@ gate_footer() {
 
 # lock_gate_clears <item>: holds the item's clear lock until gate.sh exits, so the owner and the
 # health job never clear one gate twice: the second reads the record after the first removed it.
-# Dies, exit 75, when another clear held it over CLEAR_LOCK_WAIT_SECONDS.
+# Dies, exit EXIT_BUSY, when another clear held it over CLEAR_LOCK_WAIT_SECONDS.
 lock_gate_clears() {
   FLOW_LOCK_WAIT="$CLEAR_LOCK_WAIT_SECONDS" flow_lock "gate-$(item_slug "$1")" \
-    || die "another clear of $1 has held its gate for over ${CLEAR_LOCK_WAIT_SECONDS}s; try again" 75
+    || die "another clear of $1 has held its gate for over ${CLEAR_LOCK_WAIT_SECONDS}s; try again" "$EXIT_BUSY"
 }
 
 # picked_option_answer <n> <note>: the answer option n of the record stands for: its text, then

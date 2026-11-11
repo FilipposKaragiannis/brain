@@ -36,7 +36,6 @@ result=""; [ -f "$reports/$step.json" ] && result="$(cat "$reports/$step.json")"
 [ -n "$new_size" ] || new_size="$(json_get "$result" size)"
 [ -n "$gate" ] || gate="$(json_get "$result" gate)"
 [ -n "$message" ] || message="$(json_get "$result" message)"
-# A gate's options and condition come from the result only (status gate; gate.sh raise checks them).
 options="$(json_get "$result" options)"; condition="$(json_get "$result" condition)"
 touches="$(json_list "$result" touches | tr '\n' ',' | sed 's/,$//')"
 # The verify step's result is the verify report itself: {status: pass|fail, checks, attempts}.

@@ -160,5 +160,5 @@ $footer" >/dev/null
       c="$(cat "$f")"
       printf '%s\t%s\tstopped\t%s: %s\n' "$(json_get "$c" at)" "$(json_get "$c" host)" "$(json_get "$c" cause)" "$(json_get "$c" said)"
     done ;;
-  *) sed -n '2,48p' "$0"; exit 2 ;;
+  *) awk '/^#!/ { next } /^#/ { print; next } { exit }' "$0"; exit 2 ;;
 esac
