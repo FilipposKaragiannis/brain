@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import type { PaneLaunch } from '../src/panePlan.ts';
 import type { PaneSize } from '../src/paneProtocol.ts';
 import type { PtyHandle } from '../src/panes.ts';
+import { processAlive } from '../src/processAlive.ts';
 import { ptySpawner } from '../src/pty.ts';
 
 /** How long a real shell gets to answer before the test gives up. */
@@ -51,4 +52,69 @@ test('RealPty_AfterAResize_TheProcessSeesTheNewSize', async () => {
   pty.resize({ columns: 97, rows: 51 });
   pty.write(new TextEncoder().encode('\r'));
   assert.match((await result).output, /51 97/, 'because a TUI lays itself out at the size the page measured');
+});
+
+/** The pid of a child the shell started in the background, read from the first line it prints. */
+async function childPid(pty: PtyHandle): Promise<number> {
+  const chunks: Uint8Array[] = [];
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('the shell did not print its child\'s pid in time')), ANSWER_TIMEOUT_MS);
+    pty.onOutput((bytes) => {
+      chunks.push(bytes);
+      const printed = /child=(\d+)/.exec(Buffer.concat(chunks).toString('utf8'));
+      if (printed !== null) { clearTimeout(timer); resolve(Number(printed[1])); }
+    });
+  });
+}
+
+/** Waits until a pid no longer names a process, or the answer timeout passes. */
+async function gone(pid: number): Promise<boolean> {
+  const deadline = Date.now() + ANSWER_TIMEOUT_MS;
+  while (processAlive(pid)) {
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return true;
+}
+
+const SHELL_WITH_A_CHILD = 'sleep 600 & echo child=$!; wait';
+
+test('RealPty_HangUp_EndsTheShell', async () => {
+  const pty = started(SHELL_WITH_A_CHILD, TERMINAL_SIZE);
+  const child = await childPid(pty);
+  const result = ended(pty);
+  pty.signal('SIGHUP');
+  assert.equal((await result).signal, 'SIGHUP', 'because closing a pane hangs up the process it runs');
+  if (processAlive(child)) process.kill(child, 'SIGKILL');
+});
+
+/** A shell that survives a hang-up, as an agent's wrapper may, around a child that does not. */
+const HANG_UP_SURVIVOR_WITH_A_CHILD = 'trap ":" HUP; sleep 600 & echo child=$!; while :; do sleep 1; done';
+
+test('RealPty_HangUp_ReachesTheChildOfAShellThatSurvivesIt', async () => {
+  const pty = started(HANG_UP_SURVIVOR_WITH_A_CHILD, TERMINAL_SIZE);
+  const child = await childPid(pty);
+  const result = ended(pty);
+  pty.signal('SIGHUP');
+  const childGone = await gone(child);
+  pty.signal('SIGKILL');
+  await result;
+  if (processAlive(child)) process.kill(child, 'SIGKILL');
+  assert.equal(childGone, true, 'because the hang-up reaches the whole process group, so nothing the session started outlives the pane');
+});
+
+test('RealPty_Kill_EndsAShellThatIgnoresTheHangUp', async () => {
+  const pty = started('trap "" HUP; echo child=$$; while :; do sleep 1; done', TERMINAL_SIZE);
+  await childPid(pty);
+  const result = ended(pty);
+  pty.signal('SIGHUP');
+  pty.signal('SIGKILL');
+  assert.equal((await result).signal, 'SIGKILL', 'because a process that ignores the hang-up still ends once the grace runs out');
+});
+
+test('RealPty_CommandMissing_EndsWithAFailure', async () => {
+  const launch: PaneLaunch = { command: '/no/such/folder/brain-agent', args: [], workingFolder: os.tmpdir() };
+  const spawned = ptySpawner()(launch, TERMINAL_SIZE, ENVIRONMENT);
+  const code = spawned.ok ? (await ended(spawned.pty)).code : null;
+  assert.notEqual(code, 0, 'because a program that never ran must not look like a session that ended well');
 });

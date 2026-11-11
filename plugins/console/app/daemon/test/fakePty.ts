@@ -23,6 +23,11 @@ export type FakePty = {
   emit(bytes: Uint8Array): void;
   /** Ends the process. */
   exit(code: number | null, signal: string | null): void;
+  /**
+   * The process writes its last chunks and ends. As with node-pty, a paused pty holds what the
+   * kernel still has: the chunks, then the exit, reach the listeners only as the pty reads on.
+   */
+  finish(tail: Uint8Array[], code: number): void;
 };
 
 /** A spawner that forks nothing: each spawn hands the test a pty it drives by hand, or the refusal it was given. */
@@ -32,6 +37,13 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
     if (refusal !== null) return { ok: false, error: refusal };
     const outputListeners: ((bytes: Uint8Array) => void)[] = [];
     const exitListeners: ((code: number | null, signal: string | null) => void)[] = [];
+    /** What an ended process left in the terminal that a paused pty has not read yet. */
+    const unread: { tail: Uint8Array[]; code: number | null } = { tail: [], code: null };
+    let processEnded = false;
+    const readOn = (): void => {
+      while (!fake.paused && unread.tail.length > 0) fake.emit(unread.tail.shift()!);
+      if (!fake.paused && processEnded) fake.exit(unread.code, null);
+    };
     const fake: FakePty = {
       launch, environment, size: { ...size }, received: [], paused: false, signals: [], closed: false, exited: false, ignoresHangUp: false,
       emit: (bytes) => { for (const listener of outputListeners) listener(bytes); },
@@ -39,6 +51,12 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
         if (fake.exited) return;
         fake.exited = true;
         for (const listener of exitListeners) listener(code, signal);
+      },
+      finish: (tail, code) => {
+        processEnded = true;
+        unread.tail.push(...tail);
+        unread.code = code;
+        readOn();
       },
     };
     ptys.push(fake);
@@ -49,8 +67,8 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       write: (bytes) => { fake.received.push(bytes); },
       resize: (next) => { fake.size = { ...next }; },
       pause: () => { fake.paused = true; },
-      resume: () => { fake.paused = false; },
-      running: () => !fake.exited,
+      resume: () => { fake.paused = false; readOn(); },
+      running: () => !fake.exited && !processEnded,
       signal: (name) => {
         fake.signals.push(name);
         if (name === 'SIGHUP' && fake.ignoresHangUp) return;

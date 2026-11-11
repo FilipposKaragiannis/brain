@@ -4,7 +4,7 @@ import { setImmediate as tick } from 'node:timers/promises';
 import { silentLogger } from '../src/log.ts';
 import type { PaneFacts, PaneHost, PaneRequest } from '../src/panePlan.ts';
 import type { PaneControl, PaneNotice } from '../src/paneProtocol.ts';
-import { MAX_PANES, OUTPUT_HIGH_WATER_BYTES, OUTPUT_LOW_WATER_BYTES, PANE_CLOSE, PANE_KILL_GRACE_MS } from '../src/paneProtocol.ts';
+import { MAX_PANES, OUTPUT_HIGH_WATER_BYTES, OUTPUT_LOW_WATER_BYTES, PANE_CLOSE, PANE_KILL_GRACE_MS, PAUSED_EXIT_CHECK_MS } from '../src/paneProtocol.ts';
 import { PaneSessions } from '../src/panes.ts';
 import type { PaneLink } from '../src/panes.ts';
 import { fakePty } from './fakePty.ts';
@@ -144,7 +144,7 @@ test('LinkGone_HangsUpThePty', () => {
   const { open, ptys } = sessions(null);
   const link = open(SHELL_AT_ROOT, PROJECT);
   link.go();
-  assert.deepEqual(only(ptys).signals, ['SIGHUP'], 'because a closed terminal hangs up its processes, as any terminal does');
+  assert.equal(only(ptys).exited, true, 'because a closed terminal hangs up its processes, as any terminal does, before any kill grace runs out');
 });
 
 test('LinkGone_ProcessIgnoringHangUp_KilledOnlyAfterTheGrace', () => {
@@ -259,7 +259,7 @@ test('EndProject_ItsPtyHungUp', () => {
   const { panes, open, ptys } = sessions(null);
   open(SHELL_AT_ROOT, PROJECT);
   panes.endProject(PROJECT.id);
-  assert.deepEqual(only(ptys).signals, ['SIGHUP'], 'because a pane of a project that went ends as a lost link does');
+  assert.equal(only(ptys).exited, true, 'because a pane of a project that went ends its process as a lost link does');
 });
 
 test('EndProject_AnotherProjectsPane_StaysOpen', () => {
@@ -338,4 +338,54 @@ test('LinkGone_WhilePaused_PtyResumed', () => {
   pty.emit(filler(OUTPUT_HIGH_WATER_BYTES + 1));
   link.go();
   assert.equal(pty.paused, false, 'because a paused pty never reads the hung-up process\'s end, so it would wait out the whole grace');
+});
+
+/** A pane whose pty the output flow paused: more unacked output than the high water. */
+function pausedPane() {
+  const opened = sessions(null);
+  const link = opened.open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(opened.ptys);
+  pty.emit(filler(OUTPUT_HIGH_WATER_BYTES + 1));
+  return { ...opened, link, pty };
+}
+
+const LAST_WORDS = 'error: the session ran out of context\r\n';
+
+test('ProcessEndsWhilePaused_ItsLastOutputReachesTheLink', () => {
+  const { link, pty, timers } = pausedPane();
+  pty.finish([bytes(LAST_WORDS)], 1);
+  timers.fire(PAUSED_EXIT_CHECK_MS);
+  assert.equal(new TextDecoder().decode(link.output.at(-1)), LAST_WORDS, 'because a crashing agent\'s last line is what the owner most needs to read, paused or not');
+});
+
+test('ProcessEndsWhilePaused_ExitTold', () => {
+  const { link, pty, timers } = pausedPane();
+  pty.finish([bytes(LAST_WORDS)], 1);
+  timers.fire(PAUSED_EXIT_CHECK_MS);
+  assert.deepEqual(link.notices.at(-1), { type: 'exit', code: 1, signal: null }, 'because the page says how the session ended even when it ended while paused');
+});
+
+test('ProcessStillRunningWhilePaused_PtyStaysPaused', () => {
+  const { pty, timers } = pausedPane();
+  timers.fire(PAUSED_EXIT_CHECK_MS);
+  assert.equal(pty.paused, true, 'because a live process stays paused until the page catches up');
+});
+
+test('ProcessEndsWhilePaused_TailPastTheHighWater_ExitStillTold', () => {
+  const { link, pty, timers } = pausedPane();
+  pty.finish([filler(OUTPUT_HIGH_WATER_BYTES + 1), filler(OUTPUT_HIGH_WATER_BYTES + 1)], 2);
+  timers.fire(PAUSED_EXIT_CHECK_MS);
+  assert.deepEqual(link.notices.at(-1), { type: 'exit', code: 2, signal: null }, 'because once the process is gone, pausing again only stalls the tail it left');
+});
+
+test('PausedPaneEnds_NoExitCheckLeftBehind', () => {
+  const { pty, timers } = pausedPane();
+  pty.exit(0, null);
+  assert.deepEqual(timers.pending().filter((ms) => ms === PAUSED_EXIT_CHECK_MS), [], 'because a pane that ended must not keep a timer polling a pid the system may reuse');
+});
+
+test('PausedPaneResumed_NoExitCheckLeftBehind', () => {
+  const { link, timers } = pausedPane();
+  link.control({ type: 'ack', bytes: OUTPUT_HIGH_WATER_BYTES + 1 });
+  assert.deepEqual(timers.pending().filter((ms) => ms === PAUSED_EXIT_CHECK_MS), [], 'because a pty that reads on needs no check for an exit it will read itself');
 });

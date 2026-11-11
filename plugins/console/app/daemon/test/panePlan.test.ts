@@ -119,18 +119,18 @@ test('Request_NoSize_DefaultSize', () => {
 });
 
 test('Request_SizeAtEachBound_Accepted', () => {
-  const rows = [
+  const sizes = [
     { columns: MIN_PANE_COLUMNS, rows: MIN_PANE_ROWS },
     { columns: MAX_PANE_COLUMNS, rows: MAX_PANE_ROWS },
   ];
-  for (const size of rows) {
+  for (const size of sizes) {
     const parsed = parsePaneRequest(query({ path: ROOT, run: 'shell', cols: String(size.columns), rows: String(size.rows) }));
     assert.deepEqual(parsed.ok && parsed.request.size, size, `because ${size.columns} by ${size.rows} is inside the bounds`);
   }
 });
 
 test('Request_SizeOutsideTheBounds_Refused', () => {
-  const rows = [
+  const sizes = [
     { cols: String(MIN_PANE_COLUMNS - 1), rows: '24' },
     { cols: String(MAX_PANE_COLUMNS + 1), rows: '24' },
     { cols: '80', rows: String(MIN_PANE_ROWS - 1) },
@@ -138,7 +138,7 @@ test('Request_SizeOutsideTheBounds_Refused', () => {
     { cols: '80.5', rows: '24' },
     { cols: '-80', rows: '24' },
   ];
-  for (const size of rows) {
+  for (const size of sizes) {
     assert.equal(parsePaneRequest(query({ path: ROOT, run: 'shell', ...size })).ok, false, `because ${size.cols} by ${size.rows} is not a terminal the daemon will make`);
   }
 });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { connect as connectTcp } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -217,8 +218,8 @@ test('ClientClosed_PtyHungUp', async () => {
     const client = await startedClient(running.port, AT_ROOT, PROJECT.id);
     client.socket.close(1000);
     const pty = running.ptys[0]!;
-    await until(() => pty.signals.length > 0, 'the hang-up');
-    assert.deepEqual(pty.signals, ['SIGHUP'], 'because closing the pane ends its process');
+    await until(() => pty.exited, 'the process to end');
+    assert.equal(pty.exited, true, 'because closing the pane ends its process');
   } finally { await running.close(); }
 });
 
@@ -278,16 +279,16 @@ test('QuickSession_Started_FrameCarriesTheCommand', async () => {
 });
 
 /** A project whose flow config sets claude's model and effort, in a folder of its own. */
-async function pairedProject(): Promise<{ id: string; name: string; root: string }> {
+async function pairedProject(config: string): Promise<{ id: string; name: string; root: string }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'console-pane-paired-'));
   await mkdir(path.join(root, '.flow'));
-  await writeFile(path.join(root, '.flow', 'config.yaml'), 'jobs:\n  claude:\n    model: claude-sonnet-4-5\n    effort: xhigh\n');
+  await writeFile(path.join(root, '.flow', 'config.yaml'), config);
   return { id: 'paired', name: 'paired', root };
 }
 
 test('QuickSession_ProjectSetsClaudesPair_SpawnedWithTheModelAndEffort', async () => {
   const running = await daemon();
-  const paired = await pairedProject();
+  const paired = await pairedProject('jobs:\n  claude:\n    model: claude-sonnet-4-5\n    effort: xhigh\n');
   try {
     await running.registry.apply([PROJECT, OTHER_PROJECT, paired]);
     await running.registry.get(paired.id)!.monitor.refresh('files');
@@ -313,5 +314,44 @@ test('PaneUpgrade_ProjectIdThatDoesNotDecode_DaemonServesTheNextPane', async () 
     await refusedStatus(`ws://127.0.0.1:${running.port}/api/projects/%E0/panes?token=${TOKEN}`, {});
     const client = await startedClient(running.port, AT_ROOT, PROJECT.id);
     assert.deepEqual(client.notices.map((notice) => notice.type), ['started'], 'because one bad request must not end the daemon and every pane with it');
+  } finally { await running.close(); }
+});
+
+test('QuickSession_ProjectSetsCodexsPair_SpawnedWithTheModelAndEffort', async () => {
+  const running = await daemon();
+  const paired = await pairedProject('jobs:\n  codex:\n    model: gpt-7-nova\n    effort: low\n');
+  try {
+    await running.registry.apply([PROJECT, OTHER_PROJECT, paired]);
+    await running.registry.get(paired.id)!.monitor.refresh('files');
+    await startedClient(running.port, { ...AT_ROOT, path: paired.root, run: 'codex' }, paired.id);
+    assert.deepEqual(running.ptys[0]!.launch.args, ['-m', 'gpt-7-nova', '-c', 'model_reasoning_effort="low"'], 'because a codex quick session runs with the model and effort the project\'s flow config names for codex');
+  } finally {
+    await running.close();
+    await rm(paired.root, { recursive: true, force: true });
+  }
+});
+
+/** How many callers send a refused upgrade and reset the connection before the daemon answers. */
+const RESETTING_CALLERS = 20;
+
+/** Sends a pane upgrade with no token, then resets the connection at once, as a dropped client does. */
+function upgradeThenReset(port: number): Promise<void> {
+  return new Promise((resolve) => {
+    const caller = connectTcp(port, '127.0.0.1', () => {
+      caller.write(`GET /api/projects/${PROJECT.id}/panes HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`);
+      caller.resetAndDestroy();
+    });
+    caller.on('error', () => {});
+    caller.on('close', () => resolve());
+  });
+}
+
+test('RefusedUpgradeResetByThePeer_DaemonServesTheNextPane', async () => {
+  const running = await daemon();
+  try {
+    for (let caller = 0; caller < RESETTING_CALLERS; caller += 1) await upgradeThenReset(running.port);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const client = await startedClient(running.port, AT_ROOT, PROJECT.id);
+    assert.deepEqual(client.notices.map((notice) => notice.type), ['started'], 'because a caller that hangs up on its refusal must not end the daemon and every pane with it');
   } finally { await running.close(); }
 });
