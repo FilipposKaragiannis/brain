@@ -118,10 +118,8 @@ export type JobsPair = { model: string | null; effort: string | null; from: stri
  * empty. A codex model there is a roster name, mapped the way the plugin maps it.
  */
 export function legacyJobsSetting(values: Record<string, unknown>, host: JobsHost, setting: 'model' | 'effort'): { value: string; from: string } | null {
-  const jobs = values['jobs'];
-  if (jobs === null || typeof jobs !== 'object' || Array.isArray(jobs)) return null;
-  const map = jobs as Record<string, unknown>;
-  if (map[host] !== undefined) return null;
+  const map = asRecord(values['jobs']);
+  if (map === null || map[host] !== undefined) return null;
   const old = map[setting];
   if (typeof old !== 'string' || old === '') return null;
   return { value: host === 'codex' && setting === 'model' ? codexModel(old) : old, from: `jobs.${setting}` };
@@ -133,14 +131,21 @@ export function legacyJobsSetting(values: Record<string, unknown>, host: JobsHos
  * `jobs.<host>` is absent, else null.
  */
 export function jobsPair(values: Record<string, unknown>, host: JobsHost): JobsPair {
-  const jobs = values['jobs'];
-  const hostMap = jobs !== null && typeof jobs === 'object' && !Array.isArray(jobs) ? (jobs as Record<string, unknown>)[host] : undefined;
-  const own = hostMap !== null && typeof hostMap === 'object' && !Array.isArray(hostMap) ? hostMap as Record<string, unknown> : {};
-  const settingOf = (setting: 'model' | 'effort'): string | null => {
-    const value = own[setting];
-    return typeof value === 'string' && value !== '' ? value : legacyJobsSetting(values, host, setting)?.value ?? null;
-  };
-  return { model: settingOf('model'), effort: settingOf('effort'), from: hostMap === undefined ? 'jobs' : `jobs.${host}` };
+  const hostMap = asRecord(values['jobs'])?.[host];
+  const own = asRecord(hostMap) ?? {};
+  return { model: jobsSetting(values, host, own, 'model'), effort: jobsSetting(values, host, own, 'effort'), from: hostMap === undefined ? 'jobs' : `jobs.${host}` };
+}
+
+/** One setting of a host's pair: the host's own non-empty value, else the deprecated one, else null. */
+function jobsSetting(values: Record<string, unknown>, host: JobsHost, own: Record<string, unknown>, setting: 'model' | 'effort'): string | null {
+  const value = own[setting];
+  if (typeof value === 'string' && value !== '') return value;
+  return legacyJobsSetting(values, host, setting)?.value ?? null;
+}
+
+/** A parsed value as a map, or null when it is a scalar, a list or null. */
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 /** A change to one key: the new value, or null to take the key out of the file. */

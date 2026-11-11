@@ -40,6 +40,8 @@ export const PANE_KILL_GRACE_MS = 1500;
 export const OUTPUT_HIGH_WATER_BYTES = 1024 * 1024;
 /** Bytes sent and not yet acked under which a paused pty resumes. */
 export const OUTPUT_LOW_WATER_BYTES = 256 * 1024;
+/** How often a paused pty checks whether its process ended, well inside the 200 ms after which node-pty drops what it still holds. */
+export const PAUSED_EXIT_CHECK_MS = 50;
 /** How many drawn bytes the page acks at a time. */
 export const ACK_EVERY_BYTES = 64 * 1024;
 /** The largest frame the daemon takes from the page. */

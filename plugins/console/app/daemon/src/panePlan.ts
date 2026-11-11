@@ -17,6 +17,9 @@ export type PaneHost = { shell: string; environment: Record<string, string>; isF
 /** The process a pane's pty runs: an argv, never a shell line, and the folder it starts in. */
 export type PaneLaunch = { command: string; args: string[]; workingFolder: string };
 
+/** A project with no flow config sets no pair: each host starts on its own default model and effort. */
+export const NO_JOBS_PAIRS: Record<JobsHost, JobsPair> = { claude: { model: null, effort: null, from: 'jobs.claude' }, codex: { model: null, effort: null, from: 'jobs.codex' } };
+
 type Refusal = { ok: false; error: string };
 /** One size in the request's query: `key` is the query's own name for it (`cols` for the columns). */
 type SizeBound = { key: 'cols' | 'rows'; fallback: number; min: number; max: number };

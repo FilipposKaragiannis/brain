@@ -3,7 +3,7 @@ import type { Logger } from './log.ts';
 import type { PaneFacts, PaneHost, PaneLaunch, PaneRequest } from './panePlan.ts';
 import { planPane } from './panePlan.ts';
 import type { PaneControl, PaneNotice, PaneSize } from './paneProtocol.ts';
-import { MAX_PANES, OUTPUT_HIGH_WATER_BYTES, OUTPUT_LOW_WATER_BYTES, PANE_CLOSE, PANE_KILL_GRACE_MS } from './paneProtocol.ts';
+import { MAX_PANES, OUTPUT_HIGH_WATER_BYTES, OUTPUT_LOW_WATER_BYTES, PANE_CLOSE, PANE_KILL_GRACE_MS, PAUSED_EXIT_CHECK_MS } from './paneProtocol.ts';
 
 /** A started pty, as much of it as a pane needs. Injected so tests never load the addon. */
 export type PtyHandle = {
@@ -14,6 +14,8 @@ export type PtyHandle = {
   resize(size: PaneSize): void;
   pause(): void;
   resume(): void;
+  /** Whether the process the pty started is still running. */
+  running(): boolean;
   /** Signals the pty's process group. */
   signal(name: 'SIGHUP' | 'SIGKILL'): void;
   /** Closes the master, which hangs up whatever still holds the terminal. */
@@ -38,6 +40,9 @@ export type PaneLink = {
 };
 
 type PaneSessionsDependencies = { spawner: PtySpawner; host: PaneHost; scheduler: Scheduler; log: Logger };
+
+/** A pane's process started: what it runs and its pty. */
+type StartedPane = { launch: PaneLaunch; pty: PtyHandle };
 
 /** Why a live pane is being hung up: its link went, its project is no longer watched, or the daemon stops. */
 type HangUpCause = 'link-gone' | 'project-gone' | 'daemon-stopping';
@@ -78,22 +83,43 @@ export class PaneSessions {
   /** Plans and starts a pane on the link, or tells the link why not and closes it `refused`. */
   open(project: { id: string; root: string }, request: PaneRequest, facts: PaneFacts, link: PaneLink): void {
     if (this.live.size >= MAX_PANES) { refuse(link, `${MAX_PANES} panes are open, the most the daemon runs at once; close one to open another`); return; }
+    const started = this.spawnFor(request, facts);
+    if (!started.ok) { refuse(link, started.error); return; }
+    const pane = this.register(project.id, started, link);
+    this.log.info('pane.open', { pane: pane.id, project: project.id, run: request.run, pid: pane.pty.pid });
+  }
+
+  private spawnFor(request: PaneRequest, facts: PaneFacts): ({ ok: true } & StartedPane) | { ok: false; error: string } {
     const planned = planPane(request, facts, this.host);
-    if (!planned.ok) { refuse(link, planned.error); return; }
-    const { launch } = planned;
-    const spawned = this.spawner(launch, request.size, this.host.environment);
-    if (!spawned.ok) { refuse(link, spawned.error); return; }
+    if (!planned.ok) return planned;
+    const spawned = this.spawner(planned.launch, request.size, this.host.environment);
+    return spawned.ok ? { ok: true, launch: planned.launch, pty: spawned.pty } : spawned;
+  }
+
+  /** Counts the started pane live, tells the link it started, and wires its pty and its link to each other. */
+  private register(projectId: string, started: StartedPane, link: PaneLink): LivePane {
     this.opened += 1;
     const exited = Promise.withResolvers<void>();
-    const pane: LivePane = { id: `pane-${this.opened}`, projectId: project.id, pty: spawned.pty, link, output: new OutputFlow(spawned.pty, link), hangUp: null, exited: exited.promise };
+    const { launch, pty } = started;
+    const pane: LivePane = { id: `pane-${this.opened}`, projectId, pty, link, output: new OutputFlow(pty, link, this.scheduler), hangUp: null, exited: exited.promise };
     this.live.add(pane);
     link.tell({ type: 'started', pane: pane.id, command: [launch.command, ...launch.args], folder: launch.workingFolder });
-    pane.pty.onOutput((bytes) => { if (pane.hangUp === null) { link.output(bytes); pane.output.sentMayPause(bytes.byteLength); } });
-    pane.pty.onExit((code, signal) => { this.conclude(pane, code, signal); exited.resolve(); });
-    link.onInput((bytes) => { if (this.live.has(pane)) pane.pty.write(bytes); });
-    link.onControl((control) => { if (this.live.has(pane)) applyControl(pane, control); });
-    link.onGone(() => this.hangUp(pane, 'link-gone'));
-    this.log.info('pane.open', { pane: pane.id, project: project.id, run: request.run, pid: pane.pty.pid });
+    pty.onOutput((bytes) => this.forward(pane, bytes));
+    pty.onExit((code, signal) => { this.conclude(pane, code, signal); exited.resolve(); });
+    this.listen(pane);
+    return pane;
+  }
+
+  private listen(pane: LivePane): void {
+    pane.link.onInput((bytes) => { if (this.live.has(pane)) pane.pty.write(bytes); });
+    pane.link.onControl((control) => { if (this.live.has(pane)) applyControl(pane, control); });
+    pane.link.onGone(() => this.hangUp(pane, 'link-gone'));
+  }
+
+  private forward(pane: LivePane, bytes: Uint8Array): void {
+    if (pane.hangUp !== null) return;
+    pane.link.output(bytes);
+    pane.output.sentMayPause(bytes.byteLength);
   }
 
   /** Ends the project's links `projectGone`, then hangs their panes up and kills what is left after the grace, as for a lost link. */
@@ -126,6 +152,7 @@ export class PaneSessions {
 
   private conclude(pane: LivePane, code: number | null, signal: string | null): void {
     if (!this.live.delete(pane)) return;
+    pane.output.stop();
     this.log.info('pane.close', { pane: pane.id, code, signal, cause: pane.hangUp?.cause ?? 'exited' });
     if (pane.hangUp !== null) { this.scheduler.cancel(pane.hangUp.grace); return; }
     pane.link.tell({ type: 'exit', code, signal });
@@ -148,23 +175,28 @@ function applyControl(pane: LivePane, control: PaneControl): void {
 /**
  * One pane's output the page has not acked yet, and what its link still holds, which pause and
  * resume its pty. An ack counts no more than the bytes not yet acked, and a page that acks what it
- * never read is still held back by the bytes its link holds.
+ * never read is still held back by the bytes its link holds. node-pty drops what a paused pty still
+ * holds 200 ms after its process ends, so a paused pty checks every `PAUSED_EXIT_CHECK_MS` whether
+ * its process ended, and once it has, reads the rest and never pauses again.
  */
 class OutputFlow {
   private readonly pty: PtyHandle;
   private readonly link: PaneLink;
+  private readonly scheduler: Scheduler;
   private unacked = 0;
-  private state: 'flowing' | 'paused' = 'flowing';
+  private state: 'flowing' | 'paused' | 'ended' = 'flowing';
+  private exitCheck: object | null = null;
 
-  constructor(pty: PtyHandle, link: PaneLink) {
+  constructor(pty: PtyHandle, link: PaneLink, scheduler: Scheduler) {
     this.pty = pty;
     this.link = link;
+    this.scheduler = scheduler;
   }
 
   /** Counts bytes sent to the page, and pauses the pty once they or the link's queue pass the high water. */
   sentMayPause(byteCount: number): void {
     this.unacked += byteCount;
-    if (this.state === 'flowing' && this.pastHighWater()) { this.state = 'paused'; this.pty.pause(); }
+    if (this.state === 'flowing' && this.pastHighWater()) this.pause();
   }
 
   /** Counts bytes the page drew, and resumes a paused pty once both the unacked bytes and the link's queue are under the low water. */
@@ -186,8 +218,37 @@ class OutputFlow {
     return this.unacked < OUTPUT_LOW_WATER_BYTES && this.link.queuedBytes() < OUTPUT_LOW_WATER_BYTES;
   }
 
+  /** Stops checking on the process; its pane has ended. */
+  stop(): void {
+    this.cancelExitCheck();
+  }
+
+  private pause(): void {
+    this.state = 'paused';
+    this.pty.pause();
+    this.checkExitLater();
+  }
+
   private resume(): void {
+    this.cancelExitCheck();
     this.state = 'flowing';
     this.pty.resume();
+  }
+
+  private checkExitLater(): void {
+    this.exitCheck = this.scheduler.after(PAUSED_EXIT_CHECK_MS, () => this.resumeOnceExited());
+  }
+
+  private resumeOnceExited(): void {
+    if (this.pty.running()) { this.checkExitLater(); return; }
+    this.exitCheck = null;
+    this.state = 'ended';
+    this.pty.resume();
+  }
+
+  private cancelExitCheck(): void {
+    if (this.exitCheck === null) return;
+    this.scheduler.cancel(this.exitCheck);
+    this.exitCheck = null;
   }
 }

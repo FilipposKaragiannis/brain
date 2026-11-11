@@ -15,7 +15,7 @@ export type StreamLike = {
 export type SocketLike = {
   onmessage: ((event: MessageEvent) => void) | null;
   onclose: ((event: CloseEvent) => void) | null;
-  send(data: string | Uint8Array): void;
+  send(frame: string | Uint8Array): void;
   close(code: number): void;
 };
 

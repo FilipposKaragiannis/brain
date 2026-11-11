@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { constants } from 'node:os';
 import type { PaneLaunch } from './panePlan.ts';
 import type { PaneSize } from './paneProtocol.ts';
+import { processAlive } from './processAlive.ts';
 import type { PtyHandle, PtySpawner } from './panes.ts';
 
 /**
@@ -80,6 +81,7 @@ function ptyHandle(started: PtyProcess): PtyHandle {
     resize: (size) => { started.resize(size.columns, size.rows); },
     pause: () => { started.pause(); },
     resume: () => { started.resume(); },
+    running: () => processAlive(started.pid),
     signal: (name) => { signalGroup(started.pid, name); },
     close: () => { started.destroy(); },
   };

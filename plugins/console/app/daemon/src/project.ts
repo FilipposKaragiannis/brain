@@ -23,7 +23,7 @@ import type { PullFacts } from './collectors/pulls.ts';
 import { readPulls } from './collectors/pulls.ts';
 import type { Logger } from './log.ts';
 import type { PaneFacts } from './panePlan.ts';
-import type { JobsHost, JobsPair } from './plugins/flow/schema.ts';
+import { NO_JOBS_PAIRS } from './panePlan.ts';
 import { ageSeconds, landedMergeGates, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
@@ -44,8 +44,6 @@ const STOPPED_FILE = /^log[/\\](claude|codex)\.stopped$/;
 const SWEEP_TIMEOUT_MS = 120000;
 /** `steward.sh sweep --lock` exits so when a sweep already runs; the next pulls read tries again. */
 const SWEEP_LOCK_HELD = 75;
-/** A project with no flow config sets no pair: each host starts on its own default model and effort. */
-const NO_JOBS_PAIRS: Record<JobsHost, JobsPair> = { claude: { model: null, effort: null, from: 'jobs.claude' }, codex: { model: null, effort: null, from: 'jobs.codex' } };
 
 export type ProjectDefinition = { id: string; name: string; root: string };
 

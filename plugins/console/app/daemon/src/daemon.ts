@@ -36,7 +36,7 @@ function machinePaneHost(environment: NodeJS.ProcessEnv): PaneHost {
   return {
     shell: environment.SHELL || os.userInfo().shell || FALLBACK_SHELL,
     environment: paneEnvironment(environment),
-    isFolder: (folder) => existsSync(folder) && statSync(folder).isDirectory(),
+    isFolder: (folder) => statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true,
     executable: (name) => onPath(name, environment.PATH ?? ''),
   };
 }

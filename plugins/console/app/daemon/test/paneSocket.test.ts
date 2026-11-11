@@ -66,8 +66,8 @@ function connect(url: string, headers: Record<string, string>): Client {
   const socket = new WebSocket(url, { headers });
   const notices: PaneNotice[] = [];
   const output: Buffer[] = [];
-  socket.on('message', (data: RawData, isBinary: boolean) => {
-    const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
+  socket.on('message', (rawFrame: RawData, isBinary: boolean) => {
+    const buffer = Buffer.isBuffer(rawFrame) ? rawFrame : Buffer.from(rawFrame as ArrayBuffer);
     if (isBinary) output.push(buffer);
     else notices.push(JSON.parse(buffer.toString('utf8')) as PaneNotice);
   });

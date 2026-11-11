@@ -39,13 +39,35 @@ export function servePanes(server: Server, route: PaneRoute): void {
   const projects = new PaneProjects(route);
   const unsubscribe = route.registry.onChange(() => projects.endDeparted());
   server.once('close', unsubscribe);
-  server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const url = new URL(request.url ?? '/', REQUEST_URL_BASE);
-    const admission = route.admit(request, url);
-    if (!admission.ok) { refuseUpgrade(socket, admission.status, admission.error); return; }
-    const served = paneProject(route.registry, url.pathname);
-    if (served === undefined) { refuseUpgrade(socket, HTTP_NOT_FOUND, 'not found'); return; }
-    sockets.handleUpgrade(request, socket, head, (connection) => openPane(route, projects, served, url.searchParams, connection));
+  server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => upgradePane(route, sockets, projects, { request, socket, head }));
+}
+
+/** One upgrade as the server hands it over: the request, its connection and the bytes already read past the headers. */
+type Upgrade = { request: IncomingMessage; socket: Duplex; head: Buffer };
+
+/** What starting a pane on a completed handshake needs besides the socket. */
+type PaneOpening = { route: PaneRoute; projects: PaneProjects; served: ServedProject; query: URLSearchParams };
+
+/**
+ * Refuses an upgrade the server would refuse, or hands it to `ws`. Node drops its own error
+ * listener before it emits `upgrade`, so a peer that resets a refused connection would throw from
+ * the socket; until `ws` takes the socket over, an error drops it and is logged.
+ */
+function upgradePane(route: PaneRoute, sockets: WebSocketServer, projects: PaneProjects, upgrade: Upgrade): void {
+  const { request, socket, head } = upgrade;
+  const dropOnError = (error: Error): void => {
+    route.log.warn('pane.upgrade', { error: error.message });
+    socket.destroy();
+  };
+  socket.on('error', dropOnError);
+  const url = new URL(request.url ?? '/', REQUEST_URL_BASE);
+  const admission = route.admit(request, url);
+  if (!admission.ok) { refuseUpgrade(socket, admission.status, admission.error); return; }
+  const served = paneProject(route.registry, url.pathname);
+  if (served === undefined) { refuseUpgrade(socket, HTTP_NOT_FOUND, 'not found'); return; }
+  sockets.handleUpgrade(request, socket, head, (connection) => {
+    socket.off('error', dropOnError);
+    openPane({ route, projects, served, query: url.searchParams }, connection);
   });
 }
 
@@ -90,9 +112,10 @@ function decodedSegment(segment: string): string | null {
 }
 
 /** Starts the pane a handshake asked for on its socket, or refuses it there when the query is not a pane request. */
-function openPane(route: PaneRoute, projects: PaneProjects, served: ServedProject, query: URLSearchParams, connection: WebSocket): void {
+function openPane(opening: PaneOpening, connection: WebSocket): void {
+  const { route, projects, served } = opening;
   const link = socketLink(connection, route.log);
-  const parsed = parsePaneRequest(query);
+  const parsed = parsePaneRequest(opening.query);
   if (!parsed.ok) { link.tell({ type: 'refused', error: parsed.error }); link.end(PANE_CLOSE.refused); return; }
   const { project } = served.monitor;
   projects.add(served);
@@ -115,16 +138,9 @@ function socketLink(connection: WebSocket, log: Logger): PaneLink {
     tell: (notice: PaneNotice) => { if (open()) connection.send(JSON.stringify(notice)); },
     end: (code) => { connection.close(code); },
     onInput: (listener) => {
-      connection.on('message', (data: RawData, isBinary: boolean) => { if (isBinary) listener(frameBytes(data)); });
+      connection.on('message', (rawFrame: RawData, isBinary: boolean) => { if (isBinary) listener(frameBytes(rawFrame)); });
     },
-    onControl: (listener) => {
-      connection.on('message', (data: RawData, isBinary: boolean) => {
-        if (isBinary) return;
-        const control = parseControl(frameBytes(data).toString());
-        if (control === null) { connection.close(PANE_CLOSE.unknownFrame); return; }
-        listener(control);
-      });
-    },
+    onControl: (listener) => { connection.on('message', controlHandler(connection, listener)); },
     onGone: (listener) => {
       if (connection.readyState === WebSocket.CLOSED) { listener(); return; }
       connection.once('close', () => listener());
@@ -133,10 +149,20 @@ function socketLink(connection: WebSocket, log: Logger): PaneLink {
   };
 }
 
-function frameBytes(data: RawData): Buffer {
-  if (Array.isArray(data)) return Buffer.concat(data);
-  if (data instanceof ArrayBuffer) return Buffer.from(data);
-  return data;
+/** Hands the listener each text frame that is a control, and closes the pane `unknownFrame` on any other text frame. */
+function controlHandler(connection: WebSocket, listener: (control: PaneControl) => void): (rawFrame: RawData, isBinary: boolean) => void {
+  return (rawFrame, isBinary) => {
+    if (isBinary) return;
+    const control = parseControl(frameBytes(rawFrame).toString());
+    if (control === null) { connection.close(PANE_CLOSE.unknownFrame); return; }
+    listener(control);
+  };
+}
+
+function frameBytes(rawFrame: RawData): Buffer {
+  if (Array.isArray(rawFrame)) return Buffer.concat(rawFrame);
+  if (rawFrame instanceof ArrayBuffer) return Buffer.from(rawFrame);
+  return rawFrame;
 }
 
 /** A text frame as a `PaneControl`, or null for anything else. */

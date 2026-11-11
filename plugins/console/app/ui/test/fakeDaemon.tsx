@@ -76,7 +76,7 @@ export class FakeSocket implements SocketLike {
     this.path = path;
   }
 
-  send(data: string | Uint8Array): void { this.sent.push(data); }
+  send(frame: string | Uint8Array): void { this.sent.push(frame); }
 
   /** A value of the query the page opened the socket with. */
   param(name: string): string | null { return new URL(this.path, 'http://page.test').searchParams.get(name); }
@@ -85,8 +85,8 @@ export class FakeSocket implements SocketLike {
 
   /** A frame from the daemon: terminal bytes as a binary frame, a notice as a text frame. */
   receive(frame: Uint8Array | PaneNotice): void {
-    const data = frame instanceof Uint8Array ? frame.slice().buffer : JSON.stringify(frame);
-    this.onmessage?.(new MessageEvent('message', { data }));
+    const delivered = frame instanceof Uint8Array ? frame.slice().buffer : JSON.stringify(frame);
+    this.onmessage?.(new MessageEvent('message', { data: delivered }));
   }
 
   closeFromDaemon(code: number): void { this.onclose?.(new CloseEvent('close', { code })); }

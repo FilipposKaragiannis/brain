@@ -50,6 +50,7 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       resize: (next) => { fake.size = { ...next }; },
       pause: () => { fake.paused = true; },
       resume: () => { fake.paused = false; },
+      running: () => !fake.exited,
       signal: (name) => {
         fake.signals.push(name);
         if (name === 'SIGHUP' && fake.ignoresHangUp) return;

@@ -113,14 +113,14 @@ export class PaneStore {
   }
 
   private receive(pane: Pane, socket: SocketLike, event: MessageEvent): void {
-    const data: unknown = event.data;
-    if (data instanceof ArrayBuffer) {
-      const bytes = new Uint8Array(data);
+    const frame: unknown = event.data;
+    if (frame instanceof ArrayBuffer) {
+      const bytes = new Uint8Array(frame);
       pane.terminal.write(bytes, () => this.ackDrawn(pane, socket, bytes.byteLength));
       return;
     }
-    if (typeof data !== 'string') return;
-    const notice = parseNotice(data);
+    if (typeof frame !== 'string') return;
+    const notice = parseNotice(frame);
     if (notice === null) return;
     if (notice.type === 'started') { this.change(pane, { ...pane.view, state: 'live', command: notice.command }); return; }
     if (notice.type === 'refused') { this.end(pane, notice.error); return; }
