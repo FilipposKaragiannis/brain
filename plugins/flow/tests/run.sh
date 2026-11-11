@@ -3527,6 +3527,23 @@ ob="$(oitem 'A note with the pick')"; "$P/adapters/local/write-state.sh" "$ob" s
 "$P/scripts/gate.sh" clear "$ob" --option 1 "Mark it deprecated." >/dev/null 2>&1
 check "clear --option with a note: the option's text leads and the note follows it" python3 -c 'import sys; answer = sys.argv[1]; assert answer.startswith("Keep FooBar; callers depend on it.") and answer.rstrip().endswith("Mark it deprecated."), answer' "$(ostate "$ob" answer)"
 
+# A pick and a send-back are two answers; one clear carries one, in either order.
+od="$(oitem 'A pick and a send-back')"; "$P/adapters/local/write-state.sh" "$od" step=implement
+"$P/scripts/gate.sh" raise "$od" ambiguity "**Keep the name or rename?**" --options "$OPTIONS" >/dev/null 2>&1
+for pick_and_back in "--option 1 --back Redo_it" "--back --option 1"; do
+  # shellcheck disable=SC2086
+  "$P/scripts/gate.sh" clear "$od" $pick_and_back >/dev/null 2>&1; code=$?
+  check "clear $pick_and_back: an option with a send-back is refused, exit 2" [ "$code" -eq 2 ]
+done
+check "clear with an option and a send-back: the gate stays for the owner" [ "$(ostate "$od" gate)" = ambiguity ]
+
+# Usage is the header comment block, however long it grows, and nothing of the code under it.
+"$P/scripts/gate.sh" no-such-mode > "$work/gate-usage.out" 2>&1
+check "gate.sh usage: exactly the header comment block, down to the first line of code" python3 -c 'import sys, itertools
+header = list(itertools.takewhile(lambda line: line.startswith("#"), open(sys.argv[1]).read().splitlines()[1:]))
+usage = open(sys.argv[2]).read().splitlines()
+assert header and usage == header, (len(header), usage[-3:])' "$P/scripts/gate.sh" "$work/gate-usage.out"
+
 oc="$(oitem 'Two recommended')"; "$P/adapters/local/write-state.sh" "$oc" step=implement
 "$P/scripts/gate.sh" raise "$oc" ambiguity "**Which one?**" --options '[{"label":"A","text":"Do A.","recommended":true},{"label":"B","text":"Do B.","recommended":true}]' >/dev/null 2>&1
 check "raise with two options both recommended: the gate still raises" [ "$(ostate "$oc" gate)" = ambiguity ]
