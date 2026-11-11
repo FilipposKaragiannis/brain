@@ -86,11 +86,13 @@ rm -f "$(run_file "$child")"
 printf 'own\n' > "$wt/own.txt" && git -C "$wt" add own.txt && git -C "$wt" commit -qm own
 remote_commit main main-one.txt; remote_commit main main-two.txt
 remote_commit "$eb" epic-a.txt; remote_commit "$eb" epic-b.txt
-"$P/scripts/steward.sh" health > "$work/health.out" 2>&1
+"$P/scripts/steward.sh" health > "$work/health.out" 2>&1; git fetch -q origin
+# main_drift: the commits main has that the epic lacks; an epic child must lack every one.
+main_drift() { git rev-list --count "origin/$eb..origin/main"; }
 check "HealthOnEpicChildBehindItsEpic_MergesTheEpicIn: health brings the epic's new commits onto a branch more than behind_base commits behind its recorded base" \
   '[ -f "$wt/epic-b.txt" ]'
 check "HealthOnEpicChildWhileMainIsAhead_LeavesMainOut: health merges the recorded base, never the config base, so main's own commit stays off the branch" \
-  '[ "$(git -C "$wt" rev-list --count "$br..origin/main")" -eq 2 ]'
+  'drift="$(main_drift)"; [ "$drift" -gt 0 ] && [ "$(git -C "$wt" rev-list --count "$br..origin/main")" -eq "$drift" ]'
 check "HealthOnEpicChild_EventsLogNamesTheEpicRefMerged: the events log names the ref health merged" \
   'grep -F "$br" .flow/events.log | grep -qF "origin/$eb"'
 "$L/write-state.sh" "$child" step=verify >/dev/null
@@ -101,7 +103,7 @@ check "VerifyStepOnEpicChild_SyncMergesTheEpicIn: the merge before verify brings
 check "VerifyStepOnEpicChild_SyncLineNamesTheEpicRef: the events log's sync line names the recorded base it merged" \
   'grep "	$child	sync	" .flow/events.log | grep -qF "origin/$eb"'
 check "VerifyStepOnEpicChildWhileMainIsAhead_SyncLeavesMainOut: the merge before verify never brings main's commits onto an epic child" \
-  '[ "$(git -C "$wt" rev-list --count "$br..origin/main")" -eq 3 ]'
+  'drift="$(main_drift)"; [ "$drift" -gt 0 ] && [ "$(git -C "$wt" rev-list --count "$br..origin/main")" -eq "$drift" ]'
 (cd "$wt" && "$P/scripts/verify.sh" "$child" >/dev/null 2>&1)
 check "VerifyOnEpicChild_ChangedFilesAreOnlyTheItemsOwn: verify.sh diffs against the recorded base, so the epic's files are not counted as the item's" \
   '[ "$(jget changed_files < "$("$P/scripts/steward.sh" reports "$child")/verify.json")" = "[\"own.txt\"]" ]'
@@ -206,7 +208,7 @@ check "BaseLineNamingAMissingBranch_LastEventNamesTheBranch: the owner sees whic
   'state "$missing" last_event | grep -qF plan/gone'
 name_with_a_shell_character='plan/x;id'; name_git_reads_as_an_option='-x'
 name_with_a_space='plan/x y'; name_climbing_a_level='plan/../x'; name_from_the_root='/plan/x'
-for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" "$name_with_a_space" \
+for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" \
   "$name_climbing_a_level" "$name_from_the_root"; do
   unsafe="$(new_task "Odd plan $unsafe_name" "" "base: $unsafe_name
 $body")"
@@ -215,21 +217,27 @@ $body")"
     '[ -z "$("$P/scripts/steward.sh" find "$unsafe")" ]'
   check "BaseLineOutsideTheSafeNames_NamedRunExitsWithThePassOverCode [$unsafe_name]: a refused base passes the item over like a missing one" \
     '[ "$unsafe_code" -eq 4 ]'
+  check "BaseLineOutsideTheSafeNames_LastEventNamesTheRefusedBase [$unsafe_name]: the owner sees which base was refused, so the pass-over is not some other failure" \
+    'state "$unsafe" last_event | grep -qF -- "$unsafe_name"'
 done
 
 echo "base: a recorded base that is not a safe name is never handed on"
 set_claim_base() { python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["base"]=sys.argv[2]; json.dump(c,open(p,"w"))' "$("$P/scripts/steward.sh" find "$1")/.flow/claim.json" "$2"; }
 loose_wt="$("$P/scripts/steward.sh" find "$loose")"
 printf 'loose\n' > "$loose_wt/loose.txt" && git -C "$loose_wt" add loose.txt && git -C "$loose_wt" commit -qm loose
-set_claim_base "$loose" "$name_git_reads_as_an_option"
-rm -f "$(run_file "$loose")"
-"$P/scripts/next.sh" "$loose" --json > "$work/tampered.json" 2>/dev/null
-check "TamperedClaimBase_JsonBaseIsTheConfigBase: next.sh checks the name claim.json records and falls back to the config base, so a bad name never reaches the runner or git" \
-  '[ "$(jget base < "$work/tampered.json")" = main ]'
-set_claim_base "$loose" "$name_git_reads_as_an_option"
-(cd "$loose_wt" && "$P/scripts/verify.sh" "$loose" >/dev/null 2>&1)
-check "TamperedClaimBase_VerifyDiffsAgainstTheConfigBase: verify.sh checks the name claim.json records and measures the item's own files from the config base" \
-  '[ "$(jget changed_files < "$("$P/scripts/steward.sh" reports "$loose")/verify.json")" = "[\"loose.txt\"]" ]'
+for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" "$name_with_a_space" \
+  "$name_climbing_a_level" "$name_from_the_root"; do
+  set_claim_base "$loose" "$unsafe_name"
+  rm -f "$(run_file "$loose")"
+  "$P/scripts/next.sh" "$loose" --json > "$work/tampered.json" 2>/dev/null
+  check "TamperedClaimBase_JsonBaseIsTheConfigBase [$unsafe_name]: next.sh checks the name claim.json records and falls back to the config base, so a bad name never reaches the runner or git" \
+    '[ "$(jget base < "$work/tampered.json")" = main ]'
+  set_claim_base "$loose" "$unsafe_name"
+  rm -f "$("$P/scripts/steward.sh" reports "$loose")/verify.json"
+  (cd "$loose_wt" && "$P/scripts/verify.sh" "$loose" >/dev/null 2>&1)
+  check "TamperedClaimBase_VerifyDiffsAgainstTheConfigBase [$unsafe_name]: verify.sh checks the name claim.json records and measures the item's own files from the config base" \
+    '[ "$(jget changed_files < "$("$P/scripts/steward.sh" reports "$loose")/verify.json")" = "[\"loose.txt\"]" ]'
+done
 
 [ "$fails" -eq 0 ] && { echo "base: ok"; exit 0; }
 echo "base: $fails failed"; exit 1
