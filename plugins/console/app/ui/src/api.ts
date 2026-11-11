@@ -1,7 +1,7 @@
 /**
  * The one door to the daemon. The token is read from the page URL once, at the composition root,
- * and kept in memory: fetches carry it as a bearer header, the event stream (which cannot set
- * headers) as `?token=`. Tests hand the hooks a fake `Api` instead.
+ * and kept in memory: fetches carry it as a bearer header, the event stream and a pane's socket
+ * (which cannot set headers) as `?token=`. Tests hand the hooks a fake `Api` instead.
  */
 export type StreamLike = {
   addEventListener(type: string, listener: (event: MessageEvent<string>) => void): void;
@@ -11,6 +11,14 @@ export type StreamLike = {
   close(): void;
 };
 
+/** A pane's WebSocket as the pane store uses it: binary frames arrive as an `ArrayBuffer`. */
+export type SocketLike = {
+  onmessage: ((event: MessageEvent) => void) | null;
+  onclose: ((event: CloseEvent) => void) | null;
+  send(data: string | Uint8Array): void;
+  close(code: number): void;
+};
+
 export type ApiResponse = { status: number; body: unknown };
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT';
@@ -18,9 +26,11 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT';
 export type Api = {
   request(path: string, method: HttpMethod, body: unknown): Promise<ApiResponse>;
   openStream(path: string): StreamLike;
+  openSocket(path: string): SocketLike;
 };
 
 export const STREAM_CLOSED = 2;
+const SECURE_PAGE_PROTOCOL = 'https:';
 
 export function readToken(search: string): string | null {
   const token = new URLSearchParams(search).get('token');
@@ -51,6 +61,12 @@ export function browserApi(token: string | null): Api {
     },
     openStream(path) {
       return new EventSource(withToken(path, token));
+    },
+    openSocket(path) {
+      const scheme = window.location.protocol === SECURE_PAGE_PROTOCOL ? 'wss' : 'ws';
+      const socket = new WebSocket(`${scheme}://${window.location.host}${withToken(path, token)}`);
+      socket.binaryType = 'arraybuffer';
+      return socket;
     },
   };
 }

@@ -1,13 +1,16 @@
 import type { ReactNode } from 'react';
 import type { Disagreement, Readiness, ReadyToClose, FlowEvent, Gate, InstalledPlugin, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
+import type { PaneNotice, PaneSize } from '../../daemon/src/paneProtocol.ts';
 import type { ActionRecord } from '../src/actions.ts';
-import type { Api, ApiResponse, HttpMethod, StreamLike } from '../src/api.ts';
+import type { Api, ApiResponse, HttpMethod, SocketLike, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
 import { ClockProvider } from '../src/clock.tsx';
 import type { Clock } from '../src/clock.tsx';
 import { ServicesProvider } from '../src/console.tsx';
 import { ActionsProvider } from '../src/ui.tsx';
 import { GateAnswersProvider } from '../src/gateAnswers.tsx';
+import { PaneStore } from '../src/panes.ts';
+import type { TerminalFactory, TerminalLike } from '../src/panes.ts';
 import { useActions } from '../src/useActions.ts';
 import { StreamHub } from '../src/stream.ts';
 
@@ -60,12 +63,76 @@ export class FakeStream implements StreamLike {
   }
 }
 
+/** A pane's socket the test drives as the daemon: it carries frames down, records what the page sent up, and closes with a code. */
+export class FakeSocket implements SocketLike {
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onclose: ((event: CloseEvent) => void) | null = null;
+  readonly path: string;
+  readonly sent: (string | Uint8Array)[] = [];
+  /** The code the page closed the socket with; null while it has not. */
+  closedWith: number | null = null;
+
+  constructor(path: string) {
+    this.path = path;
+  }
+
+  send(data: string | Uint8Array): void { this.sent.push(data); }
+
+  close(code: number): void { this.closedWith = code; }
+
+  /** A frame from the daemon: terminal bytes as a binary frame, a notice as a text frame. */
+  receive(frame: Uint8Array | PaneNotice): void {
+    const data = frame instanceof Uint8Array ? frame.slice().buffer : JSON.stringify(frame);
+    this.onmessage?.(new MessageEvent('message', { data }));
+  }
+
+  closeFromDaemon(code: number): void { this.onclose?.(new CloseEvent('close', { code })); }
+}
+
+/** The size a fake terminal fits to, unless the test sets another. */
+export const FAKE_TERMINAL_SIZE: PaneSize = { cols: 117, rows: 37 };
+
+/** A terminal that draws at once: it keeps what was written and lets the test type. */
+export class FakeTerminal implements TerminalLike {
+  readonly written: Uint8Array[] = [];
+  size: PaneSize = FAKE_TERMINAL_SIZE;
+  private readonly inputListeners: ((bytes: Uint8Array) => void)[] = [];
+
+  showIn(): void {}
+
+  fit(): PaneSize { return this.size; }
+
+  write(bytes: Uint8Array, drawn: () => void): void {
+    this.written.push(bytes);
+    drawn();
+  }
+
+  onInput(listener: (bytes: Uint8Array) => void): void { this.inputListeners.push(listener); }
+
+  focus(): void {}
+
+  dispose(): void {}
+
+  type(text: string): void {
+    const bytes = new TextEncoder().encode(text);
+    this.inputListeners.forEach((listener) => listener(bytes));
+  }
+}
+
 type Route = (body: unknown) => ApiResponse;
 type Held = { dueAt: number; release: () => void };
 
 /** The daemon as the hooks see it: routes answered by the test, and every stream it opened. */
 export class FakeDaemon implements Api {
   readonly streams: FakeStream[] = [];
+  readonly sockets: FakeSocket[] = [];
+  /** One per pane the store opened, in order. */
+  readonly terminals: FakeTerminal[] = [];
+  readonly fakeTerminal: TerminalFactory = () => {
+    const terminal = new FakeTerminal();
+    this.terminals.push(terminal);
+    return terminal;
+  };
   private readonly routes = new Map<string, { route: Route; afterEvents: number }>();
   private held: Held[] = [];
   private eventsSent = 0;
@@ -95,6 +162,12 @@ export class FakeDaemon implements Api {
     return stream;
   }
 
+  openSocket(path: string): SocketLike {
+    const socket = new FakeSocket(path);
+    this.sockets.push(socket);
+    return socket;
+  }
+
   latestStream(): FakeStream {
     const stream = this.streams.at(-1);
     if (stream === undefined) throw new Error('no stream was opened');
@@ -102,7 +175,7 @@ export class FakeDaemon implements Api {
   }
 
   wrapper(): (props: { children: ReactNode }) => ReactNode {
-    const services = { api: this, hub: new StreamHub(this) };
+    const services = { api: this, hub: new StreamHub(this), panes: new PaneStore(this, this.fakeTerminal) };
     return ({ children }) => <ServicesProvider services={services}>{children}</ServicesProvider>;
   }
 
