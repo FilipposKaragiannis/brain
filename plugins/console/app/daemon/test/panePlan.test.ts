@@ -17,7 +17,7 @@ const BINARIES: Record<string, string> = { claude: '/opt/tools/bin/claude', code
 const HOST: PaneHost = { shell: '/bin/zsh', environment: {}, isFolder: () => true, executable: (name) => BINARIES[name] ?? null };
 const SIZE = { columns: 132, rows: 41 };
 
-function request(folder: string, run: PaneRequest['run'] = 'shell'): PaneRequest {
+function request(folder: string, run: PaneRequest['run']): PaneRequest {
   return { folder, run, size: SIZE };
 }
 
@@ -30,31 +30,31 @@ function query(fields: Record<string, string>): URLSearchParams {
 }
 
 test('ShellPane_ListedRoot_RunsTheOwnersLoginShellThere', () => {
-  const plan = planPane(request(ROOT), FACTS, HOST);
+  const plan = planPane(request(ROOT, 'shell'), FACTS, HOST);
   assert.deepEqual(plan, { ok: true, launch: { command: '/bin/zsh', args: ['-l'], workingFolder: ROOT } }, 'because a shell pane is the owner\'s login shell in the folder they picked');
 });
 
 test('ShellPane_EachListedSource_Planned', () => {
   for (const folder of [POOL_WORKTREE, OUTSIDE_WORKTREE, AGENT_FOLDER]) {
-    const plan = planPane(request(folder), FACTS, HOST);
+    const plan = planPane(request(folder, 'shell'), FACTS, HOST);
     assert.equal(plan.ok && plan.launch.workingFolder, folder, `because ${folder} is a folder the snapshot lists, as Open in Terminal allows`);
   }
 });
 
 test('ShellPane_UnlistedFolder_RefusedWithOpenInTerminalsWords', () => {
-  assert.deepEqual(planPane(request('/etc'), FACTS, HOST), { ok: false, error: unlistedFolder('/etc') }, 'because a pane opens only where the snapshot lists a folder');
+  assert.deepEqual(planPane(request('/etc', 'shell'), FACTS, HOST), { ok: false, error: unlistedFolder('/etc') }, 'because a pane opens only where the snapshot lists a folder');
 });
 
 test('ShellPane_FolderBelowAListedOne_Refused', () => {
-  assert.equal(planPane(request('/p/app/secrets'), FACTS, HOST).ok, false, 'because the allow-list names folders, not every folder under them');
+  assert.equal(planPane(request('/p/app/secrets', 'shell'), FACTS, HOST).ok, false, 'because the allow-list names folders, not every folder under them');
 });
 
 test('ShellPane_RelativePath_Refused', () => {
-  assert.equal(planPane(request('app'), { ...FACTS, folders: [...FACTS.folders, 'app'] }, HOST).ok, false, 'because a relative path depends on where the daemon runs');
+  assert.equal(planPane(request('app', 'shell'), { ...FACTS, folders: [...FACTS.folders, 'app'] }, HOST).ok, false, 'because a relative path depends on where the daemon runs');
 });
 
 test('ShellPane_ListedFolderMissingOnDisk_Refused', () => {
-  const plan = planPane(request(POOL_WORKTREE), FACTS, { ...HOST, isFolder: (folder) => folder !== POOL_WORKTREE });
+  const plan = planPane(request(POOL_WORKTREE, 'shell'), FACTS, { ...HOST, isFolder: (folder) => folder !== POOL_WORKTREE });
   assert.equal(plan.ok, false, 'because a configured pool worktree may not exist yet, and a pty cannot start there');
 });
 
