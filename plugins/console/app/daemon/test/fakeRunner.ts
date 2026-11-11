@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { CommandRequest, CommandResult, CommandRunner } from '../src/collectors/exec.ts';
+import type { Cadence } from '../src/project.ts';
 
 export const FIXTURES = path.resolve(import.meta.dirname, 'fixtures');
 export const FIXTURE_ROOT = path.join(FIXTURES, 'project');
 /** The flow plugin plugin.sh resolves in the fake: a folder with only the adapters' prefix files. */
 export const FAKE_PLUGIN = path.join(FIXTURES, 'plugins', 'flow', '9.9.9');
+/** A cadence no test outlives: the monitor collects only when the test refreshes it. */
+export const LONG_CADENCE: Cadence = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
 
 const ok = (stdout: string): CommandResult => ({ code: 0, stdout, stderr: '', timedOut: false });
 

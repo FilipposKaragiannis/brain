@@ -8,11 +8,10 @@ import { ProjectMonitor } from '../src/project.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectRegistry } from '../src/registry.ts';
 import type { ProjectSummary } from '../src/registry.ts';
-import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
+import { FIXTURE_ROOT, FIXTURES, fakeRunner, LONG_CADENCE } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
-const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
 const MAIN = { id: 'project', name: 'project', root: FIXTURE_ROOT };
 const LOCAL = { id: 'project-local', name: 'project-local', root: path.join(FIXTURES, 'project-local') };
 

@@ -1,111 +1,12 @@
 import assert from 'node:assert/strict';
-import { connect as connectTcp } from 'node:net';
-import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { WebSocket } from 'ws';
-import type { RawData } from 'ws';
-import { ActionRunner, realScheduler } from '../src/actions.ts';
-import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
-import { silentLogger } from '../src/log.ts';
-import type { PaneHost } from '../src/panePlan.ts';
-import type { PaneNotice } from '../src/paneProtocol.ts';
-import { MAXIMUM_PANES, PANE_CLOSE } from '../src/paneProtocol.ts';
-import { PaneSessions } from '../src/panes.ts';
-import type { PtySpawner } from '../src/panes.ts';
-import { ProjectMonitor } from '../src/project.ts';
-import { ProjectRegistry } from '../src/registry.ts';
-import { closeConsoleServer, createConsoleServer } from '../src/server.ts';
-import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
-import { fakePty } from './fakePty.ts';
-import { plainSpawner } from './fakeSpawner.ts';
-import type { FakePty } from './fakePty.ts';
-
-const NOW = new Date('2026-11-11T09:30:00Z');
-const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
-const TOKEN = 'pane-token';
-const STATE_DIR = path.join(os.tmpdir(), `console-pane-socket-${process.pid}`);
-const PROJECT = { id: 'project', name: 'project', root: FIXTURE_ROOT };
-const OTHER_PROJECT = { id: 'local', name: 'local', root: path.join(FIXTURES, 'project-local') };
-const BINARIES: Record<string, string> = { claude: '/opt/tools/bin/claude', codex: '/opt/tools/bin/codex' };
-const HOST: PaneHost = { shell: '/bin/zsh', environment: { PATH: '/usr/bin' }, isFolder: () => true, executable: (name) => BINARIES[name] ?? null };
-/** How long a socket gets to do what a test waits for. */
-const SOCKET_TIMEOUT_MILLISECONDS = 5000;
-
-type Daemon = { registry: ProjectRegistry; panes: PaneSessions; ptys: FakePty[]; port: number; close(): Promise<void> };
-
-async function daemon(): Promise<Daemon> {
-  const { spawner, ptys } = fakePty(null);
-  return daemonOver(spawner, ptys);
-}
-
-/** A daemon whose panes start through `spawner`; `ptys` is what the test reads back. */
-async function daemonOver(spawner: PtySpawner, ptys: FakePty[]): Promise<Daemon> {
-  const { spawner: actionSpawner } = plainSpawner();
-  const registry = new ProjectRegistry((project) => {
-    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
-    const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner: actionSpawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: STATE_DIR, onRefresh: () => {} });
-    return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
-  }, silentLogger);
-  const panes = new PaneSessions({ spawner, host: HOST, scheduler: realScheduler, log: silentLogger });
-  const server = createConsoleServer(registry, null, { host: '127.0.0.1', port: 0, token: TOKEN, staticDir: null, log: silentLogger, panes });
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-  await registry.apply([PROJECT, OTHER_PROJECT]);
-  await Promise.all([PROJECT, OTHER_PROJECT].map((project) => registry.get(project.id)!.monitor.refresh('git')));
-  const { port } = server.address() as AddressInfo;
-  return {
-    registry, panes, ptys, port,
-    close: async () => { await panes.stopAll(); registry.stopAll(); await registry.whenIdle(); await closeConsoleServer(server); await rm(STATE_DIR, { recursive: true, force: true }); },
-  };
-}
-
-function paneUrl(port: number, fields: Record<string, string>, projectId: string): string {
-  return `ws://127.0.0.1:${port}/api/projects/${projectId}/panes?${new URLSearchParams(fields).toString()}`;
-}
-
-const AT_ROOT = { path: FIXTURE_ROOT, run: 'shell', cols: '100', rows: '30', token: TOKEN };
-
-type Client = { socket: WebSocket; notices: PaneNotice[]; output: Buffer[]; closed: Promise<number> };
-
-function connect(url: string, headers: Record<string, string>): Client {
-  const socket = new WebSocket(url, { headers });
-  const notices: PaneNotice[] = [];
-  const output: Buffer[] = [];
-  socket.on('message', (rawFrame: RawData, isBinary: boolean) => {
-    const buffer = Buffer.isBuffer(rawFrame) ? rawFrame : Buffer.from(rawFrame as ArrayBuffer);
-    if (isBinary) output.push(buffer);
-    else notices.push(JSON.parse(buffer.toString('utf8')) as PaneNotice);
-  });
-  const closed = new Promise<number>((resolve) => { socket.on('close', (code) => resolve(code)); });
-  socket.on('error', () => {});
-  return { socket, notices, output, closed };
-}
-
-/** The HTTP status a refused upgrade answered with. */
-function refusedStatus(url: string, headers: Record<string, string>): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url, { headers });
-    socket.on('unexpected-response', (_request, response) => { resolve(response.statusCode ?? 0); socket.terminate(); });
-    socket.on('open', () => { socket.terminate(); reject(new Error('the upgrade was accepted')); });
-    socket.on('error', () => {});
-  });
-}
-
-async function until(condition: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + SOCKET_TIMEOUT_MILLISECONDS;
-  while (!condition()) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}
-
-async function startedClient(port: number, fields: Record<string, string>, projectId: string): Promise<Client> {
-  const client = connect(paneUrl(port, fields, projectId), {});
-  await until(() => client.notices.length > 0, 'the first frame');
-  return client;
-}
+import { PANE_CLOSE } from '../src/paneProtocol.ts';
+import { FIXTURE_ROOT } from './fakeRunner.ts';
+import { AT_ROOT, connect, daemon, OTHER_PROJECT, paneUrl, PROJECT, refusedStatus, SOCKET_TIMEOUT_MILLISECONDS, startedClient, TOKEN, until } from './paneSocketRig.ts';
 
 test('PaneUpgrade_RefusedBeforeTheHandshake_WithItsStatus', async () => {
   const running = await daemon();
@@ -306,23 +207,6 @@ test('QuickSession_ProjectSetsClaudesPair_SpawnedWithTheModelAndEffort', async (
   }
 });
 
-test('PaneUpgrade_ProjectIdThatDoesNotDecode_404', async () => {
-  const running = await daemon();
-  try {
-    const status = await refusedStatus(`ws://127.0.0.1:${running.port}/api/projects/%E0/panes?token=${TOKEN}`, {});
-    assert.equal(status, 404, 'because a malformed project id names no project');
-  } finally { await running.close(); }
-});
-
-test('PaneUpgrade_ProjectIdThatDoesNotDecode_DaemonServesTheNextPane', async () => {
-  const running = await daemon();
-  try {
-    await refusedStatus(`ws://127.0.0.1:${running.port}/api/projects/%E0/panes?token=${TOKEN}`, {});
-    const client = await startedClient(running.port, AT_ROOT, PROJECT.id);
-    assert.deepEqual(client.notices.map((notice) => notice.type), ['started'], 'because one bad request must not end the daemon and every pane with it');
-  } finally { await running.close(); }
-});
-
 test('QuickSession_ProjectSetsCodexsPair_SpawnedWithTheModelAndEffort', async () => {
   const running = await daemon();
   const paired = await pairedProject('jobs:\n  codex:\n    model: gpt-7-nova\n    effort: low\n');
@@ -335,81 +219,4 @@ test('QuickSession_ProjectSetsCodexsPair_SpawnedWithTheModelAndEffort', async ()
     await running.close();
     await rm(paired.root, { recursive: true, force: true });
   }
-});
-
-/** How many callers send a refused upgrade and reset the connection before the daemon answers. */
-const RESETTING_CALLERS = 20;
-
-/** Sends a pane upgrade with no token, then resets the connection at once, as a dropped client does. */
-function upgradeThenReset(port: number): Promise<void> {
-  return new Promise((resolve) => {
-    const caller = connectTcp(port, '127.0.0.1', () => {
-      caller.write(`GET /api/projects/${PROJECT.id}/panes HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`);
-      caller.resetAndDestroy();
-    });
-    caller.on('error', () => {});
-    caller.on('close', () => resolve());
-  });
-}
-
-test('RefusedUpgradeResetByThePeer_DaemonServesTheNextPane', async () => {
-  const running = await daemon();
-  try {
-    for (let caller = 0; caller < RESETTING_CALLERS; caller += 1) await upgradeThenReset(running.port);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const client = await startedClient(running.port, AT_ROOT, PROJECT.id);
-    assert.deepEqual(client.notices.map((notice) => notice.type), ['started'], 'because a caller that hangs up on its refusal must not end the daemon and every pane with it');
-  } finally { await running.close(); }
-});
-
-/** The client's close code; throws once SOCKET_TIMEOUT_MILLISECONDS pass with the socket still open. */
-async function closeCode(client: Client): Promise<number> {
-  let code: number | null = null;
-  void client.closed.then((closedWith) => { code = closedWith; });
-  await until(() => code !== null, 'the close');
-  return code!;
-}
-
-const THROWING_SPAWNER: PtySpawner = () => { throw new Error('posix_spawnp failed: EMFILE'); };
-
-test('SpawnerThrows_RefusedWithTheReasonThenClosed4400', async () => {
-  const running = await daemonOver(THROWING_SPAWNER, []);
-  try {
-    const client = connect(paneUrl(running.port, AT_ROOT, PROJECT.id), {});
-    const code = await closeCode(client);
-    const told = client.notices.map((notice) => notice.type === 'refused' ? { type: notice.type, named: notice.error.includes('EMFILE') } : notice);
-    assert.deepEqual([told, code], [[{ type: 'refused', named: true }], PANE_CLOSE.refused], 'because a start that throws is a refusal the page can show, not a daemon crash');
-  } finally { await running.close(); }
-});
-
-test('SpawnerThrows_DaemonServesTheNextPane', async () => {
-  let failing = true;
-  const { spawner: working, ptys } = fakePty(null);
-  const flaky: PtySpawner = (launch, size, environment) => {
-    if (failing) throw new Error('posix_spawnp failed: EMFILE');
-    return working(launch, size, environment);
-  };
-  const running = await daemonOver(flaky, ptys);
-  try {
-    await closeCode(connect(paneUrl(running.port, AT_ROOT, PROJECT.id), {}));
-    failing = false;
-    const next = await startedClient(running.port, AT_ROOT, PROJECT.id);
-    assert.equal(next.notices[0]?.type, 'started', 'because a throw inside the upgrade callback must not take the daemon down');
-  } finally { await running.close(); }
-});
-
-test('SpawnerThrows_RefusedPanesDoNotCountAgainstTheLimit', async () => {
-  let failing = true;
-  const { spawner: working, ptys } = fakePty(null);
-  const flaky: PtySpawner = (launch, size, environment) => {
-    if (failing) throw new Error('posix_spawnp failed: EMFILE');
-    return working(launch, size, environment);
-  };
-  const running = await daemonOver(flaky, ptys);
-  try {
-    for (let attempt = 0; attempt < MAXIMUM_PANES; attempt += 1) await closeCode(connect(paneUrl(running.port, AT_ROOT, PROJECT.id), {}));
-    failing = false;
-    const next = await startedClient(running.port, AT_ROOT, PROJECT.id);
-    assert.equal(next.notices[0]?.type, 'started', 'because a pane whose start threw never ran, so it holds no place under the limit');
-  } finally { await running.close(); }
 });

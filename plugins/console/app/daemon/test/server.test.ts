@@ -20,12 +20,11 @@ import type { ServerOptions } from '../src/server.ts';
 import type { OpenRunner } from '../src/openFile.ts';
 import type { ProjectCheck } from '../src/snapshot.ts';
 import type { Snapshot } from '../src/snapshot.ts';
-import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
+import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner, LONG_CADENCE } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
 import type { FakeProcess } from './fakeSpawner.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
-const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
 
 const PROJECT = { id: 'project', name: 'project', root: FIXTURE_ROOT };
 
