@@ -250,9 +250,9 @@ const MERGE_METHODS = ['squash', 'merge', 'rebase'];
 /** The hosts flow runs sessions on; `gate.sh clear` takes one by name, and `jobs/next.sh` one as its first argument. */
 const HOSTS = ['claude', 'codex'];
 /** The efforts each host takes, as flow's `host_efforts` in lib/host.sh lists them. */
-const HOST_EFFORTS: Record<string, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh'] };
+export const HOST_EFFORTS: Record<string, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh'] };
 /** A model name passed to the host as is: letters, digits and `._:-`, never opening with `-`, so it is never read as an option. */
-const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+export const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 /** How many workers one custom run may start: the pool caps them anyway. */
 const WORKERS = /^[1-9][0-9]?$/;
 /** A pick filter's name, `pick.<name>` in .flow/config.yaml, as flow's pick_check in lib/flow.sh takes it. */
@@ -655,6 +655,16 @@ function planUnschedule(args: Record<string, string>, context: ActionContext): P
   };
 }
 
+/** Where the console may open a terminal: the project root, the pool worktrees, the other worktrees git lists and the folder of every listed agent and session, resolved. */
+export function terminalFolders(context: Pick<ActionContext, 'root' | 'pool' | 'outsideWorktrees' | 'processCwds'>): string[] {
+  return [context.root, ...context.pool, ...context.outsideWorktrees, ...context.processCwds].map((entry) => path.resolve(entry));
+}
+
+/** The refusal for a folder `terminalFolders` does not list. */
+export function unlistedFolder(folder: string): string {
+  return `${folder} is not the project root, a worktree the console lists or the folder of a listed agent or session`;
+}
+
 /**
  * `terminal.open`: a terminal window in the project root, a pool worktree, another worktree git
  * lists for the project, or the folder of an agent or session the snapshot lists, nowhere else. With `job` (from the root only) the window follows that
@@ -667,10 +677,10 @@ function planTerminal(args: Record<string, string>, context: ActionContext): Pla
   const asked = args['path'] ?? '';
   if (!path.isAbsolute(asked)) return fail('terminal.open needs an absolute path');
   const folder = path.resolve(asked);
-  const allowed = [context.root, ...context.pool, ...context.outsideWorktrees, ...context.processCwds].map((entry) => path.resolve(entry));
+  const allowed = terminalFolders(context);
   const session = args['session'];
   if (session !== undefined) return planSession(folder, session, args, context);
-  if (!allowed.includes(folder)) return fail(`${folder} is not the project root, a worktree the console lists or the folder of a listed agent or session`);
+  if (!allowed.includes(folder)) return fail(unlistedFolder(folder));
   let run: string[] | null = null;
   const job = args['job'];
   if (job !== undefined) {
