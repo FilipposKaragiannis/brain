@@ -19,12 +19,14 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
 ## How to open the PR
 1. `cd` into the worktree. Confirm `verify.json` is `pass`; otherwise stop with status `fail`
    naming the failing check. Confirm the tree is clean and every commit is on the task branch.
-2. Pick the base: `base` in the worktree's `.flow/claim.json`, the branch the claim resolved
-   once and cut the task branch from (the brief's `(base ...)`). The item's `state.base` is a
-   copy on the tracker that anyone who can edit the item can change: when it is set and differs
-   from the claim's, or the claim has none, stop with status `fail` naming both values. Say
-   "base <b>, recorded at claim" in the result. Only when both are empty (claims made before
-   the base was recorded) use the old rule: the parent item's task branch when the item has a
+2. Pick the base. The item's `state.base` tells a claim that recorded its base from one made
+   before. When `state.base` is set, the base is `base` in the worktree's `.flow/claim.json`,
+   the branch the claim resolved once and cut the task branch from (the brief's
+   `(base ...)`). `state.base` is a copy on the tracker that anyone who can edit the item can
+   change: when the claim has no base or its base differs from `state.base`, stop with status
+   `fail` naming both values. Say "base <b>, recorded at claim" in the result. When
+   `state.base` is empty, the claim predates the recorded base and its `claim.json` `base` is
+   only the config base, so use the old rule: the parent item's task branch when the item has a
    parent with a claimed branch (`flow/<parent slug>`), else an `epic/<n>` branch on the remote
    for that parent, else `base` from the config; never the default branch by default when a
    parent exists. Say which base and why in the result. Check the base before any `git` or
@@ -61,8 +63,9 @@ summary, the base and why, draft or ready, and the reviewers asked; status `fail
 not pass, the base fails step 2 or the push is rejected.
 
 ## Never
-Never open a PR when verify is not pass. Never pick a base other than the one `.flow/claim.json`
-records, nor one that `state.base` contradicts or that fails the check in step 2; with none
-recorded, never the default branch when the item has a parent. Never tag reviewers
-in the body. Never close the item. Never force-push.
+Never open a PR when verify is not pass. With `state.base` set, never pick a base other than the
+one `.flow/claim.json` records, nor one that `state.base` contradicts; never one that fails the
+check in step 2. With `state.base` empty, never the default branch when the item has a parent,
+whatever `.flow/claim.json` holds. Never tag reviewers in the body. Never close the item.
+Never force-push.
 """
