@@ -25,18 +25,18 @@ fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
 check() { # check <name> '<condition>': the condition is shell text, run whole; a FAIL shows its output
   if said="$( (eval "$2") 2>&1)"; then pass "$1"; else fail "$1"; [ -z "$said" ] || printf '%s\n' "$said" | sed 's/^/       /'; fi
 }
-jget() { python3 -c 'import json,sys; v=json.load(sys.stdin)
-for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
-print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
+json_value() { python3 -c 'import json,sys; value=json.load(sys.stdin)
+for key in sys.argv[1].split("."): value = value[int(key)] if key.isdigit() else value[key]
+print(value if isinstance(value,str) else json.dumps(value))' "$1"; }
 local_adapter="$plugin/adapters/local"
 slug() { printf '%s' "$1" | tr ':/#' '---'; }
 run_file() { printf '.flow/runs/%s.json' "$(slug "$1")"; }
-state() { "$local_adapter/read.sh" "$1" | jget "state.$2"; }
-claim_base() { jget base < "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json"; }
+state() { "$local_adapter/read.sh" "$1" | json_value "state.$2"; }
+claim_base() { json_value base < "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json"; }
 # set_claim_base <item> <name>: writes <name> as the base in the item's claim.json, as a hand could.
-set_claim_base() { python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["base"]=sys.argv[2]; json.dump(c,open(p,"w"))' "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json" "$2"; }
+set_claim_base() { python3 -c 'import json,sys; path=sys.argv[1]; claim=json.load(open(path)); claim["base"]=sys.argv[2]; json.dump(claim,open(path,"w"))' "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json" "$2"; }
 # pool_entry_field <board-json> <item> <field>: the field of the item's pool entry, as JSON.
-pool_entry_field() { python3 -c 'import json,sys; p=[w for w in json.load(open(sys.argv[1]))["pool"] if w.get("item")==sys.argv[2]]; print(json.dumps(p[0][sys.argv[3]]) if p else "no pool entry")' "$@"; }
+pool_entry_field() { python3 -c 'import json,sys; entries=[pool_entry for pool_entry in json.load(open(sys.argv[1]))["pool"] if pool_entry.get("item")==sys.argv[2]]; print(json.dumps(entries[0][sys.argv[3]]) if entries else "no pool entry")' "$@"; }
 # The reason a claim gives for a base: name base_name_valid refuses, read from lib/base.sh.
 base_name_refused="$(sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && . "$FLOW_PLUGIN/lib/base.sh" && printf %s "$base_name_refused"')"
 # epic_of <id>: the epic branch an id names, worked out by hand from the rule: the id past its
@@ -51,7 +51,7 @@ new_repo() {
   git clone -q "$root/origin.git" "$root/app" 2>/dev/null && cd "$root/app" || exit 1
   git config user.email t@t && git config user.name t && git symbolic-ref HEAD refs/heads/main
   printf 'hi\n' > README.md && git add -A && git commit -qm init && git push -q -u origin main
-  for n in 1 2 3; do git worktree add -q -b "main-wt-$n" "../wt-$n"; done
+  for worktree_number in 1 2 3; do git worktree add -q -b "main-wt-$worktree_number" "../wt-$worktree_number"; done
   mkdir -p .flow
   printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\n  - ../wt-3\npool_max: 8\nnotify:\n  desktop: false\njobs:\n  health:\n    behind_base: 1\n' > .flow/config.yaml
   git clone -q "$root/origin.git" "$root/other" 2>/dev/null
@@ -73,9 +73,9 @@ epic_branch="$(epic_of "$epic")"
 remote_branch "$epic_branch"; remote_commit "$epic_branch" epic-start.txt
 child="$(new_task "Ball spin" "$epic")"
 "$plugin/scripts/next.sh" "$child" --json > "$work/child.json" 2>/dev/null
-wt="$("$plugin/scripts/steward.sh" find "$child")"; task_branch="flow/$(slug "$child")"; git fetch -q origin
+worktree="$("$plugin/scripts/steward.sh" find "$child")"; task_branch="flow/$(slug "$child")"; git fetch -q origin
 check "EpicChild_BranchDescendsFromTheEpicBranch: a child of an epic whose epic/<n> is on the remote starts from it, so the epic's own commit is on the branch right after the claim" \
-  'git -C "$wt" merge-base --is-ancestor "origin/$epic_branch" "$task_branch"'
+  'git -C "$worktree" merge-base --is-ancestor "origin/$epic_branch" "$task_branch"'
 check "EpicChild_ClaimJsonRecordsTheEpicBranch: claim.json carries the base every reader in the worktree takes" \
   '[ "$(claim_base "$child")" = "$epic_branch" ]'
 check "EpicChild_ItemStateRecordsTheEpicBranch: state.base carries the base for a step that has no worktree" \
@@ -83,39 +83,39 @@ check "EpicChild_ItemStateRecordsTheEpicBranch: state.base carries the base for 
 check "EpicChild_EventsLogNamesTheBaseOfTheClaim: the claim says which base it started from" \
   'grep "	$child	claim	" .flow/events.log | grep -qF "$epic_branch"'
 check "EpicChild_JsonBaseIsTheEpicBranch: next.sh --json hands the runner the recorded base, not the config base" \
-  '[ "$(jget base < "$work/child.json")" = "$epic_branch" ]'
+  '[ "$(json_value base < "$work/child.json")" = "$epic_branch" ]'
 check "EpicChild_BriefNamesTheEpicBranchAsBase: the brief tells the agent the recorded base" \
-  'grep -qF "\`$epic_branch\`" "$(jget brief < "$work/child.json")"'
+  'grep -qF "\`$epic_branch\`" "$(json_value brief < "$work/child.json")"'
 
 echo "base: health, the merge before verify, verify and the PR diff read the recorded base"
 rm -f "$(run_file "$child")"
-printf 'own\n' > "$wt/own.txt" && git -C "$wt" add own.txt && git -C "$wt" commit -qm own
+printf 'own\n' > "$worktree/own.txt" && git -C "$worktree" add own.txt && git -C "$worktree" commit -qm own
 remote_commit main main-one.txt; remote_commit main main-two.txt
 remote_commit "$epic_branch" epic-a.txt; remote_commit "$epic_branch" epic-b.txt
 "$plugin/scripts/steward.sh" health > "$work/health.out" 2>&1; git fetch -q origin
 # main_drift: the commits main has that the epic lacks; an epic child must lack every one.
 main_drift() { git rev-list --count "origin/$epic_branch..origin/main"; }
 check "HealthOnEpicChildBehindItsEpic_MergesTheEpicIn: health brings the epic's new commits onto a branch more than behind_base commits behind its recorded base" \
-  '[ -f "$wt/epic-b.txt" ]'
+  '[ -f "$worktree/epic-b.txt" ]'
 check "HealthOnEpicChildWhileMainIsAhead_LeavesMainOut: health merges the recorded base, never the config base, so main's own commit stays off the branch" \
-  'drift="$(main_drift)"; [ "$drift" -gt 0 ] && [ "$(git -C "$wt" rev-list --count "$task_branch..origin/main")" -eq "$drift" ]'
+  'drift="$(main_drift)"; [ "$drift" -gt 0 ] && [ "$(git -C "$worktree" rev-list --count "$task_branch..origin/main")" -eq "$drift" ]'
 check "HealthOnEpicChild_EventsLogNamesTheEpicRefMerged: the events log names the ref health merged" \
   'grep -F "$task_branch" .flow/events.log | grep -qF "origin/$epic_branch"'
 "$local_adapter/write-state.sh" "$child" step=verify >/dev/null
 remote_commit main main-three.txt; remote_commit "$epic_branch" epic-c.txt
 "$plugin/scripts/next.sh" "$child" --json > "$work/verify.json" 2>/dev/null; git fetch -q origin
 check "VerifyStepOnEpicChild_SyncMergesTheEpicIn: the merge before verify brings the epic's newest commit onto the branch" \
-  '[ -f "$wt/epic-c.txt" ]'
+  '[ -f "$worktree/epic-c.txt" ]'
 check "VerifyStepOnEpicChild_SyncLineNamesTheEpicRef: the events log's sync line names the recorded base it merged" \
   'grep "	$child	sync	" .flow/events.log | grep -qF "origin/$epic_branch"'
 check "VerifyStepOnEpicChildWhileMainIsAhead_SyncLeavesMainOut: the merge before verify never brings main's commits onto an epic child" \
-  'drift="$(main_drift)"; [ "$drift" -gt 0 ] && [ "$(git -C "$wt" rev-list --count "$task_branch..origin/main")" -eq "$drift" ]'
-(cd "$wt" && "$plugin/scripts/verify.sh" "$child" >/dev/null 2>&1)
+  'drift="$(main_drift)"; [ "$drift" -gt 0 ] && [ "$(git -C "$worktree" rev-list --count "$task_branch..origin/main")" -eq "$drift" ]'
+(cd "$worktree" && "$plugin/scripts/verify.sh" "$child" >/dev/null 2>&1)
 check "VerifyOnEpicChild_ChangedFilesAreOnlyTheItemsOwn: verify.sh diffs against the recorded base, so the epic's files are not counted as the item's" \
-  '[ "$(jget changed_files < "$("$plugin/scripts/steward.sh" reports "$child")/verify.json")" = "[\"own.txt\"]" ]'
-git -C "$wt" fetch -q origin
+  '[ "$(json_value changed_files < "$("$plugin/scripts/steward.sh" reports "$child")/verify.json")" = "[\"own.txt\"]" ]'
+git -C "$worktree" fetch -q origin
 check "PrDiffProxyOfEpicChildWhileMainIsAhead_ListsOnlyTheItemsOwnFile: git diff base...branch, the diff a PR against the recorded base shows, has the one file the item made, not main's drift" \
-  '[ "$(git -C "$wt" diff --name-only "origin/$epic_branch...$task_branch")" = own.txt ]'
+  '[ "$(git -C "$worktree" diff --name-only "origin/$epic_branch...$task_branch")" = own.txt ]'
 
 echo "base: the hold-release note names the recorded base"
 holder="$(new_task "Ball model")"
@@ -125,7 +125,7 @@ rm -f "$(run_file "$held")"
 "$plugin/scripts/hold.sh" set "$held" "$holder" "both change the ball" >/dev/null
 "$local_adapter/close.sh" "$holder" >/dev/null
 "$plugin/scripts/next.sh" "$held" --json > "$work/held.json" 2>/dev/null
-awk '/^## The hold is over/ { on = 1; next } /^## / { on = 0 } on' "$(jget brief < "$work/held.json")" > "$work/hold.section"
+awk '/^## The hold is over/ { on = 1; next } /^## / { on = 0 } on' "$(json_value brief < "$work/held.json")" > "$work/hold.section"
 check "HeldEpicChildReleased_NoteNamesOnlyTheEpicBranch: the release note has the agent merge the recorded base and no other ref, so an epic child is never sent to merge the config base" \
   '[ "$(grep -oE "origin/[A-Za-z0-9._/-]*[A-Za-z0-9_-]" "$work/hold.section" | sort -u)" = "origin/$epic_branch" ]'
 
@@ -141,12 +141,12 @@ check "BoardWithConfigBaseItem_WorktreeCellIsTheBareWorktree: an item on the con
   '[ "$plain_cell" = "$(basename "$("$plugin/scripts/steward.sh" find "$plain")")" ]'
 "$plugin/scripts/board.sh" --json 2>/dev/null > "$work/board.json"
 check "BoardJsonWithEpicChild_PoolEntryCarriesTheBase: the board model's pool entry for the claim names its recorded base" \
-  'python3 -c "import json,sys; p=[w for w in json.load(open(sys.argv[1]))[\"pool\"] if w.get(\"item\")==sys.argv[2]]; assert p and p[0][\"base\"]==sys.argv[3], p" "$work/board.json" "$child" "$epic_branch"'
+  'python3 -c "import json,sys; entries=[pool_entry for pool_entry in json.load(open(sys.argv[1]))[\"pool\"] if pool_entry.get(\"item\")==sys.argv[2]]; assert entries and entries[0][\"base\"]==sys.argv[3], entries" "$work/board.json" "$child" "$epic_branch"'
 git -C "$root/other" push -q origin --delete "$epic_branch"
 git fetch -q --prune origin
 "$plugin/scripts/board.sh" --json 2>/dev/null > "$work/board.gone.json"
 check "BoardJsonAfterTheEpicBranchIsDeleted_MarksTheBaseMissing: a recorded base gone from the remote is flagged on its pool entry" \
-  'python3 -c "import json,sys; p=[w for w in json.load(open(sys.argv[1]))[\"pool\"] if w.get(\"item\")==sys.argv[2]]; assert p and p[0][\"base_missing\"] is True, p" "$work/board.gone.json" "$child"'
+  'python3 -c "import json,sys; entries=[pool_entry for pool_entry in json.load(open(sys.argv[1]))[\"pool\"] if pool_entry.get(\"item\")==sys.argv[2]]; assert entries and entries[0][\"base_missing\"] is True, entries" "$work/board.gone.json" "$child"'
 "$plugin/scripts/board.sh" 2>/dev/null | awk '/^#+ Health/ { on = 1; next } /^#/ { on = 0 } on' > "$work/board.health"
 check "BoardAfterTheEpicBranchIsDeleted_HealthNamesTheMissingBase: the board's Health section names the item and the base gone from the remote" \
   'grep -F "$child" "$work/board.health" | grep -qF "$epic_branch"'
@@ -178,11 +178,11 @@ done
 
 echo "base: where a claim starts when there is no epic branch next to it"
 new_repo walk
-grand="$("$local_adapter/create.sh" epic "Drills" --size L --body x)"
-grandparent_epic_branch="$(epic_of "$grand")"
+grandparent_epic="$("$local_adapter/create.sh" epic "Drills" --size L --body x)"
+grandparent_epic_branch="$(epic_of "$grandparent_epic")"
 remote_branch "$grandparent_epic_branch"; remote_commit "$grandparent_epic_branch" drills.txt
 move_task_numbers_past_the_epic_numbers one two
-middle="$(new_task "Drill set" "$grand")"
+middle="$(new_task "Drill set" "$grandparent_epic")"
 grandchild="$(new_task "Drill timer" "$middle")"
 "$plugin/scripts/next.sh" "$grandchild" >/dev/null 2>&1
 check "GrandchildWhoseParentHasNoEpicBranch_TakesTheGrandparentsEpicBranch: the walk goes up past a parent with no epic/<n> to the nearest ancestor that has one" \
@@ -201,7 +201,7 @@ remote_branch plan/sandbox; remote_commit plan/sandbox plan.txt
 "$plugin/scripts/next.sh" "$lined_kid" >/dev/null 2>&1
 check "ChildOfAClaimedParentWithABaseLine_TakesTheParentsTaskBranch: a parent's claimed branch comes before a base: line, so the child's PR lands on its parent's work" \
   '[ "$(claim_base "$lined_kid")" = "flow/$(slug "$parent")" ]'
-ruled="$(new_task "Drill scoring" "$grand" "base: plan/sandbox
+ruled="$(new_task "Drill scoring" "$grandparent_epic" "base: plan/sandbox
 $body")"
 "$plugin/scripts/next.sh" "$ruled" >/dev/null 2>&1
 check "EpicChildWithABaseLine_TakesTheEpicBranch: an ancestor's epic branch comes before a base: line, so a child of an epic stays on the epic" \
@@ -261,20 +261,20 @@ check "BaseLineWithASpace_LastEventNamesTheNameCutAtTheSpace: the owner sees the
   'state "$spaced" last_event | grep -qF -- "${name_with_a_space%% *}"'
 
 echo "base: a recorded base that is not a safe name is never handed on"
-loose_wt="$("$plugin/scripts/steward.sh" find "$loose")"
-printf 'loose\n' > "$loose_wt/loose.txt" && git -C "$loose_wt" add loose.txt && git -C "$loose_wt" commit -qm loose
+loose_worktree="$("$plugin/scripts/steward.sh" find "$loose")"
+printf 'loose\n' > "$loose_worktree/loose.txt" && git -C "$loose_worktree" add loose.txt && git -C "$loose_worktree" commit -qm loose
 for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" "$name_with_a_space" \
   "$name_climbing_a_level" "$name_from_the_root"; do
   set_claim_base "$loose" "$unsafe_name"
   rm -f "$(run_file "$loose")"
   "$plugin/scripts/next.sh" "$loose" --json > "$work/tampered.json" 2>/dev/null
   check "TamperedClaimBase_JsonBaseIsTheConfigBase [$unsafe_name]: next.sh checks the name claim.json records and falls back to the config base, so a bad name never reaches the runner or git" \
-    '[ "$(jget base < "$work/tampered.json")" = main ]'
+    '[ "$(json_value base < "$work/tampered.json")" = main ]'
   set_claim_base "$loose" "$unsafe_name"
   rm -f "$("$plugin/scripts/steward.sh" reports "$loose")/verify.json"
-  (cd "$loose_wt" && "$plugin/scripts/verify.sh" "$loose" >/dev/null 2>&1)
+  (cd "$loose_worktree" && "$plugin/scripts/verify.sh" "$loose" >/dev/null 2>&1)
   check "TamperedClaimBase_VerifyDiffsAgainstTheConfigBase [$unsafe_name]: verify.sh checks the name claim.json records and measures the item's own files from the config base" \
-    '[ "$(jget changed_files < "$("$plugin/scripts/steward.sh" reports "$loose")/verify.json")" = "[\"loose.txt\"]" ]'
+    '[ "$(json_value changed_files < "$("$plugin/scripts/steward.sh" reports "$loose")/verify.json")" = "[\"loose.txt\"]" ]'
 done
 
 echo "base: steward's own claim refuses a base that is not a safe name"
