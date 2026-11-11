@@ -10,7 +10,7 @@ import { ActionRunner, realScheduler } from '../src/actions.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
 import { parseCodexTranscript } from '../src/collectors/codexTranscript.ts';
 import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator, transcriptTailStart } from '../src/collectors/sessions.ts';
-import type { GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
+import type { CodexMeta, GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
@@ -20,6 +20,7 @@ import type { SessionActivity, SessionRef, TranscriptLine, TranscriptTurn } from
 import { TRANSCRIPT_LINE_CHARS } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const MINUTE_MS = 60000;
@@ -202,7 +203,46 @@ test('CodexSessionFilesRemembered_ForgottenAfterFourteenDays', async () => {
 
 test('CodexMeta_FirstLineLongerThanTheHead_StillRead', () => {
   const line = meta('019c-long', '/p/app-wt-3').replace('You are Codex.', 'x'.repeat(1000));
-  assert.deepEqual(codexMeta(line.slice(0, 400)), { cwd: '/p/app-wt-3', id: '019c-long', startedMs: Date.parse('2026-10-24T18:00:00Z') }, 'because the timestamp, id and cwd come before the long base instructions the head may cut');
+  const read = codexMeta(line.slice(0, 400));
+  assert.deepEqual(read === null ? null : [read.cwd, read.id, read.startedMs], ['/p/app-wt-3', '019c-long', Date.parse('2026-10-24T18:00:00Z')], 'because the timestamp, id and cwd come before the long base instructions the head may cut');
+});
+
+const CODEX_SUBAGENT_FIXTURES = path.join(FIXTURES, 'subagents', 'codex');
+/** The first line of a fixture rollout of the captured `codex exec` run. */
+const firstLineOf = (fixture: string) => readFileSync(path.join(CODEX_SUBAGENT_FIXTURES, fixture), 'utf8').split('\n')[0] ?? '';
+/** What a first line says of where a rollout sits among its session's subagents. */
+const spawnFields = (meta: CodexMeta | null) => meta === null ? null : { rootId: meta.rootId, parentId: meta.parentId, subagent: meta.subagent, agentPath: meta.agentPath, agentRole: meta.agentRole, agentNickname: meta.agentNickname, historyStart: meta.historyStart };
+
+test('CodexMeta_RootSessionFirstLine_ItsOwnRootAndNoSubagent', () => {
+  assert.deepEqual(spawnFields(codexMeta(firstLineOf('parent.jsonl'))), { rootId: '019d-root', parentId: null, subagent: false, agentPath: null, agentRole: null, agentNickname: null, historyStart: null }, 'because a root session\'s session_id is its own id, and it was spawned by nobody');
+});
+
+test('CodexMeta_SubagentFirstLine_ItsRootParentAndSpawn', () => {
+  assert.deepEqual(spawnFields(codexMeta(firstLineOf('child-depth2.jsonl'))), { rootId: '019d-root', parentId: '019d-probe', subagent: true, agentPath: '/root/probe/deeper', agentRole: 'explorer', agentNickname: 'Ada', historyStart: 16 }, 'because a child\'s session_meta names the root session, the thread that spawned it, how it was spawned and where its own history starts');
+});
+
+test('CodexMeta_SubagentFirstLineCutByTheHead_ItsRootParentAndSpawnStillRead', () => {
+  const line = firstLineOf('child-depth2.jsonl');
+  const cut = line.slice(0, line.indexOf('"model_provider"'));
+  assert.deepEqual(spawnFields(codexMeta(cut)), { rootId: '019d-root', parentId: '019d-probe', subagent: true, agentPath: '/root/probe/deeper', agentRole: 'explorer', agentNickname: 'Ada', historyStart: null }, 'because the ids and the spawn come before the long base instructions the head may cut; the history start comes after them');
+});
+
+test('CodexMeta_SubagentFirstLineCutBeforeItsHistoryStart_HistoryCut', () => {
+  const line = firstLineOf('child-depth2.jsonl');
+  const cut = line.slice(0, line.indexOf('"model_provider"'));
+  assert.deepEqual([codexMeta(cut)?.historyCut, codexMeta(line)?.historyCut, codexMeta(firstLineOf('parent.jsonl'))?.historyCut], [true, false, false], 'because only a subagent\'s line cut before its history start leaves unknown which lines replay its parent\'s');
+});
+
+test('CodexProcess_ParentAndANewerWrittenLiveChildInItsCwd_TheParentIsItsSession', async () => {
+  const { dir, done } = home();
+  try {
+    const day = path.join(dir, '.codex', 'sessions', String(NOW.getFullYear()), String(NOW.getMonth() + 1).padStart(2, '0'), String(NOW.getDate()).padStart(2, '0'));
+    const parent = path.join(day, 'rollout-parent.jsonl');
+    written(parent, readFileSync(path.join(CODEX_SUBAGENT_FIXTURES, 'parent.jsonl'), 'utf8'), new Date(NOW.getTime() - 2 * MINUTE_MS));
+    written(path.join(day, 'rollout-child.jsonl'), readFileSync(path.join(CODEX_SUBAGENT_FIXTURES, 'child-live.jsonl'), 'utf8'), new Date(NOW.getTime() - MINUTE_MS));
+    const session = await one(locator(dir), { host: 'codex', cwd: '/work/example', elapsedSeconds: 600 });
+    assert.deepEqual(session, { host: 'codex', id: '019d-root', transcript: parent, resume: ['codex', 'resume', '019d-root'] }, 'because the root\'s process writes its subagents\' rollouts in the same folder, often more lately than its own, and Open session must resume the root');
+  } finally { done(); }
 });
 
 /** A gate raised two hours before NOW in a pool worktree, so a transcript can be older than the raise or written around it. */
@@ -385,7 +425,7 @@ test('Transcript_Limit_KeepsTheLastTurns', () => {
 const LINES_TRANSCRIPT = path.join(FIXTURES, 'transcripts', 'claude-lines.jsonl');
 
 test('TranscriptLines_EachEntryAsOneLineInFileOrder', () => {
-  const lines = parseTranscriptLines(readFileSync(LINES_TRANSCRIPT, 'utf8'));
+  const lines = parseTranscriptLines(readFileSync(LINES_TRANSCRIPT, 'utf8'), { sidechains: false });
   assert.deepEqual(lines.slice(0, -1).map((line) => [line.at?.slice(17, 19), line.kind, line.text]), [
     ['01', 'user', 'Implement gh#9: the score panel.'],
     ['02', 'think', 'The brief wants the panel first.'],
@@ -591,7 +631,7 @@ function changingProcesses(): { runner: CommandRunner; drop: (pid: number) => vo
 const sessionsByPid = { assign: async (processes: { host: string }[]) => processes.map((process) => ({ session: process.host === 'claude' ? SESSION : null, activity: null })) };
 
 test('AgentWithATranscript_SnapshotCarriesItsSession', async () => {
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   const agent = monitor.snapshot?.agents.find((entry) => entry.pid === 100);
@@ -601,7 +641,7 @@ test('AgentWithATranscript_SnapshotCarriesItsSession', async () => {
 
 test('AgentGoneFromTheProcessList_ListedAsEndedWithItsSession', async () => {
   const { runner, drop } = changingProcesses();
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   drop(100);
@@ -614,7 +654,7 @@ const IDLE: SessionActivity = { status: 'idle', since: '2026-10-22T18:16:04.000Z
 const idleSessions = { assign: async (processes: { pid: number }[]) => processes.map((process) => ({ session: null, activity: process.pid === 104 ? IDLE : null })) };
 
 test('SessionWithItsActivity_SnapshotCarriesItAndItsStart', async () => {
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   const session = monitor.snapshot?.agents.find((entry) => entry.pid === 104);
@@ -622,7 +662,7 @@ test('SessionWithItsActivity_SnapshotCarriesItAndItsStart', async () => {
 });
 
 test('ActionContext_LiveSessions_TheSessionsOnlyNotTheRuns', async () => {
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   assert.deepEqual(monitor.actionContext().liveSessions, [{ pid: 104, startedAt: '2026-10-24T18:14:04.000Z' }], 'because Stop session ends the owner\'s own sessions; the run in project-wt-3 stops with Stop this run, which clears its record');
@@ -630,7 +670,7 @@ test('ActionContext_LiveSessions_TheSessionsOnlyNotTheRuns', async () => {
 
 test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async () => {
   const gateSessions = { gates: async (gates: GateLookup[]) => gates.map((gate) => (gate.cwd === path.join(FIXTURES, 'project-wt-2') && gate.raisedAt === '2026-10-22T07:43:00Z' ? SESSION : null)) };
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, gateSessions });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, gateSessions, subagents: noSubagents });
   await monitor.refresh('files');
   assert.deepEqual(monitor.snapshot?.gates.find((gate) => gate.item === 'gh#7')?.session, SESSION, 'because the card offers the located session when no agent on the item is known');
   assert.deepEqual(monitor.actionContext().gateSessions, [{ item: 'gh#7', cwd: path.join(FIXTURES, 'project-wt-2'), session: SESSION }], 'because terminal.open resumes only a session located for a waiting gate, in its worktree');
@@ -639,7 +679,7 @@ test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async ()
 async function transcriptServer(runner: CommandRunner = fakeRunner, sessions: typeof sessionsByPid = sessionsByPid): Promise<{ base: string; close: () => Promise<void> }> {
   const { spawner } = plainSpawner();
   const registry = new ProjectRegistry((project) => {
-    const monitor = new ProjectMonitor({ project, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions });
+    const monitor = new ProjectMonitor({ project, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions, subagents: noSubagents });
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: os.tmpdir(), onRefresh: () => {} });
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: async () => {}, log: silentLogger }) };
   }, silentLogger);
@@ -687,7 +727,7 @@ const codexFromRootRunner: CommandRunner = async (request) => {
 async function codexFromRoot(dir: string) {
   const day = path.join(dir, '.codex', 'sessions', String(NOW.getFullYear()), String(NOW.getMonth() + 1).padStart(2, '0'), String(NOW.getDate()).padStart(2, '0'));
   written(path.join(day, 'rollout-a-019c-wt3.jsonl'), `${meta('019c-wt3', path.join(FIXTURES, 'project-wt-3'))}\n`, new Date(NOW.getTime() - MINUTE_MS));
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: codexFromRootRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: locator(dir) });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: codexFromRootRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: locator(dir), subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   return monitor.snapshot?.agents.find((entry) => entry.pid === 107);
@@ -730,4 +770,28 @@ test('TranscriptRoute_CodexAgent_LastLinesOfItsSession', async () => {
 
 test('TranscriptRoute_CodexAgent_CountsTheModelsRecords', async () => {
   assert.equal((await codexTranscript()).body.turnCount, 6, "because every message, call, output and reasoning the model wrote counts, and Codex's own instructions do not");
+});
+
+/** One main-chain line and one side-chain line, as a claude transcript holding a subagent's turn writes them. */
+const MAIN_AND_SIDE_CHAIN = [
+  JSON.stringify({ type: 'assistant', isSidechain: false, timestamp: '2026-10-24T18:10:01.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Spawning a reviewer.' }] } }),
+  JSON.stringify({ type: 'assistant', isSidechain: true, timestamp: '2026-10-24T18:10:07.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Reviewing the change.' }] } }),
+].join('\n');
+
+test('TranscriptLines_SideChainLine_DroppedByDefault', () => {
+  assert.deepEqual(parseTranscriptLines(MAIN_AND_SIDE_CHAIN, { sidechains: false }).map((line) => line.text), ['Spawning a reviewer.'], 'because a session\'s own transcript shows its main chain, not the turns of the agents it spawned');
+});
+
+test('TranscriptLinesWithSideChains_SideChainLine_Kept', () => {
+  assert.deepEqual(parseTranscriptLines(MAIN_AND_SIDE_CHAIN, { sidechains: true }).map((line) => line.text), ['Spawning a reviewer.', 'Reviewing the change.'], 'because every line of a subagent\'s own transcript is a side chain, so reading it must keep them');
+});
+
+test('DiskTail_CutMidLine_StartsAtTheFirstWholeLine', async () => {
+  const { dir, done } = home();
+  try {
+    const file = path.join(dir, 'tail.jsonl');
+    written(file, 'first line\nsecond line\nthird line\n', NOW);
+    // 'first line\n' is 11 bytes; the last 30 of the 34 start inside it, at 'st line'.
+    assert.equal(await diskSessionFiles.tail(file, 30), 'second line\nthird line\n', 'because a tail that starts inside a line drops that partial line, so no reader parses half a JSON entry');
+  } finally { done(); }
 });

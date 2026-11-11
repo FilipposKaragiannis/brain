@@ -1,4 +1,4 @@
-import type { AgentHost, AgentKind, ProcessListStatus, ProcessLookup, SessionActivity, SessionRef } from '../snapshot.ts';
+import type { AgentHost, AgentKind, ProcessListStatus, ProcessLookup, SessionActivity, SessionRef, Subagent } from '../snapshot.ts';
 import { LOOKUP_STDERR_CHARS, PROCESS_COMMAND_CHARS } from '../snapshot.ts';
 import type { CommandResult, CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
@@ -10,11 +10,12 @@ import { hostCommand } from './commandLine.ts';
  * the same ps read lists, nearest first. `job` is the flow job it runs under, the nearest parent
  * that runs a job's script (see `jobOf`), or null. `cwd` is where it works (see `workingDirectory`).
  * `startedAt` is when ps says it started, worked out at the read. `session` and `activity` are
- * filled in by the monitor's session locator after the read; the process list alone never knows them.
+ * filled in by the monitor's session locator after the read, and `subagents` by its subagent reader
+ * from that session; the process list alone never knows them.
  */
 export type AgentProcess = {
   pid: number; parentPid: number; parents: number[]; job: string | null; host: AgentHost; kind: AgentKind; cwd: string; elapsedSeconds: number; startedAt: string; command: string;
-  session: SessionRef | null; activity: SessionActivity | null;
+  session: SessionRef | null; activity: SessionActivity | null; subagents: Subagent[];
 };
 /** A process that was in one read and gone from the next, with when the read that missed it started. */
 export type EndedProcess = AgentProcess & { endedAt: string };
@@ -187,7 +188,7 @@ export async function readProcesses(runner: CommandRunner, clock: () => Date): P
     const cwd = directories.get(row.pid);
     if (cwd === undefined) return [];
     const kind = kindOf(host, row.command);
-    return [{ pid: row.pid, parentPid: row.parentPid, ...lineage(row, byPid), host, kind, cwd: workingDirectory(host, kind, row.command, cwd), elapsedSeconds: row.elapsedSeconds, startedAt: startOf(row, readAt), command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null, activity: null }];
+    return [{ pid: row.pid, parentPid: row.parentPid, ...lineage(row, byPid), host, kind, cwd: workingDirectory(host, kind, row.command, cwd), elapsedSeconds: row.elapsedSeconds, startedAt: startOf(row, readAt), command: row.command.slice(0, PROCESS_COMMAND_CHARS), session: null, activity: null, subagents: [] }];
   });
   const servers = serving.flatMap(({ row, server }) => {
     const cwd = directories.get(row.pid);

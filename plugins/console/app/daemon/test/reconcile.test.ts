@@ -16,7 +16,7 @@ import type { CommandRunner } from '../src/collectors/exec.ts';
 import { DisagreementSettler } from '../src/settle.ts';
 import type { ReadMarks } from '../src/settle.ts';
 import type { JobRunRecord, JobStatusRow } from '../src/collectors/jobs.ts';
-import type { Freshness, Snapshot } from '../src/snapshot.ts';
+import type { Freshness, Snapshot, Subagent } from '../src/snapshot.ts';
 import { JOB_RUNS_KEPT } from '../src/snapshot.ts';
 import { BOARD_JSON, FIXTURE_ROOT, JOBS_JSON, LOCAL_BOARD_JSON, fakeRunner } from './fakeRunner.ts';
 
@@ -1466,7 +1466,7 @@ test('Agent_AtTheRootUnderTheCommentsJob_JobComments', async () => {
 /** An agent the process read found at `cwd`, a child of 502 under 501. */
 const agentAt = (cwd: string, job: string | null = null): AgentProcess => ({
   pid: 503, parentPid: 502, parents: [502, 501], job, host: 'claude', kind: 'agent', cwd, elapsedSeconds: 60,
-  startedAt: '2026-10-24T18:15:04.000Z', command: '/usr/local/bin/claude -p /flow:next gh#12', session: null, activity: null,
+  startedAt: '2026-10-24T18:15:04.000Z', command: '/usr/local/bin/claude -p /flow:next gh#12', session: null, activity: null, subagents: [],
 });
 
 /** gh#12's run of a step without a worktree, at the project root, owned by `pid`. */
@@ -1523,4 +1523,23 @@ test('Agent_UnderARunOfAnotherItemThanTheClaim_NoStep', async () => {
   facts.processes = { ...NOTHING_RUNS, agents: [agentAt(WT3)] };
   facts.flow.runs = [...facts.flow.runs, { item: 'gh#12', step: 'plan', profile: 'feature', worktree: WT3, host: 'claude', startedAt: '2026-10-24T18:15:00Z', pid: 501 }];
   assert.deepEqual(workOf(reconcile(facts), 503), ['gh#9', null], "because the claim names the item, and a step of another item's run would say the wrong thing about it");
+});
+
+/** A live reviewer the agent's session runs, as a subagent reader lists it. */
+const REVIEWER: Subagent = {
+  id: 'a1111111111111111', host: 'claude', type: 'example-reviewer', task: 'Review the example change', cwd: WT3,
+  startedAt: '2026-10-24T18:10:00.000Z', latest: { at: '2026-10-24T18:15:30.000Z', kind: 'say', text: 'The example change reads cleanly so far.' },
+};
+
+test('Agent_ItsProcessRunsASubagent_ListedOnTheAgent', async () => {
+  const facts = await input();
+  facts.processes = { ...NOTHING_RUNS, agents: [{ ...agentAt(WT3), subagents: [REVIEWER] }] };
+  const subagents = reconcile(facts).agents.filter((agent) => agent.pid === 503).map((agent) => agent.subagents);
+  assert.deepEqual(subagents, [[REVIEWER]], 'because the page lists under each agent the subagents its session runs');
+});
+
+test('EndedAgent_ItsProcessHadASubagent_NoSubagents', async () => {
+  const facts = await input();
+  facts.ended = [{ ...agentAt(WT3, 'next'), subagents: [REVIEWER], session: { host: 'claude', id: 's', transcript: '/h/s.jsonl', resume: ['claude', '--resume', 's'] }, endedAt: NOW.toISOString() }];
+  assert.deepEqual(reconcile(facts).ended.map((ended) => ended.subagents), [[]], 'because an ended session runs nothing, so it lists no live subagents');
 });
