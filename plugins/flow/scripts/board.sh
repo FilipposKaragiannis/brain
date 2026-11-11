@@ -96,7 +96,8 @@ print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
 # The base each claimed pool worktree records (lib/base.sh claimed_bases), with whether it is missing
 # from the remote.
 bases="$(claimed_bases | while IFS="$(printf '\t')" read -r claimed_item claimed_base claimed_worktree claimed_base_missing; do
-  json_obj "item=$claimed_item" "base=$claimed_base" "missing:=$claimed_base_missing"; echo
+  missing=false; [ "$claimed_base_missing" != true ] || missing=true
+  json_obj "item=$claimed_item" "base=$claimed_base" "missing:=$missing"; echo
 done | python3 -I -c '
 import json, sys
 print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"

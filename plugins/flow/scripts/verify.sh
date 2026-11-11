@@ -23,9 +23,7 @@ base=""
 while [ $# -gt 0 ]; do case "$1" in --base) base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
 root="$(repo_root)" || die "not in a git repository"
 cd "$root" || exit 1
-claim_base="$(json_get "$(cat "$(claim_file "$root")" 2>/dev/null)" base)"
-base_name_valid "$claim_base" || claim_base="$(cfg_or base main)"
-[ -n "$base" ] || base="$claim_base"
+[ -n "$base" ] || base="$(recorded_base "$root")"
 ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
 changed="$(git diff --name-only "$merge_base" HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"

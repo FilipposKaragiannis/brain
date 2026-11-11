@@ -70,6 +70,7 @@
 # Never resets a worktree with uncommitted changes: release exits 3 and says so (escalate). The one
 # exception is health's, for a free worktree whose changes the base's history already holds.
 . "$(dirname "$0")/../lib/flow.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -152,11 +153,12 @@ cmd_find() {
 # passes the one lib/base.sh resolved; default the config base). The claim records the base in
 # claim.json and the item state (base), and every later reader takes it from there: next.sh's
 # brief and pre-verify sync, verify.sh, health and release. An item that holds a claim keeps it,
-# and its base, whatever --base says.
+# and its base, whatever --base says. A base that fails base_name_valid (lib/base.sh) exits 2.
 cmd_claim() {
   item="$1"; shift
   base="$base_branch"
   while [ $# -gt 0 ]; do case "$1" in --base) base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
+  base_name_valid "$base" || die "the base is not a valid branch name" 2
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
   slug="$(item_slug "$item")"; branch="flow/$slug"

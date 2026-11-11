@@ -1,12 +1,12 @@
 # The base of an item: the branch its work starts from and its PR merges into. Resolved once, when
 # the item is first claimed, and recorded in claim.json and the item state (base). Sourced after
-# lib/flow.sh by scripts/next.sh, scripts/verify.sh, scripts/board.sh and
+# lib/flow.sh by scripts/next.sh, scripts/verify.sh, scripts/steward.sh, scripts/board.sh and
 # skills/init/scripts/init.sh.
 
 # The ancestors fetch_item_base reads for an epic branch, from the parent up.
 base_ancestor_levels=5
 
-# epic_branch <id>: gh#525 gives epic/525, local:epic/3 epic/3, jira:PROJ-12 epic/PROJ-12.
+# epic_branch <id>: gh#N gives epic/N, local:epic/3 epic/3, jira:PROJ-12 epic/PROJ-12.
 epic_branch() { printf 'epic/%s' "${1##*[#/:]}"; }
 
 # flow_repository: the repository the flow home belongs to, where the base branches live.
@@ -48,13 +48,26 @@ body_base() {
   json_get "$1" body | tr -d '`\r' | sed -n 's/^base:[[:blank:]]*\([^[:blank:]][^[:blank:]]*\).*/\1/p' | head -n 1
 }
 
+# claim_name <worktree> <field>: the branch name the field (base or branch) of the worktree's
+# claim.json holds, or nothing when the name fails base_name_valid. claim.json is a file anyone can
+# edit, so every reader checks a name here before git, a brief or the board takes it.
+claim_name() {
+  claimed_name="$(json_get "$(cat "$(claim_file "$1")" 2>/dev/null)" "$2")"
+  if base_name_valid "$claimed_name"; then printf '%s' "$claimed_name"; fi
+}
+
+# recorded_base <worktree>: the base the worktree's claim records, else the config base: a claim
+# made before the base was recorded was cut from it.
+recorded_base() {
+  claimed_name="$(claim_name "$1" base)"
+  printf '%s' "${claimed_name:-$(cfg_or base main)}"
+}
+
 # parent_branch <parent>: the branch of the parent's claim, or nothing when it holds none or its
 # branch is no valid base.
 parent_branch() {
   parent_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$1" </dev/null 2>/dev/null)"
-  [ -n "$parent_worktree" ] || return 0
-  parent_claim_branch="$(json_get "$(cat "$(claim_file "$parent_worktree")" 2>/dev/null)" branch)"
-  if base_name_valid "$parent_claim_branch"; then printf '%s' "$parent_claim_branch"; fi
+  [ -z "$parent_worktree" ] || claim_name "$parent_worktree" branch
 }
 
 # fetch_epic_ancestor <parent>: fetches the epic branch of each id from the parent up and prints the
@@ -95,6 +108,32 @@ fetch_item_base() {
   printf '%s\tconfig base' "$(cfg_or base main)"
 }
 
+# Why a claim refuses a base: line whose name fails base_name_valid. The name stays out: it may
+# carry control characters.
+base_name_refused='its base is not a valid branch name'
+
+# claim_at_base <item> <item-json>: claims a pool worktree for the item and prints its path. A new
+# claim starts from the base fetch_item_base resolves, and the events log says which and why; an
+# item that holds a claim keeps it and its base, and nothing is fetched. A base: line naming a
+# branch not on the remote, or no valid name, writes why to the item's last_event and stderr and
+# returns 4: a claim from the config base would put the work on the wrong history. Else the exit
+# code of steward.sh claim (3: no free worktree).
+claim_at_base() {
+  claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$1")"
+  if [ -n "$claimed_worktree" ]; then printf '%s\n' "$claimed_worktree"; return 0; fi
+  resolved_base="$(fetch_item_base "$2")"; resolved_code=$?
+  claim_base="$(printf '%s\n' "$resolved_base" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved_base" | cut -f2-)"
+  if [ "$resolved_code" -ne 0 ]; then
+    claim_refusal="$base_name_refused"
+    base_name_valid "$claim_base" && claim_refusal="its base $claim_base is not on the remote"
+    adapter write-state "$1" "last_event=$(now_iso) $claim_refusal" >/dev/null
+    echo "$1: $claim_refusal" >&2; return 4
+  fi
+  claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$1" --base "$claim_base")" || return
+  printf '%s\t%s\tclaim\tbase %s (%s)\n' "$(now_iso)" "$1" "$claim_base" "$claim_why" >> "$(flow_home)/events.log"
+  printf '%s\n' "$claimed_worktree"
+}
+
 # base_missing <branch>: true when the repository has an origin and refs/remotes/origin/<branch> is
 # absent. No fetch: the board and init read what the last fetch saw, so they stay fast and work
 # offline. With no origin nothing is missing.
@@ -105,16 +144,17 @@ base_missing() {
 }
 
 # claimed_bases: `<item>\t<base>\t<worktree path>\t<missing>` for each claimed pool worktree whose
-# claim records a base; missing is true or false, as base_missing says.
+# claim records a valid base; missing is true or false, as base_missing says. A claim whose item
+# carries a control character is left out too: a tab or a line break would split the record.
 claimed_bases() {
   base_repository="$(flow_repository)"
   cfg pool | while read -r pool_entry; do
     [ -n "$pool_entry" ] || continue
     case "$pool_entry" in /*) pool_worktree="$pool_entry" ;; *) pool_worktree="$base_repository/$pool_entry" ;; esac
     [ -f "$(claim_file "$pool_worktree")" ] || continue
-    pool_claim="$(cat "$(claim_file "$pool_worktree")")"
-    claimed_item="$(json_get "$pool_claim" item)"; claimed_base="$(json_get "$pool_claim" base)"
+    claimed_item="$(json_get "$(cat "$(claim_file "$pool_worktree")")" item)"; claimed_base="$(claim_name "$pool_worktree" base)"
     [ -n "$claimed_item" ] && [ -n "$claimed_base" ] || continue
+    case "$claimed_item" in *[![:print:]]*) continue ;; esac
     if base_missing "$claimed_base"; then claimed_base_missing=true; else claimed_base_missing=false; fi
     printf '%s\t%s\t%s\t%s\n' "$claimed_item" "$claimed_base" "$(cd "$pool_worktree" && pwd)" "$claimed_base_missing"
   done

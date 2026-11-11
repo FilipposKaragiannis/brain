@@ -8,10 +8,9 @@
 # Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
-# A new claim starts from the item's base (lib/base.sh), recorded in claim.json and the item state;
-# the brief, the JSON base and the merges before verify and after a hold or a wait read that one.
+# A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
 # Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
-# an open item (blocked_by), split and waiting on its children, or its base: line names a branch not on the remote · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# an open item (blocked_by), split and waiting on its children, or its base: line names a branch not on the remote or no valid name · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
 # gate, held, blocked, done, or split) and tries the next ready one, since the ready list it came from can
@@ -57,14 +56,6 @@ pick_again() {
 # item exits with the code.
 pass_over() { echo "$1" >&2; [ -z "$named" ] || exit "$2"; pick_again; }
 run_file() { printf '%s/runs/%s.json' "$home" "$(item_slug "$1")"; }
-# fetch_claim_base <item> <item-json>: `<branch>\t<why>`, the base a claim of the item starts from,
-# as lib/base.sh fetch_item_base resolves it; 1 when its `base:` line names a missing branch. An item
-# that holds a claim keeps the base it was claimed from (steward.sh claim ignores --base), so it gets
-# the config base and no why, and nothing is fetched.
-fetch_claim_base() {
-  if [ -n "$("$FLOW_PLUGIN/scripts/steward.sh" find "$1")" ]; then printf '%s\t' "$(cfg_or base main)"; return 0; fi
-  fetch_item_base "$2"
-}
 
 # The ready list is read before the pick lock is taken: listing a tracker can take a minute, and
 # a worker that waits that long on the lock gives up. The lock covers what must not race: the
@@ -162,30 +153,17 @@ depth="$(json_get "$profiles" "review_depth.$profile")"
 architect=no; [ "$(json_get "$profiles" "architect.$profile")" = true ] && architect=yes
 config_base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
-  # A `base:` line naming a missing branch holds the item: a claim from the config base would put
-  # its work on the wrong history.
-  resolved="$(fetch_claim_base "$item" "$data")"; resolved_code=$?
-  claim_base="$(printf '%s\n' "$resolved" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved" | cut -f2-)"
-  if [ "$resolved_code" -ne 0 ]; then
-    adapter write-state "$item" "last_event=$(now_iso) its base $claim_base is not on the remote" >/dev/null
-    pass_over "$item: its base $claim_base is not on the remote" 4
-  fi
-  wt="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item" --base "$claim_base")" || {
-    code=$?
-    if [ "$code" -eq 3 ] && [ -z "$named" ]; then FLOW_NEXT_FULL="$item"; pick_again; fi
-    exit "$code"
-  }
-  [ -z "$claim_why" ] || printf '%s\t%s\tclaim\tbase %s (%s)\n' "$(now_iso)" "$item" "$claim_base" "$claim_why" >> "$home/events.log"
+  # Exit 4: claim_at_base said why the item's base holds it. A pick passes it over, as a full pool.
+  wt="$(claim_at_base "$item" "$data")"; code=$?
+  [ "$code" -eq 0 ] || { [ -n "$named" ] || case "$code" in 3) FLOW_NEXT_FULL="$item"; pick_again ;; 4) pick_again ;; esac; exit "$code"; }
   branch="$(json_get "$(cat "$wt/.flow/claim.json")" branch)"
   claim="$(cat "$wt/.flow/claim.json")"
   json_set "$claim" step "$(json_string "$step")" > "$wt/.flow/claim.json"
-  base="$(json_get "$claim" base)"
+  base="$(recorded_base "$wt")"
 else
   wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$config_base")"
-  base="$(state_get "$data" base)"
+  base="$(state_get "$data" base)"; base_name_valid "$base" || base="$config_base"
 fi
-# A claim made before the base was recorded holds none: it was cut from the config base.
-base_name_valid "$base" || base="$config_base"
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
@@ -303,8 +281,7 @@ brief="$reports/brief-$step.md"
     echo
   fi
   if [ -n "$unblocked" ]; then
-    uref="$base"
-    git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$uref" && uref="origin/$uref"
+    uref="$base"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$base" && uref="origin/$base"
     echo "## The wait is over"
     echo
     echo "You waited on $unblocked (blocked by). First merge \`$uref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $uref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
