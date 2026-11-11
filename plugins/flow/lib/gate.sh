@@ -219,11 +219,16 @@ clear_answer() {
 }
 
 # clear_option <n> <answer>: the owner picked option n; the answer is picked_option_answer's, and
-# the state and the events log name the option.
+# the state and the events log name the option. On a gate that waits on blocked_by:<blocker>, a
+# pick is the owner's choice not to wait for it (the pr step's "Open it now"): the blocker is
+# waived (lib/blockers.sh), so next.sh and the ready filter run the step that carries the answer
+# out while it is still open. An answer in words waives nothing: the item waits as before.
 clear_option() {
   option_text="$(json_get "$record_json" "options.$(($1 - 1)).text")"
   option_label="$(json_get "$record_json" "options.$(($1 - 1)).label")"
   answer_pending="$(answer_pending_for "$2")" || exit $?
+  waived_condition="$(json_get "$record_json" condition)"
+  case "$waived_condition" in blocked_by:*) waive_blocker "$item" "${waived_condition#blocked_by:}" ;; esac
   release_hosts_stopped_for "$item"
   clear_with_answer "$2" "$gate, option $1 ($option_label)" "$gate (option $1): $option_text" "$answer_pending"
 }

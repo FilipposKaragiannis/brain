@@ -10,7 +10,8 @@
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
 # an open item (blocked_by), or split and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
-# A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt.
+# A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
+# a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
 # gate, held, blocked, done, or split) and tries the next ready one, since the ready list it came from can
 # be older than the item's state. A pick whose claim finds the pool full skips that item too, and

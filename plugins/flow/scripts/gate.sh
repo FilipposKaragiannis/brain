@@ -29,7 +29,10 @@
 #                                           the owner picks option n of the gate record: its text
 #                                           is the answer, the note a second paragraph under it;
 #                                           exit 2 with no record on this host, no options, n out
-#                                           of range, or with --back
+#                                           of range, or with --back. On a gate that waits on
+#                                           blocked_by:<blocker>, the pick waives that blocker:
+#                                           next.sh and the ready filter no longer hold the item
+#                                           behind it (lib/blockers.sh)
 #   gate.sh clear <item> --met <condition>  the condition the health job read no longer holds:
 #                                           nothing waits on a run, the item keeps its step; exit 2
 #                                           when the gate has no condition, exit 1 when it waits on
@@ -48,6 +51,7 @@
 # tests, like FLOW_HOME.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/host.sh"
+. "$FLOW_PLUGIN/lib/blockers.sh"
 . "$FLOW_PLUGIN/lib/gate.sh"
 home="$(flow_home)"
 

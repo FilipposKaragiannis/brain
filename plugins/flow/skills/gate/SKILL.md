@@ -108,7 +108,10 @@ and why, in one clause, from the code or the spec. The owner can then reply "as 
 - `--condition '<condition>'`: what the gate only waits on, when that is something the health job
   can watch: `blocked_by:<item id>` (the blocker closes), `pr:#<n> conflicting` (the PR merges
   cleanly again) or `ci:down` (no check fails; it reads pending checks as not failing, so it may
-  clear before they finish, and the next step sees the real state).
+  clear before they finish, and the next step sees the real state). On a `blocked_by` gate,
+  picking an option (`gate.sh clear <item> --option <n>`) is the owner's choice not to wait: it
+  waives that blocker for the item, so `next.sh` and the ready filter run the step while the
+  blocker is still open. Offer options there only for answers that do not wait.
 - `--raised-by '<who>'`: who asks, when it is not a step (`health job`, `comments job`, `intake
   job`). Left out, it is the step of the run in flight, else the item's step, else `owner`.
 

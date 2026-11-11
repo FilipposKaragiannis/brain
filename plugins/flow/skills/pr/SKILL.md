@@ -20,7 +20,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    open the PR now?** Set `"condition": "blocked_by:<blocker>"`, so the health job clears the
    gate once the blocker closes and this step runs again, and one option, `{"label": "Open it
    now", "text": "Open the PR now on <base>; do not wait for <blocker>.", "recommended":
-   false}`. Two blockers open: the condition names the one to close first.
+   false}`. Two blockers open: the condition names the one to close first. Picking that option
+   (`gate.sh clear <item> --option 1`) waives the blocker for this item, so `next.sh` runs this
+   step again while it is still open and the brief carries the answer; an answer in words waives
+   nothing, and the item waits for the blocker to close.
 2. **Spawn `pr-creator`** with the step brief plus the path of [PR-BODY.md](PR-BODY.md) (the
    house body) and, when they exist, `<reports>/explain.html` and `quiz.md`.
 3. **Result** `<reports>/pr.json`: `done` with the URL (under `pr`), the base and why, draft or
