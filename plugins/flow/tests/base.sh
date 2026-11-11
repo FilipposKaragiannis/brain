@@ -92,7 +92,7 @@ check "HealthOnEpicChildBehindItsEpic_MergesTheEpicIn: health brings the epic's 
 check "HealthOnEpicChildWhileMainIsAhead_LeavesMainOut: health merges the recorded base, never the config base, so main's own commit stays off the branch" \
   '[ "$(git -C "$wt" rev-list --count "$br..origin/main")" -eq 2 ]'
 check "HealthOnEpicChild_EventsLogNamesTheEpicRefMerged: the events log names the ref health merged" \
-  'grep -qF "merged origin/$eb into $br" .flow/events.log'
+  'grep -F "$br" .flow/events.log | grep -qF "origin/$eb"'
 "$L/write-state.sh" "$child" step=verify >/dev/null
 remote_commit main main-three.txt; remote_commit "$eb" epic-c.txt
 "$P/scripts/next.sh" "$child" --json > "$work/verify.json" 2>/dev/null; git fetch -q origin
@@ -118,10 +118,8 @@ rm -f "$(run_file "$held")"
 "$L/close.sh" "$holder" >/dev/null
 "$P/scripts/next.sh" "$held" --json > "$work/held.json" 2>/dev/null
 awk '/^## The hold is over/ { on = 1; next } /^## / { on = 0 } on' "$(jget brief < "$work/held.json")" > "$work/hold.section"
-check "HeldEpicChildReleased_NoteMergesTheEpicBranch: the release note has the agent merge the recorded base" \
-  'grep -qF "origin/$eb" "$work/hold.section"'
-check "HeldEpicChildReleased_NoteDoesNotMergeMain: the release note never sends an epic child to merge the config base" \
-  '[ -s "$work/hold.section" ] && ! grep -qF "origin/main" "$work/hold.section"'
+check "HeldEpicChildReleased_NoteNamesOnlyTheEpicBranch: the release note has the agent merge the recorded base and no other ref, so an epic child is never sent to merge the config base" \
+  '[ "$(grep -oE "origin/[A-Za-z0-9._/-]*[A-Za-z0-9_-]" "$work/hold.section" | sort -u)" = "origin/$eb" ]'
 
 echo "base: the board and init name the base"
 plain="$(new_task "Plain docs")"
@@ -207,7 +205,9 @@ check "BaseLineNamingAMissingBranch_ClaimsNoWorktree: the item is never claimed 
 check "BaseLineNamingAMissingBranch_LastEventNamesTheBranch: the owner sees which base is missing" \
   'state "$missing" last_event | grep -qF plan/gone'
 name_with_a_shell_character='plan/x;id'; name_git_reads_as_an_option='-x'
-for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option"; do
+name_with_a_space='plan/x y'; name_climbing_a_level='plan/../x'; name_from_the_root='/plan/x'
+for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" "$name_with_a_space" \
+  "$name_climbing_a_level" "$name_from_the_root"; do
   unsafe="$(new_task "Odd plan $unsafe_name" "" "base: $unsafe_name
 $body")"
   "$P/scripts/next.sh" "$unsafe" >/dev/null 2>&1; unsafe_code=$?
@@ -216,6 +216,20 @@ $body")"
   check "BaseLineOutsideTheSafeNames_NamedRunExitsWithThePassOverCode [$unsafe_name]: a refused base passes the item over like a missing one" \
     '[ "$unsafe_code" -eq 4 ]'
 done
+
+echo "base: a recorded base that is not a safe name is never handed on"
+set_claim_base() { python3 -c 'import json,sys; p=sys.argv[1]; c=json.load(open(p)); c["base"]=sys.argv[2]; json.dump(c,open(p,"w"))' "$("$P/scripts/steward.sh" find "$1")/.flow/claim.json" "$2"; }
+loose_wt="$("$P/scripts/steward.sh" find "$loose")"
+printf 'loose\n' > "$loose_wt/loose.txt" && git -C "$loose_wt" add loose.txt && git -C "$loose_wt" commit -qm loose
+set_claim_base "$loose" "$name_git_reads_as_an_option"
+rm -f "$(run_file "$loose")"
+"$P/scripts/next.sh" "$loose" --json > "$work/tampered.json" 2>/dev/null
+check "TamperedClaimBase_JsonBaseIsTheConfigBase: next.sh checks the name claim.json records and falls back to the config base, so a bad name never reaches the runner or git" \
+  '[ "$(jget base < "$work/tampered.json")" = main ]'
+set_claim_base "$loose" "$name_git_reads_as_an_option"
+(cd "$loose_wt" && "$P/scripts/verify.sh" "$loose" >/dev/null 2>&1)
+check "TamperedClaimBase_VerifyDiffsAgainstTheConfigBase: verify.sh checks the name claim.json records and measures the item's own files from the config base" \
+  '[ "$(jget changed_files < "$("$P/scripts/steward.sh" reports "$loose")/verify.json")" = "[\"loose.txt\"]" ]'
 
 [ "$fails" -eq 0 ] && { echo "base: ok"; exit 0; }
 echo "base: $fails failed"; exit 1
