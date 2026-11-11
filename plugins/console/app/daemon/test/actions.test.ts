@@ -13,6 +13,7 @@ import type { SourceName } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
 import { fakeScheduler, fakeSpawner, plainSpawner } from './fakeSpawner.ts';
 import type { FakeSpawnerOptions } from './fakeSpawner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 const NOW = new Date('2026-10-25T09:00:00Z');
@@ -349,7 +350,7 @@ test('StopAll_EndsAttachedActionsOnly', async () => {
  */
 async function wiredToMonitor() {
   const clock = { now: new Date('2026-10-25T09:00:00Z') };
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => clock.now, log: silentLogger, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => clock.now, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('jobs');
   const stateDir = await mkdtemp(path.join(os.tmpdir(), 'console-actions-'));

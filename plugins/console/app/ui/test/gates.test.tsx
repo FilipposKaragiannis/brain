@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import type { EndedAgent, Gate, Job, Snapshot } from '../../daemon/src/snapshot.ts';
+import type { EndedAgent, Gate, Job, LabelGate, Snapshot } from '../../daemon/src/snapshot.ts';
 import { Gates, GatesHeading } from '../src/screens/Gates.tsx';
 import type { ActionRecord } from '../src/actions.ts';
 import { actionRecord, boardItem, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, readyToClose, snapshotAt, TAKEN_AT, waitingGate } from './fakeDaemon.tsx';
@@ -99,6 +99,44 @@ test('ItemToCloseWithAMergeablePull_OffersTheMerge', async () => {
 test('GatesHeading_CountsGatesAndItemsToClose', () => {
   render(<GatesHeading snapshot={{ ...snapshotAt(TAKEN_AT, 3), gates: [ASKING], toClose: [SPLIT_DONE, STEPS_DONE] }} />);
   expect(screen.getByText(/waiting$/).textContent, "because the heading counts what the Overview's needs-you tile counts").toBe('3 waiting');
+});
+
+/** gh#50, gated by a `gate:escalation` label set by hand, with no gate record and so no question. */
+const LABEL_ONLY: LabelGate = { item: 'gh#50', title: 'Fifty', url: 'https://github.com/owner/project/issues/50', gate: 'escalation', worktree: null, sinceAt: TAKEN_AT, ageSeconds: 7200 };
+
+test('LabelOnlyGate_ListedInTheLabelOnlySection', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 2), gates: [ASKING], labelGates: [LABEL_ONLY] }, null);
+  expect(screen.getByLabelText('Label only').textContent, 'because a gate the tracker label names waits on the owner like any other').toMatch(/Fifty/);
+});
+
+test('LabelOnlyGatePicked_CardNamesTheGate', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 1), labelGates: [LABEL_ONLY] }, 'gh#50');
+  expect(screen.getByRole('region', { name: 'Label gate card' }).textContent, 'because the card says which gate the label sets').toMatch(/escalation/);
+});
+
+test('LabelOnlyGatePicked_CardSaysNoQuestionWasRecorded', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 1), labelGates: [LABEL_ONLY] }, 'gh#50');
+  expect(screen.getByRole('region', { name: 'Label gate card' }).textContent, 'because no record holds a question, so the card must not invent one').toMatch(/not recorded/);
+});
+
+test('LabelOnlyGatePicked_CardGivesTheRaiseCommandForThisItem', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 1), labelGates: [LABEL_ONLY] }, 'gh#50');
+  expect(screen.getByRole('region', { name: 'Label gate card' }).textContent, 'because recording the gate is the way to give it a question').toMatch(/gate\.sh raise gh#50 escalation/);
+});
+
+test('LabelOnlyGatePicked_NoAnswerBox', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 1), labelGates: [LABEL_ONLY] }, 'gh#50');
+  expect(within(screen.getByRole('region', { name: 'Label gate card' })).queryAllByRole('textbox'), 'because an escalation with no recorded question has nothing to answer, unlike a recorded one').toEqual([]);
+});
+
+test('NoGateButALabelOnlyGate_PickedByDefault', () => {
+  renderGates({ ...snapshotAt(TAKEN_AT, 1), labelGates: [LABEL_ONLY] }, null);
+  expect(screen.queryByRole('region', { name: 'Label gate card' }), 'because the screen opens on what waits on the owner').not.toBeNull();
+});
+
+test('GatesHeading_CountsLabelOnlyGates', () => {
+  render(<GatesHeading snapshot={{ ...snapshotAt(TAKEN_AT, 3), gates: [ASKING], toClose: [SPLIT_DONE], labelGates: [LABEL_ONLY] }} />);
+  expect(screen.getByText(/waiting$/).textContent, "because the heading counts what the Overview's needs-you tile counts, a label-only gate included").toBe('3 waiting');
 });
 
 test('MergeGateWithAPull_LinksThePullRequest', () => {
@@ -341,7 +379,7 @@ test('MergeGateWithAFailingPull_NoMergeButton', () => {
 });
 
 test('GateWithASessionOnItsItem_OffersDiscuss', () => {
-  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', step: null, job: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: 'claude -p', activity: null, session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
+  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', step: null, job: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: 'claude -p', activity: null, subagents: [], session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
   renderGate(PLAN_GATE, new FakeDaemon(), { ended: [ended] });
   expect(screen.queryByRole('button', { name: 'Discuss with the agent' }), 'because the owner may want to talk the plan through before deciding').not.toBeNull();
 });
@@ -363,7 +401,7 @@ test('GateWithALocatedSessionAndNoAgent_DiscussOpensTheGatesSession', async () =
 
 test('GateWithALocatedSessionAndAnEndedAgent_DiscussOpensTheAgentsSession', async () => {
   const { daemon, posted } = recordingDaemon();
-  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', step: null, job: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: 'claude -p', activity: null, session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
+  const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', step: null, job: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: 'claude -p', activity: null, subagents: [], session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
   renderGate({ ...PLAN_GATE, session: { host: 'claude', id: '9a9a', transcript: '/h/9a9a.jsonl', resume: ['claude', '--resume', '9a9a'] } }, daemon, { ended: [ended] });
   act(() => { daemon.latestStream().open(); });
   await press('Discuss with the agent');

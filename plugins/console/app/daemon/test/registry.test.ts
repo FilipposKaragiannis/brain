@@ -10,6 +10,7 @@ import { ProjectRegistry } from '../src/registry.ts';
 import type { ProjectSummary } from '../src/registry.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner, LONG_CADENCE } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const MAIN = { id: 'project', name: 'project', root: FIXTURE_ROOT };
@@ -19,7 +20,7 @@ function registry() {
   const stopped: string[] = [];
   const { spawner } = plainSpawner();
   const projects = new ProjectRegistry((project) => {
-    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
+    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE, subagents: noSubagents });
     const stop = monitor.stop.bind(monitor);
     monitor.stop = () => { stopped.push(project.id); stop(); };
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: os.tmpdir(), onRefresh: () => {} });

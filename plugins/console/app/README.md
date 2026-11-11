@@ -171,8 +171,9 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/panes?path=<folder>&run=shell\|claude\|codex&cols=<n>&rows=<n>` | a terminal pane as a WebSocket: with `run=shell` a login shell (`$SHELL -l`), with `run=claude` or `run=codex` a quick session (the agent itself, by the absolute path the daemon's `PATH` finds, refused when it finds none: `claude [--model M] [--effort E]`, `codex [-m M] [-c model_reasoning_effort="E"]`, the pair `host_jobs_pair` reads from `.flow/config.yaml`, `jobs.<host>.model` and `.effort`, else the deprecated `jobs.model` and `jobs.effort` while `jobs.<host>` is absent, each flag only when set, a codex roster name mapped to its catalog name, a model that is not a model name or an effort the host does not take refused with its key, and no permission flag), in a pty in `path`, which must be absolute and one Open in Terminal takes (the root, a worktree the console lists, the folder of a listed agent or session) and on disk; `cols` 2 to 500 and `rows` 1 to 300, 80 by 24 when absent. The pane gets the daemon's `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` (`en_US.UTF-8` when unset), `LC_ALL` and `SSH_AUTH_SOCK`, `TERM=xterm-256color` and `COLORTERM=truecolor`, never the token. Host, Origin and the token (`?token=`) are checked before the handshake (403, 401), as is the project (404). Binary frames are terminal bytes both ways; text frames are JSON, up `{"type":"resize","cols","rows"}` and `{"type":"ack","bytes"}`, down `{"type":"started","pane","command","folder"}` first, `{"type":"refused","error"}` (close 4400) for a pane the daemon will not start, and `{"type":"exit","code","signal"}` (close 1000) when the process ends. Closing the socket hangs the pane up (SIGHUP to its process group, SIGKILL 1.5 s later). The daemon runs at most 4 panes at once, every project together, a closed pane counting until its process ended; the fifth gets `refused` (close 4400) until one ends. It stops reading a pane's output once 1 MiB is sent and not acked, or its socket still holds 1 MiB not yet sent, and reads on when both are under 256 KiB (an ack counts no more than the bytes not yet acked; a hang-up reads on at once, so the process's end arrives, and so does a process that ends while its output waits, checked every 50 ms, so its last output arrives before node-pty drops it 200 ms after the end); the page acks every 64 KiB it draws. Close codes: 1000 the process ended, 1001 the daemon stopped, 1008 a text frame that is not `resize` or `ack`, 4400 refused, 4404 the project left the list or its id now names another root (the pane is hung up as above) |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 16 since an agent took `step`
-and `job` (15 when an item and a
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 18 since an agent took
+`subagents` (17 when the snapshot took `labelGates` and an attention row took the kind
+`label-gate`, 16 when an agent took `step` and `job`, 15 when an item and a
 worktree took `heldBy` and `heldReason`, the states `waiting` and `held` came, `counts` took
 `waiting` and `held`, `readiness` took `held`, an attention row took the kind `close` and the
 snapshot took `toClose`, 14 when an agent took
@@ -184,7 +185,7 @@ snapshot took `toClose`, 14 when an agent took
 place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
 One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
-a human, oldest first), `worktrees`, `items`, `gates`, `toClose`, `runs`, `agents`, `processList`, `servers`, `ended`, `jobs`, `pulls`, `events`
+a human, oldest first), `worktrees`, `items`, `gates`, `toClose`, `labelGates`, `runs`, `agents`, `processList`, `servers`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`), `lessons`, `retros`, `disagreements` and `newerConsole`
 (`{running, cached}` while the plugin cache holds a newer console with an install script than the
 one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
@@ -249,9 +250,10 @@ snapshots.
   process. For codex `~/.codex/session_index.jsonl` has ids and thread
   names but no folder, so the session files under `~/.codex/sessions/<yyyy>/<mm>/<dd>/` (the
   start's day back to fourteen days) are read instead: the newest written since the start whose
-  first line, `session_meta`, names the same cwd; the id is its `payload.id`. A `codex exec`
-  started with `-C <dir>` (or `--cd`), as flow's host.sh starts a Codex run, keeps the cwd it was
-  started in, such as the project root, so its working directory, both for the worktree it is
+  first line, `session_meta`, names the same cwd and is not a subagent's; the id is its
+  `payload.id`. A `codex exec` started with `-C <dir>` (or `--cd`), as flow's host.sh starts a
+  Codex run, keeps the cwd it was started in, such as the project root, so its working directory,
+  both for the worktree it is
   listed under and for this match, is that `<dir>`, resolved against the cwd. Only codex's options
   before its prompt count, so a `-C` the prompt mentions does not
   (`daemon/src/collectors/agentContext.ts`). Those first lines are kept in memory and forgotten
@@ -273,6 +275,26 @@ snapshots.
   owner) or `busy`, `since` its `statusUpdatedAt`. Null for codex, which writes no such file, and
   for a claude without one of its own. `startedAt` is when ps says the process started, worked out
   at the read that found it.
+- `subagents` (on every entry of `agents`) is what its session runs now, oldest started first, each
+  `{id, host, type, task, cwd, startedAt, latest}`; empty without a session and always on an entry
+  of `ended`. A subagent is live while its transcript was written in the last 10 minutes
+  (`LIVE_WINDOW_MS`), so one stuck in a single tool call longer than that drops off until it writes
+  again. For claude they are in `<transcript folder>/<session id>/subagents/`: each
+  `agent-<id>.meta.json` (not the `workflows/` folder) whose `agent-<id>.jsonl` is fresh and whose
+  meta says neither `finished` nor `stoppedByUser`; `id` is the `<id>`, `type` the meta's
+  `agentType` (`subagent` without one), `task` its `description`, `cwd` and `startedAt` the
+  transcript's first line, and `latest` the last line of its last 64 KB, read as the transcript
+  route reads lines, side chains included. For codex a subagent is its own rollout in the day
+  folders, run by its root's process: a fresh rollout whose first line is a subagent's
+  (`source.subagent` or `thread_source: "subagent"`) and names the session as its root
+  (`session_id`), at any depth, and whose last `task_started` or `task_complete` event is not
+  `task_complete`; `id` is its `payload.id`, `type` its `agent_role` (`subagent` without one),
+  `task` the last segment of its `agent_path` with its `agent_nickname` in parentheses
+  (`probe (Russell)`; the spawn message is encrypted), `cwd` and `startedAt` its first line, and `latest`
+  its own last line, not one of the parent lines it replays before its
+  `subagent_history_start_ordinal`. The metas and first lines are kept in memory while a read used
+  them in the last 10 minutes; one reader serves every project
+  (`daemon/src/collectors/subagents.ts`, `claudeSubagents.ts`, `codexSubagents.ts`).
 - `project.staleSessionSeconds` is `jobs.health.stale_session` in seconds (a flow duration, 24h
   unset). `sessionStale` in snapshot.ts is the one rule the pages use: a session (never a flow
   agent) is stale once it has been idle that long, or, with no `activity`, once its process has run
@@ -316,14 +338,24 @@ snapshots.
   that item closes; the next job skips a held item meanwhile). Both null when it is free, and on a
   plugin from before the hold keys (flow 1.33.0 and earlier).
 - `toClose` lists the open items that no step and no gate will move again, oldest first: an item
-  at step `done` with no gate up, and a split item (step `split`) whose children are all closed.
+  at step `done` with no gate up (neither a record nor a tracker label), and a split item (step `split`) whose children are all closed.
   Each is `{item, title, url, reason, todo, worktree, pull, sinceAt, ageSeconds}`: `reason`
   `steps-done` or `children-closed`, `todo` the one line on what to do ("Every step ran: merge or
   close." or "Every child is closed: close the parent."), `pull` the item's PR as a gate shows it,
   `sinceAt` the time of its board `last_event`. The item and its worktree are `needs-you` and it
   gets a `close` attention row, but no gate is made up for it: the Gates screen lists it on its
   own. An item at step done whose merge gate waits on review is `in-review` and not in the list.
-  `counts.needsYou` is `gates` plus `toClose`, so it counts every `needs-you` item once.
+- `labelGates` lists the open items whose tracker label names a gate (the board's `state.gate`,
+  neither `none` nor empty) with no gate record behind it, oldest first: the label was set by
+  hand, not by `gate.sh raise`, so no question was recorded. The flow's ready list leaves such an
+  item out, so it is `needs-you`, not `ready`; an item a claimed worktree holds keeps that
+  worktree's state, and the worktree's state does not look at the label. Each is `{item, title, url, gate, worktree, sinceAt,
+  ageSeconds}`: `gate` the name the label gives, `sinceAt` the time of its board `last_event`. It
+  gets a `label-gate` attention row whose detail says no question was recorded, and no gate is
+  made up for it. A closed item with a stale label stays `done`, and an item whose merge gate
+  waits on review stays `in-review`. An item in `labelGates` is never in `toClose`, so
+  `counts.needsYou` is `gates` plus `toClose` plus `labelGates`, and counts every `needs-you` item
+  once.
 - An item's `url` is its tracker page, from the board. Its `spend` is `{costUsd, sessions,
   tokens}`, summed over the step sessions `board.sh --json` counts from `log/runs.jsonl`, or null
   when it has none or the plugin prints no `spend`. Codex reports no cost, so a codex session adds
@@ -367,7 +399,7 @@ snapshots.
 - `readiness` is `{ready, waitingOnField, blocked, gated, held, nextInLineMissingField}` over open
   items that are not epics. The first five are buckets, each item in one at most: the next job can
   take it, only an empty field stops it (the whole backlog of such items), an open item blocks it,
-  it waits on you (a gate, or an item to close), it is held behind another item. Running, waiting,
+  it waits on you (a gate record, a gate its tracker label names, or an item to close), it is held behind another item. Running, waiting,
   claimed and stale items count in none, so the Overview can say in
   one line why nothing runs. `nextInLineMissingField` is the part of `waitingOnField` that is the
   next step of work already under way, so the UI can say "164 backlog items lack a field; 4 of
@@ -379,8 +411,8 @@ snapshots.
   sibling under the same parent has started or is done, or it blocks an item that has started.
   Every other item waiting on a field is backlog and gets no row. The row's `detail` names the
   fields: "needs priority", "needs priority and size".
-- An attention row carries `gate`: the gate's kind on a `gate` row (`merge`, `escalation`,
-  `plan-approval` …), which its chip shows, and null on every other row.
+- An attention row carries `gate`: the gate's kind on a `gate` or `label-gate` row (`merge`,
+  `escalation`, `plan-approval` …), which its chip shows, and null on every other row.
 - `lessons` is every lesson in `<flow home>/lessons.jsonl` (one JSON object per line, written by
   the flow's `lesson.sh`), oldest first, each `{line, at, kind, item, step, rule, text, host}`:
   `at` the line's `time`, an empty field null, an empty kind `other`. `line` is the lesson's
@@ -404,7 +436,7 @@ One status language, used by worktrees and items alike:
 | State | Meaning |
 |---|---|
 | `running` | an unattended agent process (`claude -p`, `codex exec`) has its cwd in the worktree, or a run record whose run is not `dead` |
-| `needs-you` | its item has a gate record in `.flow/gates`, or is in `toClose` |
+| `needs-you` | its item has a gate record in `.flow/gates`, or is in `toClose`; an item with no claimed worktree also when its tracker label names a gate (`labelGates`) |
 | `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate and no hold; never a reservation |
 | `waiting` | a flow claim with no run, no agent and no gate on an open item that has a step to run: parked until a worker of the next job takes its next step (`claim.step`) |
 | `held` | as `waiting`, but the item is held behind another (`heldBy`): the next job skips it until that item closes |
@@ -829,8 +861,11 @@ the right choice for a wrong one and each question's Because line, and say that 
 draft PR ready; a failed try has Take it again, a kept result has See results; a merge gate on a
 draft with a quiz still to pass says so in place of the merge button; under the gates a Ready to
 close panel lists `toClose`, each with what to do, and its card says why, links the issue and the
-PR and offers "Merge #N" once that PR is mergeable; the heading and the nav badge count gates and
-items to close, as the Overview's Needs you tile does), Worktrees (filter
+PR and offers "Merge #N" once that PR is mergeable; after it a Label only panel lists
+`labelGates`, and its card names the gate, links the issue, says the question text is not
+recorded and shows the two ways out (`gate.sh raise <item> <gate> "<message>"`, or removing the
+`gate:<gate>` label), with no answer form; the heading and the nav badge count gates, items to
+close and label-only gates, as the Overview's Needs you tile does), Worktrees (filter
 chips with counts for all, running, needs you, stale, waiting, held, claimed and free (held and
 claimed only while some card is), the pool size and base,
 and Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
@@ -856,9 +891,12 @@ under way, waiting (waiting and held), in review, ready, blocked and backlog, ea
 state ("held behind <item>" with the reason on hover), step ("next: <step>" while parked), worktree, PR and
 spend, a head line summing the spend of the rows shown, a banner (`role="alert"`) for each
 tracker the board could not read saying why its items are missing, and an item's detail beside the list:
-its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across
+its fields (a gate only the tracker label sets reads "<gate> (label only, no question
+recorded)"), its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across
 the page: a card per live run, the first open and the
 others folded to their header and their latest transcript line, claude and codex alike, each with
+the live subagents of its session under that line, open or folded (a row each: type, task or "no
+task", cwd, how long it has run and its latest line), and with
 its step (the agent's own, else its run's), item, worktree, host, a `headless` tag, a `job <name>`
 tag when a flow job started it, how long it has run, and PR, its stats (when its process started,
 last commit, transcript size and turns, pid) and its transcript as a terminal of the last 12
@@ -870,7 +908,7 @@ while `liveness` is `unknown`, or that it is still starting within the grace; wi
 to Jobs. Then your own sessions, folded, each row with its pid, host, worktree, item, `busy`,
 `idle 3d 2h` or (with no `activity`) its age, a `stale` tag past `jobs.health.stale_session`, Open
 session or Open in Terminal, and Stop session, which asks first ("SIGTERM to pid N?" with Stop it
-and Cancel) and then sends `session.stop`; stale sessions come first, and while any is stale the
+and Cancel) and then sends `session.stop`, and its live subagents as on a run card; stale sessions come first, and while any is stale the
 fold opens by itself with the count in its heading ("Your sessions (3 · 1 stale)"). Then the
 servers, folded and read-only ("Servers (2)", hidden with none), each row with its label, pid,
 worktree and how long it has run, its command on hover, under a line that says they are not

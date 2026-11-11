@@ -17,6 +17,7 @@ import { closeConsoleServer, createConsoleServer } from '../src/server.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner, LONG_CADENCE } from './fakeRunner.ts';
 import { fakePty } from './fakePty.ts';
 import { plainSpawner } from './fakeSpawner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 import type { FakePty } from './fakePty.ts';
 
 const NOW = new Date('2026-11-11T09:30:00Z');
@@ -40,7 +41,7 @@ export async function daemon(): Promise<Daemon> {
 export async function daemonOver(spawner: PtySpawner, ptys: FakePty[]): Promise<Daemon> {
   const { spawner: actionSpawner } = plainSpawner();
   const registry = new ProjectRegistry((project) => {
-    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
+    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE, subagents: noSubagents });
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner: actionSpawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: STATE_DIR, onRefresh: () => {} });
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
   }, silentLogger);

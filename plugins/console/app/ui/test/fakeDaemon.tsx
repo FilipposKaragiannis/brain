@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { Disagreement, Readiness, ReadyToClose, FlowEvent, Gate, InstalledPlugin, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
 import type { PaneNotice, PaneSize } from '../../daemon/src/paneProtocol.ts';
+import { SNAPSHOT_SCHEMA_VERSION } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord } from '../src/actions.ts';
 import type { Api, ApiResponse, HttpMethod, SocketLike, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
@@ -201,13 +202,13 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 16,
+    schema: SNAPSHOT_SCHEMA_VERSION,
     takenAt,
     project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', adapter: 'github', trackers: [{ name: 'github', url: 'https://github.com/owner/project/issues', error: null }], pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', jobHosts: ['claude'], plugins: [installedPlugin('flow', '1.17.0', '1.17.0'), installedPlugin('standards', '1.3.0', '1.3.0')], poolMax: 9, reviewers: ['codex', 'claude'], picks: [], staleSessionSeconds: 86400 },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
     counts: { needsYou, running: 0, stale: 0, waiting: 0, held: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0, lessonsSinceRetro: 0 },
     readiness: { ready: 0, waitingOnField: 0, blocked: 0, held: 0, gated: 0, nextInLineMissingField: 0 },
-    attention: [], worktrees: [], items: [], gates: [], toClose: [], runs: [], agents: [], processList: { status: 'complete' }, servers: [], ended: [], jobs: [], stoppedHosts: [], events: [], lessons: [], retros: [], disagreements: [], pulls: [], mergedToday: [],
+    attention: [], worktrees: [], items: [], gates: [], toClose: [], labelGates: [], runs: [], agents: [], processList: { status: 'complete' }, servers: [], ended: [], jobs: [], stoppedHosts: [], events: [], lessons: [], retros: [], disagreements: [], pulls: [], mergedToday: [],
     newerConsole: null,
   };
 }
