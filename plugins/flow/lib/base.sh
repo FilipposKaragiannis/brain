@@ -14,32 +14,34 @@ flow_repository() { dirname "$(flow_home)"; }
 
 # base_name_valid <branch>: true for a branch name that is safe to claim from, to name in a brief
 # and to pass to git. A name git would read as an option, or that carries a shell character (a base
-# reaches merge instructions in the brief and the board table), never is.
+# reaches merge instructions in the brief and the board table), never is; nor a letter outside ASCII,
+# which a UTF-8 locale would let through the ranges.
 base_name_valid() {
-  case "$1" in -*|'') return 1 ;; *[!A-Za-z0-9._/-]*) return 1 ;; esac
+  (LC_ALL=C; case "$1" in -*|'') exit 1 ;; *[!A-Za-z0-9._/-]*) exit 1 ;; esac) || return 1
   git -C "$(flow_repository)" check-ref-format "refs/heads/$1"
 }
+
+# checked_name <branch>: the name, or nothing and 1 when it fails base_name_valid.
+checked_name() { base_name_valid "$1" && printf '%s' "$1"; }
 
 # fetch_base <branch>: fetches the branch from origin into refs/remotes/origin/<branch>, when the
 # repository has an origin and the name is valid. A failed fetch (offline) leaves the remote ref as
 # the last fetch saw it.
 fetch_base() {
   base_name_valid "$1" || return 0
-  base_repository="$(flow_repository)"
-  git -C "$base_repository" remote get-url origin >/dev/null 2>&1 || return 0
-  git -C "$base_repository" fetch -q origin "$1" >/dev/null 2>&1
+  git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1 || return 0
+  git -C "$(flow_repository)" fetch -q origin "$1" >/dev/null 2>&1
 }
 
 # base_exists <branch>: true when the last fetch saw the branch on the remote; in a repository with
 # no origin, when it is a local branch. No fetch: fetch_base first for a fresh answer.
 base_exists() {
   base_name_valid "$1" || return 1
-  base_repository="$(flow_repository)"
-  if git -C "$base_repository" remote get-url origin >/dev/null 2>&1; then
-    git -C "$base_repository" show-ref --verify --quiet "refs/remotes/origin/$1"
+  if git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1; then
+    git -C "$(flow_repository)" show-ref --verify --quiet "refs/remotes/origin/$1"
     return
   fi
-  git -C "$base_repository" show-ref --verify --quiet "refs/heads/$1"
+  git -C "$(flow_repository)" show-ref --verify --quiet "refs/heads/$1"
 }
 
 # body_base <item-json>: the branch a `base: <branch>` line of the item's body names (the first
@@ -49,19 +51,15 @@ body_base() {
 }
 
 # claim_name <worktree> <field>: the branch name the field (base or branch) of the worktree's
-# claim.json holds, or nothing when the name fails base_name_valid. claim.json is a file anyone can
-# edit, so every reader checks a name here before git, a brief or the board takes it.
-claim_name() {
-  claimed_name="$(json_get "$(cat "$(claim_file "$1")" 2>/dev/null)" "$2")"
-  if base_name_valid "$claimed_name"; then printf '%s' "$claimed_name"; fi
-}
+# claim.json holds, or nothing and 1 when the name fails base_name_valid. claim.json is a file
+# anyone can edit, so next.sh, verify.sh, the board, init and the claim of a child check a name
+# here before git, a brief or the board takes it. steward.sh's release, split and health still read
+# the base field as it is.
+claim_name() { checked_name "$(json_get "$(cat "$(claim_file "$1")" 2>/dev/null)" "$2")"; }
 
 # recorded_base <worktree>: the base the worktree's claim records, else the config base: a claim
 # made before the base was recorded was cut from it.
-recorded_base() {
-  claimed_name="$(claim_name "$1" base)"
-  printf '%s' "${claimed_name:-$(cfg_or base main)}"
-}
+recorded_base() { claim_name "$1" base || cfg_or base main; }
 
 # parent_branch <parent>: the branch of the parent's claim, or nothing when it holds none or its
 # branch is no valid base.
@@ -71,8 +69,8 @@ parent_branch() {
 }
 
 # fetch_epic_ancestor <parent>: fetches the epic branch of each id from the parent up and prints the
-# first id whose epic branch exists; nothing, and 1, when none does within base_ancestor_levels or
-# before an id comes twice.
+# first id whose epic branch exists; nothing, and 1, when none does within base_ancestor_levels,
+# before an id comes twice, or at an id no adapter owns (it is never read).
 fetch_epic_ancestor() {
   ancestor="$1"; ancestors_seen=" "; ancestor_level=0
   while [ -n "$ancestor" ] && [ "$ancestor_level" -lt "$base_ancestor_levels" ]; do
@@ -81,6 +79,7 @@ fetch_epic_ancestor() {
     fetch_base "$ancestor_branch"
     if base_exists "$ancestor_branch"; then printf '%s' "$ancestor"; return 0; fi
     ancestors_seen="$ancestors_seen$ancestor "; ancestor_level=$((ancestor_level + 1))
+    adapter_for "$ancestor" >/dev/null 2>&1 || return 1
     ancestor="$(json_get "$(adapter read "$ancestor" </dev/null 2>/dev/null)" parent)"
   done
   return 1
@@ -150,19 +149,17 @@ claim_at_base() {
 # absent. No fetch: the board and init read what the last fetch saw, so they stay fast and work
 # offline. With no origin nothing is missing.
 base_missing() {
-  base_repository="$(flow_repository)"
-  git -C "$base_repository" remote get-url origin >/dev/null 2>&1 || return 1
-  ! git -C "$base_repository" show-ref --verify --quiet "refs/remotes/origin/$1"
+  git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1 || return 1
+  ! git -C "$(flow_repository)" show-ref --verify --quiet "refs/remotes/origin/$1"
 }
 
 # claimed_bases: `<item>\t<base>\t<worktree path>\t<missing>` for each claimed pool worktree whose
 # claim records a valid base; missing is true or false, as base_missing says. A claim whose item
 # carries a control character is left out too: a tab or a line break would split the record.
 claimed_bases() {
-  base_repository="$(flow_repository)"
   cfg pool | while read -r pool_entry; do
     [ -n "$pool_entry" ] || continue
-    case "$pool_entry" in /*) pool_worktree="$pool_entry" ;; *) pool_worktree="$base_repository/$pool_entry" ;; esac
+    case "$pool_entry" in /*) pool_worktree="$pool_entry" ;; *) pool_worktree="$(flow_repository)/$pool_entry" ;; esac
     [ -f "$(claim_file "$pool_worktree")" ] || continue
     claimed_item="$(json_get "$(cat "$(claim_file "$pool_worktree")")" item)"; claimed_base="$(claim_name "$pool_worktree" base)"
     [ -n "$claimed_item" ] && [ -n "$claimed_base" ] || continue
