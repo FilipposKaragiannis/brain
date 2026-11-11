@@ -6,3 +6,8 @@ bump: minor
   hangs the shell up, and a pane the daemon ended says why and keeps its screen.
 - The daemon now has runtime dependencies, `@lydell/node-pty` and `ws`, both for the terminal pane
   (ADR 0003).
+- Quick session: claude and Quick session: codex, beside each Terminal pane button, start that
+  agent in the folder in a pane of its own, with the project's `jobs.<host>` model and effort (the
+  deprecated `jobs.model` and `jobs.effort` while `jobs.<host>` is absent). The daemon runs the
+  agent it finds on its `PATH`, with no permission flag, and refuses a model or an effort the host
+  does not take, naming the key.

@@ -1,4 +1,4 @@
-import { existsSync, statSync } from 'node:fs';
+import { accessSync, constants, existsSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
@@ -31,13 +31,29 @@ const SHUTDOWN_GRACE_MS = 3000;
 /** The shell a pane runs when neither `SHELL` nor the user's account names one. */
 const FALLBACK_SHELL = '/bin/sh';
 
-/** This machine as panes see it: the owner's shell, the environment a pane gets, and the disk. */
+/** This machine as panes see it: the owner's shell, the environment a pane gets, the disk, and the programs on the daemon's PATH. */
 function machinePaneHost(env: NodeJS.ProcessEnv): PaneHost {
   return {
     shell: env.SHELL || os.userInfo().shell || FALLBACK_SHELL,
     environment: paneEnvironment(env),
     isFolder: (folder) => existsSync(folder) && statSync(folder).isDirectory(),
+    executable: (name) => onPath(name, env.PATH ?? ''),
   };
+}
+
+/** The first file named `name` the owner may run in a folder of `searchPath`, as an absolute path; null when none is. */
+function onPath(name: string, searchPath: string): string | null {
+  for (const folder of searchPath.split(path.delimiter)) {
+    if (!path.isAbsolute(folder)) continue;
+    const candidate = path.join(folder, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      if (statSync(candidate).isFile()) return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 /**
