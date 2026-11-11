@@ -1,6 +1,8 @@
 """Ready filter for the adapters. See filter-ready.sh."""
 import json, os, subprocess, sys
 plugin = sys.argv[1]
+# The flow home, where gate.sh clear --option writes the blockers the owner waived (lib/blockers.sh).
+home = sys.argv[2] if len(sys.argv) > 2 else ""
 items = json.load(sys.stdin)
 known = {i["id"]: i.get("status", "open") for i in items}
 cache = {}
@@ -62,12 +64,26 @@ def hold_applies(state):
         return True
     return state.get("step", "") not in steps[:steps.index("plan") + 1]
 
+def waived(item_id):
+    """The blockers the owner chose not to wait for on this item: an option picked on a gate that
+    waits on blocked_by:<blocker> (gate.sh clear --option), one id per line in the flow home."""
+    if not home:
+        return set()
+    slug = item_id.translate(str.maketrans(":/#", "---"))
+    try:
+        with open(os.path.join(home, "waived", slug), encoding="utf-8") as f:
+            return {line.strip() for line in f if line.strip()}
+    except OSError:
+        return set()
+
 def open_blockers(item):
-    """The item's open blockers. An adapter that knows its blockers' states lists the open ones (the
-    GitHub one does); only without that is each blocker read through its adapter, one call apiece."""
+    """The item's open blockers the owner did not waive. An adapter that knows its blockers' states
+    lists the open ones (the GitHub one does); only without that is each blocker read through its
+    adapter, one call apiece."""
+    skip = waived(item["id"])
     if "open_blockers" in item:
-        return item["open_blockers"]
-    return [b for b in item.get("blocked_by", []) if blocker_open(b)]
+        return [b for b in item["open_blockers"] if b not in skip]
+    return [b for b in item.get("blocked_by", []) if b not in skip and blocker_open(b)]
 
 def held_back(item):
     """Why an open item is not ready, in one word, or None when it is ready."""

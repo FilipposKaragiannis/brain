@@ -22,10 +22,13 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    branch, in the claimed worktree, the way steps 2 and 3 do (`implementer`, `verifier`, push,
    re-request review). An answer that asks for work outside that branch (another branch, the
    PR's base among them; the tracker; another item) is no step's: do none of it, and raise
-   `"$P/scripts/gate.sh" raise <item> escalation` with a first line in bold, **No step acts on
-   this answer: do it by hand, then clear the gate with no answer**, then the answer and what it
-   asks for. Once the answer is carried out (pushed) or raised again as a gate, and only then,
-   write the line the brief names to the file it names: that is how the job knows to take the
+   `"$P/scripts/gate.sh" raise <item> escalation "<message>" --raised-by "comments job"` with a
+   first line in bold, **No step acts on this answer: do it by hand, then clear the gate with no
+   answer**, then the answer and what it asks for, then how to do it: each git or gh command in
+   full, its PR, branch or item filled in (`gh pr merge 771 --merge`, `gh pr edit 412 --base
+   epic/525`), or the tracker action (close gh#40, add gh#41 to the epic). Never only "do it by
+   hand". Once the answer is carried out (pushed) or raised again as a gate, and only then, write
+   the line the brief names to the file it names: that is how the job knows to take the
    answer, so it is never carried twice. A dirty tree, a failing verify or anything else that
    leaves the answer undone: write nothing and report why; the answer stays pending, and the job
    counts the pass as failed and tries again. Run outside the job, no file is named: once it is
@@ -39,10 +42,11 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    into <branch>`. Then spawn the `verifier`; on `pass` run `git push origin "HEAD:<headRefName>"`
    (never `-f` or `--force-with-lease`: a merge always fast-forwards) and re-request review (step
    8) naming the merge commit. A conflict whose resolution needs the owner (two intents that
-   cannot both hold) → `"$P/scripts/gate.sh" raise <item> ambiguity` with each file and the
-   choice; abort the merge and stop. A dirty tree or a failing verify → abort or leave the merge
-   unpushed, report it, stop. `UNKNOWN` means GitHub is still computing: skip, the next pass sees
-   it.
+   cannot both hold) → `"$P/scripts/gate.sh" raise <item> ambiguity "<message>" --condition
+   "pr:#<n> conflicting" --raised-by "comments job"` with each file and the choice; abort the
+   merge and stop. The health job clears that gate once the PR no longer conflicts. A dirty tree
+   or a failing verify → abort or leave the merge unpushed, report it, stop. `UNKNOWN` means
+   GitHub is still computing: skip, the next pass sees it.
    **Interrupted work**: when `<reports>/comments-resume.md` exists, the last pass was cut short
    and the claimed worktree may hold its uncommitted work. Read the note, `git status` and
    `git diff` there. That dirty tree is not a reason to stop: give the note and the diff to the

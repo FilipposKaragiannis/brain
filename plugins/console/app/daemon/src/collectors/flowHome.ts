@@ -1,13 +1,13 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseEvents } from '../events.ts';
-import { EVENTS_KEPT } from '../snapshot.ts';
+import { EVENTS_KEPT, MOST_GATE_OPTIONS } from '../snapshot.ts';
 import { readSyncNote, reportsDir } from '../syncNote.ts';
 import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
 import type { YamlMap } from '../yaml.ts';
 import type { CommandRunner } from './exec.ts';
 import { scriptEnvironment } from './exec.ts';
-import type { FlowEvent, GatePlan, GateQuestion, PickFilter, PluginSource, Quiz, StoppedHost } from '../snapshot.ts';
+import type { FlowEvent, GateOption, GatePlan, GateQuestion, PickFilter, PluginSource, Quiz, StoppedHost } from '../snapshot.ts';
 import { readQuizzes } from '../quiz.ts';
 import { readRetroFacts } from '../retro.ts';
 import type { RetroFacts } from '../retro.ts';
@@ -49,8 +49,13 @@ export type FlowConfig = {
  * One record in .flow/gates. `questions` is the plugin's own parse of the message, from
  * `gate.sh list --json` (flow 1.18.0 and later), so the console and Slack show the same card.
  * It is null when the plugin is older or the list failed, and the daemon parses the message.
+ * `options`, `raisedBy`, `answeredBy`, `condition` and `footer` are read from the record itself,
+ * so an older plugin's record needs no version check: it yields no options and nulls.
  */
-export type GateRecord = { item: string; gate: string; message: string; time: string; host: string; questions: GateQuestion[] | null; plan: GatePlan | null };
+export type GateRecord = {
+  item: string; gate: string; message: string; time: string; host: string; questions: GateQuestion[] | null; plan: GatePlan | null;
+  options: GateOption[]; raisedBy: string | null; answeredBy: string | null; condition: string | null; footer: string | null;
+};
 /**
  * The health job's verdict on a PR waiting at the merge gate (`.flow/reviews/<n>.review.json`,
  * flow 1.24.0 and later): `in-review` while a reviewer the flow asked has not answered, which
@@ -262,6 +267,41 @@ function text(value: Record<string, unknown>, key: string): string {
   return typeof field === 'string' ? field : '';
 }
 
+/** A field that is a non-empty string, else null, as `_gates.py` reads the record's optional fields. */
+function optionalText(value: Record<string, unknown>, key: string): string | null {
+  const field = value[key];
+  return typeof field === 'string' && field !== '' ? field : null;
+}
+
+function trimmedText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/** One recorded option with a label and a text, trimmed; `recommended` false when absent. Null when it is malformed. */
+function gateOption(value: unknown): GateOption | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  const label = trimmedText(record['label']);
+  const answer = trimmedText(record['text']);
+  const recommended = record['recommended'] ?? false;
+  if (label === '' || answer === '' || typeof recommended !== 'boolean') return null;
+  return { label, text: answer, recommended };
+}
+
+/**
+ * The options a record offers, all or none, as `_gates.py` lists them: one malformed entry left
+ * out would shift every later number, so a button would send another option than it shows.
+ */
+function recordOptions(value: unknown): GateOption[] {
+  if (!Array.isArray(value) || value.length > MOST_GATE_OPTIONS) return [];
+  const options = value.flatMap((entry: unknown) => {
+    const option = gateOption(entry);
+    return option === null ? [] : [option];
+  });
+  if (options.length !== value.length || options.filter((option) => option.recommended).length > 1) return [];
+  return options;
+}
+
 /** The files a plan can be, in the order they win. */
 const PLAN_FILES = ['plan.md', 'epic.md'];
 
@@ -464,6 +504,8 @@ export async function readFlowHome(root: string, runner: CommandRunner, cache: G
   const pluginVersion = pluginRoot === null ? null : await pluginVersionOf(pluginRoot);
   const found = records.map(({ value }) => ({
     item: text(value, 'item'), gate: text(value, 'gate'), message: text(value, 'message'), time: text(value, 'time'), host: text(value, 'host'),
+    options: recordOptions(value['options']), raisedBy: optionalText(value, 'raised_by'), answeredBy: optionalText(value, 'answered_by'),
+    condition: optionalText(value, 'condition'), footer: optionalText(value, 'footer'),
   }));
   const gateListError = await fillGateQuestions(root, pluginRoot, pluginVersion, found, runner, cache);
   const gates: GateRecord[] = found.map((gate) => {

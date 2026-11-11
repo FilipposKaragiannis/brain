@@ -114,10 +114,16 @@ if spend:
     print("|---|---|---|---|")
     for item, s in sorted(spend.items(), key=lambda kv: -kv[1]["cost_usd"]):
         print("| %s | $%.2f | %d | %d |" % (item, s["cost_usd"], s["sessions"], s["tokens"]))
+# Who raised the gate, who carries the answer out, and the condition the health job clears it on
+# (gate.sh raise). A record written before these fields shows none of them.
+ROLES = (("raised_by", "raised by"), ("answered_by", "answered by"), ("condition", "waits on"))
+def roles_of(g):
+    said = ["%s %s" % (label, g[key]) for key, label in ROLES if g.get(key)]
+    return " (%s)" % ", ".join(said) if said else ""
 if gates:
     print("\n## Waiting on you")
     for g in gates:
-        print("- **%s** on %s (%s): %s" % (g["gate"], g["item"], g["time"], str(g["message"]).splitlines()[0] if g["message"] != "" else ""))
+        print("- **%s** on %s (%s): %s%s" % (g["gate"], g["item"], g["time"], str(g["message"]).splitlines()[0] if g["message"] != "" else "", roles_of(g)))
 now = time.time()
 waiting = [g for g in gates if now - epoch(g["time"]) > reminder]
 dead = [r for r in runs if not r["alive"] and not r["starting"]]
