@@ -459,6 +459,20 @@ test('OptionPressed_ClearsWithThatOptionsNumber', async () => {
   expect(posted[0], 'because gate.sh clear --option 2 sends the option text the agent wrote, never a retyped sentence').toEqual({ kind: 'gate.clear', args: { item: 'gh#755', option: '2' } });
 });
 
+test('VerdictGateWithOptions_ShowsVerdictAndOptionButtons', () => {
+  renderGate({ ...waitingGate('gh#756', 'feel-test'), message: 'Launch it and sign off.', questions: [], options: OPTIONS_GATE.options });
+  const group = screen.getByRole('group', { name: 'Pick an answer' });
+  expect(within(group).getAllByRole('button').map((button) => button.textContent), 'because a verdict gate raised with options offers them, its footer being hidden').toEqual(['1. Clamp the velocity', '2. Damp the spin', '3. Rewrite the contact']);
+  expect(screen.getByRole('button', { name: 'Sign off' }), 'because the options sit beside the verdict, not instead of it').toBeTruthy();
+});
+
+test('VerdictOptionPressed_ClearsWithThatOptionsNumber', async () => {
+  const { daemon, posted } = recordingDaemon();
+  renderGate({ ...PLAN_GATE, item: 'gh#757', options: OPTIONS_GATE.options }, daemon);
+  await press('3. Rewrite the contact');
+  expect(posted[0], 'because an option on a plan gate clears it like an option anywhere').toEqual({ kind: 'gate.clear', args: { item: 'gh#757', option: '3' } });
+});
+
 test('GateWithoutOptions_NoOptionButtons', () => {
   renderGate(ASKING);
   expect(screen.queryByRole('group', { name: 'Pick an answer' }), 'because a gate raised without options, or by an older flow, is answered in words').toBeNull();

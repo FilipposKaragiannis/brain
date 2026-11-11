@@ -369,7 +369,8 @@ type DecisionCardProps = { gate: Gate; twins: Gate[]; snapshot: Snapshot; draft:
 /** One gate as a decision: what it is about, and the answers that fit this kind of gate. */
 export function DecisionCard({ gate, twins, snapshot, draft, onAnswer }: DecisionCardProps) {
   const form = formOf(gate);
-  const choosing = form === 'answers' && gate.options.length > 0;
+  // Options show on any gate raised with them: the footer steps aside for them, so hiding them leaves no way to answer.
+  const choosing = gate.options.length > 0;
   const asksNumberedQuestions = form === 'answers' && !choosing;
   const { brief, numbered } = asksNumberedQuestions ? gateBrief(gate.message) : { brief: gate.message.trim(), numbered: false };
   const { ask: written, rest } = gateAsk(brief);
