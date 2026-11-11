@@ -6,7 +6,7 @@ import type { PaneFacts, PaneHost, PaneRequest } from '../src/panePlan.ts';
 import type { PaneControl, PaneNotice } from '../src/paneProtocol.ts';
 import { MAXIMUM_PANES, OUTPUT_HIGH_WATER_BYTES, OUTPUT_LOW_WATER_BYTES, PANE_CLOSE, PANE_KILL_GRACE_MILLISECONDS, PAUSED_EXIT_CHECK_MILLISECONDS } from '../src/paneProtocol.ts';
 import { PaneSessions } from '../src/panes.ts';
-import type { PaneLink } from '../src/panes.ts';
+import type { PaneLink, PtySpawner } from '../src/panes.ts';
 import { fakePty } from './fakePty.ts';
 import type { FakePty } from './fakePty.ts';
 import { fakeScheduler } from './fakeSpawner.ts';
@@ -56,6 +56,11 @@ function fakeLink(): FakeLink {
 
 function sessions(refusal: string | null) {
   const { spawner, ptys } = fakePty(refusal);
+  return sessionsOver(spawner, ptys);
+}
+
+/** Pane sessions over a given spawner; `ptys` is what the test reads back, empty for a spawner that starts none. */
+function sessionsOver(spawner: PtySpawner, ptys: FakePty[]) {
   const timers = fakeScheduler();
   const panes = new PaneSessions({ spawner, host: HOST, scheduler: timers.scheduler, log: silentLogger });
   const open = (request: PaneRequest, project: { id: string; root: string }): FakeLink => {
@@ -147,15 +152,23 @@ test('LinkGone_HangsUpThePty', () => {
   assert.equal(only(ptys).exited, true, 'because a closed terminal hangs up its processes, as any terminal does, before any kill grace runs out');
 });
 
-test('LinkGone_ProcessIgnoringHangUp_KilledOnlyAfterTheGrace', () => {
+test('LinkGone_ProcessIgnoringHangUp_StillRunningBeforeTheGrace', () => {
+  const { open, ptys } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.ignoresHangUp = true;
+  link.go();
+  assert.equal(pty.exited, false, 'because a process that ignores the hang-up gets the whole grace before any kill');
+});
+
+test('LinkGone_ProcessIgnoringHangUp_KilledOnceTheGraceRunsOut', () => {
   const { open, ptys, timers } = sessions(null);
   const link = open(SHELL_AT_ROOT, PROJECT);
   const pty = only(ptys);
   pty.ignoresHangUp = true;
   link.go();
-  const beforeGrace = [...pty.signals];
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
-  assert.deepEqual([beforeGrace, pty.signals], [['SIGHUP'], ['SIGHUP', 'SIGKILL']], 'because a process that ignores the hang-up gets the grace, then is killed');
+  assert.equal(pty.exited, true, 'because a process that outlives the grace is killed, so a closed pane leaves nothing running');
 });
 
 test('LinkGone_AfterTheGrace_MasterClosed', () => {
@@ -388,4 +401,69 @@ test('PausedPaneResumed_NoExitCheckLeftBehind', () => {
   const { link, timers } = pausedPane();
   link.control({ type: 'ack', bytes: OUTPUT_HIGH_WATER_BYTES + 1 });
   assert.deepEqual(timers.pending().filter((milliseconds) => milliseconds === PAUSED_EXIT_CHECK_MILLISECONDS), [], 'because a pty that reads on needs no check for an exit it will read itself');
+});
+
+/** A spawner whose ptys throw on write and resize, as node-pty does once the master's fd is destroyed. */
+function brokenPtys(): { spawner: PtySpawner; ptys: FakePty[] } {
+  const { spawner, ptys } = fakePty(null);
+  const broken: PtySpawner = (launch, size, environment) => {
+    const spawned = spawner(launch, size, environment);
+    if (!spawned.ok) return spawned;
+    const destroyed = (): never => { throw new Error('ioctl(2) failed, EBADF'); };
+    return { ok: true, pty: { ...spawned.pty, write: destroyed, resize: destroyed } };
+  };
+  return { spawner: broken, ptys };
+}
+
+test('LinkGone_ProcessStillRunning_InputNoLongerReachesThePty', () => {
+  const { open, ptys } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.ignoresHangUp = true;
+  link.go();
+  link.type(bytes('rm -rf ~\r'));
+  assert.deepEqual(pty.received, [], 'because a hung-up pane is on its way out, and its master may already be closed');
+});
+
+test('LinkGone_ProcessStillRunning_ResizeNoLongerReachesThePty', () => {
+  const { open, ptys } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.ignoresHangUp = true;
+  link.go();
+  link.control({ type: 'resize', cols: 97, rows: 51 });
+  assert.deepEqual(pty.size, { columns: 120, rows: 33 }, 'because resizing a hung-up pane\'s closed master would throw out of the socket listener');
+});
+
+test('EndProject_ProcessStillRunning_InputNoLongerReachesThePty', () => {
+  const { panes, open, ptys } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.ignoresHangUp = true;
+  panes.endProject(PROJECT.id);
+  link.type(bytes('ls\r'));
+  assert.deepEqual(pty.received, [], 'because a client that ignores the 4404 close must not reach a pane being hung up');
+});
+
+test('PtyWriteThrows_TypingDoesNotThrow', () => {
+  const { spawner, ptys } = brokenPtys();
+  const { open } = sessionsOver(spawner, ptys);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  assert.doesNotThrow(() => link.type(bytes('ls\r')), 'because a throw out of the socket listener ends the whole daemon');
+});
+
+test('PtyResizeThrows_ResizeDoesNotThrow', () => {
+  const { spawner, ptys } = brokenPtys();
+  const { open } = sessionsOver(spawner, ptys);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  assert.doesNotThrow(() => link.control({ type: 'resize', cols: 97, rows: 51 }), 'because a throw out of the socket listener ends the whole daemon');
+});
+
+test('PtyWriteThrows_PaneStaysOpen', () => {
+  const { spawner, ptys } = brokenPtys();
+  const { open } = sessionsOver(spawner, ptys);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  link.type(bytes('ls\r'));
+  only(ptys).emit(bytes('still here'));
+  assert.equal(new TextDecoder().decode(Buffer.concat(link.output)), 'still here', 'because one failed write leaves the pane and its output running');
 });
