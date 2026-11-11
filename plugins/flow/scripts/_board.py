@@ -112,7 +112,6 @@ def owner_of(i):
 def gate_of(i):
     gate = i["state"].get("gate") or "none"
     return "none, answer waits on %s" % owner_of(i) if gate == "none" and owner_of(i) else gate
-# The worktree, and the base its claim records when that is not the config base.
 def worktree_of(i):
     worktree = i["state"].get("worktree") or "-"
     base = claimed_bases.get(i["id"], {}).get("base", "")

@@ -57,6 +57,14 @@ pick_again() {
 # item exits with the code.
 pass_over() { echo "$1" >&2; [ -z "$named" ] || exit "$2"; pick_again; }
 run_file() { printf '%s/runs/%s.json' "$home" "$(item_slug "$1")"; }
+# fetch_claim_base <item> <item-json>: `<branch>\t<why>`, the base a claim of the item starts from,
+# as lib/base.sh fetch_item_base resolves it; 1 when its `base:` line names a missing branch. An item
+# that holds a claim keeps the base it was claimed from (steward.sh claim ignores --base), so it gets
+# the config base and no why, and nothing is fetched.
+fetch_claim_base() {
+  if [ -n "$("$FLOW_PLUGIN/scripts/steward.sh" find "$1")" ]; then printf '%s\t' "$(cfg_or base main)"; return 0; fi
+  fetch_item_base "$2"
+}
 
 # The ready list is read before the pick lock is taken: listing a tracker can take a minute, and
 # a worker that waits that long on the lock gives up. The lock covers what must not race: the
@@ -152,23 +160,15 @@ agent="$(step_field "$step" agent)"; skill="$(step_field "$step" skill)"; summar
 depth="$(json_get "$profiles" "review_depth.$profile")"
 # The architect runs where its cost pays: the profile's switch in profiles.json (architect).
 architect=no; [ "$(json_get "$profiles" "architect.$profile")" = true ] && architect=yes
-# base, set below: the branch the item's work starts from and merges into, one value for the brief,
-# the JSON, the pre-verify sync and the notes after a hold or a wait. With a worktree it is the
-# claim's (claim.json), without one the item state's (state.base, recorded at claim); a claim made
-# before the base was recorded falls back to the config base.
 config_base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
-  # A new claim starts from the item's base (lib/base.sh), resolved here once; an item that holds
-  # a claim keeps the base it was claimed from. A `base:` line naming a missing branch holds the
-  # item: a claim from the config base would put its work on the wrong history.
-  claim_base="$config_base"; claim_why=""
-  if [ -z "$("$FLOW_PLUGIN/scripts/steward.sh" find "$item")" ]; then
-    resolved="$(resolve_base "$data")"; resolved_code=$?
-    claim_base="$(printf '%s\n' "$resolved" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved" | cut -f2-)"
-    if [ "$resolved_code" -ne 0 ]; then
-      adapter write-state "$item" "last_event=$(now_iso) its base $claim_base is not on the remote" >/dev/null
-      pass_over "$item: its base $claim_base is not on the remote" 4
-    fi
+  # A `base:` line naming a missing branch holds the item: a claim from the config base would put
+  # its work on the wrong history.
+  resolved="$(fetch_claim_base "$item" "$data")"; resolved_code=$?
+  claim_base="$(printf '%s\n' "$resolved" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved" | cut -f2-)"
+  if [ "$resolved_code" -ne 0 ]; then
+    adapter write-state "$item" "last_event=$(now_iso) its base $claim_base is not on the remote" >/dev/null
+    pass_over "$item: its base $claim_base is not on the remote" 4
   fi
   wt="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$item" --base "$claim_base")" || {
     code=$?
@@ -184,6 +184,7 @@ else
   wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$config_base")"
   base="$(state_get "$data" base)"
 fi
+# A claim made before the base was recorded holds none: it was cut from the config base.
 [ -n "$base" ] || base="$config_base"
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
