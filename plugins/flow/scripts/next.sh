@@ -185,7 +185,7 @@ else
   base="$(state_get "$data" base)"
 fi
 # A claim made before the base was recorded holds none: it was cut from the config base.
-[ -n "$base" ] || base="$config_base"
+base_name_valid "$base" || base="$config_base"
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
@@ -208,7 +208,7 @@ flow_unlock
 if [ "$step" = verify ] && [ "$(step_field verify worktree)" = true ] && [ ! -s "$reports/sync.md" ] &&
    [ "$(git -C "$wt" symbolic-ref --short -q HEAD)" = "$branch" ] &&
    [ -z "$(git -C "$wt" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; then
-  git -C "$wt" remote get-url origin >/dev/null 2>&1 && git -C "$wt" fetch -q origin "$base" 2>/dev/null
+  git -C "$wt" remote get-url origin >/dev/null 2>&1 && git -C "$wt" fetch -q origin -- "$base" 2>/dev/null
   vref="$base"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$base" && vref="origin/$base"
   behind="$(git -C "$wt" rev-list --count "HEAD..$vref" 2>/dev/null)"
   if [ "${behind:-0}" -gt 0 ]; then
