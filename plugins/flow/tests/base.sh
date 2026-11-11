@@ -105,7 +105,7 @@ check "VerifyStepOnEpicChildWhileMainIsAhead_SyncLeavesMainOut: the merge before
 check "VerifyOnEpicChild_ChangedFilesAreOnlyTheItemsOwn: verify.sh diffs against the recorded base, so the epic's files are not counted as the item's" \
   '[ "$(jget changed_files < "$("$P/scripts/steward.sh" reports "$child")/verify.json")" = "[\"own.txt\"]" ]'
 git -C "$wt" fetch -q origin
-check "PrDiffOfEpicChildWhileMainIsAhead_ListsOnlyTheItemsOwnFile: the PR against the recorded base shows one file, not main's drift" \
+check "PrDiffProxyOfEpicChildWhileMainIsAhead_ListsOnlyTheItemsOwnFile: git diff base...branch, the diff a PR against the recorded base shows, has the one file the item made, not main's drift" \
   '[ "$(git -C "$wt" diff --name-only "origin/$eb...$br")" = own.txt ]'
 
 echo "base: the hold-release note names the recorded base"
@@ -118,9 +118,9 @@ rm -f "$(run_file "$held")"
 "$P/scripts/next.sh" "$held" --json > "$work/held.json" 2>/dev/null
 awk '/^## The hold is over/ { on = 1; next } /^## / { on = 0 } on' "$(jget brief < "$work/held.json")" > "$work/hold.section"
 check "HeldEpicChildReleased_NoteMergesTheEpicBranch: the release note has the agent merge the recorded base" \
-  'grep -qF "$eb\`" "$work/hold.section"'
+  'grep -qF "git merge origin/$eb\`" "$work/hold.section"'
 check "HeldEpicChildReleased_NoteDoesNotMergeMain: the release note never sends an epic child to merge the config base" \
-  '[ -s "$work/hold.section" ] && ! grep -qF "main\`" "$work/hold.section"'
+  '[ -s "$work/hold.section" ] && ! grep -qF "origin/main" "$work/hold.section"'
 
 echo "base: the board and init name the base"
 plain="$(new_task "Plain docs")"
@@ -129,8 +129,9 @@ plain="$(new_task "Plain docs")"
 check "BoardWithEpicChild_RowShowsItsBase: the board names a base that is not the config base beside the worktree" \
   'awk -v row="| $child |" "index(\$0, row) == 1" "$work/board.txt" | grep -qF "base $eb"'
 awk -v row="| $plain |" 'index($0, row) == 1' "$work/board.txt" > "$work/plain.row"
-check "BoardWithConfigBaseItem_RowShowsNoBase: an item on the config base gets no base marker" \
-  'grep -qF "$(basename "$("$P/scripts/steward.sh" find "$plain")")" "$work/plain.row" && ! grep -qF "base " "$work/plain.row"'
+plain_cell="$(awk -F'|' '{ gsub(/^ +| +$/, "", $9); print $9 }' "$work/plain.row")"
+check "BoardWithConfigBaseItem_WorktreeCellIsTheBareWorktree: an item on the config base gets no base marker beside its worktree" \
+  '[ "$plain_cell" = "$(basename "$("$P/scripts/steward.sh" find "$plain")")" ]'
 "$P/scripts/board.sh" --json 2>/dev/null > "$work/board.json"
 check "BoardJsonWithEpicChild_PoolEntryCarriesTheBase: the board model's pool entry for the claim names its recorded base" \
   'python3 -c "import json,sys; p=[w for w in json.load(open(sys.argv[1]))[\"pool\"] if w.get(\"item\")==sys.argv[2]]; assert p and p[0][\"base\"]==sys.argv[3], p" "$work/board.json" "$child" "$eb"'
@@ -160,11 +161,18 @@ check "GrandchildWhoseParentHasNoEpicBranch_TakesTheGrandparentsEpicBranch: the 
   '[ "$(claim_base "$grandchild")" = "$gb" ]'
 parent="$(new_task "Tuning instrument")"
 "$P/scripts/steward.sh" claim "$parent" >/dev/null 2>&1
+# the parent's own epic/<n> is on the remote too, so the claim must choose between the two
+remote_branch "$(epic_of "$parent")"
 kid="$(new_task "Tuning panel" "$parent")"
 "$P/scripts/next.sh" "$kid" >/dev/null 2>&1
-check "ChildOfAClaimedParent_TakesTheParentsTaskBranch: a parent's claimed branch wins, so the child's PR lands on its parent's work" \
+check "ChildOfAClaimedParentThatAlsoHasAnEpicBranch_TakesTheParentsTaskBranch: a parent's claimed branch comes before any epic branch, so the child's PR lands on its parent's work" \
   '[ "$(claim_base "$kid")" = "flow/$(slug "$parent")" ]'
 remote_branch plan/sandbox; remote_commit plan/sandbox plan.txt
+ruled="$(new_task "Drill scoring" "$grand" "base: plan/sandbox
+$body")"
+"$P/scripts/next.sh" "$ruled" >/dev/null 2>&1
+check "EpicChildWithABaseLine_TakesTheEpicBranch: an ancestor's epic branch comes before a base: line, so a child of an epic stays on the epic" \
+  '[ "$(claim_base "$ruled")" = "$gb" ]'
 lined="$(new_task "Sandbox plan" "" "base: plan/sandbox
 $body")"
 "$P/scripts/next.sh" "$lined" >/dev/null 2>&1; git fetch -q origin
@@ -193,6 +201,11 @@ check "BaseLineNamingAMissingBranch_ClaimsNoWorktree: the item is never claimed 
   '[ -z "$("$P/scripts/steward.sh" find "$missing")" ]'
 check "BaseLineNamingAMissingBranch_LastEventNamesTheBranch: the owner sees which base is missing" \
   'state "$missing" last_event | grep -qF plan/gone'
+unsafe="$(new_task "Odd plan" "" "base: plan/x;id
+$body")"
+"$P/scripts/next.sh" "$unsafe" >/dev/null 2>&1
+check "BaseLineWithAShellCharacter_ClaimsNoWorktree: a base: name outside the safe characters is refused, never claimed from the config base, so it cannot reach a brief or a git command" \
+  '[ -z "$("$P/scripts/steward.sh" find "$unsafe")" ]'
 
 [ "$fails" -eq 0 ] && { echo "base: ok"; exit 0; }
 echo "base: $fails failed"; exit 1
