@@ -1,6 +1,6 @@
 name = "security-reviewer"
 description = "Reviews a diff for security risks: injection, auth gaps, secrets, unsafe defaults. Use when the diff touches input, auth, storage or network."
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """

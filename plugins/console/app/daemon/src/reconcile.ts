@@ -15,7 +15,7 @@ import {
   mentionReviewWaiting, reviewChangesRequested,
 } from './snapshot.ts';
 import type {
-  Agent, AttentionRow, CloseReason, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, MergedPull, NewerConsole,
+  Agent, AttentionRow, CloseReason, EndedAgent, Claim, Counts, Disagreement, DisagreementAction, Freshness, Gate, InstalledPlugin, Item, ItemSpend, ItemState, Job, JobRun, JobState, JobWorker, LabelGate, MergedPull, NewerConsole,
   ProcessInfo, ProcessListStatus, ProjectInfo, PullRequest, PullState, Readiness, ReadyToClose, Run, RunLiveness, Server, SessionRef, Snapshot, SourceName, StoppedHost, TrackerInfo, Worktree, WorktreeFlag, WorktreeRole, WorktreeState,
 } from './snapshot.ts';
 
@@ -74,6 +74,10 @@ const CLOSE_TODO: Record<CloseReason, string> = {
   'children-closed': 'Every child is closed: close the parent.',
   'steps-done': 'Every step ran: merge or close.',
 };
+/** What a board item's `state.gate` holds when no tracker label names a gate (an empty value means the same). */
+const NO_LABEL_GATE = 'none';
+/** The needs-you row of a gate only the tracker label sets: there is no question to show. */
+export const LABEL_GATE_DETAIL = 'No question recorded: only the tracker label is set (no gate.sh raise).';
 
 export function ageSeconds(from: string | null, now: Date): number | null {
   if (from === null || from.length === 0) return null;
@@ -286,6 +290,12 @@ function commentsSkipped(worktree: Worktree, pulls: PullRequest[]): boolean {
   return worktree.role === 'pool' && worktree.item !== null && worktree.flags.includes('session') && pulls.some((pull) => pull.item === worktree.item);
 }
 
+/** The gate the item's tracker label names, or null when the label names none. */
+function labelGate(boardItem: BoardItem): string | null {
+  const gate = boardItem.state.gate;
+  return gate === '' || gate === NO_LABEL_GATE ? null : gate;
+}
+
 function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate: GateRecord | null, inReview = false): ItemState {
   // A done item whose merge gate waits on its reviewers is in review: not the owner's, not blocked, claimed or not.
   if (worktree !== null && worktree.state === 'claimed' && inReview) return 'in-review';
@@ -296,6 +306,9 @@ function itemState(boardItem: BoardItem | null, worktree: Worktree | null, gate:
   if (boardItem === null) return 'claimed';
   if (boardItem.status !== 'open') return 'done';
   if (inReview) return 'in-review';
+  // The flow's ready list leaves out an item its tracker label gates, whether or not a gate record
+  // backs the label. A merge gate held in review keeps its record, so the record wins above.
+  if (labelGate(boardItem) !== null) return 'needs-you';
   // The flow's ready list leaves these out: every step ran, or the item is split. The owner
   // merges or closes a done item and a split one whose children are closed; open children block.
   if (closeReason(boardItem) !== null) return 'needs-you';
@@ -384,9 +397,10 @@ function eventTime(lastEvent: string | null): string | null {
 }
 
 /**
- * The items that need you with no gate up: every step ran, or every child of a split is closed.
- * Each is `needs-you`, and with the gates they are everything that is, so the Gates screen and the
- * needs-you count list the same set. Oldest last event first.
+ * The items that need you with no gate up, neither a record nor a tracker label: every step ran,
+ * or every child of a split is closed. Each is `needs-you`, and with the gates and the label gates
+ * they are everything that is, so the Gates screen and the needs-you count list the same set.
+ * Oldest last event first.
  */
 function buildToClose(input: ReconcileInput, items: Item[], pulls: PullRequest[]): ReadyToClose[] {
   const gated = new Set(input.flow.gates.map((gate) => gate.item));
@@ -395,11 +409,29 @@ function buildToClose(input: ReconcileInput, items: Item[], pulls: PullRequest[]
     const boardItem = board.get(item.id);
     const reason = boardItem === undefined ? null : closeReason(boardItem);
     if (item.state !== 'needs-you' || gated.has(item.id) || reason === null) return [];
+    if (boardItem !== undefined && labelGate(boardItem) !== null) return [];
     const sinceAt = eventTime(item.lastEvent);
     return [{
       item: item.id, title: item.title, url: item.url, reason, todo: CLOSE_TODO[reason], worktree: item.worktree,
       pull: gatePull(item.id, items, pulls), sinceAt, ageSeconds: ageSeconds(sinceAt, input.now),
     }];
+  }).sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
+}
+
+/**
+ * The needs-you items a tracker label gates with no gate record behind it, so no question was
+ * recorded. With the gates and the items to close, each needs-you item is listed exactly once.
+ * Oldest last event first.
+ */
+function buildLabelGates(input: ReconcileInput, items: Item[]): LabelGate[] {
+  const gated = new Set(input.flow.gates.map((gate) => gate.item));
+  const board = new Map((input.board?.items ?? []).map((item) => [item.id, item]));
+  return items.flatMap((item) => {
+    const boardItem = board.get(item.id);
+    const gate = boardItem === undefined ? null : labelGate(boardItem);
+    if (item.state !== 'needs-you' || gated.has(item.id) || gate === null) return [];
+    const sinceAt = eventTime(item.lastEvent);
+    return [{ item: item.id, title: item.title, url: item.url, gate, worktree: item.worktree, sinceAt, ageSeconds: ageSeconds(sinceAt, input.now) }];
   }).sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
 
@@ -879,7 +911,7 @@ function needsFieldAttention(items: Item[]): AttentionRow[] {
 }
 
 /** A stop's cause in words, as flow's `host_cause_said` says it. */
-const CAUSE_SAID: Record<string, string> = { 'spend-limit': 'a spend limit', auth: 'an auth error' };
+const CAUSE_SAID: Record<string, string> = { 'spend-limit': 'a spend limit', auth: 'an auth error', model: 'an unknown model' };
 
 /** A stopped host's row: the host, the cause in words and what the host said, with the button that clears it (`gate.sh clear <host>`). */
 function stoppedHostAttention(stopped: StoppedHost, now: Date): AttentionRow {
@@ -894,15 +926,18 @@ function stoppedHostAttention(stopped: StoppedHost, now: Date): AttentionRow {
   };
 }
 
-type AttentionSources = { gates: Gate[]; toClose: ReadyToClose[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[]; stoppedHosts: StoppedHost[] };
+type AttentionSources = { gates: Gate[]; toClose: ReadyToClose[]; labelGates: LabelGate[]; worktrees: Worktree[]; items: Item[]; runs: Run[]; jobs: Job[]; pulls: PullRequest[]; disagreements: Disagreement[]; stoppedHosts: StoppedHost[] };
 
-function buildAttention({ gates, toClose, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts }: AttentionSources, now: Date): AttentionRow[] {
+function buildAttention({ gates, toClose, labelGates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts }: AttentionSources, now: Date): AttentionRow[] {
   const rows: AttentionRow[] = stoppedHosts.map((stopped) => stoppedHostAttention(stopped, now));
   for (const gate of gates) {
     rows.push({ kind: 'gate', gate: gate.gate, id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds, action: null });
   }
   for (const close of toClose) {
     rows.push({ kind: 'close', gate: null, id: close.item, title: `${close.item} is ready to close`, detail: close.todo, worktree: close.worktree, sinceAt: close.sinceAt, ageSeconds: close.ageSeconds, action: null });
+  }
+  for (const label of labelGates) {
+    rows.push({ kind: 'label-gate', gate: label.gate, id: label.item, title: `${label.gate} gate on ${label.item}`, detail: LABEL_GATE_DETAIL, worktree: label.worktree, sinceAt: label.sinceAt, ageSeconds: label.ageSeconds, action: null });
   }
   for (const run of runs.filter((entry) => entry.liveness === 'dead')) {
     rows.push({ kind: 'dead-run', gate: null, id: run.item, title: `${run.item} has a run record but no process`, detail: `step ${run.step} in ${run.worktree}`, worktree: run.worktree, sinceAt: run.startedAt, ageSeconds: ageSeconds(run.startedAt, now), action: null });
@@ -921,15 +956,15 @@ function buildAttention({ gates, toClose, worktrees, items, runs, jobs, pulls, d
   return rows.sort((left, right) => (right.ageSeconds ?? -1) - (left.ageSeconds ?? -1));
 }
 
-type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; toClose: ReadyToClose[]; pulls: PullRequest[]; disagreements: Disagreement[]; lessonsSinceRetro: number };
+type CountSources = { worktrees: Worktree[]; items: Item[]; agents: Agent[]; jobs: Job[]; gates: Gate[]; toClose: ReadyToClose[]; labelGates: LabelGate[]; pulls: PullRequest[]; disagreements: Disagreement[]; lessonsSinceRetro: number };
 
-function buildCounts({ worktrees, items, agents, jobs, gates, toClose, pulls, disagreements, lessonsSinceRetro }: CountSources): Counts {
+function buildCounts({ worktrees, items, agents, jobs, gates, toClose, labelGates, pulls, disagreements, lessonsSinceRetro }: CountSources): Counts {
   const pool = worktrees.filter((entry) => entry.role === 'pool');
   const count = (state: WorktreeState): number => pool.filter((entry) => entry.state === state).length;
   const itemCount = (state: ItemState): number => items.filter((entry) => entry.state === state).length;
   const pullCount = (state: PullState): number => pulls.filter((entry) => entry.state === state).length;
   return {
-    needsYou: gates.length + toClose.length, running: count('running'), stale: count('stale'),
+    needsYou: gates.length + toClose.length + labelGates.length, running: count('running'), stale: count('stale'),
     waiting: count('waiting'), held: count('held'), claimed: count('claimed'), free: count('free'),
     agents: agents.filter((entry) => entry.kind === 'agent').length, jobsRunning: jobs.filter((entry) => entry.state === 'running').length,
     itemsReady: itemCount('ready'), itemsBlocked: itemCount('blocked'), itemsBacklog: itemCount('backlog'), itemsDone: itemCount('done'),
@@ -1044,6 +1079,7 @@ export function reconcile(given: ReconcileInput): Snapshot {
   const worktrees = withCommentsSkipped(built, pulls);
   const gates = buildGates(input, contexts, items, pulls);
   const toClose = buildToClose(input, items, pulls);
+  const labelGates = buildLabelGates(input, items);
   const found = buildDisagreements(input, contexts, items, pulls);
   const disagreements = input.settle === undefined ? found : input.settle(found);
   return {
@@ -1051,10 +1087,10 @@ export function reconcile(given: ReconcileInput): Snapshot {
     takenAt: input.now.toISOString(),
     project: projectInfo(input, jobs),
     sources: input.sources,
-    counts: buildCounts({ worktrees, items, agents, jobs, gates, toClose, pulls, disagreements, lessonsSinceRetro: lessonsSinceRetro(input.flow.retro) }),
+    counts: buildCounts({ worktrees, items, agents, jobs, gates, toClose, labelGates, pulls, disagreements, lessonsSinceRetro: lessonsSinceRetro(input.flow.retro) }),
     readiness: buildReadiness(items),
-    attention: buildAttention({ gates, toClose, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
-    worktrees, items, gates, toClose, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, servers, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
+    attention: buildAttention({ gates, toClose, labelGates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
+    worktrees, items, gates, toClose, labelGates, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, servers, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
     mergedToday: buildMergedToday(input, items),
     events: input.flow.events,
     lessons: input.flow.retro.lessons,

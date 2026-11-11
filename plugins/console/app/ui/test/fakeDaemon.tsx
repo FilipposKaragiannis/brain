@@ -132,7 +132,7 @@ export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
     counts: { needsYou, running: 0, stale: 0, waiting: 0, held: 0, claimed: 0, free: 0, agents: 0, jobsRunning: 0, itemsReady: 0, itemsBlocked: 0, itemsBacklog: 0, itemsDone: 0, disagreements: 0, pullsMergeable: 0, pullsFailing: 0, pullsChangesRequested: 0, needsField: 0, lessonsSinceRetro: 0 },
     readiness: { ready: 0, waitingOnField: 0, blocked: 0, held: 0, gated: 0, nextInLineMissingField: 0 },
-    attention: [], worktrees: [], items: [], gates: [], toClose: [], runs: [], agents: [], processList: { status: 'complete' }, servers: [], ended: [], jobs: [], stoppedHosts: [], events: [], lessons: [], retros: [], disagreements: [], pulls: [], mergedToday: [],
+    attention: [], worktrees: [], items: [], gates: [], toClose: [], labelGates: [], runs: [], agents: [], processList: { status: 'complete' }, servers: [], ended: [], jobs: [], stoppedHosts: [], events: [], lessons: [], retros: [], disagreements: [], pulls: [], mergedToday: [],
     newerConsole: null,
   };
 }
