@@ -5,6 +5,7 @@ import type { CommandRequest, CommandResult, CommandRunner } from '../src/collec
 import type { GateQuestionCache } from '../src/collectors/flowHome.ts';
 import { parseFlowConfig, parseGateList, pluginHasGateJson, pluginVersionOf, readAdapterPrefixes, readFlowHome, readStoppedHosts } from '../src/collectors/flowHome.ts';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { MOST_GATE_OPTIONS } from '../src/snapshot.ts';
 import os from 'node:os';
 import { FAKE_PLUGIN, FIXTURES, FIXTURE_ROOT, GATE_LIST_JSON, GATE_RECORD, fakeGateList, fakeRunner } from './fakeRunner.ts';
 
@@ -413,6 +414,22 @@ test('GateRecordWithFooter_FooterRead', async () => {
 test('GateRecordOptionWithEmptyLabel_NoOptionsAtAll', async () => {
   const gate = await gateWith({ ...OPTIONED_RECORD, options: [{ label: '', text: 'Keep it.', recommended: false }, OPTIONED_RECORD.options[1]] });
   assert.deepEqual(gate.options, [], 'because dropping one malformed option would renumber the rest, and a button would send another option than it shows');
+});
+
+/** `count` well-formed options, the first one recommended, each one's text naming its number. */
+function optionsCounting(count: number) {
+  return Array.from({ length: count }, (_, index) => ({ label: `Choice ${index + 1}`, text: `Do thing ${index + 1}.`, recommended: index === 0 }));
+}
+
+test('GateRecordWithAsManyOptionsAsTheLimit_EveryOptionRead', async () => {
+  const atTheLimit = optionsCounting(MOST_GATE_OPTIONS);
+  const gate = await gateWith({ ...OPTIONED_RECORD, options: atTheLimit });
+  assert.deepEqual(gate.options, atTheLimit, 'because gate.sh raise takes up to the limit, and every option it kept must be a button');
+});
+
+test('GateRecordWithOneOptionOverTheLimit_NoOptionsAtAll', async () => {
+  const gate = await gateWith({ ...OPTIONED_RECORD, options: optionsCounting(MOST_GATE_OPTIONS + 1) });
+  assert.deepEqual(gate.options, [], 'because gate.sh clear --option cannot send an option past the limit, so a button for it would fail');
 });
 
 const OLDER_RECORD = { gate: 'ambiguity', item: 'gh#767', message: '1. Keep it?', time: '2026-11-09T09:40:00Z', host: 'shell' };

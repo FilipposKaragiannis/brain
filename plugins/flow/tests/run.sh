@@ -3535,6 +3535,18 @@ check "raise with two options both recommended: it lists no options" [ "$(ogate 
 check "clear --option on a gate with no options: refused, exit 2" [ "$code" -eq 2 ]
 "$P/scripts/gate.sh" clear "$oc" "Do A." >/dev/null 2>&1
 
+# The option limit is _gates.py's MOST_OPTIONS: a gate raised with that many lists them all, one more lists none.
+omost="$(sed -n 's/^FEWEST_OPTIONS, MOST_OPTIONS = [0-9][0-9]*, \([0-9][0-9]*\)$/\1/p' "$P/scripts/_gates.py")"
+ooptions() { python3 -c 'import json,sys; print(json.dumps([{"label": "Choice %d" % n, "text": "Do thing %d." % n, "recommended": n == 1} for n in range(1, int(sys.argv[1]) + 1)]))' "$1"; }
+olimit="$(ooptions "$omost")"; oover="$(ooptions "$((omost + 1))")"
+oo="$(oitem 'Many options')"; "$P/adapters/local/write-state.sh" "$oo" step=implement
+"$P/scripts/gate.sh" raise "$oo" ambiguity "**Which of many?**" --options "$olimit" >/dev/null 2>&1
+check "raise with as many options as the limit: it lists every one" python3 -c 'import json,sys; assert json.loads(sys.argv[1]) == json.loads(sys.argv[2])' "$(ogate "$oo" options)" "$olimit"
+"$P/scripts/gate.sh" clear "$oo" >/dev/null 2>&1
+"$P/scripts/gate.sh" raise "$oo" ambiguity "**Which of too many?**" --options "$oover" >/dev/null 2>&1
+check "raise with one option over the limit: it lists no options" [ "$(ogate "$oo" options)" = "[]" ]
+"$P/scripts/gate.sh" clear "$oo" >/dev/null 2>&1
+
 json_obj gate=escalation item=local:task/98 "message=Raised before 1.36." time=2026-10-24T10:00:00Z host=shell > .flow/gates/local-task-98.json
 check "a record from an older flow lists an empty options array" [ "$(ogate local:task/98 options)" = "[]" ]
 check "a record from an older flow lists no condition" [ "$(ogate local:task/98 condition)" = null ]
@@ -3614,6 +3626,11 @@ check "health on a record whose blocked_by is a path: the gate stays" [ "$(ostat
 (. "$P/lib/flow.sh"; adapter read "$oclimb") >/dev/null 2>&1; code=$?
 check "adapter with a path for an adapter name: refused, exit 2" [ "$code" -eq 2 ]
 check "adapter with a path for an adapter name: the path's read.sh never runs" [ ! -f "$oplant/ran" ]
+(. "$P/lib/flow.sh"; adapter read ..) >/dev/null 2>&1; code=$?
+check "adapter with a leading-dot name and no slash: refused, exit 2" [ "$code" -eq 2 ]
+"$P/scripts/gate.sh" raise "$on" escalation "**Waits on gh#772.**" --condition "blocked_by:gh#772" >/dev/null 2>&1
+check "condition blocked_by with a GitHub issue id: the adapter owns it, so the gate keeps it" [ "$(ogate "$on" condition)" = "blocked_by:gh#772" ]
+"$P/scripts/gate.sh" clear "$on" >/dev/null 2>&1
 
 oi="$(oitem 'A conflicting PR')"; "$P/adapters/local/write-state.sh" "$oi" step=done
 "$P/adapters/local/link-pr.sh" "$oi" https://github.com/acme/widgets/pull/90

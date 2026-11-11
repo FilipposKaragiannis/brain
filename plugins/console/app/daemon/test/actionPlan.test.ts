@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, QUIZ_SINCE, REVIEW_ASK, SYNC_SCRIPT, sweepNote } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
+import { MOST_GATE_OPTIONS } from '../src/snapshot.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 
@@ -843,6 +844,12 @@ test('SessionStop_NoProcessReader_Refused', () => {
 test('GateClear_WithOption_PassesTheOptionFlagAndNumber', () => {
   const plan = planned('gate.clear', { item: 'gh#755', option: '2' });
   assert.deepEqual(plan.args.slice(1), ['clear', 'gh#755', '--option', '2'], "because gate.sh clear --option N sends option N's own text, never a retyped sentence");
+});
+
+test('GateClear_OptionAtTheLimit_Accepted', () => {
+  const lastOption = String(MOST_GATE_OPTIONS);
+  const plan = planned('gate.clear', { item: 'gh#755', option: lastOption });
+  assert.deepEqual(plan.args.slice(1), ['clear', 'gh#755', '--option', lastOption], 'because a gate may carry as many options as the limit, and its last button must clear it');
 });
 
 test('GateClear_OptionWithANote_NoteAfterTheNumber', () => {
