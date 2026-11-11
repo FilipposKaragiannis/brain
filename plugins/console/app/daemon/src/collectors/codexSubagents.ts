@@ -35,6 +35,8 @@ const UNKNOWN_START = Number.MAX_SAFE_INTEGER;
 type Child = { file: string; meta: CodexMeta };
 /** A rollout line as far as the reader looks into it. */
 type RolloutEntry = { type?: unknown; ordinal?: unknown; payload?: { type?: unknown } };
+/** What one read works with: the disk, the reader's cache and the time it reads at. */
+type Reading = { files: SessionFiles; cache: CodexSubagentCache; now: number };
 
 /**
  * The live subagents of each codex session, at every depth, in the same order as `sessions`,
@@ -45,39 +47,56 @@ type RolloutEntry = { type?: unknown; ordinal?: unknown; payload?: { type?: unkn
  * completed. The first lines read are kept until no read used them for the live window.
  */
 export async function codexSubagents(sessions: readonly SessionRef[], dependencies: SubagentReaderDependencies, cache: CodexSubagentCache): Promise<Subagent[][]> {
-  forgetUnused(cache.metas, dependencies.clock().getTime());
-  const children = sessions.length === 0 ? [] : await scanFreshChildren(sessions, dependencies, cache);
-  const rows = new Map<string, Subagent[]>();
+  const reading: Reading = { files: dependencies.files, cache, now: dependencies.clock().getTime() };
+  forgetUnused(cache.metas, reading.now);
+  const children = sessions.length === 0 ? [] : await scanFreshChildren(sessions, dependencies.home, reading);
+  const rows = new Map<string, Subagent[]>(sessions.map((session) => [session.id, []]));
   for (const child of children) {
-    const row = await liveRow(child, dependencies.files);
-    if (row !== null) rows.set(child.meta.rootId, [...(rows.get(child.meta.rootId) ?? []), row]);
+    const row = await liveRow(child, reading.files);
+    if (row !== null) rows.get(child.meta.rootId)?.push(row);
   }
   return sessions.map((session) => (rows.get(session.id) ?? []).toSorted((left, right) => startKey(left) - startKey(right)));
 }
 
 /** The children of the sessions read whose rollouts were written within the live window, from the earliest start of those sessions on. */
-async function scanFreshChildren(sessions: readonly SessionRef[], dependencies: SubagentReaderDependencies, cache: CodexSubagentCache): Promise<Child[]> {
-  const now = dependencies.clock().getTime();
+async function scanFreshChildren(sessions: readonly SessionRef[], home: string, reading: Reading): Promise<Child[]> {
   const roots = new Set(sessions.map((session) => session.id));
-  let since = now;
-  for (const session of sessions) {
-    since = Math.min(since, (await cachedMeta(session.transcript, dependencies.files, cache, now))?.startedMs ?? 0);
-  }
   const children: Child[] = [];
-  for (const folder of codexDayFolders(dependencies.home, since, now)) {
-    for (const name of await dependencies.files.list(folder)) {
-      const file = path.join(folder, name);
-      const modified = name.endsWith(ROLLOUT_EXTENSION) ? await dependencies.files.modifiedMs(file) : null;
-      if (modified === null || now - modified > LIVE_WINDOW_MS) continue;
-      const meta = await cachedMeta(file, dependencies.files, cache, now);
-      if (meta !== null && meta.subagent && meta.id !== meta.rootId && roots.has(meta.rootId)) children.push({ file, meta });
+  for (const folder of codexDayFolders(home, await earliestStart(sessions, reading), reading.now)) {
+    for (const file of await freshRollouts(folder, reading)) {
+      const child = await childOf(file, roots, reading);
+      if (child !== null) children.push(child);
     }
   }
   return children;
 }
 
+/** When the first of the sessions started; one whose start cannot be read counts from the epoch, so the scan goes back as far as it can. */
+async function earliestStart(sessions: readonly SessionRef[], reading: Reading): Promise<number> {
+  let since = reading.now;
+  for (const session of sessions) since = Math.min(since, (await cachedMeta(session.transcript, reading))?.startedMs ?? 0);
+  return since;
+}
+
+/** The rollouts of a day folder written within the live window. */
+async function freshRollouts(folder: string, { files, now }: Reading): Promise<string[]> {
+  const fresh: string[] = [];
+  for (const name of await files.list(folder)) {
+    const file = path.join(folder, name);
+    const modified = name.endsWith(ROLLOUT_EXTENSION) ? await files.modifiedMs(file) : null;
+    if (modified !== null && now - modified <= LIVE_WINDOW_MS) fresh.push(file);
+  }
+  return fresh;
+}
+
+/** The rollout as a child when its first line makes it a subagent of one of `roots`, else null. */
+async function childOf(file: string, roots: ReadonlySet<string>, reading: Reading): Promise<Child | null> {
+  const meta = await cachedMeta(file, reading);
+  return meta !== null && meta.subagent && meta.id !== meta.rootId && roots.has(meta.rootId) ? { file, meta } : null;
+}
+
 /** A rollout's first line from the cache, read and kept there on its first ask, stamped as used at `now`; one that cannot be read yet is asked again next time. */
-async function cachedMeta(file: string, files: SessionFiles, cache: CodexSubagentCache, now: number): Promise<CodexMeta | null> {
+async function cachedMeta(file: string, { files, cache, now }: Reading): Promise<CodexMeta | null> {
   const kept = cache.metas.get(file);
   if (kept !== undefined) { kept.seenMs = now; return kept; }
   const meta = await readCodexMeta(files, file);
