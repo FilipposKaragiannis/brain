@@ -2100,9 +2100,19 @@ sg="$("$P/adapters/github/create.sh" task "Merged with a feel-test gate open")";
 issue_labels() { python3 -c 'import json,sys; print("\n".join(next(i for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2]))["labels"]))' "$FAKE_GH_DIR/issues.json" "${1#gh#}"; }
 check_all "sweep: a gate raised on a GitHub item carries its gate label" 'issue_labels "$sg" | grep -qx gate:feel-test'
 fake_pr MERGED "$(commit_in "$wg" felt)"
-"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+"$P/scripts/steward.sh" sweep > "$work/sweep-feel.out" 2>/dev/null
 check "sweep: the merged GitHub item is closed" [ "$("$P/adapters/github/read.sh" "$sg" | jget status)" = closed ]
 check_all "Sweep_MergedGitHubItemWithOpenGate_RemovesTheGateLabel: the issue the sweep closed keeps no gate: label" 'labels="$(issue_labels "$sg")" && ! printf "%s\n" "$labels" | grep -q "^gate:"'
+check "Sweep_FeelTestGate_NotReportedUnanswered: a feel-test gate asks no question, so the sweep carries none forward" sh -c "grep -q '$sg' '$work/sweep-feel.out' && ! grep -q '$sg: .*unanswered' '$work/sweep-feel.out'"
+sq="$("$P/adapters/github/create.sh" task "Merged with an ambiguity gate open")"; wq="$("$P/scripts/steward.sh" claim "$sq")"
+"$P/adapters/github/link-pr.sh" "$sq" https://gh/pull/90
+ambiguous_question="Does 05-settings-catalog.md:102 still own the NetFriction retune?"
+"$P/scripts/gate.sh" raise "$sq" ambiguity "$ambiguous_question" >/dev/null 2>&1
+fake_pr MERGED "$(commit_in "$wq" asked)"
+"$P/scripts/steward.sh" sweep >/dev/null 2>&1
+issue_quotes_unanswered() { python3 -c 'import json,sys; comments=next(i for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2])).get("comments", [])
+sys.exit(0 if any(sys.argv[3] in c["body"] and "unanswered" in c["body"].lower() for c in comments) else 1)' "$FAKE_GH_DIR/issues.json" "${1#gh#}" "$2"; }
+check "Sweep_UnansweredAmbiguityGate_QuotedUnansweredOnTheClosedIssue: a comment on the closed GitHub issue quotes the question and marks it unanswered" issue_quotes_unanswered "$sq" "$ambiguous_question"
 sl="$("$P/adapters/local/create.sh" task "Commit after merge")"; wl="$("$P/scripts/steward.sh" claim "$sl")"
 merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 "$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
