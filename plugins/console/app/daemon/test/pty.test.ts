@@ -30,10 +30,13 @@ function ended(pty: PtyHandle): Promise<Ended> {
     const timer = setTimeout(() => { pty.signal('SIGKILL'); reject(new Error('the shell did not end in time')); }, ANSWER_TIMEOUT_MILLISECONDS);
     pty.onExit((code, signal) => {
       clearTimeout(timer);
-      // The last output can arrive just after the exit; one turn of the loop lets it land.
-      setImmediate(() => { pty.close(); resolve({ output: Buffer.concat(chunks).toString('utf8'), code, signal }); });
+      void settleAfterExit().then(() => { pty.close(); resolve({ output: Buffer.concat(chunks).toString('utf8'), code, signal }); });
     });
   });
+}
+
+function settleAfterExit(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 test('RealPty_ShellOutput_ReachesTheListener', async () => {
@@ -95,12 +98,14 @@ test('RealPty_HangUp_ReachesTheChildOfAShellThatSurvivesIt', async () => {
   const pty = started(HANG_UP_SURVIVOR_WITH_A_CHILD, TERMINAL_SIZE);
   const child = await childPid(pty);
   const result = ended(pty);
-  pty.signal('SIGHUP');
-  const childGone = await gone(child);
-  pty.signal('SIGKILL');
-  await result;
-  if (processAlive(child)) process.kill(child, 'SIGKILL');
-  assert.equal(childGone, true, 'because the hang-up reaches the whole process group, so nothing the session started outlives the pane');
+  try {
+    pty.signal('SIGHUP');
+    assert.equal(await gone(child), true, 'because the hang-up reaches the whole process group, so nothing the session started outlives the pane');
+  } finally {
+    pty.signal('SIGKILL');
+    await result;
+    if (processAlive(child)) process.kill(child, 'SIGKILL');
+  }
 });
 
 test('RealPty_Kill_EndsAShellThatIgnoresTheHangUp', async () => {
