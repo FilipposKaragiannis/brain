@@ -177,13 +177,21 @@ function frameBytes(rawFrame: RawData): Buffer {
 
 /** A text frame as a `PaneControl`, or null for anything else. */
 function parseControl(text: string): PaneControl | null {
-  let frame: unknown;
-  try { frame = JSON.parse(text); } catch { return null; }
-  if (typeof frame !== 'object' || frame === null) return null;
-  const fields = frame as Record<string, unknown>;
+  const fields = jsonRecord(text);
+  if (fields === null) return null;
   if (fields.type === 'resize') return resizeControl(fields.cols, fields.rows);
-  if (fields.type === 'ack' && isWholeNumber(fields.bytes, 0, Number.MAX_SAFE_INTEGER)) return { type: 'ack', bytes: fields.bytes };
+  if (fields.type === 'ack') return ackControl(fields.bytes);
   return null;
+}
+
+function jsonRecord(text: string): Record<string, unknown> | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return null; }
+  return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : null;
+}
+
+function ackControl(bytes: unknown): PaneControl | null {
+  return isWholeNumber(bytes, 0, Number.MAX_SAFE_INTEGER) ? { type: 'ack', bytes } : null;
 }
 
 function resizeControl(columns: unknown, rows: unknown): PaneControl | null {

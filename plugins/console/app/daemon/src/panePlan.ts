@@ -96,9 +96,21 @@ function effortRefusal(agent: JobsHost, pair: JobsPair): string | null {
 
 /** The agent's model and effort flags, as host_run in the plugin's lib/host.sh passes them; codex takes the roster's names mapped. */
 function agentArguments(agent: JobsHost, pair: JobsPair): string[] {
-  const { model, effort } = pair;
-  if (agent === 'claude') return [...(model === null ? [] : ['--model', model]), ...(effort === null ? [] : ['--effort', effort])];
-  return [...(model === null ? [] : ['-m', codexModel(model)]), ...(effort === null ? [] : ['-c', `model_reasoning_effort="${effort}"`])];
+  return agent === 'claude' ? claudeArguments(pair) : codexArguments(pair);
+}
+
+function claudeArguments({ model, effort }: JobsPair): string[] {
+  return [...flagPair('--model', model), ...flagPair('--effort', effort)];
+}
+
+function codexArguments({ model, effort }: JobsPair): string[] {
+  const mappedModel = model === null ? null : codexModel(model);
+  const effortSetting = effort === null ? null : `model_reasoning_effort="${effort}"`;
+  return [...flagPair('-m', mappedModel), ...flagPair('-c', effortSetting)];
+}
+
+function flagPair(flag: string, value: string | null): string[] {
+  return value === null ? [] : [flag, value];
 }
 
 /** The environment every pane gets: the allow-listed variables of the daemon's, a language, and a terminal that draws colour. */
