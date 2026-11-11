@@ -94,7 +94,6 @@ function admittedUrl(route: PaneRoute, request: IncomingMessage): { ok: true; ur
   return admission.ok ? { ok: true, url } : admission;
 }
 
-/** The projects that opened a pane, so a project that leaves the registry, or whose id now names another root, has its panes ended. */
 class PaneProjects {
   private readonly route: PaneRoute;
   private readonly served = new Map<string, ServedProject>();
@@ -107,7 +106,6 @@ class PaneProjects {
     this.served.set(served.monitor.project.id, served);
   }
 
-  /** Ends the panes of every project the registry no longer serves as it did. */
   endDeparted(): void {
     for (const [id, served] of [...this.served]) {
       if (this.route.registry.get(id) === served) continue;
@@ -117,7 +115,6 @@ class PaneProjects {
   }
 }
 
-/** The project a pane path names, or undefined for another path, an id that does not decode, or a project not served. */
 function paneProject(registry: ProjectRegistry, pathname: string): ServedProject | undefined {
   const match = PANE_PATH.exec(pathname);
   if (match === null) return undefined;
@@ -125,7 +122,6 @@ function paneProject(registry: ProjectRegistry, pathname: string): ServedProject
   return id === null ? undefined : registry.get(id);
 }
 
-/** A path segment decoded, or null when its percent escapes are not UTF-8 (`decodeURIComponent` throws on those). */
 function decodedSegment(segment: string): string | null {
   try {
     return decodeURIComponent(segment);

@@ -45,7 +45,6 @@ type PaneSessionsDependencies = { spawner: PtySpawner; host: PaneHost; scheduler
 /** A pane's process started: what it runs and its pty. */
 type StartedPane = { launch: PaneLaunch; pty: PtyHandle };
 
-/** Why a live pane is being hung up: its link went, its project is no longer watched, or the daemon stops. */
 type HangUpCause = 'link-gone' | 'project-gone' | 'daemon-stopping';
 
 type LivePane = {
@@ -209,19 +208,16 @@ class OutputFlow {
     this.scheduler = scheduler;
   }
 
-  /** Counts bytes sent to the page, and pauses the pty once they or the link's queue pass the high water. */
   sentMayPause(byteCount: number): void {
     this.unacked += byteCount;
     if (this.state === 'flowing' && this.pastHighWater()) this.pause();
   }
 
-  /** Counts bytes the page drew, and resumes a paused pty once both the unacked bytes and the link's queue are under the low water. */
   ackedMayResume(byteCount: number): void {
     this.unacked -= Math.min(byteCount, this.unacked);
     if (this.state === 'paused' && this.underLowWater()) this.resume();
   }
 
-  /** Resumes a paused pty, so the hung-up process can write and its end reach the daemon. */
   resumeForHangUp(): void {
     if (this.state === 'paused') this.resume();
   }

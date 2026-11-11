@@ -22,7 +22,6 @@ export type PaneLaunch = { command: string; commandArguments: string[]; workingF
 export const NO_JOBS_PAIRS: JobsPairs = { claude: { model: null, effort: null, from: 'jobs.claude' }, codex: { model: null, effort: null, from: 'jobs.codex' } };
 
 type Refusal = { ok: false; error: string };
-/** One size in the request's query: `key` is the query's own name for it (`cols` for the columns). */
 type SizeBound = { key: 'cols' | 'rows'; fallback: number; minimum: number; maximum: number };
 type Planned = { ok: true; launch: PaneLaunch } | Refusal;
 
@@ -65,7 +64,6 @@ export function planPane(request: PaneRequest, facts: PaneFacts, host: PaneHost)
   return agentLaunch(request.run, checked.folder, facts.pairs[request.run], host);
 }
 
-/** The asked folder resolved, when it is absolute, listed in the snapshot and a folder on the disk. */
 function listedFolder(asked: string, facts: PaneFacts, host: PaneHost): { ok: true; folder: string } | Refusal {
   if (!path.isAbsolute(asked)) return refuse('a pane needs an absolute path');
   const folder = path.resolve(asked);
@@ -74,7 +72,6 @@ function listedFolder(asked: string, facts: PaneFacts, host: PaneHost): { ok: tr
   return { ok: true, folder };
 }
 
-/** A quick session: the agent on the daemon's PATH with the project's pair, once the pair is one the agent takes. */
 function agentLaunch(agent: JobsHost, folder: string, pair: JobsPair, host: PaneHost): Planned {
   const command = host.executable(agent);
   if (command === null) return refuse(`${agent} is not on the daemon's PATH; start it from a shell pane`);

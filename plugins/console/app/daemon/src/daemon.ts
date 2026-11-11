@@ -31,7 +31,6 @@ const SHUTDOWN_GRACE_MS = 3000;
 /** The shell a pane runs when neither `SHELL` nor the user's account names one. */
 const FALLBACK_SHELL = '/bin/sh';
 
-/** This machine as panes see it: the owner's shell, the environment a pane gets, the disk, and the programs on the daemon's PATH. */
 function machinePaneHost(environment: NodeJS.ProcessEnv): PaneHost {
   return {
     shell: environment.SHELL || os.userInfo().shell || FALLBACK_SHELL,
@@ -50,7 +49,6 @@ function isFolder(folder: string): boolean {
   }
 }
 
-/** The first file named `name` the owner may run in a folder of `searchPath`, as an absolute path; null when none is. */
 function onPath(name: string, searchPath: string): string | null {
   for (const folder of searchPath.split(path.delimiter)) {
     if (!path.isAbsolute(folder)) continue;
@@ -60,7 +58,6 @@ function onPath(name: string, searchPath: string): string | null {
   return null;
 }
 
-/** Whether the path is a regular file the owner may run; false when it is missing or unreadable. */
 function isRunnableFile(candidate: string): boolean {
   try {
     accessSync(candidate, constants.X_OK);
