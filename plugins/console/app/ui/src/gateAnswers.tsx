@@ -36,14 +36,15 @@ export function optionAnswer(text: string, note: string): string {
 }
 
 /**
- * The `gate.clear` for an option on one gate: `option: N` when the gate offers that option with
- * the same text, the note as its message; else the option's words as the answer, so a twin that
- * numbers its options differently still gets the answer the owner picked.
+ * The `gate.clear` for an option on one gate: `option: N`, N being this gate's own number for the
+ * option with the picked text, so a twin that lists its options in another order still gets the
+ * option and its blocker waiver; the note as its message. Only a gate with no option of that text
+ * gets the option's words as the answer.
  */
 function optionArgs(gate: Gate, decision: OptionDecision): Record<string, string> {
-  const offered = gate.options[decision.number - 1];
-  if (offered === undefined || offered.text !== decision.text) return { item: gate.item, message: optionAnswer(decision.text, decision.note) };
-  const option = String(decision.number);
+  const index = gate.options.findIndex((offered) => offered.text === decision.text);
+  if (index === -1) return { item: gate.item, message: optionAnswer(decision.text, decision.note) };
+  const option = String(index + 1);
   return decision.note.trim() === '' ? { item: gate.item, option } : { item: gate.item, option, message: decision.note.trim() };
 }
 

@@ -523,3 +523,14 @@ test('TwinGatesWithOptions_OneOptionPressClearsBoth', async () => {
     { kind: 'gate.clear', args: { item: 'gh#769', option: '1' } },
   ]);
 });
+
+test('TwinGateWithReorderedOptions_ClearedByItsOwnOptionNumber', async () => {
+  const { daemon, posted } = recordingDaemon();
+  const reordered = [...OPTIONS_GATE.options.slice(2), ...OPTIONS_GATE.options.slice(0, 2)];
+  renderTwins(daemon, { ...OPTIONS_GATE, item: 'gh#767', twins: ['gh#769'] }, { ...OPTIONS_GATE, item: 'gh#769', ageSeconds: OPTIONS_GATE.ageSeconds - 300, twinOf: 'gh#767', options: reordered });
+  await press('1. Clamp the velocity');
+  expect(posted.filter((action) => action.kind === 'gate.clear'), 'because only gate.sh clear --option waives a blocked_by blocker, so the twin gets the number it lists the same text under').toEqual([
+    { kind: 'gate.clear', args: { item: 'gh#767', option: '1' } },
+    { kind: 'gate.clear', args: { item: 'gh#769', option: '2' } },
+  ]);
+});
