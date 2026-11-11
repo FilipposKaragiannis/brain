@@ -43,7 +43,7 @@ export const xtermTerminal: TerminalFactory = () => {
     },
     fit() {
       fitAddon.fit();
-      return { cols: terminal.cols, rows: terminal.rows };
+      return { columns: terminal.cols, rows: terminal.rows };
     },
     write(bytes, drawn) { terminal.write(bytes, drawn); },
     onInput(listener) {

@@ -35,7 +35,7 @@ const SOCKET_TIMEOUT_MS = 5000;
 type Daemon = { registry: ProjectRegistry; panes: PaneSessions; ptys: FakePty[]; port: number; close(): Promise<void> };
 
 async function daemon(): Promise<Daemon> {
-  const { spawner, ptys } = fakePty();
+  const { spawner, ptys } = fakePty(null);
   const { spawner: actionSpawner } = plainSpawner();
   const registry = new ProjectRegistry((project) => {
     const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
@@ -156,7 +156,7 @@ test('ListedFolder_ShellStartedThereAtTheRequestedSize', async () => {
   try {
     await startedClient(running.port);
     const pty = running.ptys[0]!;
-    assert.deepEqual([pty.launch, pty.size], [{ command: '/bin/zsh', args: ['-l'], cwd: FIXTURE_ROOT }, { cols: 100, rows: 30 }], 'because the pane runs the owner\'s shell in the folder and size the page asked for');
+    assert.deepEqual([pty.launch, pty.size], [{ command: '/bin/zsh', args: ['-l'], workingFolder: FIXTURE_ROOT }, { columns: 100, rows: 30 }], 'because the pane runs the owner\'s shell in the folder and size the page asked for');
   } finally { await running.close(); }
 });
 
@@ -187,8 +187,8 @@ test('ResizeFrame_ReachesThePty', async () => {
     const client = await startedClient(running.port);
     client.socket.send(JSON.stringify({ type: 'resize', cols: 143, rows: 37 }));
     const pty = running.ptys[0]!;
-    await until(() => pty.size.cols === 143, 'the resize');
-    assert.deepEqual(pty.size, { cols: 143, rows: 37 }, 'because the pty follows the page\'s terminal');
+    await until(() => pty.size.columns === 143, 'the resize');
+    assert.deepEqual(pty.size, { columns: 143, rows: 37 }, 'because the pty follows the page\'s terminal');
   } finally { await running.close(); }
 });
 
@@ -264,7 +264,7 @@ test('QuickSession_Claude_SpawnsTheAbsoluteBinaryInTheFolder', async () => {
   try {
     await startedClient(running.port, { ...AT_ROOT, run: 'claude' });
     const pty = running.ptys[0]!;
-    assert.deepEqual([pty.launch.command, pty.launch.cwd], ['/opt/tools/bin/claude', FIXTURE_ROOT], 'because a quick session runs the agent found on the daemon\'s PATH, in the chosen folder');
+    assert.deepEqual([pty.launch.command, pty.launch.workingFolder], ['/opt/tools/bin/claude', FIXTURE_ROOT], 'because a quick session runs the agent found on the daemon\'s PATH, in the chosen folder');
   } finally { await running.close(); }
 });
 

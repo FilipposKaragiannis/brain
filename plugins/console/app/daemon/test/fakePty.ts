@@ -26,7 +26,7 @@ export type FakePty = {
 };
 
 /** A spawner that forks nothing: each spawn hands the test a pty it drives by hand, or the refusal it was given. */
-export function fakePty(refusal: string | null = null): { spawner: PtySpawner; ptys: FakePty[] } {
+export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: FakePty[] } {
   const ptys: FakePty[] = [];
   const spawner: PtySpawner = (launch, size, environment) => {
     if (refusal !== null) return { ok: false, error: refusal };

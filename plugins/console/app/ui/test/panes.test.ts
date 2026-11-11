@@ -23,7 +23,7 @@ function openPane(run: PaneView['run'] = 'shell'): Opened {
 /** A pane attached to the page: its terminal fitted and its one socket open. */
 function attachedPane(run: PaneView['run'] = 'shell'): Opened & { socket: FakeSocket; terminal: FakeTerminal } {
   const opened = openPane(run);
-  opened.store.attach(opened.key, document.createElement('div'));
+  opened.store.showAndConnect(opened.key, document.createElement('div'));
   return { ...opened, socket: onlyOne(opened.daemon.sockets), terminal: onlyOne(opened.daemon.terminals) };
 }
 
@@ -63,13 +63,13 @@ function bytesOf(count: number): Uint8Array {
 
 test('Attach_OpensOneSocketForTheFolderRunAndFittedSize', () => {
   const opened = openPane('codex');
-  opened.store.attach(opened.key, document.createElement('div'));
+  opened.store.showAndConnect(opened.key, document.createElement('div'));
   const requests = opened.daemon.sockets.map((socket) => {
     const url = new URL(socket.path, 'http://page.test');
     return { route: url.pathname, path: url.searchParams.get('path'), run: url.searchParams.get('run'), cols: url.searchParams.get('cols'), rows: url.searchParams.get('rows') };
   });
   expect(requests, 'because the daemon plans the pane from the folder and run in the query and starts it at the size the terminal fits to')
-    .toEqual([{ route: `/api/projects/${PROJECT}/panes`, path: WORKTREE, run: 'codex', cols: String(FAKE_TERMINAL_SIZE.cols), rows: String(FAKE_TERMINAL_SIZE.rows) }]);
+    .toEqual([{ route: `/api/projects/${PROJECT}/panes`, path: WORKTREE, run: 'codex', cols: String(FAKE_TERMINAL_SIZE.columns), rows: String(FAKE_TERMINAL_SIZE.rows) }]);
 });
 
 test('Open_BeforeAttach_OpensNoSocket', () => {
@@ -79,7 +79,7 @@ test('Open_BeforeAttach_OpensNoSocket', () => {
 
 test('SecondAttach_OpensNoSecondSocket', () => {
   const { store, daemon, key } = attachedPane();
-  store.attach(key, document.createElement('div'));
+  store.showAndConnect(key, document.createElement('div'));
   expect(daemon.sockets.length, 'because showing a pane again must not start a second process').toBe(1);
 });
 
@@ -112,7 +112,7 @@ test('DrawnReachingAckEvery_SendsAnAckForWhatWasDrawn', () => {
 
 test('Refit_SendsResizeWithTheNewSize', () => {
   const { store, key, socket, terminal } = livePane();
-  terminal.size = { cols: 61, rows: 19 };
+  terminal.size = { columns: 61, rows: 19 };
   store.refit(key);
   expect(textFrames(socket).at(-1), 'because the pty must learn the size the terminal now has').toEqual({ type: 'resize', cols: 61, rows: 19 });
 });

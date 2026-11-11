@@ -36,31 +36,67 @@ const HTTP_NOT_FOUND = 404;
  */
 export function servePanes(server: Server, route: PaneRoute): void {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: INPUT_FRAME_LIMIT_BYTES });
-  const paneProjects = new Map<string, ServedProject>();
-  const unsubscribe = route.registry.onChange(() => {
-    for (const [id, served] of [...paneProjects]) {
-      if (route.registry.get(id) === served) continue;
-      paneProjects.delete(id);
-      route.panes.endProject(id);
-    }
-  });
+  const projects = new PaneProjects(route);
+  const unsubscribe = route.registry.onChange(() => projects.endDeparted());
   server.once('close', unsubscribe);
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = new URL(request.url ?? '/', REQUEST_URL_BASE);
     const admission = route.admit(request, url);
     if (!admission.ok) { refuseUpgrade(socket, admission.status, admission.error); return; }
-    const match = PANE_PATH.exec(url.pathname);
-    const served = match === null ? undefined : route.registry.get(decodeURIComponent(match[1]!));
+    const served = paneProject(route.registry, url.pathname);
     if (served === undefined) { refuseUpgrade(socket, HTTP_NOT_FOUND, 'not found'); return; }
-    sockets.handleUpgrade(request, socket, head, (connection) => {
-      const link = socketLink(connection, route.log);
-      const parsed = parsePaneRequest(url.searchParams);
-      if (!parsed.ok) { link.tell({ type: 'refused', error: parsed.error }); link.end(PANE_CLOSE.refused); return; }
-      const { project } = served.monitor;
-      paneProjects.set(project.id, served);
-      route.panes.open({ id: project.id, root: project.root }, parsed.request, served.monitor.paneFacts(), link);
-    });
+    sockets.handleUpgrade(request, socket, head, (connection) => openPane(route, projects, served, url.searchParams, connection));
   });
+}
+
+/** The projects that opened a pane, so a project that leaves the registry, or whose id now names another root, has its panes ended. */
+class PaneProjects {
+  private readonly route: PaneRoute;
+  private readonly served = new Map<string, ServedProject>();
+
+  constructor(route: PaneRoute) {
+    this.route = route;
+  }
+
+  add(served: ServedProject): void {
+    this.served.set(served.monitor.project.id, served);
+  }
+
+  /** Ends the panes of every project the registry no longer serves as it did. */
+  endDeparted(): void {
+    for (const [id, served] of [...this.served]) {
+      if (this.route.registry.get(id) === served) continue;
+      this.served.delete(id);
+      this.route.panes.endProject(id);
+    }
+  }
+}
+
+/** The project a pane path names, or undefined for another path, an id that does not decode, or a project not served. */
+function paneProject(registry: ProjectRegistry, pathname: string): ServedProject | undefined {
+  const match = PANE_PATH.exec(pathname);
+  if (match === null) return undefined;
+  const id = decodedSegment(match[1]!);
+  return id === null ? undefined : registry.get(id);
+}
+
+/** A path segment decoded, or null when its percent escapes are not UTF-8 (`decodeURIComponent` throws on those). */
+function decodedSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
+/** Starts the pane a handshake asked for on its socket, or refuses it there when the query is not a pane request. */
+function openPane(route: PaneRoute, projects: PaneProjects, served: ServedProject, query: URLSearchParams, connection: WebSocket): void {
+  const link = socketLink(connection, route.log);
+  const parsed = parsePaneRequest(query);
+  if (!parsed.ok) { link.tell({ type: 'refused', error: parsed.error }); link.end(PANE_CLOSE.refused); return; }
+  const { project } = served.monitor;
+  projects.add(served);
+  route.panes.open({ id: project.id, root: project.root }, parsed.request, served.monitor.paneFacts(), link);
 }
 
 /** Answers an upgrade with a plain HTTP error and drops the connection once it is written. */
@@ -93,6 +129,7 @@ function socketLink(connection: WebSocket, log: Logger): PaneLink {
       if (connection.readyState === WebSocket.CLOSED) { listener(); return; }
       connection.once('close', () => listener());
     },
+    queuedBytes: () => connection.bufferedAmount,
   };
 }
 

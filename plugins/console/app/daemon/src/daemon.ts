@@ -32,12 +32,12 @@ const SHUTDOWN_GRACE_MS = 3000;
 const FALLBACK_SHELL = '/bin/sh';
 
 /** This machine as panes see it: the owner's shell, the environment a pane gets, the disk, and the programs on the daemon's PATH. */
-function machinePaneHost(env: NodeJS.ProcessEnv): PaneHost {
+function machinePaneHost(environment: NodeJS.ProcessEnv): PaneHost {
   return {
-    shell: env.SHELL || os.userInfo().shell || FALLBACK_SHELL,
-    environment: paneEnvironment(env),
+    shell: environment.SHELL || os.userInfo().shell || FALLBACK_SHELL,
+    environment: paneEnvironment(environment),
     isFolder: (folder) => existsSync(folder) && statSync(folder).isDirectory(),
-    executable: (name) => onPath(name, env.PATH ?? ''),
+    executable: (name) => onPath(name, environment.PATH ?? ''),
   };
 }
 
@@ -46,14 +46,19 @@ function onPath(name: string, searchPath: string): string | null {
   for (const folder of searchPath.split(path.delimiter)) {
     if (!path.isAbsolute(folder)) continue;
     const candidate = path.join(folder, name);
-    try {
-      accessSync(candidate, constants.X_OK);
-      if (statSync(candidate).isFile()) return candidate;
-    } catch {
-      continue;
-    }
+    if (isRunnableFile(candidate)) return candidate;
   }
   return null;
+}
+
+/** Whether the path is a regular file the owner may run; false when it is missing or unreadable. */
+function isRunnableFile(candidate: string): boolean {
+  try {
+    accessSync(candidate, constants.X_OK);
+    return statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /**

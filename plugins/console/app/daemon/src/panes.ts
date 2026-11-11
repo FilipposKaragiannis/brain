@@ -33,6 +33,8 @@ export type PaneLink = {
   onControl(listener: (control: PaneControl) => void): void;
   /** Fires once, when the page's end closed or broke. */
   onGone(listener: () => void): void;
+  /** Bytes the connection holds that have not left for the page yet. */
+  queuedBytes(): number;
 };
 
 type PaneSessionsDependencies = { spawner: PtySpawner; host: PaneHost; scheduler: Scheduler; log: Logger };
@@ -52,11 +54,11 @@ type LivePane = {
 };
 
 /**
- * Every terminal pane of the daemon, across projects, at most `MAX_PANES` at once. A pane lives as
- * long as its link: the process's exit ends the link, and a link that goes hangs the process up,
- * then kills it after `PANE_KILL_GRACE_MS`. Output the page has not acked past the high water
- * pauses the pty until acks bring it under the low water. Logs `pane.open` and `pane.close`,
- * never what a pane shows or is sent.
+ * Every terminal pane of the daemon, across projects, at most `MAX_PANES` at once; a hung-up pane
+ * counts until its process ended. A pane lives as long as its link: the process's exit ends the
+ * link, and a link that goes hangs the process up, then kills it after `PANE_KILL_GRACE_MS`.
+ * Output the page has not acked, or the link still holds, past the high water pauses the pty until
+ * both are under the low water. Logs `pane.open` and `pane.close`, never what a pane shows or is sent.
  */
 export class PaneSessions {
   private readonly spawner: PtySpawner;
@@ -75,7 +77,7 @@ export class PaneSessions {
 
   /** Plans and starts a pane on the link, or tells the link why not and closes it `refused`. */
   open(project: { id: string; root: string }, request: PaneRequest, facts: PaneFacts, link: PaneLink): void {
-    if (this.attachedPaneCount() >= MAX_PANES) { refuse(link, `${MAX_PANES} panes are open, the most the daemon runs at once; close one to open another`); return; }
+    if (this.live.size >= MAX_PANES) { refuse(link, `${MAX_PANES} panes are open, the most the daemon runs at once; close one to open another`); return; }
     const planned = planPane(request, facts, this.host);
     if (!planned.ok) { refuse(link, planned.error); return; }
     const { launch } = planned;
@@ -83,10 +85,10 @@ export class PaneSessions {
     if (!spawned.ok) { refuse(link, spawned.error); return; }
     this.opened += 1;
     const exited = Promise.withResolvers<void>();
-    const pane: LivePane = { id: `pane-${this.opened}`, projectId: project.id, pty: spawned.pty, link, output: new OutputFlow(spawned.pty), hangUp: null, exited: exited.promise };
+    const pane: LivePane = { id: `pane-${this.opened}`, projectId: project.id, pty: spawned.pty, link, output: new OutputFlow(spawned.pty, link), hangUp: null, exited: exited.promise };
     this.live.add(pane);
-    link.tell({ type: 'started', pane: pane.id, command: [launch.command, ...launch.args], folder: launch.cwd });
-    pane.pty.onOutput((bytes) => { if (pane.hangUp === null) { link.output(bytes); pane.output.sent(bytes.byteLength); } });
+    link.tell({ type: 'started', pane: pane.id, command: [launch.command, ...launch.args], folder: launch.workingFolder });
+    pane.pty.onOutput((bytes) => { if (pane.hangUp === null) { link.output(bytes); pane.output.sentMayPause(bytes.byteLength); } });
     pane.pty.onExit((code, signal) => { this.conclude(pane, code, signal); exited.resolve(); });
     link.onInput((bytes) => { if (this.live.has(pane)) pane.pty.write(bytes); });
     link.onControl((control) => { if (this.live.has(pane)) applyControl(pane, control); });
@@ -108,10 +110,6 @@ export class PaneSessions {
     await Promise.all(stopping.map((pane) => pane.exited));
   }
 
-  private attachedPaneCount(): number {
-    return [...this.live].filter((pane) => pane.hangUp === null).length;
-  }
-
   private endLink(pane: LivePane, cause: HangUpCause, code: number): void {
     if (pane.hangUp !== null) return;
     this.hangUp(pane, cause);
@@ -122,6 +120,7 @@ export class PaneSessions {
     if (!this.live.has(pane) || pane.hangUp !== null) return;
     const grace = this.scheduler.after(PANE_KILL_GRACE_MS, () => { pane.pty.signal('SIGKILL'); pane.pty.close(); });
     pane.hangUp = { cause, grace };
+    pane.output.resumeForHangUp();
     pane.pty.signal('SIGHUP');
   }
 
@@ -141,28 +140,54 @@ function refuse(link: PaneLink, error: string): void {
 
 function applyControl(pane: LivePane, control: PaneControl): void {
   switch (control.type) {
-    case 'resize': pane.pty.resize({ cols: control.cols, rows: control.rows }); return;
-    case 'ack': pane.output.acked(control.bytes); return;
+    case 'resize': pane.pty.resize({ columns: control.cols, rows: control.rows }); return;
+    case 'ack': pane.output.ackedMayResume(control.bytes); return;
   }
 }
 
-/** One pane's output the page has not acked yet, which pauses and resumes its pty. */
+/**
+ * One pane's output the page has not acked yet, and what its link still holds, which pause and
+ * resume its pty. An ack counts no more than the bytes not yet acked, and a page that acks what it
+ * never read is still held back by the bytes its link holds.
+ */
 class OutputFlow {
   private readonly pty: PtyHandle;
+  private readonly link: PaneLink;
   private unacked = 0;
   private state: 'flowing' | 'paused' = 'flowing';
 
-  constructor(pty: PtyHandle) {
+  constructor(pty: PtyHandle, link: PaneLink) {
     this.pty = pty;
+    this.link = link;
   }
 
-  sent(byteCount: number): void {
+  /** Counts bytes sent to the page, and pauses the pty once they or the link's queue pass the high water. */
+  sentMayPause(byteCount: number): void {
     this.unacked += byteCount;
-    if (this.state === 'flowing' && this.unacked > OUTPUT_HIGH_WATER_BYTES) { this.state = 'paused'; this.pty.pause(); }
+    if (this.state === 'flowing' && this.pastHighWater()) { this.state = 'paused'; this.pty.pause(); }
   }
 
-  acked(byteCount: number): void {
-    this.unacked = Math.max(0, this.unacked - byteCount);
-    if (this.state === 'paused' && this.unacked < OUTPUT_LOW_WATER_BYTES) { this.state = 'flowing'; this.pty.resume(); }
+  /** Counts bytes the page drew, and resumes a paused pty once both the unacked bytes and the link's queue are under the low water. */
+  ackedMayResume(byteCount: number): void {
+    this.unacked -= Math.min(byteCount, this.unacked);
+    if (this.state === 'paused' && this.underLowWater()) this.resume();
+  }
+
+  /** Resumes a paused pty, so the hung-up process can write and its end reach the daemon. */
+  resumeForHangUp(): void {
+    if (this.state === 'paused') this.resume();
+  }
+
+  private pastHighWater(): boolean {
+    return this.unacked > OUTPUT_HIGH_WATER_BYTES || this.link.queuedBytes() > OUTPUT_HIGH_WATER_BYTES;
+  }
+
+  private underLowWater(): boolean {
+    return this.unacked < OUTPUT_LOW_WATER_BYTES && this.link.queuedBytes() < OUTPUT_LOW_WATER_BYTES;
+  }
+
+  private resume(): void {
+    this.state = 'flowing';
+    this.pty.resume();
   }
 }

@@ -8,9 +8,9 @@
 export const PANE_RUNS = ['shell', 'claude', 'codex'] as const;
 export type PaneRun = (typeof PANE_RUNS)[number];
 
-export type PaneSize = { cols: number; rows: number };
+export type PaneSize = { columns: number; rows: number };
 
-/** Up: the terminal's new size, or how many bytes the page drew since its last ack. */
+/** Up: the terminal's new size, or how many bytes the page drew since its last ack. `cols` is the wire's name for its columns. */
 export type PaneControl = { type: 'resize'; cols: number; rows: number } | { type: 'ack'; bytes: number };
 
 /** Down: the first frame of an accepted pane, the only frame of a refused one, or the process's end. */

@@ -14,11 +14,13 @@ export type PaneFacts = { folders: string[]; pairs: Record<JobsHost, JobsPair> }
  * and the absolute path of a program on the daemon's PATH (null when none is there).
  */
 export type PaneHost = { shell: string; environment: Record<string, string>; isFolder(folder: string): boolean; executable(name: string): string | null };
-/** The process a pane's pty runs: an argv, never a shell line. */
-export type PaneLaunch = { command: string; args: string[]; cwd: string };
+/** The process a pane's pty runs: an argv, never a shell line, and the folder it starts in. */
+export type PaneLaunch = { command: string; args: string[]; workingFolder: string };
 
 type Refusal = { ok: false; error: string };
+/** One size in the request's query: `key` is the query's own name for it (`cols` for the columns). */
 type SizeBound = { key: 'cols' | 'rows'; fallback: number; min: number; max: number };
+type Planned = { ok: true; launch: PaneLaunch } | Refusal;
 
 const COLUMNS: SizeBound = { key: 'cols', fallback: DEFAULT_PANE_COLUMNS, min: MIN_PANE_COLUMNS, max: MAX_PANE_COLUMNS };
 const ROWS: SizeBound = { key: 'rows', fallback: DEFAULT_PANE_ROWS, min: MIN_PANE_ROWS, max: MAX_PANE_ROWS };
@@ -44,7 +46,7 @@ export function parsePaneRequest(query: URLSearchParams): { ok: true; request: P
   if (columns === null) return refuse(sizeRefusal(COLUMNS));
   const rows = sizeValue(query, ROWS);
   if (rows === null) return refuse(sizeRefusal(ROWS));
-  return { ok: true, request: { folder, run, size: { cols: columns, rows } } };
+  return { ok: true, request: { folder, run, size: { columns, rows } } };
 }
 
 /**
@@ -52,20 +54,40 @@ export function parsePaneRequest(query: URLSearchParams): { ok: true; request: P
  * disk holds. A shell is the owner's login shell; a quick session is the agent's absolute path with
  * the project's model and effort, each flag only when the pair sets it, and no permission flag.
  */
-export function planPane(request: PaneRequest, facts: PaneFacts, host: PaneHost): { ok: true; launch: PaneLaunch } | Refusal {
-  if (!path.isAbsolute(request.folder)) return refuse('a pane needs an absolute path');
-  const folder = path.resolve(request.folder);
+export function planPane(request: PaneRequest, facts: PaneFacts, host: PaneHost): Planned {
+  const checked = listedFolder(request.folder, facts, host);
+  if (!checked.ok) return checked;
+  if (request.run === 'shell') return { ok: true, launch: { command: host.shell, args: [LOGIN_SHELL], workingFolder: checked.folder } };
+  return agentLaunch(request.run, checked.folder, facts.pairs[request.run], host);
+}
+
+/** The asked folder resolved, when it is absolute, listed in the snapshot and a folder on the disk. */
+function listedFolder(asked: string, facts: PaneFacts, host: PaneHost): { ok: true; folder: string } | Refusal {
+  if (!path.isAbsolute(asked)) return refuse('a pane needs an absolute path');
+  const folder = path.resolve(asked);
   if (!facts.folders.includes(folder)) return refuse(unlistedFolder(folder));
   if (!host.isFolder(folder)) return refuse(`${folder} is not a folder on this machine`);
-  if (request.run === 'shell') return { ok: true, launch: { command: host.shell, args: [LOGIN_SHELL], cwd: folder } };
-  const agent = request.run;
+  return { ok: true, folder };
+}
+
+/** A quick session: the agent on the daemon's PATH with the project's pair, once the pair is one the agent takes. */
+function agentLaunch(agent: JobsHost, folder: string, pair: JobsPair, host: PaneHost): Planned {
   const command = host.executable(agent);
   if (command === null) return refuse(`${agent} is not on the daemon's PATH; start it from a shell pane`);
-  const pair = facts.pairs[agent];
-  if (pair.model !== null && !MODEL.test(pair.model)) return refuse(`${pair.from}.model must be a model name: letters, digits and . _ : -, not opening with -`);
+  const error = modelRefusal(pair) ?? effortRefusal(agent, pair);
+  if (error !== null) return refuse(error);
+  return { ok: true, launch: { command, args: agentArgs(agent, pair), workingFolder: folder } };
+}
+
+function modelRefusal(pair: JobsPair): string | null {
+  if (pair.model === null || MODEL.test(pair.model)) return null;
+  return `${pair.from}.model must be a model name: letters, digits and . _ : -, not opening with -`;
+}
+
+function effortRefusal(agent: JobsHost, pair: JobsPair): string | null {
   const efforts = HOST_EFFORTS[agent] ?? [];
-  if (pair.effort !== null && !efforts.includes(pair.effort)) return refuse(`${pair.from}.effort on ${agent} must be one of ${efforts.join(', ')}`);
-  return { ok: true, launch: { command, args: agentArgs(agent, pair), cwd: folder } };
+  if (pair.effort === null || efforts.includes(pair.effort)) return null;
+  return `${pair.from}.effort on ${agent} must be one of ${efforts.join(', ')}`;
 }
 
 /** The agent's model and effort flags, as host_run in the plugin's lib/host.sh passes them; codex takes the roster's names mapped. */

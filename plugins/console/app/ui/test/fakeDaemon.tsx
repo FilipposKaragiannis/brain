@@ -93,7 +93,7 @@ export class FakeSocket implements SocketLike {
 }
 
 /** The size a fake terminal fits to, unless the test sets another. */
-export const FAKE_TERMINAL_SIZE: PaneSize = { cols: 117, rows: 37 };
+export const FAKE_TERMINAL_SIZE: PaneSize = { columns: 117, rows: 37 };
 
 /** A terminal that draws at once: it keeps what was written and lets the test type. */
 export class FakeTerminal implements TerminalLike {

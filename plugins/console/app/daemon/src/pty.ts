@@ -26,6 +26,7 @@ type PtyProcess = {
   resume(): void;
   destroy(): void;
 };
+/** node-pty's own option names; `spawnPty` is where a pane's names become them. */
 type PtyOptions = { cols: number; rows: number; cwd: string; env: Record<string, string>; encoding: null };
 type PtyModule = { spawn(file: string, args: string[], options: PtyOptions): PtyProcess };
 
@@ -58,10 +59,10 @@ function loadPty(): { ok: true; addon: PtyModule } | { ok: false; error: string 
 
 function spawnPty(addon: PtyModule, launch: PaneLaunch, size: PaneSize, environment: Record<string, string>): ReturnType<PtySpawner> {
   try {
-    const started = addon.spawn(launch.command, launch.args, { cols: size.cols, rows: size.rows, cwd: launch.cwd, env: environment, encoding: null });
+    const started = addon.spawn(launch.command, launch.args, { cols: size.columns, rows: size.rows, cwd: launch.workingFolder, env: environment, encoding: null });
     return { ok: true, pty: ptyHandle(started) };
   } catch (error) {
-    return { ok: false, error: `${launch.command} did not start in ${launch.cwd}: ${failure(error)}` };
+    return { ok: false, error: `${launch.command} did not start in ${launch.workingFolder}: ${failure(error)}` };
   }
 }
 
@@ -76,7 +77,7 @@ function ptyHandle(started: PtyProcess): PtyHandle {
       });
     },
     write: (bytes) => { started.write(Buffer.from(bytes)); },
-    resize: (size) => { started.resize(size.cols, size.rows); },
+    resize: (size) => { started.resize(size.columns, size.rows); },
     pause: () => { started.pause(); },
     resume: () => { started.resume(); },
     signal: (name) => { signalGroup(started.pid, name); },

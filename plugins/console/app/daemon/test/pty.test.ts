@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import { test } from 'node:test';
 import type { PaneLaunch } from '../src/panePlan.ts';
+import type { PaneSize } from '../src/paneProtocol.ts';
 import type { PtyHandle } from '../src/panes.ts';
 import { ptySpawner } from '../src/pty.ts';
 
@@ -11,8 +12,10 @@ const ENVIRONMENT = { PATH: '/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'en_U
 
 type Ended = { output: string; code: number | null; signal: string | null };
 
-function started(script: string, size = { cols: 80, rows: 24 }): PtyHandle {
-  const launch: PaneLaunch = { command: '/bin/sh', args: ['-c', script], cwd: os.tmpdir() };
+const TERMINAL_SIZE: PaneSize = { columns: 80, rows: 24 };
+
+function started(script: string, size: PaneSize): PtyHandle {
+  const launch: PaneLaunch = { command: '/bin/sh', args: ['-c', script], workingFolder: os.tmpdir() };
   const spawned = ptySpawner()(launch, size, ENVIRONMENT);
   if (!spawned.ok) throw new Error(`the real pty did not start: ${spawned.error}`);
   return spawned.pty;
@@ -33,19 +36,19 @@ function ended(pty: PtyHandle): Promise<Ended> {
 }
 
 test('RealPty_ShellOutput_ReachesTheListener', async () => {
-  const result = await ended(started('printf "pane-says-%s" hi; exit 3'));
+  const result = await ended(started('printf "pane-says-%s" hi; exit 3', TERMINAL_SIZE));
   assert.match(result.output, /pane-says-hi/, 'because the pane draws what the process prints to its terminal');
 });
 
 test('RealPty_ShellExitCode_Reported', async () => {
-  const result = await ended(started('exit 3'));
+  const result = await ended(started('exit 3', TERMINAL_SIZE));
   assert.equal(result.code, 3, 'because the page says how the session ended');
 });
 
 test('RealPty_AfterAResize_TheProcessSeesTheNewSize', async () => {
-  const pty = started('read go; stty size', { cols: 80, rows: 24 });
+  const pty = started('read go; stty size', TERMINAL_SIZE);
   const result = ended(pty);
-  pty.resize({ cols: 97, rows: 51 });
+  pty.resize({ columns: 97, rows: 51 });
   pty.write(new TextEncoder().encode('\r'));
   assert.match((await result).output, /51 97/, 'because a TUI lays itself out at the size the page measured');
 });

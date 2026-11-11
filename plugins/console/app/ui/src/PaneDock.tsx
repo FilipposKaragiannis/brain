@@ -61,7 +61,7 @@ export function PaneDock({ projectOnScreen, projects }: { projectOnScreen: strin
 function PaneSurface({ store, view, label, shown }: { store: PaneStore; view: PaneView; label: string; shown: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (container.current !== null) store.attach(view.key, container.current);
+    if (container.current !== null) store.showAndConnect(view.key, container.current);
   }, [store, view.key]);
   useEffect(() => {
     if (!shown) return undefined;
