@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { constants } from 'node:os';
+import { errorMessage } from './log.ts';
 import type { PaneLaunch } from './panePlan.ts';
 import type { PaneSize } from './paneProtocol.ts';
 import { processAlive } from './processAlive.ts';
@@ -29,9 +30,7 @@ type PtyProcess = {
 };
 /** node-pty's own option names; `spawnPty` is where a pane's names become them. */
 type PtyOptions = { cols: number; rows: number; cwd: string; env: Record<string, string>; encoding: null };
-type PtyModule = { spawn(file: string, args: string[], options: PtyOptions): PtyProcess };
-
-const failure = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+type PtyModule = { spawn(file: string, commandArguments: string[], options: PtyOptions): PtyProcess };
 
 /**
  * The real `PtySpawner`. The addon loads on the first spawn, so a daemon whose addon cannot load
@@ -54,16 +53,16 @@ function loadPty(): { ok: true; addon: PtyModule } | { ok: false; error: string 
     const addon: PtyModule = createRequire(import.meta.url)(PTY_PACKAGE);
     return { ok: true, addon };
   } catch (error) {
-    return { ok: false, error: `the terminal addon (${PTY_PACKAGE}) did not load: ${failure(error)}` };
+    return { ok: false, error: `the terminal addon (${PTY_PACKAGE}) did not load: ${errorMessage(error)}` };
   }
 }
 
 function spawnPty(addon: PtyModule, launch: PaneLaunch, size: PaneSize, environment: Record<string, string>): ReturnType<PtySpawner> {
   try {
-    const started = addon.spawn(launch.command, launch.args, { cols: size.columns, rows: size.rows, cwd: launch.workingFolder, env: environment, encoding: null });
+    const started = addon.spawn(launch.command, launch.commandArguments, { cols: size.columns, rows: size.rows, cwd: launch.workingFolder, env: environment, encoding: null });
     return { ok: true, pty: ptyHandle(started) };
   } catch (error) {
-    return { ok: false, error: `${launch.command} did not start in ${launch.workingFolder}: ${failure(error)}` };
+    return { ok: false, error: `${launch.command} did not start in ${launch.workingFolder}: ${errorMessage(error)}` };
   }
 }
 

@@ -10,7 +10,8 @@ import { applyChange, parseDocument, valueAt } from '../src/plugins/flow/configD
 import { contentHash, describe, FlowConfigEditor, followUpsOf } from '../src/plugins/flow/configEditor.ts';
 import { codexDefaults, readHostDefaults } from '../src/plugins/flow/hostDefaults.ts';
 import type { FlowConfigDocument, FlowConfigSaved } from '../src/plugins/flow/schema.ts';
-import { checkChange, checkFileValue, checkSchedule, codexModel, fieldAt, FLOW_CONFIG_SCHEMA, jobsPair, legacyJobsSetting, legacyReadySetting } from '../src/plugins/flow/schema.ts';
+import { codexModel, jobsPair, legacyJobsSetting } from '../src/plugins/flow/jobsPair.ts';
+import { checkChange, checkFileValue, checkSchedule, fieldAt, FLOW_CONFIG_SCHEMA, legacyReadySetting } from '../src/plugins/flow/schema.ts';
 import { parseYaml } from '../src/yaml.ts';
 import { FIXTURES } from './fakeRunner.ts';
 

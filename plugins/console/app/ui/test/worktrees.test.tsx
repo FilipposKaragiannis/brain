@@ -402,7 +402,7 @@ function clickOnCard(card: string, button: string): { path: string | null; run: 
   const Wrapper = daemon.screenWrapper();
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-2'), poolWorktree('wt-5')] }} /><PaneDock projectOnScreen="project" projects={[]} /></Wrapper>);
   act(() => { fireEvent.click(within(screen.getByRole('article', { name: card })).getByRole('button', { name: button })); });
-  return daemon.sockets.map((socket) => ({ path: socket.param('path'), run: socket.param('run') }));
+  return daemon.sockets.map((socket) => ({ path: socket.queryParameter('path'), run: socket.queryParameter('run') }));
 }
 
 test('WorktreeCard_TerminalPane_OpensAShellAtThatWorktree', () => {

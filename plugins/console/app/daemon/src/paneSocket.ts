@@ -4,10 +4,12 @@ import type { Duplex } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { RawData } from 'ws';
 import type { Logger } from './log.ts';
+import { errorMessage } from './log.ts';
 import { parsePaneRequest } from './panePlan.ts';
 import type { PaneControl, PaneNotice } from './paneProtocol.ts';
-import { INPUT_FRAME_LIMIT_BYTES, MAX_PANE_COLUMNS, MAX_PANE_ROWS, MIN_PANE_COLUMNS, MIN_PANE_ROWS, PANE_CLOSE } from './paneProtocol.ts';
+import { INPUT_FRAME_LIMIT_BYTES, MAXIMUM_PANE_COLUMNS, MAXIMUM_PANE_ROWS, MINIMUM_PANE_COLUMNS, MINIMUM_PANE_ROWS, PANE_CLOSE } from './paneProtocol.ts';
 import type { PaneLink, PaneSessions } from './panes.ts';
+import { refuse } from './panes.ts';
 import type { ProjectRegistry, ServedProject } from './registry.ts';
 
 /** Whether a caller may open a pane at all: a refusal carries the HTTP status the upgrade is refused with. */
@@ -111,15 +113,23 @@ function decodedSegment(segment: string): string | null {
   }
 }
 
-/** Starts the pane a handshake asked for on its socket, or refuses it there when the query is not a pane request. */
+/**
+ * Starts the pane a handshake asked for on its socket, or refuses it there when the query is not a
+ * pane request. A pane that throws while it starts is refused with the reason, never a crash.
+ */
 function openPane(opening: PaneOpening, connection: WebSocket): void {
   const { route, projects, served } = opening;
   const link = socketLink(connection, route.log);
   const parsed = parsePaneRequest(opening.query);
-  if (!parsed.ok) { link.tell({ type: 'refused', error: parsed.error }); link.end(PANE_CLOSE.refused); return; }
-  const { project } = served.monitor;
+  if (!parsed.ok) { refuse(link, parsed.error); return; }
+  const projectId = served.monitor.project.id;
   projects.add(served);
-  route.panes.open({ id: project.id, root: project.root }, parsed.request, served.monitor.paneFacts(), link);
+  try {
+    route.panes.open(projectId, parsed.request, served.monitor.paneFacts(), link);
+  } catch (error) {
+    route.log.warn('pane.refused', { project: projectId, error: errorMessage(error) });
+    refuse(link, `the pane did not start: ${errorMessage(error)}`);
+  }
 }
 
 /** Answers an upgrade with a plain HTTP error and drops the connection once it is written. */
@@ -177,10 +187,10 @@ function parseControl(text: string): PaneControl | null {
 }
 
 function resizeControl(columns: unknown, rows: unknown): PaneControl | null {
-  if (!isWholeNumber(columns, MIN_PANE_COLUMNS, MAX_PANE_COLUMNS) || !isWholeNumber(rows, MIN_PANE_ROWS, MAX_PANE_ROWS)) return null;
+  if (!isWholeNumber(columns, MINIMUM_PANE_COLUMNS, MAXIMUM_PANE_COLUMNS) || !isWholeNumber(rows, MINIMUM_PANE_ROWS, MAXIMUM_PANE_ROWS)) return null;
   return { type: 'resize', cols: columns, rows };
 }
 
-function isWholeNumber(value: unknown, min: number, max: number): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
+function isWholeNumber(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= minimum && value <= maximum;
 }

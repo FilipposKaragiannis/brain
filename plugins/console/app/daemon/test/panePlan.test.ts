@@ -3,9 +3,9 @@ import { test } from 'node:test';
 import { unlistedFolder } from '../src/actionPlan.ts';
 import { paneEnvironment, parsePaneRequest, planPane } from '../src/panePlan.ts';
 import type { PaneFacts, PaneHost, PaneRequest } from '../src/panePlan.ts';
-import { DEFAULT_PANE_COLUMNS, DEFAULT_PANE_ROWS, MAX_PANE_COLUMNS, MAX_PANE_ROWS, MIN_PANE_COLUMNS, MIN_PANE_ROWS } from '../src/paneProtocol.ts';
-import { codexModel } from '../src/plugins/flow/schema.ts';
-import type { JobsPair } from '../src/plugins/flow/schema.ts';
+import { DEFAULT_PANE_COLUMNS, DEFAULT_PANE_ROWS, MAXIMUM_PANE_COLUMNS, MAXIMUM_PANE_ROWS, MINIMUM_PANE_COLUMNS, MINIMUM_PANE_ROWS } from '../src/paneProtocol.ts';
+import { codexModel } from '../src/plugins/flow/jobsPair.ts';
+import type { JobsPair } from '../src/plugins/flow/jobsPair.ts';
 
 const ROOT = '/p/app';
 const POOL_WORKTREE = '/p/app-wt-2';
@@ -31,7 +31,7 @@ function query(fields: Record<string, string>): URLSearchParams {
 
 test('ShellPane_ListedRoot_RunsTheOwnersLoginShellThere', () => {
   const plan = planPane(request(ROOT, 'shell'), FACTS, HOST);
-  assert.deepEqual(plan, { ok: true, launch: { command: '/bin/zsh', args: ['-l'], workingFolder: ROOT } }, 'because a shell pane is the owner\'s login shell in the folder they picked');
+  assert.deepEqual(plan, { ok: true, launch: { command: '/bin/zsh', commandArguments: ['-l'], workingFolder: ROOT } }, 'because a shell pane is the owner\'s login shell in the folder they picked');
 });
 
 test('ShellPane_EachListedSource_Planned', () => {
@@ -60,29 +60,29 @@ test('ShellPane_ListedFolderMissingOnDisk_Refused', () => {
 
 test('ClaudeSession_WithPair_RunsTheAbsoluteBinaryWithModelAndEffort', () => {
   const plan = planPane(request(ROOT, 'claude'), withPairs({ claude: { model: 'opus', effort: 'xhigh', from: 'jobs.claude' } }), HOST);
-  assert.deepEqual(plan, { ok: true, launch: { command: '/opt/tools/bin/claude', args: ['--model', 'opus', '--effort', 'xhigh'], workingFolder: ROOT } }, 'because a quick session starts with the project\'s model and effort pair');
+  assert.deepEqual(plan, { ok: true, launch: { command: '/opt/tools/bin/claude', commandArguments: ['--model', 'opus', '--effort', 'xhigh'], workingFolder: ROOT } }, 'because a quick session starts with the project\'s model and effort pair');
 });
 
 test('QuickSession_EmptyPair_NoFlag', () => {
   for (const run of ['claude', 'codex'] as const) {
     const plan = planPane(request(ROOT, run), FACTS, HOST);
-    assert.deepEqual(plan.ok && plan.launch.args, [], `because an empty pair leaves ${run} on its own default`);
+    assert.deepEqual(plan.ok && plan.launch.commandArguments, [], `because an empty pair leaves ${run} on its own default`);
   }
 });
 
 test('ClaudeSession_EffortOnly_OnlyTheEffortFlag', () => {
   const plan = planPane(request(ROOT, 'claude'), withPairs({ claude: { model: null, effort: 'low', from: 'jobs.claude' } }), HOST);
-  assert.deepEqual(plan.ok && plan.launch.args, ['--effort', 'low'], 'because each flag goes in only when its value is set');
+  assert.deepEqual(plan.ok && plan.launch.commandArguments, ['--effort', 'low'], 'because each flag goes in only when its value is set');
 });
 
 test('CodexSession_RosterModel_CatalogNameAndReasoningEffort', () => {
   const plan = planPane(request(POOL_WORKTREE, 'codex'), withPairs({ codex: { model: 'opus', effort: 'high', from: 'jobs.codex' } }), HOST);
-  assert.deepEqual(plan, { ok: true, launch: { command: '/usr/local/bin/codex', args: ['-m', codexModel('opus'), '-c', 'model_reasoning_effort="high"'], workingFolder: POOL_WORKTREE } }, 'because codex takes its catalog name and the effort as a config override');
+  assert.deepEqual(plan, { ok: true, launch: { command: '/usr/local/bin/codex', commandArguments: ['-m', codexModel('opus'), '-c', 'model_reasoning_effort="high"'], workingFolder: POOL_WORKTREE } }, 'because codex takes its catalog name and the effort as a config override');
 });
 
 test('CodexSession_CatalogModel_PassedThroughUnchanged', () => {
   const plan = planPane(request(ROOT, 'codex'), withPairs({ codex: { model: 'gpt-7-nova', effort: null, from: 'jobs.codex' } }), HOST);
-  assert.deepEqual(plan.ok && plan.launch.args, ['-m', 'gpt-7-nova'], 'because a name that is not a roster name is already codex\'s own');
+  assert.deepEqual(plan.ok && plan.launch.commandArguments, ['-m', 'gpt-7-nova'], 'because a name that is not a roster name is already codex\'s own');
 });
 
 test('QuickSession_ModelOpeningWithDash_RefusedNamingTheKey', () => {
@@ -120,8 +120,8 @@ test('Request_NoSize_DefaultSize', () => {
 
 test('Request_SizeAtEachBound_Accepted', () => {
   const sizes = [
-    { columns: MIN_PANE_COLUMNS, rows: MIN_PANE_ROWS },
-    { columns: MAX_PANE_COLUMNS, rows: MAX_PANE_ROWS },
+    { columns: MINIMUM_PANE_COLUMNS, rows: MINIMUM_PANE_ROWS },
+    { columns: MAXIMUM_PANE_COLUMNS, rows: MAXIMUM_PANE_ROWS },
   ];
   for (const size of sizes) {
     const parsed = parsePaneRequest(query({ path: ROOT, run: 'shell', cols: String(size.columns), rows: String(size.rows) }));
@@ -131,10 +131,10 @@ test('Request_SizeAtEachBound_Accepted', () => {
 
 test('Request_SizeOutsideTheBounds_Refused', () => {
   const sizes = [
-    { cols: String(MIN_PANE_COLUMNS - 1), rows: '24' },
-    { cols: String(MAX_PANE_COLUMNS + 1), rows: '24' },
-    { cols: '80', rows: String(MIN_PANE_ROWS - 1) },
-    { cols: '80', rows: String(MAX_PANE_ROWS + 1) },
+    { cols: String(MINIMUM_PANE_COLUMNS - 1), rows: '24' },
+    { cols: String(MAXIMUM_PANE_COLUMNS + 1), rows: '24' },
+    { cols: '80', rows: String(MINIMUM_PANE_ROWS - 1) },
+    { cols: '80', rows: String(MAXIMUM_PANE_ROWS + 1) },
     { cols: '80.5', rows: '24' },
     { cols: '-80', rows: '24' },
   ];

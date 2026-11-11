@@ -12,3 +12,5 @@ Project notes for agents, and the allowed list that N-05 in `docs/coding-standar
   `columns`.
 - **cwd**: working folder; only at the node-pty and `child_process` boundary, daemon-owned names
   say `workingFolder`.
+- **env**: environment variables; only at the node-pty boundary, daemon-owned names say
+  `environment`.

@@ -79,7 +79,7 @@ export class FakeSocket implements SocketLike {
   send(frame: string | Uint8Array): void { this.sent.push(frame); }
 
   /** A value of the query the page opened the socket with. */
-  param(name: string): string | null { return new URL(this.path, 'http://page.test').searchParams.get(name); }
+  queryParameter(name: string): string | null { return new URL(this.path, 'http://page.test').searchParams.get(name); }
 
   close(code: number): void { this.closedWith = code; }
 

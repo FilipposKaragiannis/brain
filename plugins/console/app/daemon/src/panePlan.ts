@@ -1,32 +1,33 @@
 import path from 'node:path';
 import { HOST_EFFORTS, MODEL, unlistedFolder } from './actionPlan.ts';
-import { codexModel } from './plugins/flow/schema.ts';
-import type { JobsHost, JobsPair } from './plugins/flow/schema.ts';
+import { codexModel } from './plugins/flow/jobsPair.ts';
+import type { JobsPair, JobsPairs } from './plugins/flow/jobsPair.ts';
+import type { JobsHost } from './plugins/flow/schema.ts';
 import type { PaneRun, PaneSize } from './paneProtocol.ts';
-import { DEFAULT_PANE_COLUMNS, DEFAULT_PANE_ROWS, MAX_PANE_COLUMNS, MAX_PANE_ROWS, MIN_PANE_COLUMNS, MIN_PANE_ROWS, PANE_RUNS } from './paneProtocol.ts';
+import { DEFAULT_PANE_COLUMNS, DEFAULT_PANE_ROWS, MAXIMUM_PANE_COLUMNS, MAXIMUM_PANE_ROWS, MINIMUM_PANE_COLUMNS, MINIMUM_PANE_ROWS, PANE_RUNS } from './paneProtocol.ts';
 
 /** A pane the page asks for: the folder it opens in, what it runs and the terminal's size. */
 export type PaneRequest = { folder: string; run: PaneRun; size: PaneSize };
 /** What the project says about a pane: the folders it may open in, and the pair each host's quick session starts with. */
-export type PaneFacts = { folders: string[]; pairs: Record<JobsHost, JobsPair> };
+export type PaneFacts = { folders: string[]; pairs: JobsPairs };
 /**
  * The machine the daemon runs on: the owner's shell, the environment every pane gets, the disk,
  * and the absolute path of a program on the daemon's PATH (null when none is there).
  */
 export type PaneHost = { shell: string; environment: Record<string, string>; isFolder(folder: string): boolean; executable(name: string): string | null };
 /** The process a pane's pty runs: an argv, never a shell line, and the folder it starts in. */
-export type PaneLaunch = { command: string; args: string[]; workingFolder: string };
+export type PaneLaunch = { command: string; commandArguments: string[]; workingFolder: string };
 
 /** A project with no flow config sets no pair: each host starts on its own default model and effort. */
-export const NO_JOBS_PAIRS: Record<JobsHost, JobsPair> = { claude: { model: null, effort: null, from: 'jobs.claude' }, codex: { model: null, effort: null, from: 'jobs.codex' } };
+export const NO_JOBS_PAIRS: JobsPairs = { claude: { model: null, effort: null, from: 'jobs.claude' }, codex: { model: null, effort: null, from: 'jobs.codex' } };
 
 type Refusal = { ok: false; error: string };
 /** One size in the request's query: `key` is the query's own name for it (`cols` for the columns). */
-type SizeBound = { key: 'cols' | 'rows'; fallback: number; min: number; max: number };
+type SizeBound = { key: 'cols' | 'rows'; fallback: number; minimum: number; maximum: number };
 type Planned = { ok: true; launch: PaneLaunch } | Refusal;
 
-const COLUMNS: SizeBound = { key: 'cols', fallback: DEFAULT_PANE_COLUMNS, min: MIN_PANE_COLUMNS, max: MAX_PANE_COLUMNS };
-const ROWS: SizeBound = { key: 'rows', fallback: DEFAULT_PANE_ROWS, min: MIN_PANE_ROWS, max: MAX_PANE_ROWS };
+const COLUMNS: SizeBound = { key: 'cols', fallback: DEFAULT_PANE_COLUMNS, minimum: MINIMUM_PANE_COLUMNS, maximum: MAXIMUM_PANE_COLUMNS };
+const ROWS: SizeBound = { key: 'rows', fallback: DEFAULT_PANE_ROWS, minimum: MINIMUM_PANE_ROWS, maximum: MAXIMUM_PANE_ROWS };
 const WHOLE_NUMBER = /^[0-9]+$/;
 /** A login shell, because the environment launchd hands the daemon is thin. */
 const LOGIN_SHELL = '-l';
@@ -36,7 +37,7 @@ const DEFAULT_LANGUAGE = 'en_US.UTF-8';
 const TERMINAL_VARIABLES = { TERM: 'xterm-256color', COLORTERM: 'truecolor' };
 
 const refuse = (error: string): Refusal => ({ ok: false, error });
-const sizeRefusal = (bound: SizeBound): string => `${bound.key} must be a whole number from ${bound.min} to ${bound.max}`;
+const sizeRefusal = (bound: SizeBound): string => `${bound.key} must be a whole number from ${bound.minimum} to ${bound.maximum}`;
 
 /** Reads a pane's request from its query: `path`, `run`, and `cols` and `rows` (80 by 24 when absent). */
 export function parsePaneRequest(query: URLSearchParams): { ok: true; request: PaneRequest } | Refusal {
@@ -60,7 +61,7 @@ export function parsePaneRequest(query: URLSearchParams): { ok: true; request: P
 export function planPane(request: PaneRequest, facts: PaneFacts, host: PaneHost): Planned {
   const checked = listedFolder(request.folder, facts, host);
   if (!checked.ok) return checked;
-  if (request.run === 'shell') return { ok: true, launch: { command: host.shell, args: [LOGIN_SHELL], workingFolder: checked.folder } };
+  if (request.run === 'shell') return { ok: true, launch: { command: host.shell, commandArguments: [LOGIN_SHELL], workingFolder: checked.folder } };
   return agentLaunch(request.run, checked.folder, facts.pairs[request.run], host);
 }
 
@@ -79,7 +80,7 @@ function agentLaunch(agent: JobsHost, folder: string, pair: JobsPair, host: Pane
   if (command === null) return refuse(`${agent} is not on the daemon's PATH; start it from a shell pane`);
   const error = modelRefusal(pair) ?? effortRefusal(agent, pair);
   if (error !== null) return refuse(error);
-  return { ok: true, launch: { command, args: agentArgs(agent, pair), workingFolder: folder } };
+  return { ok: true, launch: { command, commandArguments: agentArguments(agent, pair), workingFolder: folder } };
 }
 
 function modelRefusal(pair: JobsPair): string | null {
@@ -94,7 +95,7 @@ function effortRefusal(agent: JobsHost, pair: JobsPair): string | null {
 }
 
 /** The agent's model and effort flags, as host_run in the plugin's lib/host.sh passes them; codex takes the roster's names mapped. */
-function agentArgs(agent: JobsHost, pair: JobsPair): string[] {
+function agentArguments(agent: JobsHost, pair: JobsPair): string[] {
   const { model, effort } = pair;
   if (agent === 'claude') return [...(model === null ? [] : ['--model', model]), ...(effort === null ? [] : ['--effort', effort])];
   return [...(model === null ? [] : ['-m', codexModel(model)]), ...(effort === null ? [] : ['-c', `model_reasoning_effort="${effort}"`])];
@@ -115,5 +116,5 @@ function sizeValue(query: URLSearchParams, bound: SizeBound): number | null {
   if (text === null) return bound.fallback;
   if (!WHOLE_NUMBER.test(text)) return null;
   const value = Number(text);
-  return value >= bound.min && value <= bound.max ? value : null;
+  return value >= bound.minimum && value <= bound.maximum ? value : null;
 }

@@ -36,9 +36,18 @@ function machinePaneHost(environment: NodeJS.ProcessEnv): PaneHost {
   return {
     shell: environment.SHELL || os.userInfo().shell || FALLBACK_SHELL,
     environment: paneEnvironment(environment),
-    isFolder: (folder) => statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true,
+    isFolder,
     executable: (name) => onPath(name, environment.PATH ?? ''),
   };
+}
+
+/** Whether the path is a folder on the disk; false when it is missing or the daemon may not look (EACCES on a parent). */
+function isFolder(folder: string): boolean {
+  try {
+    return statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    return false;
+  }
 }
 
 /** The first file named `name` the owner may run in a folder of `searchPath`, as an absolute path; null when none is. */

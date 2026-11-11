@@ -188,7 +188,7 @@ test('App_ProjectBarTerminalPane_OpensAShellAtTheProjectRoot', async () => {
   const daemon = new FakeDaemon();
   await renderFoosbrawl(daemon);
   clickProjectBarTerminalPane();
-  expect(daemon.sockets.map((socket) => ({ path: socket.param('path'), run: socket.param('run') })), 'because the project bar opens a shell at the project root').toEqual([{ path: '/p', run: 'shell' }]);
+  expect(daemon.sockets.map((socket) => ({ path: socket.queryParameter('path'), run: socket.queryParameter('run') })), 'because the project bar opens a shell at the project root').toEqual([{ path: '/p', run: 'shell' }]);
 });
 
 const NAVIGATIONS = [

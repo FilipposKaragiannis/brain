@@ -8,7 +8,7 @@ import { processAlive } from '../src/processAlive.ts';
 import { ptySpawner } from '../src/pty.ts';
 
 /** How long a real shell gets to answer before the test gives up. */
-const ANSWER_TIMEOUT_MS = 10000;
+const ANSWER_TIMEOUT_MILLISECONDS = 10000;
 const ENVIRONMENT = { PATH: '/usr/bin:/bin', TERM: 'xterm-256color', LANG: 'en_US.UTF-8' };
 
 type Ended = { output: string; code: number | null; signal: string | null };
@@ -16,7 +16,7 @@ type Ended = { output: string; code: number | null; signal: string | null };
 const TERMINAL_SIZE: PaneSize = { columns: 80, rows: 24 };
 
 function started(script: string, size: PaneSize): PtyHandle {
-  const launch: PaneLaunch = { command: '/bin/sh', args: ['-c', script], workingFolder: os.tmpdir() };
+  const launch: PaneLaunch = { command: '/bin/sh', commandArguments: ['-c', script], workingFolder: os.tmpdir() };
   const spawned = ptySpawner()(launch, size, ENVIRONMENT);
   if (!spawned.ok) throw new Error(`the real pty did not start: ${spawned.error}`);
   return spawned.pty;
@@ -27,7 +27,7 @@ function ended(pty: PtyHandle): Promise<Ended> {
   const chunks: Uint8Array[] = [];
   pty.onOutput((bytes) => { chunks.push(bytes); });
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pty.signal('SIGKILL'); reject(new Error('the shell did not end in time')); }, ANSWER_TIMEOUT_MS);
+    const timer = setTimeout(() => { pty.signal('SIGKILL'); reject(new Error('the shell did not end in time')); }, ANSWER_TIMEOUT_MILLISECONDS);
     pty.onExit((code, signal) => {
       clearTimeout(timer);
       // The last output can arrive just after the exit; one turn of the loop lets it land.
@@ -58,7 +58,7 @@ test('RealPty_AfterAResize_TheProcessSeesTheNewSize', async () => {
 async function childPid(pty: PtyHandle): Promise<number> {
   const chunks: Uint8Array[] = [];
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('the shell did not print its child\'s pid in time')), ANSWER_TIMEOUT_MS);
+    const timer = setTimeout(() => reject(new Error('the shell did not print its child\'s pid in time')), ANSWER_TIMEOUT_MILLISECONDS);
     pty.onOutput((bytes) => {
       chunks.push(bytes);
       const printed = /child=(\d+)/.exec(Buffer.concat(chunks).toString('utf8'));
@@ -69,7 +69,7 @@ async function childPid(pty: PtyHandle): Promise<number> {
 
 /** Waits until a pid no longer names a process, or the answer timeout passes. */
 async function gone(pid: number): Promise<boolean> {
-  const deadline = Date.now() + ANSWER_TIMEOUT_MS;
+  const deadline = Date.now() + ANSWER_TIMEOUT_MILLISECONDS;
   while (processAlive(pid)) {
     if (Date.now() > deadline) return false;
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -113,7 +113,7 @@ test('RealPty_Kill_EndsAShellThatIgnoresTheHangUp', async () => {
 });
 
 test('RealPty_CommandMissing_EndsWithAFailure', async () => {
-  const launch: PaneLaunch = { command: '/no/such/folder/brain-agent', args: [], workingFolder: os.tmpdir() };
+  const launch: PaneLaunch = { command: '/no/such/folder/brain-agent', commandArguments: [], workingFolder: os.tmpdir() };
   const spawned = ptySpawner()(launch, TERMINAL_SIZE, ENVIRONMENT);
   const code = spawned.ok ? (await ended(spawned.pty)).code : null;
   assert.notEqual(code, 0, 'because a program that never ran must not look like a session that ended well');

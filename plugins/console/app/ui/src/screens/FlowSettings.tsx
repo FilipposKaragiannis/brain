@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FieldChange, FieldGroup, FieldSpec, FieldValue, FlowConfigDocument, FlowConfigSaved, HostDefaults, JobsHost, Section, TrackerAdapter } from '../../../daemon/src/plugins/flow/schema.ts';
-import { checkSchedule, DEFAULT_JOBS_HOST, fieldAt, legacyJobsSetting, legacyReadySetting, OTHER_GROUP, plainListValue } from '../../../daemon/src/plugins/flow/schema.ts';
+import { legacyJobsSetting } from '../../../daemon/src/plugins/flow/jobsPair.ts';
+import { checkSchedule, DEFAULT_JOBS_HOST, fieldAt, legacyReadySetting, OTHER_GROUP, plainListValue } from '../../../daemon/src/plugins/flow/schema.ts';
 import { projectPath, unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
 import { OpenFileButton } from '../OpenFileButton.tsx';

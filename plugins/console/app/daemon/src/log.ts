@@ -19,3 +19,6 @@ export function stderrLogger(clock: () => Date): Logger {
 }
 
 export const silentLogger: Logger = { info: () => {}, warn: () => {}, error: () => {} };
+
+/** What a log line or a refusal says of a thrown value. */
+export const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));

@@ -4,7 +4,7 @@ import { setImmediate as tick } from 'node:timers/promises';
 import { silentLogger } from '../src/log.ts';
 import type { PaneFacts, PaneHost, PaneRequest } from '../src/panePlan.ts';
 import type { PaneControl, PaneNotice } from '../src/paneProtocol.ts';
-import { MAX_PANES, OUTPUT_HIGH_WATER_BYTES, OUTPUT_LOW_WATER_BYTES, PANE_CLOSE, PANE_KILL_GRACE_MS, PAUSED_EXIT_CHECK_MS } from '../src/paneProtocol.ts';
+import { MAXIMUM_PANES, OUTPUT_HIGH_WATER_BYTES, OUTPUT_LOW_WATER_BYTES, PANE_CLOSE, PANE_KILL_GRACE_MILLISECONDS, PAUSED_EXIT_CHECK_MILLISECONDS } from '../src/paneProtocol.ts';
 import { PaneSessions } from '../src/panes.ts';
 import type { PaneLink } from '../src/panes.ts';
 import { fakePty } from './fakePty.ts';
@@ -60,7 +60,7 @@ function sessions(refusal: string | null) {
   const panes = new PaneSessions({ spawner, host: HOST, scheduler: timers.scheduler, log: silentLogger });
   const open = (request: PaneRequest, project: { id: string; root: string }): FakeLink => {
     const link = fakeLink();
-    panes.open(project, request, FACTS, link.link);
+    panes.open(project.id, request, FACTS, link.link);
     return link;
   };
   return { panes, ptys, timers, open };
@@ -154,7 +154,7 @@ test('LinkGone_ProcessIgnoringHangUp_KilledOnlyAfterTheGrace', () => {
   pty.ignoresHangUp = true;
   link.go();
   const beforeGrace = [...pty.signals];
-  timers.fire(PANE_KILL_GRACE_MS);
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
   assert.deepEqual([beforeGrace, pty.signals], [['SIGHUP'], ['SIGHUP', 'SIGKILL']], 'because a process that ignores the hang-up gets the grace, then is killed');
 });
 
@@ -164,7 +164,7 @@ test('LinkGone_AfterTheGrace_MasterClosed', () => {
   const pty = only(ptys);
   pty.ignoresHangUp = true;
   link.go();
-  timers.fire(PANE_KILL_GRACE_MS);
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
   assert.equal(pty.closed, true, 'because closing the master hangs up whatever still holds the terminal');
 });
 
@@ -184,28 +184,28 @@ test('StopAll_ProcessIgnoringHangUp_SettlesOnlyOnceItIsKilled', async () => {
   const stopping = panes.stopAll().then(() => { settled = true; });
   await tick();
   const settledBeforeGrace = settled;
-  timers.fire(PANE_KILL_GRACE_MS);
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
   await stopping;
   assert.deepEqual([settledBeforeGrace, pty.exited], [false, true], 'because the daemon exits only after every pane\'s process has ended');
 });
 
 test('PaneLimit_OneMoreThanTheLimit_Refused', () => {
   const { open } = sessions(null);
-  for (let opened = 0; opened < MAX_PANES; opened += 1) open(SHELL_AT_ROOT, PROJECT);
+  for (let opened = 0; opened < MAXIMUM_PANES; opened += 1) open(SHELL_AT_ROOT, PROJECT);
   const extra = open(SHELL_AT_ROOT, PROJECT);
-  assert.deepEqual([extra.notices.map((notice) => notice.type), extra.ended], [['refused'], PANE_CLOSE.refused], 'because the daemon runs at most MAX_PANES panes across every project');
+  assert.deepEqual([extra.notices.map((notice) => notice.type), extra.ended], [['refused'], PANE_CLOSE.refused], 'because the daemon runs at most MAXIMUM_PANES panes across every project');
 });
 
 test('PaneLimit_LimitAcrossProjects_Refused', () => {
   const { open } = sessions(null);
-  for (let opened = 0; opened < MAX_PANES; opened += 1) open(SHELL_AT_ROOT, PROJECT);
+  for (let opened = 0; opened < MAXIMUM_PANES; opened += 1) open(SHELL_AT_ROOT, PROJECT);
   const extra = open({ ...SHELL_AT_ROOT, folder: '/p/site' }, OTHER_PROJECT);
   assert.equal(extra.ended, PANE_CLOSE.refused, 'because the limit is the machine\'s, not one project\'s');
 });
 
 test('PaneLimit_OneClosed_ANewOneOpens', () => {
   const { open, ptys } = sessions(null);
-  for (let opened = 0; opened < MAX_PANES; opened += 1) open(SHELL_AT_ROOT, PROJECT);
+  for (let opened = 0; opened < MAXIMUM_PANES; opened += 1) open(SHELL_AT_ROOT, PROJECT);
   ptys[0]!.exit(0, null);
   const next = open(SHELL_AT_ROOT, PROJECT);
   assert.deepEqual(next.notices.map((notice) => notice.type), ['started'], 'because a pane that ended frees its place');
@@ -313,7 +313,7 @@ test('Ack_LinkQueueUnderTheLowWater_PtyResumed', () => {
 
 test('PaneLimit_HungUpPaneStillRunning_CountsAgainstTheLimit', () => {
   const { open, ptys } = sessions(null);
-  const links = Array.from({ length: MAX_PANES }, () => open(SHELL_AT_ROOT, PROJECT));
+  const links = Array.from({ length: MAXIMUM_PANES }, () => open(SHELL_AT_ROOT, PROJECT));
   ptys[0]!.ignoresHangUp = true;
   links[0]!.go();
   const extra = open(SHELL_AT_ROOT, PROJECT);
@@ -322,10 +322,10 @@ test('PaneLimit_HungUpPaneStillRunning_CountsAgainstTheLimit', () => {
 
 test('PaneLimit_HungUpPaneKilledAfterTheGrace_ANewOneOpens', () => {
   const { open, ptys, timers } = sessions(null);
-  const links = Array.from({ length: MAX_PANES }, () => open(SHELL_AT_ROOT, PROJECT));
+  const links = Array.from({ length: MAXIMUM_PANES }, () => open(SHELL_AT_ROOT, PROJECT));
   ptys[0]!.ignoresHangUp = true;
   links[0]!.go();
-  timers.fire(PANE_KILL_GRACE_MS);
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
   const next = open(SHELL_AT_ROOT, PROJECT);
   assert.deepEqual(next.notices.map((notice) => notice.type), ['started'], 'because a pane frees its place once its process has ended');
 });
@@ -354,38 +354,38 @@ const LAST_WORDS = 'error: the session ran out of context\r\n';
 test('ProcessEndsWhilePaused_ItsLastOutputReachesTheLink', () => {
   const { link, pty, timers } = pausedPane();
   pty.finish([bytes(LAST_WORDS)], 1);
-  timers.fire(PAUSED_EXIT_CHECK_MS);
+  timers.fire(PAUSED_EXIT_CHECK_MILLISECONDS);
   assert.equal(new TextDecoder().decode(link.output.at(-1)), LAST_WORDS, 'because a crashing agent\'s last line is what the owner most needs to read, paused or not');
 });
 
 test('ProcessEndsWhilePaused_ExitTold', () => {
   const { link, pty, timers } = pausedPane();
   pty.finish([bytes(LAST_WORDS)], 1);
-  timers.fire(PAUSED_EXIT_CHECK_MS);
+  timers.fire(PAUSED_EXIT_CHECK_MILLISECONDS);
   assert.deepEqual(link.notices.at(-1), { type: 'exit', code: 1, signal: null }, 'because the page says how the session ended even when it ended while paused');
 });
 
 test('ProcessStillRunningWhilePaused_PtyStaysPaused', () => {
   const { pty, timers } = pausedPane();
-  timers.fire(PAUSED_EXIT_CHECK_MS);
+  timers.fire(PAUSED_EXIT_CHECK_MILLISECONDS);
   assert.equal(pty.paused, true, 'because a live process stays paused until the page catches up');
 });
 
 test('ProcessEndsWhilePaused_TailPastTheHighWater_ExitStillTold', () => {
   const { link, pty, timers } = pausedPane();
   pty.finish([filler(OUTPUT_HIGH_WATER_BYTES + 1), filler(OUTPUT_HIGH_WATER_BYTES + 1)], 2);
-  timers.fire(PAUSED_EXIT_CHECK_MS);
+  timers.fire(PAUSED_EXIT_CHECK_MILLISECONDS);
   assert.deepEqual(link.notices.at(-1), { type: 'exit', code: 2, signal: null }, 'because once the process is gone, pausing again only stalls the tail it left');
 });
 
 test('PausedPaneEnds_NoExitCheckLeftBehind', () => {
   const { pty, timers } = pausedPane();
   pty.exit(0, null);
-  assert.deepEqual(timers.pending().filter((ms) => ms === PAUSED_EXIT_CHECK_MS), [], 'because a pane that ended must not keep a timer polling a pid the system may reuse');
+  assert.deepEqual(timers.pending().filter((milliseconds) => milliseconds === PAUSED_EXIT_CHECK_MILLISECONDS), [], 'because a pane that ended must not keep a timer polling a pid the system may reuse');
 });
 
 test('PausedPaneResumed_NoExitCheckLeftBehind', () => {
   const { link, timers } = pausedPane();
   link.control({ type: 'ack', bytes: OUTPUT_HIGH_WATER_BYTES + 1 });
-  assert.deepEqual(timers.pending().filter((ms) => ms === PAUSED_EXIT_CHECK_MS), [], 'because a pty that reads on needs no check for an exit it will read itself');
+  assert.deepEqual(timers.pending().filter((milliseconds) => milliseconds === PAUSED_EXIT_CHECK_MILLISECONDS), [], 'because a pty that reads on needs no check for an exit it will read itself');
 });

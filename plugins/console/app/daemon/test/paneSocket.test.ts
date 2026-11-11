@@ -31,7 +31,7 @@ const OTHER_PROJECT = { id: 'local', name: 'local', root: path.join(FIXTURES, 'p
 const BINARIES: Record<string, string> = { claude: '/opt/tools/bin/claude', codex: '/opt/tools/bin/codex' };
 const HOST: PaneHost = { shell: '/bin/zsh', environment: { PATH: '/usr/bin' }, isFolder: () => true, executable: (name) => BINARIES[name] ?? null };
 /** How long a socket gets to do what a test waits for. */
-const SOCKET_TIMEOUT_MS = 5000;
+const SOCKET_TIMEOUT_MILLISECONDS = 5000;
 
 type Daemon = { registry: ProjectRegistry; panes: PaneSessions; ptys: FakePty[]; port: number; close(): Promise<void> };
 
@@ -88,7 +88,7 @@ function refusedStatus(url: string, headers: Record<string, string>): Promise<nu
 }
 
 async function until(condition: () => boolean, what: string): Promise<void> {
-  const deadline = Date.now() + SOCKET_TIMEOUT_MS;
+  const deadline = Date.now() + SOCKET_TIMEOUT_MILLISECONDS;
   while (!condition()) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -157,7 +157,7 @@ test('ListedFolder_ShellStartedThereAtTheRequestedSize', async () => {
   try {
     await startedClient(running.port, AT_ROOT, PROJECT.id);
     const pty = running.ptys[0]!;
-    assert.deepEqual([pty.launch, pty.size], [{ command: '/bin/zsh', args: ['-l'], workingFolder: FIXTURE_ROOT }, { columns: 100, rows: 30 }], 'because the pane runs the owner\'s shell in the folder and size the page asked for');
+    assert.deepEqual([pty.launch, pty.size], [{ command: '/bin/zsh', commandArguments: ['-l'], workingFolder: FIXTURE_ROOT }, { columns: 100, rows: 30 }], 'because the pane runs the owner\'s shell in the folder and size the page asked for');
   } finally { await running.close(); }
 });
 
@@ -236,7 +236,7 @@ test('StopAll_WithAPaneOpen_ServerCloseSettles', async () => {
   const running = await daemon();
   await startedClient(running.port, AT_ROOT, PROJECT.id);
   const closing = running.close().then(() => 'closed');
-  const timeout = new Promise((resolve) => setTimeout(() => resolve('hung'), SOCKET_TIMEOUT_MS));
+  const timeout = new Promise((resolve) => setTimeout(() => resolve('hung'), SOCKET_TIMEOUT_MILLISECONDS));
   assert.equal(await Promise.race([closing, timeout]), 'closed', 'because an upgraded socket must not hold the daemon open when it stops');
 });
 
@@ -293,7 +293,7 @@ test('QuickSession_ProjectSetsClaudesPair_SpawnedWithTheModelAndEffort', async (
     await running.registry.apply([PROJECT, OTHER_PROJECT, paired]);
     await running.registry.get(paired.id)!.monitor.refresh('files');
     await startedClient(running.port, { ...AT_ROOT, path: paired.root, run: 'claude' }, paired.id);
-    assert.deepEqual(running.ptys[0]!.launch.args, ['--model', 'claude-sonnet-4-5', '--effort', 'xhigh'], 'because a quick session runs with the model and effort the project\'s flow config names');
+    assert.deepEqual(running.ptys[0]!.launch.commandArguments, ['--model', 'claude-sonnet-4-5', '--effort', 'xhigh'], 'because a quick session runs with the model and effort the project\'s flow config names');
   } finally {
     await running.close();
     await rm(paired.root, { recursive: true, force: true });
@@ -324,7 +324,7 @@ test('QuickSession_ProjectSetsCodexsPair_SpawnedWithTheModelAndEffort', async ()
     await running.registry.apply([PROJECT, OTHER_PROJECT, paired]);
     await running.registry.get(paired.id)!.monitor.refresh('files');
     await startedClient(running.port, { ...AT_ROOT, path: paired.root, run: 'codex' }, paired.id);
-    assert.deepEqual(running.ptys[0]!.launch.args, ['-m', 'gpt-7-nova', '-c', 'model_reasoning_effort="low"'], 'because a codex quick session runs with the model and effort the project\'s flow config names for codex');
+    assert.deepEqual(running.ptys[0]!.launch.commandArguments, ['-m', 'gpt-7-nova', '-c', 'model_reasoning_effort="low"'], 'because a codex quick session runs with the model and effort the project\'s flow config names for codex');
   } finally {
     await running.close();
     await rm(paired.root, { recursive: true, force: true });
