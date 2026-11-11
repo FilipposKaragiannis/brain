@@ -44,6 +44,41 @@ gates_json() {
   done | python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
 }
 
+# gate_drop <item> <why>: the item closed under its gate. The gate, its record and its gate:
+# label go and no answer is recorded. An ambiguity or escalation question goes to the item and to
+# stdout, marked unanswered (gate_unanswered). An item with no gate is left as it is.
+gate_drop() {
+  item="$1"; why="$2"; record="$home/gates/$(item_slug "$item").json"
+  gate_record="$(cat "$record" 2>/dev/null)"
+  gate="$(json_get "$gate_record" gate)"; asked="$(json_get "$gate_record" message)"
+  if [ -z "$gate" ]; then
+    item_data="$(adapter read "$item" 2>/dev/null)"
+    gate="$(state_get "$item_data" gate)"; [ "$gate" != none ] || gate=""
+  fi
+  [ -n "$gate" ] || return 0
+  adapter write-state "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
+    || die "cannot drop the $gate gate of $item; it stays"
+  rm -f "$record"
+  case "$gate" in
+    ambiguity|escalation) gate_unanswered "$item" "$gate" "$why" "$asked" ;;
+    *)
+      adapter comment "$item" --body "Gate dropped: the $gate gate closed with the item ($why)." >/dev/null || echo "flow: could not comment on $item" >&2
+      echo "$item: dropped the $gate gate ($why)" ;;
+  esac
+}
+
+# gate_unanswered <item> <gate> <why> <question>: the question nobody answered, quoted on the item
+# (headed Unanswered, not Gate, so no answers pass reads it as a gate) and on stdout, for a
+# follow-up. A question with no record points at the gate's own comment.
+gate_unanswered() {
+  quoted="$(printf '%s\n' "${4:-(the question is in the gate comment above)}" | sed 's/^/> /')"
+  adapter comment "$1" --body "**Unanswered: the $2 gate closed with the item** ($3). Nobody answered it; file a follow-up if the question still stands:
+
+$quoted" >/dev/null || echo "flow: could not post the unanswered $2 question on $1" >&2
+  echo "$1: dropped the $2 gate unanswered ($3); file a follow-up if the question still stands:"
+  printf '%s\n' "$quoted" | sed 's/^/  /'
+}
+
 case "${1:-}" in
   raise)
     [ $# -ge 4 ] || die "usage: gate.sh raise <item> <gate> <message> [<from step>]" 2
@@ -164,24 +199,6 @@ $message" >/dev/null
     done ;;
   drop)
     [ $# -eq 3 ] || die "usage: gate.sh drop <item> <why>" 2
-    item="$2"; why="$3"; record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""
-    [ -f "$record" ] && { asked="$(json_get "$(cat "$record")" message)"; gate="$(json_get "$(cat "$record")" gate)"; }
-    [ -n "$gate" ] || { gate="$(state_get "$(adapter read "$item" 2>/dev/null)" gate)"; [ "$gate" != none ] || gate=""; }
-    [ -n "$gate" ] || exit 0
-    adapter write-state "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
-      || die "cannot drop the $gate gate of $item; it stays"
-    rm -f "$record"
-    case "$gate" in
-      ambiguity|escalation)
-        quoted="$(printf '%s\n' "${asked:-(the question is in the gate comment above)}" | sed 's/^/> /')"
-        adapter comment "$item" --body "**Unanswered: the $gate gate closed with the item** ($why). Nobody answered it; file a follow-up if the question still stands:
-
-$quoted" >/dev/null || echo "flow: could not post the unanswered $gate question on $item" >&2
-        echo "$item: dropped the $gate gate unanswered ($why); file a follow-up if the question still stands:"
-        printf '%s\n' "$quoted" | sed 's/^/  /' ;;
-      *)
-        adapter comment "$item" --body "Gate dropped: the $gate gate closed with the item ($why)." >/dev/null || echo "flow: could not comment on $item" >&2
-        echo "$item: dropped the $gate gate ($why)" ;;
-    esac ;;
+    gate_drop "$2" "$3" ;;
   *) sed -n '2,29p' "$0"; exit 2 ;;
 esac
