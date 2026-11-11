@@ -1,5 +1,11 @@
 # standards
 
+## 1.4.1 (2026-11-11)
+
+- The Codex reviewers follow the roster's new model map: the spec, security and performance
+  reviewers and the project advisor run as `gpt-6.1-sol`, the standards and test reviewers as
+  `gpt-6.1-terra`.
+
 ## 1.4.0 (2026-11-08)
 
 - New hard rule M-08 No hidden side effects: a method changes only what its name says. A method
