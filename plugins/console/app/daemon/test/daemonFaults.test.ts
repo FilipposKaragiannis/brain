@@ -55,13 +55,21 @@ test('RefusedUpgradeResetByThePeer_DaemonServesTheNextPane', async () => {
 
 const THROWING_SPAWNER: PtySpawner = () => { throw new Error('posix_spawnp failed: EMFILE'); };
 
-test('SpawnerThrows_RefusedWithTheReasonThenClosed4400', async () => {
+test('SpawnerThrows_RefusedWithTheReason', async () => {
   const running = await daemonOver(THROWING_SPAWNER, []);
   try {
     const client = connect(paneUrl(running.port, AT_ROOT, PROJECT.id), {});
-    const code = await closeCode(client);
+    await closeCode(client);
     const told = client.notices.map((notice) => notice.type === 'refused' ? { type: notice.type, named: notice.error.includes('EMFILE') } : notice);
-    assert.deepEqual([told, code], [[{ type: 'refused', named: true }], PANE_CLOSE.refused], 'because a start that throws is a refusal the page can show, not a daemon crash');
+    assert.deepEqual(told, [{ type: 'refused', named: true }], 'because a start that throws is a refusal the page can show, with the reason it failed');
+  } finally { await running.close(); }
+});
+
+test('SpawnerThrows_Closed4400', async () => {
+  const running = await daemonOver(THROWING_SPAWNER, []);
+  try {
+    const code = await closeCode(connect(paneUrl(running.port, AT_ROOT, PROJECT.id), {}));
+    assert.equal(code, PANE_CLOSE.refused, 'because a start that throws closes its pane as refused, not as a daemon crash');
   } finally { await running.close(); }
 });
 

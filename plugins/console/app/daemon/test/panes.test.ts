@@ -116,18 +116,29 @@ test('StopAll_EveryLinkEnded1001', async () => {
   assert.deepEqual(links.map((link) => link.ended), [PANE_CLOSE.daemonStopping, PANE_CLOSE.daemonStopping], 'because a stopping daemon tells every page why its pane ends');
 });
 
-test('StopAll_ProcessIgnoringHangUp_SettlesOnlyOnceItIsKilled', async () => {
+test('StopAll_ProcessIgnoringHangUp_NotSettledBeforeTheGrace', async () => {
   const { panes, ptys, timers, open } = sessions(null);
   open(SHELL_AT_ROOT, PROJECT);
-  const pty = only(ptys);
-  pty.ignoresHangUp = true;
+  only(ptys).ignoresHangUp = true;
   let settled = false;
   const stopping = panes.stopAll().then(() => { settled = true; });
   await tick();
   const settledBeforeGrace = settled;
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
   await stopping;
-  assert.deepEqual([settledBeforeGrace, pty.exited], [false, true], 'because the daemon exits only after every pane\'s process has ended');
+  assert.equal(settledBeforeGrace, false, 'because the daemon waits for a process that ignores the hang-up instead of exiting under it');
+});
+
+test('StopAll_ProcessIgnoringHangUp_SettlesWithTheProcessKilled', async () => {
+  const { panes, ptys, timers, open } = sessions(null);
+  open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.ignoresHangUp = true;
+  const stopping = panes.stopAll();
+  await tick();
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  await stopping;
+  assert.equal(pty.exited, true, 'because the daemon exits only after every pane\'s process has ended');
 });
 
 test('PaneLimit_OneMoreThanTheLimit_Refused', () => {
