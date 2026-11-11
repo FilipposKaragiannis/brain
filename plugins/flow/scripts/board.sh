@@ -8,10 +8,13 @@
 # the step sessions in log/runs.jsonl; each tracker whose list failed, with why (--json:
 # tracker_errors, [{"tracker", "code", "message"}]); the status of each holder an open item is
 # held behind that the list leaves out (--json: holders, [{"id", "status"}], status open, closed or
-# unknown). --graph prints a graph model built from every adapter's open items (scripts/_graph.py):
-# the dependency waves of one epic's children, or every open item by priority. --mermaid prints it
-# as a Mermaid flowchart instead of JSON.
+# unknown); the base each claimed pool worktree records in claim.json, beside its worktree when it
+# is not the config base, and in Health when it is not on the remote (no fetch: the last fetch
+# decides; --json: base and base_missing on each pool entry). --graph prints a graph model built
+# from every adapter's open items (scripts/_graph.py): the dependency waves of one epic's children,
+# or every open item by priority. --mermaid prints it as a Mermaid flowchart instead of JSON.
 . "$(dirname "$0")/../lib/flow.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
 home="$(flow_home)"
 as_json=0; graph=""; mermaid=""
 while [ $# -gt 0 ]; do
@@ -90,4 +93,12 @@ for item in items:
 done | python3 -I -c '
 import json, sys
 print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
-printf '%s\n%s\n%s\n%s\n%s\n%s\n' "$items" "$runs" "$gates" "$tracker_errors" "$holders" "$blockers" | python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"
+# The base each claimed pool worktree records (lib/base.sh claimed_bases), with whether it is missing
+# from the remote.
+bases="$(claimed_bases | while IFS="$(printf '\t')" read -r claimed_item claimed_base claimed_worktree claimed_base_missing; do
+  json_obj "item=$claimed_item" "base=$claimed_base" "missing:=$claimed_base_missing"; echo
+done | python3 -I -c '
+import json, sys
+print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
+printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$items" "$runs" "$gates" "$tracker_errors" "$holders" "$blockers" "$bases" | \
+  FLOW_CONFIG_BASE="$(cfg_or base main)" python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"

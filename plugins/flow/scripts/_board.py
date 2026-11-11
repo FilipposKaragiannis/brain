@@ -15,6 +15,14 @@ for line in pool_text.splitlines():
                      "step": parts[3] if parts[3] != "-" else "", "state": parts[4] if len(parts) > 4 else ""})
 # Each blocker the lists leave out, as board.sh read it: {"id", "status"}, status open, closed or unknown.
 read_blockers = json.loads(lines[5]) if len(lines) > 5 and lines[5].strip() else []
+# The base each claimed pool worktree records, as board.sh read it: {"item", "base", "missing"},
+# missing when the repository has an origin that lacks the branch.
+claimed_list = json.loads(lines[6]) if len(lines) > 6 and lines[6].strip() else []
+claimed_bases = {claimed["item"]: claimed for claimed in claimed_list}
+config_base = os.environ.get("FLOW_CONFIG_BASE", "")
+for p in pool:
+    claimed = claimed_bases.get(p["item"], {})
+    p["base"], p["base_missing"] = claimed.get("base", ""), claimed.get("missing", False)
 by_id = {i["id"]: i for i in items}
 status_of = {blocker["id"]: blocker["status"] for blocker in read_blockers}
 status_of.update((item["id"], item.get("status", "open")) for item in items)
@@ -104,10 +112,15 @@ def owner_of(i):
 def gate_of(i):
     gate = i["state"].get("gate") or "none"
     return "none, answer waits on %s" % owner_of(i) if gate == "none" and owner_of(i) else gate
+# The worktree, and the base its claim records when that is not the config base.
+def worktree_of(i):
+    worktree = i["state"].get("worktree") or "-"
+    base = claimed_bases.get(i["id"], {}).get("base", "")
+    return "%s, base %s" % (worktree, base) if base and base != config_base else worktree
 for i in sorted(items, key=lambda i: i.get("rank", 999)):
     s = i["state"]
     print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (i["id"], i["kind"], i.get("priority", ""), i.get("size") or s.get("size", ""), i["title"][:50],
-          step_of(i), gate_of(i), s.get("worktree") or "-", ", ".join(i["open_blockers"]) or "-"))
+          step_of(i), gate_of(i), worktree_of(i), ", ".join(i["open_blockers"]) or "-"))
 if spend:
     print("\n## Spend (unattended step sessions)")
     print("| item | cost | sessions | tokens |")
@@ -124,7 +137,8 @@ dead = [r for r in runs if not r["alive"] and not r["starting"]]
 # An answer that waited past the gate reminder: no run took it.
 unanswered = [i for i in items if (i["state"].get("gate") or "none") == "none" and owner_of(i)
               and epoch(i["state"].get("answered_at")) and now - epoch(i["state"].get("answered_at")) > reminder]
-if dead or waiting or unanswered:
+missing_bases = [claimed for claimed in claimed_bases.values() if claimed["missing"]]
+if dead or waiting or unanswered or missing_bases:
     print("\n## Health")
     for r in dead:
         print("- %s: dead run of %s, no process since the record was written (%s ago)" % (r["item"], r["step"], age(r["age"])))
@@ -132,6 +146,8 @@ if dead or waiting or unanswered:
         print("- %s: waiting %s at the %s gate" % (g["item"], age(now - epoch(g["time"])), g["gate"]))
     for i in unanswered:
         print("- %s: the answer to its gate has waited %s on %s" % (i["id"], age(now - epoch(i["state"]["answered_at"])), owner_of(i)))
+    for claimed in missing_bases:
+        print("- %s: base %s is not on the remote" % (claimed["item"], claimed["base"]))
 if overlap:
     print("\n## Overlapping claims")
     for a, b in overlap:

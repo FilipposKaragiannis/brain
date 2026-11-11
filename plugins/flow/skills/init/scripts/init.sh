@@ -31,6 +31,7 @@ done
 FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/flow.sh"
 . "$plugin/lib/host.sh"
+. "$plugin/lib/base.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
@@ -369,6 +370,11 @@ EOF_TRACKERS
 $(host_jobs_problems)
 EOF_JOBS
   [ -z "$(cfg retro.commit)" ] || echo "init: note: .flow/config.yaml sets retro.commit, which is unused: the retro job commits nothing, as the lessons stay on this machine under .flow/; remove the key"
+  # A claim whose base is not on the remote (deleted after the claim, or never pushed): the work
+  # has no branch to merge into. The same test as the board (lib/base.sh claimed_bases), no fetch.
+  claimed_bases | while IFS="$(printf '\t')" read -r claimed_item claimed_base claimed_worktree claimed_base_missing; do
+    [ "$claimed_base_missing" = true ] && echo "init: note: $claimed_item in $claimed_worktree: base $claimed_base is not on the remote"
+  done
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
 # A flow hook entry an older init printed for the shared settings is the owner's to remove: the

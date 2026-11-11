@@ -1,6 +1,6 @@
 # The base of an item: the branch its work starts from and its PR merges into. Resolved once, when
 # the item is first claimed, and recorded in claim.json and the item state (base). Sourced after
-# lib/flow.sh by scripts/next.sh.
+# lib/flow.sh by scripts/next.sh, scripts/board.sh and skills/init/scripts/init.sh.
 
 # The ancestors resolve_base reads for an epic branch, from the parent up.
 base_ancestor_levels=5
@@ -68,4 +68,30 @@ resolve_base() {
     return
   fi
   printf '%s\tconfig base' "$(cfg_or base main)"
+}
+
+# base_missing <branch>: true when the repository has an origin and refs/remotes/origin/<branch> is
+# absent. No fetch: the board and init read what the last fetch saw, so they stay fast and work
+# offline. With no origin nothing is missing.
+base_missing() {
+  base_repository="$(dirname "$(flow_home)")"
+  git -C "$base_repository" remote get-url origin >/dev/null 2>&1 || return 1
+  ! git -C "$base_repository" show-ref --verify --quiet "refs/remotes/origin/$1"
+}
+
+# claimed_bases: one line per claimed pool worktree whose claim records a base,
+# `<item>\t<base>\t<worktree path>\t<missing>`, missing true when base_missing says so, else false.
+# Read by board.sh and init.sh, which name a base that is not on the remote.
+claimed_bases() {
+  base_repository="$(dirname "$(flow_home)")"
+  cfg pool | while read -r pool_entry; do
+    [ -n "$pool_entry" ] || continue
+    case "$pool_entry" in /*) pool_worktree="$pool_entry" ;; *) pool_worktree="$base_repository/$pool_entry" ;; esac
+    [ -f "$(claim_file "$pool_worktree")" ] || continue
+    pool_claim="$(cat "$(claim_file "$pool_worktree")")"
+    claimed_item="$(json_get "$pool_claim" item)"; claimed_base="$(json_get "$pool_claim" base)"
+    [ -n "$claimed_item" ] && [ -n "$claimed_base" ] || continue
+    if base_missing "$claimed_base"; then claimed_base_missing=true; else claimed_base_missing=false; fi
+    printf '%s\t%s\t%s\t%s\n' "$claimed_item" "$claimed_base" "$(cd "$pool_worktree" && pwd)" "$claimed_base_missing"
+  done
 }
