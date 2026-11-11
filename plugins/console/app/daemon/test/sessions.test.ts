@@ -227,6 +227,12 @@ test('CodexMeta_SubagentFirstLineCutByTheHead_ItsRootParentAndSpawnStillRead', (
   assert.deepEqual(spawnFields(codexMeta(cut)), { rootId: '019d-root', parentId: '019d-probe', subagent: true, agentPath: '/root/probe/deeper', agentRole: 'explorer', agentNickname: 'Ada', historyStart: null }, 'because the ids and the spawn come before the long base instructions the head may cut; the history start comes after them');
 });
 
+test('CodexMeta_SubagentFirstLineCutBeforeItsHistoryStart_HistoryCut', () => {
+  const line = firstLineOf('child-depth2.jsonl');
+  const cut = line.slice(0, line.indexOf('"model_provider"'));
+  assert.deepEqual([codexMeta(cut)?.historyCut, codexMeta(line)?.historyCut, codexMeta(firstLineOf('parent.jsonl'))?.historyCut], [true, false, false], 'because only a subagent\'s line cut before its history start leaves unknown which lines replay its parent\'s');
+});
+
 test('CodexProcess_ParentAndANewerWrittenLiveChildInItsCwd_TheParentIsItsSession', async () => {
   const { dir, done } = home();
   try {

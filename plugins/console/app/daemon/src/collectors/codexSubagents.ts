@@ -23,6 +23,10 @@ export function codexSubagentCache(): CodexSubagentCache {
 const CHILD_TAIL_BYTES = 64 * 1024;
 /** How far that read grows, doubling, while it holds no whole line: a final record with a long answer can outgrow the first read. */
 const CHILD_TAIL_MAX_BYTES = 4 * 1024 * 1024;
+/** How far a first line is read to find a child's history start under long base instructions; past it the start stays unknown. */
+const CHILD_HEAD_MAX_BYTES = 4 * 1024 * 1024;
+/** The history start of a child whose start is unknown: every line with an ordinal may replay its parent's, so none counts as its own. */
+const UNKNOWN_HISTORY_START = Number.POSITIVE_INFINITY;
 const ROLLOUT_EXTENSION = '.jsonl';
 /** The type a child spawned without a role shows. */
 const UNNAMED_ROLE = 'subagent';
@@ -107,19 +111,24 @@ async function childOf(file: string, roots: ReadonlySet<string>, reading: Readin
 async function cachedMeta(file: string, { files, cache, now }: Reading): Promise<CodexMeta | null> {
   const kept = cache.metas.get(file);
   if (kept !== undefined) { kept.seenMs = now; return kept; }
-  const meta = await readCodexMeta(files, file);
+  const meta = await readCodexMeta(files, file, CHILD_HEAD_MAX_BYTES);
   if (meta !== null) cache.metas.set(file, { ...meta, seenMs: now });
   return meta;
 }
 
-/** A child's row while it is at work, or null once its own last turn completed or was aborted, or its rollout cannot be read. */
+/**
+ * A child's row while it is at work, or null once its own last turn completed or was aborted, or
+ * its rollout cannot be read. A child whose history start is unknown has no latest line, and only
+ * its turn events without an ordinal count, rather than show its parent's replayed work as its own.
+ */
 async function liveRow(child: Child, files: SessionFiles): Promise<Subagent | null> {
   const tail = await wholeLineTail(child.file, files);
   const { meta } = child;
-  if (tail === null || !isAtWork(tail, meta.historyStart)) return null;
+  const historyStart = meta.historyCut ? UNKNOWN_HISTORY_START : meta.historyStart;
+  if (tail === null || !isAtWork(tail, historyStart)) return null;
   return {
     id: meta.id, host: 'codex', type: meta.agentRole ?? UNNAMED_ROLE, task: taskOf(meta), cwd: meta.cwd,
-    startedAt: meta.startedMs === null ? null : new Date(meta.startedMs).toISOString(), latest: latestOwnLine(tail, meta.historyStart),
+    startedAt: meta.startedMs === null ? null : new Date(meta.startedMs).toISOString(), latest: meta.historyCut ? null : latestOwnLine(tail, historyStart),
   };
 }
 

@@ -199,3 +199,41 @@ test('ChildWhoseOnlyTurnEndIsItsParentsAbortedTurn_StillListed', async () => {
   const rows = await rootRows({ 'child-replayed.jsonl': 1 });
   assert.deepEqual(rows.map((row) => row.id), ['019d-fresh'], 'because the turn_aborted before its history start is the parent\'s turn replayed into the child, not the end of a turn of its own');
 });
+
+/** A fixture rollout whose first line carries `bytes` of base instructions before its history start, as codex writes them. */
+function withBaseInstructions(fixture: string, bytes: number): string {
+  const rollout = readFileSync(path.join(CODEX_FIXTURES, fixture), 'utf8');
+  return rollout.replace('"subagent_history_start_ordinal"', `"base_instructions":{"text":"${'x'.repeat(bytes)}"},"subagent_history_start_ordinal"`);
+}
+
+/** The rows of a home holding the parent and `fixture` with its first line grown by `bytes` of base instructions. */
+async function rowsWithLongFirstLine(fixture: string, bytes: number): Promise<Subagent[]> {
+  const { dir, day, done } = codexHome({ 'parent.jsonl': 1 });
+  try {
+    writtenAMinuteAgo(path.join(day, `rollout-${fixture}`), withBaseInstructions(fixture, bytes));
+    const reader = new SubagentReader({ home: dir, clock: () => NOW, files: diskSessionFiles });
+    const [rows] = await reader.read([rootSession(day)]);
+    return rows ?? [];
+  } finally { done(); }
+}
+
+/** Over the 256 KiB the first read of a first line takes. */
+const PAST_THE_HEAD_BYTES = 300 * 1024;
+/** Over the 4 MiB a child's first line is read to at most. */
+const PAST_THE_HEAD_CAP_BYTES = 5 * 1024 * 1024;
+
+test('ChildWithOnlyReplayedLinesAndAFirstLineOverTheHead_ListedWithNoLatest', async () => {
+  const rows = await rowsWithLongFirstLine('child-replayed.jsonl', PAST_THE_HEAD_BYTES);
+  assert.deepEqual(rows.map((row) => ({ id: row.id, latest: row.latest })), [{ id: '019d-fresh', latest: null }], 'because its history start, written after the long base instructions, is read on past the head, so the parent\'s replayed spawn_agent and turn_aborted stay the parent\'s');
+});
+
+test('LiveChildWithAFirstLineOverTheHead_LatestIsItsOwnLastLine', async () => {
+  const [plain] = await probeRows();
+  const rows = await rowsWithLongFirstLine('child-live.jsonl', PAST_THE_HEAD_BYTES);
+  assert.deepEqual(rows.map((row) => row.latest), [plain?.latest], 'because the history start is recovered from the longer read, so the child\'s own latest line still shows rather than being withheld');
+});
+
+test('ChildWithOnlyReplayedLinesAndAFirstLineOverTheCap_ListedWithNoLatest', async () => {
+  const rows = await rowsWithLongFirstLine('child-replayed.jsonl', PAST_THE_HEAD_CAP_BYTES);
+  assert.deepEqual(rows.map((row) => ({ id: row.id, latest: row.latest })), [{ id: '019d-fresh', latest: null }], 'because with its history start unknown any line may replay the parent\'s, so none shows as its latest and the parent\'s turn_aborted does not end it');
+});

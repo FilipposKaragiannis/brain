@@ -109,10 +109,13 @@ export function transcriptStart(head: string): number | null {
  * for a root). A subagent's rollout (`subagent`) also names the thread that spawned it
  * (`parentId`), its task path (`/root/probe`), role and nickname as spawned, and the ordinal its
  * own history starts at (the lines before it replay its parent's); each null where not written.
+ * `historyCut` says the head cut a subagent's first line before its history start, so where its
+ * own history starts is not known (`historyStart` is then null).
  */
 export type CodexMeta = {
   cwd: string; id: string; startedMs: number | null; rootId: string; parentId: string | null; subagent: boolean;
   agentPath: string | null; agentRole: string | null; agentNickname: string | null; historyStart: number | null;
+  historyCut: boolean;
 };
 
 /** The fields of a `session_meta` payload the readers look at; `source` is `"exec"` for a root and `{ subagent: { thread_spawn } }` for a spawned child. */
@@ -145,19 +148,21 @@ function spawnOf(source: unknown): CodexSpawn {
 }
 
 /** A `session_meta` payload as a `CodexMeta`, or null without its cwd and id. */
-function metaOfPayload(payload: CodexMetaPayload, startedMs: number | null): CodexMeta | null {
+function metaOfPayload(payload: CodexMetaPayload, startedMs: number | null, cut: boolean): CodexMeta | null {
   if (typeof payload.cwd !== 'string' || typeof payload.id !== 'string') return null;
   const spawn = spawnOf(payload.source);
   const ordinal = payload.subagent_history_start_ordinal;
+  const subagent = payload.thread_source === CODEX_SUBAGENT_THREAD || subagentSource(payload.source) !== null;
   return {
     cwd: payload.cwd, id: payload.id, startedMs,
     rootId: textOrNull(payload.session_id) ?? payload.id,
     parentId: textOrNull(payload.parent_thread_id),
-    subagent: payload.thread_source === CODEX_SUBAGENT_THREAD || subagentSource(payload.source) !== null,
+    subagent,
     agentPath: textOrNull(spawn.agent_path) ?? textOrNull(payload.agent_path),
     agentRole: textOrNull(spawn.agent_role),
     agentNickname: textOrNull(spawn.agent_nickname) ?? textOrNull(payload.agent_nickname),
     historyStart: typeof ordinal === 'number' && Number.isInteger(ordinal) ? ordinal : null,
+    historyCut: cut && subagent && ordinal === undefined,
   };
 }
 
@@ -168,9 +173,12 @@ function quotedField(line: string, name: string): string | undefined {
   try { return JSON.parse(`"${raw}"`) as string; } catch { return undefined; }
 }
 
+/** A subagent's history start ordinal in its first line, which follows the long base instructions. */
+const HISTORY_START = /"subagent_history_start_ordinal":(\d+)/;
+
 /** The payload fields of a first line cut by the head, read by their keys: all but the history start come before the long base instructions. */
 function cutPayload(line: string): CodexMetaPayload {
-  const ordinal = /"subagent_history_start_ordinal":(\d+)/.exec(line)?.[1];
+  const ordinal = HISTORY_START.exec(line)?.[1];
   return {
     cwd: quotedField(line, 'cwd'),
     id: /"payload":\{[^{}]*?"id":"([^"]+)"/.exec(line)?.[1],
@@ -190,18 +198,30 @@ export function codexMeta(head: string): CodexMeta | null {
   let parsed: unknown;
   try { parsed = JSON.parse(line); } catch {
     // A first line longer than the head: the timestamp, ids and cwd come before the long base instructions.
-    return line.includes('"session_meta"') ? metaOfPayload(cutPayload(line), transcriptStart(line)) : null;
+    return line.includes('"session_meta"') ? metaOfPayload(cutPayload(line), transcriptStart(line), true) : null;
   }
   if (parsed === null || typeof parsed !== 'object') return null;
   const entry = parsed as { timestamp?: unknown; type?: unknown; payload?: unknown };
   if (entry.type !== 'session_meta' || entry.payload === null || typeof entry.payload !== 'object') return null;
-  return metaOfPayload(entry.payload as CodexMetaPayload, epochMs(entry.timestamp));
+  return metaOfPayload(entry.payload as CodexMetaPayload, epochMs(entry.timestamp), false);
 }
 
-/** A Codex session file's first line, read from its head; null when it cannot be read or is no `session_meta`. */
-export async function readCodexMeta(files: SessionFiles, file: string): Promise<CodexMeta | null> {
-  const head = await files.head(file, CODEX_HEAD_BYTES);
-  return head === null ? null : codexMeta(head);
+/**
+ * A Codex session file's first line, read from its head; null when it cannot be read or is no
+ * `session_meta`. Up to `maxBytes` the head doubles while it cuts a subagent's first line before
+ * its history start, so a reader that needs the start can recover it from under long base instructions.
+ */
+export async function readCodexMeta(files: SessionFiles, file: string, maxBytes = CODEX_HEAD_BYTES): Promise<CodexMeta | null> {
+  let bytes = CODEX_HEAD_BYTES;
+  let head = await files.head(file, bytes);
+  let meta = head === null ? null : codexMeta(head);
+  // A head shorter than asked for holds the whole file, so reading more finds nothing more.
+  while (head !== null && meta?.historyCut === true && Buffer.byteLength(head) >= bytes && bytes < maxBytes) {
+    bytes = Math.min(bytes * 2, maxBytes);
+    head = await files.head(file, bytes);
+    meta = head === null ? null : codexMeta(head);
+  }
+  return meta;
 }
 
 /** Codex's day folders (`~/.codex/sessions/YYYY/MM/DD`, local time) from the day of `since`, at most 14 days back, to the day after `now`. */
