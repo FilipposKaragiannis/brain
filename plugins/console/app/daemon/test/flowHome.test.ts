@@ -365,3 +365,8 @@ test('FlowHome_NoLessonsOrRetroFiles_EmptyRetroFacts', async () => {
     assert.deepEqual(retro, { lessons: [], lessonLines: 0, retros: [] }, 'because the files stay on the machine that ran the flow, so a missing one is no lesson and no retro');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('FlowConfig_JobsPairs_ReadPerHost', () => {
+  const config = parseFlowConfig('jobs:\n  claude:\n    model: opus\n    effort: max\n  codex:\n    effort: medium\n');
+  assert.deepEqual([config.jobsPairs.claude.model, config.jobsPairs.claude.effort, config.jobsPairs.codex.model, config.jobsPairs.codex.effort], ['opus', 'max', null, 'medium'], 'because each host\'s quick session takes its own pair from the project file');
+});

@@ -10,7 +10,7 @@ import { applyChange, parseDocument, valueAt } from '../src/plugins/flow/configD
 import { contentHash, describe, FlowConfigEditor, followUpsOf } from '../src/plugins/flow/configEditor.ts';
 import { codexDefaults, readHostDefaults } from '../src/plugins/flow/hostDefaults.ts';
 import type { FlowConfigDocument, FlowConfigSaved } from '../src/plugins/flow/schema.ts';
-import { checkChange, checkFileValue, checkSchedule, fieldAt, FLOW_CONFIG_SCHEMA, legacyJobsSetting, legacyReadySetting } from '../src/plugins/flow/schema.ts';
+import { checkChange, checkFileValue, checkSchedule, codexModel, fieldAt, FLOW_CONFIG_SCHEMA, jobsPair, legacyJobsSetting, legacyReadySetting } from '../src/plugins/flow/schema.ts';
 import { parseYaml } from '../src/yaml.ts';
 import { FIXTURES } from './fakeRunner.ts';
 
@@ -739,4 +739,24 @@ test('PickFieldCleared_Saved_KeyTakenOutSoAQueryFilterRuns', async () => {
     const pick = ((await readDocument(fixture.editor)).values?.['pick'] as Record<string, unknown>)['mine'];
     assert.deepEqual(pick, { trackers: ['github'], query: 'assignee:@me' }, 'because a cleared field is taken out, not saved empty, so the file reads as the query filter the form shows');
   } finally { fixture.done(); }
+});
+
+test('JobsPair_HostMap_ModelAndEffortFromIt', () => {
+  assert.deepEqual(jobsPair({ jobs: { claude: { model: 'opus', effort: 'xhigh' } } }, 'claude'), { model: 'opus', effort: 'xhigh', from: 'jobs.claude' }, 'because a quick session starts with the pair the file sets for that host');
+});
+
+test('JobsPair_EmptyValues_NullPair', () => {
+  assert.deepEqual(jobsPair({ jobs: { codex: { model: '', effort: '' } } }, 'codex'), { model: null, effort: null, from: 'jobs.codex' }, 'because an empty value leaves the host on its own default');
+});
+
+test('JobsPair_DeprecatedPairWithNoHostMap_Used', () => {
+  assert.deepEqual(jobsPair({ jobs: { model: 'sonnet', effort: 'low' } }, 'claude'), { model: 'sonnet', effort: 'low', from: 'jobs' }, 'because the plugin still runs the deprecated pair while jobs.<host> is absent');
+});
+
+test('JobsPair_HostMapPresent_DeprecatedPairIgnored', () => {
+  assert.deepEqual(jobsPair({ jobs: { model: 'sonnet', effort: 'low', claude: { effort: 'high' } } }, 'claude'), { model: null, effort: 'high', from: 'jobs.claude' }, 'because jobs.<host> replaces the deprecated pair entirely, as the plugin reads it');
+});
+
+test('JobsPair_DeprecatedRosterModelForCodex_CatalogName', () => {
+  assert.equal(jobsPair({ jobs: { model: 'opus' } }, 'codex').model, codexModel('opus'), 'because the deprecated model is a roster name, and codex takes its catalog name');
 });

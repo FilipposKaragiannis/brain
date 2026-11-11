@@ -1,6 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { ActionRecord, Run, Worktree } from '../../daemon/src/snapshot.ts';
+import { quickSessionName, TERMINAL_PANE } from '../src/PaneControls.tsx';
+import { PaneDock } from '../src/PaneDock.tsx';
 import { RELEASE_RESERVED_TITLE, Worktrees } from '../src/screens/Worktrees.tsx';
 import { actionRecord, boardItem, claudeSession, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, poolWorktree, readyToClose, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
@@ -392,4 +394,21 @@ test('ItemToCloseOnACard_SaysWhatToDoAndDecideOpensIt', () => {
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 1), worktrees: [done], toClose: [{ ...readyToClose('gh#40', 'steps-done'), worktree: 'wt-8' }] }} /></Wrapper>);
   expect(screen.getByRole('article', { name: 'wt-8' }).textContent, 'because no gate explains why it needs you').toMatch(/Ready to close, though no gate asks\. Every step ran: merge or close\./);
   expect(screen.getByRole('link', { name: 'Decide' }).getAttribute('href'), 'because the Gates screen lists it').toBe('#/project/gates/gh%2340');
+});
+
+/** The pool with the dock beside it; returns what each socket the page opened asked for. */
+function clickOnCard(card: string, button: string): { path: string | null; run: string | null }[] {
+  const daemon = new FakeDaemon();
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-2'), poolWorktree('wt-5')] }} /><PaneDock projectOnScreen="project" projects={[]} /></Wrapper>);
+  act(() => { fireEvent.click(within(screen.getByRole('article', { name: card })).getByRole('button', { name: button })); });
+  return daemon.sockets.map((socket) => ({ path: socket.param('path'), run: socket.param('run') }));
+}
+
+test('WorktreeCard_TerminalPane_OpensAShellAtThatWorktree', () => {
+  expect(clickOnCard('wt-5', TERMINAL_PANE), 'because the card opens its own worktree, not the root or another card').toEqual([{ path: '/p-wt/wt-5', run: 'shell' }]);
+});
+
+test('WorktreeCard_QuickSessionCodex_StartsCodexAtThatWorktree', () => {
+  expect(clickOnCard('wt-5', quickSessionName('codex')), 'because a quick session on a card runs the agent in that worktree').toEqual([{ path: '/p-wt/wt-5', run: 'codex' }]);
 });

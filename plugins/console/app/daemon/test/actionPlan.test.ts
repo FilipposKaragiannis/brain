@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, QUIZ_SINCE, REVIEW_ASK, SYNC_SCRIPT, sweepNote } from '../src/actionPlan.ts';
+import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, QUIZ_SINCE, REVIEW_ASK, SYNC_SCRIPT, sweepNote, terminalFolders } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
@@ -303,6 +303,11 @@ test('TerminalOpen_AnyOtherPath_RefusedWithTheReason', () => {
   }
   const result = planAction('terminal.open', { path: '/etc' }, CONTEXT);
   assert.match(result.ok ? '' : result.error, /not the project root, a worktree the console lists or the folder of a listed agent or session/, 'because the owner hears which folders may open');
+});
+
+test('TerminalFolders_EverySource_ListedResolved', () => {
+  const folders = terminalFolders({ root: '/p/app', pool: ['/p/app-wt-2/'], outsideWorktrees: ['/p/side/../app-side'], processCwds: ['/p/app-wt-2/./src'] });
+  assert.deepEqual([...folders].sort(), ['/p/app', '/p/app-side', '/p/app-wt-2', '/p/app-wt-2/src'], 'because the pane and Open in Terminal share one allow-list: the root, the pool, the outside worktrees and every process folder');
 });
 
 test('TerminalOpen_EachNamedTerminal_ItsOwnCommand', () => {

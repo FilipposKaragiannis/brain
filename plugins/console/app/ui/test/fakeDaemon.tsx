@@ -78,6 +78,9 @@ export class FakeSocket implements SocketLike {
 
   send(data: string | Uint8Array): void { this.sent.push(data); }
 
+  /** A value of the query the page opened the socket with. */
+  param(name: string): string | null { return new URL(this.path, 'http://page.test').searchParams.get(name); }
+
   close(code: number): void { this.closedWith = code; }
 
   /** A frame from the daemon: terminal bytes as a binary frame, a notice as a text frame. */
@@ -114,7 +117,7 @@ export class FakeTerminal implements TerminalLike {
   dispose(): void {}
 
   type(text: string): void {
-    const bytes = new TextEncoder().encode(text);
+    const bytes = Uint8Array.from(new TextEncoder().encode(text));
     this.inputListeners.forEach((listener) => listener(bytes));
   }
 }

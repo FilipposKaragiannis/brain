@@ -1,7 +1,9 @@
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { App, PROJECTS_RETRY_MS } from '../src/App.tsx';
 import { ClockProvider } from '../src/clock.tsx';
+import { TERMINAL_PANE } from '../src/PaneControls.tsx';
+import { PANE_DOCK_NAME } from '../src/PaneDock.tsx';
 import { FakeDaemon, HTTP_OK, HTTP_UNAUTHORIZED, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 const PROJECTS_PATH = '/api/projects';
@@ -161,4 +163,55 @@ test('App_Nav_LinksTheRetroPage', async () => {
   renderApp(daemon);
   await flush(0);
   expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Retro' }).getAttribute('href'), 'because the Retro page is reached from the nav like every project page').toBe('#/foosbrawl/retro');
+});
+
+const BRAIN = { id: 'brain', name: 'brain', counts: null };
+
+/** The page on foosbrawl's overview with its snapshot, the project root at `/p`. */
+async function renderFoosbrawl(daemon: FakeDaemon): Promise<void> {
+  window.location.hash = '#/foosbrawl/overview';
+  daemon.answer('GET', PROJECTS_PATH, () => ({ status: HTTP_OK, body: [FOOSBRAWL, BRAIN] }));
+  daemon.answer('GET', '/api/settings', () => ({ status: HTTP_OK, body: SETTINGS_VIEW }));
+  renderApp(daemon);
+  await flush(0);
+  const snapshot = snapshotAt(TAKEN_AT, 0);
+  act(() => { daemon.latestStream().send('snapshot', { ...snapshot, project: { ...snapshot.project, id: 'foosbrawl' } }); });
+}
+
+function clickProjectBarTerminalPane(): void {
+  const [projectBar] = screen.getAllByRole('button', { name: TERMINAL_PANE });
+  if (projectBar === undefined) throw new Error('no Terminal pane button on the page');
+  act(() => { fireEvent.click(projectBar); });
+}
+
+test('App_ProjectBarTerminalPane_OpensAShellAtTheProjectRoot', async () => {
+  const daemon = new FakeDaemon();
+  await renderFoosbrawl(daemon);
+  clickProjectBarTerminalPane();
+  expect(daemon.sockets.map((socket) => ({ path: socket.param('path'), run: socket.param('run') })), 'because the project bar opens a shell at the project root').toEqual([{ path: '/p', run: 'shell' }]);
+});
+
+const NAVIGATIONS = [
+  { to: 'a screen change', hash: '#/foosbrawl/agents' },
+  { to: 'a project switch', hash: '#/brain/overview' },
+  { to: 'Settings', hash: '#/settings' },
+];
+
+async function openPaneThenGo(daemon: FakeDaemon, hash: string): Promise<void> {
+  await renderFoosbrawl(daemon);
+  clickProjectBarTerminalPane();
+  act(() => { daemon.sockets[0]!.receive({ type: 'started', pane: 'pane-1', command: ['/bin/zsh', '-l'], folder: '/p' }); });
+  act(() => { window.location.hash = hash; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+  await flush(0);
+}
+
+test.each(NAVIGATIONS)('App_PaneOpen_$to_KeepsTheDock', async ({ hash }) => {
+  await openPaneThenGo(new FakeDaemon(), hash);
+  expect(screen.queryByRole('region', { name: PANE_DOCK_NAME }), 'because the dock sits outside the routed screens, so moving around the console leaves the pane open').not.toBeNull();
+});
+
+test.each(NAVIGATIONS)('App_PaneOpen_$to_KeepsItsProcess', async ({ hash }) => {
+  const daemon = new FakeDaemon();
+  await openPaneThenGo(daemon, hash);
+  expect(daemon.sockets.map((socket) => socket.closedWith), 'because moving around the console must not hang up the pane nor start a second one').toEqual([null]);
 });
