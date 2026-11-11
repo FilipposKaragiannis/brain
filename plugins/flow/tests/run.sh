@@ -2397,9 +2397,11 @@ check "health: the next interval reminds again" grep -q "$b: waiting 2d .* at th
 waiting_before="$(hs 2>&1 | tail -1 | sed -n 's/.* \([0-9]*\) gate(s) waiting.*/\1/p')"
 closed_gate_item="$(hitem "Closed under a gate")"; "$P/scripts/gate.sh" raise "$closed_gate_item" feel-test "Launch it." >/dev/null 2>&1
 "$P/adapters/local/close.sh" "$closed_gate_item" >/dev/null
-hs > "$hroot/out" 2>&1
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
 check "HealthGates_GateOnClosedItem_SaidAsADefect: a gate on a closed item is reported as a defect" grep -q "^$closed_gate_item: .*defect" "$hroot/out"
 check "HealthGates_GateOnClosedItem_NotCountedAsWaiting: a gate on a closed item is not counted among the gates waiting" sh -c "[ -n '$waiting_before' ] && tail -1 '$hroot/out' | grep -q ' $waiting_before gate(s) waiting'"
+check_all "HealthGates_GateOnClosedItem_SaidOnce: the next health run does not repeat the defect while the gate stays" 'grep -q "^$closed_gate_item: .*defect" "$hroot/out" && ! grep -q "^$closed_gate_item: .*defect" "$hroot/out2"'
+check_all "GateList_GateOnClosedItem_NamesTheItem: gate.sh list names the closed item's gate before the drop" 'gates="$("$P/scripts/gate.sh" list)" && printf "%s\n" "$gates" | grep -q "	$closed_gate_item	"'
 "$P/scripts/gate.sh" drop "$closed_gate_item" closed >/dev/null 2>&1
 check_all "GateDrop_GateOnClosedItem_ListNamesNoGate: gate.sh list names no gate of the item once its gate is dropped" 'gates="$("$P/scripts/gate.sh" list)" && ! printf "%s\n" "$gates" | grep -q "	$closed_gate_item	"'
 
