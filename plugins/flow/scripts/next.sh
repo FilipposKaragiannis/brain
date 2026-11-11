@@ -8,6 +8,8 @@
 # Reads the state, selects the profile, claims a pool worktree when the step needs one,
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
+# A new claim starts from the item's base (lib/base.sh), recorded in claim.json and the item state;
+# the brief, the JSON base and the merges before verify and after a hold or a wait read that one.
 # Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
 # an open item (blocked_by), split and waiting on its children, or its base: line names a branch not on the remote · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt.
@@ -150,12 +152,16 @@ agent="$(step_field "$step" agent)"; skill="$(step_field "$step" skill)"; summar
 depth="$(json_get "$profiles" "review_depth.$profile")"
 # The architect runs where its cost pays: the profile's switch in profiles.json (architect).
 architect=no; [ "$(json_get "$profiles" "architect.$profile")" = true ] && architect=yes
-base="$(cfg_or base main)"
+# base, set below: the branch the item's work starts from and merges into, one value for the brief,
+# the JSON, the pre-verify sync and the notes after a hold or a wait. With a worktree it is the
+# claim's (claim.json), without one the item state's (state.base, recorded at claim); a claim made
+# before the base was recorded falls back to the config base.
+config_base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
   # A new claim starts from the item's base (lib/base.sh), resolved here once; an item that holds
   # a claim keeps the base it was claimed from. A `base:` line naming a missing branch holds the
   # item: a claim from the config base would put its work on the wrong history.
-  claim_base="$base"; claim_why=""
+  claim_base="$config_base"; claim_why=""
   if [ -z "$("$FLOW_PLUGIN/scripts/steward.sh" find "$item")" ]; then
     resolved="$(resolve_base "$data")"; resolved_code=$?
     claim_base="$(printf '%s\n' "$resolved" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved" | cut -f2-)"
@@ -173,9 +179,12 @@ if [ "$(step_field "$step" worktree)" = "true" ]; then
   branch="$(json_get "$(cat "$wt/.flow/claim.json")" branch)"
   claim="$(cat "$wt/.flow/claim.json")"
   json_set "$claim" step "$(json_string "$step")" > "$wt/.flow/claim.json"
+  base="$(json_get "$claim" base)"
 else
-  wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$base")"
+  wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$config_base")"
+  base="$(state_get "$data" base)"
 fi
+[ -n "$base" ] || base="$config_base"
 reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
@@ -198,9 +207,8 @@ flow_unlock
 if [ "$step" = verify ] && [ "$(step_field verify worktree)" = true ] && [ ! -s "$reports/sync.md" ] &&
    [ "$(git -C "$wt" symbolic-ref --short -q HEAD)" = "$branch" ] &&
    [ -z "$(git -C "$wt" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; then
-  vb="$(json_get "$claim" base)"; [ -n "$vb" ] || vb="$base"
-  git -C "$wt" remote get-url origin >/dev/null 2>&1 && git -C "$wt" fetch -q origin "$vb" 2>/dev/null
-  vref="$vb"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$vb" && vref="origin/$vb"
+  git -C "$wt" remote get-url origin >/dev/null 2>&1 && git -C "$wt" fetch -q origin "$base" 2>/dev/null
+  vref="$base"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$base" && vref="origin/$base"
   behind="$(git -C "$wt" rev-list --count "HEAD..$vref" 2>/dev/null)"
   if [ "${behind:-0}" -gt 0 ]; then
     if git -C "$wt" merge -q --no-edit -m "chore: merge $vref into $branch" "$vref" >/dev/null 2>&1; then
@@ -294,7 +302,7 @@ brief="$reports/brief-$step.md"
     echo
   fi
   if [ -n "$unblocked" ]; then
-    uref="$(json_get "$claim" base)"; uref="${uref:-$base}"
+    uref="$base"
     git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$uref" && uref="origin/$uref"
     echo "## The wait is over"
     echo

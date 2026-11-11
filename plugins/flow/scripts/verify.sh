@@ -12,7 +12,8 @@
 # feel_test_paths in the flow config. Never edits anything. The report is built from data by
 # scripts/_verify_report.py and renamed into place, so it is never empty or half written; when it
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
-# cause as a check summary, and exits 1.
+# cause as a check summary, and exits 1. The changed files are those since the base: --base, else
+# the base the claim recorded (.flow/claim.json in the worktree), else the config base.
 . "$(dirname "$0")/../lib/flow.sh"
 [ $# -ge 1 ] || die "usage: verify.sh <item> [--base <ref>]" 2
 item="$1"; shift
@@ -20,6 +21,7 @@ base=""
 while [ $# -gt 0 ]; do case "$1" in --base) base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
 root="$(repo_root)" || die "not in a git repository"
 cd "$root" || exit 1
+[ -n "$base" ] || base="$(json_get "$(cat "$(claim_file "$root")" 2>/dev/null)" base)"
 [ -n "$base" ] || base="$(cfg_or base main)"
 ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"

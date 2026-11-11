@@ -148,6 +148,11 @@ cmd_find() {
   done
 }
 
+# cmd_claim <item> [--base <branch>]: a free pool worktree on flow/<slug>, cut from the base (next.sh
+# passes the one lib/base.sh resolved; default the config base). The claim records the base in
+# claim.json and the item state (base), and every later reader takes it from there: next.sh's
+# brief and pre-verify sync, verify.sh, health and release. An item that holds a claim keeps it,
+# and its base, whatever --base says.
 cmd_claim() {
   item="$1"; shift
   base="$base_branch"
