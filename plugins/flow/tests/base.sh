@@ -58,6 +58,7 @@ remote_commit() { git -C "$root/other" fetch -q origin && git -C "$root/other" c
 body="## Acceptance
 - [ ] done"
 new_task() { "$P/scripts/new.sh" task "$1" --size S --body "${3:-$body}" ${2:+--parent "$2"}; }
+move_task_numbers_past_the_epic_numbers() { for filler in "$@"; do "$L/create.sh" task "Filler $filler" --body x >/dev/null; done; }
 
 echo "base: a child of an epic is claimed from the epic branch"
 new_repo epic
@@ -152,8 +153,7 @@ new_repo walk
 grand="$("$L/create.sh" epic "Drills" --size L --body x)"
 gb="$(epic_of "$grand")"
 remote_branch "$gb"; remote_commit "$gb" drills.txt
-# fillers move the task numbers past the epic's, so no task id names the epic's branch
-"$L/create.sh" task "Filler one" --body x >/dev/null; "$L/create.sh" task "Filler two" --body x >/dev/null
+move_task_numbers_past_the_epic_numbers one two
 middle="$(new_task "Drill set" "$grand")"
 grandchild="$(new_task "Drill timer" "$middle")"
 "$P/scripts/next.sh" "$grandchild" >/dev/null 2>&1
@@ -161,8 +161,8 @@ check "GrandchildWhoseParentHasNoEpicBranch_TakesTheGrandparentsEpicBranch: the 
   '[ "$(claim_base "$grandchild")" = "$gb" ]'
 parent="$(new_task "Tuning instrument")"
 "$P/scripts/steward.sh" claim "$parent" >/dev/null 2>&1
-# the parent's own epic/<n> is on the remote too, so the claim must choose between the two
-remote_branch "$(epic_of "$parent")"
+competing_epic_branch="$(epic_of "$parent")"
+remote_branch "$competing_epic_branch"
 kid="$(new_task "Tuning panel" "$parent")"
 "$P/scripts/next.sh" "$kid" >/dev/null 2>&1
 check "ChildOfAClaimedParentThatAlsoHasAnEpicBranch_TakesTheParentsTaskBranch: a parent's claimed branch comes before any epic branch, so the child's PR lands on its parent's work" \
@@ -190,7 +190,7 @@ loose="$(new_task "Loose docs")"
 check "NoParentNoBaseLine_TakesTheConfigBase: with nothing else to go on the claim starts from the config base" \
   '[ "$(claim_base "$loose")" = main ]'
 bare="$("$L/create.sh" epic "No branch yet" --size L --body x)"
-"$L/create.sh" task "Filler three" --body x >/dev/null; "$L/create.sh" task "Filler four" --body x >/dev/null
+move_task_numbers_past_the_epic_numbers three four
 orphan="$(new_task "Early slice" "$bare")"
 "$P/scripts/next.sh" "$orphan" >/dev/null 2>&1
 check "ChildOfAnEpicWithNoEpicBranch_TakesTheConfigBase: an epic whose epic/<n> is not on the remote gives no base, so the claim falls through" \
@@ -206,8 +206,8 @@ check "BaseLineNamingAMissingBranch_ClaimsNoWorktree: the item is never claimed 
   '[ -z "$("$P/scripts/steward.sh" find "$missing")" ]'
 check "BaseLineNamingAMissingBranch_LastEventNamesTheBranch: the owner sees which base is missing" \
   'state "$missing" last_event | grep -qF plan/gone'
-# rows: a shell character, and a leading dash git would read as an option
-for unsafe_name in 'plan/x;id' '-x'; do
+name_with_a_shell_character='plan/x;id'; name_git_reads_as_an_option='-x'
+for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option"; do
   unsafe="$(new_task "Odd plan $unsafe_name" "" "base: $unsafe_name
 $body")"
   "$P/scripts/next.sh" "$unsafe" >/dev/null 2>&1; unsafe_code=$?
