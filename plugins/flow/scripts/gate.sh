@@ -66,6 +66,7 @@ gates_json() {
 }
 
 RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>]"
+OPTION_AND_BACK="gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step"
 CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <condition>"
 
 # parse_raise_flags <flag> <value> ...: sets options_given, condition_given and raised_by_given
@@ -114,15 +115,16 @@ $footer" >/dev/null
     [ $# -ge 2 ] || die "$CLEAR_USAGE" 2
     item="$2"; mode=answer; option_number=""
     case "${3:-}" in
-      --back) mode=back; shift ;;
-      --option) [ $# -ge 4 ] || die "$CLEAR_USAGE" 2; mode=option; option_number="$4"; shift 2 ;;
+      --back) [ "${4:-}" != --option ] || die "$OPTION_AND_BACK" 2; mode=back; shift ;;
+      --option) [ $# -ge 4 ] || die "$CLEAR_USAGE" 2
+        [ "$4" != --back ] && [ "${5:-}" != --back ] || die "$OPTION_AND_BACK" 2
+        mode=option; option_number="$4"; shift 2 ;;
       --met) mode=met; shift ;;
     esac
     given="${3:-}"
-    case "$mode:$option_number:$given" in
-      back::--option|option:--back:*|option:*:--back) die "gate.sh clear takes --option or --back, not both: a pick answers the gate, a send-back redoes its step" 2 ;;
-      back::) die "gate.sh clear --back needs a message: what to change" 2 ;;
-      met::) die "gate.sh clear --met needs the condition that no longer holds" 2 ;;
+    case "$mode:$given" in
+      back:) die "gate.sh clear --back needs a message: what to change" 2 ;;
+      met:) die "gate.sh clear --met needs the condition that no longer holds" 2 ;;
     esac
     # A host stopped on a spend limit or an auth error (lib/host.sh) starts sessions again when
     # the gate that names it clears, or when the owner clears the host by name.

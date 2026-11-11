@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { CommandRequest, CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 import type { GateQuestionCache } from '../src/collectors/flowHome.ts';
 import { parseFlowConfig, parseGateList, pluginHasGateJson, pluginVersionOf, readAdapterPrefixes, readFlowHome, readStoppedHosts } from '../src/collectors/flowHome.ts';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { MOST_GATE_OPTIONS } from '../src/snapshot.ts';
 import os from 'node:os';
 import { FAKE_PLUGIN, FIXTURES, FIXTURE_ROOT, GATE_LIST_JSON, GATE_RECORD, fakeGateList, fakeRunner } from './fakeRunner.ts';
@@ -430,6 +430,15 @@ test('GateRecordWithAsManyOptionsAsTheLimit_EveryOptionRead', async () => {
 test('GateRecordWithOneOptionOverTheLimit_NoOptionsAtAll', async () => {
   const gate = await gateWith({ ...OPTIONED_RECORD, options: optionsCounting(MOST_GATE_OPTIONS + 1) });
   assert.deepEqual(gate.options, [], 'because gate.sh clear --option cannot send an option past the limit, so a button for it would fail');
+});
+
+const FLOW_PLUGIN = path.resolve(import.meta.dirname, '..', '..', '..', '..', 'flow');
+const FLOW_OPTION_LIMIT = /^FEWEST_OPTIONS, MOST_OPTIONS = \d+, (\d+)$/m;
+
+test('GateOptionLimit_SameAsTheFlowPluginsMostOptions', () => {
+  const limit = FLOW_OPTION_LIMIT.exec(readFileSync(path.join(FLOW_PLUGIN, 'scripts', '_gates.py'), 'utf8'));
+  assert.ok(limit !== null, 'because _gates.py names its option limit MOST_OPTIONS');
+  assert.equal(Number(limit[1]), MOST_GATE_OPTIONS, 'because gate.sh raise keeps up to MOST_OPTIONS options, and the console must show a button for each one it kept');
 });
 
 const OLDER_RECORD = { gate: 'ambiguity', item: 'gh#767', message: '1. Keep it?', time: '2026-11-09T09:40:00Z', host: 'shell' };

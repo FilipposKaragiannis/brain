@@ -326,7 +326,7 @@ export function DecisionCard({ gate, twins, snapshot, draft, onAnswer }: Decisio
         {(form === 'approval' || form === 'feel') && <VerdictForm gate={gate} ask={ask} form={form} split={isSplit(gate, snapshot)} draft={draft} onAnswer={onAnswer} />}
         <TwinNote gate={gate} twins={twins} />
         {choosing && <OptionsForm gate={gate} hint={commandHint(gate, false)} draft={draft} onAnswer={onAnswer} />}
-        {form === 'answers' && !choosing && <AnswersForm gate={gate} questions={numbered ? gate.questions : []} draft={draft} onAnswer={onAnswer} />}
+        {asksNumberedQuestions && <AnswersForm gate={gate} questions={numbered ? gate.questions : []} draft={draft} onAnswer={onAnswer} />}
         {form === 'merge' && <MergeForm gate={gate} ask={ask} reviewers={snapshot.project.reviewers} onAnswer={onAnswer} />}
         <GateFooter gate={gate} />
         {discuss !== null && (

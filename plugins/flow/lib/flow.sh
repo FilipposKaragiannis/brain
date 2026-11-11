@@ -360,14 +360,20 @@ pick_filter() {
   FLOW_PICK_KINDS="$(cfg "pick.$_pick.kinds" | paste -sd, -)"
 }
 
+# is_adapter_name <name>: 0 when <name> is a folder under adapters/: not empty, no leading dot,
+# no slash.
+is_adapter_name() {
+  case "$1" in ""|.*|*/*) return 1 ;; esac
+  [ -d "$FLOW_PLUGIN/adapters/$1" ]
+}
+
 # adapter <op> <id|adapter-name> [args...]: run one adapter operation. The first argument after
 # the op is an item id (adapter from its prefix) or an adapter name (for list and list-ready): a
 # folder under adapters/, never a path. Anything else dies, exit 2.
 adapter() {
   op="$1"; who="$2"; shift 2
   if ! name="$(adapter_for "$who" 2>/dev/null)"; then
-    case "$who" in ""|.*|*/*) die "no adapter owns $who, and it is no adapter name" 2 ;; esac
-    [ -d "$FLOW_PLUGIN/adapters/$who" ] || die "no adapter owns $who, and it is no adapter name" 2
+    is_adapter_name "$who" || die "no adapter owns $who, and it is no adapter name" 2
     name="$who"
   fi
   script="$FLOW_PLUGIN/adapters/$name/$op.sh"

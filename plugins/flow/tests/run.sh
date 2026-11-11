@@ -3518,7 +3518,7 @@ for n in 0 3; do
   check "clear --option $n on a gate with two options: refused, exit 2" [ "$code" -eq 2 ]
 done
 check "clear --option out of range: the gate stays for the owner" [ "$(ostate "$oa" gate)" = ambiguity ]
-"$P/scripts/gate.sh" clear "$oa" --option 2 >/dev/null 2>&1; code=$?
+"$P/scripts/gate.sh" clear "$oa" --option 2 >/dev/null 2>&1
 check "clear --option 2: the answer is the second option's text, not the first's" [ "$(ostate "$oa" answer)" = "Rename FooBar to Baz everywhere." ]
 check "clear --option 2: the gate is cleared" [ "$(ostate "$oa" gate)" = none ]
 
@@ -3537,6 +3537,7 @@ check "clear --option on a gate with no options: refused, exit 2" [ "$code" -eq 
 
 # The option limit is _gates.py's MOST_OPTIONS: a gate raised with that many lists them all, one more lists none.
 omost="$(sed -n 's/^FEWEST_OPTIONS, MOST_OPTIONS = [0-9][0-9]*, \([0-9][0-9]*\)$/\1/p' "$P/scripts/_gates.py")"
+check "option limit read from _gates.py" [ -n "$omost" ]
 ooptions() { python3 -c 'import json,sys; print(json.dumps([{"label": "Choice %d" % n, "text": "Do thing %d." % n, "recommended": n == 1} for n in range(1, int(sys.argv[1]) + 1)]))' "$1"; }
 olimit="$(ooptions "$omost")"; oover="$(ooptions "$((omost + 1))")"
 oo="$(oitem 'Many options')"; "$P/adapters/local/write-state.sh" "$oo" step=implement
@@ -3631,6 +3632,14 @@ check "adapter with a leading-dot name and no slash: refused, exit 2" [ "$code" 
 "$P/scripts/gate.sh" raise "$on" escalation "**Waits on gh#772.**" --condition "blocked_by:gh#772" >/dev/null 2>&1
 check "condition blocked_by with a GitHub issue id: the adapter owns it, so the gate keeps it" [ "$(ogate "$on" condition)" = "blocked_by:gh#772" ]
 "$P/scripts/gate.sh" clear "$on" >/dev/null 2>&1
+
+# A gh# blocker is read through the github adapter: the fake gh reports gh#772 closed.
+ogh="$(oitem 'Waits on a GitHub issue')"; "$P/adapters/local/write-state.sh" "$ogh" step=implement
+python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["issues"].append({"number": 772, "title": "The GitHub blocker", "body": "", "state": "CLOSED", "labels": [], "url": "https://github.com/acme/widgets/issues/772"}); json.dump(d, open(p,"w"))' "$FAKE_GH_DIR/issues.json"
+"$P/scripts/gate.sh" raise "$ogh" escalation "**Waits on gh#772.**" --condition "blocked_by:gh#772" >/dev/null 2>&1
+hpass
+check "condition blocked_by gh#: one health pass after GitHub reports the issue closed clears the gate" [ "$(ostate "$ogh" gate)" = none ]
+check "condition blocked_by gh#: the item keeps its step" [ "$(ostate "$ogh" step)" = implement ]
 
 oi="$(oitem 'A conflicting PR')"; "$P/adapters/local/write-state.sh" "$oi" step=done
 "$P/adapters/local/link-pr.sh" "$oi" https://github.com/acme/widgets/pull/90
