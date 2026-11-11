@@ -4,6 +4,7 @@ import { processListProblem } from '../../../daemon/src/snapshot.ts';
 import { Age, formatDuration, useLiveSeconds } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import { isParked } from '../parked.tsx';
+import { PaneControls } from '../PaneControls.tsx';
 import { routeHash } from '../route.ts';
 import { worktreeTone } from '../status.ts';
 import type { Tone } from '../status.ts';
@@ -73,7 +74,7 @@ export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
                       <td className="strong nowrap" title={worktree.path}>{worktree.name}</td>
                       <td className="mono clip" title={worktree.branch ?? ''}>{worktree.branch ?? '—'}{worktree.head !== null && ` · ${worktree.head.slice(0, 8)}`}</td>
                       <td className="muted">{outsideNote(worktree, snapshot)}</td>
-                      <td className="buttons"><TerminalButton path={worktree.path} /></td>
+                      <td className="buttons"><TerminalButton path={worktree.path} /><PaneControls projectId={snapshot.project.id} folder={worktree.path} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -143,6 +144,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
         <PrimaryLink worktree={worktree} snapshot={snapshot} />
         <SyncButton worktree={worktree} snapshot={snapshot} />
         <TerminalButton path={worktree.path} />
+        <PaneControls projectId={snapshot.project.id} folder={worktree.path} />
         <HoldButton worktree={worktree} />
       </footer>
       {worktree.state === 'running' && <div className="worktree-stripes run-stripes" aria-hidden="true" />}

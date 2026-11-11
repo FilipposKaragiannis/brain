@@ -929,7 +929,13 @@ value: Project (the name; its title is the root), Repository (`owner/name`, link
 Trackers for several (each tracker the flow reads: "GitHub issues" and "Jira" linked to their
 items, "local" plain; one the board could not read followed by "(not read)", its title the reason), Base branch
 and Jobs run on (`jobHosts`, every host the schedules and their workers run on, e.g.
-`claude, codex`); the plugins and their versions are in the Overview's footer. The top bar holds the Settings button, and
+`claude, codex`); the plugins and their versions are in the Overview's footer. Terminal pane, at
+the end of that row and on every worktree card and row outside the pool, opens a shell in the root
+or that worktree in the pane dock: fixed to the bottom of the page right of the nav, one tab per
+pane (`shell · <folder name>`, the project's name added when it is not the one on screen, the
+command on hover), Close on each tab, and a chevron that folds the dock to its tabs. A pane stays
+open, with its screen, across screens, projects and Settings; one the daemon ended says why ("Session
+ended (exit 0)", "The daemon stopped") and keeps its tab until Close. The top bar holds the Settings button, and
 the theme switch is a small square icon (a moon on light, a sun on dark) kept per browser. At phone
 width the fields wrap. Settings (`#/settings`, linked from the top bar of every screen) shows one page at a time
 beside a menu: General; Projects; Plugins › Flow with the Flow pages; Jobs with Schedules and

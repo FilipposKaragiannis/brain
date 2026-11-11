@@ -7,6 +7,8 @@ import { useServices } from './console.tsx';
 import { clockTime, useNow } from './clock.tsx';
 import { parseRoute, routeHash, SCREENS, screenLabel, SETTINGS_HASH } from './route.ts';
 import type { Route, Screen } from './route.ts';
+import { PaneControls } from './PaneControls.tsx';
+import { PaneDock } from './PaneDock.tsx';
 import { ProjectHeader } from './ProjectHeader.tsx';
 import { Activity } from './screens/Activity.tsx';
 import { Agents } from './screens/Agents.tsx';
@@ -30,9 +32,21 @@ type ProjectList = { kind: 'loading' } | { kind: 'listed'; projects: ProjectSumm
 
 export const PROJECTS_RETRY_MS = DAEMON_RETRY_MS;
 
+/** The routed page, and beside it the pane dock, which no route, project or list change remounts. */
 export function App() {
   const route = useRoute();
   const list = useProjects();
+  return (
+    <>
+      <Routed route={route} list={list} />
+      <PaneDock projectOnScreen={route.projectId} projects={list.kind === 'listed' ? list.projects : NO_PROJECTS} />
+    </>
+  );
+}
+
+const NO_PROJECTS: readonly ProjectSummary[] = [];
+
+function Routed({ route, list }: { route: Route; list: ProjectList }) {
   if (list.kind === 'loading') return <div className="boot"><Empty>Connecting to the daemon…</Empty></div>;
   if (list.kind === 'unreachable') return <div className="boot"><Empty>{list.message}. Trying again every {PROJECTS_RETRY_MS / MILLISECONDS_PER_SECOND} s.</Empty></div>;
   return <Listed route={route} projects={list.projects} />;
@@ -96,7 +110,12 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
         </nav>
         <main className="main">
           {snapshot !== null && snapshot.newerConsole !== null && <NewerConsoleBanner newer={snapshot.newerConsole} />}
-          {snapshot !== null && <ProjectHeader project={snapshot.project} />}
+          {snapshot !== null && (
+            <div className="project-row">
+              <ProjectHeader project={snapshot.project} />
+              <div className="buttons"><PaneControls projectId={projectId} folder={snapshot.project.root} /></div>
+            </div>
+          )}
           <header className="page-head">
             <div className="page-title"><h1>{screenLabel(route.screen)}</h1>{route.screen === 'gates' && snapshot !== null && <GatesHeading snapshot={snapshot} />}</div>
             <div className="page-tools">
