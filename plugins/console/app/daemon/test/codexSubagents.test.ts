@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -122,4 +122,47 @@ test('ChildNoLongerFresh_ItsFirstLineForgotten', async () => {
     await codexSubagents([rootSession(day)], dependencies, cache);
     assert.equal(cache.metas.has(path.join(day, 'rollout-child-live.jsonl')), false, 'because the reader runs as long as the daemon, so it must not keep the first lines of every rollout it ever saw');
   } finally { done(); }
+});
+
+/** The day folder under `dir` for `at`, made if missing, as codex names it in local time. */
+function dayFolderOf(dir: string, at: Date): string {
+  const folder = path.join(dir, '.codex', 'sessions', String(at.getFullYear()), String(at.getMonth() + 1).padStart(2, '0'), String(at.getDate()).padStart(2, '0'));
+  mkdirSync(folder, { recursive: true });
+  return folder;
+}
+
+/** Writes `text` to `file`, last modified a minute before `NOW`, so the reader takes it as fresh. */
+function writtenAMinuteAgo(file: string, text: string): void {
+  writeFileSync(file, text);
+  const modified = new Date(NOW.getTime() - MINUTE_MS);
+  utimesSync(file, modified, modified);
+}
+
+test('TwoRootSessionsReadTogether_EachListsOnlyItsOwnChild', async () => {
+  const { dir, day, done } = codexHome({ 'parent.jsonl': 1, 'child-live.jsonl': 1, 'child-other-root.jsonl': 1 });
+  try {
+    const otherParent = path.join(day, 'rollout-other-parent.jsonl');
+    writtenAMinuteAgo(otherParent, readFileSync(path.join(CODEX_FIXTURES, 'parent.jsonl'), 'utf8').replaceAll(ROOT_ID, '019d-elsewhere'));
+    const otherSession: SessionRef = { host: 'codex', id: '019d-elsewhere', transcript: otherParent, resume: ['codex', 'resume', '019d-elsewhere'] };
+    const reader = new SubagentReader({ home: dir, clock: () => NOW, files: diskSessionFiles });
+    const lists = await reader.read([rootSession(day), otherSession]);
+    assert.deepEqual(lists.map((rows) => rows.map((row) => row.id)), [[PROBE_ID], ['019d-stranger']], 'because one read serves every codex card at once, and each child names the one root it belongs to');
+  } finally { done(); }
+});
+
+test('ParentStartedTheDayBefore_ItsFreshChildInThatDaysFolderListed', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'console-subagents-'));
+  try {
+    const dayBefore = new Date(NOW.getTime() - 24 * 60 * MINUTE_MS);
+    const folder = dayFolderOf(dir, dayBefore);
+    const [firstLine, ...rest] = readFileSync(path.join(CODEX_FIXTURES, 'parent.jsonl'), 'utf8').split('\n');
+    const startedDayBefore = (firstLine ?? '').replaceAll('2026-11-10T', '2026-11-09T');
+    const parent = path.join(folder, 'rollout-parent.jsonl');
+    writtenAMinuteAgo(parent, [startedDayBefore, ...rest].join('\n'));
+    writtenAMinuteAgo(path.join(folder, 'rollout-child-live.jsonl'), readFileSync(path.join(CODEX_FIXTURES, 'child-live.jsonl'), 'utf8'));
+    const session: SessionRef = { host: 'codex', id: ROOT_ID, transcript: parent, resume: ['codex', 'resume', ROOT_ID] };
+    const reader = new SubagentReader({ home: dir, clock: () => NOW, files: diskSessionFiles });
+    const [rows] = await reader.read([session]);
+    assert.deepEqual((rows ?? []).map((row) => row.id), [PROBE_ID], 'because codex files a rollout under the day it started, so a session running past midnight keeps children in the day before\'s folder');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

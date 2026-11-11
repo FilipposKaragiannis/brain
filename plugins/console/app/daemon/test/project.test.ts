@@ -453,7 +453,6 @@ const subagentsOf = (agents: Agent[], pid: number) => agents.find((agent) => age
 
 test('Monitor_ClaudeSessionRunsASubagent_AgentListsItWithEveryField', async () => {
   const agents = await agentsWithSubagents();
-  assert.ok(agents.some((agent) => agent.pid === CLAUDE_PID), 'because the claude in project-wt-2 is an agent of the project');
   assert.deepEqual(subagentsOf(agents, CLAUDE_PID), [{
     id: 'a1111111111111111', host: 'claude', type: 'example-reviewer', task: 'Review the example change', cwd: '/work/example',
     startedAt: '2026-10-24T18:10:00.000Z', latest: { at: '2026-10-24T18:15:30.000Z', kind: 'say', text: 'The example change reads cleanly so far.' },
@@ -462,7 +461,6 @@ test('Monitor_ClaudeSessionRunsASubagent_AgentListsItWithEveryField', async () =
 
 test('Monitor_CodexSessionRunsASubagent_AgentListsItWithEveryField', async () => {
   const agents = await agentsWithSubagents();
-  assert.ok(agents.some((agent) => agent.pid === CODEX_PID), 'because the codex in project-wt-3 is an agent of the project');
   assert.deepEqual(subagentsOf(agents, CODEX_PID), [{
     id: '019d-probe', host: 'codex', type: 'subagent', task: 'probe (Russell)', cwd: '/work/example',
     startedAt: '2026-11-10T22:10:29.944Z', latest: { at: '2026-11-10T22:10:36.647Z', kind: 'say', text: 'PONG' },
