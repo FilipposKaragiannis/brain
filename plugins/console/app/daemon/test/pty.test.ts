@@ -86,9 +86,12 @@ test('RealPty_HangUp_EndsTheShell', async () => {
   const pty = started(SHELL_WITH_A_CHILD, TERMINAL_SIZE);
   const child = await childPid(pty);
   const result = ended(pty);
-  pty.signal('SIGHUP');
-  assert.equal((await result).signal, 'SIGHUP', 'because closing a pane hangs up the process it runs');
-  if (processAlive(child)) process.kill(child, 'SIGKILL');
+  try {
+    pty.signal('SIGHUP');
+    assert.equal((await result).signal, 'SIGHUP', 'because closing a pane hangs up the process it runs');
+  } finally {
+    if (processAlive(child)) process.kill(child, 'SIGKILL');
+  }
 });
 
 /** A shell that survives a hang-up, as an agent's wrapper may, around a child that does not. */
@@ -114,12 +117,16 @@ test('RealPty_Kill_EndsAShellThatIgnoresTheHangUp', async () => {
   const result = ended(pty);
   pty.signal('SIGHUP');
   pty.signal('SIGKILL');
-  assert.equal((await result).signal, 'SIGKILL', 'because a process that ignores the hang-up still ends once the grace runs out');
+  assert.equal((await result).signal, 'SIGKILL', 'because SIGKILL ends a shell that traps the hang-up');
 });
 
 test('RealPty_CommandMissing_EndsWithAFailure', async () => {
   const launch: PaneLaunch = { command: '/no/such/folder/brain-agent', commandArguments: [], workingFolder: os.tmpdir() };
   const spawned = ptySpawner()(launch, TERMINAL_SIZE, ENVIRONMENT);
-  const code = spawned.ok ? (await ended(spawned.pty)).code : null;
-  assert.notEqual(code, 0, 'because a program that never ran must not look like a session that ended well');
+  const failed = spawned.ok ? isFailureCode((await ended(spawned.pty)).code) : spawned.error.includes(launch.command);
+  assert.equal(failed, true, 'because a program that never ran ends with a failing code or a refusal naming it, never like a session that ended well');
 });
+
+function isFailureCode(code: number | null): boolean {
+  return code !== null && code !== 0;
+}

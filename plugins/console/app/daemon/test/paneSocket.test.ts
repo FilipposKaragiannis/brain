@@ -165,8 +165,13 @@ test('StopAll_WithAPaneOpen_ServerCloseSettles', async () => {
   const running = await daemon();
   await startedClient(running.port, AT_ROOT, PROJECT.id);
   const closing = running.close().then(() => 'closed');
-  const timeout = new Promise((resolve) => setTimeout(() => resolve('hung'), SOCKET_TIMEOUT_MILLISECONDS));
-  assert.equal(await Promise.race([closing, timeout]), 'closed', 'because an upgraded socket must not hold the daemon open when it stops');
+  let hungTimer: NodeJS.Timeout | undefined;
+  const timeout = new Promise((resolve) => { hungTimer = setTimeout(() => resolve('hung'), SOCKET_TIMEOUT_MILLISECONDS); });
+  try {
+    assert.equal(await Promise.race([closing, timeout]), 'closed', 'because an upgraded socket must not hold the daemon open when it stops');
+  } finally {
+    clearTimeout(hungTimer);
+  }
 });
 
 test('ProjectRemoved_ItsPaneClosed4404', async () => {
