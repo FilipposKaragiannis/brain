@@ -8,7 +8,7 @@ import { parsePaneRequest } from './panePlan.ts';
 import type { PaneControl, PaneNotice } from './paneProtocol.ts';
 import { INPUT_FRAME_LIMIT_BYTES, MAX_PANE_COLUMNS, MAX_PANE_ROWS, MIN_PANE_COLUMNS, MIN_PANE_ROWS, PANE_CLOSE } from './paneProtocol.ts';
 import type { PaneLink, PaneSessions } from './panes.ts';
-import type { ProjectRegistry } from './registry.ts';
+import type { ProjectRegistry, ServedProject } from './registry.ts';
 
 /** Whether a caller may open a pane at all: a refusal carries the HTTP status the upgrade is refused with. */
 export type PaneAdmission = { ok: true } | { ok: false; status: number; error: string };
@@ -30,10 +30,21 @@ const HTTP_NOT_FOUND = 404;
  * `GET /api/projects/<id>/panes` as a WebSocket, one per pane. A caller the server would refuse,
  * an unknown project or another path is refused before the handshake as plain HTTP; everything
  * after it (a bad request, a folder not listed, a pty that cannot start) is a `refused` frame and
- * close `refused`, because a page cannot read a failed handshake.
+ * close `refused`, because a page cannot read a failed handshake. A project that leaves the
+ * registry, or whose id now names another root, has its panes closed `projectGone`; a text frame
+ * that is not a control closes its pane `unknownFrame`.
  */
 export function servePanes(server: Server, route: PaneRoute): void {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: INPUT_FRAME_LIMIT_BYTES });
+  const paneProjects = new Map<string, ServedProject>();
+  const unsubscribe = route.registry.onChange(() => {
+    for (const [id, served] of [...paneProjects]) {
+      if (route.registry.get(id) === served) continue;
+      paneProjects.delete(id);
+      route.panes.endProject(id);
+    }
+  });
+  server.once('close', unsubscribe);
   server.on('upgrade', (request: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = new URL(request.url ?? '/', REQUEST_URL_BASE);
     const admission = route.admit(request, url);
@@ -46,6 +57,7 @@ export function servePanes(server: Server, route: PaneRoute): void {
       const parsed = parsePaneRequest(url.searchParams);
       if (!parsed.ok) { link.tell({ type: 'refused', error: parsed.error }); link.end(PANE_CLOSE.refused); return; }
       const { project } = served.monitor;
+      paneProjects.set(project.id, served);
       route.panes.open({ id: project.id, root: project.root }, parsed.request, served.monitor.paneFacts(), link);
     });
   });
@@ -73,7 +85,8 @@ function socketLink(connection: WebSocket, log: Logger): PaneLink {
       connection.on('message', (data: RawData, isBinary: boolean) => {
         if (isBinary) return;
         const control = parseControl(frameBytes(data).toString());
-        if (control !== null) listener(control);
+        if (control === null) { connection.close(PANE_CLOSE.unknownFrame); return; }
+        listener(control);
       });
     },
     onGone: (listener) => {
