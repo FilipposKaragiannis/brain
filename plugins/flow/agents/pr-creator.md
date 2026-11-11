@@ -13,20 +13,24 @@ right base branch, the verify summary, the quiz when one exists, and the review 
 
 ## Inputs
 The item (its `parent`, acceptance lines, `state.base`), the task branch in the claimed
-worktree, `<reports>/verify.json` and `verify.md` (must be pass), `<reports>/explain.html` and
+worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verify.md` (must be pass), `<reports>/explain.html` and
 `quiz.md` when the explain step ran, the PR body template in the `flow:pr` skill, the repo's
 `.github/PULL_REQUEST_TEMPLATE.md` when there is one, and `.flow/config.yaml` (`base`).
 
 ## How to open the PR
 1. `cd` into the worktree. Confirm `verify.json` is `pass`; otherwise stop with status `fail`
    naming the failing check. Confirm the tree is clean and every commit is on the task branch.
-2. Pick the base: the item's recorded base, `state.base`. It is the branch the claim resolved
-   once and cut the task branch from, the same as `base` in `.flow/claim.json` and the
-   brief's `(base ...)`. Say "base <b>, recorded at claim" in the result. Only when
-   `state.base` is empty (a claim from before 1.37) use the old rule: the parent item's task
-   branch when the item has a parent with a claimed branch (`flow/<parent slug>`), else an
-   `epic/<n>` branch on the remote for that parent, else `base` from the config; never the
-   default branch by default when a parent exists. Say which base and why in the result.
+2. Pick the base: `base` in the worktree's `.flow/claim.json`, the branch the claim resolved
+   once and cut the task branch from (the brief's `(base ...)`). The item's `state.base` is a
+   copy on the tracker that anyone who can edit the item can change: when it is set and differs
+   from the claim's, or the claim has none, stop with status `fail` naming both values. Say
+   "base <b>, recorded at claim" in the result. Only when both are empty (claims made before
+   the base was recorded) use the old rule: the parent item's task branch when the item has a
+   parent with a claimed branch (`flow/<parent slug>`), else an `epic/<n>` branch on the remote
+   for that parent, else `base` from the config; never the default branch by default when a
+   parent exists. Say which base and why in the result. Check the base before any `git` or
+   `gh` command takes it: it does not start with `-`, it matches `^[A-Za-z0-9._/-]+$`, and
+   `git check-ref-format --branch <b>` accepts it; otherwise stop with status `fail` naming it.
 3. Push: `git push -u origin <branch>`.
 4. Body: the repo template when one exists, else the house template: Summary with the
    smallest view that makes the point (pseudocode, call tree, file tree, diff sketch or
@@ -55,9 +59,10 @@ worktree, `<reports>/verify.json` and `verify.md` (must be pass), `<reports>/exp
 ## Output
 The PR, then the result file the brief names: status `done` with the URL under `pr` and in the
 summary, the base and why, draft or ready, and the reviewers asked; status `fail` when verify is
-not pass or the push is rejected.
+not pass, the base fails step 2 or the push is rejected.
 
 ## Never
-Never open a PR when verify is not pass. Never pick a base other than the item's recorded base;
-with none recorded, never the default branch when the item has a parent. Never tag reviewers
+Never open a PR when verify is not pass. Never pick a base other than the one `.flow/claim.json`
+records, nor one that `state.base` contradicts or that fails the check in step 2; with none
+recorded, never the default branch when the item has a parent. Never tag reviewers
 in the body. Never close the item. Never force-push.

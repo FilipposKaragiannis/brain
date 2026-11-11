@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Open or update the pull request for an item with the pr-creator agent: base from the item's base recorded at claim (the parent rule for a claim from before 1.37), the house PR body with the verify report, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
+description: Open or update the pull request for an item with the pr-creator agent: base from the item's base recorded at claim in claim.json (the parent rule for claims made before the base was recorded), the house PR body with the verify report, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
 disable-model-invocation: true
 ---
 
@@ -24,6 +24,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    warning when the base is not the default branch (the merge will not auto-close the item;
    closeout does).
 
-Never open a PR on a failing verify. Never pick a base other than the item's recorded base
-(`state.base`); with none recorded (a claim from before 1.37), never the default branch when the
-item has a parent with a branch. Never tag reviewers in the body; one comment per reviewer.
+Never open a PR on a failing verify. Never pick a base other than the item's recorded base, `base`
+in the worktree's `.flow/claim.json`. `state.base` on the tracker is a copy anyone who can edit
+the item can change: when it is set and differs from the claim's, or the claim has none, stop with
+status `fail` naming both. Never pass a base to `git` or `gh` that starts with `-`, has a character
+outside `^[A-Za-z0-9._/-]+$` or fails `git check-ref-format --branch`; stop with status `fail`
+instead. With none recorded (claims made before the base was recorded), never the default branch
+when the item has a parent with a branch. Never tag reviewers in the body; one comment per reviewer.
