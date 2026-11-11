@@ -7,6 +7,7 @@ import { silentLogger } from '../src/log.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from '../src/project.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
 import { FIXTURES, LOCAL_BOARD_JSON, fakeRunner } from './fakeRunner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const ITEM = 'local:task/7';
@@ -44,7 +45,7 @@ function localTrackerProject(config: string, pr: string): LocalProject {
     if (request.command === 'sh' && script.endsWith('board.sh')) return { code: 0, stdout: JSON.stringify(board), stderr: '', timedOut: false };
     return fakeRunner(request);
   };
-  const monitor = new ProjectMonitor({ project: { id: 'local', name: 'local', root }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'local', name: 'local', root }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   return { monitor, root, sweeps, cleanUp: () => rmSync(dir, { recursive: true, force: true }) };
 }
 

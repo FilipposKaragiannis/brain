@@ -10,6 +10,7 @@ import { ProjectRegistry } from '../src/registry.ts';
 import type { ProjectSummary } from '../src/registry.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
@@ -20,7 +21,7 @@ function registry() {
   const stopped: string[] = [];
   const { spawner } = plainSpawner();
   const projects = new ProjectRegistry((project) => {
-    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
+    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE, subagents: noSubagents });
     const stop = monitor.stop.bind(monitor);
     monitor.stop = () => { stopped.push(project.id); stop(); };
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: os.tmpdir(), onRefresh: () => {} });
