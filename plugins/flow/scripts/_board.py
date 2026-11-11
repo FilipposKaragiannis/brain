@@ -20,9 +20,9 @@ read_blockers = json.loads(lines[5]) if len(lines) > 5 and lines[5].strip() else
 claimed_list = json.loads(lines[6]) if len(lines) > 6 and lines[6].strip() else []
 claimed_bases = {claimed["item"]: claimed for claimed in claimed_list}
 config_base = os.environ.get("FLOW_CONFIG_BASE", "")
-for p in pool:
-    claimed = claimed_bases.get(p["item"], {})
-    p["base"], p["base_missing"] = claimed.get("base", ""), claimed.get("missing", False)
+for pool_entry in pool:
+    claimed = claimed_bases.get(pool_entry["item"], {})
+    pool_entry["base"], pool_entry["base_missing"] = claimed.get("base", ""), claimed.get("missing", False)
 by_id = {i["id"]: i for i in items}
 status_of = {blocker["id"]: blocker["status"] for blocker in read_blockers}
 status_of.update((item["id"], item.get("status", "open")) for item in items)
@@ -112,9 +112,9 @@ def owner_of(i):
 def gate_of(i):
     gate = i["state"].get("gate") or "none"
     return "none, answer waits on %s" % owner_of(i) if gate == "none" and owner_of(i) else gate
-def worktree_of(i):
-    worktree = i["state"].get("worktree") or "-"
-    base = claimed_bases.get(i["id"], {}).get("base", "")
+def worktree_of(item):
+    worktree = item["state"].get("worktree") or "-"
+    base = claimed_bases.get(item["id"], {}).get("base", "")
     return "%s, base %s" % (worktree, base) if base and base != config_base else worktree
 for i in sorted(items, key=lambda i: i.get("rank", 999)):
     s = i["state"]
