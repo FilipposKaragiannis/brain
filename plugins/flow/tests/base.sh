@@ -277,5 +277,14 @@ for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option"
     '[ "$(jget changed_files < "$("$plugin/scripts/steward.sh" reports "$loose")/verify.json")" = "[\"loose.txt\"]" ]'
 done
 
+echo "base: steward's own claim refuses a base that is not a safe name"
+direct="$(new_task "Direct claim")"
+for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" "$name_with_a_space" \
+  "$name_climbing_a_level" "$name_from_the_root"; do
+  "$plugin/scripts/steward.sh" claim "$direct" --base "$unsafe_name" >/dev/null 2>&1; direct_code=$?
+  check "StewardClaimWithAnUnsafeBase_ExitsWithTheUsageCode [$unsafe_name]: a caller other than next.sh cannot record a base that fails the name check" \
+    '[ "$direct_code" -eq 2 ]'
+done
+
 [ "$fails" -eq 0 ] && { echo "base: ok"; exit 0; }
 echo "base: $fails failed"; exit 1
