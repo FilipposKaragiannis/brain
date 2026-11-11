@@ -379,6 +379,9 @@ const REVIEWER: Subagent = {
 const EXPLORER: Subagent = { ...REVIEWER, id: 'a2222222222222222', type: 'Explore', task: 'Explore the example module', latest: { at: '2026-10-24T18:15:50Z', kind: 'tool', text: 'Read · /work/example/src/app.ts' } };
 /** A codex child spawned without a task text the page can read. */
 const PROBE: Subagent = { id: '019d-probe', host: 'codex', type: 'subagent', task: null, cwd: '/work/example', startedAt: '2026-10-24T18:15:00Z', latest: null };
+/** The task name the daemon gives a codex child spawned as `/root/probe` with the nickname Russell. */
+const PROBE_TASK = 'probe (Russell)';
+const NAMED_PROBE: Subagent = { ...PROBE, task: PROBE_TASK };
 
 const sessionWith = (subagents: Subagent[]): Agent => ({ ...agent(104, 'session', '/p-wt/wt-2'), subagents });
 const subagentRow = (row: HTMLElement, type: string): HTMLElement => within(within(row).getByRole('list', { name: 'Subagents' })).getByRole('listitem', { name: `Subagent ${type}` });
@@ -417,6 +420,12 @@ test('CodexSessionSubagentWithoutATask_SaysNoTask', async () => {
   await renderAgents([{ ...sessionWith([PROBE]), host: 'codex' }]);
   const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'subagent');
   expect(within(row).queryByText('no task'), 'because a codex child\'s task text is encrypted, and an empty gap would read as a missing field').not.toBeNull();
+});
+
+test('CodexSessionSubagentWithATask_RowShowsIt', async () => {
+  await renderAgents([{ ...sessionWith([NAMED_PROBE]), host: 'codex' }]);
+  const row = subagentRow(screen.getByRole('listitem', { name: 'Session 104' }), 'subagent');
+  expect(within(row).queryByText(PROBE_TASK), 'because a codex child spawned with a task name shows it, as a claude subagent shows its description').not.toBeNull();
 });
 
 test('RunWithASubagent_ListedOnItsCard', async () => {

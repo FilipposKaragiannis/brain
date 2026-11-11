@@ -6,12 +6,15 @@ import { test } from 'node:test';
 import { codexSubagentCache, codexSubagents } from '../src/collectors/codexSubagents.ts';
 import { diskSessionFiles } from '../src/collectors/sessions.ts';
 import { SubagentReader } from '../src/collectors/subagents.ts';
+import { LIVE_WINDOW_MS } from '../src/collectors/subagentWindow.ts';
 import type { SessionRef, Subagent } from '../src/snapshot.ts';
 import { FIXTURES } from './fakeRunner.ts';
 
 /** A minute after the captured child wrote its last line, so every fixture written a minute ago is fresh. */
 const NOW = new Date('2026-11-10T22:12:00Z');
 const MINUTE_MS = 60000;
+/** An age a minute past the live window, in the minutes `codexHome` takes. */
+const PAST_THE_WINDOW_MINUTES = LIVE_WINDOW_MS / MINUTE_MS + 1;
 const CODEX_FIXTURES = path.join(FIXTURES, 'subagents', 'codex');
 /** The root session of the capture: a `codex exec` that spawned the `probe` child. */
 const ROOT_ID = '019d-root';
@@ -103,8 +106,8 @@ test('ChildWithOnlyReplayedLines_StillListed', async () => {
   assert.deepEqual(rows.map((row) => row.id), ['019d-fresh'], 'because a child just spawned is at work before it writes a line of its own');
 });
 
-test('ChildNotWrittenForElevenMinutes_NotListed', async () => {
-  const rows = await rootRows({ 'child-live.jsonl': 11, 'child-depth2.jsonl': 1 });
+test('ChildNotWrittenForLongerThanTheLiveWindow_NotListed', async () => {
+  const rows = await rootRows({ 'child-live.jsonl': PAST_THE_WINDOW_MINUTES, 'child-depth2.jsonl': 1 });
   assert.deepEqual(rows.map((row) => row.id), ['019d-deep'], 'because a rollout not written for longer than the live window is not at work, whatever its last turn says');
 });
 
@@ -115,7 +118,7 @@ test('ChildNoLongerFresh_ItsFirstLineForgotten', async () => {
     const cache = codexSubagentCache();
     const dependencies = { home: dir, clock: () => now, files: diskSessionFiles };
     await codexSubagents([rootSession(day)], dependencies, cache);
-    now = new Date(NOW.getTime() + 15 * MINUTE_MS);
+    now = new Date(NOW.getTime() + LIVE_WINDOW_MS + MINUTE_MS);
     await codexSubagents([rootSession(day)], dependencies, cache);
     assert.equal(cache.metas.has(path.join(day, 'rollout-child-live.jsonl')), false, 'because the reader runs as long as the daemon, so it must not keep the first lines of every rollout it ever saw');
   } finally { done(); }
