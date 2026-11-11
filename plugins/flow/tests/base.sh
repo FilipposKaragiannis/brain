@@ -42,6 +42,14 @@ base_name_refused="$(sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && . "$FLOW_PLUGIN/lib/
 # epic_of <id>: the epic branch an id names, worked out by hand from the rule: the id past its
 # last #, / or :, after epic/.
 epic_of() { printf 'epic/%s' "$(printf '%s' "$1" | sed 's|.*[#/:]||')"; }
+# The names no reader may hand on from a claim.json base, and no claim may record, by label. A tab
+# shifts the fields of a claimed_bases record; the line breaks end one record and forge the next.
+name_with_a_tab="$(printf 'plan/x\ty')"; name_with_a_shell_character='plan/x;id'
+name_forging_a_record="$(printf 'plan/x\t/tmp\tfalse\nforged-item\tforged-base\t/tmp\ttrue\nleftover')"
+name_git_reads_as_an_option='-x'; name_with_a_space='plan/x y'; name_climbing_a_level='plan/../x'
+name_from_the_root='/plan/x'; name_with_a_letter_outside_ascii='plan/é'
+tampered_labels="name_with_a_tab name_forging_a_record name_with_a_shell_character name_git_reads_as_an_option
+  name_with_a_space name_climbing_a_level name_from_the_root name_with_a_letter_outside_ascii"
 
 # new_repo <dir>: a clone of a fresh bare origin, on the local adapter with config base main, a
 # three-worktree pool and behind_base 1; the shell in it. other is a second clone that moves the
@@ -155,10 +163,7 @@ check "InitCheckAfterTheEpicBranchIsDeleted_NotesTheMissingBase: init --check ha
   'grep "^init: note:" "$work/init.out" | grep -F "$child" | grep -qF "$epic_branch"'
 
 echo "base: a claim.json base that is not a safe name never reaches the board or init"
-# A tab shifts the fields of a claimed_bases record; the line breaks end one record and forge the next.
-name_with_a_tab="$(printf 'plan/x\ty')"; name_with_a_shell_character='plan/x;id'
-name_forging_a_record="$(printf 'plan/x\t/tmp\tfalse\nforged-item\tforged-base\t/tmp\ttrue\nleftover')"
-for tampered_label in name_with_a_tab name_forging_a_record name_with_a_shell_character; do
+for tampered_label in $tampered_labels; do
   eval "tampered_name=\"\$$tampered_label\""
   set_claim_base "$plain" "$tampered_name"
   "$plugin/scripts/board.sh" --json 2>/dev/null > "$work/board.tampered.json"
@@ -169,11 +174,11 @@ for tampered_label in name_with_a_tab name_forging_a_record name_with_a_shell_ch
   check "BoardJsonWithATamperedClaimBase_GivesThatClaimNoBase [$tampered_label]: the board skips a recorded base that fails the name check, so its text never reaches the board" \
     '[ "$(pool_entry_field "$work/board.tampered.json" "$plain" base)" = "\"\"" ]'
   check "BoardWithATamperedClaimBase_HealthNamesNoForgedItem [$tampered_label]: a line break in the base cannot add a record for an item no pool worktree claims" \
-    '! grep -qF forged-item "$work/board.tampered.health"'
+    'grep -qF "$child" "$work/board.tampered.health" && ! grep -qF forged-item "$work/board.tampered.health"'
   check "InitCheckWithATamperedClaimBase_StillNotesTheOtherMissingBase [$tampered_label]: one bad claim.json does not stop init noting another claim's missing base" \
     'grep "^init: note:" "$work/init.tampered.out" | grep -F "$child" | grep -qF "$epic_branch"'
   check "InitCheckWithATamperedClaimBase_NotesNoForgedItem [$tampered_label]: a line break in the base cannot add a note for an item no pool worktree claims" \
-    '! grep -qF forged-item "$work/init.tampered.out"'
+    'grep -qF "$child" "$work/init.tampered.out" && ! grep -qF forged-item "$work/init.tampered.out"'
 done
 
 echo "base: where a claim starts when there is no epic branch next to it"
@@ -234,10 +239,8 @@ check "BaseLineNamingAMissingBranch_ClaimsNoWorktree: the item is never claimed 
   '[ -z "$("$plugin/scripts/steward.sh" find "$missing")" ]'
 check "BaseLineNamingAMissingBranch_LastEventNamesTheBranch: the owner sees which base is missing" \
   'state "$missing" last_event | grep -qF plan/gone'
-name_git_reads_as_an_option='-x'
-name_with_a_space='plan/x y'; name_climbing_a_level='plan/../x'; name_from_the_root='/plan/x'
 for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" \
-  "$name_climbing_a_level" "$name_from_the_root"; do
+  "$name_climbing_a_level" "$name_from_the_root" "$name_with_a_letter_outside_ascii"; do
   unsafe="$(new_task "Odd plan $unsafe_name" "" "base: $unsafe_name
 $body")"
   "$plugin/scripts/next.sh" "$unsafe" >/dev/null 2>&1; unsafe_code=$?
@@ -246,9 +249,9 @@ $body")"
   check "BaseLineOutsideTheSafeNames_NamedRunExitsWithThePassOverCode [$unsafe_name]: a refused base passes the item over like a missing one" \
     '[ "$unsafe_code" -eq 4 ]'
   check "BaseLineOutsideTheSafeNames_LastEventSaysTheNameIsNotValid [$unsafe_name]: the owner sees the base was refused as a name, not reported missing from the remote" \
-    'state "$unsafe" last_event | grep -qF -- "$base_name_refused"'
+    '[ -n "$base_name_refused" ] && state "$unsafe" last_event | grep -qF -- "$base_name_refused"'
   check "BaseLineOutsideTheSafeNames_LastEventLeavesTheNameOut [$unsafe_name]: a refused name may carry control characters, so it never reaches last_event" \
-    '! state "$unsafe" last_event | grep -qF -- "$unsafe_name"'
+    'last_event="$(state "$unsafe" last_event)"; [ -n "$last_event" ] && ! printf "%s\n" "$last_event" | grep -qF -- "$unsafe_name"'
 done
 spaced="$(new_task "Spaced plan" "" "base: $name_with_a_space
 $body")"
@@ -263,27 +266,29 @@ check "BaseLineWithASpace_LastEventNamesTheNameCutAtTheSpace: the owner sees the
 echo "base: a recorded base that is not a safe name is never handed on"
 loose_worktree="$("$plugin/scripts/steward.sh" find "$loose")"
 printf 'loose\n' > "$loose_worktree/loose.txt" && git -C "$loose_worktree" add loose.txt && git -C "$loose_worktree" commit -qm loose
-for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" "$name_with_a_space" \
-  "$name_climbing_a_level" "$name_from_the_root"; do
-  set_claim_base "$loose" "$unsafe_name"
+for tampered_label in $tampered_labels; do
+  eval "tampered_name=\"\$$tampered_label\""
+  set_claim_base "$loose" "$tampered_name"
   rm -f "$(run_file "$loose")"
   "$plugin/scripts/next.sh" "$loose" --json > "$work/tampered.json" 2>/dev/null
-  check "TamperedClaimBase_JsonBaseIsTheConfigBase [$unsafe_name]: next.sh checks the name claim.json records and falls back to the config base, so a bad name never reaches the runner or git" \
+  check "TamperedClaimBase_JsonBaseIsTheConfigBase [$tampered_label]: next.sh checks the name claim.json records and falls back to the config base, so a bad name never reaches the runner or git" \
     '[ "$(json_value base < "$work/tampered.json")" = main ]'
-  set_claim_base "$loose" "$unsafe_name"
+  set_claim_base "$loose" "$tampered_name"
   rm -f "$("$plugin/scripts/steward.sh" reports "$loose")/verify.json"
   (cd "$loose_worktree" && "$plugin/scripts/verify.sh" "$loose" >/dev/null 2>&1)
-  check "TamperedClaimBase_VerifyDiffsAgainstTheConfigBase [$unsafe_name]: verify.sh checks the name claim.json records and measures the item's own files from the config base" \
+  check "TamperedClaimBase_VerifyDiffsAgainstTheConfigBase [$tampered_label]: verify.sh checks the name claim.json records and measures the item's own files from the config base" \
     '[ "$(json_value changed_files < "$("$plugin/scripts/steward.sh" reports "$loose")/verify.json")" = "[\"loose.txt\"]" ]'
 done
 
 echo "base: steward's own claim refuses a base that is not a safe name"
 direct="$(new_task "Direct claim")"
-for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" "$name_with_a_space" \
-  "$name_climbing_a_level" "$name_from_the_root"; do
-  "$plugin/scripts/steward.sh" claim "$direct" --base "$unsafe_name" >/dev/null 2>&1; direct_code=$?
-  check "StewardClaimWithAnUnsafeBase_ExitsWithTheUsageCode [$unsafe_name]: a caller other than next.sh cannot record a base that fails the name check" \
+for tampered_label in $tampered_labels; do
+  eval "tampered_name=\"\$$tampered_label\""
+  "$plugin/scripts/steward.sh" claim "$direct" --base "$tampered_name" >/dev/null 2>&1; direct_code=$?
+  check "StewardClaimWithAnUnsafeBase_ExitsWithTheUsageCode [$tampered_label]: a caller other than next.sh cannot record a base that fails the name check" \
     '[ "$direct_code" -eq 2 ]'
+  check "StewardClaimWithAnUnsafeBase_ClaimsNoWorktree [$tampered_label]: the refused claim leaves the item with no pool worktree" \
+    '[ -z "$("$plugin/scripts/steward.sh" find "$direct")" ]'
 done
 
 [ "$fails" -eq 0 ] && { echo "base: ok"; exit 0; }
