@@ -16,7 +16,6 @@ import { readProcesses, readSession } from './collectors/processes.ts';
 import type { SessionLocator } from './collectors/sessions.ts';
 import { noSessions } from './collectors/sessions.ts';
 import type { SubagentReader } from './collectors/subagents.ts';
-import { noSubagents } from './collectors/subagents.ts';
 import type { ActionContext } from './actionPlan.ts';
 import type { PluginReader } from './collectors/plugins.ts';
 import { noPlugins } from './collectors/plugins.ts';
@@ -77,8 +76,8 @@ export type ProjectMonitorDependencies = {
   sessions?: Pick<SessionLocator, 'assign'>;
   /** Finds the transcript of the session that raised each waiting gate; left out, no gate has a session. */
   gateSessions?: Pick<SessionLocator, 'gates'>;
-  /** Lists the subagents each process's session runs now; left out, no process has any. */
-  subagents?: Pick<SubagentReader, 'read'>;
+  /** Lists the subagents each process's session runs now. */
+  subagents: Pick<SubagentReader, 'read'>;
   /** Reads the plugins the hosts have for the project, with the files; left out, it has none. */
   plugins?: PluginReader;
   /** A newer console in the plugin cache than the one running, asked on every rebuild; left out, none. */
@@ -144,7 +143,7 @@ export class ProjectMonitor {
     this.cadence = dependencies.cadence;
     this.sessions = dependencies.sessions ?? noSessions;
     this.gateLocator = dependencies.gateSessions ?? noSessions;
-    this.subagents = dependencies.subagents ?? noSubagents;
+    this.subagents = dependencies.subagents;
     this.plugins = dependencies.plugins ?? noPlugins;
     this.newerConsole = dependencies.newerConsole ?? (() => null);
   }

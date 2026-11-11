@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { SessionRef, Subagent, TranscriptLine } from '../snapshot.ts';
 import type { SessionFiles } from './sessions.ts';
-import { parseTranscriptLines } from './sessions.ts';
+import { parseTranscriptLines, textOrNull } from './sessions.ts';
 import type { SubagentReaderDependencies } from './subagents.ts';
 import type { UsedEntry } from './subagentWindow.ts';
 import { forgetUnused, LIVE_WINDOW_MS } from './subagentWindow.ts';
@@ -97,7 +97,7 @@ async function cachedMeta(file: string, { files, cache, now }: Reading): Promise
 function metaAbout(text: string): ClaudeSubagentMeta['about'] {
   const meta = jsonObject(text);
   if (meta === null || meta['finished'] === true || meta['stoppedByUser'] === true) return null;
-  return { type: nonEmpty(meta['agentType']) ?? UNTYPED, task: nonEmpty(meta['description']) };
+  return { type: textOrNull(meta['agentType']) ?? UNTYPED, task: textOrNull(meta['description']) };
 }
 
 /** A transcript's start, from the cache, else read from its first line and cached for the life of the file. */
@@ -107,7 +107,7 @@ async function cachedStart(file: string, { files, cache, now }: Reading): Promis
   const head = await files.head(file, START_BYTES);
   if (head === null || head === '') return NO_START;
   const first = jsonObject(head.split('\n', 1)[0] ?? '');
-  const start = first === null ? NO_START : { cwd: nonEmpty(first['cwd']), startedAt: nonEmpty(first['timestamp']) };
+  const start = first === null ? NO_START : { cwd: textOrNull(first['cwd']), startedAt: textOrNull(first['timestamp']) };
   cache.starts.set(file, { ...start, seenMs: now });
   return start;
 }
@@ -124,11 +124,6 @@ function jsonObject(text: string): Record<string, unknown> | null {
     const value: unknown = JSON.parse(text);
     return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
   } catch { return null; }
-}
-
-/** A non-empty string, else null. */
-function nonEmpty(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value : null;
 }
 
 /** Oldest start first; a subagent with no start goes last, ties by id. */

@@ -20,6 +20,7 @@ import type { SessionActivity, SessionRef, TranscriptLine, TranscriptTurn } from
 import { TRANSCRIPT_LINE_CHARS } from '../src/snapshot.ts';
 import { FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const MINUTE_MS = 60000;
@@ -418,7 +419,7 @@ test('Transcript_Limit_KeepsTheLastTurns', () => {
 const LINES_TRANSCRIPT = path.join(FIXTURES, 'transcripts', 'claude-lines.jsonl');
 
 test('TranscriptLines_EachEntryAsOneLineInFileOrder', () => {
-  const lines = parseTranscriptLines(readFileSync(LINES_TRANSCRIPT, 'utf8'));
+  const lines = parseTranscriptLines(readFileSync(LINES_TRANSCRIPT, 'utf8'), { sidechains: false });
   assert.deepEqual(lines.slice(0, -1).map((line) => [line.at?.slice(17, 19), line.kind, line.text]), [
     ['01', 'user', 'Implement gh#9: the score panel.'],
     ['02', 'think', 'The brief wants the panel first.'],
@@ -624,7 +625,7 @@ function changingProcesses(): { runner: CommandRunner; drop: (pid: number) => vo
 const sessionsByPid = { assign: async (processes: { host: string }[]) => processes.map((process) => ({ session: process.host === 'claude' ? SESSION : null, activity: null })) };
 
 test('AgentWithATranscript_SnapshotCarriesItsSession', async () => {
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   const agent = monitor.snapshot?.agents.find((entry) => entry.pid === 100);
@@ -634,7 +635,7 @@ test('AgentWithATranscript_SnapshotCarriesItsSession', async () => {
 
 test('AgentGoneFromTheProcessList_ListedAsEndedWithItsSession', async () => {
   const { runner, drop } = changingProcesses();
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   drop(100);
@@ -647,7 +648,7 @@ const IDLE: SessionActivity = { status: 'idle', since: '2026-10-22T18:16:04.000Z
 const idleSessions = { assign: async (processes: { pid: number }[]) => processes.map((process) => ({ session: null, activity: process.pid === 104 ? IDLE : null })) };
 
 test('SessionWithItsActivity_SnapshotCarriesItAndItsStart', async () => {
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   const session = monitor.snapshot?.agents.find((entry) => entry.pid === 104);
@@ -655,7 +656,7 @@ test('SessionWithItsActivity_SnapshotCarriesItAndItsStart', async () => {
 });
 
 test('ActionContext_LiveSessions_TheSessionsOnlyNotTheRuns', async () => {
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: idleSessions, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   assert.deepEqual(monitor.actionContext().liveSessions, [{ pid: 104, startedAt: '2026-10-24T18:14:04.000Z' }], 'because Stop session ends the owner\'s own sessions; the run in project-wt-3 stops with Stop this run, which clears its record');
@@ -663,7 +664,7 @@ test('ActionContext_LiveSessions_TheSessionsOnlyNotTheRuns', async () => {
 
 test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async () => {
   const gateSessions = { gates: async (gates: GateLookup[]) => gates.map((gate) => (gate.cwd === path.join(FIXTURES, 'project-wt-2') && gate.raisedAt === '2026-10-22T07:43:00Z' ? SESSION : null)) };
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, gateSessions });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, gateSessions, subagents: noSubagents });
   await monitor.refresh('files');
   assert.deepEqual(monitor.snapshot?.gates.find((gate) => gate.item === 'gh#7')?.session, SESSION, 'because the card offers the located session when no agent on the item is known');
   assert.deepEqual(monitor.actionContext().gateSessions, [{ item: 'gh#7', cwd: path.join(FIXTURES, 'project-wt-2'), session: SESSION }], 'because terminal.open resumes only a session located for a waiting gate, in its worktree');
@@ -672,7 +673,7 @@ test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async ()
 async function transcriptServer(runner: CommandRunner = fakeRunner, sessions: typeof sessionsByPid = sessionsByPid): Promise<{ base: string; close: () => Promise<void> }> {
   const { spawner } = plainSpawner();
   const registry = new ProjectRegistry((project) => {
-    const monitor = new ProjectMonitor({ project, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions });
+    const monitor = new ProjectMonitor({ project, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions, subagents: noSubagents });
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: os.tmpdir(), onRefresh: () => {} });
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: async () => {}, log: silentLogger }) };
   }, silentLogger);
@@ -720,7 +721,7 @@ const codexFromRootRunner: CommandRunner = async (request) => {
 async function codexFromRoot(dir: string) {
   const day = path.join(dir, '.codex', 'sessions', String(NOW.getFullYear()), String(NOW.getMonth() + 1).padStart(2, '0'), String(NOW.getDate()).padStart(2, '0'));
   written(path.join(day, 'rollout-a-019c-wt3.jsonl'), `${meta('019c-wt3', path.join(FIXTURES, 'project-wt-3'))}\n`, new Date(NOW.getTime() - MINUTE_MS));
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: codexFromRootRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: locator(dir) });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: codexFromRootRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: locator(dir), subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   return monitor.snapshot?.agents.find((entry) => entry.pid === 107);
@@ -772,7 +773,7 @@ const MAIN_AND_SIDE_CHAIN = [
 ].join('\n');
 
 test('TranscriptLines_SideChainLine_DroppedByDefault', () => {
-  assert.deepEqual(parseTranscriptLines(MAIN_AND_SIDE_CHAIN).map((line) => line.text), ['Spawning a reviewer.'], 'because a session\'s own transcript shows its main chain, not the turns of the agents it spawned');
+  assert.deepEqual(parseTranscriptLines(MAIN_AND_SIDE_CHAIN, { sidechains: false }).map((line) => line.text), ['Spawning a reviewer.'], 'because a session\'s own transcript shows its main chain, not the turns of the agents it spawned');
 });
 
 test('TranscriptLinesWithSideChains_SideChainLine_Kept', () => {

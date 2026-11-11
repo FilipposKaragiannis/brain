@@ -127,7 +127,7 @@ const CODEX_SUBAGENT_THREAD = 'subagent';
 const CODEX_SUBAGENT_SOURCE = '"source":{"subagent"';
 
 /** A value when it is a string with something in it, else null. */
-function textOrNull(value: unknown): string | null {
+export function textOrNull(value: unknown): string | null {
   return typeof value === 'string' && value !== '' ? value : null;
 }
 
@@ -562,8 +562,8 @@ function userLine(content: unknown, at: string | null): TranscriptLine | null {
  * line cut by the tail or not JSON is skipped. Side chains (a subagent's own talk) make none
  * either, unless `sidechains` keeps them: every line of a subagent's own transcript is one.
  */
-export function parseTranscriptLines(source: string, options: { sidechains?: boolean } = {}): TranscriptLine[] {
-  const keepSidechains = options.sidechains === true;
+export function parseTranscriptLines(source: string, options: { sidechains: boolean }): TranscriptLine[] {
+  const keepSidechains = options.sidechains;
   const lines: TranscriptLine[] = [];
   for (const raw of source.split('\n')) {
     if (raw.trim() === '') continue;
@@ -583,7 +583,7 @@ export function parseTranscriptLines(source: string, options: { sidechains?: boo
 /** How each host's transcript is read: its text parsed into lines and turns, and which of its entries count. */
 type TranscriptFormat = { parse: (source: string) => ParsedTranscript; isEntry: (line: string) => boolean };
 const TRANSCRIPT_FORMATS: Record<AgentHost, TranscriptFormat> = {
-  claude: { parse: (source) => ({ lines: parseTranscriptLines(source), turns: (limit) => parseTranscript(source, limit) }), isEntry: isTurnEntry },
+  claude: { parse: (source) => ({ lines: parseTranscriptLines(source, { sidechains: false }), turns: (limit) => parseTranscript(source, limit) }), isEntry: isTurnEntry },
   codex: { parse: parseCodexTranscript, isEntry: isCodexEntry },
 };
 

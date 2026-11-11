@@ -42,6 +42,3 @@ export class SubagentReader {
 function sessionsOf(sessions: readonly (SessionRef | null)[], host: AgentHost): { index: number; session: SessionRef }[] {
   return sessions.flatMap((session, index) => (session?.host === host ? [{ index, session }] : []));
 }
-
-/** A reader that finds no subagents, for a monitor built without one (tests that do not look at subagents). */
-export const noSubagents: Pick<SubagentReader, 'read'> = { read: async (sessions) => sessions.map(() => []) };

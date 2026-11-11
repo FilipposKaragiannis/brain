@@ -11,12 +11,13 @@ import { claudeProjectFolder, diskSessionFiles, SessionLocator } from '../src/co
 import { SubagentReader } from '../src/collectors/subagents.ts';
 import type { Agent, Subagent, TranscriptLine } from '../src/snapshot.ts';
 import { BOARD_JSON, FIXTURES, FIXTURE_ROOT, fakeRunner } from './fakeRunner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const LOCAL_ROOT = path.join(FIXTURES, 'project-local');
 
 function localMonitor(log: Logger): ProjectMonitor {
-  return new ProjectMonitor({ project: { id: 'local', name: 'local', root: LOCAL_ROOT }, runner: fakeRunner, clock: () => NOW, log, cadence: DEFAULT_CADENCE });
+  return new ProjectMonitor({ project: { id: 'local', name: 'local', root: LOCAL_ROOT }, runner: fakeRunner, clock: () => NOW, log, cadence: DEFAULT_CADENCE, subagents: noSubagents });
 }
 
 test('LocalAdapter_PullsFreshness_OkAndNotApplicable', async () => {
@@ -31,7 +32,7 @@ test('JiraTrackerWithGithubRepo_Pulls_ReadFromTheRepository', async () => {
   try {
     cpSync(LOCAL_ROOT, dir, { recursive: true });
     writeFileSync(path.join(dir, '.flow', 'config.yaml'), 'adapters:\n  default: jira\ntrackers: [jira]\ngithub:\n  repo: example/fixture\njira:\n  site: https://acme.atlassian.net\n  project: WID\nbase: main\n');
-    const monitor = new ProjectMonitor({ project: { id: 'jira', name: 'jira', root: dir }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+    const monitor = new ProjectMonitor({ project: { id: 'jira', name: 'jira', root: dir }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
     await monitor.refresh('files');
     await monitor.refresh('pulls');
     assert.deepEqual([monitor.snapshot?.sources.pulls.ok, monitor.snapshot?.sources.pulls.error], [true, null], 'because the PRs of Jira items are on GitHub, so github.repo is read whatever tracker holds the items');
@@ -43,7 +44,7 @@ test('TrackersReadGithubBesideALocalDefault_Pulls_GoOnToTheRepository', async ()
   try {
     cpSync(LOCAL_ROOT, dir, { recursive: true });
     writeFileSync(path.join(dir, '.flow', 'config.yaml'), 'adapters:\n  default: local\ntrackers: [github, local]\nbase: main\n');
-    const monitor = new ProjectMonitor({ project: { id: 'mixed', name: 'mixed', root: dir }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+    const monitor = new ProjectMonitor({ project: { id: 'mixed', name: 'mixed', root: dir }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
     await monitor.refresh('files');
     await monitor.refresh('pulls');
     assert.equal(monitor.snapshot?.sources.pulls.error, 'not applicable: no github.repo in .flow/config.yaml', 'because the flow reads GitHub here, so only the missing repository stops the read');
@@ -64,7 +65,7 @@ const gateListDown: CommandRunner = async (request) =>
 
 test('GateListFails_FilesStayOkWithTheReason_WarnedOnce', async () => {
   const warnings: string[] = [];
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: gateListDown, clock: () => NOW, log: { ...silentLogger, warn: (event) => { warnings.push(event); } }, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: gateListDown, clock: () => NOW, log: { ...silentLogger, warn: (event) => { warnings.push(event); } }, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('files');
   assert.equal(monitor.snapshot?.sources.files.ok, true, 'because the gates, runs and claims were read; only the plugin\'s parse is missing');
@@ -74,7 +75,7 @@ test('GateListFails_FilesStayOkWithTheReason_WarnedOnce', async () => {
 });
 
 function fixtureMonitor(): ProjectMonitor {
-  return new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  return new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
 }
 
 const gateVsLabels = (monitor: ProjectMonitor): boolean =>
@@ -132,7 +133,7 @@ const deadRun = (monitor: ProjectMonitor): boolean =>
 
 test('Monitor_ReadInFlightWhenADisagreementAppears_DoesNotSettleIt', async () => {
   const held = heldFilesRead();
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: held.runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: held.runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   await readEverySource(monitor);
   held.hold();
   const filesInFlight = monitor.refresh('files');
@@ -150,7 +151,7 @@ test('Monitor_BoardFailing_DisagreementShownWithTheBoardRed', async () => {
   let boardFails = false;
   const runner: CommandRunner = async (request) =>
     boardFails && request.command === 'sh' && request.args[0]?.endsWith('board.sh') ? { code: 1, stdout: '', stderr: 'gh: rate limited', timedOut: false } : fakeRunner(request);
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   await readEverySource(monitor);
   boardFails = true;
   await monitor.refresh('board');
@@ -159,7 +160,7 @@ test('Monitor_BoardFailing_DisagreementShownWithTheBoardRed', async () => {
 });
 
 test('ActionContext_PoolWorktreesRunsAndProcessFolders_FromTheLatestRead', async () => {
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   await readEverySource(monitor);
   const context = monitor.actionContext();
   const wt3 = context.worktrees.find((worktree) => worktree.name === 'project-wt-3');
@@ -177,7 +178,7 @@ function lookupMonitor(): { monitor: ProjectMonitor; answer: { ps: CommandResult
   const runner: CommandRunner = async (request) => (request.command === 'ps' || request.command === 'lsof' ? answer[request.command] : null) ?? fakeRunner(request);
   const logged: Array<[string, LogFields]> = [];
   const keep = (event: string, fields: LogFields): void => { logged.push([event, fields]); };
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: { info: keep, warn: keep, error: keep }, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: { info: keep, warn: keep, error: keep }, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   return { monitor, answer, logged };
 }
 
@@ -273,7 +274,7 @@ function mergeGatedCopy(pr: string, codes: number[], keeps = false): { monitor: 
     if (request.command === 'sh' && script.endsWith('board.sh')) return { code: 0, stdout: JSON.stringify(board), stderr: '', timedOut: false };
     return fakeRunner(request);
   };
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   return { monitor, root, sweeps, cleanUp: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -328,7 +329,7 @@ test('PullOnAnItemsTaskBranch_ItemRecordedNoPr_SnapshotLinksTheItem', async () =
   board.items.push({ ...twelve, id: 'gh#310', url: 'https://example/310' });
   const runner: CommandRunner = async (request) =>
     request.command === 'sh' && (request.args[0] ?? '').endsWith('board.sh') ? { code: 0, stdout: JSON.stringify(board), stderr: '', timedOut: false } : fakeRunner(request);
-  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE });
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   await readEverySource(monitor);
   assert.equal(monitor.snapshot?.pulls.find((pull) => pull.number === 560)?.item, 'gh#310', 'because #560 is opened from flow/gh-310, the task branch of gh#310, whose link-pr never recorded it');
   monitor.stop();
@@ -338,6 +339,7 @@ test('FilesRead_PluginReaderForTheRoot_SnapshotCarriesItsPlugins', async () => {
   const plugins = [{ name: 'flow', marketplace: 'brain-plugins', claude: '1.27.1', codex: '1.27.0' }];
   const monitor = new ProjectMonitor({
     project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE,
+    subagents: noSubagents,
     plugins: async (root) => (root === FIXTURE_ROOT ? plugins : []),
   });
   await monitor.refresh('files');
@@ -352,6 +354,7 @@ test('GitReadAfterTheFiles_PluginsNotReadAgain', async () => {
   let next = 0;
   const monitor = new ProjectMonitor({
     project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE,
+    subagents: noSubagents,
     plugins: async () => reads[Math.min(next++, reads.length - 1)]!,
   });
   await monitor.refresh('files');
@@ -371,7 +374,7 @@ test('Monitor_RefreshNowWithNothingNew_StillSendsTheSnapshot', async () => {
 });
 
 test('Snapshot_NewerConsoleCached_CarriesTheNotice', async () => {
-  const monitor = new ProjectMonitor({ project: { id: 'local', name: 'local', root: LOCAL_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, newerConsole: () => ({ running: '0.9.2', cached: '0.10.0' }) });
+  const monitor = new ProjectMonitor({ project: { id: 'local', name: 'local', root: LOCAL_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, newerConsole: () => ({ running: '0.9.2', cached: '0.10.0' }), subagents: noSubagents });
   await monitor.refresh('files');
   assert.deepEqual(monitor.snapshot?.newerConsole, { running: '0.9.2', cached: '0.10.0' }, 'because the page shows the same notice as status while the versions differ');
 });
