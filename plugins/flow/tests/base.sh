@@ -78,7 +78,7 @@ check "EpicChild_EventsLogNamesTheBaseOfTheClaim: the claim says which base it s
 check "EpicChild_JsonBaseIsTheEpicBranch: next.sh --json hands the runner the recorded base, not the config base" \
   '[ "$(jget base < "$work/child.json")" = "$eb" ]'
 check "EpicChild_BriefNamesTheEpicBranchAsBase: the brief tells the agent the recorded base" \
-  'grep -qF "(base \`$eb\`)" "$(jget brief < "$work/child.json")"'
+  'grep -qF "\`$eb\`" "$(jget brief < "$work/child.json")"'
 
 echo "base: health, the merge before verify, verify and the PR diff read the recorded base"
 rm -f "$(run_file "$child")"
@@ -118,7 +118,7 @@ rm -f "$(run_file "$held")"
 "$P/scripts/next.sh" "$held" --json > "$work/held.json" 2>/dev/null
 awk '/^## The hold is over/ { on = 1; next } /^## / { on = 0 } on' "$(jget brief < "$work/held.json")" > "$work/hold.section"
 check "HeldEpicChildReleased_NoteMergesTheEpicBranch: the release note has the agent merge the recorded base" \
-  'grep -qF "git merge origin/$eb\`" "$work/hold.section"'
+  'grep -qF "origin/$eb" "$work/hold.section"'
 check "HeldEpicChildReleased_NoteDoesNotMergeMain: the release note never sends an epic child to merge the config base" \
   '[ -s "$work/hold.section" ] && ! grep -qF "origin/main" "$work/hold.section"'
 
@@ -167,7 +167,12 @@ kid="$(new_task "Tuning panel" "$parent")"
 "$P/scripts/next.sh" "$kid" >/dev/null 2>&1
 check "ChildOfAClaimedParentThatAlsoHasAnEpicBranch_TakesTheParentsTaskBranch: a parent's claimed branch comes before any epic branch, so the child's PR lands on its parent's work" \
   '[ "$(claim_base "$kid")" = "flow/$(slug "$parent")" ]'
+lined_kid="$(new_task "Tuning readout" "$parent" "base: plan/sandbox
+$body")"
 remote_branch plan/sandbox; remote_commit plan/sandbox plan.txt
+"$P/scripts/next.sh" "$lined_kid" >/dev/null 2>&1
+check "ChildOfAClaimedParentWithABaseLine_TakesTheParentsTaskBranch: a parent's claimed branch comes before a base: line, so the child's PR lands on its parent's work" \
+  '[ "$(claim_base "$lined_kid")" = "flow/$(slug "$parent")" ]'
 ruled="$(new_task "Drill scoring" "$grand" "base: plan/sandbox
 $body")"
 "$P/scripts/next.sh" "$ruled" >/dev/null 2>&1
@@ -201,11 +206,16 @@ check "BaseLineNamingAMissingBranch_ClaimsNoWorktree: the item is never claimed 
   '[ -z "$("$P/scripts/steward.sh" find "$missing")" ]'
 check "BaseLineNamingAMissingBranch_LastEventNamesTheBranch: the owner sees which base is missing" \
   'state "$missing" last_event | grep -qF plan/gone'
-unsafe="$(new_task "Odd plan" "" "base: plan/x;id
+# rows: a shell character, and a leading dash git would read as an option
+for unsafe_name in 'plan/x;id' '-x'; do
+  unsafe="$(new_task "Odd plan $unsafe_name" "" "base: $unsafe_name
 $body")"
-"$P/scripts/next.sh" "$unsafe" >/dev/null 2>&1
-check "BaseLineWithAShellCharacter_ClaimsNoWorktree: a base: name outside the safe characters is refused, never claimed from the config base, so it cannot reach a brief or a git command" \
-  '[ -z "$("$P/scripts/steward.sh" find "$unsafe")" ]'
+  "$P/scripts/next.sh" "$unsafe" >/dev/null 2>&1; unsafe_code=$?
+  check "BaseLineOutsideTheSafeNames_ClaimsNoWorktree [$unsafe_name]: a base: name outside the safe set is refused, never claimed from the config base, so it cannot reach a brief or a git command" \
+    '[ -z "$("$P/scripts/steward.sh" find "$unsafe")" ]'
+  check "BaseLineOutsideTheSafeNames_NamedRunExitsWithThePassOverCode [$unsafe_name]: a refused base passes the item over like a missing one" \
+    '[ "$unsafe_code" -eq 4 ]'
+done
 
 [ "$fails" -eq 0 ] && { echo "base: ok"; exit 0; }
 echo "base: $fails failed"; exit 1
