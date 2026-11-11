@@ -651,6 +651,12 @@ a.tag { color: var(--accent); }
 .row-list li .buttons { margin-left: auto; }
 .row-list.compact { padding: 2px 0; }
 .row-list.compact li { padding: 3px 0; font-size: 12px; gap: 4px 10px; }
+/* A session's live subagents, nested and indented under its run card or session row */
+.subagent-list { list-style: none; min-width: 0; margin: 6px 0 0 18px; padding: 0 0 0 10px; border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+.row-list li > .subagent-list { flex: 1 1 100%; margin-top: 0; }
+.subagent-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 2px 0; font-size: 12px; min-width: 0; }
+.subagent-list li .clip { flex: 1 1 120px; max-width: none; min-width: 0; }
+.subagent-latest { flex: 1 1 100%; min-width: 0; display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 10px; margin: 0; background: var(--terminal); color: var(--terminal-ink); border-radius: 6px; padding: 2px 12px; font-family: var(--mono); font-size: 12px; line-height: 1.75; }
 .blocker { border-color: var(--failing); }
 .blocker .module-head { background: var(--failing-tint); }
 .blocker-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }

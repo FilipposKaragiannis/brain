@@ -523,7 +523,7 @@ function buildAgents(input: ReconcileInput, contexts: WorktreeContext[]): Agent[
     if (context === null) return [];
     return [{
       pid: agent.pid, host: agent.host, kind: agent.kind, cwd: agent.cwd, worktree: context.name, ...agentWork(agent, context, input.flow.runs),
-      elapsedSeconds: agent.elapsedSeconds, startedAt: agent.startedAt, command: agent.command, session: agent.session, activity: agent.activity,
+      elapsedSeconds: agent.elapsedSeconds, startedAt: agent.startedAt, command: agent.command, session: agent.session, activity: agent.activity, subagents: agent.subagents,
     }];
   });
 }
@@ -548,7 +548,7 @@ function buildEnded(input: ReconcileInput, contexts: WorktreeContext[]): EndedAg
       if (context === null) return [];
       return [{
         pid: process.pid, host: process.host, kind: process.kind, cwd: process.cwd, worktree: context.name, ...agentWork(process, context, input.flow.runs),
-        elapsedSeconds: process.elapsedSeconds, startedAt: process.startedAt, command: process.command, session: process.session, activity: process.activity, endedAt: process.endedAt,
+        elapsedSeconds: process.elapsedSeconds, startedAt: process.startedAt, command: process.command, session: process.session, activity: process.activity, subagents: [], endedAt: process.endedAt,
       }];
     })
     .slice(0, ENDED_KEPT);
