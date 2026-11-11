@@ -12,7 +12,7 @@ import { execFileOpenRunner, openPlan } from './openFile.ts';
 import { filterEvents } from './events.ts';
 import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
 import type { PaneAdmission } from './paneSocket.ts';
-import { servePanes } from './paneSocket.ts';
+import { requestUrl, servePanes, UNPARSED_URL } from './paneSocket.ts';
 import type { PaneSessions } from './panes.ts';
 import { serveStatic } from './static.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
@@ -113,7 +113,8 @@ function paneAdmission(request: IncomingMessage, url: URL, token: string): PaneA
  */
 export function createConsoleServer(registry: ProjectRegistry, settings: SettingsStore | null, options: ServerOptions): Server {
   const server = createServer((request, response) => {
-    const url = new URL(request.url ?? '/', `http://${options.host}:${options.port}`);
+    const url = requestUrl(request, `http://${options.host}:${options.port}`);
+    if (url === null) { sendJson(response, HTTP_BAD_REQUEST, { error: UNPARSED_URL }); return; }
     const caller = localCaller(request);
     if (!caller.ok) { sendJson(response, HTTP_FORBIDDEN, { error: caller.error }); return; }
     if (caller.origin !== null) {

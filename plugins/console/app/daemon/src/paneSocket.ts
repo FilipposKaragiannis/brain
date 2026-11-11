@@ -12,6 +12,18 @@ import type { PaneLink, PaneSessions } from './panes.ts';
 import { refuse } from './panes.ts';
 import type { ProjectRegistry, ServedProject } from './registry.ts';
 
+/** The refusal a request whose URL does not parse gets, on a route and on an upgrade alike. */
+export const UNPARSED_URL = 'the request URL does not parse';
+
+/** A request's URL against `base`, or null when it does not parse (a raw `GET //` does not). */
+export function requestUrl(request: IncomingMessage, base: string): URL | null {
+  try {
+    return new URL(request.url ?? '/', base);
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a caller may open a pane at all: a refusal carries the HTTP status the upgrade is refused with. */
 export type PaneAdmission = { ok: true } | { ok: false; status: number; error: string };
 
@@ -26,6 +38,7 @@ export type PaneRoute = {
 const PANE_PATH = /^\/api\/projects\/([^/]+)\/panes$/;
 /** Only the path and the query of an upgrade are read, so any base parses them. */
 const REQUEST_URL_BASE = 'http://localhost';
+const HTTP_BAD_REQUEST = 400;
 const HTTP_NOT_FOUND = 404;
 
 /**
@@ -62,15 +75,23 @@ function upgradePane(route: PaneRoute, sockets: WebSocketServer, projects: PaneP
     socket.destroy();
   };
   socket.on('error', dropOnError);
-  const url = new URL(request.url ?? '/', REQUEST_URL_BASE);
-  const admission = route.admit(request, url);
-  if (!admission.ok) { refuseUpgrade(socket, admission.status, admission.error); return; }
+  const admitted = admittedUrl(route, request);
+  if (!admitted.ok) { refuseUpgrade(socket, admitted.status, admitted.error); return; }
+  const { url } = admitted;
   const served = paneProject(route.registry, url.pathname);
   if (served === undefined) { refuseUpgrade(socket, HTTP_NOT_FOUND, 'not found'); return; }
   sockets.handleUpgrade(request, socket, head, (connection) => {
     socket.off('error', dropOnError);
     openPane({ route, projects, served, query: url.searchParams }, connection);
   });
+}
+
+/** The upgrade's URL once it parses and the server admits the caller; a URL that does not parse is a bad request. */
+function admittedUrl(route: PaneRoute, request: IncomingMessage): { ok: true; url: URL } | Extract<PaneAdmission, { ok: false }> {
+  const url = requestUrl(request, REQUEST_URL_BASE);
+  if (url === null) return { ok: false, status: HTTP_BAD_REQUEST, error: UNPARSED_URL };
+  const admission = route.admit(request, url);
+  return admission.ok ? { ok: true, url } : admission;
 }
 
 /** The projects that opened a pane, so a project that leaves the registry, or whose id now names another root, has its panes ended. */
