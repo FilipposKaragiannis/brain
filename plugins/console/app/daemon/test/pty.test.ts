@@ -57,6 +57,15 @@ test('RealPty_AfterAResize_TheProcessSeesTheNewSize', async () => {
   assert.match((await result).output, /51 97/, 'because a TUI lays itself out at the size the page measured');
 });
 
+test('RealPty_InputIsAViewIntoALargerFrame_OnlyTheViewReachesTheProcess', async () => {
+  const pty = started('read line; printf "line=[%s]" "$line"', TERMINAL_SIZE);
+  const result = ended(pty);
+  const frame = new TextEncoder().encode('XXXXhelloYYYY');
+  pty.write(frame.subarray(4, 9));
+  pty.write(new TextEncoder().encode('\r'));
+  assert.match((await result).output, /line=\[hello\]/, 'because a frame the socket hands over as a slice of a larger buffer carries only its own bytes');
+});
+
 /** The pid of a child the shell started in the background, read from the first line it prints. */
 async function childPid(pty: PtyHandle): Promise<number> {
   const chunks: Uint8Array[] = [];
