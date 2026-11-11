@@ -1,9 +1,7 @@
 #!/bin/sh
 # Worktree steward: the pool, claims, releases and temporary worktrees.
 #   steward.sh pool                              list the pool with claim, branch and dirt
-#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path; the
-#                                                base (default: the config base) goes in claim.json
-#                                                and the item state
+#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh reserve [<worktree>] [--name <who>]
 #                                                claim a free pool worktree for manual work, with
@@ -149,16 +147,9 @@ cmd_find() {
   done
 }
 
-# cmd_claim <item> [--base <branch>]: a free pool worktree on flow/<slug>, cut from the base (next.sh
-# passes the one lib/base.sh resolved; default the config base). The claim records the base in
-# claim.json and the item state (base), and every later reader takes it from there: next.sh's
-# brief and pre-verify sync, verify.sh, health and release. An item that holds a claim keeps it,
-# and its base, whatever --base says. A base that fails base_name_valid (lib/base.sh) exits 2.
 cmd_claim() {
   item="$1"; shift
-  base="$base_branch"
-  while [ $# -gt 0 ]; do case "$1" in --base) base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
-  base_name_valid "$base" || die "the base is not a valid branch name" 2
+  base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
   slug="$(item_slug "$item")"; branch="flow/$slug"

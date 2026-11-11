@@ -112,6 +112,18 @@ fetch_item_base() {
 # carry control characters.
 base_name_refused='its base is not a valid branch name'
 
+# claim_base_option <default> [--base <branch>]: the base steward.sh claim cuts the worktree from and
+# records in claim.json and the item state (base): the branch --base names (next.sh passes the one
+# claim_at_base resolved), else the default, the config base. An unknown option, or a base that
+# fails base_name_valid, dies with exit 2. An item that holds a claim keeps it and its base,
+# whatever --base says.
+claim_base_option() {
+  option_base="$1"; shift
+  while [ $# -gt 0 ]; do case "$1" in --base) option_base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
+  base_name_valid "$option_base" || die "the base is not a valid branch name" 2
+  printf '%s' "$option_base"
+}
+
 # claim_at_base <item> <item-json>: claims a pool worktree for the item and prints its path. A new
 # claim starts from the base fetch_item_base resolves, and the events log says which and why; an
 # item that holds a claim keeps it and its base, and nothing is fetched. A base: line naming a
@@ -157,5 +169,15 @@ claimed_bases() {
     case "$claimed_item" in *[![:print:]]*) continue ;; esac
     if base_missing "$claimed_base"; then claimed_base_missing=true; else claimed_base_missing=false; fi
     printf '%s\t%s\t%s\t%s\n' "$claimed_item" "$claimed_base" "$(cd "$pool_worktree" && pwd)" "$claimed_base_missing"
+  done
+}
+
+# missing_base_notes: a line for each claim whose base is not on the remote (deleted after the
+# claim, or never pushed), naming the item, its worktree and the base: the work has no branch to
+# merge into. The same test as the board (claimed_bases), no fetch.
+missing_base_notes() {
+  claimed_bases | while IFS="$(printf '\t')" read -r claimed_item claimed_base claimed_worktree claimed_base_missing; do
+    [ "$claimed_base_missing" = true ] || continue
+    printf '%s in %s: base %s is not on the remote\n' "$claimed_item" "$claimed_worktree" "$claimed_base"
   done
 }
