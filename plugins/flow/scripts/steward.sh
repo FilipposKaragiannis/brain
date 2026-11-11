@@ -999,47 +999,64 @@ health_empty() {
   flow_unlock
 }
 
+# blocked_by_met <id>: 0 when the tracker reads <id> closed, as next.sh reads a holder; 1 while
+# it is open; 2 when it cannot be read.
+blocked_by_met() {
+  blocker_item="$(adapter read "$1" 2>/dev/null)" || return 2
+  case "$(json_get "$blocker_item" status)" in closed) return 0 ;; open) return 1 ;; *) return 2 ;; esac
+}
+
+# pr_conflict_met <pr:#n conflicting>: 0 when GitHub says the PR is MERGEABLE; 1 while it
+# conflicts or GitHub has not decided (UNKNOWN); 2 when it cannot be read.
+pr_conflict_met() {
+  condition_pr="${1#pr:}"
+  condition_state="$("$FLOW_PLUGIN/scripts/comments.sh" state "${condition_pr% conflicting}" 2>/dev/null)" || return 2
+  case "$(json_get "$condition_state" mergeable)" in MERGEABLE) return 0 ;; CONFLICTING|UNKNOWN) return 1 ;; *) return 2 ;; esac
+}
+
+# ci_down_met <item>: 0 when no check fails on the item's PR (comments.sh failing-checks); 1 while
+# one does; 2 when the item, its PR or its checks cannot be read.
+ci_down_met() {
+  gated_item="$(adapter read "$1" 2>/dev/null)" || return 2
+  condition_pr="$(state_get "$gated_item" pr)"; [ -n "$condition_pr" ] || return 2
+  condition_failing="$("$FLOW_PLUGIN/scripts/comments.sh" failing-checks "$condition_pr" 2>/dev/null)" || return 2
+  [ -z "$condition_failing" ] || return 1
+}
+
 # condition_met <item> <condition>: 0 when the condition a gate waits on no longer holds, 1 while
 # it holds, 2 when it cannot be read (tracker or GitHub down, no PR, a condition outside the
 # grammar, checked again here as at raise: a record on disk is not trusted to name an id).
 # Only 0 clears a gate: a gate never clears on a read that failed.
-#   blocked_by:<id>     met when the tracker reads <id> closed, as next.sh reads a holder
-#   pr:#<n> conflicting met when GitHub says the PR is MERGEABLE (UNKNOWN is not yet met)
-#   ci:down             met when no check fails on the item's PR (comments.sh failing-checks)
 condition_met() {
   condition_in_grammar "$2" || return 2
   case "$2" in
-    blocked_by:*)
-      blocker_item="$(adapter read "${2#blocked_by:}" 2>/dev/null)" || return 2
-      case "$(json_get "$blocker_item" status)" in closed) return 0 ;; open) return 1 ;; *) return 2 ;; esac ;;
-    "pr:#"*" conflicting")
-      condition_pr="${2#pr:}"; condition_pr="${condition_pr% conflicting}"
-      condition_state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$condition_pr" 2>/dev/null)" || return 2
-      case "$(json_get "$condition_state" mergeable)" in MERGEABLE) return 0 ;; CONFLICTING|UNKNOWN) return 1 ;; *) return 2 ;; esac ;;
-    ci:down)
-      gated_item="$(adapter read "$1" 2>/dev/null)" || return 2
-      condition_pr="$(state_get "$gated_item" pr)"; [ -n "$condition_pr" ] || return 2
-      condition_failing="$("$FLOW_PLUGIN/scripts/comments.sh" failing-checks "$condition_pr" 2>/dev/null)" || return 2
-      [ -z "$condition_failing" ] && return 0
-      return 1 ;;
+    blocked_by:*) blocked_by_met "${2#blocked_by:}" ;;
+    "pr:#"*" conflicting") pr_conflict_met "$2" ;;
+    ci:down) ci_down_met "$1" ;;
+    *) return 2 ;;
   esac
-  return 2
+}
+
+# health_condition_gate <gate record file>: the gate clears here once condition_met reads the
+# condition it was raised with ended; a gate without a condition is left to the owner.
+health_condition_gate() {
+  gate_record="$(cat "$1")"; gate_condition="$(json_get "$gate_record" condition)"
+  [ -n "$gate_condition" ] || return 0
+  gate_item="$(json_get "$gate_record" item)"; gate_name="$(json_get "$gate_record" gate)"
+  condition_met "$gate_item" "$gate_condition" || return 0
+  if [ "$dry" -eq 1 ]; then health_say "$gate_item" "would clear the $gate_name gate: $gate_condition no longer holds"
+  elif "$FLOW_PLUGIN/scripts/gate.sh" clear "$gate_item" --met "$gate_condition" >/dev/null 2>&1; then
+    health_say "$gate_item" "cleared the $gate_name gate: $gate_condition no longer holds"
+  else health_say "$gate_item" "could not clear the $gate_name gate, though $gate_condition no longer holds; the next health run tries again"; fi
 }
 
 # health_conditions: a gate raised with a condition (gate.sh raise --condition) waits on that
-# alone, so the gate is cleared here once condition_met reads it ended. Run before the pool loop,
-# so the claims it frees count as no longer at a gate in this pass.
+# alone (health_condition_gate). Run before the pool loop, so the claims it frees count as no
+# longer at a gate in this pass.
 health_conditions() {
   for gate_file in "$home"/gates/*.json; do
     [ -f "$gate_file" ] || continue
-    gate_record="$(cat "$gate_file")"; gate_condition="$(json_get "$gate_record" condition)"
-    [ -n "$gate_condition" ] || continue
-    gate_item="$(json_get "$gate_record" item)"; gate_name="$(json_get "$gate_record" gate)"
-    condition_met "$gate_item" "$gate_condition" || continue
-    if [ "$dry" -eq 1 ]; then health_say "$gate_item" "would clear the $gate_name gate: $gate_condition no longer holds"; continue; fi
-    if "$FLOW_PLUGIN/scripts/gate.sh" clear "$gate_item" --met "$gate_condition" >/dev/null 2>&1; then
-      health_say "$gate_item" "cleared the $gate_name gate: $gate_condition no longer holds"
-    else health_say "$gate_item" "could not clear the $gate_name gate, though $gate_condition no longer holds; the next health run tries again"; fi
+    health_condition_gate "$gate_file"
   done
 }
 

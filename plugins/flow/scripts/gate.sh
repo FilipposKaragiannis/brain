@@ -68,30 +68,37 @@ gates_json() {
 RAISE_USAGE="usage: gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>] [--raised-by <who>]"
 CLEAR_USAGE="usage: gate.sh clear <item> [<message>] | gate.sh clear <item> --back <message> | gate.sh clear <item> --option <n> [<note>] | gate.sh clear <item> --met <condition>"
 
+# parse_raise_flags <flag> <value> ...: sets options_given, condition_given and raised_by_given
+# from raise's --options, --condition and --raised-by; dies, exit 2, on anything else.
+parse_raise_flags() {
+  options_given=""; condition_given=""; raised_by_given=""
+  while [ $# -gt 0 ]; do
+    [ $# -ge 2 ] || die "$RAISE_USAGE" 2
+    case "$1" in
+      --options) options_given="$2" ;;
+      --condition) condition_given="$2" ;;
+      --raised-by) raised_by_given="$2" ;;
+      *) die "$RAISE_USAGE" 2 ;;
+    esac
+    shift 2
+  done
+}
+
 case "${1:-}" in
   raise)
     [ $# -ge 4 ] || die "$RAISE_USAGE" 2
     item="$2"; gate="$3"; message="$4"; from=""; shift 4
     case "${1:-}" in --*) ;; *) [ $# -eq 0 ] || { from="$1"; shift; } ;; esac
-    options_given=""; condition_given=""; raised_by_given=""
-    while [ $# -gt 0 ]; do
-      [ $# -ge 2 ] || die "$RAISE_USAGE" 2
-      case "$1" in
-        --options) options_given="$2" ;;
-        --condition) condition_given="$2" ;;
-        --raised-by) raised_by_given="$2" ;;
-        *) die "$RAISE_USAGE" 2 ;;
-      esac
-      shift 2
-    done
+    parse_raise_flags "$@"
     json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "gates.$gate" >/dev/null 2>&1 || true
     data="$(adapter read "$item" 2>/dev/null)"; step="$(state_get "$data" step)"
     [ -n "$from" ] || from="$step"
     options="$(raise_options "$item" "$options_given")"
     condition="$(raise_condition "$item" "$condition_given")"
     raised_by="$(raised_by_default "$raised_by_given" "$item" "$step")"
-    answered_by="$(answer_carrier "$step" "$gate" "$(state_get "$data" pr)")"
-    footer="$(gate_footer "$item" "$answered_by" "$condition" "$options")"
+    carrier="$(carrier_row "$(carrier_kind "$step" "$gate" "$(state_get "$data" pr)")" "$item" "$step" "$(option_hint "$options")")"
+    answered_by="$(carrier_field "$carrier" "$FIELD_ANSWERED_BY")"
+    footer="$(gate_footer "$condition" "$(carrier_field "$carrier" "$FIELD_HOW_TO_CLEAR")")"
     condition_field="condition:=null"; [ -z "$condition" ] || condition_field="condition=$condition"
     adapter write-state "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" >/dev/null
     adapter comment "$item" --body "**Gate: $gate**

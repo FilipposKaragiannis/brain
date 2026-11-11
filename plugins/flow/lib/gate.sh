@@ -6,11 +6,16 @@
 
 CLEAR_LOCK_WAIT_SECONDS=10
 EXIT_BUSY=75
-CARRIER_SWEEP="the sweep, once the PR merges"
-CARRIER_CHILDREN="nobody: the children carry the work"
-CARRIER_COMMENTS="comments job, next pass"
-CARRIER_OWNER="nobody: do it by hand, then clear with no answer"
-CARRIER_FIRST_STEP="the first step, when next starts the item"
+CARRIER_SWEEP=sweep
+CARRIER_STEP=step
+CARRIER_CHILDREN=children
+CARRIER_COMMENTS=comments
+CARRIER_OWNER=owner
+PENDING_UNACTED=unacted
+FIELD_ANSWERED_BY=1
+FIELD_PENDING=2
+FIELD_HOW_TO_CLEAR=3
+FIRST_STEP_ANSWERER="the first step, when next starts the item"
 
 # step_runs <step>: next.sh runs it: a profile step, or the first one of an item not started.
 step_runs() { [ -z "$1" ] || [ -n "$(json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "steps.$1")" ]; }
@@ -21,17 +26,50 @@ read_pr_state() {
   pr_view="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null)" && json_get "$pr_view" state 2>/dev/null
 }
 
-# answer_carrier <step> <gate> <pr>: who carries an answer to the gate out. The merge gate's
-# answer is the merge itself; next runs a step it knows; a split leaves the work to its children;
-# at done with a PR, the comments job passes on an open one, or one it cannot read (the job logs
-# why it skips it). Anything else no step acts on: the owner does it by hand.
-answer_carrier() {
+# done_carrier <pr>: who carries an answer out at done with a PR: the comments job on an open
+# one, or one it cannot read (the job logs why it skips it); the owner on a merged or closed one.
+done_carrier() {
+  case "$(read_pr_state "$1")" in ""|OPEN) echo "$CARRIER_COMMENTS" ;; *) echo "$CARRIER_OWNER" ;; esac
+}
+
+# carrier_kind <step> <gate> <pr>: who carries an answer to the gate out. The merge gate's answer
+# is the merge itself (the sweep); next runs a step it knows; a split leaves the work to its
+# children; at done with a PR, done_carrier. Anything else no step acts on: the owner does it by hand.
+carrier_kind() {
   if [ "$2" = merge ]; then echo "$CARRIER_SWEEP"
-  elif step_runs "$1"; then if [ -n "$1" ]; then echo "step $1"; else echo "$CARRIER_FIRST_STEP"; fi
+  elif step_runs "$1"; then echo "$CARRIER_STEP"
   elif [ "$1" = split ] && [ "$2" = decomposition ]; then echo "$CARRIER_CHILDREN"
-  elif [ "$1" = done ] && [ -n "$3" ]; then
-    case "$(read_pr_state "$3")" in ""|OPEN) echo "$CARRIER_COMMENTS" ;; *) echo "$CARRIER_OWNER" ;; esac
+  elif [ "$1" = done ] && [ -n "$3" ]; then done_carrier "$3"
   else echo "$CARRIER_OWNER"; fi
+}
+
+# step_answerer <step>: the step that carries the answer out, as the record names it.
+step_answerer() { if [ -n "$1" ]; then printf 'step %s' "$1"; else printf '%s' "$FIRST_STEP_ANSWERER"; fi; }
+
+# carrier_fields <answered by> <pending> <how to clear>: one tab-separated carrier row.
+carrier_fields() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
+
+# carrier_field <row> <field>: one field of a carrier row (FIELD_ANSWERED_BY, FIELD_PENDING or
+# FIELD_HOW_TO_CLEAR).
+carrier_field() { printf '%s\n' "$1" | cut -f "$2"; }
+
+# carrier_row <kind> <item> <step> <option hint>: the one table of carriers. Each kind's row: who
+# the record names as answering (answered_by), what the answer waits on (answer_pending: nothing
+# for the merge or a split left standing, PENDING_UNACTED when no step acts on it) and the line
+# of the gate's footer that says how to clear it.
+carrier_row() {
+  case "$1" in
+    "$CARRIER_SWEEP") carrier_fields "the sweep, once the PR merges" "" \
+      "Merge the PR: the sweep clears this gate once it merges." ;;
+    "$CARRIER_CHILDREN") carrier_fields "nobody: the children carry the work" "" \
+      "The children carry the work: \`gate.sh clear $2\` lets the split stand; close the children first to keep it whole." ;;
+    "$CARRIER_COMMENTS") carrier_fields "comments job, next pass" comments \
+      "Answered by the comments job on its next pass; answer: \`gate.sh clear $2 \"<answer>\"\`$4." ;;
+    "$CARRIER_OWNER") carrier_fields "nobody: do it by hand, then clear with no answer" "$PENDING_UNACTED" \
+      "No step acts on an answer: do it by hand, then \`gate.sh clear $2\`." ;;
+    "$CARRIER_STEP") carrier_fields "$(step_answerer "$3")" next \
+      "Answered by $(step_answerer "$3"); answer: \`gate.sh clear $2 \"<answer>\"\`$4." ;;
+  esac
 }
 
 # raised_by_default <flag> <item> <step>: who raised the gate: the --raised-by flag, else the step
@@ -62,25 +100,24 @@ raise_condition() {
   echo "flow: $1: --condition dropped (\"$2\" is not blocked_by:<id of an item an adapter owns>, pr:#<n> conflicting or ci:down); the gate raises without it" >&2
 }
 
-# gate_footer <item> <carrier> <condition> <options>: the paragraph under the gate's message on
-# the tracker and in the notification: what clears the gate and the exact command, so an owner on
-# a host without the gate record still has it.
-gate_footer() {
-  footer_option=""; [ "$4" = "[]" ] || footer_option=" (or \`--option N\`)"
-  footer_pr="${3#pr:}"; footer_pr="${footer_pr% conflicting}"
-  case "$3" in
-    blocked_by:*) printf 'Clears itself once %s closes (the health job checks each pass). ' "${3#blocked_by:}" ;;
-    pr:*) printf 'Clears itself once PR %s no longer conflicts (the health job checks each pass). ' "$footer_pr" ;;
+# option_hint <options>: the footer's note that an option answers too, when the gate has options.
+option_hint() { [ "$1" = "[]" ] || printf ' (or `--option N`)'; }
+
+# condition_footer <condition>: the footer's line on what the gate waits on, when it has a
+# condition: the health job clears it once that ends.
+condition_footer() {
+  condition_pr="${1#pr:}"
+  case "$1" in
+    blocked_by:*) printf 'Clears itself once %s closes (the health job checks each pass). ' "${1#blocked_by:}" ;;
+    pr:*) printf 'Clears itself once PR %s no longer conflicts (the health job checks each pass). ' "${condition_pr% conflicting}" ;;
     ci:down) printf 'Clears itself once CI no longer fails (the health job checks each pass). ' ;;
   esac
-  case "$2" in
-    "$CARRIER_SWEEP") printf 'Merge the PR: the sweep clears this gate once it merges.' ;;
-    "$CARRIER_CHILDREN") printf 'The children carry the work: `gate.sh clear %s` lets the split stand; close the children first to keep it whole.' "$1" ;;
-    "$CARRIER_OWNER") printf 'No step acts on an answer: do it by hand, then `gate.sh clear %s`.' "$1" ;;
-    "$CARRIER_COMMENTS") printf 'Answered by the comments job on its next pass; answer: `gate.sh clear %s "<answer>"`%s.' "$1" "$footer_option" ;;
-    *) printf 'Answered by %s; answer: `gate.sh clear %s "<answer>"`%s.' "$2" "$1" "$footer_option" ;;
-  esac
 }
+
+# gate_footer <condition> <how to clear>: the paragraph under the gate's message on the tracker
+# and in the notification: what clears the gate and the exact command (the carrier row's line),
+# so an owner on a host without the gate record still has it.
+gate_footer() { printf '%s%s' "$(condition_footer "$1")" "$2"; }
 
 # lock_gate_clears <item>: holds the item's clear lock until gate.sh exits, so the owner and the
 # health job never clear one gate twice: the second reads the record after the first removed it.
@@ -119,12 +156,10 @@ refuse_unacted_answer() {
 # answer where no step runs. Dies through refuse_unacted_answer when no step acts on the answer.
 answer_pending_for() {
   [ -n "$1" ] || step_runs "$step" || return 0
-  case "$(answer_carrier "$step" "$gate" "$pr")" in
-    "$CARRIER_SWEEP"|"$CARRIER_CHILDREN") ;;
-    "$CARRIER_COMMENTS") echo comments ;;
-    "$CARRIER_OWNER") refuse_unacted_answer ;;
-    *) echo next ;;
-  esac
+  carrier="$(carrier_row "$(carrier_kind "$step" "$gate" "$pr")" "$item" "$step" "")"
+  pending="$(carrier_field "$carrier" "$FIELD_PENDING")"
+  [ "$pending" != "$PENDING_UNACTED" ] || refuse_unacted_answer
+  printf '%s' "$pending"
 }
 
 # release_hosts_stopped_for <item>: a host this item's gate stopped on a spend limit or an auth
