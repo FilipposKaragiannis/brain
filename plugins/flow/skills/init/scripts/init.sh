@@ -225,7 +225,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "    model: \"\"                # a Claude model or alias, e.g. opus or sonnet (claude --model)"
       echo "    effort: \"\"               # low, medium, high, xhigh or max (claude --effort)"
       echo "  codex:"
-      echo "    model: \"\"                # a Codex model, e.g. gpt-6-sol (codex exec -m)"
+      echo "    model: \"\"                # a Codex model, e.g. gpt-6.1-sol (codex exec -m)"
       echo "    effort: \"\"               # low, medium, high or xhigh (model_reasoning_effort)"
       echo "  marketplace: \"\"            # the marketplace checkout the weekly retro opens its PR from"
       echo "  # permission_mode: auto    # dontAsk (default) denies edits without an allow list; auto lets the classifier decide"

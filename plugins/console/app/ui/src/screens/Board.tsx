@@ -122,6 +122,17 @@ function PullCell({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
   return item.pr === null ? <>—</> : <ExternalLink url={pullUrl(item.pr, snapshot.project.repo)} className="mono">{pullLabel(item.pr)}</ExternalLink>;
 }
 
+/**
+ * The item's gate: none, an answer still waiting, a tracker label no record backs (the daemon's
+ * `labelGates`), so no question was asked, or else the gate itself, a record shown on the Gates
+ * screen or a merge gate held while its PR is in review.
+ */
+function gateFact(item: Item, snapshot: Snapshot): string {
+  if (item.gate === 'none' || item.gate === '') return item.answerPending === null ? '—' : `cleared, ${answerWaits(item.answerPending)}`;
+  if (snapshot.labelGates.some((entry) => entry.item === item.id)) return `${item.gate} (label only, no question recorded)`;
+  return item.gate;
+}
+
 /** One item: its fields, its pull and where its review stands, and what its sessions cost. */
 function ItemDetail({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
   const pull = snapshot.pulls.find((entry) => entry.item === item.id) ?? null;
@@ -130,7 +141,7 @@ function ItemDetail({ item, snapshot }: { item: Item; snapshot: Snapshot }) {
   const facts: Array<[string, string]> = [
     ['Kind', [item.kind, item.size, item.priority].filter((part) => part !== '').join(' · ') || '—'],
     [parked ? 'Next step' : 'Step', item.step || '—'],
-    ['Gate', item.gate === 'none' || item.gate === '' ? (item.answerPending === null ? '—' : `cleared, ${answerWaits(item.answerPending)}`) : item.gate],
+    ['Gate', gateFact(item, snapshot)],
     ['Worktree', item.worktree ?? '—'],
     ['Parent', item.parent ?? '—'],
     ['Blocked by', item.openBlockers.length === 0 ? '—' : item.openBlockers.join(', ')],

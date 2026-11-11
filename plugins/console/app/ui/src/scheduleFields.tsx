@@ -103,7 +103,7 @@ export function RunFields({ run, pair = false, picks = [] }: { run: RunForm; pai
           <option value={OTHER_MODEL}>Other…</option>
         </select>
       </label>
-      {typing && <label className="field"><span>Model name</span><input placeholder={host === 'claude' ? 'claude-opus-5-5' : 'gpt-6-sol'} {...field('model')} /></label>}
+      {typing && <label className="field"><span>Model name</span><input placeholder={host === 'claude' ? 'claude-opus-5-5' : 'gpt-6.1-sol'} {...field('model')} /></label>}
       <label className="field"><span>Effort</span>
         <select {...field('effort')}>
           <option value={FROM_CONFIG}>From config</option>
