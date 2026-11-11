@@ -62,6 +62,13 @@ def hold_applies(state):
         return True
     return state.get("step", "") not in steps[:steps.index("plan") + 1]
 
+def open_blockers(item):
+    """The item's open blockers. An adapter that knows its blockers' states lists the open ones (the
+    GitHub one does); only without that is each blocker read through its adapter, one call apiece."""
+    if "open_blockers" in item:
+        return item["open_blockers"]
+    return [b for b in item.get("blocked_by", []) if blocker_open(b)]
+
 def held_back(item):
     """Why an open item is not ready, in one word, or None when it is ready."""
     state = item.get("state", {})
@@ -73,12 +80,7 @@ def held_back(item):
         return "children"
     if state.get("step") in ("split", "done"):
         return state["step"]
-    # An adapter that knows its blockers' states lists the open ones (the GitHub one does); only
-    # without that is each blocker read through its adapter, one call apiece.
-    if "open_blockers" in item:
-        if item["open_blockers"]:
-            return "blocked"
-    elif any(blocker_open(b) for b in item.get("blocked_by", [])):
+    if open_blockers(item):
         return "blocked"
     if state.get("held_by") and hold_applies(state) and holder_open(state["held_by"]):
         return "held"
@@ -96,6 +98,8 @@ for item in items:
     note = {"id": item["id"], "worktree": state.get("worktree", ""), "why": why}
     if why == "held":
         note.update(held_by=state["held_by"], held_reason=state.get("held_reason", ""))
+    elif why == "blocked":
+        note.update(blocked_by=open_blockers(item))
     notes.append(note)
 ready.sort(key=lambda i: i.get("rank", 999))
 print(json.dumps(ready))

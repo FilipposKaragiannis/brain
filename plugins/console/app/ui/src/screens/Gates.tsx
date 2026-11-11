@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { Agent, Gate, GateQuestion, ReadyToClose, Snapshot } from '../../../daemon/src/snapshot.ts';
+import type { Agent, Gate, GateQuestion, LabelGate, ReadyToClose, Snapshot } from '../../../daemon/src/snapshot.ts';
 import { ExternalLink, trackerUrl } from '../links.tsx';
 import { Age, formatDuration } from '../clock.tsx';
 import { gateKey, useGateAnswers } from '../gateAnswers.tsx';
@@ -62,13 +62,15 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
   const waiting = ownGates(unanswered).sort((left, right) => right.gate.ageSeconds - left.gate.ageSeconds);
   const done = Object.values(answered).filter((entry) => !unanswered.some((gate) => gate.item === entry.gate.item)).sort((left, right) => right.at.getTime() - left.at.getTime());
   const toClose = snapshot.toClose;
-  const pick = selected ?? waiting[0]?.gate.item ?? toClose[0]?.item ?? done[0]?.gate.item ?? null;
+  const labelGates = snapshot.labelGates;
+  const pick = selected ?? waiting[0]?.gate.item ?? toClose[0]?.item ?? labelGates[0]?.item ?? done[0]?.gate.item ?? null;
   const answersItem = (row: OwnGate): boolean => row.gate.item === pick || row.twins.some((twin) => twin.item === pick);
   const current = waiting.find(answersItem);
   // An item to close now outranks an answer this console still holds for it: a split's
   // decomposition gate answered here is followed, once its children close, by its close card.
   const closing = current === undefined ? toClose.find((entry) => entry.item === pick) : undefined;
-  const answeredCurrent = current === undefined && closing === undefined ? done.find((entry) => entry.gate.item === pick) : undefined;
+  const labelled = current === undefined && closing === undefined ? labelGates.find((entry) => entry.item === pick) : undefined;
+  const answeredCurrent = current === undefined && closing === undefined && labelled === undefined ? done.find((entry) => entry.gate.item === pick) : undefined;
   const nextGate = waiting.find((row) => row !== current && row.gate.item !== pick)?.gate ?? null;
 
   return (
@@ -84,6 +86,13 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
               {toClose.map((entry) => <ClosePick key={entry.item} entry={entry} snapshot={snapshot} selected={entry.item === pick} />)}
             </div>
           )}
+          {labelGates.length > 0 && (
+            <div className="gate-panel close-list" aria-label="Label only">
+              <h3>Label only <span className="muted">{labelGates.length}</span></h3>
+              <p className="muted">A tracker label gates these, but no gate was raised, so no question waits: record one or remove the label.</p>
+              {labelGates.map((entry) => <LabelGatePick key={entry.item} entry={entry} snapshot={snapshot} selected={entry.item === pick} />)}
+            </div>
+          )}
           <AnsweredToday snapshot={snapshot} done={done} pick={pick} />
         </section>
         {current !== undefined && (
@@ -94,7 +103,8 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
           <AnsweredCard entry={answeredCurrent} twins={answeredWith(answeredCurrent, Object.values(answered))} snapshot={snapshot} nextGate={nextGate} onRetry={() => retry(answeredCurrent)} />
         )}
         {closing !== undefined && <CloseCard entry={closing} snapshot={snapshot} />}
-        {current === undefined && answeredCurrent === undefined && closing === undefined && pick !== null && (
+        {labelled !== undefined && <LabelGateCard entry={labelled} snapshot={snapshot} />}
+        {current === undefined && answeredCurrent === undefined && closing === undefined && labelled === undefined && pick !== null && (
           <section className="decision-card" aria-label="Decision card">
             <Empty>That gate was cleared. {waiting.length > 0 ? 'Pick another from the list.' : 'Nothing else waits on you.'}</Empty>
           </section>
@@ -146,9 +156,9 @@ function AnsweredToday({ snapshot, done, pick }: { snapshot: Snapshot; done: Ans
   );
 }
 
-/** What the Gates screen lists: the gates and the items to close, the same set the Overview's needs-you count counts. */
+/** What the Gates screen lists: the gates, the items to close and the label-only gates, the same set the Overview's needs-you count counts. */
 export function waitingOnYou(snapshot: Snapshot): number {
-  return ownGates(snapshot.gates).length + snapshot.toClose.length;
+  return ownGates(snapshot.gates).length + snapshot.toClose.length + snapshot.labelGates.length;
 }
 
 /** The count and the line beside the page title on the Gates screen. */
@@ -254,6 +264,63 @@ function CloseCard({ entry, snapshot }: { entry: ReadyToClose; snapshot: Snapsho
             <div className="decision-actions">
               {pull !== null && pull.state === 'mergeable' && <ActionButton kind="pr.merge" args={{ pr: String(pull.number) }} label={`Merge #${pull.number}`} primary />}
               <ExternalLink url={entry.url ?? trackerUrl(snapshot, entry.item)} className="button">Open the issue</ExternalLink>
+            </div>
+          </fieldset>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** One item gated only by a tracker label: its gate, item, how long since its last event, title, and worktree. */
+function LabelGatePick({ entry, snapshot, selected }: { entry: LabelGate; snapshot: Snapshot; selected: boolean }) {
+  return (
+    <a className={selected ? 'gate-pick selected' : 'gate-pick'} href={routeHash({ projectId: snapshot.project.id, screen: 'gates', detail: entry.item })} aria-current={selected ? 'true' : undefined}>
+      <span className="gate-pick-line">
+        <Chip tone="needs-you">{entry.gate}</Chip>
+        <span className="mono muted">{entry.item}</span>
+        {entry.ageSeconds !== null && <span className="gate-age fresh"><Age seconds={entry.ageSeconds} takenAt={snapshot.takenAt} /></span>}
+      </span>
+      <span className="gate-pick-title">{entry.title || entry.item}</span>
+      <span className="gate-pick-foot"><span>{entry.worktree ?? 'no worktree'} · no question recorded</span></span>
+    </a>
+  );
+}
+
+/** The two ways out of a label-only gate: record it with a question, or drop the label. */
+function labelGateHint(entry: LabelGate): string {
+  return `gate.sh raise ${entry.item} ${entry.gate} "<message>" to record it, or remove the gate:${entry.gate} label on the tracker`;
+}
+
+/**
+ * An item a tracker label gates with no gate record behind it: the gate, the item and its age, and
+ * the two ways out. No question was recorded, so there is nothing to answer here.
+ */
+function LabelGateCard({ entry, snapshot }: { entry: LabelGate; snapshot: Snapshot }) {
+  const projectId = snapshot.project.id;
+  const url = entry.url ?? trackerUrl(snapshot, entry.item);
+  return (
+    <section className="decision-card" aria-label="Label gate card">
+      <div className="decision-head">
+        <div className="decision-head-line">
+          <Chip tone="needs-you">{entry.gate}</Chip>
+          <span className="mono muted">{entry.item}</span>
+          <span className="decision-links">
+            <ExternalLink url={url} className="">Issue</ExternalLink>
+            {entry.worktree !== null && <a href={routeHash({ projectId, screen: 'worktrees', detail: null })}>{entry.worktree}</a>}
+          </span>
+        </div>
+        <h2>{entry.title || entry.item}</h2>
+        {entry.ageSeconds !== null && <div className="facts"><span className="fact">last event {formatDuration(entry.ageSeconds)} ago</span></div>}
+      </div>
+      <div className="decision-body">
+        <div className="decision">
+          <fieldset className="question">
+            <legend>{entry.gate} gate, label only</legend>
+            <p className="muted decision-help">The question text is not recorded: this gate is only a tracker label, set without gate.sh raise.</p>
+            <p className="command-hint mono">{labelGateHint(entry)}</p>
+            <div className="decision-actions">
+              <ExternalLink url={url} className="button">Open the issue</ExternalLink>
             </div>
           </fieldset>
         </div>

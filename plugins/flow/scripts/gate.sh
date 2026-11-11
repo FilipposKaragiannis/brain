@@ -37,8 +37,8 @@
 #                                           is gone
 #                                           Each clear of an item waits for another one to finish
 #                                           (exit 75 after 10s) and reads the record after it
-#   gate.sh clear <claude|codex>            start sessions on a host a spend limit or an auth
-#                                           error stopped outside any item's run
+#   gate.sh clear <claude|codex>            start sessions on a host a spend limit, an auth
+#                                           error or an unknown model stopped outside any item's run
 #   gate.sh list [--json]                   pending gates; --json prints one array, oldest first,
 #                                           with the claimed worktree, the age, the questions, the
 #                                           options, who raised it, who answers it, its condition
@@ -126,7 +126,7 @@ $footer" >/dev/null
       back:) die "gate.sh clear --back needs a message: what to change" 2 ;;
       met:) die "gate.sh clear --met needs the condition that no longer holds" 2 ;;
     esac
-    # A host stopped on a spend limit or an auth error (lib/host.sh) starts sessions again when
+    # A host stopped on a spend limit, an auth error or an unknown model (lib/host.sh) starts sessions again when
     # the gate that names it clears, or when the owner clears the host by name.
     case "$item" in claude|codex)
       [ -f "$(host_stop_file "$item")" ] || { echo "$item is not stopped"; exit 0; }

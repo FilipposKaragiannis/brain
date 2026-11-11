@@ -211,6 +211,27 @@ test('ParkedClaim_NotHeld_WaitingForAWorker', async () => {
   assert.deepEqual([picture.counts.waiting, picture.counts.claimed], [1, 0], 'because the pool counts it as waiting, not as a bare claim');
 });
 
+/** The facts with the board's open_blockers of one item set as given. */
+function withOpenBlockers(facts: ReconcileInput, id: string, openBlockers: string[]): ReconcileInput {
+  return { ...facts, board: { ...facts.board!, items: facts.board!.items.map((item) => (item.id === id ? { ...item, open_blockers: openBlockers } : item)) } };
+}
+
+test('ParkedClaim_OpenBlocker_BlockedNotWaiting', async () => {
+  const picture = reconcile(withOpenBlockers(await parkedNine(), 'gh#9', ['gh#12']));
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'blocked', 'because the next job passes a claimed item over while a blocker is open, so it waits on that blocker, not on a worker');
+});
+
+test('ParkedClaim_OpenBlocker_CountedAsBlocked', async () => {
+  const unblocked = reconcile(await parkedNine()).counts.itemsBlocked;
+  const blocked = reconcile(withOpenBlockers(await parkedNine(), 'gh#9', ['gh#12'])).counts.itemsBlocked;
+  assert.equal(blocked, unblocked + 1, 'because the Overview tile counts the same blocked items the Board shows, so a claimed item behind an open blocker adds one');
+});
+
+test('RunningClaim_OpenBlocker_StillRunning', async () => {
+  const picture = reconcile(withOpenBlockers(await input(), 'gh#9', ['gh#12']));
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'running', 'because a run that started before the blocker was added is live work until it ends');
+});
+
 test('ParkedClaim_PluginBeforeTheHoldKeys_NotHeld', async () => {
   const nine = worktree(reconcile(await parkedNine()), 'project-wt-3');
   assert.deepEqual([nine?.heldBy, nine?.heldReason], [null, null], 'because a state without held_by holds nothing');
@@ -271,6 +292,15 @@ test('HeldClaimSixDaysOld_NotIdle', async () => {
   assert.equal(nine?.flags.includes('idle'), false, 'because its age alone says nothing went wrong');
 });
 
+test('BlockedClaimSixDaysOld_BlockedNotIdle', async () => {
+  const unblocked = reconcile(await parkedNine({}, SIX_DAYS_BEFORE)).counts.itemsBlocked;
+  const picture = reconcile(withOpenBlockers(await parkedNine({}, SIX_DAYS_BEFORE), 'gh#9', ['gh#12']));
+  const nine = worktree(picture, 'project-wt-3');
+  assert.equal(nine?.flags.includes('idle'), false, 'because a claim behind an open blocker waits on purpose, so its age alone says nothing went wrong');
+  assert.equal(picture.items.find((item) => item.id === 'gh#9')?.state, 'blocked', 'because the Board lists the item as blocked with its worktree, not as stale');
+  assert.equal(picture.counts.itemsBlocked, unblocked + 1, 'because the Overview tile counts the blocked item the Board shows');
+});
+
 test('FreeClaimSixDaysOld_StillStale', async () => {
   assert.equal(worktree(reconcile(await parkedNine({}, SIX_DAYS_BEFORE)), 'project-wt-3')?.state, 'stale', 'because a claim nothing holds back and nobody worked for six days is idle');
 });
@@ -302,11 +332,75 @@ test('ItemsToClose_ListedWithWhatToDo', async () => {
   assert.deepEqual(picture.attention.filter((row) => row.kind === 'close').map((row) => row.id).sort(), ['gh#20', 'gh#40', 'gh#42'], 'because the Overview lists them with the gates');
 });
 
-test('NeedsYouCount_GatesPlusItemsToClose_EveryNeedsYouItemOnce', async () => {
-  const picture = reconcile(withBoardItems(await input(), [{ id: 'gh#42', state: { step: 'split', gate: 'none', worktree: '', pr: '', last_event: '', profile: 'task-M', attempts: 0 }, open_children: 0 }]));
-  const listed = [...picture.gates.map((gate) => gate.item), ...picture.toClose.map((entry) => entry.item)].sort();
+test('NeedsYouCount_GatesItemsToCloseAndLabelGates_EveryNeedsYouItemOnce', async () => {
+  const facts = withBoardItem(withBoardItems(await input(), [{ id: 'gh#42', state: { step: 'split', gate: 'none', worktree: '', pr: '', last_event: '', profile: 'task-M', attempts: 0 }, open_children: 0 }]), 'gh#12', { gate: 'escalation' });
+  const picture = reconcile(facts);
+  const listed = [...picture.gates.map((gate) => gate.item), ...picture.toClose.map((entry) => entry.item), ...picture.labelGates.map((entry) => entry.item)].sort();
   assert.equal(picture.counts.needsYou, listed.length, 'because the Overview count and the Gates screen count the same rows');
-  assert.deepEqual(picture.items.filter((item) => item.state === 'needs-you').map((item) => item.id).sort(), listed, 'because every item the Board tags needs you shows on the Gates screen, once');
+  assert.deepEqual(picture.items.filter((item) => item.state === 'needs-you').map((item) => item.id).sort(), listed, 'because every item the Board tags needs you shows on the Gates screen, once, a label-only gate included');
+});
+
+/** gh#12, otherwise ready, with a `gate:escalation` label set by hand on the tracker and no gate record. */
+const labelGatedTwelve = async (): Promise<ReconcileInput> => withBoardItem(await input(), 'gh#12', { gate: 'escalation' });
+
+test('Gh175_LabelOnlyGate_NeedsYouNotReady', async () => {
+  const picture = reconcile(await labelGatedTwelve());
+  assert.equal(picture.items.find((item) => item.id === 'gh#12')?.state, 'needs-you', 'because the flow leaves a label-gated item out of its ready list, so the console must not call it ready');
+});
+
+test('LabelOnlyGate_NotCountedReady', async () => {
+  const { readiness } = reconcile(await labelGatedTwelve());
+  assert.equal(readiness.ready, 0, 'because gh#12 was the one ready item and its gate label holds it for the owner');
+});
+
+test('LabelOnlyGate_ListedOnceWithItsGateName', async () => {
+  const { labelGates } = reconcile(await labelGatedTwelve());
+  assert.deepEqual(labelGates.map((entry) => [entry.item, entry.gate]), [['gh#12', 'escalation']], 'because the label-only list names the item and the gate its label carries');
+});
+
+test('LabelOnlyGate_AttentionRowOfKindLabelGateNamesTheGate', async () => {
+  const rows = reconcile(await labelGatedTwelve()).attention.filter((row) => row.kind === 'label-gate');
+  assert.deepEqual(rows.map((row) => [row.id, row.gate]), [['gh#12', 'escalation']], 'because the Needs you row chip names the gate of the one label-gated item');
+});
+
+test('LabelOnlyGate_AttentionRowSaysNoQuestionRecorded', async () => {
+  const row = reconcile(await labelGatedTwelve()).attention.find((entry) => entry.kind === 'label-gate');
+  assert.match(row!.detail, /no question/i, 'because no gate record holds a question, so the row must not invent one');
+});
+
+test('LabelOnlyGate_SinceAndAgeFromTheLastFlowEvent', async () => {
+  const facts = withBoardItem(await input(), 'gh#12', { gate: 'escalation', last_event: '2026-10-22T09:00:00Z design done; gate raised by hand' });
+  const entry = reconcile(facts).labelGates.find((gate) => gate.item === 'gh#12');
+  assert.deepEqual([entry?.sinceAt, entry?.ageSeconds], ['2026-10-22T09:00:00Z', 206164], 'because the wait counts from the last flow event, 2 days 9 h 16 min 4 s before now');
+});
+
+test('Items_GateRecordAndLabel_RecordWins', async () => {
+  const picture = reconcile(withBoardItem(await input(), 'gh#7', { gate: 'ambiguity' }));
+  const lists = [picture.gates.some((gate) => gate.item === 'gh#7'), picture.labelGates.some((entry) => entry.item === 'gh#7')];
+  assert.deepEqual(lists, [true, false], 'because the record carries the question and its age, so the item shows as a gate, not a label-only gate');
+});
+
+test('Items_ClosedWithStaleLabel_Done', async () => {
+  const picture = reconcile(withBoardItem(await input(), 'gh#2', { gate: 'merge' }));
+  assert.equal(picture.items.find((item) => item.id === 'gh#2')?.state, 'done', 'because a closed item is done, whatever label is left on it');
+});
+
+test('Items_ClosedWithStaleLabel_NotListedAsLabelGate', async () => {
+  const { labelGates } = reconcile(withBoardItem(await input(), 'gh#2', { gate: 'merge' }));
+  assert.deepEqual(labelGates, [], 'because nothing is left for the owner to do on a closed item');
+});
+
+test('Items_EveryStepRanWithLabelGate_LabelGateNotToClose', async () => {
+  const picture = reconcile(withBoardItem(await input(), 'gh#20', { gate: 'merge' }));
+  const lists = [picture.labelGates.some((entry) => entry.item === 'gh#20'), picture.toClose.some((entry) => entry.item === 'gh#20')];
+  assert.deepEqual(lists, [true, false], 'because a gate label asks the owner about it, so it sits in the label-only list and nowhere else');
+});
+
+test('Items_GateNoneOrEmpty_NotGated', async () => {
+  for (const noGate of ['none', '']) {
+    const picture = reconcile(withBoardItem(await input(), 'gh#12', { gate: noGate }));
+    assert.equal(picture.items.find((item) => item.id === 'gh#12')?.state, 'ready', `because gate '${noGate}' names no gate, so the item stays ready`);
+  }
 });
 
 test('ClaimedItemEveryStepRanNoGate_WorktreeNeedsYou', async () => {
@@ -1218,6 +1312,13 @@ test('StoppedHostOnAuthForAGate_CauseInWordsAndTheGateNamed', async () => {
   facts.flow.stoppedHosts = [{ host: 'codex', cause: 'auth', said: 'Not logged in', at: null, item: 'gh#7' }];
   const row = reconcile(facts).attention.find((entry) => entry.kind === 'host-stopped');
   assert.equal(row?.detail, 'codex stopped on an auth error: Not logged in. No codex session starts until you clear it, or when the gate on gh#7 clears.', 'because clearing the gate that names the stop starts the host again too');
+});
+
+test('StoppedHostOnAnUnknownModel_CauseInWords', async () => {
+  const facts = await input();
+  facts.flow.stoppedHosts = [{ host: 'codex', cause: 'model', said: 'model_not_found: gpt-nope-9', at: null, item: null }];
+  const row = reconcile(facts).attention.find((entry) => entry.kind === 'host-stopped');
+  assert.equal(row?.title, 'codex is stopped on an unknown model', 'because flow says the model cause as an unknown model');
 });
 
 test('NoStoppedHost_NoRowAndOtherRowsHaveNoAction', async () => {

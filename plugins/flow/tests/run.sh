@@ -470,6 +470,11 @@ sh "$here/holds.sh" > "$work/holds.out" 2>&1; code=$?
 check "holds: $(tail -n 1 "$work/holds.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/holds.out"
 
+echo "a claimed item waits while a native blocker is open (tests/blockers.sh)"
+sh "$here/blockers.sh" > "$work/blockers.out" 2>&1; code=$?
+check "blockers: $(tail -n 1 "$work/blockers.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/blockers.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
@@ -1176,7 +1181,7 @@ check "the old jobs.model and jobs.effort are a fallback, with one deprecation w
 jobscfg() { printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n%b' "$1" > .flow/config.yaml; }
 deprecated() { grep -c 'jobs.model and jobs.effort are deprecated' .flow/log/comments.log; }
 jobscfg '  model: opus\n  effort: high\n'; : > "$HOST_LOG"; "$P/jobs/comments.sh" codex 'gh#21' >/dev/null
-check "the fallback maps the old model for codex: opus is gpt-6-sol" sh -c "grep -q 'exec .*-m gpt-6-sol -c model_reasoning_effort=\"high\"' '$HOST_LOG'"
+check "the fallback maps the old model for codex: opus is gpt-6.1-sol" sh -c "grep -q 'exec .*-m gpt-6.1-sol -c model_reasoning_effort=\"high\"' '$HOST_LOG'"
 jobscfg '  model: haiku\n  effort: low\n  claude:\n    model: claude-opus-x\n    effort: xhigh\n'; : > "$HOST_LOG"; before="$(deprecated)"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "jobs.claude.model and jobs.claude.effort reach claude as --model and --effort, as is" sh -c "grep -q 'gh#21.*--model claude-opus-x --effort xhigh' '$HOST_LOG'"
 check "with jobs.claude set, the old keys are not read and no warning is logged" [ "$(deprecated)" = "$before" ]
@@ -1205,7 +1210,7 @@ jobscfg '  host: vim\n'; : > "$HOST_LOG"
 check "a jobs.host other than claude or codex fails the job early, exit 2" sh -c "[ $code = 2 ] && grep -q 'jobs.host is vim; it must be claude or codex' '$work/job.err' && [ ! -s '$HOST_LOG' ]"
 check "jobs.sh run refuses a bad jobs.host, exit 2" sh -c "'$P/scripts/jobs.sh' run comments 2>&1; [ \$? = 2 ]"
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
-check "the unattended loop keeps mapping the roster's names for codex" sh -c "FLOW_PLUGIN='$P' sh -c '. \"$P/lib/flow.sh\"; . \"$P/lib/host.sh\"; host_run codex . hi opus high' && grep -q 'exec .*-m gpt-6-sol' '$HOST_LOG'"
+check "the unattended loop keeps mapping the roster's names for codex" sh -c "FLOW_PLUGIN='$P' sh -c '. \"$P/lib/flow.sh\"; . \"$P/lib/host.sh\"; host_run codex . hi opus high' && grep -q 'exec .*-m gpt-6.1-sol' '$HOST_LOG'"
 # Passes at once: jobs.comments_workers or --workers N runs each PR's pass in its own worker.
 cp .flow/config.yaml "$work/config.workers"
 # The fake gh has one PR: both items link it, and each pass keeps its own seen file by item.
@@ -2149,7 +2154,22 @@ d = json.load(open(p)); d["claimed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", ti
 remote_commit() { git -C "$hroot/other" fetch -q origin && git -C "$hroot/other" checkout -q -B "$1" "origin/$1" && printf '%s\n' "$2" > "$hroot/other/$2.txt" && git -C "$hroot/other" add -- "$2.txt" && git -C "$hroot/other" commit -qm "$2" && git -C "$hroot/other" push -q origin "$1"; }
 facts() { n="$(grep -c "$1" .flow/events.log 2>/dev/null)"; echo "${n:-0}"; }
 pings() { n="$(grep -c 'flow: health' "$work/offline.log" 2>/dev/null)"; echo "${n:-0}"; }
-printf '#!/bin/sh\nprintf "%%s\\t%%s\\n" "$PWD" "$*" >> "%s/host.log"\n' "$hroot" > "$work/bin/claude"; chmod +x "$work/bin/claude"
+# The resumed session dies with its run: it kills the run-unattended loop above it and the loop's
+# subshells (they share its command line), as a crash would, so the run record stays and no
+# result is read. A session that exits with no result is a failed attempt since gh#169, not a
+# dead run, so it cannot stand in for one.
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf '%s\t%s\n' "\$PWD" "\$*" >> "$hroot/host.log"
+ancestor=\$\$; doomed=""
+while [ "\${ancestor:-1}" -gt 1 ]; do
+  ancestor="\$(ps -o ppid= -p "\$ancestor" | tr -d ' ')"
+  case "\$(ps -o command= -p "\${ancestor:-1}")" in *run-unattended.sh*) doomed="\$doomed \$ancestor" ;; esac
+done
+[ -z "\$doomed" ] || kill -9 \$doomed
+exit 0
+EOF
+chmod +x "$work/bin/claude"
 export FLOW_HEALTH_PROCS="$hroot/procs"; : > "$FLOW_HEALTH_PROCS"; : > "$work/offline.log"
 
 hs > "$hroot/out" 2>&1
@@ -3196,7 +3216,8 @@ printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ..
 # Host stubs that print what each host prints with the flags host_run passes: Claude one result
 # object, Codex one event per line. FAKE_HOST picks the session: ok does the step (it writes the
 # report the brief names), budget and auth fail as the hosts do on a spend limit and a login,
-# other fails on something else, quote ends well with text that quotes a limit.
+# other fails on something else, quote ends well with text that quotes a limit, silent ends well
+# and writes no report (a session whose writes were all denied).
 mkdir -p "$work/costbin"; export COST_LOG="$work/cost.log"
 cat > "$work/costbin/claude" <<'STUB'
 #!/bin/sh
@@ -3206,7 +3227,10 @@ case "${FAKE_HOST:-ok}" in
   auth) echo '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}'; exit 1 ;;
   other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
   errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
+  model) echo '[claude-code:unrecognized_model] {"model":"claude-nope-9","query_source":"sdk"}' >&2
+         echo '{"type":"result","subtype":"success","is_error":true,"result":"There'"'"'s an issue with the selected model (claude-nope-9). It may not exist or you may not have access to it. Run --model to pick a different model.","total_cost_usd":0}'; exit 1 ;;
   quote) echo '{"type":"result","subtype":"success","is_error":false,"result":"Done. The old log said: Credit balance is too low."}'; exit 0 ;;
+  silent) echo '{"type":"result","subtype":"success","is_error":false,"result":"Every write was denied, so no report was written."}'; exit 0 ;;
 esac
 brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
 report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" 2>/dev/null | head -1)"
@@ -3220,6 +3244,8 @@ case "${FAKE_HOST:-ok}" in
   auth) echo '{"type":"thread.started","thread_id":"t"}'
         echo '{"type":"error","message":"unexpected status 401 Unauthorized: Your access token could not be refreshed"}'
         echo '{"type":"turn.failed","error":{"message":"unexpected status 401 Unauthorized"}}'; exit 1 ;;
+  model) echo '{"type":"thread.started","thread_id":"t"}'
+         echo '{"type":"turn.failed","error":{"message":"status 400 model_not_found: The gpt-nope-9 model is not supported when using Codex with a ChatGPT account."}}'; exit 1 ;;
 esac
 brief="$(printf '%s' "$*" | sed -n 's/.*Follow the brief in \([^ ]*\) .*/\1/p')"
 report="$(sed -n 's/^Write `\(.*\)`:$/\1/p' "$brief" 2>/dev/null | head -1)"
@@ -3335,6 +3361,12 @@ check_all "a Claude login that does not work is an auth stop" '[ "$(jget cause <
 FAKE_HOST=errors PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' > "$work/cost.out" 2>/dev/null
 check_all "a Claude error result with its words in errors, not result, is logged and stops the host" 'grep -q "Credit balance is too low" "$work/cost.out" && [ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ]'
 "$P/scripts/gate.sh" clear claude >/dev/null
+FAKE_HOST=model PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
+check_all "a model claude does not know stops claude, naming the model" '[ "$(jget cause < .flow/log/claude.stopped)" = model ] && grep -q "claude-nope-9" .flow/log/claude.stopped && grep -q "	host-stopped	claude stopped on an unknown model: .*claude-nope-9" .flow/events.log'
+"$P/scripts/gate.sh" clear claude >/dev/null
+FAKE_HOST=model PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run codex . hi' >/dev/null 2>&1
+check_all "a model codex does not have stops codex, naming the model" '[ "$(jget cause < .flow/log/codex.stopped)" = model ] && grep -q "gpt-nope-9" .flow/log/codex.stopped'
+"$P/scripts/gate.sh" clear codex >/dev/null
 FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
@@ -3706,6 +3738,52 @@ printf '{"status":"gate","gate":"escalation","message":"**The PR waits on local:
 check "escalation at step pr: the tracker comment names the gate.sh clear command for the owner" grep -q "gate.sh clear $om" "$(ofile "$om")"
 check "escalation at step pr: the record keeps the message as raised, the command apart from it" [ "$(jget message < "$(orecord "$om")")" = "**The PR waits on local:task/772.**" ]
 "$P/scripts/gate.sh" clear "$om" >/dev/null 2>&1; "$P/scripts/steward.sh" release "$om" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+
+echo "a step with no result file (gh#169)"
+# The session exits 0 but writes no <step>.json, as when every write is denied. That is a failed
+# attempt on the item, not a silent stop the health job later undoes. Its own repo, so no
+# claim or reservation left by an earlier section fills the pool.
+mkdir -p "$work/noresult" && cd "$work/noresult" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
+git worktree add -q -b main-wt-1 ../nr-wt-1 && git worktree add -q -b main-wt-2 ../nr-wt-2
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../nr-wt-1\n  - ../nr-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+nr="$("$P/scripts/new.sh" task "Ends with no result" --size S --body "## Acceptance
+- [ ] n")"
+FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$nr" --max-steps 1 > "$work/noresult.out" 2>&1
+check "a step whose session ends with no result file counts one failed attempt (gh#169)" [ "$("$P/adapters/local/read.sh" "$nr" | jget state.attempts)" = 1 ]
+# The silent stub's last message, as the stub above prints it.
+silent_last='Every write was denied, so no report was written.'
+nr_file=".flow/items/$(printf '%s' "${nr#local:}").md"
+check "a step whose session ends with no result file comments the session's last message on the item (gh#169)" grep -qF "$silent_last" "$nr_file"
+# A Codex session a dropped stream stops: its error comes after its last agent message.
+printf '%s\n' '{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"reading the code"}}' \
+  '{"type":"error","message":"stream disconnected before completion"}' > "$work/codex-drop.out"
+: > "$work/codex-drop.err"
+python3 -I "$P/scripts/_host.py" codex "$work/codex-drop.out" "$work/codex-drop.err" 1 "$work/codex-drop.sum" > "$work/codex-drop.stdout" 2>/dev/null
+check "a codex session that ends on an error has that error as its last message, because the comment and the gate quote why it stopped (gh#169)" [ "$(jget last < "$work/codex-drop.sum")" = "stream disconnected before completion" ]
+check "a codex session's error stays off stdout, because stdout is what the session printed (gh#169)" [ "$(cat "$work/codex-drop.stdout")" = "reading the code" ]
+# Three silent sessions in a row on a fresh item: the attempt limit from profiles.json.
+max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
+ng="$("$P/scripts/new.sh" task "Ends with no result, every time" --size S --body "## Acceptance
+- [ ] g")"
+n=1
+while [ "$n" -lt "$max_attempts" ]; do
+  FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$ng" --max-steps 1 >> "$work/noresult-gate.out" 2>&1
+  n=$((n + 1))
+done
+check "a silent session short of the attempt limit raises no gate (gh#169)" [ "$("$P/adapters/local/read.sh" "$ng" | jget state.gate)" = none ]
+FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$ng" --max-steps 1 >> "$work/noresult-gate.out" 2>&1
+check "the silent session that reaches the attempt limit raises the escalation gate (gh#169)" [ "$("$P/adapters/local/read.sh" "$ng" | jget state.gate)" = escalation ]
+check_all "the escalation gate for a silent session quotes its last message (gh#169)" 'jget message < ".flow/gates/$(item_slug "$ng").json" | grep -qF "$silent_last"'
+check "a silent session that reaches the escalation gate keeps its claim (gh#169)" sh -c "[ -f \"\$('$P/scripts/steward.sh' find '$ng')/.flow/claim.json\" ]"
+# Health releases a claim that holds nothing and has been quiet past jobs.health.grace. A short
+# grace and a wait past it put the item from the first check in that window.
+printf 'jobs:\n  health:\n    grace: 1s\n' >> .flow/config.yaml
+nr_wt="$("$P/scripts/steward.sh" find "$nr")"
+sleep 2
+: > "$work/noresult-procs"
+FLOW_HEALTH_PROCS="$work/noresult-procs" "$P/jobs/health.sh" claude > "$work/noresult-health.out" 2>&1
+check "the health job keeps the claim of an item whose last run ended with no result (gh#169)" [ -f "$nr_wt/.flow/claim.json" ]
 
 [ "$fails" -eq 0 ] && { echo "flow: ok"; exit 0; }
 echo "flow: $fails failed"; exit 1

@@ -1,5 +1,29 @@
 # flow
 
+## 1.36.0 (2026-11-10)
+
+- A claimed item waits at every step while a native blocker is open (gh#168). An owner can block
+  an item after its claim (`blocked_by` on the tracker), and `next.sh` used to start its step
+  anyway: the agent refused, the flow counted a failure and, after three, raised an escalation
+  gate. Now `next.sh` passes the item over with "<item> is held behind <blocker> (blocked by)",
+  exit 4 when it is named, and records no run, so no attempt is counted and no escalation follows.
+  A pick that finds nothing names a claimed blocked item among the held ones, "<item> behind
+  <blocker> (blocked by)". Once the last blocker closes, the item's own step starts again, after
+  a sync step when one is due, and its brief says to merge the item's base first.
+- The ready filter's notes add `blocked_by`, the open blockers, to an item it held back as
+  blocked.
+- The board shows each item's open blockers, not every edge: the text board's `blocked by` column,
+  and `open_blockers` on every item of `board.sh --json` (the tracker's own list, else each
+  blocker not read as closed). A blocker the lists leave out is read once, as `next.sh` reads it,
+  so one that cannot be read shows as open on the board while `next.sh` holds the item behind it.
+- An unattended step whose session ends with no result file (every write denied, or it stopped
+  short) is a failed attempt, not a silent stop (#169). The run writes the fail result for it,
+  quoting the session's last message, so `advance.sh` counts the attempt, comments on the item and
+  raises the escalation gate at `max_attempts` as for any fail. The result keeps the claim, so the
+  health job no longer releases it as empty and the item no longer loops back to ready unseen. A
+  result left from an earlier session no longer stands for one that wrote none. `host_run` sets
+  `host_last`, the session's last message.
+
 ## 1.35.0 (2026-11-08)
 
 - A cleared gate's answer is never dropped in silence (#157). `gate.sh clear` records what carries

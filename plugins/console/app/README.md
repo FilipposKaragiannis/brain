@@ -168,9 +168,10 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 17 since a gate took `options`,
-`raisedBy`, `answeredBy`, `condition`, `footer`, `twinOf` and `twins` (16 when an agent took `step`
-and `job`, 15 when an item and a
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 18 since a gate took `options`,
+`raisedBy`, `answeredBy`, `condition`, `footer`, `twinOf` and `twins` (17 when the snapshot took
+`labelGates` and an attention row took the kind `label-gate`, 16 when an agent took `step` and
+`job`, 15 when an item and a
 worktree took `heldBy` and `heldReason`, the states `waiting` and `held` came, `counts` took
 `waiting` and `held`, `readiness` took `held`, an attention row took the kind `close` and the
 snapshot took `toClose`, 14 when an agent took
@@ -182,7 +183,7 @@ snapshot took `toClose`, 14 when an agent took
 place of `trackerUrl`, 7 when a gate and a pull took `quiz`, below).
 One `Snapshot` per project: `project`, `sources`
 (when each source was read and whether it worked), `counts`, `readiness`, `attention` (what needs
-a human, oldest first), `worktrees`, `items`, `gates`, `toClose`, `runs`, `agents`, `processList`, `servers`, `ended`, `jobs`, `pulls`, `events`
+a human, oldest first), `worktrees`, `items`, `gates`, `toClose`, `labelGates`, `runs`, `agents`, `processList`, `servers`, `ended`, `jobs`, `pulls`, `events`
 (the latest 200, each with `at`, `item`, `kind` and `message`), `lessons`, `retros`, `disagreements` and `newerConsole`
 (`{running, cached}` while the plugin cache holds a newer console with an install script than the
 one the daemon runs, looked for at start and once a minute; null otherwise, and the page shows a
@@ -314,15 +315,24 @@ snapshots.
   that item closes; the next job skips a held item meanwhile). Both null when it is free, and on a
   plugin from before the hold keys (flow 1.33.0 and earlier).
 - `toClose` lists the open items that no step and no gate will move again, oldest first: an item
-  at step `done` with no gate up, and a split item (step `split`) whose children are all closed.
+  at step `done` with no gate up (neither a record nor a tracker label), and a split item (step `split`) whose children are all closed.
   Each is `{item, title, url, reason, todo, worktree, pull, sinceAt, ageSeconds}`: `reason`
   `steps-done` or `children-closed`, `todo` the one line on what to do ("Every step ran: merge or
   close." or "Every child is closed: close the parent."), `pull` the item's PR as a gate shows it,
   `sinceAt` the time of its board `last_event`. The item and its worktree are `needs-you` and it
   gets a `close` attention row, but no gate is made up for it: the Gates screen lists it on its
   own. An item at step done whose merge gate waits on review is `in-review` and not in the list.
-  `counts.needsYou` is `gates` (a twin counted once, below) plus `toClose`, so it counts every
-  `needs-you` item once.
+- `labelGates` lists the open items whose tracker label names a gate (the board's `state.gate`,
+  neither `none` nor empty) with no gate record behind it, oldest first: the label was set by
+  hand, not by `gate.sh raise`, so no question was recorded. The flow's ready list leaves such an
+  item out, so it is `needs-you`, not `ready`; an item a claimed worktree holds keeps that
+  worktree's state, and the worktree's state does not look at the label. Each is `{item, title, url, gate, worktree, sinceAt,
+  ageSeconds}`: `gate` the name the label gives, `sinceAt` the time of its board `last_event`. It
+  gets a `label-gate` attention row whose detail says no question was recorded, and no gate is
+  made up for it. A closed item with a stale label stays `done`, and an item whose merge gate
+  waits on review stays `in-review`. An item in `labelGates` is never in `toClose`, so
+  `counts.needsYou` is `gates` (a twin counted once, below) plus `toClose` plus `labelGates`, and
+  counts every `needs-you` item once.
 - An item's `url` is its tracker page, from the board. Its `spend` is `{costUsd, sessions,
   tokens}`, summed over the step sessions `board.sh --json` counts from `log/runs.jsonl`, or null
   when it has none or the plugin prints no `spend`. Codex reports no cost, so a codex session adds
@@ -335,6 +345,9 @@ snapshots.
 - An item whose merge gate waits on review is `in-review`, not `blocked`: its PR has changes
   requested, a reviewer requested, or a reviewer the flow asked by a mention that has not
   answered. Its gate leaves `gates` and the attention list while that lasts.
+- A claimed item with no live run whose board item lists open blockers (`open_blockers`) is
+  `blocked`, not `waiting`: flow's next job passes it over until the last blocker closes. A run
+  already under way when the blocker was added stays `running` until it ends.
 - A gate carries `pull`: `{number, url, state, unresolvedThreads}` for its item's open PR (the one
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
   or null. A merge gate whose PR still
@@ -379,7 +392,7 @@ snapshots.
 - `readiness` is `{ready, waitingOnField, blocked, gated, held, nextInLineMissingField}` over open
   items that are not epics. The first five are buckets, each item in one at most: the next job can
   take it, only an empty field stops it (the whole backlog of such items), an open item blocks it,
-  it waits on you (a gate, or an item to close), it is held behind another item. Running, waiting,
+  it waits on you (a gate record, a gate its tracker label names, or an item to close), it is held behind another item. Running, waiting,
   claimed and stale items count in none, so the Overview can say in
   one line why nothing runs. `nextInLineMissingField` is the part of `waitingOnField` that is the
   next step of work already under way, so the UI can say "164 backlog items lack a field; 4 of
@@ -391,8 +404,8 @@ snapshots.
   sibling under the same parent has started or is done, or it blocks an item that has started.
   Every other item waiting on a field is backlog and gets no row. The row's `detail` names the
   fields: "needs priority", "needs priority and size".
-- An attention row carries `gate`: the gate's kind on a `gate` row (`merge`, `escalation`,
-  `plan-approval` …), which its chip shows, and null on every other row.
+- An attention row carries `gate`: the gate's kind on a `gate` or `label-gate` row (`merge`,
+  `escalation`, `plan-approval` …), which its chip shows, and null on every other row.
 - `lessons` is every lesson in `<flow home>/lessons.jsonl` (one JSON object per line, written by
   the flow's `lesson.sh`), oldest first, each `{line, at, kind, item, step, rule, text, host}`:
   `at` the line's `time`, an empty field null, an empty kind `other`. `line` is the lesson's
@@ -416,7 +429,7 @@ One status language, used by worktrees and items alike:
 | State | Meaning |
 |---|---|
 | `running` | an unattended agent process (`claude -p`, `codex exec`) has its cwd in the worktree, or a run record whose run is not `dead` |
-| `needs-you` | its item has a gate record in `.flow/gates`, or is in `toClose` |
+| `needs-you` | its item has a gate record in `.flow/gates`, or is in `toClose`; an item with no claimed worktree also when its tracker label names a gate (`labelGates`) |
 | `stale` | the branch is ≥ 20 commits behind its base, or the claim is ≥ 72h old with no run, agent or gate and no hold; never a reservation |
 | `waiting` | a flow claim with no run, no agent and no gate on an open item that has a step to run: parked until a worker of the next job takes its next step (`claim.step`) |
 | `held` | as `waiting`, but the item is held behind another (`heldBy`): the next job skips it until that item closes |
@@ -512,8 +525,8 @@ the pool keys (`pool`, `pool_max`, `worktree_copy`, `worktree_setup`) count at t
 The Agents page holds, per host, the model and effort of every unattended session
 on that host without an agent of its own: the steps with no agent (design, implement, review,
 explain) and the comments, intake and retro jobs (flow 1.20.0): `jobs.claude.model` (opus, sonnet, haiku,
-fable), `jobs.claude.effort` (low, medium, high, xhigh, max), `jobs.codex.model` (gpt-6-astra,
-gpt-6-sol, gpt-6-luna) and `jobs.codex.effort` (low, medium, high, xhigh), where empty or unset
+fable), `jobs.claude.effort` (low, medium, high, xhigh, max), `jobs.codex.model` (gpt-6.1-sol,
+gpt-6.1-terra, gpt-6-astra, gpt-6-luna) and `jobs.codex.effort` (low, medium, high, xhigh), where empty or unset
 takes the host's own default; they need no follow-up, the next job run reads the file. The two
 models are `enumOrText`, since the plugin passes any model name on and checks only the efforts
 and the host. The old `jobs.model` and `jobs.effort` are deprecated: the plugin still reads them
@@ -847,8 +860,11 @@ the right choice for a wrong one and each question's Because line, and say that 
 draft PR ready; a failed try has Take it again, a kept result has See results; a merge gate on a
 draft with a quiz still to pass says so in place of the merge button; under the gates a Ready to
 close panel lists `toClose`, each with what to do, and its card says why, links the issue and the
-PR and offers "Merge #N" once that PR is mergeable; the heading and the nav badge count gates and
-items to close, as the Overview's Needs you tile does), Worktrees (filter
+PR and offers "Merge #N" once that PR is mergeable; after it a Label only panel lists
+`labelGates`, and its card names the gate, links the issue, says the question text is not
+recorded and shows the two ways out (`gate.sh raise <item> <gate> "<message>"`, or removing the
+`gate:<gate>` label), with no answer form; the heading and the nav badge count gates, items to
+close and label-only gates, as the Overview's Needs you tile does), Worktrees (filter
 chips with counts for all, running, needs you, stale, waiting, held, claimed and free (held and
 claimed only while some card is), the pool size and base,
 and Run health and Sweep; a card per pool worktree with its name, state and flags, its item and title, its
@@ -874,7 +890,8 @@ under way, waiting (waiting and held), in review, ready, blocked and backlog, ea
 state ("held behind <item>" with the reason on hover), step ("next: <step>" while parked), worktree, PR and
 spend, a head line summing the spend of the rows shown, a banner (`role="alert"`) for each
 tracker the board could not read saying why its items are missing, and an item's detail beside the list:
-its fields, its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across
+its fields (a gate only the tracker label sets reads "<gate> (label only, no question
+recorded)"), its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across
 the page: a card per live run, the first open and the
 others folded to their header and their latest transcript line, claude and codex alike, each with
 its step (the agent's own, else its run's), item, worktree, host, a `headless` tag, a `job <name>`
@@ -986,7 +1003,7 @@ another page, and one save bar at the bottom counts the unsaved changes and whic
 with Discard and Save changes, which sends them all in one write. On Agents, both hosts' model and effort dropdowns show, each listing its values and "host default"
 for empty and, for a model, "other…" that opens a text field (a name off the list starts there),
 the help under it naming the default (for codex the one `hostDefaults` read, "On this machine
-that is gpt-6-sol"). While a host has no map and a
+that is gpt-6.1-sol"). While a host has no map and a
 deprecated key is set, its dropdown starts at what the jobs really run with, under it "now opus,
 from the deprecated jobs.model". A save of either of a host's pair writes both, "host default" as an
 empty line, so the `jobs.<host>` map is there and the fallback ends. A deprecated `jobs.model` or

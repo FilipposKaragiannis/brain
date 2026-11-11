@@ -1,8 +1,8 @@
 {
   "_readme": "Roster defaults copied from the marketplace (roster/agents.json): the tiers and the Claude-to-Codex model map a project roster may leave out or override.",
   "model_map": {
-    "sonnet": "gpt-6-luna",
-    "opus": "gpt-6-sol",
+    "sonnet": "gpt-6.1-terra",
+    "opus": "gpt-6.1-sol",
     "fable": "gpt-6-astra",
     "haiku": "gpt-6-luna"
   },
