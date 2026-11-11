@@ -109,6 +109,28 @@ test('UnknownTextFrame_Closed1008', async () => {
   } finally { await running.close(); }
 });
 
+const MALFORMED_TEXT_FRAMES: { frame: string; why: string }[] = [
+  { frame: '{"type":', why: 'text that is not JSON' },
+  { frame: '[{"type":"ack","bytes":1}]', why: 'a JSON array, though it holds a control' },
+  { frame: 'null', why: 'JSON null' },
+  { frame: '4096', why: 'a JSON number' },
+  { frame: '{"type":"resize","cols":"143","rows":37}', why: 'a resize whose columns are a string' },
+  { frame: '{"type":"resize","cols":143}', why: 'a resize with no rows' },
+  { frame: '{"type":"ack","bytes":"4096"}', why: 'an ack whose byte count is a string' },
+  { frame: '{"type":"ack"}', why: 'an ack with no byte count' },
+];
+
+for (const { frame, why } of MALFORMED_TEXT_FRAMES) {
+  test(`MalformedTextFrame_Closed1008: ${why}`, async () => {
+    const running = await daemon();
+    try {
+      const client = await startedClient(running.port, AT_ROOT, PROJECT.id);
+      client.socket.send(frame);
+      assert.equal(await client.closed, PANE_CLOSE.unknownFrame, `because ${why} is not a control the daemon can act on`);
+    } finally { await running.close(); }
+  });
+}
+
 test('ProcessExit_ExitFrameThenClosed1000', async () => {
   const running = await daemon();
   try {

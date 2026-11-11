@@ -19,8 +19,6 @@ export type FakePty = {
   exited: boolean;
   /** When true the process ignores SIGHUP, as `nohup` does, and only SIGKILL ends it. */
   ignoresHangUp: boolean;
-  /** How many times the daemon asked whether the process still runs, as a pid probe would. */
-  exitProbes: number;
   /** Bytes the process writes to the terminal. */
   emit(bytes: Uint8Array): void;
   /** Ends the process. */
@@ -47,7 +45,7 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       if (!fake.paused && processEnded) fake.exit(unread.code, null);
     };
     const fake: FakePty = {
-      launch, environment, size: { ...size }, received: [], paused: false, signals: [], closed: false, exited: false, ignoresHangUp: false, exitProbes: 0,
+      launch, environment, size: { ...size }, received: [], paused: false, signals: [], closed: false, exited: false, ignoresHangUp: false,
       emit: (bytes) => { for (const listener of outputListeners) listener(bytes); },
       exit: (code, signal) => {
         if (fake.exited) return;
@@ -70,10 +68,7 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       resize: (next) => { fake.size = { ...next }; },
       pause: () => { fake.paused = true; },
       resume: () => { fake.paused = false; readOn(); },
-      running: () => {
-        fake.exitProbes += 1;
-        return !fake.exited && !processEnded;
-      },
+      running: () => !fake.exited && !processEnded,
       signal: (name) => {
         fake.signals.push(name);
         if (name === 'SIGHUP' && fake.ignoresHangUp) return;

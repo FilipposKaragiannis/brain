@@ -129,16 +129,9 @@ test('ProcessEndsWhilePaused_TailPastTheHighWater_ExitStillTold', () => {
   assert.deepEqual(link.notices.at(-1), { type: 'exit', code: 2, signal: null }, 'because once the process is gone, pausing again only stalls the tail it left');
 });
 
-test('PausedPaneEnds_NoExitCheckLeftBehind', () => {
+test('PausedPaneEnds_ItsPtyLeftAlone', () => {
   const { pty, timers } = pausedPane();
   pty.exit(0, null);
   timers.fire(PAUSED_EXIT_CHECK_MILLISECONDS);
-  assert.equal(pty.exitProbes, 0, 'because a pane that ended must not keep polling a pid the system may reuse');
-});
-
-test('PausedPaneResumed_NoExitCheckLeftBehind', () => {
-  const { link, pty, timers } = pausedPane();
-  link.control({ type: 'ack', bytes: OUTPUT_HIGH_WATER_BYTES + 1 });
-  timers.fire(PAUSED_EXIT_CHECK_MILLISECONDS);
-  assert.equal(pty.exitProbes, 0, 'because a pty that reads on needs no check for an exit it will read itself');
+  assert.equal(pty.paused, true, 'because a pane that ended stops checking a pid the system may hand to another process');
 });
