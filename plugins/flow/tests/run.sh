@@ -3484,7 +3484,7 @@ check_all "clear at done with no answer (done by hand): cleared, nothing waits" 
 check "board: an answer no run took past the gate reminder is named in Health" sh -c "'$P/scripts/board.sh' | grep -q '^- $dn: the answer to its gate has waited .* on next\$'"
 "$P/adapters/local/close.sh" "$dn" >/dev/null
 
-echo "gate options, roles and conditions (gh#170)"
+echo "gate options, roles and conditions"
 # A gate the owner can act on: options as data, who asks and who answers, and a condition the
 # health job watches. Its own repo with an origin, the local tracker and its own fake gh.
 oroot="$work/gh170"; mkdir -p "$oroot"
