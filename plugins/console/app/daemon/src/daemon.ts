@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
@@ -9,7 +9,11 @@ import { diskSessionFiles, SessionLocator } from './collectors/sessions.ts';
 import { privateFolder, readConfig, startReport } from './config.ts';
 import { absoluteFlags, startFailure } from './launchd.ts';
 import { stderrLogger } from './log.ts';
+import type { PaneHost } from './panePlan.ts';
+import { paneEnvironment } from './panePlan.ts';
+import { PaneSessions } from './panes.ts';
 import { removePidFile, writePidFile } from './pidFile.ts';
+import { ptySpawner } from './pty.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
 import type { ProjectDefinition } from './project.ts';
 import { FlowConfigEditor } from './plugins/flow/configEditor.ts';
@@ -24,6 +28,17 @@ import { installedTerminals } from './terminal.ts';
 const EXIT_BAD_CONFIG = 2;
 /** How long a stop may take before the process ends anyway, streams or not. */
 const SHUTDOWN_GRACE_MS = 3000;
+/** The shell a pane runs when neither `SHELL` nor the user's account names one. */
+const FALLBACK_SHELL = '/bin/sh';
+
+/** This machine as panes see it: the owner's shell, the environment a pane gets, and the disk. */
+function machinePaneHost(env: NodeJS.ProcessEnv): PaneHost {
+  return {
+    shell: env.SHELL || os.userInfo().shell || FALLBACK_SHELL,
+    environment: paneEnvironment(env),
+    isFolder: (folder) => existsSync(folder) && statSync(folder).isDirectory(),
+  };
+}
 
 /**
  * `brain-console start [flags]`: the daemon in this process, until SIGINT or SIGTERM. A daemon
@@ -77,7 +92,9 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   /** The UI as `npm run build` in ui/ leaves it. Without it the daemon is API only. */
   const uiDist = path.resolve(import.meta.dirname, '..', '..', 'ui', 'dist');
   const staticDir = existsSync(path.join(uiDist, 'index.html')) ? uiDist : null;
-  const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log });
+  /** Every terminal pane, across projects; the addon loads with the first one. */
+  const panes = new PaneSessions({ spawner: ptySpawner(), host: machinePaneHost(env), scheduler: realScheduler, log });
+  const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes });
 
   privateFolder(config.stateDir);
   server.on('error', (error) => {
@@ -102,7 +119,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
     if (!config.launchd) removePidFile(config.stateDir, process.pid);
     selfCheck.stop();
     registry.stopAll();
-    void Promise.all([closeConsoleServer(server), registry.whenIdle()]).then(() => process.exit(0));
+    void Promise.all([closeConsoleServer(server), registry.whenIdle(), panes.stopAll()]).then(() => process.exit(0));
     setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();
   };
   process.on('SIGINT', () => shutdown('SIGINT'));

@@ -12,6 +12,7 @@ import { parseCodexTranscript } from '../src/collectors/codexTranscript.ts';
 import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator, transcriptTailStart } from '../src/collectors/sessions.ts';
 import type { GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
+import { PaneSessions } from '../src/panes.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
 import { ProjectRegistry } from '../src/registry.ts';
@@ -643,7 +644,8 @@ async function transcriptServer(runner: CommandRunner = fakeRunner, sessions: ty
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir: os.tmpdir(), onRefresh: () => {} });
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: async () => {}, log: silentLogger }) };
   }, silentLogger);
-  const server = createConsoleServer(registry, null, { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger });
+  const panes = new PaneSessions({ spawner: () => ({ ok: false, error: 'this test opens no pane' }), host: { shell: '/bin/sh', environment: {}, isFolder: () => false }, scheduler: realScheduler, log: silentLogger });
+  const server = createConsoleServer(registry, null, { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger, panes });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   await registry.apply([{ id: 'project', name: 'project', root: FIXTURE_ROOT }]);
   const { port } = server.address() as AddressInfo;

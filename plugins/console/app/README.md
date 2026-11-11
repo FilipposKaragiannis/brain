@@ -2,7 +2,8 @@
 
 The control plane for the flow: one local daemon that watches every flow project on this
 machine and serves a reconciled, live snapshot. The UI, a tray, a chat pane and an MCP server all
-read that one shape. Node 24, TypeScript run as-is, no runtime dependencies.
+read that one shape. Node 24, TypeScript run as-is, and two runtime dependencies, node-pty (as the
+prebuilt `@lydell/node-pty`) and ws, both for the terminal pane (ADR 0003).
 
 ## Run it
 ```bash
@@ -23,7 +24,7 @@ version shown comes from that plugin's own `plugin.json`.
 `--config <file>` reads and writes the settings (below) in that file instead of
 `~/.config/brain-console/config.json`, and looks for the old `projects.json` beside it, so a second
 daemon for a trial (`--port 7477 --state-dir /tmp/console-test --config /tmp/console-test/config.json`)
-never touches the owner's settings. Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
+never touches the owner's settings. Ctrl+C stops it, open console tabs or not: streams are cut, terminal panes are hung up, running actions get SIGTERM, and a
 second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 the settings file (below). Every root must hold a `.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
 the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
@@ -32,7 +33,8 @@ Started from a terminal, the daemon prints the URL with the token in it to that 
 structured log line names only the token file, so the token never lands in a log. The state dir is
 kept `0700` and the token file `0600`. A request whose `Host` is not a loopback
 name, or whose `Origin` is not a local page, gets 403, so a page on another site cannot drive
-the console even from the owner's own browser.
+the console even from the owner's own browser. The token opens a shell as the owner (a terminal
+pane), not only the console's fixed actions, so keep it as you would an SSH key.
 
 ## Run it on login
 ```bash
@@ -166,6 +168,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `POST /api/projects/<id>/actions` | run one action, body `{"kind","args"}`; 202 with the record, 400 on a bad request, 409 when its lock is held |
 | `GET /api/projects/<id>/actions` | the recent 50 actions, newest first, with the output tail |
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
+| `GET /api/projects/<id>/panes?path=<folder>&run=shell&cols=<n>&rows=<n>` | a terminal pane as a WebSocket: a login shell (`$SHELL -l`) in a pty in `path`, which must be absolute and one Open in Terminal takes (the root, a worktree the console lists, the folder of a listed agent or session) and on disk; `cols` 2 to 500 and `rows` 1 to 300, 80 by 24 when absent. The pane gets the daemon's `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` (`en_US.UTF-8` when unset), `LC_ALL` and `SSH_AUTH_SOCK`, `TERM=xterm-256color` and `COLORTERM=truecolor`, never the token. Host, Origin and the token (`?token=`) are checked before the handshake (403, 401), as is the project (404). Binary frames are terminal bytes both ways; text frames are JSON, up `{"type":"resize","cols","rows"}` and `{"type":"ack","bytes"}`, down `{"type":"started","pane","command","folder"}` first, `{"type":"refused","error"}` (close 4400) for a pane the daemon will not start, and `{"type":"exit","code","signal"}` (close 1000) when the process ends. Closing the socket hangs the pane up (SIGHUP to its process group, SIGKILL 1.5 s later); a daemon that stops closes every pane with 1001 |
 
 ## The snapshot
 `daemon/src/snapshot.ts` is the contract; `schema` is its version, 16 since an agent took `step`

@@ -11,6 +11,9 @@ import type { KnownFile, OpenRunner } from './openFile.ts';
 import { execFileOpenRunner, openPlan } from './openFile.ts';
 import { filterEvents } from './events.ts';
 import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
+import type { PaneAdmission } from './paneSocket.ts';
+import { servePanes } from './paneSocket.ts';
+import type { PaneSessions } from './panes.ts';
 import { serveStatic } from './static.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
 import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX, transcriptTailStart } from './collectors/sessions.ts';
@@ -18,8 +21,9 @@ import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TURNS_DEFAULT, TRANSCR
 /**
  * `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code.
  * `openRunner` runs `open` for `POST /api/open` (execFile by default) and `platform` says whether there is one (this process's by default); tests pass both.
+ * `panes` runs the terminal panes behind `/api/projects/<id>/panes`.
  */
-export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger; openRunner?: OpenRunner; platform?: NodeJS.Platform };
+export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger; panes: PaneSessions; openRunner?: OpenRunner; platform?: NodeJS.Platform };
 
 export type { ServedProject } from './registry.ts';
 
@@ -94,9 +98,18 @@ function readBody(request: IncomingMessage): Promise<{ ok: true; body: unknown }
   });
 }
 
+/** A pane's upgrade passes the same Host, Origin and token checks as every route. */
+function paneAdmission(request: IncomingMessage, url: URL, token: string): PaneAdmission {
+  const caller = localCaller(request);
+  if (!caller.ok) return { ok: false, status: HTTP_FORBIDDEN, error: caller.error };
+  if (!authorized(request, url, token)) return { ok: false, status: HTTP_UNAUTHORIZED, error: 'token required' };
+  return { ok: true };
+}
+
 /**
- * The daemon's HTTP face: the built UI at `/`, snapshots and actions over JSON, and one
- * server-sent event stream per project that carries both `snapshot` and `action` events.
+ * The daemon's HTTP face: the built UI at `/`, snapshots and actions over JSON, one server-sent
+ * event stream per project that carries both `snapshot` and `action` events, and one WebSocket
+ * per terminal pane.
  */
 export function createConsoleServer(registry: ProjectRegistry, settings: SettingsStore | null, options: ServerOptions): Server {
   const server = createServer((request, response) => {
@@ -144,6 +157,7 @@ export function createConsoleServer(registry: ProjectRegistry, settings: Setting
     if (wantsEventList(request, url)) { eventList(served.monitor, response, url); return; }
     streamEvents(served, registry, request, response, options.log);
   });
+  servePanes(server, { registry, panes: options.panes, admit: (request, url) => paneAdmission(request, url, options.token), log: options.log });
   return server;
 }
 
@@ -307,7 +321,7 @@ function streamEvents(served: ServedProject, registry: ProjectRegistry, request:
  * Stops the server for good. `server.close` alone waits for every open stream to end, and a
  * console tab holds its stream open for as long as it is on screen, so Ctrl+C would never return.
  * The open connections are cut once the listener is closed, and the promise settles when the
- * server has let go.
+ * server has let go. A pane's upgraded socket is not among them: `PaneSessions.stopAll` ends it.
  */
 export function closeConsoleServer(server: Server): Promise<void> {
   return new Promise((resolve) => {
