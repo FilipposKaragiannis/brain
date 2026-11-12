@@ -104,12 +104,13 @@ start_run() {
     exit 0
   fi
   limit="$(limit_seconds)" || exit 2
-  rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md"
-  : > "$log"; : > "$run_out"
+  # Each file is made new, never written through a link someone left at its name.
+  rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out" "$reports/.verify.run.$$.tmp"
+  (set -C; : > "$log" && : > "$run_out") || die "could not create the log of the verify run of $item"
   started="$(date +%s)"; head_sha="$(git rev-parse --short HEAD)"
   pid="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" spawn "$run_out" sh "$FLOW_PLUGIN/scripts/verify.sh" "$item" --detached ${given_base:+--base "$given_base"})" &&
     [ -n "$pid" ] || die "could not start the verify run of $item"
-  printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$pid" "$started" "$head_sha" "$limit" > "$reports/.verify.run.$$.tmp" &&
+  (set -C; printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$pid" "$started" "$head_sha" "$limit" > "$reports/.verify.run.$$.tmp") &&
     mv -f "$reports/.verify.run.$$.tmp" "$(verify_run_file "$reports")" || die "could not record the verify run of $item (pid $pid)"
   echo "verify: started the run of $item (pid $pid, limit $(duration "$limit")); wait for it with verify.sh $item --wait"
   exit 0
