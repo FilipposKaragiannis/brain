@@ -37,7 +37,8 @@ failed_checks() { python3 -c 'import json,sys; print(",".join(check["name"] for 
 report_status() { json_value status < "$reports/verify.json"; }
 # run_pid: the pid the run's record names (lib/verify.sh: one `key value` line each).
 run_pid() { sed -n 's/^pid //p' "$reports/verify.run" | head -n 1; }
-process_running() { case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) return 1 ;; esac; }
+# process_running <pid>: lib/verify.sh's own test of a live process.
+. "$plugin/lib/verify.sh"
 # until_true <seconds> '<condition>': polls the condition until it holds or the seconds pass.
 until_true() { until_deadline=$(( $(date +%s) + $1 )); until (eval "$2") >/dev/null 2>&1; do [ "$(date +%s)" -lt "$until_deadline" ] || return 1; sleep 0.2; done; }
 # wait_until_ended: --wait called again and again, as the verifier does, until it stops saying 3;
@@ -178,7 +179,6 @@ touch "$work/release-health"
 wait_until_ended
 sleep 3
 env -u FLOW_HEALTH_PROCS "$plugin/scripts/steward.sh" health --dry-run > "$work/health-ended.out" 2>&1
-cat "$work/health-ended.out" >&2; ps -axww -o pid=,command= | grep "verify.sh" | grep -v grep >&2; cat "$reports/verify.json" >&2
 check "HealthAfterTheDetachedVerifyEnded_TakesTheRunForDead: the record is the same, so only the verify run kept it alive" \
   'grep -q "$item.*dead run" "$work/health-ended.out"'
 
