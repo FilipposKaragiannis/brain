@@ -17,17 +17,16 @@
   _health.py holders <items file>
   _health.py holds <items file> <reads file> <claims file> <runs dir> <events.log> <old seconds>
 
-procs prints one line per process: pid, working directory (agent processes only) and command,
-tab separated, and fails when ps lists nothing, so a missing ps never reads as every run dead. A
-run is alive when the pid its record names still runs an agent or the unattended loop, or when
-any other process is an agent working in the worktree, or an agent or the loop names the worktree
-or the item in its command line, or the item's detached verify run (verify.sh --start) still
-runs. An editor, a tail or a host's own server naming the worktree is not a run: the claude
-daemon, an MCP server, and the Codex desktop app's app-server, its daemon and exec-server,
-which keep the folder they were started in for days. Only the first two words after the
-executable that are not options say so (`codex -c k=v app-server`), as the console reads them. A
-run record carries no pid when an older flow wrote it; the scan covers it. Times
-print in local time.
+procs prints one line per process: pid, working directory (agents and verify runs only) and
+command, tab separated, and fails when ps lists nothing, so a missing ps never reads as every run
+dead. A run is alive when the pid its record names still runs an agent or the unattended loop, or
+when any other process is an agent working in the worktree, or an agent or the loop names the
+worktree or the item in its command line, or the item's verify run (verify.sh --start) runs in the
+worktree. An editor, a tail or a host's own server naming the worktree is not a run: the claude
+daemon, an MCP server, and the Codex desktop app's app-server, its daemon and exec-server, which
+keep the folder they were started in for days. Only the first two words after the executable that
+are not options say so (`codex -c k=v app-server`), as the console reads them. A run record
+carries no pid when an older flow wrote it; the scan covers it. Times print in local time.
 
 session names one process for a line a person reads: `claude process 62102, idle 3d 2h` (idle
 since Claude last changed its status), `claude process 4242, busy`, or `codex process 7, running
@@ -70,8 +69,6 @@ SERVICE = {"daemon", "mcp", "app-server", "exec-server"}
 OPTIONS_WITH_VALUE = {"-c", "--config"}
 UNATTENDED = re.compile(r" (-p|--print|exec)( |$)")
 LOOP = re.compile(r"run-unattended\.sh|jobs/(next|comments)\.sh")
-# A detached verify run (verify.sh <item> --start) outlives the agent that started it: while it
-# runs, the item's run is alive.
 VERIFY_RUN = re.compile(r"verify\.sh .*--detached")
 DURATION = re.compile(r"(\d+)([smhd]?)")
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "": 60}
@@ -159,7 +156,7 @@ def procs():
             rows.append((parts[0], parts[1].replace("\t", " ")))
     if not rows:
         sys.exit("flow: ps listed no processes")
-    where = cwds([pid for pid, command in rows if is_host(command)])
+    where = cwds([pid for pid, command in rows if is_host(command) or VERIFY_RUN.search(command)])
     for pid, command in rows:
         print("%s\t%s\t%s" % (pid, where.get(pid, ""), command))
 
@@ -196,11 +193,9 @@ def alive(rows, item, worktree, pid, skip_self=True):
         if int(number) in own:
             continue
         real = os.path.realpath(where) if where else ""
-        if is_agent(command) and any(real == w or real.startswith(w + "/") for w in wts):
+        if (is_agent(command) or VERIFY_RUN.search(command) and item in command.split()) and any(real == w or real.startswith(w + "/") for w in wts):
             return "process %s" % number
         if is_host(command) and (named.search(command) or item in command.split()):
-            return "process %s" % number
-        if VERIFY_RUN.search(command) and item in command.split():
             return "process %s" % number
     return ""
 
