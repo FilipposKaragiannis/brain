@@ -9,8 +9,15 @@ VERIFY_STOP_GRACE=10
 
 verify_run_file() { printf '%s/verify.run' "$1"; }
 
-# verify_run_field <reports> <key>: one field of the record, empty when there is none.
-verify_run_field() { sed -n "s/^$2 //p" "$(verify_run_file "$1")" 2>/dev/null | head -n 1; }
+# verify_run_field <reports> <key>: one field of the record, empty when there is none or when it
+# holds more than the field may: hex digits for head, digits for the numbers. Anyone in the worktree
+# can write the record, and the numbers reach shell arithmetic, where bash runs a command in an
+# array subscript.
+verify_run_field() {
+  recorded_field="$(sed -n "s/^$2 //p" "$(verify_run_file "$1")" 2>/dev/null | head -n 1)"
+  case "$2" in head) field_characters=0-9a-f ;; *) field_characters=0-9 ;; esac
+  case "$recorded_field" in ''|*[!$field_characters]*) ;; *) printf '%s' "$recorded_field" ;; esac
+}
 
 # process_running <pid>: true while the process runs (a zombie has ended).
 process_running() {
