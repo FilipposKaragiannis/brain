@@ -860,11 +860,13 @@ health_claim() {
       health_say "$it" "dead run of ${step:-?} cleared (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     fi
   fi
-  health_held=""
-  [ "$health_gate" != merge ] || health_review "$it" "$(state_get "$data" pr)"
-  if [ -n "$health_held" ]; then reviewing=$((reviewing + 1)); holders="$holders$name $it its PR is $health_held, so the merge gate waits on the reviewers
+  # A gate on a closed item waits on nobody, reviewers included: the defect comes first, and its
+  # PR gets no review verdict (nor a review record the console would show as in review).
+  health_held=""; hc_closed=0; [ "$(json_get "$data" status)" != closed ] || hc_closed=1
+  [ "$health_gate" != merge ] || [ "$hc_closed" -eq 1 ] || health_review "$it" "$(state_get "$data" pr)"
+  if [ -n "$health_gate" ] && [ "$hc_closed" -eq 1 ]; then holders="$holders$name $it closed with its $health_gate gate left open, a defect
 "
-  elif [ -n "$health_gate" ] && [ "$(json_get "$data" status)" = closed ]; then holders="$holders$name $it closed with its $health_gate gate left open, a defect
+  elif [ -n "$health_held" ]; then reviewing=$((reviewing + 1)); holders="$holders$name $it its PR is $health_held, so the merge gate waits on the reviewers
 "
   elif [ -n "$health_gate" ]; then gated=$((gated + 1)); holders="$holders$name $it waiting at the $health_gate gate
 "; fi
@@ -1092,12 +1094,13 @@ health_gates() {
   for f in "$home"/gates/*.json; do
     [ -f "$f" ] || continue
     g="$(cat "$f")"; gi="$(json_get "$g" item)"; gt="$(json_get "$g" gate)"; since="$(hpy epoch "$(json_get "$g" time)")"
-    # A merge gate whose PR is still in review waits on the reviewers, not on the owner.
-    case "$health_in_review" in *" $(item_slug "$gi") "*) [ "$gt" = merge ] && continue ;; esac
+    # A closed item's gate is a defect before anything else, even with its PR still in review.
     if [ "$(item_status "$gi")" = closed ]; then
       hgs_closed="$hgs_closed gate-closed-$(item_slug "$gi")"
       health_gate_closed "$gi" "$gt"; continue
     fi
+    # A merge gate whose PR is still in review waits on the reviewers, not on the owner.
+    case "$health_in_review" in *" $(item_slug "$gi") "*) [ "$gt" = merge ] && continue ;; esac
     waiting=$((waiting + 1))
     [ $((now - since)) -gt "$reminder" ] || continue
     rf="$home/health/$(item_slug "$gi").remind"; sent=0; sent_gate=""

@@ -3061,6 +3061,15 @@ rm -f .flow/health/*.remind; : > "$work/curl.log"
 for run in 1 2; do PATH="$work/fakebin:$PATH" FLOW_SLACK_WEBHOOK=https://env.example/hook "$P/scripts/steward.sh" health; done > "$work/review.out" 2>&1
 check "health: a reviewer that cannot review is told to the owner once, at the merge gate" sh -c "[ \"\$(grep -c '$mg: codex cannot review PR #90: it replied \"To use Codex here, create an environment for this repo.\"' '$work/review.out')\" = 1 ] && [ \"\$(grep -c 'cannot review PR' '$work/curl.log')\" = 1 ] && grep -q '$mg: waiting .* at the merge gate' '$work/review.out'"
 check "health: the review record names the reviewer that cannot review" grep -q '"cannot": \[{"reviewer": "codex"' .flow/reviews/90.review.json
+# A closed item's merge gate is a defect, even with its PR in review and its dirty worktree kept.
+review_pr "" -
+mg_file=".flow/items/task/${mg##*/}.md"
+"$P/adapters/local/close.sh" "$mg" >/dev/null
+"$P/scripts/steward.sh" health > "$work/review.out" 2>&1
+check "HealthGates_ClosedItemMergeGateInReview_SaidAsADefect: a closed item's merge gate with its PR in review is a defect, not a gate waiting on the reviewers" sh -c "grep -q '^$mg: defect: closed with its merge gate still open' '$work/review.out' && ! grep -q 'in review)' '$work/review.out' && [ -f '$wm/half.txt' ] && [ -f '$wm/.flow/claim.json' ]"
+check "HealthClaim_ClosedItemMergeGateInReview_KeepsNoReviewRecord: the closed item's PR gets no review record the console would show as in review" [ ! -f .flow/reviews/90.review.json ]
+sed 's/^status: closed$/status: open/; /^closed: /d' "$mg_file" > "$mg_file.tmp" && mv "$mg_file.tmp" "$mg_file"
+"$P/scripts/steward.sh" health > "$work/review.out" 2>&1 # reopened: its review record is back for the check below
 "$P/adapters/local/write-state.sh" "$mg" gate=none; rm -f "$mgate"
 "$P/scripts/steward.sh" health > "$work/review.out" 2>&1
 check "health: the review record goes once the PR leaves the merge gate" [ ! -f .flow/reviews/90.review.json ]
