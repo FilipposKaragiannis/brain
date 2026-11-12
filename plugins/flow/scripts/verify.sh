@@ -26,10 +26,9 @@
 # limit. A run stopped by a signal, or ended with no report, also leaves a fail report that says so.
 # verify.sh <item> --wait [seconds]: waits up to the seconds (default 540) for the started run.
 # Exit 0 when it passed and 1 when it failed, printing what the run printed, as the plain run
-# does; 3 while it still runs, printing how long it has run and the check it is on. A run that
-# died with no report (killed, crashed) is a fail: --wait writes the minimal fail report and exits
-# 1. No run started: exit 2. A wait is no rerun: the checks run once, in the started run.
-# --detached is --start's own run, never called by hand.
+# does; 3 while it still runs, printing how long it has run and the check it is on. A run that died
+# with no report (killed, crashed) is a fail: --wait writes the minimal fail report and exits 1. No
+# run started: exit 2. A wait is no rerun. --detached is --start's own run, never called by hand.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
@@ -138,22 +137,34 @@ wait_run() {
   exit
 }
 
-# others_in_group: $group_others, the processes of this run's group but this one. pgrep never
-# lists itself, and a lone command substitution runs it with no shell of its own in between.
-others_in_group() {
-  group_others=""
-  for group_pid in $(pgrep -g "$$"); do [ "$group_pid" = "$$" ] || group_others="$group_others $group_pid"; done
+# signal_rest_of_group <signal>: the signal to every process of this run's group but this one. A
+# lone command substitution adds no shell of its own to the group, and pgrep never lists itself.
+signal_rest_of_group() {
+  for group_pid in $(pgrep -g "$$"); do [ "$group_pid" = "$$" ] || kill -s "$1" "$group_pid" 2>/dev/null; done
 }
 # stop_group: TERM to the rest of this run's group, then KILL to what is left after the grace.
 stop_group() {
-  others_in_group
-  # shellcheck disable=SC2086
-  [ -z "$group_others" ] || kill -s TERM $group_others 2>/dev/null
+  signal_rest_of_group TERM
   grace_waited=0
-  while others_in_group && [ -n "$group_others" ] && [ "$grace_waited" -lt "$VERIFY_STOP_GRACE" ]; do sleep 1; grace_waited=$((grace_waited + 1)); done
-  others_in_group
-  # shellcheck disable=SC2086
-  [ -z "$group_others" ] || kill -s KILL $group_others 2>/dev/null
+  while [ "$(pgrep -g "$$")" != "$$" ] && [ "$grace_waited" -lt "$VERIFY_STOP_GRACE" ]; do sleep 1; grace_waited=$((grace_waited + 1)); done
+  signal_rest_of_group KILL
+}
+# child_ends_in_time <pid>: true when the plain run ends by itself, within the limit and before a
+# signal sets stop_cause; false, with it still running, when either comes first.
+child_ends_in_time() {
+  while process_running "$1"; do
+    [ -z "$stop_cause" ] && [ $(( $(date +%s) - started )) -lt "$limit" ] || return 1
+    sleep 1
+  done
+}
+# stopped_run_report <stop cause> <exit code>: the fail report of a run that left none: stopped
+# at the limit, stopped by a signal, or ended on its own. Exits 1.
+stopped_run_report() {
+  case "$1" in
+    limit) unfinished_report "stopped at the verify limit of $(duration "$limit") (verify.limit)" ;;
+    signal) unfinished_report "stopped by a signal" ;;
+    *) unfinished_report "the run ended (exit $2) with no report" ;;
+  esac
 }
 
 # run_detached: --detached, the run --start starts as the leader of its own process group. Runs
@@ -165,20 +176,12 @@ run_detached() {
   trap 'stop_cause="${stop_cause:-signal}"' TERM INT HUP
   sh "$FLOW_PLUGIN/scripts/verify.sh" "$item" ${given_base:+--base "$given_base"} &
   child=$!
-  while process_running "$child"; do
-    [ -z "$stop_cause" ] || break
-    [ $(( $(date +%s) - started )) -lt "$limit" ] || { stop_cause=limit; break; }
-    sleep 1
-  done
+  child_ends_in_time "$child" || stop_cause="${stop_cause:-limit}"
   [ -z "$stop_cause" ] || stop_group
   wait "$child"; code=$?
   [ ! -f "$reports/verify.json" ] || exit "$code"
   attempts="$(next_attempt)"; head_sha="$(git rev-parse --short HEAD)"
-  case "$stop_cause" in
-    limit) unfinished_report "stopped at the verify limit of $(duration "$limit") (verify.limit)" ;;
-    signal) unfinished_report "stopped by a signal" ;;
-    *) unfinished_report "the run ended (exit $code) with no report" ;;
-  esac
+  stopped_run_report "$stop_cause" "$code"
 }
 
 case "$mode" in
