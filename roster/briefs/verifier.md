@@ -31,8 +31,9 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
 
 ## Closeout (epic)
 Read every sub-item through the adapter; any open one is a `fail` naming it. Run `verify.sh`
-on the epic branch when there is one, started and waited for as in step 2. Walk the epic's acceptance lines as in step 4; close the
-epic through the adapter only when every line is proven.
+on the epic branch when there is one, started and waited for as in step 2. Walk the epic's
+acceptance lines as in step 4; close the epic through the adapter only when every line is
+proven.
 
 ## Output
 `verify.json` is the step result (status `pass` or `fail`, checks, attempts). `verify.md` is
