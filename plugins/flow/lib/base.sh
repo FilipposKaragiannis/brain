@@ -113,12 +113,12 @@ base_name_refused='its base is not a valid branch name'
 
 # claim_base_option <default> [--base <branch>]: the base steward.sh claim cuts the worktree from and
 # records in claim.json and the item state (base): the branch --base names (next.sh passes the one
-# claim_at_base resolved), else the default, the config base. An unknown option, or a base that
-# fails base_name_valid, dies with exit 2. An item that holds a claim keeps it and its base,
-# whatever --base says.
+# claim_at_base resolved), else the default, the config base. An unknown option, --base with no
+# branch, or a base that fails base_name_valid, dies with exit 2. An item that holds a claim keeps
+# it and its base, whatever --base says.
 claim_base_option() {
   option_base="$1"; shift
-  while [ $# -gt 0 ]; do case "$1" in --base) option_base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
+  while [ $# -gt 0 ]; do case "$1" in --base) [ $# -ge 2 ] || die "--base takes a branch" 2; option_base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
   base_name_valid "$option_base" || die "the base is not a valid branch name" 2
   printf '%s' "$option_base"
 }
