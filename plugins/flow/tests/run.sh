@@ -3390,6 +3390,22 @@ for window_line in "$window_seen" \
 done
 check "TimeWindowLimit_IsSpendLimit: a session ended on any hit-your-<window>-limit line has cause spend-limit, because the host is out of spend until the window resets (gh#190)" \
   [ "$window_causes" = "spend-limit;spend-limit;spend-limit;spend-limit;" ]
+# The same line when the session dies before its result object: plain text on stdout, then on
+# stderr. Each row is one place a host's line can arrive.
+window_plain_causes=""
+for window_stream in out err; do
+  : > "$work/window/out"; : > "$work/window/err"
+  printf '%s\n' "$window_seen" > "$work/window/$window_stream"
+  python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 1 "$work/window/sum" >/dev/null 2>&1
+  window_plain_causes="$window_plain_causes$(jget cause < "$work/window/sum");"
+done
+check "TimeWindowLimit_AsPlainLine_IsSpendLimit: a time-window line outside the result object, on stdout or stderr, has cause spend-limit, because a session cut early may print no result (gh#190)" \
+  [ "$window_plain_causes" = "spend-limit;spend-limit;" ]
+python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"Done. The old log said: "+sys.argv[1],"total_cost_usd":0}))' "$window_seen" > "$work/window/out"
+: > "$work/window/err"
+python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 0 "$work/window/sum" >/dev/null 2>&1
+check "TimeWindowLimit_QuotedByGoodSession_HasNoCause: a session that ends well and quotes a time-window line has no cause, because only a failed session can stop the host (gh#190)" \
+  [ "$(jget cause < "$work/window/sum")" = "" ]
 # The loop's failure path: a step the 5-hour window cut, with the step budget of every attempt the
 # item has. Its own repo, so the claims the cost tests hold do not fill the pool and the stop is
 # this repo's alone.
