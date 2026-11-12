@@ -1,5 +1,44 @@
 # console
 
+## 0.21.0 (2026-11-11)
+
+- A gate the agent offered answers for shows them as buttons (gh#170). The snapshot's `Gate`
+  gains `options` (`{label, text, recommended}`), `raisedBy`, `answeredBy`, `condition` and
+  `footer`, read from the flow's gate record, with `[]` and null for a record from an older
+  plugin; schema 19. The Gates card shows one button per option with its text beside it, the
+  recommended one primary and marked "Recommended", and a free-text field whose text goes with a
+  clicked option as its note, or alone through "Send my own answer". `gate.clear` takes `option`
+  (1 to 9) and runs `gate.sh clear <item> --option N [note]`; with `back` it is refused.
+- The card shows who raised the gate, who answers it and what it waits on as chips, and the
+  footer (the exact clear command) when the gate has no options.
+- Twins: two ambiguity gates on items under one parent that ask the same question, raised within
+  24 hours, are one row. The later gate's `twinOf` names the earliest, whose `twins` lists the
+  others. The row says "answers N items" and one answer clears every item in the set. A twin
+  whose clear is refused shows on the first card as a line linked to its own card, which has
+  Retry. The attention list, `counts.needsYou` and the nav badge count a twin set once.
+
+## 0.20.0 (2026-11-11)
+
+- The Agents page lists the current Codex models (`gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-astra`,
+  `gpt-6-luna`), and the deprecated `jobs.model` fallback maps opus to `gpt-6.1-sol` and sonnet to
+  `gpt-6.1-terra`, as flow does.
+- A host flow stopped on a model it does not know shows as "stopped on an unknown model".
+- The agents page lists each session's live subagents, claude and codex alike (gh#164): under a
+  run card's latest line and on each of your sessions, one row per subagent with its type, task,
+  cwd, how long it has run and its latest line. Claude's come from the session's `subagents/`
+  folder, codex's from the child rollouts that name the session as their root; one counts as live
+  while its transcript was written in the last 10 minutes. The snapshot schema is 18: an agent
+  carries `subagents`. A codex session is no longer matched to one of its own subagents' rollouts.
+- An open item with no claimed worktree that only its tracker label gates (`gate:<name>` set by
+  hand, no `gate.sh raise`, so no gate record) shows as `needs-you`, not `ready`, as flow's ready
+  list leaves it out (gh#175). Needs you lists it once with a `label-gate` row, the Gates screen
+  has a Label only panel whose card names the gate, says the question text is not recorded and
+  shows the two ways out (record it with `gate.sh raise`, or remove the label), and the Board's
+  Gate fact reads `<gate> (label only, no question recorded)`. A closed item with a stale label
+  stays `done`, and a merge gate waiting on review stays `in-review`.
+- The snapshot carries `labelGates` (`{item, title, url, gate, worktree, sinceAt, ageSeconds}`)
+  and `counts.needsYou` counts them with the gates and the items to close (snapshot schema 17).
+
 ## 0.19.1 (2026-11-10)
 
 - The Board shows a claimed item as `blocked` while flow holds it behind an open blocker

@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Disagreement, Readiness, ReadyToClose, FlowEvent, Gate, InstalledPlugin, Item, ProcessInfo, Snapshot, Worktree } from '../../daemon/src/snapshot.ts';
+import { SNAPSHOT_SCHEMA_VERSION } from '../../daemon/src/snapshot.ts';
 import type { ActionRecord } from '../src/actions.ts';
 import type { Api, ApiResponse, HttpMethod, StreamLike } from '../src/api.ts';
 import { STREAM_CLOSED } from '../src/api.ts';
@@ -125,7 +126,7 @@ export const TAKEN_AT = '2026-10-24T18:16:04Z';
 export function snapshotAt(takenAt: string, needsYou: number): Snapshot {
   const freshness = { at: takenAt, ageSeconds: 0, ok: true, error: null };
   return {
-    schema: 17,
+    schema: SNAPSHOT_SCHEMA_VERSION,
     takenAt,
     project: { id: 'project', name: 'project', root: '/p', flowHome: '/p/.flow', base: 'main', repo: 'owner/project', repoUrl: 'https://github.com/owner/project', adapter: 'github', trackers: [{ name: 'github', url: 'https://github.com/owner/project/issues', error: null }], pluginVersion: '1.17.0', pluginRoot: '/home/owner/.claude/plugins/cache/brain/flow/1.17.0', pluginSource: 'installed', jobsHost: 'claude', jobHosts: ['claude'], plugins: [installedPlugin('flow', '1.17.0', '1.17.0'), installedPlugin('standards', '1.3.0', '1.3.0')], poolMax: 9, reviewers: ['codex', 'claude'], picks: [], staleSessionSeconds: 86400 },
     sources: { files: freshness, git: freshness, processes: freshness, jobs: freshness, board: freshness, pulls: freshness },
@@ -182,7 +183,8 @@ export function claudeSession(pid: number, elapsedSeconds: number): ProcessInfo 
 }
 
 export function waitingGate(item: string, gate: string): Gate {
-  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null, quiz: null, session: null };
+  return { item, gate, message: '1. Which way?', raisedAt: TAKEN_AT, ageSeconds: 600, overdue: false, host: 'claude', worktree: null, questions: [{ number: 1, text: 'Which way?', recommended: null }], pull: null, plan: null, body: null, quiz: null, session: null,
+    options: [], raisedBy: null, answeredBy: null, condition: null, footer: null, twinOf: null, twins: [] };
 }
 
 /** An item to close with no gate up: every child of a split closed, or every step ran. */

@@ -19,9 +19,11 @@ import type { ServerOptions } from '../src/server.ts';
 import type { OpenRunner } from '../src/openFile.ts';
 import type { ProjectCheck } from '../src/snapshot.ts';
 import type { Snapshot } from '../src/snapshot.ts';
+import { SNAPSHOT_SCHEMA_VERSION } from '../src/snapshot.ts';
 import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
 import type { FakeProcess } from './fakeSpawner.ts';
+import { noSubagents } from './fakeSubagents.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
 const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
@@ -32,7 +34,7 @@ async function started(makeSettings: (registry: ProjectRegistry) => SettingsStor
   const { spawner, processes } = plainSpawner();
   const stateDir = path.join(os.tmpdir(), `console-server-${process.pid}`);
   const registry = new ProjectRegistry((project) => {
-    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE });
+    const monitor = new ProjectMonitor({ project, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: LONG_CADENCE, subagents: noSubagents });
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: () => {} });
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
   }, silentLogger);
@@ -50,7 +52,7 @@ test('Snapshot_ServedWithToken', async () => {
   try {
     const response = await fetch(`${base}/api/projects/project/snapshot`, { headers: { authorization: 'Bearer tok' } });
     const picture = (await response.json()) as Snapshot;
-    assert.equal(picture.schema, 17, 'because readers pin the schema version');
+    assert.equal(picture.schema, SNAPSHOT_SCHEMA_VERSION, 'because readers pin the schema version');
     assert.equal(picture.counts.running, 1, 'because the fake process list has one agent in a pool worktree');
     assert.equal(picture.sources.board.ok, true, 'because the board was read');
     assert.equal(picture.items.length, 7, 'because the fake board lists six items and the gh#5 claim adds one the board never saw');
@@ -73,7 +75,7 @@ test('EventStream_SendsCurrentSnapshotFirst', async () => {
     const { value } = await reader.read();
     controller.abort();
     const text = new TextDecoder().decode(value);
-    assert.ok(text.startsWith('event: snapshot\ndata: {"schema":17'), 'because a new listener needs the picture before any change');
+    assert.ok(text.startsWith(`event: snapshot\ndata: {"schema":${SNAPSHOT_SCHEMA_VERSION}`), 'because a new listener needs the picture before any change');
   } finally { await close(); }
 });
 

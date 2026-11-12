@@ -168,8 +168,10 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 17 since the snapshot took `labelGates` and an
-attention row took the kind `label-gate` (16 when an agent took `step` and `job`, 15 when an item and a
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 19 since a gate took `options`,
+`raisedBy`, `answeredBy`, `condition`, `footer`, `twinOf` and `twins` (18 when an agent took
+`subagents`, 17 when the snapshot took `labelGates` and an attention row took the kind
+`label-gate`, 16 when an agent took `step` and `job`, 15 when an item and a
 worktree took `heldBy` and `heldReason`, the states `waiting` and `held` came, `counts` took
 `waiting` and `held`, `readiness` took `held`, an attention row took the kind `close` and the
 snapshot took `toClose`, 14 when an agent took
@@ -246,9 +248,10 @@ snapshots.
   process. For codex `~/.codex/session_index.jsonl` has ids and thread
   names but no folder, so the session files under `~/.codex/sessions/<yyyy>/<mm>/<dd>/` (the
   start's day back to fourteen days) are read instead: the newest written since the start whose
-  first line, `session_meta`, names the same cwd; the id is its `payload.id`. A `codex exec`
-  started with `-C <dir>` (or `--cd`), as flow's host.sh starts a Codex run, keeps the cwd it was
-  started in, such as the project root, so its working directory, both for the worktree it is
+  first line, `session_meta`, names the same cwd and is not a subagent's; the id is its
+  `payload.id`. A `codex exec` started with `-C <dir>` (or `--cd`), as flow's host.sh starts a
+  Codex run, keeps the cwd it was started in, such as the project root, so its working directory,
+  both for the worktree it is
   listed under and for this match, is that `<dir>`, resolved against the cwd. Only codex's options
   before its prompt count, so a `-C` the prompt mentions does not
   (`daemon/src/collectors/agentContext.ts`). Those first lines are kept in memory and forgotten
@@ -270,6 +273,26 @@ snapshots.
   owner) or `busy`, `since` its `statusUpdatedAt`. Null for codex, which writes no such file, and
   for a claude without one of its own. `startedAt` is when ps says the process started, worked out
   at the read that found it.
+- `subagents` (on every entry of `agents`) is what its session runs now, oldest started first, each
+  `{id, host, type, task, cwd, startedAt, latest}`; empty without a session and always on an entry
+  of `ended`. A subagent is live while its transcript was written in the last 10 minutes
+  (`LIVE_WINDOW_MS`), so one stuck in a single tool call longer than that drops off until it writes
+  again. For claude they are in `<transcript folder>/<session id>/subagents/`: each
+  `agent-<id>.meta.json` (not the `workflows/` folder) whose `agent-<id>.jsonl` is fresh and whose
+  meta says neither `finished` nor `stoppedByUser`; `id` is the `<id>`, `type` the meta's
+  `agentType` (`subagent` without one), `task` its `description`, `cwd` and `startedAt` the
+  transcript's first line, and `latest` the last line of its last 64 KB, read as the transcript
+  route reads lines, side chains included. For codex a subagent is its own rollout in the day
+  folders, run by its root's process: a fresh rollout whose first line is a subagent's
+  (`source.subagent` or `thread_source: "subagent"`) and names the session as its root
+  (`session_id`), at any depth, and whose last `task_started` or `task_complete` event is not
+  `task_complete`; `id` is its `payload.id`, `type` its `agent_role` (`subagent` without one),
+  `task` the last segment of its `agent_path` with its `agent_nickname` in parentheses
+  (`probe (Russell)`; the spawn message is encrypted), `cwd` and `startedAt` its first line, and `latest`
+  its own last line, not one of the parent lines it replays before its
+  `subagent_history_start_ordinal`. The metas and first lines are kept in memory while a read used
+  them in the last 10 minutes; one reader serves every project
+  (`daemon/src/collectors/subagents.ts`, `claudeSubagents.ts`, `codexSubagents.ts`).
 - `project.staleSessionSeconds` is `jobs.health.stale_session` in seconds (a flow duration, 24h
   unset). `sessionStale` in snapshot.ts is the one rule the pages use: a session (never a flow
   agent) is stale once it has been idle that long, or, with no `activity`, once its process has run
@@ -329,8 +352,8 @@ snapshots.
   gets a `label-gate` attention row whose detail says no question was recorded, and no gate is
   made up for it. A closed item with a stale label stays `done`, and an item whose merge gate
   waits on review stays `in-review`. An item in `labelGates` is never in `toClose`, so
-  `counts.needsYou` is `gates` plus `toClose` plus `labelGates`, and counts every `needs-you` item
-  once.
+  `counts.needsYou` is `gates` (a twin counted once, below) plus `toClose` plus `labelGates`, and
+  counts every `needs-you` item once.
 - An item's `url` is its tracker page, from the board. Its `spend` is `{costUsd, sessions,
   tokens}`, summed over the step sessions `board.sh --json` counts from `log/runs.jsonl`, or null
   when it has none or the plugin prints no `spend`. Codex reports no cost, so a codex session adds
@@ -371,6 +394,22 @@ snapshots.
   comes from the files on disk, so it outlives a restart that empties `ended`. Looked up with the
   `files` source and kept per item and `raisedAt` while the gate waits (a miss is scanned again a
   minute later).
+- A gate carries what the flow's gate record (`<flow home>/gates/<item>.json`, flow ADR 0003)
+  says beyond the message: `options`, the answers the agent offered, each `{label, text,
+  recommended}` in the record's order (1 to 9, at most one recommended; any bad entry and the gate
+  has none, since a skipped one would shift option N); `raisedBy` (`step plan`, `health job`,
+  `owner` …); `answeredBy`, who carries the answer out (`step plan`, `comments job, next pass`,
+  `nobody: ...`); `condition`, what the health job watches to clear the gate on its own
+  (`blocked_by:<item>`, `pr:#<number> conflicting`, `ci:down`); and `footer`, the line the tracker
+  comment ends with, the exact clear command. A record from a plugin older than them gives `[]` and
+  nulls, and an empty string reads as null. The record is per machine, so a gate raised on another
+  host shows none of them.
+- Twins are ambiguity gates on items under one parent that ask the same question (the questions'
+  text joined, else the message, lowercased, without `*`, `_` and backticks, whitespace collapsed),
+  raised within `TWIN_WINDOW_HOURS` (24) of the earliest. Each later gate's `twinOf` names the earliest
+  item, and the earliest's `twins` lists the later items in raise order; both null and empty on a
+  gate with no twin. `gates` keeps every gate, while the attention list and `counts.needsYou`
+  skip a gate whose `twinOf` is set, so a twin set is one row.
 - `readiness` is `{ready, waitingOnField, blocked, gated, held, nextInLineMissingField}` over open
   items that are not epics. The first five are buckets, each item in one at most: the next job can
   take it, only an empty field stops it (the whole backlog of such items), an open item blocks it,
@@ -572,7 +611,7 @@ on every state change and at most twice a second while output arrives.
 
 | Kind | Args | Runs | Lock | Outcome when done |
 |---|---|---|---|---|
-| `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item | `finished` |
+| `gate.clear` | `item`, `message?`, `back?`, `option?` | `gate.sh clear <item> [<message>]`; with `back` `true`, `gate.sh clear <item> --back <message>` (a message needed); with `option` (1 to 9), `gate.sh clear <item> --option N [<message>]`, the message as a note under option N's text (refused beside `back`) | the item | `finished` |
 | `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item and the next job | with an item `started` while the run goes, `finished` once it ends well; without one `started` |
 | `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
 | `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
@@ -826,7 +865,13 @@ from (`FLOW_PLUGIN` or the installed plugin, with its folder), or "No plugins fo
 or ~/.codex." with none), Gates (a decision card per gate, one line on what
 its kind asks, the PR with its state and unresolved review threads when the item has one, the
 questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
-matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; Discuss with the
+matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; chips for who
+raised the gate, who answers it and what it waits on, when the gate has them; a gate with
+`options` shows one button per option with its text, the recommended one primary and marked,
+which runs `gate.clear` with `option`, and a field whose text goes with a clicked option as its
+note or alone through Send my own answer, while a gate without shows its `footer`; a twin set is
+one row, "answers N items", whose answer runs one `gate.clear` per item, a refused one a line on
+the first card that links to its own card with Retry; Discuss with the
 agent resumes the newest agent on the item in `agents` or `ended` by its pid, else the gate's
 `session` with `gate`, and is left out with neither; a gate whose item
 has a quiz shows it as a panel: a line with how many questions or the last try's score, Take the
@@ -870,6 +915,8 @@ its fields (a gate only the tracker label sets reads "<gate> (label only, no que
 recorded)"), its PR and who that waits on, and its cost, sessions and tokens), Agents (Runs across
 the page: a card per live run, the first open and the
 others folded to their header and their latest transcript line, claude and codex alike, each with
+the live subagents of its session under that line, open or folded (a row each: type, task or "no
+task", cwd, how long it has run and its latest line), and with
 its step (the agent's own, else its run's), item, worktree, host, a `headless` tag, a `job <name>`
 tag when a flow job started it, how long it has run, and PR, its stats (when its process started,
 last commit, transcript size and turns, pid) and its transcript as a terminal of the last 12
@@ -881,7 +928,7 @@ while `liveness` is `unknown`, or that it is still starting within the grace; wi
 to Jobs. Then your own sessions, folded, each row with its pid, host, worktree, item, `busy`,
 `idle 3d 2h` or (with no `activity`) its age, a `stale` tag past `jobs.health.stale_session`, Open
 session or Open in Terminal, and Stop session, which asks first ("SIGTERM to pid N?" with Stop it
-and Cancel) and then sends `session.stop`; stale sessions come first, and while any is stale the
+and Cancel) and then sends `session.stop`, and its live subagents as on a run card; stale sessions come first, and while any is stale the
 fold opens by itself with the count in its heading ("Your sessions (3 · 1 stale)"). Then the
 servers, folded and read-only ("Servers (2)", hidden with none), each row with its label, pid,
 worktree and how long it has run, its command on hover, under a line that says they are not

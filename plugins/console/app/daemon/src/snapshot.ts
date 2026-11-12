@@ -4,7 +4,7 @@
  * Every timestamp is ISO 8601 in UTC. Every age is seconds at `takenAt`, so a reader can keep
  * counting on its own clock between snapshots.
  */
-export const SNAPSHOT_SCHEMA_VERSION = 17;
+export const SNAPSHOT_SCHEMA_VERSION = 19;
 
 /** A branch this many commits behind its base is stale, the health job's `behind_base` default. */
 export const STALE_BEHIND_BASE_COMMITS = 20;
@@ -12,6 +12,8 @@ export const STALE_BEHIND_BASE_COMMITS = 20;
 export const STALE_IDLE_HOURS = 72;
 /** A gate older than this is overdue, the health job's reminder threshold. */
 export const GATE_OVERDUE_HOURS = 24;
+/** Two ambiguity gates under one parent asking the same question are twins when raised this close together. */
+export const TWIN_WINDOW_HOURS = 24;
 /** How many events the snapshot carries, newest first. */
 export const EVENTS_KEPT = 200;
 const MILLISECONDS_PER_SECOND = 1000;
@@ -177,6 +179,15 @@ export type TranscriptTurn = { at: string | null; role: 'user' | 'assistant'; te
  */
 export type TranscriptLine = { at: string | null; kind: 'say' | 'think' | 'tool' | 'result' | 'user'; text: string };
 
+/**
+ * A subagent a claude or codex session runs now, read from the session's own files: its `type`
+ * (claude's `agentType`, codex's agent role), its `task` (claude's description, codex's task name;
+ * null when it has none), the folder it works in (`cwd`), when it started (`startedAt`, so a page
+ * counts its running time on its own clock), and its latest transcript line. `cwd`, `startedAt`
+ * and `latest` are null where its files do not tell them yet. A finished or stopped one is gone.
+ */
+export type Subagent = { id: string; host: AgentHost; type: string; task: string | null; cwd: string | null; startedAt: string | null; latest: TranscriptLine | null };
+
 /** How much of one transcript line the route returns. */
 export const TRANSCRIPT_LINE_CHARS = 300;
 
@@ -274,6 +285,16 @@ export type GateQuestion = {
   recommended: string | null;
 };
 
+/** The most options a gate offers, as `_gates.py options` allows: `gate.sh clear --option N` takes one digit. */
+export const MOST_GATE_OPTIONS = 9;
+
+/** One answer the agent offered with its gate (`options` in its record); option N is the Nth, from 1, as `gate.sh clear --option N` counts. */
+export type GateOption = {
+  label: string;
+  text: string;
+  recommended: boolean;
+};
+
 export type Gate = {
   item: string;
   gate: string;
@@ -303,6 +324,24 @@ export type Gate = {
    * claimed worktree, a host other than claude or codex, or none found.
    */
   session: SessionRef | null;
+  /** The answers the agent offered, in the record's order; empty when it offered none or its plugin is too old to record them. */
+  options: GateOption[];
+  /** Who raised the gate (`step plan`, `health job`, `owner`), or null on a record from before it was kept. */
+  raisedBy: string | null;
+  /** Who carries the answer out (`step plan`, `comments job, next pass`, `nobody: ...`), or null on a record from before it was kept. */
+  answeredBy: string | null;
+  /** What the health job watches to clear the gate on its own (`blocked_by:<item>`, `pr:#<number> conflicting`, `ci:down`), or null when nothing is watched. */
+  condition: string | null;
+  /** The line the tracker comment carries under the message, with the exact clear command; null when the record has none. */
+  footer: string | null;
+  /**
+   * The item whose gate asks the same question, when this one is its twin: both ambiguity gates,
+   * on items under one parent, raised within `TWIN_WINDOW_HOURS` of the earliest, with equal text.
+   * Null on the earliest gate of a set and on every gate with no twin.
+   */
+  twinOf: string | null;
+  /** On the earliest gate of a twin set, the items of the later ones, earliest first; empty otherwise. */
+  twins: string[];
 };
 
 export type GatePlan = { file: string; text: string };
@@ -453,6 +492,8 @@ export type Agent = {
   session: SessionRef | null;
   /** Whether it is busy or idle and since when, or null when that is unknown (Codex, or no sessions file for this process). */
   activity: SessionActivity | null;
+  /** The subagents its session runs now, oldest first; empty without a session, and always for an ended agent. */
+  subagents: Subagent[];
 };
 
 /**

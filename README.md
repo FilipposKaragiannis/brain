@@ -70,8 +70,11 @@ Codex rules and agents, and reports the config gaps. It stamps what it wrote
 `init` when the stamp is behind the plugin and lifts the pool worktrees' pinned plugin versions to the
 newest installed (`scripts/_plugins.py`; Claude pins per directory). `flow:next` runs the next
 step of an item in a fresh subagent; `advance.sh` applies the step's result file; gates stop
-the run and notify. `flow:board` shows the pool, items, gates and overlaps; `flow:steward`
-claims and releases pool worktrees, reserves one for the owner's manual work (`steward.sh
+the run and notify. A gate's record in the flow home holds the answers the agent offers
+(`gate.sh clear <item> --option N` picks one), who raised it, who carries the answer out and the
+exact clear command; a gate that waits on a blocker closing, a PR's conflict or failing CI names
+that condition and the health job clears it once it ends. `flow:board` shows the pool, items,
+gates and overlaps; `flow:steward` claims and releases pool worktrees, reserves one for the owner's manual work (`steward.sh
 reserve`, left alone by the flow until a release) and never resets uncommitted work; a claim
 with no free worktree grows the pool up to `pool_max` (the entry is appended to the config, the ignored files
 copied, the setup commands run). `flow:new` creates an epic, task or bug in the tracker; a child takes its parent's priority and area. A plan step that makes tracker tasks of a task splits it: step `split`, its worktree back to the pool. A plan step may hold its item behind another open item whose plan changes the same existing behavior (the rule in `skills/plan/holds.md`, the candidates from `scripts/hold.sh`): it waits until that item closes, then merges the base in first. A verify step starts on a branch with its base merged in; a merge that conflicts runs the `sync` step first. `flow:do` takes a plain sentence and routes it to the right skill; `flow:help` is the manual (`help <skill>`, `help lines`, `help gates`); `flow:gate` lists and answers the gates; `auto_gates` in the config lets the flow clear `plan-approval` itself for chosen sizes. `claude --worktree gh-310`

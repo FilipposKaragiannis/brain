@@ -202,6 +202,27 @@ slug_item() {
   done | head -n 1
 }
 
+# item_id_shaped <id>: 0 when an adapter owns the id (adapter_for) and the id has that adapter's
+# shape: its slug.sed turns the id's slug back into the id itself (gh#<n>, local:<kind>/<n>,
+# jira:<KEY>-<n>), so no path, space or `..` passes for an id.
+item_id_shaped() {
+  adapter_for "$1" >/dev/null || return 1
+  [ "$(slug_item "$(item_slug "$1")")" = "$1" ]
+}
+
+# condition_in_grammar <condition>: 0 when it is one the health job reads: blocked_by:<id> of an
+# item an adapter owns (item_id_shaped), pr:#<n> conflicting or ci:down.
+condition_in_grammar() {
+  _condition_pr="${1#pr:#}"; _condition_pr="${_condition_pr% conflicting}"
+  case "$1" in
+    ci:down) return 0 ;;
+    blocked_by:*) item_id_shaped "${1#blocked_by:}"; return ;;
+    "pr:#"*" conflicting") case "$_condition_pr" in ""|*[!0-9]*) return 1 ;; esac ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
 # adapter_for_kind <kind>: the adapter that new items of a kind go to, from the config.
 adapter_for_kind() { v="$(cfg "adapters.$1")"; [ -n "$v" ] && printf '%s' "$v" || cfg_or "adapters.default" "local"; }
 
@@ -339,11 +360,22 @@ pick_filter() {
   FLOW_PICK_KINDS="$(cfg "pick.$_pick.kinds" | paste -sd, -)"
 }
 
+# is_adapter_name <name>: 0 when <name> is a folder under adapters/: not empty, no leading dot,
+# no slash.
+is_adapter_name() {
+  case "$1" in ""|.*|*/*) return 1 ;; esac
+  [ -d "$FLOW_PLUGIN/adapters/$1" ]
+}
+
 # adapter <op> <id|adapter-name> [args...]: run one adapter operation. The first argument after
-# the op is an item id (adapter from its prefix) or an adapter name (for list and list-ready).
+# the op is an item id (adapter from its prefix) or an adapter name (for list and list-ready): a
+# folder under adapters/, never a path. Anything else dies, exit 2.
 adapter() {
   op="$1"; who="$2"; shift 2
-  name="$(adapter_for "$who" 2>/dev/null)" || name="$who"
+  if ! name="$(adapter_for "$who" 2>/dev/null)"; then
+    is_adapter_name "$who" || die "no adapter owns $who, and it is no adapter name" 2
+    name="$who"
+  fi
   script="$FLOW_PLUGIN/adapters/$name/$op.sh"
   [ -x "$script" ] || die "no adapter operation $name/$op"
   if [ "$name" = "$who" ]; then "$script" "$@"; else "$script" "$who" "$@"; fi

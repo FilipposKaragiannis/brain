@@ -4,7 +4,8 @@ import path from 'node:path';
 import type { CommandRequest, CommandResult, CommandRunner } from '../src/collectors/exec.ts';
 import type { GateQuestionCache } from '../src/collectors/flowHome.ts';
 import { parseFlowConfig, parseGateList, pluginHasGateJson, pluginVersionOf, readAdapterPrefixes, readFlowHome, readStoppedHosts } from '../src/collectors/flowHome.ts';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { MOST_GATE_OPTIONS } from '../src/snapshot.ts';
 import os from 'node:os';
 import { FAKE_PLUGIN, FIXTURES, FIXTURE_ROOT, GATE_LIST_JSON, GATE_RECORD, fakeGateList, fakeRunner } from './fakeRunner.ts';
 
@@ -364,4 +365,105 @@ test('FlowHome_NoLessonsOrRetroFiles_EmptyRetroFacts', async () => {
     const { retro } = await readFlowHome(root, fakeRunner);
     assert.deepEqual(retro, { lessons: [], lessonLines: 0, retros: [] }, 'because the files stay on the machine that ran the flow, so a missing one is no lesson and no retro');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+/** The gate records written beside the message: options, who asks, who answers, a condition and the footer. */
+const OPTIONED_RECORD = {
+  gate: 'ambiguity', item: 'gh#767', message: '**Keep the contact law or replace it?**', time: '2026-11-09T09:40:00Z', host: 'claude',
+  options: [
+    { label: 'Keep the law', text: 'Keep the contact law; tune the friction only.', recommended: true },
+    { label: 'Replace it', text: 'Replace the contact law with the impulse model.', recommended: false },
+  ],
+  raised_by: 'step implement', answered_by: 'comments job, next pass', condition: 'blocked_by:gh#772', footer: 'Clear it: `gate.sh clear gh#767 --option 1`',
+};
+
+/** The gate readFlowHome finds in a project holding `record` as gh-767's only gate. */
+async function gateWith(record: Record<string, unknown>) {
+  const gates = await withProject(async (root) => {
+    writeFileSync(path.join(root, '.flow', 'gates', 'gh-767.json'), JSON.stringify(record));
+    return (await readFlowHome(root, fakeRunner)).gates;
+  });
+  return gates[0] ?? assert.fail('because the project holds one gate record');
+}
+
+test('GateRecordWithOptions_OptionsReadInTheirOrder', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.deepEqual(gate.options, OPTIONED_RECORD.options, 'because option N on the card must be option N that gate.sh clear --option N sends');
+});
+
+test('GateRecordWithRoles_RaisedByRead', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.equal(gate.raisedBy, 'step implement', 'because the card names who asked');
+});
+
+test('GateRecordWithRoles_AnsweredByRead', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.equal(gate.answeredBy, 'comments job, next pass', 'because the card names who carries the answer out');
+});
+
+test('GateRecordWithCondition_ConditionRead', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.equal(gate.condition, 'blocked_by:gh#772', 'because the card says what the health job waits on before it clears the gate itself');
+});
+
+test('GateRecordWithFooter_FooterRead', async () => {
+  const gate = await gateWith(OPTIONED_RECORD);
+  assert.equal(gate.footer, OPTIONED_RECORD.footer, 'because the card shows the exact command the tracker comment carries under the message');
+});
+
+test('GateRecordOptionWithEmptyLabel_NoOptionsAtAll', async () => {
+  const gate = await gateWith({ ...OPTIONED_RECORD, options: [{ label: '', text: 'Keep it.', recommended: false }, OPTIONED_RECORD.options[1]] });
+  assert.deepEqual(gate.options, [], 'because dropping one malformed option would renumber the rest, and a button would send another option than it shows');
+});
+
+/** `count` well-formed options, the first one recommended, each one's text naming its number. */
+function optionsCounting(count: number) {
+  return Array.from({ length: count }, (_, index) => ({ label: `Choice ${index + 1}`, text: `Do thing ${index + 1}.`, recommended: index === 0 }));
+}
+
+test('GateRecordWithAsManyOptionsAsTheLimit_EveryOptionRead', async () => {
+  const atTheLimit = optionsCounting(MOST_GATE_OPTIONS);
+  const gate = await gateWith({ ...OPTIONED_RECORD, options: atTheLimit });
+  assert.deepEqual(gate.options, atTheLimit, 'because gate.sh raise takes up to the limit, and every option it kept must be a button');
+});
+
+test('GateRecordWithOneOptionOverTheLimit_NoOptionsAtAll', async () => {
+  const gate = await gateWith({ ...OPTIONED_RECORD, options: optionsCounting(MOST_GATE_OPTIONS + 1) });
+  assert.deepEqual(gate.options, [], 'because gate.sh clear --option cannot send an option past the limit, so a button for it would fail');
+});
+
+const FLOW_PLUGIN = path.resolve(import.meta.dirname, '..', '..', '..', '..', 'flow');
+const FLOW_OPTION_LIMIT = /^FEWEST_OPTIONS, MOST_OPTIONS = \d+, (\d+)$/m;
+
+test('GateOptionLimit_SameAsTheFlowPluginsMostOptions', () => {
+  const limit = FLOW_OPTION_LIMIT.exec(readFileSync(path.join(FLOW_PLUGIN, 'scripts', '_gates.py'), 'utf8'));
+  assert.ok(limit !== null, 'because _gates.py names its option limit MOST_OPTIONS');
+  assert.equal(Number(limit[1]), MOST_GATE_OPTIONS, 'because gate.sh raise keeps up to MOST_OPTIONS options, and the console must show a button for each one it kept');
+});
+
+const OLDER_RECORD = { gate: 'ambiguity', item: 'gh#767', message: '1. Keep it?', time: '2026-11-09T09:40:00Z', host: 'shell' };
+
+test('GateRecordFromAnOlderFlow_NoOptions', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.deepEqual(gate.options, [], 'because a record written before options existed offers none, so the card shows no buttons');
+});
+
+test('GateRecordFromAnOlderFlow_NoRaisedBy', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.raisedBy, null, 'because an older record names nobody who asked, and the card must not invent one');
+});
+
+test('GateRecordFromAnOlderFlow_NoAnsweredBy', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.answeredBy, null, 'because an older record names nobody who carries the answer, and the card must not invent one');
+});
+
+test('GateRecordFromAnOlderFlow_NoCondition', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.condition, null, 'because an older record waits on no condition, and the card must not say the health job will clear it');
+});
+
+test('GateRecordFromAnOlderFlow_NoFooter', async () => {
+  const gate = await gateWith(OLDER_RECORD);
+  assert.equal(gate.footer, null, 'because an older record carries no command, and the card must not show an empty one');
 });
