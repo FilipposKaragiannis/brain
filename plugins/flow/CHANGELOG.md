@@ -1,5 +1,49 @@
 # flow
 
+## 1.38.0 (2026-11-11)
+
+- A gate carries what the owner needs to act on it (gh#170, ADR 0003). The gate's record in the
+  flow home gains `options` (the answers the agent offers, each `{label, text, recommended}`, 1 to
+  9, at most one recommended), `raised_by` (`step <step>`, `health job`, `comments job`, `intake
+  job` or `owner`), `answered_by` (who carries the answer out), `condition` and `footer`.
+  `gate.sh list --json` appends them, with `[]` and null for a record from an older plugin.
+  Tracker state keeps `gate` and `gate_from` only, so no adapter changes. The tracker comment and
+  the notification end with the footer: who answers and the exact `gate.sh clear` command, so a
+  host with no record still knows how to answer.
+- `gate.sh raise` takes `--options <json>`, `--condition <condition>` and `--raised-by <who>`. A
+  malformed options value or a condition outside the grammar is dropped with a warning and the
+  gate still raises. A step's result file may set `options` and `condition` with status `gate`,
+  and `advance.sh` passes them on.
+- `gate.sh clear <item> --option N [note]` answers with option N's text, the note as a second
+  paragraph. It refuses, exit 2, with no record on this host, no options, N out of range, or
+  `--back` beside it. Every clear of an item takes a per-item lock, so the owner and the health
+  job never clear one gate twice.
+- A gate can wait on a condition the health job watches: `blocked_by:<item>` (that item closes),
+  `pr:#N conflicting` (the PR no longer conflicts) and `ci:down` (the item's PR has no failing
+  check). Each pass `steward.sh health` clears a gate whose condition ended with
+  `gate.sh clear <item> --met <condition>`, which carries nothing out and leaves the step as it
+  was, so the next job runs that step again with no escalation; it refuses, exit 1, when the
+  record now waits on another condition than the one health read. A tracker it cannot read keeps
+  the gate.
+  The reminder on such a gate names the condition. A `blocked_by` id must be one an adapter owns,
+  in its shape (`item_id_shaped`), at raise and again when the health job reads it.
+- Security: `adapter <op> <name>` takes an adapter name only as a folder under `adapters/`, never a
+  path, and exits 2 otherwise; before, an id no adapter owned fell through to
+  `adapters/<id>/<op>.sh`, so a crafted `blocked_by` condition or `hold.behind` could run a script
+  outside the plugin.
+- The pr step stops at an open blocker with an ambiguity gate that waits on `blocked_by:<blocker>`
+  and offers "Open it now", instead of failing until an escalation. Every fail or gate names the
+  command or tracker action that unblocks it, so the escalation quotes it. The health, comments
+  and intake jobs name themselves as the gate's raiser; the comments job's conflict gate waits on
+  `pr:#N conflicting`.
+- Picking an option on a gate that waits on `blocked_by:<blocker>` (`gate.sh clear <item>
+  --option N`, the pr step's "Open it now") waives that blocker for the item, in
+  `<flow home>/waived/<item>`: `next.sh` and the ready filter no longer hold the item behind it,
+  so the step runs while the blocker is open and carries out the answer. An answer in words
+  waives nothing. No tracker state changes (ADR 0003).
+- The board's "Waiting on you" bullets end with who raised the gate, who answers it and what it
+  waits on, when the record has them.
+
 ## 1.37.0 (2026-11-11)
 
 - The Codex model map follows the current Codex catalog (`codex debug models`, Codex CLI
