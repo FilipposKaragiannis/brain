@@ -480,6 +480,11 @@ sh "$here/base.sh" > "$work/base.out" 2>&1; code=$?
 check "base: $(tail -n 1 "$work/base.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/base.out"
 
+echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
+sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
+check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-detached.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
