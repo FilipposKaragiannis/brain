@@ -116,10 +116,10 @@ def worktree_of(item):
     worktree = item["state"].get("worktree") or "-"
     base = claimed_bases.get(item["id"], {}).get("base", "")
     return "%s, base %s" % (worktree, base) if base and base != config_base else worktree
-for i in sorted(items, key=lambda i: i.get("rank", 999)):
-    s = i["state"]
-    print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (i["id"], i["kind"], i.get("priority", ""), i.get("size") or s.get("size", ""), i["title"][:50],
-          step_of(i), gate_of(i), worktree_of(i), ", ".join(i["open_blockers"]) or "-"))
+for item in sorted(items, key=lambda item: item.get("rank", 999)):
+    state = item["state"]
+    print("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (item["id"], item["kind"], item.get("priority", ""), item.get("size") or state.get("size", ""), item["title"][:50],
+          step_of(item), gate_of(item), worktree_of(item), ", ".join(item["open_blockers"]) or "-"))
 if spend:
     print("\n## Spend (unattended step sessions)")
     print("| item | cost | sessions | tokens |")

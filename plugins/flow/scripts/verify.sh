@@ -56,8 +56,8 @@ log="$reports/verify.log"; run_out="$reports/verify.out"
 
 # next_attempt: the attempt this run is, one past the item's recorded attempts.
 next_attempt() {
-  na_data="$(adapter read "$item" 2>/dev/null)" || na_data='{}'
-  na_attempts="$(state_get "$na_data" attempts)"; printf '%s' $(( ${na_attempts:-0} + 1 ))
+  item_json="$(adapter read "$item" 2>/dev/null)" || item_json='{}'
+  recorded_attempts="$(state_get "$item_json" attempts)"; printf '%s' $(( ${recorded_attempts:-0} + 1 ))
 }
 # report_text <text>: the text as one line of printable characters with no quote or backslash,
 # cut to 400, safe inside the JSON string of a minimal report.
@@ -82,16 +82,16 @@ duration() {
 # on stderr and returns 1.
 limit_seconds() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds verify.limit "$(cfg_or verify.limit 2h)"; }
 # running_now: the check the run is on, as the log names it, or starting before the first.
-running_now() { rn_check="$(verify_running_check "$log")"; printf '%s' "${rn_check:-starting}"; }
+running_now() { current_check="$(verify_running_check "$log")"; printf '%s' "${current_check:-starting}"; }
 # unfinished_report <cause>: the fail report of a run that ended with none, naming the check the
 # log shows running and the cause, said on stdout and in the log. Exits 1.
 unfinished_report() {
-  ur_running="$(verify_running_check "$log")"; ur_check="${ur_running%%: *}"; ur_command="${ur_running#*: }"
-  if [ -n "$ur_running" ]; then ur_summary="$(report_text "$1 while $ur_check ran ($ur_command)")"
-  else ur_check=verify; ur_summary="$(report_text "$1 before the first check")"; fi
-  fail_report "$(report_text "$ur_check")" "$ur_summary" "Verify did not finish: $ur_summary."
-  printf '\nverify: %s\n' "$ur_summary" >> "$log"
-  echo "verify: fail (attempt $attempts): $ur_summary; report $reports/verify.json"
+  running_header="$(verify_running_check "$log")"; unfinished_check="${running_header%%: *}"; unfinished_command="${running_header#*: }"
+  if [ -n "$running_header" ]; then unfinished_summary="$(report_text "$1 while $unfinished_check ran ($unfinished_command)")"
+  else unfinished_check=verify; unfinished_summary="$(report_text "$1 before the first check")"; fi
+  fail_report "$(report_text "$unfinished_check")" "$unfinished_summary" "Verify did not finish: $unfinished_summary."
+  printf '\nverify: %s\n' "$unfinished_summary" >> "$log"
+  echo "verify: fail (attempt $attempts): $unfinished_summary; report $reports/verify.json"
   exit 1
 }
 
@@ -99,8 +99,8 @@ unfinished_report() {
 start_run() {
   flow_lock "verify-$(item_slug "$item")" || die "another verify start of $item holds its lock" 1
   if live="$(verify_run_live "$reports" "$item")"; then
-    sr_started="$(verify_run_field "$reports" started)"
-    echo "verify: a run of $item is already going (pid $live, $(duration $(( $(date +%s) - ${sr_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
+    live_started="$(verify_run_field "$reports" started)"
+    echo "verify: a run of $item is already going (pid $live, $(duration $(( $(date +%s) - ${live_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
     exit 0
   fi
   limit="$(limit_seconds)" || exit 2
@@ -123,8 +123,8 @@ wait_run() {
   while verify_run_live "$reports" "$item" >/dev/null; do
     now="$(date +%s)"
     if [ "$now" -ge "$deadline" ]; then
-      wr_started="$(verify_run_field "$reports" started)"; wr_limit="$(verify_run_field "$reports" limit)"
-      echo "verify: still running after $(duration $((now - ${wr_started:-$now}))) of its $(duration "${wr_limit:-0}") limit, now: $(running_now); wait again with verify.sh $item --wait"
+      run_started="$(verify_run_field "$reports" started)"; run_limit="$(verify_run_field "$reports" limit)"
+      echo "verify: still running after $(duration $((now - ${run_started:-$now}))) of its $(duration "${run_limit:-0}") limit, now: $(running_now); wait again with verify.sh $item --wait"
       exit 3
     fi
     sleep 1
@@ -142,15 +142,15 @@ wait_run() {
 # lists itself, and a lone command substitution runs it with no shell of its own in between.
 others_in_group() {
   group_others=""
-  for og_pid in $(pgrep -g "$$"); do [ "$og_pid" = "$$" ] || group_others="$group_others $og_pid"; done
+  for group_pid in $(pgrep -g "$$"); do [ "$group_pid" = "$$" ] || group_others="$group_others $group_pid"; done
 }
 # stop_group: TERM to the rest of this run's group, then KILL to what is left after the grace.
 stop_group() {
   others_in_group
   # shellcheck disable=SC2086
   [ -z "$group_others" ] || kill -s TERM $group_others 2>/dev/null
-  sg_waited=0
-  while others_in_group && [ -n "$group_others" ] && [ "$sg_waited" -lt "$VERIFY_STOP_GRACE" ]; do sleep 1; sg_waited=$((sg_waited + 1)); done
+  grace_waited=0
+  while others_in_group && [ -n "$group_others" ] && [ "$grace_waited" -lt "$VERIFY_STOP_GRACE" ]; do sleep 1; grace_waited=$((grace_waited + 1)); done
   others_in_group
   # shellcheck disable=SC2086
   [ -z "$group_others" ] || kill -s KILL $group_others 2>/dev/null

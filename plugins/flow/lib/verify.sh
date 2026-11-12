@@ -37,12 +37,12 @@ verify_run_live() {
 # process group, so its checks end too; the run writes its fail report. Waits for it up to twice the
 # grace the run gives its own checks. Returns 1 when it still runs then.
 verify_run_stop() {
-  vs_pid="$(verify_run_live "$1" "$2")" || return 0
-  kill -s TERM -- "-$vs_pid" 2>/dev/null
-  vs_waited=0
-  while process_running "$vs_pid"; do
-    [ "$vs_waited" -lt $((VERIFY_STOP_GRACE * 2)) ] || return 1
-    sleep 1; vs_waited=$((vs_waited + 1))
+  stop_pid="$(verify_run_live "$1" "$2")" || return 0
+  kill -s TERM -- "-$stop_pid" 2>/dev/null
+  stop_waited=0
+  while process_running "$stop_pid"; do
+    [ "$stop_waited" -lt $((VERIFY_STOP_GRACE * 2)) ] || return 1
+    sleep 1; stop_waited=$((stop_waited + 1))
   done
 }
 

@@ -39,13 +39,13 @@ report_status() { json_value status < "$reports/verify.json"; }
 run_pid() { sed -n 's/^pid //p' "$reports/verify.run" | head -n 1; }
 process_running() { case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) return 1 ;; esac; }
 # until_true <seconds> '<condition>': polls the condition until it holds or the seconds pass.
-until_true() { ut_end=$(( $(date +%s) + $1 )); until (eval "$2") >/dev/null 2>&1; do [ "$(date +%s)" -lt "$ut_end" ] || return 1; sleep 0.2; done; }
+until_true() { until_deadline=$(( $(date +%s) + $1 )); until (eval "$2") >/dev/null 2>&1; do [ "$(date +%s)" -lt "$until_deadline" ] || return 1; sleep 0.2; done; }
 # wait_until_ended: --wait called again and again, as the verifier does, until it stops saying 3;
 # 124 when it still says 3 after 24 calls (about 2 minutes), so a run that never ends fails the
 # check instead of hanging the suite.
 wait_until_ended() {
-  we_calls=0
-  while [ "$we_calls" -lt 24 ]; do verify --wait 5 >/dev/null 2>&1; we_code=$?; [ "$we_code" -eq 3 ] || return "$we_code"; we_calls=$((we_calls + 1)); done
+  wait_calls=0
+  while [ "$wait_calls" -lt 24 ]; do verify --wait 5 >/dev/null 2>&1; wait_code=$?; [ "$wait_code" -eq 3 ] || return "$wait_code"; wait_calls=$((wait_calls + 1)); done
   return 124
 }
 

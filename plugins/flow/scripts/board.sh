@@ -100,6 +100,6 @@ bases="$(claimed_bases | while IFS="$(printf '\t')" read -r claimed_item claimed
   json_obj "item=$claimed_item" "base=$claimed_base" "missing:=$missing"; echo
 done | python3 -I -c '
 import json, sys
-print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
+print(json.dumps([json.loads(line) for line in sys.stdin if line.strip()]))')"
 printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' "$items" "$runs" "$gates" "$tracker_errors" "$holders" "$blockers" "$bases" | \
   FLOW_CONFIG_BASE="$(cfg_or base main)" python3 -I "$FLOW_PLUGIN/scripts/_board.py" "$as_json" "$pool" "$reminder" "$home/log"
