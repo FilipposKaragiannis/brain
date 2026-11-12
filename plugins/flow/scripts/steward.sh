@@ -620,7 +620,14 @@ cmd_sweep() {
     if [ -f "$home/runs/$(item_slug "$it").json" ]; then echo "$it: kept $name, a run is in flight"; continue; fi
     if dirty "$p"; then echo "$it: kept $name, it has uncommitted changes ($why)"; continue; fi
     if [ "$dry" -eq 1 ]; then echo "$it: would release $name ($why)"; continue; fi
-    sweep_drop_gate "$it" "$gate" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" "$why"
+    # A gate that cannot go keeps the claim: the sweep only reads claimed worktrees, so the next
+    # one tries again.
+    if { drop_err="$(sweep_drop_gate "$it" "$gate" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" "$why" 2>&1 1>&3 3>&-)"; } 3>&1; then
+      [ -z "$drop_err" ] || printf '%s\n' "$drop_err" >&2
+    else
+      echo "$it: kept $name, could not drop its $gate gate ($(printf '%s\n' "${drop_err:-no reason given}" | tail -1 | sed 's/^flow: //')); the next sweep tries again"
+      continue
+    fi
     [ "$status" = closed ] || adapter close "$it" --comment "Closed by flow: $pr is merged." >/dev/null || echo "flow: could not close $it" >&2
     force=""
     [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
@@ -630,10 +637,12 @@ cmd_sweep() {
 
 # sweep_drop_gate <item> <gate> <answer> <why>: the gate of an item the sweep closes goes with it.
 # The merge gate clears with <answer>, the merge being the owner's answer; any other gate is
-# dropped (gate.sh drop, which leaves an item with no gate as it is).
+# dropped (gate.sh drop, which leaves an item with no gate as it is). Non-zero, with the reason on
+# stderr, when the gate stays.
 sweep_drop_gate() {
   if [ "$2" = merge ]; then
-    "$FLOW_PLUGIN/scripts/gate.sh" clear "$1" "$3" >/dev/null && echo "$1: cleared the merge gate"
+    "$FLOW_PLUGIN/scripts/gate.sh" clear "$1" "$3" >/dev/null || return 1
+    echo "$1: cleared the merge gate"
   else
     "$FLOW_PLUGIN/scripts/gate.sh" drop "$1" "$4"
   fi

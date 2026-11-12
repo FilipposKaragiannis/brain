@@ -2120,6 +2120,21 @@ merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
 "$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "sweep: a commit after the merge keeps the branch" sh -c "[ ! -f '$wl/.flow/claim.json' ] && git -C '$wl' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sl")"
+# A gate the sweep cannot take off (the tracker write fails; a read-only item file here) keeps the
+# claim, so the next sweep, which reads only claimed worktrees, tries again.
+for kept_gate in ambiguity merge; do
+  kept_item="$("$P/adapters/local/create.sh" task "Merged, its $kept_gate gate cannot go")"; kept_worktree="$("$P/scripts/steward.sh" claim "$kept_item")"
+  "$P/adapters/local/link-pr.sh" "$kept_item" https://gh/pull/90
+  "$P/scripts/gate.sh" raise "$kept_item" "$kept_gate" "Which row owns the retune?" >/dev/null 2>&1
+  fake_pr MERGED "$(commit_in "$kept_worktree" "kept-$kept_gate")"
+  kept_file=".flow/items/task/${kept_item##*/}.md"; chmod a-w "$kept_file"
+  "$P/scripts/steward.sh" sweep > "$work/sweep-kept.out" 2>/dev/null
+  chmod u+w "$kept_file"
+  check_all "Sweep_${kept_gate}GateDropFails_KeepsTheClaim: the sweep keeps the worktree of an item whose gate stays, so the next sweep can retry" '[ -f "$kept_worktree/.flow/claim.json" ] && grep -q "^$kept_item: kept .*could not drop its $kept_gate gate.*the next sweep tries again" "$work/sweep-kept.out" && ! grep -q "^$kept_item: released" "$work/sweep-kept.out"'
+  check_all "Sweep_${kept_gate}GateDropFails_LeavesTheItemOpenAndGated: the item the sweep could not ungate stays open, its gate listed" '[ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" != closed ] && "$P/scripts/gate.sh" list | grep -q "	$kept_item	$kept_gate	"'
+  "$P/scripts/steward.sh" sweep > "$work/sweep-kept.out" 2>/dev/null
+  check_all "Sweep_${kept_gate}GateDropRetried_ReleasesAndCloses: the next sweep takes the gate off, closes the item and releases its worktree" 'grep -q "^$kept_item: released" "$work/sweep-kept.out" && [ ! -f "$kept_worktree/.flow/claim.json" ] && [ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" = closed ] && ! "$P/scripts/gate.sh" list | grep -q "	$kept_item	"'
+done
 # A pr step whose worker cannot write the local item file (it lies outside the worker's sandbox)
 # leaves the PR unrecorded: advance records the URL the step's result names, and the sweep finds
 # a PR nobody recorded by the item's task branch.
