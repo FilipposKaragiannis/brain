@@ -24,20 +24,20 @@ process_running() {
   case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) return 1 ;; esac
 }
 
-# verify_run_live <reports>: the pid of the recorded run while it still runs, else nothing and 1.
-# The process must still be verify.sh's detached run, so a pid used again is never taken for it.
+# verify_run_live <reports> <item>: the pid of the item's recorded run while it still runs, else
+# nothing and 1. The process must still be verify.sh's detached run of that item, so neither a pid
+# used again nor the pid of another item's run is taken for it.
 verify_run_live() {
-  vl_pid="$(verify_run_field "$1" pid)"
-  case "$vl_pid" in ''|*[!0-9]*) return 1 ;; esac
-  process_running "$vl_pid" || return 1
-  case "$(ps -o command= -p "$vl_pid" 2>/dev/null)" in *verify.sh*--detached*) printf '%s' "$vl_pid" ;; *) return 1 ;; esac
+  live_pid="$(verify_run_field "$1" pid)"
+  [ -n "$live_pid" ] && process_running "$live_pid" || return 1
+  case "$(ps -o command= -p "$live_pid" 2>/dev/null)" in *"verify.sh $2 --detached"*) printf '%s' "$live_pid" ;; *) return 1 ;; esac
 }
 
-# verify_run_stop <reports>: end the recorded run when it still runs: TERM to its process group, so
-# its checks end too; the run writes its fail report. Waits for it up to twice the grace the run
-# gives its own checks. Returns 1 when it still runs then.
+# verify_run_stop <reports> <item>: end the item's recorded run when it still runs: TERM to its
+# process group, so its checks end too; the run writes its fail report. Waits for it up to twice the
+# grace the run gives its own checks. Returns 1 when it still runs then.
 verify_run_stop() {
-  vs_pid="$(verify_run_live "$1")" || return 0
+  vs_pid="$(verify_run_live "$1" "$2")" || return 0
   kill -s TERM -- "-$vs_pid" 2>/dev/null
   vs_waited=0
   while process_running "$vs_pid"; do

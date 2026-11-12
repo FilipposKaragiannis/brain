@@ -267,7 +267,7 @@ cmd_release() {
   fi
   # A detached verify run of the item (verify.sh --start) ends first: it would go on checking the
   # worktree after the reset.
-  [ -z "$item" ] || verify_run_stop "$p/.flow/reports/$(item_slug "$item")" ||
+  [ -z "$item" ] || verify_run_stop "$p/.flow/reports/$(item_slug "$item")" "$item" ||
     die "the verify run of $item in $p did not end; release again once it has" 1
   park "$p"; parked=$?
   [ "$parked" -ne 2 ] || die "cannot move $p to $(idle_branch "$p") at $(base_ref)"
@@ -1415,8 +1415,8 @@ cmd_stop() {
   # Its detached verify run (verify.sh --start) is no process under it: it ends too, and says so in
   # its fail report.
   st_verify=""; st_reports="${rn_path:+$rn_path/.flow/reports/$(item_slug "$1")}"
-  if [ -n "$st_reports" ] && st_verify="$(verify_run_live "$st_reports")"; then
-    verify_run_stop "$st_reports" || echo "$1: its verify run (process $st_verify) did not end yet" >&2
+  if [ -n "$st_reports" ] && st_verify="$(verify_run_live "$st_reports" "$1")"; then
+    verify_run_stop "$st_reports" "$1" || echo "$1: its verify run (process $st_verify) did not end yet" >&2
   fi
   rm -f "$rn_rec"
   st_said="run of ${rn_step:-?} stopped by the owner"

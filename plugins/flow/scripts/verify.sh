@@ -98,7 +98,7 @@ unfinished_report() {
 # start_run: --start. Under the item's verify lock, so two starts never run the checks twice.
 start_run() {
   flow_lock "verify-$(item_slug "$item")" || die "another verify start of $item holds its lock" 1
-  if live="$(verify_run_live "$reports")"; then
+  if live="$(verify_run_live "$reports" "$item")"; then
     sr_started="$(verify_run_field "$reports" started)"
     echo "verify: a run of $item is already going (pid $live, $(duration $(( $(date +%s) - ${sr_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
     exit 0
@@ -119,7 +119,7 @@ start_run() {
 wait_run() {
   [ -f "$(verify_run_file "$reports")" ] || die "no verify run of $item to wait for: start one with verify.sh $item --start" 2
   deadline=$(( $(date +%s) + wait_for ))
-  while verify_run_live "$reports" >/dev/null; do
+  while verify_run_live "$reports" "$item" >/dev/null; do
     now="$(date +%s)"
     if [ "$now" -ge "$deadline" ]; then
       wr_started="$(verify_run_field "$reports" started)"; wr_limit="$(verify_run_field "$reports" limit)"
