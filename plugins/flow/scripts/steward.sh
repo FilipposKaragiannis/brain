@@ -11,10 +11,9 @@
 #                                                when it is claimed, reserved, dirty or not in the
 #                                                pool. claim, sweep, health and next leave it alone
 #                                                until release frees it
-#   steward.sh release <item|path> [--force]     back to its idle branch (<base>-wt-<n>) at the base
-#                                                tip, delete the task branch, clear the claim; the
-#                                                item's detached verify run ends first; a closed
-#                                                item's reports go too
+#   steward.sh release <item|path> [--force]     end its verify run, back to its idle branch
+#                                                (<base>-wt-<n>) at the base tip, delete the task
+#                                                branch, clear the claim and a closed item's reports
 #   steward.sh reports <item>                    print (and create) the item's reports folder
 #   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
 #   steward.sh tmp remove <path>                 remove it and its branch
@@ -49,9 +48,8 @@
 #                                                (idle past jobs.health.stale_session, 24h) ends in
 #                                                the kill command. --stale lists only those
 #   steward.sh stop <item>                       end the item's run: its process, every one under it
-#                                                and its detached verify run; the record goes, so
-#                                                health does not resume it;
-#                                                the claim, the worktree and its changes stay
+#                                                and its verify run; the record goes (health does
+#                                                not resume it); the claim, worktree and changes stay
 #   steward.sh resume <item> [--host H] [--wait] [--model M] [--effort E]
 #                                                start a run whose process is gone again where it
 #                                                stopped, as health resumes one; a live run or no
@@ -262,13 +260,10 @@ cmd_release() {
   c="$(claim_of "$p")"
   item="$(json_get "$c" item)"; branch="$(json_get "$c" branch)"; base="$(json_get "$c" base)"
   [ -n "$base" ] || base="$base_branch"
+  [ -z "$item" ] || verify_run_end "$item" "$p" >/dev/null || exit 1
   if dirty "$p"; then
     die "$p has uncommitted changes. Not resetting. Commit or stash them, then release again (escalation)." 3
   fi
-  # A detached verify run of the item (verify.sh --start) ends first: it would go on checking the
-  # worktree after the reset.
-  [ -z "$item" ] || verify_run_stop "$p/.flow/reports/$(item_slug "$item")" "$item" ||
-    die "the verify run of $item in $p did not end; release again once it has" 1
   park "$p"; parked=$?
   [ "$parked" -ne 2 ] || die "cannot move $p to $(idle_branch "$p") at $(base_ref)"
   [ "$parked" -eq 0 ] || echo "flow: $(idle_branch "$p") has commits not in $(base_ref); kept, and $(basename "$p") left detached at $(base_ref)" >&2
@@ -1399,35 +1394,28 @@ run_of() {
 }
 
 # cmd_stop <item>: end the item's run: the process its record names, when it still runs the
-# unattended loop or a host session (the health job's test), and every process under it, as
-# jobs.sh stop ends a job's, and the item's detached verify run (lib/verify.sh). The record goes, so the health job does not resume the run; the claim,
-# the worktree and its commits and changes stay, and the next job may continue the item. One
-# events.log line and the item's last_event say it. Nothing in flight is said, exit 0.
+# unattended loop or a host session (the health job's test), every process under it, as jobs.sh
+# stop ends a job's, and its verify run, record or none. The record goes, so the health job does not
+# resume the run; the claim, the worktree and its changes stay, and the next job may continue the
+# item. One events.log line and the item's last_event say it. Nothing in flight is said, exit 0.
 cmd_stop() {
   item_id "$1"
-  run_of "$1" || { echo "$1: no run in flight, nothing to stop"; return 0; }
+  run_of "$1" || { stopped_verify="$(verify_run_end "$1" "$(cmd_find "$1")")"; echo "$1: no run in flight${stopped_verify:+; its verify run (process $stopped_verify) ended}, nothing ${stopped_verify:+else }to stop"; return 0; }
   run_procs
   st_live="$(hpy alive "$procs" "$1" "${rn_path:-$home}" "$rn_pid")"; run_procs_done
   st_pids=""
   [ -z "$rn_pid" ] || [ "$st_live" != "pid $rn_pid" ] || st_pids="$(echo "$rn_pid"; descendants "$rn_pid")"
   # shellcheck disable=SC2086
   [ -z "$st_pids" ] || kill -TERM $st_pids 2>/dev/null
-  # Its detached verify run (verify.sh --start) is no process under it: it ends too, and says so in
-  # its fail report.
-  st_verify=""; st_reports="${rn_path:+$rn_path/.flow/reports/$(item_slug "$1")}"
-  if [ -n "$st_reports" ] && st_verify="$(verify_run_live "$st_reports" "$1")"; then
-    verify_run_stop "$st_reports" "$1" || echo "$1: its verify run (process $st_verify) did not end yet" >&2
-  fi
+  stopped_verify="$(verify_run_end "$1" "$rn_path")"
   rm -f "$rn_rec"
   st_said="run of ${rn_step:-?} stopped by the owner"
   printf '%s\t%s\tstopped\t%s\n' "$(now_iso)" "$1" "$st_said" >> "$home/events.log"
   write_state "$1" "last_event=$(now_iso) $st_said"
   if [ -n "$st_pids" ]; then
-    echo "$1: $st_said: $(printf '%s\n' $st_pids | sort -u | wc -l | tr -d ' ') process(es) ended${st_verify:+, and its verify run}; the claim and the worktree are kept as they are"
-  elif [ -n "$st_verify" ]; then
-    echo "$1: $st_said: its verify run (process $st_verify) ended; the record is cleared, so the health job does not resume it"
+    echo "$1: $st_said: $(printf '%s\n' $st_pids | sort -u | wc -l | tr -d ' ') process(es) ended${stopped_verify:+, and its verify run}; the claim and the worktree are kept as they are"
   else
-    echo "$1: $st_said: no process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
+    echo "$1: $st_said: ${stopped_verify:+its verify run (process $stopped_verify) ended, }no ${stopped_verify:+other }process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
   fi
 }
 
@@ -1486,5 +1474,5 @@ case "$cmd" in
   stop) [ $# -ge 1 ] || die "usage: stop <item>" 2; cmd_stop "$1" ;;
   resume) [ $# -ge 1 ] || die "usage: resume <item> [--host H] [--wait] [--model M] [--effort E]" 2; cmd_resume "$@" ;;
   reports) [ $# -ge 1 ] || die "usage: reports <item>" 2; cmd_reports "$1" ;;
-  *) sed -n '2,49p' "$0"; exit 2 ;;
+  *) sed -n '2,48p' "$0"; exit 2 ;;
 esac

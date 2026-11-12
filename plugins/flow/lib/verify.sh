@@ -6,6 +6,8 @@
 
 # The seconds a stopped run gets to end before what is left of its group is killed.
 VERIFY_STOP_GRACE=10
+# The seconds release and stop wait for a run they end: the run's own grace for its checks, twice.
+VERIFY_END_WAIT=$((VERIFY_STOP_GRACE * 2))
 
 verify_run_file() { printf '%s/verify.run' "$1"; }
 
@@ -33,17 +35,20 @@ verify_run_live() {
   case "$(ps -o command= -p "$live_pid" 2>/dev/null)" in *"verify.sh $2 --detached"*) printf '%s' "$live_pid" ;; *) return 1 ;; esac
 }
 
-# verify_run_stop <reports> <item>: end the item's recorded run when it still runs: TERM to its
-# process group, so its checks end too; the run writes its fail report. Waits for it up to twice the
-# grace the run gives its own checks. Returns 1 when it still runs then.
-verify_run_stop() {
-  stop_pid="$(verify_run_live "$1" "$2")" || return 0
-  kill -s TERM -- "-$stop_pid" 2>/dev/null
-  stop_waited=0
-  while process_running "$stop_pid"; do
-    [ "$stop_waited" -lt $((VERIFY_STOP_GRACE * 2)) ] || return 1
-    sleep 1; stop_waited=$((stop_waited + 1))
+# verify_run_end <item> <worktree>: ends the item's detached run in the worktree when it still runs:
+# TERM to its process group, so its checks end too, and the run writes its fail report. Prints the
+# pid of the run it ended, nothing when none ran. When it still runs after VERIFY_END_WAIT, says so
+# on stderr and returns 1. steward.sh release and stop call it.
+verify_run_end() {
+  [ -n "$2" ] || return 0
+  ended_pid="$(verify_run_live "$(reports_dir "$1" "$2")" "$1")" || return 0
+  kill -s TERM -- "-$ended_pid" 2>/dev/null
+  end_waited=0
+  while process_running "$ended_pid"; do
+    [ "$end_waited" -lt "$VERIFY_END_WAIT" ] || { echo "flow: the verify run of $1 (process $ended_pid) did not end yet; try again once it has" >&2; return 1; }
+    sleep 1; end_waited=$((end_waited + 1))
   done
+  printf '%s' "$ended_pid"
 }
 
 # verify_running_check <log>: the check the log shows running last, as its header says it
