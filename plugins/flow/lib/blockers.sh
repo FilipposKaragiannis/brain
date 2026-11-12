@@ -1,6 +1,7 @@
-# The native blockers of an item (blocked_by on the tracker) and the note a claimed item keeps
-# while it waits on them. Sourced after lib/flow.sh by scripts/next.sh. An owner may block an item
-# after its claim, so a blocker holds the item at every step, claimed or not.
+# The native blockers of an item (blocked_by on the tracker), the ones the owner chose not to wait
+# for, and the note a claimed item keeps while it waits on them. Sourced after lib/flow.sh by
+# scripts/next.sh and scripts/gate.sh. An owner may block an item after its claim, so a blocker
+# holds the item at every step, claimed or not, unless the owner waived it.
 
 # comma_list: the lines on stdin as one line, ", " between them.
 comma_list() { paste -sd, - | sed 's/,/, /g'; }
@@ -15,14 +16,31 @@ adapter_open_blockers() {
   done
 }
 
-# open_blockers <item-json>: the item's open blockers, comma-separated. A tracker that keeps its own
-# list (open_blockers) saves a read per blocker.
+# waived_file <item>: the blockers the owner chose not to wait for on <item>, one id per line, in
+# the flow home beside the gate records: an option picked on a gate that waits on
+# blocked_by:<blocker> (gate.sh clear --option) writes it there, on the host whose record offered
+# the option. _filter_ready.py reads the same file.
+waived_file() { printf '%s/waived/%s' "$(flow_home)" "$(item_slug "$1")"; }
+
+# waive_blocker <item> <blocker>: <item> no longer waits on <blocker>, at any step.
+waive_blocker() {
+  mkdir -p "$(dirname "$(waived_file "$1")")"
+  grep -qxF "$2" "$(waived_file "$1")" 2>/dev/null || printf '%s\n' "$2" >> "$(waived_file "$1")"
+}
+
+# unwaived <item>: the blocker ids on stdin, less those the owner waived on <item>.
+unwaived() {
+  if [ -s "$(waived_file "$1")" ]; then grep -vxF -f "$(waived_file "$1")" || true; else cat; fi
+}
+
+# open_blockers <item-json>: the item's open blockers the owner did not waive, comma-separated. A
+# tracker that keeps its own list (open_blockers) saves a read per blocker.
 open_blockers() {
   if [ -n "$(json_get "$1" open_blockers)" ]; then
-    json_list "$1" open_blockers | comma_list
+    json_list "$1" open_blockers | unwaived "$(json_get "$1" id)" | comma_list
     return
   fi
-  adapter_open_blockers "$1" | comma_list
+  adapter_open_blockers "$1" | unwaived "$(json_get "$1" id)" | comma_list
 }
 
 # wait_note <item> <blockers>: blocked.md in the reports of a claimed item that waits, so the step

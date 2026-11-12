@@ -3,7 +3,8 @@
 # throwaway repos. next.sh passes the item over with no run, named or in a pick, at any step; the
 # board lists it with its worktree and its open blockers; once the last blocker closes, the item
 # starts at its own step with a brief that names the blocker and the base to merge; the next job
-# run behind an open blocker counts no attempt and raises no gate.
+# run behind an open blocker counts no attempt and raises no gate; an option the owner picks on a
+# gate that waits on blocked_by:<blocker> waives that blocker, in next.sh and the ready filter.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -144,6 +145,44 @@ for at in pr verify; do
   check "NextJobOnItemBlockedAt${at}OneFailureShortOfEscalation_KeepsItsAttemptCount: three job runs at $at behind an open blocker count no attempt" \
     '[ "$("$L/read.sh" "$edge" | jget state.attempts)" = "$((max - 1))" ]'
 done
+
+echo "blockers: the owner's pick on a blocked_by gate waives that blocker"
+new_repo waives 5
+open_now='[{"label": "Open it now", "text": "Open the PR now on main; do not wait.", "recommended": false}]'
+# gated_at_pr <title> <blocker...>: a claimed item at pr, blocked, at the pr step's ambiguity gate
+# that waits on its first blocker and offers "Open it now".
+gated_at_pr() {
+  gated="$(claimed_at "$@")"
+  "$P/scripts/gate.sh" raise "$gated" ambiguity "**$3 is still open: wait for it, or open the PR now?**" pr \
+    --condition "blocked_by:$3" --options "$open_now" >/dev/null 2>&1
+  echo "$gated"
+}
+fix="$(new_task "Bot test fix")"
+picked="$(gated_at_pr "Docs opened now" pr "$fix")"
+"$P/scripts/gate.sh" clear "$picked" --option 1 >/dev/null 2>&1
+"$P/scripts/next.sh" "$picked" --json >/dev/null 2>"$work/picked.err"; code=$?
+check "OpenItNowPicked_NamedRunStartsThePrStep: after the owner picks Open it now, next.sh runs the pr step though the blocker is still open" \
+  '[ "$code" -eq 0 ] && [ "$(jget step < "$(run_file "$picked")")" = pr ]'
+check "OpenItNowPicked_BriefCarriesTheAnswer: the pr step's brief carries the option's text, so the skill opens the PR" \
+  'grep -qF "Open the PR now on main; do not wait." "$(jget reports < "$(run_file "$picked")")/brief-pr.md"'
+rm -f "$(run_file "$picked")"
+"$L/list-ready.sh" > "$work/ready.json"
+check "OpenItNowPicked_ReadyFilterKeepsTheItem: the ready filter no longer holds the item behind the blocker the owner waived" \
+  'python3 -c "import json,sys; assert sys.argv[2] in [i[\"id\"] for i in json.load(open(sys.argv[1]))]" "$work/ready.json" "$picked"'
+worded="$(gated_at_pr "Docs answered in words" pr "$fix")"
+"$P/scripts/gate.sh" clear "$worded" "Fine." >/dev/null 2>&1
+"$P/scripts/next.sh" "$worded" >/dev/null 2>"$work/worded.err"; code=$?
+check "AnsweredInWordsOnABlockedByGate_ItemStillWaits: an answer in words waives nothing, so next.sh still holds the item behind its blocker" \
+  '[ "$code" -eq 4 ] && [ ! -f "$(run_file "$worded")" ] && grep -qF "held behind $fix (blocked by)" "$work/worded.err"'
+other="$(new_task "Other fix")"
+two="$(gated_at_pr "Docs behind two fixes, one waived" pr "$fix" "$other")"
+"$P/scripts/gate.sh" clear "$two" --option 1 >/dev/null 2>&1
+"$P/scripts/next.sh" "$two" >/dev/null 2>"$work/two.err"; code=$?
+check "OneOfTwoBlockersWaived_HeldBehindTheOther: the pick waives only the blocker the gate waited on, so the other still holds the item" \
+  '[ "$code" -eq 4 ] && grep -qF "held behind $other (blocked by)" "$work/two.err"'
+"$L/list-ready.sh" > "$work/ready.two.json"
+check "OneOfTwoBlockersWaived_ReadyFilterHoldsTheItem: the ready filter holds the item behind the blocker the owner did not waive" \
+  'python3 -c "import json,sys; assert sys.argv[2] not in [i[\"id\"] for i in json.load(open(sys.argv[1]))]" "$work/ready.two.json" "$two"'
 
 [ "$fails" -eq 0 ] && { echo "blockers: ok"; exit 0; }
 echo "blockers: $fails failed"; exit 1

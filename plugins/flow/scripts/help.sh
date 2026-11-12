@@ -45,8 +45,11 @@ def gates():
            "ambiguity": "an agent needs a decision; give it"}
     for g, v in profiles["gates"].items():
         print("- **%s** (raised by %s): %s. Answer: `flow:gate <item> \"<answer>\"`." % (g, v["raised_by"], ask.get(g, v["says"])))
+    print("\nPick an option instead: a gate raised with options shows them as buttons in the console; `gate.sh clear <item> --option <n> [\"<note>\"]` sends option n's text as your answer, the note under it. The options live on the host that raised the gate; elsewhere, answer in words.")
     print("\nSend the work back instead: `gate.sh clear <item> --back \"<what to change>\"` runs the gate's step again with your note (interview, decomposition, plan-approval, feel-test).")
-    print("\nConfig can clear `plan-approval` itself by item size (`auto_gates` in `.flow/config.yaml`). Nothing else is auto.")
+    print("\nRaised by, answered by: each gate names who raised it (a step, the health, comments or intake job, or you) and who carries your answer out (a step, the comments job on its next pass, the sweep once the PR merges, or nobody: you do it by hand, then clear it with no answer). The tracker comment ends with that line and the exact `gate.sh clear` command.")
+    print("\nConditions: a gate that only waits on something the health job can watch (`blocked_by:<item>`, the blocker closes; `pr:#N conflicting`, the PR stops conflicting; `ci:down`, no check fails) clears itself once it ends, and the flow goes on. On a `blocked_by` gate, pick its option (`--option <n>`) if you would rather not wait: that waives the blocker for the item; an answer in words leaves the item waiting for it.")
+    print("\nConfig can clear `plan-approval` itself by item size (`auto_gates` in `.flow/config.yaml`). Nothing else is auto, apart from the conditions above.")
 def one(name):
     s = next((x for x in skills if x["name"] == name), None)
     if not s:

@@ -1,9 +1,12 @@
 #!/bin/sh
-# notify.sh <gate> <item> <message>: one notification per human gate, on both hosts and from any
-# shell. Desktop (osascript on macOS, notify-send elsewhere) unless notify.desktop is false; Slack
-# through the incoming webhook in the FLOW_SLACK_WEBHOOK environment variable (so the URL stays out
-# of the repository), else notify.slack_webhook in the config; and always a record in
-# <flow home>/gates/<item>.json plus a line in <flow home>/events.log, which the board reads.
+# notify.sh <gate> <item> <message> [key:=json ...]: one notification per human gate, on both hosts
+# and from any shell. The trailing pairs (json_obj's key=text works too) go into the gate record
+# beside gate, item, message, time and host; a footer among them follows the message, after a
+# blank line, in the notification, never in the record's message. Desktop (osascript on macOS,
+# notify-send elsewhere) unless notify.desktop is false; Slack through the incoming webhook in the
+# FLOW_SLACK_WEBHOOK environment variable (so the URL stays out of the repository), else
+# notify.slack_webhook in the config; and always a record in <flow home>/gates/<item>.json plus a
+# line in <flow home>/events.log, which the board reads.
 # The events: idle (the next job found nothing ready; notify.idle) and health (the health job found
 # something: a gate waiting past its reminder, a diverged branch, a full pool; notify.health, on
 # unless set to false) and review-stalled (a reviewer stayed silent through every chase). A gate names the item by its
@@ -20,12 +23,19 @@ if [ "${1:-}" = "--event" ]; then
   message="$1"
   mkdir -p "$home"
   [ "$logged" -eq 0 ] || printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "-" "$name" "$(printf '%s' "$message" | tr '\n' ' ')" >> "$home/events.log"
-  title="flow: $name"; subtitle=""; link=""
+  title="flow: $name"; subtitle=""; link=""; body="$message"
 else
-  [ $# -ge 3 ] || die "usage: notify.sh <gate> <item> <message> | --event <name> <message>" 2
-  gate="$1"; item="$2"; message="$3"
+  [ $# -ge 3 ] || die "usage: notify.sh <gate> <item> <message> [key:=json ...] | --event <name> <message>" 2
+  gate="$1"; item="$2"; message="$3"; shift 3
+  gate_record() { json_obj "gate=$gate" "item=$item" "message=$message" "time=$(now_iso)" "host=$(host_name)" "$@"; }
+  record="$(gate_record "$@")"
+  [ -n "$(json_get "$record" gate)" ] || { echo "flow: a gate record field for $item is not JSON; recorded without the extra fields" >&2; record="$(gate_record)"; }
+  footer="$(json_get "$record" footer)"; body="$message"
+  [ -z "$footer" ] || body="$message
+
+$footer"
   mkdir -p "$home/gates"
-  json_obj "gate=$gate" "item=$item" "message=$message" "time=$(now_iso)" "host=$(host_name)" > "$home/gates/$(item_slug "$item").json"
+  printf '%s' "$record" > "$home/gates/$(item_slug "$item").json"
   printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$item" "$gate" "$(printf '%s' "$message" | tr '\n' ' ')" >> "$home/events.log"
   title="flow: $gate on $item"
   read_item="$(adapter read "$item" 2>/dev/null)" || read_item=""
@@ -34,14 +44,14 @@ else
 fi
 if [ "$(cfg notify.desktop)" != "false" ]; then
   if command -v osascript >/dev/null 2>&1; then
-    osascript -e "display notification \"$(printf '%s' "$message" | head -c 200 | tr '"' "'")\" with title \"$title\" subtitle \"$(printf '%s' "$subtitle" | tr '"' "'")\"" >/dev/null 2>&1 || true
+    osascript -e "display notification \"$(printf '%s' "$body" | head -c 200 | tr '"' "'")\" with title \"$title\" subtitle \"$(printf '%s' "$subtitle" | tr '"' "'")\"" >/dev/null 2>&1 || true
   elif command -v notify-send >/dev/null 2>&1; then
-    notify-send "$title" "$(printf '%s' "$message" | head -c 200)" >/dev/null 2>&1 || true
+    notify-send "$title" "$(printf '%s' "$body" | head -c 200)" >/dev/null 2>&1 || true
   fi
 fi
 hook="${FLOW_SLACK_WEBHOOK:-$(cfg notify.slack_webhook)}"
 if [ -n "$hook" ] && command -v curl >/dev/null 2>&1; then
-  payload="$(python3 -I "$FLOW_PLUGIN/scripts/_slack.py" "$title" "$link" "${url:-}" "${gate:-}" "${item:-}" "$message")"
+  payload="$(python3 -I "$FLOW_PLUGIN/scripts/_slack.py" "$title" "$link" "${url:-}" "${gate:-}" "${item:-}" "$body")"
   curl -s -S -m 10 -X POST -H 'Content-type: application/json' --data "$payload" "$hook" >/dev/null 2>&1 || echo "flow: Slack notification failed" >&2
 fi
 echo "notified: $title"

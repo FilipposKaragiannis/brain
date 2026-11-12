@@ -37,8 +37,9 @@
 #   steward.sh health [--dry-run] [--host H] [--wait] [--model M] [--effort E]
 #                                                check every claim: clear a dead run, release an
 #                                                empty claim, finish a split, resume cut-off work,
-#                                                sync branches, remind on old gates, clear stale
-#                                                or wrong holds and name old ones, say when the
+#                                                sync branches, remind on old gates, clear a gate
+#                                                whose condition ended, clear stale or wrong
+#                                                holds and name old ones, say when the
 #                                                pool is stuck, discard a free worktree's changes
 #                                                the base's history already holds
 #   steward.sh sessions [--stale]                list the claude and codex sessions working in the
@@ -786,7 +787,7 @@ health_resume() {
   if [ "$hr_n" -ge "$max_resumes" ]; then
     if [ "$dry" -eq 1 ]; then health_say "$hr_item" "would raise an escalation gate: the run of $hr_step died $hr_n times in a row"; return 0; fi
     health_say "$hr_item" "the run of $hr_step died $hr_n times in a row without the step advancing; escalation gate raised"
-    "$FLOW_PLUGIN/scripts/gate.sh" raise "$hr_item" escalation "The run of step $hr_step died $hr_n times in a row, and the health job resumed it each time without the step advancing. $(basename "$hr_path") keeps its commits and uncommitted changes untouched. Read $home/log, then clear the gate to let the flow try again." >/dev/null 2>&1 || true
+    "$FLOW_PLUGIN/scripts/gate.sh" raise "$hr_item" escalation "The run of step $hr_step died $hr_n times in a row, and the health job resumed it each time without the step advancing. $(basename "$hr_path") keeps its commits and uncommitted changes untouched. Read $home/log, then clear the gate to let the flow try again." --raised-by "health job" >/dev/null 2>&1 || true
     rm -f "$hr_file"; health_gate=escalation
     return 0
   fi
@@ -998,7 +999,69 @@ health_empty() {
   flow_unlock
 }
 
-# health_gates: a gate pending longer than gate_reminder says so once per interval.
+# blocked_by_met <id>: 0 when the tracker reads <id> closed, as next.sh reads a holder; 1 while
+# it is open; 2 when it cannot be read.
+blocked_by_met() {
+  blocker_item="$(adapter read "$1" 2>/dev/null)" || return 2
+  case "$(json_get "$blocker_item" status)" in closed) return 0 ;; open) return 1 ;; *) return 2 ;; esac
+}
+
+# pr_conflict_met <pr:#n conflicting>: 0 when GitHub says the PR is MERGEABLE; 1 while it
+# conflicts or GitHub has not decided (UNKNOWN); 2 when it cannot be read.
+pr_conflict_met() {
+  condition_pr="${1#pr:}"
+  condition_state="$("$FLOW_PLUGIN/scripts/comments.sh" state "${condition_pr% conflicting}" 2>/dev/null)" || return 2
+  case "$(json_get "$condition_state" mergeable)" in MERGEABLE) return 0 ;; CONFLICTING|UNKNOWN) return 1 ;; *) return 2 ;; esac
+}
+
+# ci_down_met <item>: 0 when no check fails on the item's PR (comments.sh failing-checks); 1 while
+# one does; 2 when the item, its PR or its checks cannot be read.
+ci_down_met() {
+  gated_item="$(adapter read "$1" 2>/dev/null)" || return 2
+  condition_pr="$(state_get "$gated_item" pr)"; [ -n "$condition_pr" ] || return 2
+  condition_failing="$("$FLOW_PLUGIN/scripts/comments.sh" failing-checks "$condition_pr" 2>/dev/null)" || return 2
+  [ -z "$condition_failing" ] || return 1
+}
+
+# condition_met <item> <condition>: 0 when the condition a gate waits on no longer holds, 1 while
+# it holds, 2 when it cannot be read (tracker or GitHub down, no PR, a condition outside the
+# grammar, checked again here as at raise: a record on disk is not trusted to name an id).
+# Only 0 clears a gate: a gate never clears on a read that failed.
+condition_met() {
+  condition_in_grammar "$2" || return 2
+  case "$2" in
+    blocked_by:*) blocked_by_met "${2#blocked_by:}" ;;
+    "pr:#"*" conflicting") pr_conflict_met "$2" ;;
+    ci:down) ci_down_met "$1" ;;
+    *) return 2 ;;
+  esac
+}
+
+# health_condition_gate <gate record file>: the gate clears here once condition_met reads the
+# condition it was raised with ended; a gate without a condition is left to the owner.
+health_condition_gate() {
+  gate_record="$(cat "$1")"; gate_condition="$(json_get "$gate_record" condition)"
+  [ -n "$gate_condition" ] || return 0
+  gate_item="$(json_get "$gate_record" item)"; gate_name="$(json_get "$gate_record" gate)"
+  condition_met "$gate_item" "$gate_condition" || return 0
+  if [ "$dry" -eq 1 ]; then health_say "$gate_item" "would clear the $gate_name gate: $gate_condition no longer holds"
+  elif "$FLOW_PLUGIN/scripts/gate.sh" clear "$gate_item" --met "$gate_condition" >/dev/null 2>&1; then
+    health_say "$gate_item" "cleared the $gate_name gate: $gate_condition no longer holds"
+  else health_say "$gate_item" "could not clear the $gate_name gate, though $gate_condition no longer holds; the next health run tries again"; fi
+}
+
+# health_conditions: a gate raised with a condition (gate.sh raise --condition) waits on that
+# alone (health_condition_gate). Run before the pool loop, so the claims it frees count as no
+# longer at a gate in this pass.
+health_conditions() {
+  for gate_file in "$home"/gates/*.json; do
+    [ -f "$gate_file" ] || continue
+    health_condition_gate "$gate_file"
+  done
+}
+
+# health_gates: a gate pending longer than gate_reminder says so once per interval. A gate with a
+# condition says what it waits on: the health job clears it when that ends.
 health_gates() {
   for f in "$home"/gates/*.json; do
     [ -f "$f" ] || continue
@@ -1010,7 +1073,8 @@ health_gates() {
     rf="$home/health/$(item_slug "$gi").remind"; sent=0; sent_gate=""
     [ -f "$rf" ] && read -r sent_gate sent < "$rf"
     [ "$sent_gate" = "$gt" ] && [ $((now - sent)) -lt "$reminder" ] && continue
-    msg="waiting $(health_ago "$since" | sed 's/ ago$//') at the $gt gate: $(json_get "$g" message | head -1)"
+    waiting_condition="$(json_get "$g" condition)"
+    msg="waiting $(health_ago "$since" | sed 's/ ago$//') at the $gt gate${waiting_condition:+ (waits on $waiting_condition; the health job clears it when that ends)}: $(json_get "$g" message | head -1)"
     health_say "$gi" "$msg"
     health_notify "$gi $msg. Answer with: flow:gate $gi \"<answer>\""
     [ "$dry" -eq 1 ] || printf '%s %s\n' "$gt" "$now" > "$rf"
@@ -1263,6 +1327,7 @@ cmd_health() {
     if [ "$dry" -eq 1 ] || git -C "$main" fetch -q --prune origin >/dev/null 2>&1; then have_remote=1; health_cleared fetch
     else health_changed fetch failed && health_say pool "git fetch origin failed; branches are not synced this run"; fi
   fi
+  health_conditions
   for p in $(pool_paths); do
     if [ ! -d "$p" ]; then health_missing "$p"; claimable=$((claimable + 1)); continue; fi
     health_cleared "missing-$(basename "$p")"

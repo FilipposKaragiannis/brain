@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, QUIZ_SINCE, REVIEW_ASK, SYNC_SCRIPT, sweepNote } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
+import { MOST_GATE_OPTIONS } from '../src/snapshot.ts';
 
 const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 
@@ -838,4 +839,29 @@ test('SessionStop_BadPidOrStart_Refused', () => {
 test('SessionStop_NoProcessReader_Refused', () => {
   const { readSession: _reader, ...unread } = STOPPABLE;
   assert.match(refusal(planAction('session.stop', stopAsked, unread)), /cannot check the pid before stopping it/, 'because a pid that cannot be checked again is never signalled');
+});
+
+test('GateClear_WithOption_PassesTheOptionFlagAndNumber', () => {
+  const plan = planned('gate.clear', { item: 'gh#755', option: '2' });
+  assert.deepEqual(plan.args.slice(1), ['clear', 'gh#755', '--option', '2'], "because gate.sh clear --option N sends option N's own text, never a retyped sentence");
+});
+
+test('GateClear_OptionAtTheLimit_Accepted', () => {
+  const lastOption = String(MOST_GATE_OPTIONS);
+  const plan = planned('gate.clear', { item: 'gh#755', option: lastOption });
+  assert.deepEqual(plan.args.slice(1), ['clear', 'gh#755', '--option', lastOption], 'because a gate may carry as many options as the limit, and its last button must clear it');
+});
+
+test('GateClear_OptionWithANote_NoteAfterTheNumber', () => {
+  const plan = planned('gate.clear', { item: 'gh#755', option: '1', message: 'Mark the old name deprecated.' });
+  assert.deepEqual(plan.args.slice(1), ['clear', 'gh#755', '--option', '1', 'Mark the old name deprecated.'], 'because gate.sh reads the note after the option number as a second paragraph');
+});
+
+test('GateClear_OptionNotOneToNine_Rejected', () => {
+  for (const option of ['0', '10', 'two', '1.5', '-1', ''])
+    assert.equal(planAction('gate.clear', { item: 'gh#755', option }, CONTEXT).ok, false, `because "${option}" is not an option number gate.sh clear --option takes (1 to 9)`);
+});
+
+test('GateClear_OptionWithBack_Rejected', () => {
+  assert.equal(planAction('gate.clear', { item: 'gh#755', option: '1', message: 'redo it', back: 'true' }, CONTEXT).ok, false, 'because picking an answer and sending the work back are two different clears');
 });

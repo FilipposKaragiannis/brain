@@ -1,5 +1,19 @@
 # flow
 
+## 1.37.0 (2026-11-11)
+
+- The Codex model map follows the current Codex catalog (`codex debug models`, Codex CLI
+  0.166.0): opus runs as `gpt-6.1-sol`, the current workhorse, and sonnet as `gpt-6.1-terra`, the
+  balanced tier below it; fable stays `gpt-6-astra` and haiku `gpt-6-luna`. `gpt-6-sol` is the
+  previous generation. `host_codex_model`, the roster's Codex agents and the init example change
+  with it. A `jobs.codex.model` set by hand is passed on as is, as before.
+- A session that fails because its host does not know the model stops the host, as a spend limit
+  or an auth error does: `_host.py` reads claude's `unrecognized_model` ("There's an issue with
+  the selected model") and Codex's `model_not_found` as the cause `model`. The unattended loop
+  raises one escalation gate that names the model and the fix, and no session starts on that host
+  until it clears. Before, each item on a bad model spent its attempts and raised its own gate
+  (gh#169 made those failures count).
+
 ## 1.36.0 (2026-11-10)
 
 - A claimed item waits at every step while a native blocker is open (gh#168). An owner can block

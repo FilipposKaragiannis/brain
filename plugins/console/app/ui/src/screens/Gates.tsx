@@ -4,8 +4,8 @@ import { ExternalLink, trackerUrl } from '../links.tsx';
 import { Age, formatDuration } from '../clock.tsx';
 import { gateKey, useGateAnswers } from '../gateAnswers.tsx';
 import type { Answered, Decision, Draft, Said, Step } from '../gateAnswers.tsx';
-import { choiceAnswers, composeGateMessage, gateAsk, gateBrief, initialChoices, verdictMessage } from '../gateAnswer.ts';
-import type { GateChoice, Verdict } from '../gateAnswer.ts';
+import { choiceAnswers, composeGateMessage, gateAsk, gateBrief, initialChoices, ownGates, verdictMessage } from '../gateAnswer.ts';
+import type { GateChoice, OwnGate, Verdict } from '../gateAnswer.ts';
 import { AskReview } from '../askReview.tsx';
 import { Markdown } from '../Markdown.tsx';
 import { QuizPanel } from '../Quiz.tsx';
@@ -14,6 +14,8 @@ import type { ActionRecord } from '../actions.ts';
 import { pullTone } from '../status.ts';
 import { GATE_KINDS } from '../words.ts';
 import { ActionButton, Chip, Dot, Empty, useActionsView } from '../ui.tsx';
+import { OptionsForm } from './GateOptions.tsx';
+import { GateFooter, GateRoles, TwinNote, twinCount } from './GateRoles.tsx';
 
 /** How a gate is answered: a verdict on a plan or a spec, a verdict on a build, answers to questions, or a merge. */
 type GateForm = 'approval' | 'feel' | 'answers' | 'merge';
@@ -56,25 +58,27 @@ const SHORT_SUMMARY_CHARS = 600;
 export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: string | null }) {
   const { answered, drafts, answer, retry } = useGateAnswers();
   const isAnswered = (gate: Gate): boolean => answered[gate.item]?.gate.raisedAt === gate.raisedAt;
-  const waiting = [...snapshot.gates].filter((gate) => !isAnswered(gate)).sort((left, right) => right.ageSeconds - left.ageSeconds);
-  const done = Object.values(answered).filter((entry) => !waiting.some((gate) => gate.item === entry.gate.item)).sort((left, right) => right.at.getTime() - left.at.getTime());
+  const unanswered = snapshot.gates.filter((gate) => !isAnswered(gate));
+  const waiting = ownGates(unanswered).sort((left, right) => right.gate.ageSeconds - left.gate.ageSeconds);
+  const done = Object.values(answered).filter((entry) => !unanswered.some((gate) => gate.item === entry.gate.item)).sort((left, right) => right.at.getTime() - left.at.getTime());
   const toClose = snapshot.toClose;
   const labelGates = snapshot.labelGates;
-  const pick = selected ?? waiting[0]?.item ?? toClose[0]?.item ?? labelGates[0]?.item ?? done[0]?.gate.item ?? null;
-  const current = waiting.find((gate) => gate.item === pick);
+  const pick = selected ?? waiting[0]?.gate.item ?? toClose[0]?.item ?? labelGates[0]?.item ?? done[0]?.gate.item ?? null;
+  const answersItem = (row: OwnGate): boolean => row.gate.item === pick || row.twins.some((twin) => twin.item === pick);
+  const current = waiting.find(answersItem);
   // An item to close now outranks an answer this console still holds for it: a split's
   // decomposition gate answered here is followed, once its children close, by its close card.
   const closing = current === undefined ? toClose.find((entry) => entry.item === pick) : undefined;
   const labelled = current === undefined && closing === undefined ? labelGates.find((entry) => entry.item === pick) : undefined;
   const answeredCurrent = current === undefined && closing === undefined && labelled === undefined ? done.find((entry) => entry.gate.item === pick) : undefined;
-  const nextGate = waiting.find((gate) => gate.item !== pick) ?? null;
+  const nextGate = waiting.find((row) => row !== current && row.gate.item !== pick)?.gate ?? null;
 
   return (
     <div className="screen">
       <div className="gates">
         <section className="gate-picks" aria-label="Waiting gates">
           {waiting.length === 0 && <div className="gate-panel"><Empty>No gate waits on you.</Empty></div>}
-          {waiting.map((gate) => <GatePick key={gate.item} gate={gate} snapshot={snapshot} selected={gate.item === pick} />)}
+          {waiting.map((row) => <GatePick key={row.gate.item} row={row} snapshot={snapshot} selected={row === current} />)}
           {toClose.length > 0 && (
             <div className="gate-panel close-list" aria-label="Ready to close">
               <h3>Ready to close <span className="muted">{toClose.length}</span></h3>
@@ -92,10 +96,12 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
           <AnsweredToday snapshot={snapshot} done={done} pick={pick} />
         </section>
         {current !== undefined && (
-          <DecisionCard key={gateKey(current)} gate={current} snapshot={snapshot} draft={drafts[gateKey(current)] ?? null}
-            onAnswer={(decision, draft) => answer(current, decision, draft)} />
+          <DecisionCard key={gateKey(current.gate)} gate={current.gate} twins={current.twins} snapshot={snapshot} draft={drafts[gateKey(current.gate)] ?? null}
+            onAnswer={(decision, draft) => answer(current.gate, current.twins, decision, draft)} />
         )}
-        {answeredCurrent !== undefined && <AnsweredCard entry={answeredCurrent} snapshot={snapshot} nextGate={nextGate} onRetry={() => retry(answeredCurrent)} />}
+        {answeredCurrent !== undefined && (
+          <AnsweredCard entry={answeredCurrent} twins={answeredWith(answeredCurrent, Object.values(answered))} snapshot={snapshot} nextGate={nextGate} onRetry={() => retry(answeredCurrent)} />
+        )}
         {closing !== undefined && <CloseCard entry={closing} snapshot={snapshot} />}
         {labelled !== undefined && <LabelGateCard entry={labelled} snapshot={snapshot} />}
         {current === undefined && answeredCurrent === undefined && closing === undefined && labelled === undefined && pick !== null && (
@@ -106,6 +112,11 @@ export function Gates({ snapshot, selected }: { snapshot: Snapshot; selected: st
       </div>
     </div>
   );
+}
+
+/** The twins answered in the same go as a gate, each with its own clear. */
+function answeredWith(entry: Answered, all: Answered[]): Answered[] {
+  return all.filter((other) => other.gate.twinOf === entry.gate.item && other.at.getTime() === entry.at.getTime());
 }
 
 /** A row of the answered list: when, which gate, and what was said; `local` rows open their answered card. */
@@ -147,7 +158,7 @@ function AnsweredToday({ snapshot, done, pick }: { snapshot: Snapshot; done: Ans
 
 /** What the Gates screen lists: the gates, the items to close and the label-only gates, the same set the Overview's needs-you count counts. */
 export function waitingOnYou(snapshot: Snapshot): number {
-  return snapshot.gates.length + snapshot.toClose.length + snapshot.labelGates.length;
+  return ownGates(snapshot.gates).length + snapshot.toClose.length + snapshot.labelGates.length;
 }
 
 /** The count and the line beside the page title on the Gates screen. */
@@ -173,15 +184,18 @@ function worktreeName(path: string | null): string | null {
   return path.split('/').filter((part) => part !== '').at(-1) ?? path;
 }
 
-/** One waiting gate in the list: its kind, item, age, title, worktree and step, and an age bar. */
-function GatePick({ gate, snapshot, selected }: { gate: Gate; snapshot: Snapshot; selected: boolean }) {
+/** One waiting gate in the list: its kind, item, age, title, worktree and step, and an age bar; a twin row says how many items it answers. */
+function GatePick({ row, snapshot, selected }: { row: OwnGate; snapshot: Snapshot; selected: boolean }) {
+  const gate = row.gate;
   const item = snapshot.items.find((entry) => entry.id === gate.item);
   const { tone, percent } = lateness(gate);
+  const twins = twinCount(row.twins);
   return (
     <a className={selected ? 'gate-pick selected' : 'gate-pick'} href={routeHash({ projectId: snapshot.project.id, screen: 'gates', detail: gate.item })} aria-current={selected ? 'true' : undefined}>
       <span className="gate-pick-line">
         <Chip tone="needs-you">{gate.gate}</Chip>
         <span className="mono muted">{gate.item}</span>
+        {twins !== null && <span className="gate-twins">{twins}</span>}
         <span className={`gate-age ${tone}`}><Age seconds={gate.ageSeconds} takenAt={snapshot.takenAt} /></span>
       </span>
       <span className="gate-pick-title">{item?.title ?? gate.item}</span>
@@ -343,16 +357,22 @@ function DecisionHead({ gate, snapshot, answered, summary }: { gate: Gate; snaps
       </div>
       <h2>{item?.title ?? gate.item}</h2>
       <div className="facts">{facts.map((fact) => <span key={fact} className={gate.overdue && fact === waitingFact ? 'fact overdue' : 'fact'}>{fact}</span>)}</div>
+      <GateRoles gate={gate} />
       {summary !== null && <Markdown className="decision-summary" text={summary} />}
     </div>
   );
 }
 
+/** The props of a decision card: the gate, the twins its answer also clears, and what the owner had typed. */
+type DecisionCardProps = { gate: Gate; twins: Gate[]; snapshot: Snapshot; draft: Draft | null; onAnswer: (decision: Decision, draft: Draft) => void };
+
 /** One gate as a decision: what it is about, and the answers that fit this kind of gate. */
-export function DecisionCard({ gate, snapshot, draft, onAnswer }: { gate: Gate; snapshot: Snapshot; draft: Draft | null; onAnswer: (decision: Decision, draft: Draft) => void }) {
+export function DecisionCard({ gate, twins, snapshot, draft, onAnswer }: DecisionCardProps) {
   const form = formOf(gate);
-  // Only an answers form asks the numbered questions; a verdict or a merge keeps them in the summary.
-  const { brief, numbered } = form === 'answers' ? gateBrief(gate.message) : { brief: gate.message.trim(), numbered: false };
+  // Options show on any gate raised with them: the footer steps aside for them, so hiding them leaves no way to answer.
+  const choosing = gate.options.length > 0;
+  const asksNumberedQuestions = form === 'answers' && !choosing;
+  const { brief, numbered } = asksNumberedQuestions ? gateBrief(gate.message) : { brief: gate.message.trim(), numbered: false };
   const { ask: written, rest } = gateAsk(brief);
   const ask = written ?? DEFAULT_ASKS[gate.gate] ?? GATE_KINDS[gate.gate] ?? 'Answer the gate.';
   // Answers lead with the ask in the head; a verdict or a merge asks it over its buttons.
@@ -372,8 +392,11 @@ export function DecisionCard({ gate, snapshot, draft, onAnswer }: { gate: Gate; 
         {lead !== 'plan' && gate.plan !== null && <GateDocument title="Plan" file={gate.plan.file} text={gate.plan.text} open={false} />}
         {lead !== 'issue' && gate.body !== null && gate.body.trim() !== '' && <GateDocument title="Issue" file={null} text={gate.body} open={false} />}
         {(form === 'approval' || form === 'feel') && <VerdictForm gate={gate} ask={ask} form={form} split={isSplit(gate, snapshot)} draft={draft} onAnswer={onAnswer} />}
-        {form === 'answers' && <AnswersForm gate={gate} questions={numbered ? gate.questions : []} draft={draft} onAnswer={onAnswer} />}
+        <TwinNote gate={gate} twins={twins} />
+        {choosing && <OptionsForm gate={gate} hint={commandHint(gate, false)} draft={draft} onAnswer={onAnswer} />}
+        {asksNumberedQuestions && <AnswersForm gate={gate} questions={numbered ? gate.questions : []} draft={draft} onAnswer={onAnswer} />}
         {form === 'merge' && <MergeForm gate={gate} ask={ask} reviewers={snapshot.project.reviewers} onAnswer={onAnswer} />}
+        <GateFooter gate={gate} />
         {discuss !== null && (
           <div className="gate-discuss">
             <ActionButton kind="terminal.open" args={discuss} label="Discuss with the agent" primary={false}
@@ -563,11 +586,18 @@ function GateDocument({ title, file, text, open }: { title: string; file: string
   );
 }
 
-/** A gate just answered: what you decided, a log of what each action did, and the run going, live from the action records. */
-function AnsweredCard({ entry, snapshot, nextGate, onRetry }: { entry: Answered; snapshot: Snapshot; nextGate: Gate | null; onRetry: () => void }) {
+/** The props of an answered card: the answer, the twins answered with it, and where to go next. */
+type AnsweredCardProps = { entry: Answered; twins: Answered[]; snapshot: Snapshot; nextGate: Gate | null; onRetry: () => void };
+
+/**
+ * A gate just answered: what you decided, a log of what each action did (one clear line per twin
+ * answered with it, each opening its own card), and the run going, live from the action records.
+ */
+function AnsweredCard({ entry, twins, snapshot, nextGate, onRetry }: AnsweredCardProps) {
   const { records } = useActionsView();
   const record = (step: Step | null): ActionRecord | undefined => (step?.state === 'started' ? records.find((candidate) => candidate.id === step.id) : undefined);
   const clear = entry.merge ? describeMerge(entry.clear, record(entry.clear), entry.gate) : describeClear(entry.clear, record(entry.clear), entry.gate, entry.back);
+  const twinClears = twins.map((twin) => ({ item: twin.gate.item, line: describeClear(twin.clear, record(twin.clear), twin.gate, twin.back) }));
   const runRecord = record(entry.run);
   const run = entry.run === null ? null : describeRun(entry.run, runRecord, entry.gate, snapshot);
   const failed = clear.tone === 'failing';
@@ -589,6 +619,9 @@ function AnsweredCard({ entry, snapshot, nextGate, onRetry }: { entry: Answered;
         <div className="answer-log">
           <div className={`answer-line ${clear.tone}`}><span className="prompt">›</span> {clear.text}</div>
           {run !== null && run.text !== null && <div className={`answer-line ${run.tone}`}><span className="prompt">›</span> {run.text}</div>}
+          {twinClears.map((twin) => (
+            <a key={twin.item} className={`answer-line ${twin.line.tone}`} href={routeHash({ projectId, screen: 'gates', detail: twin.item })}><span className="prompt">›</span> {twin.line.text}</a>
+          ))}
           {clear.detail !== null && <pre>{clear.detail}</pre>}
         </div>
         {going && (
