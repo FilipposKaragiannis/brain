@@ -3371,6 +3371,23 @@ FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run clau
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
 
+echo "a session cut by a time-window limit (gh#190)"
+# Claude's subscription ends a session on its 5-hour, daily or weekly window with exit 1 and this
+# line as its result. Each row is one window's wording, the first as seen on 2026-11-12.
+mkdir -p "$work/window"
+window_causes=""
+for window_line in "You've hit your 5-hour limit · resets 5:10am (Europe/London)" \
+                   "You've hit your weekly limit · resets Mon 9:00am (Europe/London)" \
+                   "You've hit your daily limit · resets 12:00am (UTC)" \
+                   "You've hit your 12-hour limit · resets 3:45pm (America/New_York)"; do
+  python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":True,"result":sys.argv[1],"total_cost_usd":0}))' "$window_line" > "$work/window/out"
+  : > "$work/window/err"
+  python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 1 "$work/window/sum" >/dev/null 2>&1
+  window_causes="$window_causes$(jget cause < "$work/window/sum");"
+done
+check "TimeWindowLimit_IsSpendLimit: a session ended on any hit-your-<window>-limit line has cause spend-limit, because the host is out of spend until the window resets (gh#190)" \
+  [ "$window_causes" = "spend-limit;spend-limit;spend-limit;spend-limit;" ]
+
 echo "unattended loop: a pick works on after a gate"
 # A plugin copy whose next.sh hands out the items in $GL/queue (a named one as asked) and whose
 # advance.sh exits with the code in $GL/advance.<slug> (0 when none); the gate it stands for is the
