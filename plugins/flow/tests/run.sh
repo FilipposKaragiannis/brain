@@ -475,10 +475,15 @@ sh "$here/blockers.sh" > "$work/blockers.out" 2>&1; code=$?
 check "blockers: $(tail -n 1 "$work/blockers.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/blockers.out"
 
-echo "an item's base is resolved once at claim and read everywhere (tests/base.sh)"
-sh "$here/base.sh" > "$work/base.out" 2>&1; code=$?
-check "base: $(tail -n 1 "$work/base.out")" [ "$code" -eq 0 ]
-[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base.out"
+echo "an item's recorded base is read everywhere (tests/base-readers.sh)"
+sh "$here/base-readers.sh" > "$work/base-readers.out" 2>&1; code=$?
+check "base-readers: $(tail -n 1 "$work/base-readers.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-readers.out"
+
+echo "an item's base is resolved once at claim (tests/base-claim.sh)"
+sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
+check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-claim.out"
 
 echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
 sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
