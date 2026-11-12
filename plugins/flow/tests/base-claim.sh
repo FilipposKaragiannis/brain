@@ -116,6 +116,14 @@ for tampered_label in $tampered_labels; do
   check "StewardClaimWithAnUnsafeBase_ClaimsNoWorktree [$tampered_label]: the refused claim leaves the item with no pool worktree" \
     '[ -z "$("$plugin/scripts/steward.sh" find "$direct")" ]'
 done
+# A --base with no branch after it: the claim runs in the background and is killed after 20
+# seconds with 124, so a claim that loops for ever fails the check instead of hanging the suite.
+"$plugin/scripts/steward.sh" claim "$direct" --base >/dev/null 2>&1 & bare_claim_pid=$!
+bare_claim_seconds=0
+while kill -0 "$bare_claim_pid" 2>/dev/null && [ "$bare_claim_seconds" -lt 20 ]; do sleep 1; bare_claim_seconds=$((bare_claim_seconds + 1)); done
+if kill -0 "$bare_claim_pid" 2>/dev/null; then kill -9 "$bare_claim_pid"; wait "$bare_claim_pid" 2>/dev/null; bare_claim_code=124; else wait "$bare_claim_pid"; bare_claim_code=$?; fi
+check "StewardClaimWithABareBaseOption_ExitsWithTheUsageCode: --base names no branch, so the claim is a usage error, not a loop" \
+  '[ "$bare_claim_code" -eq 2 ]'
 
 echo "base: a letter outside ASCII is refused in a UTF-8 locale too"
 # A UTF-8 locale lets a letter outside ASCII through the ranges A-Za-z, so the refusal rows run

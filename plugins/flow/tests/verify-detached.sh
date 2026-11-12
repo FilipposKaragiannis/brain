@@ -4,7 +4,10 @@
 # run and clears the earlier report; a second --start while one runs starts nothing; --wait exits
 # 0 on pass, 1 on fail (a gate that failed, a run past verify.limit, a run killed with no report),
 # 3 while it runs and 2 with no run; verify.limit stops the gate's whole process group; steward
-# stop and release end the run, and health does not take an item whose verify runs for dead.
+# stop and release end the run (stop with no run record, release before its dirty check refuses),
+# never another item's, and release gives up on a run that outlives its wait; health does not take
+# an item whose verify runs for dead, and counts a run only in the item's own worktree. A verify.run
+# field that holds a command runs nothing, and --start never writes through a link.
 # Each gate waits for a file the test creates, so the test decides when a check ends.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 set -u
@@ -12,7 +15,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 plugin="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$plugin"
 work="$(mktemp -d)"
 # On exit every held gate is let go, so no detached run outlives the test.
-trap 'for gate_name in started unstarted killed stopped released health; do touch "$work/release-$gate_name"; done; [ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
+trap 'for gate_name in started unstarted killed stopped released health stopless dirty planted stubborn tampered; do touch "$work/release-$gate_name"; done; [ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
 unset FLOW_SLACK_WEBHOOK FLOW_HOME
 mkdir -p "$work/home" "$work/offline" && HOME="$work/home" && export HOME && unset CODEX_HOME
 for tool in curl wget gh osascript notify-send claude codex launchctl; do
@@ -48,6 +51,20 @@ wait_until_ended() {
   wait_calls=0
   while [ "$wait_calls" -lt 24 ]; do verify --wait 5 >/dev/null 2>&1; wait_code=$?; [ "$wait_code" -eq 3 ] || return "$wait_code"; wait_calls=$((wait_calls + 1)); done
   return 124
+}
+
+# fake_run <name> [ignore-term]: a process in its own session whose command line reads
+# `verify.sh <item> --detached`, as a detached run's does, that waits until release-<name> exists
+# or the test's folder goes; with ignore-term it ignores TERM. Prints its pid.
+fake_run() {
+  mkdir -p "$work/fake-$1"
+  { [ "${2:-}" != ignore-term ] || echo "trap '' TERM"
+    echo "while [ ! -f $work/release-$1 ] && [ -d $work ]; do sleep 0.2; done"; } > "$work/fake-$1/verify.sh"
+  python3 -c 'import subprocess,sys; print(subprocess.Popen(["sh"] + sys.argv[1:], start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)' "$work/fake-$1/verify.sh" "$item" --detached
+}
+# write_run_record <reports> <pid> [started] [limit]: a verify.run in lib/verify.sh's format.
+write_run_record() {
+  printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "${3:-$(date +%s)}" "$(git -C "$worktree" rev-parse --short HEAD)" "${4:-7200}" > "$1/verify.run"
 }
 
 # new_item <dir> <gates yaml>: a fresh repo with the gates, a claimed item with one committed
@@ -181,5 +198,118 @@ sleep 3
 env -u FLOW_HEALTH_PROCS "$plugin/scripts/steward.sh" health --dry-run > "$work/health-ended.out" 2>&1
 check "HealthAfterTheDetachedVerifyEnded_TakesTheRunForDead: the record is the same, so only the verify run kept it alive" \
   'grep -q "$item.*dead run" "$work/health-ended.out"'
+
+echo "steward stop with no run record still ends the detached run"
+new_item stopless "$(held_gate stopless)"
+rm -f ".flow/runs/$(slug "$item").json"
+verify --start >/dev/null 2>&1
+until_true 20 '[ -s "$work/stopless.count" ]'
+stopless_pid="$(run_pid)"
+check "StoplessRun_RecordNamesALiveProcess: the record must name the run, or its end below proves nothing" \
+  'process_running "$stopless_pid"'
+"$plugin/scripts/steward.sh" stop "$item" >/dev/null 2>&1
+check "StewardStopWithNoRunRecord_EndsTheVerifyRun: a verify started by hand is still the item's run to stop" \
+  'until_true 30 "! process_running $stopless_pid"'
+check "StewardStopWithNoRunRecord_RunLeavesAFailReport: a stopped run is a fail the verifier can read, never a missing report" \
+  'until_true 20 "[ -f $reports/verify.json ]" && [ "$(report_status)" = fail ]'
+
+echo "steward release of a dirty worktree still ends the detached run"
+new_item dirty "$(held_gate dirty)"
+rm -f ".flow/runs/$(slug "$item").json"
+verify --start >/dev/null 2>&1
+until_true 20 '[ -s "$work/dirty.count" ]'
+dirty_pid="$(run_pid)"
+check "DirtyRun_RecordNamesALiveProcess: the record must name the run, or its end below proves nothing" \
+  'process_running "$dirty_pid"'
+printf 'edited\n' >> "$worktree/README.md"
+"$plugin/scripts/steward.sh" release "$item" >/dev/null 2>&1; dirty_release_code=$?
+check "ReleaseOfADirtyWorktree_ExitsThree: the dirty check must refuse it, or the run's end below proves nothing" \
+  '[ "$dirty_release_code" -eq 3 ]'
+check "ReleaseOfADirtyWorktree_StillEndsTheVerifyRun: a gate that writes files cannot keep its own run going" \
+  'until_true 30 "! process_running $dirty_pid"'
+
+echo "steward stop and release leave another item's run alone"
+new_item planted "$(held_gate planted)"
+victim_item="$item"
+verify --start >/dev/null 2>&1
+until_true 20 '[ -s "$work/planted.count" ]'
+victim_pid="$(run_pid)"
+victim_record="$reports/verify.run"
+check "VictimRun_RecordNamesALiveProcess: the other item's run must be live, or its survival below proves nothing" \
+  'process_running "$victim_pid"'
+item="$("$local_adapter/create.sh" task "Detached planter" --size S --body x)"
+"$plugin/scripts/next.sh" "$item" >/dev/null 2>&1
+worktree="$("$plugin/scripts/steward.sh" find "$item")"
+reports="$worktree/.flow/reports/$(slug "$item")"; mkdir -p "$reports"
+rm -f ".flow/runs/$(slug "$item").json"
+check "PlanterItem_HoldsItsOwnWorktree: stop and release must reach the planted record, or they prove nothing" \
+  '[ -n "$worktree" ] && [ "$item" != "$victim_item" ]'
+cp "$victim_record" "$reports/verify.run"
+"$plugin/scripts/steward.sh" stop "$item" >/dev/null 2>&1
+check "StewardStopOfAnItemWhoseRecordNamesAnotherItemsRun_LeavesThatRunGoing: a record names a run of its own item only" \
+  'process_running "$victim_pid"'
+"$plugin/scripts/steward.sh" release "$item" --force >/dev/null 2>&1
+check "StewardReleaseOfAnItemWhoseRecordNamesAnotherItemsRun_LeavesThatRunGoing: a record names a run of its own item only" \
+  'process_running "$victim_pid"'
+touch "$work/release-planted"
+
+echo "steward release waits for a run that will not end, then gives up"
+new_item stubborn "  ok: 'true'"
+rm -f ".flow/runs/$(slug "$item").json"
+stubborn_pid="$(fake_run stubborn ignore-term)"
+write_run_record "$reports" "$stubborn_pid"
+check "StubbornRun_IsLiveBeforeTheRelease: the run must be live, or the release's refusal below proves nothing" \
+  'process_running "$stubborn_pid"'
+"$plugin/scripts/steward.sh" release "$item" --force >/dev/null 2>"$work/stubborn.err"; stubborn_release_code=$?
+check "ReleaseWithARunThatIgnoresTerm_ExitsOne: a run still going is a failed release" '[ "$stubborn_release_code" -eq 1 ]'
+check "ReleaseWithARunThatIgnoresTerm_NamesTheRunStillGoing: the owner learns which process holds the worktree" \
+  'grep -qw "$stubborn_pid" "$work/stubborn.err"'
+check "ReleaseWithARunThatIgnoresTerm_LeavesTheWorktreeClaimed: no worktree is reset under a run that still works in it" \
+  '[ "$("$plugin/scripts/steward.sh" find "$item")" = "$worktree" ]'
+kill -9 -- -"$stubborn_pid" 2>/dev/null || kill -9 "$stubborn_pid" 2>/dev/null
+
+echo "a verify.run field that holds a command runs nothing"
+new_item tampered "  ok: 'true'"
+# The scripts run under bash, which runs a command in an array subscript in arithmetic, as the
+# macOS /bin/sh (bash 3.2) does; dash does not, so a run under it would pass on nothing.
+check "Bash_RunsACommandInAnArraySubscript: the shell must be one the tampered field can reach, or the rows below prove nothing" \
+  'subscript="a[\$(touch $work/bash-ran)]" bash -c ": \$((subscript))" 2>/dev/null; [ -f "$work/bash-ran" ]'
+tampered_pid="$(fake_run tampered)"
+# --start reads limit only for a run it starts, so a limit row runs under --wait alone.
+for tampered_row in "started --wait" "started --start" "limit --wait"; do
+  tampered_field="${tampered_row% *}"; verify_mode="${tampered_row#* }"
+  marker="$work/ran-$tampered_field$verify_mode"
+  if [ "$tampered_field" = started ]; then write_run_record "$reports" "$tampered_pid" "a[\$(touch $marker)]"
+  else write_run_record "$reports" "$tampered_pid" "" "a[\$(touch $marker)]"; fi
+  if [ "$verify_mode" = --wait ]; then (cd "$worktree" && bash "$plugin/scripts/verify.sh" "$item" --wait 1) >/dev/null 2>&1
+  else (cd "$worktree" && bash "$plugin/scripts/verify.sh" "$item" --start) >/dev/null 2>&1; fi
+  check "VerifyRunFieldHoldingACommand_RunsNothing [$tampered_field $verify_mode]: a field reaches arithmetic only as digits" \
+    '[ ! -e "$marker" ]'
+done
+touch "$work/release-tampered"
+
+echo "verify --start never writes through a link"
+for linked_name in verify.out verify.log; do
+  new_item "linked-$(printf '%s' "$linked_name" | tr . -)" "  ok: 'true'"
+  printf 'untouched\n' > "$work/target-$linked_name"
+  ln -s "$work/target-$linked_name" "$reports/$linked_name"
+  verify --start >/dev/null 2>&1
+  wait_until_ended
+  check "StartWithALinkAtTheOutput_LeavesTheLinkTargetUntouched [$linked_name]: the run writes only its own file" \
+    '[ "$(cat "$work/target-$linked_name")" = untouched ]'
+  check "StartWithALinkAtTheOutput_WritesAPlainFile [$linked_name]: the link is replaced, not followed" \
+    '[ -f "$reports/$linked_name" ] && [ ! -L "$reports/$linked_name" ]'
+done
+
+echo "health counts a detached verify run only in the item's own worktree"
+own_worktree="$work/own/wt-1"; other_worktree="$work/other/wt-1"; mkdir -p "$own_worktree" "$other_worktree"
+for run_worktree in own other; do
+  eval "run_cwd=\"\$${run_worktree}_worktree\""
+  printf '999991\t%s\tsh %s/scripts/verify.sh local:task/1 --detached\n' "$run_cwd" "$plugin" > "$work/procs-$run_worktree"
+done
+check "HealthAliveWithTheRunInTheItemsWorktree_FindsTheRun: the row must count in its own worktree, or the next check proves nothing" \
+  '[ -n "$(python3 "$plugin/scripts/_health.py" alive "$work/procs-own" local:task/1 "$own_worktree")" ]'
+check "HealthAliveWithTheSameItemsRunInAnotherWorktree_FindsNothing: another repo's run of the same id keeps no dead run alive" \
+  '[ -z "$(python3 "$plugin/scripts/_health.py" alive "$work/procs-other" local:task/1 "$own_worktree")" ]'
 
 if [ "$fails" -eq 0 ]; then echo "verify-detached: ok"; else echo "verify-detached: $fails failed"; exit 1; fi
