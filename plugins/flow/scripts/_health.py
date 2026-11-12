@@ -21,11 +21,12 @@ procs prints one line per process: pid, working directory (agent processes only)
 tab separated, and fails when ps lists nothing, so a missing ps never reads as every run dead. A
 run is alive when the pid its record names still runs an agent or the unattended loop, or when
 any other process is an agent working in the worktree, or an agent or the loop names the worktree
-or the item in its command line. An editor, a tail or a host's own server naming the worktree is
-not a run: the claude daemon, an MCP server, and the Codex desktop app's app-server, its daemon
-and exec-server, which keep the folder they were started in for days. Only the first two words
-after the executable that are not options say so (`codex -c k=v app-server`), as the console
-reads them. A run record carries no pid when an older flow wrote it; the scan covers it. Times
+or the item in its command line, or the item's detached verify run (verify.sh --start) still
+runs. An editor, a tail or a host's own server naming the worktree is not a run: the claude
+daemon, an MCP server, and the Codex desktop app's app-server, its daemon and exec-server,
+which keep the folder they were started in for days. Only the first two words after the
+executable that are not options say so (`codex -c k=v app-server`), as the console reads them. A
+run record carries no pid when an older flow wrote it; the scan covers it. Times
 print in local time.
 
 session names one process for a line a person reads: `claude process 62102, idle 3d 2h` (idle
@@ -69,6 +70,9 @@ SERVICE = {"daemon", "mcp", "app-server", "exec-server"}
 OPTIONS_WITH_VALUE = {"-c", "--config"}
 UNATTENDED = re.compile(r" (-p|--print|exec)( |$)")
 LOOP = re.compile(r"run-unattended\.sh|jobs/(next|comments)\.sh")
+# A detached verify run (verify.sh <item> --start) outlives the agent that started it: while it
+# runs, the item's run is alive.
+VERIFY_RUN = re.compile(r"verify\.sh .*--detached")
 DURATION = re.compile(r"(\d+)([smhd]?)")
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "": 60}
 
@@ -195,6 +199,8 @@ def alive(rows, item, worktree, pid, skip_self=True):
         if is_agent(command) and any(real == w or real.startswith(w + "/") for w in wts):
             return "process %s" % number
         if is_host(command) and (named.search(command) or item in command.split()):
+            return "process %s" % number
+        if VERIFY_RUN.search(command) and item in command.split():
             return "process %s" % number
     return ""
 

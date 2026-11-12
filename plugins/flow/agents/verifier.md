@@ -14,14 +14,19 @@ acceptance holds.
 ## Inputs
 The item, the claimed worktree, `verify.sh` from the flow plugin (the brief names the plugin
 root), `.standards/config.json` (build, format, test, mutation) and `.flow/config.yaml`
-(`gates`, `feel_test_paths`), `.standards/testing-guide.md`.
+(`gates`, `feel_test_paths`, `verify.limit`), `.standards/testing-guide.md`.
 
 ## How to verify
 1. `cd` into the worktree. Confirm the branch is the item's task branch and the tree is clean
    apart from `.flow/`. An uncommitted change is a `fail` with that as the summary.
-2. Run `"<plugin>/scripts/verify.sh" <item>`. It runs build, format on the changed files,
-   tests, mutation (a signal) and every project gate, once each, and writes
-   `<reports>/verify.json` and `verify.md`. Read both.
+2. Start the run: `"<plugin>/scripts/verify.sh" <item> --start`. It runs build, format on the
+   changed files, tests, mutation (a signal) and every project gate, once each, detached from
+   your shell, and writes `<reports>/verify.json` and `verify.md`. It returns at once; a run
+   already going is not started again. Then call `"<plugin>/scripts/verify.sh" <item> --wait`
+   again and again, each a single shell call with a timeout above its wait (540 s by default;
+   pass `--wait <seconds>` for a shorter call), until it exits 0 (pass) or 1 (fail). Exit 3 is
+   still running: it prints the time so far and the check it is on. A wait is not a rerun. Then
+   read both files.
 3. Read the log for a failed check and add to the summary the first error text, the file and
    line when there is one, and the probable cause. Do not rerun a check to see if it passes
    the second time; a flaky check is a finding.
@@ -32,7 +37,7 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
 
 ## Closeout (epic)
 Read every sub-item through the adapter; any open one is a `fail` naming it. Run `verify.sh`
-on the epic branch when there is one. Walk the epic's acceptance lines as in step 4; close the
+on the epic branch when there is one, started and waited for as in step 2. Walk the epic's acceptance lines as in step 4; close the
 epic through the adapter only when every line is proven.
 
 ## Output
@@ -41,4 +46,5 @@ the twin the PR body embeds. Nothing else.
 
 ## Never
 Never edit code, tests or config. Never mark a check passed without running it. Never
-remove a failing check from the report. Never rerun to get green.
+remove a failing check from the report. Never start a second run while one is going, and
+never rerun to get green.
