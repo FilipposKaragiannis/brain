@@ -17,6 +17,7 @@ point one at a real project, its worktrees or the owner's console settings.
   there call stub agents that spend no tokens; each call is a line in `agents.log` in the demo
   folder.
 - The demo's home links your home, so a terminal it opens loads your shell setup, but never your
-  `~/.claude`, `~/.codex`, console settings or launch agents.
+  `~/.claude`, `~/.codex`, console settings or launch agents. Its shell startup files then put the
+  stub agents first on `PATH`, so a pane there runs no real agent.
 - The token is in `<folder>/state/token`. Run the script again to reset the demo.
 - Stop the demo console when you are done; leave no daemon running.

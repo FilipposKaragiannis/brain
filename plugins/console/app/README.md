@@ -65,7 +65,9 @@ opens (Open in Terminal, Discuss with the agent) loads your shell setup and your
 settings, except what the demo must not reach: `~/.claude`, `~/.claude.json`, `~/.codex`, the
 console's settings, state, install and launcher, `~/Library/LaunchAgents` (a job install there
 writes the demo's own) and git's identity (the demo sets its own). A folder above one of those is
-the demo's own, with the rest of its entries linked. Ctrl+C, a signal or the daemon's stop ends
+the demo's own, with the rest of its entries linked. Its `.zshrc`, `.zlogin`, `.bashrc`,
+`.bash_profile` and `.profile` are the demo's own: each sources yours, then puts the stubs first on
+`PATH` again, so a pane never reaches your real `claude`. Ctrl+C, a signal or the daemon's stop ends
 the fake agents with the demo. Re-running it stops that daemon, the runs its console started and
 the fake agents, and builds the demo again from nothing; it deletes only a folder it built. The
 token is in `<folder>/state/token`.

@@ -19,13 +19,18 @@ RUN_STOP_POLLS=20
 RUN_STOP_POLL_SECONDS=0.5
 # How long a fake agent sleeps before it ends by itself, should nothing stop it: a day.
 FAKE_AGENT_SECONDS=86400
-# The demo folder's list of the fake agents it started, one pid a line, so a re-run can stop them.
+# The demo folder's list of the fake agents it started, one pid a line, so this run's exit and a
+# re-run can stop them. A file, not a variable: a helper that starts one runs in a subshell.
 AGENT_PIDS=agents.pids
 # The parts of the caller's home the demo's home never links to (see link_home): the agents' own
 # folders, the console's settings, state, install and launcher, the launch agents a job install
 # writes, and git's identity, which the demo sets itself. A name also holds out the names that
 # extend it after a dot, such as .claude.json.backup.
 HELD_OUT=".claude .claude.json .codex .config/brain-console .config/git .gitconfig .local/bin/brain-console .local/share/brain-console .local/state/brain-console Library/LaunchAgents"
+# The shell startup files the demo's home has its own of (see write_shell_startup), each the last
+# its shell reads in a mode a pane opens: zsh's .zshrc (interactive) and .zlogin (login), bash's
+# .bashrc, and sh's .profile. Bash's .bash_profile comes on top, as it reads the caller's first.
+SHELL_STARTUP=".zshrc .zlogin .bashrc .profile"
 
 die() { echo "demo: $1" >&2; exit "${2:-1}"; }
 usage() { die "usage: demo.sh [--dir <folder>] [--port <n>]" "$USAGE_EXIT"; }
@@ -135,15 +140,18 @@ demo_agent_pids() {
 }
 # stop_demo_agents <pid...>: ends those of the pids that are still a fake agent of the demo.
 stop_demo_agents() { stop_groups $(demo_agent_pids "$@"); }
-# reset_demo: stops the demo's daemon, its runs and its fake agents, then deletes the folder, only
-# when this script built it.
+record_agent() { echo "$1" >> "$demo_dir/$AGENT_PIDS"; }
+stop_recorded_agents() {
+  if [ -f "$demo_dir/$AGENT_PIDS" ]; then stop_demo_agents $(cat "$demo_dir/$AGENT_PIDS"); fi
+}
+# reset_demo: deletes the folder only when this script built it, after stopping what it started.
 reset_demo() {
   [ -e "$demo_dir" ] || return 0
   is_empty_dir "$demo_dir" && return 0
   refuse_foreign_dir
   stop_demo_daemon
   stop_demo_runs
-  if [ -f "$demo_dir/$AGENT_PIDS" ]; then stop_demo_agents $(cat "$demo_dir/$AGENT_PIDS"); fi
+  stop_recorded_agents
   rm -rf "$demo_dir"
 }
 
@@ -245,22 +253,19 @@ with open(os.path.join(projects, session + ".jsonl"), "w") as out:
         entry = {"type": role, "timestamp": at, "sessionId": session, "cwd": folder, "message": {"role": role, "content": [{"type": "text", "text": text}]}}
         out.write(json.dumps(entry, separators=(",", ":")) + "\n")' "$home" "$@"
 }
-# fake_agent <folder> <argument...>: a process ps lists as `claude -e sleep … -- <arguments>`,
-# working in <folder> in a session of its own, which the console takes for a claude: perl under
-# the name claude, sleeping, with no agent and no tokens. Sets fake_pid to its pid and adds it to
-# started_agents, which this run stops as it exits, and to the demo folder's list a re-run stops.
-started_agents=""
-fake_agent() {
-  fake_pid="$(cd "$1" && shift && python3 -I -c 'import os, sys
+# start_fake_agent <folder> <argument...>: prints the pid of a process ps lists as
+# `claude -e sleep … -- <arguments>` in <folder>, which the console takes for a claude: perl under
+# the name claude, sleeping, with no agent and no tokens. It leads a session of its own and lets go
+# of the output, so the capture of its pid returns at once and no shell's exit ends it.
+start_fake_agent() (
+  cd "$1" && shift && python3 -I -c 'import os, sys
 if os.fork(): os._exit(0)
 os.setsid()
 print(os.getpid(), flush=True)
 null = os.open(os.devnull, os.O_RDWR)
 for descriptor in (0, 1, 2): os.dup2(null, descriptor)
-os.execv(sys.argv[1], sys.argv[2:])' "$perl" claude -e "sleep $FAKE_AGENT_SECONDS" -- "$@")"
-  started_agents="$started_agents $fake_pid"
-  echo "$fake_pid" >> "$demo_dir/$AGENT_PIDS"
-}
+os.execv(sys.argv[1], sys.argv[2:])' "$perl" claude -e "sleep $FAKE_AGENT_SECONDS" -- "$@"
+)
 
 # raise_gates: one item waiting at each gate, each at the step its profile puts after that gate.
 raise_gates() (
@@ -301,30 +306,39 @@ Recommended: interval, the name the config already uses" implement \
   new_item task S "Demo: a ready task to run with the stub agents" none > /dev/null
 )
 
-# add_agents: what the Agents screen shows. A live run: a claimed item, its run record and a
-# headless claude in its worktree with a sessions file and a transcript. A run whose process died:
-# a claimed item and a codex run record three hours old with no process. And one of the owner's
-# own sessions in the project root, with a transcript but no sessions file. Sets live and dead to
-# the two items; runs in this shell, so started_agents keeps the fake agents it starts.
-add_agents() {
+# The Agents screen. add_live_run: a claimed item, its run record and a headless claude in its
+# worktree with a sessions file and a transcript; prints the item.
+add_live_run() (
   mkdir -p "$home/.claude/sessions" "$project/.flow/runs"
   live="$(new_item task S "Demo: a run going now" implement)"
-  live_worktree="$(claim "$live")"
-  fake_agent "$live_worktree" -p "/flow:next $live"
-  live_session="$(session_id)"
-  json_line "pid:=$fake_pid" "sessionId=$live_session" "cwd=$live_worktree" status=busy "statusUpdatedAt:=$(date +%s)000" > "$home/.claude/sessions/$fake_pid.json"
-  transcript "$live_worktree" "$live_session" 12 "/flow:next $live" \
+  worktree="$(claim "$live")"
+  pid="$(start_fake_agent "$worktree" -p "/flow:next $live")"
+  record_agent "$pid"
+  session="$(session_id)"
+  json_line "pid:=$pid" "sessionId=$session" "cwd=$worktree" status=busy "statusUpdatedAt:=$(date +%s)000" > "$home/.claude/sessions/$pid.json"
+  transcript "$worktree" "$session" 12 "/flow:next $live" \
     "Reading the plan: one slice, the chip on the board card." \
     "Wrote the failing test: the card shows the chip while a run goes." \
     "Added the chip to the card. The test passes." \
     "Running the checks: lint, unit and the page build."
-  json_line "item=$live" step=implement profile=task "worktree=$live_worktree" host=claude "started=$(minutes_ago 12)" "pid:=$fake_pid" > "$project/.flow/runs/$(item_file "$live")"
+  json_line "item=$live" step=implement profile=task "worktree=$worktree" host=claude "started=$(minutes_ago 12)" "pid:=$pid" > "$project/.flow/runs/$(item_file "$live")"
+  printf '%s' "$live"
+)
+# add_dead_run: a claimed item and a codex run record three hours old with no process; prints the item.
+add_dead_run() (
+  mkdir -p "$project/.flow/runs"
   dead="$(new_item task S "Demo: a run whose process died" implement)"
   json_line "item=$dead" step=implement profile=task "worktree=$(claim "$dead")" host=codex "started=$(minutes_ago 180)" > "$project/.flow/runs/$(item_file "$dead")"
-  fake_agent "$project" --model opus
+  printf '%s' "$dead"
+)
+# add_owner_session: one of the owner's own sessions in the project root, with a transcript but no
+# sessions file.
+add_owner_session() (
+  pid="$(start_fake_agent "$project" --model opus)"
+  record_agent "$pid"
   transcript "$project" "$(session_id)" 30 "What does the console show for a run that died?" \
     "A dead-run card on Agents, with Resume, and a row in Needs you."
-}
+)
 
 # add_jobs <live item> <dead item>: what the Jobs screen shows besides the schedules in the config:
 # codex stopped on a spend limit during the dead run, and the jobs' run history, oldest first.
@@ -348,23 +362,59 @@ held_out() {
     case "$out" in "$1"/*) echo above; return 0 ;; esac
   done
 }
+# left_out <entry>: a glob that matched nothing, or an entry that holds the demo folder, which the
+# demo's home must not loop back into.
+left_out() {
+  [ -e "$1" ] || [ -L "$1" ] || return 0
+  case "$demo_dir/" in "$1"/*) return 0 ;; esac
+  return 1
+}
+# link_entry <entry> <link>: an entry the demo made itself (its git identity, its shell startup
+# files) stays.
+link_entry() { [ -e "$2" ] || [ -L "$2" ] || ln -s "$1" "$2"; }
+# link_above <entry> <the demo's folder> <its path in the home>/: an entry above a held-out one
+# becomes a folder of the demo's own, linked into in turn.
+link_above() {
+  [ -d "$1" ] || return 0
+  mkdir -p "$2" && link_home "$1" "$2" "$3"
+}
 # link_home <the caller's folder> <the demo's folder> [<their path in the home>/]: links each
-# entry of the caller's home into the demo's, so a pane's shell there loads the owner's shell setup
-# and the terminal's settings. A held-out entry stays out, an entry above one becomes a folder of
-# the demo's own linked into in turn, an entry the demo made itself is kept, and an entry that holds
-# the demo folder is left out.
+# entry of the caller's home into the demo's, so a pane's shell there loads the owner's terminal
+# settings and what their shell setup reads, except what HELD_OUT holds out.
 link_home() (
   for entry in "$1"/.[!.]* "$1"/..?* "$1"/*; do
-    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    left_out "$entry" && continue
     name="${entry##*/}"
-    case "$demo_dir/" in "$entry"/*) continue ;; esac
     case "$(held_out "${3:-}$name")" in
-      held) continue ;;
-      above) if [ -d "$entry" ]; then mkdir -p "$2/$name" && link_home "$entry" "$2/$name" "${3:-}$name/"; fi; continue ;;
+      held) ;;
+      above) link_above "$entry" "$2/$name" "${3:-}$name/" ;;
+      *) link_entry "$entry" "$2/$name" ;;
     esac
-    [ -e "$2/$name" ] || [ -L "$2/$name" ] || ln -s "$entry" "$2/$name"
   done
 )
+# sh_word <text>: the text in single quotes, as one word a shell reads back unchanged.
+sh_word() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+# write_shell_startup <file> <the caller's file...>: the demo's own <file> sources the first of the
+# caller's files there is, then puts the stubs first on PATH again: the caller's setup, or macOS's
+# path_helper, can put the real claude ahead of them, and a pane must run no real agent.
+write_shell_startup() {
+  file="$1"; shift
+  keyword=if
+  {
+    echo "# The console demo's $file: yours, then its stub agents first on PATH, so a pane spends no tokens."
+    for startup in "$@"; do
+      printf '%s [ -f %s ]; then . %s\n' "$keyword" "$(sh_word "$caller_home/$startup")" "$(sh_word "$caller_home/$startup")"
+      keyword=elif
+    done
+    printf 'fi\nPATH=%s:"$PATH"\n' "$(sh_word "$stubs")"
+  } > "$home/$file"
+}
+# share_home: the demo's home gets the caller's, its own shell startup files first so they stay.
+share_home() {
+  for file in $SHELL_STARTUP; do write_shell_startup "$file" "$file"; done
+  write_shell_startup .bash_profile .bash_profile .bash_login .profile
+  link_home "$caller_home" "$home"
+}
 
 reset_demo
 mkdir -p "$demo_dir"
@@ -373,15 +423,17 @@ write_stubs
 build_project
 raise_gates
 # The fake agents end with this run, by Ctrl+C, a signal or the daemon's stop; a re-run ends any left.
-trap 'stop_demo_agents $started_agents' EXIT
+trap stop_recorded_agents EXIT
 trap 'exit 1' INT TERM HUP
-add_agents
+live="$(add_live_run)"
+dead="$(add_dead_run)"
+add_owner_session
 add_jobs "$live" "$dead"
-[ -z "$caller_home" ] || [ ! -d "$caller_home" ] || link_home "$caller_home" "$home"
+[ -z "$caller_home" ] || [ ! -d "$caller_home" ] || share_home
 python3 -I -c 'import json, sys; print(json.dumps({"projects": [{"root": sys.argv[1]}]}))' "$project" > "$config"
 
 echo "demo: built $project, its worktrees beside it, one item waiting at each gate, a live run, a dead run and a session of yours"
-echo "demo: the agents are fake processes that end with the demo; a pane's shell gets your home, without the agents' folders or the console's settings"
+echo "demo: the agents are fake processes that end with the demo; a pane's shell gets your home and shell setup, with the stubs first on PATH and without the agents' folders or the console's settings"
 echo "demo: claude and codex are stubs here; each call is a line in $demo_dir/agents.log"
 [ -f "$console/app/ui/dist/index.html" ] || echo "demo: the page is not built, so only the API answers; build it with: npm --prefix '$console/app/ui' run build" >&2
 echo "demo: starting the console on port $port for the demo only; Ctrl+C stops it"

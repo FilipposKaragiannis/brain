@@ -174,10 +174,11 @@ gate_kinds() { python3 -I -c 'import json, sys; print("\n".join(json.load(open(s
 waiting_gates() { in_demo sh "$P/../flow/scripts/gate.sh" list --json | python3 -I -c 'import json, sys; print("\n".join(gate["gate"] for gate in json.load(sys.stdin)))' | sort; }
 agent_calls() { cat "$demo/agents.log" 2>/dev/null | wc -l | tr -d ' '; }
 # The caller's shell setup and the private folders a demo pane must never reach, each with a marker.
-echo "export DEMO_SHELL_SETUP=caller" > "$home/.zshrc"
+shell_setup=caller
+echo "export DEMO_SHELL_SETUP=$shell_setup" > "$home/.zshrc"
 for private in .claude .codex .config/brain-console; do mkdir -p "$home/$private" && echo caller > "$home/$private/private-marker"; done
 run_demo --dir "$demo" --port "$demo_port"; code=$?
-check "a demo pane's shell loads the caller's shell setup" [ "$(cat "$demo/home/.zshrc" 2>/dev/null)" = "export DEMO_SHELL_SETUP=caller" ]
+check "a demo pane's shell loads the caller's shell setup" [ "$(in_demo zsh -ic 'printf %s "$DEMO_SHELL_SETUP"' 2>/dev/null)" = "$shell_setup" ]
 for private in .claude .codex .config/brain-console; do
   check "the caller's $private is out of reach from the demo's home" sh -c "[ -d '$demo/home' ] && [ ! -e '$demo/home/$private/private-marker' ]"
 done
