@@ -141,6 +141,119 @@ test('StopAll_ProcessIgnoringHangUp_SettlesWithTheProcessKilled', async () => {
   assert.equal(pty.exited, true, 'because the daemon exits only after every pane\'s process has ended');
 });
 
+/** The ways a pane is closed while the daemon runs on: the owner's Close or a lost page drop the link, and a project that goes ends its panes. */
+const CLOSINGS: { how: string; close(panes: ReturnType<typeof sessions>['panes'], link: { go(): void }): void }[] = [
+  { how: 'the link gone', close: (_panes, link) => link.go() },
+  { how: 'the project gone', close: (panes) => panes.endProject(PROJECT.id) },
+];
+
+test('PaneClosed_ChildIgnoringHangUpOutlivesItsProcess_GroupKilledOnceTheGraceRunsOut', () => {
+  for (const closing of CLOSINGS) {
+    const { panes, open, ptys, timers } = sessions(null);
+    const link = open(SHELL_AT_ROOT, PROJECT);
+    const pty = only(ptys);
+    pty.childIgnoresHangUp = true;
+    closing.close(panes, link);
+    timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+    assert.equal(pty.signals.includes('SIGKILL'), true, `because with ${closing.how} a process left in the pane's group after its own process died on the hang-up is killed, so a closed pane leaves nothing running`);
+  }
+});
+
+test('LinkGone_GroupEmptyWhenTheProcessExits_NoTimerLeft', () => {
+  const { open, ptys, timers } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  only(ptys);
+  link.go();
+  assert.deepEqual(timers.pending(), [], 'because a group with nothing left in it needs no kill, so its grace is cancelled');
+});
+
+test('LinkGone_GroupEmptyWhenTheProcessExits_NoKillSent', () => {
+  const { open, ptys, timers } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  link.go();
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  assert.equal(pty.signals.includes('SIGKILL'), false, 'because an emptied group\'s id may be handed to someone else\'s processes, so it is never signalled again');
+});
+
+test('ProcessExitsByItself_ChildLeftInItsGroup_NoSignalsSent', () => {
+  const { open, ptys, timers } = sessions(null);
+  open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.childIgnoresHangUp = true;
+  pty.exit(0, null);
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  assert.deepEqual(pty.signals, [], 'because a pane the owner did not close is never hung up or killed, whatever its process left behind');
+});
+
+test('ProcessExitsByItself_ChildLeftInItsGroup_ToldThenEnded1000', () => {
+  const { open, ptys } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.childIgnoresHangUp = true;
+  pty.exit(5, null);
+  assert.deepEqual([link.notices.at(-1), link.ended], [{ type: 'exit', code: 5, signal: null }, PANE_CLOSE.ended], 'because a process that ends by itself ends its pane as it always did');
+});
+
+test('StopAll_ChildIgnoringHangUp_NotSettledBeforeTheGrace', async () => {
+  const { panes, ptys, timers, open } = sessions(null);
+  open(SHELL_AT_ROOT, PROJECT);
+  only(ptys).childIgnoresHangUp = true;
+  let settled = false;
+  const stopping = panes.stopAll().then(() => { settled = true; });
+  await tick();
+  const settledBeforeGrace = settled;
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  await stopping;
+  assert.equal(settledBeforeGrace, false, 'because the daemon stays to kill what a pane\'s process left in its group instead of exiting under it');
+});
+
+test('StopAll_ChildIgnoringHangUp_GraceKeepsTheDaemonAlive', async () => {
+  const { panes, ptys, timers, open } = sessions(null);
+  open(SHELL_AT_ROOT, PROJECT);
+  only(ptys).childIgnoresHangUp = true;
+  const stopping = panes.stopAll();
+  await tick();
+  const holding = timers.keepingAlive();
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  await stopping;
+  assert.deepEqual(holding, [PANE_KILL_GRACE_MILLISECONDS], 'because once the pane\'s own process has exited only the grace timer keeps a stopping daemon alive until the kill');
+});
+
+test('StopAll_ChildIgnoringHangUp_SettlesWithTheGroupKilled', async () => {
+  const { panes, ptys, timers, open } = sessions(null);
+  open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.childIgnoresHangUp = true;
+  const stopping = panes.stopAll();
+  await tick();
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  await stopping;
+  assert.equal(pty.signals.includes('SIGKILL'), true, 'because the daemon exits only after the group its pane left behind has been killed');
+});
+
+test('StopAll_PaneClosedBeforeAndStillInItsGrace_NotSettledBeforeItsKill', async () => {
+  const { panes, ptys, timers, open } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  only(ptys).childIgnoresHangUp = true;
+  link.go();
+  let settled = false;
+  const stopping = panes.stopAll().then(() => { settled = true; });
+  await tick();
+  const settledBeforeGrace = settled;
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  await stopping;
+  assert.equal(settledBeforeGrace, false, 'because a pane closed just before the stop still has a group to kill, and the daemon waits for that kill');
+});
+
+test('StopAll_NothingLeftInAnyGroup_SettlesWithNoTimerLeft', async () => {
+  const { panes, timers, open } = sessions(null);
+  open(SHELL_AT_ROOT, PROJECT);
+  open({ ...SHELL_AT_ROOT, target: { run: 'shell', folder: '/p/app-wt-2' } }, PROJECT);
+  await panes.stopAll();
+  assert.deepEqual(timers.pending(), [], 'because a stop with nothing left to kill holds the daemon for nothing');
+});
+
 test('PaneLimit_OneMoreThanTheLimit_Refused', () => {
   const { open } = sessions(null);
   for (let opened = 0; opened < MAXIMUM_PANES; opened += 1) open(SHELL_AT_ROOT, PROJECT);

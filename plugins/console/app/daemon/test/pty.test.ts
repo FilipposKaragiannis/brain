@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import type { PaneLaunch } from '../src/panePlan.ts';
+import { PANE_KILL_GRACE_MILLISECONDS } from '../src/paneProtocol.ts';
 import type { PaneSize } from '../src/paneProtocol.ts';
-import type { PtyHandle } from '../src/panes.ts';
+import { PaneSessions } from '../src/panes.ts';
+import type { PaneLink, PtyHandle, PtySpawner } from '../src/panes.ts';
+import { silentLogger } from '../src/log.ts';
+import { fakeScheduler } from './fakeSpawner.ts';
 import { processAlive } from '../src/processAlive.ts';
 import { ptySpawner } from '../src/pty.ts';
 
@@ -144,3 +150,53 @@ test('RealPty_CommandMissing_EndsWithAFailure', async () => {
 function isFailureCode(code: number | null): boolean {
   return code !== null && code !== 0;
 }
+
+/**
+ * The session pane's shape: a shell that dies on the hang-up, as `/bin/sh -c '<resume>; exec
+ * <shell> -l'` does, around a child in its group that ignores it, as a resumed agent may. The
+ * child prints its own pid once it ignores the hang-up and runs its own program.
+ */
+const SHELL_DYING_WITH_A_CHILD_IGNORING_THE_HANG_UP = `#!/bin/sh
+sh -c 'trap "" HUP; echo child=$$; exec sleep 600' &
+while :; do sleep 1; done
+`;
+
+/** A link the test drops, as a page does when the owner closes the pane. */
+function droppableLink(): { link: PaneLink; drop(): void } {
+  let gone: () => void = () => {};
+  return {
+    link: { output: () => {}, tell: () => {}, end: () => {}, onInput: () => {}, onControl: () => {}, onGone: (listener) => { gone = listener; }, queuedBytes: () => 0 },
+    drop: () => gone(),
+  };
+}
+
+test('RealPaneClosed_ShellDiesOnTheHangUpAndItsChildIgnoresIt_ChildKilledOnceTheGraceRunsOut', async () => {
+  const folder = mkdtempSync(path.join(os.tmpdir(), 'pane-group-'));
+  const shell = path.join(folder, 'session.sh');
+  writeFileSync(shell, SHELL_DYING_WITH_A_CHILD_IGNORING_THE_HANG_UP);
+  chmodSync(shell, 0o755);
+  const started: PtyHandle[] = [];
+  const shellEnded: Promise<void>[] = [];
+  const realSpawner = ptySpawner();
+  const spawner: PtySpawner = (launch, size, environment) => {
+    const spawned = realSpawner(launch, size, environment);
+    if (spawned.ok) { started.push(spawned.pty); shellEnded.push(new Promise((resolve) => spawned.pty.onExit(() => resolve()))); }
+    return spawned;
+  };
+  const timers = fakeScheduler();
+  const panes = new PaneSessions({ spawner, host: { shell, environment: ENVIRONMENT, isFolder: () => true }, scheduler: timers.scheduler, log: silentLogger });
+  const page = droppableLink();
+  panes.open('app', { target: { run: 'shell', folder }, size: TERMINAL_SIZE }, { root: folder, folders: [folder], sessions: [], gateSessions: [] }, page.link);
+  const pane = started[0]!;
+  const child = await childPid(pane);
+  try {
+    page.drop();
+    await shellEnded[0];
+    await settleAfterExit();
+    timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+    assert.equal(await gone(child), true, 'because a closed pane leaves nothing running, even a process that ignored the hang-up its shell died of');
+  } finally {
+    if (processAlive(child)) process.kill(child, 'SIGKILL');
+    rmSync(folder, { recursive: true, force: true });
+  }
+});

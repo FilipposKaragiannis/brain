@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import { paneEnvironment, paneFolders, parsePaneRequest, planPane, unlistedFolder } from '../src/panePlan.ts';
 import type { PaneFacts, PaneHost, PaneRequest } from '../src/panePlan.ts';
@@ -115,10 +119,35 @@ test('JobPane_ReadsThatJobsLog', () => {
   assert.equal(plan.ok && plan.launch.commandArguments.at(-1), NEXT_NIGHTLY_WORKER_LOG, 'because the pane shows the log jobs.sh writes for that job and no other file');
 });
 
-test('JobPane_FollowsTheLogAsItGrows', () => {
-  const plan = jobPane('next');
-  const follows = plan.ok && /tail$/.test(plan.launch.command) && plan.launch.commandArguments.some((word) => /^-[A-Za-z]*[fF]$/.test(word));
-  assert.equal(follows, true, 'because the owner watches a running job, so new lines keep coming into the pane');
+/** How long a real `tail` gets to start, and then to show a line, before the test gives up. */
+const TAIL_START_MILLISECONDS = 400;
+const TAIL_ANSWER_MILLISECONDS = 10000;
+
+/** Runs the planned job pane in a real process and reports whether it ever printed the marker, or ended first. */
+function showsOnceWritten(root: string, job: string, logLine: string): Promise<boolean> {
+  const plan = planPane({ target: { run: 'job', job }, size: SIZE }, { ...FACTS, root }, HOST);
+  if (!plan.ok) return Promise.resolve(false);
+  const pane = spawn(plan.launch.command, plan.launch.commandArguments, { cwd: plan.launch.workingFolder, stdio: ['ignore', 'pipe', 'ignore'] });
+  let printed = '';
+  return new Promise<boolean>((resolve) => {
+    const finish = (seen: boolean): void => { clearTimeout(limit); pane.kill('SIGKILL'); resolve(seen); };
+    const limit = setTimeout(() => finish(false), TAIL_ANSWER_MILLISECONDS);
+    pane.stdout.on('data', (chunk: Buffer) => { printed += chunk.toString('utf8'); if (printed.includes(logLine)) finish(true); });
+    pane.on('exit', () => finish(printed.includes(logLine)));
+    pane.on('spawn', () => setTimeout(() => {
+      mkdirSync(path.join(root, '.flow', 'log'), { recursive: true });
+      writeFileSync(path.join(root, '.flow', 'log', `${job}.log`), `${logLine}\n`);
+    }, TAIL_START_MILLISECONDS));
+  });
+}
+
+test('JobPane_LogWrittenOnlyAfterThePaneOpened_ShowsIt', async () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'job-pane-'));
+  try {
+    assert.equal(await showsOnceWritten(root, 'next-nightly-2', 'worker 2 picked gh#417'), true, 'because a job that has not run yet has no log, and its pane waits for the log instead of closing at once');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('Request_JobNameThatIsNotAJob_Refused', () => {
