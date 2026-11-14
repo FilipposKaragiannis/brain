@@ -2336,7 +2336,12 @@ age_run "$b"; hs --wait > "$hroot/out" 2>&1
 check "health: after max_resumes it raises an escalation gate instead of looping" sh -c "[ \"\$('$P/adapters/local/read.sh' '$b' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"gate\"])')\" = escalation ] && [ -f .flow/gates/$(item_slug "$b").json ] && grep -q 'died 3 times in a row' '$hroot/out' && [ $(facts "$b.*resumed implement") = 3 ] && [ -f '$wb/.flow/claim.json' ]"
 check "health: the escalation notifies" grep -q "$(printf '\t')escalation$(printf '\t')" .flow/events.log
 # The gate says what the dead runs left, so the owner can answer it without reading the logs first.
-check_all "health: the escalation gate says the dead runs logged nothing, and names their log" 'jget message < ".flow/gates/$(item_slug "$b").json" > "$hroot/gate.msg" && grep -q "The run logged nothing after it started the step" "$hroot/gate.msg" && grep -q "Read $hroot/app/.flow/log/resume-$(item_slug "$b").log, then clear the gate" "$hroot/gate.msg" && ! grep -q "after the last resume" "$hroot/gate.msg"'
+# What they left is read here from the same log, and the gate must carry that line whole: a killed
+# loop most often logs nothing, but a subshell of it that outlives the first kill by a moment can
+# get a "Killed" line out, and then the gate quotes that line. The path the gate names is the one
+# git resolves, so only its end is checked (a temp folder is a link on macOS).
+left="$(python3 -I "$P/scripts/_health.py" died ".flow/log/resume-$(item_slug "$b").log" "$b" implement "$wb/.flow/reports/$(item_slug "$b")/implement.json" "$hroot/no-resume-file")"
+check_all "health: the escalation gate says what the dead runs left, and names their log" 'jget message < ".flow/gates/$(item_slug "$b").json" > "$hroot/gate.msg" && [ -n "$left" ] && ! printf "%s" "$left" | grep -q "has no line of this step" && grep -qF "without the step advancing. $left $(basename "$wb") keeps its commits" "$hroot/gate.msg" && grep -q "/app/.flow/log/resume-$(item_slug "$b").log, then clear the gate" "$hroot/gate.msg" && ! grep -q "after the last resume" "$hroot/gate.msg"'
 died="$work/died"; mkdir -p "$died"
 printf 'run-unattended: t-1 step implement in /wt\nan older run\nrun-unattended: t-1 step implement in /wt\n\nlast\tline one\nlast line two\n' > "$died/log"
 printf '3 implement\n' > "$died/resume"; touch -t 202401010000 "$died/resume"; printf '{"status":"done"}' > "$died/implement.json"
