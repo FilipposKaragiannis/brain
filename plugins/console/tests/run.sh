@@ -159,6 +159,8 @@ nodebin="$work/nodebin"; mkdir -p "$nodebin"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/node.args"\nenv > "%s/node.env"\n' "$work" "$work" > "$nodebin/node"
 chmod +x "$nodebin/node"
 demo="$work/demo"
+demo_port=7499
+usage_exit="$(sed -n 's/^USAGE_EXIT=//p' "$P/scripts/demo.sh")"
 run_demo() { # run_demo <args...>: under the fake home, with a real-looking project list in the environment
   env -i HOME="$home" PATH="$nodebin:$PATH" TMPDIR="${TMPDIR:-/tmp}" BRAIN_CONSOLE_PROJECTS="$project" \
     sh "$P/scripts/demo.sh" "$@" > "$work/out" 2>&1
@@ -166,26 +168,39 @@ run_demo() { # run_demo <args...>: under the fake home, with a real-looking proj
 in_demo() { # in_demo <command...>: in the demo project, with the PATH the daemon was given
   (cd "$demo/console-demo" && env -i HOME="$demo/home" PATH="$(sed -n 's/^PATH=//p' "$work/node.env")" FLOW_PLUGIN="$P/../flow" "$@")
 }
-gate_kinds() { sed -n 's/^# Gates: //p' "$P/../flow/scripts/gate.sh" | tr -d '.' | tr ',' '\n' | tr -d ' ' | sort; }
-run_demo --dir "$demo" --port 7499; code=$?
+gate_kinds() { python3 -I -c 'import json, sys; print("\n".join(json.load(open(sys.argv[1]))["gates"]))' "$P/../flow/profiles.json" | sort; }
+agent_calls() { cat "$demo/agents.log" 2>/dev/null | wc -l | tr -d ' '; }
+run_demo --dir "$demo" --port "$demo_port"; code=$?
 check "the demo builds" [ "$code" -eq 0 ]
 check "the demo project is a git repo with a commit on main" in_demo git rev-parse --verify -q refs/heads/main
 check "the demo project has two worktrees besides its own" [ "$(in_demo git worktree list | wc -l | tr -d ' ')" -eq 3 ]
 check "the demo project runs on flow's local adapter" sh -c "sed -n '/^adapters:/,/^[a-z]/p' '$demo/console-demo/.flow/config.yaml' | grep -q 'default: local'"
-waiting="$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)"
-check "the demo has gates waiting" [ -n "$waiting" ]
-check "one gate of each kind waits" [ "$waiting" = "$(gate_kinds)" ]
+check "one gate of each kind waits" [ "$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)" = "$(gate_kinds)" ]
+check "the demo has one ready item to run" python3 -c "import json, sys; sys.exit(len(json.loads(sys.argv[1])) != 1)" "$(in_demo sh "$P/../flow/adapters/local/list-ready.sh")"
 check "claude on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v claude')" = "$demo/bin/claude" ]
 check "codex on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v codex')" = "$demo/bin/codex" ]
-in_demo "$demo/bin/claude" -p "a prompt" --output-format json > "$work/stub.json"   # by path: a broken PATH must never reach a real claude
+# The stubs run by path: a broken PATH must never reach a real claude, codex, gh, crontab or launchctl.
+calls_before="$(agent_calls)"
+in_demo "$demo/bin/claude" -p "a prompt" --output-format json > "$work/stub.json"
 check "the stub claude reports no tokens spent" python3 -c "import json, sys; usage = json.load(open(sys.argv[1]))['usage']; sys.exit(sum(usage.values()) != 0)" "$work/stub.json"
-check "the stub claude logs each call" grep -q 'claude -p a prompt' "$demo/agents.log"
+check "the stub claude logs each call" [ "$(agent_calls)" -gt "$calls_before" ]
+calls_before="$(agent_calls)"
+in_demo "$demo/bin/codex" exec --json "a prompt" > "$work/stub.jsonl"
+check "the stub codex reports no tokens spent" python3 -c "import json, sys; usages = [event['usage'] for event in map(json.loads, open(sys.argv[1])) if 'usage' in event]; sys.exit(not usages or any(sum(usage.values()) for usage in usages))" "$work/stub.jsonl"
+check "the stub codex logs each call" [ "$(agent_calls)" -gt "$calls_before" ]
+for tool in gh crontab launchctl; do
+  check "$tool on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c "command -v $tool")" = "$demo/bin/$tool" ]
+  in_demo "$demo/bin/$tool" list > /dev/null 2>&1; code=$?
+  check "the stub $tool refuses" [ "$code" -ne 0 ]
+done
+# The command line is what demo.sh hands the daemon, so it is the script's output here; the fake
+# node stands in so no daemon starts. The real-daemon block below checks the outcome when it can.
 check "the daemon starts on the demo project, port, state dir and config only" [ "$(cat "$work/node.args")" = "$P/app/daemon/src/main.ts
 start
 --project
 $demo/console-demo
 --port
-7499
+$demo_port
 --state-dir
 $demo/state
 --config
@@ -200,48 +215,66 @@ check "a second run resets the demo" [ ! -e "$demo/console-demo/left-behind" ]
 check "the reset demo has one gate of each kind again" [ "$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)" = "$(gate_kinds)" ]
 foreign="$work/foreign"; mkdir -p "$foreign"; : > "$foreign/keep"
 run_demo --dir "$foreign"; code=$?
-check "a folder the demo did not build is refused" [ "$code" -eq 2 ]
+check "a folder the demo did not build is refused" [ "$code" -eq "$usage_exit" ]
 check "a folder the demo did not build keeps its files" test -f "$foreign/keep"
 run_demo --dir "$work/demo-port" --port "$(sed -n 's/^REAL_CONSOLE_PORT=//p' "$P/scripts/demo.sh")"; code=$?
-check "the real console's port is refused" [ "$code" -eq 2 ]
+check "the real console's port is refused" [ "$code" -eq "$usage_exit" ]
 check "a refused port builds no demo folder" [ ! -e "$work/demo-port" ]
 
 repo="$(cd "$P/../.." && pwd)"
 script_path="$(sed -n 's/^.*`\(plugins\/console\/scripts\/[a-z]*\.sh\)`.*$/\1/p' "$repo/AGENTS.md" | head -n 1)"
 check "AGENTS.md names the demo script by its path in the repo" [ "$script_path" = plugins/console/scripts/demo.sh ]
-check "the script AGENTS.md names exists and runs" test -x "$repo/$script_path"
+check "the script AGENTS.md names exists and is executable" test -x "$repo/$script_path"
 
 # The real daemon on the demo: needs the app's dev dependencies, as tools/test.sh does.
 if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   echo "demo.sh with the real daemon"
+  POLL_SECONDS=0.5
+  START_POLLS=120
+  STOP_POLLS=60
+  SHUTDOWN_POLLS=20
+  CURL_SECONDS=2
   live="$work/live"; live_home="$work/live-home"; mkdir -p "$live_home"
   live_port="$(node -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
+  first=""; second=""; first_daemon=""; second_daemon=""
   start_live() { # start_live <log>: demo.sh in the background, as a caller with its own home
     env -i HOME="$live_home" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" BRAIN_CONSOLE_PROJECTS="$project" \
       sh "$P/scripts/demo.sh" --dir "$live" --port "$live_port" > "$1" 2>&1 &
   }
-  healthz() { [ -f "$live/state/token" ] && curl -fsS --max-time 2 -H "Authorization: Bearer $(cat "$live/state/token")" "http://127.0.0.1:$live_port/healthz" 2>/dev/null; }
-  wait_healthz() { i=0; while [ $i -lt 120 ]; do healthz > "$work/healthz.json" && return 0; sleep 0.5; i=$((i + 1)); done; return 1; }
-  stop_live() { # the daemon a demo run left: its pid is in the JSON pid file
-    [ -f "$live/state/daemon.pid" ] && kill "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).pid' "$live/state/daemon.pid")" 2>/dev/null
+  poll_until() ( # poll_until <tries> <command...>: succeeds once the command does, fails after <tries> tries
+    tries="$1"; shift
+    attempt=0
+    while [ "$attempt" -lt "$tries" ]; do
+      "$@" && exit 0
+      sleep "$POLL_SECONDS"; attempt=$((attempt + 1))
+    done
+    exit 1
+  )
+  save_healthz() { [ -f "$live/state/token" ] && curl -fsS --max-time "$CURL_SECONDS" -H "Authorization: Bearer $(cat "$live/state/token")" "http://127.0.0.1:$live_port/healthz" > "$work/healthz.json" 2>/dev/null; }
+  is_gone() { ! kill -0 "$1" 2>/dev/null; }
+  port_closed() { ! curl -s --max-time "$CURL_SECONDS" "http://127.0.0.1:$live_port/healthz" > /dev/null; }
+  daemon_pid() { node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).pid' "$live/state/daemon.pid" 2>/dev/null; }
+  stop_live() { # both demo runs, both daemons they started and the one the pid file names now
+    kill $first $second $first_daemon $second_daemon $(daemon_pid) 2>/dev/null
   }
   trap 'stop_live; rm -rf "$work"' EXIT
-  gone() { i=0; while [ $i -lt 60 ]; do kill -0 "$1" 2>/dev/null || return 0; sleep 0.5; i=$((i + 1)); done; return 1; }
+  trap 'exit 1' INT TERM
   start_live "$work/live-1.log"; first=$!
-  wait_healthz; up=$?
+  poll_until "$START_POLLS" save_healthz; up=$?
+  first_daemon="$(daemon_pid)"
   check "the demo's daemon answers on the demo's port" [ "$up" -eq 0 ]
   check "the demo's daemon watches exactly one project" python3 -c "import json, sys; sys.exit(len(json.load(open(sys.argv[1]))['projects']) != 1)" "$work/healthz.json"
   check "the demo's daemon keeps its state in the demo folder" test -f "$live/state/daemon.pid"
   check "the caller's home is left empty by the demo and its daemon" [ -z "$(ls -A "$live_home")" ]
   start_live "$work/live-2.log"; second=$!
-  gone "$first"; stopped=$?
+  poll_until "$STOP_POLLS" is_gone "$first"; stopped=$?
   check "a re-run stops the daemon the previous run started" [ "$stopped" -eq 0 ]
-  wait_healthz; up=$?
+  poll_until "$START_POLLS" save_healthz; up=$?
+  second_daemon="$(daemon_pid)"
   check "the re-run's daemon answers on the same port" [ "$up" -eq 0 ]
   stop_live
-  { kill "$first" "$second"; wait "$second"; } 2>/dev/null
-  i=0; while [ $i -lt 20 ] && curl -s --max-time 1 "http://127.0.0.1:$live_port/healthz" >/dev/null; do sleep 0.5; i=$((i + 1)); done
-  check "no demo daemon is left running after the tests" sh -c "! curl -sS --max-time 2 'http://127.0.0.1:$live_port/healthz'"
+  wait "$second" 2>/dev/null
+  check "no demo daemon is left running after the tests" poll_until "$SHUTDOWN_POLLS" port_closed
 else
   echo "demo.sh with the real daemon: app dependencies or curl missing, skipping"
 fi
