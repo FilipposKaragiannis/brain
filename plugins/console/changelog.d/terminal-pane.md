@@ -13,5 +13,8 @@ bump: minor
   open a pane that resumes the session, showing the resume command instead while the run still
   goes. The tabs say which: `shell · <folder>`, `log · <job>` or `session · <folder or item>`.
   The `terminal.open` action is gone.
+- Settings no longer has a Terminal choice, and the `terminal` setting is gone: a settings file
+  that still holds it loads as before, and the next save leaves it out. `PUT /api/settings` now
+  refuses a `terminal` key as an unknown setting.
 - The daemon now has runtime dependencies, `@lydell/node-pty` and `ws`, both for the terminal pane
   (ADR 0003).

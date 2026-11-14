@@ -24,7 +24,6 @@ import { closeConsoleServer, createConsoleServer } from './server.ts';
 import { SettingsStore } from './settings.ts';
 import type { SourceName } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
-import { installedTerminals } from './terminal.ts';
 
 const EXIT_BAD_CONFIG = 2;
 /** How long a stop may take before the process ends anyway, streams or not. */
@@ -65,7 +64,6 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
     process.exit(EXIT_BAD_CONFIG);
   }
   const { config } = configuration;
-  const installed = () => installedTerminals(existsSync, os.homedir());
   /** One locator for every project: it caches what it read of the Codex session files. */
   const sessions = new SessionLocator({ home: os.homedir(), clock, files: diskSessionFiles });
   /** One subagent reader for every project: it caches what it read of the subagents' files. */
@@ -73,7 +71,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   /** Reads the hosts' plugin files under the home, with each project's files. */
   const plugins = pluginReader(os.homedir());
 
-  /** A project's monitor and runner. The runner reads the terminal setting at request time, so a change in Settings counts at once. */
+  /** A project's monitor and runner. */
   const serve = (project: ProjectDefinition) => {
     const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE, sessions, gateSessions: sessions, subagents, plugins, newerConsole: () => selfCheck.newerConsole() });
     const flowConfig = new FlowConfigEditor({ projectId: project.id, root: project.root, runner: childProcessRunner, refresh: async () => { await Promise.all([monitor.refresh('files'), monitor.refresh('jobs')]); }, log });
@@ -87,7 +85,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
     return { monitor, actions, flowConfig };
   };
   const registry = new ProjectRegistry(serve, log);
-  const settings = new SettingsStore({ config, installed, applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => selfCheck.newerConsole() });
+  const settings = new SettingsStore({ config, applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => selfCheck.newerConsole() });
   const selfCheck = new SelfCheck({
     running: version,
     newestCached: () => newestCachedPlugin(os.homedir(), { listDirs, launchd: { env, files: { exists: existsSync } } })?.version ?? null,

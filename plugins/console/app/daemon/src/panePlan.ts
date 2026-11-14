@@ -1,8 +1,8 @@
 import path from 'node:path';
 import type { PaneRun, PaneSize, PaneTarget } from './paneProtocol.ts';
 import { DEFAULT_PANE_COLUMNS, DEFAULT_PANE_ROWS, MAXIMUM_PANE_COLUMNS, MAXIMUM_PANE_ROWS, MINIMUM_PANE_COLUMNS, MINIMUM_PANE_ROWS, PANE_RUNS, TARGET_FIELDS } from './paneProtocol.ts';
+import { commandText, shellQuote } from './shellWords.ts';
 import type { SessionRef } from './snapshot.ts';
-import { commandText, shellQuote } from './terminal.ts';
 
 /** A pane the page asks for: what it opens and the terminal's size. */
 export type PaneRequest = { target: PaneTarget; size: PaneSize };

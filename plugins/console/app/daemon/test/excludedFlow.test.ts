@@ -46,7 +46,7 @@ function settingsStore(): { settings: SettingsStore; cleanup: () => void } {
   const read = readConfig([], { BRAIN_CONSOLE_TOKEN: 't', BRAIN_CONSOLE_STATE: dir }, paths);
   assert.ok(read.ok, 'because the test config is valid');
   const config = (read as { config: DaemonConfig }).config;
-  const settings = new SettingsStore({ config, installed: () => ['terminal'], applyProjects: () => undefined, newerConsole: () => null });
+  const settings = new SettingsStore({ config, applyProjects: () => undefined, newerConsole: () => null });
   return { settings, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 

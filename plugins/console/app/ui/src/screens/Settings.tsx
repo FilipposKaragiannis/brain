@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import type { FieldGroup, GroupFamily } from '../../../daemon/src/plugins/flow/schema.ts';
 import { FIELD_GROUPS, GROUP_FAMILY } from '../../../daemon/src/plugins/flow/schema.ts';
-import type { SettingOrigin, SettingsView, TerminalName, TerminalSetting } from '../../../daemon/src/snapshot.ts';
+import type { SettingOrigin, SettingsView } from '../../../daemon/src/snapshot.ts';
 import { unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
 import type { ProjectSummary } from '../stream.ts';
@@ -15,33 +15,10 @@ import { HTTP_OK } from '../useProject.ts';
 
 export const SETTINGS_PATH = '/api/settings';
 
-const TERMINAL_LABELS: Record<TerminalName, string> = { iterm: 'iTerm', terminal: 'Terminal', ghostty: 'Ghostty' };
-const TERMINAL_ORDER: TerminalName[] = ['iterm', 'terminal', 'ghostty'];
 const MAX_PORT = 65535;
 const ORIGIN_WORDS: Record<SettingOrigin, string> = { flag: 'set by a start flag', environment: 'set by the environment', file: 'from the config file', default: 'the default' };
 
 type Read = { kind: 'loading' } | { kind: 'read'; view: SettingsView } | { kind: 'unreachable'; message: string };
-/** The terminal radio: a named app, the first one installed, or the owner's own command. */
-type Choice = TerminalName | 'auto' | 'custom';
-
-function choiceOf(value: TerminalSetting | null): Choice {
-  if (value === null) return 'auto';
-  return typeof value === 'string' ? value : 'custom';
-}
-
-/**
- * A custom command as typed: a JSON array of strings, so a word may hold a space (an app path
- * such as "/Applications/My Term.app"). Returns the words, or why the text is not one.
- */
-export function parseCommand(text: string): { ok: true; words: string[] } | { ok: false; error: string } {
-  let parsed: unknown;
-  try { parsed = JSON.parse(text); } catch { return { ok: false, error: 'write the command as a JSON array, such as ["open", "-a", "Warp", "{path}"]' }; }
-  if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((word) => typeof word === 'string' && word !== '')) {
-    return { ok: false, error: 'the command must be a JSON array of non-empty strings' };
-  }
-  return { ok: true, words: parsed as string[] };
-}
-
 /**
  * The pages of the menu: the console's General and Projects, one project's flow settings by
  * group, and Configuration, which holds the jobs' own groups one tab at a time.
@@ -93,7 +70,7 @@ function storeClosed(closed: MenuGroup[]): void {
 
 /**
  * The daemon's settings and the watched projects' flow settings, one page at a time beside a menu:
- * General (the terminal, the daemon, the files and each project's raw YAML), Projects (watched,
+ * General (the daemon, the files and each project's raw YAML), Projects (watched,
  * removed, and added step by step), then the expandable groups Plugins (with Flow inside) and
  * Jobs (Schedules, and Configuration with one tab per job), then Agents, each for the project the
  * picker names (no picker with one project). A group's open or closed state is kept per browser;
@@ -237,13 +214,10 @@ function JobTabs({ job, choose }: { job: FieldGroup; choose: (group: FieldGroup)
   );
 }
 
-/** The settings that are no one plugin's or job's: the terminal, the daemon, and the files (each project's raw YAML follows). */
+/** The settings that are no one plugin's or job's: the daemon and the files (each project's raw YAML follows). */
 function General({ view, projects, saving, save }: PartProps & { projects: ProjectSummary[] }) {
   return (
     <>
-      <Module className="settings-terminal" title="Terminal" aside={<span className="muted">{ORIGIN_WORDS[view.terminal.from]}</span>} footer={null}>
-        <Terminal view={view} saving={saving} save={save} />
-      </Module>
       <Module className="settings-daemon" title="Daemon" aside={null} footer={null}>
         <Daemon view={view} saving={saving} save={save} />
       </Module>
@@ -314,36 +288,5 @@ function Projects({ view, saving, save }: PartProps) {
       {editable && !adding && <div className="settings-add"><button type="button" className="button primary" onClick={() => setAdding(true)}>Add a project</button></div>}
       {editable && adding && <AddProject roots={roots} saving={saving} save={save} close={() => setAdding(false)} />}
     </>
-  );
-}
-
-function Terminal({ view, saving, save }: PartProps) {
-  const current = view.terminal.value;
-  const [choice, setChoice] = useState<Choice>(choiceOf(current));
-  const [command, setCommand] = useState(typeof current === 'object' && current !== null ? JSON.stringify(current.command) : '');
-  const parsed = parseCommand(command);
-  const first = view.terminal.installed[0];
-  const pick = (next: Choice): void => {
-    setChoice(next);
-    if (next === 'auto') void save({ terminal: null });
-    else if (next !== 'custom') void save({ terminal: next });
-  };
-  return (
-    <fieldset className="settings-terminal-choice" disabled={saving}>
-      <legend className="module-help">Open in Terminal opens a folder (or a job's log) in this app.</legend>
-      <label><input type="radio" name="terminal" checked={choice === 'auto'} onChange={() => pick('auto')} /> The first installed of iTerm, Ghostty, Terminal {first === undefined ? '(none found)' : `(${TERMINAL_LABELS[first]})`}</label>
-      {TERMINAL_ORDER.map((name) => (
-        <label key={name}><input type="radio" name="terminal" checked={choice === name} onChange={() => pick(name)} /> {TERMINAL_LABELS[name]}{!view.terminal.installed.includes(name) && <span className="muted"> (not found)</span>}</label>
-      ))}
-      <label><input type="radio" name="terminal" checked={choice === 'custom'} onChange={() => pick('custom')} /> Custom command</label>
-      {choice === 'custom' && (
-        <form className="settings-add" onSubmit={(event) => { event.preventDefault(); if (parsed.ok) void save({ terminal: { command: parsed.words } }); }}>
-          <input aria-label="Command as a JSON array" className="input mono" placeholder='["open", "-a", "Warp", "{path}"]' value={command} onChange={(event) => setCommand(event.target.value)} aria-invalid={command !== '' && !parsed.ok} />
-          <button type="submit" className="button primary" disabled={!parsed.ok}>Save</button>
-          {command !== '' && !parsed.ok && <p className="module-help tone-failing" role="status">{parsed.error}</p>}
-          <p className="module-help">A JSON array of words, run without a shell. <span className="mono">{'{path}'}</span> is the folder as it is, for a word of its own; inside an <span className="mono">sh -c</span> string use <span className="mono">{'{qpath}'}</span>, the folder quoted for sh, and <span className="mono">{'{cmd}'}</span>, the command to run there (a job's log), quoted already. With neither path the folder goes last.</p>
-        </form>
-      )}
-    </fieldset>
   );
 }

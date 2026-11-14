@@ -244,7 +244,7 @@ function fileSettings(registry: ProjectRegistry): SettingsStore {
   writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ projects: [{ root: FIXTURE_ROOT }] }));
   const read = readConfig([], { BRAIN_CONSOLE_TOKEN: 'tok', BRAIN_CONSOLE_STATE: dir }, { configFile: path.join(dir, 'config.json'), legacyProjectsFile: path.join(dir, 'projects.json') });
   const config = (read as { config: DaemonConfig }).config;
-  return new SettingsStore({ config, installed: () => ['iterm'], applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => null });
+  return new SettingsStore({ config, applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => null });
 }
 
 const LOCAL_ROOT = path.join(FIXTURES, 'project-local');
@@ -253,8 +253,8 @@ test('Settings_GetWithToken_EffectiveSettingsAndOrigins', async () => {
   const { base, close } = await started(fileSettings);
   try {
     const response = await fetch(`${base}/api/settings`, { headers: { authorization: 'Bearer tok' } });
-    const view = (await response.json()) as { projects: { from: string; roots: string[] }; terminal: { installed: string[] } };
-    assert.deepEqual([view.projects.from, view.projects.roots, view.terminal.installed], ['file', [FIXTURE_ROOT], ['iterm']], 'because the screen shows each setting with where it came from');
+    const view = (await response.json()) as { projects: { from: string; roots: string[] } };
+    assert.deepEqual([view.projects.from, view.projects.roots], ['file', [FIXTURE_ROOT]], 'because the screen shows each setting with where it came from');
     assert.equal((await fetch(`${base}/api/settings`)).status, 401, 'because the settings sit behind the token like every route');
   } finally { await close(); }
 });

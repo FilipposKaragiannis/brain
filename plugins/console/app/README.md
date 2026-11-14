@@ -109,21 +109,12 @@ a trial must not touch: `HOME` (the agent, the plugin cache, the default config 
 `~/.config/brain-console/config.json` holds the settings, every field optional:
 
 ```json
-{ "projects": [{ "root": "/work/projects/foosbrawl" }], "terminal": "iterm", "port": 7474 }
+{ "projects": [{ "root": "/work/projects/foosbrawl" }], "port": 7474 }
 ```
 
 - `projects`: the roots to watch, absolute (or starting `~/`). Precedence is `--project` flags,
   then `BRAIN_CONSOLE_PROJECTS`, then the file; projects set by a flag or the environment show in
   Settings but cannot change there, with the note why.
-- `terminal`: what Open in Terminal opens, `"iterm"`, `"terminal"`, `"ghostty"` or
-  `{"command": ["open", "-a", "Warp", "{path}"]}`, run without a shell. In each word `{path}` is
-  the folder as it is (for a word of its own), `{qpath}` the folder quoted for sh and `{cmd}` the
-  command to run there (a job's log), quoted already: inside an `sh -c` string use `{qpath}` and
-  `{cmd}`, never `{path}`, or a folder with `$(…)` in its name would run. With neither path the
-  folder is added last. The Settings screen takes the command as a JSON array, so a word may hold a
-  space. Unset, the console takes the first installed of
-  iTerm, Ghostty and Terminal (an app in `/Applications` or `~/Applications`, Terminal also in
-  `/System/Applications/Utilities`).
 - `port`: the port to listen on when no `--port` is given (7474 by default). It takes a restart,
   and while `--port` sets the port a saved one has no effect at all; the note in Settings says so.
 
@@ -131,31 +122,32 @@ While `config.json` is absent the daemon still reads the projects of the older
 `~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`); the first save from
 Settings writes `config.json` with them, and `projects.json` is then no longer read. A file that is
 not valid JSON, or holds a setting the daemon does not know, stops the daemon at start with the reason.
+A `terminal` key, the outside terminal app Open in Terminal used before the terminal pane replaced
+it, is ignored when the file is read and left out of the next save.
 While it runs, the daemon looks at the file's modification time once a minute and takes a hand edit
 as a PUT (below) would, logging `config.reloaded`: new roots are watched, removed ones dropped
-(projects set by a flag or the environment stay as they are), the terminal counts at once. A file
+(projects set by a flag or the environment stay as they are). A file
 that does not parse or fails the PUT's checks is refused (`config.refused` in the log): the daemon
 keeps what it runs, and `fileError` in the settings and `brain-console status` say why.
 
 `PUT /api/settings` (the Settings screen) changes the settings its body names and keeps the rest:
 the whole body is checked first (every root exists, is a folder inside a git checkout and holds
 `.flow/config.yaml`, none is watched twice, no two share a folder name,
-at least one stays, the terminal is a name or a non-empty command, `"terminal": null` goes back to
-the first installed), then merged into the file as it is on disk at that moment (a hand edit made
+at least one stays), then merged into the file as it is on disk at that moment (a hand edit made
 while the daemon runs is kept; a file that no longer parses is refused with the reason, never
 overwritten), written in one step and applied. A changed project list
 applies at once: a new root gets its monitor started, a removed one is stopped and dropped (its
 attached actions get SIGTERM), and every open event stream carries `event: projects` with the new
 list. A stream whose project was removed, or whose id now names another root, ends after that list.
-The terminal counts from the next Open in Terminal; the port only after a restart.
+The port counts only after a restart.
 
 ## Routes
 | Route | What |
 |---|---|
 | `GET /healthz` | `{ok, projects}` |
 | `GET /api/projects` | every project with its counts |
-| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon, `fileError` (a change to the file the daemon refused, else null) and `newerConsole` |
-| `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
+| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the port, the config file, the state folder and whether launchd runs the daemon, `fileError` (a change to the file the daemon refused, else null) and `newerConsole` |
+| `PUT /api/settings` | change settings, body `{"projects"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
 | `POST /api/settings/check-project` | body `{"root"}`: whether that folder can be added, with the same checks the PUT runs on the list plus it; 200 with `{root, id, ok, error, findings: [{check, ok, text}], initCommand}`, `check` one of `path`, `exists`, `flow`, `git`, `watched`, `name`, and `initCommand` (`cd '<root>' && claude /flow:init`) only while `.flow/config.yaml` is missing |
 | `POST /api/open` | body `{"path", "with": "editor" \| "finder"}`: runs `open -t <path>` or `open -R <path>` (execFile, no shell) for the console settings file, the state folder (Finder only) or a watched project's `.flow/config.yaml`; 400 for any other path, 501 off macOS |
 | `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings, hostDefaults}` (below) |
@@ -957,9 +949,7 @@ first; the browser keeps which are closed, and the group holding the page on scr
 Configuration shows a trail, Configuration › Next, Health, Comments, Retro, Intake, one button per
 job: only the chosen job's settings show, the choice holds while you move between pages, and a
 draft on one job waits while another shows. With two projects or more, a picker at the top of the menu chooses the project the
-Plugins, Jobs and Agents pages edit. General (where the page opens) has Terminal, radio buttons for
-the first installed, iTerm, Terminal, Ghostty or a custom command as a JSON array, checked as you
-type; Daemon, the port it listens on now with a box to save another for the next start, the
+Plugins, Jobs and Agents pages edit. General (where the page opens) has Daemon, the port it listens on now with a box to save another for the next start, the
 restart note, and whether it runs under launchd or a terminal; and Files, the config file, the
 state folder and each project's `.flow/config.yaml` with Show in Finder, over each project's Raw
 YAML. Projects lists the watched projects with Remove, or the note why they cannot change, and

@@ -60,7 +60,6 @@ test('UnknownProjectInHash_SaysSo', async () => {
 const SETTINGS_VIEW = {
   configFile: '/home/o/.config/brain-console/config.json', readFromLegacyFile: null, stateDir: '/home/o/.local/state/brain-console', launchd: false,
   projects: { roots: ['/work/projects/foosbrawl'], from: 'file', editable: true, note: null },
-  terminal: { value: null, from: 'default', installed: ['iterm'] },
   port: { value: 7474, from: 'default', saved: null, note: 'The daemon listens on 7474; a new port takes a restart of the daemon.' },
 };
 
