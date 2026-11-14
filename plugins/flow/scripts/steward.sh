@@ -801,15 +801,20 @@ health_missing() {
 # health_resume <item> <step> <path>: start the step again in the background, where the dead run
 # left it, on $resume_host with $resume_model and $resume_effort when set, at most max_resumes times in a row while the step does not advance; then escalate. The
 # note for the resumed step goes in resume.md, which next.sh puts in that one brief and removes.
+# The escalation gate says what the dead runs left (_health.py died): a result the last session
+# wrote that the step did not advance on, and the run's last log lines or that it logged none
+# (with such a result, a loop ended from outside), then names the log.
 health_resume() {
   hr_item="$1"; hr_step="$2"; hr_path="$3"; hr_file="$home/health/$(item_slug "$1").resume"
+  hr_log="$home/log/resume-$(item_slug "$hr_item").log"
   hr_n=0; hr_last=""
   [ -f "$hr_file" ] && read -r hr_n hr_last < "$hr_file"
   [ "$hr_last" = "$hr_step" ] || hr_n=0
   if [ "$hr_n" -ge "$max_resumes" ]; then
     if [ "$dry" -eq 1 ]; then health_say "$hr_item" "would raise an escalation gate: the run of $hr_step died $hr_n times in a row"; return 0; fi
     health_say "$hr_item" "the run of $hr_step died $hr_n times in a row without the step advancing; escalation gate raised"
-    "$FLOW_PLUGIN/scripts/gate.sh" raise "$hr_item" escalation "The run of step $hr_step died $hr_n times in a row, and the health job resumed it each time without the step advancing. $(basename "$hr_path") keeps its commits and uncommitted changes untouched. Read $home/log, then clear the gate to let the flow try again." --raised-by "health job" >/dev/null 2>&1 || true
+    hr_left="$(hpy died "$hr_log" "$hr_item" "$hr_step" "$health_reports/$hr_step.json" "$hr_file" 2>/dev/null)"
+    "$FLOW_PLUGIN/scripts/gate.sh" raise "$hr_item" escalation "The run of step $hr_step died $hr_n times in a row, and the health job resumed it each time without the step advancing. ${hr_left:+$hr_left }$(basename "$hr_path") keeps its commits and uncommitted changes untouched. Read $hr_log, then clear the gate to let the flow try again." --raised-by "health job" >/dev/null 2>&1 || true
     rm -f "$hr_file"; health_gate=escalation
     return 0
   fi
@@ -818,7 +823,7 @@ health_resume() {
   hr_n=$((hr_n + 1)); printf '%s %s\n' "$hr_n" "$hr_step" > "$hr_file"
   mkdir -p "$health_reports" && printf 'The previous run of step %s died. Health job resume %s of %s: this worktree holds its commits and uncommitted changes. Read git status and git log, continue from there, and discard nothing.\n' "$hr_step" "$hr_n" "$max_resumes" > "$health_reports/resume.md"
   health_say "$hr_item" "resumed $hr_step on $resume_host (attempt $hr_n of $max_resumes)"
-  hr_run="$FLOW_PLUGIN/templates/run-unattended.sh"; hr_log="$home/log/resume-$(item_slug "$hr_item").log"
+  hr_run="$FLOW_PLUGIN/templates/run-unattended.sh"
   if [ "$wait_for_resume" -eq 1 ]; then "$hr_run" "$resume_host" "$hr_item" ${resume_model:+--model "$resume_model"} ${resume_effort:+--effort "$resume_effort"} >> "$hr_log" 2>&1
   else hpy spawn "$hr_log" "$hr_run" "$resume_host" "$hr_item" ${resume_model:+--model "$resume_model"} ${resume_effort:+--effort "$resume_effort"} >/dev/null; fi
 }

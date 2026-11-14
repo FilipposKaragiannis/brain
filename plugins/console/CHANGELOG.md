@@ -1,5 +1,17 @@
 # console
 
+## 0.22.0 (2026-11-14)
+
+- `scripts/demo.sh` builds a throwaway demo project and starts a trial console on it alone
+  (gh#193), so the console is tested without a real project in reach. The demo is a git repo on
+  flow's local adapter with two pool worktrees, one item waiting at each gate (interview,
+  plan-approval, decomposition, feel-test, merge, escalation, ambiguity) and one ready item. The
+  daemon runs with `--project`, `--port 7478`, `--state-dir` and `--config` in the demo folder, a
+  `HOME` there and none of the caller's console settings or tokens. `claude` and `codex` are
+  stubs that log each call and spend no tokens; `gh`, `crontab` and `launchctl` refuse.
+  Re-running it stops that daemon and the runs its console started, then builds the demo again;
+  it deletes only a folder it built.
+
 ## 0.21.0 (2026-11-11)
 
 - A gate the agent offered answers for shows them as buttons (gh#170). The snapshot's `Gate`
