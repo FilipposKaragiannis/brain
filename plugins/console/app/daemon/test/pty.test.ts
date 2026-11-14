@@ -103,8 +103,12 @@ test('RealPty_HangUp_EndsTheShell', async () => {
   }
 });
 
-/** A shell that survives a hang-up, as an agent's wrapper may, around a child that does not. */
-const HANG_UP_SURVIVOR_WITH_A_CHILD = 'trap ":" HUP; sleep 600 & echo child=$!; while :; do sleep 1; done';
+/**
+ * A shell that survives a hang-up, as an agent's wrapper may, around a child that does not. The
+ * child prints its own pid once it runs its own program: until that exec it is a fork of the
+ * shell that still carries the shell's HUP trap, and a hang-up in that window misses it.
+ */
+const HANG_UP_SURVIVOR_WITH_A_CHILD = 'trap ":" HUP; sh -c \'echo child=$$; exec sleep 600\' & while :; do sleep 1; done';
 
 test('RealPty_HangUp_ReachesTheChildOfAShellThatSurvivesIt', async () => {
   const pty = started(HANG_UP_SURVIVOR_WITH_A_CHILD, TERMINAL_SIZE);
