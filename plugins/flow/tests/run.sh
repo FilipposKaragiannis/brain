@@ -2210,13 +2210,16 @@ pings() { n="$(grep -c 'flow: health' "$work/offline.log" 2>/dev/null)"; echo "$
 # The resumed session dies with its run: it kills the run-unattended loop above it and the loop's
 # subshells (they share its command line), as a crash would, so the run record stays and no
 # result is read. A session that exits with no result is a failed attempt since gh#169, not a
-# dead run, so it cannot stand in for one.
+# dead run, so it cannot stand in for one. The walk up stops at this suite ($$ here): health --wait
+# runs the loop in the foreground, and above the suite sits the real loop of the step that runs
+# these tests, which the walk killed too, so every such step died as often as it ran the suite.
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
 printf '%s\t%s\n' "\$PWD" "\$*" >> "$hroot/host.log"
 ancestor=\$\$; doomed=""
 while [ "\${ancestor:-1}" -gt 1 ]; do
   ancestor="\$(ps -o ppid= -p "\$ancestor" | tr -d ' ')"
+  [ "\${ancestor:-1}" != "$$" ] || break
   case "\$(ps -o command= -p "\${ancestor:-1}")" in *run-unattended.sh*) doomed="\$doomed \$ancestor" ;; esac
 done
 [ -z "\$doomed" ] || kill -9 \$doomed
@@ -2332,6 +2335,16 @@ check "health: a step that keeps dying is resumed up to max_resumes times" [ "$(
 age_run "$b"; hs --wait > "$hroot/out" 2>&1
 check "health: after max_resumes it raises an escalation gate instead of looping" sh -c "[ \"\$('$P/adapters/local/read.sh' '$b' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"gate\"])')\" = escalation ] && [ -f .flow/gates/$(item_slug "$b").json ] && grep -q 'died 3 times in a row' '$hroot/out' && [ $(facts "$b.*resumed implement") = 3 ] && [ -f '$wb/.flow/claim.json' ]"
 check "health: the escalation notifies" grep -q "$(printf '\t')escalation$(printf '\t')" .flow/events.log
+# The gate says what the dead runs left, so the owner can answer it without reading the logs first.
+check_all "health: the escalation gate says the dead runs logged nothing, and names their log" 'jget message < ".flow/gates/$(item_slug "$b").json" > "$hroot/gate.msg" && grep -q "The run logged nothing after it started the step" "$hroot/gate.msg" && grep -q "Read $hroot/app/.flow/log/resume-$(item_slug "$b").log, then clear the gate" "$hroot/gate.msg" && ! grep -q "after the last resume" "$hroot/gate.msg"'
+died="$work/died"; mkdir -p "$died"
+printf 'run-unattended: t-1 step implement in /wt\nan older run\nrun-unattended: t-1 step implement in /wt\n\nlast\tline one\nlast line two\n' > "$died/log"
+printf '3 implement\n' > "$died/resume"; touch -t 202401010000 "$died/resume"; printf '{"status":"done"}' > "$died/implement.json"
+python3 -I "$P/scripts/_health.py" died "$died/log" t-1 implement "$died/implement.json" "$died/resume" > "$died/out"
+check_all "health: a result written after the last resume is said as a loop ended from outside, with the run's last lines" 'grep -q "The last session wrote implement.json (status done) after the last resume" "$died/out" && grep -q "something ended the loop from outside" "$died/out" && grep -q "last lines: last line one / last line two$" "$died/out" && ! grep -q "an older run" "$died/out" && [ "$(wc -l < "$died/out" | tr -d " ")" = 1 ]'
+touch -t 202401010000 "$died/implement.json"; touch "$died/resume"
+python3 -I "$P/scripts/_health.py" died "$died/log" t-1 test "$died/implement.json" "$died/resume" > "$died/out"
+check_all "health: a result older than the last resume is not said, nor a log with no line of the step taken for a silent one" '! grep -q "The last session wrote" "$died/out" && grep -q "has no line of this step" "$died/out" && ! grep -q "logged nothing" "$died/out"'
 
 printf '{"job":"next","at":"2026-10-20T10:00:00Z","seconds":1,"exit":0,"result":"quiet: no free worktree (the pool is at pool_max)"}\n' >> .flow/log/runs.jsonl
 : > "$work/offline.log"
