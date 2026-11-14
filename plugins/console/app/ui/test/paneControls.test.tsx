@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import { PaneControls, quickSessionName, TERMINAL_PANE } from '../src/PaneControls.tsx';
+import { PaneControls, TERMINAL_PANE } from '../src/PaneControls.tsx';
 import { PaneDock } from '../src/PaneDock.tsx';
 import { FakeDaemon } from './fakeDaemon.tsx';
 
@@ -19,8 +19,4 @@ function clickInControls(name: string): { path: string | null; run: string | nul
 
 test('TerminalPane_OpensAShellInTheFolder', () => {
   expect(clickInControls(TERMINAL_PANE), 'because one click opens one shell in the folder the button sits beside').toEqual([{ path: FOLDER, run: 'shell' }]);
-});
-
-test('QuickSessionClaude_StartsClaudeInTheFolder', () => {
-  expect(clickInControls(quickSessionName('claude')), 'because a quick session runs the agent itself in that folder, not a shell').toEqual([{ path: FOLDER, run: 'claude' }]);
 });

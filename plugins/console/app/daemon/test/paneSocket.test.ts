@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict';
-import os from 'node:os';
-import path from 'node:path';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { WebSocket } from 'ws';
 import { PANE_CLOSE } from '../src/paneProtocol.ts';
@@ -192,58 +189,4 @@ test('ProjectRemoved_AnotherProjectsPane_StaysOpen', async () => {
     await gone.closed;
     assert.equal(kept.socket.readyState, WebSocket.OPEN, 'because only the removed project loses its panes');
   } finally { await running.close(); }
-});
-
-test('QuickSession_Claude_SpawnsTheAbsoluteBinaryInTheFolder', async () => {
-  const running = await daemon();
-  try {
-    await startedClient(running.port, { ...AT_ROOT, run: 'claude' }, PROJECT.id);
-    const pty = running.ptys[0]!;
-    assert.deepEqual([pty.launch.command, pty.launch.workingFolder], ['/opt/tools/bin/claude', FIXTURE_ROOT], 'because a quick session runs the agent found on the daemon\'s PATH, in the chosen folder');
-  } finally { await running.close(); }
-});
-
-test('QuickSession_Started_FrameCarriesTheCommand', async () => {
-  const running = await daemon();
-  try {
-    const client = await startedClient(running.port, { ...AT_ROOT, run: 'codex' }, PROJECT.id);
-    const first = client.notices[0];
-    assert.equal(first?.type === 'started' ? first.command[0] : null, '/opt/tools/bin/codex', 'because the tab\'s tooltip shows what the pane runs');
-  } finally { await running.close(); }
-});
-
-/** A project whose flow config sets claude's model and effort, in a folder of its own. */
-async function pairedProject(config: string): Promise<{ id: string; name: string; root: string }> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'console-pane-paired-'));
-  await mkdir(path.join(root, '.flow'));
-  await writeFile(path.join(root, '.flow', 'config.yaml'), config);
-  return { id: 'paired', name: 'paired', root };
-}
-
-test('QuickSession_ProjectSetsClaudesPair_SpawnedWithTheModelAndEffort', async () => {
-  const running = await daemon();
-  const paired = await pairedProject('jobs:\n  claude:\n    model: claude-sonnet-4-5\n    effort: xhigh\n');
-  try {
-    await running.registry.apply([PROJECT, OTHER_PROJECT, paired]);
-    await running.registry.get(paired.id)!.monitor.refresh('files');
-    await startedClient(running.port, { ...AT_ROOT, path: paired.root, run: 'claude' }, paired.id);
-    assert.deepEqual(running.ptys[0]!.launch.commandArguments, ['--model', 'claude-sonnet-4-5', '--effort', 'xhigh'], 'because a quick session runs with the model and effort the project\'s flow config names');
-  } finally {
-    await running.close();
-    await rm(paired.root, { recursive: true, force: true });
-  }
-});
-
-test('QuickSession_ProjectSetsCodexsPair_SpawnedWithTheModelAndEffort', async () => {
-  const running = await daemon();
-  const paired = await pairedProject('jobs:\n  codex:\n    model: gpt-7-nova\n    effort: low\n');
-  try {
-    await running.registry.apply([PROJECT, OTHER_PROJECT, paired]);
-    await running.registry.get(paired.id)!.monitor.refresh('files');
-    await startedClient(running.port, { ...AT_ROOT, path: paired.root, run: 'codex' }, paired.id);
-    assert.deepEqual(running.ptys[0]!.launch.commandArguments, ['-m', 'gpt-7-nova', '-c', 'model_reasoning_effort="low"'], 'because a codex quick session runs with the model and effort the project\'s flow config names for codex');
-  } finally {
-    await running.close();
-    await rm(paired.root, { recursive: true, force: true });
-  }
 });

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import { PANE_CLOSE } from '../../daemon/src/paneProtocol.ts';
-import { PaneControls, quickSessionName, TERMINAL_PANE } from '../src/PaneControls.tsx';
+import { PaneControls, TERMINAL_PANE } from '../src/PaneControls.tsx';
 import { PANE_DOCK_NAME, PaneDock } from '../src/PaneDock.tsx';
 import { PANE_END_WORDS } from '../src/panes.ts';
 import { FakeDaemon } from './fakeDaemon.tsx';
@@ -62,12 +62,12 @@ test('DaemonEndedThePane_KeepsItsTab', () => {
   expect(screen.queryByRole('button', { name: CLOSE_TAB }), 'because the scrollback stays readable until the owner closes the tab').not.toBeNull();
 });
 
-/** A shell pane, then a claude pane in front of it; the owner picks the shell's tab again and gets its name. */
+/** Two shell panes, the newer in front; the owner picks the older tab again and gets its name. */
 function chooseTheOlderTab(): string {
   const daemon = new FakeDaemon();
   renderDock(daemon);
   act(() => { fireEvent.click(screen.getByRole('button', { name: TERMINAL_PANE })); });
-  act(() => { fireEvent.click(screen.getByRole('button', { name: quickSessionName('claude') })); });
+  act(() => { fireEvent.click(screen.getByRole('button', { name: TERMINAL_PANE })); });
   const olderTab = screen.getByRole('button', { pressed: false });
   act(() => { fireEvent.click(olderTab); });
   return olderTab.textContent ?? '';

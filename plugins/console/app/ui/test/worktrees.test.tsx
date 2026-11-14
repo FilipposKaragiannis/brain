@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { ActionRecord, Run, Worktree } from '../../daemon/src/snapshot.ts';
-import { quickSessionName, TERMINAL_PANE } from '../src/PaneControls.tsx';
+import { TERMINAL_PANE } from '../src/PaneControls.tsx';
 import { PaneDock } from '../src/PaneDock.tsx';
 import { RELEASE_RESERVED_TITLE, Worktrees } from '../src/screens/Worktrees.tsx';
 import { actionRecord, boardItem, claudeSession, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, poolWorktree, readyToClose, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
@@ -407,8 +407,4 @@ function clickOnCard(card: string, button: string): { path: string | null; run: 
 
 test('WorktreeCard_TerminalPane_OpensAShellAtThatWorktree', () => {
   expect(clickOnCard('wt-5', TERMINAL_PANE), 'because the card opens its own worktree, not the root or another card').toEqual([{ path: '/p-wt/wt-5', run: 'shell' }]);
-});
-
-test('WorktreeCard_QuickSessionCodex_StartsCodexAtThatWorktree', () => {
-  expect(clickOnCard('wt-5', quickSessionName('codex')), 'because a quick session on a card runs the agent in that worktree').toEqual([{ path: '/p-wt/wt-5', run: 'codex' }]);
 });

@@ -250,9 +250,9 @@ const MERGE_METHODS = ['squash', 'merge', 'rebase'];
 /** The hosts flow runs sessions on; `gate.sh clear` takes one by name, and `jobs/next.sh` one as its first argument. */
 const HOSTS = ['claude', 'codex'];
 /** The efforts each host takes, as flow's `host_efforts` in lib/host.sh lists them. */
-export const HOST_EFFORTS: Record<string, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh'] };
+const HOST_EFFORTS: Record<string, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh'] };
 /** A model name passed to the host as is: letters, digits and `._:-`, never opening with `-`, so it is never read as an option. */
-export const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
+const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 /** How many workers one custom run may start: the pool caps them anyway. */
 const WORKERS = /^[1-9][0-9]?$/;
 /** A pick filter's name, `pick.<name>` in .flow/config.yaml, as flow's pick_check in lib/flow.sh takes it. */

@@ -4,25 +4,17 @@ import { unlistedFolder } from '../src/actionPlan.ts';
 import { paneEnvironment, parsePaneRequest, planPane } from '../src/panePlan.ts';
 import type { PaneFacts, PaneHost, PaneRequest } from '../src/panePlan.ts';
 import { DEFAULT_PANE_COLUMNS, DEFAULT_PANE_ROWS, MAXIMUM_PANE_COLUMNS, MAXIMUM_PANE_ROWS, MINIMUM_PANE_COLUMNS, MINIMUM_PANE_ROWS } from '../src/paneProtocol.ts';
-import { codexModel } from '../src/plugins/flow/jobsPair.ts';
-import type { JobsPair } from '../src/plugins/flow/jobsPair.ts';
 
 const ROOT = '/p/app';
 const POOL_WORKTREE = '/p/app-wt-2';
 const OUTSIDE_WORKTREE = '/p/app-side';
 const AGENT_FOLDER = '/p/app-wt-2/src';
-const NO_PAIR: JobsPair = { model: null, effort: null, from: 'jobs' };
-const FACTS: PaneFacts = { folders: [ROOT, POOL_WORKTREE, OUTSIDE_WORKTREE, AGENT_FOLDER], pairs: { claude: NO_PAIR, codex: NO_PAIR } };
-const BINARIES: Record<string, string> = { claude: '/opt/tools/bin/claude', codex: '/usr/local/bin/codex' };
-const HOST: PaneHost = { shell: '/bin/zsh', environment: {}, isFolder: () => true, executable: (name) => BINARIES[name] ?? null };
+const FACTS: PaneFacts = { folders: [ROOT, POOL_WORKTREE, OUTSIDE_WORKTREE, AGENT_FOLDER] };
+const HOST: PaneHost = { shell: '/bin/zsh', environment: {}, isFolder: () => true };
 const SIZE = { columns: 132, rows: 41 };
 
 function request(folder: string, run: PaneRequest['run']): PaneRequest {
   return { folder, run, size: SIZE };
-}
-
-function withPairs(pairs: Partial<PaneFacts['pairs']>): PaneFacts {
-  return { ...FACTS, pairs: { ...FACTS.pairs, ...pairs } };
 }
 
 function query(fields: Record<string, string>): URLSearchParams {
@@ -58,59 +50,8 @@ test('ShellPane_ListedFolderMissingOnDisk_Refused', () => {
   assert.equal(plan.ok, false, 'because a configured pool worktree may not exist yet, and a pty cannot start there');
 });
 
-test('ClaudeSession_WithPair_RunsTheAbsoluteBinaryWithModelAndEffort', () => {
-  const plan = planPane(request(ROOT, 'claude'), withPairs({ claude: { model: 'opus', effort: 'xhigh', from: 'jobs.claude' } }), HOST);
-  assert.deepEqual(plan, { ok: true, launch: { command: '/opt/tools/bin/claude', commandArguments: ['--model', 'opus', '--effort', 'xhigh'], workingFolder: ROOT } }, 'because a quick session starts with the project\'s model and effort pair');
-});
-
-test('QuickSession_EmptyPair_NoFlag', () => {
-  for (const run of ['claude', 'codex'] as const) {
-    const plan = planPane(request(ROOT, run), FACTS, HOST);
-    assert.deepEqual(plan.ok && plan.launch.commandArguments, [], `because an empty pair leaves ${run} on its own default`);
-  }
-});
-
-test('ClaudeSession_EffortOnly_OnlyTheEffortFlag', () => {
-  const plan = planPane(request(ROOT, 'claude'), withPairs({ claude: { model: null, effort: 'low', from: 'jobs.claude' } }), HOST);
-  assert.deepEqual(plan.ok && plan.launch.commandArguments, ['--effort', 'low'], 'because each flag goes in only when its value is set');
-});
-
-test('CodexSession_RosterModel_CatalogNameAndReasoningEffort', () => {
-  const plan = planPane(request(POOL_WORKTREE, 'codex'), withPairs({ codex: { model: 'opus', effort: 'high', from: 'jobs.codex' } }), HOST);
-  assert.deepEqual(plan, { ok: true, launch: { command: '/usr/local/bin/codex', commandArguments: ['-m', codexModel('opus'), '-c', 'model_reasoning_effort="high"'], workingFolder: POOL_WORKTREE } }, 'because codex takes its catalog name and the effort as a config override');
-});
-
-test('CodexSession_CatalogModel_PassedThroughUnchanged', () => {
-  const plan = planPane(request(ROOT, 'codex'), withPairs({ codex: { model: 'gpt-7-nova', effort: null, from: 'jobs.codex' } }), HOST);
-  assert.deepEqual(plan.ok && plan.launch.commandArguments, ['-m', 'gpt-7-nova'], 'because a name that is not a roster name is already codex\'s own');
-});
-
-test('QuickSession_ModelOpeningWithDash_RefusedNamingTheKey', () => {
-  const plan = planPane(request(ROOT, 'claude'), withPairs({ claude: { model: '--dangerously-skip-permissions', effort: null, from: 'jobs.claude' } }), HOST);
-  assert.match(plan.ok ? '' : plan.error, /jobs\.claude\.model/, 'because a config value must never be read as a flag, and the owner needs the key to fix');
-});
-
-test('QuickSession_EffortTheHostDoesNotTake_RefusedNamingTheKey', () => {
-  const plan = planPane(request(ROOT, 'codex'), withPairs({ codex: { model: null, effort: 'max', from: 'jobs.codex' } }), HOST);
-  assert.match(plan.ok ? '' : plan.error, /jobs\.codex\.effort/, 'because codex has no max effort, and the owner needs the key to fix');
-});
-
-test('QuickSession_DeprecatedPair_RefusalNamesTheOldKey', () => {
-  const plan = planPane(request(ROOT, 'claude'), withPairs({ claude: { model: null, effort: 'turbo', from: 'jobs' } }), HOST);
-  assert.match(plan.ok ? '' : plan.error, /jobs\.effort/, 'because the bad value came from the deprecated jobs.effort key');
-});
-
-test('QuickSession_HostNotOnThePath_Refused', () => {
-  const plan = planPane(request(ROOT, 'codex'), FACTS, { ...HOST, executable: () => null });
-  assert.match(plan.ok ? '' : plan.error, /codex is not on the daemon's PATH/, 'because the daemon runs only a binary it found, and says which one is missing');
-});
-
-test('QuickSession_UnlistedFolder_RefusedBeforeTheBinary', () => {
-  assert.deepEqual(planPane(request('/etc', 'claude'), FACTS, HOST), { ok: false, error: unlistedFolder('/etc') }, 'because the folder rule holds for an agent as for a shell');
-});
-
 test('Request_PathRunAndSize_Read', () => {
-  assert.deepEqual(parsePaneRequest(query({ path: ROOT, run: 'codex', cols: '132', rows: '41' })), { ok: true, request: { folder: ROOT, run: 'codex', size: SIZE } }, 'because the page sends the folder, what to run and its terminal size');
+  assert.deepEqual(parsePaneRequest(query({ path: ROOT, run: 'shell', cols: '132', rows: '41' })), { ok: true, request: { folder: ROOT, run: 'shell', size: SIZE } }, 'because the page sends the folder, what to run and its terminal size');
 });
 
 test('Request_NoSize_DefaultSize', () => {
@@ -144,7 +85,7 @@ test('Request_SizeOutsideTheBounds_Refused', () => {
 });
 
 test('Request_UnknownRun_Refused', () => {
-  assert.equal(parsePaneRequest(query({ path: ROOT, run: 'bash -c id' })).ok, false, 'because a pane runs only a shell, claude or codex');
+  assert.equal(parsePaneRequest(query({ path: ROOT, run: 'bash -c id' })).ok, false, 'because a pane runs only what the daemon knows by name');
 });
 
 test('Request_NoPath_Refused', () => {

@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, statSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
@@ -37,7 +37,6 @@ function machinePaneHost(environment: NodeJS.ProcessEnv): PaneHost {
     shell: environment.SHELL || os.userInfo().shell || FALLBACK_SHELL,
     environment: paneEnvironment(environment),
     isFolder,
-    executable: (name) => onPath(name, environment.PATH ?? ''),
   };
 }
 
@@ -45,24 +44,6 @@ function machinePaneHost(environment: NodeJS.ProcessEnv): PaneHost {
 function isFolder(folder: string): boolean {
   try {
     return statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true;
-  } catch {
-    return false;
-  }
-}
-
-function onPath(name: string, searchPath: string): string | null {
-  for (const folder of searchPath.split(path.delimiter)) {
-    if (!path.isAbsolute(folder)) continue;
-    const candidate = path.join(folder, name);
-    if (isRunnableFile(candidate)) return candidate;
-  }
-  return null;
-}
-
-function isRunnableFile(candidate: string): boolean {
-  try {
-    accessSync(candidate, constants.X_OK);
-    return statSync(candidate).isFile();
   } catch {
     return false;
   }

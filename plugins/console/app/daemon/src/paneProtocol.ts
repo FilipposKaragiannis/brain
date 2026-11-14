@@ -4,8 +4,8 @@
  * down. No node imports, so the page imports this file as it imports `snapshot.ts`.
  */
 
-/** What a pane runs: a login shell, or an agent started directly in the pty. */
-export const PANE_RUNS = ['shell', 'claude', 'codex'] as const;
+/** What a pane runs: a login shell. */
+export const PANE_RUNS = ['shell'] as const;
 export type PaneRun = (typeof PANE_RUNS)[number];
 
 export type PaneSize = { columns: number; rows: number };

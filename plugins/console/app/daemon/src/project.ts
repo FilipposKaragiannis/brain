@@ -24,7 +24,6 @@ import type { PullFacts } from './collectors/pulls.ts';
 import { readPulls } from './collectors/pulls.ts';
 import type { Logger } from './log.ts';
 import type { PaneFacts } from './panePlan.ts';
-import { NO_JOBS_PAIRS } from './panePlan.ts';
 import { ageSeconds, landedMergeGates, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
@@ -153,9 +152,9 @@ export class ProjectMonitor {
 
   get snapshot(): Snapshot | null { return this.current; }
 
-  /** Where a terminal pane may open in the project right now (the folders Open in Terminal takes), and the pair each host's quick session starts with. */
+  /** Where a terminal pane may open in the project right now: the folders Open in Terminal takes. */
   paneFacts(): PaneFacts {
-    return { folders: terminalFolders(this.actionContext()), pairs: this.facts.files.facts?.config.jobsPairs ?? NO_JOBS_PAIRS };
+    return { folders: terminalFolders(this.actionContext()) };
   }
 
   /** What an action needs to know about the project right now. The terminal comes from the settings, which the daemon adds. */

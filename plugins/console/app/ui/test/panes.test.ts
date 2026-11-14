@@ -64,14 +64,14 @@ function bytesOf(count: number): Uint8Array {
 }
 
 test('Attach_OpensOneSocketForTheFolderRunAndFittedSize', () => {
-  const opened = openPane('codex');
+  const opened = openPane('shell');
   opened.store.showAndConnect(opened.key, document.createElement('div'));
   const requests = opened.daemon.sockets.map((socket) => {
     const url = new URL(socket.path, 'http://page.test');
     return { route: url.pathname, path: url.searchParams.get('path'), run: url.searchParams.get('run'), cols: url.searchParams.get('cols'), rows: url.searchParams.get('rows') };
   });
   expect(requests, 'because the daemon plans the pane from the folder and run in the query and starts it at the size the terminal fits to')
-    .toEqual([{ route: `/api/projects/${PROJECT}/panes`, path: WORKTREE, run: 'codex', cols: String(FAKE_TERMINAL_SIZE.columns), rows: String(FAKE_TERMINAL_SIZE.rows) }]);
+    .toEqual([{ route: `/api/projects/${PROJECT}/panes`, path: WORKTREE, run: 'shell', cols: String(FAKE_TERMINAL_SIZE.columns), rows: String(FAKE_TERMINAL_SIZE.rows) }]);
 });
 
 test('Open_BeforeAttach_OpensNoSocket', () => {

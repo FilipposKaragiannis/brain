@@ -97,6 +97,25 @@ export const DEFAULT_JOBS_HOST: JobsHost = 'claude';
  */
 export type HostDefaults = { codex: { model: string | null; effort: string | null; profile: string | null } | null };
 
+/** The roster's Claude names as codex takes them, as `host_codex_model` in the plugin's lib/host.sh maps them. */
+const CODEX_FROM_ROSTER: Record<string, string> = { sonnet: 'gpt-6.1-terra', opus: 'gpt-6.1-sol', fable: 'gpt-6-astra', haiku: 'gpt-6-luna' };
+
+/**
+ * What the plugin (flow 1.20.0, `host_jobs_pair` in lib/host.sh) still takes from the deprecated
+ * `jobs.model` or `jobs.effort` for a host whose `jobs.<host>` map is absent: the value it runs
+ * with and the key it came from, or null when the host's own map is there or the old key is
+ * empty. A codex model there is a roster name, mapped the way the plugin maps it.
+ */
+export function legacyJobsSetting(values: Record<string, unknown>, host: JobsHost, setting: 'model' | 'effort'): { value: string; from: string } | null {
+  const jobs = values['jobs'];
+  if (jobs === null || typeof jobs !== 'object' || Array.isArray(jobs)) return null;
+  const map = jobs as Record<string, unknown>;
+  if (map[host] !== undefined) return null;
+  const old = map[setting];
+  if (typeof old !== 'string' || old === '') return null;
+  return { value: host === 'codex' && setting === 'model' ? CODEX_FROM_ROSTER[old] ?? old : old, from: `jobs.${setting}` };
+}
+
 /** A change to one key: the new value, or null to take the key out of the file. */
 export type FieldValue = string | number | boolean | string[] | Record<string, string> | null;
 export type FieldChange = { path: string; value: FieldValue };

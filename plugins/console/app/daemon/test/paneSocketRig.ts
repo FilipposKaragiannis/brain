@@ -25,8 +25,7 @@ export const TOKEN = 'pane-token';
 const STATE_DIR = path.join(os.tmpdir(), `console-pane-socket-${process.pid}`);
 export const PROJECT = { id: 'project', name: 'project', root: FIXTURE_ROOT };
 export const OTHER_PROJECT = { id: 'local', name: 'local', root: path.join(FIXTURES, 'project-local') };
-const BINARIES: Record<string, string> = { claude: '/opt/tools/bin/claude', codex: '/opt/tools/bin/codex' };
-const HOST: PaneHost = { shell: '/bin/zsh', environment: { PATH: '/usr/bin' }, isFolder: () => true, executable: (name) => BINARIES[name] ?? null };
+const HOST: PaneHost = { shell: '/bin/zsh', environment: { PATH: '/usr/bin' }, isFolder: () => true };
 /** How long a socket gets to do what a test waits for. */
 export const SOCKET_TIMEOUT_MILLISECONDS = 5000;
 

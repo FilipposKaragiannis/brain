@@ -1,8 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { parseEvents } from '../events.ts';
-import { jobsPair } from '../plugins/flow/jobsPair.ts';
-import type { JobsPairs } from '../plugins/flow/jobsPair.ts';
 import { EVENTS_KEPT } from '../snapshot.ts';
 import { readSyncNote, reportsDir } from '../syncNote.ts';
 import { parseYaml, yamlList, yamlMap, yamlString } from '../yaml.ts';
@@ -45,8 +43,6 @@ export type FlowConfig = {
   deprecated: string[];
   /** The filters under `pick` whose names flow takes (letters, digits, _ and -), in the file's order. */
   picks: PickFilter[];
-  /** The model and effort each host runs with, as the plugin reads them; a quick session starts with them. */
-  jobsPairs: JobsPairs;
 };
 
 /**
@@ -211,7 +207,6 @@ export function parseFlowConfig(source: string): FlowConfig {
     reviewers: reviewersOf([...yamlList(map, 'reviews.reviewers'), ...REVIEWER_LISTS.flatMap((list) => yamlList(map, `reviews.reviewers.${list}`))]),
     deprecated,
     picks: picksOf(map),
-    jobsPairs: { claude: jobsPair(map, 'claude'), codex: jobsPair(map, 'codex') },
   };
 }
 
