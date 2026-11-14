@@ -802,7 +802,8 @@ health_missing() {
 # left it, on $resume_host with $resume_model and $resume_effort when set, at most max_resumes times in a row while the step does not advance; then escalate. The
 # note for the resumed step goes in resume.md, which next.sh puts in that one brief and removes.
 # The escalation gate says what the dead runs left (_health.py died): a result the last session
-# wrote that nothing read, and the run's last log lines or that it logged none, then names the log.
+# wrote that the step did not advance on, and the run's last log lines or that it logged none
+# (with such a result, a loop ended from outside), then names the log.
 health_resume() {
   hr_item="$1"; hr_step="$2"; hr_path="$3"; hr_file="$home/health/$(item_slug "$1").resume"
   hr_log="$home/log/resume-$(item_slug "$hr_item").log"

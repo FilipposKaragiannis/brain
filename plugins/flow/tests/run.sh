@@ -2341,7 +2341,15 @@ died="$work/died"; mkdir -p "$died"
 printf 'run-unattended: t-1 step implement in /wt\nan older run\nrun-unattended: t-1 step implement in /wt\n\nlast\tline one\nlast line two\n' > "$died/log"
 printf '3 implement\n' > "$died/resume"; touch -t 202401010000 "$died/resume"; printf '{"status":"done"}' > "$died/implement.json"
 python3 -I "$P/scripts/_health.py" died "$died/log" t-1 implement "$died/implement.json" "$died/resume" > "$died/out"
-check_all "health: a result written after the last resume is said as a loop ended from outside, with the run's last lines" 'grep -q "The last session wrote implement.json (status done) after the last resume" "$died/out" && grep -q "something ended the loop from outside" "$died/out" && grep -q "last lines: last line one / last line two$" "$died/out" && ! grep -q "an older run" "$died/out" && [ "$(wc -l < "$died/out" | tr -d " ")" = 1 ]'
+check_all "health: a result written after the last resume, with log lines after it, is said as it is and not as a loop ended from outside" 'grep -q "The last session wrote implement.json (status done) after the last resume, and the step did not advance on it" "$died/out" && ! grep -q "from outside" "$died/out" && grep -q "last lines: last line one / last line two$" "$died/out" && ! grep -q "an older run" "$died/out" && [ "$(wc -l < "$died/out" | tr -d " ")" = 1 ]'
+# advance.sh reads the result, then the tracker: a tracker it cannot read ends the loop by itself
+# with the record left, which health resumes too. The log then says so, and the gate quotes it.
+printf 'run-unattended: t-1 step implement in /wt\nflow: cannot read t-1\nrun-unattended: stopped (exit 1)\n' > "$died/log-advance"
+python3 -I "$P/scripts/_health.py" died "$died/log-advance" t-1 implement "$died/implement.json" "$died/resume" > "$died/out"
+check_all "health: a loop that ended by itself after the result is not said to be ended from outside" '! grep -q "from outside" "$died/out" && grep -q "last lines: flow: cannot read t-1 / run-unattended: stopped (exit 1)$" "$died/out"'
+printf 'run-unattended: t-1 step implement in /wt\n' > "$died/log-silent"
+python3 -I "$P/scripts/_health.py" died "$died/log-silent" t-1 implement "$died/implement.json" "$died/resume" > "$died/out"
+check_all "health: only a result written after the last resume with a silent log is said as a loop ended from outside" 'grep -q "wrote implement.json (status done) after the last resume, yet the run logged nothing after it started the step" "$died/out" && grep -q "something ended the loop from outside" "$died/out" && ! grep -q "last lines" "$died/out"'
 touch -t 202401010000 "$died/implement.json"; touch "$died/resume"
 python3 -I "$P/scripts/_health.py" died "$died/log" t-1 test "$died/implement.json" "$died/resume" > "$died/out"
 check_all "health: a result older than the last resume is not said, nor a log with no line of the step taken for a silent one" '! grep -q "The last session wrote" "$died/out" && grep -q "has no line of this step" "$died/out" && ! grep -q "logged nothing" "$died/out"'
