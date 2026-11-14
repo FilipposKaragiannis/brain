@@ -1,5 +1,17 @@
 # flow
 
+## 1.38.1 (2026-11-14)
+
+- A merged item never leaves a gate behind (gh#166). `steward.sh sweep` cleared only the merge
+  gate of an item it closed, so any other gate (ambiguity, feel-test, escalation) stayed in
+  `gate.sh list`, its `gate:*` label stayed on the closed issue, and the board kept it waiting on
+  the owner. The sweep now drops every other gate in the same run with the new
+  `gate.sh drop <item> <why>`: the record and the label go, no answer is recorded. An ambiguity or
+  escalation gate nobody answered is quoted in the sweep's output and in a comment on the closed
+  issue, marked unanswered, so the owner can file a follow-up.
+- The health job reports a gate on a closed item as a defect, once while it stays and with the
+  command that drops it, and no longer counts it among the gates waiting or reminds on it.
+
 ## 1.38.0 (2026-11-11)
 
 - A gate carries what the owner needs to act on it (gh#170, ADR 0003). The gate's record in the

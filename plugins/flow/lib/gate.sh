@@ -198,7 +198,8 @@ keep_whole_when_children_closed() {
 clear_with_answer() {
   cleared_at="$(now_iso)"
   adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$2" "asked=$asked" "answer=$1" \
-    "answered_at=$cleared_at" "answer_pending=$4" "last_event=$cleared_at gate cleared: $1" >/dev/null
+    "answered_at=$cleared_at" "answer_pending=$4" "last_event=$cleared_at gate cleared: $1" >/dev/null \
+    || die "cannot clear the ${gate:-gate} gate of $item; it stays"
   adapter comment "$item" --body "Gate cleared: $1" >/dev/null
   log_answered "$item" "$3"
   rm -f "$record"
