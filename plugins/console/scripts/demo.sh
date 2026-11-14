@@ -1,6 +1,7 @@
 #!/bin/sh
 # The console demo: a throwaway flow project and a trial console on it alone, so the console is
-# tested without touching a real project. Re-running it stops that console and builds the demo again.
+# tested without touching a real project. Re-running it stops that console and the runs it started
+# and builds the demo again.
 #   demo.sh [--dir <folder>] [--port <n>]
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -11,6 +12,10 @@ MARKER=.brain-console-demo
 # What launchctl print exits with for a job it does not have.
 LAUNCHCTL_NOT_LOADED=113
 USAGE_EXIT=2
+# How long a run the demo's console started gets after SIGTERM, then after SIGKILL: 20 polls of
+# half a second, the daemon's own 10 seconds of grace.
+RUN_STOP_POLLS=20
+RUN_STOP_POLL_SECONDS=0.5
 
 die() { echo "demo: $1" >&2; exit "${2:-1}"; }
 usage() { die "usage: demo.sh [--dir <folder>] [--port <n>]" "$USAGE_EXIT"; }
@@ -56,12 +61,53 @@ stop_demo_daemon() {
   [ -f "$state/daemon.pid" ] && [ -x "$stubs/launchctl" ] || return 0
   (cd "$demo_dir" && demo_env node "$daemon" stop --state-dir "$state" --config "$config") || true
 }
-# reset_demo: stops the demo's daemon and deletes the folder, only when this script built it.
+# cwd_of <pid>: the folder the process runs in, or nothing when it cannot be read.
+cwd_of() {
+  if [ -d /proc ]; then readlink "/proc/$1/cwd" 2>/dev/null && return 0; fi
+  command -v lsof > /dev/null 2>&1 && lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p'
+}
+# demo_run_pids: the detached runs the demo's console started that still run. Each flow job writes
+# its pid to a lock in the demo's .flow/log and leads its own process group (the daemon or the job
+# spawns it so). A pid counts only while it runs a flow job script, leads its group and works in
+# the demo folder, so a stale lock naming a pid since reused never reaches another process.
+demo_run_pids() {
+  real="$(cd "$demo_dir" && pwd -P)"
+  for lock in "$project"/.flow/log/*.lock/pid; do
+    [ -f "$lock" ] || continue
+    pid="$(cat "$lock" 2>/dev/null)"
+    case "$pid" in ''|*[!0-9]*) continue ;; esac
+    case "$(ps -o command= -p "$pid" 2>/dev/null)" in *jobs/*.sh*) ;; *) continue ;; esac
+    [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ] || continue
+    case "$(cwd_of "$pid")/" in "$real"/*) echo "$pid" ;; esac
+  done
+}
+group_alive() { for g in "$@"; do kill -0 -- "-$g" 2>/dev/null && return 0; done; return 1; }
+# wait_groups <group...>: waits, a bounded while, for every process in the groups to end.
+wait_groups() {
+  waited=0
+  while group_alive "$@" && [ "$waited" -lt "$RUN_STOP_POLLS" ]; do sleep "$RUN_STOP_POLL_SECONDS"; waited=$((waited + 1)); done
+}
+# stop_demo_runs: the daemon leaves detached runs going by design, so a run the demo's console
+# started would work on the folder about to be deleted and on the items rebuilt with its ids.
+# Ends each run's whole group, as the daemon's stop does: SIGTERM, then SIGKILL after the grace.
+stop_demo_runs() {
+  runs="$(demo_run_pids)"
+  [ -n "$runs" ] || return 0
+  # $runs splits on purpose: one pid a line.
+  for g in $runs; do kill -s TERM -- "-$g" 2>/dev/null || true; done
+  wait_groups $runs
+  group_alive $runs || return 0
+  for g in $runs; do kill -s KILL -- "-$g" 2>/dev/null || true; done
+  wait_groups $runs
+  ! group_alive $runs || die "a run the demo's console started outlived SIGKILL (process groups $(echo $runs)), so the demo stays; stop it and run this again"
+}
+# reset_demo: stops the demo's daemon and its runs, then deletes the folder, only when this script built it.
 reset_demo() {
   [ -e "$demo_dir" ] || return 0
   is_empty_dir "$demo_dir" && return 0
   refuse_foreign_dir
   stop_demo_daemon
+  stop_demo_runs
   rm -rf "$demo_dir"
 }
 

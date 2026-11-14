@@ -213,6 +213,32 @@ run_demo --dir "$demo"; code=$?
 check "a second run succeeds" [ "$code" -eq 0 ]
 check "a second run resets the demo" [ ! -e "$demo/console-demo/left-behind" ]
 check "the reset demo has one gate of each kind again" [ "$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)" = "$(gate_kinds)" ]
+# A detached run as the console's run.start leaves one: a flow job leading its own process group,
+# its pid in a lock under the project's .flow/log, a child in its group. The daemon's stop leaves
+# it going, so the re-run must end it, child too, before the folder goes.
+fake_job="$work/fakeflow/jobs/next.sh"; mkdir -p "$(dirname "$fake_job")"
+printf '#!/bin/sh\nmkdir -p "$1" && echo $$ > "$1/pid"\nsleep 300 &\necho $! > "$2"\nwait\n' > "$fake_job"
+start_run() { # start_run <cwd> <lock dir> <child pid file>: the fake job in its own session, not our child
+  (cd "$1" && python3 -I -c 'import os, sys
+if os.fork(): sys.exit(0)
+os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' /bin/sh "$fake_job" "$2" "$3" < /dev/null > /dev/null 2>&1)
+  tries=0; while [ ! -s "$3" ] && [ "$tries" -lt 50 ]; do sleep 0.1; tries=$((tries + 1)); done
+}
+alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
+start_run "$demo/console-demo" "$demo/console-demo/.flow/log/next.lock" "$work/run-child"
+run_pid="$(cat "$demo/console-demo/.flow/log/next.lock/pid" 2>/dev/null)"; run_child="$(cat "$work/run-child" 2>/dev/null)"
+# The same job, its pid in the demo's locks, but working outside the demo: never the demo's to stop.
+mkdir -p "$work/elsewhere"
+start_run "$work/elsewhere" "$demo/console-demo/.flow/log/next-2.lock" "$work/other-child"
+other_pid="$(cat "$demo/console-demo/.flow/log/next-2.lock/pid" 2>/dev/null)"; other_child="$(cat "$work/other-child" 2>/dev/null)"
+check "the detached run is going before the re-run" alive "$run_pid"
+run_demo --dir "$demo"; code=$?
+check "a re-run with a detached run going succeeds" [ "$code" -eq 0 ]
+check "a re-run stops a detached run the demo's console started" sh -c "[ -n '$run_pid' ] && ! kill -0 '$run_pid' 2>/dev/null"
+check "a re-run stops that run's whole process group" sh -c "[ -n '$run_child' ] && ! kill -0 '$run_child' 2>/dev/null"
+check "a re-run leaves a job working outside the demo alone, though a demo lock names it" alive "$other_pid"
+check "a re-run leaves that job's process group alone" alive "$other_child"
+for g in "$run_pid" "$other_pid"; do alive "$g" && kill -s TERM -- "-$g" 2>/dev/null; done
 foreign="$work/foreign"; mkdir -p "$foreign"; : > "$foreign/keep"
 run_demo --dir "$foreign"; code=$?
 check "a folder the demo did not build is refused" [ "$code" -eq "$usage_exit" ]
