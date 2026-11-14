@@ -42,8 +42,9 @@
   --radius-small: 6px;
   --nav-width: 212px;
   --pane-bar-height: 38px;
-  --pane-body-height: min(360px, 45vh);
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* The pane's terminal tries the installed Nerd Font families first, so prompt icons draw; the page keeps --mono. */
+  --terminal-font: 'JetBrainsMono Nerd Font', 'JetBrainsMono NF', 'JetBrainsMono Nerd Font Mono', var(--mono), 'Symbols Nerd Font Mono';
   --sans: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
@@ -384,8 +385,10 @@ pre.terminal { flex: 1; margin: 0; overflow: auto; background: var(--terminal); 
 .project-row .project-bar { flex: 1 1 auto; min-width: 0; }
 @media (max-width: 600px) { .project-row { flex-wrap: wrap; } }
 
-/* Pane dock: the terminal panes, fixed to the bottom right of the nav; the terminal is dark in both themes */
+/* Pane dock: the terminal panes, fixed to the bottom right of the nav; the terminal is dark in both themes. The dock sets --pane-body-height, its top edge resizes it */
 .pane-dock { position: fixed; left: var(--nav-width); right: 0; bottom: 0; z-index: 5; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.12); }
+.pane-resize { position: absolute; top: -4px; left: 0; right: 0; height: 8px; z-index: 1; cursor: ns-resize; touch-action: none; }
+.pane-resize:hover, .pane-resize:focus-visible { outline: none; background: linear-gradient(transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
 .pane-bar { display: flex; align-items: center; gap: 8px; height: var(--pane-bar-height); padding: 0 8px; }
 .pane-tabs { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; overflow-x: auto; }
 .pane-tab { display: inline-flex; align-items: center; flex: 0 0 auto; border: 1px solid var(--line); border-radius: var(--radius-small); background: var(--panel-soft); }

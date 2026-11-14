@@ -19,7 +19,7 @@ function pageStyle(): { theme: ITheme; fontFamily: string } {
     cursorAccent: read('--terminal'),
     selectionBackground: read('--terminal-selection'),
   };
-  return { theme, fontFamily: read('--mono') };
+  return { theme, fontFamily: read('--terminal-font') };
 }
 
 /**

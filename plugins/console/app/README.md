@@ -973,7 +973,11 @@ or that worktree in the pane dock; Quick session: claude and Quick session: code
 that agent there with the project's `jobs.<host>` model and effort, in a pane of its own that ends
 when the agent exits. The dock is fixed to the bottom of the page right of the nav, one tab per
 pane (`<shell, claude or codex> · <folder name>`, the project's name added when it is not the one on screen, the
-command, model and effort included, on hover), Close on each tab, and a chevron that folds the dock to its tabs. A pane stays
+command, model and effort included, on hover), Close on each tab, and a chevron that folds the dock to its tabs. Dragging
+the open dock's top edge, or focusing it and pressing the up and down arrows, resizes the terminal between 120 px and three
+quarters of the window, and the terminal refits to it; the browser keeps the height. A wheel or trackpad scroll over a pane
+scrolls only its terminal, never the page behind, also at the edge of the scrollback. The terminal's font tries the installed
+JetBrainsMono Nerd Font families first, so prompt icons (powerlevel10k, oh-my-zsh) draw, then the page's monospace stack. A pane stays
 open, with its screen, across screens, projects and Settings; one the daemon ended says why ("Session
 ended (exit 0)", "The daemon stopped") and keeps its tab until Close. The top bar holds the Settings button, and
 the theme switch is a small square icon (a moon on light, a sun on dark) kept per browser. At phone
