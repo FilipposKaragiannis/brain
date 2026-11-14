@@ -142,7 +142,7 @@ const ENDINGS: Ending[] = [
   { how: 'connection lost', notice: null, code: ABNORMAL_CLOSE, words: new RegExp(PANE_END_WORDS.connectionLost) },
 ];
 
-test.each(ENDINGS)('DaemonEndsThePane_$how_SaysWhy', ({ notice, code, words }) => {
+test.each(ENDINGS)('DaemonEndsThePane_SaysWhy ($how)', ({ notice, code, words }) => {
   const { store, key, socket } = attachedPane(SHELL);
   if (notice !== null) socket.receive(notice);
   socket.closeFromDaemon(code);
@@ -175,7 +175,7 @@ const UNCHANGED_REFITS: Refit[] = [
   { how: 'a size already sent', resizedTo: [{ columns: 61, rows: 19 }] },
 ];
 
-test.each(UNCHANGED_REFITS)('Refit_SameSizeAgain_$how_SendsNoResize', ({ resizedTo }) => {
+test.each(UNCHANGED_REFITS)('Refit_SameSizeAgain_SendsNoResize ($how)', ({ resizedTo }) => {
   const { store, key, socket, terminal } = livePane();
   for (const size of resizedTo) { terminal.size = size; store.refit(key); }
   store.refit(key);
@@ -192,7 +192,7 @@ const MALFORMED_NOTICES: Malformed[] = [
   { what: 'a refused with no error', notice: { type: 'refused' } },
 ];
 
-test.each(MALFORMED_NOTICES)('Notice_$what_Ignored', ({ notice }) => {
+test.each(MALFORMED_NOTICES)('MalformedNotice_Ignored ($what)', ({ notice }) => {
   const { store, key, socket } = attachedPane(SHELL);
   const before = structuredClone(view(store, key));
   socket.receive(notice as PaneNotice);

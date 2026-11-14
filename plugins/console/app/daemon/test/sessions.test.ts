@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -11,7 +12,7 @@ import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFile
 import type { CodexMeta, GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
 import { planPane } from '../src/panePlan.ts';
-import type { PaneFacts, PaneHost, PaneLaunch } from '../src/panePlan.ts';
+import type { PaneFacts, PaneHost } from '../src/panePlan.ts';
 import type { PaneTarget } from '../src/paneProtocol.ts';
 import { PaneSessions } from '../src/panes.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
@@ -562,35 +563,63 @@ const FACTS: PaneFacts = {
 const PANE_HOST: PaneHost = { shell: '/bin/zsh', environment: {}, isFolder: () => true };
 const PANE_SIZE = { columns: 100, rows: 30 };
 
-function launched(target: PaneTarget, facts: PaneFacts): PaneLaunch {
-  const result = planPane({ target, size: PANE_SIZE }, facts, PANE_HOST);
-  assert.ok(result.ok, `because ${JSON.stringify(target)} names a session the console lists: ${result.ok ? '' : result.error}`);
-  return result.launch;
+/** The folder a planned pane opens in; empty when the pane is refused. */
+function paneFolder(target: PaneTarget, facts: PaneFacts): string {
+  const plan = planPane({ target, size: PANE_SIZE }, facts, PANE_HOST);
+  return plan.ok ? plan.launch.workingFolder : '';
 }
 
-/** The shell line a resumed session's pane runs, after `/bin/sh -c`. */
-function resumeLine(target: PaneTarget, facts: PaneFacts): string {
-  return launched(target, facts).commandArguments.at(-1) ?? '';
+/**
+ * Runs a resumed session's pane for real: its line in the POSIX shell it names, in a fresh folder,
+ * with `/bin/echo` standing in for the owner's login shell and `resume` as the session's command.
+ * Says what the pane printed and whether the session's command ran (it touches a marker file).
+ */
+function ranPane(target: (folder: string) => PaneTarget, place: (folder: string, session: SessionRef) => Partial<PaneFacts>, resume?: (marker: string) => string[]): { printed: string; resumed: boolean; marker: string } {
+  const folder = mkdtempSync(path.join(os.tmpdir(), 'console-resume-'));
+  try {
+    const marker = path.join(folder, 'resumed');
+    const session: SessionRef = { ...SESSION, resume: resume === undefined ? ['/usr/bin/touch', marker] : resume(marker) };
+    const facts: PaneFacts = { root: folder, folders: [folder], sessions: [], gateSessions: [], ...place(folder, session) };
+    const plan = planPane({ target: target(folder), size: PANE_SIZE }, facts, { ...PANE_HOST, shell: '/bin/echo' });
+    if (!plan.ok) return { printed: `refused: ${plan.error}`, resumed: false, marker };
+    const printed = execFileSync(plan.launch.command, plan.launch.commandArguments, { cwd: plan.launch.workingFolder, env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8' });
+    return { printed, resumed: existsSync(marker), marker };
+  } finally { rmSync(folder, { recursive: true, force: true }); }
 }
 
-test('LiveSession_ResumePrintedNotRun', () => {
-  assert.ok(resumeLine({ run: 'session', folder: '/p/app-wt-2', pid: 100 }, FACTS).startsWith('echo '), 'because a resume while the run still writes the session would put two writers on it, so the owner runs it once the run ends');
+const sessionByPid = (pid: number) => (folder: string): PaneTarget => ({ run: 'session', folder, pid });
+const runIn = (alive: boolean) => (folder: string, session: SessionRef): Partial<PaneFacts> => ({ sessions: [{ pid: 100, folder, session, alive }] });
+const gateOn = (item: string) => (): PaneTarget => ({ run: 'gate', item });
+const gateRaisedIn = (alsoRunning: boolean) => (folder: string, session: SessionRef): Partial<PaneFacts> => ({
+  gateSessions: [{ item: 'gh#7', folder, session }],
+  sessions: alsoRunning ? [{ pid: 300, folder, session, alive: true }] : [],
 });
 
-test('LiveSession_PrintedCommandIsTheResumeCommand', () => {
-  assert.match(resumeLine({ run: 'session', folder: '/p/app-wt-2', pid: 100 }, FACTS), new RegExp(`echo 'claude --resume ${SESSION.id}'`), 'because the owner copies the command the pane shows');
+test('LiveSession_ResumeNotRun', () => {
+  assert.equal(ranPane(sessionByPid(100), runIn(true)).resumed, false, 'because a resume while the run still writes the session would put two writers on it, so the owner runs it once the run ends');
+});
+
+test('LiveSession_PrintsTheResumeCommand', () => {
+  const pane = ranPane(sessionByPid(100), runIn(true));
+  assert.ok(pane.printed.includes(`/usr/bin/touch ${pane.marker}`), `because the owner copies the command the pane shows; it printed ${JSON.stringify(pane.printed)}`);
 });
 
 test('Session_PaneOpensInTheFolderItRanIn', () => {
-  assert.equal(launched({ run: 'session', folder: '/p/app-wt-2', pid: 100 }, FACTS).workingFolder, '/p/app-wt-2', 'because claude --resume finds a session by the folder it ran in');
+  assert.equal(paneFolder({ run: 'session', folder: '/p/app-wt-2', pid: 100 }, FACTS), '/p/app-wt-2', 'because claude --resume finds a session by the folder it ran in');
 });
 
 test('EndedSession_ResumeRunsAtOnce', () => {
-  assert.ok(resumeLine({ run: 'session', folder: '/p/app-wt-2', pid: 200 }, FACTS).startsWith('claude --resume ended-1;'), 'because once the run has ended the owner wants to be in the session straight away');
+  assert.equal(ranPane(sessionByPid(100), runIn(false)).resumed, true, 'because once the run has ended the owner wants to be in the session straight away');
 });
 
 test('EndedSession_LoginShellFollows', () => {
-  assert.ok(resumeLine({ run: 'session', folder: '/p/app-wt-2', pid: 200 }, FACTS).endsWith(`exec '${PANE_HOST.shell}' -l`), 'because the pane stays a terminal after the session ends');
+  assert.equal(ranPane(sessionByPid(100), runIn(false)).printed, '-l\n', 'because the pane stays a terminal after the session ends: the owner\'s shell, as a login shell, runs once the resume returns');
+});
+
+test('EndedSession_ResumeWordsWithShellCharacters_ReachTheProgramWhole', () => {
+  const hostile = "it's $(echo pwned) `id` ; x\"y";
+  const pane = ranPane(sessionByPid(100), runIn(false), () => ['/usr/bin/printf', '[%s]', hostile]);
+  assert.ok(pane.printed.startsWith(`[${hostile}]`), `because each word of the resume command reaches the program as it is, never read by the shell; it printed ${JSON.stringify(pane.printed)}`);
 });
 
 test('SessionOfAnUnknownPid_Refused', () => {
@@ -605,16 +634,15 @@ const GATE_SESSION: SessionRef = { host: 'claude', id: 'raised-it-3333', transcr
 const GATE_FACTS: PaneFacts = { ...FACTS, gateSessions: [{ item: 'gh#7', folder: '/p/app-wt-2', session: GATE_SESSION }] };
 
 test('GateSession_OpensInTheGatesWorktree', () => {
-  assert.equal(launched({ run: 'gate', item: 'gh#7' }, GATE_FACTS).workingFolder, '/p/app-wt-2', 'because claude --resume finds a session by the folder its step ran in');
+  assert.equal(paneFolder({ run: 'gate', item: 'gh#7' }, GATE_FACTS), '/p/app-wt-2', 'because claude --resume finds a session by the folder its step ran in');
 });
 
 test('GateSession_ResumesAtOnce', () => {
-  assert.ok(resumeLine({ run: 'gate', item: 'gh#7' }, GATE_FACTS).startsWith('claude --resume raised-it-3333;'), 'because the step that raised the gate has ended, so the session resumes straight away');
+  assert.equal(ranPane(gateOn('gh#7'), gateRaisedIn(false)).resumed, true, 'because the step that raised the gate has ended, so the session resumes straight away');
 });
 
-test('GateSessionStillWrittenByALiveProcess_ResumePrintedNotRun', () => {
-  const live: PaneFacts = { ...GATE_FACTS, sessions: [{ pid: 300, folder: '/p/app-wt-2', session: GATE_SESSION, alive: true }] };
-  assert.ok(resumeLine({ run: 'gate', item: 'gh#7' }, live).startsWith('echo '), 'because a resume while a process still writes the session would put two writers on it');
+test('GateSessionStillWrittenByALiveProcess_ResumeNotRun', () => {
+  assert.equal(ranPane(gateOn('gh#7'), gateRaisedIn(true)).resumed, false, 'because a resume while a process still writes the session would put two writers on it');
 });
 
 test('GateSessionNotLocated_RefusedWithTheReason', () => {
@@ -644,14 +672,24 @@ test('AgentWithATranscript_SnapshotCarriesItsSession', async () => {
   assert.deepEqual(monitor.snapshot?.worktrees.find((entry) => entry.name === 'project-wt-3')?.agents[0]?.session, SESSION, 'because the worktree card carries the same session');
 });
 
-test('AgentGoneFromTheProcessList_ListedAsEndedWithItsSession', async () => {
+/** A monitor that saw the agent with pid 100 run, then saw it gone from the process list. */
+async function agentGoneMonitor(): Promise<ProjectMonitor> {
   const { runner, drop } = changingProcesses();
   const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, sessions: sessionsByPid, subagents: noSubagents });
   await monitor.refresh('files');
   await monitor.refresh('processes');
   drop(100);
   await monitor.refresh('processes');
+  return monitor;
+}
+
+test('AgentGoneFromTheProcessList_ListedAsEndedWithItsSession', async () => {
+  const monitor = await agentGoneMonitor();
   assert.deepEqual(monitor.snapshot?.ended.map((entry) => [entry.pid, entry.worktree, entry.endedAt, entry.session?.id]), [[100, 'project-wt-3', NOW.toISOString(), SESSION.id]], 'because a run that ended leaves a session the owner can resume');
+});
+
+test('AgentGoneFromTheProcessList_PaneFactsSayItsSessionEnded', async () => {
+  const monitor = await agentGoneMonitor();
   assert.deepEqual(monitor.paneFacts().sessions.map((entry) => [entry.pid, entry.alive]), [[104, true], [100, false]], 'because an ended run\'s session resumes at once, a live one waits for Enter');
 });
 

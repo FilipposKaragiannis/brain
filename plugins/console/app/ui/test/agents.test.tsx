@@ -73,12 +73,16 @@ test('AgentsScreen_NoRun_EmptyStatePointsToJobs', async () => {
   expect(screen.getByRole('link', { name: 'Jobs' }).getAttribute('href'), 'because a run is started from the Run once panel, which is on the Jobs page').toBe('#/project/jobs');
 });
 
-test('AgentsScreen_AgentAndSessionRows_EachOpenTheirOwnFolder', async () => {
+test('AgentsScreen_AgentAndSessionRows_EachHaveOpenInTerminal', async () => {
+  await renderAgents([agent(100, 'agent', '/p-wt/wt-3'), agent(104, 'session', '/p-wt/wt-2/src')]);
+  expect(screen.getAllByRole('button', { name: /Open in Terminal/ }).length, 'because a run card and a session row each get the button').toBe(2);
+});
+
+test('AgentsScreen_SessionRowOpenInTerminal_OpensAShellWhereItWorks', async () => {
   const daemon = new FakeDaemon();
   await renderAgents([agent(100, 'agent', '/p-wt/wt-3'), agent(104, 'session', '/p-wt/wt-2/src')], [], daemon);
   const row = screen.getByRole('listitem', { name: 'Session 104' });
   await act(async () => { fireEvent.click(within(row).getByRole('button', { name: 'Open in Terminal' })); });
-  expect(screen.getAllByRole('button', { name: /Open in Terminal/ }).length, 'because a run card and a session row each get the button').toBe(2);
   expect(paneRequests(daemon), 'because the shell pane opens where that process works').toEqual([{ run: 'shell', path: '/p-wt/wt-2/src', session: null }]);
 });
 
@@ -89,12 +93,15 @@ test('OwnSessions_FoldUnderACount', async () => {
   expect(screen.getByRole('article', { name: 'Run 100' }), 'because a flow run is a card of its own').not.toBeNull();
 });
 
-test('AgentWithASession_OpenSessionSendsItsPidAndSaysTheCommandWaits', async () => {
+test('AgentWithASession_OpenSessionSaysTheCommandWaits', async () => {
+  await renderAgents([{ ...agent(100, 'agent', '/p-wt/wt-3'), session: SESSION }]);
+  expect(screen.getByRole('button', { name: 'Open session' }).getAttribute('title'), 'because a live run cannot be resumed yet, so the pane shows the command to run once it ends').toBe(OPEN_SESSION_LIVE);
+});
+
+test('AgentWithASession_OpenSessionOpensAPaneNamingItsPidAndFolder', async () => {
   const daemon = new FakeDaemon();
   await renderAgents([{ ...agent(100, 'agent', '/p-wt/wt-3'), session: SESSION }], [], daemon);
-  const button = screen.getByRole('button', { name: 'Open session' });
-  expect(button.getAttribute('title'), 'because a live run cannot be resumed yet, so the pane shows the command to run once it ends').toBe(OPEN_SESSION_LIVE);
-  await act(async () => { fireEvent.click(button); });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open session' })); });
   expect(paneRequests(daemon), 'because the daemon finds the session by the pid and opens it in that folder').toEqual([{ run: 'session', path: '/p-wt/wt-3', session: '100' }]);
 });
 
@@ -115,10 +122,12 @@ test('EndedWithASession_NoOpenInTerminal', async () => {
   expect([within(table).queryByRole('button', { name: 'Open session' }) !== null, within(table).queryByRole('button', { name: 'Open in Terminal' })], 'because resuming the ended session opens the pane there').toEqual([true, null]);
 });
 
-test('EndedWithoutASession_KeepsOpenInTerminal', async () => {
-  await renderAgents([], [{ ...agent(201, 'session', '/p-wt/wt-3'), endedAt: '2026-10-24T18:10:00Z' }]);
+test('EndedWithoutASession_OpenInTerminalOpensAShellAtItsFolder', async () => {
+  const daemon = new FakeDaemon();
+  await renderAgents([], [{ ...agent(201, 'session', '/p-wt/wt-3'), endedAt: '2026-10-24T18:10:00Z' }], daemon);
   const table = screen.getByRole('table', { name: 'Ended agents and sessions' });
-  expect(within(table).queryByRole('button', { name: 'Open in Terminal' }), 'because with nothing to resume a plain shell at the folder is the way in').not.toBeNull();
+  await act(async () => { fireEvent.click(within(table).getByRole('button', { name: 'Open in Terminal' })); });
+  expect(paneRequests(daemon), 'because with nothing to resume a plain shell in the pane at the folder is the way in').toEqual([{ run: 'shell', path: '/p-wt/wt-3', session: null }]);
 });
 
 test('AgentWithoutASession_NoOpenSession', async () => {

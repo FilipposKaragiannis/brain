@@ -92,6 +92,41 @@ test('Request_UnknownRun_Refused', () => {
   assert.equal(parsePaneRequest(query({ path: ROOT, run: 'bash -c id' })).ok, false, 'because a pane runs only what the daemon knows by name');
 });
 
+test('Request_QuickSessionRun_Refused', () => {
+  for (const run of ['claude', 'codex']) {
+    assert.equal(parsePaneRequest(query({ path: ROOT, run })).ok, false, `because the owner starts ${run} by hand in a shell pane, so no pane starts it for them`);
+  }
+});
+
+/** Where flow's jobs.sh writes a job's log: `<root>/.flow/log/<job>.log`. */
+const NEXT_NIGHTLY_WORKER_LOG = '/p/app/.flow/log/next-nightly-2.log';
+
+function jobPane(job: string) {
+  return planPane({ target: { run: 'job', job }, size: SIZE }, FACTS, HOST);
+}
+
+test('JobPane_OpensAtTheProjectRoot', () => {
+  const plan = jobPane('next-nightly-2');
+  assert.equal(plan.ok && plan.launch.workingFolder, ROOT, 'because a job\'s log lives under the project root, whatever worktree its run used');
+});
+
+test('JobPane_ReadsThatJobsLog', () => {
+  const plan = jobPane('next-nightly-2');
+  assert.equal(plan.ok && plan.launch.commandArguments.at(-1), NEXT_NIGHTLY_WORKER_LOG, 'because the pane shows the log jobs.sh writes for that job and no other file');
+});
+
+test('JobPane_FollowsTheLogAsItGrows', () => {
+  const plan = jobPane('next');
+  const follows = plan.ok && /tail$/.test(plan.launch.command) && plan.launch.commandArguments.some((word) => /^-[A-Za-z]*[fF]$/.test(word));
+  assert.equal(follows, true, 'because the owner watches a running job, so new lines keep coming into the pane');
+});
+
+test('Request_JobNameThatIsNotAJob_Refused', () => {
+  for (const job of ['../../../etc/passwd', '-n', 'next/../../secrets', '']) {
+    assert.equal(parsePaneRequest(query({ run: 'job', job })).ok, false, `because ${JSON.stringify(job)} would read a file that is no job's log, or pass tail an option`);
+  }
+});
+
 test('Request_NoPath_Refused', () => {
   assert.equal(parsePaneRequest(query({ run: 'shell' })).ok, false, 'because a pane needs a folder to open in');
 });

@@ -190,6 +190,13 @@ test('App_ProjectBarTerminalPane_OpensAShellAtTheProjectRoot', async () => {
   expect(daemon.sockets.map((socket) => ({ path: socket.queryParameter('path'), run: socket.queryParameter('run') })), 'because the project bar opens a shell at the project root').toEqual([{ path: '/p', run: 'shell' }]);
 });
 
+test('App_ProjectBar_OneButtonOpensATerminalAndNoneStartsAnAgent', async () => {
+  await renderFoosbrawl(new FakeDaemon());
+  const projectBar = screen.getByRole('region', { name: 'Project details' }).parentElement!;
+  const named = within(projectBar).getAllByRole('button').map((button) => button.textContent ?? '').filter((name) => /terminal|session|claude|codex/i.test(name));
+  expect(named, 'because Open in Terminal and Terminal pane are one button, and the owner starts claude or codex by hand in it').toEqual([OPEN_IN_TERMINAL]);
+});
+
 const NAVIGATIONS = [
   { to: 'a screen change', hash: '#/foosbrawl/agents' },
   { to: 'a project switch', hash: '#/brain/overview' },
@@ -204,12 +211,12 @@ async function openPaneThenGo(daemon: FakeDaemon, hash: string): Promise<void> {
   await flush(0);
 }
 
-test.each(NAVIGATIONS)('App_PaneOpen_$to_KeepsTheDock', async ({ hash }) => {
+test.each(NAVIGATIONS)('App_PaneOpenThenNavigate_KeepsTheDock ($to)', async ({ hash }) => {
   await openPaneThenGo(new FakeDaemon(), hash);
   expect(screen.queryByRole('region', { name: PANE_DOCK_NAME }), 'because the dock sits outside the routed screens, so moving around the console leaves the pane open').not.toBeNull();
 });
 
-test.each(NAVIGATIONS)('App_PaneOpen_$to_KeepsItsProcess', async ({ hash }) => {
+test.each(NAVIGATIONS)('App_PaneOpenThenNavigate_KeepsItsProcess ($to)', async ({ hash }) => {
   const daemon = new FakeDaemon();
   await openPaneThenGo(daemon, hash);
   expect(daemon.sockets.map((socket) => socket.closedWith), 'because moving around the console must not hang up the pane nor start a second one').toEqual([null]);

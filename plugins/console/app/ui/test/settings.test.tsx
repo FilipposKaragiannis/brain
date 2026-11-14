@@ -82,6 +82,11 @@ test('Settings_Read_OpensOnGeneral', async () => {
   expect([screen.getByRole('heading', { name: 'Daemon' }), screen.getByRole('heading', { name: 'Files' }), screen.queryByRole('list', { name: 'Watched projects' })], 'because General is the first page and the home of the settings that are no one plugin\'s').toEqual([expect.anything(), expect.anything(), null]);
 });
 
+test('Settings_General_NoTerminalAppChoice', async () => {
+  await renderSettings(VIEW);
+  expect([screen.queryByRole('heading', { name: /terminal/i }), screen.queryAllByRole('radio')], 'because every Open in Terminal opens a pane, so there is no outside terminal app to pick').toEqual([null, []]);
+});
+
 test('Settings_Menu_GeneralProjectsThenPluginsFlowJobsAndAgents', async () => {
   await renderSettings(VIEW);
   const nav = screen.getByRole('navigation', { name: 'Settings sections' });

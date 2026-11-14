@@ -99,6 +99,31 @@ test('Put_UnknownSetting_Refused', () => {
   } finally { cleanup(); }
 });
 
+/** A config file written when the console still let the owner pick a terminal app. */
+const RETIRED_TERMINAL = { 'config.json': { projects: [{ root: FIXTURE_ROOT }], terminal: 'iterm' } };
+
+test('RetiredTerminalSetting_InTheFile_ProjectsStillRead', () => {
+  const { settings, cleanup } = store([], RETIRED_TERMINAL);
+  try {
+    assert.deepEqual(settings.view().projects.roots, [FIXTURE_ROOT], 'because a key the console no longer has must not cost the owner the projects beside it');
+  } finally { cleanup(); }
+});
+
+test('RetiredTerminalSetting_NextSave_LeavesItOut', () => {
+  const { settings, written, cleanup } = store([], RETIRED_TERMINAL);
+  try {
+    settings.update({ port: 7480 });
+    assert.deepEqual(written(), { projects: [{ root: FIXTURE_ROOT }], port: 7480 }, 'because the file stops naming a terminal app nothing reads');
+  } finally { cleanup(); }
+});
+
+test('Put_RetiredTerminalSetting_Refused', () => {
+  const { settings, cleanup } = store([], FILE_PROJECT);
+  try {
+    assert.equal(settings.update({ terminal: 'iterm' }).ok, false, 'because every Open in Terminal opens a pane, so a terminal app is not a setting');
+  } finally { cleanup(); }
+});
+
 test('LegacyProjectsFile_OnlyFile_NotedUntilTheFirstWrite', () => {
   const { settings, written, cleanup } = store([], { 'projects.json': { projects: [{ root: FIXTURE_ROOT }] } });
   try {

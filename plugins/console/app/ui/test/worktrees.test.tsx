@@ -102,13 +102,21 @@ test('FreeWorktreeWithASession_SaysTheSessionSitsThere', () => {
 
 const ACTIONS_PATH = '/api/projects/project/actions';
 
-test('Worktrees_EveryRow_OpenInTerminalOnItsPath', () => {
-  const daemon = new FakeDaemon();
+/** A pool worktree and the project root outside the pool, each with its Open in Terminal. */
+function renderPoolAndOutside(daemon: FakeDaemon): HTMLElement[] {
   const Wrapper = daemon.screenWrapper();
   render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-2'), { ...poolWorktree('project'), path: '/p', role: 'main', state: 'outside' }] }} /><PaneDock projectOnScreen="project" projects={[]} /></Wrapper>);
-  const buttons = screen.getAllByRole('button', { name: OPEN_IN_TERMINAL });
-  expect(buttons.length, 'because the pool rows and the project root outside it each get one button').toBe(2);
-  act(() => { fireEvent.click(buttons[1]!); });
+  return screen.getAllByRole('button', { name: OPEN_IN_TERMINAL });
+}
+
+test('Worktrees_PoolAndOutsideRows_OneOpenInTerminalEach', () => {
+  expect(renderPoolAndOutside(new FakeDaemon()).length, 'because the pool rows and the project root outside it each get one button').toBe(2);
+});
+
+test('Worktrees_OutsideRowOpenInTerminal_OpensAShellPaneOnItsPath', () => {
+  const daemon = new FakeDaemon();
+  const outsideRow = renderPoolAndOutside(daemon)[1]!;
+  act(() => { fireEvent.click(outsideRow); });
   expect(daemon.sockets.map((socket) => ({ path: socket.queryParameter('path'), run: socket.queryParameter('run') })), 'because the button opens a shell pane in the folder the row shows').toEqual([{ path: '/p', run: 'shell' }]);
 });
 
@@ -404,4 +412,16 @@ function clickOnCard(card: string, button: string): { path: string | null; run: 
 
 test('WorktreeCard_TerminalPane_OpensAShellAtThatWorktree', () => {
   expect(clickOnCard('wt-5', OPEN_IN_TERMINAL), 'because the card opens its own worktree, not the root or another card').toEqual([{ path: '/p-wt/wt-5', run: 'shell' }]);
+});
+
+/** A card's buttons that open a terminal or start an agent: the Open in Terminal button, a merged Terminal pane, a quick session. */
+const TERMINAL_OR_AGENT = /terminal|session|claude|codex/i;
+
+test('WorktreeCard_NoAgentOnIt_OneButtonOpensATerminalAndNoneStartsAnAgent', () => {
+  const daemon = new FakeDaemon();
+  const Wrapper = daemon.screenWrapper();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-5')] }} /><PaneDock projectOnScreen="project" projects={[]} /></Wrapper>);
+  const card = screen.getByRole('article', { name: 'wt-5' });
+  const named = within(card).getAllByRole('button').map((button) => button.textContent ?? '').filter((name) => TERMINAL_OR_AGENT.test(name));
+  expect(named, 'because the owner starts claude or codex by hand in the one pane the card opens').toEqual([OPEN_IN_TERMINAL]);
 });

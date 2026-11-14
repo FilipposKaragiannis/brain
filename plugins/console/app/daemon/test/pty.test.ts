@@ -89,18 +89,19 @@ async function gone(pid: number): Promise<boolean> {
   return true;
 }
 
-const SHELL_WITH_A_CHILD = 'sleep 600 & echo child=$!; wait';
+/**
+ * A shell that runs until it is hung up. It does not sit in `wait` on a background child: bash
+ * there may take the child's hang-up first, report it and exit 0, so the shell's own end would
+ * not say it was hung up.
+ */
+const SHELL_IN_A_LOOP = 'echo child=$$; while :; do sleep 1; done';
 
 test('RealPty_HangUp_EndsTheShell', async () => {
-  const pty = started(SHELL_WITH_A_CHILD, TERMINAL_SIZE);
-  const child = await childPid(pty);
+  const pty = started(SHELL_IN_A_LOOP, TERMINAL_SIZE);
+  await childPid(pty);
   const result = ended(pty);
-  try {
-    pty.signal('SIGHUP');
-    assert.equal((await result).signal, 'SIGHUP', 'because closing a pane hangs up the process it runs');
-  } finally {
-    if (processAlive(child)) process.kill(child, 'SIGKILL');
-  }
+  pty.signal('SIGHUP');
+  assert.equal((await result).signal, 'SIGHUP', 'because closing a pane hangs up the process it runs');
 });
 
 /**
