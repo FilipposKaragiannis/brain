@@ -1,4 +1,4 @@
-import type { GateQuestion } from '../../daemon/src/snapshot.ts';
+import type { Gate, GateQuestion } from '../../daemon/src/snapshot.ts';
 
 export type GateAnswer = { number: number; answer: string };
 
@@ -71,4 +71,34 @@ export function gateAsk(brief: string): { ask: string | null; rest: string } {
   const match = ASK_LINE.exec(brief);
   if (match === null) return { ask: null, rest: brief };
   return { ask: match[1]!.trim(), rest: brief.slice(match[0].length).trim() };
+}
+
+/** The marks a question loses before twins are compared: emphasis and code. */
+const TWIN_MARKS = /[*_`]/g;
+const WHITESPACE_RUN = /\s+/g;
+
+/**
+ * A gate's question as twins compare it, the key the daemon joins twins by: its questions' text
+ * joined, else its message; lowercased, `*`, `_` and backticks dropped, whitespace collapsed.
+ */
+export function twinKey(gate: Pick<Gate, 'questions' | 'message'>): string {
+  const asked = gate.questions.length > 0 ? gate.questions.map((question) => question.text).join(' ') : gate.message;
+  return asked.toLowerCase().replace(TWIN_MARKS, '').replace(WHITESPACE_RUN, ' ').trim();
+}
+
+/** A gate the owner answers as one row, with the waiting twins the same answer clears. */
+export type OwnGate = { gate: Gate; twins: Gate[] };
+
+/**
+ * The waiting gates one row each: a twin folds into the row of the gate it is the twin of while
+ * that gate waits too and asks the same question, so one answer clears both. A twin whose first
+ * gate is answered or gone is a row of its own again.
+ */
+export function ownGates(waiting: Gate[]): OwnGate[] {
+  const firstOf = (twin: Gate): Gate | undefined => {
+    const first = waiting.find((gate) => gate.item === twin.twinOf);
+    return first !== undefined && first.twins.includes(twin.item) && twinKey(first) === twinKey(twin) ? first : undefined;
+  };
+  const folded = waiting.filter((gate) => firstOf(gate) !== undefined);
+  return waiting.filter((gate) => !folded.includes(gate)).map((gate) => ({ gate, twins: folded.filter((twin) => firstOf(twin) === gate) }));
 }

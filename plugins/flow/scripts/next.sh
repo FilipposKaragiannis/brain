@@ -10,7 +10,8 @@
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
 # an open item (blocked_by), or split and waiting on its children · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
-# A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt.
+# A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
+# a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
 # gate, held, blocked, done, or split) and tries the next ready one, since the ready list it came from can
 # be older than the item's state. A pick whose claim finds the pool full skips that item too, and
@@ -239,8 +240,9 @@ brief="$reports/brief-$step.md"
   echo "## When you finish"
   echo "Write \`$reports/$step.json\`:"
   echo '```json'
-  echo '{"status": "done | fail | gate", "summary": "markdown: one headline sentence, then at most six short bullets (scope, order, risks, what changed)", "size": "S|M|L (only when your estimate changed)", "gate": "feel-test | ambiguity (status gate only)", "pr": "the PR URL (pr step only)", "message": "markdown (status gate only): first line, in bold, the decision the owner must make; then short bullets of context; for ambiguity, numbered questions, one per line, each followed by a line Recommended: <your answer>, <why in a clause>", "touches": ["globs you changed or will change"]}'
+  echo '{"status": "done | fail | gate", "summary": "markdown: one headline sentence, then at most six short bullets (scope, order, risks, what changed)", "size": "S|M|L (only when your estimate changed)", "gate": "feel-test | ambiguity (status gate only)", "pr": "the PR URL (pr step only)", "message": "markdown (status gate only): first line, in bold, the decision the owner must make; then short bullets of context; for ambiguity, numbered questions, one per line, each followed by a line Recommended: <your answer>, <why in a clause>", "options": [{"label": "a few words (status gate only: the choices the owner can pick, 1 to 9, at most one recommended)", "text": "the answer in full, as you will read it", "recommended": true}], "condition": "blocked_by:<id> | pr:#N conflicting | ci:down (status gate only)", "touches": ["globs you changed or will change"]}'
   echo '```'
+  echo "Set \`condition\` only when the gate waits on nothing but something the health job can watch (a blocker that closes, a PR that stops conflicting, CI that stops failing): it clears itself once that ends."
   [ "$step" != plan ] || echo "The plan step adds \`\"changes\": [\"the globs among touches whose existing behavior the plan changes; additive work is not a change\"]\`, and \`\"hold\"\` only as \`$FLOW_PLUGIN/skills/plan/holds.md\` says."
   echo "Then stop. Do not advance the tracker yourself; the orchestrator calls advance.sh."
   echo "Stop with status fail when a check you cannot fix stays red; status gate when the codebase does not answer a question."

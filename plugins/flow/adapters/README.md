@@ -25,7 +25,10 @@ An id is the prefix and a non-empty rest, in the id characters `A-Za-z0-9:#/_.-`
 files, so a new adapter needs no edit there: `adapter_for <id>` names the adapter whose prefix
 starts the id, `adapter <op> <id|name> [args]` runs `adapters/<name>/<op>.sh`, and
 `scripts/_filter_ready.py` reads the same files to look up a blocker, or the item `held_by` names,
-in another tracker.
+in another tracker. A name `adapter` takes is a folder under `adapters/`, never a path: a first
+argument no prefix owns that has a `/`, starts with a dot or names no folder there exits 2.
+`item_id_shaped <id>` holds an id to its adapter's shape: the adapter owns it and its `slug.sed`
+turns the id's slug back into the id, so a gate's `blocked_by:<id>` condition is never a path.
 
 `item_slug` turns an id into a name safe for a branch and a folder (`tr ':/#' '---'`: `gh-12`,
 `local-task-3`, `jira-WID-7`); task branches are `flow/<slug>`, reports live in
@@ -105,6 +108,12 @@ gate; empty once a run took it). Those nineteen are the state keys. `write-state
 `key=value` (a dash reads as an underscore): `touches` and `changes` are comma-separated,
 `attempts` a whole number, an empty value clears a key, `gate=none` clears the gate, `size` sets
 the item's size too. A key outside the nineteen exits 2 and writes nothing.
+
+A gate's own data is not tracker state: the options it offers, who raised it, who carries the
+answer out, the condition it waits on and its footer live in the gate's record in the flow home,
+`<flow home>/gates/<item>.json`, which `scripts/gate.sh raise` writes through `scripts/notify.sh`
+and `gate.sh list` reads (ADR 0003). Of a waiting gate the tracker holds `gate` and `gate_from`
+only, so an adapter stores no more for a gate than it did.
 
 ## Config
 

@@ -11,7 +11,7 @@ import { parseGateQuestions } from './gateMessage.ts';
 import { lessonsSinceRetro } from './retro.ts';
 import { itemSlug } from './syncNote.ts';
 import {
-  ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS,
+  ENDED_KEPT, ENDED_KEPT_HOURS, GATE_OVERDUE_HOURS, JOB_RUNS_KEPT, SNAPSHOT_SCHEMA_VERSION, STALE_BEHIND_BASE_COMMITS, STALE_IDLE_HOURS, TWIN_WINDOW_HOURS,
   mentionReviewWaiting, reviewChangesRequested,
 } from './snapshot.ts';
 import type {
@@ -372,8 +372,56 @@ function gatePull(id: string, items: Item[], pulls: PullRequest[]): Gate['pull']
   return pull === undefined ? null : { number: pull.number, url: pull.url, state: pull.state, unresolvedThreads: pull.unresolvedThreads };
 }
 
+/** The one gate kind twins are joined for: an agent's question, never a plan, a merge or an escalation. */
+const TWIN_GATE = 'ambiguity';
+/** The marks a question loses before twins are compared: emphasis and code. */
+const TWIN_MARKS = /[*_`]/g;
+const WHITESPACE_RUN = /\s+/g;
+
+/** A gate's question as twins compare it: its questions' text, else its message; lowercased, marks dropped, whitespace collapsed. */
+function twinKey(gate: Gate): string {
+  const asked = gate.questions.length > 0 ? gate.questions.map((question) => question.text).join(' ') : gate.message;
+  return asked.toLowerCase().replace(TWIN_MARKS, '').replace(WHITESPACE_RUN, ' ').trim();
+}
+
+/** A gate that can have twins: an ambiguity gate with a readable raise time on an item with a parent. */
+type TwinCandidate = { gate: Gate; parent: string; raisedMs: number; key: string };
+
+function twinCandidate(gate: Gate, parentOf: Map<string, string | null>): TwinCandidate[] {
+  const parent = parentOf.get(gate.item) ?? null;
+  const raisedMs = Date.parse(gate.raisedAt);
+  if (gate.gate !== TWIN_GATE || parent === null || Number.isNaN(raisedMs)) return [];
+  return [{ gate, parent, raisedMs, key: twinKey(gate) }];
+}
+
+/**
+ * The gates with their twins marked: an ambiguity gate is the twin of the earliest one on an item
+ * under the same parent, raised no more than `TWIN_WINDOW_HOURS` after it, that asks the same
+ * question. The later one takes `twinOf`, the earliest lists it in `twins`. Every gate stays in the
+ * list; the twins are left out of attention and the needs-you count, so one question counts once.
+ */
+function withTwins(gates: Gate[], items: Item[]): Gate[] {
+  const parentOf = new Map(items.map((item) => [item.id, item.parent]));
+  const windowMs = TWIN_WINDOW_HOURS * SECONDS_PER_HOUR * MILLISECONDS_PER_SECOND;
+  const candidates = gates.flatMap((gate) => twinCandidate(gate, parentOf))
+    .sort((left, right) => left.raisedMs - right.raisedMs || left.gate.item.localeCompare(right.gate.item));
+  const firsts: TwinCandidate[] = [];
+  const twinOf = new Map<string, string>();
+  const twins = new Map<string, string[]>();
+  for (const candidate of candidates) {
+    const first = firsts.find((earlier) => earlier.parent === candidate.parent && earlier.key === candidate.key && candidate.raisedMs - earlier.raisedMs <= windowMs);
+    if (first === undefined) {
+      firsts.push(candidate);
+      continue;
+    }
+    twinOf.set(candidate.gate.item, first.gate.item);
+    twins.set(first.gate.item, [...(twins.get(first.gate.item) ?? []), candidate.gate.item]);
+  }
+  return gates.map((gate) => ({ ...gate, twinOf: twinOf.get(gate.item) ?? null, twins: twins.get(gate.item) ?? [] }));
+}
+
 function buildGates(input: ReconcileInput, contexts: WorktreeContext[], items: Item[], pulls: PullRequest[]): Gate[] {
-  return input.flow.gates
+  const gates = input.flow.gates
     .map((gate) => ({
       item: gate.item, gate: gate.gate, message: gate.message, raisedAt: gate.time,
       ageSeconds: ageSeconds(gate.time, input.now) ?? 0,
@@ -386,8 +434,11 @@ function buildGates(input: ReconcileInput, contexts: WorktreeContext[], items: I
       body: input.board?.bodies[gate.item] ?? null,
       quiz: input.flow.quizzes[itemSlug(gate.item)] ?? null,
       session: input.gateSession?.(gate.item, gate.time) ?? null,
+      options: gate.options, raisedBy: gate.raisedBy, answeredBy: gate.answeredBy, condition: gate.condition, footer: gate.footer,
+      twinOf: null, twins: [],
     }))
     .sort((left, right) => right.ageSeconds - left.ageSeconds);
+  return withTwins(gates, items);
 }
 
 /** When a flow event happened, from the `<iso time> <what>` a `last_event` holds, or null when it opens with no time. */
@@ -930,7 +981,7 @@ type AttentionSources = { gates: Gate[]; toClose: ReadyToClose[]; labelGates: La
 
 function buildAttention({ gates, toClose, labelGates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts }: AttentionSources, now: Date): AttentionRow[] {
   const rows: AttentionRow[] = stoppedHosts.map((stopped) => stoppedHostAttention(stopped, now));
-  for (const gate of gates) {
+  for (const gate of gates.filter((entry) => entry.twinOf === null)) {
     rows.push({ kind: 'gate', gate: gate.gate, id: gate.item, title: `${gate.gate} gate on ${gate.item}`, detail: gate.questions[0]?.text ?? gate.message, worktree: gate.worktree, sinceAt: gate.raisedAt, ageSeconds: gate.ageSeconds, action: null });
   }
   for (const close of toClose) {
@@ -964,7 +1015,7 @@ function buildCounts({ worktrees, items, agents, jobs, gates, toClose, labelGate
   const itemCount = (state: ItemState): number => items.filter((entry) => entry.state === state).length;
   const pullCount = (state: PullState): number => pulls.filter((entry) => entry.state === state).length;
   return {
-    needsYou: gates.length + toClose.length + labelGates.length, running: count('running'), stale: count('stale'),
+    needsYou: gates.filter((gate) => gate.twinOf === null).length + toClose.length + labelGates.length, running: count('running'), stale: count('stale'),
     waiting: count('waiting'), held: count('held'), claimed: count('claimed'), free: count('free'),
     agents: agents.filter((entry) => entry.kind === 'agent').length, jobsRunning: jobs.filter((entry) => entry.state === 'running').length,
     itemsReady: itemCount('ready'), itemsBlocked: itemCount('blocked'), itemsBacklog: itemCount('backlog'), itemsDone: itemCount('done'),

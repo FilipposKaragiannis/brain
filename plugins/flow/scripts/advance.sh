@@ -4,6 +4,7 @@
 # Applies a finished step: reads <reports>/<step>.json (flags override), updates attempts, size
 # and touches, moves the state to the next step, raises the gate the profile puts there, and
 # clears the run (a plan-approval gate listed in auto_gates for the item's size is not raised).
+# A step that stops at a gate raises it with the options and condition its result names.
 # A plan step also records its changes and, done with a hold, holds the item behind another
 # (hold.sh set; skills/plan/holds.md); done without one, it lifts a hold an earlier plan set.
 # A plan step that ends in tracker-tasks mode with children open splits the item (steward.sh split).
@@ -35,6 +36,7 @@ result=""; [ -f "$reports/$step.json" ] && result="$(cat "$reports/$step.json")"
 [ -n "$new_size" ] || new_size="$(json_get "$result" size)"
 [ -n "$gate" ] || gate="$(json_get "$result" gate)"
 [ -n "$message" ] || message="$(json_get "$result" message)"
+options="$(json_get "$result" options)"; condition="$(json_get "$result" condition)"
 touches="$(json_list "$result" touches | tr '\n' ',' | sed 's/,$//')"
 # The verify step's result is the verify report itself: {status: pass|fail, checks, attempts}.
 [ "$status" = "pass" ] && status=done
@@ -54,6 +56,15 @@ if [ "$step" = pr ] && pr_url="$(json_get "$result" pr)" && [ -n "$pr_url" ] && 
 fi
 
 finish_run() { rm -f "$run_file"; }
+
+# raise_asked <gate> <message>: raise the gate the step asked for, with the options and condition
+# its result names; an empty options list is no options.
+raise_asked() {
+  set -- "$item" "$1" "$2"
+  case "$options" in ""|"[]") ;; *) set -- "$@" --options "$options" ;; esac
+  [ -z "$condition" ] || set -- "$@" --condition "$condition"
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$@" >/dev/null
+}
 
 size_index() { i=0; for s in $(json_list "$profiles" sizes); do [ "$s" = "$1" ] && { printf '%s' "$i"; return; }; i=$((i + 1)); done; printf '%s' -1; }
 
@@ -78,7 +89,7 @@ if [ "$step" = sync ]; then
       report 0 "$own" "" ;;
     gate)
       [ -n "$gate" ] || gate="ambiguity"
-      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$gate" "${message:-$summary}" >/dev/null
+      raise_asked "$gate" "${message:-$summary}"
       report 4 "" "$gate" ;;
     fail)
       "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "The sync step could not merge into the task branch: ${summary:-no summary}" >/dev/null
@@ -105,7 +116,7 @@ if [ "$step" = plan ] && { [ "$status" = done ] || { [ "$status" = gate ] && [ "
    ! "$FLOW_PLUGIN/scripts/steward.sh" kept-whole "$item" 2>/dev/null; then
   if [ "$status" = gate ]; then
     hint=" To keep it whole instead, close its children, then clear the gate: the plan step runs again."
-    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$gate" "${message:-$summary}$hint" >/dev/null
+    raise_asked "$gate" "${message:-$summary}$hint"
   else
     gate=""; finish_run
   fi
@@ -132,7 +143,7 @@ fi
 case "$status" in
   gate)
     [ -n "$gate" ] || gate="ambiguity"
-    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$gate" "${message:-$summary}" >/dev/null
+    raise_asked "$gate" "${message:-$summary}"
     step_write "$item" "step=$step" >/dev/null
     report 4 "" "$gate" ;;
   fail)

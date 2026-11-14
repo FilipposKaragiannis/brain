@@ -69,8 +69,9 @@ Facts to answer with:
   and the Mac is awake. A run missed while asleep starts on wake; one missed while the Mac is off
   is skipped. Pause survives a restart.
 - Each `next` run and each `health` run first frees the worktrees whose PR was merged or whose
-  item was closed (`steward.sh sweep`): the merge gate clears and the item closes, without the
-  owner, within one health cycle.
+  item was closed (`steward.sh sweep`): the merge gate clears, any other gate is dropped (an
+  unanswered ambiguity or escalation question is quoted in the job's log and on the item), and the
+  item closes, without the owner, within one health cycle.
 - A `next` run with `--workers` starts the workers and ends; it does not wait for them. A worker
   still busy is skipped by the next schedule, a free one starts, so one long build never holds
   the others. `--wait` stays until every worker ends. The launchd agent needs
@@ -99,7 +100,8 @@ Facts to answer with:
   `jobs.health.push: true`), merges the base into a branch more than `jobs.health.behind_base`
   commits behind it, with no PR and no gate, hands a merge that conflicts or a diverged branch to the
   `sync` step of the item's next run, reminds on gates older than
-  `jobs.health.gate_reminder` and says when the pool is full. It clears a stale or wrong planned
+  `jobs.health.gate_reminder` (a gate on a closed item is a defect, said once with the
+  `gate.sh drop` that removes it, not a gate waiting) and says when the pool is full. It clears a stale or wrong planned
   hold (`held_by`): the holder unreadable, holding no worktree and no run, or its `changes` no
   longer sharing a path with the held item's (`touches` stand in when no `changes` are recorded,
   and with neither the hold stays); a hold on the item itself; the newest hold in a cycle. Each clear is an `unheld` line in `events.log`. A hold whose holder closed stays for

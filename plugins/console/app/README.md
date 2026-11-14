@@ -36,6 +36,22 @@ name, or whose `Origin` is not a local page, gets 403, so a page on another site
 the console even from the owner's own browser. The token opens a shell as the owner (a terminal
 pane), not only the console's fixed actions, so keep it as you would an SSH key.
 
+## Try it on the demo
+A trial console pointed at a real project can make real changes there, so test the console on
+the demo instead:
+```bash
+plugins/console/scripts/demo.sh             # [--dir <folder>] [--port <n>]; Ctrl+C stops it
+```
+It builds a throwaway flow project in `$TMPDIR/brain-console-demo` (flow's local adapter, two pool
+worktrees, one item waiting at each gate, one ready item) and starts this checkout's daemon on it
+alone: `--project`, `--port 7478`, `--state-dir` and `--config` all in that folder, and an
+environment of `HOME` (there too), `PATH`, `TMPDIR`, `LANG`, `USER`, `SHELL`, `FLOW_PLUGIN` and
+`BRAIN_CONSOLE_LAUNCHCTL` only. `claude` and `codex` on its `PATH` are stubs that log each call to
+`agents.log` there and spend no tokens, so a run started from the console goes through the flow
+without an agent; `gh`, `crontab` and `launchctl` refuse. Re-running it stops that daemon and
+builds the demo again from nothing; it deletes only a folder it built. The token is in
+`<folder>/state/token`.
+
 ## Run it on login
 ```bash
 brain-console install --project /work/projects/foosbrawl   # the same flags as start; none keeps the agent's
@@ -163,8 +179,9 @@ The port counts only after a restart.
 | `GET /api/projects/<id>/panes?run=<run>&…&cols=<n>&rows=<n>` | a terminal pane as a WebSocket. The page names what to open and the daemon plans what runs: `run=shell&path=<folder>` a login shell (`$SHELL -l`) in `path`, which must be absolute, one the console lists (the root, a worktree the console lists, the folder of a listed agent or session) and on disk; `run=job&job=<name>` `/usr/bin/tail -n 200 -f <root>/.flow/log/<job>.log` from the root, the file `jobs.sh logs` reads (the name is lower-case letters, digits and dashes); `run=session&session=<pid>&path=<folder>` the session of an agent or session in `agents` or `ended` whose transcript was found, in the folder that process ran in (`path` must be it: `claude --resume` finds a session by its folder); `run=gate&gate=<item>` the session the daemon located for the gate waiting on the item, in its worktree. A session or a gate runs `/bin/sh -c '<line>; exec <shell> -l'` with every word quoted for sh, so the pane stays a shell after it: a running `claude -p` or `codex exec` cannot be attached to and a second writer on its session would mix with it, so while a listed process still runs the session the line prints the resume command (`echo`) for the owner to run once it ends; once it has ended the line is the resume command, which runs at once. `cols` 2 to 500 and `rows` 1 to 300, 80 by 24 when absent. The pane gets the daemon's `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` (`en_US.UTF-8` when unset), `LC_ALL` and `SSH_AUTH_SOCK`, `TERM=xterm-256color` and `COLORTERM=truecolor`, never the token. Host, Origin and the token (`?token=`) are checked before the handshake (403, 401), as is the project (404). Binary frames are terminal bytes both ways; text frames are JSON, up `{"type":"resize","cols","rows"}` and `{"type":"ack","bytes"}`, down `{"type":"started","pane","command","folder"}` first, `{"type":"refused","error"}` (close 4400) for a pane the daemon will not start, and `{"type":"exit","code","signal"}` (close 1000) when the process ends. Closing the socket hangs the pane up (SIGHUP to its process group, SIGKILL 1.5 s later). The daemon runs at most 4 panes at once, every project together, a closed pane counting until its process ended; the fifth gets `refused` (close 4400) until one ends. It stops reading a pane's output once 1 MiB is sent and not acked, or its socket still holds 1 MiB not yet sent, and reads on when both are under 256 KiB (an ack counts no more than the bytes not yet acked; a hang-up reads on at once, so the process's end arrives, and so does a process that ends while its output waits, checked every 50 ms, so its last output arrives before node-pty drops it 200 ms after the end); the page acks every 64 KiB it draws. Close codes: 1000 the process ended, 1001 the daemon stopped, 1008 a text frame that is not `resize` or `ack`, 4400 refused, 4404 the project left the list or its id now names another root (the pane is hung up as above) |
 
 ## The snapshot
-`daemon/src/snapshot.ts` is the contract; `schema` is its version, 18 since an agent took
-`subagents` (17 when the snapshot took `labelGates` and an attention row took the kind
+`daemon/src/snapshot.ts` is the contract; `schema` is its version, 19 since a gate took `options`,
+`raisedBy`, `answeredBy`, `condition`, `footer`, `twinOf` and `twins` (18 when an agent took
+`subagents`, 17 when the snapshot took `labelGates` and an attention row took the kind
 `label-gate`, 16 when an agent took `step` and `job`, 15 when an item and a
 worktree took `heldBy` and `heldReason`, the states `waiting` and `held` came, `counts` took
 `waiting` and `held`, `readiness` took `held`, an attention row took the kind `close` and the
@@ -346,8 +363,8 @@ snapshots.
   gets a `label-gate` attention row whose detail says no question was recorded, and no gate is
   made up for it. A closed item with a stale label stays `done`, and an item whose merge gate
   waits on review stays `in-review`. An item in `labelGates` is never in `toClose`, so
-  `counts.needsYou` is `gates` plus `toClose` plus `labelGates`, and counts every `needs-you` item
-  once.
+  `counts.needsYou` is `gates` (a twin counted once, below) plus `toClose` plus `labelGates`, and
+  counts every `needs-you` item once.
 - An item's `url` is its tracker page, from the board. Its `spend` is `{costUsd, sessions,
   tokens}`, summed over the step sessions `board.sh --json` counts from `log/runs.jsonl`, or null
   when it has none or the plugin prints no `spend`. Codex reports no cost, so a codex session adds
@@ -388,6 +405,22 @@ snapshots.
   comes from the files on disk, so it outlives a restart that empties `ended`. Looked up with the
   `files` source and kept per item and `raisedAt` while the gate waits (a miss is scanned again a
   minute later).
+- A gate carries what the flow's gate record (`<flow home>/gates/<item>.json`, flow ADR 0003)
+  says beyond the message: `options`, the answers the agent offered, each `{label, text,
+  recommended}` in the record's order (1 to 9, at most one recommended; any bad entry and the gate
+  has none, since a skipped one would shift option N); `raisedBy` (`step plan`, `health job`,
+  `owner` …); `answeredBy`, who carries the answer out (`step plan`, `comments job, next pass`,
+  `nobody: ...`); `condition`, what the health job watches to clear the gate on its own
+  (`blocked_by:<item>`, `pr:#<number> conflicting`, `ci:down`); and `footer`, the line the tracker
+  comment ends with, the exact clear command. A record from a plugin older than them gives `[]` and
+  nulls, and an empty string reads as null. The record is per machine, so a gate raised on another
+  host shows none of them.
+- Twins are ambiguity gates on items under one parent that ask the same question (the questions'
+  text joined, else the message, lowercased, without `*`, `_` and backticks, whitespace collapsed),
+  raised within `TWIN_WINDOW_HOURS` (24) of the earliest. Each later gate's `twinOf` names the earliest
+  item, and the earliest's `twins` lists the later items in raise order; both null and empty on a
+  gate with no twin. `gates` keeps every gate, while the attention list and `counts.needsYou`
+  skip a gate whose `twinOf` is set, so a twin set is one row.
 - `readiness` is `{ready, waitingOnField, blocked, gated, held, nextInLineMissingField}` over open
   items that are not epics. The first five are buckets, each item in one at most: the next job can
   take it, only an empty field stops it (the whole backlog of such items), an open item blocks it,
@@ -589,7 +622,7 @@ on every state change and at most twice a second while output arrives.
 
 | Kind | Args | Runs | Lock | Outcome when done |
 |---|---|---|---|---|
-| `gate.clear` | `item`, `message?` | `gate.sh clear <item> [<message>]` | the item | `finished` |
+| `gate.clear` | `item`, `message?`, `back?`, `option?` | `gate.sh clear <item> [<message>]`; with `back` `true`, `gate.sh clear <item> --back <message>` (a message needed); with `option` (1 to 9), `gate.sh clear <item> --option N [<message>]`, the message as a note under option N's text (refused beside `back`) | the item | `finished` |
 | `run.start` | `item?`, `maxSteps?` | `jobs/next.sh <jobs.host> <item> --max-steps N`, detached; without an item `jobs.sh run next` | the item and the next job | with an item `started` while the run goes, `finished` once it ends well; without one `started` |
 | `job.run` | `job` | `jobs.sh run <job>` | the job | `started` |
 | `job.pause` `job.resume` | `job` | `jobs.sh <verb> <job>` | the job | `finished` |
@@ -812,7 +845,13 @@ from (`FLOW_PLUGIN` or the installed plugin, with its folder), or "No plugins fo
 or ~/.codex." with none), Gates (a decision card per gate, one line on what
 its kind asks, the PR with its state and unresolved review threads when the item has one, the
 questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
-matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; Discuss with the
+matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; chips for who
+raised the gate, who answers it and what it waits on, when the gate has them; a gate with
+`options` shows one button per option with its text, the recommended one primary and marked,
+which runs `gate.clear` with `option`, and a field whose text goes with a clicked option as its
+note or alone through Send my own answer, while a gate without shows its `footer`; a twin set is
+one row, "answers N items", whose answer runs one `gate.clear` per item, a refused one a line on
+the first card that links to its own card with Retry; Discuss with the
 agent opens a pane on the newest agent on the item in `agents` or `ended` (`run=session` by its pid), else on the gate's
 `session` (`run=gate`), and is left out with neither; a gate whose item
 has a quiz shows it as a panel: a line with how many questions or the last try's score, Take the
