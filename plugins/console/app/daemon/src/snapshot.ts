@@ -813,7 +813,6 @@ export type ActionKind =
   | 'pr.review'
   | 'quiz.answer'
   | 'host.clear'
-  | 'terminal.open'
   | 'refresh';
 export type ActionState = 'running' | 'done' | 'failed' | 'rejected';
 /**

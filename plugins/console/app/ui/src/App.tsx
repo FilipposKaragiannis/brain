@@ -7,7 +7,7 @@ import { useServices } from './console.tsx';
 import { clockTime, useNow } from './clock.tsx';
 import { parseRoute, routeHash, SCREENS, screenLabel, SETTINGS_HASH } from './route.ts';
 import type { Route, Screen } from './route.ts';
-import { PaneControls } from './PaneControls.tsx';
+import { TerminalButton } from './PaneControls.tsx';
 import { PaneDock } from './PaneDock.tsx';
 import { ProjectHeader } from './ProjectHeader.tsx';
 import { Activity } from './screens/Activity.tsx';
@@ -113,7 +113,7 @@ function ProjectShell({ route, projectId, projects }: { route: Route; projectId:
           {snapshot !== null && (
             <div className="project-row">
               <ProjectHeader project={snapshot.project} />
-              <div className="buttons"><PaneControls projectId={projectId} folder={snapshot.project.root} /></div>
+              <div className="buttons"><TerminalButton projectId={projectId} folder={snapshot.project.root} /></div>
             </div>
           )}
           <header className="page-head">

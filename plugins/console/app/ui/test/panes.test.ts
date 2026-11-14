@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest';
 import { ACK_EVERY_BYTES, PANE_CLOSE } from '../../daemon/src/paneProtocol.ts';
-import type { PaneNotice } from '../../daemon/src/paneProtocol.ts';
+import type { PaneNotice, PaneTarget } from '../../daemon/src/paneProtocol.ts';
 import { PANE_END_WORDS, PaneStore } from '../src/panes.ts';
 import type { PaneView } from '../src/panes.ts';
 import { FAKE_TERMINAL_SIZE, FakeDaemon } from './fakeDaemon.tsx';
@@ -10,26 +10,27 @@ const PROJECT = 'foosbrawl';
 const WORKTREE = '/work/foosbrawl-wt/wt-3';
 /** A close code no pane rule names: the connection dropped. */
 const ABNORMAL_CLOSE = 1006;
+const SHELL: PaneTarget = { run: 'shell', folder: WORKTREE };
 
 type Opened = { store: PaneStore; daemon: FakeDaemon; key: string };
 
-function openPane(run: PaneView['run']): Opened {
+function openPane(target: PaneTarget): Opened {
   const daemon = new FakeDaemon();
   const store = new PaneStore(daemon, daemon.fakeTerminal);
-  const key = store.open(PROJECT, WORKTREE, run);
+  const key = store.open(PROJECT, target);
   return { store, daemon, key };
 }
 
 /** A pane attached to the page: its terminal fitted and its one socket open. */
-function attachedPane(run: PaneView['run']): Opened & { socket: FakeSocket; terminal: FakeTerminal } {
-  const opened = openPane(run);
+function attachedPane(target: PaneTarget): Opened & { socket: FakeSocket; terminal: FakeTerminal } {
+  const opened = openPane(target);
   opened.store.showAndConnect(opened.key, document.createElement('div'));
   return { ...opened, socket: onlyOne(opened.daemon.sockets), terminal: onlyOne(opened.daemon.terminals) };
 }
 
 /** An attached pane the daemon started: what every accepted pane is once its first frame arrived. */
 function livePane(): Opened & { socket: FakeSocket; terminal: FakeTerminal } {
-  const attached = attachedPane('shell');
+  const attached = attachedPane(SHELL);
   attached.socket.receive({ type: 'started', pane: 'pane-1', command: ['/bin/zsh', '-l'], folder: WORKTREE });
   return attached;
 }
@@ -64,7 +65,7 @@ function bytesOf(count: number): Uint8Array {
 }
 
 test('Attach_OpensOneSocketForTheFolderRunAndFittedSize', () => {
-  const opened = openPane('shell');
+  const opened = openPane(SHELL);
   opened.store.showAndConnect(opened.key, document.createElement('div'));
   const requests = opened.daemon.sockets.map((socket) => {
     const url = new URL(socket.path, 'http://page.test');
@@ -75,12 +76,12 @@ test('Attach_OpensOneSocketForTheFolderRunAndFittedSize', () => {
 });
 
 test('Open_BeforeAttach_OpensNoSocket', () => {
-  const { daemon } = openPane('shell');
+  const { daemon } = openPane(SHELL);
   expect(daemon.sockets.length, 'because the socket waits for a fitted terminal so the process starts at the right size').toBe(0);
 });
 
 test('SecondAttach_OpensNoSecondSocket', () => {
-  const { store, daemon, key } = attachedPane('shell');
+  const { store, daemon, key } = attachedPane(SHELL);
   store.showAndConnect(key, document.createElement('div'));
   expect(daemon.sockets.length, 'because showing a pane again must not start a second process').toBe(1);
 });
@@ -120,13 +121,13 @@ test('Refit_SendsResizeWithTheNewSize', () => {
 });
 
 test('Started_MakesThePaneLive', () => {
-  const { store, key, socket } = attachedPane('shell');
+  const { store, key, socket } = attachedPane(SHELL);
   socket.receive({ type: 'started', pane: 'pane-7', command: ['/bin/zsh', '-l'], folder: WORKTREE });
   expect(view(store, key).state, 'because the daemon started the process').toBe('live');
 });
 
 test('Started_KeepsTheCommandTheDaemonRan', () => {
-  const { store, key, socket } = attachedPane('shell');
+  const { store, key, socket } = attachedPane(SHELL);
   socket.receive({ type: 'started', pane: 'pane-7', command: ['/usr/local/bin/claude', '--model', 'opus'], folder: WORKTREE });
   expect(view(store, key).command, 'because the tab says what the daemon actually runs').toEqual(['/usr/local/bin/claude', '--model', 'opus']);
 });
@@ -142,27 +143,27 @@ const ENDINGS: Ending[] = [
 ];
 
 test.each(ENDINGS)('DaemonEndsThePane_$how_SaysWhy', ({ notice, code, words }) => {
-  const { store, key, socket } = attachedPane('shell');
+  const { store, key, socket } = attachedPane(SHELL);
   if (notice !== null) socket.receive(notice);
   socket.closeFromDaemon(code);
   expect(view(store, key).ended ?? '', 'because an ended pane tells the owner how it ended').toMatch(words);
 });
 
 test('DaemonEndsThePane_KeepsItAsEnded', () => {
-  const { store, key, socket } = attachedPane('shell');
+  const { store, key, socket } = attachedPane(SHELL);
   socket.receive({ type: 'exit', code: 0, signal: null });
   socket.closeFromDaemon(PANE_CLOSE.ended);
   expect(view(store, key).state, 'because the scrollback stays readable until the owner closes the tab').toBe('ended');
 });
 
 test('Close_ClosesTheSocketAsEnded', () => {
-  const { store, key, socket } = attachedPane('shell');
+  const { store, key, socket } = attachedPane(SHELL);
   store.close(key);
   expect(socket.closedWith, 'because closing the pane ends its process on the daemon').toBe(PANE_CLOSE.ended);
 });
 
 test('Close_DropsThePane', () => {
-  const { store, key } = attachedPane('shell');
+  const { store, key } = attachedPane(SHELL);
   store.close(key);
   expect(store.panes().map((pane) => pane.key), 'because a closed pane leaves the dock').toEqual([]);
 });
@@ -192,7 +193,7 @@ const MALFORMED_NOTICES: Malformed[] = [
 ];
 
 test.each(MALFORMED_NOTICES)('Notice_$what_Ignored', ({ notice }) => {
-  const { store, key, socket } = attachedPane('shell');
+  const { store, key, socket } = attachedPane(SHELL);
   const before = structuredClone(view(store, key));
   socket.receive(notice as PaneNotice);
   expect(view(store, key), 'because a frame the page cannot trust must not change what the pane shows').toEqual(before);

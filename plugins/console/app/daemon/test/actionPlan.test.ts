@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, QUIZ_SINCE, REVIEW_ASK, SYNC_SCRIPT, sweepNote, terminalFolders } from '../src/actionPlan.ts';
+import { ACTION_KINDS, HANDED_ON_REFRESH_MS, installNote, planAction, QUIZ_SINCE, REVIEW_ASK, SYNC_SCRIPT, sweepNote } from '../src/actionPlan.ts';
 import type { ActionContext, SyncFacts } from '../src/actionPlan.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'codex', pool: ['/p/app-wt-2', '/p/app-wt-3'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 
 function planned(kind: Parameters<typeof planAction>[0], args: Record<string, string>, context = CONTEXT) {
   const result = planAction(kind, args, context);
@@ -285,79 +285,6 @@ test('JobStop_FinishedAndReadOnce', () => {
   assert.deepEqual([plan.outcome, plan.refreshAgainMs], ['finished', null], 'because a stop is over when the script returns');
 });
 
-test('TerminalOpen_ProjectRoot_OpensItInTheFirstInstalledTerminal', () => {
-  const plan = planned('terminal.open', { path: '/p/app' });
-  assert.deepEqual([plan.command, ...plan.args], ['open', '-a', 'iTerm', '/p/app'], 'because with no terminal set the first installed one opens');
-  assert.deepEqual([plan.locks, plan.refresh, plan.detach, plan.outcome], [[], [], false, 'finished'], 'because opening a window touches no flow state and is over when open returns');
-});
-
-test('TerminalOpen_PoolWorktreeAndAgentFolder_Allowed', () => {
-  assert.equal(planned('terminal.open', { path: '/p/app-wt-3' }).args.at(-1), '/p/app-wt-3', 'because a pool worktree is a folder the console shows');
-  assert.equal(planned('terminal.open', { path: '/p/app-wt-2/src' }).args.at(-1), '/p/app-wt-2/src', 'because an agent or session row opens where that process works');
-});
-
-test('TerminalOpen_AnyOtherPath_RefusedWithTheReason', () => {
-  for (const target of ['/etc', '/p', '/p/app/../app-wt-9', 'p/app', '']) {
-    const result = planAction('terminal.open', { path: target }, CONTEXT);
-    assert.equal(result.ok, false, `because "${target}" is none of the folders the console lists`);
-  }
-  const result = planAction('terminal.open', { path: '/etc' }, CONTEXT);
-  assert.match(result.ok ? '' : result.error, /not the project root, a worktree the console lists or the folder of a listed agent or session/, 'because the owner hears which folders may open');
-});
-
-test('TerminalFolders_EverySource_ListedResolved', () => {
-  const folders = terminalFolders({ root: '/p/app', pool: ['/p/app-wt-2/'], outsideWorktrees: ['/p/side/../app-side'], processCwds: ['/p/app-wt-2/./src'] });
-  assert.deepEqual([...folders].sort(), ['/p/app', '/p/app-side', '/p/app-wt-2', '/p/app-wt-2/src'], 'because the pane and Open in Terminal share one allow-list: the root, the pool, the outside worktrees and every process folder');
-});
-
-test('TerminalOpen_EachNamedTerminal_ItsOwnCommand', () => {
-  const opened = (terminal: 'iterm' | 'terminal' | 'ghostty') => { const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal }); return [plan.command, ...plan.args]; };
-  assert.deepEqual(opened('terminal'), ['open', '-a', 'Terminal', '/p/app'], 'because Terminal opens a folder given to open -a');
-  assert.deepEqual(opened('ghostty'), ['open', '-na', 'Ghostty', '--args', '--working-directory=/p/app'], 'because Ghostty takes the folder as an argument of a new instance');
-  assert.deepEqual(opened('iterm'), ['open', '-a', 'iTerm', '/p/app'], 'because iTerm opens a folder given to open -a');
-});
-
-test('TerminalOpen_CustomCommand_PathSubstitutedInEachWord', () => {
-  const plan = planned('terminal.open', { path: '/p/app-wt-2' }, { ...CONTEXT, terminal: { command: ['wezterm', 'start', '--cwd={path}'] } });
-  assert.deepEqual([plan.command, ...plan.args], ['wezterm', 'start', '--cwd=/p/app-wt-2'], 'because the owner\'s command runs as argv with the folder in place');
-});
-
-test('TerminalOpen_CustomCommandWithoutPath_FolderLast', () => {
-  const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal: { command: ['open', '-a', 'Warp'] } });
-  assert.deepEqual(plan.args, ['-a', 'Warp', '/p/app'], 'because a command that never names the folder would open the wrong place');
-});
-
-test('TerminalOpen_NoTerminalInstalled_Refused', () => {
-  const result = planAction('terminal.open', { path: '/p/app' }, { ...CONTEXT, installedTerminals: [] });
-  assert.match(result.ok ? '' : result.error, /Settings/, 'because the owner must pick a terminal or a command there');
-});
-
-test('TerminalOpen_NoPlugin_StillPlanned', () => {
-  assert.equal(planAction('terminal.open', { path: '/p/app' }, { ...CONTEXT, pluginRoot: null }).ok, true, 'because opening a folder runs no flow script');
-});
-
-test('TerminalOpen_Job_FollowsItsLogInTheProjectFlow', () => {
-  const plan = planned('terminal.open', { path: '/p/app', job: 'next' }, { ...CONTEXT, terminal: 'ghostty' });
-  assert.deepEqual(plan.args, ['-na', 'Ghostty', '--args', '--working-directory=/p/app', '-e', "cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'"], 'because a job row follows the job\'s log, the file jobs.sh logs reads, as one shell line that reads the same whether Ghostty runs it through a shell or joins its -e words');
-});
-
-test('TerminalOpen_JobFromAWorktreeOrBadName_Refused', () => {
-  assert.equal(planAction('terminal.open', { path: '/p/app-wt-2', job: 'next' }, CONTEXT).ok, false, "because a job's log belongs to the project root");
-  assert.equal(planAction('terminal.open', { path: '/p/app', job: '../../etc/passwd' }, CONTEXT).ok, false, 'because a job name never reaches outside .flow/log');
-});
-
-test('TerminalOpen_JobInITermAndTerminal_ThroughOsascript', () => {
-  const iterm = planned('terminal.open', { path: '/p/app', job: 'health' });
-  assert.deepEqual([iterm.command, iterm.args[1]], ['osascript', `tell application "iTerm" to create window with default profile command "/bin/sh -c 'cd '\\\\''/p/app'\\\\'' && '\\\\''tail'\\\\'' '\\\\''-n'\\\\'' '\\\\''200'\\\\'' '\\\\''-f'\\\\'' '\\\\''/p/app/.flow/log/health.log'\\\\'''"`], 'because iTerm runs its command without a shell, so the line goes to sh whole');
-  const terminal = planned('terminal.open', { path: '/p/app', job: 'health' }, { ...CONTEXT, terminal: 'terminal' });
-  assert.equal(terminal.args[1], `tell application "Terminal" to do script "cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/health.log'"`, 'because Terminal runs the line in its shell');
-});
-
-test('TerminalOpen_CustomCommandWithCmd_GetsTheQuotedLine', () => {
-  const plan = planned('terminal.open', { path: '/p/app', job: 'next' }, { ...CONTEXT, terminal: { command: ['kitty', '--directory', '{path}', 'sh', '-c', '{cmd}'] } });
-  assert.equal(plan.args.at(-1), `cd '/p/app' && 'tail' '-n' '200' '-f' '/p/app/.flow/log/next.log'`, 'because {cmd} is the line to run, quoted for sh');
-});
-
 const CLEAN: SyncFacts = { name: 'app-wt-2', path: '/p/app-wt-2', item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 27, agentPids: [], step: 'implement', claimStep: 'implement', trackerStep: 'implement' };
 const SYNC: ActionContext = { ...CONTEXT, worktrees: [CLEAN, { ...CLEAN, name: 'app-wt-3', path: '/p/app-wt-3', item: 'gh#9', claimBase: 'epic/gh-300' }] };
 
@@ -463,15 +390,6 @@ test('SyncHandoff_RefsOnePerLine_Accepted', () => {
 test('WorktreeSync_ConflictOutput_RecordCarriesTheConflict', () => {
   const plan = planned('worktree.sync', { target: 'app-wt-2' }, SYNC);
   assert.deepEqual(plan.conflict?.('console: merging origin/main conflicts, so the merge was aborted. Conflicting files:\na.txt\nconsole: still to merge: origin/main\n'), { refs: ['origin/main'], files: ['a.txt'] }, 'because the record carries the conflict for the hand-off');
-});
-
-test('TerminalOpen_WorktreeOutsideThePool_Allowed', () => {
-  assert.equal(planned('terminal.open', { path: '/p/app-side' }).args.at(-1), '/p/app-side', 'because the Worktrees screen shows a button on every outside row, and git lists that worktree for the project');
-});
-
-test('TerminalOpen_CustomCommandWithQpath_FolderQuotedForSh', () => {
-  const plan = planned('terminal.open', { path: '/p/app' }, { ...CONTEXT, terminal: { command: ['sh', '-c', 'cd {qpath} && exec $SHELL'] } });
-  assert.deepEqual(plan.args, ['-c', "cd '/p/app' && exec $SHELL"], 'because {qpath} is the folder quoted for an sh -c string, and the folder is not added again');
 });
 
 test('JobsInstall_RunsJobsShInstallHoldingEveryJobLock', () => {

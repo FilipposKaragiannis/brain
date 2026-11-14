@@ -5,11 +5,12 @@ import { JOB_KINDS, newScheduleProblem, ownArgs, pairSpec, scheduleName, schedul
 import type { ScheduleWhen } from '../jobStart.ts';
 import { ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
+import { JobLogButton } from '../PaneControls.tsx';
 import { routeHash } from '../route.ts';
 import { RunFields, useRunForm, WhenFields } from '../scheduleFields.tsx';
 import { jobTone } from '../status.ts';
 import type { Tone } from '../status.ts';
-import { ActionButton, Dot, Empty, Module, SourceFreshness, TerminalButton, useActionsView } from '../ui.tsx';
+import { ActionButton, Dot, Empty, Module, SourceFreshness, useActionsView } from '../ui.tsx';
 
 const EVENTS_SHOWN = 15;
 
@@ -70,7 +71,7 @@ function Schedules({ snapshot }: { snapshot: Snapshot }) {
     <Module className="schedules" title="Schedules" aside={<span className="muted">{scheduled.length} schedules{running > 0 ? ` · ${running} running` : ''}</span>} footer={<SourceFreshness name="jobs" freshness={snapshot.sources.jobs} />}>
       {scheduled.length === 0 ? <Empty>No jobs scheduled. Add one from the Schedule panel.</Empty> : (
         <ul className="job-list">
-          {scheduled.map((job) => <JobRow key={job.name} job={job} root={snapshot.project.root} edit={(chosen) => setEditing(chosen.name)} />)}
+          {scheduled.map((job) => <JobRow key={job.name} job={job} projectId={snapshot.project.id} edit={(chosen) => setEditing(chosen.name)} />)}
         </ul>
       )}
       {unscheduled.length > 0 && <p className="muted job-unscheduled">Not scheduled: {unscheduled.map((job) => job.name).join(' · ')}. Add one under jobs.schedule in the flow settings.</p>}
@@ -98,7 +99,7 @@ const STATE_WORD: Record<Job['state'], string> = {
  * One schedule in one card: its state and when, the last run, and every button it takes. Its
  * runs and workers open under it in a box of their own that scrolls.
  */
-function JobRow({ job, root, edit }: { job: Job; root: string; edit: (job: Job) => void }) {
+function JobRow({ job, projectId, edit }: { job: Job; projectId: string; edit: (job: Job) => void }) {
   const args = { job: job.name };
   const tone = jobTone(job);
   const running = job.state === 'running' || job.running.length > 0;
@@ -127,7 +128,7 @@ function JobRow({ job, root, edit }: { job: Job; root: string; edit: (job: Job) 
           ? <ActionButton kind="job.resume" args={args} label="Resume" primary={false} />
           : <ActionButton kind="job.pause" args={args} label="Pause" primary={false} />)}
         <ActionButton kind="job.unschedule" args={args} label="Unschedule" primary={false} title="Removes it from launchd and from the config." />
-        <TerminalButton path={root} job={job.name} />
+        <JobLogButton projectId={projectId} job={job.name} />
       </div>
       <details className="job-more">
         <summary>History{job.workers.length > 0 ? ' and workers' : ''} <span className="muted">({job.recent.length} runs)</span></summary>

@@ -48,14 +48,6 @@ test('DrawerListingAStartedJob_SaysStarted', async () => {
   expect(screen.getByRole('button', { name: /job\.run/ }).textContent, 'because the drawer uses the same words as the button').toMatch(/^started/);
 });
 
-test('MatchesAction_TerminalOnTheRootAgainstAJobsTerminal_NoMatch', () => {
-  expect(matchesAction('terminal.open', { path: '/p' }, 'terminal.open', { path: '/p', job: 'next' }), 'because the project root row must not light up for a job row that also opens the root').toBe(false);
-});
-
-test('MatchesAction_TerminalWithTheSameArguments_Matches', () => {
-  expect(matchesAction('terminal.open', { path: '/p', job: 'next' }, 'terminal.open', { path: '/p', job: 'next' }), 'because a job row shows its own action').toBe(true);
-});
-
 test('MatchesAction_GateAnswerNamesTheItemOnly_StillMatchesTheMessage', () => {
   expect(matchesAction('gate.clear', { item: 'gh#7' }, 'gate.clear', { item: 'gh#7', message: 'yes' }), 'because the Answer button names the item, not the message it sends').toBe(true);
 });

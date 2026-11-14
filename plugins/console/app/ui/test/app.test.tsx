@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { App, PROJECTS_RETRY_MS } from '../src/App.tsx';
 import { ClockProvider } from '../src/clock.tsx';
-import { TERMINAL_PANE } from '../src/PaneControls.tsx';
+import { OPEN_IN_TERMINAL } from '../src/PaneControls.tsx';
 import { PANE_DOCK_NAME } from '../src/PaneDock.tsx';
 import { FakeDaemon, HTTP_OK, HTTP_UNAUTHORIZED, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
@@ -179,7 +179,7 @@ async function renderFoosbrawl(daemon: FakeDaemon): Promise<void> {
 }
 
 function clickProjectBarTerminalPane(): void {
-  const [projectBar] = screen.getAllByRole('button', { name: TERMINAL_PANE });
+  const [projectBar] = screen.getAllByRole('button', { name: OPEN_IN_TERMINAL });
   if (projectBar === undefined) throw new Error('no Terminal pane button on the page');
   act(() => { fireEvent.click(projectBar); });
 }

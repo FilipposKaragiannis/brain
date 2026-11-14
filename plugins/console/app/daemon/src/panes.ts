@@ -86,7 +86,7 @@ export class PaneSessions {
     const started = this.spawnFor(request, facts);
     if (!started.ok) { refuse(link, started.error); return; }
     const pane = this.register(projectId, started, link);
-    this.log.info('pane.open', { pane: pane.id, project: projectId, run: request.run, pid: pane.pty.pid });
+    this.log.info('pane.open', { pane: pane.id, project: projectId, run: request.target.run, pid: pane.pty.pid });
   }
 
   private spawnFor(request: PaneRequest, facts: PaneFacts): ({ ok: true } & StartedPane) | { ok: false; error: string } {

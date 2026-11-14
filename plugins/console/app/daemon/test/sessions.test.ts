@@ -4,14 +4,15 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { planAction } from '../src/actionPlan.ts';
-import type { ActionContext } from '../src/actionPlan.ts';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import type { CommandRunner } from '../src/collectors/exec.ts';
 import { parseCodexTranscript } from '../src/collectors/codexTranscript.ts';
 import { claudeProjectFolder, codexMeta, countTranscriptEntries, diskSessionFiles, parseTranscript, parseTranscriptLines, readTranscript, SessionLocator, transcriptTailStart } from '../src/collectors/sessions.ts';
 import type { CodexMeta, GateLookup, SessionFiles, SessionProcess } from '../src/collectors/sessions.ts';
 import { silentLogger } from '../src/log.ts';
+import { planPane } from '../src/panePlan.ts';
+import type { PaneFacts, PaneHost, PaneLaunch } from '../src/panePlan.ts';
+import type { PaneTarget } from '../src/paneProtocol.ts';
 import { PaneSessions } from '../src/panes.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
@@ -553,69 +554,72 @@ test('CodexTranscript_TextTurnsOfUserAndAssistant_OldestFirst', () => {
 });
 
 const SESSION: SessionRef = { host: 'claude', id: '8f3c2a10-5b7e-4c1d-9a0b-1e2f3a4b5c6d', transcript: TRANSCRIPT, resume: ['claude', '--resume', '8f3c2a10-5b7e-4c1d-9a0b-1e2f3a4b5c6d'] };
-const CONTEXT: ActionContext = {
-  root: '/p/app', pluginRoot: '/plugins/flow/1.19.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2'], outsideWorktrees: [], processCwds: ['/p/app-wt-2'],
-  sessions: [{ pid: 100, cwd: '/p/app-wt-2', session: SESSION, alive: true }, { pid: 200, cwd: '/p/app-wt-2', session: { ...SESSION, id: 'ended-1', resume: ['claude', '--resume', 'ended-1'] }, alive: false }],
-  terminal: 'iterm', installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: null, nextJob: null,
+const ENDED_SESSION: SessionRef = { ...SESSION, id: 'ended-1', resume: ['claude', '--resume', 'ended-1'] };
+const FACTS: PaneFacts = {
+  root: '/p/app', folders: ['/p/app', '/p/app-wt-2'], gateSessions: [],
+  sessions: [{ pid: 100, folder: '/p/app-wt-2', session: SESSION, alive: true }, { pid: 200, folder: '/p/app-wt-2', session: ENDED_SESSION, alive: false }],
 };
+const PANE_HOST: PaneHost = { shell: '/bin/zsh', environment: {}, isFolder: () => true };
+const PANE_SIZE = { columns: 100, rows: 30 };
 
-function launch(args: Record<string, string>, context: ActionContext = CONTEXT): string[] {
-  const result = planAction('terminal.open', args, context);
-  assert.ok(result.ok, `because ${JSON.stringify(args)} names a listed session in its own folder: ${result.ok ? '' : result.error}`);
-  return result.ok ? [result.plan.command, ...result.plan.args] : [];
+function launched(target: PaneTarget, facts: PaneFacts): PaneLaunch {
+  const result = planPane({ target, size: PANE_SIZE }, facts, PANE_HOST);
+  assert.ok(result.ok, `because ${JSON.stringify(target)} names a session the console lists: ${result.ok ? '' : result.error}`);
+  return result.launch;
 }
 
-test('LiveSessionInIterm_ResumeTypedButNotRun', () => {
-  const argv = launch({ path: '/p/app-wt-2', session: '100' });
-  assert.equal(argv[0], 'osascript', 'because iTerm is driven through AppleScript');
-  assert.ok(argv.includes(`write text "claude --resume ${SESSION.id}" newline NO`), 'because a resume while the run still writes the session would put two writers on it, so Enter is the owner\'s');
-  assert.ok(argv.includes('write text "cd \'/p/app-wt-2\'"'), 'because claude --resume finds a session by the folder it ran in');
+/** The shell line a resumed session's pane runs, after `/bin/sh -c`. */
+function resumeLine(target: PaneTarget, facts: PaneFacts): string {
+  return launched(target, facts).commandArguments.at(-1) ?? '';
+}
+
+test('LiveSession_ResumePrintedNotRun', () => {
+  assert.ok(resumeLine({ run: 'session', folder: '/p/app-wt-2', pid: 100 }, FACTS).startsWith('echo '), 'because a resume while the run still writes the session would put two writers on it, so the owner runs it once the run ends');
 });
 
-test('EndedSessionInIterm_ResumeRunsAtOnce', () => {
-  const argv = launch({ path: '/p/app-wt-2', session: '200' });
-  assert.ok(argv.includes('write text "claude --resume ended-1"'), 'because once the run has ended the owner wants to be in the session straight away');
-  assert.ok(!argv.some((word) => word.includes('newline NO')), 'because nothing waits for the owner to press Enter');
+test('LiveSession_PrintedCommandIsTheResumeCommand', () => {
+  assert.match(resumeLine({ run: 'session', folder: '/p/app-wt-2', pid: 100 }, FACTS), new RegExp(`echo 'claude --resume ${SESSION.id}'`), 'because the owner copies the command the pane shows');
 });
 
-test('LiveSessionInTerminal_CommandPrintedNotRun', () => {
-  const argv = launch({ path: '/p/app-wt-2', session: '100' }, { ...CONTEXT, terminal: 'terminal' });
-  assert.equal(argv[2], `tell application "Terminal" to do script "cd '/p/app-wt-2' && echo 'The run is still going. Once it ends, resume its session with:' && echo 'claude --resume ${SESSION.id}'"`, 'because Terminal cannot type without running, so it shows the command and leaves the shell');
+test('Session_PaneOpensInTheFolderItRanIn', () => {
+  assert.equal(launched({ run: 'session', folder: '/p/app-wt-2', pid: 100 }, FACTS).workingFolder, '/p/app-wt-2', 'because claude --resume finds a session by the folder it ran in');
 });
 
-test('EndedSessionInGhostty_RunsAndKeepsAShell', () => {
-  const argv = launch({ path: '/p/app-wt-2', session: '200' }, { ...CONTEXT, terminal: 'ghostty' });
-  assert.deepEqual(argv.slice(-2), ['-e', `cd '/p/app-wt-2' && claude --resume ended-1; exec "\${SHELL:-/bin/sh}" -l`], 'because the session resumes at once and the window stays a shell after it');
+test('EndedSession_ResumeRunsAtOnce', () => {
+  assert.ok(resumeLine({ run: 'session', folder: '/p/app-wt-2', pid: 200 }, FACTS).startsWith('claude --resume ended-1;'), 'because once the run has ended the owner wants to be in the session straight away');
 });
 
-test('SessionOfAnUnknownPidOrInAnotherFolder_Refused', () => {
-  assert.equal(planAction('terminal.open', { path: '/p/app-wt-2', session: '999' }, CONTEXT).ok, false, 'because only a session the snapshot lists may be resumed');
-  assert.equal(planAction('terminal.open', { path: '/p/app', session: '100' }, CONTEXT).ok, false, 'because claude --resume run elsewhere would not find the session');
-  assert.equal(planAction('terminal.open', { path: '/p/app-wt-2', session: '100', job: 'next' }, CONTEXT).ok, false, 'because a window follows a log or opens a session, not both');
+test('EndedSession_LoginShellFollows', () => {
+  assert.ok(resumeLine({ run: 'session', folder: '/p/app-wt-2', pid: 200 }, FACTS).endsWith(`exec '${PANE_HOST.shell}' -l`), 'because the pane stays a terminal after the session ends');
+});
+
+test('SessionOfAnUnknownPid_Refused', () => {
+  assert.equal(planPane({ target: { run: 'session', folder: '/p/app-wt-2', pid: 999 }, size: PANE_SIZE }, FACTS, PANE_HOST).ok, false, 'because only a session the snapshot lists may be resumed');
+});
+
+test('SessionAskedInAnotherFolder_Refused', () => {
+  assert.equal(planPane({ target: { run: 'session', folder: '/p/app', pid: 100 }, size: PANE_SIZE }, FACTS, PANE_HOST).ok, false, 'because claude --resume run elsewhere would not find the session');
 });
 
 const GATE_SESSION: SessionRef = { host: 'claude', id: 'raised-it-3333', transcript: '/h/raised-it-3333.jsonl', resume: ['claude', '--resume', 'raised-it-3333'] };
-const GATE_CONTEXT: ActionContext = { ...CONTEXT, gateSessions: [{ item: 'gh#7', cwd: '/p/app-wt-2', session: GATE_SESSION }] };
+const GATE_FACTS: PaneFacts = { ...FACTS, gateSessions: [{ item: 'gh#7', folder: '/p/app-wt-2', session: GATE_SESSION }] };
 
-test('GateSessionInIterm_ResumesAtOnceInTheGatesWorktree', () => {
-  const argv = launch({ gate: 'gh#7' }, GATE_CONTEXT);
-  assert.ok(argv.includes('write text "cd \'/p/app-wt-2\'"'), 'because claude --resume finds a session by the folder its step ran in');
-  assert.ok(argv.includes('write text "claude --resume raised-it-3333"'), 'because the step that raised the gate has ended, so the session resumes straight away');
-  assert.ok(!argv.some((word) => word.includes('newline NO')), 'because no process writes the session any more');
+test('GateSession_OpensInTheGatesWorktree', () => {
+  assert.equal(launched({ run: 'gate', item: 'gh#7' }, GATE_FACTS).workingFolder, '/p/app-wt-2', 'because claude --resume finds a session by the folder its step ran in');
 });
 
-test('GateSessionStillWrittenByALiveProcess_ResumeTypedButNotRun', () => {
-  const live = { ...GATE_CONTEXT, sessions: [{ pid: 300, cwd: '/p/app-wt-2', session: GATE_SESSION, alive: true }] };
-  assert.ok(launch({ gate: 'gh#7', path: '/p/app-wt-2' }, live).includes('write text "claude --resume raised-it-3333" newline NO'), 'because a resume while a process still writes the session would put two writers on it');
+test('GateSession_ResumesAtOnce', () => {
+  assert.ok(resumeLine({ run: 'gate', item: 'gh#7' }, GATE_FACTS).startsWith('claude --resume raised-it-3333;'), 'because the step that raised the gate has ended, so the session resumes straight away');
 });
 
-test('GateSessionNotLocatedOrAskedElsewhere_Refused', () => {
-  const unknown = planAction('terminal.open', { gate: 'gh#9' }, GATE_CONTEXT);
+test('GateSessionStillWrittenByALiveProcess_ResumePrintedNotRun', () => {
+  const live: PaneFacts = { ...GATE_FACTS, sessions: [{ pid: 300, folder: '/p/app-wt-2', session: GATE_SESSION, alive: true }] };
+  assert.ok(resumeLine({ run: 'gate', item: 'gh#7' }, live).startsWith('echo '), 'because a resume while a process still writes the session would put two writers on it');
+});
+
+test('GateSessionNotLocated_RefusedWithTheReason', () => {
+  const unknown = planPane({ target: { run: 'gate', item: 'gh#9' }, size: PANE_SIZE }, GATE_FACTS, PANE_HOST);
   assert.match(unknown.ok ? '' : unknown.error, /^the console located no session for a gate on gh#9: /, 'because only a session the daemon located for a waiting gate may be resumed, and the owner is told why');
-  assert.equal(planAction('terminal.open', { gate: 'gh#7' }, CONTEXT).ok, false, 'because a context with no located gate session opens none');
-  assert.equal(planAction('terminal.open', { gate: 'gh#7; rm -rf /' }, GATE_CONTEXT).ok, false, 'because the gate must be an item id');
-  assert.equal(planAction('terminal.open', { gate: 'gh#7', path: '/p/app' }, GATE_CONTEXT).ok, false, 'because claude --resume run outside the gate\'s worktree would not find the session');
-  assert.equal(planAction('terminal.open', { gate: 'gh#7', session: '100' }, GATE_CONTEXT).ok, false, 'because a window opens one session, named one way');
 });
 
 /** The fake runner, with the process list it answers changed by the test. */
@@ -648,7 +652,7 @@ test('AgentGoneFromTheProcessList_ListedAsEndedWithItsSession', async () => {
   drop(100);
   await monitor.refresh('processes');
   assert.deepEqual(monitor.snapshot?.ended.map((entry) => [entry.pid, entry.worktree, entry.endedAt, entry.session?.id]), [[100, 'project-wt-3', NOW.toISOString(), SESSION.id]], 'because a run that ended leaves a session the owner can resume');
-  assert.deepEqual(monitor.actionContext().sessions.map((entry) => [entry.pid, entry.alive]), [[104, true], [100, false]], 'because an ended run\'s session resumes at once, a live one waits for Enter');
+  assert.deepEqual(monitor.paneFacts().sessions.map((entry) => [entry.pid, entry.alive]), [[104, true], [100, false]], 'because an ended run\'s session resumes at once, a live one waits for Enter');
 });
 
 const IDLE: SessionActivity = { status: 'idle', since: '2026-10-22T18:16:04.000Z' };
@@ -669,12 +673,12 @@ test('ActionContext_LiveSessions_TheSessionsOnlyNotTheRuns', async () => {
   assert.deepEqual(monitor.actionContext().liveSessions, [{ pid: 104, startedAt: '2026-10-24T18:14:04.000Z' }], 'because Stop session ends the owner\'s own sessions; the run in project-wt-3 stops with Stop this run, which clears its record');
 });
 
-test('GateOnAClaimedWorktree_SnapshotAndActionsCarryItsLocatedSession', async () => {
+test('GateOnAClaimedWorktree_SnapshotAndPaneFactsCarryItsLocatedSession', async () => {
   const gateSessions = { gates: async (gates: GateLookup[]) => gates.map((gate) => (gate.cwd === path.join(FIXTURES, 'project-wt-2') && gate.raisedAt === '2026-10-22T07:43:00Z' ? SESSION : null)) };
   const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: { filesMs: 1e9, gitMs: 1e9, processesMs: 1e9, jobsMs: 1e9, boardMs: 1e9, pullsMs: 1e9 }, gateSessions, subagents: noSubagents });
   await monitor.refresh('files');
   assert.deepEqual(monitor.snapshot?.gates.find((gate) => gate.item === 'gh#7')?.session, SESSION, 'because the card offers the located session when no agent on the item is known');
-  assert.deepEqual(monitor.actionContext().gateSessions, [{ item: 'gh#7', cwd: path.join(FIXTURES, 'project-wt-2'), session: SESSION }], 'because terminal.open resumes only a session located for a waiting gate, in its worktree');
+  assert.deepEqual(monitor.paneFacts().gateSessions, [{ item: 'gh#7', folder: path.join(FIXTURES, 'project-wt-2'), session: SESSION }], 'because a gate pane resumes only a session located for a waiting gate, in its worktree');
 });
 
 async function transcriptServer(runner: CommandRunner = fakeRunner, sessions: typeof sessionsByPid = sessionsByPid): Promise<{ base: string; close: () => Promise<void> }> {

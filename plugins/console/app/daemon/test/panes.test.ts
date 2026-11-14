@@ -50,13 +50,13 @@ test('ResizeControl_ResizesThePty', () => {
 
 test('UnlistedFolder_RefusedAndEnded4400', () => {
   const { open } = sessions(null);
-  const link = open({ ...SHELL_AT_ROOT, folder: '/etc' }, PROJECT);
+  const link = open({ ...SHELL_AT_ROOT, target: { run: 'shell', folder: '/etc' } }, PROJECT);
   assert.deepEqual([link.notices.map((notice) => notice.type), link.ended], [['refused'], PANE_CLOSE.refused], 'because a folder the snapshot does not list gets only a refusal');
 });
 
 test('UnlistedFolder_NoPtySpawned', () => {
   const { open, ptys } = sessions(null);
-  open({ ...SHELL_AT_ROOT, folder: '/etc' }, PROJECT);
+  open({ ...SHELL_AT_ROOT, target: { run: 'shell', folder: '/etc' } }, PROJECT);
   assert.equal(ptys.length, 0, 'because a refused folder never starts a process');
 });
 
@@ -111,7 +111,7 @@ test('LinkGone_AfterTheGrace_MasterClosed', () => {
 
 test('StopAll_EveryLinkEnded1001', async () => {
   const { panes, open } = sessions(null);
-  const links = [open(SHELL_AT_ROOT, PROJECT), open({ ...SHELL_AT_ROOT, folder: '/p/app-wt-2' }, PROJECT)];
+  const links = [open(SHELL_AT_ROOT, PROJECT), open({ ...SHELL_AT_ROOT, target: { run: 'shell', folder: '/p/app-wt-2' } }, PROJECT)];
   await panes.stopAll();
   assert.deepEqual(links.map((link) => link.ended), [PANE_CLOSE.daemonStopping, PANE_CLOSE.daemonStopping], 'because a stopping daemon tells every page why its pane ends');
 });
@@ -151,7 +151,7 @@ test('PaneLimit_OneMoreThanTheLimit_Refused', () => {
 test('PaneLimit_LimitAcrossProjects_Refused', () => {
   const { open } = sessions(null);
   for (let opened = 0; opened < MAXIMUM_PANES; opened += 1) open(SHELL_AT_ROOT, PROJECT);
-  const extra = open({ ...SHELL_AT_ROOT, folder: '/p/site' }, OTHER_PROJECT);
+  const extra = open({ ...SHELL_AT_ROOT, target: { run: 'shell', folder: '/p/site' } }, OTHER_PROJECT);
   assert.equal(extra.ended, PANE_CLOSE.refused, 'because the limit is the machine\'s, not one project\'s');
 });
 
@@ -180,7 +180,7 @@ test('EndProject_ItsPtyHungUp', () => {
 test('EndProject_AnotherProjectsPane_StaysOpen', () => {
   const { panes, open } = sessions(null);
   open(SHELL_AT_ROOT, PROJECT);
-  const other = open({ ...SHELL_AT_ROOT, folder: '/p/site' }, OTHER_PROJECT);
+  const other = open({ ...SHELL_AT_ROOT, target: { run: 'shell', folder: '/p/site' } }, OTHER_PROJECT);
   panes.endProject(PROJECT.id);
   assert.equal(other.ended, null, 'because only the project that went loses its panes');
 });

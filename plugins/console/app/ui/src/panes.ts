@@ -1,5 +1,5 @@
-import type { PaneNotice, PaneRun, PaneSize } from '../../daemon/src/paneProtocol.ts';
-import { ACK_EVERY_BYTES, PANE_CLOSE } from '../../daemon/src/paneProtocol.ts';
+import type { PaneNotice, PaneSize, PaneTarget } from '../../daemon/src/paneProtocol.ts';
+import { ACK_EVERY_BYTES, PANE_CLOSE, targetQuery } from '../../daemon/src/paneProtocol.ts';
 import { projectPath } from './api.ts';
 import type { Api, SocketLike } from './api.ts';
 
@@ -22,7 +22,7 @@ export type TerminalFactory = () => TerminalLike;
 /** `opening` until the daemon started the process, `live` while it runs, `ended` with the reason after. */
 export type PaneState = 'opening' | 'live' | 'ended';
 
-export type PaneView = { key: string; projectId: string; folder: string; run: PaneRun; state: PaneState; command: string[]; ended: string | null };
+export type PaneView = { key: string; projectId: string; target: PaneTarget; state: PaneState; command: string[]; ended: string | null };
 
 /** What an ended pane says, by how it ended. An exit adds its code or signal to `sessionEnded`; a refusal says the daemon's words. */
 export const PANE_END_WORDS = {
@@ -54,10 +54,10 @@ export class PaneStore {
   }
 
   /** Adds an `opening` pane and returns its key; nothing reaches the daemon until `showAndConnect`. */
-  open(projectId: string, folder: string, run: PaneRun): string {
+  open(projectId: string, target: PaneTarget): string {
     this.opened += 1;
     const key = `pane-${this.opened}`;
-    const view: PaneView = { key, projectId, folder, run, state: 'opening', command: [], ended: null };
+    const view: PaneView = { key, projectId, target, state: 'opening', command: [], ended: null };
     this.entries.set(key, { view, terminal: this.terminals(), socket: null, drawnSinceAck: 0, size: null });
     this.publish();
     return key;
@@ -159,7 +159,7 @@ export class PaneStore {
 }
 
 function paneSocketPath(view: PaneView, size: PaneSize): string {
-  const query = new URLSearchParams({ path: view.folder, run: view.run, cols: String(size.columns), rows: String(size.rows) });
+  const query = new URLSearchParams({ ...targetQuery(view.target), cols: String(size.columns), rows: String(size.rows) });
   return `${projectPath(view.projectId, '/panes')}?${query.toString()}`;
 }
 

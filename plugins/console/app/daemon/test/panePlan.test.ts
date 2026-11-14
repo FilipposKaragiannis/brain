@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { unlistedFolder } from '../src/actionPlan.ts';
-import { paneEnvironment, parsePaneRequest, planPane } from '../src/panePlan.ts';
+import { paneEnvironment, paneFolders, parsePaneRequest, planPane, unlistedFolder } from '../src/panePlan.ts';
 import type { PaneFacts, PaneHost, PaneRequest } from '../src/panePlan.ts';
 import { DEFAULT_PANE_COLUMNS, DEFAULT_PANE_ROWS, MAXIMUM_PANE_COLUMNS, MAXIMUM_PANE_ROWS, MINIMUM_PANE_COLUMNS, MINIMUM_PANE_ROWS } from '../src/paneProtocol.ts';
 
@@ -9,12 +8,12 @@ const ROOT = '/p/app';
 const POOL_WORKTREE = '/p/app-wt-2';
 const OUTSIDE_WORKTREE = '/p/app-side';
 const AGENT_FOLDER = '/p/app-wt-2/src';
-const FACTS: PaneFacts = { folders: [ROOT, POOL_WORKTREE, OUTSIDE_WORKTREE, AGENT_FOLDER] };
+const FACTS: PaneFacts = { root: ROOT, folders: [ROOT, POOL_WORKTREE, OUTSIDE_WORKTREE, AGENT_FOLDER], sessions: [], gateSessions: [] };
 const HOST: PaneHost = { shell: '/bin/zsh', environment: {}, isFolder: () => true };
 const SIZE = { columns: 132, rows: 41 };
 
-function request(folder: string, run: PaneRequest['run']): PaneRequest {
-  return { folder, run, size: SIZE };
+function request(folder: string, run: 'shell'): PaneRequest {
+  return { target: { run, folder }, size: SIZE };
 }
 
 function query(fields: Record<string, string>): URLSearchParams {
@@ -29,11 +28,11 @@ test('ShellPane_ListedRoot_RunsTheOwnersLoginShellThere', () => {
 test('ShellPane_EachListedSource_Planned', () => {
   for (const folder of [POOL_WORKTREE, OUTSIDE_WORKTREE, AGENT_FOLDER]) {
     const plan = planPane(request(folder, 'shell'), FACTS, HOST);
-    assert.equal(plan.ok && plan.launch.workingFolder, folder, `because ${folder} is a folder the snapshot lists, as Open in Terminal allows`);
+    assert.equal(plan.ok && plan.launch.workingFolder, folder, `because ${folder} is a folder the snapshot lists`);
   }
 });
 
-test('ShellPane_UnlistedFolder_RefusedWithOpenInTerminalsWords', () => {
+test('ShellPane_UnlistedFolder_RefusedNamingTheListedFolders', () => {
   assert.deepEqual(planPane(request('/etc', 'shell'), FACTS, HOST), { ok: false, error: unlistedFolder('/etc') }, 'because a pane opens only where the snapshot lists a folder');
 });
 
@@ -51,7 +50,12 @@ test('ShellPane_ListedFolderMissingOnDisk_Refused', () => {
 });
 
 test('Request_PathRunAndSize_Read', () => {
-  assert.deepEqual(parsePaneRequest(query({ path: ROOT, run: 'shell', cols: '132', rows: '41' })), { ok: true, request: { folder: ROOT, run: 'shell', size: SIZE } }, 'because the page sends the folder, what to run and its terminal size');
+  assert.deepEqual(parsePaneRequest(query({ path: ROOT, run: 'shell', cols: '132', rows: '41' })), { ok: true, request: { target: { run: 'shell', folder: ROOT }, size: SIZE } }, 'because the page sends the folder, what to run and its terminal size');
+});
+
+test('PaneFolders_EverySource_ListedResolved', () => {
+  const folders = paneFolders({ root: '/p/app', pool: ['/p/app-wt-2/'], outsideWorktrees: ['/p/side/../app-side'], processFolders: ['/p/app-wt-2/./src'] });
+  assert.deepEqual([...folders].sort(), ['/p/app', '/p/app-side', '/p/app-wt-2', '/p/app-wt-2/src'], 'because a shell pane opens in the root, the pool, the outside worktrees and every process folder');
 });
 
 test('Request_NoSize_DefaultSize', () => {

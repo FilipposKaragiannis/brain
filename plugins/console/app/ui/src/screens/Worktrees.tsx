@@ -4,11 +4,11 @@ import { processListProblem } from '../../../daemon/src/snapshot.ts';
 import { Age, formatDuration, useLiveSeconds } from '../clock.tsx';
 import { ItemLink } from '../links.tsx';
 import { isParked } from '../parked.tsx';
-import { PaneControls } from '../PaneControls.tsx';
+import { TerminalButton } from '../PaneControls.tsx';
 import { routeHash } from '../route.ts';
 import { worktreeTone } from '../status.ts';
 import type { Tone } from '../status.ts';
-import { ActionButton, Chip, Dot, Empty, Flags, Module, SourceFreshness, TerminalButton, useActionsView } from '../ui.tsx';
+import { ActionButton, Chip, Dot, Empty, Flags, Module, SourceFreshness, useActionsView } from '../ui.tsx';
 import { WORDS } from '../words.ts';
 
 /** How many commits behind the base fill a card's behind bar; a stale branch passes 20. */
@@ -74,7 +74,7 @@ export function Worktrees({ snapshot }: { snapshot: Snapshot }) {
                       <td className="strong nowrap" title={worktree.path}>{worktree.name}</td>
                       <td className="mono clip" title={worktree.branch ?? ''}>{worktree.branch ?? '—'}{worktree.head !== null && ` · ${worktree.head.slice(0, 8)}`}</td>
                       <td className="muted">{outsideNote(worktree, snapshot)}</td>
-                      <td className="buttons"><TerminalButton path={worktree.path} /><PaneControls projectId={snapshot.project.id} folder={worktree.path} /></td>
+                      <td className="buttons"><TerminalButton projectId={snapshot.project.id} folder={worktree.path} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -143,8 +143,7 @@ function WorktreeCard({ worktree, snapshot }: { worktree: Worktree; snapshot: Sn
       <footer className="buttons worktree-card-foot">
         <PrimaryLink worktree={worktree} snapshot={snapshot} />
         <SyncButton worktree={worktree} snapshot={snapshot} />
-        <TerminalButton path={worktree.path} />
-        <PaneControls projectId={snapshot.project.id} folder={worktree.path} />
+        <TerminalButton projectId={snapshot.project.id} folder={worktree.path} />
         <HoldButton worktree={worktree} />
       </footer>
       {worktree.state === 'running' && <div className="worktree-stripes run-stripes" aria-hidden="true" />}

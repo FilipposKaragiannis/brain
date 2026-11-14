@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { PaneTarget } from '../../daemon/src/paneProtocol.ts';
 import { useServices } from './console.tsx';
 import type { PaneStore, PaneView } from './panes.ts';
 import { PaneResizeHandle, useDockHeight } from './PaneResize.tsx';
@@ -123,19 +124,32 @@ function useDockState(views: readonly PaneView[]): DockState {
   return { active, collapsed, choose, toggle: () => setCollapsed((folded) => !folded) };
 }
 
-/** `<run> · <folder name>`, and the project's name when it is not the one on screen. */
+/**
+ * What the pane holds, so a shell, a job's log and a session tell apart: `shell · <folder name>`,
+ * `log · <job>`, `session · <folder name>` or `session · <item>`; and the project's name when it
+ * is not the one on screen.
+ */
 function paneLabel(view: PaneView, projectOnScreen: string | null, projects: readonly ProjectSummary[]): string {
-  const label = `${view.run} · ${folderName(view.folder)}`;
+  const label = targetLabel(view.target);
   if (view.projectId === projectOnScreen) return label;
   const project = projects.find((each) => each.id === view.projectId);
   return `${label} (${project?.name ?? view.projectId})`;
+}
+
+function targetLabel(target: PaneTarget): string {
+  switch (target.run) {
+    case 'shell': return `shell · ${folderName(target.folder)}`;
+    case 'job': return `log · ${target.job}`;
+    case 'session': return `session · ${folderName(target.folder)}`;
+    case 'gate': return `session · ${target.item}`;
+  }
 }
 
 function folderName(folder: string): string {
   return folder.split('/').filter((part) => part !== '').at(-1) ?? folder;
 }
 
-/** The command the daemon started, once it has; the folder until then. */
+/** The command the daemon started, once it has; what the pane holds until then. */
 function paneTooltip(view: PaneView): string {
-  return view.command.length > 0 ? view.command.join(' ') : view.folder;
+  return view.command.length > 0 ? view.command.join(' ') : targetLabel(view.target);
 }

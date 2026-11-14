@@ -79,7 +79,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
     const flowConfig = new FlowConfigEditor({ projectId: project.id, root: project.root, runner: childProcessRunner, refresh: async () => { await Promise.all([monitor.refresh('files'), monitor.refresh('jobs')]); }, log });
     const actions = new ActionRunner({
       projectId: project.id,
-      context: () => ({ ...monitor.actionContext(), terminal: settings.terminal(), installedTerminals: installed(), writeConfig: (key, value) => flowConfig.setKey(key, value) }),
+      context: () => ({ ...monitor.actionContext(), writeConfig: (key, value) => flowConfig.setKey(key, value) }),
       spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
       onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },
     });

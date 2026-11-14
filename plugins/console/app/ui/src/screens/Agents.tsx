@@ -4,9 +4,10 @@ import { processListProblem, sessionStale } from '../../../daemon/src/snapshot.t
 import { Age, clockTime, formatDuration, Since, useLiveSeconds, useNow } from '../clock.tsx';
 import { ExternalLink, ItemLink } from '../links.tsx';
 import type { ItemPages } from '../links.tsx';
+import { SessionButton, TerminalButton } from '../PaneControls.tsx';
 import { routeHash } from '../route.ts';
 import { FULL_LINES, RunStream, TAIL_LINES, transcriptSize, useTranscript } from '../Transcript.tsx';
-import { ActionButton, Chip, Dot, Empty, Module, SessionButton, SourceFreshness, TerminalButton } from '../ui.tsx';
+import { ActionButton, Chip, Dot, Empty, Module, SourceFreshness } from '../ui.tsx';
 import { WORDS } from '../words.ts';
 
 /**
@@ -97,7 +98,7 @@ function RunCard({ agent, snapshot, startOpen }: { agent: Agent; snapshot: Snaps
           <footer className="buttons run-card-foot" title={agent.cwd}>
             {hasTranscript && <button type="button" className="button" aria-pressed={full} onClick={() => setFull((shown) => !shown)}>{full ? 'Last lines' : 'Full log'}</button>}
             {pull !== null && <ExternalLink url={pull.url} className="button">PR #{pull.number}</ExternalLink>}
-            <OpenButton path={agent.cwd} pid={agent.pid} hasSession={agent.session !== null} alive />
+            <OpenButton projectId={snapshot.project.id} folder={agent.cwd} pid={agent.pid} hasSession={agent.session !== null} alive />
             {agent.item !== null && (
               <span className="run-stop">
                 <ActionButton kind="run.stop" args={{ item: agent.item }} label="Stop this run" primary={false} title={STOP_HELP} />
@@ -140,7 +141,7 @@ function DeadRunCard({ run, snapshot }: { run: Run; snapshot: Snapshot }) {
       </p>
       <footer className="buttons">
         <ActionButton kind="run.resume" args={{ item: run.item }} label="Resume" primary />
-        {path !== null && <TerminalButton path={path} />}
+        {path !== null && <TerminalButton projectId={snapshot.project.id} folder={path} />}
       </footer>
     </article>
   );
@@ -222,7 +223,7 @@ function Sessions({ sessions, snapshot }: { sessions: Agent[]; snapshot: Snapsho
             <SessionActivity session={session} takenAt={snapshot.takenAt} />
             {isStale(session) && <span className="tag tag-warn" title={`Idle (or, saying nothing of being idle, running) for ${formatDuration(snapshot.project.staleSessionSeconds)} or more: jobs.health.stale_session`}>stale</span>}
             <span className="buttons">
-              <OpenButton path={session.cwd} pid={session.pid} hasSession={session.session !== null} alive />
+              <OpenButton projectId={snapshot.project.id} folder={session.cwd} pid={session.pid} hasSession={session.session !== null} alive />
               <StopSessionButton session={session} />
             </span>
             <SubagentRows subagents={session.subagents} />
@@ -339,14 +340,14 @@ function Ended({ snapshot }: { snapshot: Snapshot }) {
       <div className="scroll">
         <table className="table" aria-label="Ended agents and sessions">
           <thead><tr><th>Kind</th><th>Pid</th><th>Host</th><th>Worktree</th><th>Item</th><th>Ended</th><th /></tr></thead>
-          <tbody>{snapshot.ended.map((agent) => <EndedRow key={`${agent.pid}-${agent.endedAt}`} agent={agent} pages={snapshot} />)}</tbody>
+          <tbody>{snapshot.ended.map((agent) => <EndedRow key={`${agent.pid}-${agent.endedAt}`} agent={agent} pages={snapshot} projectId={snapshot.project.id} />)}</tbody>
         </table>
       </div>
     </Module>
   );
 }
 
-function EndedRow({ agent, pages }: { agent: EndedAgent; pages: ItemPages }) {
+function EndedRow({ agent, pages, projectId }: { agent: EndedAgent; pages: ItemPages; projectId: string }) {
   return (
     <tr>
       <td><Chip tone="quiet">{agent.kind}</Chip></td>
@@ -356,7 +357,7 @@ function EndedRow({ agent, pages }: { agent: EndedAgent; pages: ItemPages }) {
       <td>{agent.item === null ? '—' : <ItemLink id={agent.item} pages={pages} />}</td>
       <td className="mono">{clockTime(agent.endedAt)}</td>
       <td className="buttons" title={agent.cwd}>
-        <OpenButton path={agent.cwd} pid={agent.pid} hasSession={agent.session !== null} alive={false} />
+        <OpenButton projectId={projectId} folder={agent.cwd} pid={agent.pid} hasSession={agent.session !== null} alive={false} />
       </td>
     </tr>
   );
@@ -364,11 +365,11 @@ function EndedRow({ agent, pages }: { agent: EndedAgent; pages: ItemPages }) {
 
 /**
  * One button to the folder a process works in: Open session when its session can be resumed,
- * which opens a terminal there too, else Open in Terminal. Two buttons to the same folder would
+ * which opens a pane there too, else Open in Terminal. Two buttons to the same folder would
  * leave the owner guessing which one to press.
  */
-function OpenButton({ path, pid, hasSession, alive }: { path: string; pid: number; hasSession: boolean; alive: boolean }) {
-  return hasSession ? <SessionButton path={path} pid={pid} alive={alive} /> : <TerminalButton path={path} />;
+function OpenButton({ projectId, folder, pid, hasSession, alive }: { projectId: string; folder: string; pid: number; hasSession: boolean; alive: boolean }) {
+  return hasSession ? <SessionButton projectId={projectId} folder={folder} pid={pid} alive={alive} /> : <TerminalButton projectId={projectId} folder={folder} />;
 }
 
 /** The run record an agent works for: the one in its worktree, else the one for its item. */

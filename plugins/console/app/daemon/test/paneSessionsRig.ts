@@ -9,9 +9,9 @@ import { fakeScheduler } from './fakeSpawner.ts';
 
 export const PROJECT = { id: 'app', root: '/p/app' };
 export const OTHER_PROJECT = { id: 'site', root: '/p/site' };
-const FACTS: PaneFacts = { folders: ['/p/app', '/p/app-wt-2', '/p/site'] };
+const FACTS: PaneFacts = { root: '/p/app', folders: ['/p/app', '/p/app-wt-2', '/p/site'], sessions: [], gateSessions: [] };
 export const HOST: PaneHost = { shell: '/bin/zsh', environment: { PATH: '/usr/bin' }, isFolder: () => true };
-export const SHELL_AT_ROOT: PaneRequest = { folder: '/p/app', run: 'shell', size: { columns: 120, rows: 33 } };
+export const SHELL_AT_ROOT: PaneRequest = { target: { run: 'shell', folder: '/p/app' }, size: { columns: 120, rows: 33 } };
 
 type FakeLink = {
   link: PaneLink;

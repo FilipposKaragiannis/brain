@@ -168,7 +168,7 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `POST /api/projects/<id>/actions` | run one action, body `{"kind","args"}`; 202 with the record, 400 on a bad request, 409 when its lock is held |
 | `GET /api/projects/<id>/actions` | the recent 50 actions, newest first, with the output tail |
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
-| `GET /api/projects/<id>/panes?path=<folder>&run=shell&cols=<n>&rows=<n>` | a terminal pane as a WebSocket: with `run=shell` a login shell (`$SHELL -l`) in a pty in `path`, which must be absolute and one Open in Terminal takes (the root, a worktree the console lists, the folder of a listed agent or session) and on disk; `cols` 2 to 500 and `rows` 1 to 300, 80 by 24 when absent. The pane gets the daemon's `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` (`en_US.UTF-8` when unset), `LC_ALL` and `SSH_AUTH_SOCK`, `TERM=xterm-256color` and `COLORTERM=truecolor`, never the token. Host, Origin and the token (`?token=`) are checked before the handshake (403, 401), as is the project (404). Binary frames are terminal bytes both ways; text frames are JSON, up `{"type":"resize","cols","rows"}` and `{"type":"ack","bytes"}`, down `{"type":"started","pane","command","folder"}` first, `{"type":"refused","error"}` (close 4400) for a pane the daemon will not start, and `{"type":"exit","code","signal"}` (close 1000) when the process ends. Closing the socket hangs the pane up (SIGHUP to its process group, SIGKILL 1.5 s later). The daemon runs at most 4 panes at once, every project together, a closed pane counting until its process ended; the fifth gets `refused` (close 4400) until one ends. It stops reading a pane's output once 1 MiB is sent and not acked, or its socket still holds 1 MiB not yet sent, and reads on when both are under 256 KiB (an ack counts no more than the bytes not yet acked; a hang-up reads on at once, so the process's end arrives, and so does a process that ends while its output waits, checked every 50 ms, so its last output arrives before node-pty drops it 200 ms after the end); the page acks every 64 KiB it draws. Close codes: 1000 the process ended, 1001 the daemon stopped, 1008 a text frame that is not `resize` or `ack`, 4400 refused, 4404 the project left the list or its id now names another root (the pane is hung up as above) |
+| `GET /api/projects/<id>/panes?run=<run>&…&cols=<n>&rows=<n>` | a terminal pane as a WebSocket. The page names what to open and the daemon plans what runs: `run=shell&path=<folder>` a login shell (`$SHELL -l`) in `path`, which must be absolute, one the console lists (the root, a worktree the console lists, the folder of a listed agent or session) and on disk; `run=job&job=<name>` `/usr/bin/tail -n 200 -f <root>/.flow/log/<job>.log` from the root, the file `jobs.sh logs` reads (the name is lower-case letters, digits and dashes); `run=session&session=<pid>&path=<folder>` the session of an agent or session in `agents` or `ended` whose transcript was found, in the folder that process ran in (`path` must be it: `claude --resume` finds a session by its folder); `run=gate&gate=<item>` the session the daemon located for the gate waiting on the item, in its worktree. A session or a gate runs `/bin/sh -c '<line>; exec <shell> -l'` with every word quoted for sh, so the pane stays a shell after it: a running `claude -p` or `codex exec` cannot be attached to and a second writer on its session would mix with it, so while a listed process still runs the session the line prints the resume command (`echo`) for the owner to run once it ends; once it has ended the line is the resume command, which runs at once. `cols` 2 to 500 and `rows` 1 to 300, 80 by 24 when absent. The pane gets the daemon's `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` (`en_US.UTF-8` when unset), `LC_ALL` and `SSH_AUTH_SOCK`, `TERM=xterm-256color` and `COLORTERM=truecolor`, never the token. Host, Origin and the token (`?token=`) are checked before the handshake (403, 401), as is the project (404). Binary frames are terminal bytes both ways; text frames are JSON, up `{"type":"resize","cols","rows"}` and `{"type":"ack","bytes"}`, down `{"type":"started","pane","command","folder"}` first, `{"type":"refused","error"}` (close 4400) for a pane the daemon will not start, and `{"type":"exit","code","signal"}` (close 1000) when the process ends. Closing the socket hangs the pane up (SIGHUP to its process group, SIGKILL 1.5 s later). The daemon runs at most 4 panes at once, every project together, a closed pane counting until its process ended; the fifth gets `refused` (close 4400) until one ends. It stops reading a pane's output once 1 MiB is sent and not acked, or its socket still holds 1 MiB not yet sent, and reads on when both are under 256 KiB (an ack counts no more than the bytes not yet acked; a hang-up reads on at once, so the process's end arrives, and so does a process that ends while its output waits, checked every 50 ms, so its last output arrives before node-pty drops it 200 ms after the end); the page acks every 64 KiB it draws. Close codes: 1000 the process ended, 1001 the daemon stopped, 1008 a text frame that is not `resize` or `ack`, 4400 refused, 4404 the project left the list or its id now names another root (the pane is hung up as above) |
 
 ## The snapshot
 `daemon/src/snapshot.ts` is the contract; `schema` is its version, 18 since an agent took
@@ -623,7 +623,6 @@ on every state change and at most twice a second while output arrives.
 | `pr.auto-merge` | `pr`, `method?` (squash), `off?` | `gh pr merge <pr> --repo <repo> --auto --<method>`: GitHub merges the PR itself once its checks and reviews pass; `off=true` runs `--disable-auto` instead. No `--delete-branch`, as for `pr.merge` | the PR | `finished` |
 | `quiz.answer` | `item`, `answers` (`1b 2a 3c`: a letter per question number) | `quiz.sh answer <item> 1b 2a 3c` (flow 1.29.0): grades the try against the key in `<reports>/quiz.md`, writes `<reports>/quiz.json`, logs one `quiz` event, and on a pass marks the item's draft PR ready for review (`comments.sh ready`) when it has one on GitHub. Refused on an older flow, which has no quiz.sh | the item | `finished`; `files` and `pulls` are re-read |
 | `pr.review` | `pr`, `reviewer` (a name or GitHub login, `@` optional) | `comments.sh request-review <pr> <ask> <reviewer>` (flow 1.27.0): one mention comment with the flow's request marker, Copilot through the reviewers API, so the health job tracks and chases it; the ask is the PR step's own. Refused on flow before 1.27.0, whose script would ask every reviewer | the PR | `finished` |
-| `terminal.open` | `path`, `job?`, `session?`, `gate?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command; with `gate` (an item, `path` optional) one with the resume command of the gate's located `session` | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
 `ActionRecord.note` is what a finished action wants said beside its state (null for most); the
@@ -708,36 +707,6 @@ and the stale reason goes with the next git read. Conflict: the merge is aborted
 `failed` with `conflict`, and the card lists the files with "Hand to the flow". Handed to the flow:
 that button runs `sync.handoff`; the card says it is handing off until the files source reads
 the note, then shows "sync pending: <refs>" until the sync step merges them (and drops the note), and a choice only the owner can make comes back as an escalation gate.
-
-`terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, another
-worktree git lists for the project (the outside rows), or the working directory of an agent or
-session the snapshot lists (so only processes in this project's worktrees); any other path is refused with the
-reason. The app is the `terminal` setting, else the first installed of iTerm, Ghostty, Terminal:
-`iterm` runs `open -a iTerm <path>`, `terminal` `open -a Terminal <path>`, `ghostty`
-`open -na Ghostty --args --working-directory=<path>`, a custom command its words with `{path}`,
-`{qpath}` replaced. With `job` (from the root only) the window follows `<root>/.flow/log/<job>.log`, the file
-`jobs.sh logs` reads, with `tail -n 200 -f`: iTerm through `osascript` (`create window with default
-profile command`, the line handed to `/bin/sh -c`), Terminal through `osascript` (`do script`),
-Ghostty with the line as the one word after `-e` (assumed to work whether Ghostty runs that word
-through a shell or joins its `-e` words into one shell string; not tried on every version), a custom command with `{cmd}` replaced by the line. The line is
-`cd <path> && tail -n 200 -f <log>` with every word quoted for sh and then for AppleScript, so a
-path with a space or a quote stays one word. Nothing is locked or re-read.
-
-With `session` (the pid of an agent or session in `agents` or `ended` whose transcript was found;
-`job` with it is refused) the window opens in the folder that process ran in (`path` must be it:
-`claude --resume` finds a session by its folder) with its resume command. A running `claude -p`
-or `codex exec` cannot be attached to, and a second writer on its session would mix with it, so
-while the process is alive the command waits for the owner: iTerm types it without pressing Enter
-(`write text "<cmd>" newline NO` after `write text "cd <path>"`, through `osascript`); Terminal
-cannot type without running, so `do script` prints it (`echo`) and leaves the shell; Ghostty does
-the same with the line after `-e`, then `exec "${SHELL:-/bin/sh}" -l` keeps a shell; a custom
-command gets that line in `{cmd}`. Once the process has ended the command runs at once in all of
-them.
-
-With `gate` (an item id; `job` or `session` with it is refused) the window opens in the worktree
-the gate was raised in (a `path`, when given, must be it) with the resume command of the gate's
-`session`, run at once, unless a listed live process writes that transcript. Only a gate in
-`gates` with a located session; any other item is refused with the reason.
 
 An item is an id that starts with the prefix of one of the plugin's adapters (the first line of
 `adapters/<name>/prefix`, read with the flow files; `gh#` and `local:` for a plugin before flow
@@ -852,8 +821,8 @@ or ~/.codex." with none), Gates (a decision card per gate, one line on what
 its kind asks, the PR with its state and unresolved review threads when the item has one, the
 questions and recommendations as the plugin parses them on flow 1.18.0 and later, so the card
 matches the Slack message, else the daemon's own parse, Answer runs `gate.clear`; Discuss with the
-agent resumes the newest agent on the item in `agents` or `ended` by its pid, else the gate's
-`session` with `gate`, and is left out with neither; a gate whose item
+agent opens a pane on the newest agent on the item in `agents` or `ended` (`run=session` by its pid), else on the gate's
+`session` (`run=gate`), and is left out with neither; a gate whose item
 has a quiz shows it as a panel: a line with how many questions or the last try's score, Take the
 quiz, which opens one radio group per question and a Check my answers button that grades the
 letters on the page and runs `quiz.answer`; the results mark each question right or wrong, show
@@ -882,7 +851,7 @@ which runs `sync.handoff` with the conflict's refs, or while a run record names 
 note is there "A run is going; the sync step runs first when it starts", and between an accepted
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
 <refs>" whenever `syncPending` is set, so a note the health job wrote shows too), Open in
-Terminal on every card, Reserve (`worktree.reserve` with the card's worktree as `target`) on a
+Terminal (a shell pane) on every card, Reserve (`worktree.reserve` with the card's worktree as `target`) on a
 free one, and Release in its place on a claimed one, a reserved one saying "reserved by <who>"
 and its Release saying it gives the reservation back; each button's running and outcome states
 show on its own card; then the worktrees outside the pool, the
@@ -915,7 +884,7 @@ worktree and how long it has run, its command on hover, under a line that says t
 sessions and the comments and health jobs ignore them. Then the runs
 ended in the last day, each row with Open session or, with no session to resume, Open in Terminal), Jobs (`#/<project>/jobs`, a main column and a side column. Schedules: a
 card per schedule with its state, timing, host and args, the last
-run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Open in Terminal in the row; its
+run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Follow log (a pane on the job's log) in the row; its
 history and workers open in a box of fixed height that scrolls; the jobs with no schedule fold
 into one line. Edit… opens a dialog over the page with the schedule's timing, host, model and
 effort, and for next its item, workers and max steps; saving runs `job.schedule` under the same
@@ -967,10 +936,12 @@ value: Project (the name; its title is the root), Repository (`owner/name`, link
 Trackers for several (each tracker the flow reads: "GitHub issues" and "Jira" linked to their
 items, "local" plain; one the board could not read followed by "(not read)", its title the reason), Base branch
 and Jobs run on (`jobHosts`, every host the schedules and their workers run on, e.g.
-`claude, codex`); the plugins and their versions are in the Overview's footer. Terminal pane, at
-the end of that row and on every worktree card and row outside the pool, opens a shell in the root
-or that worktree in the pane dock; start `claude` or `codex` there by hand. The dock is fixed to the bottom of the page right of the nav, one tab per
-pane (`shell · <folder name>`, the project's name added when it is not the one on screen, the
+`claude, codex`); the plugins and their versions are in the Overview's footer. Open in Terminal, at
+the end of that row, opens a shell in the root in the pane dock. Every button that opens something
+in a terminal opens a pane there: Open in Terminal on a worktree, a dead run or a process with no
+session, Follow log on a job, Open session on a process with a session and Discuss with the agent
+on a gate; start `claude` or `codex` in a shell by hand. The dock is fixed to the bottom of the page right of the nav, one tab per
+pane (`shell · <folder name>`, `log · <job>`, `session · <folder name>` or `session · <item>` for a gate, the project's name added when it is not the one on screen, the
 command on hover), Close on each tab, and a chevron that folds the dock to its tabs. Dragging
 the open dock's top edge, or focusing it and pressing the up and down arrows, resizes the terminal between 120 px and three
 quarters of the window, and the terminal refits to it; the browser keeps the height. A wheel or trackpad scroll over a pane

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import { PANE_CLOSE } from '../../daemon/src/paneProtocol.ts';
-import { PaneControls, TERMINAL_PANE } from '../src/PaneControls.tsx';
+import { OPEN_IN_TERMINAL, TerminalButton } from '../src/PaneControls.tsx';
 import { PANE_DOCK_NAME, PaneDock } from '../src/PaneDock.tsx';
 import { PANE_END_WORDS } from '../src/panes.ts';
 import { FakeDaemon } from './fakeDaemon.tsx';
@@ -14,14 +14,14 @@ const CLOSE_TAB = /^Close /;
 
 function renderDock(daemon: FakeDaemon): void {
   const Wrapper = daemon.wrapper();
-  render(<Wrapper><PaneControls projectId="foosbrawl" folder={FOLDER} /><PaneDock projectOnScreen="foosbrawl" projects={[]} /></Wrapper>);
+  render(<Wrapper><TerminalButton projectId="foosbrawl" folder={FOLDER} /><PaneDock projectOnScreen="foosbrawl" projects={[]} /></Wrapper>);
 }
 
 /** A shell pane the daemon started, shown in the dock. */
 function livePane(): FakeSocket {
   const daemon = new FakeDaemon();
   renderDock(daemon);
-  act(() => { fireEvent.click(screen.getByRole('button', { name: TERMINAL_PANE })); });
+  act(() => { fireEvent.click(screen.getByRole('button', { name: OPEN_IN_TERMINAL })); });
   const socket = daemon.sockets[0]!;
   act(() => { socket.receive({ type: 'started', pane: 'pane-1', command: ['/bin/zsh', '-l'], folder: FOLDER }); });
   return socket;
@@ -66,8 +66,8 @@ test('DaemonEndedThePane_KeepsItsTab', () => {
 function chooseTheOlderTab(): string {
   const daemon = new FakeDaemon();
   renderDock(daemon);
-  act(() => { fireEvent.click(screen.getByRole('button', { name: TERMINAL_PANE })); });
-  act(() => { fireEvent.click(screen.getByRole('button', { name: TERMINAL_PANE })); });
+  act(() => { fireEvent.click(screen.getByRole('button', { name: OPEN_IN_TERMINAL })); });
+  act(() => { fireEvent.click(screen.getByRole('button', { name: OPEN_IN_TERMINAL })); });
   const olderTab = screen.getByRole('button', { pressed: false });
   act(() => { fireEvent.click(olderTab); });
   return olderTab.textContent ?? '';

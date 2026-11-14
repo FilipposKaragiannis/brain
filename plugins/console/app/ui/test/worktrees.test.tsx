@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { ActionRecord, Run, Worktree } from '../../daemon/src/snapshot.ts';
-import { TERMINAL_PANE } from '../src/PaneControls.tsx';
+import { OPEN_IN_TERMINAL } from '../src/PaneControls.tsx';
 import { PaneDock } from '../src/PaneDock.tsx';
 import { RELEASE_RESERVED_TITLE, Worktrees } from '../src/screens/Worktrees.tsx';
 import { actionRecord, boardItem, claudeSession, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, poolWorktree, readyToClose, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
@@ -102,17 +102,14 @@ test('FreeWorktreeWithASession_SaysTheSessionSitsThere', () => {
 
 const ACTIONS_PATH = '/api/projects/project/actions';
 
-test('Worktrees_EveryRow_OpenInTerminalOnItsPath', async () => {
+test('Worktrees_EveryRow_OpenInTerminalOnItsPath', () => {
   const daemon = new FakeDaemon();
-  const posted: unknown[] = [];
-  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('t1', 'done', {}), kind: 'terminal.open', args: { path: '/p' }, outcome: 'finished' } } }; });
   const Wrapper = daemon.screenWrapper();
-  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-2'), { ...poolWorktree('project'), path: '/p', role: 'main', state: 'outside' }] }} /></Wrapper>);
-  const buttons = screen.getAllByRole('button', { name: 'Open in Terminal' });
-  expect(buttons.length, 'because the pool rows and the project root outside it each open a terminal').toBe(2);
-  await act(async () => { fireEvent.click(buttons[1]!); });
-  expect(posted, 'because the button opens the folder the row shows').toEqual([{ kind: 'terminal.open', args: { path: '/p' } }]);
-  expect(screen.getByText('done'), 'because the button shows how its action ended, as every action button does').not.toBeNull();
+  render(<Wrapper><Worktrees snapshot={{ ...snapshotAt(TAKEN_AT, 0), worktrees: [poolWorktree('wt-2'), { ...poolWorktree('project'), path: '/p', role: 'main', state: 'outside' }] }} /><PaneDock projectOnScreen="project" projects={[]} /></Wrapper>);
+  const buttons = screen.getAllByRole('button', { name: OPEN_IN_TERMINAL });
+  expect(buttons.length, 'because the pool rows and the project root outside it each get one button').toBe(2);
+  act(() => { fireEvent.click(buttons[1]!); });
+  expect(daemon.sockets.map((socket) => ({ path: socket.queryParameter('path'), run: socket.queryParameter('run') })), 'because the button opens a shell pane in the folder the row shows').toEqual([{ path: '/p', run: 'shell' }]);
 });
 
 const BEHIND: Worktree = { ...poolWorktree('wt-7'), state: 'stale', flags: ['stale-branch'], claim: CLAIM, item: 'gh#344', staleReason: 'branch is 27 commits behind epic/gh-300 (limit 20)' };
@@ -406,5 +403,5 @@ function clickOnCard(card: string, button: string): { path: string | null; run: 
 }
 
 test('WorktreeCard_TerminalPane_OpensAShellAtThatWorktree', () => {
-  expect(clickOnCard('wt-5', TERMINAL_PANE), 'because the card opens its own worktree, not the root or another card').toEqual([{ path: '/p-wt/wt-5', run: 'shell' }]);
+  expect(clickOnCard('wt-5', OPEN_IN_TERMINAL), 'because the card opens its own worktree, not the root or another card').toEqual([{ path: '/p-wt/wt-5', run: 'shell' }]);
 });
