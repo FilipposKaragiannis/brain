@@ -42,12 +42,13 @@ plugins/console/scripts/demo.sh             # [--dir <folder>] [--port <n>]; Ctr
 ```
 It builds a throwaway flow project in `$TMPDIR/brain-console-demo` (flow's local adapter, two pool
 worktrees, one item waiting at each gate, one ready item) and starts this checkout's daemon on it
-alone: `--project`, `--port 7478`, `--state-dir` and `--config` all in that folder, `HOME` there
-too, and none of the caller's environment but `PATH`, `TMPDIR`, `USER` and `SHELL`. `claude` and
-`codex` on its `PATH` are stubs that log each call to `agents.log` there and spend no tokens, so
-a run started from the console goes through the flow without an agent; `gh`, `crontab` and
-`launchctl` refuse. Re-running it stops that daemon and builds the demo again from nothing; it
-deletes only a folder it built. The token is in `<folder>/state/token`.
+alone: `--project`, `--port 7478`, `--state-dir` and `--config` all in that folder, and an
+environment of `HOME` (there too), `PATH`, `TMPDIR`, `LANG`, `USER`, `SHELL`, `FLOW_PLUGIN` and
+`BRAIN_CONSOLE_LAUNCHCTL` only. `claude` and `codex` on its `PATH` are stubs that log each call to
+`agents.log` there and spend no tokens, so a run started from the console goes through the flow
+without an agent; `gh`, `crontab` and `launchctl` refuse. Re-running it stops that daemon and
+builds the demo again from nothing; it deletes only a folder it built. The token is in
+`<folder>/state/token`.
 
 ## Run it on login
 ```bash
