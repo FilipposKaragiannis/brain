@@ -55,16 +55,18 @@ type LivePane = {
   pty: PtyHandle;
   link: PaneLink;
   output: OutputFlow;
-  /** Null while nothing ends the pane but its own process. */
-  hangUp: { cause: HangUpCause; grace: object } | null;
-  exited: Promise<void>;
+  /** Null while nothing ends the pane but its own process; `grace` is null once it ran out. */
+  hangUp: { cause: HangUpCause; grace: object | null } | null;
+  /** Settles once nothing the pane started runs: its process ended and, once hung up, its group was empty or killed. */
+  finished: PromiseWithResolvers<void>;
 };
 
 /**
  * Every terminal pane of the daemon, across projects, at most `MAXIMUM_PANES` at once; a hung-up pane
  * counts until its process ended. A pane lives as long as its link: the process's exit ends the
  * link, and a link that goes hangs the process group up, then kills it after `PANE_KILL_GRACE_MILLISECONDS`,
- * also when the process ended on the hang-up but left a process in its group.
+ * also when the process ended on the hang-up but left a process in its group. The grace keeps the
+ * daemon's process alive, so a stopping daemon kills what a pane left before it exits.
  * Output the page has not acked, or the link still holds, past the high water pauses the pty until
  * both are under the low water. Logs `pane.open` and `pane.close`, never what a pane shows or is sent.
  */
@@ -74,6 +76,8 @@ export class PaneSessions {
   private readonly scheduler: Scheduler;
   private readonly log: Logger;
   private readonly live = new Set<LivePane>();
+  /** Hung-up panes whose process ended but whose group still holds a process the grace has yet to kill. */
+  private readonly finishing = new Set<LivePane>();
   private opened = 0;
 
   constructor(dependencies: PaneSessionsDependencies) {
@@ -102,13 +106,12 @@ export class PaneSessions {
   /** Counts the started pane live, tells the link it started, and wires its pty and its link to each other. */
   private register(projectId: string, started: StartedPane, link: PaneLink): LivePane {
     this.opened += 1;
-    const exited = Promise.withResolvers<void>();
     const { launch, pty } = started;
-    const pane: LivePane = { id: `pane-${this.opened}`, projectId, pty, link, output: new OutputFlow(pty, link, this.scheduler), hangUp: null, exited: exited.promise };
+    const pane: LivePane = { id: `pane-${this.opened}`, projectId, pty, link, output: new OutputFlow(pty, link, this.scheduler), hangUp: null, finished: Promise.withResolvers<void>() };
     this.live.add(pane);
     link.tell({ type: 'started', pane: pane.id, command: [launch.command, ...launch.commandArguments], folder: launch.workingFolder });
     pty.onOutput((bytes) => this.forward(pane, bytes));
-    pty.onExit((code, signal) => { this.conclude(pane, code, signal); exited.resolve(); });
+    pty.onExit((code, signal) => this.conclude(pane, code, signal));
     this.listen(pane);
     return pane;
   }
@@ -146,11 +149,14 @@ export class PaneSessions {
     }
   }
 
-  /** Ends every link `daemonStopping`, hangs every pane up and kills what is left after the grace; settles when every pty exited. */
+  /**
+   * Ends every link `daemonStopping`, hangs every pane up and kills what is left after the grace;
+   * settles when every pane finished, a pane closed before the stop and still in its grace too.
+   */
   async stopAll(): Promise<void> {
     const stopping = [...this.live];
     for (const pane of stopping) this.endLink(pane, 'daemon-stopping', PANE_CLOSE.daemonStopping);
-    await Promise.all(stopping.map((pane) => pane.exited));
+    await Promise.all([...stopping, ...this.finishing].map((pane) => pane.finished.promise));
   }
 
   private endLink(pane: LivePane, cause: HangUpCause, code: number): void {
@@ -161,38 +167,46 @@ export class PaneSessions {
 
   private hangUp(pane: LivePane, cause: HangUpCause): void {
     if (!this.live.has(pane) || pane.hangUp !== null) return;
-    const grace = this.scheduler.after(PANE_KILL_GRACE_MILLISECONDS, () => this.killAfterGrace(pane));
+    const grace = this.scheduler.afterKeepingAlive(PANE_KILL_GRACE_MILLISECONDS, () => this.killAfterGrace(pane, cause));
     pane.hangUp = { cause, grace };
     pane.output.resumeForHangUp();
     pane.pty.signal('SIGHUP');
   }
 
   /**
-   * Kills the pane's process group, and closes the master while its process still runs. An ended
-   * pty is left alone: node-pty closed it before telling the exit, and its close hangs up the bare
-   * pid once more.
+   * Kills the pane's process group, and closes the master while its process still runs, whose exit
+   * then finishes the pane. An ended pty is left alone: node-pty closed it before telling the exit,
+   * and its close hangs up the bare pid once more; the pane has finished with the kill.
    */
-  private killAfterGrace(pane: LivePane): void {
+  private killAfterGrace(pane: LivePane, cause: HangUpCause): void {
+    pane.hangUp = { cause, grace: null };
     const processRunning = this.live.has(pane);
     pane.pty.signal('SIGKILL');
-    if (processRunning) pane.pty.close();
+    if (processRunning) { pane.pty.close(); return; }
+    this.finishing.delete(pane);
+    pane.finished.resolve();
   }
 
-  /**
-   * Ends the pane on its process's exit. A hung-up pane whose group still holds a process keeps its
-   * grace, so the kill reaches what the process left there. One whose group is already empty
-   * cancels it: the group's id is free for the system to hand out again, so it is not signalled.
-   */
   private conclude(pane: LivePane, code: number | null, signal: string | null): void {
     if (!this.live.delete(pane)) return;
     pane.output.stop();
     this.log.info('pane.close', { pane: pane.id, code, signal, cause: pane.hangUp?.cause ?? 'exited' });
-    if (pane.hangUp !== null) {
-      if (!pane.pty.groupRunning()) this.scheduler.cancel(pane.hangUp.grace);
-      return;
-    }
+    if (pane.hangUp !== null) { this.concludeHungUp(pane, pane.hangUp.grace); return; }
     pane.link.tell({ type: 'exit', code, signal });
     pane.link.end(PANE_CLOSE.ended);
+    pane.finished.resolve();
+  }
+
+  /**
+   * A hung-up pane whose process ended. While its group still holds a process and the grace has yet
+   * to run out, the pane waits for the grace to kill it. Else the pane has finished, and a grace
+   * still armed is cancelled: the empty group's id is free for the system to hand out again, so it
+   * is not signalled, and nothing holds the daemon.
+   */
+  private concludeHungUp(pane: LivePane, grace: object | null): void {
+    if (grace !== null && pane.pty.groupRunning()) { this.finishing.add(pane); return; }
+    if (grace !== null) this.scheduler.cancel(grace);
+    pane.finished.resolve();
   }
 }
 

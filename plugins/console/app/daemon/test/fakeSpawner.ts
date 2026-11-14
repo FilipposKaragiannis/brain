@@ -67,11 +67,13 @@ export function fakeSpawner(options: FakeSpawnerOptions): { spawner: Spawner; pr
 export const plainSpawner = (): { spawner: Spawner; processes: FakeProcess[] } => fakeSpawner({ failWith: null, detachedOutput: '' });
 
 /** Timers the test fires by hand, by the delay they were asked for. */
-export function fakeScheduler(): { scheduler: Scheduler; fire(ms: number): number; pending(): number[] } {
-  const timers = new Map<object, { ms: number; task: () => void }>();
+export function fakeScheduler(): { scheduler: Scheduler; fire(ms: number): number; pending(): number[]; keepingAlive(): number[] } {
+  const timers = new Map<object, { ms: number; task: () => void; keepsAlive: boolean }>();
+  const schedule = (ms: number, task: () => void, keepsAlive: boolean): object => { const handle = {}; timers.set(handle, { ms, task, keepsAlive }); return handle; };
   return {
     scheduler: {
-      after: (ms, task) => { const handle = {}; timers.set(handle, { ms, task }); return handle; },
+      after: (ms, task) => schedule(ms, task, false),
+      afterKeepingAlive: (ms, task) => schedule(ms, task, true),
       cancel: (handle) => { timers.delete(handle); },
     },
     fire: (ms) => {
@@ -80,6 +82,8 @@ export function fakeScheduler(): { scheduler: Scheduler; fire(ms: number): numbe
       return fired;
     },
     pending: () => [...timers.values()].map((timer) => timer.ms),
+    /** The delays of the pending timers that keep the process alive. */
+    keepingAlive: () => [...timers.values()].filter((timer) => timer.keepsAlive).map((timer) => timer.ms),
   };
 }
 

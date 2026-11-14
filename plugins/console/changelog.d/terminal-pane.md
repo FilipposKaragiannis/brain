@@ -3,11 +3,11 @@ bump: minor
 - Terminal pane: a shell in a pty the daemon runs, rendered in the page, opened from the project
   bar (at the root) or from a worktree card or row (at that worktree). The panes sit in a dock at
   the bottom of the page, one tab each, and stay open across screens, projects and Settings; Close
-  hangs the shell up and kills what it left running 1.5 s later, and a pane the daemon ended says
-  why and keeps its screen. Drag the dock's top edge (or focus it and use the arrows) to resize
-  it, and the terminal refits; the browser keeps the height. Scrolling over a pane never scrolls
-  the page behind it, and the terminal uses an installed JetBrainsMono Nerd Font when there is
-  one, so prompt icons draw.
+  hangs the shell up and kills what it left running 1.5 s later (a stopping daemon waits for that
+  kill), and a pane the daemon ended says why and keeps its screen. Drag the dock's top edge (or
+  focus it and use the arrows) to resize it, and the terminal refits; the browser keeps the
+  height. Scrolling over a pane never scrolls the page behind it, and the terminal uses an
+  installed JetBrainsMono Nerd Font when there is one, so prompt icons draw.
 - The pane replaces the outside terminal app: Open in Terminal on the project bar, a worktree, a
   dead run or a process with no session opens a shell pane (one button where there were two);
   Follow log on a job opens a pane that follows its log, and waits for it when the job has not
