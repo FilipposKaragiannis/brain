@@ -251,7 +251,7 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
     exit 1
   )
   save_healthz() { [ -f "$live/state/token" ] && curl -fsS --max-time "$CURL_SECONDS" -H "Authorization: Bearer $(cat "$live/state/token")" "http://127.0.0.1:$live_port/healthz" > "$work/healthz.json" 2>/dev/null; }
-  is_gone() { ! kill -0 "$1" 2>/dev/null; }
+  is_gone() { [ -n "$1" ] && ! kill -0 "$1" 2>/dev/null; } # an unknown pid is never gone, so a check cannot pass on nothing
   port_closed() { ! curl -s --max-time "$CURL_SECONDS" "http://127.0.0.1:$live_port/healthz" > /dev/null; }
   daemon_pid() { node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).pid' "$live/state/daemon.pid" 2>/dev/null; }
   stop_live() { # both demo runs, both daemons they started and the one the pid file names now
@@ -267,7 +267,8 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   check "the demo's daemon keeps its state in the demo folder" test -f "$live/state/daemon.pid"
   check "the caller's home is left empty by the demo and its daemon" [ -z "$(ls -A "$live_home")" ]
   start_live "$work/live-2.log"; second=$!
-  poll_until "$STOP_POLLS" is_gone "$first"; stopped=$?
+  # The daemon, not the demo.sh shell that started it: killing only the shell would orphan it.
+  poll_until "$STOP_POLLS" is_gone "$first_daemon"; stopped=$?
   check "a re-run stops the daemon the previous run started" [ "$stopped" -eq 0 ]
   poll_until "$START_POLLS" save_healthz; up=$?
   second_daemon="$(daemon_pid)"
