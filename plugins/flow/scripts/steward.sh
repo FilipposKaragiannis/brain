@@ -579,7 +579,9 @@ cmd_prune() {
 
 # cmd_sweep: merging on the host is the owner's answer to the merge gate, so nobody has to say it
 # again. Each claimed worktree whose item is closed, or whose linked PR is merged, is released:
-# an open merge gate clears with the PR's URL, an item still open closes (a PR into an epic
+# an open merge gate clears with the PR's URL, any other gate is dropped (gate.sh drop: its
+# label goes, and an unanswered ambiguity or escalation question is posted on the item and
+# printed here, for a follow-up), an item still open closes (a PR into an epic
 # branch does not close its issue), and the task branch goes even when squash-merged, but only
 # while its tip is the PR's head, so a commit made after the merge keeps it. A worktree with
 # uncommitted changes, a run in flight, or an item that cannot be read is left alone.
@@ -618,12 +620,32 @@ cmd_sweep() {
     if [ -f "$home/runs/$(item_slug "$it").json" ]; then echo "$it: kept $name, a run is in flight"; continue; fi
     if dirty "$p"; then echo "$it: kept $name, it has uncommitted changes ($why)"; continue; fi
     if [ "$dry" -eq 1 ]; then echo "$it: would release $name ($why)"; continue; fi
-    [ "$gate" = merge ] && "$FLOW_PLUGIN/scripts/gate.sh" clear "$it" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" >/dev/null && echo "$it: cleared the merge gate"
+    # A gate that cannot go keeps the claim: the sweep only reads claimed worktrees, so the next
+    # one tries again.
+    if { drop_err="$(sweep_drop_gate "$it" "$gate" "$(if [ "$merged" -eq 1 ]; then echo "merged: $pr"; else echo "closed"; fi)" "$why" 2>&1 1>&3 3>&-)"; } 3>&1; then
+      [ -z "$drop_err" ] || printf '%s\n' "$drop_err" >&2
+    else
+      echo "$it: kept $name, could not drop its $gate gate ($(printf '%s\n' "${drop_err:-no reason given}" | tail -1 | sed 's/^flow: //')); the next sweep tries again"
+      continue
+    fi
     [ "$status" = closed ] || adapter close "$it" --comment "Closed by flow: $pr is merged." >/dev/null || echo "flow: could not close $it" >&2
     force=""
     [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
     (cmd_release "$p" $force >/dev/null) && echo "$it: released $name ($why)"
   done
+}
+
+# sweep_drop_gate <item> <gate> <answer> <why>: the gate of an item the sweep closes goes with it.
+# The merge gate clears with <answer>, the merge being the owner's answer; any other gate is
+# dropped (gate.sh drop, which leaves an item with no gate as it is). Non-zero, with the reason on
+# stderr, when the gate stays.
+sweep_drop_gate() {
+  if [ "$2" = merge ]; then
+    "$FLOW_PLUGIN/scripts/gate.sh" clear "$1" "$3" >/dev/null || return 1
+    echo "$1: cleared the merge gate"
+  else
+    "$FLOW_PLUGIN/scripts/gate.sh" drop "$1" "$4"
+  fi
 }
 
 # --- health: the pool checked in order, claim by claim. See jobs/health.sh, which runs it.
@@ -838,9 +860,13 @@ health_claim() {
       health_say "$it" "dead run of ${step:-?} cleared (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     fi
   fi
-  health_held=""
-  [ "$health_gate" != merge ] || health_review "$it" "$(state_get "$data" pr)"
-  if [ -n "$health_held" ]; then reviewing=$((reviewing + 1)); holders="$holders$name $it its PR is $health_held, so the merge gate waits on the reviewers
+  # A gate on a closed item waits on nobody, reviewers included: the defect comes first, and its
+  # PR gets no review verdict (nor a review record the console would show as in review).
+  health_held=""; hc_closed=0; [ "$(json_get "$data" status)" != closed ] || hc_closed=1
+  [ "$health_gate" != merge ] || [ "$hc_closed" -eq 1 ] || health_review "$it" "$(state_get "$data" pr)"
+  if [ -n "$health_gate" ] && [ "$hc_closed" -eq 1 ]; then holders="$holders$name $it closed with its $health_gate gate left open, a defect
+"
+  elif [ -n "$health_held" ]; then reviewing=$((reviewing + 1)); holders="$holders$name $it its PR is $health_held, so the merge gate waits on the reviewers
 "
   elif [ -n "$health_gate" ]; then gated=$((gated + 1)); holders="$holders$name $it waiting at the $health_gate gate
 "; fi
@@ -1061,11 +1087,18 @@ health_conditions() {
 }
 
 # health_gates: a gate pending longer than gate_reminder says so once per interval. A gate with a
-# condition says what it waits on: the health job clears it when that ends.
+# condition says what it waits on: the health job clears it when that ends. A gate on a closed
+# item waits on nobody, so it is a defect (health_gate_closed), not a gate waiting.
 health_gates() {
+  hgs_closed=""
   for f in "$home"/gates/*.json; do
     [ -f "$f" ] || continue
     g="$(cat "$f")"; gi="$(json_get "$g" item)"; gt="$(json_get "$g" gate)"; since="$(hpy epoch "$(json_get "$g" time)")"
+    # A closed item's gate is a defect before anything else, even with its PR still in review.
+    if [ "$(item_status "$gi")" = closed ]; then
+      hgs_closed="$hgs_closed gate-closed-$(item_slug "$gi")"
+      health_gate_closed "$gi" "$gt"; continue
+    fi
     # A merge gate whose PR is still in review waits on the reviewers, not on the owner.
     case "$health_in_review" in *" $(item_slug "$gi") "*) [ "$gt" = merge ] && continue ;; esac
     waiting=$((waiting + 1))
@@ -1082,6 +1115,26 @@ health_gates() {
   for rf in "$home"/health/*.remind; do
     [ -f "$rf" ] || continue
     [ -f "$home/gates/$(basename "$rf" .remind).json" ] || { [ "$dry" -eq 1 ] || rm -f "$rf"; }
+  done
+  health_gate_closed_sweep "$hgs_closed"
+}
+
+# health_gate_closed <item> <gate>: the sweep drops the gate of an item it closes, so a gate left
+# on a closed item is a defect. Said and notified once while it stays, with the command that
+# drops it.
+health_gate_closed() {
+  health_changed "gate-closed-$(item_slug "$1")" "$2" || return 0
+  health_say "$1" "defect: closed with its $2 gate still open; nobody is asked. Drop it: gate.sh drop $1 \"closed\""
+  health_notify "$1 is closed with its $2 gate still open, a defect: nobody is asked. Drop it: gate.sh drop $1 \"closed\""
+}
+
+# health_gate_closed_sweep <keys>: forget a closed item's gate defect once it is gone, so it is
+# said again should it come back. <keys> are the gate-closed-<slug> keys still holding.
+health_gate_closed_sweep() {
+  for hgc_seen in "$home"/health/gate-closed-*.seen; do
+    [ -f "$hgc_seen" ] || continue
+    hgc_key="$(basename "$hgc_seen" .seen)"
+    case " $1 " in *" $hgc_key "*) ;; *) health_cleared "$hgc_key" ;; esac
   done
 }
 

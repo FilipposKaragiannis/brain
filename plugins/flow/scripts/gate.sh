@@ -46,6 +46,11 @@
 #                                           with the claimed worktree, the age, the questions, the
 #                                           options, who raised it, who answers it, its condition
 #                                           and its footer
+#   gate.sh drop <item> <why>               the item closed under the gate (steward.sh sweep): the
+#                                           gate, its record and its gate: label go, no answer
+#                                           recorded; an ambiguity or escalation question nobody
+#                                           answered is posted on the item and printed, marked
+#                                           unanswered, so the owner can file a follow-up
 # Gates: interview, plan-approval, decomposition, feel-test, merge, escalation, ambiguity.
 # FLOW_NOW (an ISO time, 2026-10-25T09:00:00Z) stands in for the clock in the age. It exists for
 # tests, like FLOW_HOME.
@@ -87,6 +92,42 @@ parse_raise_flags() {
     esac
     shift 2
   done
+}
+
+# gate_drop <item> <why>: the item closed under its gate. The gate, its record and its gate:
+# label go and no answer is recorded. An ambiguity or escalation question goes to the item and to
+# stdout, marked unanswered (gate_unanswered). An item with no gate is left as it is. It holds the
+# item's clear lock (lock_gate_clears), so a drop and a clear never take one gate twice.
+gate_drop() {
+  item="$1"; why="$2"; lock_gate_clears "$item"; record="$home/gates/$(item_slug "$item").json"
+  gate_record="$(cat "$record" 2>/dev/null)"
+  gate="$(json_get "$gate_record" gate)"; asked="$(json_get "$gate_record" message)"
+  if [ -z "$gate" ]; then
+    item_data="$(adapter read "$item" 2>/dev/null)"
+    gate="$(state_get "$item_data" gate)"; [ "$gate" != none ] || gate=""
+  fi
+  [ -n "$gate" ] || return 0
+  adapter write-state "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
+    || die "cannot drop the $gate gate of $item; it stays"
+  rm -f "$record"
+  case "$gate" in
+    ambiguity|escalation) gate_unanswered "$item" "$gate" "$why" "$asked" ;;
+    *)
+      adapter comment "$item" --body "Gate dropped: the $gate gate closed with the item ($why)." >/dev/null || echo "flow: could not comment on $item" >&2
+      echo "$item: dropped the $gate gate ($why)" ;;
+  esac
+}
+
+# gate_unanswered <item> <gate> <why> <question>: the question nobody answered, quoted on the item
+# (headed Unanswered, not Gate, so no answers pass reads it as a gate) and on stdout, for a
+# follow-up. A question with no record points at the gate's own comment.
+gate_unanswered() {
+  quoted="$(printf '%s\n' "${4:-(the question is in the gate comment above)}" | sed 's/^/> /')"
+  adapter comment "$1" --body "**Unanswered: the $2 gate closed with the item** ($3). Nobody answered it; file a follow-up if the question still stands:
+
+$quoted" >/dev/null || echo "flow: could not post the unanswered $2 question on $1" >&2
+  echo "$1: dropped the $2 gate unanswered ($3); file a follow-up if the question still stands:"
+  printf '%s\n' "$quoted" | sed 's/^/  /'
 }
 
 case "${1:-}" in
@@ -173,5 +214,8 @@ $footer" >/dev/null
       c="$(cat "$f")"
       printf '%s\t%s\tstopped\t%s: %s\n' "$(json_get "$c" at)" "$(json_get "$c" host)" "$(json_get "$c" cause)" "$(json_get "$c" said)"
     done ;;
+  drop)
+    [ $# -eq 3 ] || die "usage: gate.sh drop <item> <why>" 2
+    gate_drop "$2" "$3" ;;
   *) awk '/^#!/ { next } /^#/ { print; next } { exit }' "$0"; exit 2 ;;
 esac

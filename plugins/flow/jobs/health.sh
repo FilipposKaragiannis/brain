@@ -10,9 +10,9 @@
 # past jobs.health.behind_base; a conflict or a diverged branch goes to the sync step of the
 # item's next run), clears a gate whose condition ended (its blocker closed, its PR's conflict or
 # failing CI gone: `gate.sh clear --met`), reminds on gates pending past
-# jobs.health.gate_reminder, and says once when the pool is full and the next job has no worktree
-# to start in. It clears a planned hold
-# (state.held_by) that is stale or wrong: the holder unreadable, holding no worktree and no run,
+# jobs.health.gate_reminder (a gate on a closed item is a defect, said once, not a gate waiting),
+# and says once when the pool is full and the next job has no worktree to start in. It clears a
+# planned hold (state.held_by) that is stale or wrong: the holder unreadable, holding no worktree and no run,
 # or its changes (touches, when it records none) no longer sharing a path with the held item's; a
 # hold on itself; the newest hold in a cycle. Each clear is an `unheld` line in events.log. A hold whose holder closed stays:
 # next.sh releases it with the note to merge the holder's work and check the plan. A valid hold waiting over a day is
