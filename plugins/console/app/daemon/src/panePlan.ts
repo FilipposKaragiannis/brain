@@ -137,9 +137,10 @@ function shellLaunch(asked: string, facts: PaneFacts, host: PaneHost): Planned {
   return launchIn(folder, host.shell, [LOGIN_SHELL]);
 }
 
+/** `-F`, not `-f`: a job that never ran has no log yet, and `tail -F` waits for it, silent, then follows it across rotation. */
 function jobLogLaunch(job: string, facts: PaneFacts): Planned {
   const root = path.resolve(facts.root);
-  return launchIn(root, TAIL, ['-n', LOG_LINES, '-f', path.join(root, JOB_LOG_FOLDER, `${job}.log`)]);
+  return launchIn(root, TAIL, ['-n', LOG_LINES, '-F', path.join(root, JOB_LOG_FOLDER, `${job}.log`)]);
 }
 
 /** Only a session the snapshot lists, and only in its own folder: `claude --resume` finds a session by the folder it was started in. */

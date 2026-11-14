@@ -9,9 +9,9 @@ bump: minor
   an installed JetBrainsMono Nerd Font when there is one, so prompt icons draw.
 - The pane replaces the outside terminal app: Open in Terminal on the project bar, a worktree, a
   dead run or a process with no session opens a shell pane (one button where there were two);
-  Follow log on a job opens a pane that follows its log; Open session and Discuss with the agent
-  open a pane that resumes the session, showing the resume command instead while the run still
-  goes. The tabs say which: `shell · <folder>`, `log · <job>` or `session · <folder or item>`.
+  Follow log on a job opens a pane that follows its log, and waits for it when the job has not
+  run yet; Open session and Discuss with the agent open a pane that resumes the session, showing
+  the resume command instead while the run still goes. The tabs say which: `shell · <folder>`, `log · <job>` or `session · <folder or item>`.
   The `terminal.open` action is gone.
 - Settings no longer has a Terminal choice, and the `terminal` setting is gone: a settings file
   that still holds it loads as before, and the next save leaves it out. `PUT /api/settings` now
