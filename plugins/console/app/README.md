@@ -34,6 +34,22 @@ kept `0700` and the token file `0600`. A request whose `Host` is not a loopback
 name, or whose `Origin` is not a local page, gets 403, so a page on another site cannot drive
 the console even from the owner's own browser.
 
+## Try it on the demo
+A trial console pointed at a real project can make real changes there, so test the console on
+the demo instead:
+```bash
+plugins/console/scripts/demo.sh             # [--dir <folder>] [--port <n>]; Ctrl+C stops it
+```
+It builds a throwaway flow project in `$TMPDIR/brain-console-demo` (flow's local adapter, two pool
+worktrees, one item waiting at each gate, one ready item) and starts this checkout's daemon on it
+alone: `--project`, `--port 7478`, `--state-dir` and `--config` all in that folder, and an
+environment of `HOME` (there too), `PATH`, `TMPDIR`, `LANG`, `USER`, `SHELL`, `FLOW_PLUGIN` and
+`BRAIN_CONSOLE_LAUNCHCTL` only. `claude` and `codex` on its `PATH` are stubs that log each call to
+`agents.log` there and spend no tokens, so a run started from the console goes through the flow
+without an agent; `gh`, `crontab` and `launchctl` refuse. Re-running it stops that daemon and
+builds the demo again from nothing; it deletes only a folder it built. The token is in
+`<folder>/state/token`.
+
 ## Run it on login
 ```bash
 brain-console install --project /work/projects/foosbrawl   # the same flags as start; none keeps the agent's
