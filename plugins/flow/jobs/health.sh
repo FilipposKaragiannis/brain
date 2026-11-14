@@ -5,7 +5,8 @@
 # next job does), so a merge clears its gate within one cycle even while a next run is busy.
 # Then runs `steward.sh health`: clears the run records whose process is gone, releases a claim
 # that holds nothing, resumes work a dead run cut off (the host runs only then, and only up to
-# jobs.health.max_resumes times before an escalation gate), brings clean task branches in step
+# jobs.health.max_resumes times before an escalation gate, which says what the dead runs left: a
+# result the step did not advance on, their last log lines or that they logged none), brings clean task branches in step
 # with their remote (a push only with jobs.health.push: true) and with their base (a merge once
 # past jobs.health.behind_base; a conflict or a diverged branch goes to the sync step of the
 # item's next run), clears a gate whose condition ended (its blocker closed, its PR's conflict or
