@@ -81,7 +81,9 @@ demo_run_pids() {
     case "$(cwd_of "$pid")/" in "$real"/*) echo "$pid" ;; esac
   done
 }
-group_alive() { for g in "$@"; do kill -0 -- "-$g" 2>/dev/null && return 0; done; return 1; }
+# group_alive <group...>: whether any process in the groups runs. `kill -s 0`, as the TERM and KILL
+# below: dash's kill takes `--` after `-s <signal>` but reads `-0 --` as a bad number.
+group_alive() { for g in "$@"; do kill -s 0 -- "-$g" 2>/dev/null && return 0; done; return 1; }
 # wait_groups <group...>: waits, a bounded while, for every process in the groups to end.
 wait_groups() {
   waited=0

@@ -218,10 +218,21 @@ check "the reset demo has one gate of each kind again" [ "$(in_demo sh "$P/../fl
 # it going, so the re-run must end it, child too, before the folder goes.
 fake_job="$work/fakeflow/jobs/next.sh"; mkdir -p "$(dirname "$fake_job")"
 printf '#!/bin/sh\nmkdir -p "$1" && echo $$ > "$1/pid"\nsleep 300 &\necho $! > "$2"\nwait\n' > "$fake_job"
-start_run() { # start_run <cwd> <lock dir> <child pid file>: the fake job in its own session, not our child
+# A job that outlasts SIGTERM by a second and, as it ends, notes in <child pid file>.end whether
+# its lock in the demo is still there: kept when the re-run waited for it, gone when it did not.
+slow_job="$work/fakeflow/jobs/slow.sh"
+cat > "$slow_job" <<'SH'
+#!/bin/sh
+trap 'sleep 1; if [ -d "$1" ]; then echo kept; else echo gone; fi > "$2.end"; exit 0' TERM
+mkdir -p "$1" && echo $$ > "$1/pid"
+sleep 300 &
+echo $! > "$2"
+wait
+SH
+start_run() { # start_run <cwd> <lock dir> <child pid file> [job]: the fake job in its own session, not our child
   (cd "$1" && python3 -I -c 'import os, sys
 if os.fork(): sys.exit(0)
-os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' /bin/sh "$fake_job" "$2" "$3" < /dev/null > /dev/null 2>&1)
+os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' /bin/sh "${4:-$fake_job}" "$2" "$3" < /dev/null > /dev/null 2>&1)
   tries=0; while [ ! -s "$3" ] && [ "$tries" -lt 50 ]; do sleep 0.1; tries=$((tries + 1)); done
 }
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
@@ -231,14 +242,19 @@ run_pid="$(cat "$demo/console-demo/.flow/log/next.lock/pid" 2>/dev/null)"; run_c
 mkdir -p "$work/elsewhere"
 start_run "$work/elsewhere" "$demo/console-demo/.flow/log/next-2.lock" "$work/other-child"
 other_pid="$(cat "$demo/console-demo/.flow/log/next-2.lock/pid" 2>/dev/null)"; other_child="$(cat "$work/other-child" 2>/dev/null)"
+start_run "$demo/console-demo" "$demo/console-demo/.flow/log/slow.lock" "$work/slow-child" "$slow_job"
+slow_pid="$(cat "$demo/console-demo/.flow/log/slow.lock/pid" 2>/dev/null)"
 check "the detached run is going before the re-run" alive "$run_pid"
+check "the run that outlasts SIGTERM is going before the re-run" alive "$slow_pid"
 run_demo --dir "$demo"; code=$?
 check "a re-run with a detached run going succeeds" [ "$code" -eq 0 ]
 check "a re-run stops a detached run the demo's console started" sh -c "[ -n '$run_pid' ] && ! kill -0 '$run_pid' 2>/dev/null"
 check "a re-run stops that run's whole process group" sh -c "[ -n '$run_child' ] && ! kill -0 '$run_child' 2>/dev/null"
+tries=0; while [ ! -s "$work/slow-child.end" ] && [ "$tries" -lt 50 ]; do sleep 0.1; tries=$((tries + 1)); done
+check "a re-run deletes the demo only after a run that outlasts SIGTERM has ended" [ "$(cat "$work/slow-child.end" 2>/dev/null)" = kept ]
 check "a re-run leaves a job working outside the demo alone, though a demo lock names it" alive "$other_pid"
 check "a re-run leaves that job's process group alone" alive "$other_child"
-for g in "$run_pid" "$other_pid"; do alive "$g" && kill -s TERM -- "-$g" 2>/dev/null; done
+for g in "$run_pid" "$other_pid" "$slow_pid"; do alive "$g" && kill -s TERM -- "-$g" 2>/dev/null; done
 foreign="$work/foreign"; mkdir -p "$foreign"; : > "$foreign/keep"
 run_demo --dir "$foreign"; code=$?
 check "a folder the demo did not build is refused" [ "$code" -eq "$usage_exit" ]
