@@ -13,6 +13,7 @@
   _health.py seconds <config key> <duration>
   _health.py ago <epoch>
   _health.py spawn <log> <command>...
+  _health.py died <log> <item> <step> <result file> <resume file>
   _health.py review <state json> <review rows file> [<record path>]
   _health.py holders <items file>
   _health.py holds <items file> <reads file> <claims file> <runs dir> <events.log> <old seconds>
@@ -58,7 +59,14 @@ prints one tab-separated line per hold to change: `clear<TAB>item<TAB>holder<TAB
 stale or wrong one (held by itself; the holder unreadable, holding no claim and no run, or its
 changes sharing no path with the item's; in a cycle the newest hold, by its last `held` line in
 events.log). A hold whose holder closed is left alone: next.sh releases it with the merge note, then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
-than the old seconds (seconds a dash when no `held` line dates it, which counts as old)."""
+than the old seconds (seconds a dash when no `held` line dates it, which counts as old).
+
+died says in one line what a run that kept dying left behind, for the escalation gate: whether
+the step's result file was written after the last resume, and the last lines the run logged
+after it last started the step, or that it logged none. Only the two together, a new result and
+a silent log, say the loop was ended from outside: a loop that ends by itself prints the
+session's text and how advance.sh ended, so a new result with lines after it is said as it is
+(advance.sh may have read it and failed, as when it cannot read the tracker)."""
 import calendar, glob, json, os, re, subprocess, sys, time
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
@@ -420,6 +428,51 @@ def next_streaks(log):
             print("%s\t%s\t%d\t%s" % (job, kind, n, text))
 
 
+DIED_LINES = 3
+DIED_LINE_LENGTH = 200
+
+
+def died(log, item, step, result, resumed):
+    try:
+        written, since = os.stat(result).st_mtime, os.stat(resumed).st_mtime
+    except OSError:
+        written = since = 0
+    wrote = ""
+    if written and written >= since:
+        try:
+            with open(result) as f:
+                status = str(json.load(f).get("status") or "")
+        except (OSError, ValueError, AttributeError):
+            status = ""
+        wrote = "The last session wrote %s%s after the last resume" % (
+            os.path.basename(result), " (status %s)" % status if status else "")
+    start, lines = "run-unattended: %s step %s in " % (item, step), None
+    try:
+        with open(log, errors="replace") as f:
+            for line in f:
+                if line.startswith(start):
+                    lines = []
+                elif lines is not None and line.strip():
+                    lines.append(" ".join(line.split())[:DIED_LINE_LENGTH])
+    except OSError:
+        lines = None
+    silent = lines is not None and not lines
+    said = []
+    if wrote and silent:
+        said.append(wrote + ", yet the run logged nothing after it started the step: the loop was gone before the "
+                    "session ended, so something ended the loop from outside, and the step's own work may be done.")
+    elif wrote:
+        said.append(wrote + ", and the step did not advance on it.")
+    elif silent:
+        said.append("The run logged nothing after it started the step: a loop that is killed, or a machine that "
+                    "restarts, ends like that, and a session that fails does not.")
+    if lines is None:
+        said.append("The run's log, %s, has no line of this step." % log)
+    elif lines:
+        said.append("The run's last lines: %s" % " / ".join(lines[-DIED_LINES:]))
+    print(" ".join(said))
+
+
 def spawn(log, command):
     with open(log, "ab") as out:
         p = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
@@ -605,6 +658,8 @@ def main():
         holders(args[0])
     elif command == "holds":
         holds(args[0], args[1], args[2], args[3], args[4], int(args[5]))
+    elif command == "died":
+        died(*args[:5])
     elif command == "spawn":
         spawn(args[0], args[1:])
     else:
