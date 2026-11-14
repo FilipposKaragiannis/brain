@@ -173,14 +173,25 @@ gate_kinds() { python3 -I -c 'import json, sys; print("\n".join(json.load(open(s
 # waiting_gates: the kind of each gate record in the demo, sorted; a stopped host is no gate record.
 waiting_gates() { in_demo sh "$P/../flow/scripts/gate.sh" list --json | python3 -I -c 'import json, sys; print("\n".join(gate["gate"] for gate in json.load(sys.stdin)))' | sort; }
 agent_calls() { cat "$demo/agents.log" 2>/dev/null | wc -l | tr -d ' '; }
-# The caller's shell setup and the private folders a demo pane must never reach, each with a marker.
+# The caller's shell setup, which puts a real-looking claude first on PATH as an owner's often does,
+# and the private folders a demo pane must never reach, each with a marker.
 shell_setup=caller
-echo "export DEMO_SHELL_SETUP=$shell_setup" > "$home/.zshrc"
+real_agents="$work/real-agents"; mkdir -p "$real_agents"
+printf '#!/bin/sh\necho real claude\n' > "$real_agents/claude"; chmod +x "$real_agents/claude"
+for rc in .zshrc .bashrc .profile; do
+  printf 'export DEMO_SHELL_SETUP=%s\nexport PATH="%s:$PATH"\n' "$shell_setup" "$real_agents" > "$home/$rc"
+done
+echo '. "$HOME/.bashrc"' > "$home/.bash_profile"
 for private in .claude .codex .config/brain-console; do mkdir -p "$home/$private" && echo caller > "$home/$private/private-marker"; done
 run_demo --dir "$demo" --port "$demo_port"; code=$?
-check "a demo pane's shell loads the caller's shell setup" [ "$(in_demo zsh -ic 'printf %s "$DEMO_SHELL_SETUP"' 2>/dev/null)" = "$shell_setup" ]
+# A pane runs the terminal's "$SHELL -l"; a plain interactive shell is what a pane's own shell spawns.
+# shellcheck disable=SC2016 # expanded by the pane's shell
+for shell in "zsh -il" "zsh -i" "bash -il" "bash -i" "sh -il"; do
+  check "a demo '$shell' pane loads the caller's shell setup" [ "$(in_demo $shell -c 'printf %s "$DEMO_SHELL_SETUP"' 2>/dev/null)" = "$shell_setup" ]
+  check "a demo '$shell' pane finds the demo's claude stub before the caller's claude" [ "$(in_demo $shell -c 'command -v claude' 2>/dev/null)" = "$demo/bin/claude" ]
+done
 for private in .claude .codex .config/brain-console; do
-  check "the caller's $private is out of reach from the demo's home" sh -c "[ -d '$demo/home' ] && [ ! -e '$demo/home/$private/private-marker' ]"
+  check "the caller's $private is out of reach from the demo's home" sh -c "[ -n \"\$(ls -A '$demo/home')\" ] && [ ! -e '$demo/home/$private/private-marker' ]"
 done
 check "the demo builds" [ "$code" -eq 0 ]
 check "the demo project is a git repo with a commit on main" in_demo git rev-parse --verify -q refs/heads/main
@@ -350,7 +361,9 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   check "the re-run's daemon answers on the same port" [ "$up" -eq 0 ]
   # shellcheck disable=SC2086 # one pid per word
   check "a re-run ends the fake agents the previous run started" poll_until "$STOP_POLLS" all_gone $first_fakes
-  poll_until "$START_POLLS" save_snapshot
+  # A fresh snapshot, so the stop check below never reads the first run's agents.
+  rm -f "$work/snapshot.json"
+  check "the re-run's Agents shows its own fake agents" poll_until "$START_POLLS" save_snapshot
   second_fakes="$(fake_pids)"
   stop_live
   wait "$second" 2>/dev/null
