@@ -1,8 +1,10 @@
 #!/bin/sh
 # Tests for the console plugin's installer and `brain-console update`: install.sh runs under a
 # fake home with a fake npm that records its calls (and builds a stand-in page), a launchctl
-# that says nothing is loaded, and no network. Needs node 24 or newer (the installer refuses an
-# older one), else it skips. Run from anywhere. Exit 1 on any failure.
+# that says nothing is loaded, and no network. demo.sh builds its demo in a temp folder and hands
+# the daemon to a fake node that records its arguments and environment, so no daemon starts.
+# Needs node 24 or newer (the installer refuses an older one), else it skips. Run from anywhere.
+# Exit 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"
@@ -148,6 +150,58 @@ check "the launcher now runs the new version" [ "$(HOME="$home" PATH="$fake:$PAT
 env -i HOME="$home" PATH="$fake:$PATH" TMPDIR="${TMPDIR:-/tmp}" "$launcher" update > "$work/out" 2>&1; code=$?
 check "update with nothing newer is already up to date" sh -c "[ $code -eq 0 ] && grep -q 'already up to date' '$work/out' && [ \"\$(readlink '$share/current')\" = 0.10.0 ]"
 check "update leaves launchd alone when no job is loaded" sh -c "! grep -qE 'bootstrap|kickstart' '$work/offline.log'"
+
+echo "demo.sh"
+# node: records the daemon's arguments and environment instead of starting it.
+nodebin="$work/nodebin"; mkdir -p "$nodebin"
+printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/node.args"\nenv > "%s/node.env"\n' "$work" "$work" > "$nodebin/node"
+chmod +x "$nodebin/node"
+demo="$work/demo"
+run_demo() { # run_demo <args...>: under the fake home, with a real-looking project list in the environment
+  env -i HOME="$home" PATH="$nodebin:$PATH" TMPDIR="${TMPDIR:-/tmp}" BRAIN_CONSOLE_PROJECTS="$project" \
+    sh "$P/scripts/demo.sh" "$@" > "$work/out" 2>&1
+}
+in_demo() { # in_demo <command...>: in the demo project, with the PATH the daemon was given
+  (cd "$demo/console-demo" && env -i HOME="$demo/home" PATH="$(sed -n 's/^PATH=//p' "$work/node.env")" FLOW_PLUGIN="$P/../flow" "$@")
+}
+gate_kinds() { sed -n 's/^# Gates: //p' "$P/../flow/scripts/gate.sh" | tr -d '.' | tr ',' '\n' | tr -d ' ' | sort; }
+run_demo --dir "$demo" --port 7499; code=$?
+check "the demo builds" [ "$code" -eq 0 ]
+check "the demo project is a git repo with a commit on main" in_demo git rev-parse --verify -q refs/heads/main
+check "the demo project has two worktrees besides its own" [ "$(in_demo git worktree list | wc -l | tr -d ' ')" -eq 3 ]
+check "the demo project runs on flow's local adapter" sh -c "sed -n '/^adapters:/,/^[a-z]/p' '$demo/console-demo/.flow/config.yaml' | grep -q 'default: local'"
+waiting="$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)"
+check "the demo has gates waiting" [ -n "$waiting" ]
+check "one gate of each kind waits" [ "$waiting" = "$(gate_kinds)" ]
+check "claude on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v claude')" = "$demo/bin/claude" ]
+check "codex on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v codex')" = "$demo/bin/codex" ]
+in_demo "$demo/bin/claude" -p "a prompt" --output-format json > "$work/stub.json"   # by path: a broken PATH must never reach a real claude
+check "the stub claude reports no tokens spent" python3 -c "import json, sys; usage = json.load(open(sys.argv[1]))['usage']; sys.exit(sum(usage.values()) != 0)" "$work/stub.json"
+check "the stub claude logs each call" grep -q 'claude -p a prompt' "$demo/agents.log"
+check "the daemon starts on the demo project, port, state dir and config only" [ "$(cat "$work/node.args")" = "$P/app/daemon/src/main.ts
+start
+--project
+$demo/console-demo
+--port
+7499
+--state-dir
+$demo/state
+--config
+$demo/config.json" ]
+check "the daemon's home is the demo's" grep -qx "HOME=$demo/home" "$work/node.env"
+check "the caller's BRAIN_CONSOLE_PROJECTS never reaches the daemon" sh -c "! grep -q '^BRAIN_CONSOLE_PROJECTS=' '$work/node.env'"
+check "the console settings file names the demo project only" python3 -c "import json, sys; sys.exit(json.load(open(sys.argv[1]))['projects'] != [{'root': sys.argv[2]}])" "$demo/config.json" "$demo/console-demo"
+: > "$demo/console-demo/left-behind"
+run_demo --dir "$demo"; code=$?
+check "a second run succeeds" [ "$code" -eq 0 ]
+check "a second run resets the demo" [ ! -e "$demo/console-demo/left-behind" ]
+check "the reset demo has one gate of each kind again" [ "$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)" = "$(gate_kinds)" ]
+foreign="$work/foreign"; mkdir -p "$foreign"; : > "$foreign/keep"
+run_demo --dir "$foreign"; code=$?
+check "a folder the demo did not build is refused" [ "$code" -eq 2 ]
+check "a folder the demo did not build keeps its files" test -f "$foreign/keep"
+run_demo --dir "$work/demo-port" --port "$(sed -n 's/^REAL_CONSOLE_PORT=//p' "$P/scripts/demo.sh")"; code=$?
+check "the real console's port is refused" sh -c "[ $code -eq 2 ] && [ ! -e '$work/demo-port' ]"
 
 echo "console tests: $fails failure(s)"
 [ "$fails" -eq 0 ]
