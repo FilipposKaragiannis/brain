@@ -12,7 +12,8 @@ here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"
 major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 if [ "$major" -lt 24 ]; then echo "console tests: node 24 or newer missing, skipping"; exit 0; fi
-work="$(mktemp -d)"
+# The physical path: demo.sh hands the daemon its folder with every link resolved.
+work="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$work"' EXIT
 fails=0
 pass() { echo "  ok   $1"; }
@@ -169,14 +170,16 @@ in_demo() { # in_demo <command...>: in the demo project, with the PATH the daemo
   (cd "$demo/console-demo" && env -i HOME="$demo/home" PATH="$(sed -n 's/^PATH=//p' "$work/node.env")" FLOW_PLUGIN="$P/../flow" "$@")
 }
 gate_kinds() { python3 -I -c 'import json, sys; print("\n".join(json.load(open(sys.argv[1]))["gates"]))' "$P/../flow/profiles.json" | sort; }
+# waiting_gates: the kind of each gate record in the demo, sorted; a stopped host is no gate record.
+waiting_gates() { in_demo sh "$P/../flow/scripts/gate.sh" list --json | python3 -I -c 'import json, sys; print("\n".join(gate["gate"] for gate in json.load(sys.stdin)))' | sort; }
 agent_calls() { cat "$demo/agents.log" 2>/dev/null | wc -l | tr -d ' '; }
 run_demo --dir "$demo" --port "$demo_port"; code=$?
 check "the demo builds" [ "$code" -eq 0 ]
 check "the demo project is a git repo with a commit on main" in_demo git rev-parse --verify -q refs/heads/main
-check "the demo project has two worktrees besides its own" [ "$(in_demo git worktree list | wc -l | tr -d ' ')" -eq 3 ]
+check "the demo project has three worktrees besides its own" [ "$(in_demo git worktree list | wc -l | tr -d ' ')" -eq 4 ]
 check "the demo project runs on flow's local adapter" sh -c "sed -n '/^adapters:/,/^[a-z]/p' '$demo/console-demo/.flow/config.yaml' | grep -q 'default: local'"
-check "one gate of each kind waits" [ "$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)" = "$(gate_kinds)" ]
-check "the demo has one ready item to run" python3 -c "import json, sys; sys.exit(len(json.loads(sys.argv[1])) != 1)" "$(in_demo sh "$P/../flow/adapters/local/list-ready.sh")"
+check "one gate of each kind waits" [ "$(waiting_gates)" = "$(gate_kinds)" ]
+check "the demo has one ready item no run record holds" python3 -I -c "import glob, json, os, sys; held = {json.load(open(record))['item'] for record in glob.glob(os.path.join(sys.argv[2], '*.json'))}; sys.exit(len([item for item in json.loads(sys.argv[1]) if item['id'] not in held]) != 1)" "$(in_demo sh "$P/../flow/adapters/local/list-ready.sh")" "$demo/console-demo/.flow/runs"
 check "claude on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v claude')" = "$demo/bin/claude" ]
 check "codex on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v codex')" = "$demo/bin/codex" ]
 # The stubs run by path: a broken PATH must never reach a real claude, codex, gh, crontab or launchctl.
@@ -212,7 +215,7 @@ check "the console settings file names the demo project only" python3 -c "import
 run_demo --dir "$demo"; code=$?
 check "a second run succeeds" [ "$code" -eq 0 ]
 check "a second run resets the demo" [ ! -e "$demo/console-demo/left-behind" ]
-check "the reset demo has one gate of each kind again" [ "$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)" = "$(gate_kinds)" ]
+check "the reset demo has one gate of each kind again" [ "$(waiting_gates)" = "$(gate_kinds)" ]
 # A detached run as the console's run.start leaves one: a flow job leading its own process group,
 # its pid in a lock under the project's .flow/log, a child in its group. The daemon's stop leaves
 # it going, so the re-run must end it, child too, before the folder goes.
