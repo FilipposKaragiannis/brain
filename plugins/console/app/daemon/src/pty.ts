@@ -81,6 +81,8 @@ function ptyHandle(started: PtyProcess): PtyHandle {
     pause: () => { started.pause(); },
     resume: () => { started.resume(); },
     running: () => processAlive(started.pid),
+    // A negative pid names the process group the child leads; the group's id stays its pid.
+    groupRunning: () => processAlive(-started.pid),
     signal: (name) => { signalGroup(started.pid, name); },
     close: () => { started.destroy(); },
   };

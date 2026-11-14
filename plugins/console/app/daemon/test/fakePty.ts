@@ -19,6 +19,11 @@ export type FakePty = {
   exited: boolean;
   /** When true the process ignores SIGHUP, as `nohup` does, and only SIGKILL ends it. */
   ignoresHangUp: boolean;
+  /**
+   * When true the process leaves a child in its process group that ignores SIGHUP, as a resumed
+   * agent may: the group still runs after the process ended, until SIGKILL reaches it.
+   */
+  childIgnoresHangUp: boolean;
   /** Bytes the process writes to the terminal. */
   emit(bytes: Uint8Array): void;
   /** Ends the process. */
@@ -45,7 +50,7 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       if (!fake.paused && processEnded) fake.exit(unread.code, null);
     };
     const fake: FakePty = {
-      launch, environment, size: { ...size }, received: [], paused: false, signals: [], closed: false, exited: false, ignoresHangUp: false,
+      launch, environment, size: { ...size }, received: [], paused: false, signals: [], closed: false, exited: false, ignoresHangUp: false, childIgnoresHangUp: false,
       emit: (bytes) => { for (const listener of outputListeners) listener(bytes); },
       exit: (code, signal) => {
         if (fake.exited) return;
@@ -69,6 +74,7 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       pause: () => { fake.paused = true; },
       resume: () => { fake.paused = false; readOn(); },
       running: () => !fake.exited && !processEnded,
+      groupRunning: () => !fake.exited || (fake.childIgnoresHangUp && !fake.signals.includes('SIGKILL')),
       signal: (name) => {
         fake.signals.push(name);
         if (name === 'SIGHUP' && fake.ignoresHangUp) return;

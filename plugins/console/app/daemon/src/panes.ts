@@ -17,6 +17,8 @@ export type PtyHandle = {
   resume(): void;
   /** Whether the process the pty started is still running. */
   running(): boolean;
+  /** Whether any process of the pty's process group still runs: the process the pty started, or one it left there. */
+  groupRunning(): boolean;
   /** Signals the pty's process group. */
   signal(name: 'SIGHUP' | 'SIGKILL'): void;
   /** Closes the master, which hangs up whatever still holds the terminal. */
@@ -61,7 +63,8 @@ type LivePane = {
 /**
  * Every terminal pane of the daemon, across projects, at most `MAXIMUM_PANES` at once; a hung-up pane
  * counts until its process ended. A pane lives as long as its link: the process's exit ends the
- * link, and a link that goes hangs the process up, then kills it after `PANE_KILL_GRACE_MILLISECONDS`.
+ * link, and a link that goes hangs the process group up, then kills it after `PANE_KILL_GRACE_MILLISECONDS`,
+ * also when the process ended on the hang-up but left a process in its group.
  * Output the page has not acked, or the link still holds, past the high water pauses the pty until
  * both are under the low water. Logs `pane.open` and `pane.close`, never what a pane shows or is sent.
  */
@@ -158,17 +161,36 @@ export class PaneSessions {
 
   private hangUp(pane: LivePane, cause: HangUpCause): void {
     if (!this.live.has(pane) || pane.hangUp !== null) return;
-    const grace = this.scheduler.after(PANE_KILL_GRACE_MILLISECONDS, () => { pane.pty.signal('SIGKILL'); pane.pty.close(); });
+    const grace = this.scheduler.after(PANE_KILL_GRACE_MILLISECONDS, () => this.killAfterGrace(pane));
     pane.hangUp = { cause, grace };
     pane.output.resumeForHangUp();
     pane.pty.signal('SIGHUP');
   }
 
+  /**
+   * Kills the pane's process group, and closes the master while its process still runs. An ended
+   * pty is left alone: node-pty closed it before telling the exit, and its close hangs up the bare
+   * pid once more.
+   */
+  private killAfterGrace(pane: LivePane): void {
+    const processRunning = this.live.has(pane);
+    pane.pty.signal('SIGKILL');
+    if (processRunning) pane.pty.close();
+  }
+
+  /**
+   * Ends the pane on its process's exit. A hung-up pane whose group still holds a process keeps its
+   * grace, so the kill reaches what the process left there. One whose group is already empty
+   * cancels it: the group's id is free for the system to hand out again, so it is not signalled.
+   */
   private conclude(pane: LivePane, code: number | null, signal: string | null): void {
     if (!this.live.delete(pane)) return;
     pane.output.stop();
     this.log.info('pane.close', { pane: pane.id, code, signal, cause: pane.hangUp?.cause ?? 'exited' });
-    if (pane.hangUp !== null) { this.scheduler.cancel(pane.hangUp.grace); return; }
+    if (pane.hangUp !== null) {
+      if (!pane.pty.groupRunning()) this.scheduler.cancel(pane.hangUp.grace);
+      return;
+    }
     pane.link.tell({ type: 'exit', code, signal });
     pane.link.end(PANE_CLOSE.ended);
   }
