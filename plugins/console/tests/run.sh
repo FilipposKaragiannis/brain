@@ -2,7 +2,9 @@
 # Tests for the console plugin's installer and `brain-console update`: install.sh runs under a
 # fake home with a fake npm that records its calls (and builds a stand-in page), a launchctl
 # that says nothing is loaded, and no network. demo.sh builds its demo in a temp folder and hands
-# the daemon to a fake node that records its arguments and environment, so no daemon starts.
+# the daemon to a fake node that records its arguments and environment, so no daemon starts. When
+# the app's dev dependencies are present, demo.sh also starts the real daemon on a free port, and
+# the tests stop it before they end.
 # Needs node 24 or newer (the installer refuses an older one), else it skips. Run from anywhere.
 # Exit 1 on any failure.
 set -u
@@ -201,7 +203,48 @@ run_demo --dir "$foreign"; code=$?
 check "a folder the demo did not build is refused" [ "$code" -eq 2 ]
 check "a folder the demo did not build keeps its files" test -f "$foreign/keep"
 run_demo --dir "$work/demo-port" --port "$(sed -n 's/^REAL_CONSOLE_PORT=//p' "$P/scripts/demo.sh")"; code=$?
-check "the real console's port is refused" sh -c "[ $code -eq 2 ] && [ ! -e '$work/demo-port' ]"
+check "the real console's port is refused" [ "$code" -eq 2 ]
+check "a refused port builds no demo folder" [ ! -e "$work/demo-port" ]
+
+repo="$(cd "$P/../.." && pwd)"
+script_path="$(sed -n 's/^.*`\(plugins\/console\/scripts\/[a-z]*\.sh\)`.*$/\1/p' "$repo/AGENTS.md" | head -n 1)"
+check "AGENTS.md names the demo script by its path in the repo" [ "$script_path" = plugins/console/scripts/demo.sh ]
+check "the script AGENTS.md names exists and runs" test -x "$repo/$script_path"
+
+# The real daemon on the demo: needs the app's dev dependencies, as tools/test.sh does.
+if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
+  echo "demo.sh with the real daemon"
+  live="$work/live"; live_home="$work/live-home"; mkdir -p "$live_home"
+  live_port="$(node -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
+  start_live() { # start_live <log>: demo.sh in the background, as a caller with its own home
+    env -i HOME="$live_home" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" BRAIN_CONSOLE_PROJECTS="$project" \
+      sh "$P/scripts/demo.sh" --dir "$live" --port "$live_port" > "$1" 2>&1 &
+  }
+  healthz() { [ -f "$live/state/token" ] && curl -fsS --max-time 2 -H "Authorization: Bearer $(cat "$live/state/token")" "http://127.0.0.1:$live_port/healthz" 2>/dev/null; }
+  wait_healthz() { i=0; while [ $i -lt 120 ]; do healthz > "$work/healthz.json" && return 0; sleep 0.5; i=$((i + 1)); done; return 1; }
+  stop_live() { # the daemon a demo run left: its pid is in the JSON pid file
+    [ -f "$live/state/daemon.pid" ] && kill "$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).pid' "$live/state/daemon.pid")" 2>/dev/null
+  }
+  trap 'stop_live; rm -rf "$work"' EXIT
+  gone() { i=0; while [ $i -lt 60 ]; do kill -0 "$1" 2>/dev/null || return 0; sleep 0.5; i=$((i + 1)); done; return 1; }
+  start_live "$work/live-1.log"; first=$!
+  wait_healthz; up=$?
+  check "the demo's daemon answers on the demo's port" [ "$up" -eq 0 ]
+  check "the demo's daemon watches exactly one project" python3 -c "import json, sys; sys.exit(len(json.load(open(sys.argv[1]))['projects']) != 1)" "$work/healthz.json"
+  check "the demo's daemon keeps its state in the demo folder" test -f "$live/state/daemon.pid"
+  check "the caller's home is left empty by the demo and its daemon" [ -z "$(ls -A "$live_home")" ]
+  start_live "$work/live-2.log"; second=$!
+  gone "$first"; stopped=$?
+  check "a re-run stops the daemon the previous run started" [ "$stopped" -eq 0 ]
+  wait_healthz; up=$?
+  check "the re-run's daemon answers on the same port" [ "$up" -eq 0 ]
+  stop_live
+  { kill "$first" "$second"; wait "$second"; } 2>/dev/null
+  i=0; while [ $i -lt 20 ] && curl -s --max-time 1 "http://127.0.0.1:$live_port/healthz" >/dev/null; do sleep 0.5; i=$((i + 1)); done
+  check "no demo daemon is left running after the tests" sh -c "! curl -sS --max-time 2 'http://127.0.0.1:$live_port/healthz'"
+else
+  echo "demo.sh with the real daemon: app dependencies or curl missing, skipping"
+fi
 
 echo "console tests: $fails failure(s)"
 [ "$fails" -eq 0 ]
