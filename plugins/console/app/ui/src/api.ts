@@ -25,12 +25,15 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT';
 
 export type Api = {
   request(path: string, method: HttpMethod, body: unknown): Promise<ApiResponse>;
+  /** `GET` a file's bytes; null when the daemon did not answer 200 with it. */
+  requestBytes(path: string): Promise<ArrayBuffer | null>;
   openStream(path: string): StreamLike;
   openSocket(path: string): SocketLike;
 };
 
 export const STREAM_CLOSED = 2;
 const SECURE_PAGE_PROTOCOL = 'https:';
+const HTTP_OK = 200;
 
 export function readToken(search: string): string | null {
   const token = new URLSearchParams(search).get('token');
@@ -57,6 +60,16 @@ export function browserApi(token: string | null): Api {
         return { status: response.status, body: text === '' ? null : parseJson(text) };
       } catch (error) {
         return { status: 0, body: { error: error instanceof Error ? error.message : 'network error' } };
+      }
+    },
+    async requestBytes(path) {
+      const headers: Record<string, string> = {};
+      if (token !== null) headers.authorization = `Bearer ${token}`;
+      try {
+        const response = await fetch(path, { method: 'GET', headers });
+        return response.status === HTTP_OK ? await response.arrayBuffer() : null;
+      } catch {
+        return null;
       }
     },
     openStream(path) {

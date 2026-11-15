@@ -160,6 +160,13 @@ export class FakeDaemon implements Api {
     return entry.route(body);
   }
 
+  /** The files `requestBytes` answers, by path; any other path gets null, as a 404 does. */
+  readonly files = new Map<string, ArrayBuffer>();
+
+  async requestBytes(path: string): Promise<ArrayBuffer | null> {
+    return this.files.get(path) ?? null;
+  }
+
   openStream(): StreamLike {
     const stream = new FakeStream(() => this.eventSent());
     this.streams.push(stream);
