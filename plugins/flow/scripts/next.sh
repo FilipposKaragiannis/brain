@@ -162,8 +162,6 @@ if [ "$(step_field "$step" worktree)" = "true" ]; then
     *) exit "$code" ;;
   esac
   branch="$(json_get "$(cat "$worktree/.flow/claim.json")" branch)"
-  claim="$(cat "$worktree/.flow/claim.json")"
-  json_set "$claim" step "$(json_string "$step")" > "$worktree/.flow/claim.json"
   base="$(recorded_base "$worktree")"
 else
   worktree="$(dirname "$home")"; branch="$(git -C "$worktree" symbolic-ref --short -q HEAD || echo "$config_base")"
@@ -176,8 +174,9 @@ touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; pri
 owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
 # A number in JSON has no leading zero, so the zeros go (never $((...)), which reads 0123 as octal).
 case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; owner="${owner:-0}" ;; esac
-json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$worktree" "reports=$reports" "host=$(host_name)" \
-  "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches" > "$(run_file "$item")"
+take_item "$item"
+record_set "$item" "run:=$(json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$worktree" "reports=$reports" "host=$(host_name)" \
+  "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches")"
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
 # The run takes the answer to the last gate (answer_pending, gate.sh clear): its brief carries it.
 taken=""; [ -z "$(state_get "$data" answer_pending)" ] || taken="answer_pending="
@@ -208,8 +207,7 @@ fi
 own_step="$step"
 if [ "$(step_field "$step" worktree)" = "true" ] && [ -s "$reports/sync.md" ]; then
   step=sync; agent="$(step_field sync agent)"; skill="$(step_field sync skill)"; summary="$(step_field sync summary)"
-  json_set "$claim" step "$(json_string sync)" > "$worktree/.flow/claim.json"
-  json_set "$(cat "$(run_file "$item")")" step "$(json_string sync)" > "$(run_file "$item").tmp" && mv "$(run_file "$item").tmp" "$(run_file "$item")"
+  record_set "$item" "run.step=sync"
 fi
 # A hold (hold.sh, skills/plan/holds.md) ends when its holder closes: the item's own step, not a
 # sync ahead of it, gets the release note, and the hold is lifted.

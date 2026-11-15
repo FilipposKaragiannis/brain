@@ -152,7 +152,7 @@ case "${1:-}" in
 $message
 
 $footer" >/dev/null
-    rm -f "$home/runs/$(item_slug "$item").json"
+    record_set "$item" "run:=null"
     [ "$gate" = "escalation" ] && "$FLOW_PLUGIN/scripts/lesson.sh" escalation "$item" "$message" >/dev/null
     "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" "options:=$options" "raised_by=$raised_by" \
       "answered_by=$answered_by" "$condition_field" "footer=$footer" ;;

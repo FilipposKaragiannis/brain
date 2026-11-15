@@ -4,7 +4,7 @@
 # stores as they were; the tracker gets each state write first unless tracker_state is none; two
 # writers at once both land; a write renders the run file, the gate file and the claim's step only
 # when it names their fact; the first write seeds from the tracker and this machine's gate and run
-# files; take, archive, and a caller's while-read loop keeps its input.
+# files; take (a next.sh start too), archive, and a caller's while-read loop keeps its input.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 
@@ -223,6 +223,11 @@ take alpha "$taken" >/dev/null 2>&1
 check "TakeOfAnUnheldItem_RecordsThisMachine: take_item makes this machine the item's holder" '[ "$(record get "$taken" claim.machine)" = alpha ]'
 take beta "$taken" >/dev/null 2>&1
 check "TakeOfAnItemAnotherMachineHolds_KeepsThatMachine: a take never moves a hold from another machine" '[ "$(record get "$taken" claim.machine)" = alpha ]'
+started_here="$(new_task "Started by next")"
+record set "$started_here" last_event=filed >/dev/null 2>&1
+env FLOW_MACHINE=alpha "$plugin/scripts/next.sh" "$started_here" >/dev/null 2>&1
+check "NextStartOfARecordedItem_RecordsTheStartingMachineAsTheHolder: starting an item takes it for the machine that started it" \
+  '[ "$(record get "$started_here" claim.machine)" = alpha ]'
 archived="$(new_task "Archived")"
 record set "$archived" last_event=finished >/dev/null 2>&1
 record archive "$archived" >/dev/null 2>&1

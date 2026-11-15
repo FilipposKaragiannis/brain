@@ -867,7 +867,7 @@ health_claim() {
     dead=1
     if [ "$dry" -eq 1 ]; then health_say "$it" "would clear the dead run of ${step:-?} (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     else
-      rm -f "$rec"
+      record_set "$it" "run:=null"
       record_set "$it" "last_event=$(now_iso) health: cleared the dead run of ${step:-?}" >/dev/null 2>&1 || true
       health_say "$it" "dead run of ${step:-?} cleared (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     fi
@@ -1472,7 +1472,7 @@ cmd_stop() {
   # shellcheck disable=SC2086
   [ -z "$st_pids" ] || kill -TERM $st_pids 2>/dev/null
   stopped_verify="$(verify_run_end "$1" "$rn_path")"; verify_end_status=$?
-  rm -f "$rn_rec"
+  record_set "$1" "run:=null"
   st_said="run of ${rn_step:-?} stopped by the owner"
   printf '%s\t%s\tstopped\t%s\n' "$(now_iso)" "$1" "$st_said" >> "$home/events.log"
   write_state "$1" "last_event=$(now_iso) $st_said"
@@ -1531,7 +1531,7 @@ cmd_resume() {
   rs_step="$(state_get "$(adapter read "$rs_item" 2>/dev/null)" step)"; [ -n "$rs_step" ] || rs_step="$rn_step"
   mkdir -p "$home/health" "$home/log"
   health_reports="$rn_path/.flow/reports/$(item_slug "$rs_item")"
-  rm -f "$rn_rec"
+  record_set "$rs_item" "run:=null"
   write_state "$rs_item" "last_event=$(now_iso) owner: cleared the dead run of ${rs_step:-?} to resume it"
   health_say "$rs_item" "dead run of ${rs_step:-?} cleared by the owner"
   health_resume "$rs_item" "$rs_step" "$rn_path"

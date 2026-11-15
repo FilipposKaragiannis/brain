@@ -55,7 +55,7 @@ if [ "$step" = pr ] && pr_url="$(json_get "$result" pr)" && [ -n "$pr_url" ] && 
   adapter link-pr "$item" "$pr_url" >/dev/null || echo "advance: could not record $pr_url on $item" >&2
 fi
 
-finish_run() { rm -f "$run_file"; }
+finish_run() { record_set "$item" "run:=null" >/dev/null; }
 
 # raise_asked <gate> <message>: raise the gate the step asked for, with the options and condition
 # its result names; an empty options list is no options.
