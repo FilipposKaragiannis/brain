@@ -208,20 +208,10 @@ if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then pass "git commit-ms
 git reset -q golden-pending; mv golden-pending golden-pending.off; mv golden-pending.off "$work/"; mv golden-ok.off "$work/"
 cp "$work/config.bak" .standards/config.json
 
-echo "command gates: git's repository variables"
-# A git hook exports GIT_DIR and its siblings; a gate that inherits them aims its tests' git at the
-# repository being committed, so the gate must run without them.
-# The gate leaves a marker only when it saw none of them, so a gate that never ran fails too.
-python3 - "$work/gate-clean" <<'PY2'
-import json, sys
-c = json.load(open(".standards/config.json"))
-c["gates"] = [{"name": "git-env", "command": "env | grep -E '^GIT_(DIR|INDEX_FILE|WORK_TREE)=' || touch '%s'" % sys.argv[1]}]
-json.dump(c, open(".standards/config.json", "w"), indent=2)
-PY2
-printf '{"tool_input":{"command":"git commit -m x"}}' | env GIT_DIR="$work/repo/.git" GIT_INDEX_FILE="$work/repo/.git/index" \
-  GIT_WORK_TREE="$work/repo" "$hooks/check-gates.sh" >/dev/null 2>&1
-check "GateFromGitHook_RunsWithoutGitRepositoryVariables: the gate ran and saw no GIT_DIR, GIT_INDEX_FILE or GIT_WORK_TREE" [ -f "$work/gate-clean" ]
-cp "$work/config.bak" .standards/config.json
+echo "command gates: git's repository variables (tests/gate-git-env.sh)"
+sh "$here/gate-git-env.sh" > "$work/gate-git-env.out" 2>&1; code=$?
+check "GateGitEnvSuite_Passes: every check in gate-git-env.sh passed ($(tail -n 1 "$work/gate-git-env.out"))" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/gate-git-env.out"
 
 echo "an agent's commit runs the gates once"
 python3 - "$work/count.log" <<'PY'
