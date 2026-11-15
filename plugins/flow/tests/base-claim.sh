@@ -118,11 +118,13 @@ for tampered_label in $tampered_labels; do
   check "StewardClaimWithAnUnsafeBase_ClaimsNoWorktree [$tampered_label]: the refused claim leaves the item with no pool worktree" \
     '[ -z "$("$plugin/scripts/steward.sh" find "$direct")" ]'
 done
-# A --base with no branch after it: the claim runs in the background and is killed after 20
-# seconds with 124, so a claim that loops for ever fails the check instead of hanging the suite.
+# A --base with no branch after it: the claim runs in the background and is killed after
+# bare_claim_limit_seconds with 124, so a claim that loops for ever fails the check instead of
+# hanging the suite.
+bare_claim_limit_seconds=20
 "$plugin/scripts/steward.sh" claim "$direct" --base >/dev/null 2>&1 & bare_claim_pid=$!
 bare_claim_seconds=0
-while kill -0 "$bare_claim_pid" 2>/dev/null && [ "$bare_claim_seconds" -lt 20 ]; do sleep 1; bare_claim_seconds=$((bare_claim_seconds + 1)); done
+while kill -0 "$bare_claim_pid" 2>/dev/null && [ "$bare_claim_seconds" -lt "$bare_claim_limit_seconds" ]; do sleep 1; bare_claim_seconds=$((bare_claim_seconds + 1)); done
 if kill -0 "$bare_claim_pid" 2>/dev/null; then kill -9 "$bare_claim_pid"; wait "$bare_claim_pid" 2>/dev/null; bare_claim_code=124; else wait "$bare_claim_pid"; bare_claim_code=$?; fi
 check "StewardClaimWithABareBaseOption_ExitsWithTheUsageCode: --base names no branch, so the claim is a usage error, not a loop" \
   '[ "$bare_claim_code" -eq 2 ]'
@@ -174,8 +176,14 @@ PLANTED
 chmod +x "$work/planted/read.sh"
 climb_to_the_root=""; for level in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do climb_to_the_root="$climb_to_the_root../"; done
 parent_id_no_adapter_owns="$climb_to_the_root${work#/}/planted"
-check "PlantedRead_RunsWhenCalled: the planted script leaves its mark, so its absence below means it never ran" \
-  '"$work/planted/read.sh" >/dev/null && [ -e "$work/planted.ran" ] && rm -f "$work/planted.ran"'
+"$work/planted/read.sh" >/dev/null 2>&1; planted_read_code=$?
+check "PlantedRead_ExitsZero: the planted script runs at all, or the mark check below proves nothing" \
+  '[ "$planted_read_code" -eq 0 ]'
+check "PlantedRead_LeavesItsMark: the planted script leaves its mark, so its absence below means it never ran" \
+  '[ -e "$work/planted.ran" ]'
+rm -f "$work/planted.ran"
+check "PlantedRead_MarkRemoved: the mark is gone before the walk, so a mark below is the walk's" \
+  '[ ! -e "$work/planted.ran" ]'
 stray="$("$local_adapter/create.sh" task "Stray child" --size S --body "$body" --parent "$parent_id_no_adapter_owns")"
 "$plugin/scripts/next.sh" "$stray" >/dev/null 2>&1
 check "ChildOfAParentIdNoAdapterOwns_RunsNothingAtThatPath: the walk stops at the id, so the file it names never runs" \
