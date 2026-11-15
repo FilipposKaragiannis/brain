@@ -223,8 +223,10 @@ for linked_name in verify.out verify.log; do
   wait_until_ended
   check "StartWithALinkAtTheOutput_LeavesTheLinkTargetUntouched [$linked_name]: the run writes only its own file" \
     '[ "$(cat "$work/target-$linked_name")" = untouched ]'
-  check "StartWithALinkAtTheOutput_WritesAPlainFile [$linked_name]: the link is replaced, not followed" \
-    '[ -f "$reports/$linked_name" ] && [ ! -L "$reports/$linked_name" ]'
+  check "StartWithALinkAtTheOutput_WritesAFile [$linked_name]: the run makes its own output where the link was" \
+    '[ -f "$reports/$linked_name" ]'
+  check "StartWithALinkAtTheOutput_ReplacesTheLink [$linked_name]: the link is replaced, not followed" \
+    '[ ! -L "$reports/$linked_name" ]'
 done
 
 echo "health counts a detached verify run only in the item's own worktree"
