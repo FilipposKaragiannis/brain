@@ -23,10 +23,10 @@ Install the Brain Console from this plugin: the app under `~/.local/share/brain-
    installer's words, and stop. 1 with "no projects": the files are in place; ask which folder to
    watch, then run `brain-console add <folder>` and `brain-console install`. Any other 1: show the
    failing line and stop. Done when the install succeeded or the owner knows the one next step.
-4. **Report once**, in a few lines: the version installed, whether it runs under launchd and on
-   which URL (from the `status` lines at the end, never the token), the PATH line to add when the
-   installer printed one, and `brain-console open` to see it. Done when the message ends on that
-   command.
+4. **End with one report**, in a few lines: the version installed, whether it runs under
+   launchd and on which URL (from the `status` lines at the end, never the token), the PATH line
+   to add when the installer printed one, and `brain-console open` to see it. Done when the
+   message ends on that command.
 
 ## Never
 

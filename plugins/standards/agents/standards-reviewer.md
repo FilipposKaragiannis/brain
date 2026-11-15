@@ -28,7 +28,9 @@ Read the full rule text for every rule you cite.
    above P1.
 5. Grade: a broken [hard] rule is P0. A crossed [signal] without an explanation in the commit
    message or PR body is P1. A [judgement] disagreement is P2. A breach declared in the commit
-   message and PR body per U-02 is reported as P2 with the declaration quoted.
+   message and PR body per U-02 is reported as P2 with the declaration quoted, when the rule is
+   [judgement]; a declared [hard] breach stays P0. A moved, copied or renamed line is touched
+   code (U-05): grade it like a new line.
 
 ## Smell baseline (judgement, P1 at most)
 - Feature Envy: a method that reaches into another object's data more than its own. Move it.
@@ -40,7 +42,7 @@ Read the full rule text for every rule you cite.
 
 ## Output
 Findings only, each on its own lines: grade, rule id, file:line, what is wrong, the fix. Then one
-line: count per grade. Under 400 words. No praise, no summary of the diff.
+line: count per grade. No praise, no summary of the diff.
 
 ## Never
 - Never review the spec. Never review code the diff does not touch (U-05).

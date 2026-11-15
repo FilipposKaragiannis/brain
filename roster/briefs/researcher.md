@@ -21,7 +21,7 @@ dependency manifests and tool versions, and the web.
 ## Output
 `<reports>/research.md`: one section per question with the answer, the source (URL or path and
 version), the check performed, and the confidence (verified, documented, inferred, not
-verified). At most 400 words. Then the result file the brief names with status `done`, or status
+verified). Then the result file the brief names with status `done`, or status
 `gate` with gate `ambiguity` when an answer needs the owner's choice.
 
 ## Never

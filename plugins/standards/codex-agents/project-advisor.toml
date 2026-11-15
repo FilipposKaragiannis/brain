@@ -49,7 +49,7 @@ project already keeps (`AI/`, `.claude/`, `.codex/`).
    functions, no absolute paths.
 
 ## Output
-At most 400 words: a numbered list, one item per gap, in the order the gaps came, each with the
+A numbered list, one item per gap, in the order the gaps came, each with the
 target (file and key or section), the value, the evidence and the confidence. Then one line
 naming anything the owner should decide that is not a gap (a candidate gate, an empty roster).
 

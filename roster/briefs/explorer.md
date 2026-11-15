@@ -22,7 +22,7 @@ The item (title, body, acceptance lines) and the repo. Read `AGENTS.md` or `CLAU
    seams, files over the size signal, areas with no tests.
 
 ## Output
-A report of at most 400 words to `<reports>/explore.md`: sections Entry points, Seams, Data,
+A report to `<reports>/explore.md`: sections Entry points, Seams, Data,
 Tests, Invalidated assumptions, Risks; every claim with `file:line`. Then the result file the
 brief names with status `done`, a three-line summary and `touches`: the globs of the files the
 change will reach (the plan step's hold check reads them).

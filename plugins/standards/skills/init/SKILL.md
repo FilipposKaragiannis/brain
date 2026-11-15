@@ -30,14 +30,14 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
    config and guide paths. Say in the report that a general agent stood in. In a session that
    cannot spawn agents at all, list the gaps without recommendations and say the advisor did
    not run.
-4. **Report once**, per W-07, in one short message (about ten lines plus the gap list, no step
-   narration, no copy of the installer's output): the files changed, grouped by folder; what the
-   owner must do by hand, in one list (review `.standards/config.json` on a first install, the
-   `init: note:` lines, the Codex `/hooks` trust); that the changes are uncommitted; then the
-   gaps as one numbered list, one line each: the target (file and key or section), the advisor's
-   value, its evidence and confidence, so the owner answers "1 yes, 2 no, 3 use X" or "all". A
-   gap with no evidence gets the one question to ask, nothing more. Report only the gaps the
-   installer listed.
+4. **End with one report**, per W-07, with no copy of the installer's output: the files
+   changed, grouped by folder; what the owner must do by hand, in one list (review
+   `.standards/config.json` on a first install, the `init: note:` lines, the Codex `/hooks`
+   trust); that the changes are uncommitted; then the gaps as one numbered list, one line each:
+   the target (file and key or section, the file named on every line even when the line above
+   names the same one), the advisor's value, its evidence and confidence, so the owner answers
+   "1 yes, 2 no, 3 use X" or "all". A gap with no evidence gets the one question to ask, nothing
+   more. Report only the gaps the installer listed.
 5. **On a first install, add one more numbered item to that list**: "Doc comments are allowed
    above `public` declarations and on `interface` and `enum` members (`comments.doc_inside`).
    Add more container kinds, such as `class`, `struct` or `record`, or remove one?" An existing

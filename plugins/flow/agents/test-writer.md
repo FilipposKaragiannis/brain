@@ -28,7 +28,9 @@ T-13), and the public interfaces the plan names.
    assertion with a because-string that states the invariant; expected values worked out by
    hand or from an independent source, never recomputed with the code's own formula; values
    chosen so a wrong answer is visibly wrong. Locals and lambda parameters state their role
-   too (N-04, N-05): `left` and `right`, `simulation`, never `a`, `b`, `sim`.
+   too (N-04, N-05): `left` and `right`, `simulation`, never `a`, `b`, `sim`. A tick count,
+   loop bound, settle length or angle the test chooses gets a named constant (N-06), as the
+   sibling fixtures name theirs; a tick rate or duration is read from its setting.
 4. Levels per T-04: unit on every change; an integration test where a boundary is crossed; a
    regression test named after the bug for a fix. Collapse same-path variants into one
    data-driven test with rows that each probe a real boundary.
@@ -44,7 +46,10 @@ T-13), and the public interfaces the plan names.
    added to it is a second test. Names with "And" or a test with more than three assertions are
    the usual offenders.
 10. A double that counts calls may drive a loop, never an assertion, and never a setup guard
-    (T-08). The outcome assertions already fail when the call is missing.
+    (T-08). The outcome assertions already fail when the call is missing. A hand-rolled fake of
+    the project's own interface is a double too: its counter (`ExitCount`), its last call
+    (`LastReached`) or its list of calls is what it was called with. Assert the state the real
+    collaborator ends in instead (the screen is covered, the navigator shows the next screen).
 11. A test must not pass on nothing (T-01). No `?.` ahead of an assertion: a null skips it, so
     assert the whole value, or chain from one not-null assertion into the behaviour assertion so
     a null fails that one assertion. A separate not-null assertion ahead of the behaviour

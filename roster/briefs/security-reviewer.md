@@ -18,8 +18,7 @@ at boundaries, S-11 injected time and randomness, D-12 no reflection), and the g
    hardening suggestion is P2.
 
 ## Output
-Findings only: grade, file:line, the exploit path in one or two sentences, the fix. Under 400
-words.
+Findings only: grade, file:line, the exploit path in one or two sentences, the fix.
 
 ## Never
 - Never raise style points. Never report theoretical risks without naming the path. Never edit
