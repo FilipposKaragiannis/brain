@@ -66,13 +66,14 @@ report_text_max_characters=400
 report_text() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' ' ' | LC_ALL=C tr -d '"\\' | cut -c1-"$report_text_max_characters"; }
 # fail_report <check name> <summary> <sentence>: the minimal report with status fail and one failed
 # check, written without the builder and renamed in, with its verify.md twin saying the sentence.
-# Name, summary and sentence are report_text already; $attempts, $base and $head_sha are set.
+# Name, summary and sentence are report_text already; $attempts, $base and $head_sha are set. Each
+# file is written to a new one mktemp makes, never through a link left at a name, and renamed in.
 fail_report() {
   safe() { printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-'; }
-  printf '{"status": "fail", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false}\n' \
-    "$1" "$2" "$attempts" "$(safe "$base")" "$(safe "$head_sha")" > "$reports/.verify.json.$$.tmp" && mv -f "$reports/.verify.json.$$.tmp" "$reports/verify.json"
-  printf '## Verify: fail (attempt %d)\n\n%s\n\nLog: `%s`.\n' "$attempts" "$3" "$log" \
-    > "$reports/.verify.md.$$.tmp" && mv -f "$reports/.verify.md.$$.tmp" "$reports/verify.md"
+  json_temp="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false}\n' \
+    "$1" "$2" "$attempts" "$(safe "$base")" "$(safe "$head_sha")" > "$json_temp" && mv -f "$json_temp" "$reports/verify.json"
+  md_temp="$(mktemp "$reports/.verify.md.XXXXXX")" && printf '## Verify: fail (attempt %d)\n\n%s\n\nLog: `%s`.\n' "$attempts" "$3" "$log" \
+    > "$md_temp" && mv -f "$md_temp" "$reports/verify.md"
 }
 # duration <seconds>: 45s, 12m 30s or 2h 05m.
 duration() {
