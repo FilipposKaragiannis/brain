@@ -205,7 +205,7 @@ def alive(rows, item, worktree, pid, skip_self=True):
         if int(number) in own:
             continue
         real = os.path.realpath(where) if where else ""
-        if (is_agent(command) or VERIFY_RUN.search(command) and item in command.split()) and any(real == w or real.startswith(w + "/") for w in wts):
+        if (is_agent(command) or (VERIFY_RUN.search(command) and item in command.split())) and any(real == w or real.startswith(w + "/") for w in wts):
             return "process %s" % number
         if is_host(command) and (named.search(command) or item in command.split()):
             return "process %s" % number
