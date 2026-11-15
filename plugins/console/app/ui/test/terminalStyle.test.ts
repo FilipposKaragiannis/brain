@@ -21,6 +21,22 @@ function browserFonts(loads = true): { installer: FontInstaller; loaded: Map<str
   return { loaded, installer: async (family, bytes) => { if (loads) loaded.set(family, bytes); return loads; } };
 }
 
+const STILL_LOADING = 'still loading';
+
+/** Settles on the next task, after every pending microtask: a style that does not wait for the font has settled by then. */
+function afterPendingWork<T>(value: T): Promise<T> {
+  return new Promise((resolve) => setTimeout(() => resolve(value), 0));
+}
+
+/** A font the browser is still loading: `asked` settles once the page asks for it, `finish` ends the load. */
+function slowFont(): { installer: FontInstaller; asked: Promise<void>; finish: (loaded: boolean) => void } {
+  let askedNow: () => void = () => {};
+  let finish: (loaded: boolean) => void = () => {};
+  const asked = new Promise<void>((resolve) => { askedNow = resolve; });
+  const load = new Promise<boolean>((resolve) => { finish = resolve; });
+  return { installer: () => { askedNow(); return load; }, asked, finish: (loaded) => finish(loaded) };
+}
+
 function daemonServing(profile: TerminalProfile, fontBytes: ArrayBuffer | null = FONT_BYTES): FakeDaemon {
   const daemon = new FakeDaemon();
   daemon.answer('GET', TERMINAL_PROFILE_PATH, () => ({ status: HTTP_OK, body: profile }));
@@ -53,15 +69,21 @@ test('ServedFontLoaded_StyleSaysSo', async () => {
 });
 
 test('ServedFontStillLoading_StyleNotReady', async () => {
-  let finishLoading: (loaded: boolean) => void = () => {};
-  const slowInstaller: FontInstaller = () => new Promise<boolean>((resolve) => { finishLoading = resolve; });
-  let ready = false;
-  const loading = loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), slowInstaller).then(() => { ready = true; });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  const readyWhileLoading = ready;
-  finishLoading(true);
+  const font = slowFont();
+  const loading = loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), font.installer);
+  await font.asked;
+  const first = await Promise.race([loading, afterPendingWork(STILL_LOADING)]);
+  font.finish(true);
   await loading;
-  expect(readyWhileLoading, 'because the terminal measures its cells once the style is ready, so the style waits for the font to load').toBe(false);
+  expect(first, 'because the terminal measures its cells once the style is ready, so the style waits for the font to load').toBe(STILL_LOADING);
+});
+
+test('ServedFontFinishesLoading_StyleUsesIt', async () => {
+  const font = slowFont();
+  const loading = loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), font.installer);
+  await font.asked;
+  font.finish(true);
+  expect((await loading).servedFont, 'because a font that finishes loading after the ask is still the one the pane asks for first').toBe(true);
 });
 
 test('ServedFontUnavailable_ConsoleFontKept', async () => {
