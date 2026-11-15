@@ -21,7 +21,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 3. **Check the result file** `<reports>/test.json` (or `reproduce.json`): `done` with the count
    per level and the unpinned acceptance lines; `fail` when the suite does not run; `gate`
    when a seam is missing (the implementer fixes the interface, never the test writer).
-4. **Report once** (W-07), in this shape: the `test-writer` subagent wrote the behaviour
+4. **End with one report** (W-07), in this shape: the `test-writer` subagent wrote the behaviour
    list from the acceptance lines to `<reports>/tests.md`, then the tests; the count per level;
    the result file (`<reports>/test.json`) and its status; the acceptance lines left unpinned;
    and any decision the owner must take. Nothing else first.

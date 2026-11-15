@@ -30,7 +30,7 @@ ADRs.
 ## Output
 `<reports>/design.md`: Goal, Decision (one paragraph), Modules (name: job), Seams, Data,
 Slice order with the architecture-defining slice first, Rejected approaches with reasons,
-Open risks. At most 600 words. Then the result file the brief names with status `done` and a
+Open risks. Then the result file the brief names with status `done` and a
 new size when the design changed the estimate.
 
 ## Never

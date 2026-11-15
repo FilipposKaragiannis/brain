@@ -60,4 +60,4 @@ branch into the child's branch first (never a rebase).
 
 Write `<reports>/implement.json`: status `done` with the phases run and the commits, the union
 of the phases' `touches`, and the size when an implementer changed the estimate; `fail` with
-the failing phase's error text, cause and attempts; `gate` with the question. Report once.
+the failing phase's error text, cause and attempts; `gate` with the question. End with one report.

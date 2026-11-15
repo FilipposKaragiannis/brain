@@ -42,7 +42,7 @@ Read the full rule text for every rule you cite.
 
 ## Output
 Findings only, each on its own lines: grade, rule id, file:line, what is wrong, the fix. Then one
-line: count per grade. Under 400 words. No praise, no summary of the diff.
+line: count per grade. No praise, no summary of the diff.
 
 ## Never
 - Never review the spec. Never review code the diff does not touch (U-05).

@@ -36,7 +36,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    <branch>`, `gh pr create --base <base> --head <branch>`) or the tracker action (merge the
    blocker's PR, close gh#40). The escalation gate a last failed attempt raises quotes that
    summary, so the owner never reads only "do it by hand".
-4. Report once: the URL, the base and where it came from (recorded at claim or the parent
+4. End with one report: the URL, the base and where it came from (recorded at claim or the parent
    rule), draft or ready, and the warning when the base is not the default branch (the merge
    will not auto-close the item; closeout does).
 
