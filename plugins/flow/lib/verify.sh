@@ -12,7 +12,7 @@ VERIFY_END_WAIT=$((VERIFY_STOP_GRACE * 2))
 verify_run_file() { printf '%s/verify.run' "$1"; }
 
 # verify_run_record <reports> <pid> <started> <head> <limit>: writes the record to a new file
-# mktemp makes, never through a link left at a name, and renames it in. verify.sh --start calls it.
+# mktemp makes, never through a link left at a name, and renames it in. verify_run_start calls it.
 verify_run_record() {
   run_record_file="$(mktemp "$1/.verify.run.XXXXXX")" &&
     printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "$3" "$4" "$5" > "$run_record_file" && mv -f "$run_record_file" "$(verify_run_file "$1")"
