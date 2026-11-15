@@ -13,7 +13,7 @@ P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
 A="$P/adapters/$name"
 [ -d "$A" ] || { echo "adapter-contract: no adapter $name under $P/adapters" >&2; exit 2; }
 work="$(mktemp -d)"
-. "$here/_sandbox.sh"; sandbox_enter "$work" "$P"
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 export FLOW_HOME="$work/home"; mkdir -p "$FLOW_HOME" "$work/bin"
 for tool in gh curl osascript notify-send; do

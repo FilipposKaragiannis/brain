@@ -10,7 +10,7 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
 work="$(mktemp -d)"
-. "$here/_sandbox.sh"; sandbox_enter "$work" "$P"
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
 trap 'sandbox_close $?' EXIT
 mkdir -p "$work/offline"
 for tool in curl wget gh osascript notify-send claude codex launchctl; do

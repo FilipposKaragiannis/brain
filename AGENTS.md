@@ -96,9 +96,13 @@ T-13: a name of the shape Scenario_Outcome, a because string per assertion, one 
 per test, no assertion on a double's calls.
 <!-- standards:end -->
 
-## Testing the flow plugin
+## Test suites stay off the real checkout
 
 A test touches only stubs, fakes and throwaway files under its suite's temp folder: never the
-checkout it runs from, its worktrees, the owner's home or any real config. Every flow suite runs
-in `plugins/flow/tests/_sandbox.sh`, which enforces that and fails the run when the checkout
-changes. A new suite starts with the same two lines as `run.sh`; `tools/lint.sh` checks it.
+checkout it runs from, its worktrees, the owner's home or any real config. Every shell suite runs
+in `tools/lib/sandbox.sh`, and a plugin app's `npm test` in `tools/lib/sandboxed.sh`: both clear
+git's repository variables (`GIT_DIR` and the rest, which a git hook exports) and the git, Claude,
+Codex and flow config pointers, give the run a throwaway home, and fail it when the checkout
+changes. A new suite starts with the same two lines as `plugins/flow/tests/run.sh`;
+`tools/lint.sh` checks every suite and app test script. A command gate in
+`.standards/config.json` runs without git's repository variables too (`check-gates.sh`).

@@ -4,7 +4,9 @@
 set -u
 export PYTHONDONTWRITEBYTECODE=1   # a __pycache__ in the repo copy would read as "written" to the diffs below
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"
+. "$root/tools/lib/sandbox.sh"; sandbox_enter "$work" "$root/tools"
+trap 'sandbox_close $?' EXIT
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }

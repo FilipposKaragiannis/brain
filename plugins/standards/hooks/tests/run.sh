@@ -5,11 +5,10 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 hooks="$here/.."
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-# No test reaches the network, the desktop or a real agent. The owner's shell may export
-# FLOW_SLACK_WEBHOOK, so it is cleared, and these tools are stubs that log to $work/offline.log.
-# A test that needs one of them puts its own fake earlier in PATH.
-unset FLOW_SLACK_WEBHOOK
+. "$hooks/../../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$hooks/.."
+trap 'sandbox_close $?' EXIT
+# No test reaches the network, the desktop or a real agent: these tools are stubs that log to
+# $work/offline.log. A test that needs one of them puts its own fake earlier in PATH.
 mkdir -p "$work/offline"
 for tool in curl wget gh osascript notify-send claude codex; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
