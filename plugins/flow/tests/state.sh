@@ -268,6 +268,101 @@ check "GateRaise_RecordEqualsTheTrackersState: a raised gate reads the same in b
 "$plugin/scripts/gate.sh" clear "$paired" "Keep both rows" >/dev/null 2>&1
 check "GateClear_RecordEqualsTheTrackersState: a cleared gate and its answer read the same in both stores" 'record_equals_tracker "$paired"'
 
+echo "the key map: each tracker key lands at its record path"
+mapped="$(new_task "Key map")"
+while IFS='|' read -r key value record_path; do
+  record set "$mapped" "$key=$value" >/dev/null 2>&1
+  check "Set_${key}_LandsAt_${record_path}: the record keeps a tracker key under the schema's own name" \
+    '[ "$(record get "$mapped" "$record_path")" = "$value" ]'
+done <<'PATHS'
+size|S|size_estimate
+worktree|wt-3|claim.worktree
+held_by|local:task/4|hold.by
+held_reason|shares the retune|hold.reason
+gate|ambiguity|gate.name
+answered|plan-approval|answer.gate
+answer_pending|next|answer.pending
+pr|https://example.invalid/pull/11|pr.url
+pr_host|claude|pr.host
+PATHS
+record set "$mapped" held_by= held_reason= >/dev/null 2>&1
+check "HoldWithEveryFieldEmptied_IsNull: absence is a null hold, never an object of empty fields" '[ "$(record show "$mapped" | json_value hold)" = null ]'
+record set "$mapped" step=plan step=verify >/dev/null 2>&1
+check "KeyGivenTwice_TakesItsLastValue: the later pair of one write wins, as on the tracker" '[ "$(record get "$mapped" step)" = verify ]'
+record set "$mapped" "touches=src/a/**, ,,docs/b.md" >/dev/null 2>&1
+check "CommaListWithBlankItems_DropsTheBlanks: a list keeps only the items written" \
+  '[ "$(record get "$mapped" touches | canonical)" = "$(printf "%s" "[\"src/a/**\",\"docs/b.md\"]" | canonical)" ]'
+
+echo "the gate's value rules"
+ruled="$(new_task "Gate rules")"
+record set "$ruled" "gate:=$gate_record" >/dev/null 2>&1; record set "$ruled" gate_from=design >/dev/null 2>&1
+record set "$ruled" gate=ambiguity >/dev/null 2>&1
+check "GateNameOfTheOpenGate_KeepsItsRecord: naming the open gate again keeps the question notify.sh wrote" \
+  '[ "$(record get "$ruled" gate.message)" = "$(printf "%s" "$gate_record" | json_value message)" ]'
+record set "$ruled" gate=plan-approval >/dev/null 2>&1
+check "GateNameOfAnotherGate_DropsTheOldGatesRecord: a new gate starts with none of the last gate's options" \
+  '[ -z "$(record get "$ruled" gate.options)" ]'
+record set "$ruled" "gate:=$gate_record" >/dev/null 2>&1
+check "GateObjectOfAnotherGate_StartsWithNoFrom: a gate's origin belongs to that gate only" '[ -z "$(record get "$ruled" gate.from)" ]'
+record set "$ruled" gate=none >/dev/null 2>&1; record set "$ruled" gate_from=plan >/dev/null 2>&1
+check "GateFromWhileNoGateIsOpen_LeavesTheGateClear: an origin with no gate opens nothing" '[ "$(record get "$ruled" gate)" = none ]'
+
+echo "more refusals"
+run_step_on_no_run="$(new_task "Run step with no run")"
+record set "$run_step_on_no_run" step=plan >/dev/null 2>&1
+record_before="$(record show "$run_step_on_no_run")"
+record set "$run_step_on_no_run" run.step=sync >/dev/null 2>&1; code=$?
+check "RunStepWithNoRun_ExitsTwo: there is no run to move" '[ "$code" -eq 2 ]'
+check "RunStepWithNoRun_WritesNoRunFile: a refused run step makes no run" '[ ! -f "$(run_file "$run_step_on_no_run")" ]'
+check "RunStepWithNoRun_LeavesTheRecordAsItWas: a refused write changes nothing" '[ "$(record show "$run_step_on_no_run")" = "$record_before" ]'
+record set "$run_step_on_no_run" step >/dev/null 2>&1; code=$?
+check "PairWithNoEquals_ExitsTwo: a pair is a key, an equals sign and a value" '[ "$code" -eq 2 ]'
+record set "$run_step_on_no_run" >/dev/null 2>&1; code=$?
+check "SetWithNoPair_ExitsTwo: a write names at least one pair" '[ "$code" -eq 2 ]'
+"$plugin/scripts/state.sh" frobnicate >/dev/null 2>&1; code=$?
+check "UnknownCommand_ExitsTwo: state.sh knows get, set, show, path and archive" '[ "$code" -eq 2 ]'
+
+echo "where the records live"
+cp .flow/config.yaml "$work/config.saved"
+printf 'state:\n  dir: records\n' >> .flow/config.yaml
+relative_record="$(record path "$run_step_on_no_run")"; mkdir -p records
+check "RelativeStateDir_LivesUnderTheMainWorktree: a relative state.dir is read from the repository root" \
+  '[ "$(cd "$(dirname "$relative_record")" && pwd -P)/$(basename "$relative_record")" = "$(cd records && pwd -P)/$(slug "$run_step_on_no_run").json" ]'
+rmdir records
+cp "$work/config.saved" .flow/config.yaml
+unwritable="$(new_task "Unwritable state dir")"
+printf 'state:\n  dir: /dev/null/records\n' >> .flow/config.yaml
+tracker_before="$(tracker "$unwritable")"
+record set "$unwritable" step=plan >/dev/null 2>&1; code=$?
+check "StateDirThatCannotBeMade_ExitsTwo: a state.dir that cannot be written is bad config" '[ "$code" -eq 2 ]'
+check "StateDirThatCannotBeMade_LeavesTheTrackerAsItWas: bad config is refused before any store is written" \
+  '[ "$(tracker "$unwritable")" = "$tracker_before" ]'
+cp "$work/config.saved" .flow/config.yaml
+
+echo "a busy lock"
+tracker_state_is none
+locked="$(new_task "Busy lock")"
+record set "$locked" step=plan >/dev/null 2>&1
+lock_held_seconds_past_any_wait=600
+mkdir -p .flow/locks
+python3 -c 'import fcntl,sys,time
+handle=open(sys.argv[1],"a"); fcntl.flock(handle, fcntl.LOCK_EX); open(sys.argv[2],"w").close(); time.sleep(float(sys.argv[3]))' \
+  ".flow/locks/$(slug "$locked").lock" "$work/lock.held" "$lock_held_seconds_past_any_wait" &
+lock_holder=$!
+while [ ! -f "$work/lock.held" ]; do sleep 0.1; done
+record set "$locked" step=review >/dev/null 2>&1; code=$?
+kill "$lock_holder" 2>/dev/null; wait "$lock_holder" 2>/dev/null
+check "LockHeldByAnotherWrite_ExitsSeventyFive: a write that cannot take the item's lock says try again" '[ "$code" -eq 75 ]'
+check "LockHeldByAnotherWrite_LeavesTheRecordAsItWas: a write that never took the lock changes nothing" '[ "$(record get "$locked" step)" = plan ]'
+tracker_state_is ""
+
+echo "parity of a hold"
+holder="$(new_task "Holder")"; waiter="$(new_task "Waiter")"
+"$plugin/scripts/hold.sh" set "$waiter" "$holder" "same retune of the row owner" >/dev/null 2>&1
+check "HoldSet_RecordEqualsTheTrackersState: a hold reads the same in both stores" 'record_equals_tracker "$waiter"'
+"$plugin/scripts/hold.sh" clear "$waiter" "holder merged" >/dev/null 2>&1
+check "HoldClear_RecordEqualsTheTrackersState: a lifted hold reads the same in both stores" 'record_equals_tracker "$waiter"'
+
 echo "a caller's stdin"
 looped="$(new_task "Loop around a write")"
 loop_input="$(printf 'first\nsecond\nthird')"
