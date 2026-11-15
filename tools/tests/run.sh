@@ -223,6 +223,11 @@ printf '#!/bin/sh\nwork="$(mktemp -d)"\necho ok\n' > "$demo/tests/run.sh"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "SuiteOutsideSandbox_FailsLint: lint exits 1 and names a suite that never enters tools/lib/sandbox.sh" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/tests/run.sh'" "$out"
 fresh
+mkdir -p "$demo/tests"
+printf '#!/bin/sh\nwork="$(mktemp -d)"\n. "$here/../../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$here/.."\necho ok\n' > "$demo/tests/run.sh"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "SuiteWithoutCloseTrap_FailsLint: lint exits 1 and names a suite that enters the sandbox but never checks the checkout on exit" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/tests/run.sh'" "$out"
+fresh
 python3 - "$demo/app/package.json" <<'PY2'
 import json, sys
 package = json.load(open(sys.argv[1]))
