@@ -130,3 +130,35 @@ test('MachineReaders_ItermInstalled_ItsPreferencesReadWithoutWriting', async () 
 test('MachineReaders_DefaultsFails_NoPreferences', async () => {
   assert.equal(await machineProfileReaders(readOnlyDefaults('', 1), os.tmpdir()).readItermPreferences(), null, 'because a failed read is no iTerm, and the console keeps its look');
 });
+
+const unreadable = async (): Promise<never> => { throw new Error('defaults crashed mid-read'); };
+
+test('ItermPreferencesThrow_NoItermLook', async () => {
+  const terminal = new TerminalProfiles({ readItermPreferences: unreadable, findFont: machineWith(bothFontsInstalled) }, silentLogger);
+  assert.equal((await terminal.profile()).iterm, null, 'because an unreadable profile leaves the pane on the console\'s own theme');
+});
+
+test('ItermPreferencesThrow_ConsoleFontServed', async () => {
+  const terminal = new TerminalProfiles({ readItermPreferences: unreadable, findFont: machineWith(bothFontsInstalled) }, silentLogger);
+  assert.deepEqual(await terminal.font(), CONSOLE_FILE, 'because an unreadable profile still gets the console\'s own Nerd Font served');
+});
+
+test('PreferencesAndFontLookupBothThrow_ProfileNamesNoFont', async () => {
+  const terminal = new TerminalProfiles({ readItermPreferences: unreadable, findFont: unreadable }, silentLogger);
+  assert.deepEqual(await terminal.profile(), { iterm: null, font: null }, 'because when nothing can be read the page keeps its own look, and the profile still answers');
+});
+
+test('PreferencesAndFontLookupBothThrow_NoFontFile', async () => {
+  const terminal = new TerminalProfiles({ readItermPreferences: unreadable, findFont: unreadable }, silentLogger);
+  assert.equal(await terminal.font(), null, 'because a font lookup that fails serves nothing instead of failing the route');
+});
+
+test('ItermPreferencesThrewOnce_AskedAgain_SameFallbackNotARejection', async () => {
+  let reads = 0;
+  const terminal = new TerminalProfiles({
+    readItermPreferences: async () => { reads += 1; if (reads === 1) throw new Error('defaults crashed mid-read'); return itermPreferences(); },
+    findFont: machineWith(bothFontsInstalled),
+  }, silentLogger);
+  await terminal.profile();
+  assert.deepEqual(await terminal.profile(), { iterm: null, font: { path: TERMINAL_FONT_PATH } }, 'because the kept answer after a failed read is the fallback, so a later ask neither rejects nor rereads');
+});

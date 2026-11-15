@@ -176,6 +176,31 @@ test('LinkGone_GroupEmptyWhenTheProcessExits_NoKillSent', () => {
   assert.equal(pty.signals.includes('SIGKILL'), false, 'because an emptied group\'s id may be handed to someone else\'s processes, so it is never signalled again');
 });
 
+test('LinkGone_GroupEmptiesByItselfDuringTheGrace_NoKillSent', () => {
+  const { open, ptys, timers } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.childIgnoresHangUp = true;
+  link.go();
+  pty.childEnded = true;
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  assert.equal(pty.signals.includes('SIGKILL'), false, 'because a group that emptied during the grace may have its id handed to someone else\'s processes, so it is never signalled');
+});
+
+test('StopAll_GroupEmptiesByItselfDuringTheGrace_Settles', async () => {
+  const { panes, ptys, timers, open } = sessions(null);
+  open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.childIgnoresHangUp = true;
+  let settled = false;
+  void panes.stopAll().then(() => { settled = true; });
+  await tick();
+  pty.childEnded = true;
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  await tick();
+  assert.equal(settled, true, 'because a pane whose group emptied by itself is finished, so a stopping daemon exits without a kill');
+});
+
 test('ProcessExitsByItself_ChildLeftInItsGroup_NoSignalsSent', () => {
   const { open, ptys, timers } = sessions(null);
   open(SHELL_AT_ROOT, PROJECT);

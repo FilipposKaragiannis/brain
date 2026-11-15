@@ -69,3 +69,27 @@ test('PlistXml_MalformedText_Null', () => {
     assert.equal(parsePlistXml(xml), null, `because ${shape} is not a property list, and the reader answers null rather than throwing or guessing`);
   }
 });
+
+/** `value` wrapped in `levels` of the element `tag`; a dictionary level keys its child as `k`. */
+function nested(tag: 'array' | 'dict', levels: number, value: string): string {
+  const open = tag === 'array' ? '<array>' : '<dict><key>k</key>';
+  const close = tag === 'array' ? '</array>' : '</dict>';
+  return open.repeat(levels) + value + close.repeat(levels);
+}
+
+const HOSTILE_DEPTH = 100_000;
+
+test('PlistXml_ArraysNestedFarPastAnyExport_NullWithoutThrowing', () => {
+  assert.equal(parsePlistXml(document(nested('array', HOSTILE_DEPTH, '<string>x</string>'))), null, 'because preferences nested deeper than any export are unreadable, never a stack overflow that ends the daemon');
+});
+
+test('PlistXml_DictionariesNestedFarPastAnyExport_NullWithoutThrowing', () => {
+  assert.equal(parsePlistXml(document(nested('dict', HOSTILE_DEPTH, '<string>x</string>'))), null, 'because preferences nested deeper than any export are unreadable, never a stack overflow that ends the daemon');
+});
+
+test('PlistXml_NestedAsDeepAsARealExport_Read', () => {
+  const levels = 12;
+  let expected: unknown = 'colour';
+  for (let level = 0; level < levels; level += 1) expected = { k: expected };
+  assert.deepEqual(parsePlistXml(document(nested('dict', levels, '<string>colour</string>'))), expected, 'because the depth bound must not cut off real preferences, which nest a handful of levels');
+});
