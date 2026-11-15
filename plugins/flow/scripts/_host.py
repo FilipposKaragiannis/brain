@@ -14,8 +14,7 @@ session that ended well may quote those lines."""
 import json, re, sys
 
 # The host's own words for a limit on spend and for a login that does not work, from the claude
-# and codex binaries: the Claude subscription and credit limits (hit your limit, or the limit of a
-# time window: 5-hour, any number of hours, daily, weekly), the API's budget answer, Codex's
+# and codex binaries: the Claude subscription and credit limits, the API's budget answer, Codex's
 # usage limit and quota; the logins that expired, were revoked or are missing.
 SPEND = re.compile(r"credit balance is too low|out of extra usage|requires usage credits|seat type doesn.t include"
                    r"|usage allocation has been disabled|usage limit|spend limit|spending limit|ExceededBudget"
