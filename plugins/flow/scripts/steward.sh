@@ -1471,14 +1471,24 @@ cmd_stop() {
   st_said="run of ${rn_step:-?} stopped by the owner"
   printf '%s\t%s\tstopped\t%s\n' "$(now_iso)" "$1" "$st_said" >> "$home/events.log"
   write_state "$1" "last_event=$(now_iso) $st_said"
-  if [ -n "$st_pids" ]; then
-    echo "$1: $st_said: $(printf '%s\n' $st_pids | sort -u | wc -l | tr -d ' ') process(es) ended${stopped_verify:+, and its verify run}; the claim and the worktree are kept as they are"
-  elif [ -n "$stopped_verify" ]; then
-    echo "$1: $st_said: its verify run (process $stopped_verify) ended, no other process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
-  else
-    echo "$1: $st_said: no process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
-  fi
+  say_stopped "$1" "$st_said" "$st_pids" "$stopped_verify" "$st_live"
   return "$verify_end_status"
+}
+# say_stopped <item> <what stop says> <pids ended> <verify pid ended> <other run>: stop's closing
+# sentence: how many processes ended, the verify run it ended, and another run that works in the
+# worktree, which it left alone.
+say_stopped() {
+  if [ -n "$5" ]; then other_run=" (another one works in its worktree: $5, left alone)"; else other_run=""; fi
+  if [ -n "$4" ]; then verify_ended=", and its verify run"; else verify_ended=""; fi
+  if [ -n "$3" ]; then
+    # shellcheck disable=SC2086
+    ended_count="$(printf '%s\n' $3 | sort -u | wc -l | tr -d ' ')"
+    echo "$1: $2: $ended_count process(es) ended$verify_ended; the claim and the worktree are kept as they are"
+  elif [ -n "$4" ]; then
+    echo "$1: $2: its verify run (process $4) ended, no other process of it was running$other_run; the record is cleared, so the health job does not resume it"
+  else
+    echo "$1: $2: no process of it was running$other_run; the record is cleared, so the health job does not resume it"
+  fi
 }
 # stop_verify_alone <item>: stop of an item with no run record: ends its verify run in the claimed
 # worktree, if one goes. 1 when the run still goes after its wait, as verify_run_end says.
