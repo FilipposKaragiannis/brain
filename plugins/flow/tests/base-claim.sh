@@ -216,5 +216,21 @@ ahead_kid="$(new_task "Score colours" "$ahead_parent")"
 check "ChildOfAClaimedParentWithUnpushedCommits_BranchHoldsTheParentsLocalTip: the parent's newest commit is on the child's branch, not only what the remote has" \
   'git -C "$("$plugin/scripts/steward.sh" find "$ahead_kid")" merge-base --is-ancestor "refs/heads/$ahead_parent_branch" HEAD'
 
+echo "base: the WorktreeCreate hook claims from the same base as next.sh"
+new_repo hook
+hook_epic="$("$local_adapter/create.sh" epic "Leagues" --size L --body x)"
+hook_epic_branch="$(epic_of "$hook_epic")"
+remote_branch "$hook_epic_branch"; remote_commit "$hook_epic_branch" leagues.txt
+move_task_numbers_past_the_epic_numbers one
+hook_child="$(new_task "League table" "$hook_epic")"
+hook_child_worktree="$(printf '{"name":"%s","cwd":"%s"}' "$(slug "$hook_child")" "$PWD" | "$plugin/hooks/worktree-create.sh" 2>/dev/null | tail -n 1)"
+check "HookClaimOfAnEpicChild_BranchStartsFromTheEpicBranch: the epic's remote work is on the child's branch" \
+  'git -C "$hook_child_worktree" merge-base --is-ancestor "origin/$hook_epic_branch" HEAD'
+check "HookClaimOfAnEpicChild_RecordsTheEpicBranchAsBase: the claim names the epic branch, so the PR merges into it" \
+  '[ "$(claim_base "$hook_child")" = "$hook_epic_branch" ]'
+printf '{"name":"quiet-elm","cwd":"%s"}' "$PWD" | "$plugin/hooks/worktree-create.sh" >/dev/null 2>&1
+check "HookClaimOfAnAdhocName_RecordsTheConfigBase: a name no tracker owns has no ancestry, so it starts from the config base" \
+  '[ "$(claim_base adhoc:quiet-elm)" = main ]'
+
 [ "$fails" -eq 0 ] && { echo "base-claim: ok"; exit 0; }
 echo "base-claim: $fails failed"; exit 1

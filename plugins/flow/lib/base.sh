@@ -1,7 +1,7 @@
 # The base of an item: the branch its work starts from and its PR merges into. Resolved once, when
 # the item is first claimed, and recorded in claim.json and the item state (base). Sourced after
-# lib/flow.sh by scripts/next.sh, scripts/verify.sh, scripts/steward.sh, scripts/board.sh and
-# skills/init/scripts/init.sh.
+# lib/flow.sh by scripts/next.sh, scripts/verify.sh, scripts/steward.sh, scripts/board.sh,
+# hooks/worktree-create.sh and skills/init/scripts/init.sh.
 
 # The ancestors fetch_item_base reads for an epic branch, from the parent up.
 base_ancestor_levels=5
