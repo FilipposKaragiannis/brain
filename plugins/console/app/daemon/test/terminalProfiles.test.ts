@@ -1,0 +1,132 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import os from 'node:os';
+import type { CommandRequest, CommandResult } from '../src/collectors/exec.ts';
+import type { FontFile, FontLookup } from '../src/fontFiles.ts';
+import { silentLogger } from '../src/log.ts';
+import type { PlistValue } from '../src/plist.ts';
+import { CONSOLE_FONT_NAMES, machineProfileReaders, TerminalProfiles } from '../src/terminalProfiles.ts';
+import { TERMINAL_FONT_PATH } from '../src/terminalProtocol.ts';
+
+const GUID = 'B1C2D3E4-0000-4000-8000-000000000138';
+const ITERM_FONT = 'FiraCodeNF-Retina';
+const ITERM_FILE: FontFile = { path: '/Users/owner/Library/Fonts/FiraCodeNerdFont-Retina.ttf', contentType: 'font/ttf' };
+const CONSOLE_FILE: FontFile = { path: '/Library/Fonts/JetBrainsMonoNerdFont-Regular.otf', contentType: 'font/otf' };
+
+/** iTerm's preferences with one default profile in `font` at 15 points, its foreground #cc3366. */
+function itermPreferences(font: string = ITERM_FONT): PlistValue {
+  return {
+    'Default Bookmark Guid': GUID,
+    'New Bookmarks': [{ Guid: GUID, 'Normal Font': `${font} 15`, 'Foreground Color': { 'Red Component': 0.8, 'Green Component': 0.2, 'Blue Component': 0.4, 'Color Space': 'sRGB' } }],
+  };
+}
+
+/** The machine's font folders as a lookup: the first wanted name that is installed wins. */
+function machineWith(installed: Record<string, FontFile>): FontLookup {
+  return async (postScriptNames) => {
+    for (const name of postScriptNames) if (installed[name] !== undefined) return installed[name];
+    return null;
+  };
+}
+
+const consoleFontInstalled = { [CONSOLE_FONT_NAMES[0]]: CONSOLE_FILE };
+const bothFontsInstalled = { [ITERM_FONT]: ITERM_FILE, [CONSOLE_FONT_NAMES[0]]: CONSOLE_FILE };
+
+function profiles(preferences: PlistValue | null, installed: Record<string, FontFile>): TerminalProfiles {
+  return new TerminalProfiles({ readItermPreferences: async () => preferences, findFont: machineWith(installed) }, silentLogger);
+}
+
+test('NoIterm_NoItermLook', async () => {
+  assert.equal((await profiles(null, consoleFontInstalled).profile()).iterm, null, 'because without iTerm the pane keeps the console\'s own theme');
+});
+
+test('NoIterm_ConsoleFontServed', async () => {
+  assert.deepEqual(await profiles(null, bothFontsInstalled).font(), CONSOLE_FILE, 'because without iTerm the console serves its own Nerd Font, not some other installed font');
+});
+
+test('ItermProfile_ItsLookGiven', async () => {
+  const look = (await profiles(itermPreferences(), bothFontsInstalled).profile()).iterm;
+  assert.deepEqual({ fontSize: look?.fontSize, foreground: look?.colours.foreground }, { fontSize: 15, foreground: '#cc3366' }, 'because with iTerm the pane takes its default profile\'s size and colours');
+});
+
+test('ItermProfile_ItsOwnFontServedBeforeTheConsoles', async () => {
+  assert.deepEqual(await profiles(itermPreferences(), bothFontsInstalled).font(), ITERM_FILE, 'because the profile\'s font file is the one the console serves');
+});
+
+test('ItermFontNotInstalled_ConsoleFontServed', async () => {
+  assert.deepEqual(await profiles(itermPreferences(), consoleFontInstalled).font(), CONSOLE_FILE, 'because a profile font that is not in the font folders falls back to the console\'s font');
+});
+
+test('ItermFontNotInstalled_ItermColoursKept', async () => {
+  const look = (await profiles(itermPreferences(), consoleFontInstalled).profile()).iterm;
+  assert.equal(look?.colours.foreground ?? 'no iTerm look', '#cc3366', 'because a missing font file does not undo the colours the profile read');
+});
+
+test('ItermPreferencesWithoutADefaultProfile_NoItermLook', async () => {
+  assert.equal((await profiles({ 'New Bookmarks': [] }, bothFontsInstalled).profile()).iterm, null, 'because preferences that hold no default profile are an unreadable profile, and the console keeps its theme');
+});
+
+test('ItermPreferencesWithoutADefaultProfile_ConsoleFontServed', async () => {
+  assert.deepEqual(await profiles({ 'New Bookmarks': [] }, bothFontsInstalled).font(), CONSOLE_FILE, 'because an unreadable profile names no font, so the console serves its own');
+});
+
+test('FontFound_ProfileNamesTheFontRouteNotTheFile', async () => {
+  assert.deepEqual((await profiles(itermPreferences(), bothFontsInstalled).profile()).font, { path: TERMINAL_FONT_PATH },
+    'because the page fetches the font from the daemon\'s fixed route and never learns or names a file path');
+});
+
+test('NoFontInstalled_ProfileNamesNoFont', async () => {
+  assert.equal((await profiles(itermPreferences(), {}).profile()).font, null, 'because with no font to serve the page keeps its installed fonts');
+});
+
+test('NoFontInstalled_NoFontFile', async () => {
+  assert.equal(await profiles(null, {}).font(), null, 'because nothing found is nothing served');
+});
+
+test('ProfileAskedTwice_ReadOnce', async () => {
+  let reads = 0;
+  const terminal = new TerminalProfiles({ readItermPreferences: async () => (reads++ === 0 ? itermPreferences() : null), findFont: machineWith(bothFontsInstalled) }, silentLogger);
+  await terminal.profile();
+  assert.notEqual((await terminal.profile()).iterm, null, 'because the profile is read once at the first ask and kept, so later panes get the same look');
+});
+
+/**
+ * `defaults` as a fake: the read verbs print iTerm's preferences as XML; any verb that changes
+ * them throws, because reading the profile must never write to iTerm's settings.
+ */
+function readOnlyDefaults(xml: string, code = 0): (request: CommandRequest) => Promise<CommandResult> {
+  return async (request) => {
+    const [verb] = request.args;
+    if (verb !== 'export' && verb !== 'read') throw new Error(`defaults ${request.args.join(' ')} would change iTerm's settings`);
+    return { code, stdout: xml, stderr: '', timedOut: false };
+  };
+}
+
+const ITERM_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Default Bookmark Guid</key>
+	<string>${GUID}</string>
+	<key>New Bookmarks</key>
+	<array>
+		<dict>
+			<key>Guid</key>
+			<string>${GUID}</string>
+			<key>Normal Font</key>
+			<string>${ITERM_FONT} 15</string>
+		</dict>
+	</array>
+</dict>
+</plist>
+`;
+
+test('MachineReaders_ItermInstalled_ItsPreferencesReadWithoutWriting', async () => {
+  const read = await machineProfileReaders(readOnlyDefaults(ITERM_XML), os.tmpdir()).readItermPreferences();
+  assert.deepEqual(read, { 'Default Bookmark Guid': GUID, 'New Bookmarks': [{ Guid: GUID, 'Normal Font': `${ITERM_FONT} 15` }] },
+    'because the preferences come from a read of iTerm\'s domain, parsed from its XML');
+});
+
+test('MachineReaders_DefaultsFails_NoPreferences', async () => {
+  assert.equal(await machineProfileReaders(readOnlyDefaults('', 1), os.tmpdir()).readItermPreferences(), null, 'because a failed read is no iTerm, and the console keeps its look');
+});
