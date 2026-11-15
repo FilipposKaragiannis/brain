@@ -6,8 +6,12 @@ bump: minor
   hangs the shell up and kills what it left running 1.5 s later (a stopping daemon waits for that
   kill), and a pane the daemon ended says why and keeps its screen. Drag the dock's top edge (or
   focus it and use the arrows) to resize it, and the terminal refits; the browser keeps the
-  height. Scrolling over a pane never scrolls the page behind it, and the terminal uses an
-  installed JetBrainsMono Nerd Font when there is one, so prompt icons draw.
+  height. Scrolling over a pane never scrolls the page behind it.
+- With iTerm installed the pane takes its default profile as is: font and size, colours (P3
+  converted to sRGB), cursor shape and blink, and bold in bright colours; the page's theme switch
+  then leaves the pane alone. The daemon serves the profile's font file, or the installed
+  JetBrainsMono Nerd Font without iTerm, and the page loads it as a web font, so prompt icons draw
+  in Brave and Safari too. Without iTerm the pane keeps the console's own look.
 - The pane replaces the outside terminal app: Open in Terminal on the project bar, a worktree, a
   dead run or a process with no session opens a shell pane (one button where there were two);
   Follow log on a job opens a pane that follows its log, and waits for it when the job has not
