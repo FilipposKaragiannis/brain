@@ -76,10 +76,11 @@ fail_report() {
     > "$md_temp" && mv -f "$md_temp" "$reports/verify.md"
 }
 # duration <seconds>: 45s, 12m 30s or 2h 05m.
+seconds_per_minute=60; seconds_per_hour=3600
 duration() {
-  if [ "$1" -lt 60 ]; then printf '%ds' "$1"
-  elif [ "$1" -lt 3600 ]; then printf '%dm %02ds' $(($1 / 60)) $(($1 % 60))
-  else printf '%dh %02dm' $(($1 / 3600)) $(($1 % 3600 / 60)); fi
+  if [ "$1" -lt "$seconds_per_minute" ]; then printf '%ds' "$1"
+  elif [ "$1" -lt "$seconds_per_hour" ]; then printf '%dm %02ds' $(($1 / seconds_per_minute)) $(($1 % seconds_per_minute))
+  else printf '%dh %02dm' $(($1 / seconds_per_hour)) $(($1 % seconds_per_hour / seconds_per_minute)); fi
 }
 # limit_seconds: verify.limit from the flow config in seconds; a value that is no duration says so
 # on stderr and returns 1.
