@@ -1456,25 +1456,36 @@ run_of() {
 # stop ends a job's, and its verify run, record or none. The record goes, so the health job does not
 # resume the run; the claim, the worktree and its changes stay, and the next job may continue the
 # item. One events.log line and the item's last_event say it. Nothing in flight is said, exit 0.
+# A verify run still going after its wait is said on stderr, exit 1, the rest stopped all the same.
 cmd_stop() {
   item_id "$1"
-  run_of "$1" || { stopped_verify="$(verify_run_end "$1" "$(cmd_find "$1")")"; echo "$1: no run in flight${stopped_verify:+; its verify run (process $stopped_verify) ended}, nothing ${stopped_verify:+else }to stop"; return 0; }
+  run_of "$1" || { stop_verify_alone "$1"; return; }
   run_procs
   st_live="$(hpy alive "$procs" "$1" "${rn_path:-$home}" "$rn_pid")"; run_procs_done
   st_pids=""
   [ -z "$rn_pid" ] || [ "$st_live" != "pid $rn_pid" ] || st_pids="$(echo "$rn_pid"; descendants "$rn_pid")"
   # shellcheck disable=SC2086
   [ -z "$st_pids" ] || kill -TERM $st_pids 2>/dev/null
-  stopped_verify="$(verify_run_end "$1" "$rn_path")"
+  stopped_verify="$(verify_run_end "$1" "$rn_path")"; verify_end_status=$?
   rm -f "$rn_rec"
   st_said="run of ${rn_step:-?} stopped by the owner"
   printf '%s\t%s\tstopped\t%s\n' "$(now_iso)" "$1" "$st_said" >> "$home/events.log"
   write_state "$1" "last_event=$(now_iso) $st_said"
   if [ -n "$st_pids" ]; then
     echo "$1: $st_said: $(printf '%s\n' $st_pids | sort -u | wc -l | tr -d ' ') process(es) ended${stopped_verify:+, and its verify run}; the claim and the worktree are kept as they are"
+  elif [ -n "$stopped_verify" ]; then
+    echo "$1: $st_said: its verify run (process $stopped_verify) ended, no other process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
   else
-    echo "$1: $st_said: ${stopped_verify:+its verify run (process $stopped_verify) ended, }no ${stopped_verify:+other }process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
+    echo "$1: $st_said: no process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
   fi
+  return "$verify_end_status"
+}
+# stop_verify_alone <item>: stop of an item with no run record: ends its verify run in the claimed
+# worktree, if one goes. 1 when the run still goes after its wait, as verify_run_end says.
+stop_verify_alone() {
+  stopped_verify="$(verify_run_end "$1" "$(cmd_find "$1")")" || return 1
+  if [ -n "$stopped_verify" ]; then echo "$1: no run in flight; its verify run (process $stopped_verify) ended, nothing else to stop"
+  else echo "$1: no run in flight, nothing to stop"; fi
 }
 
 # cmd_resume <item> [--host H] [--wait] [--model M] [--effort E]: start again a run whose process is gone, as the health job
