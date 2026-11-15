@@ -3880,6 +3880,10 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"i0","type":"agent_message"
 python3 -I "$P/scripts/_host.py" codex "$work/codex-drop.out" "$work/codex-drop.err" 1 "$work/codex-drop.sum" > "$work/codex-drop.stdout" 2>/dev/null
 check "a codex session that ends on an error has that error as its last message, because the comment and the gate quote why it stopped (gh#169)" [ "$(jget last < "$work/codex-drop.sum")" = "stream disconnected before completion" ]
 check "a codex session's error stays off stdout, because stdout is what the session printed (gh#169)" [ "$(cat "$work/codex-drop.stdout")" = "reading the code" ]
+printf '%s' '{"type":"result","subtype":"success","is_error":true,"result":"You'"'"'ve hit your 5-hour limit \u00b7 resets 5:10am (Europe/London)"}' > "$work/window.out"
+: > "$work/window.err"
+python3 -I "$P/scripts/_host.py" claude "$work/window.out" "$work/window.err" 1 "$work/window.sum" >/dev/null 2>&1
+check "ClaudeTimedUsageWindow_ReportsSpendLimit: a retry before the window resets fails the same way" [ "$(jget cause < "$work/window.sum")" = spend-limit ]
 # Three silent sessions in a row on a fresh item: the attempt limit from profiles.json.
 max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
 ng="$("$P/scripts/new.sh" task "Ends with no result, every time" --size S --body "## Acceptance

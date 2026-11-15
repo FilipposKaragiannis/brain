@@ -31,8 +31,10 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
 3. Minimal diff (W-04): only what the phase needs. No drive-by renames, refactors or error
    handling for impossible cases. When the plan is wrong, ambiguous or impossible, stop with
    status `gate` and gate `ambiguity` instead of improvising.
-   Moved code is touched code (U-05): a block you move into a new file, type or helper meets the
-   rules there (names, literals, casts) or is declared under U-02. Moving it is no exemption.
+   Moved or renamed code is touched code (U-05): a line you move into a new file, type or
+   helper, or rename, meets the rules there (names, literals, casts, primitives at a boundary,
+   because-strings on its assertions). A U-02 declaration covers a [judgement] rule only; a
+   [hard] rule on a moved line is fixed. The habit of the file around it is no exemption.
 4. Build after each coherent change. A red build under your change is yours to fix, including
    warnings (L-01). A red build you inherited is reported, not fixed.
 5. Update living documentation in the same change when behaviour or structure changed.
@@ -44,7 +46,8 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
 8. A test you add or change (a build repair, a moved rig, a test in a fix commit) meets the
    test writer's pre-commit checks: one behaviour per test, split where two assertions can fail
    independently; no `?.` ahead of an assertion; a not-empty check before comparing collections
-   or streams; settings, constants and messages read from their owner, never copied as literals. Review blockers keep landing on tests written outside the test step.
+   or streams; settings, constants and messages read from their owner, never copied as literals;
+   the test's own tick counts and bounds named (N-06); no assertion on a fake's calls (T-08). Review blockers keep landing on tests written outside the test step.
 
 ## Merge and rebase conflicts
 When a rebase onto the task branch or the base conflicts: see the state (`git status`, the
