@@ -13,10 +13,6 @@ limit, an auth error or a model the host does not know, with the host's line tha
 session that ended well may quote those lines."""
 import json, re, sys
 
-# The host's own words for a limit on spend and for a login that does not work, from the claude
-# and codex binaries: the Claude subscription and credit limits, the API's budget answer, Codex's
-# usage limit and quota, the subscription's timed windows ("You've hit your 5-hour limit"); the
-# logins that expired, were revoked or are missing.
 SPEND = re.compile(r"credit balance is too low|out of extra usage|requires usage credits|seat type doesn.t include"
                    r"|usage allocation has been disabled|usage limit|spend limit|spending limit|ExceededBudget"
                    r"|hit your (?:[\w-]+ )?limit|quota exceeded|insufficient_quota|credits_depleted|spend_control_reached"
