@@ -69,11 +69,11 @@ report_text() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' ' ' | LC_ALL=C tr 
 # Name, summary and sentence are report_text already; $attempts, $base and $head_sha are set. Each
 # file is written to a new one mktemp makes, never through a link left at a name, and renamed in.
 fail_report() {
-  safe() { printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-'; }
-  json_temp="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false}\n' \
-    "$1" "$2" "$attempts" "$(safe "$base")" "$(safe "$head_sha")" > "$json_temp" && mv -f "$json_temp" "$reports/verify.json"
-  md_temp="$(mktemp "$reports/.verify.md.XXXXXX")" && printf '## Verify: fail (attempt %d)\n\n%s\n\nLog: `%s`.\n' "$attempts" "$3" "$log" \
-    > "$md_temp" && mv -f "$md_temp" "$reports/verify.md"
+  safe_name() { printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-'; }
+  minimal_json_file="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false}\n' \
+    "$1" "$2" "$attempts" "$(safe_name "$base")" "$(safe_name "$head_sha")" > "$minimal_json_file" && mv -f "$minimal_json_file" "$reports/verify.json"
+  minimal_md_file="$(mktemp "$reports/.verify.md.XXXXXX")" && printf '## Verify: fail (attempt %d)\n\n%s\n\nLog: `%s`.\n' "$attempts" "$3" "$log" \
+    > "$minimal_md_file" && mv -f "$minimal_md_file" "$reports/verify.md"
 }
 # duration <seconds>: 45s, 12m 30s or 2h 05m.
 seconds_per_minute=60; seconds_per_hour=3600
@@ -101,9 +101,9 @@ unfinished_report() {
 
 # say_live_run: true, saying how long it has run and the check it is on, while the item's run goes.
 say_live_run() {
-  live="$(verify_run_live "$reports" "$item")" || return 1
+  live_run_pid="$(verify_run_live "$reports" "$item")" || return 1
   live_started="$(verify_run_field "$reports" started)"
-  echo "verify: a run of $item is already going (pid $live, $(duration $(( $(date +%s) - ${live_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
+  echo "verify: a run of $item is already going (pid $live_run_pid, $(duration $(( $(date +%s) - ${live_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
 }
 # make_run_files: removes the earlier run's record, reports, log and output, and makes the log and
 # the output new, never written through a link someone left at a name.

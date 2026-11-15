@@ -14,8 +14,8 @@ verify_run_file() { printf '%s/verify.run' "$1"; }
 # verify_run_record <reports> <pid> <started> <head> <limit>: writes the record to a new file
 # mktemp makes, never through a link left at a name, and renames it in. verify.sh --start calls it.
 verify_run_record() {
-  record_temp="$(mktemp "$1/.verify.run.XXXXXX")" &&
-    printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "$3" "$4" "$5" > "$record_temp" && mv -f "$record_temp" "$(verify_run_file "$1")"
+  run_record_file="$(mktemp "$1/.verify.run.XXXXXX")" &&
+    printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "$3" "$4" "$5" > "$run_record_file" && mv -f "$run_record_file" "$(verify_run_file "$1")"
 }
 
 # verify_run_start <reports> <run output> <limit> <item> <base or empty>: starts the item's detached
