@@ -24,6 +24,9 @@ usage.
 - Conflicts: see the state, find each side's intent in the commits, the PR and the item, resolve
   every hunk keeping both intents where possible, run the project checks, finish the merge or
   rebase. Never abort, never invent behaviour.
+- A sandboxed Claude session commits and switches branches only in the worktree it started in:
+  when a claim, a release or a commit fails on `index.lock` (`Operation not permitted`), report
+  that error and stop, and never look for a way around it.
 
 ## Output
 One short report: the path claimed or released, the branch, what was kept and why, and anything

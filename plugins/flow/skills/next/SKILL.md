@@ -54,3 +54,8 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
 - Never reset or release a worktree yourself; the steward does that, and never with uncommitted changes.
 - A re-size by one step continues; two steps or into L stops at a plan-approval gate. Do not argue with it.
 - Unattended runs use `.flow/run-unattended.sh`, which drives this same loop from a shell.
+- A sandboxed Claude session commits and switches branches only in the worktree it started in
+  (the unattended run claims from a shell and starts each step in the item's worktree): run from
+  anywhere else, the claim's branch switch and every step that commits (implement, test,
+  reproduce, comments) fail on `index.lock`, so report that and stop rather than look for a way
+  around it.

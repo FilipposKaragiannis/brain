@@ -3,6 +3,7 @@
 # lib/flow.sh by scripts/verify.sh and scripts/steward.sh. The record is <reports>/verify.run, one
 # `key value` line each: pid (the run's own session and process group), started (epoch seconds),
 # head (the short commit it checks) and limit (seconds).
+. "$FLOW_PLUGIN/lib/process.sh"
 
 # The seconds a stopped run gets to end before what is left of its group is killed.
 VERIFY_STOP_GRACE=10
@@ -44,18 +45,13 @@ verify_run_field() {
   case "$recorded_field" in ''|*[!$field_characters]*) ;; *) printf '%s' "$recorded_field" ;; esac
 }
 
-# process_running <pid>: true while the process runs (a zombie has ended).
-process_running() {
-  case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) return 1 ;; esac
-}
-
 # verify_run_live <reports> <item>: the pid of the item's recorded run while it still runs, else
 # nothing and 1. The process must still be verify.sh's detached run of that item, so neither a pid
 # used again nor the pid of another item's run is taken for it.
 verify_run_live() {
   live_pid="$(verify_run_field "$1" pid)"
   [ -n "$live_pid" ] && process_running "$live_pid" || return 1
-  case "$(ps -o command= -p "$live_pid" 2>/dev/null)" in *"verify.sh $2 --detached"*) printf '%s' "$live_pid" ;; *) return 1 ;; esac
+  case "$(process_command "$live_pid")" in *"verify.sh $2 --detached"*) printf '%s' "$live_pid" ;; *) return 1 ;; esac
 }
 
 # verify_run_end <item> <worktree>: ends the item's detached run in the worktree when it still runs:

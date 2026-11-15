@@ -60,6 +60,11 @@ elif args[:2] == ["pr", "edit"]:
     reviewers = pr().setdefault("reviewers", [])
     if "--remove-reviewer" in args: reviewers.remove(args[args.index("--remove-reviewer") + 1])
     if "--add-reviewer" in args and args[args.index("--add-reviewer") + 1] not in reviewers: reviewers.append(args[args.index("--add-reviewer") + 1])
+    if "--title" in args: pr()["title"] = args[args.index("--title") + 1]
+    if "--body" in args: pr()["body"] = args[args.index("--body") + 1]
+    if "--body-file" in args:
+        body_file = args[args.index("--body-file") + 1]
+        pr()["body"] = sys.stdin.read() if body_file == "-" else open(body_file).read()
     save()
 elif args[:2] == ["pr", "list"]:
     head = args[args.index("--head") + 1] if "--head" in args else None

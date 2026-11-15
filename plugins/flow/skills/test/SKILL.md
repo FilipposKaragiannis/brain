@@ -17,7 +17,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    step `reproduce` the brief says: one failing test that pins the bug, run red, committed. For
    step `test` the brief says: the behaviour list first, from the acceptance lines, written to
    `<reports>/tests.md` (that exact name) before any implementation file is opened; then the
-   tests; then the suite run.
+   tests; then the suite run. A sandboxed Claude session commits only in the worktree it
+   started in (the unattended run starts each step in the item's claimed worktree): started
+   anywhere else, the writer's commit fails on `index.lock`, so name that in the report and
+   stop rather than look for a way around it.
 3. **Check the result file** `<reports>/test.json` (or `reproduce.json`): `done` with the count
    per level and the unpinned acceptance lines; `fail` when the suite does not run; `gate`
    when a seam is missing (the implementer fixes the interface, never the test writer).

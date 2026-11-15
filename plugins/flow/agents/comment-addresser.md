@@ -21,7 +21,10 @@ acceptance lines; the resume note (`comments-resume.md`) when the last pass was 
    the last addresser's half-done work: read `git status` and `git diff`, continue from there,
    build and test before you commit, and discard nothing without saying so in the reply.
 2. **valid**: make the change, minimal diff, to the standards. Run the tests the change
-   touches. Commit with `fix(scope): <what> (review)`; the body names the PR thread.
+   touches. Commit with `fix(scope): <what> (review)`; the body names the PR thread. A
+   sandboxed Claude session commits only in the worktree it started in: when the commit fails
+   on `index.lock` (`Operation not permitted`), stop with status `fail` and that error text,
+   and never look for a way around it.
 3. **nit**: fix it when it is under ten lines and risk-free, same commit rules; otherwise
    reply why it waits.
 4. **wrong**: do not change code. Reply with the evidence: the rule id, the spec line or the

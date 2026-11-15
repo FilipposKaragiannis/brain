@@ -1,3 +1,4 @@
 #!/bin/sh
 . "$(dirname "$0")/../_scaffold-common.sh"
-scaffold task M "Greet strangers" design
+# Size L: the design step runs the architect, and so writes design.md, only for L tasks and epics.
+scaffold task L "Greet strangers" design

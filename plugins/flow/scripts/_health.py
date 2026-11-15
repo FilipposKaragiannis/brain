@@ -30,6 +30,9 @@ keep the folder they were started in for days. Only the first two words after th
 are not options say so (`codex -c k=v app-server`), as the console reads them. A run record
 carries no pid when an older flow wrote it; the scan covers it. Times print in local time.
 
+Where a sandbox refuses ps, procs, owner and the ancestors a run's liveness skips are read through
+pgrep, and lsof or /proc, instead (_process.py).
+
 session names one process for a line a person reads: `claude process 62102, idle 3d 2h` (idle
 since Claude last changed its status), `claude process 4242, busy`, or `codex process 7, running
 7d 2h` when the host keeps no status. Claude writes ~/.claude/sessions/<pid>.json for each running
@@ -72,6 +75,9 @@ a silent log, say the loop was ended from outside: a loop that ends by itself pr
 session's text and how advance.sh ended, so a new result with lines after it is said as it is
 (advance.sh may have read it and failed, as when it cannot read the tracker)."""
 import calendar, glob, json, os, re, subprocess, sys, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _process  # noqa: E402
 
 AGENT = re.compile(r"(^|/)(claude|codex)$")
 # A host's own servers, never an agent: the subcommand, the first word after the executable that is
@@ -161,11 +167,7 @@ def cwds(pids):
 
 
 def procs():
-    rows = []
-    for line in run(["ps", "-axww", "-o", "pid=,command="]).splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            rows.append((parts[0], parts[1].replace("\t", " ")))
+    rows = _process.listing()
     if not rows:
         sys.exit("flow: ps listed no processes")
     where = cwds([pid for pid, command in rows if is_host(command) or VERIFY_RUN.search(command)])
@@ -186,8 +188,7 @@ def ancestors():
     found, pid = set(), os.getpid()
     while pid > 1 and pid not in found:
         found.add(pid)
-        out = run(["ps", "-o", "ppid=", "-p", str(pid)]).strip()
-        pid = int(out) if out.isdigit() else 0
+        pid = _process.parent_of(pid)
     return found
 
 
@@ -220,7 +221,8 @@ def works_in(pid, folder):
 
 
 def started(pids):
-    """Per pid: how many seconds it has run, as ps says."""
+    """Per pid: how many seconds it has run, as ps says; none where ps cannot run, so a session
+    with no status of its own is never stale there."""
     out = {}
     if not pids:
         return out
@@ -316,12 +318,12 @@ def owner():
     seen = set()
     while pid > 1 and pid not in seen:
         seen.add(pid)
-        out = run(["ps", "-o", "ppid=,command=", "-p", str(pid)]).strip().split(None, 1)
-        if len(out) < 2:
+        command = _process.command_of(pid)
+        if not command:
             return ""
-        if is_host(out[1]):
+        if is_host(command):
             return str(pid)
-        pid = int(out[0]) if out[0].isdigit() else 0
+        pid = _process.parent_of(pid)
     return ""
 
 

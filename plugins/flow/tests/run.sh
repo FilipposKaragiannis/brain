@@ -20,6 +20,10 @@ for tool in curl wget gh osascript notify-send claude codex launchctl; do
   chmod +x "$work/offline/$tool"
 done
 PATH="$work/offline:$PATH"; export PATH
+# A ps that cannot run, as a sandbox refuses the setuid /bin/ps on macOS. A test that needs it puts
+# this folder first in PATH.
+refused_ps="$work/refused-ps"
+mkdir -p "$refused_ps" && printf '#!/bin/sh\necho "ps: Operation not permitted" >&2\nexit 126\n' > "$refused_ps/ps" && chmod +x "$refused_ps/ps"
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
@@ -963,7 +967,7 @@ export HOST_LOG="$work/host.log"; realrepo="$(cd "$repo" && pwd -P)"
 for h in claude codex; do printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/$h"; chmod +x "$work/bin/$h"; done
 "$P/adapters/github/write-state.sh" 'gh#21' step=pr && "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/90
 "$P/jobs/comments.sh" claude >/dev/null
-check "comments job: runs the skill per open PR from the main worktree" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
+check "comments job: runs the skill per open PR from the main worktree when the item holds none" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
 check "comments job: one PR, one run" [ "$(grep -c comments "$HOST_LOG")" = "1" ]
 check "comments job: a mergeable PR gets no conflict note" sh -c "! grep -q 'Conflicts step' '$HOST_LOG'"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
@@ -1298,6 +1302,8 @@ mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fa
 fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
 mkdir -p .flow/log/comments.lock && echo "$fakejob" > .flow/log/comments.lock/pid
 check "job lock: live pid skips"  sh -c "'$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
+check "JobLockWhereNoPsRuns_LivePidSkips: pgrep sees the run, so a live lock is never taken for a stale one" \
+  sh -c "PATH='$refused_ps':\$PATH '$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
 mkdir -p .flow/log/comments.shared.lock && echo "$fakejob" > .flow/log/comments.shared.lock/pid && printf comments > .flow/log/comments.shared.lock/name
 check "job lock: another schedule of the job skips while one runs, as they share its state" sh -c "'$P/jobs/comments.sh' claude --as comments-fast | grep -q 'skipped: comments is running (pid $fakejob), which shares the comments job.s state' && [ ! -d .flow/log/comments-fast.lock ] && [ \"\$(cat .flow/log/comments.shared.lock/pid)\" = $fakejob ]"
 rm -rf .flow/log/comments.shared.lock
@@ -1444,7 +1450,11 @@ fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh
 sleep 1; fakechild="$(pgrep -P "$fakejob")"
 mkdir -p "$home2/log/comments.lock" && echo "$fakejob" > "$home2/log/comments.lock/pid"
 check "run refuses a job that is running" sh -c "FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
+check "RunWhereNoPsRuns_RefusesAJobThatIsRunning: pgrep sees the run, so no second one starts beside it" \
+  sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
 check "status shows a running job" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
+check "StatusWhereNoPsRuns_ShowsARunningJob: pgrep sees the run, so status never calls it stopped" \
+  sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
 FLOW_HOME="$home2" "$J" stop comments >/dev/null
 sleep 1
 check "stop ends the running run and every process under it" sh -c "[ -n '$fakechild' ] && ! kill -0 $fakejob 2>/dev/null && ! kill -0 $fakechild 2>/dev/null"
@@ -1894,14 +1904,14 @@ for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh"
 : > "$HOST_LOG"
 # The slow host notes its process group, then holds until the test says go.
 mkdir -p "$work/slow"; rm -f "$work/slow.go" "$work/slow.groups"
-printf '#!/bin/sh\nps -o pgid= -p $$ >> "%s/slow.groups"\nn=0; while [ ! -f "%s/slow.go" ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n + 1)); done\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' "$work" "$work" > "$work/slow/claude"; chmod +x "$work/slow/claude"
+printf '#!/bin/sh\npython3 -I -c "import os; print(os.getpgrp())" >> "%s/slow.groups"\nn=0; while [ ! -f "%s/slow.go" ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n + 1)); done\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' "$work" "$work" > "$work/slow/claude"; chmod +x "$work/slow/claude"
 PATH="$work/slow:$PATH" "$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1; code=$?
 check_all "--workers: the job starts the workers and ends before they do" '[ "$code" -eq 0 ] && [ ! -s "$HOST_LOG" ]'
 touch "$work/slow.go"
 waited=0; while { [ "$(grep -c . "$HOST_LOG")" -lt 2 ] || ls -d .flow/log/next-[0-9]*.lock; } >/dev/null 2>&1 && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
 check "--workers: the workers end within a minute" [ "$waited" -lt 60 ]
 [ "$waited" -lt 60 ] || for d in .flow/log/next-[0-9]*.lock; do kill "$(cat "$d/pid")" 2>/dev/null; rm -rf "$d"; done
-own_group="$(ps -o pgid= -p $$ | tr -d ' ')"
+own_group="$(python3 -I -c 'import os; print(os.getpgrp())')"
 check_all "--workers: each worker runs outside the job's process group, so the scheduler ending the job spares them" '[ "$(grep -c . "$work/slow.groups")" = 2 ] && ! tr -d " " < "$work/slow.groups" | grep -qx "$own_group"'
 check_all "--workers 2: two loops, two logs" '[ -f .flow/log/next-1.log ] && [ -f .flow/log/next-2.log ]'
 sleep 30 & held=$!
@@ -2236,12 +2246,16 @@ pings() { n="$(grep -c 'flow: health' "$work/offline.log" 2>/dev/null)"; echo "$
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
 printf '%s\t%s\n' "\$PWD" "\$*" >> "$hroot/host.log"
-ancestor=\$\$; doomed=""
-while [ "\${ancestor:-1}" -gt 1 ]; do
-  ancestor="\$(ps -o ppid= -p "\$ancestor" | tr -d ' ')"
-  [ "\${ancestor:-1}" != "$$" ] || break
-  case "\$(ps -o command= -p "\${ancestor:-1}")" in *run-unattended.sh*) doomed="\$doomed \$ancestor" ;; esac
-done
+doomed="\$(python3 -I -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import _process
+ancestor, doomed = _process.parent_of(os.getppid()), []
+while ancestor > 1 and ancestor != int(sys.argv[2]):
+    if "run-unattended.sh" in _process.command_of(ancestor):
+        doomed.append(str(ancestor))
+    ancestor = _process.parent_of(ancestor)
+print(" ".join(doomed))' "$P/scripts" "$$")"
 [ -z "\$doomed" ] || kill -9 \$doomed
 exit 0
 EOF
@@ -2508,6 +2522,23 @@ check "alive: Claude's MCP server in a worktree is not a session there" [ -z "$(
 # ps prints a command unquoted, and the desktop app keeps its CLI under Application Support.
 printf '7678\t%s\t/Users/x/Library/Application Support/Claude/claude-code/2.1.308/a93d/claude.app/Contents/MacOS/claude --output-format stream-json\n' "$we" > "$FLOW_HEALTH_PROCS"
 check "alive: a Claude desktop session, its CLI under a path with a space, is one" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7678" ]
+# A host session that calls health from a child shell, as the health job runs under one: started as
+# claude, it lists itself working in the worktree, then asks alive or owner.
+cat > "$work/host-calls-alive" <<'SH'
+printf '%s\t%s\tclaude\n' "$$" "$2" > "$3"
+sh -c 'printf "[%s]" "$(python3 -I "$1" alive "$3" local:task/none "$2")"' sh "$1" "$2" "$3"
+SH
+cat > "$work/host-calls-owner" <<'SH'
+python3 -I "$1" owner
+echo "$$"
+SH
+self_alive="$(PATH="$refused_ps:$PATH" bash -c 'exec -a claude sh "$@"' sh "$work/host-calls-alive" "$P/scripts/_health.py" "$we" "$hroot/procs-self")"
+check "AliveWhereNoPsRuns_SkipsTheHostItRunsUnder: the walk up reads each parent without ps, so health's own session is no run" \
+  [ "$self_alive" = "[]" ]
+owner_lines="$(PATH="$refused_ps:$PATH" bash -c 'exec -a claude sh "$@"' sh "$work/host-calls-owner" "$P/scripts/_health.py")"
+owner_found="$(echo "$owner_lines" | sed -n 1p)"; owner_host="$(echo "$owner_lines" | sed -n 2p)"
+check_all "OwnerWhereNoPsRuns_IsTheHostSessionAbove: next.sh records it as the run's pid, which health reads to keep a live run" \
+  '[ -n "$owner_host" ] && [ "$owner_found" = "$owner_host" ]'
 # A stale session: Claude's status file says idle for 3 days. A stand-in process gives ps a real pid.
 sleep 300 & idler=$!
 mkdir -p "$HOME/.claude/sessions"
@@ -2545,6 +2576,9 @@ grep -v "$(printf '\t')$g$(printf '\t')" .flow/events.log > "$hroot/events" || t
 sleep 1
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
 check "health: an empty claim with an agent working in its worktree is not released" sh -c "[ -f '$wg/.flow/claim.json' ] && ! grep -q 'released the empty claim' '$hroot/out'"
+PATH="$refused_ps:$PATH" env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
+check "HealthWhereNoPsRuns_ListsTheAgentInTheClaim: pgrep lists the processes, so health judges the claim instead of leaving every run unjudged" \
+  sh -c "[ -f '$wg/.flow/claim.json' ] && ! grep -q 'cannot list processes' '$hroot/out'"
 kill "$agent" 2>/dev/null; wait "$agent" 2>/dev/null
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
 check "health: the same claim is released once the agent is gone" sh -c "[ ! -f '$wg/.flow/claim.json' ] && grep -q 'released the empty claim' '$hroot/out'"
@@ -3128,6 +3162,7 @@ printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "%s/host77.lo
 "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: uncommitted changes with no note get one, and the pass is told to read it" sh -c "grep -q '90: .*holds uncommitted changes from an earlier run' .flow/log/comments.log && grep -q 'An earlier pass was cut short: read .*gh-77/comments-resume.md first' '$work/host77.log' && [ -f '$wm/.flow/reports/gh-77/comments-resume.md' ]"
 check "comments job: a pass that completes with the tree still dirty keeps the note" [ -f "$wm/.flow/reports/gh-77/comments-resume.md" ]
+check "CommentsJob_ItemHoldsAWorktree_PassStartsInIt: the pass's session starts in the item's worktree, the one place a sandboxed Claude session can commit" sh -c "[ \"\$(cd \"\$(head -1 '$work/host77.log' | cut -f2)\" && pwd -P)\" = \"\$(cd '$wm' && pwd -P)\" ]"
 rm "$wm/half.txt"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: a pass that completes with a clean tree removes the note" [ ! -f "$wm/.flow/reports/gh-77/comments-resume.md" ]
 # Another session in the item's worktree: the job never edits under it, named or not.
