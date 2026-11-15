@@ -23,9 +23,9 @@ fi
 if command -v claude >/dev/null 2>&1; then
   for dir in plugins/*/; do
     [ -f "$dir/plugin.source.json" ] || continue
-    claude plugin validate "$dir" >/dev/null 2>&1 || { echo "test: claude plugin validate failed: $dir"; claude plugin validate "$dir"; status=1; }
+    claude plugin validate --strict "$dir" >/dev/null 2>&1 || { echo "test: claude plugin validate failed: $dir"; claude plugin validate --strict "$dir"; status=1; }
   done
-  claude plugin validate .claude-plugin/marketplace.json >/dev/null 2>&1 || { echo "test: marketplace validate failed"; claude plugin validate .claude-plugin/marketplace.json; status=1; }
+  claude plugin validate --strict .claude-plugin/marketplace.json >/dev/null 2>&1 || { echo "test: marketplace validate failed"; claude plugin validate --strict .claude-plugin/marketplace.json; status=1; }
   tools/cost.sh || true   # a report with warnings, never a failure
 else
   echo "test: claude CLI not found, skipping plugin validate"

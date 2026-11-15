@@ -27,7 +27,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    - P1 or P2 only → `{"status": "done", "summary": "<verdict per axis>"}`; the P1s go into the
      PR body's review section, the P2s are comments.
    - the engine could not run (no diff, no standards block) → `fail` with the reason.
-5. Report once: verdict per axis and where the report is.
+5. End with one report: the verdict per axis and where the report is.
 
 Never grade findings yourself; the engine and its refutation pass do. Never review code the
 diff does not touch.

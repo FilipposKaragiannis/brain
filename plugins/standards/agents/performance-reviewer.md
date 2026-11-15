@@ -27,7 +27,7 @@ grading scale.
 
 ## Output
 Findings only: grade, rule id, file:line, the cost (measured or reasoned, in one sentence), the
-fix. Under 400 words.
+fix.
 
 ## Never
 - Never ask for an optimisation outside a hot path without a measurement. Never edit files.

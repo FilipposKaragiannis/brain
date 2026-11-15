@@ -68,7 +68,7 @@ not contents), the spec text or path, and the grading scale:
 - **P2**: a [judgement] disagreement or a nit. A comment.
 
 Every finding: grade, rule id (or spec line), file and line, what is wrong, the fix. Touched
-code only. Under 400 words per reviewer.
+code only.
 
 ## 5. Refute the blockers
 

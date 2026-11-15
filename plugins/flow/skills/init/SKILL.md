@@ -19,7 +19,7 @@ Install the flow plugin into the current repository, or refresh it after a plugi
    and to the user's `~/.codex` when it has none or with `--user-codex`; the installer says which.
    If it refuses a file edited by hand, do not add `--force` for the owner: show the refusal and
    ask. The edit belongs in the plugin source.
-2. **Read what it printed** and report once (W-07), in one short message: the files written,
+2. **Read what it printed** and end with one report (W-07): the files written,
    the `Gaps` list as is, what the owner reviews by hand, where the Codex rules and agents went
    (the `Codex rules and agents:` line), and that nothing is committed: `.flow/` stays out of git.
    When it prints a `git rm --cached` command for files an earlier install committed, pass it on

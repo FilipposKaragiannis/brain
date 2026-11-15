@@ -106,7 +106,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    item's `pr_host`, recorded by `link-pr`, else the PR body's footer.
 9. Delete `<reports>/comments-resume.md` once every thread of this pass is addressed or replied
    to, and the interrupted work is committed or named in a reply.
-10. Report once: the owner's answer carried out or raised again, the conflict merge, the checks
+10. End with one report: the owner's answer carried out or raised again, the conflict merge, the checks
    fixed or left red and why, threads addressed (valid, nit, wrong counts), commits, the owner's
    decisions pending, the quiz state.
 
