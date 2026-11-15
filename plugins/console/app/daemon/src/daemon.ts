@@ -24,6 +24,7 @@ import { closeConsoleServer, createConsoleServer } from './server.ts';
 import { SettingsStore } from './settings.ts';
 import type { SourceName } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
+import { machineProfileReaders, TerminalProfiles } from './terminalProfiles.ts';
 
 const EXIT_BAD_CONFIG = 2;
 /** How long a stop may take before the process ends anyway, streams or not. */
@@ -103,7 +104,10 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   const staticDir = existsSync(path.join(uiDist, 'index.html')) ? uiDist : null;
   /** Every terminal pane, across projects; the addon loads with the first one. */
   const panes = new PaneSessions({ spawner: ptySpawner(), host: machinePaneHost(env), scheduler: realScheduler, log });
-  const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes });
+  /** The panes' look, read at start so the page's first ask does not wait on iTerm's preferences. */
+  const terminal = new TerminalProfiles(machineProfileReaders(childProcessRunner, os.homedir()), log);
+  void terminal.profile();
+  const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes, terminal });
 
   privateFolder(config.stateDir);
   server.on('error', (error) => {
