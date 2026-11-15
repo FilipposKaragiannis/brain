@@ -98,23 +98,28 @@ unfinished_report() {
   exit 1
 }
 
+# say_live_run: true, saying how long it has run and the check it is on, while the item's run goes.
+say_live_run() {
+  live="$(verify_run_live "$reports" "$item")" || return 1
+  live_started="$(verify_run_field "$reports" started)"
+  echo "verify: a run of $item is already going (pid $live, $(duration $(( $(date +%s) - ${live_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
+}
+# make_run_files: removes the earlier run's record, reports, log and output, and makes the log and
+# the output new, never written through a link someone left at a name.
+make_run_files() {
+  rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out"
+  (set -C; : > "$log" && : > "$run_out")
+}
 # start_run: --start. Under the item's verify lock, so two starts never run the checks twice.
 start_run() {
   flow_lock "verify-$(item_slug "$item")" || die "another verify start of $item holds its lock" 1
-  if live="$(verify_run_live "$reports" "$item")"; then
-    live_started="$(verify_run_field "$reports" started)"
-    echo "verify: a run of $item is already going (pid $live, $(duration $(( $(date +%s) - ${live_started:-$(date +%s)} ))) in, now: $(running_now)); wait for it with verify.sh $item --wait"
-    exit 0
-  fi
+  if say_live_run; then exit 0; fi
   limit="$(limit_seconds)" || exit 2
-  # Each file is made new, never written through a link someone left at its name.
-  rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out" "$reports/.verify.run.$$.tmp"
-  (set -C; : > "$log" && : > "$run_out") || die "could not create the log of the verify run of $item"
+  make_run_files || die "could not create the log of the verify run of $item"
   started="$(date +%s)"; head_sha="$(git rev-parse --short HEAD)"
   pid="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" spawn "$run_out" sh "$FLOW_PLUGIN/scripts/verify.sh" "$item" --detached ${given_base:+--base "$given_base"})" &&
     [ -n "$pid" ] || die "could not start the verify run of $item"
-  (set -C; printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$pid" "$started" "$head_sha" "$limit" > "$reports/.verify.run.$$.tmp") &&
-    mv -f "$reports/.verify.run.$$.tmp" "$(verify_run_file "$reports")" || die "could not record the verify run of $item (pid $pid)"
+  verify_run_record "$reports" "$pid" "$started" "$head_sha" "$limit" || die "could not record the verify run of $item (pid $pid)"
   echo "verify: started the run of $item (pid $pid, limit $(duration "$limit")); wait for it with verify.sh $item --wait"
   exit 0
 }
@@ -141,18 +146,6 @@ wait_run() {
   exit
 }
 
-# signal_rest_of_group <signal>: the signal to every process of this run's group but this one. A
-# lone command substitution adds no shell of its own to the group, and pgrep never lists itself.
-signal_rest_of_group() {
-  for group_pid in $(pgrep -g "$$"); do [ "$group_pid" = "$$" ] || kill -s "$1" "$group_pid" 2>/dev/null; done
-}
-# stop_group: TERM to the rest of this run's group, then KILL to what is left after the grace.
-stop_group() {
-  signal_rest_of_group TERM
-  grace_waited=0
-  while [ "$(pgrep -g "$$")" != "$$" ] && [ "$grace_waited" -lt "$VERIFY_STOP_GRACE" ]; do sleep 1; grace_waited=$((grace_waited + 1)); done
-  signal_rest_of_group KILL
-}
 # child_ends_in_time <pid>: true when the plain run ends by itself, within the limit and before a
 # signal sets stop_cause; false, with it still running, when either comes first.
 child_ends_in_time() {
@@ -181,7 +174,7 @@ run_detached() {
   sh "$FLOW_PLUGIN/scripts/verify.sh" "$item" ${given_base:+--base "$given_base"} &
   child=$!
   child_ends_in_time "$child" || stop_cause="${stop_cause:-limit}"
-  [ -z "$stop_cause" ] || stop_group
+  [ -z "$stop_cause" ] || verify_stop_group
   wait "$child"; code=$?
   [ ! -f "$reports/verify.json" ] || exit "$code"
   attempts="$(next_attempt)"; head_sha="$(git rev-parse --short HEAD)"

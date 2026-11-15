@@ -11,6 +11,13 @@ VERIFY_END_WAIT=$((VERIFY_STOP_GRACE * 2))
 
 verify_run_file() { printf '%s/verify.run' "$1"; }
 
+# verify_run_record <reports> <pid> <started> <head> <limit>: writes the record to a new file
+# mktemp makes, never through a link left at a name, and renames it in. verify.sh --start calls it.
+verify_run_record() {
+  record_temp="$(mktemp "$1/.verify.run.XXXXXX")" &&
+    printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "$3" "$4" "$5" > "$record_temp" && mv -f "$record_temp" "$(verify_run_file "$1")"
+}
+
 # verify_run_field <reports> <key>: one field of the record, empty when there is none or when it
 # holds more than the field may: hex digits for head, digits for the numbers. Anyone in the worktree
 # can write the record, and the numbers reach shell arithmetic, where bash runs a command in an
@@ -49,6 +56,21 @@ verify_run_end() {
     sleep 1; end_waited=$((end_waited + 1))
   done
   printf '%s' "$ended_pid"
+}
+
+# verify_signal_rest_of_group <signal>: the signal to every process of the calling shell's group
+# but itself, the detached run's group, as it leads one. A lone command substitution adds no shell
+# of its own to the group, and pgrep never lists itself.
+verify_signal_rest_of_group() {
+  for group_pid in $(pgrep -g "$$"); do [ "$group_pid" = "$$" ] || kill -s "$1" "$group_pid" 2>/dev/null; done
+}
+# verify_stop_group: TERM to the rest of the detached run's group, then KILL to what is left after
+# VERIFY_STOP_GRACE. verify.sh --detached calls it at the limit or on a signal.
+verify_stop_group() {
+  verify_signal_rest_of_group TERM
+  grace_waited=0
+  while [ "$(pgrep -g "$$")" != "$$" ] && [ "$grace_waited" -lt "$VERIFY_STOP_GRACE" ]; do sleep 1; grace_waited=$((grace_waited + 1)); done
+  verify_signal_rest_of_group KILL
 }
 
 # verify_running_check <log>: the check the log shows running last, as its header says it
