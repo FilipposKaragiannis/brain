@@ -31,6 +31,15 @@ const NAME_HEADER_BYTES = 6;
 const NAME_RECORD_BYTES = 12;
 const COLLECTION_HEADER_BYTES = 12;
 const OFFSET_BYTES = 4;
+const COLLECTION_COUNT_AT = 8;
+const SFNT_TABLE_COUNT_AT = 4;
+const RECORD_OFFSET_AT = 8;
+const RECORD_LENGTH_AT = 12;
+const NAME_COUNT_AT = 2;
+const NAME_STRINGS_AT = 4;
+const NAME_ID_AT = 6;
+const NAME_STRING_LENGTH_AT = 8;
+const NAME_STRING_OFFSET_AT = 10;
 /** Bounds on what a malformed file can make the reader ask for. */
 const COLLECTION_FONTS_MAXIMUM = 256;
 const TABLES_MAXIMUM = 512;
@@ -106,7 +115,7 @@ export async function fontNames(read: ByteReader): Promise<FontNames | null> {
 }
 
 async function collectionNames(read: ByteReader, header: Uint8Array): Promise<string[]> {
-  const count = Math.min(view(header).getUint32(8), COLLECTION_FONTS_MAXIMUM);
+  const count = Math.min(view(header).getUint32(COLLECTION_COUNT_AT), COLLECTION_FONTS_MAXIMUM);
   const offsets = await read(COLLECTION_HEADER_BYTES, count * OFFSET_BYTES);
   const names: string[] = [];
   for (let index = 0; index + OFFSET_BYTES <= offsets.length; index += OFFSET_BYTES) {
@@ -120,11 +129,11 @@ async function collectionNames(read: ByteReader, header: Uint8Array): Promise<st
 async function postScriptName(read: ByteReader, start: number): Promise<string | null> {
   const header = await read(start, SFNT_HEADER_BYTES);
   if (header.length < SFNT_HEADER_BYTES) return null;
-  const tableCount = Math.min(view(header).getUint16(4), TABLES_MAXIMUM);
+  const tableCount = Math.min(view(header).getUint16(SFNT_TABLE_COUNT_AT), TABLES_MAXIMUM);
   const records = await read(start + SFNT_HEADER_BYTES, tableCount * TABLE_RECORD_BYTES);
   for (let at = 0; at + TABLE_RECORD_BYTES <= records.length; at += TABLE_RECORD_BYTES) {
     if (tagOf(records, at) !== NAME_TABLE_TAG) continue;
-    const table = await read(view(records).getUint32(at + 8), Math.min(view(records).getUint32(at + 12), NAME_TABLE_BYTES_MAXIMUM));
+    const table = await read(view(records).getUint32(at + RECORD_OFFSET_AT), Math.min(view(records).getUint32(at + RECORD_LENGTH_AT), NAME_TABLE_BYTES_MAXIMUM));
     return nameRecord(table, POSTSCRIPT_NAME_ID);
   }
   return null;
@@ -133,13 +142,13 @@ async function postScriptName(read: ByteReader, start: number): Promise<string |
 /** The first non-empty string with the name id in a name table: UTF-16 on the Unicode and Windows platforms, one byte a character on the Mac one. */
 function nameRecord(table: Uint8Array, nameId: number): string | null {
   if (table.length < NAME_HEADER_BYTES) return null;
-  const count = view(table).getUint16(2);
-  const strings = view(table).getUint16(4);
+  const count = view(table).getUint16(NAME_COUNT_AT);
+  const strings = view(table).getUint16(NAME_STRINGS_AT);
   for (let at = NAME_HEADER_BYTES; at + NAME_RECORD_BYTES <= table.length && at < NAME_HEADER_BYTES + count * NAME_RECORD_BYTES; at += NAME_RECORD_BYTES) {
     const record = view(table);
-    if (record.getUint16(at + 6) !== nameId) continue;
-    const from = strings + record.getUint16(at + 10);
-    const bytes = table.subarray(from, from + record.getUint16(at + 8));
+    if (record.getUint16(at + NAME_ID_AT) !== nameId) continue;
+    const from = strings + record.getUint16(at + NAME_STRING_OFFSET_AT);
+    const bytes = table.subarray(from, from + record.getUint16(at + NAME_STRING_LENGTH_AT));
     const text = (record.getUint16(at) === MAC_PLATFORM_ID ? ascii : utf16).decode(bytes).trim();
     if (text !== '') return text;
   }
