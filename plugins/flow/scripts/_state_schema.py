@@ -1,10 +1,10 @@
 """The flow record of an item as data (ADR 0004). Pure: no file, clock or environment is read here.
 
-_state.py is the edge that loads, locks and writes; this module checks pairs, seeds, merges and
-reads back. A pair is `key=text` for one of the twenty state keys (a dash reads as an underscore)
-or one of the record pairs `run:=<object|null>`, `run.step=<text>` and `gate:=<object>`. Pairs
-apply in the key map's order; a key given twice takes its last value. Objects that hold only empty
-fields read null, and lists are never null.
+_state.py is the edge that loads, locks and writes; this module checks pairs, merges and reads
+back; _state_views.py seeds a record and renders its views. A pair is `key=text` for one of the
+twenty state keys (a dash reads as an underscore) or one of the record pairs `run:=<object|null>`,
+`run.step=<text>` and `gate:=<object>`. Pairs apply in the key map's order; a key given twice takes
+its last value. Objects that hold only empty fields read null, and lists are never null.
 """
 import json
 from dataclasses import dataclass
@@ -244,20 +244,6 @@ def merged(record, pairs, now):
         if key in last_by_key:
             record = applied_pair(record, last_by_key[key])
     return dict(record, updated_at=now)
-
-
-def state_text(value):
-    if isinstance(value, list):
-        return ",".join(str(entry) for entry in value)
-    return "" if value is None else str(value)
-
-
-def seeded(item, tracker_state, machine, now):
-    pairs = [Pair(key, state_text(tracker_state[key])) for key in STATE_KEYS if key in tracker_state]
-    record = merged(new_record(item, now), [pair for pair in pairs if not pair_problem(pair)], now)
-    if tracker_state.get("step") or tracker_state.get("worktree"):
-        record = with_field(record, "claim", "machine", machine)
-    return record
 
 
 def taken(record, machine, host, now):

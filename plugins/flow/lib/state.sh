@@ -18,6 +18,8 @@
 #                               run.step=<text> and gate:=<object>, never both kinds in one write.
 #                               With tracker_state labels the state pairs go to the tracker first
 #                               (adapter write-state) and are recorded only when it took them.
+#                               The run file, the gate file and the claim's step follow a write
+#                               that names them (scripts/_state_views.py).
 #                               Prints nothing on stdout. Exit 0 written; the adapter's code when
 #                               the tracker refused, nothing written; 1 a record that does not
 #                               parse; 2 a refused pair, item or config, nothing written; 75 the

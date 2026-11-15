@@ -11,7 +11,9 @@ The record is <state dir>/<slug>.json, archived to <state dir>/closed/<slug>.jso
 <flow home>/locks/<slug>.lock. set, take and archive hold the lock for their file work, tried every
 LOCK_RETRY_SECONDS up to LOCK_TRIES times, then exit 75. A write goes to a temporary file and is
 renamed over the record. With no record yet, set and take start from the item the adapter read,
-given on stdin with --seed stdin (_state_schema.seeded). A record that does not parse or carries a
+given on stdin with --seed stdin, and the item's gate and run files (_state_views.seeded). set then
+renders the views its pairs name (_state_views), each through a temporary file and a rename; the
+claim file is the item's claim.json, or empty for none. A record that does not parse or carries a
 schema above this one is refused, exit 1. set checks every pair before it takes the lock (exit 2).
 get prints a string raw and anything else as JSON, nothing when the record or the path is absent.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.
@@ -27,6 +29,7 @@ from types import MappingProxyType
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _state_schema as schema  # noqa: E402
+import _state_views as views  # noqa: E402
 
 SEED_SOURCES = ("stdin", "none")
 COMMAND_OPTIONS = MappingProxyType({
@@ -38,6 +41,7 @@ COMMAND_OPTIONS = MappingProxyType({
 })
 COMMAND_POSITIONALS = MappingProxyType({"set": ("pairs", "*"), "get": ("key", None)})
 NO_RECORD = MappingProxyType({})
+NO_OBJECT = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -76,18 +80,40 @@ def read_record(path):
     return StoredRecord(record, schema.DONE)
 
 
-def write_record(path, record):
+def replace_file(path, text):
     folder = os.path.dirname(path)
     os.makedirs(folder, exist_ok=True)
     temporary = "%s/.%s.%d.tmp" % (folder, os.path.basename(path), os.getpid())
     try:
         with open(temporary, "w", encoding="utf-8") as handle:
-            json.dump(record, handle, indent=2, ensure_ascii=False)
-            handle.write("\n")
+            handle.write(text)
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.remove(temporary)
+
+
+def write_record(path, record):
+    replace_file(path, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+
+
+def read_object(path):
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return NO_OBJECT
+    return value if isinstance(value, dict) else NO_OBJECT
+
+
+def apply_view(change):
+    if change.content is not None:
+        replace_file(change.path, views.view_text(change.content))
+        return
+    try:
+        os.remove(change.path)
+    except FileNotFoundError:
+        return
 
 
 def acquired_lock(path):
@@ -132,7 +158,9 @@ def item_paths(options):
 def starting_record(record, options, tracker_state):
     if record is not NO_RECORD:
         return record
-    return schema.seeded(options.item, tracker_state, options.machine, options.now)
+    paths = views.view_paths(options.flow_home, options.item)
+    seed = views.Seed(tracker_state, read_object(paths.gate), read_object(paths.run))
+    return views.seeded(options.item, seed, options.machine, options.now)
 
 
 def not_recorded(options, pairs, outcome):
@@ -152,7 +180,11 @@ def command_set(options):
         refused = schema.write_outcome(current, pairs)
         if refused.code:
             return refused
-        write_record(item_paths(options).record, schema.merged(current, pairs, options.now))
+        updated = schema.merged(current, pairs, options.now)
+        write_record(item_paths(options).record, updated)
+        claim = views.ClaimFile(options.claim_file, read_object(options.claim_file))
+        for change in views.view_changes(views.view_paths(options.flow_home, options.item), claim, pairs, updated):
+            apply_view(change)
         return schema.DONE
 
     written = under_lock(item_paths(options), write)
