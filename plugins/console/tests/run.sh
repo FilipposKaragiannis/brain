@@ -196,10 +196,12 @@ for private in .claude .codex .config/brain-console; do
 done
 check "the demo builds" [ "$code" -eq 0 ]
 check "the demo project is a git repo with a commit on main" in_demo git rev-parse --verify -q refs/heads/main
-check "the demo project has three worktrees besides its own" [ "$(in_demo git worktree list | wc -l | tr -d ' ')" -eq 4 ]
+check "the demo project has four worktrees besides its own" [ "$(in_demo git worktree list | wc -l | tr -d ' ')" -eq 5 ]
 check "the demo project runs on flow's local adapter" sh -c "sed -n '/^adapters:/,/^[a-z]/p' '$demo/console-demo/.flow/config.yaml' | grep -q 'default: local'"
 check "one gate of each kind waits" [ "$(waiting_gates)" = "$(gate_kinds)" ]
 check "the demo has one ready item no run record holds" python3 -I -c "import glob, json, os, sys; held = {json.load(open(record))['item'] for record in glob.glob(os.path.join(sys.argv[2], '*.json'))}; sys.exit(len([item for item in json.loads(sys.argv[1]) if item['id'] not in held]) != 1)" "$(in_demo sh "$P/../flow/adapters/local/list-ready.sh")" "$demo/console-demo/.flow/runs"
+ready_item="$(in_demo sh "$P/../flow/adapters/local/list-ready.sh" | python3 -I -c "import glob, json, os, sys; held = {json.load(open(record))['item'] for record in glob.glob(os.path.join(sys.argv[1], '*.json'))}; print(next(item['id'] for item in json.load(sys.stdin) if item['id'] not in held))" "$demo/console-demo/.flow/runs")"
+check "the demo's ready item claims a free pool worktree" in_demo sh "$P/../flow/scripts/steward.sh" claim "$ready_item"
 check "claude on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v claude')" = "$demo/bin/claude" ]
 check "codex on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v codex')" = "$demo/bin/codex" ]
 # The stubs run by path: a broken PATH must never reach a real claude, codex, gh, crontab or launchctl.

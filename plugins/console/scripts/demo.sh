@@ -191,8 +191,9 @@ JSON
   chmod +x "$stubs"/*
 }
 
-# build_project: the repo, flow installed by its own init with two job schedules, and the three
-# pool worktrees: one for the gate with a session, one for the live run, one for the dead run.
+# build_project: the repo, flow installed by its own init with two job schedules, and the four
+# pool worktrees: one for the gate with a session, one for the live run, one for the dead run and
+# one free for the ready task.
 build_project() {
   mkdir -p "$home" "$project/.flow"
   printf '[user]\n\tname = Console Demo\n\temail = demo@example.com\n' > "$home/.gitconfig"
@@ -202,7 +203,7 @@ build_project() {
   in_project git commit -q -m "chore: the console demo"
   printf 'adapters:\n  default: local\nbase: main\nnotify:\n  desktop: false\njobs:\n  schedule:\n    next: every 30m\n    health: daily 02:00\n' > "$project/.flow/config.yaml"
   in_project sh "$flow/skills/init/scripts/init.sh" > /dev/null
-  for n in 1 2 3; do in_project "$flow/scripts/steward.sh" add "../console-demo-wt-$n" > /dev/null; done
+  for n in 1 2 3 4; do in_project "$flow/scripts/steward.sh" add "../console-demo-wt-$n" > /dev/null; done
 }
 
 # new_item <kind> <size> <title> <step>: a local item at that step (none: ready); prints its id.
@@ -346,7 +347,7 @@ add_jobs() {
   mkdir -p "$project/.flow/log"
   json_line host=codex cause=spend-limit "said=You have hit your usage limit. Try again at 3:00 PM." "at=$(minutes_ago 25)" "item=$2" > "$project/.flow/log/codex.stopped"
   {
-    json_line job=health host=claude "at=$(minutes_ago 540)" seconds:=14 exit:=0 "result=healthy: 3 worktrees, 0 stale"
+    json_line job=health host=claude "at=$(minutes_ago 540)" seconds:=14 exit:=0 "result=healthy: 4 worktrees, 0 stale"
     json_line job=next host=claude "at=$(minutes_ago 95)" seconds:=2 exit:=0 "result=quiet: nothing ready"
     json_line job=next host=codex "at=$(minutes_ago 65)" seconds:=96 exit:=1 "result=stopped: spend limit"
     json_line job=next host=claude "at=$(minutes_ago 35)" seconds:=1412 exit:=0 "result=advanced $1 to implement"
