@@ -104,8 +104,11 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   const staticDir = existsSync(path.join(uiDist, 'index.html')) ? uiDist : null;
   /** Every terminal pane, across projects; the addon loads with the first one. */
   const panes = new PaneSessions({ spawner: ptySpawner(), host: machinePaneHost(env), scheduler: realScheduler, log });
-  /** The panes' look, read at start so the page's first ask does not wait on iTerm's preferences. */
-  const terminal = new TerminalProfiles(machineProfileReaders(childProcessRunner, os.homedir()), log);
+  /**
+   * The panes' look, read at start so the page's first ask does not wait on iTerm's preferences.
+   * The account's home, not HOME: `defaults` reads the account's preferences whatever HOME says, and its fonts are the account's too.
+   */
+  const terminal = new TerminalProfiles(machineProfileReaders(childProcessRunner, os.userInfo().homedir), log);
   void terminal.profile();
   const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes, terminal });
 
