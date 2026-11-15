@@ -175,14 +175,16 @@ export class PaneSessions {
   }
 
   /**
-   * Kills the pane's process group, and closes the master while its process still runs, whose exit
-   * then finishes the pane. An ended pty is left alone: node-pty closed it before telling the exit,
-   * and its close hangs up the bare pid once more; the pane has finished with the kill.
+   * Kills the pane's process group while it still holds a process: a group that emptied during the
+   * grace is not signalled, as its id is free for the system to hand out again. Closes the master
+   * while its process still runs, whose exit then finishes the pane. An ended pty is left alone:
+   * node-pty closed it before telling the exit, and its close hangs up the bare pid once more; the
+   * pane has finished with the kill.
    */
   private killAfterGrace(pane: LivePane, cause: HangUpCause): void {
     pane.hangUp = { cause, grace: null };
     const processRunning = this.live.has(pane);
-    pane.pty.signal('SIGKILL');
+    if (pane.pty.groupRunning()) pane.pty.signal('SIGKILL');
     if (processRunning) { pane.pty.close(); return; }
     this.finishing.delete(pane);
     pane.finished.resolve();
