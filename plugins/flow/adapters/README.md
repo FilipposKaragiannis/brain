@@ -102,12 +102,13 @@ that landed. The Jira adapter's waits come from `FLOW_JIRA_RETRY_WAIT`.
 `attempts` (a number), `touches` (a list of globs), `changes` (the globs among them whose existing
 behavior the plan changes, a list), `held_by` (the item this one waits behind, empty when free),
 `held_reason` (one line, why) and `gate` (`none` when clear), and, once written, `gate_from`,
-`pr_host` (claude or codex, the host that wrote the PR), `answered`, `asked`, `answer`,
-`answered_at` and `answer_pending` (`next` or `comments`, what carries out the answer to a cleared
-gate; empty once a run took it). Those nineteen are the state keys. `write-state` takes them as
-`key=value` (a dash reads as an underscore): `touches` and `changes` are comma-separated,
-`attempts` a whole number, an empty value clears a key, `gate=none` clears the gate, `size` sets
-the item's size too. A key outside the nineteen exits 2 and writes nothing.
+`pr_host` (claude or codex, the host that wrote the PR), `base` (the branch the item's work starts
+from and merges into, written at its claim; empty for claims made before the base was recorded),
+`answered`, `asked`, `answer`, `answered_at` and `answer_pending` (`next` or `comments`, what
+carries out the answer to a cleared gate; empty once a run took it). Those twenty are the state keys.
+`write-state` takes them as `key=value` (a dash reads as an underscore): `touches` and `changes`
+are comma-separated, `attempts` a whole number, an empty value clears a key, `gate=none` clears
+the gate, `size` sets the item's size too. A key outside the twenty exits 2 and writes nothing.
 
 A gate's own data is not tracker state: the options it offers, who raised it, who carries the
 answer out, the condition it waits on and its footer live in the gate's record in the flow home,

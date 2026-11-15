@@ -26,7 +26,9 @@ path `codex plugin list` prints for `flow`). Call it `$P`.
 3. A `## Health` section appears when something is stale: a run record with no live process
    (the pool row says `dead run`, not `running on <host>`), a gate waiting past the reminder, or
    an answer that has waited past it on the run that carries it out (the gate column says
-   `none, answer waits on next` or `on the comments job` while one waits).
+   `none, answer waits on next` or `on the comments job` while one waits), or a claim whose
+   base is not on the remote (`base <b> is not on the remote`: its PR has no branch to merge into
+   until the base is pushed again). The `worktree` column names a base other than the config base.
    Say what it means in one line and that the `health` job clears and resumes it, or run
    `"$P/scripts/steward.sh" health --dry-run`.
 4. When a gate waits, say in one line per gate what the owner must do, and how to clear it:
