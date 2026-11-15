@@ -11,9 +11,9 @@
 #                                                when it is claimed, reserved, dirty or not in the
 #                                                pool. claim, sweep, health and next leave it alone
 #                                                until release frees it
-#   steward.sh release <item|path> [--force]     back to its idle branch (<base>-wt-<n>) at the base
-#                                                tip, delete the task branch, clear the claim; a
-#                                                closed item's reports go too
+#   steward.sh release <item|path> [--force]     end its verify run, back to its idle branch
+#                                                (<base>-wt-<n>) at the base tip, delete the task
+#                                                branch, clear the claim and a closed item's reports
 #   steward.sh reports <item>                    print (and create) the item's reports folder
 #   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
 #   steward.sh tmp remove <path>                 remove it and its branch
@@ -47,9 +47,9 @@
 #                                                item, busy or idle and for how long; a stale one
 #                                                (idle past jobs.health.stale_session, 24h) ends in
 #                                                the kill command. --stale lists only those
-#   steward.sh stop <item>                       end the item's run: its process and every one under
-#                                                it; the record goes, so health does not resume it;
-#                                                the claim, the worktree and its changes stay
+#   steward.sh stop <item>                       end the item's run: its process, every one under it
+#                                                and its verify run; the record goes (health does
+#                                                not resume it); the claim, worktree and changes stay
 #   steward.sh resume <item> [--host H] [--wait] [--model M] [--effort E]
 #                                                start a run whose process is gone again where it
 #                                                stopped, as health resumes one; a live run or no
@@ -69,6 +69,8 @@
 # Never resets a worktree with uncommitted changes: release exits 3 and says so (escalate). The one
 # exception is health's, for a free worktree whose changes the base's history already holds.
 . "$(dirname "$0")/../lib/flow.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/verify.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -94,6 +96,11 @@ base_ref() {
 }
 
 claim_of() { [ -f "$1/.flow/claim.json" ] && cat "$1/.flow/claim.json"; }
+# claimed_branch <branch>: true when a pool worktree's claim holds the branch. The pool shares its
+# refs, so the local head of such a branch is newer than the remote one: commits land there first.
+claimed_branch() {
+  [ -n "$(pool_paths | while read -r p; do [ "$(json_get "$(claim_of "$p")" branch)" = "$1" ] && { printf y; break; }; done)" ]
+}
 # reserved_by <path>: who reserved the worktree for manual work (reserve), or nothing.
 reserved_by() { json_get "$(claim_of "$1")" reserved; }
 
@@ -149,13 +156,12 @@ cmd_find() {
 
 cmd_claim() {
   item="$1"; shift
-  base="$base_branch"
-  while [ $# -gt 0 ]; do case "$1" in --base) base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
+  base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
   slug="$(item_slug "$item")"; branch="flow/$slug"
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null
-  ref="$(base_ref "$base")"
+  ref="$(base_ref "$base")"; claimed_branch "$base" && ref="$base"
   claim_lock
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then flow_unlock; printf '%s\n' "$existing"; return 0; fi
@@ -169,7 +175,7 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
-  write_state "$item" "worktree=$(basename "$free")" "last_event=$(now_iso) claimed $(basename "$free")"
+  write_state "$item" "worktree=$(basename "$free")" "base=$base" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
 
@@ -259,6 +265,7 @@ cmd_release() {
   c="$(claim_of "$p")"
   item="$(json_get "$c" item)"; branch="$(json_get "$c" branch)"; base="$(json_get "$c" base)"
   [ -n "$base" ] || base="$base_branch"
+  [ -z "$item" ] || verify_run_end "$item" "$p" >/dev/null || exit 1
   if dirty "$p"; then
     die "$p has uncommitted changes. Not resetting. Commit or stash them, then release again (escalation)." 3
   fi
@@ -1450,28 +1457,50 @@ run_of() {
 }
 
 # cmd_stop <item>: end the item's run: the process its record names, when it still runs the
-# unattended loop or a host session (the health job's test), and every process under it, as
-# jobs.sh stop ends a job's. The record goes, so the health job does not resume the run; the claim,
-# the worktree and its commits and changes stay, and the next job may continue the item. One
-# events.log line and the item's last_event say it. Nothing in flight is said, exit 0.
+# unattended loop or a host session (the health job's test), every process under it, as jobs.sh
+# stop ends a job's, and its verify run, record or none. The record goes, so the health job does not
+# resume the run; the claim, the worktree and its changes stay, and the next job may continue the
+# item. One events.log line and the item's last_event say it. Nothing in flight is said, exit 0.
+# A verify run still going after its wait is said on stderr, exit 1, the rest stopped all the same.
 cmd_stop() {
   item_id "$1"
-  run_of "$1" || { echo "$1: no run in flight, nothing to stop"; return 0; }
+  run_of "$1" || { stop_verify_alone "$1"; return; }
   run_procs
   st_live="$(hpy alive "$procs" "$1" "${rn_path:-$home}" "$rn_pid")"; run_procs_done
   st_pids=""
   [ -z "$rn_pid" ] || [ "$st_live" != "pid $rn_pid" ] || st_pids="$(echo "$rn_pid"; descendants "$rn_pid")"
   # shellcheck disable=SC2086
   [ -z "$st_pids" ] || kill -TERM $st_pids 2>/dev/null
+  stopped_verify="$(verify_run_end "$1" "$rn_path")"; verify_end_status=$?
   rm -f "$rn_rec"
   st_said="run of ${rn_step:-?} stopped by the owner"
   printf '%s\t%s\tstopped\t%s\n' "$(now_iso)" "$1" "$st_said" >> "$home/events.log"
   write_state "$1" "last_event=$(now_iso) $st_said"
-  if [ -n "$st_pids" ]; then
-    echo "$1: $st_said: $(printf '%s\n' $st_pids | sort -u | wc -l | tr -d ' ') process(es) ended; the claim and the worktree are kept as they are"
+  say_stopped "$1" "$st_said" "$st_pids" "$stopped_verify" "$st_live"
+  return "$verify_end_status"
+}
+# say_stopped <item> <what stop says> <pids ended> <verify pid ended> <other run>: stop's closing
+# sentence: how many processes ended, the verify run it ended, and another run that works in the
+# worktree, which it left alone.
+say_stopped() {
+  if [ -n "$5" ]; then other_run=" (another one works in its worktree: $5, left alone)"; else other_run=""; fi
+  if [ -n "$4" ]; then verify_ended=", and its verify run"; else verify_ended=""; fi
+  if [ -n "$3" ]; then
+    # shellcheck disable=SC2086
+    ended_count="$(printf '%s\n' $3 | sort -u | wc -l | tr -d ' ')"
+    echo "$1: $2: $ended_count process(es) ended$verify_ended; the claim and the worktree are kept as they are"
+  elif [ -n "$4" ]; then
+    echo "$1: $2: its verify run (process $4) ended, no other process of it was running$other_run; the record is cleared, so the health job does not resume it"
   else
-    echo "$1: $st_said: no process of it was running${st_live:+ (another one works in its worktree: $st_live, left alone)}; the record is cleared, so the health job does not resume it"
+    echo "$1: $2: no process of it was running$other_run; the record is cleared, so the health job does not resume it"
   fi
+}
+# stop_verify_alone <item>: stop of an item with no run record: ends its verify run in the claimed
+# worktree, if one goes. 1 when the run still goes after its wait, as verify_run_end says.
+stop_verify_alone() {
+  stopped_verify="$(verify_run_end "$1" "$(cmd_find "$1")")" || return 1
+  if [ -n "$stopped_verify" ]; then echo "$1: no run in flight; its verify run (process $stopped_verify) ended, nothing else to stop"
+  else echo "$1: no run in flight, nothing to stop"; fi
 }
 
 # cmd_resume <item> [--host H] [--wait] [--model M] [--effort E]: start again a run whose process is gone, as the health job

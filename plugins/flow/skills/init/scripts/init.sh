@@ -31,6 +31,7 @@ done
 FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/flow.sh"
 . "$plugin/lib/host.sh"
+. "$plugin/lib/base.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
@@ -191,6 +192,10 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  # harness:"
       echo "  #   command: ./tools/check-harness.sh"
       echo "  #   paths: [server/**, tools/**]"
+      echo "# The longest one verify run may take, every check together: past it the run is stopped and"
+      echo "# fails, naming the check it was on. Fit it to the slowest gate (s, m, h or d; unset, 2h)."
+      echo "# verify:"
+      echo "#   limit: 2h"
       echo "# Changed files matching these globs raise the feel-test gate after verify passes."
       echo "feel_test_paths:"
       echo "  # - client/unity/**"
@@ -369,6 +374,7 @@ EOF_TRACKERS
 $(host_jobs_problems)
 EOF_JOBS
   [ -z "$(cfg retro.commit)" ] || echo "init: note: .flow/config.yaml sets retro.commit, which is unused: the retro job commits nothing, as the lessons stay on this machine under .flow/; remove the key"
+  missing_base_notes | sed 's/^/init: note: /'
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"
 fi
 # A flow hook entry an older init printed for the shared settings is the owner's to remove: the

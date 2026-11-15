@@ -471,6 +471,26 @@ sh "$here/blockers.sh" > "$work/blockers.out" 2>&1; code=$?
 check "blockers: $(tail -n 1 "$work/blockers.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/blockers.out"
 
+echo "an item's recorded base is read everywhere (tests/base-readers.sh)"
+sh "$here/base-readers.sh" > "$work/base-readers.out" 2>&1; code=$?
+check "base-readers: $(tail -n 1 "$work/base-readers.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-readers.out"
+
+echo "an item's base is resolved once at claim (tests/base-claim.sh)"
+sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
+check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-claim.out"
+
+echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
+sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
+check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-detached.out"
+
+echo "stop and release end only the item's own verify run, and stop says when one outlives its wait (tests/verify-ends.sh)"
+sh "$here/verify-ends.sh" > "$work/verify-ends.out" 2>&1; code=$?
+check "verify-ends: $(tail -n 1 "$work/verify-ends.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-ends.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
@@ -3856,6 +3876,10 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"i0","type":"agent_message"
 python3 -I "$P/scripts/_host.py" codex "$work/codex-drop.out" "$work/codex-drop.err" 1 "$work/codex-drop.sum" > "$work/codex-drop.stdout" 2>/dev/null
 check "a codex session that ends on an error has that error as its last message, because the comment and the gate quote why it stopped (gh#169)" [ "$(jget last < "$work/codex-drop.sum")" = "stream disconnected before completion" ]
 check "a codex session's error stays off stdout, because stdout is what the session printed (gh#169)" [ "$(cat "$work/codex-drop.stdout")" = "reading the code" ]
+printf '%s' '{"type":"result","subtype":"success","is_error":true,"result":"You'"'"'ve hit your 5-hour limit \u00b7 resets 5:10am (Europe/London)"}' > "$work/window.out"
+: > "$work/window.err"
+python3 -I "$P/scripts/_host.py" claude "$work/window.out" "$work/window.err" 1 "$work/window.sum" >/dev/null 2>&1
+check "ClaudeTimedUsageWindow_ReportsSpendLimit: a retry before the window resets fails the same way" [ "$(jget cause < "$work/window.sum")" = spend-limit ]
 # Three silent sessions in a row on a fresh item: the attempt limit from profiles.json.
 max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
 ng="$("$P/scripts/new.sh" task "Ends with no result, every time" --size S --body "## Acceptance
