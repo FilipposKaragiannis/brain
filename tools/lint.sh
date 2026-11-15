@@ -135,6 +135,14 @@ for path in glob.glob("roster/briefs/*.md"):
 sys.exit(1 if bad else 0)
 PY
 
+# Every flow suite runs in the sandbox, so no test reaches the checkout it runs from or the
+# owner's config, and a run that does fails.
+for f in plugins/flow/tests/*.sh; do
+  case "$(basename "$f")" in _*|fake-*) continue ;; esac
+  grep -q '^\. "\$here/_sandbox.sh"; sandbox_enter "\$work" "\$P"$' "$f" && grep -q "^trap 'sandbox_close \$?' EXIT$" "$f" \
+    || fail "flow suite outside the sandbox (tests/_sandbox.sh): $f"
+done
+
 # The installed block must stay under 6 KB (Codex budget).
 size="$(wc -c < plugins/standards/rules/block.md | tr -d ' ')"
 [ "$size" -le 6144 ] || fail "standards block is $size bytes, limit 6144"

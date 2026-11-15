@@ -6,14 +6,10 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-# No test reaches the network, the desktop or a real agent. The owner's shell may export
-# FLOW_SLACK_WEBHOOK, so it is cleared, and these tools are stubs that log to $work/offline.log.
-# A test that needs one of them puts its own fake earlier in PATH.
-unset FLOW_SLACK_WEBHOOK
-# init writes the Codex rules and agents to ~/.codex when a repo has no .codex folder, so no test
-# runs with the owner's home.
-mkdir -p "$work/home" && HOME="$work/home" && export HOME && unset CODEX_HOME
+. "$here/_sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
+# No test reaches the network, the desktop or a real agent: these tools are stubs that log to
+# $work/offline.log. A test that needs one of them puts its own fake earlier in PATH.
 mkdir -p "$work/offline"
 for tool in curl wget gh osascript notify-send claude codex launchctl; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"

@@ -95,3 +95,10 @@ spec separately from the standards and never merge the two lists. Tests follow T
 T-13: a name of the shape Scenario_Outcome, a because string per assertion, one behaviour
 per test, no assertion on a double's calls.
 <!-- standards:end -->
+
+## Testing the flow plugin
+
+A test touches only stubs, fakes and throwaway files under its suite's temp folder: never the
+checkout it runs from, its worktrees, the owner's home or any real config. Every flow suite runs
+in `plugins/flow/tests/_sandbox.sh`, which enforces that and fails the run when the checkout
+changes. A new suite starts with the same two lines as `run.sh`; `tools/lint.sh` checks it.

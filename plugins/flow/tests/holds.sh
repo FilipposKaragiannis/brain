@@ -10,9 +10,9 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-unset FLOW_SLACK_WEBHOOK FLOW_HOME
-mkdir -p "$work/home" "$work/offline" && HOME="$work/home" && export HOME && unset CODEX_HOME
+. "$here/_sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
+mkdir -p "$work/offline"
 for tool in curl wget gh osascript notify-send claude codex launchctl; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
   chmod +x "$work/offline/$tool"
