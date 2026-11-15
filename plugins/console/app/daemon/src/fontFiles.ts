@@ -5,11 +5,8 @@ import path from 'node:path';
 export type FontFile = { path: string; contentType: FontContentType };
 export type FontContentType = 'font/ttf' | 'font/otf';
 
-/**
- * The PostScript names a font file holds, and the content type it is served as: null for a
- * collection (.ttc), which holds one name per font and which a web font cannot load.
- */
-export type FontNames = { postScriptNames: string[]; servedAs: FontContentType | null };
+/** The PostScript names a font file holds, and the content type it is served as. */
+export type FontNames = { postScriptNames: string[]; servedAs: FontContentType };
 
 /** Reads up to `length` bytes at `offset`; fewer at the end of the file. */
 export type ByteReader = (offset: number, length: number) => Promise<Uint8Array>;
@@ -18,7 +15,6 @@ export type ByteReader = (offset: number, length: number) => Promise<Uint8Array>
 export type FontLookup = (postScriptNames: readonly string[]) => Promise<FontFile | null>;
 
 const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.ttc', '.otc']);
-const COLLECTION_TAG = 'ttcf';
 const CFF_TAG = 'OTTO';
 const TRUETYPE_VERSION = 0x00010000;
 const APPLE_TRUETYPE_TAG = 'true';
@@ -29,9 +25,7 @@ const SFNT_HEADER_BYTES = 12;
 const TABLE_RECORD_BYTES = 16;
 const NAME_HEADER_BYTES = 6;
 const NAME_RECORD_BYTES = 12;
-const COLLECTION_HEADER_BYTES = 12;
-const OFFSET_BYTES = 4;
-const COLLECTION_COUNT_AT = 8;
+const TAG_BYTES = 4;
 const SFNT_TABLE_COUNT_AT = 4;
 const RECORD_OFFSET_AT = 8;
 const RECORD_LENGTH_AT = 12;
@@ -41,7 +35,6 @@ const NAME_ID_AT = 6;
 const NAME_STRING_LENGTH_AT = 8;
 const NAME_STRING_OFFSET_AT = 10;
 /** Bounds on what a malformed file can make the reader ask for. */
-const COLLECTION_FONTS_MAXIMUM = 256;
 const TABLES_MAXIMUM = 512;
 const NAME_TABLE_BYTES_MAXIMUM = 1024 * 1024;
 const ascii = new TextDecoder('latin1');
@@ -57,7 +50,7 @@ export function macFontFolders(home: string): string[] {
 
 /**
  * A lookup over the font folders: it reads each font file's name table, never trusts its file
- * name, and stops at a file with the first name. A name found only in a collection is skipped.
+ * name, and stops at a file with the first name. A collection is skipped by its tag, unread.
  */
 export function folderFontLookup(folders: readonly string[]): FontLookup {
   return async (postScriptNames) => bestFont(await fontFilesIn(folders), postScriptNames);
@@ -76,7 +69,7 @@ async function bestFont(files: readonly string[], wanted: readonly string[]): Pr
 
 async function rankedFont(file: string, wanted: readonly string[], toBeat: number): Promise<RankedFont | null> {
   const found = await fileNames(file);
-  if (found === null || found.servedAs === null) return null;
+  if (found === null) return null;
   const rank = firstRank(wanted, found.postScriptNames);
   return rank < 0 || rank >= toBeat ? null : { rank, file: { path: file, contentType: found.servedAs } };
 }
@@ -110,33 +103,23 @@ async function fileNames(file: string): Promise<FontNames | null> {
   }
 }
 
-/** The PostScript names a font file holds, from its name table; null when it is not a TrueType, OpenType or collection file. */
+/**
+ * The PostScript names a font file holds, from its name table; null when it is not a TrueType or
+ * OpenType file. A collection (.ttc) is null from its tag alone: a web font cannot load one.
+ */
 export async function fontNames(read: ByteReader): Promise<FontNames | null> {
-  const header = await read(0, COLLECTION_HEADER_BYTES);
+  const header = await read(0, SFNT_HEADER_BYTES);
   if (header.length < SFNT_HEADER_BYTES) return null;
   const kind = fontKind(header);
   if (kind === null) return null;
-  if (kind === 'collection') return { postScriptNames: await collectionNames(read, header), servedAs: null };
   const name = await postScriptName(read, 0);
   return { postScriptNames: name === null ? [] : [name], servedAs: kind };
 }
 
-function fontKind(header: Uint8Array): FontContentType | 'collection' | null {
+function fontKind(header: Uint8Array): FontContentType | null {
   const tag = tagOf(header, 0);
-  if (tag === COLLECTION_TAG) return 'collection';
   if (tag === CFF_TAG) return 'font/otf';
   return tag === APPLE_TRUETYPE_TAG || view(header).getUint32(0) === TRUETYPE_VERSION ? 'font/ttf' : null;
-}
-
-async function collectionNames(read: ByteReader, header: Uint8Array): Promise<string[]> {
-  const count = Math.min(view(header).getUint32(COLLECTION_COUNT_AT), COLLECTION_FONTS_MAXIMUM);
-  const offsets = await read(COLLECTION_HEADER_BYTES, count * OFFSET_BYTES);
-  const names: string[] = [];
-  for (let index = 0; index + OFFSET_BYTES <= offsets.length; index += OFFSET_BYTES) {
-    const name = await postScriptName(read, view(offsets).getUint32(index));
-    if (name !== null) names.push(name);
-  }
-  return names;
 }
 
 /** The PostScript name (name id 6) of the font whose table directory starts at `start`. */
@@ -174,7 +157,7 @@ function recordText(table: Uint8Array, at: number): string {
 }
 
 function tagOf(bytes: Uint8Array, at: number): string {
-  return ascii.decode(bytes.subarray(at, at + OFFSET_BYTES));
+  return ascii.decode(bytes.subarray(at, at + TAG_BYTES));
 }
 
 function view(bytes: Uint8Array): DataView {

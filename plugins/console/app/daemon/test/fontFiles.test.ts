@@ -103,9 +103,9 @@ test('MacRomanNameRecord_Decoded', async () => {
   assert.deepEqual((await fontNames(readerOver(font)))?.postScriptNames ?? 'no names', ['Menlo-Regular'], 'because older fonts carry their PostScript name as a one-byte Mac record');
 });
 
-test('Collection_NamesEveryFontButIsNotServed', async () => {
-  assert.deepEqual(await fontNames(readerOver(collection(['Menlo-Regular', 'Menlo-Bold']))), { postScriptNames: ['Menlo-Regular', 'Menlo-Bold'], servedAs: null },
-    'because a .ttc holds one name per font, and a web font cannot load a collection');
+test('Collection_NoNames', async () => {
+  assert.equal(await fontNames(readerOver(collection(['Menlo-Regular', 'Menlo-Bold']))), null,
+    'because a web font cannot load a collection, so its names are not worth reading');
 });
 
 test('BytesThatAreNotAFont_NoNames', async () => {
