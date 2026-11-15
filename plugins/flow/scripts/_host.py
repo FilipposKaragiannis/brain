@@ -15,10 +15,11 @@ import json, re, sys
 
 # The host's own words for a limit on spend and for a login that does not work, from the claude
 # and codex binaries: the Claude subscription and credit limits, the API's budget answer, Codex's
-# usage limit and quota; the logins that expired, were revoked or are missing.
+# usage limit and quota, the subscription's timed windows ("You've hit your 5-hour limit"); the
+# logins that expired, were revoked or are missing.
 SPEND = re.compile(r"credit balance is too low|out of extra usage|requires usage credits|seat type doesn.t include"
                    r"|usage allocation has been disabled|usage limit|spend limit|spending limit|ExceededBudget"
-                   r"|hit your limit|quota exceeded|insufficient_quota|credits_depleted|spend_control_reached"
+                   r"|hit your (?:[\w-]+ )?limit|quota exceeded|insufficient_quota|credits_depleted|spend_control_reached"
                    r"|purchase more credits", re.I)
 AUTH = re.compile(r"please run /login|not logged in|invalid api key|invalid auth token|oauth token (revoked|has expired)"
                   r"|login expired|session expired|authentication required|authentication_error|disabled api key authentication"
