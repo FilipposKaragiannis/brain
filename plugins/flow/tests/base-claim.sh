@@ -3,7 +3,8 @@
 # origin. From the parent's claimed branch, else the nearest ancestor's epic/<n> on the remote, else
 # a base: line in the body, else the config base; a base: line naming a missing branch or a name
 # that is not safe passes the item over, in any locale; a tampered claim.json base is never handed
-# on; steward's own claim refuses an unsafe --base; the epic walk stops at an id no adapter owns.
+# on; steward's own claim refuses an unsafe --base; the epic walk passes a task ancestor numbered like
+# an epic and stops at an id no adapter owns.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 
@@ -162,6 +163,18 @@ $body")"
   check "StewardClaimWithALetterOutsideAsciiInAUnicodeLocale_ExitsWithTheUsageCode [$locale_letting_the_letter_through]: steward's own claim refuses the name whatever the locale" \
     '[ "$accented_direct_code" -eq 2 ]'
 fi
+
+echo "base: a task ancestor never takes the epic branch its number shares"
+new_repo shared
+shared_epic="$("$local_adapter/create.sh" epic "Leagues" --size L --body x)"
+remote_branch "$(epic_of "$shared_epic")"; remote_commit "$(epic_of "$shared_epic")" leagues.txt
+numbered_like_the_epic="$(new_task "Fixtures")"
+check "TaskNumberedLikeAnEpic_SharesItsEpicBranchName: the task and the epic name the same epic/<n>, or the check below proves nothing" \
+  '[ "$(epic_of "$numbered_like_the_epic")" = "$(epic_of "$shared_epic")" ]'
+fixture_child="$(new_task "Fixture list" "$numbered_like_the_epic")"
+"$plugin/scripts/next.sh" "$fixture_child" >/dev/null 2>&1
+check "ChildOfAnUnclaimedTaskNumberedLikeAnEpic_TakesTheConfigBase: a task ancestor is no epic, so the claim never starts on the epic's history" \
+  '[ "$(claim_base "$fixture_child")" = main ]'
 
 echo "base: the epic walk stops at a parent id no adapter owns"
 # A parent id with no adapter prefix is read as an adapter name, so a path there would run any

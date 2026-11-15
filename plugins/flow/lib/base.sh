@@ -68,19 +68,23 @@ parent_branch() {
   [ -z "$parent_worktree" ] || claim_name "$parent_worktree" branch
 }
 
-# fetch_epic_ancestor <parent>: fetches the epic branch of each id from the parent up and prints the
-# first id whose epic branch exists; nothing, and 1, when none does within base_ancestor_levels,
-# before an id comes twice, or at an id no adapter owns (it is never read).
+# fetch_epic_ancestor <parent>: fetches the epic branch of each epic from the parent up and prints
+# the first epic whose epic branch exists; nothing, and 1, when none does within
+# base_ancestor_levels, before an id comes twice, or at an id no adapter owns (it is never read).
+# A task or bug ancestor is walked past, never matched: its number may also be an epic's.
 fetch_epic_ancestor() {
   ancestor="$1"; ancestors_seen=" "; ancestor_level=0
   while [ -n "$ancestor" ] && [ "$ancestor_level" -lt "$base_ancestor_levels" ]; do
     case "$ancestors_seen" in *" $ancestor "*) return 1 ;; esac
-    ancestor_branch="$(epic_branch "$ancestor")"
-    fetch_base "$ancestor_branch"
-    if base_exists "$ancestor_branch"; then printf '%s' "$ancestor"; return 0; fi
-    ancestors_seen="$ancestors_seen$ancestor "; ancestor_level=$((ancestor_level + 1))
     adapter_for "$ancestor" >/dev/null 2>&1 || return 1
-    ancestor="$(json_get "$(adapter read "$ancestor" </dev/null 2>/dev/null)" parent)"
+    ancestor_json="$(adapter read "$ancestor" </dev/null 2>/dev/null)"
+    if [ "$(json_get "$ancestor_json" kind)" = epic ]; then
+      ancestor_branch="$(epic_branch "$ancestor")"
+      fetch_base "$ancestor_branch"
+      if base_exists "$ancestor_branch"; then printf '%s' "$ancestor"; return 0; fi
+    fi
+    ancestors_seen="$ancestors_seen$ancestor "; ancestor_level=$((ancestor_level + 1))
+    ancestor="$(json_get "$ancestor_json" parent)"
   done
   return 1
 }
