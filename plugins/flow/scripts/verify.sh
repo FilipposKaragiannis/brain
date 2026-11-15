@@ -35,7 +35,8 @@
 usage="usage: verify.sh <item> [--base <ref>] [--start | --wait [seconds]]"
 [ $# -ge 1 ] || die "$usage" 2
 item="$1"; shift
-base=""; mode=run; wait_for=540
+# A --wait call by default: nine minutes, under the ten after which a host cuts a shell call.
+default_wait_seconds=540; base=""; mode=run; wait_for="$default_wait_seconds"
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) base="$2"; shift 2 ;;
@@ -59,8 +60,9 @@ next_attempt() {
   recorded_attempts="$(state_get "$item_json" attempts)"; printf '%s' $(( ${recorded_attempts:-0} + 1 ))
 }
 # report_text <text>: the text as one line of printable characters with no quote or backslash,
-# cut to 400, safe inside the JSON string of a minimal report.
-report_text() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' ' ' | LC_ALL=C tr -d '"\\' | cut -c1-400; }
+# cut to report_text_max_characters, safe inside the JSON string of a minimal report.
+report_text_max_characters=400
+report_text() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' ' ' | LC_ALL=C tr -d '"\\' | cut -c1-"$report_text_max_characters"; }
 # fail_report <check name> <summary> <sentence>: the minimal report with status fail and one failed
 # check, written without the builder and renamed in, with its verify.md twin saying the sentence.
 # Name, summary and sentence are report_text already; $attempts, $base and $head_sha are set.
