@@ -49,8 +49,9 @@ before the slices they block, and verify every blocker edge came back from a `re
    (its step becomes `split`, it waits on its children and its worktree goes back to the pool).
    The owner keeps it whole by closing the children and clearing the gate. Each child is
    claimed from the base its claim resolves (this item's branch while it holds a claim, else
-   the nearest `epic/<n>` branch on the remote among its ancestors, else the config base) and
-   opens its PR against it. When this branch holds commits a child needs (an ADR, a design
+   the nearest `epic/<n>` branch on the remote among its ancestors, else the branch a
+   `base: <branch>` line in the child's body names, else the config base) and opens its PR
+   against it. When this branch holds commits a child needs (an ADR, a design
    doc), name the branch in that child's `## Notes` ("Merge flow/gh-344 first: it holds ADR
    0022") and block the other children on it; its implementer merges the branch in, so its PR
    carries them.
