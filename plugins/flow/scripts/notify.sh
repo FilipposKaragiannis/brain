@@ -5,8 +5,9 @@
 # blank line, in the notification, never in the record's message. Desktop (osascript on macOS,
 # notify-send elsewhere) unless notify.desktop is false; Slack through the incoming webhook in the
 # FLOW_SLACK_WEBHOOK environment variable (so the URL stays out of the repository), else
-# notify.slack_webhook in the config; and always a record in <flow home>/gates/<item>.json plus a
-# line in <flow home>/events.log, which the board reads.
+# notify.slack_webhook in the config; and always the gate in the item's flow record (record_set,
+# which renders <flow home>/gates/<item>.json) plus a line in <flow home>/events.log, which the
+# board reads.
 # The events: idle (the next job found nothing ready; notify.idle) and health (the health job found
 # something: a gate waiting past its reminder, a diverged branch, a full pool; notify.health, on
 # unless set to false) and review-stalled (a reviewer stayed silent through every chase). A gate names the item by its
@@ -34,8 +35,8 @@ else
   [ -z "$footer" ] || body="$message
 
 $footer"
-  mkdir -p "$home/gates"
-  printf '%s' "$record" > "$home/gates/$(item_slug "$item").json"
+  mkdir -p "$home"
+  record_set "$item" "gate:=$record" || echo "flow: could not record the $gate gate of $item" >&2
   printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$item" "$gate" "$(printf '%s' "$message" | tr '\n' ' ')" >> "$home/events.log"
   title="flow: $gate on $item"
   read_item="$(adapter read "$item" 2>/dev/null)" || read_item=""

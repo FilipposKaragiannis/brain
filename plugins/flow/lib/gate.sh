@@ -202,7 +202,6 @@ clear_with_answer() {
     || die "cannot clear the ${gate:-gate} gate of $item; it stays"
   adapter comment "$item" --body "Gate cleared: $1" >/dev/null
   log_answered "$item" "$3"
-  rm -f "$record"
   keep_whole_when_children_closed && return 0
   case "$4:$step" in
     comments:*) echo "gate cleared on $item; it is done, so the comments job carries the answer out on its next pass on $pr (now: jobs/comments.sh <host> $item)" ;;
@@ -248,7 +247,6 @@ clear_back() {
     "answered_at=$sent_at" "answer_pending=next" "last_event=$sent_at gate sent back to $from: $1" >/dev/null
   adapter comment "$item" --body "Gate sent back to $from: $1" >/dev/null
   log_answered "$item" "${gate:-gate}, sent back to $from: $1"
-  rm -f "$record"
   echo "gate sent back on $item; run next $item to run $from again"
 }
 
@@ -261,7 +259,6 @@ clear_met() {
   record_set "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate, condition met" "asked=$asked" "answer=$met_note" \
     "answer_pending=" "last_event=$met_at gate cleared by health: $met_note" >/dev/null
   adapter comment "$item" --body "Gate cleared by the health job: $met_note" >/dev/null
-  rm -f "$record"
   step_runs "$step" && { echo "gate cleared on $item: $met_note; run next $item to continue"; return 0; }
   echo "gate cleared on $item: $met_note; nothing runs on it (step ${step:-none})"
 }

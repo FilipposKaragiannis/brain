@@ -109,7 +109,6 @@ gate_drop() {
   [ -n "$gate" ] || return 0
   record_set "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
     || die "cannot drop the $gate gate of $item; it stays"
-  rm -f "$record"
   case "$gate" in
     ambiguity|escalation) gate_unanswered "$item" "$gate" "$why" "$asked" ;;
     *)
