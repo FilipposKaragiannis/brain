@@ -2,6 +2,8 @@
 # Human gates.
 #   gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>]
 #                 [--raised-by <who>]       record the gate in the tracker, notify, stop the run;
+#                                           notify.sh writes the gate's record through the flow
+#                                           record, which renders <flow home>/gates/<item>.json;
 #                                           <from step> is the step whose work the gate judges
 #                                           (default: the item's step now), where --back returns.
 #                                           --options: a JSON array of 1 to 9 {label, text,
