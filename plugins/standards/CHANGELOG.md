@@ -1,5 +1,12 @@
 # standards
 
+## 1.4.2 (2026-11-15)
+
+- U-05 says a renamed line is touched code, and that a U-02 declaration covers a [judgement]
+  rule only: a [hard] rule on a moved line is met. It used to offer a declaration for any rule.
+- The standards reviewer grades a declared [hard] breach P0, not P2, and grades moved, copied and
+  renamed lines like new ones.
+
 ## 1.4.1 (2026-11-11)
 
 - The Codex reviewers follow the roster's new model map: the spec, security and performance
