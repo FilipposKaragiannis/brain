@@ -53,14 +53,14 @@ wait_until_ended() {
   return 124
 }
 
-# fake_run <name> [ignore-term]: a process in its own session whose command line reads
-# `verify.sh <item> --detached`, as a detached run's does, that waits until release-<name> exists
-# or the test's folder goes; with ignore-term it ignores TERM. Prints its pid.
+# fake_run <name> [ignore-term]: a process in its own session and the item's worktree whose command
+# line reads `verify.sh <item> --detached`, as a detached run's does, that waits for release-<name>
+# or for the test's folder to go; with ignore-term it ignores TERM. Prints its pid.
 fake_run() {
   mkdir -p "$work/fake-$1"
   { [ "${2:-}" != ignore-term ] || echo "trap '' TERM"
     echo "while [ ! -f $work/release-$1 ] && [ -d $work ]; do sleep 0.2; done"; } > "$work/fake-$1/verify.sh"
-  python3 -c 'import subprocess,sys; print(subprocess.Popen(["sh"] + sys.argv[1:], start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)' "$work/fake-$1/verify.sh" "$item" --detached
+  python3 -c 'import subprocess,sys; print(subprocess.Popen(["sh"] + sys.argv[2:], cwd=sys.argv[1], start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).pid)' "$worktree" "$work/fake-$1/verify.sh" "$item" --detached
 }
 # write_run_record <reports> <pid> [started] [limit]: a verify.run in lib/verify.sh's format.
 write_run_record() {

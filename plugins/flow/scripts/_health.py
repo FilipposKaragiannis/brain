@@ -9,6 +9,7 @@
   _health.py runs <runs dir> <procs file> <grace seconds>
   _health.py last-next <log dir>
   _health.py next-streaks <log dir>
+  _health.py works-in <pid> <folder>
   _health.py epoch <iso time>
   _health.py seconds <config key> <duration>
   _health.py ago <epoch>
@@ -60,6 +61,9 @@ stale or wrong one (held by itself; the holder unreadable, holding no claim and 
 changes sharing no path with the item's; in a cycle the newest hold, by its last `held` line in
 events.log). A hold whose holder closed is left alone: next.sh releases it with the merge note, then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
 than the old seconds (seconds a dash when no `held` line dates it, which counts as old).
+
+works-in exits 0 when the process works in the folder or under it, as procs reads its working
+directory, and 1 when it works elsewhere or its working directory cannot be read.
 
 died says in one line what a run that kept dying left behind, for the escalation gate: whether
 the step's result file was written after the last resume, and the last lines the run logged
@@ -206,6 +210,13 @@ def alive(rows, item, worktree, pid, skip_self=True):
         if is_host(command) and (named.search(command) or item in command.split()):
             return "process %s" % number
     return ""
+
+
+def works_in(pid, folder):
+    """True when the process's working directory is the folder or under it."""
+    where = cwds([pid]).get(pid, "")
+    real, top = os.path.realpath(where) if where else "", os.path.realpath(folder)
+    return bool(real) and (real == top or real.startswith(top.rstrip("/") + "/"))
 
 
 def started(pids):
@@ -646,6 +657,8 @@ def main():
         last_next(args[0])
     elif command == "next-streaks":
         next_streaks(args[0])
+    elif command == "works-in":
+        sys.exit(0 if works_in(args[0], args[1]) else 1)
     elif command == "epoch":
         print(epoch(args[0]))
     elif command == "seconds":

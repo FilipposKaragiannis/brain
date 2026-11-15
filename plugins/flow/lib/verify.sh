@@ -44,11 +44,14 @@ verify_run_live() {
 
 # verify_run_end <item> <worktree>: ends the item's detached run in the worktree when it still runs:
 # TERM to its process group, so its checks end too, and the run writes its fail report. Prints the
-# pid of the run it ended, nothing when none ran. When it still runs after VERIFY_END_WAIT, says so
-# on stderr and returns 1. steward.sh release and stop call it.
+# pid of the run it ended, nothing when none ran. A run whose working folder is not in the worktree
+# is another repository's run of the same item id, and is left alone, as the health job leaves it.
+# When it still runs after VERIFY_END_WAIT, says so on stderr and returns 1. steward.sh release
+# and stop call it.
 verify_run_end() {
   [ -n "$2" ] || return 0
   ended_pid="$(verify_run_live "$(reports_dir "$1" "$2")" "$1")" || return 0
+  python3 -I "$FLOW_PLUGIN/scripts/_health.py" works-in "$ended_pid" "$2" || return 0
   kill -s TERM -- "-$ended_pid" 2>/dev/null
   end_waited=0
   while process_running "$ended_pid"; do
