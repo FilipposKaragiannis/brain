@@ -3514,32 +3514,34 @@ done
 python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"Done. The old log said: "+sys.argv[1],"total_cost_usd":0}))' "$window_seen" > "$work/window/out"
 : > "$work/window/err"
 python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 0 "$work/window/sum" >/dev/null 2>&1
-check "TimeWindowLimit_QuotedByGoodSession_HasNoCause: a session that ends well and quotes a time-window line has no cause, because only a failed session can stop the host" \
-  [ "$(jget cause < "$work/window/sum")" = "" ]
-repo_free_of_cost_claims_and_stop="$work/windowloop"
-mkdir -p "$repo_free_of_cost_claims_and_stop" && cd "$repo_free_of_cost_claims_and_stop" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
-printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
-git worktree add -q -b main-wt-1 ../wl-wt-1
-printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wl-wt-1\nnotify:\n  desktop: false\n' > .flow/config.yaml
+check_all "TimeWindowLimit_QuotedByGoodSession_HasNoCause: a session that ends well and quotes a time-window line has no cause, because only a failed session can stop the host" \
+  '[ -s "$work/window/sum" ] && [ "$(jget cause < "$work/window/sum")" = "" ]'
+window_loop_folder="$work/windowloop"
+window_loop_repo="$window_loop_folder/app"
+mkdir -p "$window_loop_folder" && git init -q -b main "$window_loop_repo"
+(cd "$window_loop_repo" && git config user.email t@t && git config user.name t \
+  && printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow \
+  && git worktree add -q --detach ../window-loop-wt-1 \
+  && printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../window-loop-wt-1\nnotify:\n  desktop: false\n' > .flow/config.yaml)
 window_attempts_max="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
-wl="$("$P/scripts/new.sh" task "Cut by the 5-hour window" --size S --body "## Acceptance
+window_loop_item="$(cd "$window_loop_repo" && "$P/scripts/new.sh" task "Cut by the 5-hour window" --size S --body "## Acceptance
 - [ ] w")"
-wl_attempts="$("$P/adapters/local/read.sh" "$wl" | jget state.attempts)"
-: > "$COST_LOG"
-FAKE_HOST=window FAKE_HOST_SAID="$window_seen" PATH="$cpath" "$P/templates/run-unattended.sh" claude "$wl" --max-steps "$window_attempts_max" > "$work/windowloop.out" 2>&1
+window_loop_attempts="$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)"
+(cd "$window_loop_repo" && FAKE_HOST=window FAKE_HOST_SAID="$window_seen" PATH="$cpath" "$P/templates/run-unattended.sh" claude "$window_loop_item" --max-steps "$window_attempts_max" > "$work/windowloop.out" 2>&1)
+window_loop_stopped="$window_loop_repo/.flow/log/claude.stopped"
+window_loop_gate="$window_loop_repo/.flow/gates/$(item_slug "$window_loop_item").json"
 check "TimeWindowLimit_KeepsAttemptCount: a step cut by a time-window limit keeps its attempt count, because the limit is the host's, not the step's" \
-  [ "$("$P/adapters/local/read.sh" "$wl" | jget state.attempts)" = "$wl_attempts" ]
-check "TimeWindowLimit_StartsOneSession: a time-window limit is one session, no retry, because every retry before the reset fails the same way" \
-  [ "$(grep -c . "$COST_LOG")" = 1 ]
+  [ "$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)" = "$window_loop_attempts" ]
+check "TimeWindowLimit_RecordsOneSession: a time-window limit is one step session in runs.jsonl, no retry, because every retry before the reset fails the same way" \
+  python3 -I -c 'import json,sys; sessions=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; sys.exit([session["item"] for session in sessions] != [sys.argv[2]])' "$window_loop_repo/.flow/log/runs.jsonl" "$window_loop_item"
 check_all "TimeWindowLimit_StopsHostOnSpendLimit: the host is stopped on a spend limit, because no session can run until the window resets" \
-  '[ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ]'
+  '[ "$(jget cause < "$window_loop_stopped")" = spend-limit ]'
 check_all "TimeWindowLimit_StopsHostWithItsLine: the stopped host keeps the host's line, because it says when the window resets" \
-  '[ "$(jget said < .flow/log/claude.stopped)" = "$window_seen" ]'
+  '[ "$(jget said < "$window_loop_stopped")" = "$window_seen" ]'
 check_all "TimeWindowLimit_GateQuotesHostLine: the item's gate quotes the host's line, because it says when the window resets" \
-  'jget message < ".flow/gates/$(item_slug "$wl").json" | grep -qF "$window_seen"'
+  'jget message < "$window_loop_gate" | grep -qF "$window_seen"'
 check_all "TimeWindowLimit_GateIsNotAttemptLimit: the item's gate is not the attempt limit's escalation, because no attempt failed" \
-  '[ -f ".flow/gates/$(item_slug "$wl").json" ] && ! jget message < ".flow/gates/$(item_slug "$wl").json" | grep -qE "Step [a-z-]+ failed [0-9]+ times"'
-cd "$work/cost/app"
+  '[ -f "$window_loop_gate" ] && ! jget message < "$window_loop_gate" | grep -qE "Step [a-z-]+ failed [0-9]+ times"'
 
 echo "unattended loop: a pick works on after a gate"
 # A plugin copy whose next.sh hands out the items in $GL/queue (a named one as asked) and whose
