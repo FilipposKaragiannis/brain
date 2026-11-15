@@ -14,7 +14,7 @@
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
 # the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
-# else the config base. Exit 0 on pass, 1 on fail.
+# else the config base. Exit 0 on pass, 1 on fail; 2 when --base is no valid branch name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -50,6 +50,7 @@ case "$wait_for" in ''|*[!0-9]*) die "--wait takes a number of seconds, not $wai
 given_base="$base"
 root="$(repo_root)" || die "not in a git repository"
 cd "$root" || exit 1
+[ -z "$base" ] || base_name_valid "$base" || die "--base takes a valid branch name" 2
 [ -n "$base" ] || base="$(recorded_base "$root")"
 reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"
 log="$reports/verify.log"; run_out="$reports/verify.out"
