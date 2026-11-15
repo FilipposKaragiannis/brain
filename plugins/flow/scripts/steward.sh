@@ -96,6 +96,11 @@ base_ref() {
 }
 
 claim_of() { [ -f "$1/.flow/claim.json" ] && cat "$1/.flow/claim.json"; }
+# claimed_branch <branch>: true when a pool worktree's claim holds the branch. The pool shares its
+# refs, so the local head of such a branch is newer than the remote one: commits land there first.
+claimed_branch() {
+  [ -n "$(pool_paths | while read -r p; do [ "$(json_get "$(claim_of "$p")" branch)" = "$1" ] && { printf y; break; }; done)" ]
+}
 # reserved_by <path>: who reserved the worktree for manual work (reserve), or nothing.
 reserved_by() { json_get "$(claim_of "$1")" reserved; }
 
@@ -156,7 +161,7 @@ cmd_claim() {
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
   slug="$(item_slug "$item")"; branch="flow/$slug"
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null
-  ref="$(base_ref "$base")"
+  ref="$(base_ref "$base")"; claimed_branch "$base" && ref="$base"
   claim_lock
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then flow_unlock; printf '%s\n' "$existing"; return 0; fi

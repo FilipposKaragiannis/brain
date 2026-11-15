@@ -204,5 +204,17 @@ check "ChildOfAParentIdNoAdapterOwns_RunsNothingAtThatPath: the walk stops at th
 check "ChildOfAParentIdNoAdapterOwns_TakesTheConfigBase: the walk finds no epic past the id, so the claim falls through to the config base" \
   '[ "$(claim_base "$stray")" = main ]'
 
+echo "base: a child of a claimed parent starts from the parent's local tip"
+new_repo ahead
+ahead_parent="$(new_task "Score board")"
+ahead_parent_worktree="$("$plugin/scripts/steward.sh" claim "$ahead_parent" 2>/dev/null)"
+ahead_parent_branch="flow/$(slug "$ahead_parent")"
+git -C "$ahead_parent_worktree" push -q origin "$ahead_parent_branch"
+printf 'unpushed\n' > "$ahead_parent_worktree/unpushed.txt" && git -C "$ahead_parent_worktree" add unpushed.txt && git -C "$ahead_parent_worktree" commit -qm unpushed
+ahead_kid="$(new_task "Score colours" "$ahead_parent")"
+"$plugin/scripts/next.sh" "$ahead_kid" >/dev/null 2>&1
+check "ChildOfAClaimedParentWithUnpushedCommits_BranchHoldsTheParentsLocalTip: the parent's newest commit is on the child's branch, not only what the remote has" \
+  'git -C "$("$plugin/scripts/steward.sh" find "$ahead_kid")" merge-base --is-ancestor "refs/heads/$ahead_parent_branch" HEAD'
+
 [ "$fails" -eq 0 ] && { echo "base-claim: ok"; exit 0; }
 echo "base-claim: $fails failed"; exit 1
