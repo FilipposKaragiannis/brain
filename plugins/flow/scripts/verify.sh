@@ -111,16 +111,18 @@ make_run_files() {
   rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out"
   (set -C; : > "$log" && : > "$run_out")
 }
-# start_run: --start. Under the item's verify lock, so two starts never run the checks twice.
-start_run() {
+# may_start: takes the item's verify lock, so two starts never run the checks twice. False, saying
+# how far it is, while a run of the item still goes.
+may_start() {
   flow_lock "verify-$(item_slug "$item")" || die "another verify start of $item holds its lock" 1
-  if say_live_run; then exit 0; fi
+  ! say_live_run
+}
+# start_run: --start.
+start_run() {
+  may_start || exit 0
   limit="$(limit_seconds)" || exit 2
   make_run_files || die "could not create the log of the verify run of $item"
-  started="$(date +%s)"; head_sha="$(git rev-parse --short HEAD)"
-  pid="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" spawn "$run_out" sh "$FLOW_PLUGIN/scripts/verify.sh" "$item" --detached ${given_base:+--base "$given_base"})" &&
-    [ -n "$pid" ] || die "could not start the verify run of $item"
-  verify_run_record "$reports" "$pid" "$started" "$head_sha" "$limit" || die "could not record the verify run of $item (pid $pid)"
+  pid="$(verify_run_start "$reports" "$run_out" "$limit" "$item" "$given_base")" || exit 1
   echo "verify: started the run of $item (pid $pid, limit $(duration "$limit")); wait for it with verify.sh $item --wait"
   exit 0
 }
