@@ -106,7 +106,7 @@ async function fileNames(file: string): Promise<FontNames | null> {
   } catch {
     return null;
   } finally {
-    await handle.close();
+    await handle.close().catch(() => undefined);
   }
 }
 

@@ -2,8 +2,10 @@ import type { CommandRunner } from './collectors/exec.ts';
 import { scriptEnvironment } from './collectors/exec.ts';
 import type { FontFile, FontLookup } from './fontFiles.ts';
 import { folderFontLookup, macFontFolders } from './fontFiles.ts';
+import type { ItermProfile } from './itermProfile.ts';
 import { defaultItermProfile } from './itermProfile.ts';
 import type { Logger } from './log.ts';
+import { errorMessage } from './log.ts';
 import type { PlistValue } from './plist.ts';
 import { parsePlistXml } from './plist.ts';
 import type { TerminalProfile } from './terminalProtocol.ts';
@@ -28,9 +30,12 @@ const DEFAULTS_TIMEOUT_MILLISECONDS = 10000;
 
 type Resolved = { profile: TerminalProfile; font: FontFile | null };
 
+const CONSOLE_LOOK_WITHOUT_FONT: Resolved = { profile: { iterm: null, font: null }, font: null };
+
 /**
  * The look the terminal panes take: iTerm's default profile when there is one, and the font file
- * the daemon serves for it. Read once, on the first ask, and kept until the daemon stops.
+ * the daemon serves for it. Read once, on the first ask, and kept until the daemon stops. Never
+ * rejects: when the profile cannot be read the panes keep the console's look and font.
  */
 export class TerminalProfiles {
   private readonly readers: TerminalProfileReaders;
@@ -57,8 +62,19 @@ export class TerminalProfiles {
   }
 
   private async read(): Promise<Resolved> {
-    const preferences = await this.readers.readItermPreferences();
-    const iterm = preferences === null ? null : defaultItermProfile(preferences);
+    try {
+      const preferences = await this.readers.readItermPreferences();
+      return await this.resolveFor(preferences === null ? null : defaultItermProfile(preferences));
+    } catch (error) {
+      this.log.warn('terminal.profile.unreadable', { error: errorMessage(error) });
+      return this.resolveFor(null).catch((fontError: unknown) => {
+        this.log.warn('terminal.font.unreadable', { error: errorMessage(fontError) });
+        return CONSOLE_LOOK_WITHOUT_FONT;
+      });
+    }
+  }
+
+  private async resolveFor(iterm: ItermProfile | null): Promise<Resolved> {
     const fontName = iterm?.fontName ?? null;
     const font = await this.readers.findFont(fontName === null ? CONSOLE_FONT_NAMES : [fontName, ...CONSOLE_FONT_NAMES]);
     this.log.info('terminal.profile', { iterm: iterm !== null, font: font?.path ?? null });

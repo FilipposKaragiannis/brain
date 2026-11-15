@@ -16,16 +16,18 @@ const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quo
 const HEXADECIMAL = 16;
 const DECIMAL = 10;
 const LAST_CODE_POINT = 0x10ffff;
+const NESTING_DEPTH_MAXIMUM = 64;
 
 /**
  * The value of an XML property list, as `plutil -convert xml1` and `defaults export` write one;
- * null when the text is not one. Comments and processing instructions inside the `<plist>` are not read.
+ * null when the text is not one, or nests deeper than `NESTING_DEPTH_MAXIMUM`. Comments and
+ * processing instructions inside the `<plist>` are not read.
  */
 export function parsePlistXml(xml: string): PlistValue | null {
   const tokens = plistTokens(xml);
   if (tokens === null) return null;
   const reader = new TokenReader(tokens);
-  const value = readValue(reader, reader.nextElement());
+  const value = readValue(reader, reader.nextElement(), 0);
   if (value === undefined || reader.nextElement() !== undefined) return null;
   return value;
 }
@@ -82,12 +84,12 @@ class TokenReader {
   }
 }
 
-function readValue(reader: TokenReader, start: Token | undefined): PlistValue | undefined {
+function readValue(reader: TokenReader, start: Token | undefined, depth: number): PlistValue | undefined {
   if (start?.kind === 'empty') return emptyValue(start.name);
   if (start?.kind !== 'open') return undefined;
   switch (start.name) {
-    case 'dict': return readDictionary(reader);
-    case 'array': return readArray(reader);
+    case 'dict': return readDictionary(reader, depth);
+    case 'array': return readArray(reader, depth);
     case 'string': case 'date': case 'data': return reader.textUntilClose(start.name);
     case 'integer': case 'real': return numberValue(reader.textUntilClose(start.name));
     default: return undefined;
@@ -122,34 +124,38 @@ function decimalNumber(spelt: string): number | undefined {
   return Number.isNaN(value) ? undefined : value;
 }
 
-function readDictionary(reader: TokenReader): PlistDictionary | undefined {
+function readDictionary(reader: TokenReader, depth: number): PlistDictionary | undefined {
   const entries: Record<string, PlistValue> = {};
   for (let start = reader.nextElement(); start !== undefined; start = reader.nextElement()) {
     if (start.kind === 'close') return start.name === 'dict' ? entries : undefined;
-    const entry = readEntry(reader, start);
+    const entry = readEntry(reader, start, depth);
     if (entry === undefined) return undefined;
     entries[entry.key] = entry.value;
   }
   return undefined;
 }
 
-function readEntry(reader: TokenReader, start: Token): { key: string; value: PlistValue } | undefined {
+function readEntry(reader: TokenReader, start: Token, depth: number): { key: string; value: PlistValue } | undefined {
   if (start.kind !== 'open' || start.name !== 'key') return undefined;
   const key = reader.textUntilClose('key');
   if (key === undefined) return undefined;
-  const value = readValue(reader, reader.nextElement());
+  const value = readNested(reader, reader.nextElement(), depth);
   return value === undefined ? undefined : { key, value };
 }
 
-function readArray(reader: TokenReader): PlistValue[] | undefined {
+function readArray(reader: TokenReader, depth: number): PlistValue[] | undefined {
   const values: PlistValue[] = [];
   for (let start = reader.nextElement(); start !== undefined; start = reader.nextElement()) {
     if (start.kind === 'close') return start.name === 'array' ? values : undefined;
-    const value = readValue(reader, start);
+    const value = readNested(reader, start, depth);
     if (value === undefined) return undefined;
     values.push(value);
   }
   return undefined;
+}
+
+function readNested(reader: TokenReader, start: Token | undefined, depth: number): PlistValue | undefined {
+  return depth < NESTING_DEPTH_MAXIMUM ? readValue(reader, start, depth + 1) : undefined;
 }
 
 function decodeEntities(text: string): string {
