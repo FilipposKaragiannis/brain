@@ -65,6 +65,8 @@ check "BaseLineNamingAMissingBranch_ClaimsNoWorktree: the item is never claimed 
   '[ -z "$("$plugin/scripts/steward.sh" find "$missing")" ]'
 check "BaseLineNamingAMissingBranch_LastEventNamesTheBranch: the owner sees which base is missing" \
   'state "$missing" last_event | grep -qF plan/gone'
+check "BaseNameRefused_IsReadFromLibBase: an empty reason matches any last_event, so the rows below would prove nothing" \
+  '[ -n "$base_name_refused" ]'
 for unsafe_name in "$name_with_a_shell_character" "$name_git_reads_as_an_option" \
   "$name_climbing_a_level" "$name_from_the_root" "$name_with_a_letter_outside_ascii"; do
   unsafe="$(new_task "Odd plan $unsafe_name" "" "base: $unsafe_name
@@ -75,9 +77,9 @@ $body")"
   check "BaseLineOutsideTheSafeNames_NamedRunExitsWithThePassOverCode [$unsafe_name]: a refused base passes the item over like a missing one" \
     '[ "$unsafe_code" -eq 4 ]'
   check "BaseLineOutsideTheSafeNames_LastEventSaysTheNameIsNotValid [$unsafe_name]: the owner sees the base was refused as a name, not reported missing from the remote" \
-    '[ -n "$base_name_refused" ] && state "$unsafe" last_event | grep -qF -- "$base_name_refused"'
+    'state "$unsafe" last_event | grep -qF -- "$base_name_refused"'
   check "BaseLineOutsideTheSafeNames_LastEventLeavesTheNameOut [$unsafe_name]: a refused name may carry control characters, so it never reaches last_event" \
-    'last_event="$(state "$unsafe" last_event)"; [ -n "$last_event" ] && ! printf "%s\n" "$last_event" | grep -qF -- "$unsafe_name"'
+    '! state "$unsafe" last_event | grep -qF -- "$unsafe_name"'
 done
 spaced="$(new_task "Spaced plan" "" "base: $name_with_a_space
 $body")"
@@ -127,26 +129,37 @@ check "StewardClaimWithABareBaseOption_ExitsWithTheUsageCode: --base names no br
 
 echo "base: a letter outside ASCII is refused in a UTF-8 locale too"
 # A UTF-8 locale lets a letter outside ASCII through the ranges A-Za-z, so the refusal rows run
-# in one. C and some C.UTF-8 builds refuse it with no check at all, so they would pass on nothing.
-# A fresh repo, so a full pool cannot pass the item over in place of the name check.
-new_repo accented
-locale_letting_the_letter_through=en_US.UTF-8
-check "UnicodeLocale_LetsTheLetterThroughTheRanges: the rows below can only fail when the locale lets the letter through the ranges" \
-  '[ "$(LC_ALL=$locale_letting_the_letter_through sh -c "case \"\$1\" in *[!A-Za-z0-9._/-]*) echo refused ;; *) echo let-through ;; esac" sh "$name_with_a_letter_outside_ascii")" = let-through ]'
-remote_branch "$name_with_a_letter_outside_ascii"
-accented="$(new_task "Accented plan" "" "base: $name_with_a_letter_outside_ascii
+# in one. C and some C.UTF-8 builds refuse it with no check at all, so they would pass on nothing:
+# the rows take the first installed UTF-8 locale that lets the letter through, and are skipped,
+# said, when none does. A fresh repo, so a full pool cannot pass the item over in place of the
+# name check.
+# lets_the_letter_through <locale>: true when the ranges A-Za-z let the letter through there.
+lets_the_letter_through() {
+  [ "$(LC_ALL=$1 sh -c 'case "$1" in *[!A-Za-z0-9._/-]*) echo refused ;; *) echo let-through ;; esac' sh "$name_with_a_letter_outside_ascii" 2>/dev/null)" = let-through ]
+}
+locale_letting_the_letter_through=""
+for candidate_locale in en_US.UTF-8 $(locale -a 2>/dev/null | grep -i 'utf-\{0,1\}8$'); do
+  if lets_the_letter_through "$candidate_locale"; then locale_letting_the_letter_through="$candidate_locale"; break; fi
+done
+if [ -z "$locale_letting_the_letter_through" ]; then
+  echo "  skip no installed UTF-8 locale lets a letter outside ASCII through the ranges, so the rows that refuse it in one cannot run here"
+else
+  new_repo accented
+  remote_branch "$name_with_a_letter_outside_ascii"
+  accented="$(new_task "Accented plan" "" "base: $name_with_a_letter_outside_ascii
 $body")"
-LC_ALL=$locale_letting_the_letter_through "$plugin/scripts/next.sh" "$accented" >/dev/null 2>&1; accented_code=$?
-check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_ClaimsNoWorktree: the branch is on the remote, but its name is refused whatever the locale" \
-  '[ -z "$("$plugin/scripts/steward.sh" find "$accented")" ]'
-check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_NamedRunExitsWithThePassOverCode: a refused base passes the item over like a missing one" \
-  '[ "$accented_code" -eq 4 ]'
-check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_LastEventSaysTheNameIsNotValid: the refusal is the name check, not a missing branch" \
-  '[ -n "$base_name_refused" ] && state "$accented" last_event | grep -qF -- "$base_name_refused"'
-accented_direct="$(new_task "Accented direct claim")"
-LC_ALL=$locale_letting_the_letter_through "$plugin/scripts/steward.sh" claim "$accented_direct" --base "$name_with_a_letter_outside_ascii" >/dev/null 2>&1; accented_direct_code=$?
-check "StewardClaimWithALetterOutsideAsciiInAUnicodeLocale_ExitsWithTheUsageCode: steward's own claim refuses the name whatever the locale" \
-  '[ "$accented_direct_code" -eq 2 ]'
+  LC_ALL=$locale_letting_the_letter_through "$plugin/scripts/next.sh" "$accented" >/dev/null 2>&1; accented_code=$?
+  check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_ClaimsNoWorktree [$locale_letting_the_letter_through]: the branch is on the remote, but its name is refused whatever the locale" \
+    '[ -z "$("$plugin/scripts/steward.sh" find "$accented")" ]'
+  check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_NamedRunExitsWithThePassOverCode [$locale_letting_the_letter_through]: a refused base passes the item over like a missing one" \
+    '[ "$accented_code" -eq 4 ]'
+  check "BaseLineWithALetterOutsideAsciiInAUnicodeLocale_LastEventSaysTheNameIsNotValid [$locale_letting_the_letter_through]: the refusal is the name check, not a missing branch" \
+    'state "$accented" last_event | grep -qF -- "$base_name_refused"'
+  accented_direct="$(new_task "Accented direct claim")"
+  LC_ALL=$locale_letting_the_letter_through "$plugin/scripts/steward.sh" claim "$accented_direct" --base "$name_with_a_letter_outside_ascii" >/dev/null 2>&1; accented_direct_code=$?
+  check "StewardClaimWithALetterOutsideAsciiInAUnicodeLocale_ExitsWithTheUsageCode [$locale_letting_the_letter_through]: steward's own claim refuses the name whatever the locale" \
+    '[ "$accented_direct_code" -eq 2 ]'
+fi
 
 echo "base: the epic walk stops at a parent id no adapter owns"
 # A parent id with no adapter prefix is read as an adapter name, so a path there would run any
