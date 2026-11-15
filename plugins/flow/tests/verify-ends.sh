@@ -2,13 +2,14 @@
 # verify-ends.sh: who ends a detached verify run, and when they give up, on the local adapter in
 # throwaway repos. steward stop exits 1 when the run ignores TERM past its wait, with a run record
 # (which it still clears) or without one; stop and release leave a run of the item's id that works
-# outside the item's worktree; _health.py works-in says whether a process works in a folder; and
-# verify.sh refuses a --base that git would read as an option. Each stand-in run waits for a file
+# outside the item's worktree; stop names the verify run it ended; _health.py works-in says whether a
+# process works in a folder; verify.sh refuses a --base that git would read as an option; --start
+# exits 1 when it cannot start or record the run; and the plain run never writes through a link. Each stand-in run waits for a file
 # the test creates, or for the test's folder to go, so none outlives the test.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 # On exit every stand-in run is let go.
-trap 'for run_name in stubborn elsewhere inside nested outside gone; do touch "$work/release-$run_name"; done; [ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
+trap 'for run_name in stubborn elsewhere inside nested outside gone said said-again; do touch "$work/release-$run_name"; done; [ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
 . "$here/_verify_fixture.sh"
 
 echo "verify.sh refuses a --base that git would read as an option"
@@ -70,5 +71,51 @@ check "WorksInWithAProcessInAFolderUnderIt_ExitsZero: a run in a subfolder of th
   'works_in "$nested_pid" "$folder"'
 check "WorksInWithAProcessElsewhere_ExitsOne: a run in another folder is not the item's" '! works_in "$outside_pid" "$folder"'
 check "WorksInWithAProcessThatIsGone_ExitsOne: a working folder that cannot be read is no match" '! works_in "$gone_pid" "$folder"'
+
+echo "steward stop names the verify run it ended, with a run record and without one"
+new_item said "  ok: 'true'"
+record_a_dead_agent
+recorded_said_pid="$(fake_run said)"
+write_run_record "$reports" "$recorded_said_pid"
+stop_said="$("$plugin/scripts/steward.sh" stop "$item" 2>&1)"; said_stop_code=$?
+check "StopWithARecordAndAVerifyRunThatEnds_ExitsZero: a run that ended is a stop that worked" '[ "$said_stop_code" -eq 0 ]'
+check "StopWithARecordAndAVerifyRunThatEnds_NamesTheVerifyPid: the owner sees which run it ended" \
+  'printf "%s" "$stop_said" | grep -qw "$recorded_said_pid"'
+recordless_said_pid="$(fake_run said-again)"
+write_run_record "$reports" "$recordless_said_pid"
+check "SaidAgainItem_HasNoAgentRecord: the first stop cleared it, or this is the record row twice" '[ ! -f "$(run_file "$item")" ]'
+stop_said="$("$plugin/scripts/steward.sh" stop "$item" 2>&1)"
+check "StopWithNoRecordAndAVerifyRunThatEnds_NamesTheVerifyPid: a verify run started by hand is named all the same" \
+  'printf "%s" "$stop_said" | grep -qw "$recordless_said_pid"'
+
+echo "verify.sh --start exits 1 when it cannot start or record the run"
+new_item unspawned "  ok: 'true'"
+# A python3 in front of the real one that fails the spawn and runs everything else.
+mkdir -p "$work/failing-spawn"
+printf '#!/bin/sh\ncase " $* " in *" spawn "*) exit 1 ;; esac\nexec "%s" "$@"\n' "$(command -v python3)" > "$work/failing-spawn/python3"
+chmod +x "$work/failing-spawn/python3"
+unspawned_err="$(PATH="$work/failing-spawn:$PATH" verify --start 2>&1 >/dev/null)"; unspawned_code=$?
+check "StartWhoseSpawnFails_ExitsOne: no run started is no start, never a quiet 0" '[ "$unspawned_code" -eq 1 ]'
+check "StartWhoseSpawnFails_NamesTheItemOnStderr: the owner sees which item's run did not start" \
+  'printf "%s" "$unspawned_err" | grep -qF "$item"'
+check "StartWhoseSpawnFails_RecordsNoRun: a record of no run would have --wait wait on nothing" '[ ! -e "$reports/verify.run" ]'
+new_item unrecorded "  ok: 'true'"
+# A folder at the record's name that nothing may write into: the record cannot be renamed in.
+mkdir "$reports/verify.run" && chmod 555 "$reports/verify.run"
+unrecorded_err="$(verify --start 2>&1 >/dev/null)"; unrecorded_code=$?
+check "StartWhoseRecordCannotBeWritten_ExitsOne: a run nobody can wait on or stop is no start" '[ "$unrecorded_code" -eq 1 ]'
+check "StartWhoseRecordCannotBeWritten_NamesTheItemOnStderr: the owner sees which item's run went unrecorded" \
+  'printf "%s" "$unrecorded_err" | grep -qF "$item"'
+# The run that started goes on unrecorded; its report says it is done.
+check "UnrecordedRun_EndsWithAReport: the started run must end before the next section" 'until_true 60 "[ -s $reports/verify.json ]"'
+chmod 755 "$reports/verify.run"
+
+echo "the plain verify run makes its log new, never through a link at its name"
+new_item linked "  ok: 'true'"
+printf 'kept\n' > "$work/log-target"
+rm -f "$reports/verify.log" && ln -s "$work/log-target" "$reports/verify.log"
+verify >/dev/null 2>&1
+check "PlainRunWithALinkAtTheLog_LeavesTheLinkTargetUntouched: verify writes its own files, never one a link points to" \
+  '[ "$(cat "$work/log-target")" = kept ]'
 
 if [ "$fails" -eq 0 ]; then echo "verify-ends: ok"; else echo "verify-ends: $fails failed"; exit 1; fi
