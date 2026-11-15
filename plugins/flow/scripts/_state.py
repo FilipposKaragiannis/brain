@@ -18,50 +18,22 @@ schema above this one is refused, exit 1. set checks every pair before it takes 
 get prints a string raw and anything else as JSON, nothing when the record or the path is absent.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.
 """
-import argparse
 import fcntl
 import json
 import os
 import sys
 import time
-from dataclasses import dataclass
+from collections import namedtuple
 from types import MappingProxyType
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _state_arguments as command_line  # noqa: E402
 import _state_schema as schema  # noqa: E402
 import _state_views as views  # noqa: E402
 
-SEED_SOURCES = ("stdin", "none")
-COMMAND_OPTIONS = MappingProxyType({
-    "set": ("state-dir", "flow-home", "item", "now", "machine", "host", "claim-file", "seed"),
-    "take": ("state-dir", "flow-home", "item", "now", "machine", "host", "seed"),
-    "get": ("state-dir", "flow-home", "item"),
-    "show": ("state-dir", "flow-home", "item"),
-    "archive": ("state-dir", "flow-home", "item", "machine"),
-})
-COMMAND_POSITIONALS = MappingProxyType({"set": ("pairs", "*"), "get": ("key", None)})
 NO_RECORD = MappingProxyType({})
 NO_OBJECT = MappingProxyType({})
-
-
-@dataclass(frozen=True)
-class StoredRecord:
-    record: dict
-    outcome: schema.Outcome
-
-
-def parsed_options(arguments):
-    parser = argparse.ArgumentParser(prog="_state.py")
-    commands = parser.add_subparsers(dest="command", required=True)
-    for command, options in COMMAND_OPTIONS.items():
-        command_parser = commands.add_parser(command)
-        for option in options:
-            command_parser.add_argument("--" + option, required=True,
-                                        choices=SEED_SOURCES if option == "seed" else None)
-        if command in COMMAND_POSITIONALS:
-            name, count = COMMAND_POSITIONALS[command]
-            command_parser.add_argument(name, nargs=count)
-    return parser.parse_args(arguments)
+StoredRecord = namedtuple("StoredRecord", ("record", "outcome"))
 
 
 def read_record(path):
@@ -244,9 +216,10 @@ COMMANDS = MappingProxyType({"set": command_set, "take": command_take, "get": co
 
 
 def main(arguments):
-    options = parsed_options(arguments)
+    parsed = command_line.parsed(arguments)
+    options = parsed.options
     try:
-        outcome = COMMANDS[options.command](options)
+        outcome = COMMANDS[options.command](options) if not parsed.outcome.code else parsed.outcome
     except OSError as error:
         outcome = schema.Outcome(schema.EXIT_UNREADABLE, "%s: %s" % (options.item, error))
     if outcome.message:

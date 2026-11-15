@@ -12,7 +12,7 @@ A record with no file yet is seeded from the tracker's state, the gate file (whe
 shows no gate or the same one) and the run file. The seed renders no view.
 """
 import json
-from dataclasses import dataclass
+from collections import namedtuple
 
 import _state_schema as schema
 
@@ -23,29 +23,10 @@ CLAIM_ITEM_FIELD = "item"
 RUN_KEYS = (schema.RUN_OBJECT, schema.RUN_STEP)
 
 
-@dataclass(frozen=True)
-class ViewPaths:
-    run: str
-    gate: str
-
-
-@dataclass(frozen=True)
-class ClaimFile:
-    path: str
-    content: dict
-
-
-@dataclass(frozen=True)
-class ViewChange:
-    path: str
-    content: object
-
-
-@dataclass(frozen=True)
-class Seed:
-    state: dict
-    gate: dict
-    run: dict
+ViewPaths = namedtuple("ViewPaths", ("run", "gate"))
+ClaimFile = namedtuple("ClaimFile", ("path", "content"))
+ViewChange = namedtuple("ViewChange", ("path", "content"))
+Seed = namedtuple("Seed", ("state", "gate", "run"))
 
 
 def view_paths(flow_home, item):

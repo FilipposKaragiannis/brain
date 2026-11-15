@@ -17,6 +17,7 @@ The record is one JSON file per item behind one module (`scripts/_state.py` and 
 |---|---|
 | `scripts/_state_schema.py` (new) | the record as data, pure: schema, key map, pair grammar, merge, seed, the twenty keys read back, view shapes |
 | `scripts/_state.py` (new) | the record on disk: arguments, lock, atomic write, views, archive; later join, status derivation, import |
+| `scripts/_state_arguments.py` (new) | the command line of `_state.py`, pure and hand-written: argparse and dataclasses were most of each write's Python start |
 | `lib/state.sh` (new, sourced by `lib/flow.sh`) | the shell face below, and the one place a record write meets the tracker; no script opens a record file |
 | `scripts/state.sh` (new) | CLI for tests, skills and the owner: `get set show path archive` (1a), `list` (1b), `import` (4a), `prune` (5) |
 | `scripts/_filter_ready.py` | readiness on (normalised item, record, `ready:` policy) |

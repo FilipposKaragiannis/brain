@@ -117,7 +117,7 @@ record_pairs_kind() (
 record_writable_dir() (
   adapter_for "$1" >/dev/null || die "no adapter owns $1, so it has no record" 2
   flow_record_dir="$(state_dir)"
-  { mkdir -p "$flow_record_dir" 2>/dev/null && [ -w "$flow_record_dir" ]; } \
+  { { [ -d "$flow_record_dir" ] || mkdir -p "$flow_record_dir" 2>/dev/null; } && [ -w "$flow_record_dir" ]; } \
     || die "state.dir $flow_record_dir cannot be created or written" 2
   printf '%s' "$flow_record_dir"
 )

@@ -7,7 +7,7 @@ twenty state keys (a dash reads as an underscore) or one of the record pairs `ru
 its last value. Objects that hold only empty fields read null, and lists are never null.
 """
 import json
-from dataclasses import dataclass
+from collections import namedtuple
 from types import MappingProxyType
 
 SCHEMA_VERSION = 1
@@ -34,12 +34,7 @@ RECORD_ITEM_FIELD = "item"
 NOTIFY_GATE_FIELD = "gate"
 
 
-@dataclass(frozen=True)
-class StateKey:
-    key: str
-    holder: str
-    field: str
-    kind: str
+StateKey = namedtuple("StateKey", ("key", "holder", "field", "kind"))
 
 
 KEY_MAP = (
@@ -68,23 +63,9 @@ STATE_KEYS = MappingProxyType({state_key.key: state_key for state_key in KEY_MAP
 APPLY_ORDER = tuple(state_key.key for state_key in KEY_MAP) + RECORD_PAIR_KEYS
 
 
-@dataclass(frozen=True)
-class Pair:
-    key: str
-    value: str
-
-
-@dataclass(frozen=True)
-class RecordPaths:
-    record: str
-    closed: str
-    lock: str
-
-
-@dataclass(frozen=True)
-class Outcome:
-    code: int
-    message: str
+Pair = namedtuple("Pair", ("key", "value"))
+RecordPaths = namedtuple("RecordPaths", ("record", "closed", "lock"))
+Outcome = namedtuple("Outcome", ("code", "message"))
 
 
 DONE = Outcome(EXIT_DONE, "")
