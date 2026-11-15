@@ -28,7 +28,8 @@ check "StartAfterAnEarlierRun_RemovesTheEarlierVerifyJson: no report of an earli
   '[ ! -f "$reports/verify.json" ]'
 check "StartAfterAnEarlierRun_RemovesTheEarlierVerifyMd: the PR body never embeds an earlier run's twin" \
   '[ ! -f "$reports/verify.md" ]'
-until_true 20 '[ -s "$work/started.count" ]'
+check "StartedRun_GateStarts: the gate must be running, or the rows below prove nothing" \
+  'until_true 20 "[ -s $work/started.count ]"'
 verify --wait 1 >/dev/null 2>&1; running_code=$?
 check "WaitWhileTheGateRuns_ExitsThree: 3 tells the verifier to call --wait again" '[ "$running_code" -eq 3 ]'
 verify --start >/dev/null 2>&1
@@ -55,12 +56,14 @@ check "WaitWithNoRunStarted_ExitsTwo: there is nothing to wait for" '[ "$unstart
 echo "a run killed with no report"
 new_item killed "$(held_gate killed)"
 verify --start >/dev/null 2>&1
-until_true 20 '[ -s "$work/killed.count" ]'
+check "KilledRun_GateStarts: the gate must be running, or the rows below prove nothing" \
+  'until_true 20 "[ -s $work/killed.count ]"'
 killed_pid="$(run_pid)"
 check "KilledRun_RecordNamesALiveProcess: the record must name the run, or the kill below proves nothing" \
   'process_running "$killed_pid"'
 kill -9 -"$killed_pid" 2>/dev/null || kill -9 "$killed_pid"
-until_true 20 '! process_running "$killed_pid"'
+check "KilledRun_HasEnded: the kill must take, or the wait below reads a run still going" \
+  'until_true 20 "! process_running $killed_pid"'
 wait_until_ended; ended_code=$?
 check "WaitAfterTheRunWasKilled_ExitsOne: a run that died with no report is a fail" '[ "$ended_code" -eq 1 ]'
 check "WaitAfterTheRunWasKilled_ReportSaysFail: the verifier still has a report to read" '[ "$(report_status)" = fail ]'
@@ -73,7 +76,8 @@ limit_yaml="verify:
 new_item limited "  slow: 'sh -c \"sh -c \\\"while [ -d $work ]; do sleep 1; done\\\" & echo \\\$! > $work/slow-child.pid; wait\"'"
 limit_yaml=""
 verify --start >/dev/null 2>&1
-until_true 20 '[ -s "$work/slow-child.pid" ]'
+check "LimitedRun_GateChildStarts: the gate's child must have started, or its end below proves nothing" \
+  'until_true 20 "[ -s $work/slow-child.pid ]"'
 slow_child="$(cat "$work/slow-child.pid")"
 check "LimitedRun_GateChildRunsBeforeTheLimit: the child must run, or its end below proves nothing" \
   'process_running "$slow_child"'
@@ -88,7 +92,8 @@ echo "steward stop and release end the detached run"
 new_item stopped "$(held_gate stopped)"
 record_a_dead_agent
 verify --start >/dev/null 2>&1
-until_true 20 '[ -s "$work/stopped.count" ]'
+check "StoppedRun_GateStarts: the gate must be running, or the rows below prove nothing" \
+  'until_true 20 "[ -s $work/stopped.count ]"'
 stopped_pid="$(run_pid)"
 check "StoppedRun_RecordNamesALiveProcess: the record must name the run, or its end below proves nothing" \
   'process_running "$stopped_pid"'
@@ -98,7 +103,8 @@ check "StewardStopOnAnItemWithADetachedVerify_EndsTheVerifyRun: a stopped item r
 
 new_item released "$(held_gate released)"
 verify --start >/dev/null 2>&1
-until_true 20 '[ -s "$work/released.count" ]'
+check "ReleasedRun_GateStarts: the gate must be running, or the rows below prove nothing" \
+  'until_true 20 "[ -s $work/released.count ]"'
 released_pid="$(run_pid)"
 check "ReleasedRun_RecordNamesALiveProcess: the record must name the run, or its end below proves nothing" \
   'process_running "$released_pid"'
@@ -112,7 +118,8 @@ new_item health "$(held_gate health)"
 printf 'jobs:\n  health:\n    grace: 1s\n' >> .flow/config.yaml
 record_a_dead_agent
 verify --start >/dev/null 2>&1
-until_true 20 '[ -s "$work/health.count" ]'
+check "HealthRun_GateStarts: the gate must be running, or the rows below prove nothing" \
+  'until_true 20 "[ -s $work/health.count ]"'
 env -u FLOW_HEALTH_PROCS "$plugin/scripts/steward.sh" health --dry-run > "$work/health-live.out" 2>&1
 check "HealthWhileTheDetachedVerifyRuns_DoesNotTakeTheRunForDead: the verify run is the item's live run" \
   '! grep -q "$item.*dead run" "$work/health-live.out"'
@@ -127,7 +134,8 @@ echo "steward stop with no run record still ends the detached run"
 new_item stopless "$(held_gate stopless)"
 rm -f ".flow/runs/$(slug "$item").json"
 verify --start >/dev/null 2>&1
-until_true 20 '[ -s "$work/stopless.count" ]'
+check "StoplessRun_GateStarts: the gate must be running, or the rows below prove nothing" \
+  'until_true 20 "[ -s $work/stopless.count ]"'
 stopless_pid="$(run_pid)"
 check "StoplessRun_RecordNamesALiveProcess: the record must name the run, or its end below proves nothing" \
   'process_running "$stopless_pid"'
@@ -142,7 +150,8 @@ echo "steward release of a dirty worktree still ends the detached run"
 new_item dirty "$(held_gate dirty)"
 rm -f ".flow/runs/$(slug "$item").json"
 verify --start >/dev/null 2>&1
-until_true 20 '[ -s "$work/dirty.count" ]'
+check "DirtyRun_GateStarts: the gate must be running, or the rows below prove nothing" \
+  'until_true 20 "[ -s $work/dirty.count ]"'
 dirty_pid="$(run_pid)"
 check "DirtyRun_RecordNamesALiveProcess: the record must name the run, or its end below proves nothing" \
   'process_running "$dirty_pid"'
@@ -157,7 +166,8 @@ echo "steward stop and release leave another item's run alone"
 new_item planted "$(held_gate planted)"
 victim_item="$item"
 verify --start >/dev/null 2>&1
-until_true 20 '[ -s "$work/planted.count" ]'
+check "VictimRun_GateStarts: the gate must be running, or the rows below prove nothing" \
+  'until_true 20 "[ -s $work/planted.count ]"'
 victim_pid="$(run_pid)"
 victim_record="$reports/verify.run"
 check "VictimRun_RecordNamesALiveProcess: the other item's run must be live, or its survival below proves nothing" \
