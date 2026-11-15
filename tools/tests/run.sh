@@ -216,5 +216,57 @@ out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "tools/lint.sh fails on a malformed fragment and names it" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'malformed changelog fragment plugins/demo/changelog.d/b-bad.md'" "$out"
 check "tools/lint.sh fails on a drifted app package and names it" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'plugins/demo/app/package-lock.json: version 1.4.1'" "$out"
 
+echo "lint keeps every suite in the sandbox"
+fresh
+mkdir -p "$demo/tests"
+printf '#!/bin/sh\nwork="$(mktemp -d)"\necho ok\n' > "$demo/tests/run.sh"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "SuiteOutsideSandbox_FailsLint" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/tests/run.sh'" "$out"
+fresh
+python3 - "$demo/app/package.json" <<'PY2'
+import json, sys
+package = json.load(open(sys.argv[1]))
+package["scripts"] = {"test": "node --test 'test/**/*.test.ts'"}
+json.dump(package, open(sys.argv[1], "w"), indent=2)
+PY2
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "AppTestScriptOutsideSandbox_FailsLint" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/app/package.json'" "$out"
+
+echo "the sandbox keeps a suite off the checkout it runs from"
+# host stands in for the real checkout: a repo with one commit whose config the tests watch.
+host="$work/host"
+new_host() {
+  rm -rf "$host"; git init -q -b main "$host"
+  git -C "$host" -c user.email=h@h -c user.name=h commit -q --allow-empty -m init
+}
+host_config() { cat "$host/.git/config"; }
+# A throwaway suite as every suite in this repo starts: its own temp folder, then the sandbox.
+# Its body is $1; it runs from host, the way a suite runs from the checkout it tests.
+sandboxed_suite() {
+  printf '#!/bin/sh\nwork="$(mktemp -d)"\n. "%s/tools/lib/sandbox.sh"; sandbox_enter "$work" "%s"\ntrap '"'"'sandbox_close $?'"'"' EXIT\ncd "$work"\n%s\n' \
+    "$root" "$host" "$1" > "$work/suite.sh"
+  (cd "$host" && sh "$work/suite.sh" >/dev/null 2>&1)
+}
+new_host; before="$(host_config)"
+# A subshell: sh keeps an assignment made in front of a function call after the call returns.
+(GIT_DIR="$host/.git"; GIT_WORK_TREE="$host"; export GIT_DIR GIT_WORK_TREE
+  sandboxed_suite 'git init -q repo && git -C repo config user.email t@t')
+check "SuiteWithGitDirExported_LeavesHostConfigUnchanged" [ "$(host_config)" = "$before" ]
+new_host
+sandboxed_suite 'git init -q repo && git -C repo config user.email t@t'; code=$?
+check "SuiteThatStaysInItsTempFolder_Passes" [ "$code" -eq 0 ]
+new_host
+sandboxed_suite "git config --file '$host/.git/config' core.bare true"; code=$?
+check "SuiteThatMakesHostBare_Fails" [ "$code" -eq 1 ]
+
+echo "sandboxed.sh keeps a test command off the checkout it runs from"
+new_host; before="$(host_config)"
+(cd "$host" && GIT_DIR="$host/.git" GIT_WORK_TREE="$host" sh "$root/tools/lib/sandboxed.sh" "$host" \
+  sh -c 'cd "$(mktemp -d)" && git init -q repo && git -C repo config user.email t@t' >/dev/null 2>&1)
+check "TestCommandWithGitDirExported_LeavesHostConfigUnchanged" [ "$(host_config)" = "$before" ]
+new_host
+(cd "$host" && sh "$root/tools/lib/sandboxed.sh" "$host" git config --file "$host/.git/config" core.bare true >/dev/null 2>&1); code=$?
+check "TestCommandThatMakesHostBare_Fails" [ "$code" -eq 1 ]
+
 [ "$fails" -eq 0 ] && echo "tools: ok"
 exit $(( fails > 0 ))

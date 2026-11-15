@@ -208,6 +208,20 @@ if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then pass "git commit-ms
 git reset -q golden-pending; mv golden-pending golden-pending.off; mv golden-pending.off "$work/"; mv golden-ok.off "$work/"
 cp "$work/config.bak" .standards/config.json
 
+echo "command gates: git's repository variables"
+# A git hook exports GIT_DIR and its siblings; a gate that inherits them aims its tests' git at the
+# repository being committed, so the gate must run without them.
+python3 - <<'PY2'
+import json
+c = json.load(open(".standards/config.json"))
+c["gates"] = [{"name": "git-env", "command": "env | grep -E '^GIT_(DIR|INDEX_FILE|WORK_TREE)=' && exit 1; exit 0"}]
+json.dump(c, open(".standards/config.json", "w"), indent=2)
+PY2
+EXPECT_ENV="GIT_DIR=$work/repo/.git GIT_INDEX_FILE=$work/repo/.git/index GIT_WORK_TREE=$work/repo"
+expect "GateFromGitHook_RunsWithoutGitRepositoryVariables" check-gates.sh 'git commit -m x' 0 ""
+EXPECT_ENV=""
+cp "$work/config.bak" .standards/config.json
+
 echo "an agent's commit runs the gates once"
 python3 - "$work/count.log" <<'PY'
 import json, sys
