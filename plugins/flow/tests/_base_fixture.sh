@@ -1,6 +1,7 @@
-# _base_fixture.sh: the fixture base-readers.sh, base-claim.sh and verify-detached.sh source: a work
-# folder that goes on exit, an offline PATH, the check helpers, the names no claim may record, and
-# new_repo, a clone of a fresh bare origin on the local adapter. Sourced, never run.
+# _base_fixture.sh: the fixture base-readers.sh, base-claim.sh, verify-detached.sh and
+# verify-ends.sh source: a work folder that goes on exit, an offline PATH, the check helpers, the
+# names no claim may record, and new_repo, a clone of a fresh bare origin on the local adapter.
+# Sourced, never run.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 plugin="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$plugin"
