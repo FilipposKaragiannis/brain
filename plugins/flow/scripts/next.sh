@@ -154,7 +154,6 @@ depth="$(json_get "$profiles" "review_depth.$profile")"
 architect=no; [ "$(json_get "$profiles" "architect.$profile")" = true ] && architect=yes
 config_base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
-  # Exit 4: claim_at_base said why the item's base holds it. A pick passes it over, as a full pool.
   worktree="$(claim_at_base "$item" "$data")"; code=$?
   case "$code" in
     0) ;;
