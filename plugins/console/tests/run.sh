@@ -187,6 +187,7 @@ run_demo --dir "$demo" --port "$demo_port"; code=$?
 # A pane runs the terminal's "$SHELL -l"; a plain interactive shell is what a pane's own shell spawns.
 # shellcheck disable=SC2016 # expanded by the pane's shell
 for shell in "zsh -il" "zsh -i" "bash -il" "bash -i" "sh -il"; do
+  if ! command -v "${shell%% *}" >/dev/null 2>&1; then echo "  skip a demo '$shell' pane: no ${shell%% *} on PATH"; continue; fi
   check "a demo '$shell' pane loads the caller's shell setup" [ "$(in_demo $shell -c 'printf %s "$DEMO_SHELL_SETUP"' 2>/dev/null)" = "$shell_setup" ]
   check "a demo '$shell' pane finds the demo's claude stub before the caller's claude" [ "$(in_demo $shell -c 'command -v claude' 2>/dev/null)" = "$demo/bin/claude" ]
 done
