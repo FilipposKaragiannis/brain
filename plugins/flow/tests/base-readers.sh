@@ -40,8 +40,10 @@ remote_commit "$epic_branch" epic-a.txt; remote_commit "$epic_branch" epic-b.txt
 main_drift() { git rev-list --count "origin/$epic_branch..origin/main"; }
 check "HealthOnEpicChildBehindItsEpic_MergesTheEpicIn: health brings the epic's new commits onto a branch more than behind_base commits behind its recorded base" \
   '[ -f "$worktree/epic-b.txt" ]'
+check "HealthOnEpicChild_MainIsAheadOfTheEpic: main must hold commits the epic lacks, or the next check proves nothing" \
+  '[ "$(main_drift)" -gt 0 ]'
 check "HealthOnEpicChildWhileMainIsAhead_LeavesMainOut: health merges the recorded base, never the config base, so main's own commit stays off the branch" \
-  'drift="$(main_drift)"; [ "$drift" -gt 0 ] && [ "$(git -C "$worktree" rev-list --count "$task_branch..origin/main")" -eq "$drift" ]'
+  '[ "$(git -C "$worktree" rev-list --count "$task_branch..origin/main")" -eq "$(main_drift)" ]'
 check "HealthOnEpicChild_EventsLogNamesTheEpicRefMerged: the events log names the ref health merged" \
   'grep -F "$task_branch" .flow/events.log | grep -qF "origin/$epic_branch"'
 "$local_adapter/write-state.sh" "$child" step=verify >/dev/null
@@ -51,8 +53,10 @@ check "VerifyStepOnEpicChild_SyncMergesTheEpicIn: the merge before verify brings
   '[ -f "$worktree/epic-c.txt" ]'
 check "VerifyStepOnEpicChild_SyncLineNamesTheEpicRef: the events log's sync line names the recorded base it merged" \
   'grep "	$child	sync	" .flow/events.log | grep -qF "origin/$epic_branch"'
+check "VerifyStepOnEpicChild_MainIsAheadOfTheEpic: main must hold commits the epic lacks, or the next check proves nothing" \
+  '[ "$(main_drift)" -gt 0 ]'
 check "VerifyStepOnEpicChildWhileMainIsAhead_SyncLeavesMainOut: the merge before verify never brings main's commits onto an epic child" \
-  'drift="$(main_drift)"; [ "$drift" -gt 0 ] && [ "$(git -C "$worktree" rev-list --count "$task_branch..origin/main")" -eq "$drift" ]'
+  '[ "$(git -C "$worktree" rev-list --count "$task_branch..origin/main")" -eq "$(main_drift)" ]'
 (cd "$worktree" && "$plugin/scripts/verify.sh" "$child" >/dev/null 2>&1)
 check "VerifyOnEpicChild_ChangedFilesAreOnlyTheItemsOwn: verify.sh diffs against the recorded base, so the epic's files are not counted as the item's" \
   '[ "$(json_value changed_files < "$("$plugin/scripts/steward.sh" reports "$child")/verify.json")" = "[\"own.txt\"]" ]'
@@ -108,12 +112,16 @@ for tampered_label in $tampered_labels; do
     '[ "$(pool_entry_field "$work/board.tampered.json" "$child" base_missing)" = true ]'
   check "BoardJsonWithATamperedClaimBase_GivesThatClaimNoBase [$tampered_label]: the board skips a recorded base that fails the name check, so its text never reaches the board" \
     '[ "$(pool_entry_field "$work/board.tampered.json" "$plain" base)" = "\"\"" ]'
+  check "BoardWithATamperedClaimBase_HealthNamesTheChild [$tampered_label]: the health section must list the claims, or the next check proves nothing" \
+    'grep -qF "$child" "$work/board.tampered.health"'
   check "BoardWithATamperedClaimBase_HealthNamesNoForgedItem [$tampered_label]: a line break in the base cannot add a record for an item no pool worktree claims" \
-    'grep -qF "$child" "$work/board.tampered.health" && ! grep -qF forged-item "$work/board.tampered.health"'
+    '! grep -qF forged-item "$work/board.tampered.health"'
   check "InitCheckWithATamperedClaimBase_StillNotesTheOtherMissingBase [$tampered_label]: one bad claim.json does not stop init noting another claim's missing base" \
     'grep "^init: note:" "$work/init.tampered.out" | grep -F "$child" | grep -qF "$epic_branch"'
+  check "InitCheckWithATamperedClaimBase_NamesTheChild [$tampered_label]: init must note the claims, or the next check proves nothing" \
+    'grep -qF "$child" "$work/init.tampered.out"'
   check "InitCheckWithATamperedClaimBase_NotesNoForgedItem [$tampered_label]: a line break in the base cannot add a note for an item no pool worktree claims" \
-    'grep -qF "$child" "$work/init.tampered.out" && ! grep -qF forged-item "$work/init.tampered.out"'
+    '! grep -qF forged-item "$work/init.tampered.out"'
 done
 
 [ "$fails" -eq 0 ] && { echo "base-readers: ok"; exit 0; }
