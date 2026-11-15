@@ -1,6 +1,6 @@
 name = "test-writer"
 description = "Writes the tests for a slice from the spec, not from the implementation. Use after the implementer, never the same agent."
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 developer_instructions = """

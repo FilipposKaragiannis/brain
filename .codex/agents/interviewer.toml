@@ -1,6 +1,6 @@
 name = "interviewer"
 description = "Interviews the owner one question at a time until the item has a testable spec. Use at the start of an epic or an L task."
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "read-only"
 developer_instructions = """

@@ -1,6 +1,6 @@
 name = "comment-addresser"
 description = "Addresses PR review comments one by one, replies on each and pushes. Use when a PR has unresolved comments."
-model = "gpt-6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 sandbox_mode = "workspace-write"
 developer_instructions = """
