@@ -166,16 +166,15 @@ printf 'jobs:\n  health:\n    grace: 1s\n' >> .flow/config.yaml
 record_a_dead_agent
 verify --start >/dev/null 2>&1
 until_true 20 '[ -s "$work/health.count" ]'
-sleep 3
 env -u FLOW_HEALTH_PROCS "$plugin/scripts/steward.sh" health --dry-run > "$work/health-live.out" 2>&1
 check "HealthWhileTheDetachedVerifyRuns_DoesNotTakeTheRunForDead: the verify run is the item's live run" \
   '! grep -q "$item.*dead run" "$work/health-live.out"'
 touch "$work/release-health"
 wait_until_ended
-sleep 3
-env -u FLOW_HEALTH_PROCS "$plugin/scripts/steward.sh" health --dry-run > "$work/health-ended.out" 2>&1
+# The run's processes may still be in the list a moment after --wait saw the run end, so health is
+# asked again until it takes the run for dead.
 check "HealthAfterTheDetachedVerifyEnded_TakesTheRunForDead: the record is the same, so only the verify run kept it alive" \
-  'grep -q "$item.*dead run" "$work/health-ended.out"'
+  'until_true 30 "env -u FLOW_HEALTH_PROCS \"$plugin/scripts/steward.sh\" health --dry-run 2>&1 | grep -q \"$item.*dead run\""'
 
 echo "steward stop with no run record still ends the detached run"
 new_item stopless "$(held_gate stopless)"
@@ -188,8 +187,9 @@ check "StoplessRun_RecordNamesALiveProcess: the record must name the run, or its
 "$plugin/scripts/steward.sh" stop "$item" >/dev/null 2>&1
 check "StewardStopWithNoRunRecord_EndsTheVerifyRun: a verify started by hand is still the item's run to stop" \
   'until_true 30 "! process_running $stopless_pid"'
-check "StewardStopWithNoRunRecord_RunLeavesAFailReport: a stopped run is a fail the verifier can read, never a missing report" \
-  'until_true 20 "[ -f $reports/verify.json ]" && [ "$(report_status)" = fail ]'
+check "StewardStopWithNoRunRecord_RunLeavesAReport: a stopped run leaves the verifier a report to read, never a missing one" \
+  'until_true 20 "[ -f $reports/verify.json ]"'
+check "StewardStopWithNoRunRecord_ReportSaysFail: a stopped run is a fail" '[ "$(report_status)" = fail ]'
 
 echo "steward release of a dirty worktree still ends the detached run"
 new_item dirty "$(held_gate dirty)"
@@ -220,8 +220,9 @@ item="$("$local_adapter/create.sh" task "Detached planter" --size S --body x)"
 worktree="$("$plugin/scripts/steward.sh" find "$item")"
 reports="$worktree/.flow/reports/$(slug "$item")"; mkdir -p "$reports"
 rm -f ".flow/runs/$(slug "$item").json"
-check "PlanterItem_HoldsItsOwnWorktree: stop and release must reach the planted record, or they prove nothing" \
-  '[ -n "$worktree" ] && [ "$item" != "$victim_item" ]'
+check "PlanterItem_HoldsAWorktree: stop and release must reach the planted record, or they prove nothing" '[ -n "$worktree" ]'
+check "PlanterItem_IsAnotherItem: the record must name another item's run, or the run's survival proves nothing" \
+  '[ "$item" != "$victim_item" ]'
 cp "$victim_record" "$reports/verify.run"
 "$plugin/scripts/steward.sh" stop "$item" >/dev/null 2>&1
 check "StewardStopOfAnItemWhoseRecordNamesAnotherItemsRun_LeavesThatRunGoing: a record names a run of its own item only" \
