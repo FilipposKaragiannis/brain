@@ -40,7 +40,6 @@ function machinePaneHost(environment: NodeJS.ProcessEnv): PaneHost {
   };
 }
 
-/** Whether the path is a folder on the disk; false when it is missing or the daemon may not look (EACCES on a parent). */
 function isFolder(folder: string): boolean {
   try {
     return statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true;

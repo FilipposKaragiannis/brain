@@ -79,7 +79,6 @@ function parseItermLook(value: unknown): ItermLook | null {
   return { fontSize, colours: parseColours(colours), cursorStyle, cursorBlink, boldIsBright };
 }
 
-/** The colours with a known name and a CSS hex value; any other entry is left out. */
 function parseColours(value: unknown): TerminalColours {
   const colours: TerminalColours = {};
   if (!isRecord(value)) return colours;

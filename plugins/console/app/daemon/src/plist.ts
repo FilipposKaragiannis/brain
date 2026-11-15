@@ -52,7 +52,6 @@ function token(match: RegExpExecArray): Token {
   return { kind: empty === '/' ? 'empty' : 'open', name: name! };
 }
 
-/** The tokens in order; whitespace between elements is skipped, text inside one is kept. */
 class TokenReader {
   private readonly tokens: readonly Token[];
   private next = 0;
@@ -61,7 +60,6 @@ class TokenReader {
     this.tokens = tokens;
   }
 
-  /** Takes the next element tag, past the whitespace before it. */
   nextElement(): Token | undefined {
     while (this.isBlankText(this.tokens[this.next])) this.next += 1;
     const found = this.tokens[this.next];
@@ -69,7 +67,6 @@ class TokenReader {
     return found;
   }
 
-  /** Takes the element's text and its closing tag; '' when it closes at once, undefined when anything else follows. */
   textUntilClose(name: string): string | undefined {
     const first = this.tokens[this.next];
     const text = first?.kind === 'text' ? first.text : '';
@@ -107,7 +104,6 @@ function emptyValue(name: string): PlistValue | undefined {
   }
 }
 
-/** A number's text; a `<real>` may also be `+infinity`, `-infinity` or `nan`, as Foundation writes them. */
 function numberValue(text: string | undefined): number | undefined {
   if (text === undefined || BLANK.test(text)) return undefined;
   const spelt = text.trim().toLowerCase();

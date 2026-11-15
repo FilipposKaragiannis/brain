@@ -117,7 +117,6 @@ function fontKind(header: Uint8Array): FontContentType | null {
   return tag === APPLE_TRUETYPE_TAG || view(header).getUint32(0) === TRUETYPE_VERSION ? 'font/ttf' : null;
 }
 
-/** The PostScript name (name id 6) of the font whose table directory starts at `start`. */
 async function postScriptName(read: ByteReader, start: number): Promise<string | null> {
   const header = await read(start, SFNT_HEADER_BYTES);
   if (header.length < SFNT_HEADER_BYTES) return null;
@@ -131,7 +130,6 @@ async function postScriptName(read: ByteReader, start: number): Promise<string |
   return null;
 }
 
-/** The first non-empty string with the name id in a name table: UTF-16 on the Unicode and Windows platforms, one byte a character on the Mac one. */
 function nameRecord(table: Uint8Array, nameId: number): string | null {
   if (table.length < NAME_HEADER_BYTES) return null;
   const fields = view(table);

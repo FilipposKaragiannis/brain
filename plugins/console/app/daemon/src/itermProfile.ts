@@ -6,7 +6,6 @@ import { TERMINAL_COLOUR_NAMES } from './terminalProtocol.ts';
 /** iTerm's default profile: the look a pane takes, and the PostScript name of its font, null when it names none. */
 export type ItermProfile = { look: ItermLook; fontName: string | null };
 
-/** A colour's red, green and blue, each 0 to 1. */
 type RgbColour = { red: number; green: number; blue: number };
 
 const PROFILES_KEY = 'New Bookmarks';
@@ -25,7 +24,6 @@ const OPAQUE = 1;
 const BYTE_MAXIMUM = 255;
 const HEXADECIMAL = 16;
 const HEX_DIGITS = 2;
-/** "JetBrainsMonoNF-Regular 13": the PostScript name, a space, the size in points. */
 const FONT_SETTING = /^(.+) (\d+(?:\.\d+)?)$/;
 
 const COLOUR_KEYS: Record<TerminalColourName, string> = {
@@ -37,7 +35,6 @@ const COLOUR_KEYS: Record<TerminalColourName, string> = {
   selectionBackground: 'Selection Color', selectionForeground: 'Selected Text Color',
 };
 
-/** iTerm's "Cursor Type" values. */
 const CURSOR_TYPES: Record<number, TerminalCursorStyle> = { 0: 'underline', 1: 'bar', 2: 'block' };
 const DEFAULT_CURSOR_STYLE: TerminalCursorStyle = 'block';
 
@@ -97,7 +94,6 @@ function cursorStyle(value: PlistValue | undefined): TerminalCursorStyle {
   return typeof value === 'number' ? CURSOR_TYPES[value] ?? DEFAULT_CURSOR_STYLE : DEFAULT_CURSOR_STYLE;
 }
 
-/** The colours the profile sets, each read from its dark-mode key first when the profile keeps one per mode. */
 function profileColours(profile: PlistDictionary): TerminalColours {
   const suffix = profile[SEPARATE_MODES_KEY] === true ? DARK_MODE_SUFFIX : '';
   const colours: TerminalColours = {};
@@ -110,7 +106,6 @@ function profileColours(profile: PlistDictionary): TerminalColours {
   return colours;
 }
 
-/** An iTerm colour as CSS: "P3" converted to sRGB, "sRGB", "Calibrated" or no space taken as sRGB. */
 function cssColour(value: PlistValue | undefined): string | null {
   if (!isPlistDictionary(value)) return null;
   const stored = storedColour(value);

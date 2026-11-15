@@ -7,10 +7,8 @@ import { paneLook } from './terminalStyle.ts';
 
 const utf8Encoder = new TextEncoder();
 
-/** The stylesheet's custom property the pane dock paints behind a terminal. */
 const PANE_BACKGROUND_PROPERTY = '--pane-background';
 
-/** The pane's colours and font, read from the stylesheet so the terminal follows the page's theme. */
 function pageLook(): PageLook {
   const style = getComputedStyle(document.documentElement);
   const read = (property: string): string => style.getPropertyValue(property).trim();
