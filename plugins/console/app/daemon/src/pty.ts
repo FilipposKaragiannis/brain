@@ -81,8 +81,7 @@ function ptyHandle(started: PtyProcess): PtyHandle {
     pause: () => { started.pause(); },
     resume: () => { started.resume(); },
     running: () => processAlive(started.pid),
-    // A negative pid names the process group the child leads; the group's id stays its pid.
-    groupRunning: () => processAlive(-started.pid),
+    groupRunning: () => processAlive(groupLedBy(started.pid)),
     signal: (name) => { signalGroup(started.pid, name); },
     close: () => { started.destroy(); },
   };
@@ -91,10 +90,14 @@ function ptyHandle(started: PtyProcess): PtyHandle {
 /** Signals the group the pty's child leads (it leads its own session); a group already gone is left alone. */
 function signalGroup(pid: number, name: 'SIGHUP' | 'SIGKILL'): void {
   try {
-    process.kill(-pid, name);
+    process.kill(groupLedBy(pid), name);
   } catch {
     return;
   }
+}
+
+function groupLedBy(leaderPid: number): number {
+  return -leaderPid;
 }
 
 function signalName(signal: number): string | null {
