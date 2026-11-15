@@ -8,6 +8,8 @@
 # config, adds a worktree into <work> or edits a file under <watched dir> fails, whatever the tests
 # said. sandboxed.sh beside it runs one command the same way; tools/lint.sh checks every suite.
 
+sandbox_failure_message="the suite left the checkout it runs from as it found it"
+
 sandbox_enter() { # sandbox_enter <work> <watched dir>
   sandbox_work="$1"; sandbox_watched="$2"
   sandbox_work_real="$(cd "$sandbox_work" && pwd -P)"
@@ -50,7 +52,7 @@ sandbox_close() { # sandbox_close <status>: the exit status, 1 when the run touc
   sandbox_status="$1"
   sandbox_after="$(sandbox_print)"
   if [ "$sandbox_after" != "$sandbox_before" ]; then
-    echo "  FAIL the suite left the checkout it runs from as it found it" >&2
+    echo "  FAIL $sandbox_failure_message" >&2
     printf 'before:\n%s\nafter:\n%s\n' "$sandbox_before" "$sandbox_after" | sed 's/^/       /' >&2
     sandbox_status=1
   fi
