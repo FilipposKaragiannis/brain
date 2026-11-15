@@ -3863,7 +3863,7 @@ check "a codex session's error stays off stdout, because stdout is what the sess
 printf '%s' '{"type":"result","subtype":"success","is_error":true,"result":"You'"'"'ve hit your 5-hour limit \u00b7 resets 5:10am (Europe/London)"}' > "$work/window.out"
 : > "$work/window.err"
 python3 -I "$P/scripts/_host.py" claude "$work/window.out" "$work/window.err" 1 "$work/window.sum" >/dev/null 2>&1
-check "a claude session stopped by a timed usage window is a spend-limit stop, because a retry before the reset fails the same way" [ "$(jget cause < "$work/window.sum")" = spend-limit ]
+check "ClaudeTimedUsageWindow_ReportsSpendLimit: a retry before the window resets fails the same way" [ "$(jget cause < "$work/window.sum")" = spend-limit ]
 # Three silent sessions in a row on a fresh item: the attempt limit from profiles.json.
 max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
 ng="$("$P/scripts/new.sh" task "Ends with no result, every time" --size S --body "## Acceptance
