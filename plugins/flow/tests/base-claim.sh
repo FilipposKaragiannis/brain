@@ -7,6 +7,8 @@
 # an epic and stops at an id no adapter owns.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
 
 echo "base: where a claim starts when there is no epic branch next to it"
 new_repo walk
