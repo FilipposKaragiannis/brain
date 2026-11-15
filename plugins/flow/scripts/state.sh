@@ -1,0 +1,25 @@
+#!/bin/sh
+# The flow record of an item (ADR 0004): one JSON file per item under state.dir (lib/state.sh).
+#   state.sh get <item> <key>       one of the twenty state keys through the key map, or a record
+#                                   path (gate.options.0.label, claim.machine, run); a string raw,
+#                                   anything else as JSON, nothing when there is no record
+#   state.sh set <item> <pair>...   record_set: key=value for the state keys, or run:=<object|null>,
+#                                   run.step=<text> and gate:=<object>; with tracker_state labels
+#                                   the state pairs reach the tracker first
+#   state.sh show <item>            the record as JSON; exit 1 with none
+#   state.sh path <item>            where the record lives while the item is open
+#   state.sh archive <item>         the record to closed/; refused, exit 1, while another
+#                                   machine holds the item
+# Exit codes: 0 done · 1 refused or unreadable record · 2 bad usage · 75 the item's lock stayed
+# busy · the adapter's code when the tracker refused a write.
+. "$(dirname "$0")/../lib/flow.sh"
+
+command="${1:-}"; [ $# -gt 0 ] && shift
+case "$command:$#" in
+  get:2) record_get "$1" "$2" ;;
+  set:*) [ $# -ge 2 ] || die "usage: state.sh set <item> <key=value>..." 2; record_set "$@" ;;
+  show:1) record_show "$1" ;;
+  path:1) record_file "$1"; echo ;;
+  archive:1) record_archive "$1" ;;
+  *) awk '/^#!/ { next } /^#/ { print; next } { exit }' "$0"; exit 2 ;;
+esac

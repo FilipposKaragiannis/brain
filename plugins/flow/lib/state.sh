@@ -1,0 +1,146 @@
+#!/bin/sh
+# The flow record of an item (ADR 0004, docs/design/flow-owns-its-state.md): one JSON file per
+# item under state.dir, opened only by scripts/_state.py. Sourced by lib/flow.sh; defines
+# functions and runs nothing. Each public function runs in a subshell: it changes no variable of
+# its caller, reads no stdin of its caller, and returns its code instead of exiting the caller.
+#   state_dir                   state.dir: absolute as given, relative under the main worktree;
+#                               unset, <flow home>/state
+#   record_file <item>          <state dir>/<slug>.json; closed/<slug>.json once archived
+#   tracker_state               tracker_state: labels (the default) or none; another value is
+#                               refused, exit 2
+#   flow_machine                this machine's name: FLOW_MACHINE, else hostname -s
+#   record_get <item> <key>     one of the twenty state keys through the key map (gate reads none
+#                               when clear), or a record path (gate.options.0.label, claim.machine);
+#                               a string raw, anything else as JSON, nothing with no record
+#   record_show <item>          the record as JSON; exit 1 with none
+#   record_set <item> <pair>... key=value for the twenty keys (adapters/README.md; a dash reads as
+#                               an underscore), or the record pairs run:=<object|null>,
+#                               run.step=<text> and gate:=<object>, never both kinds in one write.
+#                               With tracker_state labels the state pairs go to the tracker first
+#                               (adapter write-state) and are recorded only when it took them.
+#                               Prints nothing on stdout. Exit 0 written; the adapter's code when
+#                               the tracker refused, nothing written; 1 a record that does not
+#                               parse; 2 a refused pair, item or config, nothing written; 75 the
+#                               item's lock stayed busy. On 1 and 75 the tracker may have taken
+#                               the write: stderr names the keys and the same call again is safe
+#   take_item <item>            this machine holds the item: claim.machine, claim.host and
+#                               claim.claimed_at, when the claim names no machine yet
+#   record_archive <item>       the record to closed/; nothing with no record; exit 1 when
+#                               another machine holds it
+# With no record yet, record_set and take_item start one from the tracker's state (lazy seed).
+
+state_dir() (
+  flow_record_dir="$(cfg state.dir)"
+  case "$flow_record_dir" in
+    "") printf '%s/state' "$(flow_home)" ;;
+    /*) printf '%s' "$flow_record_dir" ;;
+    *) printf '%s/%s' "$(dirname "$(flow_home)")" "$flow_record_dir" ;;
+  esac
+)
+
+record_file() { printf '%s/%s.json' "$(state_dir)" "$(item_slug "$1")"; }
+
+tracker_state() (
+  flow_record_tracker_state="$(cfg tracker_state)"
+  case "${flow_record_tracker_state:-labels}" in
+    labels|none) printf '%s' "${flow_record_tracker_state:-labels}" ;;
+    *) die "tracker_state in .flow/config.yaml is labels or none, not $flow_record_tracker_state" 2 ;;
+  esac
+)
+
+flow_machine() { printf '%s' "${FLOW_MACHINE:-$(hostname -s)}"; }
+
+record_get() (
+  [ $# -eq 2 ] || die "usage: record_get <item> <key>" 2
+  FLOW_HOME="$(flow_home)"
+  state_python get --state-dir "$(state_dir)" --flow-home "$FLOW_HOME" --item "$1" -- "$2"
+)
+
+record_show() (
+  [ $# -eq 1 ] || die "usage: record_show <item>" 2
+  FLOW_HOME="$(flow_home)"
+  state_python show --state-dir "$(state_dir)" --flow-home "$FLOW_HOME" --item "$1"
+)
+
+record_set() (
+  [ $# -ge 2 ] || die "usage: record_set <item> <key=value>..." 2
+  flow_record_item="$1"; shift
+  flow_record_kind="$(record_pairs_kind "$@")" || exit 2
+  FLOW_HOME="$(flow_home)"
+  flow_record_dir="$(record_writable_dir "$flow_record_item")" || exit 2
+  flow_record_tracker="$(tracker_state)" || exit 2
+  if [ "$flow_record_tracker" = labels ] && [ "$flow_record_kind" = state ]; then
+    tracker_mirror "$flow_record_item" "$@" || exit
+  fi
+  record_seeded set "$flow_record_item" "$flow_record_dir" \
+    --claim-file "$(record_claim_file "$flow_record_item" "$@")" -- "$@"
+)
+
+take_item() (
+  [ $# -eq 1 ] || die "usage: take_item <item>" 2
+  FLOW_HOME="$(flow_home)"
+  flow_record_dir="$(record_writable_dir "$1")" || exit 2
+  record_seeded take "$1" "$flow_record_dir"
+)
+
+record_archive() (
+  [ $# -eq 1 ] || die "usage: record_archive <item>" 2
+  FLOW_HOME="$(flow_home)"
+  state_python archive --state-dir "$(state_dir)" --flow-home "$FLOW_HOME" --item "$1" --machine "$(flow_machine)"
+)
+
+state_python() { python3 -I "$FLOW_PLUGIN/scripts/_state.py" "$@"; }
+
+# tracker_mirror <item> <pair>...: the one adapter write-state call of the flow.
+tracker_mirror() ( adapter write-state "$@" ) </dev/null >&2
+
+# record_pairs_kind <pair>...: state or record, the kind every pair is; refuses, exit 2, a pair
+# with no =, the two kinds together and attempts that is not a whole number.
+record_pairs_kind() (
+  flow_record_kind=""
+  for flow_record_pair in "$@"; do
+    flow_record_key="${flow_record_pair%%=*}"
+    [ "$flow_record_key" != "$flow_record_pair" ] || die "expected key=value, got $flow_record_pair" 2
+    case "$flow_record_pair" in attempts=*[!0-9]*) die "attempts takes a whole number, not ${flow_record_pair#attempts=}" 2 ;; esac
+    case "$flow_record_key" in *.*|*:) flow_record_pair_kind=record ;; *) flow_record_pair_kind=state ;; esac
+    [ "${flow_record_kind:-$flow_record_pair_kind}" = "$flow_record_pair_kind" ] \
+      || die "a write holds state pairs or record pairs, never both: $*" 2
+    flow_record_kind="$flow_record_pair_kind"
+  done
+  printf '%s' "$flow_record_kind"
+)
+
+# record_writable_dir <item>: the state dir, created; refuses, exit 2, an id no adapter owns and
+# a state.dir that cannot be created or written.
+record_writable_dir() (
+  adapter_for "$1" >/dev/null || die "no adapter owns $1, so it has no record" 2
+  flow_record_dir="$(state_dir)"
+  { mkdir -p "$flow_record_dir" 2>/dev/null && [ -w "$flow_record_dir" ]; } \
+    || die "state.dir $flow_record_dir cannot be created or written" 2
+  printf '%s' "$flow_record_dir"
+)
+
+# record_seeded <set|take> <item> <state dir> [<option>...]: one _state.py write. An item with no
+# record yet sends the tracker's read along as the seed; a read that fails seeds nothing.
+record_seeded() {
+  flow_record_command="$1"; flow_record_item="$2"; flow_record_dir="$3"; shift 3
+  flow_record_seed=stdin
+  [ ! -f "$flow_record_dir/$(item_slug "$flow_record_item").json" ] || flow_record_seed=none
+  { [ "$flow_record_seed" = none ] || ( adapter read "$flow_record_item" ) </dev/null 2>/dev/null; } \
+    | state_python "$flow_record_command" --state-dir "$flow_record_dir" --flow-home "$FLOW_HOME" \
+      --item "$flow_record_item" --now "$(now_iso)" --machine "$(flow_machine)" --host "$(host_name)" \
+      --seed "$flow_record_seed" "$@"
+}
+
+# record_claim_file <item> <pair>...: the claim.json of the item's pool worktree, when a pair
+# names its step (step=, run.step= or a run); nothing otherwise.
+record_claim_file() (
+  flow_record_item="$1"; shift
+  for flow_record_pair in "$@"; do
+    case "$flow_record_pair" in step=*|run.step=*|run:=\{*) ;; *) continue ;; esac
+    flow_record_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$flow_record_item" </dev/null 2>/dev/null)"
+    [ -n "$flow_record_worktree" ] && [ -f "$flow_record_worktree/.flow/claim.json" ] \
+      && printf '%s/.flow/claim.json' "$flow_record_worktree"
+    exit 0
+  done
+)

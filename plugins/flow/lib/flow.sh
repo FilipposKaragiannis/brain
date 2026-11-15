@@ -10,6 +10,7 @@ fi
 export FLOW_PLUGIN
 . "$FLOW_PLUGIN/lib/json.sh"
 . "$FLOW_PLUGIN/lib/stamp.sh"
+. "$FLOW_PLUGIN/lib/state.sh"
 
 # macOS ships /usr/bin/git as an xcrun shim that fails in sandboxes that block its cache file
 # ("Failed to locate 'git'"). When the shim is broken and Xcode's git exists, use that one.

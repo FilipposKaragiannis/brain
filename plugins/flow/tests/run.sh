@@ -485,6 +485,11 @@ sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
 check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-claim.out"
 
+echo "every flow write lands in the item's flow record (tests/state.sh)"
+sh "$here/state.sh" > "$work/state.out" 2>&1; code=$?
+check "state: $(tail -n 1 "$work/state.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/state.out"
+
 echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
 sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
 check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]
