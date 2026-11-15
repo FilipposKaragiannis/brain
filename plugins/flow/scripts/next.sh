@@ -155,24 +155,29 @@ architect=no; [ "$(json_get "$profiles" "architect.$profile")" = true ] && archi
 config_base="$(cfg_or base main)"
 if [ "$(step_field "$step" worktree)" = "true" ]; then
   # Exit 4: claim_at_base said why the item's base holds it. A pick passes it over, as a full pool.
-  wt="$(claim_at_base "$item" "$data")"; code=$?
-  [ "$code" -eq 0 ] || { [ -n "$named" ] || case "$code" in 3) FLOW_NEXT_FULL="$item"; pick_again ;; 4) pick_again ;; esac; exit "$code"; }
-  branch="$(json_get "$(cat "$wt/.flow/claim.json")" branch)"
-  claim="$(cat "$wt/.flow/claim.json")"
-  json_set "$claim" step "$(json_string "$step")" > "$wt/.flow/claim.json"
-  base="$(recorded_base "$wt")"
+  worktree="$(claim_at_base "$item" "$data")"; code=$?
+  case "$code" in
+    0) ;;
+    3) [ -z "$named" ] || exit 3; FLOW_NEXT_FULL="$item"; pick_again ;;
+    4) [ -z "$named" ] || exit 4; pick_again ;;
+    *) exit "$code" ;;
+  esac
+  branch="$(json_get "$(cat "$worktree/.flow/claim.json")" branch)"
+  claim="$(cat "$worktree/.flow/claim.json")"
+  json_set "$claim" step "$(json_string "$step")" > "$worktree/.flow/claim.json"
+  base="$(recorded_base "$worktree")"
 else
-  wt="$(dirname "$home")"; branch="$(git -C "$wt" symbolic-ref --short -q HEAD || echo "$config_base")"
+  worktree="$(dirname "$home")"; branch="$(git -C "$worktree" symbolic-ref --short -q HEAD || echo "$config_base")"
   base="$(state_get "$data" base)"; base_name_valid "$base" || base="$config_base"
 fi
-reports="$(reports_dir "$item" "$wt")"; mkdir -p "$reports"
+reports="$(reports_dir "$item" "$worktree")"; mkdir -p "$reports"
 touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
 # script. The health job reads it to tell a live run from a dead one.
 owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
 # A number in JSON has no leading zero, so the zeros go (never $((...)), which reads 0123 as octal).
 case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; owner="${owner:-0}" ;; esac
-json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$wt" "reports=$reports" "host=$(host_name)" \
+json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$worktree" "reports=$reports" "host=$(host_name)" \
   "started=$(now_iso)" ${owner:+"pid:=$owner"} "touches:=$touches" > "$(run_file "$item")"
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
 # The run takes the answer to the last gate (answer_pending, gate.sh clear): its brief carries it.
@@ -185,17 +190,17 @@ flow_unlock
 # and a fetch under the lock would keep every other worker waiting. A merge that conflicts is
 # aborted and handed to the sync step below (sync.md), so verify never runs on an unmerged branch.
 if [ "$step" = verify ] && [ "$(step_field verify worktree)" = true ] && [ ! -s "$reports/sync.md" ] &&
-   [ "$(git -C "$wt" symbolic-ref --short -q HEAD)" = "$branch" ] &&
-   [ -z "$(git -C "$wt" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; then
-  git -C "$wt" remote get-url origin >/dev/null 2>&1 && git -C "$wt" fetch -q origin -- "$base" 2>/dev/null
-  vref="$base"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$base" && vref="origin/$base"
-  behind="$(git -C "$wt" rev-list --count "HEAD..$vref" 2>/dev/null)"
+   [ "$(git -C "$worktree" symbolic-ref --short -q HEAD)" = "$branch" ] &&
+   [ -z "$(git -C "$worktree" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; then
+  git -C "$worktree" remote get-url origin >/dev/null 2>&1 && git -C "$worktree" fetch -q origin -- "$base" 2>/dev/null
+  base_ref="$base"; git -C "$worktree" show-ref --verify --quiet "refs/remotes/origin/$base" && base_ref="origin/$base"
+  behind="$(git -C "$worktree" rev-list --count "HEAD..$base_ref" 2>/dev/null)"
   if [ "${behind:-0}" -gt 0 ]; then
-    if git -C "$wt" merge -q --no-edit -m "chore: merge $vref into $branch" "$vref" >/dev/null 2>&1; then
-      printf '%s\t%s\tsync\tmerged %s into %s (%s commits behind) before verify\n' "$(now_iso)" "$item" "$vref" "$branch" "$behind" >> "$home/events.log"
+    if git -C "$worktree" merge -q --no-edit -m "chore: merge $base_ref into $branch" "$base_ref" >/dev/null 2>&1; then
+      printf '%s\t%s\tsync\tmerged %s into %s (%s commits behind) before verify\n' "$(now_iso)" "$item" "$base_ref" "$branch" "$behind" >> "$home/events.log"
     else
-      git -C "$wt" merge --abort >/dev/null 2>&1
-      printf '%s\n' "$vref" > "$reports/sync.md"
+      git -C "$worktree" merge --abort >/dev/null 2>&1
+      printf '%s\n' "$base_ref" > "$reports/sync.md"
     fi
   fi
 fi
@@ -204,7 +209,7 @@ fi
 own_step="$step"
 if [ "$(step_field "$step" worktree)" = "true" ] && [ -s "$reports/sync.md" ]; then
   step=sync; agent="$(step_field sync agent)"; skill="$(step_field sync skill)"; summary="$(step_field sync summary)"
-  json_set "$claim" step "$(json_string sync)" > "$wt/.flow/claim.json"
+  json_set "$claim" step "$(json_string sync)" > "$worktree/.flow/claim.json"
   json_set "$(cat "$(run_file "$item")")" step "$(json_string sync)" > "$(run_file "$item").tmp" && mv "$(run_file "$item").tmp" "$(run_file "$item")"
 fi
 # A hold (hold.sh, skills/plan/holds.md) ends when its holder closes: the item's own step, not a
@@ -229,7 +234,7 @@ brief="$reports/brief-$step.md"
   echo "- Item: $item, kind $kind, size $size, profile $profile, review depth $depth, attempt $((attempts + 1)) of $max_attempts"
   echo "- Title: $(json_get "$data" title)"
   [ -n "$(json_get "$data" url)" ] && echo "- Tracker: $(json_get "$data" url)"
-  echo "- Worktree: \`$wt\` on branch \`$branch\` (base \`$base\`). Start with \`cd \"$wt\"\`. Work only there."
+  echo "- Worktree: \`$worktree\` on branch \`$branch\` (base \`$base\`). Start with \`cd \"$worktree\"\`. Work only there."
   echo "- Reports: \`$reports\` (earlier step results and the plan live here)"
   echo "- Plugin: \`$FLOW_PLUGIN\` (scripts: \`scripts/verify.sh\`, \`scripts/steward.sh\`, \`scripts/comments.sh\`, adapters under \`adapters/\`)"
   if [ -n "$agent" ]; then echo "- Agent: $agent (its brief is your role)"; else echo "- Skill: invoke \`flow:$skill $item\`; it spawns what the step needs"; fi
@@ -276,17 +281,17 @@ brief="$reports/brief-$step.md"
     echo
   fi
   if [ -n "$released" ]; then
-    rref="$base"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$base" && rref="origin/$base"
+    rref="$base"; git -C "$worktree" show-ref --verify --quiet "refs/remotes/origin/$base" && rref="origin/$base"
     echo "## The hold is over"
     echo
     echo "You were held behind $released, which has closed. First merge \`$rref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $rref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
     echo
   fi
   if [ -n "$unblocked" ]; then
-    uref="$base"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$base" && uref="origin/$base"
+    base_ref="$base"; git -C "$worktree" show-ref --verify --quiet "refs/remotes/origin/$base" && base_ref="origin/$base"
     echo "## The wait is over"
     echo
-    echo "You waited on $unblocked (blocked by). First merge \`$uref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $uref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
+    echo "You waited on $unblocked (blocked by). First merge \`$base_ref\` into the branch (\`git fetch origin\` when there is one, then \`git merge $base_ref\`; never rebase), then check the plan still fits the code. If it does not, stop with status gate, gate ambiguity."
     echo
   fi
   if [ -n "$still_held" ]; then
@@ -322,11 +327,11 @@ brief="$reports/brief-$step.md"
 rm -f "$reports/resume.md"; [ -z "$unblocked" ] || rm -f "$reports/blocked.md"
 
 out="$(json_obj "item=$item" "title=$(json_get "$data" title)" "kind=$kind" "size=$size" "profile=$profile" "depth=$depth" \
-  "architect=$architect" "step=$step" "agent=$agent" "skill=$skill" "worktree=$wt" "branch=$branch" "base=$base" "brief=$brief" "reports=$reports" \
+  "architect=$architect" "step=$step" "agent=$agent" "skill=$skill" "worktree=$worktree" "branch=$branch" "base=$base" "brief=$brief" "reports=$reports" \
   "model=$(agent_model "$agent" 2>/dev/null)" "effort=$(agent_effort "$agent" 2>/dev/null)")"
 if [ "$as_json" -eq 1 ]; then printf '%s\n' "$out"; else
   echo "next: $item - $step ($profile, $size)"
-  echo "  run:   ${agent:-skill flow:$skill} in $wt"
+  echo "  run:   ${agent:-skill flow:$skill} in $worktree"
   echo "  brief: $brief"
   echo "  then:  advance.sh $item"
 fi
