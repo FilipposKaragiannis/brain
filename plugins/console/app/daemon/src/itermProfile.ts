@@ -7,7 +7,7 @@ import { TERMINAL_COLOUR_NAMES } from './terminalProtocol.ts';
 export type ItermProfile = { look: ItermLook; fontName: string | null };
 
 /** A colour's red, green and blue, each 0 to 1. */
-export type RgbColour = { red: number; green: number; blue: number };
+type RgbColour = { red: number; green: number; blue: number };
 
 const PROFILES_KEY = 'New Bookmarks';
 const DEFAULT_PROFILE_KEY = 'Default Bookmark Guid';
@@ -131,7 +131,7 @@ function hexColour(colour: RgbColour, opacity: number): string {
 }
 
 /** A Display P3 colour as the nearest sRGB one: to linear light, through XYZ, back to the curve, clamped to the sRGB gamut. */
-export function displayP3ToSrgb(colour: RgbColour): RgbColour {
+function displayP3ToSrgb(colour: RgbColour): RgbColour {
   const linear = [colour.red, colour.green, colour.blue].map(decodeTransfer);
   const [red, green, blue] = transform(XYZ_TO_SRGB, transform(DISPLAY_P3_TO_XYZ, linear)).map((channel) => encodeTransfer(clampUnit(channel)));
   return { red: red!, green: green!, blue: blue! };

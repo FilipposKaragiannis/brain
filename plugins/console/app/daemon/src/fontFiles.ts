@@ -5,11 +5,9 @@ import path from 'node:path';
 export type FontFile = { path: string; contentType: FontContentType };
 export type FontContentType = 'font/ttf' | 'font/otf';
 
-/** The PostScript names a font file holds, and the content type it is served as. */
-export type FontNames = { postScriptNames: string[]; servedAs: FontContentType };
+type FontNames = { postScriptNames: string[]; servedAs: FontContentType };
 
-/** Reads up to `length` bytes at `offset`; fewer at the end of the file. */
-export type ByteReader = (offset: number, length: number) => Promise<Uint8Array>;
+type ByteReader = (offset: number, length: number) => Promise<Uint8Array>;
 
 /** Finds the first font file, by the order of the names, whose PostScript name is one of them; null when none is there to serve. */
 export type FontLookup = (postScriptNames: readonly string[]) => Promise<FontFile | null>;
@@ -103,11 +101,8 @@ async function fileNames(file: string): Promise<FontNames | null> {
   }
 }
 
-/**
- * The PostScript names a font file holds, from its name table; null when it is not a TrueType or
- * OpenType file. A collection (.ttc) is null from its tag alone: a web font cannot load one.
- */
-export async function fontNames(read: ByteReader): Promise<FontNames | null> {
+/** A collection (.ttc) is null from its tag alone: a web font cannot load one. */
+async function fontNames(read: ByteReader): Promise<FontNames | null> {
   const header = await read(0, SFNT_HEADER_BYTES);
   if (header.length < SFNT_HEADER_BYTES) return null;
   const kind = fontKind(header);

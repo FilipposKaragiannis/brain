@@ -3,8 +3,7 @@ import { test } from 'node:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { folderFontLookup, fontNames } from '../src/fontFiles.ts';
-import type { ByteReader } from '../src/fontFiles.ts';
+import { folderFontLookup } from '../src/fontFiles.ts';
 
 type NameRecord = { platform: 'windows' | 'mac'; nameId: number; text: string };
 type Outline = 'truetype' | 'cff';
@@ -68,10 +67,6 @@ function collection(postScriptNames: readonly string[]): Buffer {
   return Buffer.concat([header, ...fonts]);
 }
 
-function readerOver(bytes: Buffer): ByteReader {
-  return async (offset, length) => new Uint8Array(bytes.subarray(offset, offset + length));
-}
-
 function postScriptFont(name: string, outline: Outline = 'truetype'): Buffer {
   return sfnt(outline, [{ platform: 'windows', nameId: FAMILY, text: 'Family Not Wanted' }, { platform: 'windows', nameId: POSTSCRIPT, text: name }]);
 }
@@ -88,36 +83,45 @@ async function inFontFolder(files: Record<string, Buffer>, body: (folder: string
   } finally { rmSync(folder, { recursive: true, force: true }); }
 }
 
-test('TrueTypeFont_NamesItsPostScriptNameAndServesAsTtf', async () => {
-  assert.deepEqual(await fontNames(readerOver(postScriptFont('JetBrainsMonoNF-Regular'))), { postScriptNames: ['JetBrainsMonoNF-Regular'], servedAs: 'font/ttf' },
-    'because a TrueType file is found by name ID 6 alone, not its family name, and the page loads it as font/ttf');
+test('FontLookup_TrueTypeFont_ServedAsTtf', async () => {
+  await inFontFolder({ 'font.ttf': postScriptFont('JetBrainsMonoNF-Regular') }, async (folder) => {
+    assert.deepEqual(await folderFontLookup([folder])(['JetBrainsMonoNF-Regular']), { path: path.join(folder, 'font.ttf'), contentType: 'font/ttf' },
+      'because a TrueType file is found by its PostScript name, name ID 6, and the page loads it as font/ttf');
+  });
 });
 
-test('CffFont_NamesItsPostScriptNameAndServesAsOtf', async () => {
-  assert.deepEqual(await fontNames(readerOver(postScriptFont('SourceCodePro-Regular', 'cff'))), { postScriptNames: ['SourceCodePro-Regular'], servedAs: 'font/otf' },
-    'because an OTTO file is an OpenType font with CFF outlines, served as font/otf');
+test('FontLookup_FamilyName_NotMatched', async () => {
+  await inFontFolder({ 'font.ttf': postScriptFont('JetBrainsMonoNF-Regular') }, async (folder) => {
+    assert.equal(await folderFontLookup([folder])(['Family Not Wanted']), null, 'because only the PostScript name, name ID 6, identifies the font, not its family name');
+  });
 });
 
-test('MacRomanNameRecord_Decoded', async () => {
-  const font = sfnt('truetype', [{ platform: 'mac', nameId: POSTSCRIPT, text: 'Menlo-Regular' }]);
-  assert.deepEqual((await fontNames(readerOver(font)))?.postScriptNames ?? 'no names', ['Menlo-Regular'], 'because older fonts carry their PostScript name as a one-byte Mac record');
+test('FontLookup_CffFont_ServedAsOtf', async () => {
+  await inFontFolder({ 'font.otf': postScriptFont('SourceCodePro-Regular', 'cff') }, async (folder) => {
+    assert.deepEqual(await folderFontLookup([folder])(['SourceCodePro-Regular']), { path: path.join(folder, 'font.otf'), contentType: 'font/otf' },
+      'because an OTTO file is an OpenType font with CFF outlines, served as font/otf');
+  });
 });
 
-test('Collection_NoNames', async () => {
-  assert.equal(await fontNames(readerOver(collection(['Menlo-Regular', 'Menlo-Bold']))), null,
-    'because a web font cannot load a collection, so its names are not worth reading');
+test('FontLookup_MacRomanNameRecord_Found', async () => {
+  await inFontFolder({ 'font.ttf': sfnt('truetype', [{ platform: 'mac', nameId: POSTSCRIPT, text: 'Menlo-Regular' }]) }, async (folder) => {
+    assert.equal((await folderFontLookup([folder])(['Menlo-Regular']))?.path ?? 'not found', path.join(folder, 'font.ttf'),
+      'because older fonts carry their PostScript name as a one-byte Mac record');
+  });
 });
 
-test('BytesThatAreNotAFont_NoNames', async () => {
-  const junk: Record<string, Buffer> = { text: Buffer.from('this is not a font file at all, only words'), empty: Buffer.alloc(0) };
-  for (const [shape, bytes] of Object.entries(junk)) {
-    assert.equal(await fontNames(readerOver(bytes)), null, `because ${shape} names no font, and reading it must not throw`);
-  }
+test('FontLookup_BytesThatAreNotAFont_SkippedWithoutThrowing', async () => {
+  const files = { 'a-text.ttf': Buffer.from('this is not a font file at all, only words'), 'a-empty.ttf': Buffer.alloc(0), 'z-font.ttf': postScriptFont('JetBrainsMonoNF-Regular') };
+  await inFontFolder(files, async (folder) => {
+    assert.equal((await folderFontLookup([folder])(['JetBrainsMonoNF-Regular']))?.path ?? 'not found', path.join(folder, 'z-font.ttf'),
+      'because a file that names no font is passed over, and reading it must not stop the search');
+  });
 });
 
-test('FontCutOffBeforeItsNameTable_NamesNoPostScriptName', async () => {
-  const cut = postScriptFont('Cut-Regular').subarray(0, 40);
-  assert.deepEqual((await fontNames(readerOver(cut)))?.postScriptNames ?? [], [], 'because a file that ends before its name table holds no name that a lookup could match');
+test('FontLookup_FontCutOffBeforeItsNameTable_NotFound', async () => {
+  await inFontFolder({ 'cut.ttf': postScriptFont('Cut-Regular').subarray(0, 40) }, async (folder) => {
+    assert.equal(await folderFontLookup([folder])(['Cut-Regular']), null, 'because a file that ends before its name table holds no name that a lookup could match');
+  });
 });
 
 test('FontLookup_FileNamedOtherwise_FoundByTheNameInside', async () => {
