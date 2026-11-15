@@ -1,10 +1,11 @@
 import type { Scheduler } from './actions.ts';
 import type { Logger } from './log.ts';
 import { errorMessage } from './log.ts';
+import { OutputFlow } from './paneOutput.ts';
 import type { PaneFacts, PaneHost, PaneLaunch, PaneRequest } from './panePlan.ts';
 import { planPane } from './panePlan.ts';
 import type { PaneControl, PaneNotice, PaneSize } from './paneProtocol.ts';
-import { MAXIMUM_PANES, OUTPUT_HIGH_WATER_BYTES, OUTPUT_LOW_WATER_BYTES, PANE_CLOSE, PANE_KILL_GRACE_MILLISECONDS, PAUSED_EXIT_CHECK_MILLISECONDS } from './paneProtocol.ts';
+import { MAXIMUM_PANES, PANE_CLOSE, PANE_KILL_GRACE_MILLISECONDS } from './paneProtocol.ts';
 
 /** A started pty, as much of it as a pane needs. Injected so tests never load the addon. */
 export type PtyHandle = {
@@ -220,83 +221,5 @@ function applyControl(pane: LivePane, control: PaneControl): void {
   switch (control.type) {
     case 'resize': pane.pty.resize({ columns: control.cols, rows: control.rows }); return;
     case 'ack': pane.output.ackedMayResume(control.bytes); return;
-  }
-}
-
-/**
- * One pane's output the page has not acked yet, and what its link still holds, which pause and
- * resume its pty. An ack counts no more than the bytes not yet acked, and a page that acks what it
- * never read is still held back by the bytes its link holds. node-pty drops what a paused pty still
- * holds 200 ms after its process ends, so a paused pty checks every `PAUSED_EXIT_CHECK_MILLISECONDS` whether
- * its process ended, and once it has, reads the rest and never pauses again.
- */
-class OutputFlow {
-  private readonly pty: PtyHandle;
-  private readonly link: PaneLink;
-  private readonly scheduler: Scheduler;
-  private unacked = 0;
-  private state: 'flowing' | 'paused' | 'ended' = 'flowing';
-  private exitCheck: object | null = null;
-
-  constructor(pty: PtyHandle, link: PaneLink, scheduler: Scheduler) {
-    this.pty = pty;
-    this.link = link;
-    this.scheduler = scheduler;
-  }
-
-  sentMayPause(byteCount: number): void {
-    this.unacked += byteCount;
-    if (this.state === 'flowing' && this.pastHighWater()) this.pause();
-  }
-
-  ackedMayResume(byteCount: number): void {
-    this.unacked -= Math.min(byteCount, this.unacked);
-    if (this.state === 'paused' && this.underLowWater()) this.resume();
-  }
-
-  resumeForHangUp(): void {
-    if (this.state === 'paused') this.resume();
-  }
-
-  private pastHighWater(): boolean {
-    return this.unacked > OUTPUT_HIGH_WATER_BYTES || this.link.queuedBytes() > OUTPUT_HIGH_WATER_BYTES;
-  }
-
-  private underLowWater(): boolean {
-    return this.unacked < OUTPUT_LOW_WATER_BYTES && this.link.queuedBytes() < OUTPUT_LOW_WATER_BYTES;
-  }
-
-  /** Stops checking on the process; its pane has ended. */
-  stop(): void {
-    this.cancelExitCheck();
-  }
-
-  private pause(): void {
-    this.state = 'paused';
-    this.pty.pause();
-    this.checkExitLater();
-  }
-
-  private resume(): void {
-    this.cancelExitCheck();
-    this.state = 'flowing';
-    this.pty.resume();
-  }
-
-  private checkExitLater(): void {
-    this.exitCheck = this.scheduler.after(PAUSED_EXIT_CHECK_MILLISECONDS, () => this.resumeOnceExited());
-  }
-
-  private resumeOnceExited(): void {
-    if (this.pty.running()) { this.checkExitLater(); return; }
-    this.exitCheck = null;
-    this.state = 'ended';
-    this.pty.resume();
-  }
-
-  private cancelExitCheck(): void {
-    if (this.exitCheck === null) return;
-    this.scheduler.cancel(this.exitCheck);
-    this.exitCheck = null;
   }
 }
