@@ -10,31 +10,9 @@
 # field that holds a command runs nothing, and --start never writes through a link.
 # Each gate waits for a file the test creates, so the test decides when a check ends.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
-set -u
-here="$(cd "$(dirname "$0")" && pwd)"
-plugin="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$plugin"
-work="$(mktemp -d)"
+. "$(dirname "$0")/_base_fixture.sh"
 # On exit every held gate is let go, so no detached run outlives the test.
 trap 'for gate_name in started unstarted killed stopped released health stopless dirty planted stubborn tampered; do touch "$work/release-$gate_name"; done; [ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
-unset FLOW_SLACK_WEBHOOK FLOW_HOME
-mkdir -p "$work/home" "$work/offline" && HOME="$work/home" && export HOME && unset CODEX_HOME
-for tool in curl wget gh osascript notify-send claude codex launchctl; do
-  printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
-  chmod +x "$work/offline/$tool"
-done
-PATH="$work/offline:$PATH"; export PATH
-export FLOW_HEALTH_PROCS="$work/procs"; : > "$FLOW_HEALTH_PROCS"
-fails=0
-pass() { echo "  ok   $1"; }
-fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
-check() { # check <name> '<condition>': the condition is shell text, run whole; a FAIL shows its output
-  if said="$( (eval "$2") 2>&1)"; then pass "$1"; else fail "$1"; [ -z "$said" ] || printf '%s\n' "$said" | sed 's/^/       /'; fi
-}
-json_value() { python3 -c 'import json,sys; value=json.load(sys.stdin)
-for key in sys.argv[1].split("."): value = value[int(key)] if key.isdigit() else value[key]
-print(value if isinstance(value,str) else json.dumps(value))' "$1"; }
-local_adapter="$plugin/adapters/local"
-slug() { printf '%s' "$1" | tr ':/#' '---'; }
 verify() { (cd "$worktree" && "$plugin/scripts/verify.sh" "$item" "$@"); }
 failed_checks() { python3 -c 'import json,sys; print(",".join(check["name"] for check in json.load(open(sys.argv[1]))["checks"] if check["status"]=="fail"))' "$reports/verify.json"; }
 report_status() { json_value status < "$reports/verify.json"; }
