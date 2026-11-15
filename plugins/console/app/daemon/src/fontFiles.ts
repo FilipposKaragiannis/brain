@@ -60,18 +60,25 @@ export function macFontFolders(home: string): string[] {
  * name, and stops at a file with the first name. A name found only in a collection is skipped.
  */
 export function folderFontLookup(folders: readonly string[]): FontLookup {
-  return async (postScriptNames) => {
-    let best: { rank: number; file: FontFile } | null = null;
-    for (const file of await fontFilesIn(folders)) {
-      const found = await fileNames(file);
-      if (found === null || found.servedAs === null) continue;
-      const rank = firstRank(postScriptNames, found.postScriptNames);
-      if (rank < 0 || (best !== null && best.rank <= rank)) continue;
-      best = { rank, file: { path: file, contentType: found.servedAs } };
-      if (rank === 0) break;
-    }
-    return best?.file ?? null;
-  };
+  return async (postScriptNames) => bestFont(await fontFilesIn(folders), postScriptNames);
+}
+
+type RankedFont = { rank: number; file: FontFile | null };
+
+async function bestFont(files: readonly string[], wanted: readonly string[]): Promise<FontFile | null> {
+  let best: RankedFont = { rank: wanted.length, file: null };
+  for (const file of files) {
+    if (best.rank === 0) break;
+    best = (await rankedFont(file, wanted, best.rank)) ?? best;
+  }
+  return best.file;
+}
+
+async function rankedFont(file: string, wanted: readonly string[], toBeat: number): Promise<RankedFont | null> {
+  const found = await fileNames(file);
+  if (found === null || found.servedAs === null) return null;
+  const rank = firstRank(wanted, found.postScriptNames);
+  return rank < 0 || rank >= toBeat ? null : { rank, file: { path: file, contentType: found.servedAs } };
 }
 
 function firstRank(wanted: readonly string[], held: readonly string[]): number {
@@ -107,11 +114,18 @@ async function fileNames(file: string): Promise<FontNames | null> {
 export async function fontNames(read: ByteReader): Promise<FontNames | null> {
   const header = await read(0, COLLECTION_HEADER_BYTES);
   if (header.length < SFNT_HEADER_BYTES) return null;
-  const tag = tagOf(header, 0);
-  if (tag === COLLECTION_TAG) return { postScriptNames: await collectionNames(read, header), servedAs: null };
-  if (tag !== CFF_TAG && tag !== APPLE_TRUETYPE_TAG && view(header).getUint32(0) !== TRUETYPE_VERSION) return null;
+  const kind = fontKind(header);
+  if (kind === null) return null;
+  if (kind === 'collection') return { postScriptNames: await collectionNames(read, header), servedAs: null };
   const name = await postScriptName(read, 0);
-  return { postScriptNames: name === null ? [] : [name], servedAs: tag === CFF_TAG ? 'font/otf' : 'font/ttf' };
+  return { postScriptNames: name === null ? [] : [name], servedAs: kind };
+}
+
+function fontKind(header: Uint8Array): FontContentType | 'collection' | null {
+  const tag = tagOf(header, 0);
+  if (tag === COLLECTION_TAG) return 'collection';
+  if (tag === CFF_TAG) return 'font/otf';
+  return tag === APPLE_TRUETYPE_TAG || view(header).getUint32(0) === TRUETYPE_VERSION ? 'font/ttf' : null;
 }
 
 async function collectionNames(read: ByteReader, header: Uint8Array): Promise<string[]> {
@@ -142,17 +156,21 @@ async function postScriptName(read: ByteReader, start: number): Promise<string |
 /** The first non-empty string with the name id in a name table: UTF-16 on the Unicode and Windows platforms, one byte a character on the Mac one. */
 function nameRecord(table: Uint8Array, nameId: number): string | null {
   if (table.length < NAME_HEADER_BYTES) return null;
-  const count = view(table).getUint16(NAME_COUNT_AT);
-  const strings = view(table).getUint16(NAME_STRINGS_AT);
-  for (let at = NAME_HEADER_BYTES; at + NAME_RECORD_BYTES <= table.length && at < NAME_HEADER_BYTES + count * NAME_RECORD_BYTES; at += NAME_RECORD_BYTES) {
-    const record = view(table);
-    if (record.getUint16(at + NAME_ID_AT) !== nameId) continue;
-    const from = strings + record.getUint16(at + NAME_STRING_OFFSET_AT);
-    const bytes = table.subarray(from, from + record.getUint16(at + NAME_STRING_LENGTH_AT));
-    const text = (record.getUint16(at) === MAC_PLATFORM_ID ? ascii : utf16).decode(bytes).trim();
+  const fields = view(table);
+  const end = Math.min(table.length, NAME_HEADER_BYTES + fields.getUint16(NAME_COUNT_AT) * NAME_RECORD_BYTES);
+  for (let at = NAME_HEADER_BYTES; at + NAME_RECORD_BYTES <= end; at += NAME_RECORD_BYTES) {
+    if (fields.getUint16(at + NAME_ID_AT) !== nameId) continue;
+    const text = recordText(table, at);
     if (text !== '') return text;
   }
   return null;
+}
+
+function recordText(table: Uint8Array, at: number): string {
+  const fields = view(table);
+  const from = fields.getUint16(NAME_STRINGS_AT) + fields.getUint16(at + NAME_STRING_OFFSET_AT);
+  const bytes = table.subarray(from, from + fields.getUint16(at + NAME_STRING_LENGTH_AT));
+  return (fields.getUint16(at) === MAC_PLATFORM_ID ? ascii : utf16).decode(bytes).trim();
 }
 
 function tagOf(bytes: Uint8Array, at: number): string {

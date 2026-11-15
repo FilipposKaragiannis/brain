@@ -113,11 +113,19 @@ function profileColours(profile: PlistDictionary): TerminalColours {
 /** An iTerm colour as CSS: "P3" converted to sRGB, "sRGB", "Calibrated" or no space taken as sRGB. */
 function cssColour(value: PlistValue | undefined): string | null {
   if (!isPlistDictionary(value)) return null;
-  const { 'Red Component': red, 'Green Component': green, 'Blue Component': blue, 'Alpha Component': alpha } = value;
-  if (typeof red !== 'number' || typeof green !== 'number' || typeof blue !== 'number') return null;
-  const stored = { red, green, blue };
+  const stored = storedColour(value);
+  if (stored === null) return null;
   const colour = value['Color Space'] === P3_SPACE ? displayP3ToSrgb(stored) : stored;
-  const opacity = typeof alpha === 'number' ? alpha : OPAQUE;
+  const alpha = value['Alpha Component'];
+  return hexColour(colour, typeof alpha === 'number' ? alpha : OPAQUE);
+}
+
+function storedColour(value: PlistDictionary): RgbColour | null {
+  const { 'Red Component': red, 'Green Component': green, 'Blue Component': blue } = value;
+  return typeof red === 'number' && typeof green === 'number' && typeof blue === 'number' ? { red, green, blue } : null;
+}
+
+function hexColour(colour: RgbColour, opacity: number): string {
   const channels = [colour.red, colour.green, colour.blue, ...(opacity < OPAQUE ? [opacity] : [])];
   return `#${channels.map(hexByte).join('')}`;
 }

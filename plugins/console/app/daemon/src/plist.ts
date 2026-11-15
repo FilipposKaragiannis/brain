@@ -109,8 +109,15 @@ function emptyValue(name: string): PlistValue | undefined {
 function numberValue(text: string | undefined): number | undefined {
   if (text === undefined || BLANK.test(text)) return undefined;
   const spelt = text.trim().toLowerCase();
+  return specialReal(spelt) ?? decimalNumber(spelt);
+}
+
+function specialReal(spelt: string): number | undefined {
   if (INFINITY.test(spelt)) return spelt.startsWith('-') ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
-  if (spelt === NOT_A_NUMBER) return Number.NaN;
+  return spelt === NOT_A_NUMBER ? Number.NaN : undefined;
+}
+
+function decimalNumber(spelt: string): number | undefined {
   const value = Number(spelt);
   return Number.isNaN(value) ? undefined : value;
 }
@@ -119,12 +126,19 @@ function readDictionary(reader: TokenReader): PlistDictionary | undefined {
   const entries: Record<string, PlistValue> = {};
   for (let start = reader.nextElement(); start !== undefined; start = reader.nextElement()) {
     if (start.kind === 'close') return start.name === 'dict' ? entries : undefined;
-    const key = start.kind === 'open' && start.name === 'key' ? reader.textUntilClose('key') : undefined;
-    const value = key === undefined ? undefined : readValue(reader, reader.nextElement());
-    if (key === undefined || value === undefined) return undefined;
-    entries[key] = value;
+    const entry = readEntry(reader, start);
+    if (entry === undefined) return undefined;
+    entries[entry.key] = entry.value;
   }
   return undefined;
+}
+
+function readEntry(reader: TokenReader, start: Token): { key: string; value: PlistValue } | undefined {
+  if (start.kind !== 'open' || start.name !== 'key') return undefined;
+  const key = reader.textUntilClose('key');
+  if (key === undefined) return undefined;
+  const value = readValue(reader, reader.nextElement());
+  return value === undefined ? undefined : { key, value };
 }
 
 function readArray(reader: TokenReader): PlistValue[] | undefined {
