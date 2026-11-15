@@ -25,7 +25,7 @@ Mutation is the project's switch: an empty `mutation` in `.standards/config.json
 report a missing mutation run under T-04 or T-05.
 
 ## Output
-Findings only: grade, rule id, file:line, what is wrong, the fix. Under 400 words.
+Findings only: grade, rule id, file:line, what is wrong, the fix.
 
 ## Never
 - Never review production code. Never ask for tests of trivial code the standards exclude. Never

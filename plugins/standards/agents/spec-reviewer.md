@@ -26,7 +26,7 @@ epic's scope and out-of-scope when there is one, and the grading scale.
 
 ## Output
 Findings only: grade, the spec line quoted, file:line, what is wrong, the fix. Then one line:
-count per grade. Under 400 words.
+count per grade.
 
 ## Never
 - Never review style, naming or standards. Never accept a check as met without evidence in the

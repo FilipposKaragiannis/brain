@@ -27,7 +27,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 4. **Closeout** (epic): the verifier reads every sub-item, fails on any open one, runs
    `verify.sh` on the epic branch when there is one, walks the epic's acceptance lines, and
    closes the epic through the adapter only when every line is proven.
-5. Report once: the status, the failing checks, where the report is.
+5. End with one report: the status, the failing checks, where the report is.
 
 The verifier never edits anything. A flaky check is a finding, not a retry. Never run the
 checks yourself and skip the agent; the report must come from one run of `verify.sh`. A wait is

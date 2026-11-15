@@ -26,7 +26,7 @@ marketplace and the hosts.
 3. **Write the body.** Steps in order, every one ending on `Done when <check>`, the last too;
    reference on demand, long reference disclosed to a sibling file; one hard guardrail under
    `## Never`, phrased with what to do instead. Prune: no-ops, duplication, cached environment
-   truth. Done when every sentence changes behaviour versus the default.
+   truth, literal limits (word caps, blanket bans, capitals). Done when every sentence changes behaviour versus the default.
 4. **Write the description.** Model-invoked: the leading word first, one trigger per branch, a
    reach clause when another skill calls it. User-invoked: one human-facing line. Done when
    the description fits its kind.
