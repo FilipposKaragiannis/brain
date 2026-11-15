@@ -1,6 +1,7 @@
 # _base_fixture.sh: the fixture base-readers.sh, base-claim.sh, verify-detached.sh, verify-ends.sh
-# and state.sh source: a work folder that goes on exit, an offline PATH, the check helpers, the
-# names no claim may record, and new_repo, a clone of a fresh bare origin on the local adapter.
+# and, through _state_fixture.sh, state.sh and state-views.sh source: a work folder that goes on
+# exit, an offline PATH, the check helpers, the names no claim may record, and new_repo, a clone of
+# a fresh bare origin on the local adapter.
 # Sourced, never run.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"

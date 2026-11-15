@@ -1,35 +1,11 @@
 #!/bin/sh
 # state.sh: the flow record of an item (lib/state.sh, scripts/state.sh), on the local adapter in a
-# throwaway repo. Every state key and gate record field reads back; a refused write leaves both
-# stores as they were; the tracker gets each state write first unless tracker_state is none; two
-# writers at once both land; a write renders the run file, the gate file and the claim's step only
-# when it names their fact; the first write seeds from the tracker and this machine's gate and run
-# files; take (a next.sh start too), archive (a release of a closed item too), the record equals
-# the tracker's state after next, advance and a gate, and a caller's while-read loop keeps its input.
+# throwaway repo. Every state key and gate record field reads back, each at its record path; a
+# refused write leaves both stores as they were; the tracker gets each state write first unless
+# tracker_state is none; two writers at once both land and a busy lock says try again; the gate's
+# value rules; where the records live; and a caller's while-read loop keeps its input.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
-. "$(dirname "$0")/_base_fixture.sh"
-
-record() { "$plugin/scripts/state.sh" "$@"; }
-take() { env FLOW_MACHINE="$1" sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && take_item "$1"' take "$2"; }
-closed_record() { open_record="$(record path "$1")"; printf '%s/closed/%s' "$(dirname "$open_record")" "$(basename "$open_record")"; }
-tracker_state_is() { grep -v '^tracker_state:' .flow/config.yaml > "$work/config.yaml"; [ -z "$1" ] || echo "tracker_state: $1" >> "$work/config.yaml"; cp "$work/config.yaml" .flow/config.yaml; }
-tracker() { "$local_adapter/read.sh" "$1" | json_value state; }
-item_file() { printf '.flow/items/task/%s.md' "${1##*/}"; }
-gate_file() { printf '.flow/gates/%s.json' "$(slug "$1")"; }
-claim_step() { json_value step < "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json"; }
-with_item() { python3 -c 'import json,sys; view=json.load(sys.stdin); view["item"]=sys.argv[1]; print(json.dumps(view, sort_keys=True))' "$1"; }
-canonical() { python3 -c 'import json,sys
-text=sys.stdin.read().rstrip("\n")
-try: print(json.dumps(json.loads(text), sort_keys=True))
-except ValueError: print(text)'; }
-record_equals_tracker() { # each of the tracker's state keys reads the same in the record; prints the first that differs
-  tracker_keys="$("$local_adapter/read.sh" "$1" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["state"]))')"
-  [ -n "$tracker_keys" ] && for key in $tracker_keys; do
-    [ "$(record get "$1" "$key" | canonical)" = "$(state "$1" "$key" | canonical)" ] || { echo "$key differs"; return 1; }
-  done
-}
-
-new_repo records
+. "$(dirname "$0")/_state_fixture.sh"
 
 echo "state keys: each reads back what was set"
 keyed="$(new_task "Key round trip")"
@@ -70,7 +46,6 @@ check "DashKey_ReadsAsItsUnderscoreKey: a dash in a key reads as an underscore, 
   '[ "$(record get "$keyed" last_event)" = "spelt with a dash" ]'
 
 echo "the gate's record: each field reads back after gate:="
-gate_record='{"gate":"ambiguity","item":"ignored","message":"Which row owns the retune?","time":"2026-11-15T10:00:00Z","host":"codex","options":[{"label":"Keep both rows","text":"Both rows stay","recommended":true}],"raised_by":"step design","answered_by":"step plan","condition":"ci:down","footer":"gate.sh clear with an option"}'
 record set "$keyed" "gate:=$gate_record" >/dev/null 2>&1
 while IFS='|' read -r path; do
   check "GateRecord_${path}_ReadsBackAsGiven: the gate's record keeps every field notify.sh writes" \
@@ -96,8 +71,8 @@ refusal() { # refusal <scenario> <pair>...
   record_before="$(record show "$refused")"; tracker_before="$(tracker "$refused")"
   record set "$refused" "$@" >/dev/null 2>&1; code=$?
   check "${scenario}_ExitsTwo: a write outside the grammar is a usage error" '[ "$code" -eq 2 ]'
-  check "${scenario}_LeavesBothStoresAsTheyWere: a refused write reaches neither the record nor the tracker" \
-    '[ "$(record show "$refused")" = "$record_before" ] && [ "$(tracker "$refused")" = "$tracker_before" ]'
+  check "${scenario}_LeavesTheRecordAsItWas: a refused write never reaches the record" '[ "$(record show "$refused")" = "$record_before" ]'
+  check "${scenario}_LeavesTheTrackerAsItWas: a refused write never reaches the tracker" '[ "$(tracker "$refused")" = "$tracker_before" ]'
 }
 refusal UnknownKey colour=blue
 refusal AttemptsNotAWholeNumber attempts=x
@@ -146,127 +121,6 @@ record set "$fresh" step=plan >/dev/null 2>&1 & record set "$fresh" last_event=f
 check "TwoFirstWritesAtOnce_MakeOneRecordWithBoth: the second first write finds the record and merges into it" \
   '[ "$(record get "$fresh" step)" = plan ] && [ "$(record get "$fresh" last_event)" = first ]'
 tracker_state_is ""
-
-echo "views: a write renders the run file, the gate file and the claim's step it names"
-run_record='{"item":"ignored","step":"implement","profile":"task-M","worktree":"/tmp/wt-2","reports":"/tmp/reports","host":"codex","started":"2026-11-15T11:00:00Z","pid":4242,"touches":["src/a/**"]}'
-ran="$(new_task "Run view")"
-record set "$ran" "run:=$run_record" >/dev/null 2>&1
-check "RunObject_WritesTheRunFileWithItsFields: the run file reads as next.sh wrote it, with the item's id" \
-  '[ "$(canonical < "$(run_file "$ran")")" = "$(printf "%s" "$run_record" | with_item "$ran")" ]'
-record set "$ran" run.step=sync >/dev/null 2>&1
-check "RunStep_ChangesTheRunFilesStep: a run that moves to sync shows it in the run file" '[ "$(json_value step < "$(run_file "$ran")")" = sync ]'
-record set "$ran" "run:=null" >/dev/null 2>&1
-check "RunNull_RemovesTheRunFile: a run that ended leaves no run file" '[ ! -f "$(run_file "$ran")" ]'
-hand_ran="$(new_task "Hand-made run file")"
-mkdir -p .flow/runs && printf '%s' "$run_record" > "$(run_file "$hand_ran")"
-record set "$hand_ran" "run:=null" >/dev/null 2>&1
-check "RunNullWithNoRunRecorded_RemovesAHandMadeRunFile: ending the run removes its file whether or not the record had one" \
-  '[ ! -f "$(run_file "$hand_ran")" ]'
-printf '%s' "$run_record" > "$(run_file "$hand_ran")"
-record set "$hand_ran" step=review >/dev/null 2>&1
-check "Step_LeavesAHandMadeRunFileAlone: a write that does not name the run does not touch its file" \
-  '[ "$(cat "$(run_file "$hand_ran")")" = "$run_record" ]'
-record set "$ran" "run:=$run_record" >/dev/null 2>&1; rm -f "$(run_file "$ran")"
-record set "$ran" step=review >/dev/null 2>&1
-check "StepAfterTheRunFileWentByHand_DoesNotBringItBack: only a write of the run makes its file" '[ ! -f "$(run_file "$ran")" ]'
-gated="$(new_task "Gate view")"
-record set "$gated" "gate:=$gate_record" >/dev/null 2>&1
-check "GateObject_WritesTheGateFileWithNotifysFields: the gate file reads as notify.sh wrote it, with the item's id" \
-  '[ "$(canonical < "$(gate_file "$gated")")" = "$(printf "%s" "$gate_record" | with_item "$gated")" ]'
-record set "$gated" gate=none >/dev/null 2>&1
-check "GateNone_RemovesTheGateFile: a cleared gate leaves no gate file" '[ ! -f "$(gate_file "$gated")" ]'
-record set "$gated" "gate:=$gate_record" >/dev/null 2>&1; record set "$gated" gate= >/dev/null 2>&1
-check "EmptyGate_RemovesTheGateFile: an empty gate clears it as none does" '[ ! -f "$(gate_file "$gated")" ]'
-named_gate="$(new_task "Gate named only")"
-record set "$named_gate" gate=plan-approval gate_from=plan >/dev/null 2>&1
-check "GateName_WritesNoGateFile: the gate file is notify.sh's record, which a gate name alone does not carry" '[ ! -f "$(gate_file "$named_gate")" ]'
-mkdir -p .flow/gates && printf '%s' "$gate_record" > "$(gate_file "$named_gate")"
-record set "$named_gate" last_event=reminded >/dev/null 2>&1
-check "LastEvent_LeavesAHandMadeGateFileAlone: a write that does not name the gate does not touch its file" \
-  '[ "$(cat "$(gate_file "$named_gate")")" = "$gate_record" ]'
-claimed="$(new_task "Claim view")"
-"$plugin/scripts/steward.sh" claim "$claimed" >/dev/null 2>&1
-record set "$claimed" step=implement >/dev/null 2>&1
-check "StepOfAClaimedItem_IsTheClaimsStep: the worktree's claim follows the item's step" '[ "$(claim_step "$claimed")" = implement ]'
-record set "$claimed" "run:=$run_record" >/dev/null 2>&1; record set "$claimed" run.step=sync >/dev/null 2>&1
-check "RunStepOfAClaimedItem_IsTheClaimsStep: the step the run is on is the claim's step" '[ "$(claim_step "$claimed")" = sync ]'
-unclaimed="$(new_task "No claim view")"
-record set "$unclaimed" step=implement >/dev/null 2>&1
-check "StepOfAnUnclaimedItem_MakesNoClaimFile: only a claimed worktree carries the step" '[ -z "$("$plugin/scripts/steward.sh" find "$unclaimed")" ]'
-
-echo "the seed: an item started before the records"
-started="$(new_task "Started before the records")"
-"$local_adapter/write-state.sh" "$started" step=implement profile=task-M size=M worktree=wt-1 attempts=2 \
-  touches=src/a/**,docs/b.md changes=lib/c.sh base=plan/sandbox held_by=local:task/9 held_reason="same row" \
-  gate=ambiguity gate_from=design answered=plan-approval asked="Approve the plan?" answer=Approved \
-  answered_at=2026-11-14T08:00:00Z answer_pending=next pr=https://example.invalid/pull/8 pr_host=codex
-started_gate_file="$(printf '%s' "$gate_record" | with_item "$started")"; started_run_file="$(printf '%s' "$run_record" | with_item "$started")"
-printf '%s' "$started_gate_file" > "$(gate_file "$started")"; printf '%s' "$started_run_file" > "$(run_file "$started")"
-env FLOW_MACHINE=gamma "$plugin/scripts/state.sh" set "$started" last_event=resumed >/dev/null 2>&1
-seeded_keys="$("$local_adapter/read.sh" "$started" | python3 -c 'import json,sys; print(" ".join(key for key in json.load(sys.stdin)["state"] if key != "last_event"))')"
-check "FirstWriteOfAStartedItem_CopiesTheTrackersStateKeys: the record starts from the tracker's state, so nothing in flight is lost" \
-  '[ -n "$seeded_keys" ] && for key in $seeded_keys; do [ "$(record get "$started" "$key" | canonical)" = "$(state "$started" "$key" | canonical)" ] || { echo "$key differs"; exit 1; }; done'
-check "FirstWriteOfAStartedItem_ClaimsItForThisMachine: an item with a step was started here" '[ "$(record get "$started" claim.machine)" = gamma ]'
-check "FirstWriteOfAStartedItem_TakesTheGateFilesOptions: the open gate's options outlive the move to the record" \
-  '[ "$(record get "$started" gate.options.0.label)" = "$(printf "%s" "$gate_record" | json_value options.0.label)" ]'
-check "FirstWriteOfAStartedItem_TakesTheRunFile: the run in flight outlives the move to the record" \
-  '[ "$(record get "$started" run.pid)" = "$(printf "%s" "$run_record" | json_value pid)" ]'
-check "FirstWriteOfAStartedItem_LeavesTheGateFileAsItWas: the seed renders no view" '[ "$(cat "$(gate_file "$started")")" = "$started_gate_file" ]'
-check "FirstWriteOfAStartedItem_LeavesTheRunFileAsItWas: the seed renders no view" '[ "$(cat "$(run_file "$started")")" = "$started_run_file" ]'
-other_gate="$(new_task "Gate file of another gate")"
-"$local_adapter/write-state.sh" "$other_gate" step=plan gate=plan-approval
-printf '%s' "$gate_record" > "$(gate_file "$other_gate")"
-record set "$other_gate" last_event=resumed >/dev/null 2>&1
-check "GateFileOfAnotherGate_StaysOutOfTheSeed: the tracker's open gate wins over a gate file left from another one" \
-  '[ -z "$(record get "$other_gate" gate.options)" ]'
-"$local_adapter/write-state.sh" "$started" step=review
-check "LaterTrackerChange_DoesNotReachTheRecord: once a record exists it wins and is never compared again" '[ "$(record get "$started" step)" = implement ]'
-unrecorded="$(new_task "Never written")"
-check "ItemWithNoRecord_GetPrintsNothing: a read never seeds a record" '[ -z "$(record get "$unrecorded" step)" ] && [ ! -f "$(record path "$unrecorded")" ]'
-
-echo "take and archive"
-taken="$(new_task "Taken here")"
-take alpha "$taken" >/dev/null 2>&1
-check "TakeOfAnUnheldItem_RecordsThisMachine: take_item makes this machine the item's holder" '[ "$(record get "$taken" claim.machine)" = alpha ]'
-take beta "$taken" >/dev/null 2>&1
-check "TakeOfAnItemAnotherMachineHolds_KeepsThatMachine: a take never moves a hold from another machine" '[ "$(record get "$taken" claim.machine)" = alpha ]'
-started_here="$(new_task "Started by next")"
-record set "$started_here" last_event=filed >/dev/null 2>&1
-env FLOW_MACHINE=alpha "$plugin/scripts/next.sh" "$started_here" >/dev/null 2>&1
-check "NextStartOfARecordedItem_RecordsTheStartingMachineAsTheHolder: starting an item takes it for the machine that started it" \
-  '[ "$(record get "$started_here" claim.machine)" = alpha ]'
-archived="$(new_task "Archived")"
-record set "$archived" last_event=finished >/dev/null 2>&1
-record archive "$archived" >/dev/null 2>&1
-check "Archive_MovesTheRecordToClosed: an archived record leaves the open ones and is kept under closed/" \
-  '[ ! -f "$(record path "$archived")" ] && [ -f "$(closed_record "$archived")" ]'
-record set "$archived" last_event=reopened >/dev/null 2>&1
-check "WriteAfterArchive_StartsANewRecord: a write to an archived item starts an open record again" '[ "$(record get "$archived" last_event)" = reopened ]'
-record archive "$unrecorded" >/dev/null 2>&1; code=$?
-check "ArchiveWithNoRecord_DoesNothing: there is nothing to move" '[ "$code" -eq 0 ] && [ ! -f "$(closed_record "$unrecorded")" ]'
-held="$(new_task "Held elsewhere")"
-take beta "$held" >/dev/null 2>&1
-env FLOW_MACHINE=alpha "$plugin/scripts/state.sh" archive "$held" >/dev/null 2>&1; code=$?
-check "ArchiveOfARecordAnotherMachineHolds_ExitsOne: only the holder's machine archives a record" '[ "$code" -eq 1 ]'
-check "ArchiveOfARecordAnotherMachineHolds_KeepsTheRecord: a refused archive moves nothing" '[ -f "$(record path "$held")" ] && [ ! -f "$(closed_record "$held")" ]'
-released="$(new_task "Released when closed")"
-released_worktree="$("$plugin/scripts/steward.sh" claim "$released" 2>/dev/null)"
-"$local_adapter/close.sh" "$released" >/dev/null
-"$plugin/scripts/steward.sh" release "$released_worktree" >/dev/null 2>&1
-check "ReleaseOfAClosedItem_ArchivesItsRecord: a closed item's record leaves the open ones with its worktree" \
-  '[ ! -f "$(record path "$released")" ] && [ -f "$(closed_record "$released")" ]'
-
-echo "parity: the record equals the tracker's state after the flow's own writes"
-paired="$(new_task "Parity")"
-paired_start="$("$plugin/scripts/next.sh" "$paired" --json 2>/dev/null)"
-paired_step="$(printf '%s' "$paired_start" | json_value step)"
-printf '{"status":"done","summary":"done","touches":["src/a/**"]}\n' > "$(printf '%s' "$paired_start" | json_value reports)/$paired_step.json"
-"$plugin/scripts/advance.sh" "$paired" >/dev/null 2>&1
-check "NextAndAdvance_RecordEqualsTheTrackersState: a started and advanced item reads the same in both stores" 'record_equals_tracker "$paired"'
-"$plugin/scripts/gate.sh" raise "$paired" ambiguity "Which row owns the retune?" >/dev/null 2>&1
-check "GateRaise_RecordEqualsTheTrackersState: a raised gate reads the same in both stores" 'record_equals_tracker "$paired"'
-"$plugin/scripts/gate.sh" clear "$paired" "Keep both rows" >/dev/null 2>&1
-check "GateClear_RecordEqualsTheTrackersState: a cleared gate and its answer read the same in both stores" 'record_equals_tracker "$paired"'
 
 echo "the key map: each tracker key lands at its record path"
 mapped="$(new_task "Key map")"
@@ -339,6 +193,29 @@ check "StateDirThatCannotBeMade_LeavesTheTrackerAsItWas: bad config is refused b
   '[ "$(tracker "$unwritable")" = "$tracker_before" ]'
 cp "$work/config.saved" .flow/config.yaml
 
+read_only_dir="$work/read-only-records"; mkdir -p "$read_only_dir"; chmod a-w "$read_only_dir"
+read_only="$(new_task "Read-only state dir")"
+printf 'state:\n  dir: %s\n' "$read_only_dir" >> .flow/config.yaml
+tracker_before="$(tracker "$read_only")"
+record set "$read_only" step=plan >/dev/null 2>&1; code=$?
+check "ReadOnlyStateDir_ExitsTwo: a state.dir that is there but cannot be written is bad config" '[ "$code" -eq 2 ]'
+check "ReadOnlyStateDir_LeavesTheTrackerAsItWas: bad config is refused before any store is written" \
+  '[ "$(tracker "$read_only")" = "$tracker_before" ]'
+chmod u+w "$read_only_dir"
+cp "$work/config.saved" .flow/config.yaml
+
+echo "values that look like options"
+optioned="$(new_task "Option-like values")"
+while IFS='|' read -r scenario key value; do
+  record set "$optioned" "$key=$value" >/dev/null 2>&1
+  check "ValueThatLooksLike${scenario}_ReadsBackAsGiven: a pair's value is data, never a word of the command line" \
+    '[ "$(record get "$optioned" "$key")" = "$value" ]'
+done <<'VALUES'
+AnOption|last_event|--seed none
+TheEndOfOptions|asked|--
+AnOptionWithItsValue|answer|--item=local:task/1
+VALUES
+
 echo "a busy lock"
 tracker_state_is none
 locked="$(new_task "Busy lock")"
@@ -349,19 +226,14 @@ python3 -c 'import fcntl,sys,time
 handle=open(sys.argv[1],"a"); fcntl.flock(handle, fcntl.LOCK_EX); open(sys.argv[2],"w").close(); time.sleep(float(sys.argv[3]))' \
   ".flow/locks/$(slug "$locked").lock" "$work/lock.held" "$lock_held_seconds_past_any_wait" &
 lock_holder=$!
-while [ ! -f "$work/lock.held" ]; do sleep 0.1; done
-record set "$locked" step=review >/dev/null 2>&1; code=$?
+lock_holder_start_tries=100
+tries=0; while [ ! -f "$work/lock.held" ] && [ "$tries" -lt "$lock_holder_start_tries" ]; do sleep 0.1; tries=$((tries + 1)); done
+code=lock-never-held
+[ -f "$work/lock.held" ] && { record set "$locked" step=review >/dev/null 2>&1; code=$?; }
 kill "$lock_holder" 2>/dev/null; wait "$lock_holder" 2>/dev/null
 check "LockHeldByAnotherWrite_ExitsSeventyFive: a write that cannot take the item's lock says try again" '[ "$code" -eq 75 ]'
 check "LockHeldByAnotherWrite_LeavesTheRecordAsItWas: a write that never took the lock changes nothing" '[ "$(record get "$locked" step)" = plan ]'
 tracker_state_is ""
-
-echo "parity of a hold"
-holder="$(new_task "Holder")"; waiter="$(new_task "Waiter")"
-"$plugin/scripts/hold.sh" set "$waiter" "$holder" "same retune of the row owner" >/dev/null 2>&1
-check "HoldSet_RecordEqualsTheTrackersState: a hold reads the same in both stores" 'record_equals_tracker "$waiter"'
-"$plugin/scripts/hold.sh" clear "$waiter" "holder merged" >/dev/null 2>&1
-check "HoldClear_RecordEqualsTheTrackersState: a lifted hold reads the same in both stores" 'record_equals_tracker "$waiter"'
 
 echo "a caller's stdin"
 looped="$(new_task "Loop around a write")"
