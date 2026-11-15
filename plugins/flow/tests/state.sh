@@ -4,7 +4,8 @@
 # stores as they were; the tracker gets each state write first unless tracker_state is none; two
 # writers at once both land; a write renders the run file, the gate file and the claim's step only
 # when it names their fact; the first write seeds from the tracker and this machine's gate and run
-# files; take (a next.sh start too), archive, and a caller's while-read loop keeps its input.
+# files; take (a next.sh start too), archive (a release of a closed item too), the record equals
+# the tracker's state after next, advance and a gate, and a caller's while-read loop keeps its input.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 
@@ -21,6 +22,12 @@ canonical() { python3 -c 'import json,sys
 text=sys.stdin.read().rstrip("\n")
 try: print(json.dumps(json.loads(text), sort_keys=True))
 except ValueError: print(text)'; }
+record_equals_tracker() { # each of the tracker's state keys reads the same in the record; prints the first that differs
+  tracker_keys="$("$local_adapter/read.sh" "$1" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["state"]))')"
+  [ -n "$tracker_keys" ] && for key in $tracker_keys; do
+    [ "$(record get "$1" "$key" | canonical)" = "$(state "$1" "$key" | canonical)" ] || { echo "$key differs"; return 1; }
+  done
+}
 
 new_repo records
 
@@ -242,6 +249,24 @@ take beta "$held" >/dev/null 2>&1
 env FLOW_MACHINE=alpha "$plugin/scripts/state.sh" archive "$held" >/dev/null 2>&1; code=$?
 check "ArchiveOfARecordAnotherMachineHolds_ExitsOne: only the holder's machine archives a record" '[ "$code" -eq 1 ]'
 check "ArchiveOfARecordAnotherMachineHolds_KeepsTheRecord: a refused archive moves nothing" '[ -f "$(record path "$held")" ] && [ ! -f "$(closed_record "$held")" ]'
+released="$(new_task "Released when closed")"
+released_worktree="$("$plugin/scripts/steward.sh" claim "$released" 2>/dev/null)"
+"$local_adapter/close.sh" "$released" >/dev/null
+"$plugin/scripts/steward.sh" release "$released_worktree" >/dev/null 2>&1
+check "ReleaseOfAClosedItem_ArchivesItsRecord: a closed item's record leaves the open ones with its worktree" \
+  '[ ! -f "$(record path "$released")" ] && [ -f "$(closed_record "$released")" ]'
+
+echo "parity: the record equals the tracker's state after the flow's own writes"
+paired="$(new_task "Parity")"
+paired_start="$("$plugin/scripts/next.sh" "$paired" --json 2>/dev/null)"
+paired_step="$(printf '%s' "$paired_start" | json_value step)"
+printf '{"status":"done","summary":"done","touches":["src/a/**"]}\n' > "$(printf '%s' "$paired_start" | json_value reports)/$paired_step.json"
+"$plugin/scripts/advance.sh" "$paired" >/dev/null 2>&1
+check "NextAndAdvance_RecordEqualsTheTrackersState: a started and advanced item reads the same in both stores" 'record_equals_tracker "$paired"'
+"$plugin/scripts/gate.sh" raise "$paired" ambiguity "Which row owns the retune?" >/dev/null 2>&1
+check "GateRaise_RecordEqualsTheTrackersState: a raised gate reads the same in both stores" 'record_equals_tracker "$paired"'
+"$plugin/scripts/gate.sh" clear "$paired" "Keep both rows" >/dev/null 2>&1
+check "GateClear_RecordEqualsTheTrackersState: a cleared gate and its answer read the same in both stores" 'record_equals_tracker "$paired"'
 
 echo "a caller's stdin"
 looped="$(new_task "Loop around a write")"

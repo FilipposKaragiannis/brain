@@ -175,6 +175,7 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
+  if adapter_for "$item" >/dev/null 2>&1; then take_item "$item"; fi
   write_state "$item" "worktree=$(basename "$free")" "base=$base" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
@@ -287,6 +288,7 @@ cmd_release() {
       d="$root/.flow/reports/$(item_slug "$item")"
       [ -d "$d" ] && rm -rf "$d" && echo "removed $d ($item is closed)"
     done
+    record_archive "$item"
   fi
   return 0
 }
@@ -365,9 +367,7 @@ cmd_split() {
     fi
     [ -z "$sp_tmp" ] || rm -f "$sp_tmp" "$sp_tmp.failed"
     if [ -n "$split_kept" ]; then
-      # Through a temp file beside it: a failed write never leaves an empty claim (a free look).
-      sp_new="$sp_path/.flow/claim.json.tmp.$$"
-      if json_set "$sp_claim" step "$(json_string split)" > "$sp_new" && [ -s "$sp_new" ]; then mv "$sp_new" "$sp_path/.flow/claim.json"; else rm -f "$sp_new"; fi
+      [ "$(json_get "$sp_claim" step)" = split ] || write_state "$sp_item" "step=split"
       [ "$sp_was" = split ] && [ "$(json_get "$sp_claim" step)" = split ] || split_msg="$sp_said; $sp_name is kept: $split_kept"
     else
       sp_ahead="$(git -C "$sp_path" rev-list --count "$(base_ref "$sp_base")..refs/heads/$sp_branch" 2>/dev/null)"
@@ -616,7 +616,7 @@ cmd_sweep() {
     if [ -z "$pr" ] && [ "$gate" = merge ]; then
       gh_repo="$(cfg github.repo)"
       found="$(cd "$main" && gh pr list ${gh_repo:+-R "$gh_repo"} --head "$br" --state all --json url 2>/dev/null)" && pr="$(json_get "$found" 0.url)"
-      [ -z "$pr" ] || [ "$dry" -eq 1 ] || adapter link-pr "$it" "$pr" >/dev/null || echo "flow: could not record $pr on $it" >&2
+      [ -z "$pr" ] || [ "$dry" -eq 1 ] || link_pr "$it" "$pr"
     fi
     merged=0; head=""
     if [ -n "$pr" ] && st="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pr" 2>/dev/null)" && [ "$(json_get "$st" state)" = MERGED ]; then
@@ -640,6 +640,14 @@ cmd_sweep() {
     [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
     (cmd_release "$p" $force >/dev/null) && echo "$it: released $name ($why)"
   done
+}
+
+# link_pr <item> <pr>: the PR on the tracker (adapter link-pr), then in the item's flow record with
+# the pr_host the tracker took.
+link_pr() {
+  adapter link-pr "$1" "$2" >/dev/null || { echo "flow: could not record $2 on $1" >&2; return 1; }
+  lp_linked_item="$(adapter read "$1" 2>/dev/null)" || return 0
+  write_state "$1" "pr=$2" "pr_host=$(state_get "$lp_linked_item" pr_host)"
 }
 
 # sweep_drop_gate <item> <gate> <answer> <why>: the gate of an item the sweep closes goes with it.

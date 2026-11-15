@@ -53,6 +53,11 @@ kind="$(json_get "$data" kind)"
 # sandbox): the URL its result names is recorded here when the item has none.
 if [ "$step" = pr ] && pr_url="$(json_get "$result" pr)" && [ -n "$pr_url" ] && [ -z "$(state_get "$data" pr)" ]; then
   adapter link-pr "$item" "$pr_url" >/dev/null || echo "advance: could not record $pr_url on $item" >&2
+  data="$(adapter read "$item")" || die "cannot read $item"
+fi
+# The worker's link-pr writes only the tracker: the record takes the PR the tracker holds.
+if [ "$step" = pr ] && [ -n "$(state_get "$data" pr)" ]; then
+  record_set "$item" "pr=$(state_get "$data" pr)" "pr_host=$(state_get "$data" pr_host)"
 fi
 
 finish_run() { record_set "$item" "run:=null" >/dev/null; }
