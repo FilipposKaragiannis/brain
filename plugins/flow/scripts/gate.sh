@@ -107,7 +107,7 @@ gate_drop() {
     gate="$(state_get "$item_data" gate)"; [ "$gate" != none ] || gate=""
   fi
   [ -n "$gate" ] || return 0
-  adapter write-state "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
+  record_set "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
     || die "cannot drop the $gate gate of $item; it stays"
   rm -f "$record"
   case "$gate" in
@@ -146,7 +146,7 @@ case "${1:-}" in
     answered_by="$(carrier_field "$carrier" "$FIELD_ANSWERED_BY")"
     footer="$(gate_footer "$condition" "$(carrier_field "$carrier" "$FIELD_HOW_TO_CLEAR")")"
     condition_field="condition:=null"; [ -z "$condition" ] || condition_field="condition=$condition"
-    adapter write-state "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" >/dev/null
+    record_set "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" >/dev/null
     adapter comment "$item" --body "**Gate: $gate**
 
 $message

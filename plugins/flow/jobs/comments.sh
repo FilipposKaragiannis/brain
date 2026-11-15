@@ -185,7 +185,7 @@ take_answer() {
   if [ "${ta_at:-unknown}" != "$answer_at" ]; then
     job_say "$1: a newer answer to its gate came while the pass ran; it waits for the next pass" >/dev/null; return 0
   fi
-  adapter write-state "$answer_item" answer_pending= >/dev/null 2>&1 \
+  record_set "$answer_item" answer_pending= >/dev/null 2>&1 \
     || job_say "$1: could not mark the answer to its gate taken; the next pass carries it again" >/dev/null
 }
 # claimed_by <worktree> <item>: the worktree's claim names the item, so its changes are this

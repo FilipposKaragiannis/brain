@@ -187,7 +187,7 @@ keep_whole_when_children_closed() {
   [ "$gate" = decomposition ] || return 1
   item_now="$(adapter read "$item" 2>/dev/null)"
   [ "$(state_get "$item_now" step)" = split ] && [ "$(json_get "$item_now" open_children)" = 0 ] || return 1
-  step_write "$item" "step=plan" "answer_pending=next" "last_event=$(now_iso) kept whole: the children are closed, the plan step runs again" >/dev/null
+  record_set "$item" "step=plan" "answer_pending=next" "last_event=$(now_iso) kept whole: the children are closed, the plan step runs again" >/dev/null
   "$FLOW_PLUGIN/scripts/steward.sh" keep-whole "$item" >/dev/null
   echo "gate cleared on $item; its children are closed, so it is whole again: next $item runs the plan step"
 }
@@ -197,7 +197,7 @@ keep_whole_when_children_closed() {
 # them; answered_at stays too: the comments job counts a clear as new activity on the item's PR.
 clear_with_answer() {
   cleared_at="$(now_iso)"
-  adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$2" "asked=$asked" "answer=$1" \
+  record_set "$item" "gate=none" "gate_from=" "attempts=0" "answered=$2" "asked=$asked" "answer=$1" \
     "answered_at=$cleared_at" "answer_pending=$4" "last_event=$cleared_at gate cleared: $1" >/dev/null \
     || die "cannot clear the ${gate:-gate} gate of $item; it stays"
   adapter comment "$item" --body "Gate cleared: $1" >/dev/null
@@ -244,7 +244,7 @@ clear_back() {
   step_runs "$from" || die "$item has no step to send back to: its ${gate:-gate} gate judges the $from step, which no run does again. Do it by hand, then clear the gate with no answer: gate.sh clear $item"
   release_hosts_stopped_for "$item"
   sent_at="$(now_iso)"
-  step_write "$item" "gate=none" "gate_from=" "step=$from" "attempts=0" "answered=$gate, sent back" "asked=$asked" "answer=$1" \
+  record_set "$item" "gate=none" "gate_from=" "step=$from" "attempts=0" "answered=$gate, sent back" "asked=$asked" "answer=$1" \
     "answered_at=$sent_at" "answer_pending=next" "last_event=$sent_at gate sent back to $from: $1" >/dev/null
   adapter comment "$item" --body "Gate sent back to $from: $1" >/dev/null
   log_answered "$item" "${gate:-gate}, sent back to $from: $1"
@@ -258,7 +258,7 @@ clear_back() {
 clear_met() {
   release_hosts_stopped_for "$item"
   met_note="$1 no longer holds"; met_at="$(now_iso)"
-  adapter write-state "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate, condition met" "asked=$asked" "answer=$met_note" \
+  record_set "$item" "gate=none" "gate_from=" "attempts=0" "answered=$gate, condition met" "asked=$asked" "answer=$met_note" \
     "answer_pending=" "last_event=$met_at gate cleared by health: $met_note" >/dev/null
   adapter comment "$item" --body "Gate cleared by the health job: $met_note" >/dev/null
   rm -f "$record"

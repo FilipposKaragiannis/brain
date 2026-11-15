@@ -141,7 +141,7 @@ claim_at_base() {
   if [ "$resolved_code" -ne 0 ]; then
     claim_refusal="$base_name_refused"
     base_name_valid "$claim_base" && claim_refusal="its base $claim_base is not on the remote"
-    adapter write-state "$1" "last_event=$(now_iso) $claim_refusal" >/dev/null
+    record_set "$1" "last_event=$(now_iso) $claim_refusal" >/dev/null
     echo "$1: $claim_refusal" >&2; return 4
   fi
   claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$1" --base "$claim_base")" || return

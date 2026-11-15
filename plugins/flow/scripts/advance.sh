@@ -70,7 +70,7 @@ size_index() { i=0; for s in $(json_list "$profiles" sizes); do [ "$s" = "$1" ] 
 
 report() {
   # report <exit> <next-step> <gate>
-  [ -n "$touches" ] && adapter write-state "$item" "touches=$touches" >/dev/null
+  [ -n "$touches" ] && record_set "$item" "touches=$touches" >/dev/null
   if [ "$as_json" -eq 1 ]; then json_obj "item=$item" "step=$step" "status=$status" "next_step=$2" "gate=$3" "profile=$profile" "size=$size" "attempts:=$attempts"; echo
   else echo "advance: $item - $step $status -> ${2:-$3}"; fi
   exit "$1"
@@ -83,7 +83,7 @@ if [ "$step" = sync ]; then
   case "$status" in
     done)
       rm -f "$reports/sync.md"
-      step_write "$item" "step=$own" "last_event=$(now_iso) sync done -> $own" >/dev/null
+      record_set "$item" "step=$own" "last_event=$(now_iso) sync done -> $own" >/dev/null
       adapter comment "$item" --body "The task branch is in step: ${summary:-merged}. Next: $own." >/dev/null
       finish_run
       report 0 "$own" "" ;;
@@ -127,7 +127,7 @@ fi
 # The plan step's changes (the globs among its touches whose existing behavior it changes) and
 # its hold. Only a plan that is done holds the item; a gate means the plan is not settled.
 if [ "$step" = plan ] && [ -n "$result" ]; then
-  adapter write-state "$item" "changes=$(json_list "$result" changes | tr '\n' ',' | sed 's/,$//')" >/dev/null
+  record_set "$item" "changes=$(json_list "$result" changes | tr '\n' ',' | sed 's/,$//')" >/dev/null
   if [ "$status" = done ]; then
     holder="$(json_get "$result" hold.behind)"
     if [ -n "$holder" ] && "$FLOW_PLUGIN/scripts/hold.sh" set "$item" "$holder" "$(json_get "$result" hold.reason)"; then
@@ -144,18 +144,18 @@ case "$status" in
   gate)
     [ -n "$gate" ] || gate="ambiguity"
     raise_asked "$gate" "${message:-$summary}"
-    step_write "$item" "step=$step" >/dev/null
+    record_set "$item" "step=$step" >/dev/null
     report 4 "" "$gate" ;;
   fail)
     attempts=$((attempts + 1))
     max="$(json_get "$profiles" max_attempts)"
     if [ "$attempts" -ge "${max:-3}" ]; then
-      adapter write-state "$item" "attempts=$attempts" >/dev/null
+      record_set "$item" "attempts=$attempts" >/dev/null
       "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "Step $step failed $attempts times. Last: ${summary:-no summary}" >/dev/null
       report 4 "" escalation
     fi
     fix="$(json_get "$profiles" "fix_step.$step")"; [ -n "$fix" ] || fix="$step"
-    step_write "$item" "step=$fix" "attempts=$attempts" "last_event=$(now_iso) $step failed (attempt $attempts): ${summary:-no summary}" >/dev/null
+    record_set "$item" "step=$fix" "attempts=$attempts" "last_event=$(now_iso) $step failed (attempt $attempts): ${summary:-no summary}" >/dev/null
     adapter comment "$item" --body "Step $step failed (attempt $attempts of ${max:-3}): ${summary:-no summary}. Back to $fix." >/dev/null
     finish_run
     report 0 "$fix" "" ;;
@@ -171,9 +171,9 @@ next_profile="$profile"
 if [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
   old_i="$(size_index "$size")"; new_i="$(size_index "$new_size")"
   [ "$new_i" -ge 0 ] || die "unknown size $new_size" 2
-  adapter write-state "$item" "size=$new_size" >/dev/null
+  record_set "$item" "size=$new_size" >/dev/null
   if [ $((new_i - old_i)) -ge 2 ] || { [ "$new_size" = "L" ] && [ "$new_i" -gt "$old_i" ]; }; then
-    step_write "$item" "step=$step" "profile=$(profile_select "$kind" "$new_size")" >/dev/null
+    record_set "$item" "step=$step" "profile=$(profile_select "$kind" "$new_size")" >/dev/null
     "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" plan-approval "**Re-sized $size -> $new_size at step $step. Replan or split, then clear the gate.**
 
 ${summary:-No summary.}" >/dev/null
@@ -190,7 +190,7 @@ fi
 profile="$next_profile"
 attempts=0
 if [ -z "$following" ]; then
-  step_write "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; every step ran" >/dev/null
+  record_set "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; every step ran" >/dev/null
   adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Every step of $profile ran." >/dev/null
   finish_run
   report 6 "done" ""
@@ -202,20 +202,20 @@ case "$following" in
     [ -n "$after" ] || after="done"
     # auto_gates: only plan-approval can be cleared by the flow, by item size; every other gate waits.
     if [ "$g" = "plan-approval" ] && case ",$(cfg auto_gates.plan-approval | tr -d ' ')," in *",$size,"*) true ;; *) false ;; esac; then
-      step_write "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g auto-approved (size $size)" >/dev/null
+      record_set "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g auto-approved (size $size)" >/dev/null
       adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Gate $g auto-approved by auto_gates for size $size. Next: $after." >/dev/null
       printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$item" "$g" "auto-approved (size $size)" >> "$home/events.log"
       finish_run
       report 0 "$after" ""
     fi
-    step_write "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g" >/dev/null
+    record_set "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g" >/dev/null
     # The ask leads, in bold, so the owner reads the decision before the step's summary.
     "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" "$g" "**$(json_get "$profiles" "gates.$g.asks")**
 
 ${summary:-$step done.}" "$step" >/dev/null
     report 4 "$after" "$g" ;;
   *)
-    step_write "$item" "step=$following" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done -> $following" >/dev/null
+    record_set "$item" "step=$following" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done -> $following" >/dev/null
     adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Next: $following." >/dev/null
     if [ "$feel_test" -eq 1 ]; then
       # Problems the owner reports go back to the step that writes the code, not to verify.

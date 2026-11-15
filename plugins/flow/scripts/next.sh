@@ -181,7 +181,7 @@ json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$worktree" "repo
 sized="size=$size"; [ "$kind" = "epic" ] && sized="size="
 # The run takes the answer to the last gate (answer_pending, gate.sh clear): its brief carries it.
 taken=""; [ -z "$(state_get "$data" answer_pending)" ] || taken="answer_pending="
-adapter write-state "$item" "step=$step" "profile=$profile" "$sized" ${taken:+"$taken"} "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
+record_set "$item" "step=$step" "profile=$profile" "$sized" ${taken:+"$taken"} "last_event=$(now_iso) start $step on $(host_name)" >/dev/null
 flow_unlock
 
 # Verify runs on the code the PR merges: a clean task branch behind its base gets the base merged

@@ -131,7 +131,7 @@ write_state() {
   # write_state <item> key=value... ; skipped for ids no adapter owns (ad hoc worktree sessions).
   adapter_for "$1" >/dev/null 2>&1 || return 0
   item="$1"; shift
-  adapter write-state "$item" "$@" >/dev/null || echo "flow: could not write state for $item" >&2
+  record_set "$item" "$@" >/dev/null || echo "flow: could not write state for $item" >&2
 }
 
 cmd_pool() {
@@ -868,7 +868,7 @@ health_claim() {
     if [ "$dry" -eq 1 ]; then health_say "$it" "would clear the dead run of ${step:-?} (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     else
       rm -f "$rec"
-      adapter write-state "$it" "last_event=$(now_iso) health: cleared the dead run of ${step:-?}" >/dev/null 2>&1 || true
+      record_set "$it" "last_event=$(now_iso) health: cleared the dead run of ${step:-?}" >/dev/null 2>&1 || true
       health_say "$it" "dead run of ${step:-?} cleared (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     fi
   fi
@@ -1222,7 +1222,7 @@ health_holds() {
   while IFS="$(printf '\t')" read -r hh_what hh_it hh_by hh_a hh_b; do   # no pipe: health_say counts here
     if [ "$hh_what" = clear ]; then
       if [ "$dry" -eq 1 ]; then health_say "$hh_it" "would clear its hold behind $hh_by: $hh_a"
-      elif adapter write-state "$hh_it" held_by= held_reason= >/dev/null 2>&1; then
+      elif record_set "$hh_it" held_by= held_reason= >/dev/null 2>&1; then
         health_kind=unheld; health_say "$hh_it" "no longer held behind $hh_by: $hh_a"; health_kind=""
       else health_say "$hh_it" "could not clear its hold behind $hh_by ($hh_a)"; fi
       continue
