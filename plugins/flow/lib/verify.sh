@@ -12,10 +12,13 @@ VERIFY_END_WAIT=$((VERIFY_STOP_GRACE * 2))
 verify_run_file() { printf '%s/verify.run' "$1"; }
 
 # verify_run_record <reports> <pid> <started> <head> <limit>: writes the record to a new file
-# mktemp makes, never through a link left at a name, and renames it in. verify_run_start calls it.
+# mktemp makes, never through a link left at a name, and renames it in. A folder at the record's
+# name fails it, as mv would move the record into the folder. verify_run_start calls it.
 verify_run_record() {
-  run_record_file="$(mktemp "$1/.verify.run.XXXXXX")" &&
-    printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "$3" "$4" "$5" > "$run_record_file" && mv -f "$run_record_file" "$(verify_run_file "$1")"
+  [ ! -d "$(verify_run_file "$1")" ] || return 1
+  run_record_file="$(mktemp "$1/.verify.run.XXXXXX")" || return 1
+  printf 'pid %s\nstarted %s\nhead %s\nlimit %s\n' "$2" "$3" "$4" "$5" > "$run_record_file" &&
+    mv -f "$run_record_file" "$(verify_run_file "$1")" || { rm -f "$run_record_file"; return 1; }
 }
 
 # verify_run_start <reports> <run output> <limit> <item> <base or empty>: starts the item's detached

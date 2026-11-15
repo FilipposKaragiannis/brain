@@ -100,15 +100,16 @@ check "StartWhoseSpawnFails_NamesTheItemOnStderr: the owner sees which item's ru
   'printf "%s" "$unspawned_err" | grep -qF "$item"'
 check "StartWhoseSpawnFails_RecordsNoRun: a record of no run would have --wait wait on nothing" '[ ! -e "$reports/verify.run" ]'
 new_item unrecorded "  ok: 'true'"
-# A folder at the record's name that nothing may write into: the record cannot be renamed in.
-mkdir "$reports/verify.run" && chmod 555 "$reports/verify.run"
+# A folder at the record's name: the record cannot be renamed in, whoever runs the test.
+mkdir "$reports/verify.run"
 unrecorded_err="$(verify --start 2>&1 >/dev/null)"; unrecorded_code=$?
 check "StartWhoseRecordCannotBeWritten_ExitsOne: a run nobody can wait on or stop is no start" '[ "$unrecorded_code" -eq 1 ]'
 check "StartWhoseRecordCannotBeWritten_NamesTheItemOnStderr: the owner sees which item's run went unrecorded" \
   'printf "%s" "$unrecorded_err" | grep -qF "$item"'
+check "StartWhoseRecordCannotBeWritten_LeavesNoRecordBehind: a record inside the folder or a temporary one is a run nobody stops" \
+  '[ -z "$(ls -A "$reports/verify.run")" ] && [ -z "$(find "$reports" -name ".verify.run.*")" ]'
 # The run that started goes on unrecorded; its report says it is done.
 check "UnrecordedRun_EndsWithAReport: the started run must end before the next section" 'until_true 60 "[ -s $reports/verify.json ]"'
-chmod 755 "$reports/verify.run"
 
 echo "the plain verify run makes its log new, never through a link at its name"
 new_item linked "  ok: 'true'"
