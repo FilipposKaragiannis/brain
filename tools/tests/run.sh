@@ -247,11 +247,13 @@ sandboxed_suite() {
     "$root" "$host" "$1" > "$work/suite.sh"
   (cd "$host" && sh "$work/suite.sh" >/dev/null 2>&1)
 }
-new_host; before="$(host_config)"
+new_host; before="$(host_config)"; rm -f "$work/ran"
 # A subshell: sh keeps an assignment made in front of a function call after the call returns.
+# The suite's last line leaves a marker, so a suite that never got that far fails too.
 (GIT_DIR="$host/.git"; GIT_WORK_TREE="$host"; export GIT_DIR GIT_WORK_TREE
-  sandboxed_suite 'git init -q repo && git -C repo config user.email t@t')
-check "SuiteWithGitDirExported_LeavesHostConfigUnchanged" [ "$(host_config)" = "$before" ]
+  sandboxed_suite "git init -q repo && git -C repo config user.email t@t && touch '$work/ran'")
+check "SuiteWithGitDirExported_LeavesHostConfigUnchanged: the suite ran its git calls and the host config did not move" \
+  sh -c '[ -f "$1" ] && [ "$2" = "$3" ]' sh "$work/ran" "$(host_config)" "$before"
 new_host
 sandboxed_suite 'git init -q repo && git -C repo config user.email t@t'; code=$?
 check "SuiteThatStaysInItsTempFolder_Passes" [ "$code" -eq 0 ]
@@ -260,10 +262,11 @@ sandboxed_suite "git config --file '$host/.git/config' core.bare true"; code=$?
 check "SuiteThatMakesHostBare_Fails" [ "$code" -eq 1 ]
 
 echo "sandboxed.sh keeps a test command off the checkout it runs from"
-new_host; before="$(host_config)"
+new_host; before="$(host_config)"; rm -f "$work/ran"
 (cd "$host" && GIT_DIR="$host/.git" GIT_WORK_TREE="$host" sh "$root/tools/lib/sandboxed.sh" "$host" \
-  sh -c 'cd "$(mktemp -d)" && git init -q repo && git -C repo config user.email t@t' >/dev/null 2>&1)
-check "TestCommandWithGitDirExported_LeavesHostConfigUnchanged" [ "$(host_config)" = "$before" ]
+  sh -c 'cd "$(mktemp -d)" && git init -q repo && git -C repo config user.email t@t && touch "$1"' sh "$work/ran" >/dev/null 2>&1)
+check "TestCommandWithGitDirExported_LeavesHostConfigUnchanged: the command ran its git calls and the host config did not move" \
+  sh -c '[ -f "$1" ] && [ "$2" = "$3" ]' sh "$work/ran" "$(host_config)" "$before"
 new_host
 (cd "$host" && sh "$root/tools/lib/sandboxed.sh" "$host" git config --file "$host/.git/config" core.bare true >/dev/null 2>&1); code=$?
 check "TestCommandThatMakesHostBare_Fails" [ "$code" -eq 1 ]
