@@ -1273,12 +1273,16 @@ i=0; while ! grep -q '^end .*comments gh#21\.' "$work/overlap.log" && [ "\$i" -l
 printf 'end %s\n' "\$*" >> "$work/overlap.log"
 EOF
 bump 2026-10-25T03:20:00Z; : > "$work/overlap.log"
-"$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1; code=$?
+diag_t0="$(date +%s.%N)"; diag_n0="$(wc -l < .flow/log/comments.log)"
+"$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>"$work/diag.err"; code=$?
 check_all "comments job: a pass the host stopped ends only its worker, because the other pass in flight finishes" '[ "$code" -eq 0 ] && tail -n 1 "$work/overlap.log" | grep -q "^end .*comments $par\." && ! grep -q "$par: pass failed" .flow/log/comments.log'
+{ echo "DIAG par=$par code=$code t0=$diag_t0 now=$(date +%s.%N)"; cut -c1-60 "$work/overlap.log"; echo "DIAG log"; tail -n +"$((diag_n0 + 1))" .flow/log/comments.log | cut -c1-300; echo "DIAG err"; cut -c1-300 "$work/diag.err"; echo "DIAG stop"; cat .flow/log/claude.stopped; echo; } | sed 's/^/  DIAG /'
 check "comments job: with no pass failed, the host's stop is the run's last word" sh -c "grep '\"job\":\"comments\"' .flow/log/runs.jsonl | tail -1 | grep -q '\"exit\":0,\"result\":\"stopped: claude is stopped since '"
 "$P/scripts/gate.sh" clear claude >/dev/null
 printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"
+diag_n0="$(wc -l < .flow/log/comments.log)"
 "$P/jobs/comments.sh" claude --workers 2 >/dev/null 2>&1
+{ cut -f3 "$HOST_LOG" | cut -c1-40; tail -n +"$((diag_n0 + 1))" .flow/log/comments.log | cut -c1-300; } | sed 's/^/  DIAG2 /'
 check_all "comments job: after the clear only the stopped pass's PR runs again, because the finished pass kept its activity" 'grep -q "comments gh#21\." "$HOST_LOG" && ! grep -q "comments $par\." "$HOST_LOG"'
 # A failed pass beside one that completes: the run exits 1 and names the failed PR.
 printf '#!/bin/sh\ncase "$*" in *"comments gh#21."*) exit 1 ;; esac\n' > "$work/bin/claude"
