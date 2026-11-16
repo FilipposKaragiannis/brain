@@ -12,9 +12,9 @@ cache) is BLOCKED too: the skill could not start its work.
 A directory holding run directories resolves to the newest aggregate-result.json under it. Each
 case line ends with the score in the baseline file (tools/eval-baseline.json, or --against) and
 the change from it. --save writes this result's scores into the baseline file instead, under the
-plugin's name, replacing the cases and arms it ran and keeping the rest, with the Claude Code
-version the run used. A run on another version than the baseline's gets a line that says so
-first, since a CLI or sandbox change can move every score.
+plugin's name, replacing the cases and arms it ran and keeping the rest. Each saved arm keeps the
+Claude Code version it was scored on. A run on another version than the baseline arms it compares
+with gets a line that says so first, since a CLI or sandbox change can move every score.
 """
 import glob
 import json
@@ -70,16 +70,19 @@ def plugin_name(result, path):
 
 
 def scores(result):
-    """{case: {arm: {score, passed, runs}}} over the scored runs."""
+    """{case: {arm: {score, passed, runs[, claude_version]}}} over the scored runs."""
     out = {}
+    version = result.get("claudeVersion")
     for case in result.get("cases", []):
         for arm, runs in (case.get("arms") or {}).items():
             scored = [r for r in runs or [] if not blocked(r)]
             if scored:
-                out.setdefault(case["name"], {})[arm] = {
-                    "score": round(sum(r.get("score", 0) for r in scored) / len(scored), 2),
-                    "passed": sum(1 for r in scored if r.get("passed")),
-                    "runs": len(scored)}
+                entry = {"score": round(sum(r.get("score", 0) for r in scored) / len(scored), 2),
+                         "passed": sum(1 for r in scored if r.get("passed")),
+                         "runs": len(scored)}
+                if version:
+                    entry["claude_version"] = version
+                out.setdefault(case["name"], {})[arm] = entry
     return out
 
 
@@ -95,8 +98,6 @@ def save(result, plugin, path):
     cases = data.setdefault("plugins", {}).setdefault(plugin, {})
     for name, arms in scores(result).items():
         cases.setdefault(name, {}).update(arms)
-    if result.get("claudeVersion"):
-        data.setdefault("claude_version", {})[plugin] = result["claudeVersion"]
     data["recorded"] = date.today().isoformat()
     try:
         data["commit"] = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
@@ -108,13 +109,17 @@ def save(result, plugin, path):
         f.write("\n")
 
 
-def version_change(result, baseline_version):
-    """The line that names a Claude Code change since the baseline, or None when there is none."""
+def version_change(result, baseline):
+    """The line that names the other Claude Code versions of the baseline arms this run compares
+    with, or None when none differs from the run's."""
     version = result.get("claudeVersion")
-    if not version or not baseline_version or version == baseline_version:
+    recorded = {((baseline.get(name) or {}).get(arm) or {}).get("claude_version")
+                for name, arms in scores(result).items() for arm in arms}
+    others = sorted(recorded - {None, version})
+    if not version or not others:
         return None
     return ("  Claude Code changed since the baseline (%s -> %s): a drop may come from the CLI "
-            "or its sandbox, not the plugin" % (baseline_version, version))
+            "or its sandbox, not the plugin" % (", ".join(others), version))
 
 
 def summarise(result, baseline=None):
@@ -173,11 +178,11 @@ def main(argv):
         print("eval summary: saved %s scores to %s" % (plugin, BASELINE))
         return 0
     print("eval summary (BLOCKED runs left out of the score): %s" % path)
-    recorded = load(against)
-    change = version_change(result, recorded.get("claude_version", {}).get(plugin))
+    baseline = load(against).get("plugins", {}).get(plugin) or {}
+    change = version_change(result, baseline)
     if change:
         print(change)
-    for line in summarise(result, recorded.get("plugins", {}).get(plugin)):
+    for line in summarise(result, baseline):
         print(line)
     return 0
 

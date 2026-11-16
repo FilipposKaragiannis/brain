@@ -77,15 +77,25 @@ check "--save writes the scored runs" python3 -c "import json,sys; d=json.load(o
 out="$(python3 "$root/tools/lib/eval_summary.py" "$here/fixtures/eval-result" --against "$work/baseline.json")"
 check "compares with the baseline" has 'review-cites-rule-ids \[without\] *score 0.25, passed 0/1 (baseline 0.25, +0.00)$'
 check "RunWithoutCliVersion_NamesNoChange: a run that does not say its version has none to compare" sh -c '! printf "%s\n" "$1" | grep -q "Claude Code changed"' _ "$out"
-mkdir -p "$work/on-old" "$work/on-new"
-on_version() { python3 -c "import json,sys; aggregate_result=json.load(open(sys.argv[1])); aggregate_result['claudeVersion']=sys.argv[2]; json.dump(aggregate_result,open(sys.argv[3],'w'))" "$here/fixtures/eval-result/aggregate-result.json" "$1" "$2/aggregate-result.json"; }
+mkdir -p "$work/on-old" "$work/on-new" "$work/on-new-blocked" "$work/on-new-partial"
+on_version() { version="$1"; dir="$2"; shift 2; python3 -c "import json,sys; aggregate_result=json.load(open(sys.argv[1])); kept=sys.argv[4:]; aggregate_result['claudeVersion']=sys.argv[2]; aggregate_result['cases']=[case for case in aggregate_result['cases'] if not kept or case['name'] in kept]; json.dump(aggregate_result,open(sys.argv[3],'w'))" "$here/fixtures/eval-result/aggregate-result.json" "$version" "$dir/aggregate-result.json" "$@"; }
+recorded_versions() { python3 -c "import json,sys; cases=json.load(open(sys.argv[1]))['plugins']['demo']; print(' '.join(sorted({arm.get('claude_version', '-') for arms in cases.values() for arm in arms.values()})))" "$work/baseline.json"; }
 on_version 2.1.303 "$work/on-old"; on_version 2.1.325 "$work/on-new"
 EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$work/on-old" --save >/dev/null
-check "SaveOnACliVersion_RecordsThatVersion: the baseline keeps the version its scores came from" python3 -c "import json,sys; recorded=json.load(open(sys.argv[1]))['claude_version']['demo']; assert recorded == '2.1.303', 'the save ran on 2.1.303, so the baseline names it, not %s' % recorded" "$work/baseline.json"
+check "SaveOnACliVersion_RecordsThatVersion: the baseline keeps the version its scores came from" python3 -c "import json,sys; recorded=json.load(open(sys.argv[1]))['plugins']['demo']['review-cites-rule-ids']['with'].get('claude_version'); assert recorded == '2.1.303', 'the save ran on 2.1.303, so the score names it, not %s' % recorded" "$work/baseline.json"
 out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-new" --against "$work/baseline.json")"
 check "RunOnNewerCli_NamesTheChangeBeforeTheCases: the version line comes first, since it qualifies every case line" sh -c 'printf "%s\n" "$1" | sed -n 2p | grep -q "Claude Code changed since the baseline (2.1.303 -> 2.1.325)"' _ "$out"
 out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-old" --against "$work/baseline.json")"
 check "RunOnTheBaselineCli_NamesNoChange: the same version cannot explain a score move" sh -c '! printf "%s\n" "$1" | grep -q "Claude Code changed"' _ "$out"
+on_version 2.1.325 "$work/on-new-blocked" init-installs
+EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$work/on-new-blocked" --save >/dev/null
+check "SaveOfOnlyBlockedRunsOnNewerCli_KeepsTheRecordedVersions: a save that replaces no score relabels none" [ "$(recorded_versions)" = "2.1.303" ]
+on_version 2.1.325 "$work/on-new-partial" review-cites-rule-ids
+EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$work/on-new-partial" --save >/dev/null
+out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-new" --against "$work/baseline.json")"
+check "PartialSaveOnNewerCli_RunStillNamesTheOlderVersion: the cases the save left keep the version they were scored on" sh -c 'printf "%s\n" "$1" | sed -n 2p | grep -q "Claude Code changed since the baseline (2.1.303 -> 2.1.325)"' _ "$out"
+out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-new-partial" --against "$work/baseline.json")"
+check "PartialSaveOnNewerCli_RunOfTheSavedCaseNamesNoChange: its baseline scores came from the same version" sh -c '! printf "%s\n" "$1" | grep -q "Claude Code changed"' _ "$out"
 
 echo "eval.sh prints the summary and keeps the eval's exit status"
 cat > "$work/bin/claude" <<EOF
