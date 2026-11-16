@@ -1881,6 +1881,12 @@ mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
 - [ ] three" >/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "a live holder makes the next pick wait, then exit 7 (quiet)" [ "$code" -eq 7 ]
+# The mkdir of uutils coreutils 0.8, Ubuntu 26.04's default, exits 0 when another process made the
+# directory first: this one always does.
+lying_mkdir="$work/lying-mkdir"; mkdir -p "$lying_mkdir"
+printf '#!/bin/sh\nexec %s -p "$@"\n' "$(command -v mkdir)" > "$lying_mkdir/mkdir" && chmod +x "$lying_mkdir/mkdir"
+PATH="$lying_mkdir:$PATH" FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
+check "a mkdir that exits 0 on a directory that exists still leaves the pick lock to its live holder" [ "$code" -eq 7 ]
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check_all "a stale lock (holder gone) is taken over" '[ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]'
