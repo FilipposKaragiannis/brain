@@ -12,8 +12,10 @@ here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"
 major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 if [ "$major" -lt 24 ]; then echo "console tests: node 24 or newer missing, skipping"; exit 0; fi
-work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
+# The physical path: demo.sh hands the daemon its folder with every link resolved.
+work="$(cd "$(mktemp -d)" && pwd -P)"
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
@@ -175,14 +177,38 @@ in_demo() { # in_demo <command...>: in the demo project, with the PATH the daemo
   (cd "$demo/console-demo" && env -i HOME="$demo/home" PATH="$(sed -n 's/^PATH=//p' "$work/node.env")" FLOW_PLUGIN="$P/../flow" "$@")
 }
 gate_kinds() { python3 -I -c 'import json, sys; print("\n".join(json.load(open(sys.argv[1]))["gates"]))' "$P/../flow/profiles.json" | sort; }
+# waiting_gates: the kind of each gate record in the demo, sorted; a stopped host is no gate record.
+waiting_gates() { in_demo sh "$P/../flow/scripts/gate.sh" list --json | python3 -I -c 'import json, sys; print("\n".join(gate["gate"] for gate in json.load(sys.stdin)))' | sort; }
 agent_calls() { cat "$demo/agents.log" 2>/dev/null | wc -l | tr -d ' '; }
+# The caller's shell setup, which puts a real-looking claude first on PATH as an owner's often does,
+# and the private folders a demo pane must never reach, each with a marker.
+shell_setup=caller
+real_agents="$work/real-agents"; mkdir -p "$real_agents"
+printf '#!/bin/sh\necho real claude\n' > "$real_agents/claude"; chmod +x "$real_agents/claude"
+for rc in .zshrc .bashrc .profile; do
+  printf 'export DEMO_SHELL_SETUP=%s\nexport PATH="%s:$PATH"\n' "$shell_setup" "$real_agents" > "$home/$rc"
+done
+echo '. "$HOME/.bashrc"' > "$home/.bash_profile"
+for private in .claude .codex .config/brain-console; do mkdir -p "$home/$private" && echo caller > "$home/$private/private-marker"; done
 run_demo --dir "$demo" --port "$demo_port"; code=$?
+# A pane runs the terminal's "$SHELL -l"; a plain interactive shell is what a pane's own shell spawns.
+# shellcheck disable=SC2016 # expanded by the pane's shell
+for shell in "zsh -il" "zsh -i" "bash -il" "bash -i" "sh -il"; do
+  if ! command -v "${shell%% *}" >/dev/null 2>&1; then echo "  skip a demo '$shell' pane: no ${shell%% *} on PATH"; continue; fi
+  check "a demo '$shell' pane loads the caller's shell setup" [ "$(in_demo $shell -c 'printf %s "$DEMO_SHELL_SETUP"' 2>/dev/null)" = "$shell_setup" ]
+  check "a demo '$shell' pane finds the demo's claude stub before the caller's claude" [ "$(in_demo $shell -c 'command -v claude' 2>/dev/null)" = "$demo/bin/claude" ]
+done
+for private in .claude .codex .config/brain-console; do
+  check "the caller's $private is out of reach from the demo's home" sh -c "[ -n \"\$(ls -A '$demo/home')\" ] && [ ! -e '$demo/home/$private/private-marker' ]"
+done
 check "the demo builds" [ "$code" -eq 0 ]
 check "the demo project is a git repo with a commit on main" in_demo git rev-parse --verify -q refs/heads/main
-check "the demo project has two worktrees besides its own" [ "$(in_demo git worktree list | wc -l | tr -d ' ')" -eq 3 ]
+check "the demo project has four worktrees besides its own" [ "$(in_demo git worktree list | wc -l | tr -d ' ')" -eq 5 ]
 check "the demo project runs on flow's local adapter" sh -c "sed -n '/^adapters:/,/^[a-z]/p' '$demo/console-demo/.flow/config.yaml' | grep -q 'default: local'"
-check "one gate of each kind waits" [ "$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)" = "$(gate_kinds)" ]
-check "the demo has one ready item to run" python3 -c "import json, sys; sys.exit(len(json.loads(sys.argv[1])) != 1)" "$(in_demo sh "$P/../flow/adapters/local/list-ready.sh")"
+check "one gate of each kind waits" [ "$(waiting_gates)" = "$(gate_kinds)" ]
+check "the demo has one ready item no run record holds" python3 -I -c "import glob, json, os, sys; held = {json.load(open(record))['item'] for record in glob.glob(os.path.join(sys.argv[2], '*.json'))}; sys.exit(len([item for item in json.loads(sys.argv[1]) if item['id'] not in held]) != 1)" "$(in_demo sh "$P/../flow/adapters/local/list-ready.sh")" "$demo/console-demo/.flow/runs"
+ready_item="$(in_demo sh "$P/../flow/adapters/local/list-ready.sh" | python3 -I -c "import glob, json, os, sys; held = {json.load(open(record))['item'] for record in glob.glob(os.path.join(sys.argv[1], '*.json'))}; print(next(item['id'] for item in json.load(sys.stdin) if item['id'] not in held))" "$demo/console-demo/.flow/runs")"
+check "the demo's ready item claims a free pool worktree" in_demo sh "$P/../flow/scripts/steward.sh" claim "$ready_item"
 check "claude on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v claude')" = "$demo/bin/claude" ]
 check "codex on the daemon's PATH is the demo's stub" [ "$(in_demo sh -c 'command -v codex')" = "$demo/bin/codex" ]
 # The stubs run by path: a broken PATH must never reach a real claude, codex, gh, crontab or launchctl.
@@ -218,7 +244,7 @@ check "the console settings file names the demo project only" python3 -c "import
 run_demo --dir "$demo"; code=$?
 check "a second run succeeds" [ "$code" -eq 0 ]
 check "a second run resets the demo" [ ! -e "$demo/console-demo/left-behind" ]
-check "the reset demo has one gate of each kind again" [ "$(in_demo sh "$P/../flow/scripts/gate.sh" list | cut -f3 | sort)" = "$(gate_kinds)" ]
+check "the reset demo has one gate of each kind again" [ "$(waiting_gates)" = "$(gate_kinds)" ]
 # A detached run as the console's run.start leaves one: a flow job leading its own process group,
 # its pid in a lock under the project's .flow/log, a child in its group. The daemon's stop leaves
 # it going, so the re-run must end it, child too, before the folder goes.
@@ -314,6 +340,28 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   check "the demo's daemon watches exactly one project" python3 -c "import json, sys; sys.exit(len(json.load(open(sys.argv[1]))['projects']) != 1)" "$work/healthz.json"
   check "the demo's daemon keeps its state in the demo folder" test -f "$live/state/daemon.pid"
   check "the caller's home is left empty by the demo and its daemon" [ -z "$(ls -A "$live_home")" ]
+  # The snapshot the console's screens read, once every source has been read at least once.
+  project_id="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["projects"][0])' "$work/healthz.json" 2>/dev/null)"
+  save_snapshot() {
+    curl -fsS --max-time "$CURL_SECONDS" -H "Authorization: Bearer $(cat "$live/state/token")" "http://127.0.0.1:$live_port/api/projects/$project_id/snapshot" > "$work/snapshot.json" 2>/dev/null &&
+      python3 -I -c 'import json, sys; snapshot = json.load(open(sys.argv[1])); sys.exit(snapshot is None or any(source["at"] is None for source in snapshot["sources"].values()) or not snapshot["agents"])' "$work/snapshot.json" 2>/dev/null
+  }
+  in_snapshot() { python3 -I -c "import json, sys; snapshot = json.load(open(sys.argv[1])); sys.exit(not ($1))" "$work/snapshot.json"; }
+  poll_until "$START_POLLS" save_snapshot
+  check "Agents shows a live run with a session" in_snapshot 'any(agent["kind"] == "agent" and agent["session"] is not None for agent in snapshot["agents"])'
+  live_agent="$(python3 -I -c 'import json, sys; print(next((agent["pid"] for agent in json.load(open(sys.argv[1]))["agents"] if agent["kind"] == "agent" and agent["session"] is not None), ""))' "$work/snapshot.json" 2>/dev/null)"
+  curl -fsS --max-time "$CURL_SECONDS" -H "Authorization: Bearer $(cat "$live/state/token")" "http://127.0.0.1:$live_port/api/projects/$project_id/agents/$live_agent/transcript" > "$work/transcript.json" 2>/dev/null
+  check "the live run's transcript has lines to show" python3 -I -c 'import json, sys; sys.exit(not json.load(open(sys.argv[1]))["lines"])' "$work/transcript.json"
+  check "Agents shows a run that died" in_snapshot 'any(run["liveness"] == "dead" for run in snapshot["runs"])'
+  check "Agents shows a session with no session file" in_snapshot 'any(agent["kind"] == "session" and agent["activity"] is None for agent in snapshot["agents"])'
+  check "the feel-test gate carries its session, so Discuss with the agent shows" in_snapshot 'any(gate["gate"] == "feel-test" and gate["session"] is not None for gate in snapshot["gates"])'
+  check "Jobs shows a schedule" in_snapshot 'any(job["schedule"] for job in snapshot["jobs"])'
+  check "Jobs shows run history" in_snapshot 'any(job["recent"] for job in snapshot["jobs"])'
+  check "Jobs shows a stopped host" in_snapshot 'len(snapshot["stoppedHosts"]) > 0'
+  # all_gone <pids...>: every pid has ended; no pid at all is a failure, so the check cannot pass on nothing.
+  all_gone() { [ "$#" -gt 0 ] || return 1; for pid in "$@"; do kill -0 "$pid" 2>/dev/null && return 1; done; return 0; }
+  fake_pids() { python3 -I -c 'import json, sys; print(" ".join(str(agent["pid"]) for agent in json.load(open(sys.argv[1]))["agents"]))' "$work/snapshot.json" 2>/dev/null; }
+  first_fakes="$(fake_pids)"
   start_live "$work/live-2.log"; second=$!
   # The daemon, not the demo.sh shell that started it: killing only the shell would orphan it.
   poll_until "$STOP_POLLS" is_gone "$first_daemon"; stopped=$?
@@ -321,8 +369,16 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   poll_until "$START_POLLS" save_healthz; up=$?
   second_daemon="$(daemon_pid)"
   check "the re-run's daemon answers on the same port" [ "$up" -eq 0 ]
+  # shellcheck disable=SC2086 # one pid per word
+  check "a re-run ends the fake agents the previous run started" poll_until "$STOP_POLLS" all_gone $first_fakes
+  # A fresh snapshot, so the stop check below never reads the first run's agents.
+  rm -f "$work/snapshot.json"
+  check "the re-run's Agents shows its own fake agents" poll_until "$START_POLLS" save_snapshot
+  second_fakes="$(fake_pids)"
   stop_live
   wait "$second" 2>/dev/null
+  # shellcheck disable=SC2086 # one pid per word
+  check "stopping the demo ends its fake agents" poll_until "$STOP_POLLS" all_gone $second_fakes
   check "no demo daemon is left running after the tests" poll_until "$SHUTDOWN_POLLS" port_closed
 else
   echo "demo.sh with the real daemon: app dependencies or curl missing, skipping"

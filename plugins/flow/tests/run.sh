@@ -6,14 +6,10 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-# No test reaches the network, the desktop or a real agent. The owner's shell may export
-# FLOW_SLACK_WEBHOOK, so it is cleared, and these tools are stubs that log to $work/offline.log.
-# A test that needs one of them puts its own fake earlier in PATH.
-unset FLOW_SLACK_WEBHOOK
-# init writes the Codex rules and agents to ~/.codex when a repo has no .codex folder, so no test
-# runs with the owner's home.
-mkdir -p "$work/home" && HOME="$work/home" && export HOME && unset CODEX_HOME
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
+# No test reaches the network, the desktop or a real agent: these tools are stubs that log to
+# $work/offline.log. A test that needs one of them puts its own fake earlier in PATH.
 mkdir -p "$work/offline"
 for tool in curl wget gh osascript notify-send claude codex launchctl; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
@@ -474,6 +470,26 @@ echo "a claimed item waits while a native blocker is open (tests/blockers.sh)"
 sh "$here/blockers.sh" > "$work/blockers.out" 2>&1; code=$?
 check "blockers: $(tail -n 1 "$work/blockers.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/blockers.out"
+
+echo "an item's recorded base is read everywhere (tests/base-readers.sh)"
+sh "$here/base-readers.sh" > "$work/base-readers.out" 2>&1; code=$?
+check "base-readers: $(tail -n 1 "$work/base-readers.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-readers.out"
+
+echo "an item's base is resolved once at claim (tests/base-claim.sh)"
+sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
+check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-claim.out"
+
+echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
+sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
+check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-detached.out"
+
+echo "stop and release end only the item's own verify run, and stop says when one outlives its wait (tests/verify-ends.sh)"
+sh "$here/verify-ends.sh" > "$work/verify-ends.out" 2>&1; code=$?
+check "verify-ends: $(tail -n 1 "$work/verify-ends.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-ends.out"
 
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
@@ -3323,6 +3339,7 @@ printf 'claude\tttl=%s/%s\t%s\n' "${CLAUDE_CODE_PROMPT_CACHE_TTL:-}" "${CLAUDE_C
 case "${FAKE_HOST:-ok}" in
   budget) echo '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 422 {\"type\":\"error\",\"error\":{\"type\":\"ExceededBudget\",\"message\":\"The seat reached its spend limit.\"}}","total_cost_usd":0}'; exit 1 ;;
   auth) echo '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}'; exit 1 ;;
+  window) python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":True,"result":sys.argv[1],"total_cost_usd":0}))' "$FAKE_HOST_SAID"; exit 1 ;;
   other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
   errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
   model) echo '[claude-code:unrecognized_model] {"model":"claude-nope-9","query_source":"sdk"}' >&2
@@ -3468,6 +3485,59 @@ check_all "a model codex does not have stops codex, naming the model" '[ "$(jget
 FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
+
+echo "a session cut by a time-window limit"
+mkdir -p "$work/window"
+window_seen="You've hit your 5-hour limit · resets 5:10am (Europe/London)"
+for window_line in "$window_seen" \
+                   "You've hit your limit · resets 5:10am (Europe/London)" \
+                   "You've hit your weekly limit · resets Mon 9:00am (Europe/London)" \
+                   "You've hit your daily limit · resets 12:00am (UTC)" \
+                   "You've hit your 12-hour limit · resets 3:45pm (America/New_York)"; do
+  FAKE_HOST=window FAKE_HOST_SAID="$window_line" "$work/costbin/claude" > "$work/window/out"
+  : > "$work/window/err"
+  python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 1 "$work/window/sum" >/dev/null 2>&1
+  check "TimeWindowLimit_IsSpendLimit: a session ended on \"$window_line\" has cause spend-limit, because the host is out of spend until the window resets" \
+    [ "$(jget cause < "$work/window/sum")" = spend-limit ]
+done
+for window_stream in out err; do
+  : > "$work/window/out"; : > "$work/window/err"
+  printf '%s\n' "$window_seen" > "$work/window/$window_stream"
+  python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 1 "$work/window/sum" >/dev/null 2>&1
+  check "TimeWindowLimit_AsPlainLineOnStd$window_stream: a time-window line outside the result object, on std$window_stream, has cause spend-limit, because a session cut early may print no result" \
+    [ "$(jget cause < "$work/window/sum")" = spend-limit ]
+done
+python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"Done. The old log said: "+sys.argv[1],"total_cost_usd":0}))' "$window_seen" > "$work/window/out"
+: > "$work/window/err"
+python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 0 "$work/window/sum" >/dev/null 2>&1
+check_all "TimeWindowLimit_QuotedByGoodSession_HasNoCause: a session that ends well and quotes a time-window line has no cause, because only a failed session can stop the host" \
+  '[ -s "$work/window/sum" ] && [ "$(jget cause < "$work/window/sum")" = "" ]'
+window_loop_folder="$work/windowloop"
+window_loop_repo="$window_loop_folder/app"
+mkdir -p "$window_loop_folder" && git init -q -b main "$window_loop_repo"
+(cd "$window_loop_repo" && git config user.email t@t && git config user.name t \
+  && printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow \
+  && git worktree add -q --detach ../window-loop-wt-1 \
+  && printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../window-loop-wt-1\nnotify:\n  desktop: false\n' > .flow/config.yaml)
+window_attempts_max="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
+window_loop_item="$(cd "$window_loop_repo" && "$P/scripts/new.sh" task "Cut by the 5-hour window" --size S --body "## Acceptance
+- [ ] w")"
+window_loop_attempts="$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)"
+(cd "$window_loop_repo" && FAKE_HOST=window FAKE_HOST_SAID="$window_seen" PATH="$cpath" "$P/templates/run-unattended.sh" claude "$window_loop_item" --max-steps "$window_attempts_max" > "$work/windowloop.out" 2>&1)
+window_loop_stopped="$window_loop_repo/.flow/log/claude.stopped"
+window_loop_gate="$window_loop_repo/.flow/gates/$(item_slug "$window_loop_item").json"
+check "TimeWindowLimit_KeepsAttemptCount: a step cut by a time-window limit keeps its attempt count, because the limit is the host's, not the step's" \
+  [ "$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)" = "$window_loop_attempts" ]
+check "TimeWindowLimit_RecordsOneSession: a time-window limit is one step session in runs.jsonl, no retry, because every retry before the reset fails the same way" \
+  python3 -I -c 'import json,sys; sessions=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; sys.exit([session["item"] for session in sessions] != [sys.argv[2]])' "$window_loop_repo/.flow/log/runs.jsonl" "$window_loop_item"
+check_all "TimeWindowLimit_StopsHostOnSpendLimit: the host is stopped on a spend limit, because no session can run until the window resets" \
+  '[ "$(jget cause < "$window_loop_stopped")" = spend-limit ]'
+check_all "TimeWindowLimit_StopsHostWithItsLine: the stopped host keeps the host's line, because it says when the window resets" \
+  '[ "$(jget said < "$window_loop_stopped")" = "$window_seen" ]'
+check_all "TimeWindowLimit_GateQuotesHostLine: the item's gate quotes the host's line, because it says when the window resets" \
+  'jget message < "$window_loop_gate" | grep -qF "$window_seen"'
+check_all "TimeWindowLimit_GateIsNotAttemptLimit: the item's gate is not the attempt limit's escalation, because no attempt failed" \
+  '[ -f "$window_loop_gate" ] && ! jget message < "$window_loop_gate" | grep -qE "Step [a-z-]+ failed [0-9]+ times"'
 
 echo "unattended loop: a pick works on after a gate"
 # A plugin copy whose next.sh hands out the items in $GL/queue (a named one as asked) and whose
@@ -3860,6 +3930,10 @@ printf '%s\n' '{"type":"item.completed","item":{"id":"i0","type":"agent_message"
 python3 -I "$P/scripts/_host.py" codex "$work/codex-drop.out" "$work/codex-drop.err" 1 "$work/codex-drop.sum" > "$work/codex-drop.stdout" 2>/dev/null
 check "a codex session that ends on an error has that error as its last message, because the comment and the gate quote why it stopped (gh#169)" [ "$(jget last < "$work/codex-drop.sum")" = "stream disconnected before completion" ]
 check "a codex session's error stays off stdout, because stdout is what the session printed (gh#169)" [ "$(cat "$work/codex-drop.stdout")" = "reading the code" ]
+printf '%s' '{"type":"result","subtype":"success","is_error":true,"result":"You'"'"'ve hit your 5-hour limit \u00b7 resets 5:10am (Europe/London)"}' > "$work/window.out"
+: > "$work/window.err"
+python3 -I "$P/scripts/_host.py" claude "$work/window.out" "$work/window.err" 1 "$work/window.sum" >/dev/null 2>&1
+check "ClaudeTimedUsageWindow_ReportsSpendLimit: a retry before the window resets fails the same way" [ "$(jget cause < "$work/window.sum")" = spend-limit ]
 # Three silent sessions in a row on a fresh item: the attempt limit from profiles.json.
 max_attempts="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
 ng="$("$P/scripts/new.sh" task "Ends with no result, every time" --size S --body "## Acceptance

@@ -13,8 +13,8 @@ P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
 A="$P/adapters/$name"
 [ -d "$A" ] || { echo "adapter-contract: no adapter $name under $P/adapters" >&2; exit 2; }
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-unset FLOW_SLACK_WEBHOOK
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
 export FLOW_HOME="$work/home"; mkdir -p "$FLOW_HOME" "$work/bin"
 for tool in gh curl osascript notify-send; do
   printf '#!/bin/sh\necho "adapter-contract: %s is offline here" >&2\nexit 1\n' "$tool" > "$work/bin/$tool"
@@ -197,6 +197,10 @@ check "write-state: changes, held_by and held_reason read back" '[ "$(field "$t1
 "$A/write-state.sh" "$t1" changes= held_by= held_reason= >/dev/null 2>&1
 check "write-state: empty values clear changes and the hold" '[ "$(field "$t1" state.changes)" = "[]" ] && [ -z "$(field "$t1" state.held_by)" ]'
 check "write-state: a new size is the item size too" '[ "$(field "$t1" size)" = M ] && [ "$(field "$t1" state.size)" = M ]'
+"$A/write-state.sh" "$t1" base=epic/9 >/dev/null 2>&1
+check "WriteStateBase_ReadsBackAsStateBase: the base a claim records is the item's state.base, which every reader of a claim-less step falls back on" '[ "$(field "$t1" state.base)" = epic/9 ]'
+"$A/write-state.sh" "$t1" base= >/dev/null 2>&1
+check "WriteStateEmptyBase_ClearsIt: an empty base reads back empty, so the readers fall back on the config base" '[ -z "$(field "$t1" state.base)" ]'
 "$A/write-state.sh" "$t1" gate=plan-approval gate_from=implement >/dev/null 2>&1
 check "write-state: a gate and its from step read back" '[ "$(field "$t1" state.gate)" = plan-approval ] && [ "$(field "$t1" state.gate_from)" = implement ]'
 check "list-ready leaves out an item at a gate" '! listed "$t1" "$A/list-ready.sh"'

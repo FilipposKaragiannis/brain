@@ -42,15 +42,37 @@ the demo instead:
 ```bash
 plugins/console/scripts/demo.sh             # [--dir <folder>] [--port <n>]; Ctrl+C stops it
 ```
-It builds a throwaway flow project in `$TMPDIR/brain-console-demo` (flow's local adapter, two pool
-worktrees, one item waiting at each gate, one ready item) and starts this checkout's daemon on it
-alone: `--project`, `--port 7478`, `--state-dir` and `--config` all in that folder, and an
+It builds a throwaway flow project in `$TMPDIR/brain-console-demo` (its physical path, links
+resolved, so the agents ps and lsof place land in its worktrees) and starts this checkout's daemon
+on it alone: `--project`, `--port 7478`, `--state-dir` and `--config` all in that folder, and an
 environment of `HOME` (there too), `PATH`, `TMPDIR`, `LANG`, `USER`, `SHELL`, `FLOW_PLUGIN` and
-`BRAIN_CONSOLE_LAUNCHCTL` only. `claude` and `codex` on its `PATH` are stubs that log each call to
-`agents.log` there and spend no tokens, so a run started from the console goes through the flow
-without an agent; `gh`, `crontab` and `launchctl` refuse. Re-running it stops that daemon and
-builds the demo again from nothing; it deletes only a folder it built. The token is in
-`<folder>/state/token`.
+`BRAIN_CONSOLE_LAUNCHCTL` only. The project is on flow's local adapter with three pool worktrees and
+fills every screen:
+
+- Gates: one item waiting at each gate. The feel-test gate was raised as a claude session raises
+  it, and that session's transcript is in its worktree, so Discuss with the agent shows.
+- Agents: a live run (a run record, and a fake `claude -p` in its worktree with a sessions file
+  and a transcript), a dead run (a codex run record three hours old with no process), and a
+  session of yours in the project root with a transcript but no sessions file. The fake agents
+  are perl sleeping under the name `claude`, in sessions of their own; they spend nothing, and
+  Stop session ends them.
+- Jobs: `next` every 30 minutes and `health` daily (not installed: launchd is a stub), their run
+  history in `.flow/log/runs.jsonl`, and codex stopped on a spend limit.
+- Board: one ready item besides.
+
+`claude` and `codex` on its `PATH` are stubs that log each call to `agents.log` there and spend no
+tokens, so a run started from the console goes through the flow without an agent; `gh`, `crontab`
+and `launchctl` refuse. The demo's `HOME` links each entry of yours, so a terminal the console
+opens (Open in Terminal, Discuss with the agent) loads your shell setup and your terminal's
+settings, except what the demo must not reach: `~/.claude`, `~/.claude.json`, `~/.codex`, the
+console's settings, state, install and launcher, `~/Library/LaunchAgents` (a job install there
+writes the demo's own) and git's identity (the demo sets its own). A folder above one of those is
+the demo's own, with the rest of its entries linked. Its `.zshrc`, `.zlogin`, `.bashrc`,
+`.bash_profile` and `.profile` are the demo's own: each sources yours, then puts the stubs first on
+`PATH` again, so a pane never reaches your real `claude`. Ctrl+C, a signal or the daemon's stop ends
+the fake agents with the demo. Re-running it stops that daemon, the runs its console started and
+the fake agents, and builds the demo again from nothing; it deletes only a folder it built. The
+token is in `<folder>/state/token`.
 
 ## Run it on login
 ```bash

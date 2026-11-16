@@ -20,8 +20,15 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    comments` with `asked` and `answer`. Carry it out first: it settles what a gate an earlier
    pass raised asked (how a conflict resolves, which fix a check gets). Work on the PR's own
    branch, in the claimed worktree, the way steps 2 and 3 do (`implementer`, `verifier`, push,
-   re-request review). An answer that asks for work outside that branch (another branch, the
-   PR's base among them; the tracker; another item) is no step's: do none of it, and raise
+   re-request review). One base merge is this step's own: an answer that asks to merge the
+   default branch into the PR's base when that base is an epic branch (`epic/<n>`). Do it in a
+   throwaway worktree: `git fetch origin`, `git worktree add --detach <tmp> origin/epic/<n>`,
+   `git merge --no-edit -m "chore: merge <default> into epic/<n>" origin/<default>`, the
+   project's build, `git push origin HEAD:epic/<n>` (never force), `git worktree remove <tmp>`.
+   A conflict or a red build aborts it and removes the worktree: raise the gate below with what
+   conflicted or failed. Then carry the rest of the answer on the PR's branch. Any other answer
+   that asks for work outside that branch (another branch, the PR's base for anything but that
+   merge; the tracker; another item) is no step's: do none of it, and raise
    `"$P/scripts/gate.sh" raise <item> escalation "<message>" --raised-by "comments job"` with a
    first line in bold, **No step acts on this answer: do it by hand, then clear the gate with no
    answer**, then the answer and what it asks for, then how to do it: each git or gh command in
@@ -99,7 +106,7 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    item's `pr_host`, recorded by `link-pr`, else the PR body's footer.
 9. Delete `<reports>/comments-resume.md` once every thread of this pass is addressed or replied
    to, and the interrupted work is committed or named in a reply.
-10. Report once: the owner's answer carried out or raised again, the conflict merge, the checks
+10. End with one report: the owner's answer carried out or raised again, the conflict merge, the checks
    fixed or left red and why, threads addressed (valid, nit, wrong counts), commits, the owner's
    decisions pending, the quiz state.
 

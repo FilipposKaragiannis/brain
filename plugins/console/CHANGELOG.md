@@ -1,5 +1,19 @@
 # console
 
+## 0.23.0 (2026-11-15)
+
+- The console demo (`scripts/demo.sh`) fills every screen (gh#196). Agents shows a live run with
+  a session and a transcript, a run whose process died, and a session of the owner's with no
+  sessions file; the feel-test gate has the session that raised it, so Discuss with the agent
+  shows; Jobs shows two schedules, their run history and codex stopped on a spend limit. The
+  agents are fake processes (perl sleeping under the name `claude`) that end when the demo is
+  stopped or run again. The demo's home links the caller's, so a terminal it opens loads the
+  owner's shell setup and terminal settings, but holds out `~/.claude`, `~/.codex`, the console's
+  settings, state and install, the launch agents and git's identity. Its shell startup files
+  source the owner's and then put the stub agents first on `PATH`, so a pane runs no real agent.
+  The demo now has three pool worktrees, and its folder is its physical path, so ps and lsof place
+  its agents.
+
 ## 0.22.0 (2026-11-14)
 
 - `scripts/demo.sh` builds a throwaway demo project and starts a trial console on it alone

@@ -1,6 +1,6 @@
 ---
 name: pr
-description: Open or update the pull request for an item with the pr-creator agent: base from the parent or the config, the house PR body with the verify report, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
+description: Open or update the pull request for an item with the pr-creator agent: base from the item's base recorded at claim in claim.json when the item's state.base is set (the parent rule when it is empty, for claims made before the base was recorded), the house PR body with the verify report, a draft while the owner has a quiz to pass in the console, review requests in separate comments, the PR linked on the item. Use when the user asks to open a PR for an item or when the next step of an item is pr.
 disable-model-invocation: true
 ---
 
@@ -26,17 +26,26 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    nothing, and the item waits for the blocker to close.
 2. **Spawn `pr-creator`** with the step brief plus the path of [PR-BODY.md](PR-BODY.md) (the
    house body) and, when they exist, `<reports>/explain.html` and `quiz.md`.
-3. **Result** `<reports>/pr.json`: `done` with the URL (under `pr`), the base and why, draft or
+3. **Result** `<reports>/pr.json`: `done` with the URL (under `pr`), the base and why ("base
+   <b>, recorded at claim", or the parent rule for a claim with no `state.base`), draft or
    ready, the reviewers asked. A quiz never goes on the PR: the owner takes it in the console,
-   which marks the draft ready on a pass. The profile raises the merge gate after this step; the orchestrator
-   notifies the owner with the URL and the verify summary.
+   which marks the draft ready on a pass. The profile raises the merge gate after this step;
+   the orchestrator notifies the owner with the URL and the verify summary.
    A `fail` or a `gate` names, in its summary or message, what the owner runs or does to unblock
    it, filled in for this item: the git or gh command (`git -C <worktree> push -u origin
    <branch>`, `gh pr create --base <base> --head <branch>`) or the tracker action (merge the
    blocker's PR, close gh#40). The escalation gate a last failed attempt raises quotes that
    summary, so the owner never reads only "do it by hand".
-4. Report once: the URL, the base, draft or ready, and the warning when the base is not the
-   default branch (the merge will not auto-close the item; closeout does).
+4. End with one report: the URL, the base and where it came from (recorded at claim or the parent
+   rule), draft or ready, and the warning when the base is not the default branch (the merge
+   will not auto-close the item; closeout does).
 
-Never open a PR on a failing verify. Never pick the default branch as base when the item has a
-parent with a branch. Never tag reviewers in the body; one comment per reviewer.
+Never open a PR on a failing verify. With the item's `state.base` set, never pick a base other
+than the item's recorded base, `base` in the worktree's `.flow/claim.json`. `state.base` on the
+tracker is a copy anyone who can edit the item can change: when it differs from the claim's, or
+the claim has none, stop with status `fail` naming both. Never pass a base to `git` or `gh` that
+starts with `-`, has a character outside `^[A-Za-z0-9._/-]+$` or fails
+`git check-ref-format --branch`; stop with status `fail` instead. With `state.base` empty (a
+claim made before the base was recorded, whose `claim.json` holds only the config base), take
+the parent rule and never the default branch when the item has a parent with a branch. Never
+tag reviewers in the body; one comment per reviewer.
