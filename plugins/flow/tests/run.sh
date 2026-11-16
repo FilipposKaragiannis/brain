@@ -1881,8 +1881,6 @@ mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
 - [ ] three" >/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "a live holder makes the next pick wait, then exit 7 (quiet)" [ "$code" -eq 7 ]
-# The mkdir of uutils coreutils 0.8, Ubuntu 26.04's default, exits 0 when another process made the
-# directory first: this one always does.
 lying_mkdir="$work/lying-mkdir"; mkdir -p "$lying_mkdir"
 printf '#!/bin/sh\nexec %s -p "$@"\n' "$(command -v mkdir)" > "$lying_mkdir/mkdir" && chmod +x "$lying_mkdir/mkdir"
 PATH="$lying_mkdir:$PATH" FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
@@ -1909,8 +1907,8 @@ mkdir -p "$work/slow"; rm -f "$work/slow.go" "$work/slow.groups"
 printf '#!/bin/sh\npython3 -I -c "import os; print(os.getpgrp())" >> "%s/slow.groups"\nn=0; while [ ! -f "%s/slow.go" ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n + 1)); done\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' "$work" "$work" > "$work/slow/claude"; chmod +x "$work/slow/claude"
 PATH="$work/slow:$PATH" "$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1; code=$?
 check_all "--workers: the job starts the workers and ends before they do" '[ "$code" -eq 0 ] && [ ! -s "$HOST_LOG" ]'
-# Go once both sessions run: a worker that picks after the other's step ended may take that item again.
-waited=0; while [ "$(grep -c . "$work/slow.groups" 2>/dev/null)" != 2 ] && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
+both_sessions_started() { [ "$(grep -c . "$work/slow.groups" 2>/dev/null)" = 2 ]; }
+waited=0; while ! both_sessions_started && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
 touch "$work/slow.go"
 waited=0; while { [ "$(grep -c . "$HOST_LOG")" -lt 2 ] || ls -d .flow/log/next-[0-9]*.lock; } >/dev/null 2>&1 && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
 check "--workers: the workers end within a minute" [ "$waited" -lt 60 ]
