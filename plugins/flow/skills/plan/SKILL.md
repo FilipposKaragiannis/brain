@@ -24,7 +24,7 @@ on Codex the path `codex plugin list` prints for `flow`).
 | `epic` | planner | epic body in the item; `epic.md` |
 | `tasks` | planner, then epic-plan-reviewer on the list | the sub-items (after the decomposition gate) |
 | `design` | explorer; researcher only when the exploration or the spec names a question the repo cannot answer; architect only when the profile turns it on | `explore.md`, `research.md`, `design.md` with the architect |
-| `plan` | planner; epic-plan-reviewer on an L task | `plan.md`; sub-items in tracker-tasks mode |
+| `plan` | planner; epic-plan-reviewer on an M or L task | `plan.md`; sub-items in tracker-tasks mode |
 
 Spawn each subagent by its roster name with the step brief from `next.sh` when you have one,
 else a brief of the same shape: item, step, worktree, reports path, inputs, and the result
@@ -45,7 +45,10 @@ exploration, and the planner designs from `explore.md`.
 
 The epic-plan-reviewer reads the plan or the task list and returns Blocker, Risk, Gap and
 Nice-to-fix findings. Give every Blocker and Gap back to the planner for one more pass; then
-stop. Prefer the other provider for the reviewer when both hosts are available.
+stop. Prefer the other provider for the reviewer when both hosts are available. It checks the
+item's premises too: an item the plan leans on (one that sets a value, lands first or owns a
+follow-up) is read in the tracker, and a closed or missing one is a Blocker. A bug has no plan
+step; its diagnosis is reviewed in the reproduce step (`flow:test`).
 
 ## 3. The plan template (`plan.md`)
 

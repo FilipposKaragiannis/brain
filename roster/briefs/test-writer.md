@@ -31,7 +31,13 @@ T-13), and the public interfaces the plan names.
 5. Doubles at system boundaries only (external services, time, randomness, file system).
    Never assert on a double's calls (T-08). Never mock the project's own types.
 6. For `reproduce`: write the single test that fails on the bug as described, run it, confirm
-   it is red for the right reason, commit it.
+   it is red for the right reason, commit it. As described means the `## Problem` steps and
+   the symptom the reporter saw, under the conditions they saw it in. A lead or a suspect the
+   item names is a hypothesis: a test that shows only the lead misbehaving, in conditions the
+   steps never reach, is not the reproduction. When the item names several suspects, or the
+   symptom does not follow from the first lead, measure before you pin: run the steps with the
+   project's own tracing and name in the result the source the measurement gives, with the
+   command and the numbers. No source you can name: stop with status `gate`, gate `ambiguity`.
 7. Run the suite with the guide's command. Commit with a conventional message naming the item.
    A sandboxed Claude session commits only in the worktree it started in: when the commit fails
    on `index.lock` (`Operation not permitted`), stop with status `fail` and that error text, and
