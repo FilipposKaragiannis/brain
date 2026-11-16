@@ -1,6 +1,15 @@
 {
-  "commit": "f1c6259",
+  "commit": "8ef2d29",
   "plugins": {
+    "console": {
+      "install-works": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      }
+    },
     "craft": {
       "design-skips-explanation": {
         "with": {
@@ -11,9 +20,9 @@
       },
       "design-uses-vocabulary": {
         "with": {
-          "passed": 1,
+          "passed": 3,
           "runs": 3,
-          "score": 0.9
+          "score": 1.0
         },
         "without": {
           "passed": 0,
@@ -23,8 +32,8 @@
       },
       "improve-finds-shallow": {
         "with": {
-          "passed": 2,
-          "runs": 2,
+          "passed": 3,
+          "runs": 3,
           "score": 1.0
         },
         "without": {
@@ -99,6 +108,13 @@
         }
       },
       "intake-files-notes": {
+        "with": {
+          "passed": 3,
+          "runs": 3,
+          "score": 1.0
+        }
+      },
+      "jobs-health-checks-pool": {
         "with": {
           "passed": 3,
           "runs": 3,
@@ -186,9 +202,9 @@
     "meta": {
       "retro-routes-lessons": {
         "with": {
-          "passed": 2,
+          "passed": 3,
           "runs": 3,
-          "score": 0.96
+          "score": 1.0
         }
       },
       "retro-unattended-reports": {
@@ -235,5 +251,5 @@
       }
     }
   },
-  "recorded": "2026-10-19"
+  "recorded": "2026-11-16"
 }
