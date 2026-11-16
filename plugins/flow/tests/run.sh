@@ -276,6 +276,14 @@ if command -v dash >/dev/null 2>&1; then
   n=0; while [ -z "$(ls -A "$work/vtmp")" ] && [ "$n" -lt 100 ]; do n=$((n + 1)); sleep 0.1; done
   kill -TERM "$vp" 2>/dev/null; wait "$vp"
   check_all "verify under dash stopped by TERM leaves no temp file" '[ "$n" -lt 100 ] && [ -z "$(ls -A "$work/vtmp")" ]'
+  # The TERM lands at a set point: a mktemp that holds once its file exists, until the test says go.
+  mkdir -p "$work/vtmp-held" "$work/held-mktemp"; rm -f "$work/held-mktemp.go"
+  printf '#!/bin/sh\nmade="$(%s "$@")" || exit 1\nprintf "%%s\\n" "$made"\ncase "$made" in "$TMPDIR"/*) n=0; while [ ! -f %s/held-mktemp.go ] && [ "$n" -lt 100 ]; do sleep 0.1; n=$((n + 1)); done ;; esac\n' \
+    "$(command -v mktemp)" "$work" > "$work/held-mktemp/mktemp"; chmod +x "$work/held-mktemp/mktemp"
+  (cd "$wv" && PATH="$work/held-mktemp:$PATH" TMPDIR="$work/vtmp-held" exec dash "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1) & vp=$!
+  n=0; while [ -z "$(ls -A "$work/vtmp-held")" ] && [ "$n" -lt 100 ]; do n=$((n + 1)); sleep 0.1; done
+  kill -TERM "$vp" 2>/dev/null; touch "$work/held-mktemp.go"; wait "$vp"
+  check_all "TermWhileVerifyMakesItsFirstTempFile_LeavesNoTempFile: the cleanup is set before the file exists" '[ "$n" -lt 100 ] && [ -z "$(ls -A "$work/vtmp-held")" ]'
 fi
 # The write is atomic: a reader polling verify.json while verify runs never sees it empty, and
 # no temp file is left behind.

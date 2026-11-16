@@ -198,13 +198,15 @@ std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
 overall="pass"
+records=""; changed_list=""
+# dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
+# so a parent shell sees it (an exit 130 would hide it). The traps are set before the temp files
+# exist, so a signal between the two leaves none behind.
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
-# dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
-# so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f "$records" "$changed_list"' EXIT
-trap 'trap - INT EXIT; rm -f "$records" "$changed_list"; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f "$records" "$changed_list"; kill -TERM $$' TERM
 
 record() {
   # record <name> <status> <command> <summary source>: one check, four NUL-terminated fields. The
