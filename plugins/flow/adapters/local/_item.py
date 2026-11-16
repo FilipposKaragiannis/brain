@@ -22,6 +22,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -33,6 +34,7 @@ LIST_KEYS = {"blocked_by", "labels", "touches", "changes"}
 INT_KEYS = {"attempts"}
 # The rank of an item with no priority: after every ranked one.
 NO_RANK = 999
+OWNER_ONLY_MODE = 0o600
 
 
 def usage(message):
@@ -105,8 +107,29 @@ def dump(path, meta, body):
         else:
             lines.append("%s: %s" % (key, quote(value if value is not None else "")))
     lines.append("---")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n" + body.lstrip("\n"))
+    refuse_when_read_only(path)
+    replace_whole(path, "\n".join(lines) + "\n" + body.lstrip("\n"))
+
+
+def refuse_when_read_only(path):
+    open(path, "a", encoding="utf-8").close()
+
+
+def replace_whole(path, text):
+    temporary = "%s.%d.tmp" % (path, os.getpid())
+    output = create_owner_only(temporary)
+    try:
+        with output:
+            output.write(text)
+    except BaseException:
+        os.remove(temporary)
+        raise
+    shutil.copymode(path, temporary)
+    os.replace(temporary, path)
+
+
+def create_owner_only(path):
+    return os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, OWNER_ONLY_MODE), "w", encoding="utf-8")
 
 
 def item_path(home, item_id):
