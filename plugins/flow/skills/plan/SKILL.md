@@ -46,9 +46,11 @@ exploration, and the planner designs from `explore.md`.
 The epic-plan-reviewer reads the plan or the task list and returns Blocker, Risk, Gap and
 Nice-to-fix findings. Give every Blocker and Gap back to the planner for one more pass; then
 stop. Prefer the other provider for the reviewer when both hosts are available. It checks the
-item's premises too: an item the plan leans on (one that sets a value, lands first or owns a
-follow-up) is read in the tracker, and a closed or missing one is a Blocker. A bug has no plan
-step; its diagnosis is reviewed in the reproduce step (`flow:test`).
+item's premises too, reading in the tracker each item the plan leans on. A prerequisite that
+closed is met when what it promised is in the code. An item the plan expects to do work still
+ahead (set a value, own a follow-up) is a Blocker when it is closed or missing: nobody will do
+that work. A bug has no plan step; its diagnosis is reviewed in the reproduce step
+(`flow:test`).
 
 ## 3. The plan template (`plan.md`)
 

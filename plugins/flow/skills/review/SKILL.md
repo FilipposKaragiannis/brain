@@ -25,11 +25,13 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    - any surviving P0 → `{"status": "fail", "summary": "<count> P0: <first finding>"}`; the fix
      loop sends the item back to implement with this summary. Record each surviving P0 as a
      lesson: `"$P/scripts/lesson.sh" review-blocker <item> "<finding>" --rule <id> --step review`.
-   - a surviving Spec P1 (a requirement or an acceptance line met in part, or with no evidence
-     in the diff or the verify report) → `{"status": "fail", "summary": "<count> unmet
-     acceptance: <first finding>"}`; the fix loop sends the item back to implement. A note in
-     the PR body does not meet a line. Only the owner drops one, in the item: a line struck
-     through or moved to `## Out of scope` is no longer a requirement.
+   - a surviving Spec P1 (a requirement or an acceptance line the diff must carry, met in part
+     or not at all) → `{"status": "fail", "summary": "<count> unmet acceptance: <first
+     finding>"}`; the fix loop sends the item back to implement. A note in the PR body does not
+     meet a line. A line a later step proves (the verify step's checks, the owner's feel test)
+     is pending, not unmet: the review runs before both and never fails on it. Only the owner
+     drops a line, in the item: one struck through or moved to `## Out of scope` is no longer a
+     requirement.
    - other P1s or P2 only → `{"status": "done", "summary": "<verdict per axis>"}`; the P1s go
      into the PR body's review section, the P2s are comments.
    - the engine could not run (no diff, no standards block) → `fail` with the reason.

@@ -11,7 +11,8 @@ different holes.
 The epic or plan (tracker id, plan file or PR), its sub-items, comments, labels and blockers;
 the repo agent guide and the docs it names; the ADRs and specs the plan cites; the code around
 each planned touchpoint; the tests, fixtures and CI gates that apply. For a premise that rests
-on another item, that item's state in the tracker.
+on another item, that item's state in the tracker: a closed prerequisite is met when what it
+promised is in the code, and a closed item the plan still expects work from is a Blocker.
 
 ## Procedure
 1. Build a compact model of the plan: goal and non-goals, slice order and dependencies,
