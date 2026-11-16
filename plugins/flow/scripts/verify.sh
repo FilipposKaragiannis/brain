@@ -200,8 +200,7 @@ attempts="$(next_attempt)"
 overall="pass"
 records=""; changed_list=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
-# so a parent shell sees it (an exit 130 would hide it). The traps are set before the temp files
-# exist, so a signal between the two leaves none behind.
+# so a parent shell sees it (an exit 130 would hide it).
 trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}' EXIT
 trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}; kill -INT $$' INT
 trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}; kill -TERM $$' TERM
