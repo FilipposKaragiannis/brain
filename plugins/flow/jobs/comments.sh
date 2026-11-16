@@ -343,6 +343,7 @@ pass() {
 # not open names no item and has no lock to take.
 locked_pass() {
   lp_item="$(item_of "$1")"
+  [ -z "${FLOW_DIAG:-}" ] || echo "$(date +%s.%N) $(sh -c 'echo $PPID') lock $1 item=$lp_item" >> "$FLOW_DIAG"
   if [ -n "$lp_item" ] && ! FLOW_LOCK_WAIT=0 flow_lock "item:$(item_slug "$lp_item")"; then
     job_say "$1: another pass works on $lp_item (its lock is held), skipped" >/dev/null; outcome busy "another pass holds its lock"; return 0
   fi
@@ -357,7 +358,8 @@ worker() {
   for wk_t in $targets; do
     wk_n=$((wk_n + 1))
     [ ! -f "$run/stopped" ] || return 0
-    slot="$run/$wk_n"; mkdir "$slot" 2>/dev/null || continue
+    slot="$run/$wk_n"; mkdir "$slot" 2>/dev/null || { [ -z "${FLOW_DIAG:-}" ] || echo "$(date +%s.%N) $(sh -c 'echo $PPID') n=$wk_n t=$wk_t slot taken" >> "$FLOW_DIAG"; continue; }
+    [ -z "${FLOW_DIAG:-}" ] || echo "$(date +%s.%N) $(sh -c 'echo $PPID') n=$wk_n t=$wk_t slot made; $(ls "$run" | tr '\n' ' ')" >> "$FLOW_DIAG"
     out="$slot/out"
     locked_pass "$wk_t"
   done
@@ -366,6 +368,7 @@ worker() {
 # functions, targets and process list with no arguments to pass, and no run of their own shows in
 # the job's status, as a re-run of this script per PR would.
 run="$out.run"; mkdir -p "$run"; procs=""
+[ -z "${FLOW_DIAG:-}" ] || echo "$(date +%s.%N) $$ main run=$run targets=$(printf '%s' "$targets" | tr '\n' ' ')" >> "$FLOW_DIAG"
 if [ "$workers" -gt 1 ] && [ -z "$one" ]; then
   list_procs
   k=1
