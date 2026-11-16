@@ -76,6 +76,7 @@ refusal() { # refusal <scenario> <pair>...
 }
 refusal UnknownKey colour=blue
 refusal AttemptsNotAWholeNumber attempts=x
+refusal AttemptsInNonAsciiDigits attempts=²
 refusal RecordPairNotJson "run:=not json"
 refusal StatePairBesideRecordPair step=review run.step=review
 record set nowhere:1 step=plan >/dev/null 2>&1; code=$?

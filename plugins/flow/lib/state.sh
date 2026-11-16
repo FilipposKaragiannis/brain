@@ -125,7 +125,7 @@ record_pairs_kind() (
   for flow_record_pair in "$@"; do
     flow_record_key="${flow_record_pair%%=*}"
     [ "$flow_record_key" != "$flow_record_pair" ] || die "expected key=value, got $flow_record_pair" "$EXIT_USAGE"
-    case "$flow_record_pair" in attempts=*[!0-9]*) die "attempts takes a whole number, not ${flow_record_pair#attempts=}" "$EXIT_USAGE" ;; esac
+    case "$flow_record_pair" in attempts=*[!0123456789]*) die "attempts takes a whole number, not ${flow_record_pair#attempts=}" "$EXIT_USAGE" ;; esac
     case "$flow_record_key" in *.*|*:) flow_record_pair_kind=record ;; *) flow_record_pair_kind=state ;; esac
     [ "${flow_record_kind:-$flow_record_pair_kind}" = "$flow_record_pair_kind" ] \
       || die "a write holds state pairs or record pairs, never both: $*" "$EXIT_USAGE"

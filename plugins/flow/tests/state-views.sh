@@ -81,6 +81,14 @@ check "GateFileOfAnotherGate_StaysOutOfTheSeed: the tracker's open gate wins ove
   '[ -z "$(record get "$other_gate" gate.options)" ]'
 "$local_adapter/write-state.sh" "$started" step=review
 check "LaterTrackerChange_DoesNotReachTheRecord: once a record exists it wins and is never compared again" '[ "$(record get "$started" step)" = implement ]'
+other_digits="$(new_task "Tracker attempts in other digits")"
+other_digits_record="$(record path "$other_digits")"
+printf '{"state":{"step":"plan","attempts":"²"}}' | python3 -I "$plugin/scripts/_state.py" set \
+  --state-dir "$(dirname "$other_digits_record")" --flow-home "$(dirname "$(dirname "$other_digits_record")")" \
+  --item "$other_digits" --now 2026-11-15T12:00:00Z --machine gamma --host codex --claim-file "" --seed stdin \
+  -- last_event=resumed >/dev/null 2>&1
+check "SeedWithAttemptsInNonAsciiDigits_StillMakesTheRecord: a tracker number outside 0-9 stays out of the seed, never failing the first write" \
+  '[ "$(record get "$other_digits" step)" = plan ]'
 unrecorded="$(new_task "Never written")"
 check "ItemWithNoRecord_GetPrintsNothing: an item never written has no value to read" '[ -z "$(record get "$unrecorded" step)" ]'
 check "ItemWithNoRecord_GetSeedsNoRecord: a read never seeds a record" '[ ! -f "$(record path "$unrecorded")" ]'

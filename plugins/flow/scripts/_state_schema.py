@@ -35,6 +35,7 @@ GATE_CLEARED = ("", "none")
 RECORD_ITEM_FIELD = "item"
 NOTIFY_GATE_FIELD = "gate"
 ITEM_SLUG_SHAPE = re.compile(r"[A-Za-z0-9_-]+")
+WHOLE_NUMBER_SHAPE = re.compile(r"[0-9]+")
 
 
 StateKey = namedtuple("StateKey", ("key", "holder", "field", "kind"))
@@ -82,6 +83,10 @@ def item_slug_shaped(item):
     return ITEM_SLUG_SHAPE.fullmatch(item_slug(item)) is not None
 
 
+def whole_number_shaped(text):
+    return WHOLE_NUMBER_SHAPE.fullmatch(text) is not None
+
+
 def record_paths(state_dir, flow_home, item):
     slug = item_slug(item)
     return RecordPaths("%s/%s.json" % (state_dir, slug), "%s/closed/%s.json" % (state_dir, slug),
@@ -104,7 +109,7 @@ def pair_problem(pair):
         return record_pair_problem(pair)
     if pair.key not in STATE_KEYS:
         return "unknown state key %s" % pair.key
-    if STATE_KEYS[pair.key].kind == NUMBER and pair.value != "" and not pair.value.isdigit():
+    if STATE_KEYS[pair.key].kind == NUMBER and pair.value != "" and not whole_number_shaped(pair.value):
         return "%s takes a whole number, not %s" % (pair.key, pair.value)
     return ""
 
@@ -250,7 +255,7 @@ def claimed_elsewhere(record, machine):
 def path_value(record, path):
     value = record
     for step in path.split("."):
-        if isinstance(value, list) and step.isdigit() and int(step) < len(value):
+        if isinstance(value, list) and whole_number_shaped(step) and int(step) < len(value):
             value = value[int(step)]
         elif isinstance(value, dict) and step in value:
             value = value[step]
