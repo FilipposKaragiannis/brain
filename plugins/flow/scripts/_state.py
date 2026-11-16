@@ -9,12 +9,13 @@
 
 The record is <state dir>/<slug>.json, archived to <state dir>/closed/<slug>.json; its lock is
 <flow home>/locks/<slug>.lock. set, take and archive hold the lock for their file work, tried every
-LOCK_RETRY_SECONDS up to LOCK_TRIES times, then exit 75. A write goes to a temporary file and is
-renamed over the record. With no record yet, set and take start from the item the adapter read,
-given on stdin with --seed stdin, and the item's gate and run files (_state_views.seeded). set then
-renders the views its pairs name (_state_views), each through a temporary file and a rename; the
-claim file is the item's claim.json, or empty for none. A record that does not parse or carries a
-schema above this one is refused, exit 1. set checks every pair before it takes the lock (exit 2).
+LOCK_RETRY_SECONDS up to LOCK_TRIES times, then exit 75. A write goes to a new temporary file of an
+unguessable name, created only where no file or link stands, and is renamed over the record. With
+no record yet, set and take start from the item the adapter read, given on stdin with --seed stdin,
+and the item's gate and run files (_state_views.seeded). set then renders the views its pairs name
+(_state_views), each through such a temporary file and a rename; the claim file is the item's
+claim.json, or empty for none. A record that does not parse or carries a schema above this one is
+refused, exit 1. set checks every pair before it takes the lock (exit 2).
 get prints a string raw and anything else as JSON, nothing when the record or the path is absent.
 Exit codes: 0 done, 1 unreadable record or refused archive, 2 bad usage or pair, 75 lock busy.
 """
@@ -34,6 +35,9 @@ import _state_views as views  # noqa: E402
 NO_RECORD = MappingProxyType({})
 NO_OBJECT = MappingProxyType({})
 StoredRecord = namedtuple("StoredRecord", ("record", "outcome"))
+NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
+NEW_FILE_MODE = 0o666
+TEMPORARY_NAME_RANDOM_BYTES = 8
 
 
 def read_record(path):
@@ -55,13 +59,15 @@ def read_record(path):
 def replace_file(path, text):
     folder = os.path.dirname(path)
     os.makedirs(folder, exist_ok=True)
-    temporary = "%s/.%s.%d.tmp" % (folder, os.path.basename(path), os.getpid())
+    random_suffix = os.urandom(TEMPORARY_NAME_RANDOM_BYTES).hex()
+    temporary = "%s/.%s.%d.%s.tmp" % (folder, os.path.basename(path), os.getpid(), random_suffix)
+    descriptor = os.open(temporary, NEW_FILE_FLAGS, NEW_FILE_MODE)
     try:
-        with open(temporary, "w", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(text)
         os.replace(temporary, path)
     finally:
-        if os.path.exists(temporary):
+        if os.path.lexists(temporary):
             os.remove(temporary)
 
 

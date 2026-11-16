@@ -401,7 +401,7 @@ Value rules, the adapters' own (`adapters/local/_item.py:245-261`), so both stor
 Pairs apply in the key map's order, not the caller's; a key given twice takes its last value. `record_set` returns its code and never exits its caller (unlike `adapter`, whose `die` does), prints nothing on stdout, changes no variable of its caller and never reads its caller's stdin (M-08, D-10): its own variables carry the prefix `flow_record_`, each adapter call runs in a subshell with stdin from `/dev/null`, and the seed reaches `_state.py` on a pipe.
 
 One write, in order
-1. Refuse, exit 2, in the shell: an id no adapter owns, no pair, a pair with no `=`, state and record pairs together, `attempts` that is not a whole number, a `tracker_state` outside its two values, a `state.dir` that cannot be created or written (A-03).
+1. Refuse, exit 2, in the shell: an id not of its adapter's shape (`item_id_shaped`; `record_get`, `record_show`, `record_archive` and `state.sh path` refuse it too), no pair, a pair with no `=`, state and record pairs together, `attempts` that is not a whole number, a `tracker_state` outside its two values, a `state.dir` that cannot be created or written (A-03).
 2. Only with the mirror on and state pairs: `adapter write-state <item> <the pairs as given>`. Its failure ends the write with its exit code and nothing is written; its whitelist is the twenty (`github/write-state.sh:12`, `local/_item.py:29`, `_jira.py:37`), so a key outside them exits 2 there.
 3. No record file yet: `adapter read <item>` is the seed; a read that fails seeds nothing.
 4. A pair names `step`, `run.step` or a `run` that is not null: the claim file is `<steward.sh find <item>>/.flow/claim.json`, when there is one.
