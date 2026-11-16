@@ -60,14 +60,14 @@ record_get() (
   [ $# -eq 2 ] || die "usage: record_get <item> <key>" "$EXIT_USAGE"
   item_shape_required "$1"
   FLOW_HOME="$(flow_home)"
-  state_python get "$(state_dir)" "$1" -- "$2"
+  state_python get "$(state_dir)" "$FLOW_HOME" "$1" -- "$2"
 )
 
 record_show() (
   [ $# -eq 1 ] || die "usage: record_show <item>" "$EXIT_USAGE"
   item_shape_required "$1"
   FLOW_HOME="$(flow_home)"
-  state_python show "$(state_dir)" "$1"
+  state_python show "$(state_dir)" "$FLOW_HOME" "$1"
 )
 
 record_set() (
@@ -81,7 +81,7 @@ record_set() (
   if [ "$flow_record_tracker" = labels ] && [ "$flow_record_kind" = state ]; then
     tracker_mirror "$flow_record_item" "$@" || exit
   fi
-  record_seeded set "$flow_record_item" "$flow_record_dir" \
+  record_seeded set "$flow_record_item" "$flow_record_dir" "$FLOW_HOME" \
     --claim-file "$(record_claim_file "$flow_record_item" "$@")" -- "$@"
 )
 
@@ -90,14 +90,14 @@ take_item() (
   item_shape_required "$1"
   FLOW_HOME="$(flow_home)"
   flow_record_dir="$(record_ensured_dir)" || exit "$EXIT_USAGE"
-  record_seeded take "$1" "$flow_record_dir"
+  record_seeded take "$1" "$flow_record_dir" "$FLOW_HOME"
 )
 
 record_archive() (
   [ $# -eq 1 ] || die "usage: record_archive <item>" "$EXIT_USAGE"
   item_shape_required "$1"
   FLOW_HOME="$(flow_home)"
-  state_python archive "$(state_dir)" "$1" --machine "$(flow_machine)"
+  state_python archive "$(state_dir)" "$FLOW_HOME" "$1" --machine "$(flow_machine)"
 )
 
 # item_shape_required <item>: refuses, exit 2, an id that is not of its adapter's shape.
@@ -105,11 +105,14 @@ item_shape_required() {
   item_id_shaped "$1" || die "$1 is no item id of an adapter's shape, so it has no record" "$EXIT_USAGE"
 }
 
-# state_python <command> <state dir> <item> [<option>...]: one _state.py call on the item's record.
+# state_python <command> <state dir> <flow home> <item> [<option>...]: one _state.py call on the
+# item's record.
 state_python() {
-  flow_record_python_command="$1"; flow_record_python_dir="$2"; flow_record_python_item="$3"; shift 3
+  flow_record_python_command="$1"; flow_record_python_dir="$2"; flow_record_python_home="$3"
+  flow_record_python_item="$4"; shift 4
   python3 -I "$FLOW_PLUGIN/scripts/_state.py" "$flow_record_python_command" \
-    --state-dir "$flow_record_python_dir" --flow-home "$FLOW_HOME" --item "$flow_record_python_item" "$@"
+    --state-dir "$flow_record_python_dir" --flow-home "$flow_record_python_home" \
+    --item "$flow_record_python_item" "$@"
 }
 
 # tracker_mirror <item> <pair>...: the one adapter write-state call of the flow.
@@ -140,14 +143,14 @@ record_ensured_dir() (
   printf '%s' "$flow_record_dir"
 )
 
-# record_seeded <set|take> <item> <state dir> [<option>...]: one _state.py write. An item with no
-# record yet sends the tracker's read along as the seed; a read that fails seeds nothing.
+# record_seeded <set|take> <item> <state dir> <flow home> [<option>...]: one _state.py write. An
+# item with no record yet sends the tracker's read along as the seed; a read that fails seeds nothing.
 record_seeded() {
-  flow_record_command="$1"; flow_record_item="$2"; flow_record_dir="$3"; shift 3
+  flow_record_command="$1"; flow_record_item="$2"; flow_record_dir="$3"; flow_record_home="$4"; shift 4
   flow_record_seed=stdin
   [ ! -f "$flow_record_dir/$(item_slug "$flow_record_item").json" ] || flow_record_seed=none
   { [ "$flow_record_seed" = none ] || ( adapter read "$flow_record_item" ) </dev/null 2>/dev/null; } \
-    | state_python "$flow_record_command" "$flow_record_dir" "$flow_record_item" \
+    | state_python "$flow_record_command" "$flow_record_dir" "$flow_record_home" "$flow_record_item" \
       --now "$(now_iso)" --machine "$(flow_machine)" --host "$(host_name)" --seed "$flow_record_seed" "$@"
 }
 
