@@ -2,8 +2,10 @@
 
 A command, then each of its options as `--name value`, every one required (given twice, the last
 counts), then `--` and the command's words: the pairs of set, the one key of get, none for the
-others. --seed is stdin or none. A line outside this grammar is refused with the command's usage,
-exit 2. Hand-written rather than argparse, whose import was a large share of every write's start.
+others. --seed is stdin or none. --item is an id whose slug holds only letters, digits, _ and -, as
+the slug of every adapter's id shape does, so no item names a path. A line outside this grammar is
+refused with the command's usage, exit 2. Hand-written rather than argparse, whose import was a
+large share of every write's start.
 """
 from collections import namedtuple
 from types import MappingProxyType
@@ -15,6 +17,7 @@ OPTION_PREFIX = "--"
 END_OF_OPTIONS = "--"
 WORDS_PER_OPTION = 2
 SEED_OPTION = "seed"
+ITEM_OPTION = "item"
 SEED_SOURCES = ("stdin", "none")
 COMMAND_OPTIONS = MappingProxyType({
     "set": ("state-dir", "flow-home", "item", "now", "machine", "host", "claim-file", "seed"),
@@ -65,11 +68,13 @@ def options_problem(command, option_words):
     unknown = [name for name in names if name not in known]
     missing = [name for name in known if name not in given]
     seed = given.get(option_word(SEED_OPTION), SEED_SOURCES[0])
+    item = given.get(option_word(ITEM_OPTION), "")
     checks = (
         (len(names) != len(values), "every option takes one value: %s" % " ".join(option_words)),
         (unknown, "unrecognized options: %s" % " ".join(unknown)),
         (missing, "the following options are required: %s" % " ".join(missing)),
         (seed not in SEED_SOURCES, "--seed is %s, not %s" % (" or ".join(SEED_SOURCES), seed)),
+        (not schema.item_slug_shaped(item), "--item takes an id whose slug is letters, digits, _ and -, not %r" % item),
     )
     return next((message for failed, message in checks if failed), "")
 

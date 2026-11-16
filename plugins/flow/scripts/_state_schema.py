@@ -7,6 +7,7 @@ twenty state keys (a dash reads as an underscore) or one of the record pairs `ru
 its last value. Objects that hold only empty fields read null, and lists are never null.
 """
 import json
+import re
 from collections import namedtuple
 from types import MappingProxyType
 
@@ -32,6 +33,7 @@ OBJECT_FIELDS = MappingProxyType({
 GATE_CLEARED = ("", "none")
 RECORD_ITEM_FIELD = "item"
 NOTIFY_GATE_FIELD = "gate"
+ITEM_SLUG_SHAPE = re.compile(r"[A-Za-z0-9_-]+")
 
 
 StateKey = namedtuple("StateKey", ("key", "holder", "field", "kind"))
@@ -73,6 +75,10 @@ DONE = Outcome(EXIT_DONE, "")
 
 def item_slug(item):
     return item.replace(":", "-").replace("/", "-").replace("#", "-")
+
+
+def item_slug_shaped(item):
+    return ITEM_SLUG_SHAPE.fullmatch(item_slug(item)) is not None
 
 
 def record_paths(state_dir, flow_home, item):
