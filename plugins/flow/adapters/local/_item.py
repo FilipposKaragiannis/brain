@@ -106,6 +106,8 @@ def dump(path, meta, body):
             lines.append("%s: %s" % (key, quote(value if value is not None else "")))
     lines.append("---")
     # Other runs list the items without a lock: they must find the old item or the new, never an empty file.
+    # A rename would replace a file the owner made read-only, so its write is refused first, as before.
+    open(path, "a", encoding="utf-8").close()
     temporary = "%s.%d.tmp" % (path, os.getpid())
     with open(temporary, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n" + body.lstrip("\n"))
