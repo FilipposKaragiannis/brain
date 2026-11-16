@@ -81,14 +81,23 @@ check "GateFileOfAnotherGate_StaysOutOfTheSeed: the tracker's open gate wins ove
   '[ -z "$(record get "$other_gate" gate.options)" ]'
 "$local_adapter/write-state.sh" "$started" step=review
 check "LaterTrackerChange_DoesNotReachTheRecord: once a record exists it wins and is never compared again" '[ "$(record get "$started" step)" = implement ]'
-other_digits="$(new_task "Tracker attempts in other digits")"
-other_digits_record="$(record path "$other_digits")"
-printf '{"state":{"step":"plan","attempts":"²"}}' | python3 -I "$plugin/scripts/_state.py" set \
-  --state-dir "$(dirname "$other_digits_record")" --flow-home "$(dirname "$(dirname "$other_digits_record")")" \
-  --item "$other_digits" --now 2026-11-15T12:00:00Z --machine gamma --host codex --claim-file "" --seed stdin \
-  -- last_event=resumed >/dev/null 2>&1
+tracker_attempts_outside_ascii='²'
+other_digits=gh#7
+seeded_step="$(
+  export FAKE_GH_DIR="$work/gh"; mkdir -p "$FAKE_GH_DIR" "$work/gh-bin" && cp "$here/_fake_gh.py" "$FAKE_GH_DIR/" && ln -sf "$here/fake-gh.sh" "$work/gh-bin/gh"
+  PATH="$work/gh-bin:$PATH"
+  python3 -c 'import json,sys; marker="<!-- flow:state -->"
+body="%s\n```json\n%s\n```\n" % (marker, json.dumps({"step": "plan", "attempts": sys.argv[1]}))
+issue={"number": 7, "title": "Tracker attempts in other digits", "body": "", "state": "OPEN", "labels": ["size:S", "step:plan"], "url": "https://gh/7", "comments": [{"id": 701, "body": body}]}
+json.dump({"issues": [issue]}, open(sys.argv[2], "w"))' "$tracker_attempts_outside_ascii" "$FAKE_GH_DIR/issues.json"
+  cp .flow/config.yaml "$work/config.local"
+  printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\ntracker_state: none\nnotify:\n  desktop: false\n' > .flow/config.yaml
+  record set "$other_digits" last_event=resumed >/dev/null 2>&1
+  record get "$other_digits" step
+  cp "$work/config.local" .flow/config.yaml
+)"
 check "SeedWithAttemptsInNonAsciiDigits_StillMakesTheRecord: a tracker number outside 0-9 stays out of the seed, never failing the first write" \
-  '[ "$(record get "$other_digits" step)" = plan ]'
+  '[ "$seeded_step" = plan ]'
 unrecorded="$(new_task "Never written")"
 check "ItemWithNoRecord_GetPrintsNothing: an item never written has no value to read" '[ -z "$(record get "$unrecorded" step)" ]'
 check "ItemWithNoRecord_GetSeedsNoRecord: a read never seeds a record" '[ ! -f "$(record path "$unrecorded")" ]'

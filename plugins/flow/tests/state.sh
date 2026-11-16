@@ -130,6 +130,9 @@ check "KeyGivenTwice_TakesItsLastValue: the later pair of one write wins, as on 
 record set "$mapped" "touches=src/a/**, ,,docs/b.md" >/dev/null 2>&1
 check "CommaListWithBlankItems_DropsTheBlanks: a list keeps only the items written" \
   '[ "$(record get "$mapped" touches | canonical)" = "$(printf "%s" "[\"src/a/**\",\"docs/b.md\"]" | canonical)" ]'
+list_index_outside_ascii='touches.²'
+check "ListIndexInNonAsciiDigits_ReadsAsAPathToNothing: only 0-9 index a list, so any other digit reads no value, as a missing path does" \
+  '[ "$(record get "$mapped" "$list_index_outside_ascii"; echo "exit $?")" = "exit 0" ]'
 
 echo "the gate's value rules"
 ruled="$(new_task "Gate rules")"

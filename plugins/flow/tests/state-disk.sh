@@ -28,10 +28,15 @@ echo "a write waits for the item's lock"
 waiting="$(new_task "Waits for the lock")"
 record set "$waiting" step=plan >/dev/null 2>&1
 lock_held_seconds_within_the_wait=30
-seconds_a_free_write_needs=2
+lock_wait_seconds="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _state_schema as schema; print(schema.LOCK_TRIES * schema.LOCK_RETRY_SECONDS)' "$plugin/scripts")"
+writer_poll_seconds=0.1
+writer_polls_within_half_the_wait="$(python3 -c 'import sys; print(int(float(sys.argv[1]) / 2 / float(sys.argv[2])))' "$lock_wait_seconds" "$writer_poll_seconds")"
 if hold_lock "$waiting" "$lock_held_seconds_within_the_wait"; then
   record set "$waiting" step=review >/dev/null 2>&1 & waiting_writer=$!
-  sleep "$seconds_a_free_write_needs"
+  polls=0
+  while kill -0 "$waiting_writer" 2>/dev/null && [ "$polls" -lt "$writer_polls_within_half_the_wait" ]; do
+    sleep "$writer_poll_seconds"; polls=$((polls + 1))
+  done
   step_while_held="$(record get "$waiting" step)"
   let_go_of_lock
   wait "$waiting_writer"
@@ -89,25 +94,32 @@ cp "$work/config.saved" .flow/config.yaml
 
 echo "a link planted at the old fixed temporary name"
 pids_a_write_may_skip=3000
-plant_links() { # plant_links <file> <target>
+plant_links() { # plant_links <file> <target>: prints the first pid it planted for
   python3 -c 'import os,sys
 folder,name,target,window=os.path.dirname(sys.argv[1]),os.path.basename(sys.argv[1]),sys.argv[2],int(sys.argv[3])
 first=os.getpid()
-for pid in range(first,first+window): os.symlink(target,"%s/.%s.%d.tmp"%(folder,name,pid))' "$1" "$2" "$pids_a_write_may_skip"
+for pid in range(first,first+window): os.symlink(target,"%s/.%s.%d.tmp"%(folder,name,pid))
+print(first)' "$1" "$2" "$pids_a_write_may_skip"
+}
+next_pid() { true & echo "$!"; wait "$!"; }
+window_covered_the_write() { # window_covered_the_write <first planted pid> <a pid started after the write>
+  [ "$2" -gt "$1" ] && [ "$2" -lt $(($1 + pids_a_write_may_skip)) ]
 }
 linked="$(new_task "Planted link")"
 record set "$linked" step=plan >/dev/null 2>&1
 printf 'kept\n' > "$work/record-victim"
-plant_links "$(record path "$linked")" "$work/record-victim"
+first_planted="$(plant_links "$(record path "$linked")" "$work/record-victim")"
 record set "$linked" step=review >/dev/null 2>&1
+after_write="$(next_pid)"
 check "PlantedLinkAtTheRecordsOldTemporaryName_IsNotWrittenThrough: a record write makes its own new temporary, never one someone else placed" \
-  '[ "$(cat "$work/record-victim")" = kept ]'
+  'window_covered_the_write "$first_planted" "$after_write" && [ "$(cat "$work/record-victim")" = kept ]'
 mkdir -p .flow/runs
 printf 'kept\n' > "$work/run-victim"
-plant_links "$(run_file "$linked")" "$work/run-victim"
+first_planted="$(plant_links "$(run_file "$linked")" "$work/run-victim")"
 record set "$linked" "run:=$run_record" >/dev/null 2>&1
+after_write="$(next_pid)"
 check "PlantedLinkAtTheRunFilesOldTemporaryName_IsNotWrittenThrough: a view write makes its own new temporary, never one someone else placed" \
-  '[ "$(cat "$work/run-victim")" = kept ]'
+  'window_covered_the_write "$first_planted" "$after_write" && [ "$(cat "$work/run-victim")" = kept ]'
 
 [ "$fails" -eq 0 ] && { echo "state-disk: ok"; exit 0; }
 echo "state-disk: $fails failed"; exit 1
