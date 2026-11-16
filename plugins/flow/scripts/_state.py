@@ -54,10 +54,10 @@ def read_record(path):
     return StoredRecord(record, schema.DONE)
 
 
-def replace_file(path, text):
+def replace_file(path, text, random_bytes):
     folder = os.path.dirname(path)
     os.makedirs(folder, exist_ok=True)
-    random_suffix = os.urandom(TEMPORARY_NAME_RANDOM_BYTES).hex()
+    random_suffix = random_bytes(TEMPORARY_NAME_RANDOM_BYTES).hex()
     temporary = "%s/.%s.%d.%s.tmp" % (folder, os.path.basename(path), os.getpid(), random_suffix)
     descriptor = os.open(temporary, NEW_FILE_FLAGS, NEW_FILE_MODE)
     try:
@@ -69,8 +69,8 @@ def replace_file(path, text):
             os.remove(temporary)
 
 
-def write_record(path, record):
-    replace_file(path, json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+def write_record(path, record, random_bytes):
+    replace_file(path, json.dumps(record, indent=2, ensure_ascii=False) + "\n", random_bytes)
 
 
 def read_object(path):
@@ -82,9 +82,9 @@ def read_object(path):
     return value if isinstance(value, dict) else NO_OBJECT
 
 
-def apply_view(change):
+def apply_view(change, random_bytes):
     if change.content is not None:
-        replace_file(change.path, views.view_text(change.content))
+        replace_file(change.path, views.view_text(change.content), random_bytes)
         return
     try:
         os.remove(change.path)
@@ -144,7 +144,7 @@ def not_recorded(options, pairs, outcome):
     return schema.Outcome(outcome.code, "%s: not recorded (%s): %s" % (options.item, keys, outcome.message))
 
 
-def command_set(options):
+def command_set(options, random_bytes):
     pairs = [schema.parse_pair(text) for text in options.pairs]
     outcome = schema.pairs_outcome(pairs)
     if outcome.code:
@@ -157,23 +157,23 @@ def command_set(options):
         if refused.code:
             return refused
         updated = schema.merged(current, pairs, options.now)
-        write_record(item_paths(options).record, updated)
+        write_record(item_paths(options).record, updated, random_bytes)
         claim = views.ClaimFile(options.claim_file, read_object(options.claim_file))
         for change in views.view_changes(views.view_paths(options.flow_home, options.item), claim, pairs, updated):
-            apply_view(change)
+            apply_view(change, random_bytes)
         return schema.DONE
 
     written = under_lock(item_paths(options), write)
     return written if written.code in (schema.EXIT_DONE, schema.EXIT_USAGE) else not_recorded(options, pairs, written)
 
 
-def command_take(options):
+def command_take(options, random_bytes):
     tracker_state = seed_state(options.seed)
 
     def take(record):
         taken = schema.taken(starting_record(record, options, tracker_state), options.machine, options.host, options.now)
         if taken is not record:
-            write_record(item_paths(options).record, taken)
+            write_record(item_paths(options).record, taken, random_bytes)
         return schema.DONE
 
     return under_lock(item_paths(options), take)
@@ -215,15 +215,17 @@ def command_show(options):
     return schema.DONE
 
 
-COMMANDS = MappingProxyType({"set": command_set, "take": command_take, "get": command_get, "show": command_show,
-                             "archive": command_archive})
+def commands(random_bytes):
+    return MappingProxyType({"set": lambda options: command_set(options, random_bytes),
+                             "take": lambda options: command_take(options, random_bytes),
+                             "get": command_get, "show": command_show, "archive": command_archive})
 
 
-def main(arguments):
+def main(arguments, random_bytes):
     parsed = command_line.parsed(arguments)
     options = parsed.options
     try:
-        outcome = COMMANDS[options.command](options) if not parsed.outcome.code else parsed.outcome
+        outcome = commands(random_bytes)[options.command](options) if not parsed.outcome.code else parsed.outcome
     except OSError as error:
         outcome = schema.Outcome(schema.EXIT_UNREADABLE, "%s: %s" % (options.item, error))
     if outcome.message:
@@ -232,4 +234,4 @@ def main(arguments):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    sys.exit(main(sys.argv[1:], os.urandom))
