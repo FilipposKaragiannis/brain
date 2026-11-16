@@ -15,6 +15,7 @@ import { planPane } from '../src/panePlan.ts';
 import type { PaneFacts, PaneHost } from '../src/panePlan.ts';
 import type { PaneTarget } from '../src/paneProtocol.ts';
 import { PaneSessions } from '../src/panes.ts';
+import { shellQuote } from '../src/shellWords.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectMonitor } from '../src/project.ts';
 import { ProjectRegistry } from '../src/registry.ts';
@@ -570,10 +571,27 @@ function paneFolder(target: PaneTarget, facts: PaneFacts): string {
   return plan.ok ? plan.launch.workingFolder : '';
 }
 
+/** An agent the daemon's PATH lacks and only the owner's startup files put on it, as a shell installer does. */
+const STARTUP_AGENT = 'startup-agent';
+const EXECUTABLE_MODE = 0o755;
+
 /**
- * Runs a resumed session's pane for real: its line in the POSIX shell it names, in a fresh folder,
- * with `/bin/echo` standing in for the owner's login shell and `resume` as the session's command.
- * Says what the pane printed and whether the session's command ran (it touches a marker file).
+ * Writes a stand-in for the owner's shell: its startup puts a folder holding `STARTUP_AGENT` first
+ * on PATH, then it runs the script it is given, or, started with only `-l`, prints that and ends.
+ */
+function ownerShell(folder: string): string {
+  const startupFolder = path.join(folder, 'startup-bin');
+  mkdirSync(startupFolder);
+  writeFileSync(path.join(startupFolder, STARTUP_AGENT), '#!/bin/sh\n/usr/bin/touch "$1"\n', { mode: EXECUTABLE_MODE });
+  const shell = path.join(folder, 'owner-shell');
+  writeFileSync(shell, `#!/bin/sh\nPATH=${shellQuote(startupFolder)}:"$PATH"\nexport PATH\nif [ "$#" -eq 1 ]; then echo "$1"; exit 0; fi\nfor script; do :; done\neval "$script"\n`, { mode: EXECUTABLE_MODE });
+  return shell;
+}
+
+/**
+ * Runs a resumed session's pane for real, in a fresh folder, with `ownerShell` standing in for the
+ * owner's shell and `resume` as the session's command. Says what the pane printed and whether the
+ * session's command ran (it touches a marker file).
  */
 function ranPane(target: (folder: string) => PaneTarget, place: (folder: string, session: SessionRef) => Partial<PaneFacts>, resume?: (marker: string) => string[]): { printed: string; resumed: boolean; marker: string } {
   const folder = mkdtempSync(path.join(os.tmpdir(), 'console-resume-'));
@@ -581,7 +599,7 @@ function ranPane(target: (folder: string) => PaneTarget, place: (folder: string,
     const marker = path.join(folder, 'resumed');
     const session: SessionRef = { ...SESSION, resume: resume === undefined ? ['/usr/bin/touch', marker] : resume(marker) };
     const facts: PaneFacts = { root: folder, folders: [folder], sessions: [], gateSessions: [], ...place(folder, session) };
-    const plan = planPane({ target: target(folder), size: PANE_SIZE }, facts, { ...PANE_HOST, shell: '/bin/echo' });
+    const plan = planPane({ target: target(folder), size: PANE_SIZE }, facts, { ...PANE_HOST, shell: ownerShell(folder) });
     if (!plan.ok) return { printed: `refused: ${plan.error}`, resumed: false, marker };
     const printed = execFileSync(plan.launch.command, plan.launch.commandArguments, { cwd: plan.launch.workingFolder, env: { PATH: '/usr/bin:/bin' }, encoding: 'utf8' });
     return { printed, resumed: existsSync(marker), marker };
@@ -611,6 +629,10 @@ test('Session_PaneOpensInTheFolderItRanIn', () => {
 
 test('EndedSession_ResumeRunsAtOnce', () => {
   assert.equal(ranPane(sessionByPid(100), runIn(false)).resumed, true, 'because once the run has ended the owner wants to be in the session straight away');
+});
+
+test('EndedSession_AgentOnlyOnTheOwnersStartupPath_Resumes', () => {
+  assert.equal(ranPane(sessionByPid(100), runIn(false), (marker) => [STARTUP_AGENT, marker]).resumed, true, 'because the resume runs once the owner\'s shell has read its startup files, so it finds an agent wherever a shell pane would');
 });
 
 test('EndedSession_LoginShellFollows', () => {

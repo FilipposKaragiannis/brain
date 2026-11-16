@@ -22,7 +22,8 @@ export type PanePlaces = { root: string; pool: string[]; outsideWorktrees: strin
 export type PaneHost = { shell: string; environment: Record<string, string>; isFolder(folder: string): boolean };
 /**
  * The process a pane's pty runs: an argv and the folder it starts in. Only a resumed session runs
- * a shell line, through `/bin/sh -c`, with every word in it quoted.
+ * a shell line, through `/bin/sh -c` once the owner's shell has read its startup files, with every
+ * word in it quoted.
  */
 export type PaneLaunch = { command: string; commandArguments: string[]; workingFolder: string };
 
@@ -50,6 +51,12 @@ const JOB_LOG_FOLDER = path.join('.flow', 'log');
 /** The shell a resumed session's line runs in: POSIX, so the quoting is the same whatever the owner's shell. */
 const POSIX_SHELL = '/bin/sh';
 const RUN_LINE = '-c';
+/** Login and interactive, so the resume finds the agents on the PATH the owner's startup files set, as in a shell pane. */
+const STARTUP_SHELL = [LOGIN_SHELL, '-i'];
+const ENVIRONMENT_COMMAND = '/usr/bin/env';
+/** The line reaches `/bin/sh` through the environment, so the owner's shell never parses it, whatever shell it is. */
+const RESUME_LINE_VARIABLE = 'BRAIN_CONSOLE_RESUME_LINE';
+const RUN_RESUME_LINE = `exec ${POSIX_SHELL} ${RUN_LINE} "$${RESUME_LINE_VARIABLE}"`;
 const STILL_RUNNING = 'The run is still going. Once it ends, resume its session with:';
 /** The daemon's variables a pane inherits; nothing else, so no token reaches a pane. */
 const INHERITED_VARIABLES = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG', 'LC_ALL', 'SSH_AUTH_SOCK'];
@@ -161,15 +168,17 @@ function gateLaunch(item: string, facts: PaneFacts, host: PaneHost): Planned {
 }
 
 /**
- * A session handed to the owner in its folder. While its process still runs the resume command is
- * printed, not run (two writers on one session); once the process has ended it runs at once.
- * Either way the owner's login shell follows, so the pane stays a terminal.
+ * A session handed to the owner in its folder, once the owner's shell has read its startup files.
+ * While its process still runs the resume command is printed, not run (two writers on one session);
+ * once the process has ended it runs at once. Either way the owner's login shell follows, so the
+ * pane stays a terminal.
  */
 function resumeLaunch(session: Resumable, host: PaneHost): Planned {
   if (!host.isFolder(session.folder)) return refuse(notAFolder(session.folder));
   const typed = commandText(session.resume);
   const first = session.alive ? `echo ${shellQuote(STILL_RUNNING)} && echo ${shellQuote(typed)}` : typed;
-  return launchIn(session.folder, POSIX_SHELL, [RUN_LINE, `${first}; exec ${shellQuote(host.shell)} ${LOGIN_SHELL}`]);
+  const line = `unset ${RESUME_LINE_VARIABLE}; ${first}; exec ${shellQuote(host.shell)} ${LOGIN_SHELL}`;
+  return launchIn(session.folder, ENVIRONMENT_COMMAND, [`${RESUME_LINE_VARIABLE}=${line}`, host.shell, ...STARTUP_SHELL, RUN_LINE, RUN_RESUME_LINE]);
 }
 
 /** The environment every pane gets: the allow-listed variables of the daemon's, a language, and a terminal that draws colour. */
