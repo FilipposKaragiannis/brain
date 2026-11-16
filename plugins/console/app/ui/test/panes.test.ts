@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
-import { ACK_EVERY_BYTES, PANE_CLOSE } from '../../daemon/src/paneProtocol.ts';
+import { ACK_EVERY_BYTES, MAXIMUM_PANE_COLUMNS, MAXIMUM_PANE_ROWS, MINIMUM_PANE_COLUMNS, MINIMUM_PANE_ROWS, PANE_CLOSE } from '../../daemon/src/paneProtocol.ts';
 import type { PaneNotice, PaneTarget } from '../../daemon/src/paneProtocol.ts';
-import { PANE_END_WORDS, PaneStore } from '../src/panes.ts';
+import { PANE_END_WORDS, PaneStore, paneSizeInBounds } from '../src/panes.ts';
 import type { PaneView } from '../src/panes.ts';
 import { FAKE_TERMINAL_SIZE, FakeDaemon } from './fakeDaemon.tsx';
 import type { FakeSocket, FakeTerminal } from './fakeDaemon.tsx';
@@ -216,4 +216,19 @@ test.each(MALFORMED_NOTICES)('MalformedNotice_Ignored ($what)', ({ notice }) => 
   const before = structuredClone(view(store, key));
   socket.receive(notice as PaneNotice);
   expect(view(store, key), 'because a frame the page cannot trust must not change what the pane shows').toEqual(before);
+});
+
+test('SizeWithinBounds_IsKept', () => {
+  expect(paneSizeInBounds(FAKE_TERMINAL_SIZE), 'because a size the daemon accepts reaches it unchanged').toEqual(FAKE_TERMINAL_SIZE);
+});
+
+test('SizeBeyondTheMaximum_IsHeldAtTheMaximum', () => {
+  const ultrawide = { columns: MAXIMUM_PANE_COLUMNS + 100, rows: MAXIMUM_PANE_ROWS + 100 };
+  expect(paneSizeInBounds(ultrawide), 'because the daemon refuses a pane wider or taller than its maximum and hangs up a live one asked to grow past it')
+    .toEqual({ columns: MAXIMUM_PANE_COLUMNS, rows: MAXIMUM_PANE_ROWS });
+});
+
+test('SizeBelowTheMinimum_IsHeldAtTheMinimum', () => {
+  expect(paneSizeInBounds({ columns: 0, rows: 0 }), 'because the daemon refuses a pane narrower or shorter than its minimum')
+    .toEqual({ columns: MINIMUM_PANE_COLUMNS, rows: MINIMUM_PANE_ROWS });
 });

@@ -1,5 +1,5 @@
 import type { PaneNotice, PaneSize, PaneTarget } from '../../daemon/src/paneProtocol.ts';
-import { ACK_EVERY_BYTES, PANE_CLOSE, targetQuery } from '../../daemon/src/paneProtocol.ts';
+import { ACK_EVERY_BYTES, MAXIMUM_PANE_COLUMNS, MAXIMUM_PANE_ROWS, MINIMUM_PANE_COLUMNS, MINIMUM_PANE_ROWS, PANE_CLOSE, targetQuery } from '../../daemon/src/paneProtocol.ts';
 import { projectPath } from './api.ts';
 import type { Api, SocketLike } from './api.ts';
 
@@ -7,7 +7,7 @@ import type { Api, SocketLike } from './api.ts';
 export type TerminalLike = {
   /** Puts the terminal in the container: opens it there the first time, moves it there after. */
   showIn(container: HTMLElement): void;
-  /** Fits the terminal to its container and returns the size it now has. */
+  /** Fits the terminal to its container, within `paneSizeInBounds`, and returns the size it now has. */
   fit(): PaneSize;
   /** Draws the bytes, then calls `drawn`. */
   write(bytes: Uint8Array, drawn: () => void): void;
@@ -169,6 +169,14 @@ export class PaneStore {
     this.views = [...this.entries.values()].map((pane) => pane.view);
     this.listeners.forEach((listener) => listener());
   }
+}
+
+/** The size a terminal may take: the proposed one, held within the columns and rows the daemon accepts. */
+export function paneSizeInBounds(proposed: PaneSize): PaneSize {
+  return {
+    columns: Math.min(Math.max(proposed.columns, MINIMUM_PANE_COLUMNS), MAXIMUM_PANE_COLUMNS),
+    rows: Math.min(Math.max(proposed.rows, MINIMUM_PANE_ROWS), MAXIMUM_PANE_ROWS),
+  };
 }
 
 function paneSocketPath(view: PaneView, size: PaneSize): string {

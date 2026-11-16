@@ -2,6 +2,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalFactory } from './panes.ts';
+import { paneSizeInBounds } from './panes.ts';
 import type { FontInstaller, PageLook, TerminalStyle } from './terminalStyle.ts';
 import { paneLook } from './terminalStyle.ts';
 
@@ -73,7 +74,11 @@ export function xtermTerminals(style: TerminalStyle): TerminalFactory {
         if (terminal.element === undefined) terminal.open(host);
       },
       fit() {
-        fitAddon.fit();
+        const proposed = fitAddon.proposeDimensions();
+        if (proposed !== undefined && !Number.isNaN(proposed.cols) && !Number.isNaN(proposed.rows)) {
+          const size = paneSizeInBounds({ columns: proposed.cols, rows: proposed.rows });
+          if (size.columns !== terminal.cols || size.rows !== terminal.rows) terminal.resize(size.columns, size.rows);
+        }
         return { columns: terminal.cols, rows: terminal.rows };
       },
       write(bytes, drawn) { terminal.write(bytes, drawn); },
