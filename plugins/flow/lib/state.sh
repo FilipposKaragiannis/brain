@@ -1,8 +1,8 @@
 #!/bin/sh
 # The flow record of an item: one JSON file per item under state.dir that holds its workflow
 # state, opened only by scripts/_state.py. Sourced by lib/flow.sh; defines functions and runs
-# nothing. Each public function runs in a subshell: it changes no variable of its caller, reads no
-# stdin of its caller, and returns its code instead of exiting the caller.
+# nothing. No public function changes a variable of its caller or reads its stdin, and each returns
+# its code rather than exiting the caller.
 #   state_dir                   state.dir: absolute as given, relative under the main worktree;
 #                               unset, <flow home>/state
 #   record_file <item>          <state dir>/<slug>.json; closed/<slug>.json once archived
