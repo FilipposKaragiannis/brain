@@ -62,9 +62,10 @@ started="$(new_task "Started before the records")"
 started_gate_file="$(printf '%s' "$gate_record" | with_item "$started")"; started_run_file="$(printf '%s' "$run_record" | with_item "$started")"
 printf '%s' "$started_gate_file" > "$(gate_file "$started")"; printf '%s' "$started_run_file" > "$(run_file "$started")"
 env FLOW_MACHINE=gamma "$plugin/scripts/state.sh" set "$started" last_event=resumed >/dev/null 2>&1
-seeded_keys="$("$local_adapter/read.sh" "$started" | python3 -c 'import json,sys; print(" ".join(key for key in json.load(sys.stdin)["state"] if key != "last_event"))')"
-check "FirstWriteOfAStartedItem_CopiesTheTrackersStateKeys: the record starts from the tracker's state, so nothing in flight is lost" \
-  '[ -n "$seeded_keys" ] && for key in $seeded_keys; do [ "$(record get "$started" "$key" | canonical)" = "$(state "$started" "$key" | canonical)" ] || { echo "$key differs"; exit 1; }; done'
+for key in step profile size worktree attempts touches changes base held_by held_reason gate gate_from answered asked answer answered_at answer_pending pr pr_host; do
+  check "FirstWriteOfAStartedItem_Copies_${key}: the record starts from the tracker's state, so nothing in flight is lost" \
+    '[ "$(record get "$started" "$key" | canonical)" = "$(state "$started" "$key" | canonical)" ]'
+done
 check "FirstWriteOfAStartedItem_ClaimsItForThisMachine: an item with a step was started here" '[ "$(record get "$started" claim.machine)" = gamma ]'
 check "FirstWriteOfAStartedItem_TakesTheGateFilesOptions: the open gate's options outlive the move to the record" \
   '[ "$(record get "$started" gate.options.0.label)" = "$(printf "%s" "$gate_record" | json_value options.0.label)" ]'

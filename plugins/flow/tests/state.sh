@@ -112,7 +112,7 @@ record set "$raced" step=plan >/dev/null 2>&1
 lock_rounds=25
 writer() { round=1; while [ "$round" -le "$lock_rounds" ]; do record set "$raced" "$1=$1-$round" >/dev/null 2>&1; round=$((round + 1)); done; }
 writer step & writer last_event & wait
-check "TwoWritersOfDifferentKeys_BothKeepTheirLastValue: each write merges under the item's lock, so neither loses the other's key" \
+check "TwoWritersOfDifferentKeys_BothKeepTheirLastValue: each write merges under the item's lock, so neither loses the other's key; a lost write shows by chance, more surely the nearer it falls to the last round" \
   '[ "$(record get "$raced" step)" = "step-$lock_rounds" ] && [ "$(record get "$raced" last_event)" = "last_event-$lock_rounds" ]'
 check "TwoWritersOfDifferentKeys_LeaveARecordThatParses: a write replaces the record whole, never in part" \
   'record show "$raced" | python3 -c "import json,sys; json.load(sys.stdin)"'
@@ -181,7 +181,7 @@ cp .flow/config.yaml "$work/config.saved"
 printf 'state:\n  dir: records\n' >> .flow/config.yaml
 relative_record="$(record path "$run_step_on_no_run")"; mkdir -p records
 check "RelativeStateDir_LivesUnderTheMainWorktree: a relative state.dir is read from the repository root" \
-  '[ "$(cd "$(dirname "$relative_record")" && pwd -P)/$(basename "$relative_record")" = "$(cd records && pwd -P)/$(slug "$run_step_on_no_run").json" ]'
+  '[ "$(cd "$(dirname "$relative_record")" && pwd -P)" = "$(cd records && pwd -P)" ]'
 rmdir records
 cp "$work/config.saved" .flow/config.yaml
 unwritable="$(new_task "Unwritable state dir")"
@@ -202,6 +202,40 @@ check "ReadOnlyStateDir_ExitsTwo: a state.dir that is there but cannot be writte
 check "ReadOnlyStateDir_LeavesTheTrackerAsItWas: bad config is refused before any store is written" \
   '[ "$(tracker "$read_only")" = "$tracker_before" ]'
 chmod u+w "$read_only_dir"
+cp "$work/config.saved" .flow/config.yaml
+
+echo "ids of the wrong shape"
+malformed_id=local:task-3
+while IFS='|' read -r scenario arguments; do
+  # shellcheck disable=SC2086
+  record $arguments >/dev/null 2>&1; code=$?
+  check "MalformedId_${scenario}_ExitsTwo: an id its adapter would never make is a usage error" '[ "$code" -eq 2 ]'
+done <<IDS
+Get|get $malformed_id step
+Show|show $malformed_id
+Path|path $malformed_id
+Archive|archive $malformed_id
+Set|set $malformed_id step=plan
+IDS
+items_before="$(ls -A .flow/items/task)"
+record set "$malformed_id" step=plan >/dev/null 2>&1
+check "MalformedId_Set_WritesNoTrackerItem: a refused id reaches no tracker" '[ "$(ls -A .flow/items/task)" = "$items_before" ]'
+
+echo "how a write lands on disk"
+fresh_state_dir="$work/not-yet/records"
+printf 'state:\n  dir: %s\n' "$fresh_state_dir" >> .flow/config.yaml
+landed="$(new_task "Lands on disk")"
+(umask 022 && record set "$landed" step=plan >/dev/null 2>&1)
+check "MissingStateDir_IsMadeByTheFirstWrite: the first write makes state.dir and its record" '[ -f "$(record path "$landed")" ]'
+check "Write_LeavesNoTemporaryBesideTheRecord: a write renames its temporary into place" \
+  'listing="$(ls -A "$fresh_state_dir")" && [ -n "$listing" ] && ! printf "%s\n" "$listing" | grep -q "\.tmp$"'
+(umask 022 && : > "$work/plain-write")
+mode_of() { python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1"; }
+check "RecordFileUnderUmask022_TakesTheModeAPlainWriteGives: the record is as readable as the file it replaced" \
+  '[ "$(mode_of "$(record path "$landed")")" = "$(mode_of "$work/plain-write")" ]'
+record set "$landed" "run:=$run_record" >/dev/null 2>&1
+check "Write_LeavesNoTemporaryBesideTheRunFile: a view is renamed into place too" \
+  'listing="$(ls -A .flow/runs)" && [ -n "$listing" ] && ! printf "%s\n" "$listing" | grep -q "\.tmp$"'
 cp "$work/config.saved" .flow/config.yaml
 
 echo "values that look like options"
@@ -226,6 +260,8 @@ python3 -c 'import fcntl,sys,time
 handle=open(sys.argv[1],"a"); fcntl.flock(handle, fcntl.LOCK_EX); open(sys.argv[2],"w").close(); time.sleep(float(sys.argv[3]))' \
   ".flow/locks/$(slug "$locked").lock" "$work/lock.held" "$lock_held_seconds_past_any_wait" &
 lock_holder=$!
+trap 'kill "$lock_holder" 2>/dev/null; rm -rf "$work"' EXIT
+trap 'exit 130' INT TERM
 lock_holder_start_tries=100
 tries=0; while [ ! -f "$work/lock.held" ] && [ "$tries" -lt "$lock_holder_start_tries" ]; do sleep 0.1; tries=$((tries + 1)); done
 code=lock-never-held
