@@ -12,7 +12,9 @@ cache) is BLOCKED too: the skill could not start its work.
 A directory holding run directories resolves to the newest aggregate-result.json under it. Each
 case line ends with the score in the baseline file (tools/eval-baseline.json, or --against) and
 the change from it. --save writes this result's scores into the baseline file instead, under the
-plugin's name, replacing the cases and arms it ran and keeping the rest.
+plugin's name, replacing the cases and arms it ran and keeping the rest, with the Claude Code
+version the run used. A run on another version than the baseline's gets a line that says so
+first, since a CLI or sandbox change can move every score.
 """
 import glob
 import json
@@ -93,6 +95,8 @@ def save(result, plugin, path):
     cases = data.setdefault("plugins", {}).setdefault(plugin, {})
     for name, arms in scores(result).items():
         cases.setdefault(name, {}).update(arms)
+    if result.get("claudeVersion"):
+        data.setdefault("claude_version", {})[plugin] = result["claudeVersion"]
     data["recorded"] = date.today().isoformat()
     try:
         data["commit"] = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
@@ -102,6 +106,15 @@ def save(result, plugin, path):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, sort_keys=True)
         f.write("\n")
+
+
+def version_change(result, baseline_version):
+    """The line that names a Claude Code change since the baseline, or None when there is none."""
+    version = result.get("claudeVersion")
+    if not version or not baseline_version or version == baseline_version:
+        return None
+    return ("  Claude Code changed since the baseline (%s -> %s): a drop may come from the CLI "
+            "or its sandbox, not the plugin" % (baseline_version, version))
 
 
 def summarise(result, baseline=None):
@@ -160,7 +173,11 @@ def main(argv):
         print("eval summary: saved %s scores to %s" % (plugin, BASELINE))
         return 0
     print("eval summary (BLOCKED runs left out of the score): %s" % path)
-    for line in summarise(result, load(against).get("plugins", {}).get(plugin)):
+    recorded = load(against)
+    change = version_change(result, recorded.get("claude_version", {}).get(plugin))
+    if change:
+        print(change)
+    for line in summarise(result, recorded.get("plugins", {}).get(plugin)):
         print(line)
     return 0
 

@@ -76,6 +76,16 @@ EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$
 check "--save writes the scored runs" python3 -c "import json,sys; d=json.load(open(sys.argv[1]))['plugins']['demo']; assert d['retro-unattended-reports']['with'] == {'score': 0.75, 'passed': 1, 'runs': 2}" "$work/baseline.json"
 out="$(python3 "$root/tools/lib/eval_summary.py" "$here/fixtures/eval-result" --against "$work/baseline.json")"
 check "compares with the baseline" has 'review-cites-rule-ids \[without\] *score 0.25, passed 0/1 (baseline 0.25, +0.00)$'
+check "a run with no CLI version says nothing of one" sh -c '! printf "%s\n" "$1" | grep -q "Claude Code changed"' _ "$out"
+mkdir -p "$work/on-old" "$work/on-new"
+on_version() { python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d['claudeVersion']=sys.argv[2]; json.dump(d,open(sys.argv[3],'w'))" "$here/fixtures/eval-result/aggregate-result.json" "$1" "$2/aggregate-result.json"; }
+on_version 2.1.303 "$work/on-old"; on_version 2.1.325 "$work/on-new"
+EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$work/on-old" --save >/dev/null
+check "--save records the CLI version of the run" python3 -c "import json,sys; assert json.load(open(sys.argv[1]))['claude_version']['demo'] == '2.1.303'" "$work/baseline.json"
+out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-new" --against "$work/baseline.json")"
+check "a run on a newer CLI names the change before the cases" sh -c 'printf "%s\n" "$1" | sed -n 2p | grep -q "Claude Code changed since the baseline (2.1.303 -> 2.1.325)"' _ "$out"
+out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-old" --against "$work/baseline.json")"
+check "a run on the baseline's CLI names no change" sh -c '! printf "%s\n" "$1" | grep -q "Claude Code changed"' _ "$out"
 
 echo "eval.sh prints the summary and keeps the eval's exit status"
 cat > "$work/bin/claude" <<EOF
