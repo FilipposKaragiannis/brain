@@ -120,6 +120,25 @@ test('Refit_SendsResizeWithTheNewSize', () => {
   expect(textFrames(socket).at(-1), 'because the pty must learn the size the terminal now has').toEqual({ type: 'resize', cols: 61, rows: 19 });
 });
 
+test('RefitWhileOpening_StartedSendsTheNewSize', () => {
+  const { store, key, socket, terminal } = attachedPane(SHELL);
+  terminal.size = { columns: 120, rows: 40 };
+  store.refit(key);
+  socket.receive({ type: 'started', pane: 'pane-1', command: ['/bin/zsh', '-l'], folder: WORKTREE });
+  expect(textFrames(socket).at(-1), 'because the pty started at the opening size and must learn the size the terminal took meanwhile').toEqual({ type: 'resize', cols: 120, rows: 40 });
+});
+
+test('RefitWhileOpeningBackToTheOpeningSize_StartedSendsNoResize', () => {
+  const { store, key, socket, terminal } = attachedPane(SHELL);
+  terminal.size = { columns: 120, rows: 40 };
+  store.refit(key);
+  terminal.size = FAKE_TERMINAL_SIZE;
+  store.refit(key);
+  socket.receive({ type: 'started', pane: 'pane-1', command: ['/bin/zsh', '-l'], folder: WORKTREE });
+  const resizes = textFrames(socket).filter((frame) => (frame as { type: string }).type === 'resize');
+  expect(resizes, 'because the pty already has the opening size').toEqual([]);
+});
+
 test('Started_MakesThePaneLive', () => {
   const { store, key, socket } = attachedPane(SHELL);
   socket.receive({ type: 'started', pane: 'pane-7', command: ['/bin/zsh', '-l'], folder: WORKTREE });

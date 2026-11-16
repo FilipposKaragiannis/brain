@@ -32,8 +32,8 @@ export const PANE_END_WORDS = {
   connectionLost: 'Connection to the daemon lost',
 } as const;
 
-/** A pane's terminal, its socket once open, the bytes it drew since its last ack, and the size the daemon last heard. */
-type Pane = { view: PaneView; terminal: TerminalLike; socket: SocketLike | null; drawnSinceAck: number; size: PaneSize | null };
+/** A pane's terminal, its socket once open, the bytes it drew since its last ack, the size the daemon last heard and the size the terminal last fitted to. */
+type Pane = { view: PaneView; terminal: TerminalLike; socket: SocketLike | null; drawnSinceAck: number; size: PaneSize | null; fitted: PaneSize | null };
 
 /**
  * The page's open panes, across projects, each with its terminal and its one socket to the daemon.
@@ -58,7 +58,7 @@ export class PaneStore {
     this.opened += 1;
     const key = `pane-${this.opened}`;
     const view: PaneView = { key, projectId, target, state: 'opening', command: [], ended: null };
-    this.entries.set(key, { view, terminal: this.terminals(), socket: null, drawnSinceAck: 0, size: null });
+    this.entries.set(key, { view, terminal: this.terminals(), socket: null, drawnSinceAck: 0, size: null, fitted: null });
     this.publish();
     return key;
   }
@@ -73,6 +73,7 @@ export class PaneStore {
     const socket = this.api.openSocket(paneSocketPath(pane.view, size));
     pane.socket = socket;
     pane.size = size;
+    pane.fitted = size;
     socket.onmessage = (event) => this.receive(pane, socket, event);
     socket.onclose = (event) => this.end(pane, closeWords(event.code));
     pane.terminal.onInput((bytes) => { if (pane.view.state === 'live') socket.send(bytes); });
@@ -82,10 +83,8 @@ export class PaneStore {
   refit(key: string): void {
     const pane = this.entries.get(key);
     if (pane === undefined) return;
-    const size = pane.terminal.fit();
-    if (pane.socket === null || pane.view.state !== 'live' || sameSize(pane.size, size)) return;
-    pane.socket.send(JSON.stringify({ type: 'resize', cols: size.columns, rows: size.rows }));
-    pane.size = size;
+    pane.fitted = pane.terminal.fit();
+    this.sendFittedSize(pane);
   }
 
   /** Ends the pane's socket, which hangs up its process, and drops the pane. */
@@ -122,9 +121,23 @@ export class PaneStore {
     if (typeof frame !== 'string') return;
     const notice = parseNotice(frame);
     if (notice === null) return;
-    if (notice.type === 'started') { this.change(pane, { ...pane.view, state: 'live', command: notice.command }); return; }
+    if (notice.type === 'started') { this.start(pane, notice.command); return; }
     if (notice.type === 'refused') { this.end(pane, notice.error); return; }
     this.end(pane, exitWords(notice.code, notice.signal));
+  }
+
+  /** Makes the pane live, then tells the daemon the size the terminal fitted to while it opened, if that differs. */
+  private start(pane: Pane, command: string[]): void {
+    this.change(pane, { ...pane.view, state: 'live', command });
+    this.sendFittedSize(pane);
+  }
+
+  /** Sends the fitted size as a resize while the process runs and the daemon last heard another size. */
+  private sendFittedSize(pane: Pane): void {
+    const size = pane.fitted;
+    if (size === null || pane.socket === null || pane.view.state !== 'live' || sameSize(pane.size, size)) return;
+    pane.socket.send(JSON.stringify({ type: 'resize', cols: size.columns, rows: size.rows }));
+    pane.size = size;
   }
 
   /** Counts the bytes the terminal drew and, once an ack is due, acks them to the daemon and starts the count again. */
