@@ -14,7 +14,8 @@ major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 if [ "$major" -lt 24 ]; then echo "console tests: node 24 or newer missing, skipping"; exit 0; fi
 # The physical path: demo.sh hands the daemon its folder with every link resolved.
 work="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$work"' EXIT
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }

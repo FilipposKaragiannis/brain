@@ -13,8 +13,8 @@ P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
 A="$P/adapters/$name"
 [ -d "$A" ] || { echo "adapter-contract: no adapter $name under $P/adapters" >&2; exit 2; }
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-unset FLOW_SLACK_WEBHOOK
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
 export FLOW_HOME="$work/home"; mkdir -p "$FLOW_HOME" "$work/bin"
 for tool in gh curl osascript notify-send; do
   printf '#!/bin/sh\necho "adapter-contract: %s is offline here" >&2\nexit 1\n' "$tool" > "$work/bin/$tool"
