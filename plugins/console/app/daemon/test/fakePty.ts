@@ -37,6 +37,8 @@ export type FakePty = {
   someoneElsesProcessRunning: boolean;
   /** When true each signal lands a turn of the event loop later, once the process table was listed, as on a busy system. */
   slowProcessTable: boolean;
+  /** When true a process a signal ends tells its exit a turn of the event loop later, as node-pty does once it read the master's end. */
+  exitToldLate: boolean;
   /** Whether anything still runs in the process group: the process or the child it left. */
   groupRunning(): boolean;
   /** Bytes the process writes to the terminal. */
@@ -65,7 +67,7 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       if (!fake.paused && processEnded) fake.exit(unread.code, null);
     };
     const fake: FakePty = {
-      launch, environment, size: { ...size }, received: [], paused: false, closed: false, exited: false, ignoresHangUp: false, childIgnoresHangUp: false, childEndsOnHangUp: false, childEnded: false, someoneElsesProcessRunning: true, slowProcessTable: false,
+      launch, environment, size: { ...size }, received: [], paused: false, closed: false, exited: false, ignoresHangUp: false, childIgnoresHangUp: false, childEndsOnHangUp: false, childEnded: false, someoneElsesProcessRunning: true, slowProcessTable: false, exitToldLate: false,
       groupRunning: () => !fake.exited || ((fake.childIgnoresHangUp || fake.childEndsOnHangUp) && !fake.childEnded),
       emit: (bytes) => { for (const listener of outputListeners) listener(bytes); },
       exit: (code, signal) => {
@@ -96,6 +98,7 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
         if (!fake.groupRunning()) { fake.someoneElsesProcessRunning = false; return; }
         if (name === 'SIGKILL' || fake.childEndsOnHangUp) fake.childEnded = true;
         if (name === 'SIGHUP' && fake.ignoresHangUp) return;
+        if (fake.exitToldLate) { void tick().then(() => fake.exit(null, name)); return; }
         fake.exit(null, name);
       },
       close: () => { fake.closed = true; },

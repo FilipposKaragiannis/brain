@@ -185,10 +185,9 @@ export class PaneSessions {
    * pane has finished once the kill was sent.
    */
   private async killAfterGrace(pane: LivePane, cause: HangUpCause, cancel: AbortSignal): Promise<void> {
-    const processRunning = this.live.has(pane);
     if (pane.pty.groupRunning()) await pane.pty.signal('SIGKILL', cancel);
     pane.hangUp = { cause, grace: null };
-    if (processRunning) pane.pty.close();
+    if (this.live.has(pane)) pane.pty.close();
     if (this.live.has(pane)) return;
     this.finishing.delete(pane);
     pane.finished.resolve();

@@ -104,10 +104,25 @@ test('LinkGone_AfterTheGrace_MasterClosed', async () => {
   const link = open(SHELL_AT_ROOT, PROJECT);
   const pty = only(ptys);
   pty.ignoresHangUp = true;
+  pty.exitToldLate = true;
   link.go();
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
   await tick();
   assert.equal(pty.closed, true, 'because closing the master hangs up whatever still holds the terminal');
+});
+
+test('LinkGone_ShellExitsWhileItsKillIsPending_EndedPtyNotClosed', async () => {
+  const { open, ptys, timers } = sessions(null);
+  const link = open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.ignoresHangUp = true;
+  pty.slowProcessTable = true;
+  link.go();
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  pty.exit(0, null);
+  await tick();
+  await tick();
+  assert.equal(pty.closed, false, 'because node-pty closed an ended pty before telling its exit, and closing it again hangs up a pid the system may have handed out again');
 });
 
 test('StopAll_EveryLinkEnded1001', async () => {
