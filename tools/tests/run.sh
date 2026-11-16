@@ -284,6 +284,13 @@ printf 'owner edit\n' > "$host/notes.txt"
 (cd "$host" && sh "$root/tools/lib/sandboxed.sh" "$host" sh -c 'printf "overwritten\n" > "$1"' sh "$host/notes.txt" > "$work/command.out" 2>&1); code=$?
 check "TestCommandThatOverwritesModifiedWatchedFile_Fails: a command that rewrites a file the owner already modified exits 1 with the sandbox's failure message" \
   sh -c '[ "$1" -eq 1 ] && grep -qF -- "$2" "$3"' sh "$code" "$sandbox_failure_message" "$work/command.out"
+new_host
+printf 'tracked\n' > "$host/café notes.txt"
+git -C "$host" add . && git -C "$host" -c user.email=h@h -c user.name=h commit -q -m notes
+printf 'owner edit\n' > "$host/café notes.txt"
+(cd "$host" && sh "$root/tools/lib/sandboxed.sh" "$host" sh -c 'printf "overwritten\n" > "$1"' sh "$host/café notes.txt" > "$work/command.out" 2>&1); code=$?
+check "TestCommandThatOverwritesModifiedWatchedFileWithNonAsciiName_Fails: a command that rewrites a file the owner already modified, whose name has an accent and a space, exits 1 with the sandbox's failure message" \
+  sh -c '[ "$1" -eq 1 ] && grep -qF -- "$2" "$3"' sh "$code" "$sandbox_failure_message" "$work/command.out"
 
 [ "$fails" -eq 0 ] && echo "tools: ok"
 exit $(( fails > 0 ))

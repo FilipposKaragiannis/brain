@@ -46,11 +46,12 @@ sandbox_print() {
     cat "$sandbox_repository"/worktrees/*/gitdir 2>/dev/null | grep -F -e "$sandbox_work" -e "$sandbox_work_real" | sed 's/^/  worktree in the sandbox /'
   done
   env -u GIT_CEILING_DIRECTORIES git -C "$sandbox_watched" --no-optional-locks status --porcelain -- . 2>/dev/null | sed 's/^/  watched file /'
-  env -u GIT_CEILING_DIRECTORIES git -C "$sandbox_watched" ls-files --modified --others --exclude-standard -- . 2>/dev/null |
-    while IFS= read -r sandbox_path; do
-      [ -f "$sandbox_watched/$sandbox_path" ] || continue
-      echo "  watched content $(git hash-object -- "$sandbox_watched/$sandbox_path") $sandbox_path"
-    done
+  env -u GIT_CEILING_DIRECTORIES git -C "$sandbox_watched" ls-files -z --modified --others --exclude-standard -- . 2>/dev/null |
+    xargs -0 sh -c 'watched="$1"; shift
+      for path do
+        [ -f "$watched/$path" ] || continue
+        echo "  watched content $(git hash-object -- "$watched/$path") $path"
+      done' sh "$sandbox_watched"
 }
 
 sandbox_close() { # sandbox_close <status>: the exit status, 1 when the run touched a real checkout
