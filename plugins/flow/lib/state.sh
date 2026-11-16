@@ -25,6 +25,11 @@
 #                               parse; 2 a refused pair, item or config, nothing written; 75 the
 #                               item's lock stayed busy. On 1 and 75 the tracker may have taken
 #                               the write: stderr names the keys and the same call again is safe
+#   record_set_with_claim <claim file> <item> <pair>...
+#                               record_set for a caller that knows the item's claim.json, or empty
+#                               when the item holds no pool worktree
+#   item_claim_file <item>      the claim.json of the item's pool worktree; nothing when it holds
+#                               none
 #   take_item <item>            this machine holds the item: claim.machine, claim.host and
 #                               claim.claimed_at, when the claim names no machine yet
 #   record_archive <item>       the record to closed/; nothing with no record; exit 1 when
@@ -71,6 +76,13 @@ record_show() (
 record_set() (
   [ $# -ge 2 ] || die "usage: record_set <item> <key=value>..." "$EXIT_USAGE"
   item_shape_required "$1"
+  record_set_with_claim "$(record_claim_file "$@")" "$@"
+)
+
+record_set_with_claim() (
+  [ $# -ge 3 ] || die "usage: record_set_with_claim <claim file> <item> <key=value>..." "$EXIT_USAGE"
+  flow_record_claim_file="$1"; shift
+  item_shape_required "$1"
   flow_record_item="$1"; shift
   flow_record_kind="$(record_pairs_kind "$@")" || exit "$EXIT_USAGE"
   flow_record_home="$(flow_home)"
@@ -80,7 +92,7 @@ record_set() (
     tracker_mirror "$flow_record_item" "$@" || exit
   fi
   record_seeded set "$flow_record_item" "$flow_record_dir" "$flow_record_home" \
-    --claim-file "$(record_claim_file "$flow_record_item" "$@")" -- "$@"
+    --claim-file "$flow_record_claim_file" -- "$@"
 )
 
 take_item() (
@@ -156,15 +168,18 @@ record_seeded() {
       --now "$(now_iso)" --machine "$(flow_machine)" --host "$(host_name)" --seed "$flow_record_seed" "$@"
 }
 
-# record_claim_file <item> <pair>...: the claim.json of the item's pool worktree, when a pair
-# names its step (step=, run.step= or a run); nothing otherwise.
+# record_claim_file <item> <pair>...: the item's claim file, when a pair names its step (step=,
+# run.step= or a run); nothing otherwise.
 record_claim_file() (
   flow_record_item="$1"; shift
   for flow_record_pair in "$@"; do
-    case "$flow_record_pair" in step=*|run.step=*|run:=\{*) ;; *) continue ;; esac
-    flow_record_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$flow_record_item" </dev/null 2>/dev/null)"
-    [ -n "$flow_record_worktree" ] && [ -f "$flow_record_worktree/.flow/claim.json" ] \
-      && printf '%s/.flow/claim.json' "$flow_record_worktree"
-    exit 0
+    case "$flow_record_pair" in step=*|run.step=*|run:=\{*) item_claim_file "$flow_record_item"; exit 0 ;; esac
   done
+)
+
+# item_claim_file <item>: the claim.json of the item's pool worktree; nothing when it holds none.
+item_claim_file() (
+  flow_record_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$1" </dev/null 2>/dev/null)"
+  [ -z "$flow_record_worktree" ] || [ ! -f "$(claim_file "$flow_record_worktree")" ] \
+    || claim_file "$flow_record_worktree"
 )

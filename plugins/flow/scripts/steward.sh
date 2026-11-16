@@ -134,6 +134,13 @@ write_state() {
   record_set "$item" "$@" >/dev/null || echo "flow: could not write state for $item" >&2
 }
 
+# write_claimed_state <claim file> <item> key=value...: write_state where the caller knows the
+# item's claim.json, or empty when it holds no pool worktree.
+write_claimed_state() {
+  adapter_for "$2" >/dev/null 2>&1 || return 0
+  record_set_with_claim "$@" >/dev/null || echo "flow: could not write state for $2" >&2
+}
+
 cmd_pool() {
   printf '%-28s %-32s %-22s %-10s %s\n' worktree branch item step state
   pool_paths | while read -r p; do
@@ -346,8 +353,9 @@ cmd_split() {
   ! kept_whole "$sp_item" || { echo "$sp_item: the owner kept it whole, so it is not split until its plan step rewrites plan.md"; return 1; }
   sp_was="$(state_get "$sp_data" step)"
   sp_said="split into $sp_kids open child item(s), it waits on them"
-  [ "$sp_was" = split ] || write_state "$sp_item" "step=split" "last_event=$(now_iso) $sp_said"
-  sp_path="$(cmd_find "$sp_item")"
+  sp_path="$(cmd_find "$sp_item")"; sp_claim_file=""
+  [ -z "$sp_path" ] || sp_claim_file="$(claim_file "$sp_path")"
+  [ "$sp_was" = split ] || write_claimed_state "$sp_claim_file" "$sp_item" "step=split" "last_event=$(now_iso) $sp_said"
   if [ -z "$sp_path" ]; then
     [ "$sp_was" = split ] || split_msg="$sp_said; it holds no worktree"
   else
@@ -367,7 +375,7 @@ cmd_split() {
     fi
     [ -z "$sp_tmp" ] || rm -f "$sp_tmp" "$sp_tmp.failed"
     if [ -n "$split_kept" ]; then
-      [ "$(json_get "$sp_claim" step)" = split ] || write_state "$sp_item" "step=split"
+      [ "$(json_get "$sp_claim" step)" = split ] || write_claimed_state "$sp_claim_file" "$sp_item" "step=split"
       [ "$sp_was" = split ] && [ "$(json_get "$sp_claim" step)" = split ] || split_msg="$sp_said; $sp_name is kept: $split_kept"
     else
       sp_ahead="$(git -C "$sp_path" rev-list --count "$(base_ref "$sp_base")..refs/heads/$sp_branch" 2>/dev/null)"
