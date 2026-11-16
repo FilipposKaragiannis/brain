@@ -27,6 +27,8 @@ export type Spawner = (plan: ActionPlan, env: Record<string, string>, outputFile
 /** Timers, injected so a test can fire a timeout without waiting for it. */
 export type Scheduler = {
   after(ms: number, task: () => void): object;
+  /** As `after`, but the process stays alive until the task ran or was cancelled. */
+  afterKeepingAlive(ms: number, task: () => void): object;
   cancel(handle: object): void;
 };
 
@@ -80,6 +82,7 @@ type Live = {
 
 export const realScheduler: Scheduler = {
   after: (ms, task) => { const timer = setTimeout(task, ms); timer.unref(); return timer; },
+  afterKeepingAlive: (ms, task) => setTimeout(task, ms),
   cancel: (handle) => { clearTimeout(handle as NodeJS.Timeout); },
 };
 

@@ -58,13 +58,13 @@ function configDir(files: Record<string, unknown>): { paths: ConfigPaths; dir: s
 const LOCAL_ROOT = path.join(FIXTURES, 'project-local');
 const QUIET_ENV = { BRAIN_CONSOLE_TOKEN: 't', BRAIN_CONSOLE_STATE: os.tmpdir() };
 
-test('ConfigFile_AllThreeSet_ProjectsPortAndTerminalRead', () => {
-  const { dir, paths } = configDir({ 'config.json': { projects: [{ root: LOCAL_ROOT }], terminal: 'ghostty', port: 7480 } });
+test('ConfigFile_BothSet_ProjectsAndPortRead', () => {
+  const { dir, paths } = configDir({ 'config.json': { projects: [{ root: LOCAL_ROOT }], port: 7480 } });
   try {
     const result = readConfig([], QUIET_ENV, paths);
     assert.ok(result.ok, 'because the file names a root that holds a flow');
     if (!result.ok) return;
-    assert.deepEqual([result.config.projects.map((project) => project.id), result.config.port, result.config.stored.file.terminal], [['project-local'], 7480, 'ghostty'], 'because config.json carries the projects, the port and the terminal');
+    assert.deepEqual([result.config.projects.map((project) => project.id), result.config.port], [['project-local'], 7480], 'because config.json carries the projects and the port');
     assert.deepEqual(result.config.origins, { projects: 'file', port: 'file' }, 'because both came from the file');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
@@ -112,16 +112,31 @@ test('ConfigFile_NotJson_Refused', () => {
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('ConfigFile_UnknownTerminal_Refused', () => {
+test('ConfigFile_RetiredTerminalSetting_StillStarts', () => {
   const { dir, paths } = configDir({ 'config.json': { terminal: 'kitty' } });
   try {
-    assert.equal(readConfig(['--project', FIXTURE_ROOT], QUIET_ENV, paths).ok, false, 'because only the named terminals or a command array open a folder');
+    assert.equal(readConfig(['--project', FIXTURE_ROOT], QUIET_ENV, paths).ok, true, 'because a file written when the console still had a terminal setting must not stop the daemon');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('LaunchdVariable_Set_NotedInTheConfig', () => {
   const result = readConfig(['--project', FIXTURE_ROOT], { ...QUIET_ENV, BRAIN_CONSOLE_LAUNCHD: '1' }, NO_FILES);
   assert.ok(result.ok && result.config.launchd, 'because the plist install writes sets it, and Settings says the daemon runs under launchd');
+});
+
+test('TerminalLookVariable_Unset_MachineLook', () => {
+  const result = readConfig(['--project', FIXTURE_ROOT], QUIET_ENV, NO_FILES);
+  assert.ok(result.ok && result.config.terminalLook === 'machine', "because the owner's console takes iTerm's look unless told otherwise");
+});
+
+test('TerminalLookVariable_Console_ConsoleLook', () => {
+  const result = readConfig(['--project', FIXTURE_ROOT], { ...QUIET_ENV, BRAIN_CONSOLE_TERMINAL_LOOK: 'console' }, NO_FILES);
+  assert.ok(result.ok && result.config.terminalLook === 'console', 'because a daemon under test must read no real preferences');
+});
+
+test('TerminalLookVariable_Unknown_Refused', () => {
+  const result = readConfig(['--project', FIXTURE_ROOT], { ...QUIET_ENV, BRAIN_CONSOLE_TERMINAL_LOOK: 'iterm' }, NO_FILES);
+  assert.equal(result.ok, false, "because a typo must not quietly read the owner's preferences");
 });
 
 test('StartReport_LogLine_NeverHoldsTheToken', () => {

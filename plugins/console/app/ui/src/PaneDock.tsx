@@ -1,0 +1,155 @@
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { PaneTarget } from '../../daemon/src/paneProtocol.ts';
+import { useServices } from './console.tsx';
+import type { PaneStore, PaneView } from './panes.ts';
+import { PaneResizeHandle, useDockHeight } from './PaneResize.tsx';
+import type { ProjectSummary } from './stream.ts';
+
+/** The dock's accessible name. */
+export const PANE_DOCK_NAME = 'Terminal panes';
+
+/** The name of the button that folds the dock to its tabs and opens it again; aria-expanded says which. */
+export const PANE_DOCK_TOGGLE = 'Terminals';
+
+const PANE_BODY_ID = 'pane-dock-body';
+
+/** The accessible name of a tab's Close button. */
+export function closePaneName(label: string): string {
+  return `Close ${label}`;
+}
+
+/**
+ * The open panes, fixed to the bottom of the page right of the nav, outside the routed screens: a
+ * screen change, a project switch or Settings leaves every pane and its screen as it was. One tab
+ * per pane with its Close; the newest pane comes forward when it opens. Every pane's surface stays
+ * mounted, the inactive ones hidden, so no terminal is torn down while its pane lives. The open
+ * dock's top edge resizes it.
+ */
+export function PaneDock({ projectOnScreen, projects }: { projectOnScreen: string | null; projects: readonly ProjectSummary[] }) {
+  const { panes: store } = useServices();
+  const views = usePaneViews(store);
+  const { active, collapsed, choose, toggle } = useDockState(views);
+  const height = useDockHeight();
+  if (views.length === 0) return null;
+  return (
+    <section className={collapsed ? 'pane-dock collapsed' : 'pane-dock'} aria-label={PANE_DOCK_NAME}>
+      {!collapsed && <PaneResizeHandle height={height} />}
+      <div className="pane-bar">
+        <div className="pane-tabs">
+          {views.map((view) => <PaneTab key={view.key} store={store} view={view} label={paneLabel(view, projectOnScreen, projects)} active={view.key === active} choose={choose} />)}
+        </div>
+        <button type="button" className="icon-button small pane-dock-toggle" aria-label={PANE_DOCK_TOGGLE} aria-expanded={!collapsed} aria-controls={PANE_BODY_ID} onClick={toggle}>
+          <span className="pane-chevron" aria-hidden="true" />
+        </button>
+      </div>
+      <div id={PANE_BODY_ID} className="pane-body" hidden={collapsed}>
+        {views.map((view) => <PaneSurface key={view.key} store={store} view={view} label={paneLabel(view, projectOnScreen, projects)} shown={!collapsed && view.key === active} heightPixels={height.pixels} />)}
+      </div>
+    </section>
+  );
+}
+
+function PaneTab({ store, view, label, active, choose }: { store: PaneStore; view: PaneView; label: string; active: boolean; choose: (key: string) => void }) {
+  const classes = `pane-tab${active ? ' active' : ''}${view.state === 'ended' ? ' ended' : ''}`;
+  return (
+    <div className={classes}>
+      <button type="button" className="pane-tab-name" aria-pressed={active} title={paneTooltip(view)} onClick={() => choose(view.key)}>{label}</button>
+      <button type="button" className="pane-tab-close" aria-label={closePaneName(label)} title={closePaneName(label)} onClick={() => store.close(view.key)}>×</button>
+    </div>
+  );
+}
+
+type SurfaceProps = { store: PaneStore; view: PaneView; label: string; shown: boolean; heightPixels: number };
+
+/**
+ * One pane's screen. On mount it hands its container to the store, which shows the terminal there
+ * and, the first time, opens the pane. While shown it fits the terminal to the dock, again on every
+ * window resize and dock resize. An ended pane says why above the screen it keeps. A wheel over the
+ * pane scrolls the terminal and never the page behind, also at the edge of the scrollback.
+ */
+function PaneSurface({ store, view, label, shown, heightPixels }: SurfaceProps) {
+  const surface = useRef<HTMLDivElement>(null);
+  const container = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (container.current !== null) store.showAndConnect(view.key, container.current);
+  }, [store, view.key]);
+  useEffect(() => {
+    if (!shown) return undefined;
+    const refit = (): void => store.refit(view.key);
+    refit();
+    window.addEventListener('resize', refit);
+    return () => window.removeEventListener('resize', refit);
+  }, [store, view.key, shown, view.ended, heightPixels]);
+  useEffect(() => {
+    const element = surface.current;
+    if (element === null) return undefined;
+    const keepFromPage = (wheel: WheelEvent): void => wheel.preventDefault();
+    element.addEventListener('wheel', keepFromPage, { passive: false });
+    return () => element.removeEventListener('wheel', keepFromPage);
+  }, []);
+  return (
+    <div className="pane-surface" role="region" aria-label={label} hidden={!shown} ref={surface}>
+      {view.ended !== null && <p className="pane-ended" role="status">{view.ended}</p>}
+      <div className="pane-screen" ref={container} />
+    </div>
+  );
+}
+
+function usePaneViews(store: PaneStore): readonly PaneView[] {
+  const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store]);
+  const read = useCallback(() => store.panes(), [store]);
+  return useSyncExternalStore(subscribe, read);
+}
+
+type DockState = { active: string | null; collapsed: boolean; choose: (key: string) => void; toggle: () => void };
+
+/** Which pane is in front and whether the dock is folded; a pane that opens comes to the front of an open dock. */
+function useDockState(views: readonly PaneView[]): DockState {
+  const [known, setKnown] = useState(views);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  if (known !== views) {
+    setKnown(views);
+    const opened = views.filter((view) => !known.some((each) => each.key === view.key)).at(-1);
+    if (opened !== undefined) {
+      setChosen(opened.key);
+      setCollapsed(false);
+    }
+  }
+  const active = views.some((view) => view.key === chosen) ? chosen : views.at(-1)?.key ?? null;
+  const choose = (key: string): void => {
+    setChosen(key);
+    setCollapsed(false);
+  };
+  return { active, collapsed, choose, toggle: () => setCollapsed((folded) => !folded) };
+}
+
+/**
+ * What the pane holds, so a shell, a job's log and a session tell apart: `shell · <folder name>`,
+ * `log · <job>`, `session · <folder name>` or `session · <item>`; and the project's name when it
+ * is not the one on screen.
+ */
+function paneLabel(view: PaneView, projectOnScreen: string | null, projects: readonly ProjectSummary[]): string {
+  const label = targetLabel(view.target);
+  if (view.projectId === projectOnScreen) return label;
+  const project = projects.find((each) => each.id === view.projectId);
+  return `${label} (${project?.name ?? view.projectId})`;
+}
+
+function targetLabel(target: PaneTarget): string {
+  switch (target.run) {
+    case 'shell': return `shell · ${folderName(target.folder)}`;
+    case 'job': return `log · ${target.job}`;
+    case 'session': return `session · ${folderName(target.folder)}`;
+    case 'gate': return `session · ${target.item}`;
+  }
+}
+
+function folderName(folder: string): string {
+  return folder.split('/').filter((part) => part !== '').at(-1) ?? folder;
+}
+
+/** The command the daemon started, once it has; what the pane holds until then. */
+function paneTooltip(view: PaneView): string {
+  return view.command.length > 0 ? view.command.join(' ') : targetLabel(view.target);
+}

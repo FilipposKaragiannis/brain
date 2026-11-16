@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ActionRecord, Agent, EndedAgent, Job, Run, Server, SessionRef, Snapshot, Subagent } from '../../daemon/src/snapshot.ts';
 import { Agents, STOP_HELP, STOP_SESSION_HELP } from '../src/screens/Agents.tsx';
 import { TICK_MS } from '../src/clock.tsx';
-import { OPEN_SESSION_ENDED, OPEN_SESSION_LIVE } from '../src/ui.tsx';
+import { OPEN_SESSION_ENDED, OPEN_SESSION_LIVE } from '../src/PaneControls.tsx';
+import { PaneDock } from '../src/PaneDock.tsx';
 import { WORDS } from '../src/words.ts';
 import { FakeDaemon, HTTP_ACCEPTED, HTTP_OK, actionRecord, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
@@ -21,11 +22,16 @@ const SESSION: SessionRef = { host: 'claude', id: '8f3c', transcript: '/h/.claud
 
 async function renderAgents(agents: Agent[], ended: EndedAgent[] = [], daemon = new FakeDaemon()): Promise<unknown[]> {
   const posted: unknown[] = [];
-  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('t1', 'running', {}), kind: 'terminal.open', args: (body as { args: Record<string, string> }).args } } }; });
+  daemon.answer('POST', ACTIONS_PATH, (body) => { posted.push(body); return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('t1', 'running', {}), kind: 'session.stop', args: (body as { args: Record<string, string> }).args } } }; });
   const Wrapper = daemon.screenWrapper();
-  render(<Wrapper><Agents snapshot={{ ...snapshotAt(TAKEN_AT, 0), agents, ended }} /></Wrapper>);
+  render(<Wrapper><Agents snapshot={{ ...snapshotAt(TAKEN_AT, 0), agents, ended }} /><PaneDock projectOnScreen="project" projects={[]} /></Wrapper>);
   await act(async () => {});
   return posted;
+}
+
+/** What each pane the page opened asked the daemon for. */
+function paneRequests(daemon: FakeDaemon): { run: string | null; path: string | null; session: string | null }[] {
+  return daemon.sockets.map((socket) => ({ run: socket.queryParameter('run'), path: socket.queryParameter('path'), session: socket.queryParameter('session') }));
 }
 
 async function renderSnapshot(extra: Partial<Snapshot>, daemon = new FakeDaemon(), clock?: () => number): Promise<unknown[]> {
@@ -67,12 +73,17 @@ test('AgentsScreen_NoRun_EmptyStatePointsToJobs', async () => {
   expect(screen.getByRole('link', { name: 'Jobs' }).getAttribute('href'), 'because a run is started from the Run once panel, which is on the Jobs page').toBe('#/project/jobs');
 });
 
-test('AgentsScreen_AgentAndSessionRows_EachOpenTheirOwnFolder', async () => {
-  const posted = await renderAgents([agent(100, 'agent', '/p-wt/wt-3'), agent(104, 'session', '/p-wt/wt-2/src')]);
+test('AgentsScreen_AgentAndSessionRows_EachHaveOpenInTerminal', async () => {
+  await renderAgents([agent(100, 'agent', '/p-wt/wt-3'), agent(104, 'session', '/p-wt/wt-2/src')]);
+  expect(screen.getAllByRole('button', { name: /Open in Terminal/ }).length, 'because a run card and a session row each get the button').toBe(2);
+});
+
+test('AgentsScreen_SessionRowOpenInTerminal_OpensAShellWhereItWorks', async () => {
+  const daemon = new FakeDaemon();
+  await renderAgents([agent(100, 'agent', '/p-wt/wt-3'), agent(104, 'session', '/p-wt/wt-2/src')], [], daemon);
   const row = screen.getByRole('listitem', { name: 'Session 104' });
   await act(async () => { fireEvent.click(within(row).getByRole('button', { name: 'Open in Terminal' })); });
-  expect(screen.getAllByRole('button', { name: /Open in Terminal/ }).length, 'because a run card and a session row each get the button').toBe(2);
-  expect(posted, 'because the terminal opens where that process works').toEqual([{ kind: 'terminal.open', args: { path: '/p-wt/wt-2/src' } }]);
+  expect(paneRequests(daemon), 'because the shell pane opens where that process works').toEqual([{ run: 'shell', path: '/p-wt/wt-2/src', session: null }]);
 });
 
 test('OwnSessions_FoldUnderACount', async () => {
@@ -82,17 +93,21 @@ test('OwnSessions_FoldUnderACount', async () => {
   expect(screen.getByRole('article', { name: 'Run 100' }), 'because a flow run is a card of its own').not.toBeNull();
 });
 
-test('AgentWithASession_OpenSessionSendsItsPidAndSaysEnterWaits', async () => {
-  const posted = await renderAgents([{ ...agent(100, 'agent', '/p-wt/wt-3'), session: SESSION }]);
-  const button = screen.getByRole('button', { name: 'Open session' });
-  expect(button.getAttribute('title'), 'because a live run cannot be resumed yet, so the command waits for Enter').toBe(OPEN_SESSION_LIVE);
-  await act(async () => { fireEvent.click(button); });
-  expect(posted, 'because the daemon finds the session by the pid and opens it in that folder').toEqual([{ kind: 'terminal.open', args: { path: '/p-wt/wt-3', session: '100' } }]);
+test('AgentWithASession_OpenSessionSaysTheCommandWaits', async () => {
+  await renderAgents([{ ...agent(100, 'agent', '/p-wt/wt-3'), session: SESSION }]);
+  expect(screen.getByRole('button', { name: 'Open session' }).getAttribute('title'), 'because a live run cannot be resumed yet, so the pane shows the command to run once it ends').toBe(OPEN_SESSION_LIVE);
+});
+
+test('AgentWithASession_OpenSessionOpensAPaneNamingItsPidAndFolder', async () => {
+  const daemon = new FakeDaemon();
+  await renderAgents([{ ...agent(100, 'agent', '/p-wt/wt-3'), session: SESSION }], [], daemon);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open session' })); });
+  expect(paneRequests(daemon), 'because the daemon finds the session by the pid and opens it in that folder').toEqual([{ run: 'session', path: '/p-wt/wt-3', session: '100' }]);
 });
 
 test('RunWithASession_NoOpenInTerminal', async () => {
   await renderAgents([{ ...agent(100, 'agent', '/p-wt/wt-3'), session: SESSION }]);
-  expect(within(screen.getByRole('article', { name: 'Run 100' })).queryByRole('button', { name: 'Open in Terminal' }), 'because Open session opens a terminal in the same folder, so one button does').toBeNull();
+  expect(within(screen.getByRole('article', { name: 'Run 100' })).queryByRole('button', { name: 'Open in Terminal' }), 'because Open session opens a pane in the same folder, so one button does').toBeNull();
 });
 
 test('OwnSessionWithASession_NoOpenInTerminal', async () => {
@@ -104,13 +119,15 @@ test('OwnSessionWithASession_NoOpenInTerminal', async () => {
 test('EndedWithASession_NoOpenInTerminal', async () => {
   await renderAgents([], [{ ...agent(200, 'agent', '/p-wt/wt-3'), session: SESSION, endedAt: '2026-10-24T18:10:00Z' }]);
   const table = screen.getByRole('table', { name: 'Ended agents and sessions' });
-  expect([within(table).queryByRole('button', { name: 'Open session' }) !== null, within(table).queryByRole('button', { name: 'Open in Terminal' })], 'because resuming the ended session opens the terminal there').toEqual([true, null]);
+  expect([within(table).queryByRole('button', { name: 'Open session' }) !== null, within(table).queryByRole('button', { name: 'Open in Terminal' })], 'because resuming the ended session opens the pane there').toEqual([true, null]);
 });
 
-test('EndedWithoutASession_KeepsOpenInTerminal', async () => {
-  await renderAgents([], [{ ...agent(201, 'session', '/p-wt/wt-3'), endedAt: '2026-10-24T18:10:00Z' }]);
+test('EndedWithoutASession_OpenInTerminalOpensAShellAtItsFolder', async () => {
+  const daemon = new FakeDaemon();
+  await renderAgents([], [{ ...agent(201, 'session', '/p-wt/wt-3'), endedAt: '2026-10-24T18:10:00Z' }], daemon);
   const table = screen.getByRole('table', { name: 'Ended agents and sessions' });
-  expect(within(table).queryByRole('button', { name: 'Open in Terminal' }), 'because with nothing to resume a plain shell at the folder is the way in').not.toBeNull();
+  await act(async () => { fireEvent.click(within(table).getByRole('button', { name: 'Open in Terminal' })); });
+  expect(paneRequests(daemon), 'because with nothing to resume a plain shell in the pane at the folder is the way in').toEqual([{ run: 'shell', path: '/p-wt/wt-3', session: null }]);
 });
 
 test('AgentWithoutASession_NoOpenSession', async () => {

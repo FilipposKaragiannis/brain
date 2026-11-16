@@ -59,26 +59,6 @@ export function useActionsView(): ActionsView {
   return actions;
 }
 
-/** The label every Open in Terminal button carries. */
-export const OPEN_IN_TERMINAL = 'Open in Terminal';
-
-/** Opens a terminal in a folder the snapshot lists, or, with a job, follows that job's log from the project root. */
-export function TerminalButton({ path, job }: { path: string; job?: string }) {
-  return <ActionButton kind="terminal.open" args={job === undefined ? { path } : { path, job }} label={OPEN_IN_TERMINAL} primary={false} />;
-}
-
-export const OPEN_SESSION = 'Open session';
-export const OPEN_SESSION_LIVE = 'Opens a terminal at the worktree with the resume command ready. The run is still going, so press Enter once it ends.';
-export const OPEN_SESSION_ENDED = 'Opens a terminal at the worktree and resumes the session.';
-
-/**
- * Hands the owner an agent's session: a terminal in the folder it ran in with its resume command,
- * typed but not run while the process still runs, run at once once it has ended.
- */
-export function SessionButton({ path, pid, alive }: { path: string; pid: number; alive: boolean }) {
-  return <ActionButton kind="terminal.open" args={{ path, session: String(pid) }} label={OPEN_SESSION} primary title={alive ? OPEN_SESSION_LIVE : OPEN_SESSION_ENDED} />;
-}
-
 /** How long a button keeps saying how its last press ended: a short while for success, longer for a failure. */
 export const OUTCOME_SHOWN_MS = 8000;
 export const FAILURE_SHOWN_MS = 30000;

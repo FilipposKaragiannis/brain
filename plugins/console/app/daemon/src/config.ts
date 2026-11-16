@@ -19,7 +19,16 @@ export type DaemonConfig = {
   stored: StoredSettings;
   /** launchd started the daemon: the plist `install` writes sets BRAIN_CONSOLE_LAUNCHD=1. */
   launchd: boolean;
+  /** Where the panes' look comes from: BRAIN_CONSOLE_TERMINAL_LOOK, `machine` unless it says `console`. */
+  terminalLook: TerminalLook;
 };
+
+/**
+ * `machine`: iTerm's default profile and the account's fonts. `console`: the console's own look,
+ * read from nothing on the machine, for a daemon under test.
+ */
+export type TerminalLook = 'machine' | 'console';
+const TERMINAL_LOOKS: readonly TerminalLook[] = ['machine', 'console'];
 
 const TOKEN_BYTES = 24;
 const TOKEN_FILE_MODE = 0o600;
@@ -42,6 +51,7 @@ export type ConfigResult = { ok: true; config: DaemonConfig } | { ok: false; err
  * old projects.json is then looked for beside it), so a second daemon never touches the owner's
  * ~/.config/brain-console. Every route needs the token: `--token` or BRAIN_CONSOLE_TOKEN, else the
  * one in <state dir>/token, written on the first start (the folder kept 0700).
+ * BRAIN_CONSOLE_TERMINAL_LOOK=console keeps the panes off iTerm's preferences and the fonts.
  */
 export function readConfig(argv: string[], env: NodeJS.ProcessEnv, paths: ConfigPaths = DEFAULT_CONFIG_PATHS): ConfigResult {
   const flagRoots: string[] = [];
@@ -75,14 +85,21 @@ export function readConfig(argv: string[], env: NodeJS.ProcessEnv, paths: Config
   if (!Number.isInteger(port) || port <= 0) return { ok: false, error: `bad port: ${port}` };
   const projects = projectsFromRoots(roots);
   if (!projects.ok) return projects;
+  const terminalLook = env['BRAIN_CONSOLE_TERMINAL_LOOK'] ?? 'machine';
+  if (!isTerminalLook(terminalLook)) return { ok: false, error: `bad BRAIN_CONSOLE_TERMINAL_LOOK: ${terminalLook} (machine or console)` };
   const resolvedState = path.resolve(stateDir);
   return {
     ok: true,
     config: {
       projects: projects.value, host: LOCALHOST, port, token: token === '' ? storedToken(resolvedState) : token, stateDir: resolvedState,
       paths: configPaths, origins: { projects: projectsFrom, port: portFrom }, stored: stored.value, launchd: env['BRAIN_CONSOLE_LAUNCHD'] === '1',
+      terminalLook,
     },
   };
+}
+
+function isTerminalLook(value: string): value is TerminalLook {
+  return (TERMINAL_LOOKS as readonly string[]).includes(value);
 }
 
 /** The token kept in <state dir>/token, made on the first start so the URL stays the same after. */

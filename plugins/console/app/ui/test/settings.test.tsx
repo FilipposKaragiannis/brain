@@ -5,7 +5,7 @@ import { fieldAt, schemaSections } from '../../daemon/src/plugins/flow/schema.ts
 import type { ProjectCheck, SettingsView } from '../../daemon/src/snapshot.ts';
 import { OPEN_PATH } from '../src/OpenFileButton.tsx';
 import { CHECK_PROJECT_PATH } from '../src/screens/AddProject.tsx';
-import { MENU_STORAGE_KEY, parseCommand, Settings, SETTINGS_PATH } from '../src/screens/Settings.tsx';
+import { MENU_STORAGE_KEY, Settings, SETTINGS_PATH } from '../src/screens/Settings.tsx';
 import { FakeDaemon, HTTP_OK } from './fakeDaemon.tsx';
 
 afterEach(() => {
@@ -19,7 +19,6 @@ const HTTP_BAD_REQUEST = 400;
 const VIEW: SettingsView = {
   configFile: '/home/o/.config/brain-console/config.json', readFromLegacyFile: null, stateDir: '/home/o/.local/state/brain-console', launchd: false,
   projects: { roots: ['/work/projects/foosbrawl'], from: 'file', editable: true, note: null },
-  terminal: { value: null, from: 'default', installed: ['ghostty'] },
   port: { value: 7474, from: 'default', saved: null, note: 'The daemon listens on 7474; a new port takes a restart of the daemon.' },
   fileError: null, newerConsole: null,
 };
@@ -80,7 +79,12 @@ function currentStep(): string | undefined {
 
 test('Settings_Read_OpensOnGeneral', async () => {
   await renderSettings(VIEW);
-  expect([screen.getByRole('heading', { name: 'Terminal' }), screen.getByRole('heading', { name: 'Daemon' }), screen.getByRole('heading', { name: 'Files' }), screen.queryByRole('list', { name: 'Watched projects' })], 'because General is the first page and the home of the settings that are no one plugin\'s').toEqual([expect.anything(), expect.anything(), expect.anything(), null]);
+  expect([screen.getByRole('heading', { name: 'Daemon' }), screen.getByRole('heading', { name: 'Files' }), screen.queryByRole('list', { name: 'Watched projects' })], 'because General is the first page and the home of the settings that are no one plugin\'s').toEqual([expect.anything(), expect.anything(), null]);
+});
+
+test('Settings_General_NoTerminalAppChoice', async () => {
+  await renderSettings(VIEW);
+  expect([screen.queryByRole('heading', { name: /terminal/i }), screen.queryAllByRole('radio')], 'because every Open in Terminal opens a pane, so there is no outside terminal app to pick').toEqual([null, []]);
 });
 
 test('Settings_Menu_GeneralProjectsThenPluginsFlowJobsAndAgents', async () => {
@@ -336,36 +340,6 @@ test('AddProject_PutRefused_StaysOnConfirmAndSaysWhy', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Next' }));
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add brain' })); });
   expect([currentStep(), screen.getByRole('alert').textContent], 'because a refused add must say what the folder lacks, and leave the owner where they were').toEqual(['3. Confirm', expect.stringMatching(/no \.flow\/config\.yaml/)]);
-});
-
-test('Settings_PickATerminal_SavedAtOnce', async () => {
-  const { puts } = await renderSettings(VIEW);
-  await act(async () => { fireEvent.click(screen.getByRole('radio', { name: /^iTerm/ })); });
-  expect(puts, 'because a named terminal needs nothing more').toEqual([{ terminal: 'iterm' }]);
-});
-
-test('Settings_NoTerminalSet_SaysWhichOneOpens', async () => {
-  await renderSettings(VIEW);
-  expect(screen.getByRole('radio', { name: /first installed/ }).closest('label')?.textContent, 'because the default picks the first installed app and the owner should know which').toMatch(/\(Ghostty\)/);
-});
-
-test('Settings_CustomCommandWithASpaceInAWord_SavedWhole', async () => {
-  const { puts } = await renderSettings(VIEW);
-  fireEvent.click(screen.getByRole('radio', { name: 'Custom command' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Command as a JSON array' }), { target: { value: '["open", "-a", "/Applications/My Term.app", "{path}"]' } });
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save' })); });
-  expect(puts, 'because an app path with a space is one word, and the daemon runs the array without a shell').toEqual([{ terminal: { command: ['open', '-a', '/Applications/My Term.app', '{path}'] } }]);
-});
-
-test('Settings_CustomCommandNotAnArray_SaveDisabledWithTheReason', async () => {
-  await renderSettings(VIEW);
-  fireEvent.click(screen.getByRole('radio', { name: 'Custom command' }));
-  fireEvent.change(screen.getByRole('textbox', { name: 'Command as a JSON array' }), { target: { value: 'open -a Warp' } });
-  expect([screen.getByRole('button', { name: 'Save' }).hasAttribute('disabled'), screen.getByRole('status').textContent], 'because plain words cannot say where a word with a space ends').toEqual([true, expect.stringMatching(/JSON array/)]);
-});
-
-test('ParseCommand_EmptyWord_Refused', () => {
-  expect(parseCommand('["open", ""]').ok, 'because an empty word is refused before it is sent, as the daemon would').toBe(false);
 });
 
 test('Settings_Port_SavedForTheNextStartWithTheNote', async () => {

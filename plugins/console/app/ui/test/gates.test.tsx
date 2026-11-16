@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
 import type { EndedAgent, Gate, Job, LabelGate, Snapshot } from '../../daemon/src/snapshot.ts';
+import { PaneDock } from '../src/PaneDock.tsx';
 import { Gates, GatesHeading } from '../src/screens/Gates.tsx';
 import type { ActionRecord } from '../src/actions.ts';
 import { actionRecord, boardItem, FakeDaemon, HTTP_ACCEPTED, HTTP_CONFLICT, readyToClose, snapshotAt, TAKEN_AT, waitingGate } from './fakeDaemon.tsx';
@@ -13,7 +14,12 @@ const ACTIONS_PATH = '/api/projects/project/actions';
 
 function renderGate(gate: Gate, daemon = new FakeDaemon(), more: Partial<Snapshot> = {}): void {
   const Wrapper = daemon.screenWrapper();
-  render(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 1), ...more, gates: [gate] }} selected={gate.item} /></Wrapper>);
+  render(<Wrapper><Gates snapshot={{ ...snapshotAt(TAKEN_AT, 1), ...more, gates: [gate] }} selected={gate.item} /><PaneDock projectOnScreen="project" projects={[]} /></Wrapper>);
+}
+
+/** What each pane the page opened asked the daemon for. */
+function paneRequests(daemon: FakeDaemon): { run: string | null; path: string | null; session: string | null; gate: string | null }[] {
+  return daemon.sockets.map((socket) => ({ run: socket.queryParameter('run'), path: socket.queryParameter('path'), session: socket.queryParameter('session'), gate: socket.queryParameter('gate') }));
 }
 
 const ASKING: Gate = {
@@ -390,22 +396,20 @@ test('GateWithNoSession_NoDiscuss', () => {
 });
 
 test('GateWithALocatedSessionAndNoAgent_DiscussOpensTheGatesSession', async () => {
-  const { daemon, posted } = recordingDaemon();
+  const daemon = new FakeDaemon();
   renderGate({ ...PLAN_GATE, session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] } }, daemon);
-  act(() => { daemon.latestStream().open(); });
   const button = screen.getByRole('button', { name: 'Discuss with the agent' });
   expect(button.getAttribute('title'), 'because the button explains itself the same way whichever way the session was found').toContain('resumes the session that raised this gate');
   await press('Discuss with the agent');
-  expect(posted, 'because after a daemon restart no agent is known, and the daemon resumes the session it located for the gate').toEqual([{ kind: 'terminal.open', args: { gate: 'gh#514' } }]);
+  expect(paneRequests(daemon), 'because after a daemon restart no agent is known, and the daemon resumes the session it located for the gate').toEqual([{ run: 'gate', path: null, session: null, gate: 'gh#514' }]);
 });
 
 test('GateWithALocatedSessionAndAnEndedAgent_DiscussOpensTheAgentsSession', async () => {
-  const { daemon, posted } = recordingDaemon();
+  const daemon = new FakeDaemon();
   const ended: EndedAgent = { pid: 200, host: 'claude', kind: 'agent', cwd: '/p-wt/wt-3', worktree: 'wt-3', item: 'gh#514', step: null, job: null, elapsedSeconds: 60, startedAt: '2026-10-24T18:15:04Z', command: 'claude -p', activity: null, subagents: [], session: { host: 'claude', id: '8f3c', transcript: '/h/8f3c.jsonl', resume: ['claude', '--resume', '8f3c'] }, endedAt: TAKEN_AT };
   renderGate({ ...PLAN_GATE, session: { host: 'claude', id: '9a9a', transcript: '/h/9a9a.jsonl', resume: ['claude', '--resume', '9a9a'] } }, daemon, { ended: [ended] });
-  act(() => { daemon.latestStream().open(); });
   await press('Discuss with the agent');
-  expect(posted, 'because an agent the daemon watched end is known for sure, so it wins over the session found from file times').toEqual([{ kind: 'terminal.open', args: { path: '/p-wt/wt-3', session: '200' } }]);
+  expect(paneRequests(daemon), 'because an agent the daemon watched end is known for sure, so it wins over the session found from file times').toEqual([{ run: 'session', path: '/p-wt/wt-3', session: '200', gate: null }]);
 });
 
 const ANSWERED_NOW = new Date().toISOString();

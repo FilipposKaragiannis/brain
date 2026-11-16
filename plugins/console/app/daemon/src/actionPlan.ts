@@ -1,12 +1,11 @@
 import path from 'node:path';
-import type { ActionKind, ActionOutcome, SessionRef, SyncConflict, TerminalName, TerminalSetting } from './snapshot.ts';
+import type { ActionKind, ActionOutcome, SyncConflict } from './snapshot.ts';
 import { MOST_GATE_OPTIONS, SOURCE_NAMES } from './snapshot.ts';
 import { compareVersions } from './cli.ts';
 import { checkSchedule, FLOW_JOBS, SCHEDULE_NAME, scheduleJob } from './plugins/flow/schema.ts';
 import { syncConflict, syncRefs, writeSyncNote } from './syncNote.ts';
 import type { AdapterPrefix } from './collectors/flowHome.ts';
 import type { HostProcess } from './collectors/processes.ts';
-import { sessionLaunch, terminalLaunch } from './terminal.ts';
 
 /** What a sync needs to know of one pool worktree, from the latest snapshot. */
 export type SyncFacts = {
@@ -30,14 +29,8 @@ export type SyncFacts = {
   trackerStep: string;
 };
 
-/** A process's session as the snapshot lists it: where it ran, how to resume it, and whether the process still runs. */
-export type SessionFacts = { pid: number; cwd: string; session: SessionRef; alive: boolean };
-
 /** An interactive session the snapshot lists running: its pid, and when its process started. */
 export type LiveSessionFacts = { pid: number; startedAt: string };
-
-/** The session the daemon located for a waiting gate from the transcripts on disk, and the worktree its step ran in. */
-export type GateSessionFacts = { item: string; cwd: string; session: SessionRef };
 
 /** What an action needs from the project before it can be planned. */
 export type ActionContext = {
@@ -53,14 +46,6 @@ export type ActionContext = {
   jobsHost: string;
   /** The pool worktrees, as absolute paths. A release names one of these or an item. */
   pool: string[];
-  /** The worktrees outside the pool that git lists for the project (the main checkout among them); a terminal may open there. */
-  outsideWorktrees: string[];
-  /** The working directory of every agent and session the snapshot lists, so only those in this project's worktrees. */
-  processCwds: string[];
-  /** The sessions of the agents and sessions the snapshot lists (alive) and of those that ended since (not alive). */
-  sessions: SessionFacts[];
-  /** The sessions located for the gates the snapshot shows waiting; absent or empty, a gate's session cannot be opened. */
-  gateSessions?: GateSessionFacts[];
   /** The interactive sessions (not flow's agents) the snapshot lists running; absent or empty, `session.stop` has none to stop. */
   liveSessions?: LiveSessionFacts[];
   /**
@@ -69,10 +54,6 @@ export type ActionContext = {
    * and then `session.stop` is refused.
    */
   readSession?: (pid: number) => Promise<HostProcess | null>;
-  /** The terminal chosen in Settings, or null for the first installed one. */
-  terminal: TerminalSetting | null;
-  /** The terminals installed, first choice first. */
-  installedTerminals: TerminalName[];
   /** The branch work merges into, `base` in .flow/config.yaml. */
   base: string;
   /** The pool worktrees as the latest snapshot shows them; empty before the first one. */
@@ -168,7 +149,7 @@ export type PlanResult = { ok: true; plan: ActionPlan } | { ok: false; error: st
 export const ACTION_KINDS: ActionKind[] = [
   'gate.clear', 'run.start', 'job.run', 'job.start', 'job.stop', 'job.pause', 'job.resume',
   'job.schedule', 'job.unschedule', 'run.stop', 'run.resume',
-  'session.stop', 'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.auto-merge', 'pr.review', 'quiz.answer', 'host.clear', 'terminal.open', 'refresh',
+  'session.stop', 'worktree.claim', 'worktree.release', 'worktree.reserve', 'worktree.sync', 'sync.handoff', 'item.step-sync', 'steward.health', 'steward.sweep', 'jobs.install', 'job.uninstall', 'pr.merge', 'pr.auto-merge', 'pr.review', 'quiz.answer', 'host.clear', 'refresh',
 ];
 
 /** The argument names each kind accepts. Anything else is refused, so a typo never changes the meaning. */
@@ -196,7 +177,6 @@ const ARGUMENTS: Record<ActionKind, string[]> = {
   'pr.review': ['pr', 'reviewer'],
   'quiz.answer': ['item', 'answers'],
   'host.clear': ['host'],
-  'terminal.open': ['path', 'job', 'session', 'gate'],
   refresh: ['source'],
 };
 
@@ -222,8 +202,6 @@ const MESSAGE_LIMIT_CHARS = 10000;
 const ID_REST = /^[A-Za-z0-9][A-Za-z0-9:#/_.-]{0,127}$/;
 /** Path parts an id never has: an adapter may join the id onto a folder (the local one does), so `..` would leave it. */
 const NOT_AN_ID_PART = new Set(['', '.', '..']);
-/** A job's log name: a schedule (`next`, `next-nightly`) or one of its workers (`next-2`, `next-nightly-2`). */
-const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const PR_NUMBER = /^[1-9][0-9]*$/;
 /** An option number as `gate.sh clear --option N` takes it: no sign, no leading zero. */
 const OPTION_NUMBER = /^[1-9][0-9]*$/;
@@ -263,8 +241,6 @@ const PICK_NAME = /^[A-Za-z0-9_-]+$/;
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 /** The console's own merge script: fetch, the upstream, then the base, aborting on a conflict. */
 export const SYNC_SCRIPT = path.resolve(import.meta.dirname, '..', 'scripts', 'sync.sh');
-/** How much of a job's log a terminal shows before it follows new lines. */
-const LOG_LINES = '200';
 
 /** A step name as profiles.json spells them; anything else in a claim file never reaches the tracker. */
 const STEP = /^[a-z][a-z0-9-]*$/;
@@ -320,7 +296,6 @@ export function planAction(kind: ActionKind, args: Record<string, string>, conte
     if (source !== '' && !(SOURCE_NAMES as string[]).includes(source)) return fail(`unknown source: ${source}`);
     return { ok: true, plan: { command: '', args: [], cwd: context.root, locks: [], timeoutMs: 0, detach: false, refresh: source === '' ? [...SOURCE_NAMES] : [source], refreshAgainMs: null, outcome: 'finished' } };
   }
-  if (kind === 'terminal.open') return planTerminal(args, context);
   if (kind === 'worktree.sync') return planSync(args, context);
   if (kind === 'session.stop') return planSessionStop(args, context);
   if (context.pluginRoot === null) return fail('no flow plugin found for the project');
@@ -661,74 +636,6 @@ function planUnschedule(args: Record<string, string>, context: ActionContext): P
     ok: true,
     plan: { command: 'sh', args: [script(context, 'jobs.sh'), 'uninstall', name], cwd: context.root, locks: [`job:${name}`], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: ['jobs', 'files'], refreshAgainMs: null, outcome: 'finished', conclude },
   };
-}
-
-/**
- * `terminal.open`: a terminal window in the project root, a pool worktree, another worktree git
- * lists for the project, or the folder of an agent or session the snapshot lists, nowhere else. With `job` (from the root only) the window follows that
- * job's log, `<root>/.flow/log/<job>.log`; with `session` (a pid) or `gate` (an item) it resumes a
- * session (see `planSession`, `planGateSession`). Nothing is locked or re-read: it only opens a window.
- */
-function planTerminal(args: Record<string, string>, context: ActionContext): PlanResult {
-  const gate = args['gate'];
-  if (gate !== undefined) return planGateSession(gate, args, context);
-  const asked = args['path'] ?? '';
-  if (!path.isAbsolute(asked)) return fail('terminal.open needs an absolute path');
-  const folder = path.resolve(asked);
-  const allowed = [context.root, ...context.pool, ...context.outsideWorktrees, ...context.processCwds].map((entry) => path.resolve(entry));
-  const session = args['session'];
-  if (session !== undefined) return planSession(folder, session, args, context);
-  if (!allowed.includes(folder)) return fail(`${folder} is not the project root, a worktree the console lists or the folder of a listed agent or session`);
-  let run: string[] | null = null;
-  const job = args['job'];
-  if (job !== undefined) {
-    if (!JOB_NAME.test(job)) return fail('terminal.open needs a job name like next or health');
-    if (folder !== path.resolve(context.root)) return fail("a job's log opens from the project root");
-    const flowHome = path.join(path.resolve(context.root), '.flow');
-    const log = path.join(flowHome, 'log', `${job}.log`);
-    if (path.relative(flowHome, log).startsWith('..')) return fail("a job's log must be under the project's .flow");
-    run = ['tail', '-n', LOG_LINES, '-f', log];
-  }
-  const launch = terminalLaunch(context.terminal, context.installedTerminals, folder, run);
-  if (!launch.ok) return launch;
-  return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
-}
-
-/**
- * `terminal.open` with `gate` (an item id): a terminal at the worktree the gate on that item was
- * raised in, with the session the daemon located for it resumed at once: the step that raised it
- * has ended. Only a session located for a gate the snapshot shows waiting; a `path`, when given,
- * must be that worktree. Should the session's process still run, its command is typed, not run.
- */
-function planGateSession(item: string, args: Record<string, string>, context: ActionContext): PlanResult {
-  if (!isItemId(item, context)) return fail(`gate must be ${itemIdShape(context)}`);
-  if (args['job'] !== undefined || args['session'] !== undefined) return fail('terminal.open takes one of a job, a session or a gate');
-  const found = (context.gateSessions ?? []).find((entry) => entry.item === item);
-  if (found === undefined) return fail(`the console located no session for a gate on ${item}: no gate waits on it, it has no claimed worktree, or no transcript there was written around the time it was raised`);
-  const folder = path.resolve(found.cwd);
-  const asked = args['path'];
-  if (asked !== undefined && (!path.isAbsolute(asked) || path.resolve(asked) !== folder)) return fail(`the gate on ${item} was raised in ${folder}; its session opens there, not in ${asked}`);
-  const alive = context.sessions.some((entry) => entry.alive && entry.session.transcript === found.session.transcript);
-  const launch = sessionLaunch(context.terminal, context.installedTerminals, folder, found.session.resume, alive);
-  if (!launch.ok) return launch;
-  return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
-}
-
-/**
- * `terminal.open` with `session` (a pid): a terminal at the folder that process ran in, with its
- * resume command typed but not run while the process still runs, or run at once once it ended.
- * Only a session the snapshot lists, and only in its own folder: `claude --resume` finds a
- * session by the folder it was started in.
- */
-function planSession(folder: string, pid: string, args: Record<string, string>, context: ActionContext): PlanResult {
-  if (!PID.test(pid)) return fail('session must be the pid of an agent or session the console lists');
-  if (args['job'] !== undefined) return fail('terminal.open takes a job or a session, not both');
-  const found = context.sessions.find((entry) => String(entry.pid) === pid);
-  if (found === undefined) return fail(`the console knows no session for pid ${pid}: its transcript was not found, or it ended over a day ago`);
-  if (path.resolve(found.cwd) !== folder) return fail(`pid ${pid} ran in ${found.cwd}; its session opens there, not in ${folder}`);
-  const launch = sessionLaunch(context.terminal, context.installedTerminals, folder, found.session.resume, found.alive);
-  if (!launch.ok) return launch;
-  return { ok: true, plan: { command: launch.launch.command, args: launch.launch.args, cwd: context.root, locks: [], timeoutMs: SCRIPT_TIMEOUT_MS, detach: false, refresh: [], refreshAgainMs: null, outcome: 'finished' } };
 }
 
 /**

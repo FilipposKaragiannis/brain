@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import type { ActionRecord, Job, JobRun, Snapshot } from '../../daemon/src/snapshot.ts';
 import { TICK_MS } from '../src/clock.tsx';
+import { FOLLOW_LOG } from '../src/PaneControls.tsx';
+import { PaneDock } from '../src/PaneDock.tsx';
 import { Jobs, OVERDUE_HELP } from '../src/screens/Jobs.tsx';
 import { OUTCOME_SHOWN_MS } from '../src/ui.tsx';
 import { FakeDaemon, HTTP_ACCEPTED, actionRecord, flowEvent, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
@@ -20,7 +22,7 @@ async function renderSnapshot(extra: Partial<Snapshot>, daemon = new FakeDaemon(
     return { status: HTTP_ACCEPTED, body: { action: { ...actionRecord('p1', 'done', {}), kind, args, outcome: 'finished' } } };
   });
   const Wrapper = daemon.screenWrapper(clock);
-  render(<Wrapper><Jobs snapshot={{ ...snapshotAt(TAKEN_AT, 0), ...extra }} /></Wrapper>);
+  render(<Wrapper><Jobs snapshot={{ ...snapshotAt(TAKEN_AT, 0), ...extra }} /><PaneDock projectOnScreen="project" projects={[]} /></Wrapper>);
   await act(async () => {});
   return posted;
 }
@@ -49,10 +51,11 @@ test('JobsScreen_WithRuns_ShowsNoRunCards', async () => {
   expect(screen.queryByRole('heading', { name: 'Runs' }), 'because the runs live on the Agents page').toBeNull();
 });
 
-test('JobRow_OpenInTerminal_OpensTheRootFollowingTheJobsLog', async () => {
-  const posted = await renderSnapshot({ jobs: [JOB] });
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Open in Terminal' })); });
-  expect(posted, 'because a job has no folder of its own: it opens the project root and follows its log').toEqual([{ kind: 'terminal.open', args: { path: '/p', job: 'next' } }]);
+test('JobRow_FollowLog_OpensAPaneOnTheJobsLog', async () => {
+  const daemon = new FakeDaemon();
+  await renderSnapshot({ jobs: [JOB] }, daemon);
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: FOLLOW_LOG })); });
+  expect(daemon.sockets.map((socket) => ({ run: socket.queryParameter('run'), job: socket.queryParameter('job') })), 'because a job pane names the job and the daemon follows its log from the project root').toEqual([{ run: 'job', job: 'next' }]);
 });
 
 test('StoppedHost_ShowsWhyAndClears', async () => {

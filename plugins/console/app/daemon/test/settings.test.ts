@@ -22,7 +22,7 @@ function store(argv: string[], files: Record<string, unknown>) {
   assert.ok(read.ok, 'because the test config is valid');
   const config = (read as { config: DaemonConfig }).config;
   const applied: ProjectDefinition[][] = [];
-  const settings = new SettingsStore({ config, installed: () => ['ghostty', 'terminal'], applyProjects: (projects) => applied.push(projects), newerConsole: () => null });
+  const settings = new SettingsStore({ config, applyProjects: (projects) => applied.push(projects), newerConsole: () => null });
   const written = (): unknown => JSON.parse(readFileSync(paths.configFile, 'utf8'));
   return { settings, applied, written, paths, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
@@ -33,9 +33,8 @@ test('View_FileProjects_EachSettingSaysWhereItCameFrom', () => {
   const { settings, paths, cleanup } = store([], FILE_PROJECT);
   try {
     const view = settings.view();
-    assert.deepEqual([view.projects.from, view.projects.editable, view.terminal.from, view.port.from, view.port.value], ['file', true, 'default', 'default', 7474], 'because the owner must see which settings the file holds and which are defaults');
+    assert.deepEqual([view.projects.from, view.projects.editable, view.port.from, view.port.value], ['file', true, 'default', 7474], 'because the owner must see which settings the file holds and which are defaults');
     assert.equal(view.configFile, paths.configFile, 'because the screen shows the file to edit by hand');
-    assert.deepEqual(view.terminal.installed, ['ghostty', 'terminal'], 'because with no terminal set the first installed one opens');
   } finally { cleanup(); }
 });
 
@@ -83,32 +82,6 @@ test('PutProjects_EmptyList_Refused', () => {
   } finally { cleanup(); }
 });
 
-test('PutTerminal_Command_KeptOtherSettingsUntouched', () => {
-  const { settings, written, cleanup } = store([], FILE_PROJECT);
-  try {
-    assert.ok(settings.update({ terminal: { command: ['open', '-a', 'Warp', '{path}'] } }).ok, 'because a non-empty command array is a terminal');
-    assert.deepEqual(written(), { projects: [{ root: FIXTURE_ROOT }], terminal: { command: ['open', '-a', 'Warp', '{path}'] } }, 'because a PUT changes only what it names');
-    assert.deepEqual(settings.terminal(), { command: ['open', '-a', 'Warp', '{path}'] }, 'because the next Open in Terminal uses it without a restart');
-  } finally { cleanup(); }
-});
-
-test('PutTerminal_BadValue_Refused', () => {
-  const { settings, cleanup } = store([], FILE_PROJECT);
-  try {
-    for (const terminal of ['kitty', { command: [] }, { command: ['open', ''] }, ['open']]) {
-      assert.equal(settings.update({ terminal }).ok, false, `because ${JSON.stringify(terminal)} is neither a known terminal nor a non-empty command`);
-    }
-  } finally { cleanup(); }
-});
-
-test('PutTerminal_Null_BackToTheFirstInstalled', () => {
-  const { settings, written, cleanup } = store([], { 'config.json': { projects: [{ root: FIXTURE_ROOT }], terminal: 'iterm' } });
-  try {
-    settings.update({ terminal: null });
-    assert.deepEqual([settings.terminal(), settings.view().terminal.from, written()], [null, 'default', { projects: [{ root: FIXTURE_ROOT }] }], 'because clearing the choice goes back to picking the first installed app');
-  } finally { cleanup(); }
-});
-
 test('PutPort_NewPort_SavedButTheDaemonKeepsItsPort', () => {
   const { settings, cleanup } = store([], FILE_PROJECT);
   try {
@@ -126,21 +99,46 @@ test('Put_UnknownSetting_Refused', () => {
   } finally { cleanup(); }
 });
 
+/** A config file written when the console still let the owner pick a terminal app. */
+const RETIRED_TERMINAL = { 'config.json': { projects: [{ root: FIXTURE_ROOT }], terminal: 'iterm' } };
+
+test('RetiredTerminalSetting_InTheFile_ProjectsStillRead', () => {
+  const { settings, cleanup } = store([], RETIRED_TERMINAL);
+  try {
+    assert.deepEqual(settings.view().projects.roots, [FIXTURE_ROOT], 'because a key the console no longer has must not cost the owner the projects beside it');
+  } finally { cleanup(); }
+});
+
+test('RetiredTerminalSetting_NextSave_LeavesItOut', () => {
+  const { settings, written, cleanup } = store([], RETIRED_TERMINAL);
+  try {
+    settings.update({ port: 7480 });
+    assert.deepEqual(written(), { projects: [{ root: FIXTURE_ROOT }], port: 7480 }, 'because the file stops naming a terminal app nothing reads');
+  } finally { cleanup(); }
+});
+
+test('Put_RetiredTerminalSetting_Refused', () => {
+  const { settings, cleanup } = store([], FILE_PROJECT);
+  try {
+    assert.equal(settings.update({ terminal: 'iterm' }).ok, false, 'because every Open in Terminal opens a pane, so a terminal app is not a setting');
+  } finally { cleanup(); }
+});
+
 test('LegacyProjectsFile_OnlyFile_NotedUntilTheFirstWrite', () => {
   const { settings, written, cleanup } = store([], { 'projects.json': { projects: [{ root: FIXTURE_ROOT }] } });
   try {
     assert.match(settings.view().readFromLegacyFile ?? '', /projects\.json$/, 'because the screen says where the projects came from');
-    settings.update({ terminal: 'ghostty' });
-    assert.deepEqual([settings.view().readFromLegacyFile, written()], [null, { projects: [{ root: FIXTURE_ROOT }], terminal: 'ghostty' }], 'because the first save moves the projects into config.json');
+    settings.update({ port: 7480 });
+    assert.deepEqual([settings.view().readFromLegacyFile, written()], [null, { projects: [{ root: FIXTURE_ROOT }], port: 7480 }], 'because the first save moves the projects into config.json');
   } finally { cleanup(); }
 });
 
 test('Put_FileEditedByHandSinceTheStart_EditKept', () => {
   const { settings, written, paths, cleanup } = store([], FILE_PROJECT);
   try {
-    writeFileSync(paths.configFile, JSON.stringify({ projects: [{ root: FIXTURE_ROOT }], port: 7490 }));
-    settings.update({ terminal: 'ghostty' });
-    assert.deepEqual(written(), { projects: [{ root: FIXTURE_ROOT }], port: 7490, terminal: 'ghostty' }, 'because a save from the screen must not undo what the owner wrote in the file meanwhile');
+    writeFileSync(paths.configFile, JSON.stringify({ projects: [{ root: FIXTURE_ROOT }, { root: LOCAL_ROOT }] }));
+    settings.update({ port: 7490 });
+    assert.deepEqual(written(), { projects: [{ root: FIXTURE_ROOT }, { root: LOCAL_ROOT }], port: 7490 }, 'because a save from the screen must not undo what the owner wrote in the file meanwhile');
   } finally { cleanup(); }
 });
 
@@ -148,7 +146,7 @@ test('Put_FileBrokenByHand_RefusedAndLeftAsItIs', () => {
   const { settings, paths, cleanup } = store([], FILE_PROJECT);
   try {
     writeFileSync(paths.configFile, '{"projects": [');
-    const result = settings.update({ terminal: 'ghostty' });
+    const result = settings.update({ port: 7480 });
     assert.match(result.ok ? '' : result.error, /not valid JSON/, 'because the owner hears why nothing was saved');
     assert.equal(readFileSync(paths.configFile, 'utf8'), '{"projects": [', 'because a half-written hand edit is the owner\'s to finish, not ours to overwrite');
   } finally { cleanup(); }
@@ -314,16 +312,16 @@ test('Reload_ProjectsFromAFlag_StayFixed', () => {
 test('Reload_AfterTheDaemonsOwnSave_NothingToTake', () => {
   const { settings, cleanup } = store([], FILE_PROJECT);
   try {
-    settings.update({ terminal: 'ghostty', port: 7490 });
+    settings.update({ port: 7490 });
     assert.equal(settings.reload(), null, 'because a file the daemon wrote itself holds what it runs, so there is no reload to log');
   } finally { cleanup(); }
 });
 
-test('Reload_ProjectAddedByHandThenTerminalSaved_Applied', () => {
+test('Reload_ProjectAddedByHandThenPortSaved_Applied', () => {
   const { settings, applied, paths, cleanup } = store([], FILE_PROJECT);
   try {
     writeFileSync(paths.configFile, JSON.stringify(BOTH_PROJECTS));
-    settings.update({ terminal: 'ghostty' });
+    settings.update({ port: 7490 });
     settings.reload();
     assert.deepEqual(applied.map((projects) => projects.map((project) => project.id)), [['project', 'project-local']], 'because a save of another setting before the next look keeps the hand-added root in the file, and it must still be watched');
   } finally { cleanup(); }

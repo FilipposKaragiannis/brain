@@ -25,12 +25,15 @@ export function scriptEnvironment(): Record<string, string> {
   return environment;
 }
 
-export const childProcessRunner: CommandRunner = (request) =>
+/** Runs external commands that the signal cancels; a cancelled one ends with no exit code, as a killed one does. */
+export type CancellableCommandRunner = (request: CommandRequest, signal: AbortSignal) => Promise<CommandResult>;
+
+export const cancellableProcessRunner: CancellableCommandRunner = (request, signal) =>
   new Promise((resolve) => {
     execFile(
       request.command,
       request.args,
-      { cwd: request.cwd, timeout: request.timeoutMs, maxBuffer: OUTPUT_LIMIT_BYTES, env: request.env, encoding: 'utf8' },
+      { cwd: request.cwd, timeout: request.timeoutMs, maxBuffer: OUTPUT_LIMIT_BYTES, env: request.env, encoding: 'utf8', signal },
       (error, stdout, stderr) => {
         if (error === null) { resolve({ code: 0, stdout, stderr, timedOut: false }); return; }
         const failure = error as NodeJS.ErrnoException & { code?: number | string; killed?: boolean; signal?: string | null };
@@ -40,3 +43,5 @@ export const childProcessRunner: CommandRunner = (request) =>
       },
     );
   });
+
+export const childProcessRunner: CommandRunner = (request) => cancellableProcessRunner(request, new AbortController().signal);

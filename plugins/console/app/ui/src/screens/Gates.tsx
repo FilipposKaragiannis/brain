@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { PaneTarget } from '../../../daemon/src/paneProtocol.ts';
 import type { Agent, Gate, GateQuestion, LabelGate, ReadyToClose, Snapshot } from '../../../daemon/src/snapshot.ts';
 import { ExternalLink, trackerUrl } from '../links.tsx';
 import { Age, formatDuration } from '../clock.tsx';
@@ -8,6 +9,7 @@ import { choiceAnswers, composeGateMessage, gateAsk, gateBrief, initialChoices, 
 import type { GateChoice, OwnGate, Verdict } from '../gateAnswer.ts';
 import { AskReview } from '../askReview.tsx';
 import { Markdown } from '../Markdown.tsx';
+import { PaneButton } from '../PaneControls.tsx';
 import { QuizPanel } from '../Quiz.tsx';
 import { routeHash } from '../route.ts';
 import type { ActionRecord } from '../actions.ts';
@@ -379,7 +381,7 @@ export function DecisionCard({ gate, twins, snapshot, draft, onAnswer }: Decisio
   const summary = (form === 'answers' ? [`**${ask}**`, rest] : [rest]).filter((part) => part.trim() !== '').join('\n\n');
   const short = summary.length <= SHORT_SUMMARY_CHARS;
   const lead = form === 'approval' ? (gate.plan !== null ? 'plan' : gate.body !== null && gate.body.trim() !== '' ? 'issue' : null) : null;
-  const discuss = discussArgs(snapshot, gate);
+  const discuss = discussTarget(snapshot, gate);
   return (
     <section className="decision-card" aria-label="Decision card">
       <DecisionHead gate={gate} snapshot={snapshot} answered={false} summary={short && summary !== '' ? summary : null} />
@@ -399,9 +401,9 @@ export function DecisionCard({ gate, twins, snapshot, draft, onAnswer }: Decisio
         <GateFooter gate={gate} />
         {discuss !== null && (
           <div className="gate-discuss">
-            <ActionButton kind="terminal.open" args={discuss} label="Discuss with the agent" primary={false}
-              title="Opens a terminal at the worktree and resumes the session that raised this gate, so you can talk it through before you answer." />
-            <span className="muted">Resumes the session that raised the gate, in a terminal.</span>
+            <PaneButton projectId={snapshot.project.id} target={discuss} label="Discuss with the agent" primary={false}
+              title="Opens a pane at the worktree and resumes the session that raised this gate, so you can talk it through before you answer." />
+            <span className="muted">Resumes the session that raised the gate, in a terminal pane.</span>
           </div>
         )}
       </div>
@@ -414,10 +416,10 @@ export function DecisionCard({ gate, twins, snapshot, draft, onAnswer }: Decisio
  * running or ended, by its pid; else the session the daemon located for the gate from the
  * transcripts on disk (it survives a daemon restart), by the gate's item. Null with neither.
  */
-function discussArgs(snapshot: Snapshot, gate: Gate): Record<string, string> | null {
+function discussTarget(snapshot: Snapshot, gate: Gate): PaneTarget | null {
   const agent = latestSession(snapshot, gate.item);
-  if (agent !== null) return { path: agent.cwd, session: String(agent.pid) };
-  return gate.session !== null ? { gate: gate.item } : null;
+  if (agent !== null) return { run: 'session', folder: agent.cwd, pid: agent.pid };
+  return gate.session !== null ? { run: 'gate', item: gate.item } : null;
 }
 
 /** The newest session that worked on the item, running or ended, so the owner can talk to it. */
