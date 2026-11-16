@@ -59,15 +59,13 @@ flow_machine() { printf '%s' "${FLOW_MACHINE:-$(hostname -s)}"; }
 record_get() (
   [ $# -eq 2 ] || die "usage: record_get <item> <key>" "$EXIT_USAGE"
   item_shape_required "$1"
-  FLOW_HOME="$(flow_home)"
-  state_python get "$(state_dir)" "$FLOW_HOME" "$1" -- "$2"
+  state_python get "$(state_dir)" "$(flow_home)" "$1" -- "$2"
 )
 
 record_show() (
   [ $# -eq 1 ] || die "usage: record_show <item>" "$EXIT_USAGE"
   item_shape_required "$1"
-  FLOW_HOME="$(flow_home)"
-  state_python show "$(state_dir)" "$FLOW_HOME" "$1"
+  state_python show "$(state_dir)" "$(flow_home)" "$1"
 )
 
 record_set() (
@@ -75,29 +73,27 @@ record_set() (
   item_shape_required "$1"
   flow_record_item="$1"; shift
   flow_record_kind="$(record_pairs_kind "$@")" || exit "$EXIT_USAGE"
-  FLOW_HOME="$(flow_home)"
+  flow_record_home="$(flow_home)"
   flow_record_dir="$(record_ensured_dir)" || exit "$EXIT_USAGE"
   flow_record_tracker="$(tracker_state)" || exit "$EXIT_USAGE"
   if [ "$flow_record_tracker" = labels ] && [ "$flow_record_kind" = state ]; then
     tracker_mirror "$flow_record_item" "$@" || exit
   fi
-  record_seeded set "$flow_record_item" "$flow_record_dir" "$FLOW_HOME" \
+  record_seeded set "$flow_record_item" "$flow_record_dir" "$flow_record_home" \
     --claim-file "$(record_claim_file "$flow_record_item" "$@")" -- "$@"
 )
 
 take_item() (
   [ $# -eq 1 ] || die "usage: take_item <item>" "$EXIT_USAGE"
   item_shape_required "$1"
-  FLOW_HOME="$(flow_home)"
   flow_record_dir="$(record_ensured_dir)" || exit "$EXIT_USAGE"
-  record_seeded take "$1" "$flow_record_dir" "$FLOW_HOME"
+  record_seeded take "$1" "$flow_record_dir" "$(flow_home)"
 )
 
 record_archive() (
   [ $# -eq 1 ] || die "usage: record_archive <item>" "$EXIT_USAGE"
   item_shape_required "$1"
-  FLOW_HOME="$(flow_home)"
-  state_python archive "$(state_dir)" "$FLOW_HOME" "$1" --machine "$(flow_machine)"
+  state_python archive "$(state_dir)" "$(flow_home)" "$1" --machine "$(flow_machine)"
 )
 
 # item_shape_required <item>: refuses, exit 2, an id that is not of its adapter's shape.
