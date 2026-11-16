@@ -82,7 +82,8 @@ check "GateFileOfAnotherGate_StaysOutOfTheSeed: the tracker's open gate wins ove
 "$local_adapter/write-state.sh" "$started" step=review
 check "LaterTrackerChange_DoesNotReachTheRecord: once a record exists it wins and is never compared again" '[ "$(record get "$started" step)" = implement ]'
 unrecorded="$(new_task "Never written")"
-check "ItemWithNoRecord_GetPrintsNothing: a read never seeds a record" '[ -z "$(record get "$unrecorded" step)" ] && [ ! -f "$(record path "$unrecorded")" ]'
+check "ItemWithNoRecord_GetPrintsNothing: an item never written has no value to read" '[ -z "$(record get "$unrecorded" step)" ]'
+check "ItemWithNoRecord_GetSeedsNoRecord: a read never seeds a record" '[ ! -f "$(record path "$unrecorded")" ]'
 
 echo "take and archive"
 taken="$(new_task "Taken here")"
@@ -98,8 +99,8 @@ check "NextStartOfARecordedItem_RecordsTheStartingMachineAsTheHolder: starting a
 archived="$(new_task "Archived")"
 record set "$archived" last_event=finished >/dev/null 2>&1
 record archive "$archived" >/dev/null 2>&1
-check "Archive_MovesTheRecordToClosed: an archived record leaves the open ones and is kept under closed/" \
-  '[ ! -f "$(record path "$archived")" ] && [ -f "$(closed_record "$archived")" ]'
+check "Archive_LeavesNoOpenRecord: an archived record leaves the open ones" '[ ! -f "$(record path "$archived")" ]'
+check "Archive_KeepsTheRecordUnderClosed: an archived record is kept, not deleted" '[ -f "$(closed_record "$archived")" ]'
 record set "$archived" last_event=reopened >/dev/null 2>&1
 check "WriteAfterArchive_StartsANewRecord: a write to an archived item starts an open record again" '[ "$(record get "$archived" last_event)" = reopened ]'
 record archive "$unrecorded" >/dev/null 2>&1; code=$?
@@ -109,13 +110,14 @@ held="$(new_task "Held elsewhere")"
 take beta "$held" >/dev/null 2>&1
 env FLOW_MACHINE=alpha "$plugin/scripts/state.sh" archive "$held" >/dev/null 2>&1; code=$?
 check "ArchiveOfARecordAnotherMachineHolds_ExitsOne: only the holder's machine archives a record" '[ "$code" -eq 1 ]'
-check "ArchiveOfARecordAnotherMachineHolds_KeepsTheRecord: a refused archive moves nothing" '[ -f "$(record path "$held")" ] && [ ! -f "$(closed_record "$held")" ]'
+check "ArchiveOfARecordAnotherMachineHolds_KeepsTheOpenRecord: a refused archive moves nothing" '[ -f "$(record path "$held")" ]'
+check "ArchiveOfARecordAnotherMachineHolds_PutsNothingUnderClosed: a refused archive moves nothing" '[ ! -f "$(closed_record "$held")" ]'
 released="$(new_task "Released when closed")"
 released_worktree="$("$plugin/scripts/steward.sh" claim "$released" 2>/dev/null)"
 "$local_adapter/close.sh" "$released" >/dev/null
 "$plugin/scripts/steward.sh" release "$released_worktree" >/dev/null 2>&1
-check "ReleaseOfAClosedItem_ArchivesItsRecord: a closed item's record leaves the open ones with its worktree" \
-  '[ ! -f "$(record path "$released")" ] && [ -f "$(closed_record "$released")" ]'
+check "ReleaseOfAClosedItem_LeavesNoOpenRecord: a closed item's record leaves the open ones with its worktree" '[ ! -f "$(record path "$released")" ]'
+check "ReleaseOfAClosedItem_KeepsItsRecordUnderClosed: a released item's record is archived, not deleted" '[ -f "$(closed_record "$released")" ]'
 
 echo "parity: the record equals the tracker's state after the flow's own writes"
 paired="$(new_task "Parity")"
@@ -123,18 +125,18 @@ paired_start="$("$plugin/scripts/next.sh" "$paired" --json 2>/dev/null)"
 paired_step="$(printf '%s' "$paired_start" | json_value step)"
 printf '{"status":"done","summary":"done","touches":["src/a/**"]}\n' > "$(printf '%s' "$paired_start" | json_value reports)/$paired_step.json"
 "$plugin/scripts/advance.sh" "$paired" >/dev/null 2>&1
-check "NextAndAdvance_RecordEqualsTheTrackersState: a started and advanced item reads the same in both stores" 'record_equals_tracker "$paired"'
+check "NextAndAdvance_RecordEqualsTheTrackersState: a started and advanced item reads the same in both stores" 'first_key_differing_from_tracker "$paired"'
 "$plugin/scripts/gate.sh" raise "$paired" ambiguity "Which row owns the retune?" >/dev/null 2>&1
-check "GateRaise_RecordEqualsTheTrackersState: a raised gate reads the same in both stores" 'record_equals_tracker "$paired"'
+check "GateRaise_RecordEqualsTheTrackersState: a raised gate reads the same in both stores" 'first_key_differing_from_tracker "$paired"'
 "$plugin/scripts/gate.sh" clear "$paired" "Keep both rows" >/dev/null 2>&1
-check "GateClear_RecordEqualsTheTrackersState: a cleared gate and its answer read the same in both stores" 'record_equals_tracker "$paired"'
+check "GateClear_RecordEqualsTheTrackersState: a cleared gate and its answer read the same in both stores" 'first_key_differing_from_tracker "$paired"'
 
 echo "parity of a hold"
 holder="$(new_task "Holder")"; waiter="$(new_task "Waiter")"
 "$plugin/scripts/hold.sh" set "$waiter" "$holder" "same retune of the row owner" >/dev/null 2>&1
-check "HoldSet_RecordEqualsTheTrackersState: a hold reads the same in both stores" 'record_equals_tracker "$waiter"'
+check "HoldSet_RecordEqualsTheTrackersState: a hold reads the same in both stores" 'first_key_differing_from_tracker "$waiter"'
 "$plugin/scripts/hold.sh" clear "$waiter" "holder merged" >/dev/null 2>&1
-check "HoldClear_RecordEqualsTheTrackersState: a lifted hold reads the same in both stores" 'record_equals_tracker "$waiter"'
+check "HoldClear_RecordEqualsTheTrackersState: a lifted hold reads the same in both stores" 'first_key_differing_from_tracker "$waiter"'
 
 [ "$fails" -eq 0 ] && { echo "state-views: ok"; exit 0; }
 echo "state-views: $fails failed"; exit 1

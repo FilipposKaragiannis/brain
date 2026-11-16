@@ -16,7 +16,7 @@ canonical() { python3 -c 'import json,sys
 text=sys.stdin.read().rstrip("\n")
 try: print(json.dumps(json.loads(text), sort_keys=True))
 except ValueError: print(text)'; }
-record_equals_tracker() { # each of the tracker's state keys reads the same in the record; prints the first that differs
+first_key_differing_from_tracker() {
   tracker_keys="$("$local_adapter/read.sh" "$1" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["state"]))')"
   [ -n "$tracker_keys" ] && for key in $tracker_keys; do
     [ "$(record get "$1" "$key" | canonical)" = "$(state "$1" "$key" | canonical)" ] || { echo "$key differs"; return 1; }

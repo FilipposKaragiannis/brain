@@ -2,8 +2,8 @@
 # state.sh: the flow record of an item (lib/state.sh, scripts/state.sh), on the local adapter in a
 # throwaway repo. Every state key and gate record field reads back, each at its record path; a
 # refused write leaves both stores as they were; the tracker gets each state write first unless
-# tracker_state is none; two writers at once both land and a busy lock says try again; the gate's
-# value rules; where the records live; and a caller's while-read loop keeps its input.
+# tracker_state is none; the gate's value rules; where the records live; ids of the wrong shape;
+# and a caller's while-read loop keeps its input. state-disk.sh has the lock and the disk.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 
@@ -11,7 +11,7 @@ echo "state keys: each reads back what was set"
 keyed="$(new_task "Key round trip")"
 while IFS='|' read -r key value expected; do
   record set "$keyed" "$key=$value" >/dev/null 2>&1
-  check "Set_${key}_ReadsBackTheValueSet: the record keeps each of the twenty keys as the tracker does" \
+  check "Set_${key}_ReadsBackTheValueSet: the record keeps each state key as the tracker does" \
     '[ "$(record get "$keyed" "$key")" = "$expected" ]'
 done <<'KEYS'
 step|implement|implement
@@ -27,7 +27,7 @@ held_by|local:task/9|local:task/9
 held_reason|same retune of the row owner|same retune of the row owner
 gate|plan-approval|plan-approval
 gate_from|design|design
-answered|plan-approval|plan-approval
+answered|feel-test|feel-test
 asked|Approve the plan?|Approve the plan?
 answer|Approved with notes|Approved with notes
 answered_at|2026-11-14T09:30:00Z|2026-11-14T09:30:00Z
@@ -104,23 +104,6 @@ record set "$refusing" 'run:={"step":"implement","pid":4242}' >/dev/null 2>&1
 check "TrackerRefusesWrites_RecordOnlyPairLands: a record pair never goes to the tracker, so its refusal does not stop it" \
   '[ "$(record get "$refusing" run.pid)" = 4242 ]'
 chmod u+w "$(item_file "$refusing")"
-
-echo "the lock: two writers at once both land"
-tracker_state_is none
-raced="$(new_task "Two writers")"
-record set "$raced" step=plan >/dev/null 2>&1
-lock_rounds=25
-writer() { round=1; while [ "$round" -le "$lock_rounds" ]; do record set "$raced" "$1=$1-$round" >/dev/null 2>&1; round=$((round + 1)); done; }
-writer step & writer last_event & wait
-check "TwoWritersOfDifferentKeys_BothKeepTheirLastValue: each write merges under the item's lock, so neither loses the other's key; a lost write shows by chance, more surely the nearer it falls to the last round" \
-  '[ "$(record get "$raced" step)" = "step-$lock_rounds" ] && [ "$(record get "$raced" last_event)" = "last_event-$lock_rounds" ]'
-check "TwoWritersOfDifferentKeys_LeaveARecordThatParses: a write replaces the record whole, never in part" \
-  'record show "$raced" | python3 -c "import json,sys; json.load(sys.stdin)"'
-fresh="$(new_task "Two first writes")"
-record set "$fresh" step=plan >/dev/null 2>&1 & record set "$fresh" last_event=first >/dev/null 2>&1 & wait
-check "TwoFirstWritesAtOnce_MakeOneRecordWithBoth: the second first write finds the record and merges into it" \
-  '[ "$(record get "$fresh" step)" = plan ] && [ "$(record get "$fresh" last_event)" = first ]'
-tracker_state_is ""
 
 echo "the key map: each tracker key lands at its record path"
 mapped="$(new_task "Key map")"
@@ -216,27 +199,12 @@ Show|show $malformed_id
 Path|path $malformed_id
 Archive|archive $malformed_id
 Set|set $malformed_id step=plan
+SetOfAParentFolder|set local:task/.. step=plan
+SetOfAPathOutOfItsKind|set local:../task/1 step=plan
 IDS
 items_before="$(ls -A .flow/items/task)"
 record set "$malformed_id" step=plan >/dev/null 2>&1
 check "MalformedId_Set_WritesNoTrackerItem: a refused id reaches no tracker" '[ "$(ls -A .flow/items/task)" = "$items_before" ]'
-
-echo "how a write lands on disk"
-fresh_state_dir="$work/not-yet/records"
-printf 'state:\n  dir: %s\n' "$fresh_state_dir" >> .flow/config.yaml
-landed="$(new_task "Lands on disk")"
-(umask 022 && record set "$landed" step=plan >/dev/null 2>&1)
-check "MissingStateDir_IsMadeByTheFirstWrite: the first write makes state.dir and its record" '[ -f "$(record path "$landed")" ]'
-check "Write_LeavesNoTemporaryBesideTheRecord: a write renames its temporary into place" \
-  'listing="$(ls -A "$fresh_state_dir")" && [ -n "$listing" ] && ! printf "%s\n" "$listing" | grep -q "\.tmp$"'
-(umask 022 && : > "$work/plain-write")
-mode_of() { python3 -c 'import os,stat,sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' "$1"; }
-check "RecordFileUnderUmask022_TakesTheModeAPlainWriteGives: the record is as readable as the file it replaced" \
-  '[ "$(mode_of "$(record path "$landed")")" = "$(mode_of "$work/plain-write")" ]'
-record set "$landed" "run:=$run_record" >/dev/null 2>&1
-check "Write_LeavesNoTemporaryBesideTheRunFile: a view is renamed into place too" \
-  'listing="$(ls -A .flow/runs)" && [ -n "$listing" ] && ! printf "%s\n" "$listing" | grep -q "\.tmp$"'
-cp "$work/config.saved" .flow/config.yaml
 
 echo "values that look like options"
 optioned="$(new_task "Option-like values")"
@@ -249,27 +217,6 @@ AnOption|last_event|--seed none
 TheEndOfOptions|asked|--
 AnOptionWithItsValue|answer|--item=local:task/1
 VALUES
-
-echo "a busy lock"
-tracker_state_is none
-locked="$(new_task "Busy lock")"
-record set "$locked" step=plan >/dev/null 2>&1
-lock_held_seconds_past_any_wait=600
-mkdir -p .flow/locks
-python3 -c 'import fcntl,sys,time
-handle=open(sys.argv[1],"a"); fcntl.flock(handle, fcntl.LOCK_EX); open(sys.argv[2],"w").close(); time.sleep(float(sys.argv[3]))' \
-  ".flow/locks/$(slug "$locked").lock" "$work/lock.held" "$lock_held_seconds_past_any_wait" &
-lock_holder=$!
-trap 'kill "$lock_holder" 2>/dev/null; rm -rf "$work"' EXIT
-trap 'exit 130' INT TERM
-lock_holder_start_tries=100
-tries=0; while [ ! -f "$work/lock.held" ] && [ "$tries" -lt "$lock_holder_start_tries" ]; do sleep 0.1; tries=$((tries + 1)); done
-code=lock-never-held
-[ -f "$work/lock.held" ] && { record set "$locked" step=review >/dev/null 2>&1; code=$?; }
-kill "$lock_holder" 2>/dev/null; wait "$lock_holder" 2>/dev/null
-check "LockHeldByAnotherWrite_ExitsSeventyFive: a write that cannot take the item's lock says try again" '[ "$code" -eq 75 ]'
-check "LockHeldByAnotherWrite_LeavesTheRecordAsItWas: a write that never took the lock changes nothing" '[ "$(record get "$locked" step)" = plan ]'
-tracker_state_is ""
 
 echo "a caller's stdin"
 looped="$(new_task "Loop around a write")"
