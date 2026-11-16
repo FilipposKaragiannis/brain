@@ -94,6 +94,22 @@ Good interfaces make testing natural:
 
 3. **Small surface area.** Fewer methods = fewer tests needed. Fewer params = simpler test setup.
 
+## Answering a design question
+
+When asked how to shape a module, say each of these in the answer, in these words:
+
+- **The dependency category** of each dependency, by its name in [DEEPENING.md](DEEPENING.md)
+  (in-process, local-substitutable, remote but owned, true external).
+- **The pure core**: the module's logic as a function with no I/O that takes what a remote
+  dependency returns (a rate table, a price list) as plain data. State it as part of the
+  design, with its signature, even when an outer function fetches the data and passes it in.
+- **The seam and its adapters**: for each port, name the two adapters that fill it (typically
+  the production client and an in-memory fake for tests) and say the two adapters make it a
+  real seam. With only one adapter, say it is a hypothetical seam and leave the port out.
+- **The interface**: the few entry points callers use, and how tests cross the same interface
+  with the in-memory adapter instead of mocking internals.
+- **The rule ids** each decision rests on (table below).
+
 ## Relationships
 
 - A **Module** has exactly one **Interface** (the surface it presents to callers and tests).

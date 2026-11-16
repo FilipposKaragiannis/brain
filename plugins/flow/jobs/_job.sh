@@ -12,6 +12,7 @@
 # schedule can run on its own pair. They are taken out of the arguments the same way.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/host.sh"
+. "$FLOW_PLUGIN/lib/process.sh"
 job_log_dir() { printf '%s/log' "$(flow_home)"; }
 job_say() { job_last="$*"; printf '%s\t%s\t%s\n' "$(now_iso)" "$job" "$*" | tee -a "$(job_log_dir)/$job.log"; }
 die() { job_last="error: $1"; echo "flow: $1" >&2; exit "${2:-1}"; }
@@ -60,7 +61,7 @@ job_skip_if_paused() {
 }
 # job_alive <pid>: the pid still runs this job's script. A lock left by a restart can name a pid
 # the system has since given to something else.
-job_alive() { case "$(ps -o command= -p "$1" 2>/dev/null)" in *"jobs/$(job_base).sh"*) return 0 ;; esac; return 1; }
+job_alive() { case "$(process_command "$1")" in *"jobs/$(job_base).sh"*) return 0 ;; esac; return 1; }
 # job_lock: exit 0 quietly when another run of this job is alive; a lock whose pid is not is stale.
 # The schedules of one job but next (intake and intake-nightly) share that job's state, the notes
 # and ledger, the PR replies, the lessons or the claims, so they take turns on <job>.shared.lock as

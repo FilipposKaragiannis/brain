@@ -7,7 +7,7 @@ failed_checks() { python3 -c 'import json,sys; print(",".join(check["name"] for 
 report_status() { json_value status < "$reports/verify.json"; }
 # run_pid: the pid the run's record names (lib/verify.sh: one `key value` line each).
 run_pid() { sed -n 's/^pid //p' "$reports/verify.run" | head -n 1; }
-# process_running <pid>: lib/verify.sh's own test of a live process.
+# process_running <pid>: lib/process.sh's test of a live process, which lib/verify.sh sources.
 . "$plugin/lib/verify.sh"
 # until_true <seconds> '<condition>': polls the condition until it holds or the seconds pass.
 until_true() { until_deadline=$(( $(date +%s) + $1 )); until (eval "$2") >/dev/null 2>&1; do [ "$(date +%s)" -lt "$until_deadline" ] || return 1; sleep 0.2; done; }

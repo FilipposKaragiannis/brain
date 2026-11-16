@@ -39,6 +39,10 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
    Mermaid, one of them), Evidence before and after from the verify report, Merge danger
    (one-way or two-way door, blast radius in one word), the `verify.md` table, and
    `Resolves #<n>` for a GitHub item (a local item gets `Item: <id>`). Glossary words only.
+   Open the PR with the whole body at once: `gh pr create --base <base> --head <branch> --title
+   <item title> --body-file <file>`. The PR is a GitHub PR on the origin whatever tracker holds
+   the item; a local or Jira item gets one too, and its tracker only records it (step 6). A
+   pushed branch is no PR: when `gh pr create` fails, stop with status `fail` naming it.
 5. When a quiz exists (`<reports>/quiz.md`): open as a draft (`--draft`) and say in the
    result that the PR goes ready when the owner passes the quiz in the console. Never post the
    quiz, its answers or a link to it on the PR: the console shows it on the Gates and Pull

@@ -25,7 +25,9 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    step again while it is still open and the brief carries the answer; an answer in words waives
    nothing, and the item waits for the blocker to close.
 2. **Spawn `pr-creator`** with the step brief plus the path of [PR-BODY.md](PR-BODY.md) (the
-   house body) and, when they exist, `<reports>/explain.html` and `quiz.md`.
+   house body) and, when they exist, `<reports>/explain.html` and `quiz.md`. The PR is a GitHub
+   PR on the origin, opened with `gh pr create`, whatever tracker holds the item: a local item
+   gets one too, and the tracker only records it. A pushed branch is no PR.
 3. **Result** `<reports>/pr.json`: `done` with the URL (under `pr`), the base and why ("base
    <b>, recorded at claim", or the parent rule for a claim with no `state.base`), draft or
    ready, the reviewers asked. A quiz never goes on the PR: the owner takes it in the console,

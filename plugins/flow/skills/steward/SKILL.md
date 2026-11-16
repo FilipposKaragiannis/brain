@@ -47,6 +47,9 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   them, while they stay unchanged and no session works there. It restores only the paths it
   checked and never touches `.flow/`.
 - Never create worktrees outside the pool except `tmp add`, and delete those after the phase.
+- A sandboxed Claude session commits and switches branches only in the worktree it started in:
+  run from anywhere else, a claim, a release or a conflict's commit in a pool worktree fails on
+  `index.lock`, so name that and stop rather than look for a way around it.
 - **The pool grows on its own.** A claim with no free worktree adds one while the pool is below
   `pool_max`, named after the last entry (`../app-wt-3` after `../app-wt-2`), appends it to
   `pool:` and runs the copies and the setup. `worktree_name: ../{repo}-wt-{n}` in the config names

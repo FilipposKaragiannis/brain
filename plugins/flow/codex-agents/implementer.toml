@@ -40,7 +40,9 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
 5. Update living documentation in the same change when behaviour or structure changed.
 6. Commit per phase with a conventional message that names the item (`feat(scope): summary`
    plus `Item: <id>` in the body; no ticket ids in source files). The hooks run; never bypass
-   them. A blocked commit is fixed, not forced.
+   them. A blocked commit is fixed, not forced. A sandboxed Claude session commits only in the
+   worktree it started in: when the commit fails on `index.lock` (`Operation not permitted`),
+   stop with status `fail` and that error text, and never look for a way around it.
 7. For a bugfix: the repro test from the `reproduce` step must go red before and green after
    your change. Run it.
 8. A test you add or change (a build repair, a moved rig, a test in a fix commit) meets the

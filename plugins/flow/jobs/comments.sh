@@ -2,8 +2,9 @@
 # Comments job: address review comments on every open PR, or one.
 #   jobs/comments.sh <claude|codex> [pr|item] [--workers N] [--model <name>] [--effort <level>]
 # Finds every open item with a linked PR across the adapters, drops the merged and closed
-# ones, and runs the flow `comments` skill once per PR in a fresh host session from the main
-# worktree (the skill spawns the comment-addresser in the task's worktree). Before that, with no
+# ones, and runs the flow `comments` skill once per PR in a fresh host session started in the
+# item's worktree, or the main worktree when it holds none (the skill spawns the
+# comment-addresser in the task's worktree). Before that, with no
 # model: a reviewer of the PR's author host silent past reviews.chase_after is asked again
 # (comments.sh chase), a PR that conflicts with its base is named in the brief so the skill
 # merges the base in first, and the checks failing on the PR's head are named so it fixes them.
@@ -153,6 +154,13 @@ item_of() {
   io_head="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("headRefName", ""))' 2>/dev/null)"
   case "$io_head" in flow/?*) slug_item "${io_head#flow/}" ;; esac
 }
+# pass_dir <target>: where the pass's session starts: the worktree the item holds, else the main
+# worktree. A sandboxed Claude session commits only in the worktree it started in.
+pass_dir() {
+  pd_item="$(item_of "$1")"; pd_wt=""
+  [ -z "$pd_item" ] || pd_wt="$("$FLOW_PLUGIN/scripts/steward.sh" find "$pd_item" 2>/dev/null)"
+  if [ -n "$pd_wt" ] && [ -d "$pd_wt" ]; then printf '%s' "$pd_wt"; else printf '%s' "$main"; fi
+}
 # resume_note <target>: the item's comments-resume.md, the note a cut-short pass leaves for the
 # next one (the shape of the health job's resume.md), in the reports folder the steward names.
 resume_note() {
@@ -293,7 +301,7 @@ pass() {
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
   job_say "addressing $t"; rm -f "$(in_use_marker "$t" "$pull")"
   # The output goes to the log as it comes, so a pass killed half way keeps what it said.
-  { job_host_run "$main" "$(host_skill_prompt "$host" flow comments "$t.$note$answer$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
+  { job_host_run "$(pass_dir "$t")" "$(host_skill_prompt "$host" flow comments "$t.$note$answer$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR

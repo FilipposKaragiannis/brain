@@ -33,6 +33,9 @@ T-13), and the public interfaces the plan names.
 6. For `reproduce`: write the single test that fails on the bug as described, run it, confirm
    it is red for the right reason, commit it.
 7. Run the suite with the guide's command. Commit with a conventional message naming the item.
+   A sandboxed Claude session commits only in the worktree it started in: when the commit fails
+   on `index.lock` (`Operation not permitted`), stop with status `fail` and that error text, and
+   never look for a way around it.
 8. Ask of every test: would it reveal a bug a sibling would not? Delete it when the answer is no.
 9. Before committing, read each test's assertions and split it when two of them can fail
    independently (a state and a position, a release and a placement, a verdict and a null on

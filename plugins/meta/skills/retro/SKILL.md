@@ -48,13 +48,17 @@ machine check before a written rule.
 
 ## 3. Report
 
-Findings grouped by home, highest leverage first, each as **what happened → the change → where
-it lands**, with the lesson lines that support it. Then ask which to apply.
+The report has three parts. The findings, grouped by home, highest leverage first, each under
+the labels **What happened** (with the lesson lines that support it), **The change** (one change,
+not a menu of options) and **Where it lands**. The lessons set aside, each with why (a one-off, a
+pinned decision). Then the question which findings to apply. Nothing else goes in: a check that
+came up clean or a remark on the project is not a finding. Steps 1 to 3 read the project and the
+session only: the marketplace checkout is opened in step 4, for the findings the owner approved.
 
 ## 4. Apply
 
-- Marketplace changes: in the marketplace repo (the owner names its path; `/work/brain` here),
-  on a branch `retro/<date>`, the edits, a changelog fragment
+- Marketplace changes: in the marketplace checkout (the path the prompt names, else ask the
+  owner for it), on a branch `retro/<date>`, the edits, a changelog fragment
   `plugins/<plugin>/changelog.d/retro-<date>.md` for each plugin changed (a `bump:` line, a blank
   line, the bullets; never the version or `CHANGELOG.md`, the release PR folds them),
   `tools/generate.sh`, `tools/test.sh`, then a PR (`gh pr create`) titled `retro: <summary>`
@@ -69,10 +73,11 @@ it lands**, with the lesson lines that support it. Then ask which to apply.
 
 When the prompt says unattended (the weekly `flow` job runs this skill under `claude -p` or
 `codex exec`), nobody answers. Skip the question in step 3. Apply every marketplace finding
-as the PR in step 4; the owner reviews it there. Do not edit the project: write the project
-findings, with the exact edits proposed, to `.flow/reports/retro-<date>.md` together with the
-report, and append the `retros.log` line. "Nothing worth changing" writes the report and the
-log line and opens no PR.
+as the PR in step 4; the owner reviews it there. With no checkout named, the marketplace findings
+go in the report instead. Do not edit the project: write the project findings, with the exact
+edits proposed, to `.flow/reports/retro-<date>.md` together with the report, and append the
+`retros.log` line. "Nothing worth changing" writes the report and the log line and opens no PR.
+The final message names the report and says the project was not edited.
 
 ## Never
 

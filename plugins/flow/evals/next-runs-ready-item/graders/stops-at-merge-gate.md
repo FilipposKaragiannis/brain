@@ -2,7 +2,7 @@
 type: regex
 target:
   source: file
-  path: .flow/items/task/1.md
+  path: .main/.flow/items/task/1.md
 pattern: '^gate: "?merge"?$'
 flags: "m"
 match: contains

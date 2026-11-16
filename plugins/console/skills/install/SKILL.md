@@ -19,10 +19,22 @@ Install the Brain Console from this plugin: the app under `~/.local/share/brain-
    The plugin root is two folders up from this skill (`${CLAUDE_PLUGIN_ROOT}` on Claude; on
    Codex, the path `codex plugin list` prints for `console`). Add `--no-launchd` only when the owner asked not to start it on login. It takes a
    minute: it copies the app, runs `npm ci` and builds the page. Done when it exits.
-3. **Handle the exit code.** 2: node or npm is missing or too old; say what to install, in the
-   installer's words, and stop. 1 with "no projects": the files are in place; ask which folder to
-   watch, then run `brain-console add <folder>` and `brain-console install`. Any other 1: show the
-   failing line and stop. Done when the install succeeded or the owner knows the one next step.
+3. **Handle the exit code.** 1 with "no projects": the files are in place; ask which folder to
+   watch, then run `brain-console add <folder>` and `brain-console install`. Any other failure
+   (2: node or npm is missing or too old; any other 1) ends the work, and the whole message is
+   three parts with nothing said twice: the sentence "The install failed.", with no reason; the
+   installer's failing line in a `>` quote, copied character for character and cut before the
+   `;` where its advice starts, never retold in your own words; then `Next step:` and that
+   advice, or for a line with none the one thing to do, then running this install again. No
+   other advice or notes. For a node too old:
+   ```
+   The install failed.
+
+   > console install: node v20.11.0 is too old
+
+   Next step: install Node 24 or newer, then run `/console:install` again.
+   ```
+   Done when the install succeeded or the owner knows the one next step.
 4. **End with one report**, in a few lines: the version installed, whether it runs under
    launchd and on which URL (from the `status` lines at the end, never the token), the PATH line
    to add when the installer printed one, and `brain-console open` to see it. Done when the

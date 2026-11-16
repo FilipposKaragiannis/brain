@@ -127,7 +127,8 @@ One command, `node daemon/src/main.ts <subcommand>` (the launcher `~/.local/bin/
 `/console:install` runs `../scripts/install.sh [--no-launchd] [--keep-old] [--project <root>]…`:
 it copies this folder (without `node_modules` or `ui/dist`, through an archive so a failed read
 fails) to `~/.local/share/brain-console/<version>/` (the version must be digits and dots), runs
-`npm ci` and the UI build in a staging folder beside it, moves a same-version copy aside before
+`npm ci` and the UI build in a staging folder beside it (with the npm beside `node` when there is
+one; an npm older than 7, which cannot read the lockfiles, exits 2 before any copy), moves a same-version copy aside before
 moving the new one in, points `current` at it, writes the launcher, adds each `--project`, runs
 `brain-console install` unless `--no-launchd`, and removes the other versions unless `--keep-old`.
 A step that fails after `current` moved points it back at the version before. Staging folders a

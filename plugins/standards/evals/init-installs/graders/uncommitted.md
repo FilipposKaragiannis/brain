@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: "uncommitted|not (?:yet )?(?:been )?committed|nothing (?:is |has been |was )?(?:yet )?committed|(?:haven't|have not|did not|didn't) commit"
+pattern: "uncommitted|not (?:yet )?(?:been )?committed|(?:nothing|none(?: of (?:it|them|this|these))?) (?:is |are |has been |have been |was |were )?(?:yet )?committed|(?:haven't|have not|did not|didn't) commit"
 flags: "i"
 match: contains
 target: last_message

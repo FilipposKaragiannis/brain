@@ -28,7 +28,8 @@ Install the flow plugin into the current repository, or refresh it after a plugi
    When the installer says the pool lists more worktrees than the default `pool_max`, say so first:
    each listed worktree becomes a task slot, so the owner trims the list or keeps it.
 3. **On a first install, end that same message with the config questions**, one numbered list,
-   each with the value the installer wrote and the one you recommend from the repository:
+   each with the value the installer wrote, in those words ("written `3`", "written empty"), and
+   the value you recommend from the repository ("I recommend `3`"; a value, not only advice):
    `pool_max` (the parallelism budget; the pool grows to it on its own), `worktree_copy` (the
    git-ignored files a worktree needs: `.claude/settings.local.json`, local env files; read
    `.gitignore` for candidates), `worktree_setup` (restore or install commands a fresh checkout
@@ -36,7 +37,7 @@ Install the flow plugin into the current repository, or refresh it after a plugi
    runs; scripts under `tools/` or `scripts/` named check, lint or verify; a gate that only
    matters for some files takes `command` and `paths`), `feel_test_paths`
    (the client or UI folders), `auto_gates` (leave `plan-approval` empty unless the owner says items are
-   grilled and defined before they enter the backlog; then recommend `S,M`), `notify.idle` (true: the scheduled `next` job says once when nothing is ready), `notify.slack_webhook` (prefer the `FLOW_SLACK_WEBHOOK` environment variable on the session or the scheduler, so the URL stays out of the repository). `reviews.reviewers` (who each review round asks: `codex`, `claude`, `copilot` or a login; recommend only the reviewers that answer on this repo), `jobs.claude.model`/`jobs.claude.effort` and `jobs.codex.model`/`jobs.codex.effort` (the model and effort of the sessions the scheduled jobs start, one pair per host, passed as written; empty is the host's default; a Claude effort is low, medium, high, xhigh or max, a Codex one low, medium, high or xhigh). Never hold the report back for the
+   grilled and defined before they enter the backlog; then recommend `S,M`), `notify.idle` (true: the scheduled `next` job says once when nothing is ready), `notify.slack_webhook` (prefer the `FLOW_SLACK_WEBHOOK` environment variable on the session or the scheduler, so the URL stays out of the repository). `reviews.reviewers` (who each review round asks: `codex`, `claude`, `copilot` or a login; recommend only the reviewers that answer on this repo, `[]` when none can yet), `jobs.claude.model`/`jobs.claude.effort` and `jobs.codex.model`/`jobs.codex.effort` (the model and effort of the sessions the scheduled jobs start, one pair per host, passed as written; empty is the host's default; a Claude effort is low, medium, high, xhigh or max, a Codex one low, medium, high or xhigh). Never hold the report back for the
    answers. When the owner answers, write the accepted values into `.flow/config.yaml`, then run
    `init --check` and show that the gaps are closed.
 
