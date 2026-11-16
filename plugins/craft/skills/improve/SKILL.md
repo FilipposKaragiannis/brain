@@ -34,9 +34,11 @@ move it? "Concentrates" is the signal.
 
 ## 2. Present the candidates as an HTML report
 
-Write one self-contained file to `${TMPDIR:-/tmp}/improve-<timestamp>.html`, open it
-(`open` on macOS, `xdg-open` on Linux) and print the absolute path. Scaffold, diagram patterns
-and styling: [HTML-REPORT.md](HTML-REPORT.md). Mermaid for graph-shaped relationships, hand-built
+Write one self-contained file to `${TMPDIR:-/tmp}/improve-<timestamp>.html`: resolve that path
+first (`echo "${TMPDIR:-/tmp}/improve-$(date +%Y%m%d-%H%M%S).html"`), then create the file with
+your file-writing tool (Write in Claude Code), never a shell heredoc or redirect, which mangles
+the report's quotes and backticks. Open it (`open` on macOS, `xdg-open` on Linux) and print the
+absolute path. Scaffold, diagram patterns and styling: [HTML-REPORT.md](HTML-REPORT.md). Mermaid for graph-shaped relationships, hand-built
 divs or SVG for the editorial visuals. Each candidate is a card:
 
 - **Files**: the modules involved.
@@ -53,8 +55,11 @@ divs or SVG for the editorial visuals. Each candidate is a card:
 An ADR conflict is shown only when the friction is real enough to reopen the ADR, with a warning
 callout naming it. End with **Top recommendation**: the first candidate to take and why.
 
-In the chat, list the candidates in one line each (name, strength, the rules served) with the
-report path, then ask: "Which of these would you like to explore?" and stop.
+In the chat, list the candidates in one line each (name, strength, the rules served), then one
+line that starts `**Top recommendation:**` and names the candidate and why it goes first, then
+the report path, then ask: "Which of these would you like to explore?" and stop. The chat stays
+at the candidates: no interface, signature, entry point or shape for the deepened module, and no
+implementation steps. Those come in step 3, after the owner picks.
 
 ## 3. Specify the chosen candidate
 
