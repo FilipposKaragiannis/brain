@@ -1,5 +1,49 @@
 # console
 
+## 0.24.0 (2026-11-16)
+
+- The installer uses the npm that came with the node it runs, not an older npm found first on the
+  PATH (such as Homebrew's npm 6 beside an nvm node 24), which crashed in `npm ci`.
+- An npm older than 7, which cannot read the app's lockfiles, now stops the install at the start
+  with exit 2 and a message that names it and says what to install.
+- `install` ends a failed install with the failing line and its one next step, nothing else.
+- A failed install now always reads the same way, with nothing said twice: "The install
+  failed.", the installer's line quoted exactly and cut before its advice, then `Next step:` with
+  that advice. Before, the agent sometimes retold the line in its own words or repeated the
+  line's advice as the next step, and `install-works` failed on those runs.
+- `install` ends with one report in a few lines instead of "report once", which current models
+  read as a ban on any note during the work.
+- The demo stops the runs and fake agents it started where ps cannot run, as in a sandbox that
+  refuses the setuid /bin/ps on macOS, instead of leaving them going after the demo is gone.
+- Terminal pane: a shell in a pty the daemon runs, rendered in the page, opened from the project
+  bar (at the root) or from a worktree card or row (at that worktree). The panes sit in a dock at
+  the bottom of the page, one tab each, and stay open across screens, projects and Settings; Close
+  hangs the shell up and kills what it left running 1.5 s later (a stopping daemon waits for that
+  kill), and a pane the daemon ended says why and keeps its screen. Drag the dock's top edge (or
+  focus it and use the arrows) to resize it, and the terminal refits; the browser keeps the
+  height. Scrolling over a pane never scrolls the page behind it.
+- With iTerm installed the pane takes its default profile as is: font and size, colours (P3
+  converted to sRGB), cursor shape and blink, and bold in bright colours; the page's theme switch
+  then leaves the pane alone. The daemon serves the profile's font file, or the installed
+  JetBrainsMono Nerd Font without iTerm, and the page loads it as a web font, so prompt icons draw
+  in Brave and Safari too. Without iTerm the pane keeps the console's own look.
+- The pane replaces the outside terminal app: Open in Terminal on the project bar, a worktree, a
+  dead run or a process with no session opens a shell pane (one button where there were two);
+  Follow log on a job opens a pane that follows its log, and waits for it when the job has not
+  run yet; Open session and Discuss with the agent open a pane that resumes the session, showing
+  the resume command instead while the run still goes. The tabs say which: `shell · <folder>`,
+  `log · <job>` or `session · <folder or item>`. The `terminal.open` action is gone.
+- Settings no longer has a Terminal choice, and the `terminal` setting is gone: a settings file
+  that still holds it loads as before, and the next save leaves it out. `PUT /api/settings` now
+  refuses a `terminal` key as an unknown setting.
+- The daemon now has runtime dependencies, `@lydell/node-pty` and `ws`, both for the terminal pane
+  (ADR 0003).
+- The app's tests (`npm test`, and so `npm run check` and the `console-app` commit gate) and the
+  plugin's shell suite run in the repository's test sandbox: no git repository variable, a
+  throwaway home and git config, and a run that changes the checkout it runs from fails. With
+  `GIT_DIR` exported, as in a git hook, the sync tests wrote their `t` identity into the
+  repository being committed.
+
 ## 0.23.0 (2026-11-15)
 
 - The console demo (`scripts/demo.sh`) fills every screen (gh#196). Agents shows a live run with
