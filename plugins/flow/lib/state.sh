@@ -1,8 +1,8 @@
 #!/bin/sh
-# The flow record of an item (ADR 0004, docs/design/flow-owns-its-state.md): one JSON file per
-# item under state.dir, opened only by scripts/_state.py. Sourced by lib/flow.sh; defines
-# functions and runs nothing. Each public function runs in a subshell: it changes no variable of
-# its caller, reads no stdin of its caller, and returns its code instead of exiting the caller.
+# The flow record of an item: one JSON file per item under state.dir that holds its workflow
+# state, opened only by scripts/_state.py. Sourced by lib/flow.sh; defines functions and runs
+# nothing. Each public function runs in a subshell: it changes no variable of its caller, reads no
+# stdin of its caller, and returns its code instead of exiting the caller.
 #   state_dir                   state.dir: absolute as given, relative under the main worktree;
 #                               unset, <flow home>/state
 #   record_file <item>          <state dir>/<slug>.json; closed/<slug>.json once archived

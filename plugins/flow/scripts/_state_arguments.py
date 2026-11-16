@@ -1,4 +1,5 @@
-"""The command line of _state.py (ADR 0004). Pure: it reads only the words it is given.
+"""The command line of _state.py: its commands and their options.
+Pure: it reads only the words it is given.
 
 A command, then each of its options as `--name value`, every one required (given twice, the last
 counts), then `--` and the command's words: the pairs of set, the one key of get, none for the

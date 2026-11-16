@@ -1,4 +1,4 @@
-"""The flow record's views and its lazy seed (ADR 0004). Pure: no file, clock or environment is read here.
+"""The flow record's views and its lazy seed. Pure: no file, clock or environment is read here.
 
 The views are the stores the flow read before the records, rendered from a write's pairs and the
 merged record, and only for a fact the write names:

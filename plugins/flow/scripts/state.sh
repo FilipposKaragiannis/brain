@@ -1,5 +1,5 @@
 #!/bin/sh
-# The flow record of an item (ADR 0004): one JSON file per item under state.dir (lib/state.sh).
+# The flow record of an item: one JSON file per item under state.dir (lib/state.sh).
 #   state.sh get <item> <key>       one of the twenty state keys through the key map, or a record
 #                                   path (gate.options.0.label, claim.machine, run); a string raw,
 #                                   anything else as JSON, nothing when there is no record

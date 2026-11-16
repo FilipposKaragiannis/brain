@@ -1,4 +1,5 @@
-"""The flow record of an item as data (ADR 0004). Pure: no file, clock or environment is read here.
+"""The flow record of an item as data: its keys, pairs, merge and reads.
+Pure: no file, clock or environment is read here.
 
 _state.py is the edge that loads, locks and writes; this module checks pairs, merges and reads
 back; _state_views.py seeds a record and renders its views. A pair is `key=text` for one of the

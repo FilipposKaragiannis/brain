@@ -1,4 +1,5 @@
-"""The flow record of an item on disk (ADR 0004). lib/state.sh is its one caller; see there.
+"""The flow record of an item on disk: read, locked, written and archived here.
+lib/state.sh is its one caller; see there.
 
   _state.py set     --state-dir D --flow-home H --item I --now T --machine M --host N
                     --claim-file F --seed stdin|none -- <pair>...
