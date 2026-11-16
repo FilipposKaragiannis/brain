@@ -26,21 +26,22 @@ check() { # check <name> <condition command...>
 
 home="$work/home"; mkdir -p "$home"
 fake="$work/bin"; mkdir -p "$fake"
-# npm: logs "<cwd> <args>"; `ci` leaves a marker and links the app's runtime dependencies from
-# the source's node_modules (the daemon imports ws at start), `run build` leaves ui/dist/index.html.
+# npm: logs "<cwd> <args>"; `ci` leaves a marker and, in the app, a stand-in ws (the daemon imports
+# it at start; node-pty loads on the first spawn, which no test here makes), `run build` leaves
+# ui/dist/index.html. No test reads the source's node_modules, which a fresh clone has not installed.
 cat > "$fake/npm" <<SH
 #!/bin/sh
 [ "\$1" = --version ] && { echo 11.6.2; exit 0; }
 echo "\$(pwd) \$*" >> "$work/npm.log"
 dir=.; [ "\$1" = --prefix ] && { dir="\$2"; shift 2; }
 [ "\$1" = ci ] && [ -f "$work/npm-fails" ] && exit 1
-link_runtime() {
-  for name in \$(node -p 'Object.keys(JSON.parse(require("fs").readFileSync("package.json", "utf8")).dependencies ?? {}).join(" ")'); do
-    mkdir -p "node_modules/\$(dirname "\$name")" && ln -s "$P/app/node_modules/\$name" "node_modules/\$name"
-  done
+stand_in_runtime() {
+  mkdir -p node_modules/ws
+  echo '{ "name": "ws", "type": "module", "exports": "./index.js" }' > node_modules/ws/package.json
+  echo 'export class WebSocket {} export class WebSocketServer {}' > node_modules/ws/index.js
 }
 case "\$1" in
-  ci) mkdir -p "\$dir/node_modules" && : > "\$dir/node_modules/.fake" && { [ "\$dir" != . ] || link_runtime; } ;;
+  ci) mkdir -p "\$dir/node_modules" && : > "\$dir/node_modules/.fake" && { [ "\$dir" != . ] || stand_in_runtime; } ;;
   run) [ "\$2" = build ] && mkdir -p "\$dir/dist" && echo '<html></html>' > "\$dir/dist/index.html" ;;
 esac
 SH
