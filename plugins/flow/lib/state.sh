@@ -115,19 +115,25 @@ state_python() {
 tracker_mirror() ( adapter write-state "$@" ) </dev/null >&2
 
 # record_pairs_kind <pair>...: state or record, the kind every pair is; refuses, exit 2, a pair
-# with no =, the two kinds together and attempts that is not a whole number.
+# record_pair_kind refuses and the two kinds together.
 record_pairs_kind() (
   flow_record_kind=""
   for flow_record_pair in "$@"; do
-    flow_record_key="${flow_record_pair%%=*}"
-    [ "$flow_record_key" != "$flow_record_pair" ] || die "expected key=value, got $flow_record_pair" "$EXIT_USAGE"
-    case "$flow_record_pair" in attempts=*[!0123456789]*) die "attempts takes a whole number, not ${flow_record_pair#attempts=}" "$EXIT_USAGE" ;; esac
-    case "$flow_record_key" in *.*|*:) flow_record_pair_kind=record ;; *) flow_record_pair_kind=state ;; esac
+    flow_record_pair_kind="$(record_pair_kind "$flow_record_pair")" || exit "$EXIT_USAGE"
     [ "${flow_record_kind:-$flow_record_pair_kind}" = "$flow_record_pair_kind" ] \
       || die "a write holds state pairs or record pairs, never both: $*" "$EXIT_USAGE"
     flow_record_kind="$flow_record_pair_kind"
   done
   printf '%s' "$flow_record_kind"
+)
+
+# record_pair_kind <pair>: state or record, the pair's kind; refuses, exit 2, a pair with no = and
+# attempts that is not a whole number.
+record_pair_kind() (
+  flow_record_key="${1%%=*}"
+  [ "$flow_record_key" != "$1" ] || die "expected key=value, got $1" "$EXIT_USAGE"
+  case "$1" in attempts=*[!0123456789]*) die "attempts takes a whole number, not ${1#attempts=}" "$EXIT_USAGE" ;; esac
+  case "$flow_record_key" in *.*|*:) printf record ;; *) printf state ;; esac
 )
 
 # record_ensured_dir: the state dir, created when missing; refuses, exit 2, a state.dir that
