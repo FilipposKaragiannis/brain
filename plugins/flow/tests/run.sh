@@ -82,7 +82,10 @@ chmod 600 .flow/items/task/1.md
 check "PrivateItemWrittenAgain_StaysPrivate: an item made 0600 is still 0600 after a state write, because the whole-file replace keeps the old file's mode" \
   [ "$(python3 -I -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' .flow/items/task/1.md)" = "0o600" ]
 chmod 644 .flow/items/task/1.md
-check "list open"         [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
+check "TemporaryItemFile_IsOwnerOnlyFromCreation: the temporary file a whole-item write fills is 0600 under umask 022 before any content is written, because a private item's contents never sit in a file others can read" \
+  python3 -I -B -c 'import os, stat, sys; sys.path.insert(0, sys.argv[1]); import _item; os.umask(0o022)
+with _item.create_owner_only(sys.argv[2]) as f: sys.exit(stat.S_IMODE(os.fstat(f.fileno()).st_mode) != 0o600)' "$P/adapters/local" "$work/owner-only.tmp"
+check "list open"        [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
 printf '[{"id":"local:task/90","status":"open","state":{"gate":"none"},"blocked_by":["gh#999999"],"open_blockers":[]},{"id":"local:task/91","status":"open","state":{"gate":"none"},"blocked_by":[],"open_blockers":["gh#1"]}]' | "$P/scripts/filter-ready.sh" > "$work/ready.out"
 check "ready: an item that lists its open blockers is judged by that list, with no read per blocker" sh -c "grep -q 'local:task/90' '$work/ready.out' && ! grep -q 'local:task/91' '$work/ready.out'"
 check "ready excludes blocked" [ "$("$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "local:task/1,local:task/2" ]
