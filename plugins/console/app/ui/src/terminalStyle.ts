@@ -7,8 +7,8 @@ export const SERVED_FONT_FAMILY = 'Brain Console Terminal';
 /** The pane's font size without an iTerm profile that names one. */
 export const PANE_FONT_SIZE_PIXELS = 12;
 
-/** Installs the font file as a web font of the family and settles once it is loaded; false when the browser cannot load it. */
-export type FontInstaller = (family: string, bytes: ArrayBuffer) => Promise<boolean>;
+/** Installs the font file as a web font of the family and settles once it is loaded; false when the browser cannot load it or the signal cancels the install. */
+export type FontInstaller = (family: string, bytes: ArrayBuffer, signal: AbortSignal) => Promise<boolean>;
 
 /** What the page learnt of the panes' look before the first pane opens: iTerm's, if any, and whether the served font is loaded. */
 export type TerminalStyle = { iterm: ItermLook | null; servedFont: boolean };
@@ -36,19 +36,19 @@ const CSS_HEX_COLOUR = /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i;
 /**
  * Asks the daemon for the panes' profile and, when it serves a font, loads that font before it
  * settles, so a terminal opened after it measures its cells in the font it draws with. Anything
- * the daemon does not give leaves the console's own look.
+ * the daemon does not give, and a load the signal cancels, leaves the console's own look.
  */
-export async function loadTerminalStyle(api: Api, installFont: FontInstaller): Promise<TerminalStyle> {
-  const response = await api.request(TERMINAL_PROFILE_PATH, 'GET', null);
+export async function loadTerminalStyle(api: Api, installFont: FontInstaller, signal: AbortSignal): Promise<TerminalStyle> {
+  const response = await api.get(TERMINAL_PROFILE_PATH, signal);
   const profile = response.status === HTTP_OK ? parseTerminalProfile(response.body) : null;
-  if (profile === null) return CONSOLE_STYLE;
-  const servedFont = profile.font !== null && await installServedFont(api, profile.font.path, installFont);
-  return { iterm: profile.iterm, servedFont };
+  if (profile === null || signal.aborted) return CONSOLE_STYLE;
+  const servedFont = profile.font !== null && await installServedFont(api, profile.font.path, installFont, signal);
+  return signal.aborted ? CONSOLE_STYLE : { iterm: profile.iterm, servedFont };
 }
 
-async function installServedFont(api: Api, path: string, installFont: FontInstaller): Promise<boolean> {
-  const bytes = await api.requestBytes(path);
-  return bytes !== null && installFont(SERVED_FONT_FAMILY, bytes);
+async function installServedFont(api: Api, path: string, installFont: FontInstaller, signal: AbortSignal): Promise<boolean> {
+  const bytes = await api.requestBytes(path, signal);
+  return bytes !== null && installFont(SERVED_FONT_FAMILY, bytes, signal);
 }
 
 /**

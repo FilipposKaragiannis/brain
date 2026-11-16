@@ -160,10 +160,17 @@ export class FakeDaemon implements Api {
     return entry.route(body);
   }
 
+  /** Answers as `request` does; a cancelled one gets status 0, as the browser's does. */
+  async get(path: string, signal: AbortSignal): Promise<ApiResponse> {
+    if (signal.aborted) return { status: 0, body: { error: 'aborted' } };
+    return this.request(path, 'GET', null);
+  }
+
   /** The files `requestBytes` answers, by path; any other path gets null, as a 404 does. */
   readonly files = new Map<string, ArrayBuffer>();
 
-  async requestBytes(path: string): Promise<ArrayBuffer | null> {
+  async requestBytes(path: string, signal: AbortSignal): Promise<ArrayBuffer | null> {
+    if (signal.aborted) return null;
     return this.files.get(path) ?? null;
   }
 

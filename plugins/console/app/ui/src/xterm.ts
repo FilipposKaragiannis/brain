@@ -22,17 +22,25 @@ function pageLook(): PageLook {
   return { colours, fontFamily: read('--terminal-font') };
 }
 
-/** Installs the font file as a `FontFace` of the family once the browser has loaded it. */
-export const browserFontInstaller: FontInstaller = async (family, bytes) => {
+/** Installs the font file as a `FontFace` of the family once the browser has loaded it, unless the signal cancelled the install first. */
+export const browserFontInstaller: FontInstaller = async (family, bytes, signal) => {
   try {
     const face = new FontFace(family, bytes);
-    await face.load();
+    const loaded = await Promise.race([face.load().then(() => true), whenAborted(signal)]);
+    if (!loaded || signal.aborted) return false;
     document.fonts.add(face);
     return true;
   } catch {
     return false;
   }
 };
+
+function whenAborted(signal: AbortSignal): Promise<false> {
+  return new Promise((resolve) => {
+    if (signal.aborted) resolve(false);
+    else signal.addEventListener('abort', () => resolve(false), { once: true });
+  });
+}
 
 /** Paints the dock behind the panes in the iTerm profile's background, so the edge around a terminal matches it; without one the stylesheet's stays. */
 export function paintPaneBackground(style: TerminalStyle): void {

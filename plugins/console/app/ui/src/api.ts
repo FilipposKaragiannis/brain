@@ -25,8 +25,10 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT';
 
 export type Api = {
   request(path: string, method: HttpMethod, body: unknown): Promise<ApiResponse>;
-  /** `GET` a file's bytes; null when the daemon did not answer 200 with it. */
-  requestBytes(path: string): Promise<ArrayBuffer | null>;
+  /** `GET` that the signal cancels; a cancelled one answers status 0, as an unreachable daemon does. */
+  get(path: string, signal: AbortSignal): Promise<ApiResponse>;
+  /** `GET` a file's bytes; null when the daemon did not answer 200 with it or the signal cancelled the request. */
+  requestBytes(path: string, signal: AbortSignal): Promise<ArrayBuffer | null>;
   openStream(path: string): StreamLike;
   openSocket(path: string): SocketLike;
 };
@@ -54,19 +56,18 @@ export function browserApi(token: string | null): Api {
       if (body !== null) headers['content-type'] = 'application/json';
       const init: RequestInit = { method, headers };
       if (body !== null) init.body = JSON.stringify(body);
-      try {
-        const response = await fetch(path, init);
-        const text = await response.text();
-        return { status: response.status, body: text === '' ? null : parseJson(text) };
-      } catch (error) {
-        return { status: 0, body: { error: error instanceof Error ? error.message : 'network error' } };
-      }
+      return fetchJson(path, init);
     },
-    async requestBytes(path) {
+    async get(path, signal) {
+      const headers: Record<string, string> = {};
+      if (token !== null) headers.authorization = `Bearer ${token}`;
+      return fetchJson(path, { method: 'GET', headers, signal });
+    },
+    async requestBytes(path, signal) {
       const headers: Record<string, string> = {};
       if (token !== null) headers.authorization = `Bearer ${token}`;
       try {
-        const response = await fetch(path, { method: 'GET', headers });
+        const response = await fetch(path, { method: 'GET', headers, signal });
         return response.status === HTTP_OK ? await response.arrayBuffer() : null;
       } catch {
         return null;
@@ -82,6 +83,16 @@ export function browserApi(token: string | null): Api {
       return socket;
     },
   };
+}
+
+async function fetchJson(path: string, init: RequestInit): Promise<ApiResponse> {
+  try {
+    const response = await fetch(path, init);
+    const text = await response.text();
+    return { status: response.status, body: text === '' ? null : parseJson(text) };
+  } catch (error) {
+    return { status: 0, body: { error: error instanceof Error ? error.message : 'network error' } };
+  }
 }
 
 function parseJson(text: string): unknown {

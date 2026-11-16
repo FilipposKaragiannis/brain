@@ -20,7 +20,9 @@ if (token !== null) {
   window.history.replaceState(window.history.state, '', withoutToken.toString());
 }
 const api = browserApi(token);
-const terminalStyle = await loadTerminalStyle(api, browserFontInstaller);
+const pageLeft = new AbortController();
+window.addEventListener('pagehide', () => pageLeft.abort(), { once: true });
+const terminalStyle = await loadTerminalStyle(api, browserFontInstaller, pageLeft.signal);
 paintPaneBackground(terminalStyle);
 const services = { api, hub: new StreamHub(api), panes: new PaneStore(api, xtermTerminals(terminalStyle)) };
 const systemClock = (): number => Date.now();

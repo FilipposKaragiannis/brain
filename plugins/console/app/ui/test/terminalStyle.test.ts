@@ -23,6 +23,9 @@ function browserFonts(loads = true): { installer: FontInstaller; loaded: Map<str
 
 const STILL_LOADING = 'still loading';
 
+/** The signal of a page that stays open while its look loads. */
+const STAYING = new AbortController().signal;
+
 /** Settles on the next task, after every pending microtask: a style that does not wait for the font has settled by then. */
 function afterPendingWork<T>(value: T): Promise<T> {
   return new Promise((resolve) => setTimeout(() => resolve(value), 0));
@@ -49,28 +52,28 @@ test('ProfileUnusable_ConsoleStyle', async () => {
   for (const [shape, status, body] of answers) {
     const daemon = new FakeDaemon();
     daemon.answer('GET', TERMINAL_PROFILE_PATH, () => ({ status, body }));
-    expect(await loadTerminalStyle(daemon, browserFonts().installer), `because when ${shape} the pane keeps the console's own theme and font`).toEqual(CONSOLE_STYLE);
+    expect(await loadTerminalStyle(daemon, browserFonts().installer, STAYING), `because when ${shape} the pane keeps the console's own theme and font`).toEqual(CONSOLE_STYLE);
   }
 });
 
 test('NoProfileRoute_ConsoleStyle', async () => {
-  expect(await loadTerminalStyle(new FakeDaemon(), browserFonts().installer), 'because an older daemon without the route must not break the pane').toEqual(CONSOLE_STYLE);
+  expect(await loadTerminalStyle(new FakeDaemon(), browserFonts().installer, STAYING), 'because an older daemon without the route must not break the pane').toEqual(CONSOLE_STYLE);
 });
 
 test('ServedFont_LoadedUnderTheServedFamily', async () => {
   const fonts = browserFonts();
-  await loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), fonts.installer);
+  await loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), fonts.installer, STAYING);
   expect(fonts.loaded.get(SERVED_FONT_FAMILY), 'because the page loads the daemon\'s font file itself, so a browser that hides installed fonts still draws its glyphs').toBe(FONT_BYTES);
 });
 
 test('ServedFontLoaded_StyleSaysSo', async () => {
-  const style = await loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), browserFonts().installer);
+  const style = await loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), browserFonts().installer, STAYING);
   expect(style.servedFont, 'because a loaded served font is the one the pane asks for first').toBe(true);
 });
 
 test('ServedFontStillLoading_StyleNotReady', async () => {
   const font = slowFont();
-  const loading = loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), font.installer);
+  const loading = loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), font.installer, STAYING);
   await font.asked;
   const first = await Promise.race([loading, afterPendingWork(STILL_LOADING)]);
   font.finish(true);
@@ -80,7 +83,7 @@ test('ServedFontStillLoading_StyleNotReady', async () => {
 
 test('ServedFontFinishesLoading_StyleUsesIt', async () => {
   const font = slowFont();
-  const loading = loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), font.installer);
+  const loading = loadTerminalStyle(daemonServing({ iterm: null, font: { path: TERMINAL_FONT_PATH } }), font.installer, STAYING);
   await font.asked;
   font.finish(true);
   expect((await loading).servedFont, 'because a font that finishes loading after the ask is still the one the pane asks for first').toBe(true);
@@ -93,17 +96,34 @@ test('ServedFontUnavailable_ConsoleFontKept', async () => {
     ['the profile names no font', daemonServing({ iterm: null, font: null }), browserFonts().installer],
   ];
   for (const [shape, daemon, installer] of rows) {
-    expect((await loadTerminalStyle(daemon, installer)).servedFont, `because when ${shape} the pane keeps the console's font and nothing fails`).toBe(false);
+    expect((await loadTerminalStyle(daemon, installer, STAYING)).servedFont, `because when ${shape} the pane keeps the console's font and nothing fails`).toBe(false);
   }
 });
 
+test('CancelledBeforeTheProfileAnswers_ConsoleStyle', async () => {
+  const pageLeft = new AbortController();
+  pageLeft.abort();
+  const style = await loadTerminalStyle(daemonServing({ iterm: ITERM, font: { path: TERMINAL_FONT_PATH } }), browserFonts().installer, pageLeft.signal);
+  expect(style, 'because a cancelled load settles to the console\'s own look instead of throwing into the page').toEqual(CONSOLE_STYLE);
+});
+
+test('CancelledWhileTheFontLoads_ConsoleStyle', async () => {
+  const pageLeft = new AbortController();
+  const font = slowFont();
+  const loading = loadTerminalStyle(daemonServing({ iterm: ITERM, font: { path: TERMINAL_FONT_PATH } }), font.installer, pageLeft.signal);
+  await font.asked;
+  pageLeft.abort();
+  font.finish(true);
+  expect(await loading, 'because a load cancelled midway settles to the console\'s own look, not half of the profile').toEqual(CONSOLE_STYLE);
+});
+
 test('ItermProfile_PassedToThePanes', async () => {
-  const style = await loadTerminalStyle(daemonServing({ iterm: ITERM, font: { path: TERMINAL_FONT_PATH } }), browserFonts().installer);
+  const style = await loadTerminalStyle(daemonServing({ iterm: ITERM, font: { path: TERMINAL_FONT_PATH } }), browserFonts().installer, STAYING);
   expect(style.iterm, 'because the panes take iTerm\'s look as the daemon read it').toEqual(ITERM);
 });
 
 test('ItermFontUnavailable_ItermLookKept', async () => {
-  const style = await loadTerminalStyle(daemonServing({ iterm: ITERM, font: { path: TERMINAL_FONT_PATH } }, null), browserFonts().installer);
+  const style = await loadTerminalStyle(daemonServing({ iterm: ITERM, font: { path: TERMINAL_FONT_PATH } }, null), browserFonts().installer, STAYING);
   expect(style.iterm, 'because a font that does not load leaves iTerm\'s colours in place').toEqual(ITERM);
 });
 

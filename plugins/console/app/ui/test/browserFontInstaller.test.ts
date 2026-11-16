@@ -3,6 +3,7 @@ import { browserFontInstaller } from '../src/xterm.ts';
 
 const FAMILY = 'Served Pane Mono';
 const FONT_BYTES = new Uint8Array([0x00, 0x01, 0x00, 0x00, 0x13, 0x8f]).buffer;
+const STAYING = new AbortController().signal;
 
 /** A face the browser built from a family and its bytes. */
 type BuiltFace = { family: string; source: ArrayBuffer };
@@ -34,22 +35,30 @@ afterEach(() => {
 
 test('ServedFontLoads_JoinsThePagesFontsUnderTheServedFamily', async () => {
   const browser = browserWithFonts(true);
-  await browserFontInstaller(FAMILY, FONT_BYTES);
+  await browserFontInstaller(FAMILY, FONT_BYTES, STAYING);
   expect(browser.added.map((face) => ({ family: face.family, source: face.source })), 'because the terminal asks for the served family, so the served bytes must be in the page\'s fonts under that name').toEqual([{ family: FAMILY, source: FONT_BYTES }]);
 });
 
 test('ServedFontLoads_ReportsInstalled', async () => {
   browserWithFonts(true);
-  expect(await browserFontInstaller(FAMILY, FONT_BYTES), 'because a loaded face lets the pane ask for the served font first').toBe(true);
+  expect(await browserFontInstaller(FAMILY, FONT_BYTES, STAYING), 'because a loaded face lets the pane ask for the served font first').toBe(true);
 });
 
 test('ServedFontFailsToLoad_ReportsNotInstalled', async () => {
   browserWithFonts(false);
-  expect(await browserFontInstaller(FAMILY, FONT_BYTES), 'because bytes the browser cannot load must leave the pane on the console\'s own font, not fail the page').toBe(false);
+  expect(await browserFontInstaller(FAMILY, FONT_BYTES, STAYING), 'because bytes the browser cannot load must leave the pane on the console\'s own font, not fail the page').toBe(false);
 });
 
 test('ServedFontFailsToLoad_NothingJoinsThePagesFonts', async () => {
   const browser = browserWithFonts(false);
-  await browserFontInstaller(FAMILY, FONT_BYTES);
+  await browserFontInstaller(FAMILY, FONT_BYTES, STAYING);
   expect(browser.added, 'because a face that did not load would draw nothing, so the page keeps only fonts that work').toEqual([]);
+});
+
+test('CancelledWhileLoading_NothingJoinsThePagesFonts', async () => {
+  const browser = browserWithFonts(true);
+  const pageLeft = new AbortController();
+  pageLeft.abort();
+  const installed = await browserFontInstaller(FAMILY, FONT_BYTES, pageLeft.signal);
+  expect({ installed, added: browser.added }, 'because a cancelled install reports the font as not installed and leaves the page\'s fonts as they were').toEqual({ installed: false, added: [] });
 });
