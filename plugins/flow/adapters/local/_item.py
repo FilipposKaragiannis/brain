@@ -105,8 +105,11 @@ def dump(path, meta, body):
         else:
             lines.append("%s: %s" % (key, quote(value if value is not None else "")))
     lines.append("---")
-    with open(path, "w", encoding="utf-8") as f:
+    # Other runs list the items without a lock: they must find the old item or the new, never an empty file.
+    temporary = "%s.%d.tmp" % (path, os.getpid())
+    with open(temporary, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n" + body.lstrip("\n"))
+    os.replace(temporary, path)
 
 
 def item_path(home, item_id):
