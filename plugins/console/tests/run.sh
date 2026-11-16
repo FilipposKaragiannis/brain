@@ -337,8 +337,9 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   live="$work/live"; live_home="$work/live-home"; mkdir -p "$live_home"
   live_port="$(node -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
   first=""; second=""; first_daemon=""; second_daemon=""
+  # The console's own look: the daemon reads neither the account's iTerm preferences nor its fonts.
   start_live() { # start_live <log>: demo.sh in the background, as a caller with its own home
-    env -i HOME="$live_home" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" BRAIN_CONSOLE_PROJECTS="$project" \
+    env -i HOME="$live_home" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" BRAIN_CONSOLE_PROJECTS="$project" BRAIN_CONSOLE_TERMINAL_LOOK=console \
       sh "$P/scripts/demo.sh" --dir "$live" --port "$live_port" > "$1" 2>&1 &
   }
   poll_until() ( # poll_until <tries> <command...>: succeeds once the command does, fails after <tries> tries
@@ -365,6 +366,7 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   check "the demo's daemon answers on the demo's port" [ "$up" -eq 0 ]
   check "the demo's daemon watches exactly one project" python3 -c "import json, sys; sys.exit(len(json.load(open(sys.argv[1]))['projects']) != 1)" "$work/healthz.json"
   check "the demo's daemon keeps its state in the demo folder" test -f "$live/state/daemon.pid"
+  check "the demo's daemon under test reads no iTerm preferences and no fonts" poll_until "$START_POLLS" grep -q '"event":"terminal.profile","iterm":false,"font":null' "$work/live-1.log"
   check "the caller's home is left empty by the demo and its daemon" [ -z "$(ls -A "$live_home")" ]
   # The snapshot the console's screens read, once every source has been read at least once.
   project_id="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["projects"][0])' "$work/healthz.json" 2>/dev/null)"

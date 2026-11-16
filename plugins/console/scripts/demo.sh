@@ -72,7 +72,8 @@ daemon="$console/app/daemon/src/main.ts"
 # demo_env <command...>: the command with the demo's environment and nothing else.
 demo_env() {
   env -i HOME="$home" PATH="$stubs:$PATH" TMPDIR="$temporary" LANG=C USER="${USER:-demo}" SHELL="${SHELL:-/bin/sh}" \
-    FLOW_PLUGIN="$flow" BRAIN_CONSOLE_LAUNCHCTL="$stubs/launchctl" "$@"
+    FLOW_PLUGIN="$flow" BRAIN_CONSOLE_LAUNCHCTL="$stubs/launchctl" \
+    ${BRAIN_CONSOLE_TERMINAL_LOOK:+BRAIN_CONSOLE_TERMINAL_LOOK="$BRAIN_CONSOLE_TERMINAL_LOOK"} "$@"
 }
 in_project() { (cd "$project" && demo_env "$@"); }
 

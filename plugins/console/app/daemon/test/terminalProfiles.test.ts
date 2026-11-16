@@ -5,7 +5,7 @@ import type { CommandRequest, CommandResult } from '../src/collectors/exec.ts';
 import type { FontFile, FontLookup } from '../src/fontFiles.ts';
 import { silentLogger } from '../src/log.ts';
 import type { PlistValue } from '../src/plist.ts';
-import { CONSOLE_FONT_NAMES, machineProfileReaders, TerminalProfiles } from '../src/terminalProfiles.ts';
+import { CONSOLE_FONT_NAMES, machineProfileReaders, TerminalProfiles, terminalProfileReaders } from '../src/terminalProfiles.ts';
 import { TERMINAL_FONT_PATH } from '../src/terminalProtocol.ts';
 
 const GUID = 'B1C2D3E4-0000-4000-8000-000000000138';
@@ -129,6 +129,16 @@ test('MachineReaders_ItermInstalled_ItsPreferencesReadWithoutWriting', async () 
 
 test('MachineReaders_DefaultsFails_NoPreferences', async () => {
   assert.equal(await machineProfileReaders(readOnlyDefaults('', 1), os.tmpdir()).readItermPreferences(), null, 'because a failed read is no iTerm, and the console keeps its look');
+});
+
+test('ConsoleLook_ItermInstalled_NoItermLookAndNoFont', async () => {
+  const terminal = new TerminalProfiles(terminalProfileReaders('console', readOnlyDefaults(ITERM_XML), os.tmpdir()), silentLogger);
+  assert.deepEqual(await terminal.profile(), { iterm: null, font: null }, 'because a daemon under test reads neither iTerm\'s preferences nor the fonts');
+});
+
+test('MachineLook_ItermInstalled_ItsPreferencesRead', async () => {
+  const preferences = await terminalProfileReaders('machine', readOnlyDefaults(ITERM_XML), os.tmpdir()).readItermPreferences();
+  assert.notEqual(preferences, null, "because the owner's console reads iTerm's preferences");
 });
 
 const unreadable = async (): Promise<never> => { throw new Error('defaults crashed mid-read'); };

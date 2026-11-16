@@ -24,7 +24,7 @@ import { closeConsoleServer, createConsoleServer } from './server.ts';
 import { SettingsStore } from './settings.ts';
 import type { SourceName } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
-import { machineProfileReaders, TerminalProfiles } from './terminalProfiles.ts';
+import { TerminalProfiles, terminalProfileReaders } from './terminalProfiles.ts';
 
 const EXIT_BAD_CONFIG = 2;
 /** How long a stop may take before the process ends anyway, streams or not. */
@@ -106,8 +106,9 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   /**
    * The panes' look, read at start so the page's first ask does not wait on iTerm's preferences.
    * The account's home, not HOME: `defaults` reads the account's preferences whatever HOME says, and its fonts are the account's too.
+   * A daemon under test sets BRAIN_CONSOLE_TERMINAL_LOOK=console and reads neither.
    */
-  const terminal = new TerminalProfiles(machineProfileReaders(childProcessRunner, os.userInfo().homedir), log);
+  const terminal = new TerminalProfiles(terminalProfileReaders(config.terminalLook, childProcessRunner, os.userInfo().homedir), log);
   void terminal.profile();
   const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes, terminal });
 

@@ -1,4 +1,5 @@
 import type { CommandRunner } from './collectors/exec.ts';
+import type { TerminalLook } from './config.ts';
 import { scriptEnvironment } from './collectors/exec.ts';
 import type { FontFile, FontLookup } from './fontFiles.ts';
 import { folderFontLookup, macFontFolders } from './fontFiles.ts';
@@ -91,4 +92,15 @@ export function machineProfileReaders(runner: CommandRunner, home: string): Term
     },
     findFont: folderFontLookup(macFontFolders(home)),
   };
+}
+
+/** Readers that read nothing: no iTerm and no font, so the panes keep the console's look. */
+export const CONSOLE_LOOK_READERS: TerminalProfileReaders = {
+  readItermPreferences: async () => null,
+  findFont: async () => null,
+};
+
+/** The readers for `look`: the machine's, or none for a daemon that must not read the owner's preferences. */
+export function terminalProfileReaders(look: TerminalLook, runner: CommandRunner, home: string): TerminalProfileReaders {
+  return look === 'console' ? CONSOLE_LOOK_READERS : machineProfileReaders(runner, home);
 }
