@@ -1,4 +1,6 @@
-bump: patch
+# craft
+
+## 1.0.1 (2026-11-16)
 
 - improve writes its HTML report with the file-writing tool after resolving the path, not with a
   shell heredoc that breaks on the report's quotes and backticks.
