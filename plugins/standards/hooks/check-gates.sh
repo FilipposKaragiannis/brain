@@ -6,7 +6,9 @@
 #     commit in CI ("ci", via check-range.sh). Blocks (exit 2) when the command fails. "when"
 #     defaults to ["commit"]. Globs match like "protected": ** and * both cross directories.
 #     The command sees STANDARDS_COMMIT_MESSAGE (the message of the commit, empty before a push)
-#     and STANDARDS_STAGE (commit, push or ci).
+#     and STANDARDS_STAGE (commit, push or ci), and none of git's repository variables (GIT_DIR,
+#     GIT_INDEX_FILE, GIT_WORK_TREE, every name `git rev-parse --local-env-vars` lists): the git
+#     hooks export them, and a gate that runs tests would aim the tests' git at this repository.
 #   {"name": "golden-pause", "command": "tools/check-golden.sh", "marker": "[closeout #218]"}
 #     a command gate with a marker: a commit whose message carries the marker skips the gate. The
 #     git pre-commit hook has no message yet, so it leaves marked gates to the commit-msg hook
@@ -88,7 +90,8 @@ FORBID
     done
     [ "$match" -eq 1 ] || continue
   fi
-  if ! output="$(STANDARDS_COMMIT_MESSAGE="$commit_msg" STANDARDS_STAGE="$stage" sh -c "$command" 2>&1)"; then
+  # shellcheck disable=SC2046
+  if ! output="$(unset $(git rev-parse --local-env-vars); STANDARDS_COMMIT_MESSAGE="$commit_msg" STANDARDS_STAGE="$stage" sh -c "$command" 2>&1)"; then
     failed="$failed  gate $name failed: $command
 $(printf '%s\n' "$output" | tail -40 | sed 's/^/    /')
 ${marker:+    The owner can approve it: add $marker to the commit message.

@@ -8,8 +8,9 @@
 # the test creates, or for the test's folder to go, so none outlives the test.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
-# On exit every stand-in run is let go.
-trap 'for run_name in stubborn elsewhere inside nested outside gone said said-again; do touch "$work/release-$run_name"; done; [ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
+# The sandbox removes the folder on exit, which lets every held gate and stand-in run go.
 . "$here/_verify_fixture.sh"
 
 echo "verify.sh refuses a --base that git would read as an option"

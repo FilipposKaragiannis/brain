@@ -11,8 +11,9 @@
 # Each gate waits for a file the test creates, so the test decides when a check ends.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
-# On exit every held gate is let go, so no detached run outlives the test.
-trap 'for gate_name in started unstarted killed stopped released health stopless dirty planted stubborn tampered; do touch "$work/release-$gate_name"; done; [ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
+# The sandbox removes the folder on exit, which lets every held gate and stand-in run go.
 . "$here/_verify_fixture.sh"
 
 echo "verify --start returns while the checks run, and --wait follows the run"
