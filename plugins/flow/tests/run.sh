@@ -2349,6 +2349,12 @@ hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
 check_all "health: bytes a clean filter strips are hashed raw, so the file is kept and never discarded" 'grep -q "so no claim can use it: the disk version of README.md is not in origin/main" "$hroot/out" && ! grep -q discard "$hroot/out2" && grep -q SECRET ../wt-2/README.md'
 rm -f "$common/info/attributes"; git -C ../wt-2 config --unset filter.strip.clean; git -C ../wt-2 checkout -q -- README.md; hs >/dev/null 2>&1
 
+ended_agent_worktree="$(printf '{"name":"agent-a2bc735e","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
+stale_claim "$ended_agent_worktree"; : > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check "health: a sub-agent's ad hoc claim whose session has ended is released with no hand step" [ ! -f "$ended_agent_worktree/.flow/claim.json" ]
+"$P/scripts/steward.sh" release "$ended_agent_worktree" --force >/dev/null 2>&1
+
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
 a="$(hitem "Empty claim")"; FLOW_RUN_PID="$loop" "$P/scripts/next.sh" "$a" >/dev/null; wa="$("$P/scripts/steward.sh" find "$a")"
