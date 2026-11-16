@@ -3343,6 +3343,7 @@ printf 'claude\tttl=%s/%s\t%s\n' "${CLAUDE_CODE_PROMPT_CACHE_TTL:-}" "${CLAUDE_C
 case "${FAKE_HOST:-ok}" in
   budget) echo '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 422 {\"type\":\"error\",\"error\":{\"type\":\"ExceededBudget\",\"message\":\"The seat reached its spend limit.\"}}","total_cost_usd":0}'; exit 1 ;;
   auth) echo '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}'; exit 1 ;;
+  window) python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":True,"result":sys.argv[1],"total_cost_usd":0}))' "$FAKE_HOST_SAID"; exit 1 ;;
   other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
   errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
   model) echo '[claude-code:unrecognized_model] {"model":"claude-nope-9","query_source":"sdk"}' >&2
@@ -3488,6 +3489,59 @@ check_all "a model codex does not have stops codex, naming the model" '[ "$(jget
 FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
+
+echo "a session cut by a time-window limit"
+mkdir -p "$work/window"
+window_seen="You've hit your 5-hour limit · resets 5:10am (Europe/London)"
+for window_line in "$window_seen" \
+                   "You've hit your limit · resets 5:10am (Europe/London)" \
+                   "You've hit your weekly limit · resets Mon 9:00am (Europe/London)" \
+                   "You've hit your daily limit · resets 12:00am (UTC)" \
+                   "You've hit your 12-hour limit · resets 3:45pm (America/New_York)"; do
+  FAKE_HOST=window FAKE_HOST_SAID="$window_line" "$work/costbin/claude" > "$work/window/out"
+  : > "$work/window/err"
+  python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 1 "$work/window/sum" >/dev/null 2>&1
+  check "TimeWindowLimit_IsSpendLimit: a session ended on \"$window_line\" has cause spend-limit, because the host is out of spend until the window resets" \
+    [ "$(jget cause < "$work/window/sum")" = spend-limit ]
+done
+for window_stream in out err; do
+  : > "$work/window/out"; : > "$work/window/err"
+  printf '%s\n' "$window_seen" > "$work/window/$window_stream"
+  python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 1 "$work/window/sum" >/dev/null 2>&1
+  check "TimeWindowLimit_AsPlainLineOnStd$window_stream: a time-window line outside the result object, on std$window_stream, has cause spend-limit, because a session cut early may print no result" \
+    [ "$(jget cause < "$work/window/sum")" = spend-limit ]
+done
+python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"Done. The old log said: "+sys.argv[1],"total_cost_usd":0}))' "$window_seen" > "$work/window/out"
+: > "$work/window/err"
+python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 0 "$work/window/sum" >/dev/null 2>&1
+check_all "TimeWindowLimit_QuotedByGoodSession_HasNoCause: a session that ends well and quotes a time-window line has no cause, because only a failed session can stop the host" \
+  '[ -s "$work/window/sum" ] && [ "$(jget cause < "$work/window/sum")" = "" ]'
+window_loop_folder="$work/windowloop"
+window_loop_repo="$window_loop_folder/app"
+mkdir -p "$window_loop_folder" && git init -q -b main "$window_loop_repo"
+(cd "$window_loop_repo" && git config user.email t@t && git config user.name t \
+  && printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow \
+  && git worktree add -q --detach ../window-loop-wt-1 \
+  && printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../window-loop-wt-1\nnotify:\n  desktop: false\n' > .flow/config.yaml)
+window_attempts_max="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
+window_loop_item="$(cd "$window_loop_repo" && "$P/scripts/new.sh" task "Cut by the 5-hour window" --size S --body "## Acceptance
+- [ ] w")"
+window_loop_attempts="$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)"
+(cd "$window_loop_repo" && FAKE_HOST=window FAKE_HOST_SAID="$window_seen" PATH="$cpath" "$P/templates/run-unattended.sh" claude "$window_loop_item" --max-steps "$window_attempts_max" > "$work/windowloop.out" 2>&1)
+window_loop_stopped="$window_loop_repo/.flow/log/claude.stopped"
+window_loop_gate="$window_loop_repo/.flow/gates/$(item_slug "$window_loop_item").json"
+check "TimeWindowLimit_KeepsAttemptCount: a step cut by a time-window limit keeps its attempt count, because the limit is the host's, not the step's" \
+  [ "$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)" = "$window_loop_attempts" ]
+check "TimeWindowLimit_RecordsOneSession: a time-window limit is one step session in runs.jsonl, no retry, because every retry before the reset fails the same way" \
+  python3 -I -c 'import json,sys; sessions=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; sys.exit([session["item"] for session in sessions] != [sys.argv[2]])' "$window_loop_repo/.flow/log/runs.jsonl" "$window_loop_item"
+check_all "TimeWindowLimit_StopsHostOnSpendLimit: the host is stopped on a spend limit, because no session can run until the window resets" \
+  '[ "$(jget cause < "$window_loop_stopped")" = spend-limit ]'
+check_all "TimeWindowLimit_StopsHostWithItsLine: the stopped host keeps the host's line, because it says when the window resets" \
+  '[ "$(jget said < "$window_loop_stopped")" = "$window_seen" ]'
+check_all "TimeWindowLimit_GateQuotesHostLine: the item's gate quotes the host's line, because it says when the window resets" \
+  'jget message < "$window_loop_gate" | grep -qF "$window_seen"'
+check_all "TimeWindowLimit_GateIsNotAttemptLimit: the item's gate is not the attempt limit's escalation, because no attempt failed" \
+  '[ -f "$window_loop_gate" ] && ! jget message < "$window_loop_gate" | grep -qE "Step [a-z-]+ failed [0-9]+ times"'
 
 echo "unattended loop: a pick works on after a gate"
 # A plugin copy whose next.sh hands out the items in $GL/queue (a named one as asked) and whose
