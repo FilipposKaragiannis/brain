@@ -5,7 +5,7 @@ import { OutputFlow } from './paneOutput.ts';
 import type { PaneFacts, PaneHost, PaneLaunch, PaneRequest } from './panePlan.ts';
 import { planPane } from './panePlan.ts';
 import type { PaneControl, PaneNotice, PaneSize } from './paneProtocol.ts';
-import { MAXIMUM_PANES, PANE_CLOSE, PANE_KILL_GRACE_MILLISECONDS } from './paneProtocol.ts';
+import { MAXIMUM_PANES, PANE_CLOSE, PANE_KILL_GRACE_MILLISECONDS, PANE_SIGNAL_LOOKUP_MILLISECONDS } from './paneProtocol.ts';
 
 /** A started pty, as much of it as a pane needs. Injected so tests never load the addon. */
 export type PtyHandle = {
@@ -20,8 +20,11 @@ export type PtyHandle = {
   running(): boolean;
   /** Whether any process of the pane's process groups still runs: the one the pty's process leads, or a job group it started. */
   groupRunning(): boolean;
-  /** Signals the pane's process groups, in the order asked. */
-  signal(name: 'SIGHUP' | 'SIGKILL'): void;
+  /**
+   * Signals the pane's process groups, in the order asked; settles once the signal is sent. A
+   * cancelled lookup of the groups sends it to the groups already known.
+   */
+  signal(name: 'SIGHUP' | 'SIGKILL', cancel: AbortSignal): Promise<void>;
   /** Closes the master, which hangs up whatever still holds the terminal. */
   close(): void;
 };
@@ -168,10 +171,10 @@ export class PaneSessions {
 
   private hangUp(pane: LivePane, cause: HangUpCause): void {
     if (!this.live.has(pane) || pane.hangUp !== null) return;
-    const grace = this.scheduler.afterKeepingAlive(PANE_KILL_GRACE_MILLISECONDS, () => this.killAfterGrace(pane, cause));
+    const grace = this.scheduler.afterKeepingAlive(PANE_KILL_GRACE_MILLISECONDS, () => void this.killAfterGrace(pane, cause, AbortSignal.timeout(PANE_SIGNAL_LOOKUP_MILLISECONDS)));
     pane.hangUp = { cause, grace };
     pane.output.resumeForHangUp();
-    pane.pty.signal('SIGHUP');
+    void pane.pty.signal('SIGHUP', AbortSignal.timeout(PANE_SIGNAL_LOOKUP_MILLISECONDS));
   }
 
   /**
@@ -179,13 +182,14 @@ export class PaneSessions {
    * grace is not signalled, as its id is free for the system to hand out again. Closes the master
    * while its process still runs, whose exit then finishes the pane. An ended pty is left alone:
    * node-pty closed it before telling the exit, and its close hangs up the bare pid once more; the
-   * pane has finished with the kill.
+   * pane has finished once the kill was sent.
    */
-  private killAfterGrace(pane: LivePane, cause: HangUpCause): void {
-    pane.hangUp = { cause, grace: null };
+  private async killAfterGrace(pane: LivePane, cause: HangUpCause, cancel: AbortSignal): Promise<void> {
     const processRunning = this.live.has(pane);
-    if (pane.pty.groupRunning()) pane.pty.signal('SIGKILL');
-    if (processRunning) { pane.pty.close(); return; }
+    if (pane.pty.groupRunning()) await pane.pty.signal('SIGKILL', cancel);
+    pane.hangUp = { cause, grace: null };
+    if (processRunning) pane.pty.close();
+    if (this.live.has(pane)) return;
     this.finishing.delete(pane);
     pane.finished.resolve();
   }

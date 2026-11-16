@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import type { PaneLaunch } from '../src/panePlan.ts';
-import { PANE_KILL_GRACE_MILLISECONDS } from '../src/paneProtocol.ts';
+import { PANE_KILL_GRACE_MILLISECONDS, PANE_SIGNAL_LOOKUP_MILLISECONDS } from '../src/paneProtocol.ts';
 import type { PaneSize } from '../src/paneProtocol.ts';
 import { PaneSessions } from '../src/panes.ts';
 import type { PaneLink, PtyHandle, PtySpawner } from '../src/panes.ts';
@@ -33,12 +33,16 @@ function ended(pty: PtyHandle): Promise<Ended> {
   const chunks: Uint8Array[] = [];
   pty.onOutput((bytes) => { chunks.push(bytes); });
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pty.signal('SIGKILL'); reject(new Error('the shell did not end in time')); }, ANSWER_TIMEOUT_MILLISECONDS);
+    const timer = setTimeout(() => { void pty.signal('SIGKILL', lookup()); reject(new Error('the shell did not end in time')); }, ANSWER_TIMEOUT_MILLISECONDS);
     pty.onExit((code, signal) => {
       clearTimeout(timer);
       void settleAfterExit().then(() => { pty.close(); resolve({ output: Buffer.concat(chunks).toString('utf8'), code, signal }); });
     });
   });
+}
+
+function lookup(): AbortSignal {
+  return AbortSignal.timeout(PANE_SIGNAL_LOOKUP_MILLISECONDS);
 }
 
 function settleAfterExit(): Promise<void> {
@@ -106,7 +110,7 @@ test('RealPty_HangUp_EndsTheShell', async () => {
   const pty = started(SHELL_IN_A_LOOP, TERMINAL_SIZE);
   await childPid(pty);
   const result = ended(pty);
-  pty.signal('SIGHUP');
+  void pty.signal('SIGHUP', lookup());
   assert.equal((await result).signal, 'SIGHUP', 'because closing a pane hangs up the process it runs');
 });
 
@@ -122,10 +126,10 @@ test('RealPty_HangUp_ReachesTheChildOfAShellThatSurvivesIt', async () => {
   const child = await childPid(pty);
   const result = ended(pty);
   try {
-    pty.signal('SIGHUP');
+    void pty.signal('SIGHUP', lookup());
     assert.equal(await gone(child), true, 'because the hang-up reaches the whole process group, so nothing the session started outlives the pane');
   } finally {
-    pty.signal('SIGKILL');
+    void pty.signal('SIGKILL', lookup());
     await result;
     if (processAlive(child)) process.kill(child, 'SIGKILL');
   }
@@ -135,8 +139,8 @@ test('RealPty_Kill_EndsAShellThatIgnoresTheHangUp', async () => {
   const pty = started('trap "" HUP; echo child=$$; while :; do sleep 1; done', TERMINAL_SIZE);
   await childPid(pty);
   const result = ended(pty);
-  pty.signal('SIGHUP');
-  pty.signal('SIGKILL');
+  void pty.signal('SIGHUP', lookup());
+  void pty.signal('SIGKILL', lookup());
   assert.equal((await result).signal, 'SIGKILL', 'because SIGKILL ends a shell that traps the hang-up');
 });
 
@@ -225,9 +229,9 @@ test('RealPty_KillAfterTheShellEnded_ReachesAJobInAGroupOfItsOwn', async () => {
   const child = await childPid(pty);
   const result = ended(pty);
   try {
-    pty.signal('SIGHUP');
+    void pty.signal('SIGHUP', lookup());
     await result;
-    pty.signal('SIGKILL');
+    void pty.signal('SIGKILL', lookup());
     assert.equal(await gone(child), true, 'because a job the shell started stays the pane\'s after the shell ended, so the kill still reaches it');
   } finally {
     if (processAlive(child)) process.kill(child, 'SIGKILL');

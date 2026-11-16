@@ -99,13 +99,14 @@ test('LinkGone_ProcessIgnoringHangUp_KilledOnceTheGraceRunsOut', () => {
   assert.equal(pty.exited, true, 'because a process that outlives the grace is killed, so a closed pane leaves nothing running');
 });
 
-test('LinkGone_AfterTheGrace_MasterClosed', () => {
+test('LinkGone_AfterTheGrace_MasterClosed', async () => {
   const { open, ptys, timers } = sessions(null);
   const link = open(SHELL_AT_ROOT, PROJECT);
   const pty = only(ptys);
   pty.ignoresHangUp = true;
   link.go();
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  await tick();
   assert.equal(pty.closed, true, 'because closing the master hangs up whatever still holds the terminal');
 });
 
@@ -255,6 +256,19 @@ test('StopAll_ChildIgnoringHangUp_SettlesWithTheGroupKilled', async () => {
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
   await stopping;
   assert.equal(pty.groupRunning(), false, 'because the daemon exits only after the group its pane left behind has been killed');
+});
+
+test('StopAll_ChildIgnoringHangUpAndSlowProcessTable_SettlesWithTheGroupKilled', async () => {
+  const { panes, ptys, timers, open } = sessions(null);
+  open(SHELL_AT_ROOT, PROJECT);
+  const pty = only(ptys);
+  pty.childIgnoresHangUp = true;
+  pty.slowProcessTable = true;
+  const stopping = panes.stopAll();
+  await tick();
+  timers.fire(PANE_KILL_GRACE_MILLISECONDS);
+  await stopping;
+  assert.equal(pty.groupRunning(), false, 'because the daemon exits only once the kill reached the group, however long the process table takes to list');
 });
 
 test('StopAll_PaneClosedBeforeAndStillInItsGrace_NotSettledBeforeItsKill', async () => {

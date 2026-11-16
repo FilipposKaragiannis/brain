@@ -59,6 +59,11 @@ export const PANE_CLOSE = {
 export const MAXIMUM_PANES = 4;
 /** How long a hung-up pane's processes get before SIGKILL. */
 export const PANE_KILL_GRACE_MILLISECONDS = 1500;
+/**
+ * How long a pane's signal may wait for the process table before it goes to the groups already
+ * known. With the grace it stays under the daemon's stop limit, so a stopping daemon sends the kill.
+ */
+export const PANE_SIGNAL_LOOKUP_MILLISECONDS = 1000;
 /** Bytes sent and not yet acked above which the daemon pauses the pty. */
 export const OUTPUT_HIGH_WATER_BYTES = 1024 * 1024;
 /** Bytes sent and not yet acked under which a paused pty resumes. */

@@ -13,8 +13,6 @@ import { paneGroups, processTable } from './ptyGroups.ts';
  */
 const PTY_PACKAGE = '@lydell/node-pty';
 const NO_SIGNAL = 0;
-/** How long the process table may take to list before a signal goes to the groups already known. */
-const PROCESS_TABLE_TIMEOUT_MILLISECONDS = 2000;
 
 /**
  * The part of the addon's module a pane uses, with output as bytes (`encoding: null`). `destroy`
@@ -87,8 +85,9 @@ function ptyHandle(started: PtyProcess): PtyHandle {
     resume: () => { started.resume(); },
     running: () => processAlive(started.pid),
     groupRunning: () => [...groups].some((group) => processAlive(groupLedBy(group))),
-    signal: (name) => {
-      signalling = signalling.then(() => signalGroups(groups, name, AbortSignal.timeout(PROCESS_TABLE_TIMEOUT_MILLISECONDS)));
+    signal: (name, cancel) => {
+      signalling = signalling.then(() => signalGroups(groups, name, cancel));
+      return signalling;
     },
     close: () => { started.destroy(); },
   };

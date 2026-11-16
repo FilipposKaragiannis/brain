@@ -1,3 +1,4 @@
+import { setImmediate as tick } from 'node:timers/promises';
 import type { PaneLaunch } from '../src/panePlan.ts';
 import type { PaneSize } from '../src/paneProtocol.ts';
 import type { PtyHandle, PtySpawner } from '../src/panes.ts';
@@ -34,6 +35,8 @@ export type FakePty = {
    * to another process, which any signal sent to the emptied group then ends.
    */
   someoneElsesProcessRunning: boolean;
+  /** When true each signal lands a turn of the event loop later, once the process table was listed, as on a busy system. */
+  slowProcessTable: boolean;
   /** Whether anything still runs in the process group: the process or the child it left. */
   groupRunning(): boolean;
   /** Bytes the process writes to the terminal. */
@@ -62,7 +65,7 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       if (!fake.paused && processEnded) fake.exit(unread.code, null);
     };
     const fake: FakePty = {
-      launch, environment, size: { ...size }, received: [], paused: false, closed: false, exited: false, ignoresHangUp: false, childIgnoresHangUp: false, childEndsOnHangUp: false, childEnded: false, someoneElsesProcessRunning: true,
+      launch, environment, size: { ...size }, received: [], paused: false, closed: false, exited: false, ignoresHangUp: false, childIgnoresHangUp: false, childEndsOnHangUp: false, childEnded: false, someoneElsesProcessRunning: true, slowProcessTable: false,
       groupRunning: () => !fake.exited || ((fake.childIgnoresHangUp || fake.childEndsOnHangUp) && !fake.childEnded),
       emit: (bytes) => { for (const listener of outputListeners) listener(bytes); },
       exit: (code, signal) => {
@@ -88,7 +91,8 @@ export function fakePty(refusal: string | null): { spawner: PtySpawner; ptys: Fa
       resume: () => { fake.paused = false; readOn(); },
       running: () => !fake.exited && !processEnded,
       groupRunning: () => fake.groupRunning(),
-      signal: (name) => {
+      signal: async (name) => {
+        if (fake.slowProcessTable) await tick();
         if (!fake.groupRunning()) { fake.someoneElsesProcessRunning = false; return; }
         if (name === 'SIGKILL' || fake.childEndsOnHangUp) fake.childEnded = true;
         if (name === 'SIGHUP' && fake.ignoresHangUp) return;
