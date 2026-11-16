@@ -170,10 +170,21 @@ function droppableLink(): { link: PaneLink; drop(): void } {
   };
 }
 
-test('RealPaneClosed_ShellDiesOnTheHangUpAndItsChildIgnoresIt_ChildKilledOnceTheGraceRunsOut', async () => {
+/**
+ * The same shape under job control, as in an interactive shell: the child runs in a job group of
+ * its own, outside the group the shell leads.
+ */
+const SHELL_DYING_WITH_A_JOB_IGNORING_THE_HANG_UP = `#!/bin/sh
+set -m
+sh -c 'trap "" HUP; echo child=$$; exec sleep 600' &
+while :; do sleep 1; done
+`;
+
+/** Opens a pane on the script, drops its page, lets the grace run out and says whether the child is gone. */
+async function childGoneOncePaneClosed(script: string): Promise<boolean> {
   const folder = mkdtempSync(path.join(os.tmpdir(), 'pane-group-'));
   const shell = path.join(folder, 'session.sh');
-  writeFileSync(shell, SHELL_DYING_WITH_A_CHILD_IGNORING_THE_HANG_UP);
+  writeFileSync(shell, script);
   chmodSync(shell, 0o755);
   const started: PtyHandle[] = [];
   const shellEnded: Promise<void>[] = [];
@@ -194,9 +205,31 @@ test('RealPaneClosed_ShellDiesOnTheHangUpAndItsChildIgnoresIt_ChildKilledOnceThe
     await shellEnded[0];
     await settleAfterExit();
     timers.fire(PANE_KILL_GRACE_MILLISECONDS);
-    assert.equal(await gone(child), true, 'because a closed pane leaves nothing running, even a process that ignored the hang-up its shell died of');
+    return await gone(child);
   } finally {
     if (processAlive(child)) process.kill(child, 'SIGKILL');
     rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+test('RealPaneClosed_ShellDiesOnTheHangUpAndItsChildIgnoresIt_ChildKilledOnceTheGraceRunsOut', async () => {
+  assert.equal(await childGoneOncePaneClosed(SHELL_DYING_WITH_A_CHILD_IGNORING_THE_HANG_UP), true, 'because a closed pane leaves nothing running, even a process that ignored the hang-up its shell died of');
+});
+
+test('RealPaneClosed_ChildInAJobGroupIgnoresTheHangUp_ChildKilledOnceTheGraceRunsOut', async () => {
+  assert.equal(await childGoneOncePaneClosed(SHELL_DYING_WITH_A_JOB_IGNORING_THE_HANG_UP), true, 'because a closed pane ends the job groups its shell started too, not only the group the shell leads');
+});
+
+test('RealPty_KillAfterTheShellEnded_ReachesAJobInAGroupOfItsOwn', async () => {
+  const pty = started(SHELL_DYING_WITH_A_JOB_IGNORING_THE_HANG_UP, TERMINAL_SIZE);
+  const child = await childPid(pty);
+  const result = ended(pty);
+  try {
+    pty.signal('SIGHUP');
+    await result;
+    pty.signal('SIGKILL');
+    assert.equal(await gone(child), true, 'because a job the shell started stays the pane\'s after the shell ended, so the kill still reaches it');
+  } finally {
+    if (processAlive(child)) process.kill(child, 'SIGKILL');
   }
 });

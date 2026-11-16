@@ -5,6 +5,7 @@ import type { PaneLaunch } from './panePlan.ts';
 import type { PaneSize } from './paneProtocol.ts';
 import { processAlive } from './processAlive.ts';
 import type { PtyHandle, PtySpawner } from './panes.ts';
+import { paneGroups, processTable } from './ptyGroups.ts';
 
 /**
  * The prebuilt node-pty. Upstream node-pty 1.1.0 ships its macOS `spawn-helper` without the
@@ -12,6 +13,8 @@ import type { PtyHandle, PtySpawner } from './panes.ts';
  */
 const PTY_PACKAGE = '@lydell/node-pty';
 const NO_SIGNAL = 0;
+/** How long the process table may take to list before a signal goes to the groups already known. */
+const PROCESS_TABLE_TIMEOUT_MILLISECONDS = 2000;
 
 /**
  * The part of the addon's module a pane uses, with output as bytes (`encoding: null`). `destroy`
@@ -67,6 +70,8 @@ function spawnPty(addon: PtyModule, launch: PaneLaunch, size: PaneSize, environm
 }
 
 function ptyHandle(started: PtyProcess): PtyHandle {
+  const groups = new Set([started.pid]);
+  let signalling: Promise<void> = Promise.resolve();
   return {
     pid: started.pid,
     onOutput: (listener) => { started.onData((bytes) => listener(bytes)); },
@@ -81,16 +86,28 @@ function ptyHandle(started: PtyProcess): PtyHandle {
     pause: () => { started.pause(); },
     resume: () => { started.resume(); },
     running: () => processAlive(started.pid),
-    groupRunning: () => processAlive(groupLedBy(started.pid)),
-    signal: (name) => { signalGroup(started.pid, name); },
+    groupRunning: () => [...groups].some((group) => processAlive(groupLedBy(group))),
+    signal: (name) => {
+      signalling = signalling.then(() => signalGroups(groups, name, AbortSignal.timeout(PROCESS_TABLE_TIMEOUT_MILLISECONDS)));
+    },
     close: () => { started.destroy(); },
   };
 }
 
-/** Signals the group the pty's child leads (it leads its own session); a group already gone is left alone. */
-function signalGroup(pid: number, name: 'SIGHUP' | 'SIGKILL'): void {
+/**
+ * Signals every group the pane holds: the one the pty's child leads and each job group it started.
+ * The groups are looked up before the signal, while the shell that started them still runs.
+ */
+async function signalGroups(groups: Set<number>, name: 'SIGHUP' | 'SIGKILL', cancel: AbortSignal): Promise<void> {
+  for (const group of paneGroups(await processTable(cancel), groups)) groups.add(group);
+  for (const group of groups) signalGroup(group, name);
+}
+
+/** A group already gone is left alone: its id is free for the system to hand out again. */
+function signalGroup(group: number, name: 'SIGHUP' | 'SIGKILL'): void {
+  if (!processAlive(groupLedBy(group))) return;
   try {
-    process.kill(groupLedBy(pid), name);
+    process.kill(groupLedBy(group), name);
   } catch {
     return;
   }

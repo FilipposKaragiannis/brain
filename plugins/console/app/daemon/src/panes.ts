@@ -18,9 +18,9 @@ export type PtyHandle = {
   resume(): void;
   /** Whether the process the pty started is still running. */
   running(): boolean;
-  /** Whether any process of the pty's process group still runs: the process the pty started, or one it left there. */
+  /** Whether any process of the pane's process groups still runs: the one the pty's process leads, or a job group it started. */
   groupRunning(): boolean;
-  /** Signals the pty's process group. */
+  /** Signals the pane's process groups, in the order asked. */
   signal(name: 'SIGHUP' | 'SIGKILL'): void;
   /** Closes the master, which hangs up whatever still holds the terminal. */
   close(): void;
