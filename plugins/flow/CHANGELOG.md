@@ -1,5 +1,15 @@
 # flow
 
+## 1.39.2 (2026-11-16)
+
+- The local tracker writes an item whole: a run that lists the items while another run updates
+  one no longer reads it empty. Two runs started together could fail the pick with "cannot read",
+  and a worker could end without a step.
+- Every flow lock lets one holder in, also on Ubuntu 26.04: its default mkdir (uutils coreutils
+  0.8) exits 0 when another process made the directory first, so two runs could take the pick lock,
+  an item's lock or a job's lock together, and pick the same item or address one PR twice. The
+  locks now make their directory through Python, which reports the kernel's answer.
+
 ## 1.39.1 (2026-11-16)
 
 - The comments job starts each pass in the item's worktree, or the main worktree when the item
