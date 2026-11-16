@@ -77,6 +77,11 @@ check_all "write-state"       '[ "$("$P/adapters/local/read.sh" "$t1" | jget sta
 "$P/adapters/local/write-state.sh" "$t1" step= attempts=0 touches=
 printf 'hello: world\n' | "$P/adapters/local/comment.sh" "$t1"
 check "comment appended"  grep -q 'hello: world' .flow/items/task/1.md
+chmod 600 .flow/items/task/1.md
+"$P/adapters/local/write-state.sh" "$t1" step=
+check "PrivateItemWrittenAgain_StaysPrivate: an item made 0600 is still 0600 after a state write, because the whole-file replace keeps the old file's mode" \
+  [ "$(python3 -I -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' .flow/items/task/1.md)" = "0o600" ]
+chmod 644 .flow/items/task/1.md
 check "list open"         [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
 printf '[{"id":"local:task/90","status":"open","state":{"gate":"none"},"blocked_by":["gh#999999"],"open_blockers":[]},{"id":"local:task/91","status":"open","state":{"gate":"none"},"blocked_by":[],"open_blockers":["gh#1"]}]' | "$P/scripts/filter-ready.sh" > "$work/ready.out"
 check "ready: an item that lists its open blockers is judged by that list, with no read per blocker" sh -c "grep -q 'local:task/90' '$work/ready.out' && ! grep -q 'local:task/91' '$work/ready.out'"

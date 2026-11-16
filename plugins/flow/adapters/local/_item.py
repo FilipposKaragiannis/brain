@@ -22,6 +22,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -117,6 +118,7 @@ def replace_whole(path, text):
     temporary = "%s.%d.tmp" % (path, os.getpid())
     with open(temporary, "w", encoding="utf-8") as f:
         f.write(text)
+    shutil.copymode(path, temporary)
     os.replace(temporary, path)
 
 
