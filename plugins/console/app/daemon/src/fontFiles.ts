@@ -9,8 +9,8 @@ type FontNames = { postScriptNames: string[]; servedAs: FontContentType };
 
 type ByteReader = (offset: number, length: number) => Promise<Uint8Array>;
 
-/** Finds the first font file, by the order of the names, whose PostScript name is one of them; null when none is there to serve. */
-export type FontLookup = (postScriptNames: readonly string[]) => Promise<FontFile | null>;
+/** Finds the first font file, by the order of the names, whose PostScript name is one of them; null when none is there to serve or the signal cancelled the search. */
+export type FontLookup = (postScriptNames: readonly string[], signal: AbortSignal) => Promise<FontFile | null>;
 
 const FONT_EXTENSIONS = new Set(['.ttf', '.otf', '.ttc', '.otc']);
 const CFF_TAG = 'OTTO';
@@ -51,18 +51,18 @@ export function macFontFolders(home: string): string[] {
  * name, and stops at a file with the first name. A collection is skipped by its tag, unread.
  */
 export function folderFontLookup(folders: readonly string[]): FontLookup {
-  return async (postScriptNames) => bestFont(await fontFilesIn(folders), postScriptNames);
+  return async (postScriptNames, signal) => bestFont(await fontFilesIn(folders, signal), postScriptNames, signal);
 }
 
 type RankedFont = { rank: number; file: FontFile | null };
 
-async function bestFont(files: readonly string[], wanted: readonly string[]): Promise<FontFile | null> {
+async function bestFont(files: readonly string[], wanted: readonly string[], signal: AbortSignal): Promise<FontFile | null> {
   let best: RankedFont = { rank: wanted.length, file: null };
   for (const file of files) {
-    if (best.rank === 0) break;
+    if (best.rank === 0 || signal.aborted) break;
     best = (await rankedFont(file, wanted, best.rank)) ?? best;
   }
-  return best.file;
+  return signal.aborted ? null : best.file;
 }
 
 async function rankedFont(file: string, wanted: readonly string[], toBeat: number): Promise<RankedFont | null> {
@@ -76,9 +76,10 @@ function firstRank(wanted: readonly string[], held: readonly string[]): number {
   return wanted.findIndex((name) => held.includes(name));
 }
 
-async function fontFilesIn(folders: readonly string[]): Promise<string[]> {
+async function fontFilesIn(folders: readonly string[], signal: AbortSignal): Promise<string[]> {
   const files: string[] = [];
   for (const folder of folders) {
+    if (signal.aborted) break;
     const entries = await readdir(folder, { recursive: true }).catch(() => [] as string[]);
     files.push(...entries.filter((entry) => FONT_EXTENSIONS.has(path.extname(entry).toLowerCase())).sort().map((entry) => path.join(folder, entry)));
   }

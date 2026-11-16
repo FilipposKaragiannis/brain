@@ -1,4 +1,4 @@
-import type { CommandRunner } from './collectors/exec.ts';
+import type { CancellableCommandRunner } from './collectors/exec.ts';
 import type { TerminalLook } from './config.ts';
 import { scriptEnvironment } from './collectors/exec.ts';
 import type { FontFile, FontLookup } from './fontFiles.ts';
@@ -14,8 +14,8 @@ import { TERMINAL_FONT_PATH } from './terminalProtocol.ts';
 
 /** What the profile is read from, injected so tests read no real preferences or font folders. */
 export type TerminalProfileReaders = {
-  /** iTerm's preferences; null when iTerm is not installed or they cannot be read. Never throws. */
-  readItermPreferences: () => Promise<PlistValue | null>;
+  /** iTerm's preferences; null when iTerm is not installed, they cannot be read or the signal cancelled the read. Never throws. */
+  readItermPreferences: (signal: AbortSignal) => Promise<PlistValue | null>;
   findFont: FontLookup;
 };
 
@@ -35,26 +35,30 @@ const CONSOLE_LOOK_WITHOUT_FONT: Resolved = { profile: { iterm: null, font: null
 
 /**
  * The look the terminal panes take: iTerm's default profile when there is one, and the font file
- * the daemon serves for it. Read once, on the first ask, and kept until the daemon stops. Never
- * rejects: when the profile cannot be read the panes keep the console's look and font.
+ * the daemon serves for it. Read once, on the first ask, and kept until the daemon stops; the
+ * daemon's stop cancels the read. Never rejects: when the profile cannot be read the panes keep
+ * the console's look and font. An ask whose signal is cancelled gets that look at once, and the
+ * read goes on for the asks after it.
  */
 export class TerminalProfiles {
   private readonly readers: TerminalProfileReaders;
   private readonly log: Logger;
+  private readonly daemonStopping: AbortSignal;
   private resolved: Promise<Resolved> | null = null;
 
-  constructor(readers: TerminalProfileReaders, log: Logger) {
+  constructor(readers: TerminalProfileReaders, log: Logger, daemonStopping: AbortSignal) {
     this.readers = readers;
     this.log = log;
+    this.daemonStopping = daemonStopping;
   }
 
-  async profile(): Promise<TerminalProfile> {
-    return (await this.resolve()).profile;
+  async profile(signal: AbortSignal): Promise<TerminalProfile> {
+    return (await untilCancelled(this.resolve(), signal)).profile;
   }
 
-  /** The font file the profile's `font` names; null when it names none. */
-  async font(): Promise<FontFile | null> {
-    return (await this.resolve()).font;
+  /** The font file the profile's `font` names; null when it names none or the signal cancelled the ask. */
+  async font(signal: AbortSignal): Promise<FontFile | null> {
+    return (await untilCancelled(this.resolve(), signal)).font;
   }
 
   private resolve(): Promise<Resolved> {
@@ -64,7 +68,7 @@ export class TerminalProfiles {
 
   private async read(): Promise<Resolved> {
     try {
-      const preferences = await this.readers.readItermPreferences();
+      const preferences = await this.readers.readItermPreferences(this.daemonStopping);
       return await this.resolveFor(preferences === null ? null : defaultItermProfile(preferences));
     } catch (error) {
       this.log.warn('terminal.profile.unreadable', { error: errorMessage(error) });
@@ -77,17 +81,29 @@ export class TerminalProfiles {
 
   private async resolveFor(iterm: ItermProfile | null): Promise<Resolved> {
     const fontName = iterm?.fontName ?? null;
-    const font = await this.readers.findFont(fontName === null ? CONSOLE_FONT_NAMES : [fontName, ...CONSOLE_FONT_NAMES]);
+    const font = await this.readers.findFont(fontName === null ? CONSOLE_FONT_NAMES : [fontName, ...CONSOLE_FONT_NAMES], this.daemonStopping);
     this.log.info('terminal.profile', { iterm: iterm !== null, font: font?.path ?? null });
     return { profile: { iterm: iterm?.look ?? null, font: font === null ? null : { path: TERMINAL_FONT_PATH } }, font };
   }
 }
 
+function untilCancelled(read: Promise<Resolved>, signal: AbortSignal): Promise<Resolved> {
+  if (signal.aborted) return Promise.resolve(CONSOLE_LOOK_WITHOUT_FONT);
+  return new Promise((resolve) => {
+    const cancel = (): void => resolve(CONSOLE_LOOK_WITHOUT_FONT);
+    signal.addEventListener('abort', cancel, { once: true });
+    void read.then((resolved) => {
+      signal.removeEventListener('abort', cancel);
+      resolve(resolved);
+    });
+  });
+}
+
 /** The readers on this machine: `defaults export` for iTerm's preferences (it only reads them), the macOS font folders for the font. */
-export function machineProfileReaders(runner: CommandRunner, home: string): TerminalProfileReaders {
+export function machineProfileReaders(runner: CancellableCommandRunner, home: string): TerminalProfileReaders {
   return {
-    readItermPreferences: async () => {
-      const exported = await runner({ command: DEFAULTS_COMMAND, args: ['export', ITERM_DOMAIN, '-'], cwd: home, timeoutMs: DEFAULTS_TIMEOUT_MILLISECONDS, env: scriptEnvironment() });
+    readItermPreferences: async (signal) => {
+      const exported = await runner({ command: DEFAULTS_COMMAND, args: ['export', ITERM_DOMAIN, '-'], cwd: home, timeoutMs: DEFAULTS_TIMEOUT_MILLISECONDS, env: scriptEnvironment() }, signal);
       return exported.code === 0 ? parsePlistXml(exported.stdout) : null;
     },
     findFont: folderFontLookup(macFontFolders(home)),
@@ -101,6 +117,6 @@ export const CONSOLE_LOOK_READERS: TerminalProfileReaders = {
 };
 
 /** The readers for `look`: the machine's, or none for a daemon that must not read the owner's preferences. */
-export function terminalProfileReaders(look: TerminalLook, runner: CommandRunner, home: string): TerminalProfileReaders {
+export function terminalProfileReaders(look: TerminalLook, runner: CancellableCommandRunner, home: string): TerminalProfileReaders {
   return look === 'console' ? CONSOLE_LOOK_READERS : machineProfileReaders(runner, home);
 }

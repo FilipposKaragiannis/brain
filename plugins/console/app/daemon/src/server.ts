@@ -288,7 +288,8 @@ async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: In
 /** `GET` the `TerminalProfile` the panes take: iTerm's default profile, or null without one, and where the font is served. */
 async function terminalProfileRoute(terminal: TerminalProfiles, request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
-  sendJson(response, HTTP_OK, await terminal.profile());
+  const profile = await terminal.profile(whenClosed(response));
+  if (!response.destroyed) sendJson(response, HTTP_OK, profile);
 }
 
 /**
@@ -297,9 +298,17 @@ async function terminalProfileRoute(terminal: TerminalProfiles, request: Incomin
  */
 async function terminalFontRoute(terminal: TerminalProfiles, request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
-  const font = await terminal.font();
+  const font = await terminal.font(whenClosed(response));
+  if (response.destroyed) return;
   if (font === null) { sendJson(response, HTTP_NOT_FOUND, { error: 'no terminal font on this machine' }); return; }
   sendFile(response, font.path, { 'content-type': font.contentType, 'cache-control': 'no-store' });
+}
+
+/** Aborts once the response's connection closes, so a page that left stops the wait behind its request. */
+function whenClosed(response: ServerResponse): AbortSignal {
+  const closed = new AbortController();
+  response.once('close', () => closed.abort());
+  return closed.signal;
 }
 
 /**

@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { folderFontLookup } from '../src/fontFiles.ts';
 
+/** The signal of a daemon that keeps running while the lookup walks the folders. */
+const STAYING = new AbortController().signal;
+
 type NameRecord = { platform: 'windows' | 'mac'; nameId: number; text: string };
 type Outline = 'truetype' | 'cff';
 
@@ -85,27 +88,27 @@ async function inFontFolder(files: Record<string, Buffer>, body: (folder: string
 
 test('FontLookup_TrueTypeFont_ServedAsTtf', async () => {
   await inFontFolder({ 'font.ttf': postScriptFont('JetBrainsMonoNF-Regular') }, async (folder) => {
-    assert.deepEqual(await folderFontLookup([folder])(['JetBrainsMonoNF-Regular']), { path: path.join(folder, 'font.ttf'), contentType: 'font/ttf' },
+    assert.deepEqual(await folderFontLookup([folder])(['JetBrainsMonoNF-Regular'], STAYING), { path: path.join(folder, 'font.ttf'), contentType: 'font/ttf' },
       'because a TrueType file is found by its PostScript name, name ID 6, and the page loads it as font/ttf');
   });
 });
 
 test('FontLookup_FamilyName_NotMatched', async () => {
   await inFontFolder({ 'font.ttf': postScriptFont('JetBrainsMonoNF-Regular') }, async (folder) => {
-    assert.equal(await folderFontLookup([folder])(['Family Not Wanted']), null, 'because only the PostScript name, name ID 6, identifies the font, not its family name');
+    assert.equal(await folderFontLookup([folder])(['Family Not Wanted'], STAYING), null, 'because only the PostScript name, name ID 6, identifies the font, not its family name');
   });
 });
 
 test('FontLookup_CffFont_ServedAsOtf', async () => {
   await inFontFolder({ 'font.otf': postScriptFont('SourceCodePro-Regular', 'cff') }, async (folder) => {
-    assert.deepEqual(await folderFontLookup([folder])(['SourceCodePro-Regular']), { path: path.join(folder, 'font.otf'), contentType: 'font/otf' },
+    assert.deepEqual(await folderFontLookup([folder])(['SourceCodePro-Regular'], STAYING), { path: path.join(folder, 'font.otf'), contentType: 'font/otf' },
       'because an OTTO file is an OpenType font with CFF outlines, served as font/otf');
   });
 });
 
 test('FontLookup_MacRomanNameRecord_Found', async () => {
   await inFontFolder({ 'font.ttf': sfnt('truetype', [{ platform: 'mac', nameId: POSTSCRIPT, text: 'Menlo-Regular' }]) }, async (folder) => {
-    assert.equal((await folderFontLookup([folder])(['Menlo-Regular']))?.path ?? 'not found', path.join(folder, 'font.ttf'),
+    assert.equal((await folderFontLookup([folder])(['Menlo-Regular'], STAYING))?.path ?? 'not found', path.join(folder, 'font.ttf'),
       'because older fonts carry their PostScript name as a one-byte Mac record');
   });
 });
@@ -113,66 +116,74 @@ test('FontLookup_MacRomanNameRecord_Found', async () => {
 test('FontLookup_BytesThatAreNotAFont_SkippedWithoutThrowing', async () => {
   const files = { 'a-text.ttf': Buffer.from('this is not a font file at all, only words'), 'a-empty.ttf': Buffer.alloc(0), 'z-font.ttf': postScriptFont('JetBrainsMonoNF-Regular') };
   await inFontFolder(files, async (folder) => {
-    assert.equal((await folderFontLookup([folder])(['JetBrainsMonoNF-Regular']))?.path ?? 'not found', path.join(folder, 'z-font.ttf'),
+    assert.equal((await folderFontLookup([folder])(['JetBrainsMonoNF-Regular'], STAYING))?.path ?? 'not found', path.join(folder, 'z-font.ttf'),
       'because a file that names no font is passed over, and reading it must not stop the search');
   });
 });
 
 test('FontLookup_FontCutOffBeforeItsNameTable_NotFound', async () => {
   await inFontFolder({ 'cut.ttf': postScriptFont('Cut-Regular').subarray(0, 40) }, async (folder) => {
-    assert.equal(await folderFontLookup([folder])(['Cut-Regular']), null, 'because a file that ends before its name table holds no name that a lookup could match');
+    assert.equal(await folderFontLookup([folder])(['Cut-Regular'], STAYING), null, 'because a file that ends before its name table holds no name that a lookup could match');
   });
 });
 
 test('FontLookup_FileNamedOtherwise_FoundByTheNameInside', async () => {
   await inFontFolder({ 'Menlo.ttf': postScriptFont('JetBrainsMonoNF-Regular'), 'JetBrainsMonoNF-Regular.ttf': postScriptFont('Impostor-Regular') }, async (folder) => {
-    assert.deepEqual(await folderFontLookup([folder])(['JetBrainsMonoNF-Regular']), { path: path.join(folder, 'Menlo.ttf'), contentType: 'font/ttf' },
+    assert.deepEqual(await folderFontLookup([folder])(['JetBrainsMonoNF-Regular'], STAYING), { path: path.join(folder, 'Menlo.ttf'), contentType: 'font/ttf' },
       'because a file name proves nothing; the font named inside the file is the one served');
   });
 });
 
 test('FontLookup_EarlierWantedNameInAFileThatSortsLater_Wins', async () => {
   await inFontFolder({ 'a-console.ttf': postScriptFont('ConsoleFont-Regular'), 'z-iterm.otf': postScriptFont('ItermFont-Regular', 'cff') }, async (folder) => {
-    assert.deepEqual(await folderFontLookup([folder])(['ItermFont-Regular', 'ConsoleFont-Regular']), { path: path.join(folder, 'z-iterm.otf'), contentType: 'font/otf' },
+    assert.deepEqual(await folderFontLookup([folder])(['ItermFont-Regular', 'ConsoleFont-Regular'], STAYING), { path: path.join(folder, 'z-iterm.otf'), contentType: 'font/otf' },
       'because iTerm\'s own font comes before the console\'s fallback whatever order the files are found in');
   });
 });
 
 test('FontLookup_FontInASubfolder_Found', async () => {
   await inFontFolder({ 'Nerd Fonts/JetBrains/font.ttf': postScriptFont('JetBrainsMonoNF-Regular') }, async (folder) => {
-    assert.equal((await folderFontLookup([folder])(['JetBrainsMonoNF-Regular']))?.path ?? 'not found', path.join(folder, 'Nerd Fonts/JetBrains/font.ttf'),
+    assert.equal((await folderFontLookup([folder])(['JetBrainsMonoNF-Regular'], STAYING))?.path ?? 'not found', path.join(folder, 'Nerd Fonts/JetBrains/font.ttf'),
       'because font installers put fonts in subfolders of the font folders');
   });
 });
 
 test('FontLookup_NameOnlyInACollection_NotServed', async () => {
   await inFontFolder({ 'Menlo.ttc': collection(['Menlo-Regular', 'Menlo-Bold']) }, async (folder) => {
-    assert.equal(await folderFontLookup([folder])(['Menlo-Regular']), null, 'because a collection cannot be loaded as a web font, so it is not a file to serve');
+    assert.equal(await folderFontLookup([folder])(['Menlo-Regular'], STAYING), null, 'because a collection cannot be loaded as a web font, so it is not a file to serve');
   });
 });
 
 test('FontLookup_NameOnlyInACollection_LaterNameInAPlainFileServed', async () => {
   await inFontFolder({ 'Menlo.ttc': collection(['Menlo-Regular']), 'console.ttf': postScriptFont('ConsoleFont-Regular') }, async (folder) => {
-    assert.equal((await folderFontLookup([folder])(['Menlo-Regular', 'ConsoleFont-Regular']))?.path ?? 'not found', path.join(folder, 'console.ttf'),
+    assert.equal((await folderFontLookup([folder])(['Menlo-Regular', 'ConsoleFont-Regular'], STAYING))?.path ?? 'not found', path.join(folder, 'console.ttf'),
       'because skipping the collection falls back to the next wanted name rather than to nothing');
   });
 });
 
 test('FontLookup_NoFileHoldsAWantedName_Null', async () => {
   await inFontFolder({ 'other.ttf': postScriptFont('Other-Regular'), 'notes.txt': Buffer.from('JetBrainsMonoNF-Regular') }, async (folder) => {
-    assert.equal(await folderFontLookup([folder])(['JetBrainsMonoNF-Regular']), null, 'because no font file there holds the name, so there is nothing to serve');
+    assert.equal(await folderFontLookup([folder])(['JetBrainsMonoNF-Regular'], STAYING), null, 'because no font file there holds the name, so there is nothing to serve');
   });
 });
 
 test('FontLookup_MissingFolder_NullWithoutThrowing', async () => {
   const missing = path.join(os.tmpdir(), `console-fonts-missing-${process.pid}`, 'Library', 'Fonts');
-  assert.equal(await folderFontLookup([missing])(['JetBrainsMonoNF-Regular']), null, 'because a machine without a user font folder must still start, serving no font');
+  assert.equal(await folderFontLookup([missing])(['JetBrainsMonoNF-Regular'], STAYING), null, 'because a machine without a user font folder must still start, serving no font');
 });
 
 test('FontLookup_MissingFolderBeforeOneWithTheFont_FontFound', async () => {
   await inFontFolder({ 'font.ttf': postScriptFont('JetBrainsMonoNF-Regular') }, async (folder) => {
     const missing = path.join(folder, 'no-such-folder');
-    assert.equal((await folderFontLookup([missing, folder])(['JetBrainsMonoNF-Regular']))?.path ?? 'not found', path.join(folder, 'font.ttf'),
+    assert.equal((await folderFontLookup([missing, folder])(['JetBrainsMonoNF-Regular'], STAYING))?.path ?? 'not found', path.join(folder, 'font.ttf'),
       'because one missing folder must not stop the search of the others');
+  });
+});
+
+test('FontLookup_Cancelled_Null', async () => {
+  await inFontFolder({ 'font.ttf': postScriptFont('JetBrainsMonoNF-Regular') }, async (folder) => {
+    const daemonStopping = new AbortController();
+    daemonStopping.abort();
+    assert.equal(await folderFontLookup([folder])(['JetBrainsMonoNF-Regular'], daemonStopping.signal), null, 'because a cancelled search stops walking the folders and serves nothing');
   });
 });

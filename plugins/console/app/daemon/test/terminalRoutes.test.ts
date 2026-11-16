@@ -36,7 +36,7 @@ async function started(withFont = true): Promise<Rig> {
   };
   const registry = new ProjectRegistry(() => { throw new Error('this test serves no project'); }, silentLogger);
   const panes = new PaneSessions({ spawner: () => ({ ok: false, error: 'this test opens no pane' }), host: { shell: '/bin/sh', environment: {}, isFolder: () => false }, scheduler: realScheduler, log: silentLogger });
-  const server = createConsoleServer(registry, null, { host: '127.0.0.1', port: 0, token: TOKEN, staticDir: null, log: silentLogger, panes, terminal: new TerminalProfiles(readers, silentLogger) });
+  const server = createConsoleServer(registry, null, { host: '127.0.0.1', port: 0, token: TOKEN, staticDir: null, log: silentLogger, panes, terminal: new TerminalProfiles(readers, silentLogger, new AbortController().signal) });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   return { base: `http://127.0.0.1:${port}`, fontFile, otherFile, close: async () => { await closeConsoleServer(server); rmSync(folder, { recursive: true, force: true }); } };

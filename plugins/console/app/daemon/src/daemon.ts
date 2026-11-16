@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { newestCachedPlugin } from './cli.ts';
-import { childProcessRunner } from './collectors/exec.ts';
+import { cancellableProcessRunner, childProcessRunner } from './collectors/exec.ts';
 import { pluginReader } from './collectors/plugins.ts';
 import { diskSessionFiles, SessionLocator } from './collectors/sessions.ts';
 import { SubagentReader } from './collectors/subagents.ts';
@@ -108,8 +108,9 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
    * The account's home, not HOME: `defaults` reads the account's preferences whatever HOME says, and its fonts are the account's too.
    * A daemon under test sets BRAIN_CONSOLE_TERMINAL_LOOK=console and reads neither.
    */
-  const terminal = new TerminalProfiles(terminalProfileReaders(config.terminalLook, childProcessRunner, os.userInfo().homedir), log);
-  void terminal.profile();
+  const daemonStopping = new AbortController();
+  const terminal = new TerminalProfiles(terminalProfileReaders(config.terminalLook, cancellableProcessRunner, os.userInfo().homedir), log, daemonStopping.signal);
+  void terminal.profile(daemonStopping.signal);
   const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes, terminal });
 
   privateFolder(config.stateDir);
@@ -134,6 +135,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
     log.info('shutdown', { signal });
     if (!config.launchd) removePidFile(config.stateDir, process.pid);
     selfCheck.stop();
+    daemonStopping.abort();
     registry.stopAll();
     void Promise.all([closeConsoleServer(server), registry.whenIdle(), panes.stopAll()]).then(() => process.exit(0));
     setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();
