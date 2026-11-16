@@ -9,7 +9,8 @@
 # once every step worked, unless --keep-old (brain-console update prunes after its restart). A
 # step that fails after current moved points it back at the version before. <home> is
 # BRAIN_CONSOLE_HOME, else HOME; the launcher keeps BRAIN_CONSOLE_HOME when it is not HOME.
-# Exit 2 when node or npm is missing or an argument is wrong, 1 when a step fails.
+# npm is the one beside node when there is one. Exit 2 when node or npm is missing or too old or
+# an argument is wrong, 1 when a step fails.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 app="$(cd "$here/../app" 2>/dev/null && pwd)" || { echo "console install: no app folder beside $here" >&2; exit 1; }
@@ -28,10 +29,23 @@ for arg in "$@"; do
 done
 [ "$expect_root" -eq 0 ] || { echo "console install: --project needs a folder" >&2; exit 2; }
 
-command -v node >/dev/null 2>&1 || { echo "console install: node is missing; install Node 24 or newer (https://nodejs.org, or: brew install node), then run this again" >&2; exit 2; }
-command -v npm >/dev/null 2>&1 || { echo "console install: npm is missing; it comes with Node 24 or newer (https://nodejs.org, or: brew install node)" >&2; exit 2; }
+node_path="$(command -v node 2>/dev/null)" || { echo "console install: node is missing; install Node 24 or newer (https://nodejs.org, or: brew install node), then run this again" >&2; exit 2; }
 major="$(node -p 'process.versions.node.split(".")[0]')"
 [ "$major" -ge 24 ] 2>/dev/null || { echo "console install: node $(node --version) is too old; install Node 24 or newer" >&2; exit 2; }
+# The npm installed with this node, not an older one from another install further on the PATH:
+# npm runs on the first node on the PATH, and an npm older than its node crashes in npm ci.
+node_dir="$(dirname "$node_path")"
+PATH="$node_dir:$PATH"; export PATH
+npm_path="$(command -v npm 2>/dev/null)" || { echo "console install: npm is missing; it comes with Node 24 or newer (https://nodejs.org, or: brew install node)" >&2; exit 2; }
+# The app's lockfiles are version 3, which npm reads from 7 on.
+min_npm=7
+npm_version="$(npm --version 2>/dev/null)"
+if ! [ "${npm_version%%.*}" -ge "$min_npm" ] 2>/dev/null; then
+  beside="$node_dir has no working npm of its own"
+  [ "$(dirname "$npm_path")" = "$node_dir" ] && beside="it is the one beside node"
+  echo "console install: npm ${npm_version:-(it does not run)} at $npm_path is too old: the app needs npm $min_npm or newer, and $beside; install Node 24 or newer with its npm (https://nodejs.org, or: brew install node), then run this again" >&2
+  exit 2
+fi
 version="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).version' "$app/package.json")"
 # The version names a folder that is replaced and pruned: only digits and dots.
 printf '%s' "$version" | grep -Eq '^[0-9]+(\.[0-9]+)*$' || { echo "console install: $app/package.json has no version of digits and dots (got '$version')" >&2; exit 2; }
