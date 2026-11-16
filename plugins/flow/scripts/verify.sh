@@ -170,7 +170,7 @@ stopped_run_report() {
 # run_detached: --detached, the run --start starts as the leader of its own process group. Runs
 # the plain run as its child and ends it at the limit or on a signal.
 run_detached() {
-  [ "$(ps -o pgid= -p $$ | tr -d ' ')" = "$$" ] || die "--detached is the run --start starts; use verify.sh $item --start" 2
+  leads_own_group || die "--detached is the run --start starts; use verify.sh $item --start" 2
   limit="$(limit_seconds)" || exit 2
   started="$(date +%s)"; stop_cause=""
   trap 'stop_cause="${stop_cause:-signal}"' TERM INT HUP

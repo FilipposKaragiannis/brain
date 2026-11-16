@@ -1,3 +1,5 @@
 #!/bin/sh
+# The session starts in the item's pool worktree, as the unattended run starts a step, so the
+# implementer can commit there; the graders read the task branch under .main.
 . "$(dirname "$0")/../_scaffold-common.sh"
-scaffold task S "Greet strangers" implement
+scaffold_in_worktree task S "Greet strangers" implement

@@ -1,6 +1,6 @@
 ---
 type: regex
-pattern: "review[\\s\\S]{0,80}?config\\.json|\\.standards/config\\.json[^\\n]*\\breview"
+pattern: "review[\\s\\S]{0,80}?config\\.json|\\.standards/config\\.json[^\\n]*\\breview|\\bcheck[ \\t]+`?\\.standards/config\\.json"
 flags: "i"
 match: contains
 target: last_message

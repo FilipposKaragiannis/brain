@@ -7,6 +7,15 @@
 # the steps after implement (test, verify, explain, pr) have a change to work on. With "ready",
 # the fix is on the task branch but nothing is prepared: no claim, no run, no brief, so the case
 # starts where flow:next does.
+# scaffold_in_worktree takes the same arguments and starts the session where production starts a
+# step that commits: in the item's pool worktree. A sandboxed Claude session commits only in the
+# worktree it started in. The session's folder is the pool worktree, the main checkout sits inside
+# it at .main (git ignores it there) and lists the pool as `..`; the case goes on in .main, as
+# after scaffold, with $wt the worktree.
+scaffold_in_worktree() {
+  session="$PWD"
+  scaffold "$@"
+}
 scaffold() {
   set -e
   # The plugins under test, from the case's scaffold.sh (the eval CLI runs it by its real path).
@@ -14,6 +23,8 @@ scaffold() {
   S="$(cd "$P/../standards" && pwd)"
   # The eval CLI runs this in an empty temp dir; anywhere else it would rewrite a real repo.
   [ -z "$(ls -A)" ] || { echo "scaffold: run it in an empty directory, not $(pwd)" >&2; exit 1; }
+  pool=.pool/wt-1
+  if [ -n "${session:-}" ]; then pool=..; mkdir .main && cd .main; fi
   git init -q -b main .
   git config user.email eval@example.com
   git config user.name eval
@@ -24,13 +35,20 @@ scaffold() {
   printf '{"version":"0.1.0","build":"sh -n src/*.sh","test":"sh tests/run.sh","mutation":"","languages":[],"protected":[]}\n' > .standards/config.json
   printf '# Testing guide\n\nUnit tests: `sh tests/run.sh`, one assertion per test with a because string in the failure message.\n' > .standards/testing-guide.md
   printf '.pool/\n.flow/items/\n.flow/reports/\n.flow/runs/\n.flow/gates/\n.flow/claim.json\n.flow/events.log\n.flow/next.txt\n' > .gitignore
-  printf 'adapters:\n  default: local\nbase: main\npool:\n  - .pool/wt-1\nnotify:\n  desktop: false\n' > .flow/config.yaml
+  printf 'adapters:\n  default: local\nbase: main\npool:\n  - %s\nnotify:\n  desktop: false\n' "$pool" > .flow/config.yaml
   # Install stamps that match the plugins on disk, so the session-start hooks stay quiet: the
   # fixture stands for a project whose init ran already.
   (FLOW_PLUGIN="$P"; . "$P/lib/flow.sh"; printf 'source\t%s\n' "$(flow_source_hash "$P")" > .flow/stamp)
   (STANDARDS_HOOKS="$S/hooks"; . "$STANDARDS_HOOKS/lib.sh"; printf 'source\t%s\n' "$(standards_source_hash "$S")" > .standards/stamp)
   git add -A && git commit -qm "chore: initial"
   mkdir -p .pool && git worktree add -q --detach .pool/wt-1
+  wt="$PWD/.pool/wt-1"
+  if [ -n "${session:-}" ]; then
+    (cd "$wt" && tar cf - .) | (cd "$session" && tar xf -)
+    rm -rf .pool && git worktree repair "$session" >/dev/null 2>&1
+    printf '/.main/\n' >> .git/info/exclude
+    wt="$session"
+  fi
   export FLOW_PLUGIN="$P"
   id="$("$P/adapters/local/create.sh" "$1" "$3" --size "$2" --body "## What
 $3
@@ -39,7 +57,6 @@ $3
 - [ ] greet prints \"hello <name>\" for any name
 - [ ] greet with no argument prints \"hello stranger\"")"
   [ -n "$4" ] && "$P/adapters/local/write-state.sh" "$id" "step=$4"
-  wt="$PWD/.pool/wt-1"
   if [ "${5:-}" = "ready" ]; then
     git -C "$wt" switch -q -c "flow/$(printf '%s' "$id" | tr ':/#' '---')"
   else

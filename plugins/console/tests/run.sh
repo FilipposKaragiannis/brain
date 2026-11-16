@@ -29,6 +29,7 @@ fake="$work/bin"; mkdir -p "$fake"
 # npm: logs "<cwd> <args>"; `ci` leaves a marker, `run build` leaves ui/dist/index.html.
 cat > "$fake/npm" <<SH
 #!/bin/sh
+[ "\$1" = --version ] && { echo 11.6.2; exit 0; }
 echo "\$(pwd) \$*" >> "$work/npm.log"
 dir=.; [ "\$1" = --prefix ] && { dir="\$2"; shift 2; }
 [ "\$1" = ci ] && [ -f "$work/npm-fails" ] && exit 1
@@ -41,6 +42,8 @@ for tool in launchctl open; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n[ "$1" = print ] && exit 113\nexit 0\n' "$tool" "$work" > "$fake/$tool"
 done
 chmod +x "$fake"/*
+# The installer takes the npm beside node: node is in the fake folder, so the fake npm is that one.
+ln -s "$(command -v node)" "$fake/node"
 run_install() { # run_install <script> <args...>: under the fake home, output in $work/out
   script="$1"; shift
   env -i HOME="${H:-$home}" PATH="$fake:$PATH" SHELL=/bin/zsh TMPDIR="${TMPDIR:-/tmp}" ${BCH:+BRAIN_CONSOLE_HOME="$BCH"} sh "$script" "$@" > "$work/out" 2>&1
@@ -82,6 +85,17 @@ run_install "$P/scripts/install.sh" --no-launchd --project "$work"; code=$?
 check "--project on a folder with no flow fails the install" [ "$code" -eq 1 ]
 run_install "$P/scripts/install.sh" --bogus; code=$?
 check "an unknown argument exits 2" [ "$code" -eq 2 ]
+
+# npm 6, as Homebrew's node@14 links it: crashes in npm ci on the app's lockfiles under node 24.
+oldnpm="$work/oldnpm"; mkdir -p "$oldnpm"
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo 6.14.17; exit 0; }\necho "$*" >> "%s/oldnpm.log"\nexit 1\n' "$work" > "$oldnpm/npm"
+chmod +x "$oldnpm/npm"
+env -i HOME="$home" PATH="$oldnpm:$fake:$PATH" SHELL=/bin/zsh TMPDIR="${TMPDIR:-/tmp}" sh "$P/scripts/install.sh" --no-launchd > "$work/out" 2>&1; code=$?
+check "an old npm before node's own on the PATH is passed over for node's own" sh -c "[ $code -eq 0 ] && [ ! -e '$work/oldnpm.log' ]"
+oldnode="$work/oldnode"; mkdir -p "$oldnode"
+cp "$oldnpm/npm" "$oldnode/npm" && ln -s "$(command -v node)" "$oldnode/node"
+env -i HOME="$home" PATH="$oldnode:$PATH" SHELL=/bin/zsh TMPDIR="${TMPDIR:-/tmp}" sh "$P/scripts/install.sh" --no-launchd > "$work/out" 2>&1; code=$?
+check "an npm too old for the lockfiles exits 2 naming it before npm ci" sh -c "[ $code -eq 2 ] && grep -q 'npm 6.14.17 at $oldnode/npm is too old' '$work/out' && [ ! -e '$work/oldnpm.log' ]"
 
 echo "install.sh: failures and reinstalls"
 : > "$work/npm-fails"
@@ -281,6 +295,17 @@ check "a re-run deletes the demo only after a run that outlasts SIGTERM has ende
 check "a re-run leaves a job working outside the demo alone, though a demo lock names it" alive "$other_pid"
 check "a re-run leaves that job's process group alone" alive "$other_child"
 for g in "$run_pid" "$other_pid" "$slow_pid"; do alive "$g" && kill -s TERM -- "-$g" 2>/dev/null; done
+# The same re-run where ps cannot run, as a sandbox refuses the setuid /bin/ps on macOS.
+refused_ps="$work/refused-ps"
+mkdir -p "$refused_ps" && printf '#!/bin/sh\necho "ps: Operation not permitted" >&2\nexit 126\n' > "$refused_ps/ps" && chmod +x "$refused_ps/ps"
+start_run "$demo/console-demo" "$demo/console-demo/.flow/log/next.lock" "$work/refused-child"
+refused_run_pid="$(cat "$demo/console-demo/.flow/log/next.lock/pid" 2>/dev/null)"
+path_with_ps="$PATH"; PATH="$refused_ps:$PATH"
+run_demo --dir "$demo"
+PATH="$path_with_ps"
+check "ReRunWhereNoPsRuns_StopsADetachedRun: pgrep and python find the run, so it never outlives the demo it works on" \
+  sh -c "[ -n '$refused_run_pid' ] && ! kill -0 '$refused_run_pid' 2>/dev/null"
+alive "$refused_run_pid" && kill -s TERM -- "-$refused_run_pid" 2>/dev/null
 foreign="$work/foreign"; mkdir -p "$foreign"; : > "$foreign/keep"
 run_demo --dir "$foreign"; code=$?
 check "a folder the demo did not build is refused" [ "$code" -eq "$usage_exit" ]

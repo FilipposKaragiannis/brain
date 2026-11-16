@@ -32,8 +32,9 @@ marketplace and the hosts.
    the description fits its kind.
 5. **Write the eval.** `prompt.md` is a user message that should fire the skill without naming
    it (model-invoked) or the `/plugin:name` command (user-invoked); graders: `tool_used` on the
-   Skill tool, a `regex` or `file_exists` on the promised output, one `llm` rubric on the final
-   message. A fixture goes in `scaffold.sh`. A model-invoked skill that a nearby request could
+   Skill tool for a model-invoked skill (a typed command loads the skill without that call, so a
+   user-invoked one gets `tool_used` on a call its steps make), a `regex` or `file_exists` on the
+   promised output, one `llm` rubric on the final message. A fixture goes in `scaffold.sh`. A model-invoked skill that a nearby request could
    fire by mistake also gets a should-not-trigger case: a nearby, unrelated prompt and a
    `tool_used` grader with `min: 0` and `max: 0`. Done when `tools/eval.sh <plugin>` passes.
 6. **Review with the owner.** Show the skill and the eval, and say whether it is user-invoked
