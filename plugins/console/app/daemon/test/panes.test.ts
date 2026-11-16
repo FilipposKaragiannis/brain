@@ -155,7 +155,7 @@ test('PaneClosed_ChildIgnoringHangUpOutlivesItsProcess_GroupKilledOnceTheGraceRu
     pty.childIgnoresHangUp = true;
     closing.close(panes, link);
     timers.fire(PANE_KILL_GRACE_MILLISECONDS);
-    assert.equal(pty.signals.includes('SIGKILL'), true, `because with ${closing.how} a process left in the pane's group after its own process died on the hang-up is killed, so a closed pane leaves nothing running`);
+    assert.equal(pty.groupRunning(), false, `because with ${closing.how} a process left in the pane's group after its own process died on the hang-up is killed, so a closed pane leaves nothing running`);
   }
 });
 
@@ -167,16 +167,16 @@ test('LinkGone_GroupEmptyWhenTheProcessExits_NoTimerLeft', () => {
   assert.deepEqual(timers.pending(), [], 'because a group with nothing left in it needs no kill, so its grace is cancelled');
 });
 
-test('LinkGone_GroupEmptyWhenTheProcessExits_NoKillSent', () => {
+test('LinkGone_GroupEmptyWhenTheProcessExits_SomeoneElsesProcessGivenItsIdKeepsRunning', () => {
   const { open, ptys, timers } = sessions(null);
   const link = open(SHELL_AT_ROOT, PROJECT);
   const pty = only(ptys);
   link.go();
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
-  assert.equal(pty.signals.includes('SIGKILL'), false, 'because an emptied group\'s id may be handed to someone else\'s processes, so it is never signalled again');
+  assert.equal(pty.someoneElsesProcessRunning, true, 'because an emptied group\'s id may be handed to someone else\'s processes, so it is never signalled again');
 });
 
-test('LinkGone_GroupEmptiesByItselfDuringTheGrace_NoKillSent', () => {
+test('LinkGone_GroupEmptiesByItselfDuringTheGrace_SomeoneElsesProcessGivenItsIdKeepsRunning', () => {
   const { open, ptys, timers } = sessions(null);
   const link = open(SHELL_AT_ROOT, PROJECT);
   const pty = only(ptys);
@@ -184,7 +184,7 @@ test('LinkGone_GroupEmptiesByItselfDuringTheGrace_NoKillSent', () => {
   link.go();
   pty.childEnded = true;
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
-  assert.equal(pty.signals.includes('SIGKILL'), false, 'because a group that emptied during the grace may have its id handed to someone else\'s processes, so it is never signalled');
+  assert.equal(pty.someoneElsesProcessRunning, true, 'because a group that emptied during the grace may have its id handed to someone else\'s processes, so it is never signalled');
 });
 
 test('StopAll_GroupEmptiesByItselfDuringTheGrace_Settles', async () => {
@@ -201,14 +201,14 @@ test('StopAll_GroupEmptiesByItselfDuringTheGrace_Settles', async () => {
   assert.equal(settled, true, 'because a pane whose group emptied by itself is finished, so a stopping daemon exits without a kill');
 });
 
-test('ProcessExitsByItself_ChildLeftInItsGroup_NoSignalsSent', () => {
+test('ProcessExitsByItself_ChildLeftInItsGroup_ChildKeepsRunning', () => {
   const { open, ptys, timers } = sessions(null);
   open(SHELL_AT_ROOT, PROJECT);
   const pty = only(ptys);
-  pty.childIgnoresHangUp = true;
+  pty.childEndsOnHangUp = true;
   pty.exit(0, null);
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
-  assert.deepEqual(pty.signals, [], 'because a pane the owner did not close is never hung up or killed, whatever its process left behind');
+  assert.equal(pty.groupRunning(), true, 'because a pane the owner did not close is never hung up or killed, whatever its process left behind');
 });
 
 test('ProcessExitsByItself_ChildLeftInItsGroup_ToldThenEnded1000', () => {
@@ -254,7 +254,7 @@ test('StopAll_ChildIgnoringHangUp_SettlesWithTheGroupKilled', async () => {
   await tick();
   timers.fire(PANE_KILL_GRACE_MILLISECONDS);
   await stopping;
-  assert.equal(pty.signals.includes('SIGKILL'), true, 'because the daemon exits only after the group its pane left behind has been killed');
+  assert.equal(pty.groupRunning(), false, 'because the daemon exits only after the group its pane left behind has been killed');
 });
 
 test('StopAll_PaneClosedBeforeAndStillInItsGrace_NotSettledBeforeItsKill', async () => {
