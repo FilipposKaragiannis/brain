@@ -1301,22 +1301,45 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: merged PR skipped, quiet" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'quiet: no open PR' .flow/log/comments.log"
-# A stand-in run: its command line names jobs/comments.sh, as a real run's does, and it has a child.
+# Stand-in runs: each command line names jobs/<job>.sh, as a real run's does, and each has a child.
 mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
-fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
-mkdir -p .flow/log/comments.lock && echo "$fakejob" > .flow/log/comments.lock/pid
-check "job lock: live pid skips"  sh -c "'$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
+printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/intake.sh" && chmod +x "$work/fake/jobs/intake.sh"
+fakeintake="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/intake.sh")"
+mkdir -p .flow/log/intake.lock && echo "$fakeintake" > .flow/log/intake.lock/pid
+check "IntakeRunBesideALiveRunOfItsSchedule_Skips: an intake schedule runs one at a time" sh -c "'$P/jobs/intake.sh' claude | grep -q 'skipped: run $fakeintake still going'"
 check "JobLockWhereNoPsRuns_LivePidSkips: pgrep sees the run, so a live lock is never taken for a stale one" \
-  sh -c "PATH='$refused_ps':\$PATH '$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
+  sh -c "PATH='$refused_ps':\$PATH '$P/jobs/intake.sh' claude | grep -q 'skipped: run $fakeintake still going'"
+mkdir -p .flow/log/intake.shared.lock && echo "$fakeintake" > .flow/log/intake.shared.lock/pid && printf intake > .flow/log/intake.shared.lock/name
+"$P/jobs/intake.sh" claude --as intake-nightly > "$work/shared.out" 2>&1
+check "IntakeScheduleBesideAHeldSharedLock_Skips: the schedules of intake share its state, so they take turns" grep -q "skipped: intake is running (pid $fakeintake), which shares the intake job.s state" "$work/shared.out"
+check "IntakeScheduleBesideAHeldSharedLock_RemovesItsOwnLock: a skipped run leaves no lock behind" test ! -d .flow/log/intake-nightly.lock
+check "IntakeScheduleBesideAHeldSharedLock_LeavesTheSharedLockToItsHolder: the live holder keeps its turn" sh -c "[ \"\$(cat .flow/log/intake.shared.lock/pid)\" = $fakeintake ]"
+rm -rf .flow/log/intake.shared.lock .flow/log/intake.lock
+pkill -P "$fakeintake" 2>/dev/null; kill "$fakeintake" 2>/dev/null
+fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
+mkdir -p ".flow/log/comments-$fakejob.lock" && echo "$fakejob" > ".flow/log/comments-$fakejob.lock/pid"
+"$P/jobs/comments.sh" claude > "$work/beside.out" 2>&1
+check "CommentsRunBesideALiveRun_Starts: runs of the comments job overlap" grep -q 'quiet: no open PR' "$work/beside.out"
+check "CommentsRunBesideALiveRun_LeavesOnlyTheLiveRunsLock: a run removes its own lock and never a live one" \
+  sh -c "[ \"\$(ls -d .flow/log/comments-[0-9]*.lock)\" = '.flow/log/comments-$fakejob.lock' ]"
+check "JobLockWhereNoPsRuns_KeepsALiveRunsLock: pgrep sees the run, so a live lock is never taken for a stale one" \
+  sh -c "PATH='$refused_ps':\$PATH '$P/jobs/comments.sh' claude >/dev/null 2>&1; [ -d '.flow/log/comments-$fakejob.lock' ]"
 mkdir -p .flow/log/comments.shared.lock && echo "$fakejob" > .flow/log/comments.shared.lock/pid && printf comments > .flow/log/comments.shared.lock/name
-check "job lock: another schedule of the job skips while one runs, as they share its state" sh -c "'$P/jobs/comments.sh' claude --as comments-fast | grep -q 'skipped: comments is running (pid $fakejob), which shares the comments job.s state' && [ ! -d .flow/log/comments-fast.lock ] && [ \"\$(cat .flow/log/comments.shared.lock/pid)\" = $fakejob ]"
-rm -rf .flow/log/comments.shared.lock
+"$P/jobs/comments.sh" claude --as comments-fast > "$work/beside.out" 2>&1
+check "CommentsScheduleBesideAHeldSharedLock_Starts: the comments job takes no shared lock" grep -q 'quiet: no open PR' "$work/beside.out"
+check "CommentsScheduleBesideAHeldSharedLock_LeavesItToItsHolder: a comments run never takes over the shared lock" \
+  sh -c "[ \"\$(cat .flow/log/comments.shared.lock/pid)\" = $fakejob ]"
+rm -rf .flow/log/comments.shared.lock ".flow/log/comments-$fakejob.lock"
 pkill -P "$fakejob" 2>/dev/null; kill "$fakejob" 2>/dev/null
-echo 999999 > .flow/log/comments.lock/pid
-check "job lock: stale pid runs, and leaves neither its lock nor the shared one" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ] && [ ! -d .flow/log/comments.shared.lock ]"
+mkdir -p .flow/log/comments-999999.lock && echo 999999 > .flow/log/comments-999999.lock/pid
+"$P/jobs/comments.sh" claude > "$work/stale.out" 2>&1
+check "CommentsRunBesideAStaleLock_Starts: a lock whose pid is gone holds nothing" grep -q 'quiet: no open PR' "$work/stale.out"
+check "StaleCommentsRunLock_IsRemovedByTheNextRun: the next run clears a lock whose pid is gone" test ! -d .flow/log/comments-999999.lock
 sleep 60 & other=$!
-mkdir -p .flow/log/comments.lock && echo "$other" > .flow/log/comments.lock/pid
-check "job lock: a pid a restart gave to another process is stale, and that process is left alone" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ] && kill -0 $other"
+mkdir -p ".flow/log/comments-$other.lock" && echo "$other" > ".flow/log/comments-$other.lock/pid"
+"$P/jobs/comments.sh" claude >/dev/null 2>&1
+check "CommentsRunLockOfAPidARestartGaveAway_IsRemoved: a pid that runs something else is stale" test ! -d ".flow/log/comments-$other.lock"
+check "CommentsRunLockOfAPidARestartGaveAway_LeavesThatProcessAlone: only the lock goes" kill -0 "$other"
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null"
 home2="$work/home2"; mkdir -p "$home2"
@@ -1452,10 +1475,13 @@ printf 'the job said this\n' >> "$home2/log/next.log"; printf 'a worker said thi
 check "logs prints the job's log and each worker's" sh -c "FLOW_HOME='$home2' '$J' logs next 5 > '$work/logs.out' && grep -q '^== next.log' '$work/logs.out' && grep -q 'the job said this' '$work/logs.out' && grep -q '^== next-1.log' '$work/logs.out' && grep -q 'a worker said this' '$work/logs.out'"
 fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
 sleep 1; fakechild="$(pgrep -P "$fakejob")"
-mkdir -p "$home2/log/comments.lock" && echo "$fakejob" > "$home2/log/comments.lock/pid"
-check "run refuses a job that is running" sh -c "FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
+mkdir -p "$home2/log/comments-$fakejob.lock" && echo "$fakejob" > "$home2/log/comments-$fakejob.lock/pid"
+fakeintake="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/intake.sh")"
+mkdir -p "$home2/log/intake.lock" && echo "$fakeintake" > "$home2/log/intake.lock/pid"
+check "RunOfAJobThatIsRunning_IsRefused: a job other than comments runs one at a time" sh -c "FLOW_HOME='$home2' '$J' run intake | grep -q 'running already'"
 check "RunWhereNoPsRuns_RefusesAJobThatIsRunning: pgrep sees the run, so no second one starts beside it" \
-  sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
+  sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' run intake | grep -q 'running already'"
+pkill -P "$fakeintake" 2>/dev/null; kill "$fakeintake" 2>/dev/null; rm -rf "$home2/log/intake.lock"
 check "status shows a running job" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
 check "StatusWhereNoPsRuns_ShowsARunningJob: pgrep sees the run, so status never calls it stopped" \
   sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
@@ -1463,11 +1489,11 @@ FLOW_HOME="$home2" "$J" stop comments >/dev/null
 sleep 1
 check "stop ends the running run and every process under it" sh -c "[ -n '$fakechild' ] && ! kill -0 $fakejob 2>/dev/null && ! kill -0 $fakechild 2>/dev/null"
 sleep 60 & other=$!
-echo "$other" > "$home2/log/comments.lock/pid"
+mv "$home2/log/comments-$fakejob.lock" "$home2/log/comments-$other.lock" && echo "$other" > "$home2/log/comments-$other.lock/pid"
 check "a lock whose pid now runs something else is not a running job" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"]==[]'"
 check "stop leaves that process alone" sh -c "FLOW_HOME='$home2' '$J' stop comments | grep -q 'not running' && kill -0 $other"
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
-rm -rf "$home2/log/comments.lock"
+rm -rf "$home2/log/comments-$other.lock"
 # Named schedules: one job on several schedules, each its own agent, name and host.
 printf 'jobs:\n  schedule:\n    next: every 30m --max-steps 15\n    next-codex: every 30m codex --workers 2 --max-steps 5\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install next-codex > "$work/install.out" 2>&1

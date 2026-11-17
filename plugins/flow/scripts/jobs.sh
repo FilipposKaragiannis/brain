@@ -4,7 +4,8 @@
 #                          result, next run, last 7 days, and each worker of next with its host
 #   history <name> [N]     the last N runs (default 10): start, length, exit, outcome, last line
 #   logs <name> [N]        the last N lines of the schedule's log and of each worker's (default 40)
-#   run <name>             start a run now, as the schedule would; a running one is left alone
+#   run <name>             start a run now, as the schedule would; a running one is left alone,
+#                          and comments starts a second run beside it
 #   stop <name>            end the running run and every session under it
 #   pause <name|all>       later runs exit at once until resume; a running run finishes
 #   resume <name|all>
@@ -127,14 +128,15 @@ case "$cmd" in
   run)
     [ -n "${1:-}" ] || die "run <name>" 2; named "$1"; settings_ok "$1"
     [ -z "$(spec "$1")" ] || py args "$(spec "$1")" >/dev/null || exit 2
-    [ -z "$(live "$1")" ] || { echo "$1 is running already: jobs.sh stop $1 ends it"; exit 0; }
-    if loaded "$1"; then
+    live_pids="$(live "$1")"
+    [ -z "$live_pids" ] || [ "$(job_of "$1")" = comments ] || { echo "$1 is running already: jobs.sh stop $1 ends it"; exit 0; }
+    if [ -z "$live_pids" ] && loaded "$1"; then
       launchctl kickstart "$domain/$(label "$1")" || die "launchd could not start $(label "$1")"
       echo "$1 started through launchd"
     else
       mkdir -p "$log"
       (cd "$main" && nohup sh -c "$(command_for "$1")" >> "$log/launchd-$1.log" 2>&1 &)
-      echo "$1 started: $(command_for "$1")"
+      if [ -n "$live_pids" ]; then echo "$1 started beside its live run: $(command_for "$1")"; else echo "$1 started: $(command_for "$1")"; fi
     fi ;;
   stop)
     [ -n "${1:-}" ] || die "stop <name>" 2; known "$1"

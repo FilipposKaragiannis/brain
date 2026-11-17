@@ -62,6 +62,14 @@ job_skip_if_paused() {
 # job_alive <pid>: the pid still runs this job's script. A lock left by a restart can name a pid
 # the system has since given to something else.
 job_alive() { case "$(process_command "$1")" in *"jobs/$(job_base).sh"*) return 0 ;; esac; return 1; }
+job_lock_kind="${job_lock_kind:-schedule}"
+case "$job_lock_kind" in schedule|run) ;; *) die "job_lock_kind is $job_lock_kind: schedule or run" 2 ;; esac
+job_drop_stale_run_locks() {
+  for _run_lock in "$(job_log_dir)/$job.lock" "$(job_log_dir)/$job"-[0-9]*.lock; do
+    _run_pid="$(cat "$_run_lock/pid" 2>/dev/null)"
+    [ -z "$_run_pid" ] || job_alive "$_run_pid" || rm -rf "$_run_lock"
+  done
+}
 # job_lock: exit 0 quietly when another run of this job is alive; a lock whose pid is not is stale.
 # The schedules of one job but next (intake and intake-nightly) share that job's state, the notes
 # and ledger, the PR replies, the lessons or the claims, so they take turns on <job>.shared.lock as
@@ -69,6 +77,7 @@ job_alive() { case "$(process_command "$1")" in *"jobs/$(job_base).sh"*) return 
 job_lock() {
   job_shared=
   d="$(job_log_dir)/$job.lock"
+  if [ "$job_lock_kind" = run ]; then job_drop_stale_run_locks; d="$(job_log_dir)/$job-$$.lock"; rm -rf "$d"; fi
   if mkdir "$d" 2>/dev/null; then :; else
     pid="$(cat "$d/pid" 2>/dev/null)"
     if [ -n "$pid" ] && job_alive "$pid"; then job_say "skipped: run $pid still going"; job_record 0; exit 0; fi
@@ -78,7 +87,7 @@ job_lock() {
   trap 'job_end $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  [ "$(job_base)" != next ] || return 0
+  [ "$job_lock_kind" = schedule ] && [ "$(job_base)" != next ] || return 0
   _s="$(job_log_dir)/$(job_base).shared.lock"
   if mkdir "$_s" 2>/dev/null; then :; else
     _spid="$(cat "$_s/pid" 2>/dev/null)"

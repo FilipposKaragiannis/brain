@@ -42,6 +42,7 @@
 # passes' host output goes to the log as it comes, so lines of passes at once interleave there.
 set -u
 job=comments
+job_lock_kind=run
 . "$(dirname "$0")/_job.sh"
 . "$FLOW_PLUGIN/lib/slots.sh"
 host="${1:-}"; [ $# -eq 0 ] || shift
