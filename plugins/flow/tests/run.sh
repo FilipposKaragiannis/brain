@@ -2355,6 +2355,31 @@ hs > "$hroot/out" 2>&1
 check "health: a sub-agent's ad hoc claim whose session has ended is released with no hand step" [ ! -f "$ended_agent_worktree/.flow/claim.json" ]
 "$P/scripts/steward.sh" release "$ended_agent_worktree" --force >/dev/null 2>&1
 
+dirty_agent_worktree="$(printf '{"name":"agent-d1e7c0de","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
+printf 'unsaved\n' > "$dirty_agent_worktree/sub-agent-notes.txt"; touch -t 202401010000 "$dirty_agent_worktree/sub-agent-notes.txt"
+stale_claim "$dirty_agent_worktree"; : > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: an ended sub-agent's ad hoc claim with uncommitted changes is kept" [ -f "$dirty_agent_worktree/.flow/claim.json" ]
+check "health: an ended sub-agent's uncommitted changes are never reset" [ "$(cat "$dirty_agent_worktree/sub-agent-notes.txt")" = unsaved ]
+dirty_agent_name="$(basename "$dirty_agent_worktree")"
+check_all "health: an ended sub-agent's claim with uncommitted changes is named once" 'grep -qw "$dirty_agent_name" "$hroot/out" && ! grep -qw "$dirty_agent_name" "$hroot/out2"'
+rm -f "$dirty_agent_worktree/sub-agent-notes.txt"; "$P/scripts/steward.sh" release "$dirty_agent_worktree" --force >/dev/null 2>&1
+
+subagent_host="$hroot/subagent-host/run-unattended.sh"; mkdir -p "$hroot/subagent-host"
+printf '#!/bin/sh\necho "$$"\n"$1"\n' > "$subagent_host"; chmod +x "$subagent_host"
+printf '{"name":"agent-11fe5e55","cwd":"%s"}' "$PWD" | "$subagent_host" "$P/hooks/worktree-create.sh" > "$hroot/hook.out" 2>/dev/null
+live_host_pid="$(head -1 "$hroot/hook.out")"; live_agent_worktree="$(tail -1 "$hroot/hook.out")"
+stale_claim "$live_agent_worktree"; printf '%s\t\t/bin/sh %s\n' "$live_host_pid" "$subagent_host" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check "health: a sub-agent's ad hoc claim is kept while the session that claimed it still runs" [ -f "$live_agent_worktree/.flow/claim.json" ]
+: > "$FLOW_HEALTH_PROCS"; "$P/scripts/steward.sh" release "$live_agent_worktree" --force >/dev/null 2>&1
+
+working_agent_worktree="$(printf '{"name":"agent-3a6e17ed","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
+stale_claim "$working_agent_worktree"; printf '4646\t%s\tclaude\n' "$working_agent_worktree" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check "health: a sub-agent's ad hoc claim is kept while an agent works in its worktree" [ -f "$working_agent_worktree/.flow/claim.json" ]
+: > "$FLOW_HEALTH_PROCS"; "$P/scripts/steward.sh" release "$working_agent_worktree" --force >/dev/null 2>&1
+
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
 a="$(hitem "Empty claim")"; FLOW_RUN_PID="$loop" "$P/scripts/next.sh" "$a" >/dev/null; wa="$("$P/scripts/steward.sh" find "$a")"

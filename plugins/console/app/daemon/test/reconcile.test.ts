@@ -211,6 +211,38 @@ test('ParkedClaim_NotHeld_WaitingForAWorker', async () => {
   assert.deepEqual([picture.counts.waiting, picture.counts.claimed], [1, 0], 'because the pool counts it as waiting, not as a bare claim');
 });
 
+const SUB_AGENT_CLAIM_ID = 'adhoc:agent-a2bc735e';
+const SUB_AGENT_BRANCH = 'flow/adhoc-agent-a2bc735e';
+
+/** project-wt-3 claimed by a sub-agent through flow's WorktreeCreate hook instead of gh#9, with no run and no process anywhere. */
+async function subAgentClaim(): Promise<Snapshot> {
+  const facts = await parkedNine();
+  facts.flow = {
+    ...facts.flow,
+    claims: facts.flow.claims.map((claim) => (claim.item === 'gh#9' ? { ...claim, item: SUB_AGENT_CLAIM_ID, branch: SUB_AGENT_BRANCH, step: '' } : claim)),
+  };
+  facts.git = { worktrees: facts.git!.worktrees.map((entry) => (entry.path.endsWith('project-wt-3') ? { ...entry, branch: SUB_AGENT_BRANCH } : entry)) };
+  return reconcile(facts);
+}
+
+const subAgentItem = (picture: Snapshot) => picture.items.find((item) => item.id === SUB_AGENT_CLAIM_ID);
+
+test('SubAgentClaim_ShownAsASubAgent', async () => {
+  assert.equal(subAgentItem(await subAgentClaim())?.kind, 'sub-agent', 'because the board row says what holds the worktree, which no tracker item names');
+});
+
+test('SubAgentClaim_TitleNamesItsWorktree', async () => {
+  assert.match(subAgentItem(await subAgentClaim())?.title ?? '', /project-wt-3/, 'because the owner finds the pool worktree the sub-agent holds from its row, not from a bare id');
+});
+
+test('SubAgentClaim_TitleNamesItsBranch', async () => {
+  assert.match(subAgentItem(await subAgentClaim())?.title ?? '', new RegExp(SUB_AGENT_BRANCH), 'because the owner finds the sub-agent\'s work by its branch');
+});
+
+test('SubAgentClaimWithNoAgent_ClaimedNotWaiting', async () => {
+  assert.equal(subAgentItem(await subAgentClaim())?.state, 'claimed', 'because no worker takes a next step for a sub-agent\'s claim, so it is never parked waiting for one');
+});
+
 /** The facts with the board's open_blockers of one item set as given. */
 function withOpenBlockers(facts: ReconcileInput, id: string, openBlockers: string[]): ReconcileInput {
   return { ...facts, board: { ...facts.board!, items: facts.board!.items.map((item) => (item.id === id ? { ...item, open_blockers: openBlockers } : item)) } };
