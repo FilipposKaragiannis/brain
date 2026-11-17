@@ -4,7 +4,9 @@
 # dashes in a name, so the item id comes in slug form: gh-12 for gh#12, local-task-3 for
 # local:task/3. Such a name claims for that item from the base lib/base.sh claim_at_base resolves,
 # as next.sh does, and records it in the tracker; any other name claims as adhoc:<name> from the
-# config base. Fails (exit 1) when the project has no .flow/config.yaml, the item cannot be read,
+# config base and records the pid of the host session that ran the hook, which the health job
+# reads to release the claim once that session has ended (Claude Code runs no WorktreeRemove for a
+# sub-agent). Fails (exit 1) when the project has no .flow/config.yaml, the item cannot be read,
 # its base: line names a branch not on the remote or the pool is full, so Claude reports the error
 # instead of creating a worktree outside the pool or on the wrong history.
 FLOW_PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"; export FLOW_PLUGIN
@@ -21,5 +23,8 @@ if [ -n "$item" ]; then
   path="$(claim_at_base "$item" "$item_json")" || exit 1
 else
   path="$("$FLOW_PLUGIN/scripts/steward.sh" claim "adhoc:${name:-session}")" || exit 1
+  session_pid="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)"
+  claim="$(cat "$path/.flow/claim.json")"
+  [ -z "$session_pid" ] || json_set "$claim" pid "$session_pid" > "$path/.flow/claim.json"
 fi
 printf '%s\n' "$path"
