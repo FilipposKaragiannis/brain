@@ -1199,6 +1199,9 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 "$P/jobs/comments.sh" codex >/dev/null
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec --json -C $realrepo -s workspace-write' '$HOST_LOG'"
 check "a job starts its skill as typed: /plugin:skill on Claude, \$plugin:skill on Codex" sh -c "grep -q 'codex	.*workspace-write.* \\\$flow:comments gh#21' '$HOST_LOG' && [ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow implement gh#7')\" = '/flow:implement gh#7' ]"
+check "HostSkillPrompt_CodexSkillNameAnotherPluginShares_NamesFlowAsThePlugin" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex flow review gh#9')\" = '\$flow:review gh#9' ]"
+check "HostSkillPrompt_CodexSkillOfAnotherPlugin_NamesThatPlugin" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex meta retro x')\" = '\$meta:retro x' ]"
+check "HostSkillPrompt_ClaudeSkillNameAnotherPluginShares_IsUnchanged" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow review gh#9')\" = '/flow:review gh#9' ]"
 check "the unattended loop starts a skill step as typed" grep -q 'host_skill_prompt "$host" flow "$skill"' "$P/templates/run-unattended.sh"
 # The chase asks the reviewers of the PR's author host: the pr_host of the item its branch names.
 cp .flow/config.yaml "$work/config.jobs"; printf 'reviews:\n  reviewers:\n    claude: [codex]\n    codex: [octo-cat]\n  chase_after: 30m\n' >> .flow/config.yaml
