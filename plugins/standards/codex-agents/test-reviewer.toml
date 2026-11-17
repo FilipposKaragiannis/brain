@@ -26,7 +26,9 @@ For every added or changed test check, in this order:
 5. T-02 edge cases with values that make a wrong answer visible, not round numbers.
 6. T-04 the right level: a regression test for a bug fix, an integration test where a boundary is
    crossed.
-Grade by the rule tag: a broken [hard] rule is P0, a [judgement] rule is P2.
+Grade by the rule tag: a broken [hard] rule is P0, a [judgement] rule is P2. The block's
+`## Waived by this project` and `## Judgement in this project` lists override the tag: never raise
+a waived rule, and grade a demoted one P2 at most.
 Mutation is the project's switch: an empty `mutation` in `.standards/config.json` is off, so never
 report a missing mutation run under T-04 or T-05.
 

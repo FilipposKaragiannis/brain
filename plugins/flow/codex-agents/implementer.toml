@@ -22,10 +22,11 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    have landed part of it. Cite the code when one is already met; never tick it on a guess.
 2. Design the interface before the body: small surface, dependencies injected at the
    boundaries, results returned over hidden mutation, glossary names. Then write the code to
-   the standards: hard rules are not negotiable; a crossed signal gets its reason in the commit
-   body; a judgement rule you disagree with is declared, not ignored. A new implementation type
-   starts at the narrowest access the project's rules allow, and locals and lambda parameters
-   are spelt in full like any name (`serviceProvider`, `simulation`, never `sp`, `sim`).
+   the standards: hard rules are not negotiable, except those the block lists as waived or as
+   judgement in this project; a crossed signal gets its reason in the commit body; a judgement
+   rule you disagree with is declared, not ignored. A new implementation type starts at the
+   narrowest access the project's rules allow, and locals and lambda parameters are spelt in
+   full like any name (`serviceProvider`, `simulation`, never `sp`, `sim`).
    A method writes an argument only when its name says so (M-08), even where the file
    around it threads state through `ref`: a method that decides returns its result.
 3. Minimal diff (W-04): only what the phase needs. No drive-by renames, refactors or error
