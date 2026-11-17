@@ -2380,6 +2380,16 @@ hs > "$hroot/out" 2>&1
 check "health: a sub-agent's ad hoc claim is kept while an agent works in its worktree" [ -f "$working_agent_worktree/.flow/claim.json" ]
 : > "$FLOW_HEALTH_PROCS"; "$P/scripts/steward.sh" release "$working_agent_worktree" --force >/dev/null 2>&1
 
+calling_agent_worktree="$(printf '{"name":"agent-5e1fca11","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
+stale_claim "$calling_agent_worktree"; python3 -c '
+import json, sys
+p = sys.argv[1] + "/.flow/claim.json"
+d = json.load(open(p)); d.pop("pid", None); json.dump(d, open(p, "w"))' "$calling_agent_worktree"
+printf '%s\t%s\tclaude\n' "$$" "$calling_agent_worktree" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check "health: a sub-agent's ad hoc claim with no recorded pid is kept while its session calls health from an ancestor process" [ -f "$calling_agent_worktree/.flow/claim.json" ]
+: > "$FLOW_HEALTH_PROCS"; "$P/scripts/steward.sh" release "$calling_agent_worktree" --force >/dev/null 2>&1
+
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
 a="$(hitem "Empty claim")"; FLOW_RUN_PID="$loop" "$P/scripts/next.sh" "$a" >/dev/null; wa="$("$P/scripts/steward.sh" find "$a")"

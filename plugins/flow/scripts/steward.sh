@@ -940,7 +940,7 @@ sub_agent_session_running() {
   sub_agent_last="$(hpy activity "$1" "$1/.flow/reports/$(item_slug "$2")" "$home/events.log" "$2")"
   sub_agent_claimed="$(hpy epoch "$(json_get "$3" claimed_at)")"
   [ "$sub_agent_last" -gt "$sub_agent_claimed" ] || sub_agent_last="$sub_agent_claimed"
-  [ -n "$(hpy alive "$procs" "$2" "$1" "$(json_get "$3" pid)")" ] || [ $((now - sub_agent_last)) -le "$grace" ]
+  [ -n "$(hpy present "$procs" "$2" "$1" "$(json_get "$3" pid)")" ] || [ $((now - sub_agent_last)) -le "$grace" ]
 }
 
 # sub_agent_keep_dirty <path> <claim id>
