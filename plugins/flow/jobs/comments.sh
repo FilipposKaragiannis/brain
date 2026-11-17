@@ -28,11 +28,18 @@
 # its activity is not kept, the next run tries it again, and the job exits 1; after
 # jobs.comments.max_failures (3) in a row the job stops trying the PR and the owner is told
 # once, until a pass run by hand completes. Nothing open or nothing new: a quiet exit, no model spend.
-# Cheap when quiet, so it can run every 5 or 10 minutes; the lock skips an overlap.
+# Cheap when quiet, so it can run every 5 or 10 minutes. Runs overlap: each holds its own
+# <schedule>-<pid>.lock, and every schedule of the job shares one seen record per PR under
+# comments.seen/. Each pass holds its PR's lock with no wait: the item's
+# (<flow home>/item:<item slug>.lock), or pr:<number>.lock for a PR the flow did not open, so no
+# two passes work one PR at once: a held one skips the PR, counted in use.
 # --workers N, or jobs.comments_workers in .flow/config.yaml, runs up to N passes at once, each on
-# its own PR; unset or 1 runs them one after another. The job lock stays one per run. Each pass
-# holds the item's lock (<flow home>/item:<item slug>.lock, no wait), so no two passes work one
-# item at once: a held one skips the PR, counted in use. The processes are listed once per run.
+# its own PR; unset or 1 runs them one after another. jobs.comments_workers also caps the passes
+# live at once across all runs, through the slot pool (lib/slots.sh); a run given --workers N may
+# use slots up to N. A pass holds a slot for its host session only and waits for a free one: it
+# never skips a PR for lack of a slot. A pass still running at jobs.comments.pass_limit (1h) is
+# stopped with its children and counts as failed, so the next run tries it again. The processes
+# are listed once per run.
 # The result line names every open PR and what it came to: addressed, nothing new, waits on you
 # (threads still unanswered after two passes, or passes failing in a row), in use (the session in
 # its worktree and how long it has been idle) or at a gate. A red check never holds a PR back: the
