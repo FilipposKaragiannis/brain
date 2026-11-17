@@ -3,13 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import type { DaemonConfig } from './config.ts';
 import type { ProjectDefinition } from './project.ts';
-import type { NewerConsole, ProjectCheck, ProjectFinding, SettingOrigin, SettingsView, TerminalName, TerminalSetting } from './snapshot.ts';
-import { commandText, TERMINAL_NAMES } from './terminal.ts';
+import { commandText } from './shellWords.ts';
+import type { NewerConsole, ProjectCheck, ProjectFinding, SettingOrigin, SettingsView } from './snapshot.ts';
 
-export type { ProjectCheck, ProjectFinding, SettingOrigin, SettingsView, TerminalSetting };
+export type { ProjectCheck, ProjectFinding, SettingOrigin, SettingsView };
 
 /** `~/.config/brain-console/config.json`: every field optional. */
-export type ConfigFile = { projects?: { root: string }[]; terminal?: TerminalSetting; port?: number };
+export type ConfigFile = { projects?: { root: string }[]; port?: number };
 
 export type ConfigPaths = {
   /** The settings file the daemon reads and `PUT /api/settings` writes. */
@@ -22,27 +22,13 @@ const CONFIG_DIR = path.join(os.homedir(), '.config', 'brain-console');
 export const DEFAULT_CONFIG_PATHS: ConfigPaths = { configFile: path.join(CONFIG_DIR, 'config.json'), legacyProjectsFile: path.join(CONFIG_DIR, 'projects.json') };
 
 const MAX_PORT = 65535;
-const FILE_KEYS = ['projects', 'terminal', 'port'];
+const FILE_KEYS = ['projects', 'port'];
+/** Settings the console no longer has: dropped when the file is read, so an older file still loads and the next save leaves them out. */
+const RETIRED_KEYS = ['terminal'];
 
 export type Checked<T> = { ok: true; value: T } | { ok: false; error: string };
 
 const fail = <T>(error: string): Checked<T> => ({ ok: false, error });
-
-export function isTerminalName(value: unknown): value is TerminalName {
-  return typeof value === 'string' && (TERMINAL_NAMES as string[]).includes(value);
-}
-
-export function checkTerminal(value: unknown): Checked<TerminalSetting> {
-  if (isTerminalName(value)) return { ok: true, value };
-  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    const command = (value as { command?: unknown }).command;
-    const keys = Object.keys(value);
-    if (keys.length === 1 && Array.isArray(command) && command.length > 0 && command.every((word) => typeof word === 'string' && word !== '')) {
-      return { ok: true, value: { command: command as string[] } };
-    }
-  }
-  return fail(`terminal must be one of ${TERMINAL_NAMES.join(', ')} or {"command": [...]} with no empty word`);
-}
 
 function checkPort(value: unknown): Checked<number> {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= MAX_PORT ? { ok: true, value } : fail(`port must be a whole number from 1 to ${MAX_PORT}`);
@@ -72,11 +58,6 @@ export function checkConfigFile(value: unknown): Checked<ConfigFile> {
       roots.push({ root: root.value });
     }
     file.projects = roots;
-  }
-  if (record['terminal'] !== undefined) {
-    const terminal = checkTerminal(record['terminal']);
-    if (!terminal.ok) return terminal;
-    file.terminal = terminal.value;
   }
   if (record['port'] !== undefined) {
     const port = checkPort(record['port']);
@@ -109,7 +90,7 @@ export function readStoredSettings(paths: ConfigPaths): Checked<StoredSettings> 
   if (existsSync(paths.configFile)) {
     const parsed = parseJsonFile(paths.configFile);
     if (!parsed.ok) return parsed;
-    const file = checkConfigFile(parsed.value);
+    const file = checkConfigFile(withoutRetiredKeys(parsed.value));
     return file.ok ? { ok: true, value: { file: file.value, legacy: false } } : fail(`${paths.configFile}: ${file.error}`);
   }
   if (!existsSync(paths.legacyProjectsFile)) return { ok: true, value: { file: {}, legacy: false } };
@@ -118,6 +99,11 @@ export function readStoredSettings(paths: ConfigPaths): Checked<StoredSettings> 
   const entries = (parsed.value as { projects?: { root?: unknown }[] } | null)?.projects ?? [];
   const projects = entries.flatMap((entry) => (typeof entry?.root === 'string' ? [{ root: entry.root }] : []));
   return { ok: true, value: { file: { projects }, legacy: true } };
+}
+
+function withoutRetiredKeys(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !RETIRED_KEYS.includes(key)));
 }
 
 function parseJsonFile(file: string): Checked<unknown> {
@@ -210,11 +196,10 @@ export function checkNewProject(typed: unknown, watched: string[]): ProjectCheck
  * Merges a checked change into the file as it is on disk now (an edit made by hand since the
  * daemon started is kept; a file that no longer parses is refused, never overwritten) and writes it.
  */
-export function saveSettings(paths: ConfigPaths, change: ConfigFile, clearTerminal = false): Checked<ConfigFile> {
+export function saveSettings(paths: ConfigPaths, change: ConfigFile): Checked<ConfigFile> {
   const onDisk = readStoredSettings(paths);
   if (!onDisk.ok) return fail(`not saved, so the file is not overwritten: ${onDisk.error}`);
   const next: ConfigFile = { ...onDisk.value.file, ...change };
-  if (clearTerminal) delete next.terminal;
   try { writeConfigFile(paths.configFile, next); } catch (error) {
     return fail(`could not write ${paths.configFile}: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -223,8 +208,6 @@ export function saveSettings(paths: ConfigPaths, change: ConfigFile, clearTermin
 
 export type SettingsStoreDependencies = {
   config: DaemonConfig;
-  /** The terminals installed now, first choice first; asked on every read, so a new install counts. */
-  installed: () => TerminalName[];
   /** Starts and stops monitors so the daemon watches exactly these projects. */
   applyProjects: (projects: ProjectDefinition[]) => void;
   /** A newer console in the plugin cache than the one running, as the daemon last saw it. */
@@ -233,7 +216,7 @@ export type SettingsStoreDependencies = {
 
 /** Two readings of the file hold the same settings, whatever the order of their keys. */
 const sameSettings = (left: ConfigFile, right: ConfigFile): boolean =>
-  JSON.stringify([left.projects ?? [], left.terminal ?? null, left.port ?? null]) === JSON.stringify([right.projects ?? [], right.terminal ?? null, right.port ?? null]);
+  JSON.stringify([left.projects ?? [], left.port ?? null]) === JSON.stringify([right.projects ?? [], right.port ?? null]);
 
 const PROJECT_NOTES: Record<SettingOrigin, string | null> = {
   flag: 'Set by --project when the daemon started; start it without the flag to edit them here.',
@@ -246,8 +229,7 @@ const PROJECT_NOTES: Record<SettingOrigin, string | null> = {
  * The daemon's settings while it runs: what `GET /api/settings` shows and what `PUT` changes.
  * A PUT is checked whole, merged into the file as it is on disk then (a hand edit since the start
  * is kept; a file that no longer parses is refused, never overwritten), written and applied: a new project list at
- * once (when the projects come from the file), the terminal on the next Open in Terminal, the
- * port only after a restart.
+ * once (when the projects come from the file), the port only after a restart.
  */
 export class SettingsStore {
   private readonly deps: SettingsStoreDependencies;
@@ -266,9 +248,6 @@ export class SettingsStore {
     this.projectsFrom = config.origins.projects;
   }
 
-  /** The terminal the owner chose, or null to take the first installed one. */
-  terminal(): TerminalSetting | null { return this.file.terminal ?? null; }
-
   view(): SettingsView {
     const { config } = this.deps;
     return {
@@ -277,7 +256,6 @@ export class SettingsStore {
       stateDir: config.stateDir,
       launchd: config.launchd,
       projects: { roots: [...this.roots], from: this.projectsFrom, editable: this.projectsFrom === 'file', note: PROJECT_NOTES[this.projectsFrom] },
-      terminal: { value: this.terminal(), from: this.file.terminal === undefined ? 'default' : 'file', installed: this.deps.installed() },
       port: {
         value: config.port, from: config.origins.port, saved: this.file.port ?? null,
         note: config.origins.port === 'flag'
@@ -304,7 +282,7 @@ export class SettingsStore {
   /**
    * Reads the file again after it changed on disk, and takes a hand edit as a PUT would: the
    * projects applied at once when they come from the file (a flag or the environment keeps
-   * them fixed), the terminal on the next Open in Terminal. A file that does not parse, or whose
+   * them fixed). A file that does not parse, or whose
    * projects fail the PUT's checks, is refused: the daemon keeps what it loaded and the view says
    * why until the file is fixed. The roots watched after a reload; null when the file holds what
    * the daemon runs already.
@@ -332,7 +310,7 @@ export class SettingsStore {
 
   /**
    * The roots the file names are the ones watched, or a flag or the environment sets them. A PUT
-   * of the terminal or the port keeps a hand edit of the projects in the file without applying it.
+   * of the port keeps a hand edit of the projects in the file without applying it.
    */
   private watchesFileProjects(file: ConfigFile): boolean {
     if (this.projectsFrom !== 'file') return true;
@@ -341,13 +319,11 @@ export class SettingsStore {
   }
 
   /**
-   * Changes the settings a body names and keeps the rest. `terminal: null` goes back to the
-   * first installed terminal. Projects set by a flag or the environment cannot change here.
+   * Changes the settings a body names and keeps the rest. Projects set by a flag or the
+   * environment cannot change here.
    */
   update(body: unknown): Checked<SettingsView> {
-    const clearTerminal = typeof body === 'object' && body !== null && (body as Record<string, unknown>)['terminal'] === null;
-    const input = clearTerminal ? Object.fromEntries(Object.entries(body as Record<string, unknown>).filter(([key]) => key !== 'terminal')) : body;
-    const checked = checkConfigFile(input);
+    const checked = checkConfigFile(body);
     if (!checked.ok) return checked;
     const change = checked.value;
     let projects: ProjectDefinition[] | null = null;
@@ -357,7 +333,7 @@ export class SettingsStore {
       if (!found.ok) return found;
       projects = found.value;
     }
-    const saved = saveSettings(this.deps.config.paths, change, clearTerminal);
+    const saved = saveSettings(this.deps.config.paths, change);
     if (!saved.ok) return saved;
     const next = saved.value;
     this.file = next;

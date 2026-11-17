@@ -1,9 +1,10 @@
 import { createContext, useContext } from 'react';
 import type { ReactNode } from 'react';
 import type { Api } from './api.ts';
+import type { PaneStore } from './panes.ts';
 import type { StreamHub } from './stream.ts';
 
-export type ConsoleServices = { api: Api; hub: StreamHub };
+export type ConsoleServices = { api: Api; hub: StreamHub; panes: PaneStore };
 
 const ServicesContext = createContext<ConsoleServices | null>(null);
 

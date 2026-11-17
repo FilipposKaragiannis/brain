@@ -22,6 +22,8 @@ import { noPlugins } from './collectors/plugins.ts';
 import type { PullFacts } from './collectors/pulls.ts';
 import { readPulls } from './collectors/pulls.ts';
 import type { Logger } from './log.ts';
+import type { PaneFacts } from './panePlan.ts';
+import { paneFolders } from './panePlan.ts';
 import { ageSeconds, landedMergeGates, reconcile } from './reconcile.ts';
 import { DisagreementSettler, disagreementKey } from './settle.ts';
 import type { ReadMarks } from './settle.ts';
@@ -150,26 +152,38 @@ export class ProjectMonitor {
 
   get snapshot(): Snapshot | null { return this.current; }
 
-  /** What an action needs to know about the project right now. The terminal comes from the settings, which the daemon adds. */
+  /** What a terminal pane may open in the project right now: the folders a shell may open in, the root's jobs' logs, and the sessions it may resume. */
+  paneFacts(): PaneFacts {
+    const flow = this.facts.files.facts;
+    const root = this.project.root;
+    const agents = this.current?.agents ?? [];
+    return {
+      root,
+      folders: paneFolders({
+        root, pool: flow === null ? [] : poolPaths(root, flow.config),
+        outsideWorktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role !== 'pool').map((worktree) => worktree.path),
+        // The snapshot's agents, not the raw process list: only processes in this project's worktrees.
+        processFolders: agents.map((agent) => agent.cwd),
+      }),
+      sessions: [
+        ...agents.flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, folder: agent.cwd, session: agent.session, alive: true }])),
+        ...(this.current?.ended ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, folder: agent.cwd, session: agent.session, alive: false }])),
+      ],
+      gateSessions: (this.current?.gates ?? []).flatMap((gate) => {
+        const found = this.gateSessions.get(gateSessionKey(gate.item, gate.raisedAt));
+        return found === undefined ? [] : [{ item: gate.item, folder: found.cwd, session: found.session }];
+      }),
+    };
+  }
+
+  /** What an action needs to know about the project right now. */
   actionContext(): ActionContext {
     const flow = this.facts.files.facts;
     return {
       root: this.project.root, pluginRoot: flow?.pluginRoot ?? null, pluginVersion: flow?.pluginVersion ?? null, pluginScripts: flow?.pluginScripts ?? null, adapterPrefixes: flow?.adapterPrefixes ?? [], repo: flow?.config.repo ?? null,
       jobsHost: flow?.config.jobsHost ?? 'claude', pool: flow === null ? [] : poolPaths(this.project.root, flow.config),
-      outsideWorktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role !== 'pool').map((worktree) => worktree.path),
-      // The snapshot's agents, not the raw process list: only processes in this project's worktrees.
-      processCwds: (this.current?.agents ?? []).map((agent) => agent.cwd),
-      sessions: [
-        ...(this.current?.agents ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: true }])),
-        ...(this.current?.ended ?? []).flatMap((agent) => (agent.session === null ? [] : [{ pid: agent.pid, cwd: agent.cwd, session: agent.session, alive: false }])),
-      ],
       liveSessions: (this.current?.agents ?? []).filter((agent) => agent.kind === 'session').map((agent) => ({ pid: agent.pid, startedAt: agent.startedAt })),
       readSession: (pid) => readSession(this.runner, this.clock, pid),
-      gateSessions: (this.current?.gates ?? []).flatMap((gate) => {
-        const found = this.gateSessions.get(gateSessionKey(gate.item, gate.raisedAt));
-        return found === undefined ? [] : [{ item: gate.item, cwd: found.cwd, session: found.session }];
-      }),
-      terminal: null, installedTerminals: [],
       base: flow?.config.base ?? 'main',
       worktrees: (this.current?.worktrees ?? []).filter((worktree) => worktree.role === 'pool').map((worktree) => ({
         name: worktree.name, path: worktree.path, item: worktree.claim?.item ?? null, claimBase: worktree.claim?.base || null,

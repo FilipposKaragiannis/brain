@@ -58,6 +58,8 @@ flow="$console/../flow"
 [ -f "$flow/scripts/gate.sh" ] || flow="${FLOW_PLUGIN:-}"
 [ -n "$flow" ] && [ -f "$flow/scripts/gate.sh" ] || die "no flow plugin beside this console and none in FLOW_PLUGIN; set FLOW_PLUGIN to one" "$USAGE_EXIT"
 flow="$(cd "$flow" && pwd)"
+# process_command and process_group: ps, or pgrep and python where a sandbox refuses ps.
+. "$flow/lib/process.sh"
 perl="$(command -v perl)" || die "the demo's fake agents run perl, and none is on PATH"
 
 home="$demo_dir/home"
@@ -70,7 +72,8 @@ daemon="$console/app/daemon/src/main.ts"
 # demo_env <command...>: the command with the demo's environment and nothing else.
 demo_env() {
   env -i HOME="$home" PATH="$stubs:$PATH" TMPDIR="$temporary" LANG=C USER="${USER:-demo}" SHELL="${SHELL:-/bin/sh}" \
-    FLOW_PLUGIN="$flow" BRAIN_CONSOLE_LAUNCHCTL="$stubs/launchctl" "$@"
+    FLOW_PLUGIN="$flow" BRAIN_CONSOLE_LAUNCHCTL="$stubs/launchctl" \
+    ${BRAIN_CONSOLE_TERMINAL_LOOK:+BRAIN_CONSOLE_TERMINAL_LOOK="$BRAIN_CONSOLE_TERMINAL_LOOK"} "$@"
 }
 in_project() { (cd "$project" && demo_env "$@"); }
 
@@ -98,8 +101,8 @@ demo_run_pids() {
     [ -f "$lock" ] || continue
     pid="$(cat "$lock" 2>/dev/null)"
     case "$pid" in ''|*[!0-9]*) continue ;; esac
-    case "$(ps -o command= -p "$pid" 2>/dev/null)" in *jobs/*.sh*) ;; *) continue ;; esac
-    [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ] || continue
+    case "$(process_command "$pid")" in *jobs/*.sh*) ;; *) continue ;; esac
+    [ "$(process_group "$pid")" = "$pid" ] || continue
     case "$(cwd_of "$pid")/" in "$real"/*) echo "$pid" ;; esac
   done
 }
@@ -133,8 +136,8 @@ demo_agent_pids() {
   real="$(cd "$demo_dir" && pwd -P)"
   for pid in "$@"; do
     case "$pid" in ''|*[!0-9]*) continue ;; esac
-    case "$(ps -o command= -p "$pid" 2>/dev/null)" in "claude -e sleep $FAKE_AGENT_SECONDS "*) ;; *) continue ;; esac
-    [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ] || continue
+    case "$(process_command "$pid")" in "claude -e sleep $FAKE_AGENT_SECONDS "*) ;; *) continue ;; esac
+    [ "$(process_group "$pid")" = "$pid" ] || continue
     case "$(cwd_of "$pid")/" in "$real"/*) echo "$pid" ;; esac
   done
 }

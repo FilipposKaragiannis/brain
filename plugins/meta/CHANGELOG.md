@@ -1,5 +1,24 @@
 # meta
 
+## 1.1.6 (2026-11-16)
+
+- `retro` no longer names the owner's own marketplace folder. It opens the marketplace only to
+  apply findings the owner approved, at the path the prompt gives or the owner names, so the
+  report rests on the lessons and the session alone.
+- The retro report has a set shape: the findings under the labels What happened, The change and
+  Where it lands, one change each; the lessons set aside, each with why; then the question which
+  findings to apply. Asides such as checks that came up clean stay out.
+- An unattended retro with no marketplace checkout puts the marketplace findings in its report,
+  and its last message names the report and says the project was not edited.
+- `write-a-skill` names a new failure mode, the literal limit: a word cap, a blanket ban or a line
+  in capitals that current models follow to the letter. The no-op fix is a sharper completion
+  criterion or the effort setting, not a louder word.
+- The meta suite runs in the repository's test sandbox: no git repository variable, a throwaway
+  home and git config, and a run that changes the checkout it runs from fails.
+- `write-a-skill` gives a user-invoked skill's eval a grader on a call the skill makes, not on
+  the Skill tool: a typed `/plugin:name` command loads the skill without that call, so the
+  Skill-tool grader could never pass.
+
 ## 1.1.5 (2026-11-08)
 
 - `retro` reads the lessons whose time is after the last retro's time, not a line count, and

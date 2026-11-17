@@ -2,7 +2,8 @@
 
 The control plane for the flow: one local daemon that watches every flow project on this
 machine and serves a reconciled, live snapshot. The UI, a tray, a chat pane and an MCP server all
-read that one shape. Node 24, TypeScript run as-is, no runtime dependencies.
+read that one shape. Node 24, TypeScript run as-is, and two runtime dependencies, node-pty (as the
+prebuilt `@lydell/node-pty`) and ws, both for the terminal pane (ADR 0003).
 
 ## Run it
 ```bash
@@ -23,8 +24,8 @@ version shown comes from that plugin's own `plugin.json`.
 `--config <file>` reads and writes the settings (below) in that file instead of
 `~/.config/brain-console/config.json`, and looks for the old `projects.json` beside it, so a second
 daemon for a trial (`--port 7477 --state-dir /tmp/console-test --config /tmp/console-test/config.json`)
-never touches the owner's settings. Ctrl+C stops it, open console tabs or not: streams are cut, running actions get SIGTERM, and a
-second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
+never touches the owner's settings. Ctrl+C stops it, open console tabs or not: streams are cut, terminal panes are hung up (it waits up to 1.5 s to kill
+what a pane left running), running actions get SIGTERM, and a second Ctrl+C ends the process at once. Projects also come from `BRAIN_CONSOLE_PROJECTS` (colon separated roots) or
 the settings file (below). Every root must hold a `.flow/config.yaml`, or the daemon refuses to start. It binds `127.0.0.1` only and every route needs
 the token, as `Authorization: Bearer <t>` or `?token=<t>`: `--token <t>` or `BRAIN_CONSOLE_TOKEN`,
 else the one the daemon makes on first start and keeps in `~/.local/state/brain-console/token`.
@@ -32,7 +33,8 @@ Started from a terminal, the daemon prints the URL with the token in it to that 
 structured log line names only the token file, so the token never lands in a log. The state dir is
 kept `0700` and the token file `0600`. A request whose `Host` is not a loopback
 name, or whose `Origin` is not a local page, gets 403, so a page on another site cannot drive
-the console even from the owner's own browser.
+the console even from the owner's own browser. The token opens a shell as the owner (a terminal
+pane), not only the console's fixed actions, so keep it as you would an SSH key.
 
 ## Try it on the demo
 A trial console pointed at a real project can make real changes there, so test the console on
@@ -125,7 +127,8 @@ One command, `node daemon/src/main.ts <subcommand>` (the launcher `~/.local/bin/
 `/console:install` runs `../scripts/install.sh [--no-launchd] [--keep-old] [--project <root>]…`:
 it copies this folder (without `node_modules` or `ui/dist`, through an archive so a failed read
 fails) to `~/.local/share/brain-console/<version>/` (the version must be digits and dots), runs
-`npm ci` and the UI build in a staging folder beside it, moves a same-version copy aside before
+`npm ci` and the UI build in a staging folder beside it (with the npm beside `node` when there is
+one; an npm older than 7, which cannot read the lockfiles, exits 2 before any copy), moves a same-version copy aside before
 moving the new one in, points `current` at it, writes the launcher, adds each `--project`, runs
 `brain-console install` unless `--no-launchd`, and removes the other versions unless `--keep-old`.
 A step that fails after `current` moved points it back at the version before. Staging folders a
@@ -145,21 +148,12 @@ a trial must not touch: `HOME` (the agent, the plugin cache, the default config 
 `~/.config/brain-console/config.json` holds the settings, every field optional:
 
 ```json
-{ "projects": [{ "root": "/work/projects/foosbrawl" }], "terminal": "iterm", "port": 7474 }
+{ "projects": [{ "root": "/work/projects/foosbrawl" }], "port": 7474 }
 ```
 
 - `projects`: the roots to watch, absolute (or starting `~/`). Precedence is `--project` flags,
   then `BRAIN_CONSOLE_PROJECTS`, then the file; projects set by a flag or the environment show in
   Settings but cannot change there, with the note why.
-- `terminal`: what Open in Terminal opens, `"iterm"`, `"terminal"`, `"ghostty"` or
-  `{"command": ["open", "-a", "Warp", "{path}"]}`, run without a shell. In each word `{path}` is
-  the folder as it is (for a word of its own), `{qpath}` the folder quoted for sh and `{cmd}` the
-  command to run there (a job's log), quoted already: inside an `sh -c` string use `{qpath}` and
-  `{cmd}`, never `{path}`, or a folder with `$(…)` in its name would run. With neither path the
-  folder is added last. The Settings screen takes the command as a JSON array, so a word may hold a
-  space. Unset, the console takes the first installed of
-  iTerm, Ghostty and Terminal (an app in `/Applications` or `~/Applications`, Terminal also in
-  `/System/Applications/Utilities`).
 - `port`: the port to listen on when no `--port` is given (7474 by default). It takes a restart,
   and while `--port` sets the port a saved one has no effect at all; the note in Settings says so.
 
@@ -167,31 +161,32 @@ While `config.json` is absent the daemon still reads the projects of the older
 `~/.config/brain-console/projects.json` (`{"projects":[{"root":"…"}]}`); the first save from
 Settings writes `config.json` with them, and `projects.json` is then no longer read. A file that is
 not valid JSON, or holds a setting the daemon does not know, stops the daemon at start with the reason.
+A `terminal` key, the outside terminal app Open in Terminal used before the terminal pane replaced
+it, is ignored when the file is read and left out of the next save.
 While it runs, the daemon looks at the file's modification time once a minute and takes a hand edit
 as a PUT (below) would, logging `config.reloaded`: new roots are watched, removed ones dropped
-(projects set by a flag or the environment stay as they are), the terminal counts at once. A file
+(projects set by a flag or the environment stay as they are). A file
 that does not parse or fails the PUT's checks is refused (`config.refused` in the log): the daemon
 keeps what it runs, and `fileError` in the settings and `brain-console status` say why.
 
 `PUT /api/settings` (the Settings screen) changes the settings its body names and keeps the rest:
 the whole body is checked first (every root exists, is a folder inside a git checkout and holds
 `.flow/config.yaml`, none is watched twice, no two share a folder name,
-at least one stays, the terminal is a name or a non-empty command, `"terminal": null` goes back to
-the first installed), then merged into the file as it is on disk at that moment (a hand edit made
+at least one stays), then merged into the file as it is on disk at that moment (a hand edit made
 while the daemon runs is kept; a file that no longer parses is refused with the reason, never
 overwritten), written in one step and applied. A changed project list
 applies at once: a new root gets its monitor started, a removed one is stopped and dropped (its
 attached actions get SIGTERM), and every open event stream carries `event: projects` with the new
 list. A stream whose project was removed, or whose id now names another root, ends after that list.
-The terminal counts from the next Open in Terminal; the port only after a restart.
+The port counts only after a restart.
 
 ## Routes
 | Route | What |
 |---|---|
 | `GET /healthz` | `{ok, projects}` |
 | `GET /api/projects` | every project with its counts |
-| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the terminal and the installed ones, the port, the config file, the state folder and whether launchd runs the daemon, `fileError` (a change to the file the daemon refused, else null) and `newerConsole` |
-| `PUT /api/settings` | change settings, body `{"projects"?, "terminal"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
+| `GET /api/settings` | the effective settings, each with `from` (`flag`, `environment`, `file`, `default`): the projects (and whether they can change here), the port, the config file, the state folder and whether launchd runs the daemon, `fileError` (a change to the file the daemon refused, else null) and `newerConsole` |
+| `PUT /api/settings` | change settings, body `{"projects"?, "port"?}` as JSON; 200 with the new settings, 400 with the reason |
 | `POST /api/settings/check-project` | body `{"root"}`: whether that folder can be added, with the same checks the PUT runs on the list plus it; 200 with `{root, id, ok, error, findings: [{check, ok, text}], initCommand}`, `check` one of `path`, `exists`, `flow`, `git`, `watched`, `name`, and `initCommand` (`cd '<root>' && claude /flow:init`) only while `.flow/config.yaml` is missing |
 | `POST /api/open` | body `{"path", "with": "editor" \| "finder"}`: runs `open -t <path>` or `open -R <path>` (execFile, no shell) for the console settings file, the state folder (Finder only) or a watched project's `.flow/config.yaml`; 400 for any other path, 501 off macOS |
 | `GET /api/projects/<id>/plugins/flow/config` | the project's `.flow/config.yaml` for the editor: `{path, text, hash, values, sections, warnings, hostDefaults}` (below) |
@@ -204,6 +199,9 @@ The terminal counts from the next Open in Terminal; the port only after a restar
 | `POST /api/projects/<id>/actions` | run one action, body `{"kind","args"}`; 202 with the record, 400 on a bad request, 409 when its lock is held |
 | `GET /api/projects/<id>/actions` | the recent 50 actions, newest first, with the output tail |
 | `GET /api/projects/<id>/actions/<actionId>` | one action with its full output |
+| `GET /api/terminal/profile` | the look the panes take, `{iterm, font}`: `iterm` is iTerm's default profile (`{fontSize, colours, cursorStyle, cursorBlink, boldIsBright}`, colours by xterm's theme names as sRGB `#rrggbb`), null without iTerm or when it cannot be read; `font` is `{path}` where the font is served, null when there is none. Read once at the daemon's start with `defaults export com.googlecode.iterm2 -`, which never writes iTerm's settings |
+| `GET /api/terminal/font` | the font file the profile names (its "Normal Font", by PostScript name), else the console's JetBrainsMono Nerd Font, found by the daemon in the account's `~/Library/Fonts`, `/Library/Fonts` and `/System/Library/Fonts` by each file's name table; a font only in a collection (.ttc) is not served. Nothing in the request picks the file; 404 when there is none |
+| `GET /api/projects/<id>/panes?run=<run>&…&cols=<n>&rows=<n>` | a terminal pane as a WebSocket. The page names what to open and the daemon plans what runs: `run=shell&path=<folder>` a login shell (`$SHELL -l`) in `path`, which must be absolute, one the console lists (the root, a worktree the console lists, the folder of a listed agent or session) and on disk; `run=job&job=<name>` `/usr/bin/tail -n 200 -F <root>/.flow/log/<job>.log` from the root, the file `jobs.sh logs` reads (`-F` waits for a log the job has not written yet, then follows it across rotation) (the name is lower-case letters, digits and dashes); `run=session&session=<pid>&path=<folder>` the session of an agent or session in `agents` or `ended` whose transcript was found, in the folder that process ran in (`path` must be it: `claude --resume` finds a session by its folder); `run=gate&gate=<item>` the session the daemon located for the gate waiting on the item, in its worktree. A session or a gate runs `/bin/sh -c '<line>; exec <shell> -l'` with every word quoted for sh, so the pane stays a shell after it: a running `claude -p` or `codex exec` cannot be attached to and a second writer on its session would mix with it, so while a listed process still runs the session the line prints the resume command (`echo`) for the owner to run once it ends; once it has ended the line is the resume command, which runs at once. `cols` 2 to 500 and `rows` 1 to 300, 80 by 24 when absent. The pane gets the daemon's `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`, `LANG` (`en_US.UTF-8` when unset), `LC_ALL` and `SSH_AUTH_SOCK`, `TERM=xterm-256color` and `COLORTERM=truecolor`, never the token. Host, Origin and the token (`?token=`) are checked before the handshake (403, 401), as is the project (404). Binary frames are terminal bytes both ways; text frames are JSON, up `{"type":"resize","cols","rows"}` and `{"type":"ack","bytes"}`, down `{"type":"started","pane","command","folder"}` first, `{"type":"refused","error"}` (close 4400) for a pane the daemon will not start, and `{"type":"exit","code","signal"}` (close 1000) when the process ends. Closing the socket hangs the pane up (SIGHUP to its process group, SIGKILL to the group 1.5 s later, also when the pane's own process ended on the hang-up but left a process in its group; a stopping daemon waits for that kill, at most 1.5 s and only while a pane's group still holds a process). The daemon runs at most 4 panes at once, every project together, a closed pane counting until its process ended; the fifth gets `refused` (close 4400) until one ends. It stops reading a pane's output once 1 MiB is sent and not acked, or its socket still holds 1 MiB not yet sent, and reads on when both are under 256 KiB (an ack counts no more than the bytes not yet acked; a hang-up reads on at once, so the process's end arrives, and so does a process that ends while its output waits, checked every 50 ms, so its last output arrives before node-pty drops it 200 ms after the end); the page acks every 64 KiB it draws. Close codes: 1000 the process ended, 1001 the daemon stopped, 1008 a text frame that is not `resize` or `ack`, 4400 refused, 4404 the project left the list or its id now names another root (the pane is hung up as above) |
 
 ## The snapshot
 `daemon/src/snapshot.ts` is the contract; `schema` is its version, 19 since a gate took `options`,
@@ -675,7 +673,6 @@ on every state change and at most twice a second while output arrives.
 | `pr.auto-merge` | `pr`, `method?` (squash), `off?` | `gh pr merge <pr> --repo <repo> --auto --<method>`: GitHub merges the PR itself once its checks and reviews pass; `off=true` runs `--disable-auto` instead. No `--delete-branch`, as for `pr.merge` | the PR | `finished` |
 | `quiz.answer` | `item`, `answers` (`1b 2a 3c`: a letter per question number) | `quiz.sh answer <item> 1b 2a 3c` (flow 1.29.0): grades the try against the key in `<reports>/quiz.md`, writes `<reports>/quiz.json`, logs one `quiz` event, and on a pass marks the item's draft PR ready for review (`comments.sh ready`) when it has one on GitHub. Refused on an older flow, which has no quiz.sh | the item | `finished`; `files` and `pulls` are re-read |
 | `pr.review` | `pr`, `reviewer` (a name or GitHub login, `@` optional) | `comments.sh request-review <pr> <ask> <reviewer>` (flow 1.27.0): one mention comment with the flow's request marker, Copilot through the reviewers API, so the health job tracks and chases it; the ask is the PR step's own. Refused on flow before 1.27.0, whose script would ask every reviewer | the PR | `finished` |
-| `terminal.open` | `path`, `job?`, `session?`, `gate?` | a terminal window in `path` (below); with `session` (a pid) one with that process's resume command; with `gate` (an item, `path` optional) one with the resume command of the gate's located `session` | none | `finished` |
 | `refresh` | `source?` | re-reads the sources in the daemon | none | `finished` |
 
 `ActionRecord.note` is what a finished action wants said beside its state (null for most); the
@@ -760,36 +757,6 @@ and the stale reason goes with the next git read. Conflict: the merge is aborted
 `failed` with `conflict`, and the card lists the files with "Hand to the flow". Handed to the flow:
 that button runs `sync.handoff`; the card says it is handing off until the files source reads
 the note, then shows "sync pending: <refs>" until the sync step merges them (and drops the note), and a choice only the owner can make comes back as an escalation gate.
-
-`terminal.open` opens only the project root, a pool worktree from `.flow/config.yaml`, another
-worktree git lists for the project (the outside rows), or the working directory of an agent or
-session the snapshot lists (so only processes in this project's worktrees); any other path is refused with the
-reason. The app is the `terminal` setting, else the first installed of iTerm, Ghostty, Terminal:
-`iterm` runs `open -a iTerm <path>`, `terminal` `open -a Terminal <path>`, `ghostty`
-`open -na Ghostty --args --working-directory=<path>`, a custom command its words with `{path}`,
-`{qpath}` replaced. With `job` (from the root only) the window follows `<root>/.flow/log/<job>.log`, the file
-`jobs.sh logs` reads, with `tail -n 200 -f`: iTerm through `osascript` (`create window with default
-profile command`, the line handed to `/bin/sh -c`), Terminal through `osascript` (`do script`),
-Ghostty with the line as the one word after `-e` (assumed to work whether Ghostty runs that word
-through a shell or joins its `-e` words into one shell string; not tried on every version), a custom command with `{cmd}` replaced by the line. The line is
-`cd <path> && tail -n 200 -f <log>` with every word quoted for sh and then for AppleScript, so a
-path with a space or a quote stays one word. Nothing is locked or re-read.
-
-With `session` (the pid of an agent or session in `agents` or `ended` whose transcript was found;
-`job` with it is refused) the window opens in the folder that process ran in (`path` must be it:
-`claude --resume` finds a session by its folder) with its resume command. A running `claude -p`
-or `codex exec` cannot be attached to, and a second writer on its session would mix with it, so
-while the process is alive the command waits for the owner: iTerm types it without pressing Enter
-(`write text "<cmd>" newline NO` after `write text "cd <path>"`, through `osascript`); Terminal
-cannot type without running, so `do script` prints it (`echo`) and leaves the shell; Ghostty does
-the same with the line after `-e`, then `exec "${SHELL:-/bin/sh}" -l` keeps a shell; a custom
-command gets that line in `{cmd}`. Once the process has ended the command runs at once in all of
-them.
-
-With `gate` (an item id; `job` or `session` with it is refused) the window opens in the worktree
-the gate was raised in (a `path`, when given, must be it) with the resume command of the gate's
-`session`, run at once, unless a listed live process writes that transcript. Only a gate in
-`gates` with a located session; any other item is refused with the reason.
 
 An item is an id that starts with the prefix of one of the plugin's adapters (the first line of
 `adapters/<name>/prefix`, read with the flow files; `gh#` and `local:` for a plugin before flow
@@ -910,8 +877,8 @@ which runs `gate.clear` with `option`, and a field whose text goes with a clicke
 note or alone through Send my own answer, while a gate without shows its `footer`; a twin set is
 one row, "answers N items", whose answer runs one `gate.clear` per item, a refused one a line on
 the first card that links to its own card with Retry; Discuss with the
-agent resumes the newest agent on the item in `agents` or `ended` by its pid, else the gate's
-`session` with `gate`, and is left out with neither; a gate whose item
+agent opens a pane on the newest agent on the item in `agents` or `ended` (`run=session` by its pid), else on the gate's
+`session` (`run=gate`), and is left out with neither; a gate whose item
 has a quiz shows it as a panel: a line with how many questions or the last try's score, Take the
 quiz, which opens one radio group per question and a Check my answers button that grades the
 letters on the page and runs `quiz.answer`; the results mark each question right or wrong, show
@@ -940,7 +907,7 @@ which runs `sync.handoff` with the conflict's refs, or while a run record names 
 note is there "A run is going; the sync step runs first when it starts", and between an accepted
 hand-off and the first read of its note "Handing off to the flow"; and "sync pending:
 <refs>" whenever `syncPending` is set, so a note the health job wrote shows too), Open in
-Terminal on every card, Reserve (`worktree.reserve` with the card's worktree as `target`) on a
+Terminal (a shell pane) on every card, Reserve (`worktree.reserve` with the card's worktree as `target`) on a
 free one, and Release in its place on a claimed one, a reserved one saying "reserved by <who>"
 and its Release saying it gives the reservation back; each button's running and outcome states
 show on its own card; then the worktrees outside the pool, the
@@ -973,7 +940,7 @@ worktree and how long it has run, its command on hover, under a line that says t
 sessions and the comments and health jobs ignore them. Then the runs
 ended in the last day, each row with Open session or, with no session to resume, Open in Terminal), Jobs (`#/<project>/jobs`, a main column and a side column. Schedules: a
 card per schedule with its state, timing, host and args, the last
-run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Open in Terminal in the row; its
+run, and Run now or Stop, Edit…, Pause or Resume, Unschedule and Follow log (a pane on the job's log) in the row; its
 history and workers open in a box of fixed height that scrolls; the jobs with no schedule fold
 into one line. Edit… opens a dialog over the page with the schedule's timing, host, model and
 effort, and for next its item, workers and max steps; saving runs `job.schedule` under the same
@@ -1025,7 +992,24 @@ value: Project (the name; its title is the root), Repository (`owner/name`, link
 Trackers for several (each tracker the flow reads: "GitHub issues" and "Jira" linked to their
 items, "local" plain; one the board could not read followed by "(not read)", its title the reason), Base branch
 and Jobs run on (`jobHosts`, every host the schedules and their workers run on, e.g.
-`claude, codex`); the plugins and their versions are in the Overview's footer. The top bar holds the Settings button, and
+`claude, codex`); the plugins and their versions are in the Overview's footer. Open in Terminal, at
+the end of that row, opens a shell in the root in the pane dock. Every button that opens something
+in a terminal opens a pane there: Open in Terminal on a worktree, a dead run or a process with no
+session, Follow log on a job, Open session on a process with a session and Discuss with the agent
+on a gate; start `claude` or `codex` in a shell by hand. The dock is fixed to the bottom of the page right of the nav, one tab per
+pane (`shell · <folder name>`, `log · <job>`, `session · <folder name>` or `session · <item>` for a gate, the project's name added when it is not the one on screen, the
+command on hover), Close on each tab, and a chevron that folds the dock to its tabs. Dragging
+the open dock's top edge, or focusing it and pressing the up and down arrows, resizes the terminal between 120 px and three
+quarters of the window, and the terminal refits to it; the browser keeps the height. A wheel or trackpad scroll over a pane
+scrolls only its terminal, never the page behind, also at the edge of the scrollback. With iTerm installed the pane takes
+its default profile as is: font and size, the 16 ANSI colours, foreground, background, selection, cursor colour, shape and
+blink, and bold in bright colours when the profile says so (xterm.js has no bold colour). P3 colours are converted to sRGB; a
+profile with a colour per light and dark mode gives its dark one, and the page's theme switch no longer recolours the pane.
+The daemon serves the profile's font file, or without iTerm the installed JetBrainsMono Nerd Font, and the page loads it as
+a web font before it renders, so prompt icons (powerlevel10k, oh-my-zsh) draw in browsers that hide installed fonts (Brave,
+Safari). Without iTerm, or when its profile or font cannot be read, the pane keeps the page's colours and font stack. A pane stays
+open, with its screen, across screens, projects and Settings; one the daemon ended says why ("Session
+ended (exit 0)", "The daemon stopped") and keeps its tab until Close. The top bar holds the Settings button, and
 the theme switch is a small square icon (a moon on light, a sun on dark) kept per browser. At phone
 width the fields wrap. Settings (`#/settings`, linked from the top bar of every screen) shows one page at a time
 beside a menu: General; Projects; Plugins › Flow with the Flow pages; Jobs with Schedules and
@@ -1034,9 +1018,7 @@ first; the browser keeps which are closed, and the group holding the page on scr
 Configuration shows a trail, Configuration › Next, Health, Comments, Retro, Intake, one button per
 job: only the chosen job's settings show, the choice holds while you move between pages, and a
 draft on one job waits while another shows. With two projects or more, a picker at the top of the menu chooses the project the
-Plugins, Jobs and Agents pages edit. General (where the page opens) has Terminal, radio buttons for
-the first installed, iTerm, Terminal, Ghostty or a custom command as a JSON array, checked as you
-type; Daemon, the port it listens on now with a box to save another for the next start, the
+Plugins, Jobs and Agents pages edit. General (where the page opens) has Daemon, the port it listens on now with a box to save another for the next start, the
 restart note, and whether it runs under launchd or a terminal; and Files, the config file, the
 state folder and each project's `.flow/config.yaml` with Show in Finder, over each project's Raw
 YAML. Projects lists the watched projects with Remove, or the note why they cannot change, and

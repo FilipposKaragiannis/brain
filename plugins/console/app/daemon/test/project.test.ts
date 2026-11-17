@@ -159,16 +159,23 @@ test('Monitor_BoardFailing_DisagreementShownWithTheBoardRed', async () => {
   assert.deepEqual([gateVsLabels(monitor), monitor.snapshot?.sources.board.ok], [true, false], 'because a board that keeps failing would hold the row back for ever, and the red board on the sources strip says how far to trust it');
 });
 
-test('ActionContext_PoolWorktreesRunsAndProcessFolders_FromTheLatestRead', async () => {
+test('ActionContext_PoolWorktreesAndRuns_FromTheLatestRead', async () => {
   const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
   await readEverySource(monitor);
   const context = monitor.actionContext();
   const wt3 = context.worktrees.find((worktree) => worktree.name === 'project-wt-3');
   assert.deepEqual([wt3?.item, wt3?.dirtyFiles, wt3?.agentPids], ['gh#9', 2, [100]], 'because a sync is refused on what the console shows: the claim, the dirty files and the agent in it');
   assert.deepEqual(context.runItems, ['gh#9'], 'because a run record holds its item against a merge');
-  assert.ok(context.processCwds.includes(path.join(FIXTURES, 'project-wt-2', 'src')), 'because a session row may open a terminal in its own folder');
-  assert.equal(context.processCwds.includes('/elsewhere'), false, 'because a codex working in another folder on the machine is not this project\'s to open');
-  assert.deepEqual(context.outsideWorktrees.sort(), [FIXTURE_ROOT, path.join(FIXTURES, 'project-side')].sort(), 'because the main checkout and the side worktree git lists are rows with the button');
+  monitor.stop();
+});
+
+test('PaneFacts_ProcessAndOutsideFolders_FromTheLatestRead', async () => {
+  const monitor = new ProjectMonitor({ project: { id: 'project', name: 'project', root: FIXTURE_ROOT }, runner: fakeRunner, clock: () => NOW, log: silentLogger, cadence: DEFAULT_CADENCE, subagents: noSubagents });
+  await readEverySource(monitor);
+  const { folders } = monitor.paneFacts();
+  assert.ok(folders.includes(path.join(FIXTURES, 'project-wt-2', 'src')), 'because a session row may open a pane in its own folder');
+  assert.equal(folders.includes('/elsewhere'), false, 'because a codex working in another folder on the machine is not this project\'s to open');
+  assert.ok(folders.includes(path.join(FIXTURES, 'project-side')), 'because the side worktree git lists is a row with the button');
   monitor.stop();
 });
 

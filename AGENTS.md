@@ -1,6 +1,6 @@
 # Agent notes
 
-Project notes for agents.
+Project notes for agents, and the allowed list that N-05 in `docs/coding-standards.md` refers to.
 
 ## Testing the console
 
@@ -95,3 +95,27 @@ spec separately from the standards and never merge the two lists. Tests follow T
 T-13: a name of the shape Scenario_Outcome, a because string per assertion, one behaviour
 per test, no assertion on a double's calls.
 <!-- standards:end -->
+
+## Test suites stay off the real checkout
+
+A test touches only stubs, fakes and throwaway files under its suite's temp folder: never the
+checkout it runs from, its worktrees, the owner's home or any real config. Every shell suite runs
+in `tools/lib/sandbox.sh`, and a plugin app's `npm test` in `tools/lib/sandboxed.sh`: both clear
+git's repository variables (`GIT_DIR` and the rest, which a git hook exports) and the git, Claude,
+Codex and flow config pointers, give the run a throwaway home, and fail it when the checkout
+changes. A new suite starts with the same two lines as `plugins/flow/tests/run.sh`;
+`tools/lint.sh` checks every suite and app test script. A command gate in
+`.standards/config.json` runs without git's repository variables too (`check-gates.sh`).
+
+## Glossary
+
+### Allowed abbreviations
+
+- **pty**: pseudo-terminal; the node-pty library's term and the item's.
+- **pid**: process id.
+- **cols**: terminal columns; only at the wire and the node-pty boundary, daemon-owned names say
+  `columns`.
+- **cwd**: working folder; only at the node-pty and `child_process` boundary, daemon-owned names
+  say `workingFolder`.
+- **env**: environment variables; only at the node-pty boundary, daemon-owned names say
+  `environment`.

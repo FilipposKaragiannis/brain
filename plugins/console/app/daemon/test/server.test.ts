@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, realScheduler } from '../src/actions.ts';
 import { silentLogger } from '../src/log.ts';
+import { PaneSessions } from '../src/panes.ts';
 import { ProjectMonitor } from '../src/project.ts';
 import { FlowConfigEditor } from '../src/plugins/flow/configEditor.ts';
 import { ProjectRegistry } from '../src/registry.ts';
@@ -20,13 +21,13 @@ import type { OpenRunner } from '../src/openFile.ts';
 import type { ProjectCheck } from '../src/snapshot.ts';
 import type { Snapshot } from '../src/snapshot.ts';
 import { SNAPSHOT_SCHEMA_VERSION } from '../src/snapshot.ts';
-import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner } from './fakeRunner.ts';
+import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner, LONG_CADENCE } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
 import type { FakeProcess } from './fakeSpawner.ts';
 import { noSubagents } from './fakeSubagents.ts';
+import { noTerminalProfiles } from './fakeTerminalProfiles.ts';
 
 const NOW = new Date('2026-10-24T18:16:04Z');
-const LONG_CADENCE = { filesMs: 600000, gitMs: 600000, processesMs: 600000, jobsMs: 600000, boardMs: 600000, pullsMs: 600000 };
 
 const PROJECT = { id: 'project', name: 'project', root: FIXTURE_ROOT };
 
@@ -38,7 +39,8 @@ async function started(makeSettings: (registry: ProjectRegistry) => SettingsStor
     const actions = new ActionRunner({ projectId: project.id, context: () => monitor.actionContext(), spawner, scheduler: realScheduler, clock: () => NOW, log: silentLogger, stateDir, onRefresh: () => {} });
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
   }, silentLogger);
-  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger, ...open });
+  const panes = new PaneSessions({ spawner: () => ({ ok: false, error: 'this test opens no pane' }), host: { shell: '/bin/sh', environment: {}, isFolder: () => false }, scheduler: realScheduler, log: silentLogger });
+  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger, panes, terminal: noTerminalProfiles(), ...open });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   await registry.apply([PROJECT]);
   const monitor = registry.get('project')!.monitor;
@@ -243,7 +245,7 @@ function fileSettings(registry: ProjectRegistry): SettingsStore {
   writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ projects: [{ root: FIXTURE_ROOT }] }));
   const read = readConfig([], { BRAIN_CONSOLE_TOKEN: 'tok', BRAIN_CONSOLE_STATE: dir }, { configFile: path.join(dir, 'config.json'), legacyProjectsFile: path.join(dir, 'projects.json') });
   const config = (read as { config: DaemonConfig }).config;
-  return new SettingsStore({ config, installed: () => ['iterm'], applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => null });
+  return new SettingsStore({ config, applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => null });
 }
 
 const LOCAL_ROOT = path.join(FIXTURES, 'project-local');
@@ -252,8 +254,8 @@ test('Settings_GetWithToken_EffectiveSettingsAndOrigins', async () => {
   const { base, close } = await started(fileSettings);
   try {
     const response = await fetch(`${base}/api/settings`, { headers: { authorization: 'Bearer tok' } });
-    const view = (await response.json()) as { projects: { from: string; roots: string[] }; terminal: { installed: string[] } };
-    assert.deepEqual([view.projects.from, view.projects.roots, view.terminal.installed], ['file', [FIXTURE_ROOT], ['iterm']], 'because the screen shows each setting with where it came from');
+    const view = (await response.json()) as { projects: { from: string; roots: string[] } };
+    assert.deepEqual([view.projects.from, view.projects.roots], ['file', [FIXTURE_ROOT]], 'because the screen shows each setting with where it came from');
     assert.equal((await fetch(`${base}/api/settings`)).status, 401, 'because the settings sit behind the token like every route');
   } finally { await close(); }
 });

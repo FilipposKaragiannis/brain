@@ -135,6 +135,18 @@ for path in glob.glob("roster/briefs/*.md"):
 sys.exit(1 if bad else 0)
 PY
 
+# Every test suite runs in the sandbox, so no test reaches the checkout it runs from or the
+# owner's config, and a run that does fails.
+for f in plugins/*/tests/*.sh plugins/*/*/tests/*.sh tools/tests/*.sh; do
+  case "$(basename "$f")" in _*|fake-*) continue ;; esac
+  grep -q '^\. "[^"]*/tools/lib/sandbox\.sh"; sandbox_enter "\$work" ' "$f" && grep -q "^trap 'sandbox_close \$?' EXIT$" "$f" \
+    || fail "test suite outside the sandbox (tools/lib/sandbox.sh): $f"
+done
+for f in plugins/*/app/package.json; do
+  python3 -c 'import json, sys; test = json.load(open(sys.argv[1])).get("scripts", {}).get("test", ""); sys.exit(0 if not test or test.startswith("sh ../../../tools/lib/sandboxed.sh . ") else 1)' "$f" \
+    || fail "app test script outside the sandbox (tools/lib/sandboxed.sh): $f"
+done
+
 # The installed block must stay under 6 KB (Codex budget).
 size="$(wc -c < plugins/standards/rules/block.md | tr -d ' ')"
 [ "$size" -le 6144 ] || fail "standards block is $size bytes, limit 6144"

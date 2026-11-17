@@ -29,6 +29,9 @@ from datetime import datetime, timedelta
 from xml.parsers.expat import ExpatError
 from xml.sax.saxutils import escape
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _process  # noqa: E402
+
 DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 HOSTS = ["claude", "codex"]
 WEEK = 7 * 86400
@@ -174,13 +177,7 @@ def took(seconds):
 
 # alive: the pid still runs jobs/<job>.sh. A lock left by a restart can name a reused pid.
 def alive(pid, job):
-    if not pid.isdigit():
-        return False
-    try:
-        p = subprocess.run(["ps", "-o", "command=", "-p", pid], capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return p.returncode == 0 and ("jobs/%s.sh" % job) in p.stdout
+    return pid.isdigit() and ("jobs/%s.sh" % job) in _process.command_of(pid)
 
 
 # running: the live runs of a schedule and of its workers, from their locks; each pid must still

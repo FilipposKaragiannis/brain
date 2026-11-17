@@ -15,7 +15,7 @@ import { fakeScheduler, fakeSpawner, plainSpawner } from './fakeSpawner.ts';
 import type { FakeSpawnerOptions } from './fakeSpawner.ts';
 import { noSubagents } from './fakeSubagents.ts';
 
-const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], outsideWorktrees: ['/p/app-side'], processCwds: ['/p/app-wt-2/src'], sessions: [], terminal: null, installedTerminals: ['iterm'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
+const CONTEXT: ActionContext = { root: '/p/app', pluginRoot: '/plugins/flow/1.17.0', pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: 'o/r', jobsHost: 'claude', pool: ['/p/app-wt-2', '/p/app-wt-3'], base: 'main', worktrees: [], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true, plan: true, grill: false }, nextJob: { paused: false, running: false } };
 const NOW = new Date('2026-10-25T09:00:00Z');
 const HTTP_ACCEPTED = 202;
 const HTTP_BAD_REQUEST = 400;
@@ -479,18 +479,6 @@ test('ActionFails_NoOutcome', async () => {
     processes[0]!.exit(1, null);
     await announced(actions, record.id, notRunning);
     assert.equal(actions.get(record.id)?.outcome, null, 'because a failed hand-off started nothing');
-  } finally { await cleanup(); }
-});
-
-test('TerminalOpen_TwoAtOnce_NoLockAndNothingReRead', async () => {
-  const { actions, processes, refreshed, cleanup } = await runner(CONTEXT, PLAIN);
-  try {
-    const first = actionOf(actions.request('terminal.open', { path: '/p/app' }));
-    const second = actions.request('terminal.open', { path: '/p/app' });
-    assert.equal(second.status, HTTP_ACCEPTED, 'because two windows on one folder hold nothing against each other');
-    processes[0]!.exit(0, null);
-    await announced(actions, first.id, notRunning);
-    assert.deepEqual([actions.get(first.id)?.state, actions.get(first.id)?.outcome, refreshed], ['done', 'finished', []], 'because opening a window changes no source');
   } finally { await cleanup(); }
 });
 

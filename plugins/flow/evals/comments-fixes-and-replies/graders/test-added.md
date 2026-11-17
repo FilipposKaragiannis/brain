@@ -2,7 +2,7 @@
 type: regex
 target:
   source: file
-  path: .pool/wt-1/tests/run.sh
+  path: tests/run.sh
 pattern: 'hello stranger'
 flags: ""
 match: contains

@@ -8,6 +8,7 @@ import type { CliDependencies } from './cli.ts';
 import { DEFAULT_STATE_DIR, privateFolder, writeFileWithMode } from './config.ts';
 import { runDaemon } from './daemon.ts';
 import type { LaunchdDependencies } from './launchd.ts';
+import { processAlive } from './processAlive.ts';
 import { listDirs } from './selfCheck.ts';
 import { DEFAULT_CONFIG_PATHS } from './settings.ts';
 
@@ -81,7 +82,7 @@ const deps: CliDependencies = {
   version: packageJson.version,
   defaultStateDir: DEFAULT_STATE_DIR,
   cwd: process.cwd(),
-  isAlive: (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; } },
+  isAlive: processAlive,
   processCommand: (pid) => new Promise((resolve) => {
     execFile('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }, (error, stdout) => resolve(error === null && stdout.trim() !== '' ? stdout.trim() : null));
   }),

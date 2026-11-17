@@ -1,16 +1,20 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ActionRunner, childProcessSpawner, realScheduler } from './actions.ts';
 import { newestCachedPlugin } from './cli.ts';
-import { childProcessRunner } from './collectors/exec.ts';
+import { cancellableProcessRunner, childProcessRunner } from './collectors/exec.ts';
 import { pluginReader } from './collectors/plugins.ts';
 import { diskSessionFiles, SessionLocator } from './collectors/sessions.ts';
 import { SubagentReader } from './collectors/subagents.ts';
 import { privateFolder, readConfig, startReport } from './config.ts';
 import { absoluteFlags, startFailure } from './launchd.ts';
 import { stderrLogger } from './log.ts';
+import type { PaneHost } from './panePlan.ts';
+import { paneEnvironment } from './panePlan.ts';
+import { PaneSessions } from './panes.ts';
 import { removePidFile, writePidFile } from './pidFile.ts';
+import { ptySpawner } from './pty.ts';
 import { DEFAULT_CADENCE, ProjectMonitor } from './project.ts';
 import type { ProjectDefinition } from './project.ts';
 import { FlowConfigEditor } from './plugins/flow/configEditor.ts';
@@ -20,11 +24,29 @@ import { closeConsoleServer, createConsoleServer } from './server.ts';
 import { SettingsStore } from './settings.ts';
 import type { SourceName } from './snapshot.ts';
 import { SOURCE_NAMES } from './snapshot.ts';
-import { installedTerminals } from './terminal.ts';
+import { TerminalProfiles, terminalProfileReaders } from './terminalProfiles.ts';
 
 const EXIT_BAD_CONFIG = 2;
 /** How long a stop may take before the process ends anyway, streams or not. */
 const SHUTDOWN_GRACE_MS = 3000;
+/** The shell a pane runs when neither `SHELL` nor the user's account names one. */
+const FALLBACK_SHELL = '/bin/sh';
+
+function machinePaneHost(environment: NodeJS.ProcessEnv): PaneHost {
+  return {
+    shell: environment.SHELL || os.userInfo().shell || FALLBACK_SHELL,
+    environment: paneEnvironment(environment),
+    isFolder,
+  };
+}
+
+function isFolder(folder: string): boolean {
+  try {
+    return statSync(folder, { throwIfNoEntry: false })?.isDirectory() === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * `brain-console start [flags]`: the daemon in this process, until SIGINT or SIGTERM. A daemon
@@ -42,7 +64,6 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
     process.exit(EXIT_BAD_CONFIG);
   }
   const { config } = configuration;
-  const installed = () => installedTerminals(existsSync, os.homedir());
   /** One locator for every project: it caches what it read of the Codex session files. */
   const sessions = new SessionLocator({ home: os.homedir(), clock, files: diskSessionFiles });
   /** One subagent reader for every project: it caches what it read of the subagents' files. */
@@ -50,13 +71,13 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   /** Reads the hosts' plugin files under the home, with each project's files. */
   const plugins = pluginReader(os.homedir());
 
-  /** A project's monitor and runner. The runner reads the terminal setting at request time, so a change in Settings counts at once. */
+  /** A project's monitor and runner. */
   const serve = (project: ProjectDefinition) => {
     const monitor = new ProjectMonitor({ project, runner: childProcessRunner, clock, log, cadence: DEFAULT_CADENCE, sessions, gateSessions: sessions, subagents, plugins, newerConsole: () => selfCheck.newerConsole() });
     const flowConfig = new FlowConfigEditor({ projectId: project.id, root: project.root, runner: childProcessRunner, refresh: async () => { await Promise.all([monitor.refresh('files'), monitor.refresh('jobs')]); }, log });
     const actions = new ActionRunner({
       projectId: project.id,
-      context: () => ({ ...monitor.actionContext(), terminal: settings.terminal(), installedTerminals: installed(), writeConfig: (key, value) => flowConfig.setKey(key, value) }),
+      context: () => ({ ...monitor.actionContext(), writeConfig: (key, value) => flowConfig.setKey(key, value) }),
       spawner: childProcessSpawner, scheduler: realScheduler, clock, log, stateDir: config.stateDir,
       onRefresh: (sources) => { for (const source of sources) if ((SOURCE_NAMES as string[]).includes(source)) void monitor.refresh(source as SourceName); },
     });
@@ -64,7 +85,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
     return { monitor, actions, flowConfig };
   };
   const registry = new ProjectRegistry(serve, log);
-  const settings = new SettingsStore({ config, installed, applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => selfCheck.newerConsole() });
+  const settings = new SettingsStore({ config, applyProjects: (projects) => { void registry.apply(projects); }, newerConsole: () => selfCheck.newerConsole() });
   const selfCheck = new SelfCheck({
     running: version,
     newestCached: () => newestCachedPlugin(os.homedir(), { listDirs, launchd: { env, files: { exists: existsSync } } })?.version ?? null,
@@ -80,7 +101,17 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   /** The UI as `npm run build` in ui/ leaves it. Without it the daemon is API only. */
   const uiDist = path.resolve(import.meta.dirname, '..', '..', 'ui', 'dist');
   const staticDir = existsSync(path.join(uiDist, 'index.html')) ? uiDist : null;
-  const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log });
+  /** Every terminal pane, across projects; the addon loads with the first one. */
+  const panes = new PaneSessions({ spawner: ptySpawner(), host: machinePaneHost(env), scheduler: realScheduler, log });
+  /**
+   * The panes' look, read at start so the page's first ask does not wait on iTerm's preferences.
+   * The account's home, not HOME: `defaults` reads the account's preferences whatever HOME says, and its fonts are the account's too.
+   * A daemon under test sets BRAIN_CONSOLE_TERMINAL_LOOK=console and reads neither.
+   */
+  const daemonStopping = new AbortController();
+  const terminal = new TerminalProfiles(terminalProfileReaders(config.terminalLook, cancellableProcessRunner, os.userInfo().homedir), log, daemonStopping.signal);
+  void terminal.profile(daemonStopping.signal);
+  const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes, terminal });
 
   privateFolder(config.stateDir);
   server.on('error', (error) => {
@@ -104,8 +135,9 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
     log.info('shutdown', { signal });
     if (!config.launchd) removePidFile(config.stateDir, process.pid);
     selfCheck.stop();
+    daemonStopping.abort();
     registry.stopAll();
-    void Promise.all([closeConsoleServer(server), registry.whenIdle()]).then(() => process.exit(0));
+    void Promise.all([closeConsoleServer(server), registry.whenIdle(), panes.stopAll()]).then(() => process.exit(0));
     setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();
   };
   process.on('SIGINT', () => shutdown('SIGINT'));

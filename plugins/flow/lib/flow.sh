@@ -156,6 +156,8 @@ yaml_get() {
 
 cfg() { yaml_get "$(config_file)" "$1"; }
 
+mkdir_exclusive() { python3 -I -c 'import os, sys; os.mkdir(sys.argv[1])' "$1" 2>/dev/null; }
+
 # flow_lock <name>: one holder at a time across sessions and unattended runs: a directory
 # <flow home>/<name>.lock with the holder's pid. Waits up to FLOW_LOCK_WAIT seconds (default 60),
 # then returns 1. A lock whose pid is gone is stale and taken over. flow_unlock releases it; so
@@ -163,7 +165,7 @@ cfg() { yaml_get "$(config_file)" "$1"; }
 flow_lock() {
   _flow_lock="$(flow_home)/$1.lock"; _waited=0
   mkdir -p "$(flow_home)"
-  while ! mkdir "$_flow_lock" 2>/dev/null; do
+  while ! mkdir_exclusive "$_flow_lock"; do
     _pid="$(cat "$_flow_lock/pid" 2>/dev/null)"
     if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then rm -rf "$_flow_lock"; continue; fi
     [ "$_waited" -ge "${FLOW_LOCK_WAIT:-60}" ] && { _flow_lock=""; return 1; }

@@ -5,11 +5,10 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 hooks="$here/.."
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-# No test reaches the network, the desktop or a real agent. The owner's shell may export
-# FLOW_SLACK_WEBHOOK, so it is cleared, and these tools are stubs that log to $work/offline.log.
-# A test that needs one of them puts its own fake earlier in PATH.
-unset FLOW_SLACK_WEBHOOK
+. "$hooks/../../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$hooks/.."
+trap 'sandbox_close $?' EXIT
+# No test reaches the network, the desktop or a real agent: these tools are stubs that log to
+# $work/offline.log. A test that needs one of them puts its own fake earlier in PATH.
 mkdir -p "$work/offline"
 for tool in curl wget gh osascript notify-send claude codex; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
@@ -208,6 +207,11 @@ printf 'chore: tidy [closeout #2]\n' > "$work/msg"
 if "$hooks/git/commit-msg" "$work/msg" >/dev/null 2>&1; then pass "git commit-msg honours the marker"; else fail "git commit-msg ignored the gate marker"; fi
 git reset -q golden-pending; mv golden-pending golden-pending.off; mv golden-pending.off "$work/"; mv golden-ok.off "$work/"
 cp "$work/config.bak" .standards/config.json
+
+echo "command gates: git's repository variables (tests/gate-git-env.sh)"
+sh "$here/gate-git-env.sh" > "$work/gate-git-env.out" 2>&1; code=$?
+check "GateGitEnvSuite_Passes: every check in gate-git-env.sh passed ($(tail -n 1 "$work/gate-git-env.out"))" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/gate-git-env.out"
 
 echo "an agent's commit runs the gates once"
 python3 - "$work/count.log" <<'PY'

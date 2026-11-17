@@ -4,7 +4,9 @@
 set -u
 export PYTHONDONTWRITEBYTECODE=1   # a __pycache__ in the repo copy would read as "written" to the diffs below
 here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"
+. "$root/tools/lib/sandbox.sh"; sandbox_enter "$work" "$root/tools"
+trap 'sandbox_close $?' EXIT
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
@@ -74,6 +76,26 @@ EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$
 check "--save writes the scored runs" python3 -c "import json,sys; d=json.load(open(sys.argv[1]))['plugins']['demo']; assert d['retro-unattended-reports']['with'] == {'score': 0.75, 'passed': 1, 'runs': 2}" "$work/baseline.json"
 out="$(python3 "$root/tools/lib/eval_summary.py" "$here/fixtures/eval-result" --against "$work/baseline.json")"
 check "compares with the baseline" has 'review-cites-rule-ids \[without\] *score 0.25, passed 0/1 (baseline 0.25, +0.00)$'
+check "RunWithoutCliVersion_NamesNoChange: a run that does not say its version has none to compare" sh -c '! printf "%s\n" "$1" | grep -q "Claude Code changed"' _ "$out"
+mkdir -p "$work/on-old" "$work/on-new" "$work/on-new-blocked" "$work/on-new-partial"
+on_version() { version="$1"; output_directory="$2"; shift 2; python3 -c "import json,sys; aggregate_result=json.load(open(sys.argv[1])); kept=sys.argv[4:]; aggregate_result['claudeVersion']=sys.argv[2]; aggregate_result['cases']=[case for case in aggregate_result['cases'] if not kept or case['name'] in kept]; json.dump(aggregate_result,open(sys.argv[3],'w'))" "$here/fixtures/eval-result/aggregate-result.json" "$version" "$output_directory/aggregate-result.json" "$@"; }
+recorded_versions() { python3 -c "import json,sys; cases=json.load(open(sys.argv[1]))['plugins']['demo']; print(' '.join(sorted({arm.get('claude_version', '-') for arms in cases.values() for arm in arms.values()})))" "$work/baseline.json"; }
+on_version 2.1.303 "$work/on-old"; on_version 2.1.325 "$work/on-new"
+EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$work/on-old" --save >/dev/null
+check "SaveOnACliVersion_RecordsThatVersion: the baseline keeps the version its scores came from" python3 -c "import json,sys; recorded=json.load(open(sys.argv[1]))['plugins']['demo']['review-cites-rule-ids']['with'].get('claude_version'); assert recorded == '2.1.303', 'the save ran on 2.1.303, so the score names it, not %s' % recorded" "$work/baseline.json"
+out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-new" --against "$work/baseline.json")"
+check "RunOnNewerCli_NamesTheChangeBeforeTheCases: the version line comes first, since it qualifies every case line" sh -c 'printf "%s\n" "$1" | sed -n 2p | grep -q "Claude Code changed since the baseline (2.1.303 -> 2.1.325)"' _ "$out"
+out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-old" --against "$work/baseline.json")"
+check "RunOnTheBaselineCli_NamesNoChange: the same version cannot explain a score move" sh -c '! printf "%s\n" "$1" | grep -q "Claude Code changed"' _ "$out"
+on_version 2.1.325 "$work/on-new-blocked" init-installs
+EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$work/on-new-blocked" --save >/dev/null
+check "SaveOfOnlyBlockedRunsOnNewerCli_KeepsTheRecordedVersions: a save that replaces no score relabels none" [ "$(recorded_versions)" = "2.1.303" ]
+on_version 2.1.325 "$work/on-new-partial" review-cites-rule-ids
+EVAL_BASELINE="$work/baseline.json" python3 "$root/tools/lib/eval_summary.py" "$work/on-new-partial" --save >/dev/null
+out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-new" --against "$work/baseline.json")"
+check "PartialSaveOnNewerCli_RunStillNamesTheOlderVersion: the cases the save left keep the version they were scored on" sh -c 'printf "%s\n" "$1" | sed -n 2p | grep -q "Claude Code changed since the baseline (2.1.303 -> 2.1.325)"' _ "$out"
+out="$(python3 "$root/tools/lib/eval_summary.py" "$work/on-new-partial" --against "$work/baseline.json")"
+check "PartialSaveOnNewerCli_RunOfTheSavedCaseNamesNoChange: its baseline scores came from the same version" sh -c '! printf "%s\n" "$1" | grep -q "Claude Code changed"' _ "$out"
 
 echo "eval.sh prints the summary and keeps the eval's exit status"
 cat > "$work/bin/claude" <<EOF
@@ -213,6 +235,82 @@ printf 'bump: minor\n- No blank line.\n' > "$demo/changelog.d/b-bad.md"
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "tools/lint.sh fails on a malformed fragment and names it" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'malformed changelog fragment plugins/demo/changelog.d/b-bad.md'" "$out"
 check "tools/lint.sh fails on a drifted app package and names it" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'plugins/demo/app/package-lock.json: version 1.4.1'" "$out"
+
+echo "lint keeps every suite in the sandbox"
+fresh
+mkdir -p "$demo/tests"
+printf '#!/bin/sh\nwork="$(mktemp -d)"\necho ok\n' > "$demo/tests/run.sh"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "SuiteOutsideSandbox_FailsLint: lint exits 1 and names a suite that never enters tools/lib/sandbox.sh" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/tests/run.sh'" "$out"
+fresh
+mkdir -p "$demo/tests"
+printf '#!/bin/sh\nwork="$(mktemp -d)"\n. "$here/../../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$here/.."\necho ok\n' > "$demo/tests/run.sh"
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "SuiteWithoutCloseTrap_FailsLint: lint exits 1 and names a suite that enters the sandbox but never checks the checkout on exit" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/tests/run.sh'" "$out"
+fresh
+python3 - "$demo/app/package.json" <<'PY2'
+import json, sys
+package = json.load(open(sys.argv[1]))
+package["scripts"] = {"test": "node --test 'test/**/*.test.ts'"}
+json.dump(package, open(sys.argv[1], "w"), indent=2)
+PY2
+out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
+check "AppTestScriptOutsideSandbox_FailsLint: lint exits 1 and names an app whose test script skips tools/lib/sandboxed.sh" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/app/package.json'" "$out"
+
+echo "the sandbox keeps a suite off the checkout it runs from"
+# host stands in for the real checkout: a repo with one commit whose config the tests watch.
+host="$work/host"
+new_host() {
+  rm -rf "$host"; git init -q -b main "$host"
+  git -C "$host" -c user.email=h@h -c user.name=h commit -q --allow-empty -m init
+}
+host_config() { cat "$host/.git/config"; }
+# A throwaway suite as every suite in this repo starts: its own temp folder, then the sandbox.
+# Its body is $1; it runs from host, the way a suite runs from the checkout it tests.
+sandboxed_suite() {
+  printf '#!/bin/sh\nwork="$(mktemp -d)"\n. "%s/tools/lib/sandbox.sh"; sandbox_enter "$work" "%s"\ntrap '"'"'sandbox_close $?'"'"' EXIT\ncd "$work"\n%s\n' \
+    "$root" "$host" "$1" > "$work/suite.sh"
+  (cd "$host" && sh "$work/suite.sh" > "$work/suite.out" 2>&1)
+}
+new_host; before="$(host_config)"; rm -f "$work/ran"
+# A subshell: sh keeps an assignment made in front of a function call after the call returns.
+# The suite's last line leaves a marker, so a suite that never got that far fails too.
+(GIT_DIR="$host/.git"; GIT_WORK_TREE="$host"; export GIT_DIR GIT_WORK_TREE
+  sandboxed_suite "git init -q repo && git -C repo config user.email t@t && touch '$work/ran'")
+check "SuiteWithGitDirExported_LeavesHostConfigUnchanged: the suite ran its git calls and the host config did not move" \
+  sh -c '[ -f "$1" ] && [ "$2" = "$3" ]' sh "$work/ran" "$(host_config)" "$before"
+new_host
+sandboxed_suite 'git init -q repo && git -C repo config user.email t@t'; code=$?
+check "SuiteThatStaysInItsTempFolder_Passes: a suite whose git calls stay in its temp folder exits 0" [ "$code" -eq 0 ]
+new_host
+sandboxed_suite "git config --file '$host/.git/config' core.bare true"; code=$?
+check "SuiteThatMakesHostBare_Fails: a suite that sets core.bare on the checkout it runs from exits 1 with the sandbox's failure message" \
+  sh -c '[ "$1" -eq 1 ] && grep -qF -- "$2" "$3"' sh "$code" "$sandbox_failure_message" "$work/suite.out"
+
+echo "sandboxed.sh keeps a test command off the checkout it runs from"
+new_host; before="$(host_config)"; rm -f "$work/ran"
+(cd "$host" && GIT_DIR="$host/.git" GIT_WORK_TREE="$host" sh "$root/tools/lib/sandboxed.sh" "$host" \
+  sh -c 'cd "$(mktemp -d)" && git init -q repo && git -C repo config user.email t@t && touch "$1"' sh "$work/ran" >/dev/null 2>&1)
+check "TestCommandWithGitDirExported_LeavesHostConfigUnchanged: the command ran its git calls and the host config did not move" \
+  sh -c '[ -f "$1" ] && [ "$2" = "$3" ]' sh "$work/ran" "$(host_config)" "$before"
+new_host
+(cd "$host" && sh "$root/tools/lib/sandboxed.sh" "$host" git config --file "$host/.git/config" core.bare true > "$work/command.out" 2>&1); code=$?
+check "TestCommandThatMakesHostBare_Fails: a command that sets core.bare on the checkout it runs from exits 1 with the sandbox's failure message" \
+  sh -c '[ "$1" -eq 1 ] && grep -qF -- "$2" "$3"' sh "$code" "$sandbox_failure_message" "$work/command.out"
+new_host
+printf 'tracked\n' > "$host/notes.txt"
+git -C "$host" add notes.txt && git -C "$host" -c user.email=h@h -c user.name=h commit -q -m notes
+printf 'owner edit\n' > "$host/notes.txt"
+(cd "$host" && sh "$root/tools/lib/sandboxed.sh" "$host" sh -c 'printf "overwritten\n" > "$1"' sh "$host/notes.txt" > "$work/command.out" 2>&1); code=$?
+check "TestCommandThatOverwritesModifiedWatchedFile_Fails: a command that rewrites a file the owner already modified exits 1 with the sandbox's failure message" \
+  sh -c '[ "$1" -eq 1 ] && grep -qF -- "$2" "$3"' sh "$code" "$sandbox_failure_message" "$work/command.out"
+new_host
+printf 'tracked\n' > "$host/café notes.txt"
+git -C "$host" add . && git -C "$host" -c user.email=h@h -c user.name=h commit -q -m notes
+printf 'owner edit\n' > "$host/café notes.txt"
+(cd "$host" && sh "$root/tools/lib/sandboxed.sh" "$host" sh -c 'printf "overwritten\n" > "$1"' sh "$host/café notes.txt" > "$work/command.out" 2>&1); code=$?
+check "TestCommandThatOverwritesModifiedWatchedFileWithNonAsciiName_Fails: a command that rewrites a file the owner already modified, whose name has an accent and a space, exits 1 with the sandbox's failure message" \
+  sh -c '[ "$1" -eq 1 ] && grep -qF -- "$2" "$3"' sh "$code" "$sandbox_failure_message" "$work/command.out"
 
 [ "$fails" -eq 0 ] && echo "tools: ok"
 exit $(( fails > 0 ))

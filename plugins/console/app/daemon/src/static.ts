@@ -51,10 +51,15 @@ export function serveStatic(request: IncomingMessage, response: ServerResponse, 
     'cache-control': extname(file.path) === '.html' ? 'no-cache' : 'public, max-age=3600',
   };
   if (request.method === 'HEAD') { response.writeHead(HTTP_OK, headers); response.end(); return true; }
-  const stream = createReadStream(file.path);
+  sendFile(response, file.path, headers);
+  return true;
+}
+
+/** Answers 200 with the file once it opens; 404 when it is gone, 500 when it cannot be read. */
+export function sendFile(response: ServerResponse, file: string, headers: Record<string, string>): void {
+  const stream = createReadStream(file);
   stream.on('error', (error: NodeJS.ErrnoException) => failRead(response, error));
   stream.on('open', () => { response.writeHead(HTTP_OK, headers); stream.pipe(response); });
-  return true;
 }
 
 function failRead(response: ServerResponse, error: NodeJS.ErrnoException): void {

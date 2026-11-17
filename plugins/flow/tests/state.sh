@@ -6,6 +6,9 @@
 # and a caller's while-read loop keeps its input. state-disk.sh has the lock and the disk.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
+new_repo records
 
 echo "state keys: each reads back what was set"
 keyed="$(new_task "Key round trip")"

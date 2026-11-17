@@ -14,7 +14,8 @@ major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
 if [ "$major" -lt 24 ]; then echo "console tests: node 24 or newer missing, skipping"; exit 0; fi
 # The physical path: demo.sh hands the daemon its folder with every link resolved.
 work="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$work"' EXIT
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
@@ -25,14 +26,22 @@ check() { # check <name> <condition command...>
 
 home="$work/home"; mkdir -p "$home"
 fake="$work/bin"; mkdir -p "$fake"
-# npm: logs "<cwd> <args>"; `ci` leaves a marker, `run build` leaves ui/dist/index.html.
+# npm: logs "<cwd> <args>"; `ci` leaves a marker and, in the app, a stand-in ws (the daemon imports
+# it at start; node-pty loads on the first spawn, which no test here makes), `run build` leaves
+# ui/dist/index.html. No test reads the source's node_modules, which a fresh clone has not installed.
 cat > "$fake/npm" <<SH
 #!/bin/sh
+[ "\$1" = --version ] && { echo 11.6.2; exit 0; }
 echo "\$(pwd) \$*" >> "$work/npm.log"
 dir=.; [ "\$1" = --prefix ] && { dir="\$2"; shift 2; }
 [ "\$1" = ci ] && [ -f "$work/npm-fails" ] && exit 1
+stand_in_runtime() {
+  mkdir -p node_modules/ws
+  echo '{ "name": "ws", "type": "module", "exports": "./index.js" }' > node_modules/ws/package.json
+  echo 'export class WebSocket {} export class WebSocketServer {}' > node_modules/ws/index.js
+}
 case "\$1" in
-  ci) mkdir -p "\$dir/node_modules" && : > "\$dir/node_modules/.fake" ;;
+  ci) mkdir -p "\$dir/node_modules" && : > "\$dir/node_modules/.fake" && { [ "\$dir" != . ] || stand_in_runtime; } ;;
   run) [ "\$2" = build ] && mkdir -p "\$dir/dist" && echo '<html></html>' > "\$dir/dist/index.html" ;;
 esac
 SH
@@ -40,6 +49,8 @@ for tool in launchctl open; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n[ "$1" = print ] && exit 113\nexit 0\n' "$tool" "$work" > "$fake/$tool"
 done
 chmod +x "$fake"/*
+# The installer takes the npm beside node: node is in the fake folder, so the fake npm is that one.
+ln -s "$(command -v node)" "$fake/node"
 run_install() { # run_install <script> <args...>: under the fake home, output in $work/out
   script="$1"; shift
   env -i HOME="${H:-$home}" PATH="$fake:$PATH" SHELL=/bin/zsh TMPDIR="${TMPDIR:-/tmp}" ${BCH:+BRAIN_CONSOLE_HOME="$BCH"} sh "$script" "$@" > "$work/out" 2>&1
@@ -81,6 +92,17 @@ run_install "$P/scripts/install.sh" --no-launchd --project "$work"; code=$?
 check "--project on a folder with no flow fails the install" [ "$code" -eq 1 ]
 run_install "$P/scripts/install.sh" --bogus; code=$?
 check "an unknown argument exits 2" [ "$code" -eq 2 ]
+
+# npm 6, as Homebrew's node@14 links it: crashes in npm ci on the app's lockfiles under node 24.
+oldnpm="$work/oldnpm"; mkdir -p "$oldnpm"
+printf '#!/bin/sh\n[ "$1" = --version ] && { echo 6.14.17; exit 0; }\necho "$*" >> "%s/oldnpm.log"\nexit 1\n' "$work" > "$oldnpm/npm"
+chmod +x "$oldnpm/npm"
+env -i HOME="$home" PATH="$oldnpm:$fake:$PATH" SHELL=/bin/zsh TMPDIR="${TMPDIR:-/tmp}" sh "$P/scripts/install.sh" --no-launchd > "$work/out" 2>&1; code=$?
+check "an old npm before node's own on the PATH is passed over for node's own" sh -c "[ $code -eq 0 ] && [ ! -e '$work/oldnpm.log' ]"
+oldnode="$work/oldnode"; mkdir -p "$oldnode"
+cp "$oldnpm/npm" "$oldnode/npm" && ln -s "$(command -v node)" "$oldnode/node"
+env -i HOME="$home" PATH="$oldnode:$PATH" SHELL=/bin/zsh TMPDIR="${TMPDIR:-/tmp}" sh "$P/scripts/install.sh" --no-launchd > "$work/out" 2>&1; code=$?
+check "an npm too old for the lockfiles exits 2 naming it before npm ci" sh -c "[ $code -eq 2 ] && grep -q 'npm 6.14.17 at $oldnode/npm is too old' '$work/out' && [ ! -e '$work/oldnpm.log' ]"
 
 echo "install.sh: failures and reinstalls"
 : > "$work/npm-fails"
@@ -280,6 +302,17 @@ check "a re-run deletes the demo only after a run that outlasts SIGTERM has ende
 check "a re-run leaves a job working outside the demo alone, though a demo lock names it" alive "$other_pid"
 check "a re-run leaves that job's process group alone" alive "$other_child"
 for g in "$run_pid" "$other_pid" "$slow_pid"; do alive "$g" && kill -s TERM -- "-$g" 2>/dev/null; done
+# The same re-run where ps cannot run, as a sandbox refuses the setuid /bin/ps on macOS.
+refused_ps="$work/refused-ps"
+mkdir -p "$refused_ps" && printf '#!/bin/sh\necho "ps: Operation not permitted" >&2\nexit 126\n' > "$refused_ps/ps" && chmod +x "$refused_ps/ps"
+start_run "$demo/console-demo" "$demo/console-demo/.flow/log/next.lock" "$work/refused-child"
+refused_run_pid="$(cat "$demo/console-demo/.flow/log/next.lock/pid" 2>/dev/null)"
+path_with_ps="$PATH"; PATH="$refused_ps:$PATH"
+run_demo --dir "$demo"
+PATH="$path_with_ps"
+check "ReRunWhereNoPsRuns_StopsADetachedRun: pgrep and python find the run, so it never outlives the demo it works on" \
+  sh -c "[ -n '$refused_run_pid' ] && ! kill -0 '$refused_run_pid' 2>/dev/null"
+alive "$refused_run_pid" && kill -s TERM -- "-$refused_run_pid" 2>/dev/null
 foreign="$work/foreign"; mkdir -p "$foreign"; : > "$foreign/keep"
 run_demo --dir "$foreign"; code=$?
 check "a folder the demo did not build is refused" [ "$code" -eq "$usage_exit" ]
@@ -304,8 +337,9 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   live="$work/live"; live_home="$work/live-home"; mkdir -p "$live_home"
   live_port="$(node -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
   first=""; second=""; first_daemon=""; second_daemon=""
+  # The console's own look: the daemon reads neither the account's iTerm preferences nor its fonts.
   start_live() { # start_live <log>: demo.sh in the background, as a caller with its own home
-    env -i HOME="$live_home" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" BRAIN_CONSOLE_PROJECTS="$project" \
+    env -i HOME="$live_home" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" BRAIN_CONSOLE_PROJECTS="$project" BRAIN_CONSOLE_TERMINAL_LOOK=console \
       sh "$P/scripts/demo.sh" --dir "$live" --port "$live_port" > "$1" 2>&1 &
   }
   poll_until() ( # poll_until <tries> <command...>: succeeds once the command does, fails after <tries> tries
@@ -332,6 +366,7 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   check "the demo's daemon answers on the demo's port" [ "$up" -eq 0 ]
   check "the demo's daemon watches exactly one project" python3 -c "import json, sys; sys.exit(len(json.load(open(sys.argv[1]))['projects']) != 1)" "$work/healthz.json"
   check "the demo's daemon keeps its state in the demo folder" test -f "$live/state/daemon.pid"
+  check "the demo's daemon under test reads no iTerm preferences and no fonts" poll_until "$START_POLLS" grep -q '"event":"terminal.profile","iterm":false,"font":null' "$work/live-1.log"
   check "the caller's home is left empty by the demo and its daemon" [ -z "$(ls -A "$live_home")" ]
   # The snapshot the console's screens read, once every source has been read at least once.
   project_id="$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["projects"][0])' "$work/healthz.json" 2>/dev/null)"

@@ -365,10 +365,10 @@ test('Open_NotRunning_NoBrowser', async () => {
 test('Add_NothingRunning_WritesTheConfigFile', async () => {
   const f = fake();
   try {
-    writeFileSync(f.config, JSON.stringify({ projects: [{ root: FIXTURE_ROOT }], terminal: 'ghostty' }));
+    writeFileSync(f.config, JSON.stringify({ projects: [{ root: FIXTURE_ROOT }], port: 7480 }));
     assert.equal(await runCli(['add', LOCAL_ROOT], f.deps), 0, 'because the folder holds a flow');
     assert.deepEqual(configRoots(f), [FIXTURE_ROOT, LOCAL_ROOT], 'because the new project is appended');
-    assert.equal((JSON.parse(readFileSync(f.config, 'utf8')) as { terminal: string }).terminal, 'ghostty', 'because the other settings are kept');
+    assert.equal((JSON.parse(readFileSync(f.config, 'utf8')) as { port: number }).port, 7480, 'because the other settings are kept');
   } finally { f.cleanup(); }
 });
 

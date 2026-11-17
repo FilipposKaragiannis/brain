@@ -6,18 +6,22 @@
 # temporary name went is never written through.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
+new_repo records
 cp .flow/config.yaml "$work/config.saved"
 tracker_state_is none
 
-lock_holder=
-trap '[ -z "$lock_holder" ] || kill "$lock_holder" 2>/dev/null; rm -rf "$work"' EXIT
-trap 'exit 130' INT TERM
 lock_holder_start_tries=100
-hold_lock() { # hold_lock <item> <seconds>
+# The holder lets go once the sandbox removes the work folder, so a cut run leaves no holder.
+lock_holder_poll_seconds=0.1
+hold_lock() { # hold_lock <item> <seconds>: holds until let go, the seconds pass or the work folder goes
   rm -f "$work/lock.held"; mkdir -p .flow/locks
-  python3 -c 'import fcntl,sys,time
-handle=open(sys.argv[1],"a"); fcntl.flock(handle, fcntl.LOCK_EX); open(sys.argv[2],"w").close(); time.sleep(float(sys.argv[3]))' \
-    ".flow/locks/$(slug "$1").lock" "$work/lock.held" "$2" &
+  python3 -c 'import fcntl,os,sys,time
+handle=open(sys.argv[1],"a"); fcntl.flock(handle, fcntl.LOCK_EX); open(sys.argv[2],"w").close()
+deadline=time.time()+float(sys.argv[3])
+while time.time()<deadline and os.path.exists(sys.argv[2]): time.sleep(float(sys.argv[4]))' \
+    ".flow/locks/$(slug "$1").lock" "$work/lock.held" "$2" "$lock_holder_poll_seconds" &
   lock_holder=$!
   tries=0; while [ ! -f "$work/lock.held" ] && [ "$tries" -lt "$lock_holder_start_tries" ]; do sleep 0.1; tries=$((tries + 1)); done
   [ -f "$work/lock.held" ]

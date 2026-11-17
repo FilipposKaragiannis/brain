@@ -12,6 +12,7 @@ import { silentLogger } from '../src/log.ts';
 import type { ActionRecord } from '../src/snapshot.ts';
 import { syncConflict, syncNotePath, syncRefs } from '../src/syncNote.ts';
 import { fakeSpawner, settle, until } from './fakeSpawner.ts';
+import { gitEnvironment } from './gitEnv.ts';
 
 /**
  * The sync script against real git in a temporary folder: a remote, a main checkout that pushes
@@ -19,7 +20,7 @@ import { fakeSpawner, settle, until } from './fakeSpawner.ts';
  */
 function repos() {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'console-sync-'));
-  const git = (cwd: string, ...args: string[]): string => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', '-c', 'core.hooksPath=/dev/null', ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const git = (cwd: string, ...args: string[]): string => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', '-c', 'core.hooksPath=/dev/null', ...args], { cwd, encoding: 'utf8', env: gitEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] });
   const remote = path.join(dir, 'remote.git');
   const main = path.join(dir, 'main');
   const worktree = path.join(dir, 'wt');
@@ -33,7 +34,7 @@ function repos() {
   git(main, 'push', '-q', 'origin', 'HEAD:main');
   git(main, 'worktree', 'add', '-q', '-b', 'flow/gh-7', worktree);
   git(worktree, 'push', '-q', '-u', 'origin', 'flow/gh-7');
-  const sync = () => spawnSync('sh', [SYNC_SCRIPT, worktree, 'main'], { encoding: 'utf8', env: { ...process.env, GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 't', GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 't@t' } });
+  const sync = () => spawnSync('sh', [SYNC_SCRIPT, worktree, 'main'], { encoding: 'utf8', env: gitEnvironment({ GIT_CONFIG_COUNT: '2', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 't', GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 't@t' }) });
   return { dir, git, main, worktree, commit, sync, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
@@ -113,7 +114,7 @@ test('SyncRefs_TheRefsTheScriptWouldMerge_WithoutMerging', async () => {
 /** An action runner over the temp repos: the worktree is pool slot wt, claimed for gh#7. */
 async function runnerOver(worktree: string, dir: string, log: Logger, spawner = childProcessSpawner) {
   const context: ActionContext = {
-    root: path.join(dir, 'main'), pluginRoot: path.join(dir, 'plugin'), pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: null, jobsHost: 'claude', pool: [worktree], outsideWorktrees: [], processCwds: [], sessions: [], terminal: null, installedTerminals: [], base: 'main',
+    root: path.join(dir, 'main'), pluginRoot: path.join(dir, 'plugin'), pluginVersion: null, pluginScripts: null, adapterPrefixes: [{ adapter: 'github', prefix: 'gh#' }, { adapter: 'jira', prefix: 'jira:' }, { adapter: 'local', prefix: 'local:' }], repo: null, jobsHost: 'claude', pool: [worktree], base: 'main',
     worktrees: [{ name: 'wt', path: worktree, item: 'gh#7', claimBase: null, dirtyFiles: 0, behindBase: 1, agentPids: [], step: 'implement', claimStep: 'implement', trackerStep: 'implement' }], runItems: [], gateItems: [], worktreeSteps: { implement: true, sync: true }, nextJob: null,
   };
   const events: ActionRecord[] = [];
@@ -173,7 +174,7 @@ test('Sync_TermMidMerge_MergeAbortedAndNonZero', async () => {
     const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
     execFileSync('mkdir', [bin]);
     writeFileSync(path.join(bin, 'git'), `#!/bin/sh\ncase " $* " in *" merge --no-edit "*) "${real}" -c user.name=t -c user.email=t@t "$@" --no-commit --no-ff; touch "${dir}/mid-merge"; exec sleep 30 ;; esac\nexec "${real}" "$@"\n`, { mode: 0o755 });
-    const child = spawn('sh', [SYNC_SCRIPT, worktree, 'main'], { detached: true, env: { ...process.env, PATH: `${bin}:${process.env['PATH'] ?? ''}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('sh', [SYNC_SCRIPT, worktree, 'main'], { detached: true, env: gitEnvironment({ PATH: `${bin}:${process.env['PATH'] ?? ''}` }), stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
     while (!existsSync(path.join(dir, 'mid-merge'))) await new Promise((resolve) => setTimeout(resolve, 50));

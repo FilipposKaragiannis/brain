@@ -3,16 +3,18 @@
 # waited on with --wait, on the local adapter in throwaway repos. --start returns while the checks
 # run and clears the earlier report; a second --start while one runs starts nothing; --wait exits
 # 0 on pass, 1 on fail (a gate that failed, a run past verify.limit, a run killed with no report),
-# 3 while it runs and 2 with no run; verify.limit stops the gate's whole process group; steward
-# stop and release end the run (stop with no run record, release before its dirty check refuses),
-# never another item's, and release gives up on a run that outlives its wait; health does not take
-# an item whose verify runs for dead, and counts a run only in the item's own worktree. A verify.run
-# field that holds a command runs nothing, and --start never writes through a link.
+# 3 while it runs and 2 with no run, also where ps cannot run, where a zombie reads as ended too;
+# verify.limit stops the gate's whole process group; steward stop and release end the run (stop
+# with no run record, release before its dirty check refuses), never another item's, and release
+# gives up on a run that outlives its wait; health does not take an item whose verify runs for
+# dead, and counts a run only in the item's own worktree. A verify.run field that holds a command
+# runs nothing, and --start never writes through a link.
 # Each gate waits for a file the test creates, so the test decides when a check ends.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
-# On exit every held gate is let go, so no detached run outlives the test.
-trap 'for gate_name in started unstarted killed stopped released health stopless dirty planted stubborn tampered; do touch "$work/release-$gate_name"; done; [ -n "${KEEP:-}" ] || rm -rf "$work"' EXIT
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
+# The sandbox removes the folder on exit, which lets every held gate and stand-in run go.
 . "$here/_verify_fixture.sh"
 
 echo "verify --start returns while the checks run, and --wait follows the run"
@@ -47,6 +49,38 @@ verify --start >/dev/null 2>&1
 wait_until_ended; ended_code=$?
 check "WaitAfterAFailingGate_ExitsOne: 1 is a fail" '[ "$ended_code" -eq 1 ]'
 check "WaitAfterAFailingGate_ReportSaysFail: the failed gate fails the run" '[ "$(report_status)" = fail ]'
+
+echo "verify where ps cannot run, as a sandbox refuses the setuid /bin/ps"
+new_item refused "$(held_gate refused)"
+mkdir -p "$work/refused-ps" && printf '#!/bin/sh\necho "ps: Operation not permitted" >&2\nexit 126\n' > "$work/refused-ps/ps" && chmod +x "$work/refused-ps/ps"
+path_with_ps="$PATH"; PATH="$work/refused-ps:$PATH"
+verify --start >/dev/null 2>&1
+check "StartWhereNoPsRuns_GateStarts: the detached run reaches its checks without ps" \
+  'until_true 20 "[ -s $work/refused.count ]"'
+verify --wait 1 >/dev/null 2>&1; refused_running_code=$?
+check "WaitWhileTheGateRunsWhereNoPsRuns_ExitsThree: a run still going never reads as one that died" '[ "$refused_running_code" -eq 3 ]'
+touch "$work/release-refused"
+wait_until_ended; ended_code=$?
+PATH="$path_with_ps"
+check "WaitAfterAPassingRunWhereNoPsRuns_ExitsZero: the run's own report is the step result" '[ "$ended_code" -eq 0 ]'
+
+echo "a process that ended but is not yet reaped, where ps cannot run"
+python3 -I -c 'import os, sys, time
+child = os.fork()
+if child == 0:
+    os._exit(0)
+print(child, flush=True)
+while not os.path.exists(sys.argv[1]) and os.path.isdir(sys.argv[2]):
+    time.sleep(0.2)' "$work/release-zombie" "$work" > "$work/zombie.pid" &
+until_true 20 "[ -s $work/zombie.pid ]"
+zombie_pid="$(cat "$work/zombie.pid")"
+PATH="$work/refused-ps:$PATH"
+check "ZombieWhereNoPsRuns_ReadsAsEnded: steward stop and release must not wait the whole VERIFY_END_WAIT on a run that has ended" \
+  'until_true 20 "! process_running $zombie_pid"'
+PATH="$path_with_ps"
+check "ZombieBeforeItsRelease_StillExists: the pid must still be the unreaped zombie, or the row above proves nothing" \
+  'kill -0 "$zombie_pid"'
+touch "$work/release-zombie"
 
 echo "verify --wait with no run started"
 new_item unstarted "$(held_gate unstarted)"

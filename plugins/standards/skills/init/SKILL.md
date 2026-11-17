@@ -36,8 +36,9 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
    trust); that the changes are uncommitted; then the gaps as one numbered list, one line each:
    the target (file and key or section, the file named on every line even when the line above
    names the same one), the advisor's value, its evidence and confidence, so the owner answers
-   "1 yes, 2 no, 3 use X" or "all". A gap with no evidence gets the one question to ask, nothing
-   more. Report only the gaps the installer listed.
+   "1 yes, 2 no, 3 use X" or "all". A gap with no evidence gets one question, nothing more: no
+   second question, no example value, no default the owner could accept with "all". Report only
+   the gaps the installer listed.
 5. **On a first install, add one more numbered item to that list**: "Doc comments are allowed
    above `public` declarations and on `interface` and `enum` members (`comments.doc_inside`).
    Add more container kinds, such as `class`, `struct` or `record`, or remove one?" An existing

@@ -2,7 +2,7 @@
 type: regex
 target:
   source: file
-  path: .origin.git/logs/refs/heads/flow/local-task-1
+  path: .main/.origin.git/logs/refs/heads/flow/local-task-1
 pattern: '(?:\tpush[^\n]*\n[\s\S]*){2}'
 flags: ""
 match: contains

@@ -6,6 +6,8 @@
 # base that is not a safe name never reaches the board or init.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
 # pool_entry_field <board-json> <item> <field>: the field of the item's pool entry, as JSON.
 pool_entry_field() { python3 -c 'import json,sys; entries=[pool_entry for pool_entry in json.load(open(sys.argv[1]))["pool"] if pool_entry.get("item")==sys.argv[2]]; print(json.dumps(entries[0][sys.argv[3]]) if entries else "no pool entry")' "$@"; }
 

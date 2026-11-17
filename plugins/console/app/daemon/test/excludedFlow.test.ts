@@ -11,6 +11,7 @@ import { readFlowHome } from '../src/collectors/flowHome.ts';
 import { readGit } from '../src/collectors/git.ts';
 import { SettingsStore } from '../src/settings.ts';
 import { fakeRunner, FIXTURE_ROOT } from './fakeRunner.ts';
+import { gitEnvironment } from './gitEnv.ts';
 
 // flow:init keeps .flow/ out of git: a block in the clone's .git/info/exclude, nothing committed.
 // The console reads the flow home from the disk, so such a project is added and watched as one
@@ -19,7 +20,7 @@ import { fakeRunner, FIXTURE_ROOT } from './fakeRunner.ts';
 type ExcludedProject = { root: string; linked: string; cleanup: () => void };
 
 function gitIn(cwd: string, args: string[]): string {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env: gitEnvironment({ GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }) });
 }
 
 /** A git repo with one commit, .flow/ excluded and untracked, a pool worktree beside it holding a claim. */
@@ -46,7 +47,7 @@ function settingsStore(): { settings: SettingsStore; cleanup: () => void } {
   const read = readConfig([], { BRAIN_CONSOLE_TOKEN: 't', BRAIN_CONSOLE_STATE: dir }, paths);
   assert.ok(read.ok, 'because the test config is valid');
   const config = (read as { config: DaemonConfig }).config;
-  const settings = new SettingsStore({ config, installed: () => ['terminal'], applyProjects: () => undefined, newerConsole: () => null });
+  const settings = new SettingsStore({ config, applyProjects: () => undefined, newerConsole: () => null });
   return { settings, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 

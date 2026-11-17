@@ -11,15 +11,21 @@ import type { KnownFile, OpenRunner } from './openFile.ts';
 import { execFileOpenRunner, openPlan } from './openFile.ts';
 import { filterEvents } from './events.ts';
 import type { FlowConfigEditor } from './plugins/flow/configEditor.ts';
-import { serveStatic } from './static.ts';
+import type { PaneAdmission } from './paneSocket.ts';
+import { requestUrl, servePanes, UNPARSED_URL } from './paneSocket.ts';
+import type { PaneSessions } from './panes.ts';
+import { sendFile, serveStatic } from './static.ts';
+import type { TerminalProfiles } from './terminalProfiles.ts';
+import { TERMINAL_FONT_PATH, TERMINAL_PROFILE_PATH } from './terminalProtocol.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
 import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX, transcriptTailStart } from './collectors/sessions.ts';
 
 /**
  * `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code.
  * `openRunner` runs `open` for `POST /api/open` (execFile by default) and `platform` says whether there is one (this process's by default); tests pass both.
+ * `panes` runs the terminal panes behind `/api/projects/<id>/panes`; `terminal` is the look they take and the font file served for it.
  */
-export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger; openRunner?: OpenRunner; platform?: NodeJS.Platform };
+export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger; panes: PaneSessions; terminal: TerminalProfiles; openRunner?: OpenRunner; platform?: NodeJS.Platform };
 
 export type { ServedProject } from './registry.ts';
 
@@ -94,13 +100,23 @@ function readBody(request: IncomingMessage): Promise<{ ok: true; body: unknown }
   });
 }
 
+/** A pane's upgrade passes the same Host, Origin and token checks as every route. */
+function paneAdmission(request: IncomingMessage, url: URL, token: string): PaneAdmission {
+  const caller = localCaller(request);
+  if (!caller.ok) return { ok: false, status: HTTP_FORBIDDEN, error: caller.error };
+  if (!authorized(request, url, token)) return { ok: false, status: HTTP_UNAUTHORIZED, error: 'token required' };
+  return { ok: true };
+}
+
 /**
- * The daemon's HTTP face: the built UI at `/`, snapshots and actions over JSON, and one
- * server-sent event stream per project that carries both `snapshot` and `action` events.
+ * The daemon's HTTP face: the built UI at `/`, snapshots and actions over JSON, one server-sent
+ * event stream per project that carries both `snapshot` and `action` events, and one WebSocket
+ * per terminal pane.
  */
 export function createConsoleServer(registry: ProjectRegistry, settings: SettingsStore | null, options: ServerOptions): Server {
   const server = createServer((request, response) => {
-    const url = new URL(request.url ?? '/', `http://${options.host}:${options.port}`);
+    const url = requestUrl(request, `http://${options.host}:${options.port}`);
+    if (url === null) { sendJson(response, HTTP_BAD_REQUEST, { error: UNPARSED_URL }); return; }
     const caller = localCaller(request);
     if (!caller.ok) { sendJson(response, HTTP_FORBIDDEN, { error: caller.error }); return; }
     if (caller.origin !== null) {
@@ -117,6 +133,8 @@ export function createConsoleServer(registry: ProjectRegistry, settings: Setting
     if (url.pathname === '/api/settings') { void settingsRoute(settings, request, response); return; }
     if (url.pathname === '/api/settings/check-project') { void checkProjectRoute(settings, request, response); return; }
     if (url.pathname === '/api/open') { void openRoute(knownFiles(registry, settings), options, request, response); return; }
+    if (url.pathname === TERMINAL_PROFILE_PATH) { void terminalProfileRoute(options.terminal, request, response); return; }
+    if (url.pathname === TERMINAL_FONT_PATH) { void terminalFontRoute(options.terminal, request, response); return; }
     const plugin = /^\/api\/projects\/([^/]+)\/plugins\/flow\/config$/.exec(url.pathname);
     if (plugin !== null) {
       const owner = registry.get(decodeURIComponent(plugin[1]!));
@@ -144,6 +162,7 @@ export function createConsoleServer(registry: ProjectRegistry, settings: Setting
     if (wantsEventList(request, url)) { eventList(served.monitor, response, url); return; }
     streamEvents(served, registry, request, response, options.log);
   });
+  servePanes(server, { registry, panes: options.panes, admit: (request, url) => paneAdmission(request, url, options.token), log: options.log });
   return server;
 }
 
@@ -266,6 +285,32 @@ async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: In
   sendJson(response, HTTP_OK, { session: agent.session.id, ...read });
 }
 
+/** `GET` the `TerminalProfile` the panes take: iTerm's default profile, or null without one, and where the font is served. */
+async function terminalProfileRoute(terminal: TerminalProfiles, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
+  const profile = await terminal.profile(whenClosed(response));
+  if (!response.destroyed) sendJson(response, HTTP_OK, profile);
+}
+
+/**
+ * `GET` the font file the profile names, or the console's own Nerd Font, found by the daemon in
+ * the machine's font folders: nothing in the request picks the file. 404 when there is none.
+ */
+async function terminalFontRoute(terminal: TerminalProfiles, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
+  const font = await terminal.font(whenClosed(response));
+  if (response.destroyed) return;
+  if (font === null) { sendJson(response, HTTP_NOT_FOUND, { error: 'no terminal font on this machine' }); return; }
+  sendFile(response, font.path, { 'content-type': font.contentType, 'cache-control': 'no-store' });
+}
+
+/** Aborts once the response's connection closes, so a page that left stops the wait behind its request. */
+function whenClosed(response: ServerResponse): AbortSignal {
+  const closed = new AbortController();
+  response.once('close', () => closed.abort());
+  return closed.signal;
+}
+
 /**
  * `GET` the project's .flow/config.yaml as the editor shows it; `PUT` changes to it (`{changes,
  * hash, force?}` or `{text, hash, force?}`), refused with 409 when the file changed since the GET
@@ -307,7 +352,7 @@ function streamEvents(served: ServedProject, registry: ProjectRegistry, request:
  * Stops the server for good. `server.close` alone waits for every open stream to end, and a
  * console tab holds its stream open for as long as it is on screen, so Ctrl+C would never return.
  * The open connections are cut once the listener is closed, and the promise settles when the
- * server has let go.
+ * server has let go. A pane's upgraded socket is not among them: `PaneSessions.stopAll` ends it.
  */
 export function closeConsoleServer(server: Server): Promise<void> {
   return new Promise((resolve) => {

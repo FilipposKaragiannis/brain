@@ -36,6 +36,11 @@ Read the phases and their `independent` flags. Walk them in order:
 
 Never run two implementers in the same worktree. Never run a phase whose predecessor failed.
 
+A sandboxed Claude session commits only in the worktree it started in (the unattended run starts
+each step in the item's claimed worktree). A commit anywhere else fails on `index.lock`: in the
+claimed worktree when the session started in the main checkout, and in a phase's temporary
+worktree always. Name that in the report and stop rather than look for a way around it.
+
 ## 3. Bugfix and S tasks
 
 One phase, one implementer, in the claimed worktree. For a bugfix, the brief names the repro
@@ -60,4 +65,6 @@ branch into the child's branch first (never a rebase).
 
 Write `<reports>/implement.json`: status `done` with the phases run and the commits, the union
 of the phases' `touches`, and the size when an implementer changed the estimate; `fail` with
-the failing phase's error text, cause and attempts; `gate` with the question. End with one report.
+the failing phase's error text, cause and attempts; `gate` with the question. End with one report
+that names the task branch and the worktree: where the commits landed, or on a fail or a gate,
+where the work stands.

@@ -6,20 +6,20 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
 work="$(mktemp -d)"
-trap 'rm -rf "$work"' EXIT
-# No test reaches the network, the desktop or a real agent. The owner's shell may export
-# FLOW_SLACK_WEBHOOK, so it is cleared, and these tools are stubs that log to $work/offline.log.
-# A test that needs one of them puts its own fake earlier in PATH.
-unset FLOW_SLACK_WEBHOOK
-# init writes the Codex rules and agents to ~/.codex when a repo has no .codex folder, so no test
-# runs with the owner's home.
-mkdir -p "$work/home" && HOME="$work/home" && export HOME && unset CODEX_HOME
+. "$P/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$P"
+trap 'sandbox_close $?' EXIT
+# No test reaches the network, the desktop or a real agent: these tools are stubs that log to
+# $work/offline.log. A test that needs one of them puts its own fake earlier in PATH.
 mkdir -p "$work/offline"
 for tool in curl wget gh osascript notify-send claude codex launchctl; do
   printf '#!/bin/sh\necho "%s $*" >> "%s/offline.log"\n' "$tool" "$work" > "$work/offline/$tool"
   chmod +x "$work/offline/$tool"
 done
 PATH="$work/offline:$PATH"; export PATH
+# A ps that cannot run, as a sandbox refuses the setuid /bin/ps on macOS. A test that needs it puts
+# this folder first in PATH.
+refused_ps="$work/refused-ps"
+mkdir -p "$refused_ps" && printf '#!/bin/sh\necho "ps: Operation not permitted" >&2\nexit 126\n' > "$refused_ps/ps" && chmod +x "$refused_ps/ps"
 fails=0
 pass() { echo "  ok   $1"; }
 fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
@@ -77,7 +77,15 @@ check_all "write-state"       '[ "$("$P/adapters/local/read.sh" "$t1" | jget sta
 "$P/adapters/local/write-state.sh" "$t1" step= attempts=0 touches=
 printf 'hello: world\n' | "$P/adapters/local/comment.sh" "$t1"
 check "comment appended"  grep -q 'hello: world' .flow/items/task/1.md
-check "list open"         [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
+chmod 600 .flow/items/task/1.md
+"$P/adapters/local/write-state.sh" "$t1" step=
+check "PrivateItemWrittenAgain_StaysPrivate: an item made 0600 is still 0600 after a state write, because the whole-file replace keeps the old file's mode" \
+  [ "$(python3 -I -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' .flow/items/task/1.md)" = "0o600" ]
+chmod 644 .flow/items/task/1.md
+check "TemporaryItemFile_IsOwnerOnlyFromCreation: the temporary file a whole-item write fills is 0600 under umask 022 before any content is written, because a private item's contents never sit in a file others can read" \
+  python3 -I -B -c 'import os, stat, sys; sys.path.insert(0, sys.argv[1]); import _item; os.umask(0o022)
+with _item.create_owner_only(sys.argv[2]) as f: sys.exit(stat.S_IMODE(os.fstat(f.fileno()).st_mode) != 0o600)' "$P/adapters/local" "$work/owner-only.tmp"
+check "list open"        [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
 printf '[{"id":"local:task/90","status":"open","state":{"gate":"none"},"blocked_by":["gh#999999"],"open_blockers":[]},{"id":"local:task/91","status":"open","state":{"gate":"none"},"blocked_by":[],"open_blockers":["gh#1"]}]' | "$P/scripts/filter-ready.sh" > "$work/ready.out"
 check "ready: an item that lists its open blockers is judged by that list, with no read per blocker" sh -c "grep -q 'local:task/90' '$work/ready.out' && ! grep -q 'local:task/91' '$work/ready.out'"
 check "ready excludes blocked" [ "$("$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "local:task/1,local:task/2" ]
@@ -276,6 +284,14 @@ if command -v dash >/dev/null 2>&1; then
   n=0; while [ -z "$(ls -A "$work/vtmp")" ] && [ "$n" -lt 100 ]; do n=$((n + 1)); sleep 0.1; done
   kill -TERM "$vp" 2>/dev/null; wait "$vp"
   check_all "verify under dash stopped by TERM leaves no temp file" '[ "$n" -lt 100 ] && [ -z "$(ls -A "$work/vtmp")" ]'
+  hold_polls=100; hold_poll_seconds=0.1
+  mkdir -p "$work/vtmp-held" "$work/held-mktemp"; rm -f "$work/held-mktemp.go"
+  printf '#!/bin/sh\nmade="$(%s "$@")" || exit 1\nprintf "%%s\\n" "$made"\ncase "$made" in "$TMPDIR"/*) n=0; while [ ! -f %s/held-mktemp.go ] && [ "$n" -lt %s ]; do sleep %s; n=$((n + 1)); done ;; esac\n' \
+    "$(command -v mktemp)" "$work" "$hold_polls" "$hold_poll_seconds" > "$work/held-mktemp/mktemp"; chmod +x "$work/held-mktemp/mktemp"
+  (cd "$wv" && PATH="$work/held-mktemp:$PATH" TMPDIR="$work/vtmp-held" exec dash "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1) & vp=$!
+  n=0; while [ -z "$(ls -A "$work/vtmp-held")" ] && [ "$n" -lt "$hold_polls" ]; do n=$((n + 1)); sleep "$hold_poll_seconds"; done
+  kill -TERM "$vp" 2>/dev/null; touch "$work/held-mktemp.go"; wait "$vp"
+  check_all "TermWhileVerifyMakesItsFirstTempFile_LeavesNoTempFile: the cleanup is set before the file exists" '[ "$n" -lt "$hold_polls" ] && [ -z "$(ls -A "$work/vtmp-held")" ]'
 fi
 # The write is atomic: a reader polling verify.json while verify runs never sees it empty, and
 # no temp file is left behind.
@@ -978,7 +994,7 @@ export HOST_LOG="$work/host.log"; realrepo="$(cd "$repo" && pwd -P)"
 for h in claude codex; do printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/$h"; chmod +x "$work/bin/$h"; done
 "$P/adapters/github/write-state.sh" 'gh#21' step=pr && "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/90
 "$P/jobs/comments.sh" claude >/dev/null
-check "comments job: runs the skill per open PR from the main worktree" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
+check "comments job: runs the skill per open PR from the main worktree when the item holds none" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
 check "comments job: one PR, one run" [ "$(grep -c comments "$HOST_LOG")" = "1" ]
 check "comments job: a mergeable PR gets no conflict note" sh -c "! grep -q 'Conflicts step' '$HOST_LOG'"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
@@ -1313,6 +1329,8 @@ mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fa
 fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
 mkdir -p .flow/log/comments.lock && echo "$fakejob" > .flow/log/comments.lock/pid
 check "job lock: live pid skips"  sh -c "'$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
+check "JobLockWhereNoPsRuns_LivePidSkips: pgrep sees the run, so a live lock is never taken for a stale one" \
+  sh -c "PATH='$refused_ps':\$PATH '$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
 mkdir -p .flow/log/comments.shared.lock && echo "$fakejob" > .flow/log/comments.shared.lock/pid && printf comments > .flow/log/comments.shared.lock/name
 check "job lock: another schedule of the job skips while one runs, as they share its state" sh -c "'$P/jobs/comments.sh' claude --as comments-fast | grep -q 'skipped: comments is running (pid $fakejob), which shares the comments job.s state' && [ ! -d .flow/log/comments-fast.lock ] && [ \"\$(cat .flow/log/comments.shared.lock/pid)\" = $fakejob ]"
 rm -rf .flow/log/comments.shared.lock
@@ -1459,7 +1477,11 @@ fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh
 sleep 1; fakechild="$(pgrep -P "$fakejob")"
 mkdir -p "$home2/log/comments.lock" && echo "$fakejob" > "$home2/log/comments.lock/pid"
 check "run refuses a job that is running" sh -c "FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
+check "RunWhereNoPsRuns_RefusesAJobThatIsRunning: pgrep sees the run, so no second one starts beside it" \
+  sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
 check "status shows a running job" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
+check "StatusWhereNoPsRuns_ShowsARunningJob: pgrep sees the run, so status never calls it stopped" \
+  sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
 FLOW_HOME="$home2" "$J" stop comments >/dev/null
 sleep 1
 check "stop ends the running run and every process under it" sh -c "[ -n '$fakechild' ] && ! kill -0 $fakejob 2>/dev/null && ! kill -0 $fakechild 2>/dev/null"
@@ -1890,6 +1912,10 @@ mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
 - [ ] three" >/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "a live holder makes the next pick wait, then exit 7 (quiet)" [ "$code" -eq 7 ]
+lying_mkdir="$work/lying-mkdir"; mkdir -p "$lying_mkdir"
+printf '#!/bin/sh\nexec %s -p "$@"\n' "$(command -v mkdir)" > "$lying_mkdir/mkdir" && chmod +x "$lying_mkdir/mkdir"
+PATH="$lying_mkdir:$PATH" FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
+check "MkdirThatExitsZeroOnExistingDirectory_PickWaitsForLiveHolder: the pick exits 7 (quiet) because only the call that makes the lock directory holds the lock" [ "$code" -eq 7 ]
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check_all "a stale lock (holder gone) is taken over" '[ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]'
@@ -1909,14 +1935,16 @@ for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh"
 : > "$HOST_LOG"
 # The slow host notes its process group, then holds until the test says go.
 mkdir -p "$work/slow"; rm -f "$work/slow.go" "$work/slow.groups"
-printf '#!/bin/sh\nps -o pgid= -p $$ >> "%s/slow.groups"\nn=0; while [ ! -f "%s/slow.go" ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n + 1)); done\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' "$work" "$work" > "$work/slow/claude"; chmod +x "$work/slow/claude"
+printf '#!/bin/sh\npython3 -I -c "import os; print(os.getpgrp())" >> "%s/slow.groups"\nn=0; while [ ! -f "%s/slow.go" ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n + 1)); done\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' "$work" "$work" > "$work/slow/claude"; chmod +x "$work/slow/claude"
 PATH="$work/slow:$PATH" "$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1; code=$?
 check_all "--workers: the job starts the workers and ends before they do" '[ "$code" -eq 0 ] && [ ! -s "$HOST_LOG" ]'
+both_sessions_started() { [ "$(grep -c . "$work/slow.groups" 2>/dev/null)" = 2 ]; }
+waited=0; while ! both_sessions_started && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
 touch "$work/slow.go"
 waited=0; while { [ "$(grep -c . "$HOST_LOG")" -lt 2 ] || ls -d .flow/log/next-[0-9]*.lock; } >/dev/null 2>&1 && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
 check "--workers: the workers end within a minute" [ "$waited" -lt 60 ]
 [ "$waited" -lt 60 ] || for d in .flow/log/next-[0-9]*.lock; do kill "$(cat "$d/pid")" 2>/dev/null; rm -rf "$d"; done
-own_group="$(ps -o pgid= -p $$ | tr -d ' ')"
+own_group="$(python3 -I -c 'import os; print(os.getpgrp())')"
 check_all "--workers: each worker runs outside the job's process group, so the scheduler ending the job spares them" '[ "$(grep -c . "$work/slow.groups")" = 2 ] && ! tr -d " " < "$work/slow.groups" | grep -qx "$own_group"'
 check_all "--workers 2: two loops, two logs" '[ -f .flow/log/next-1.log ] && [ -f .flow/log/next-2.log ]'
 sleep 30 & held=$!
@@ -2251,12 +2279,16 @@ pings() { n="$(grep -c 'flow: health' "$work/offline.log" 2>/dev/null)"; echo "$
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
 printf '%s\t%s\n' "\$PWD" "\$*" >> "$hroot/host.log"
-ancestor=\$\$; doomed=""
-while [ "\${ancestor:-1}" -gt 1 ]; do
-  ancestor="\$(ps -o ppid= -p "\$ancestor" | tr -d ' ')"
-  [ "\${ancestor:-1}" != "$$" ] || break
-  case "\$(ps -o command= -p "\${ancestor:-1}")" in *run-unattended.sh*) doomed="\$doomed \$ancestor" ;; esac
-done
+doomed="\$(python3 -I -c '
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import _process
+ancestor, doomed = _process.parent_of(os.getppid()), []
+while ancestor > 1 and ancestor != int(sys.argv[2]):
+    if "run-unattended.sh" in _process.command_of(ancestor):
+        doomed.append(str(ancestor))
+    ancestor = _process.parent_of(ancestor)
+print(" ".join(doomed))' "$P/scripts" "$$")"
 [ -z "\$doomed" ] || kill -9 \$doomed
 exit 0
 EOF
@@ -2523,6 +2555,23 @@ check "alive: Claude's MCP server in a worktree is not a session there" [ -z "$(
 # ps prints a command unquoted, and the desktop app keeps its CLI under Application Support.
 printf '7678\t%s\t/Users/x/Library/Application Support/Claude/claude-code/2.1.308/a93d/claude.app/Contents/MacOS/claude --output-format stream-json\n' "$we" > "$FLOW_HEALTH_PROCS"
 check "alive: a Claude desktop session, its CLI under a path with a space, is one" [ "$(python3 "$P/scripts/_health.py" alive "$FLOW_HEALTH_PROCS" "$e" "$we")" = "process 7678" ]
+# A host session that calls health from a child shell, as the health job runs under one: started as
+# claude, it lists itself working in the worktree, then asks alive or owner.
+cat > "$work/host-calls-alive" <<'SH'
+printf '%s\t%s\tclaude\n' "$$" "$2" > "$3"
+sh -c 'printf "[%s]" "$(python3 -I "$1" alive "$3" local:task/none "$2")"' sh "$1" "$2" "$3"
+SH
+cat > "$work/host-calls-owner" <<'SH'
+python3 -I "$1" owner
+echo "$$"
+SH
+self_alive="$(PATH="$refused_ps:$PATH" bash -c 'exec -a claude sh "$@"' sh "$work/host-calls-alive" "$P/scripts/_health.py" "$we" "$hroot/procs-self")"
+check "AliveWhereNoPsRuns_SkipsTheHostItRunsUnder: the walk up reads each parent without ps, so health's own session is no run" \
+  [ "$self_alive" = "[]" ]
+owner_lines="$(PATH="$refused_ps:$PATH" bash -c 'exec -a claude sh "$@"' sh "$work/host-calls-owner" "$P/scripts/_health.py")"
+owner_found="$(echo "$owner_lines" | sed -n 1p)"; owner_host="$(echo "$owner_lines" | sed -n 2p)"
+check_all "OwnerWhereNoPsRuns_IsTheHostSessionAbove: next.sh records it as the run's pid, which health reads to keep a live run" \
+  '[ -n "$owner_host" ] && [ "$owner_found" = "$owner_host" ]'
 # A stale session: Claude's status file says idle for 3 days. A stand-in process gives ps a real pid.
 sleep 300 & idler=$!
 mkdir -p "$HOME/.claude/sessions"
@@ -2560,6 +2609,9 @@ grep -v "$(printf '\t')$g$(printf '\t')" .flow/events.log > "$hroot/events" || t
 sleep 1
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
 check "health: an empty claim with an agent working in its worktree is not released" sh -c "[ -f '$wg/.flow/claim.json' ] && ! grep -q 'released the empty claim' '$hroot/out'"
+PATH="$refused_ps:$PATH" env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
+check "HealthWhereNoPsRuns_ListsTheAgentInTheClaim: pgrep lists the processes, so health judges the claim instead of leaving every run unjudged" \
+  sh -c "[ -f '$wg/.flow/claim.json' ] && ! grep -q 'cannot list processes' '$hroot/out'"
 kill "$agent" 2>/dev/null; wait "$agent" 2>/dev/null
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
 check "health: the same claim is released once the agent is gone" sh -c "[ ! -f '$wg/.flow/claim.json' ] && grep -q 'released the empty claim' '$hroot/out'"
@@ -3143,6 +3195,7 @@ printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "%s/host77.lo
 "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: uncommitted changes with no note get one, and the pass is told to read it" sh -c "grep -q '90: .*holds uncommitted changes from an earlier run' .flow/log/comments.log && grep -q 'An earlier pass was cut short: read .*gh-77/comments-resume.md first' '$work/host77.log' && [ -f '$wm/.flow/reports/gh-77/comments-resume.md' ]"
 check "comments job: a pass that completes with the tree still dirty keeps the note" [ -f "$wm/.flow/reports/gh-77/comments-resume.md" ]
+check "CommentsJob_ItemHoldsAWorktree_PassStartsInIt: the pass's session starts in the item's worktree, the one place a sandboxed Claude session can commit" sh -c "[ \"\$(cd \"\$(head -1 '$work/host77.log' | cut -f2)\" && pwd -P)\" = \"\$(cd '$wm' && pwd -P)\" ]"
 rm "$wm/half.txt"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: a pass that completes with a clean tree removes the note" [ ! -f "$wm/.flow/reports/gh-77/comments-resume.md" ]
 # Another session in the item's worktree: the job never edits under it, named or not.
@@ -3358,6 +3411,7 @@ printf 'claude\tttl=%s/%s\t%s\n' "${CLAUDE_CODE_PROMPT_CACHE_TTL:-}" "${CLAUDE_C
 case "${FAKE_HOST:-ok}" in
   budget) echo '{"type":"result","subtype":"success","is_error":true,"result":"API Error: 422 {\"type\":\"error\",\"error\":{\"type\":\"ExceededBudget\",\"message\":\"The seat reached its spend limit.\"}}","total_cost_usd":0}'; exit 1 ;;
   auth) echo '{"type":"result","subtype":"success","is_error":true,"result":"Not logged in · Please run /login"}'; exit 1 ;;
+  window) python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":True,"result":sys.argv[1],"total_cost_usd":0}))' "$FAKE_HOST_SAID"; exit 1 ;;
   other) echo '{"type":"result","subtype":"success","is_error":true,"result":"Prompt is too long"}'; exit 1 ;;
   errors) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Credit balance is too low"]}'; exit 1 ;;
   model) echo '[claude-code:unrecognized_model] {"model":"claude-nope-9","query_source":"sdk"}' >&2
@@ -3503,6 +3557,59 @@ check_all "a model codex does not have stops codex, naming the model" '[ "$(jget
 FAKE_HOST=other PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1; code=$?
 FAKE_HOST=quote PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' >/dev/null 2>&1
 check "another failure, or a good session that quotes a limit, stops nothing" sh -c "[ $code = 1 ] && [ ! -f .flow/log/claude.stopped ]"
+
+echo "a session cut by a time-window limit"
+mkdir -p "$work/window"
+window_seen="You've hit your 5-hour limit · resets 5:10am (Europe/London)"
+for window_line in "$window_seen" \
+                   "You've hit your limit · resets 5:10am (Europe/London)" \
+                   "You've hit your weekly limit · resets Mon 9:00am (Europe/London)" \
+                   "You've hit your daily limit · resets 12:00am (UTC)" \
+                   "You've hit your 12-hour limit · resets 3:45pm (America/New_York)"; do
+  FAKE_HOST=window FAKE_HOST_SAID="$window_line" "$work/costbin/claude" > "$work/window/out"
+  : > "$work/window/err"
+  python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 1 "$work/window/sum" >/dev/null 2>&1
+  check "TimeWindowLimit_IsSpendLimit: a session ended on \"$window_line\" has cause spend-limit, because the host is out of spend until the window resets" \
+    [ "$(jget cause < "$work/window/sum")" = spend-limit ]
+done
+for window_stream in out err; do
+  : > "$work/window/out"; : > "$work/window/err"
+  printf '%s\n' "$window_seen" > "$work/window/$window_stream"
+  python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 1 "$work/window/sum" >/dev/null 2>&1
+  check "TimeWindowLimit_AsPlainLineOnStd$window_stream: a time-window line outside the result object, on std$window_stream, has cause spend-limit, because a session cut early may print no result" \
+    [ "$(jget cause < "$work/window/sum")" = spend-limit ]
+done
+python3 -c 'import json,sys; print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"Done. The old log said: "+sys.argv[1],"total_cost_usd":0}))' "$window_seen" > "$work/window/out"
+: > "$work/window/err"
+python3 -I "$P/scripts/_host.py" claude "$work/window/out" "$work/window/err" 0 "$work/window/sum" >/dev/null 2>&1
+check_all "TimeWindowLimit_QuotedByGoodSession_HasNoCause: a session that ends well and quotes a time-window line has no cause, because only a failed session can stop the host" \
+  '[ -s "$work/window/sum" ] && [ "$(jget cause < "$work/window/sum")" = "" ]'
+window_loop_folder="$work/windowloop"
+window_loop_repo="$window_loop_folder/app"
+mkdir -p "$window_loop_folder" && git init -q -b main "$window_loop_repo"
+(cd "$window_loop_repo" && git config user.email t@t && git config user.name t \
+  && printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow \
+  && git worktree add -q --detach ../window-loop-wt-1 \
+  && printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../window-loop-wt-1\nnotify:\n  desktop: false\n' > .flow/config.yaml)
+window_attempts_max="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
+window_loop_item="$(cd "$window_loop_repo" && "$P/scripts/new.sh" task "Cut by the 5-hour window" --size S --body "## Acceptance
+- [ ] w")"
+window_loop_attempts="$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)"
+(cd "$window_loop_repo" && FAKE_HOST=window FAKE_HOST_SAID="$window_seen" PATH="$cpath" "$P/templates/run-unattended.sh" claude "$window_loop_item" --max-steps "$window_attempts_max" > "$work/windowloop.out" 2>&1)
+window_loop_stopped="$window_loop_repo/.flow/log/claude.stopped"
+window_loop_gate="$window_loop_repo/.flow/gates/$(item_slug "$window_loop_item").json"
+check "TimeWindowLimit_KeepsAttemptCount: a step cut by a time-window limit keeps its attempt count, because the limit is the host's, not the step's" \
+  [ "$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)" = "$window_loop_attempts" ]
+check "TimeWindowLimit_RecordsOneSession: a time-window limit is one step session in runs.jsonl, no retry, because every retry before the reset fails the same way" \
+  python3 -I -c 'import json,sys; sessions=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; sys.exit([session["item"] for session in sessions] != [sys.argv[2]])' "$window_loop_repo/.flow/log/runs.jsonl" "$window_loop_item"
+check_all "TimeWindowLimit_StopsHostOnSpendLimit: the host is stopped on a spend limit, because no session can run until the window resets" \
+  '[ "$(jget cause < "$window_loop_stopped")" = spend-limit ]'
+check_all "TimeWindowLimit_StopsHostWithItsLine: the stopped host keeps the host's line, because it says when the window resets" \
+  '[ "$(jget said < "$window_loop_stopped")" = "$window_seen" ]'
+check_all "TimeWindowLimit_GateQuotesHostLine: the item's gate quotes the host's line, because it says when the window resets" \
+  'jget message < "$window_loop_gate" | grep -qF "$window_seen"'
+check_all "TimeWindowLimit_GateIsNotAttemptLimit: the item's gate is not the attempt limit's escalation, because no attempt failed" \
+  '[ -f "$window_loop_gate" ] && ! jget message < "$window_loop_gate" | grep -qE "Step [a-z-]+ failed [0-9]+ times"'
 
 echo "unattended loop: a pick works on after a gate"
 # A plugin copy whose next.sh hands out the items in $GL/queue (a named one as asked) and whose

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { scriptEnvironment } from '../src/collectors/exec.ts';
+import { cancellableProcessRunner, scriptEnvironment } from '../src/collectors/exec.ts';
 
 test('ScriptEnvironment_PassesFlowPluginAndDropsTheRest', () => {
   const before = { plugin: process.env.FLOW_PLUGIN, secret: process.env.CONSOLE_TEST_SECRET };
@@ -25,4 +25,15 @@ test('ScriptEnvironment_JiraToken_PassedToTheFlowScripts', () => {
   } finally {
     if (before === undefined) delete process.env.JIRA_API_TOKEN; else process.env.JIRA_API_TOKEN = before;
   }
+});
+
+/** Long enough that only the cancel can end the command within the test. */
+const SLEEP_SECONDS = '30';
+const TIMEOUT_MILLISECONDS = 60_000;
+
+test('CancellableRunner_CancelledWhileRunning_EndsWithoutAnExitCode', async () => {
+  const daemonStopping = new AbortController();
+  const running = cancellableProcessRunner({ command: '/bin/sleep', args: [SLEEP_SECONDS], cwd: '/', timeoutMs: TIMEOUT_MILLISECONDS, env: {} }, daemonStopping.signal);
+  daemonStopping.abort();
+  assert.deepEqual(await running, { code: null, stdout: '', stderr: '', timedOut: false }, 'because a cancelled command is stopped, not waited on, and ends as a killed one does');
 });

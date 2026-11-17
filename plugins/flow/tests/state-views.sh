@@ -6,6 +6,9 @@
 # the tracker's state after next, advance, a gate and a hold.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
+new_repo records
 
 echo "views: a write renders the run file, the gate file and the claim's step it names"
 ran="$(new_task "Run view")"

@@ -31,6 +31,7 @@ set -u
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/host.sh"
 . "$FLOW_PLUGIN/lib/workers.sh"
+. "$FLOW_PLUGIN/lib/process.sh"
 JOBS="next comments intake retro health"
 log="$(flow_home)/log"; main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 agents="${FLOW_LAUNCH_AGENTS:-$HOME/Library/LaunchAgents}"
@@ -81,7 +82,7 @@ plist() { printf '%s/%s.plist' "$agents" "$(label "$1")"; }
 loaded() { [ "$scheduler" = launchd ] && launchctl print "$domain/$(label "$1")" >/dev/null 2>&1; }
 # is_job <pid> <job>: the pid still runs jobs/<job>.sh; a lock left by a restart can name a pid
 # the system has since given to something else.
-is_job() { case "$(ps -o command= -p "$1" 2>/dev/null)" in *"jobs/$2.sh"*) return 0 ;; esac; return 1; }
+is_job() { case "$(process_command "$1")" in *"jobs/$2.sh"*) return 0 ;; esac; return 1; }
 # live <name>: the pids of its running runs, one per worker, from the schedule's locks.
 live() {
   for d in "$log/$1.lock" "$log/$1"-[0-9]*.lock; do

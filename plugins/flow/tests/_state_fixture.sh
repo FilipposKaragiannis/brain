@@ -1,6 +1,7 @@
 # _state_fixture.sh: the fixture state.sh and state-views.sh source: the base fixture, a repo
 # on the local adapter, the helpers that read an item's flow record and its tracker side by side,
-# and one gate record and one run record as notify.sh and next.sh write them. Sourced, never run.
+# and one gate record and one run record as notify.sh and next.sh write them. Each suite enters
+# the sandbox, then makes its repo with new_repo records. Sourced, never run.
 . "$(dirname "$0")/_base_fixture.sh"
 
 record() { "$plugin/scripts/state.sh" "$@"; }
@@ -26,4 +27,3 @@ first_key_differing_from_tracker() {
 gate_record='{"gate":"ambiguity","item":"ignored","message":"Which row owns the retune?","time":"2026-11-15T10:00:00Z","host":"codex","options":[{"label":"Keep both rows","text":"Both rows stay","recommended":true}],"raised_by":"step design","answered_by":"step plan","condition":"ci:down","footer":"gate.sh clear with an option"}'
 run_record='{"item":"ignored","step":"implement","profile":"task-M","worktree":"/tmp/wt-2","reports":"/tmp/reports","host":"codex","started":"2026-11-15T11:00:00Z","pid":4242,"touches":["src/a/**"]}'
 
-new_repo records

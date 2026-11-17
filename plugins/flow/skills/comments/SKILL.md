@@ -86,7 +86,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    - `wrong`: the comment misreads the code, the rule or the spec; or it asks for scope creep.
    Write the grades with one line of reason to `<reports>/comments.json`.
 6. **Spawn `comment-addresser`** once per thread, in order of file, in the claimed worktree
-   (`"$P/scripts/steward.sh" find <item>`, claim when released). One at a time: each commits
+   (`"$P/scripts/steward.sh" find <item>`, claim when released). A sandboxed Claude session
+   commits only in the worktree it started in (the comments job starts it there): started
+   anywhere else, a commit there fails on `index.lock`, so name that in the report and stop
+   rather than look for a way around it. One at a time: each commits
    or replies, resolves when done, pushes. A `gate` result means the owner decides; collect it.
    Wait for each addresser in the foreground and never end the turn while one runs: an
    unattended host stops background work after the last turn, and the comments job then counts

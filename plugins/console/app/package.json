@@ -1,6 +1,6 @@
 {
   "name": "brain-console",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "private": true,
   "description": "The Brain Console: a local daemon that reconciles every flow project into one live snapshot, and the web UI over it.",
   "type": "module",
@@ -10,12 +10,17 @@
     "daemon:install": "node daemon/src/main.ts install",
     "daemon:uninstall": "node daemon/src/main.ts uninstall",
     "daemon:status": "node daemon/src/main.ts status",
-    "test": "node --test 'daemon/test/**/*.test.ts'",
+    "test": "sh ../../../tools/lib/sandboxed.sh . node --test 'daemon/test/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json",
     "check": "npm run typecheck && npm test && npm --prefix ui run check"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/ws": "^8.18.2",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.18",
+    "ws": "^8.22.2"
   }
 }
