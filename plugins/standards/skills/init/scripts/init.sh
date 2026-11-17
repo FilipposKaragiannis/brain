@@ -151,22 +151,35 @@ sys.stdout.write(open(template, encoding="utf-8").read().replace("{{test}}", tes
   fi
 fi
 
+# The rules the project relaxes (.standards/config.json "rules"). With none, every copy below is
+# the plugin's file as it is.
+relaxed="$(json_list "$(config_text)" rules.relaxed)"
+judgement="$(json_list "$(config_text)" rules.judgement)"
+project_copy() {
+  # project_copy <section|block> <plugin file>: prints the path of the text this project gets.
+  if [ -z "$relaxed$judgement" ]; then printf '%s' "$2"; return; fi
+  out="$(tmpfile "relaxed-$(basename "$2")")"
+  python3 "$plugin/skills/init/scripts/relaxed_rules.py" --config .standards/config.json --index "$plugin/rules/index.json" "$1" "$2" > "$out" && [ -s "$out" ] && printf '%s' "$out"
+}
+
 # 2. Full rule text.
 for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
-  install_file "$src" ".standards/rules/$(basename "$src")"
+  copy="$(project_copy section "$src")" || die "could not render $src"
+  install_file "$copy" ".standards/rules/$(basename "$src")"
 done
 
 # 3. The marked block in AGENTS.md, and in CLAUDE.md when that is a different file.
+block_source="$(project_copy block "$plugin/rules/block.md")" || die "could not render the block"
 install_block() {
   target="$1"
   tmp="$(tmpfile block)"
   if [ -f "$target" ] && grep -q '<!-- standards:begin' "$target"; then
-    awk -v begin="$begin" -v end="$end" -v block="$plugin/rules/block.md" '
+    awk -v begin="$begin" -v end="$end" -v block="$block_source" '
       /<!-- standards:begin/ { print begin; while ((getline line < block) > 0) print line; print end; skip = 1; next }
       /<!-- standards:end -->/ { skip = 0; next }
       !skip { print }' "$target" > "$tmp"
   else
-    { [ -f "$target" ] && cat "$target"; [ -f "$target" ] && echo; echo "$begin"; cat "$plugin/rules/block.md"; echo "$end"; } > "$tmp"
+    { [ -f "$target" ] && cat "$target"; [ -f "$target" ] && echo; echo "$begin"; cat "$block_source"; echo "$end"; } > "$tmp"
   fi
   [ -s "$tmp" ] || die "could not build the block for $target"
   if [ ! -f "$target" ] || ! cmp -s "$tmp" "$target"; then
@@ -184,7 +197,8 @@ for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
   name="$(basename "$src" .md | sed 's/^[0-9]*-//')"
   dst=".claude/rules/standards-$name.md"
   tmp="$(tmpfile rule)"
-  { echo "---"; echo "paths:"; echo "$globs"; echo "---"; cat "$src"; } > "$tmp"
+  copy="$(project_copy section "$src")" || die "could not render $src"
+  { echo "---"; echo "paths:"; echo "$globs"; echo "---"; cat "$copy"; } > "$tmp"
   [ -s "$tmp" ] || die "could not build $dst"
   install_file "$tmp" "$dst"
 done
