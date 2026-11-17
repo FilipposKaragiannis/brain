@@ -918,11 +918,7 @@ health_claim() {
   health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty" "$(state_get "$data" pr)"
 }
 
-# health_sub_agent <path> <claim id> <claim> <base>: an adhoc:<name> claim the WorktreeCreate hook
-# made, a sub-agent's mostly, which Claude Code never releases. Its session has ended once the pid
-# the hook recorded runs no host, no agent works in or names the worktree, and nothing changed
-# there past the grace window. Then the claim is released under the pick lock, its branch kept
-# when it holds commits past the base; one with uncommitted changes is kept and said once.
+# health_sub_agent <path> <claim id> <claim> <base>
 health_sub_agent() {
   sub_agent_name="$(basename "$1")"
   sub_agent_last="$(hpy activity "$1" "$1/.flow/reports/$(item_slug "$2")" "$home/events.log" "$2")"
