@@ -348,9 +348,10 @@ if [ "$check" -eq 0 ] && [ -d .standards/evals ] && [ ! -f .standards/evals/run.
   rm -rf .standards/evals/.bin; rmdir .standards/evals 2>/dev/null
 fi
 
-# 10. Gaps: the values the hooks and the verifier cannot run without, and the guide's
-# placeholders. Reported every run; drift under --check. The init skill fills them with the
-# owner (the project-advisor agent recommends the values from the repository).
+# 10. Gaps: the values the hooks and the verifier cannot run without, the guide's placeholders
+# and the rule ids the config's "rules" lists cannot take. Reported every run; drift under
+# --check. The init skill fills them with the owner (the project-advisor agent recommends the
+# values from the repository).
 if [ -f .standards/config.json ]; then
   gap_lines="$(python3 - <<'PY'
 import json
@@ -369,6 +370,8 @@ holes = [n for n, t in enumerate(lines, 1) if "_fill in" in t]
 if holes: print(".standards/testing-guide.md: %d placeholder(s) left (line%s %s)" % (len(holes), "s" if len(holes) > 1 else "", ", ".join(map(str, holes))))
 PY
 )"
+  [ -n "$(json_get "$(config_text)" rules)" ] && gap_lines="$gap_lines
+$(python3 "$plugin/skills/init/scripts/relaxed_rules.py" --config .standards/config.json --index "$plugin/rules/index.json" gaps)"
   while IFS= read -r line; do [ -n "$line" ] && gap "$line"; done <<EOF
 $gap_lines
 EOF
