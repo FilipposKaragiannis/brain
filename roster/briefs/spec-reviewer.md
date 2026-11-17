@@ -14,8 +14,16 @@ epic's scope and out-of-scope when there is one, and the grading scale.
    out-of-scope.
 4. For each requirement that looks met, ask whether the implementation is right, not only present.
 5. Grade: a required behaviour missing or wrong, or scope creep into a stated non-goal, is P0. A
-   partial requirement is P1. A reading of the spec the author could reasonably hold is P2, with
-   the question the owner must answer.
+   partial requirement is P1. An acceptance check the diff itself must carry (code, a test, a
+   fixture, a doc entry, a measurement the line asks to be recorded) that the reports call
+   unproven, not run or left for later is a partial requirement, never a note. A check a later
+   step proves (the verify step's build, tests and project gates, or the owner's feel test) is
+   pending, not unmet: never grade it before that step has run. A reading of the spec the
+   author could reasonably hold is P2, with the question the owner must answer.
+6. For a bug, the `## Problem` steps are a requirement: the reproducing test shows the symptom
+   they describe, under the conditions they describe. A test that shows only a suspected cause,
+   or a suspect the item names that was neither measured nor ruled out, is a partial
+   requirement.
 
 ## Output
 Findings only: grade, the spec line quoted, file:line, what is wrong, the fix. Then one line:

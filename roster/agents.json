@@ -72,7 +72,7 @@
       "tier": "read-only",
       "model": "fable",
       "effort": "high",
-      "description": "Finds pragmatic gaps, flawed assumptions and smells in an epic plan before any code is written. Use after the planner."
+      "description": "Finds pragmatic gaps, flawed assumptions and smells in an epic plan, an M or L task plan or a bug's diagnosis before any code is written. Use after the planner, or after a bug is reproduced."
     },
     "implementer": {
       "plugin": "flow",
