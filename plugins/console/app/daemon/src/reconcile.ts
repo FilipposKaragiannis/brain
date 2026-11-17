@@ -365,7 +365,6 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
   return items.sort((left, right) => STATE_ORDER[left.state] - STATE_ORDER[right.state] || left.rank - right.rank || left.id.localeCompare(right.id));
 }
 
-/** A sub-agent's board row: the worktree it works in and its branch, as the claim holds no tracker item to title it. */
 function subAgentTitle(worktree: Worktree | null): string {
   return `Sub-agent in ${worktree?.name ?? 'no worktree'} on ${worktree?.branch ?? 'no branch'}`;
 }
