@@ -921,28 +921,46 @@ health_claim() {
 # health_sub_agent <path> <claim id> <claim> <base>
 health_sub_agent() {
   sub_agent_name="$(basename "$1")"
-  sub_agent_last="$(hpy activity "$1" "$1/.flow/reports/$(item_slug "$2")" "$home/events.log" "$2")"
-  sub_agent_claimed="$(hpy epoch "$(json_get "$3" claimed_at)")"
-  [ "$sub_agent_last" -gt "$sub_agent_claimed" ] || sub_agent_last="$sub_agent_claimed"
-  if [ -n "$(hpy alive "$procs" "$2" "$1" "$(json_get "$3" pid)")" ] || [ $((now - sub_agent_last)) -le "$grace" ]; then
+  if sub_agent_session_running "$1" "$2" "$3"; then
     running=$((running + 1)); holders="$holders$sub_agent_name $2 a sub-agent's session, running
 "; return 0
   fi
-  if dirty "$1"; then
-    holders="$holders$sub_agent_name $2 a sub-agent's session that ended, with uncommitted changes
-"
-    health_changed "sub-agent-$sub_agent_name" "$2" || return 0
-    health_say "$2" "the session that claimed $sub_agent_name has ended, but it has uncommitted changes, so it is kept; commit or discard them, then steward.sh release $1"
-    return 0
-  fi
+  if dirty "$1"; then sub_agent_keep_dirty "$1" "$2"; return 0; fi
   health_cleared "sub-agent-$sub_agent_name"
-  sub_agent_ahead="$(git -C "$1" rev-list --count "$(base_ref "$4")..HEAD" 2>/dev/null)"
-  sub_agent_said="the session that claimed $sub_agent_name has ended"
-  [ "${sub_agent_ahead:-0}" -eq 0 ] || sub_agent_said="$sub_agent_said; its branch $(json_get "$3" branch) keeps its $sub_agent_ahead commit(s)"
+  sub_agent_said="$(sub_agent_ended_note "$1" "$3" "$4")"
   if [ "$dry" -eq 1 ]; then
     health_say "$2" "would release $sub_agent_name: $sub_agent_said"
     claims=$((claims - 1)); claimable=$((claimable + 1)); return 0
   fi
+  sub_agent_release_under_pick_lock "$1" "$2"
+}
+
+# sub_agent_session_running <path> <claim id> <claim>
+sub_agent_session_running() {
+  sub_agent_last="$(hpy activity "$1" "$1/.flow/reports/$(item_slug "$2")" "$home/events.log" "$2")"
+  sub_agent_claimed="$(hpy epoch "$(json_get "$3" claimed_at)")"
+  [ "$sub_agent_last" -gt "$sub_agent_claimed" ] || sub_agent_last="$sub_agent_claimed"
+  [ -n "$(hpy alive "$procs" "$2" "$1" "$(json_get "$3" pid)")" ] || [ $((now - sub_agent_last)) -le "$grace" ]
+}
+
+# sub_agent_keep_dirty <path> <claim id>
+sub_agent_keep_dirty() {
+  holders="$holders$sub_agent_name $2 a sub-agent's session that ended, with uncommitted changes
+"
+  health_changed "sub-agent-$sub_agent_name" "$2" || return 0
+  health_say "$2" "the session that claimed $sub_agent_name has ended, but it has uncommitted changes, so it is kept; commit or discard them, then steward.sh release $1"
+}
+
+# sub_agent_ended_note <path> <claim> <base>
+sub_agent_ended_note() {
+  sub_agent_ahead="$(git -C "$1" rev-list --count "$(base_ref "$3")..HEAD" 2>/dev/null)"
+  sub_agent_note="the session that claimed $sub_agent_name has ended"
+  [ "${sub_agent_ahead:-0}" -eq 0 ] || sub_agent_note="$sub_agent_note; its branch $(json_get "$2" branch) keeps its $sub_agent_ahead commit(s)"
+  printf '%s\n' "$sub_agent_note"
+}
+
+# sub_agent_release_under_pick_lock <path> <claim id>
+sub_agent_release_under_pick_lock() {
   flow_lock pick || { health_say "$2" "$sub_agent_name's session has ended but the pick lock is busy; left for the next run"; return 0; }
   if [ -f "$1/.flow/claim.json" ] && (cmd_release "$1" >/dev/null 2>&1); then
     health_say "$2" "released $sub_agent_name: $sub_agent_said"
