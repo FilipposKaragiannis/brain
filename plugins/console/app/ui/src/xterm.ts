@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit';
+import type { IDisposable } from '@xterm/xterm';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalFactory } from './panes.ts';
@@ -9,6 +10,11 @@ import { paneLook } from './terminalStyle.ts';
 const utf8Encoder = new TextEncoder();
 
 const PANE_BACKGROUND_PROPERTY = '--pane-background';
+
+/** The DEC private mode that starts and stops the cursor blinking, part of the shell's `cnorm`. */
+const CURSOR_BLINK_MODE = 12;
+const DEC_PRIVATE_PREFIX = '?';
+const SET_AND_RESET_FINALS = ['h', 'l'];
 
 function pageLook(): PageLook {
   const style = getComputedStyle(document.documentElement);
@@ -50,10 +56,29 @@ export function paintPaneBackground(style: TerminalStyle): void {
 }
 
 /**
+ * Pins the terminal's cursor blink to the iTerm profile's, as iTerm ignores the shell's mode 12: a
+ * set or reset of mode 12 alone is dropped, and one that carries other modes applies them, then
+ * puts the profile's blink back once the write is parsed.
+ */
+function pinCursorBlink(terminal: Terminal, profileBlink: boolean): IDisposable[] {
+  const dropBlinkMode = (modes: (number | number[])[]): boolean => {
+    if (!modes.includes(CURSOR_BLINK_MODE)) return false;
+    if (modes.every((mode) => mode === CURSOR_BLINK_MODE)) return true;
+    const restore = terminal.onWriteParsed(() => {
+      restore.dispose();
+      terminal.options.cursorBlink = profileBlink;
+    });
+    return false;
+  };
+  return SET_AND_RESET_FINALS.map((final) => terminal.parser.registerCsiHandler({ prefix: DEC_PRIVATE_PREFIX, final }, dropBlinkMode));
+}
+
+/**
  * A pane's terminal on xterm.js, the one file that imports it, in the look `paneLook` gives the
  * style. The terminal lives in a host element of its own: the first `showIn` opens it there, a
  * later one only moves the host, so a second mount (StrictMode, a dock that re-renders) never
- * opens it twice. Without an iTerm profile its colours follow the page's light and dark themes.
+ * opens it twice. Without an iTerm profile its colours follow the page's light and dark themes;
+ * with one its cursor keeps the profile's blink.
  */
 export function xtermTerminals(style: TerminalStyle): TerminalFactory {
   return () => {
@@ -64,6 +89,7 @@ export function xtermTerminals(style: TerminalStyle): TerminalFactory {
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    const blinkPins = style.iterm === null ? [] : pinCursorBlink(terminal, style.iterm.cursorBlink);
     const themeWatch = new MutationObserver(() => { terminal.options.theme = paneLook(style, pageLook()).colours; });
     if (look.followsPage) themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     const host = document.createElement('div');
@@ -89,6 +115,7 @@ export function xtermTerminals(style: TerminalStyle): TerminalFactory {
       focus() { terminal.focus(); },
       dispose() {
         themeWatch.disconnect();
+        blinkPins.forEach((pin) => pin.dispose());
         terminal.dispose();
         host.remove();
       },
