@@ -14,6 +14,7 @@
   _health.py seconds <config key> <duration>
   _health.py ago <epoch>
   _health.py spawn <log> <command>...
+  _health.py bounded <seconds> <grace seconds> <command>...
   _health.py died <log> <item> <step> <result file> <resume file>
   _health.py review <state json> <review rows file> [<record path>]
   _health.py holders <items file>
@@ -65,6 +66,12 @@ changes sharing no path with the item's; in a cycle the newest hold, by its last
 events.log). A hold whose holder closed is left alone: next.sh releases it with the merge note, then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
 than the old seconds (seconds a dash when no `held` line dates it, which counts as old).
 
+bounded runs the command as the leader of its own session, with this process's stdin, stdout and
+stderr, and exits with its code. A command still running after the seconds gets TERM, sent to its
+whole process group, then KILL to what is left after the grace seconds, and the exit is 124. A
+TERM, INT or HUP to this process goes to the group first, then the same stop, and the exit is 128
+plus the signal's number.
+
 works-in exits 0 when the process works in the folder or under it, as procs reads its working
 directory, and 1 when it works elsewhere or its working directory cannot be read.
 
@@ -74,7 +81,7 @@ after it last started the step, or that it logged none. Only the two together, a
 a silent log, say the loop was ended from outside: a loop that ends by itself prints the
 session's text and how advance.sh ended, so a new result with lines after it is said as it is
 (advance.sh may have read it and failed, as when it cannot read the tracker)."""
-import calendar, glob, json, os, re, subprocess, sys, time
+import calendar, glob, json, os, re, signal, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _process  # noqa: E402
@@ -493,6 +500,56 @@ def spawn(log, command):
     print(p.pid)
 
 
+BOUNDED_LIMIT_EXIT = 124
+BOUNDED_POLL_SECONDS = 0.2
+SIGNAL_EXIT_BASE = 128
+FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def signal_group(group, signum):
+    """True when the signal reached the process group, False when no process of it is left."""
+    try:
+        os.killpg(group, signum)
+    except OSError:
+        return False
+    return True
+
+
+def stop_group(child, grace):
+    signal_group(child.pid, signal.SIGTERM)
+    deadline = time.monotonic() + grace
+    while time.monotonic() < deadline:
+        child.poll()
+        if not signal_group(child.pid, 0):
+            break
+        time.sleep(BOUNDED_POLL_SECONDS)
+    signal_group(child.pid, signal.SIGKILL)
+    child.wait()
+
+
+def exit_code(returncode):
+    return SIGNAL_EXIT_BASE - returncode if returncode < 0 else returncode
+
+
+def bounded(limit, grace, command):
+    child = subprocess.Popen(command, start_new_session=True)
+    received = []
+
+    def forward(signum, _frame):
+        received.append(signum)
+        signal_group(child.pid, signum)
+
+    for signum in FORWARDED_SIGNALS:
+        signal.signal(signum, forward)
+    deadline = time.monotonic() + limit
+    while child.poll() is None and not received and time.monotonic() < deadline:
+        time.sleep(BOUNDED_POLL_SECONDS)
+    if child.returncode is not None and not received:
+        return exit_code(child.returncode)
+    stop_group(child, grace)
+    return SIGNAL_EXIT_BASE + received[0] if received else BOUNDED_LIMIT_EXIT
+
+
 def review(state, rows, record=None):
     decision = state.get("reviewDecision") or ""
     latest = [r.get("state") for r in state.get("latestReviews") or []]
@@ -678,6 +735,8 @@ def main():
         died(*args[:5])
     elif command == "spawn":
         spawn(args[0], args[1:])
+    elif command == "bounded":
+        sys.exit(bounded(int(args[0]), int(args[1]), args[2:]))
     else:
         sys.exit("flow: unknown command %s" % command)
 

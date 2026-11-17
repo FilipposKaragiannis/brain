@@ -58,6 +58,12 @@ job_start "$host" model
 out="$(job_log_dir)/$job.out.$$"
 slot_pool="$(job_log_dir)/$(job_base).slots"
 trap 'c=$?; slot_give_all "$slot_pool" $$; rm -rf "$out.run"; rm -f "$out.login" "$out.procs" "$out.procs.failed" "$out.targets" "$out.gated"; job_end $c' EXIT
+# A pass still running at jobs.comments.pass_limit is stopped with its children: TERM, then KILL
+# after PASS_STOP_GRACE seconds; it ends with PASS_LIMIT_EXIT and counts as failed.
+PASS_STOP_GRACE=10
+PASS_LIMIT_EXIT=124
+pass_limit="$(cfg_or jobs.comments.pass_limit 1h)"
+pass_limit_seconds="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.comments.pass_limit "$pass_limit" 2>&1)" || die "${pass_limit_seconds#flow: }" 2
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 targets=""; gated=""; rm -f "$out.gated"
@@ -272,6 +278,12 @@ tell_in_use() {
 # outcome <word> [<why>]: what this pass came to, in its slot, for the run's result line:
 # addressed, failed, unchanged, waits (on the owner), busy or stopped, and why.
 outcome() { printf '%s\t%s\n' "$1" "${2:-}" > "$slot/outcome"; }
+# pass_host_run <dir> <prompt>: job_host_run as the leader of its own session, stopped with its
+# children at the pass limit.
+pass_host_run() {
+  python3 -I "$FLOW_PLUGIN/scripts/_health.py" bounded "$pass_limit_seconds" "$PASS_STOP_GRACE" \
+    sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run "$@"' host_run "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is
+}
 # pass <target> <item>: one pass on one PR, its outcome in $slot.
 pass() {
   t="$1"
@@ -321,18 +333,18 @@ pass() {
   }
   job_say "addressing $t"; rm -f "$(in_use_marker "$t" "$pull")"
   # The output goes to the log as it comes, so a pass killed half way keeps what it said.
-  { job_host_run "$(pass_dir "$t")" "$(host_skill_prompt "$host" flow comments "$t.$note$answer$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
+  { pass_host_run "$(pass_dir "$t")" "$(host_skill_prompt "$host" flow comments "$t.$note$answer$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   slot_give "$pass_slot"
   code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR
   # is tried again after the clear, with no failure counted. The saved activity goes, so the extra
   # pass this run may have marked as taken still runs. The stop's line is the run's last word.
-  if [ "$code" -ne 0 ] && job_host_stopped; then
-    rm -f "$f"; printf '%s' "$job_last" > "$run/stopped"; outcome stopped; return 0
-  fi
   why=""
-  if [ "$code" -ne 0 ]; then why="host exit $code"
+  if [ "$code" -eq "$PASS_LIMIT_EXIT" ]; then why="stopped at the pass limit of $pass_limit (jobs.comments.pass_limit)"
+  elif [ "$code" -ne 0 ] && job_host_stopped; then
+    rm -f "$f"; printf '%s' "$job_last" > "$run/stopped"; outcome stopped; return 0
+  elif [ "$code" -ne 0 ]; then why="host exit $code"
   elif [ -n "$(cut_short "$out")" ]; then why="the host stopped the addresser before it finished"
   elif [ -n "$answer" ] && ! answer_taken "$f.answer"; then why="the pass did not confirm it carried out the owner's answer"; fi
   if [ -z "$why" ]; then
