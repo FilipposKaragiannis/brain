@@ -43,6 +43,7 @@
 set -u
 job=comments
 . "$(dirname "$0")/_job.sh"
+. "$FLOW_PLUGIN/lib/slots.sh"
 host="${1:-}"; [ $# -eq 0 ] || shift
 one=""; workers=""
 while [ $# -gt 0 ]; do
@@ -54,7 +55,8 @@ while [ $# -gt 0 ]; do
 done
 job_start "$host" model
 out="$(job_log_dir)/$job.out.$$"
-trap 'c=$?; rm -rf "$out.run"; rm -f "$out.login" "$out.procs" "$out.procs.failed" "$out.targets" "$out.gated"; job_end $c' EXIT
+slot_pool="$(job_log_dir)/$(job_base).slots"
+trap 'c=$?; slot_give_all "$slot_pool" $$; rm -rf "$out.run"; rm -f "$out.login" "$out.procs" "$out.procs.failed" "$out.targets" "$out.gated"; job_end $c' EXIT
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 targets=""; gated=""; rm -f "$out.gated"
@@ -312,10 +314,15 @@ pass() {
     fi
   fi
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
+  pass_slot="$(slot_try "$slot_pool" "$workers" $$)" || {
+    job_say "$t: waits for a free pass slot, $workers across the runs" >/dev/null
+    pass_slot="$(slot_take "$slot_pool" "$workers" $$)"
+  }
   job_say "addressing $t"; rm -f "$(in_use_marker "$t" "$pull")"
   # The output goes to the log as it comes, so a pass killed half way keeps what it said.
   { job_host_run "$(pass_dir "$t")" "$(host_skill_prompt "$host" flow comments "$t.$note$answer$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
+  slot_give "$pass_slot"
   code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR
   # is tried again after the clear, with no failure counted. The saved activity goes, so the extra
@@ -352,12 +359,18 @@ pass() {
     outcome failed
   fi
 }
-# locked_pass <target>: the pass under its item's lock, taken with no wait; a PR the flow did
-# not open names no item and has no lock to take.
+# pass_lock <target> <item>: the lock a pass holds: its item's, else its PR's by number (a PR the
+# flow did not open), else one keyed by the target.
+pass_lock() {
+  [ -z "$2" ] || { printf 'item:%s' "$(item_slug "$2")"; return 0; }
+  pass_lock_number="$(pr_number "$1")"
+  printf 'pr:%s' "${pass_lock_number:-$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')}"
+}
+# locked_pass <target>: the pass under its lock (pass_lock), taken with no wait.
 locked_pass() {
   lp_item="$(item_of "$1")"
-  if [ -n "$lp_item" ] && ! FLOW_LOCK_WAIT=0 flow_lock "item:$(item_slug "$lp_item")"; then
-    job_say "$1: another pass works on $lp_item (its lock is held), skipped" >/dev/null; outcome busy "another pass holds its lock"; return 0
+  if ! FLOW_LOCK_WAIT=0 flow_lock "$(pass_lock "$1" "$lp_item")"; then
+    job_say "$1: another pass works on ${lp_item:-it} (its lock is held), skipped" >/dev/null; outcome busy "another pass holds its lock"; return 0
   fi
   pass "$1" "$lp_item"
   flow_unlock || true
