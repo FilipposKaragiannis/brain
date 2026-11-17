@@ -11,7 +11,6 @@ const utf8Encoder = new TextEncoder();
 
 const PANE_BACKGROUND_PROPERTY = '--pane-background';
 
-/** The DEC private mode that starts and stops the cursor blinking, part of the shell's `cnorm`. */
 const CURSOR_BLINK_MODE = 12;
 const DEC_PRIVATE_PREFIX = '?';
 const SET_AND_RESET_FINALS = ['h', 'l'];
@@ -70,11 +69,6 @@ function restoreBlinkOnceParsed(terminal: Terminal, profileBlink: boolean): void
   });
 }
 
-/**
- * iTerm ignores the shell's mode 12, so a pane with an iTerm profile keeps the profile's blink.
- * xterm.js hands a handler a copy of the parameters, so a sequence that carries other modes cannot
- * be filtered in place: those modes must apply, and the blink is restored after the write is parsed.
- */
 function pinCursorBlink(terminal: Terminal, profileBlink: boolean): IDisposable[] {
   const swallowBlinkModeOrRestoreProfileBlink = (modes: (number | number[])[]): boolean => {
     if (!holdsBlinkMode(modes)) return false;
@@ -89,8 +83,7 @@ function pinCursorBlink(terminal: Terminal, profileBlink: boolean): IDisposable[
  * A pane's terminal on xterm.js, the one file that imports it, in the look `paneLook` gives the
  * style. The terminal lives in a host element of its own: the first `showIn` opens it there, a
  * later one only moves the host, so a second mount (StrictMode, a dock that re-renders) never
- * opens it twice. Without an iTerm profile its colours follow the page's light and dark themes;
- * with one its cursor keeps the profile's blink.
+ * opens it twice. Without an iTerm profile its colours follow the page's light and dark themes.
  */
 export function xtermTerminals(style: TerminalStyle): TerminalFactory {
   return () => {

@@ -7,16 +7,9 @@ import { xtermTerminals } from '../src/xterm.ts';
 const BLINKING_ITERM: ItermLook = { fontSize: null, colours: {}, cursorStyle: 'block', cursorBlink: true, boldIsBright: true };
 const STEADY_ITERM: ItermLook = { ...BLINKING_ITERM, cursorBlink: false };
 
-/** What the shell's `cnorm` sends for `xterm-256color` at a zsh prompt: stop the cursor blinking, then show it. */
 const SHELL_CURSOR_NORMAL = '\x1b[?12l\x1b[?25h';
-
-/** Start the cursor blinking, then show it. */
 const SHELL_CURSOR_BLINKING = '\x1b[?12h\x1b[?25h';
-
-/** Stop the cursor blinking and hide it in one sequence. */
 const SHELL_HIDES_A_STEADY_CURSOR = '\x1b[?12;25l';
-
-/** Stop the cursor blinking and hide it in one sequence, then show it again. */
 const SHELL_SHOWS_A_STEADY_CURSOR_AGAIN = `${SHELL_HIDES_A_STEADY_CURSOR}\x1b[?25h`;
 
 const BLINKING_CURSOR = '.xterm-cursor.xterm-cursor-blink';
@@ -26,12 +19,10 @@ const DRAWN_ROW = '.xterm-rows > div';
 
 const textEncoder = new TextEncoder();
 
-/** jsdom has no media queries; xterm.js asks one for the pixel ratio, so the page answers that none matches. */
 function stillMediaQuery(query: string): MediaQueryList {
   return { matches: false, media: query, onchange: null, addListener: () => {}, removeListener: () => {}, addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false };
 }
 
-/** Writes the text to the terminal and settles once the next frame has drawn it. */
 function drawn(terminal: TerminalLike, text: string): Promise<void> {
   return new Promise((resolve) => terminal.write(textEncoder.encode(text), () => requestAnimationFrame(() => resolve())));
 }
