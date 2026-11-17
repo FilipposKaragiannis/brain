@@ -54,10 +54,10 @@ while [ $# -gt 0 ]; do
 done
 job_start "$host" model
 out="$(job_log_dir)/$job.out.$$"
-trap 'c=$?; rm -rf "$out.run"; rm -f "$out.login" "$out.procs" "$out.procs.failed"; job_end $c' EXIT
+trap 'c=$?; rm -rf "$out.run"; rm -f "$out.login" "$out.procs" "$out.procs.failed" "$out.targets" "$out.gated"; job_end $c' EXIT
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
-targets=""; gated=""; rm -f "$(job_log_dir)/$job.gated"
+targets=""; gated=""; rm -f "$out.gated"
 if [ -n "$one" ]; then
   targets="$one"
 else
@@ -70,12 +70,12 @@ for i in json.load(sys.stdin):
     if i.get("status") == "open" and pr: print(i["id"], pr, (i.get("state") or {}).get("gate") or "none")'
   done | while read -r item pr gate; do
     # A gate other than merge is the owner's to answer first: a pass would stop at it again.
-    case "$gate" in none|merge) ;; *) job_say "$item: waits at the $gate gate, skipped" >/dev/null; printf '%s (%s gate)\n' "$item" "$gate" >> "$(job_log_dir)/$job.gated"; continue ;; esac
+    case "$gate" in none|merge) ;; *) job_say "$item: waits at the $gate gate, skipped" >/dev/null; printf '%s (%s gate)\n' "$item" "$gate" >> "$out.gated"; continue ;; esac
     state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pr" 2>/dev/null)" || { job_say "$item: cannot read $pr" >/dev/null; continue; }
     if [ "$(json_get "$state" state)" = "OPEN" ]; then echo "$item"; else job_say "$item: $pr is $(json_get "$state" state), skipped" >/dev/null; fi
-  done > "$(job_log_dir)/$job.targets"
-  targets="$(cat "$(job_log_dir)/$job.targets")"; rm -f "$(job_log_dir)/$job.targets"
-  gated="$(cat "$(job_log_dir)/$job.gated" 2>/dev/null | tr '\n' ',' | sed 's/,$//; s/,/, /g')"; rm -f "$(job_log_dir)/$job.gated"
+  done > "$out.targets"
+  targets="$(cat "$out.targets")"; rm -f "$out.targets"
+  gated="$(cat "$out.gated" 2>/dev/null | tr '\n' ',' | sed 's/,$//; s/,/, /g')"; rm -f "$out.gated"
 fi
 if [ -z "$targets" ]; then
   if [ -n "$gated" ]; then job_say "quiet: no open PR to address; at a gate: $gated"; else job_say "quiet: no open PR"; fi
@@ -140,7 +140,20 @@ cut_short() { tail -n 20 "$1" 2>/dev/null | grep -m1 -E "$CUT_SHORT"; }
 # <pr>.told and <pr>.told-fails, what the owner was last told. Each is said once. The in-use
 # marker, pr-<number>.told-in-use, is keyed by the PR's number, so the item and the PR's number or
 # URL, as a run by hand names it, share one; it goes when a pass addresses the PR.
-seen_file() { printf '%s/%s.seen/%s' "$(job_log_dir)" "$job" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+# seen_file <key>: the record of the PR pr_key names, shared by every schedule of the job.
+seen_file() { printf '%s/%s.seen/%s' "$(job_log_dir)" "$(job_base)" "$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')"; }
+# pr_number <text>: the PR number <text> names as a number, #<n> or a PR URL; nothing otherwise.
+pr_number() {
+  pr_number_text="${1##*/}"; pr_number_text="${pr_number_text#\#}"
+  case "$pr_number_text" in ''|*[!0-9]*) ;; *) printf '%s' "$pr_number_text" ;; esac
+}
+# pr_key <target> <item>: one key per PR: the item the target names (item_of), else pr-<number>,
+# else the target.
+pr_key() {
+  [ -z "$2" ] || { printf '%s' "$2"; return 0; }
+  pr_key_number="$(pr_number "$1")"
+  if [ -n "$pr_key_number" ]; then printf 'pr-%s' "$pr_key_number"; else printf '%s' "$1"; fi
+}
 max_fails="$(cfg_or jobs.comments.max_failures 3)"
 case "$max_fails" in ''|*[!0-9]*) die "jobs.comments.max_failures takes a whole number" 2 ;; esac
 [ -n "$workers" ] || workers="$(cfg_or jobs.comments_workers 1)"
@@ -231,8 +244,8 @@ pr_of() { if adapter_for "$1" >/dev/null; then json_get "$(adapter read "$1" 2>/
 # in_use_marker <target> <pr>: the told-in-use marker of the PR <target> names, keyed by the PR's
 # number (<pr> as a number, #<n> or URL); by the target when no PR is known.
 in_use_marker() {
-  im_pr="${2##*/}"; im_pr="${im_pr#\#}"
-  case "$im_pr" in ''|*[!0-9]*) seen_file "$1" ;; *) seen_file "pr-$im_pr" ;; esac
+  marker_number="$(pr_number "$2")"
+  if [ -n "$marker_number" ]; then seen_file "pr-$marker_number"; else seen_file "$1"; fi
   printf '.told-in-use'
 }
 # session_named <how>: the process _health.py alive named ("process 4242"), as a person reads it:
@@ -256,7 +269,7 @@ tell_in_use() {
 # outcome <word> [<why>]: what this pass came to, in its slot, for the run's result line:
 # addressed, failed, unchanged, waits (on the owner), busy or stopped, and why.
 outcome() { printf '%s\t%s\n' "$1" "${2:-}" > "$slot/outcome"; }
-# pass <target>: one pass on one PR, its outcome in $slot.
+# pass <target> <item>: one pass on one PR, its outcome in $slot.
 pass() {
   t="$1"
   in_use "$t"
@@ -266,7 +279,7 @@ pass() {
     return 0
   fi
   note="$(prepare_pr "$t")"
-  activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$t")"; mkdir -p "$(dirname "$f")"
+  activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$(pr_key "$t" "$2")")"; mkdir -p "$(dirname "$f")"
   rm -f "$f.answer"; answer_note "$t" "$f.answer"
   fails=0
   [ -f "$f.fails" ] && { read -r fails _ < "$f.fails"; case "$fails" in ''|*[!0-9]*) fails=0 ;; esac; }
@@ -346,7 +359,7 @@ locked_pass() {
   if [ -n "$lp_item" ] && ! FLOW_LOCK_WAIT=0 flow_lock "item:$(item_slug "$lp_item")"; then
     job_say "$1: another pass works on $lp_item (its lock is held), skipped" >/dev/null; outcome busy "another pass holds its lock"; return 0
   fi
-  pass "$1"
+  pass "$1" "$lp_item"
   flow_unlock || true
 }
 # worker: runs passes one after another, each on the next target no other worker took (the first
