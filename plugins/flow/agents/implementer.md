@@ -45,6 +45,10 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    stop with status `fail` and that error text, and never look for a way around it.
 7. For a bugfix: the repro test from the `reproduce` step must go red before and green after
    your change. Run it.
+   Sent back by the review for an unmet acceptance line: meet it, with its evidence in the
+   reports. One you cannot meet inside the item's scope: stop with status `gate`, gate
+   `ambiguity`, and ask the owner to drop the line or split it into a new item. Never restate
+   it as a note.
 8. A test you add or change (a build repair, a moved rig, a test in a fix commit) meets the
    test writer's pre-commit checks: one behaviour per test, split where two assertions can fail
    independently; no `?.` ahead of an assertion; a not-empty check before comparing collections
