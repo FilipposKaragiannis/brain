@@ -1,4 +1,5 @@
 import { FitAddon } from '@xterm/addon-fit';
+import type { IDisposable } from '@xterm/xterm';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import type { TerminalFactory } from './panes.ts';
@@ -9,6 +10,10 @@ import { paneLook } from './terminalStyle.ts';
 const utf8Encoder = new TextEncoder();
 
 const PANE_BACKGROUND_PROPERTY = '--pane-background';
+
+const CURSOR_BLINK_MODE = 12;
+const DEC_PRIVATE_PREFIX = '?';
+const SET_AND_RESET_FINALS = ['h', 'l'];
 
 function pageLook(): PageLook {
   const style = getComputedStyle(document.documentElement);
@@ -49,6 +54,31 @@ export function paintPaneBackground(style: TerminalStyle): void {
   if (background !== undefined) document.documentElement.style.setProperty(PANE_BACKGROUND_PROPERTY, background);
 }
 
+function holdsBlinkMode(modes: (number | number[])[]): boolean {
+  return modes.includes(CURSOR_BLINK_MODE);
+}
+
+function isBlinkModeAlone(modes: (number | number[])[]): boolean {
+  return modes.every((mode) => mode === CURSOR_BLINK_MODE);
+}
+
+function restoreBlinkOnceParsed(terminal: Terminal, profileBlink: boolean): void {
+  const restore = terminal.onWriteParsed(() => {
+    restore.dispose();
+    terminal.options.cursorBlink = profileBlink;
+  });
+}
+
+function pinCursorBlink(terminal: Terminal, profileBlink: boolean): IDisposable[] {
+  const swallowBlinkModeOrRestoreProfileBlink = (modes: (number | number[])[]): boolean => {
+    if (!holdsBlinkMode(modes)) return false;
+    if (isBlinkModeAlone(modes)) return true;
+    restoreBlinkOnceParsed(terminal, profileBlink);
+    return false;
+  };
+  return SET_AND_RESET_FINALS.map((final) => terminal.parser.registerCsiHandler({ prefix: DEC_PRIVATE_PREFIX, final }, swallowBlinkModeOrRestoreProfileBlink));
+}
+
 /**
  * A pane's terminal on xterm.js, the one file that imports it, in the look `paneLook` gives the
  * style. The terminal lives in a host element of its own: the first `showIn` opens it there, a
@@ -64,6 +94,7 @@ export function xtermTerminals(style: TerminalStyle): TerminalFactory {
     });
     const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
+    const blinkPins = style.iterm === null ? [] : pinCursorBlink(terminal, style.iterm.cursorBlink);
     const themeWatch = new MutationObserver(() => { terminal.options.theme = paneLook(style, pageLook()).colours; });
     if (look.followsPage) themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
     const host = document.createElement('div');
@@ -89,6 +120,7 @@ export function xtermTerminals(style: TerminalStyle): TerminalFactory {
       focus() { terminal.focus(); },
       dispose() {
         themeWatch.disconnect();
+        blinkPins.forEach((pin) => pin.dispose());
         terminal.dispose();
         host.remove();
       },
