@@ -11,6 +11,8 @@ const SHELL_CURSOR_NORMAL = '\x1b[?12l\x1b[?25h';
 const SHELL_CURSOR_BLINKING = '\x1b[?12h\x1b[?25h';
 const SHELL_HIDES_A_STEADY_CURSOR = '\x1b[?12;25l';
 const SHELL_SHOWS_A_STEADY_CURSOR_AGAIN = `${SHELL_HIDES_A_STEADY_CURSOR}\x1b[?25h`;
+const SHELL_SETS_A_STEADY_BLOCK_CURSOR = '\x1b[2 q';
+const SHELL_SHOWS_A_STEADY_BLOCK_CURSOR_AFTER_THE_BLINK_MODE = `${SHELL_SHOWS_A_STEADY_CURSOR_AGAIN}${SHELL_SETS_A_STEADY_BLOCK_CURSOR}`;
 
 const BLINKING_CURSOR = '.xterm-cursor.xterm-cursor-blink';
 const STEADY_CURSOR = '.xterm-cursor:not(.xterm-cursor-blink)';
@@ -82,6 +84,16 @@ test('ShellStopsTheBlinkAlongsideOtherModes_PaneCursorKeepsTheItermProfileBlink'
   await drawn(terminal, SHELL_SHOWS_A_STEADY_CURSOR_AGAIN);
 
   expect(container.querySelector(BLINKING_CURSOR), 'mode 12 carried with other modes is ignored as iTerm ignores it, so the profile blink stays').not.toBeNull();
+});
+
+test('ShellSetsASteadyCursorStyleAfterAMixedBlinkMode_PaneCursorIsSteady', async () => {
+  terminal = xtermTerminals({ iterm: BLINKING_ITERM, servedFont: false })();
+  terminal.showIn(container);
+  terminal.focus();
+
+  await drawn(terminal, SHELL_SHOWS_A_STEADY_BLOCK_CURSOR_AFTER_THE_BLINK_MODE);
+
+  expect(container.querySelector(STEADY_CURSOR), 'an explicit DECSCUSR steady style after mode 12 in the same write wins over the iTerm profile blink').not.toBeNull();
 });
 
 test('ShellStartsTheCursorBlinkingWithoutAnItermProfile_PaneCursorBlinks', async () => {
