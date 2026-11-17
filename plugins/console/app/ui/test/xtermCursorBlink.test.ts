@@ -37,7 +37,7 @@ function drawn(terminal: TerminalLike, text: string): Promise<void> {
 }
 
 let container: HTMLElement;
-let terminal: TerminalLike;
+let terminal: TerminalLike | undefined;
 
 beforeEach(() => {
   vi.stubGlobal('matchMedia', stillMediaQuery);
@@ -46,7 +46,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  terminal.dispose();
+  terminal?.dispose();
+  terminal = undefined;
   container.remove();
   vi.unstubAllGlobals();
 });

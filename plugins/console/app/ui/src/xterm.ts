@@ -55,22 +55,34 @@ export function paintPaneBackground(style: TerminalStyle): void {
   if (background !== undefined) document.documentElement.style.setProperty(PANE_BACKGROUND_PROPERTY, background);
 }
 
+function holdsBlinkMode(modes: (number | number[])[]): boolean {
+  return modes.includes(CURSOR_BLINK_MODE);
+}
+
+function isBlinkModeAlone(modes: (number | number[])[]): boolean {
+  return modes.every((mode) => mode === CURSOR_BLINK_MODE);
+}
+
+function restoreBlinkOnceParsed(terminal: Terminal, profileBlink: boolean): void {
+  const restore = terminal.onWriteParsed(() => {
+    restore.dispose();
+    terminal.options.cursorBlink = profileBlink;
+  });
+}
+
 /**
- * Pins the terminal's cursor blink to the iTerm profile's, as iTerm ignores the shell's mode 12: a
- * set or reset of mode 12 alone is dropped, and one that carries other modes applies them, then
- * puts the profile's blink back once the write is parsed.
+ * iTerm ignores the shell's mode 12, so a pane with an iTerm profile keeps the profile's blink.
+ * xterm.js hands a handler a copy of the parameters, so a sequence that carries other modes cannot
+ * be filtered in place: those modes must apply, and the blink is restored after the write is parsed.
  */
 function pinCursorBlink(terminal: Terminal, profileBlink: boolean): IDisposable[] {
-  const dropBlinkMode = (modes: (number | number[])[]): boolean => {
-    if (!modes.includes(CURSOR_BLINK_MODE)) return false;
-    if (modes.every((mode) => mode === CURSOR_BLINK_MODE)) return true;
-    const restore = terminal.onWriteParsed(() => {
-      restore.dispose();
-      terminal.options.cursorBlink = profileBlink;
-    });
+  const swallowBlinkModeOrRestoreProfileBlink = (modes: (number | number[])[]): boolean => {
+    if (!holdsBlinkMode(modes)) return false;
+    if (isBlinkModeAlone(modes)) return true;
+    restoreBlinkOnceParsed(terminal, profileBlink);
     return false;
   };
-  return SET_AND_RESET_FINALS.map((final) => terminal.parser.registerCsiHandler({ prefix: DEC_PRIVATE_PREFIX, final }, dropBlinkMode));
+  return SET_AND_RESET_FINALS.map((final) => terminal.parser.registerCsiHandler({ prefix: DEC_PRIVATE_PREFIX, final }, swallowBlinkModeOrRestoreProfileBlink));
 }
 
 /**
