@@ -419,13 +419,15 @@ cmd_tmp() {
       wt="$(cmd_find "$item")"; [ -n "$wt" ] || die "$item has no claimed worktree" 2
       path="$home/tmp/$slug-$phase"; branch="flow/$slug-$phase"
       mkdir -p "$home/tmp"
-      git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"
+      if [ -n "$(cfg worktree_create)" ]; then tmp_worktree_create "$path" "flow/$slug" "$branch"
+      else git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
     remove)
       path="$2"
       branch="$(git -C "$path" symbolic-ref --short -q HEAD)"
       dirty "$path" && die "$path has uncommitted changes. Not removing." 3
-      git -C "$main" worktree remove "$path" || die "cannot remove $path"
+      if [ -n "$(cfg worktree_remove)" ]; then run_worktree_remove "$path"
+      else git -C "$main" worktree remove "$path" || die "cannot remove $path"; fi
       [ -n "$branch" ] && git -C "$main" branch -q -D "$branch" 2>/dev/null
       echo "removed $path" ;;
     *) die "usage: tmp add <item> <phase> | tmp remove <path>" 2 ;;
@@ -547,6 +549,26 @@ run_worktree_create() {
   [ "$create_exit" -eq 0 ] && worktree_at "$1" && return 0
   echo "flow: worktree_create failed for $1 (exit $create_exit)" >&2
   return 1
+}
+
+# tmp_worktree_create <path> <base> <branch>: worktree_create makes a temporary worktree at the
+# base, then the worktree gets the new branch there. Either failing ends the run, exit 1.
+tmp_worktree_create() {
+  run_worktree_create "$1" "$2" || die "cannot add $1"
+  git -C "$1" switch -q -c "$3" >&2 || die "cannot put $1 on a new branch $3"
+}
+
+# run_worktree_remove <path>: run the worktree_remove command from the main worktree, with {path}
+# filled shell-quoted ({base} empty) and all its output on stderr, then prune git's record of the
+# worktree. One with no {path} is refused before it runs, exit 2; one that fails or leaves the
+# folder on disk ends the run, exit 1.
+run_worktree_remove() {
+  remove_command="$(cfg worktree_remove)"
+  case "$remove_command" in *'{path}'*) ;; *) die "worktree_remove has no {path}, so it cannot be told which worktree to remove; add {path} to it in $(config_file)" 2 ;; esac
+  (cd "$main" && sh -c "$(command_filled "$remove_command" "$(shell_quoted "$1")" "$(shell_quoted "")")") >&2 ||
+    die "cannot remove $1: worktree_remove failed (exit $?)"
+  [ ! -e "$1" ] || die "cannot remove $1: worktree_remove left it on disk"
+  git -C "$main" worktree prune
 }
 
 # pool_worktree_create <path>: worktree_create makes a pool worktree at the base tip, then park
