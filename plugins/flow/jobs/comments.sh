@@ -302,7 +302,7 @@ pass() {
     return 0
   fi
   note="$(prepare_pr "$t")"
-  activity "$t" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$(pr_key "$t" "$2")")"; mkdir -p "$(dirname "$f")"
+  activity "${2:-$t}" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$(pr_key "$t" "$2")")"; mkdir -p "$(dirname "$f")"
   rm -f "$f.answer"; answer_note "$t" "$f.answer"
   fails=0
   [ -f "$f.fails" ] && { read -r fails _ < "$f.fails"; case "$fails" in ''|*[!0-9]*) fails=0 ;; esac; }

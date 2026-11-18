@@ -1302,8 +1302,13 @@ bump 2026-10-25T04:00:00Z
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
 check "SecondScheduleAddressedThePr_PlainRunFindsNothingNew: every schedule of the job shares one seen record per PR" test ! -s "$HOST_LOG"
 bump 2026-10-25T04:10:00Z; rm -f .flow/log/comments.seen/gh_21
+answered_before="$("$P/adapters/github/read.sh" 'gh#21' | jget state.answered_at 2>/dev/null)"
+"$P/adapters/github/write-state.sh" 'gh#21' answered_at=2026-10-25T04:05:00Z >/dev/null
 "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "PrNamedByNumberOfAnItem_WritesTheItemsSeenRecord: the PR's number and its item are one key" test -s .flow/log/comments.seen/gh_21
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check "PrNamedByNumberOfAnItem_LeavesNothingNewForTheItemsNextRun: a pass named by the PR's number keeps the item's activity" test ! -s "$HOST_LOG"
+"$P/adapters/github/write-state.sh" 'gh#21' "answered_at=$answered_before" >/dev/null
 # Another run's lists at the fixed names of before stay as they are: each run keeps its own.
 printf 'another run lists these\n' > .flow/log/comments.targets; cp .flow/log/comments.targets .flow/log/comments.gated
 "$P/adapters/github/write-state.sh" 'gh#21' gate=ambiguity >/dev/null
