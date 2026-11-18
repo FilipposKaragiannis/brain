@@ -32,6 +32,7 @@ FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/flow.sh"
 . "$plugin/lib/host.sh"
 . "$plugin/lib/base.sh"
+. "$plugin/lib/worktree_command.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
@@ -362,8 +363,7 @@ tracked="$(git ls-files -- .flow | grep -c .)"
 if [ -f .flow/config.yaml ]; then
   [ -n "$(cfg pool | grep .)" ] || [ "$(cfg_or pool_max 0)" -gt 0 ] 2>/dev/null || gap ".flow/config.yaml: the pool is empty and pool_max is 0; list a worktree under pool: or set pool_max"
   [ -n "$(cfg base)" ] || gap ".flow/config.yaml: base is empty; name the branch tasks start from"
-  case "$(cfg worktree_create)" in ''|*'{path}'*) ;; *) gap ".flow/config.yaml: worktree_create has no {path}; flow passes the new worktree's folder there" ;; esac
-  case "$(cfg worktree_remove)" in ''|*'{path}'*) ;; *) gap ".flow/config.yaml: worktree_remove has no {path}; flow passes the folder of the worktree to remove there" ;; esac
+  for k in worktree_create worktree_remove; do flaw="$(worktree_command_flaw "$k" "$(cfg "$k")")"; [ -z "$flaw" ] || gap ".flow/config.yaml: $flaw"; done
   for k in epic task bug; do a="$(cfg "adapters.$k")"; [ -z "$a" ] || [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.$k names $a, not an adapter"; done
   bad_auto="$(sed -n '/^auto_gates:/,/^[^ #]/p' .flow/config.yaml | grep -E '^  [A-Za-z]' | grep -v '^  plan-approval:' | sed 's/:.*//; s/^ *//' | head -1)"
   [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"

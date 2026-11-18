@@ -68,17 +68,18 @@
 # worktree add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes
 # a tmp remove worktree in place of git worktree remove; flow never removes a pool worktree. In
 # the command {path} is the worktree's absolute folder and {base} the ref it starts from (the
-# pool's base, flow/<slug> for tmp add, empty for a remove), each filled in single-quoted, so the
-# command writes them bare. It runs from the main worktree, all its output on stderr. After a
-# create a git worktree must sit at {path}; then the pool's goes onto its idle branch at the base
-# tip (one that cannot move stays as made, and health moves it once free) and tmp add's onto a
-# new flow/<slug>-<phase>. After a remove the folder must be gone; git's record is pruned and the
-# branch deleted. A command with no {path} is refused before it runs, exit 2. One that fails, or
-# leaves no worktree (a remove: leaves the folder), is named after its output: add, tmp and a
-# growing pool exit 1 with no pool entry added (a pool that cannot grow says why, not that it is
-# at pool_max), and a claim skips a missing pool path it cannot recreate. A folder a failed
-# create leaves stays for the owner. A value must not hold " #" (the config reads a comment
-# there) or start with [ (it reads a list).
+# pool's base, flow/<slug> for tmp add, empty for a remove); sh -c gets them as "$1" and "$2", so
+# the command writes them bare and no value is read as shell. It runs from the main worktree, all
+# its output on stderr. After a create a git worktree must sit at {path}; then the pool's goes
+# onto its idle branch at the base tip (one that cannot move stays as made, and health moves it
+# once free) and tmp add's onto a new flow/<slug>-<phase>. After a remove the folder must be
+# gone; git's record is pruned and the branch deleted. A command with no {path}, or with a
+# placeholder inside quotes, is refused before it runs, exit 2. One
+# that fails, or leaves no worktree (a remove: leaves the folder), is named after its output:
+# add, tmp and a growing pool exit 1 with no pool entry added (a pool that cannot grow says why,
+# not that it is at pool_max), and a claim skips a missing pool path it cannot recreate. A folder
+# a failed create leaves stays for the owner. A value must not hold " #" (the config reads a
+# comment there) or start with [ (it reads a list).
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.
@@ -87,6 +88,7 @@
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
+. "$FLOW_PLUGIN/lib/worktree_command.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -515,33 +517,6 @@ run_setup() {
   done
 }
 
-# shell_quoted <value>: the value single-quoted for sh, each ' in it spelt '\''.
-shell_quoted() {
-  quoted_rest="$1"; quoted_done=""
-  while :; do
-    case "$quoted_rest" in
-      *\'*) quoted_done="$quoted_done${quoted_rest%%\'*}'\\''"; quoted_rest="${quoted_rest#*\'}" ;;
-      *) break ;;
-    esac
-  done
-  printf "'%s%s'" "$quoted_done" "$quoted_rest"
-}
-
-# command_filled <command> <path> <base>: the command with every {path} and {base} replaced by
-# the values as they are, in one pass, so a value that holds a placeholder, &, \ or | stays literal.
-command_filled() {
-  FILL_COMMAND="$1" FILL_PATH="$2" FILL_BASE="$3" awk 'BEGIN {
-    rest = ENVIRON["FILL_COMMAND"]; filled = ""
-    while ((brace = index(rest, "{")) > 0) {
-      filled = filled substr(rest, 1, brace - 1); rest = substr(rest, brace)
-      if (index(rest, "{path}") == 1) { filled = filled ENVIRON["FILL_PATH"]; rest = substr(rest, length("{path}") + 1) }
-      else if (index(rest, "{base}") == 1) { filled = filled ENVIRON["FILL_BASE"]; rest = substr(rest, length("{base}") + 1) }
-      else { filled = filled "{"; rest = substr(rest, length("{") + 1) }
-    }
-    printf "%s", filled rest
-  }'
-}
-
 # worktree_at <path>: true when the path is the top level of a git worktree.
 worktree_at() {
   [ -d "$1" ] && [ "$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$1" && pwd -P)" ]
@@ -552,14 +527,21 @@ worktree_maker() {
   if [ -n "$(cfg worktree_create)" ]; then printf 'worktree_create'; else printf 'git worktree add'; fi
 }
 
+# worktree_command <key>: the key's command, refused before it runs, exit 2, when it has no {path}
+# or quotes a placeholder.
+worktree_command() {
+  command_text="$(cfg "$1")"
+  command_flaw="$(worktree_command_flaw "$1" "$command_text")"
+  [ -z "$command_flaw" ] || die "$command_flaw; fix it in $(config_file)" 2
+  printf '%s' "$command_text"
+}
+
 # run_worktree_create <path> <base>: run the worktree_create command from the main worktree, with
-# {path} and {base} filled shell-quoted and all its output on stderr (callers print the path on
-# stdout). One with no {path} is refused before it runs, exit 2. Returns 1, saying so, when it
-# fails or leaves no worktree at the path.
+# the path and the base as its "$1" and "$2" and all its output on stderr (callers print the path
+# on stdout). Returns 1, saying so, when it fails or leaves no worktree at the path.
 run_worktree_create() {
-  create_command="$(cfg worktree_create)"
-  case "$create_command" in *'{path}'*) ;; *) die "worktree_create has no {path}, so it cannot be told where the new worktree goes; add {path} to it in $(config_file)" 2 ;; esac
-  (cd "$main" && sh -c "$(command_filled "$create_command" "$(shell_quoted "$1")" "$(shell_quoted "$2")")") >&2
+  create_command="$(worktree_command worktree_create)" || exit
+  (cd "$main" && sh -c "$(worktree_command_filled "$create_command")" flow-worktree "$1" "$2") >&2
   create_exit=$?
   [ "$create_exit" -eq 0 ] && worktree_at "$1" && return 0
   echo "flow: worktree_create failed for $1 (exit $create_exit)" >&2
@@ -573,14 +555,12 @@ tmp_worktree_create() {
   git -C "$1" switch -q -c "$3" >&2 || die "cannot put $1 on a new branch $3"
 }
 
-# run_worktree_remove <path>: run the worktree_remove command from the main worktree, with {path}
-# filled shell-quoted ({base} empty) and all its output on stderr, then prune git's record of the
-# worktree. One with no {path} is refused before it runs, exit 2; one that fails or leaves the
-# folder on disk ends the run, exit 1.
+# run_worktree_remove <path>: run the worktree_remove command from the main worktree, with the
+# path as its "$1" ("$2" empty) and all its output on stderr, then prune git's record of the
+# worktree. One that fails or leaves the folder on disk ends the run, exit 1.
 run_worktree_remove() {
-  remove_command="$(cfg worktree_remove)"
-  case "$remove_command" in *'{path}'*) ;; *) die "worktree_remove has no {path}, so it cannot be told which worktree to remove; add {path} to it in $(config_file)" 2 ;; esac
-  (cd "$main" && sh -c "$(command_filled "$remove_command" "$(shell_quoted "$1")" "$(shell_quoted "")")") >&2 ||
+  remove_command="$(worktree_command worktree_remove)" || exit
+  (cd "$main" && sh -c "$(worktree_command_filled "$remove_command")" flow-worktree "$1" "") >&2 ||
     die "cannot remove $1: worktree_remove failed (exit $?)"
   [ ! -e "$1" ] || die "cannot remove $1: worktree_remove left it on disk"
   git -C "$main" worktree prune

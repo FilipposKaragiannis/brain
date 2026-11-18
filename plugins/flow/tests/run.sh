@@ -1888,6 +1888,16 @@ tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh\n"
 "$P/scripts/steward.sh" tmp remove "$tp5" > "$work/tmpwt.out" 2>&1; code=$?
 check_all "RemoveCommandWithoutPath_IsRefusedWithExitTwo: one with no {path} is refused, exit 2, naming the key" '[ "$code" = 2 ] && grep -q "worktree_remove has no {path}" "$work/tmpwt.out"'
 check "RemoveCommandWithoutPath_NeverRuns: one with no {path} never runs" [ ! -s "$tmp_log" ]
+tmpcfg "worktree_create: sh $work/tmpwt/fake-create.sh \"{path}\" {base}\n"
+"$P/scripts/steward.sh" tmp add "$t1" 'p$(touch injected)' > "$work/tmpwt.out" 2>&1; code=$?
+check "CreateCommandQuotingPath_ExitsTwo: a template with {path} inside double quotes is refused" [ "$code" = 2 ]
+check "CreateCommandQuotingPath_RunsNoPhaseNameText: a phase name holding \$(touch ...) creates no file" [ ! -e injected ]
+tmpcfg "worktree_create: sh $work/tmpwt/fake-create.sh '{path}' {base}\n"
+"$P/scripts/steward.sh" tmp add "$t1" phase-7 > "$work/tmpwt.out" 2>&1; code=$?
+check "CreateCommandSingleQuotingPath_ExitsTwo: a template with {path} inside single quotes is refused" [ "$code" = 2 ]
+tmpcfg "$fake_tmp_create"
+"$P/scripts/steward.sh" tmp add "$t1" 'p$(touch injected)' > "$work/tmpwt.out" 2>&1
+check "BarePathWithCommandSubstitutionInPhase_RunsNoPhaseNameText: a phase name holding \$(touch ...) reaches a bare {path} as text" [ ! -e injected ]
 
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -3065,6 +3075,9 @@ commandcfg 'worktree_remove: workspace remove\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-remove.out" 2>&1; code=$?
 check "InitCheckOfRemoveCommandWithoutPath_NamesGap: --check names a worktree_remove without {path} as a gap" grep -qF 'gap: .flow/config.yaml: worktree_remove has no {path}' "$work/init-remove.out"
 check "InitCheckOfRemoveCommandWithoutPath_ExitsNonZero: --check exits non-zero on a worktree_remove without {path}" [ "$code" != 0 ]
+commandcfg 'worktree_create: workspace new "{path}" --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-quoted.out" 2>&1
+check "InitCheckOfCreateCommandQuotingPath_NamesGap: --check names a worktree_create with {path} inside quotes as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-quoted.out"
 commandcfg 'worktree_create: workspace new {path} --from {base}\nworktree_remove: workspace remove {path}\n'
 check "InitCheckOfCommandsHoldingPath_IsClean: --check is clean with a worktree_create and a worktree_remove that hold {path}" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q

@@ -59,12 +59,13 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   number no pool entry and no folder uses. A `worktree_name` with no `{n}`, or with `{n}` only in a parent folder (every new worktree would share one idle branch), is refused. At `pool_max` the claim fails with exit 3: tell the
   owner, who raises `pool_max` or releases one. Never edit `pool:` by hand; `add` does it.
 - **A configured command makes the folder.** `worktree_create` in the config (a `sh` command;
-  `{path}` the new worktree's absolute folder, `{base}` the ref it starts from, both filled in
-  single-quoted) replaces `git worktree add` for a grown, added or recreated pool worktree and
-  for `tmp add`; `worktree_remove` (`{path}`) replaces `git worktree remove` for `tmp remove`
-  only. Both run from the main worktree with their output on stderr; a pool worktree then goes
-  onto its idle branch at the base tip, or stays as made for `health` to move it later. A command
-  with no `{path}` is refused, exit 2. A create that fails, or leaves no git worktree at `{path}`,
+  `{path}` the new worktree's absolute folder, `{base}` the ref it starts from, both written bare:
+  `sh -c` gets them as `"$1"` and `"$2"`, so no value is read as shell) replaces
+  `git worktree add` for a grown, added or recreated pool worktree and for `tmp add`;
+  `worktree_remove` (`{path}`) replaces `git worktree remove` for `tmp remove` only. Both run from
+  the main worktree with their output on stderr; a pool worktree then goes onto its idle branch at
+  the base tip, or stays as made for `health` to move it later. A command with no `{path}`, or
+  with a placeholder inside quotes, is refused, exit 2. A create that fails, or leaves no git worktree at `{path}`,
   adds no pool entry and says why after the command's output: the claim exits 1, not the
   `pool_max` exit 3, so tell the owner the command failed and name the folder it may have left
   (flow does not remove it). A slow create runs under the claim lock: a second claim that waits
