@@ -1365,6 +1365,18 @@ wait_for grep -q "$cap: waits for a free pass slot" .flow/log/comments.log
 touch "$work/release"; wait "$first_run"; wait "$second_run"
 check "TwoRunsWithOneWorkerConfigured_NeverOverlapTheirPasses: live passes across runs stay within jobs.comments_workers" \
   [ "$(sed 's/ .*comments \([^ ]*\)\..*/ \1/' "$work/runs.log" | tr '\n' '|')" = "start gh#21|end gh#21|start $cap|end $cap|" ]
+# Two runs started together beside the one slot a dead run left: only one of them takes it.
+rm -f "$work/release"; : > "$work/runs.log"; mkdir -p .flow/log/comments.slots && ln -s 999999 .flow/log/comments.slots/1
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & first_run=$!
+"$P/jobs/comments.sh" claude "$cap" >/dev/null 2>&1 & second_run=$!
+wait_for grep -q '^start .*comments gh#21\.' "$work/runs.log"
+slot_holder="$(readlink .flow/log/comments.slots/1)"
+touch "$work/release"; wait "$first_run"; wait "$second_run"
+check "StaleSlotTakenByTwoRunsAtOnce_NeverOverlapsTheirPasses: a slot a dead run left is taken by one run only" \
+  awk '/^start /{live++; if (live > 1) overlap=1} /^end /{live--} END{exit overlap}' "$work/runs.log"
+check "StaleSlotTakenByTwoRunsAtOnce_AddressesBothPrs: the run that lost the slot waits for it instead of skipping" \
+  sh -c "grep -q '^end .*comments gh#21\.' '$work/runs.log' && grep -q '^end .*comments $cap\.' '$work/runs.log'"
+check "SlotHeldByALivePass_NamesItsRunsPid: a slot is never held with no pid" [ "$slot_holder" = "$first_run" ]
 mkdir -p .flow/log/comments.slots && ln -s 999999 .flow/log/comments.slots/1
 printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & stale_run=$!

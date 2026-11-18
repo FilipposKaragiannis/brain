@@ -740,3 +740,15 @@ test('PickFieldCleared_Saved_KeyTakenOutSoAQueryFilterRuns', async () => {
     assert.deepEqual(pick, { trackers: ['github'], query: 'assignee:@me' }, 'because a cleared field is taken out, not saved empty, so the file reads as the query filter the form shows');
   } finally { fixture.done(); }
 });
+
+test('CommentsPassLimitOfZero_Saved_Refused', () => {
+  const passLimit = fieldAt('jobs.comments.pass_limit')!;
+  for (const zero of ['0s', '0m', '0h', '0d']) {
+    assert.deepEqual([checkChange(passLimit, zero).ok, checkFileValue(passLimit, zero).ok], [false, false], `because comments.sh refuses ${zero}: a zero limit would stop every pass at once`);
+  }
+});
+
+test('CommentsPassLimitOfOneSecond_Saved_Accepted', () => {
+  const passLimit = fieldAt('jobs.comments.pass_limit')!;
+  assert.deepEqual([checkChange(passLimit, '1s').ok, checkFileValue(passLimit, '1s').ok], [true, true], 'because one second is the shortest limit comments.sh takes');
+});
