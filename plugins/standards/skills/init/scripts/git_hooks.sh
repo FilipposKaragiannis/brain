@@ -4,7 +4,8 @@
 # The plugin never creates .githooks/: a project that has one keeps it and gets one call per hook,
 # placed before a trailing top-level `exit` so it runs (a call after the exit never does), and moved
 # rather than duplicated on a re-run; a project without one points core.hooksPath (local git
-# config, per clone) at the plugin's own folder.
+# config, per clone) at the plugin's own folder. init never sets core.hooksPath over live hooks:
+# an executable file in the clone's hooks folder that git would stop running once the path moves.
 hook_with_call() {
   hook_file="$1"; call="$2"; needle="$3"
   CALL="$call" NEEDLE="$needle" awk '
@@ -33,6 +34,14 @@ place_call() {
   cmp -s "$(tmpfile hook)" "$hook_file" && return 0
   cat "$(tmpfile hook)" > "$hook_file" && note "$hook_file: standards call $outcome"
 }
+live_hook_names() {
+  hooks_folder="$1"; live_names=""
+  for candidate_hook in "$hooks_folder"/*; do
+    case "$candidate_hook" in *.sample) continue ;; esac
+    if [ -f "$candidate_hook" ] && [ -x "$candidate_hook" ]; then live_names="${live_names:+$live_names, }${candidate_hook##*/}"; fi
+  done
+  printf '%s' "$live_names"
+}
 hooks_path="$(git config core.hooksPath 2>/dev/null || true)"
 if [ -d .githooks ]; then
   for hook in pre-commit commit-msg pre-push; do
@@ -52,7 +61,12 @@ if [ -d .githooks ]; then
 else
   wanted_hooks_path=".standards/hooks/git"
 fi
-if [ -z "$hooks_path" ]; then
+live_hooks_folder="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/hooks"
+live_hooks="$(live_hook_names "$live_hooks_folder")"
+if [ -z "$hooks_path" ] && [ -n "$live_hooks" ]; then
+  bypass_warning="$live_hooks_folder holds $live_hooks; pointing core.hooksPath at $wanted_hooks_path would stop git running them. Call $wanted_hooks_path/pre-commit, commit-msg and pre-push from them, or run init --scope machine."
+  if [ "$check" -eq 1 ]; then echo "init: note: $bypass_warning"; else echo "init: $bypass_warning"; fi
+elif [ -z "$hooks_path" ]; then
   if [ "$check" -eq 1 ]; then drifted "core.hooksPath is unset (wanted $wanted_hooks_path)"
   elif git config core.hooksPath "$wanted_hooks_path" 2>/dev/null; then note "git config core.hooksPath $wanted_hooks_path"
   else echo "init: could not set core.hooksPath. Run: git config core.hooksPath $wanted_hooks_path"; fi

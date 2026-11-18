@@ -462,4 +462,14 @@ cp .githooks/pre-commit "$work/pc.after"
 "$init" >/dev/null
 check "init: a second run changes nothing" sh -c "cmp -s .githooks/pre-commit '$work/pc.after' && ! '$init' --check | grep -q 'githooks'"
 
+echo "init: a live hook in .git/hooks keeps core.hooksPath unset"
+mkdir -p "$work/live-hooks" && cd "$work/live-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+printf '#!/bin/sh\ngit lfs pre-push "$@"\n' > .git/hooks/pre-push; chmod +x .git/hooks/pre-push
+"$init" > "$work/live-hooks.init.out" 2>&1
+check "LiveHookInGitHooks_HooksPathStaysUnset: init leaves core.hooksPath unset so git still runs .git/hooks/pre-push" sh -c "[ -z \"\$(git config core.hooksPath)\" ]"
+check "LiveHookInGitHooks_InitNamesTheHook: init names the live hook it would have bypassed" grep -q 'init: .git/hooks holds pre-push;' "$work/live-hooks.init.out"
+git config --unset core.hooksPath
+"$init" --check > "$work/live-hooks.check.out" 2>&1
+check "LiveHookInGitHooks_CheckReportsNoHooksPathDrift: init --check does not count the unset core.hooksPath as drift" sh -c "[ -s '$work/live-hooks.check.out' ] && ! grep -q 'core.hooksPath is unset' '$work/live-hooks.check.out'"
+
 [ "$fails" -eq 0 ] && echo "hooks: ok" || { echo "hooks: $fails failed"; exit 1; }
