@@ -1338,16 +1338,16 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 # Two runs at once: a second PR item, and a host whose gh#21 pass holds until it is released.
 cap="$("$P/adapters/github/create.sh" task "A PR for the second run")"
 "$P/adapters/github/write-state.sh" "$cap" step=pr >/dev/null && "$P/adapters/github/link-pr.sh" "$cap" https://gh/pull/90 >/dev/null
-RELEASE_POLLS=150
+POLL_LIMIT=150
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
 printf 'start %s\n' "\$*" >> "$work/runs.log"
-case "\$*" in *"comments gh#21."*) i=0; while [ ! -f "$work/release" ] && [ "\$i" -lt $RELEASE_POLLS ]; do sleep 0.1; i=\$((i + 1)); done ;; esac
+case "\$*" in *"comments gh#21."*) poll_count=0; while [ ! -f "$work/release" ] && [ "\$poll_count" -lt $POLL_LIMIT ]; do sleep 0.1; poll_count=\$((poll_count + 1)); done ;; esac
 printf 'end %s\n' "\$*" >> "$work/runs.log"
 EOF
 chmod +x "$work/bin/claude"
 wait_for() { # wait_for <condition...>: polls up to 15 s
-  w=0; while ! "$@" 2>/dev/null && [ "$w" -lt 150 ]; do sleep 0.1; w=$((w + 1)); done
+  poll_count=0; while ! "$@" 2>/dev/null && [ "$poll_count" -lt "$POLL_LIMIT" ]; do sleep 0.1; poll_count=$((poll_count + 1)); done
 }
 jobscfg '  comments_workers: 2\n'; bump 2026-10-25T04:20:00Z; rm -f "$work/release"; : > "$work/runs.log"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & first_run=$!
@@ -1379,12 +1379,12 @@ cat > "$work/bin/claude" <<EOF
 sleep 30 & echo \$! > "$work/pass-child.pid"
 wait
 EOF
-chmod +x "$work/bin/claude"; rm -f .flow/log/comments.seen/gh_21.fails
+chmod +x "$work/bin/claude"; rm -f .flow/log/comments.seen/gh_21.fails "$work/pass-child.pid"
 jobscfg '  comments:\n    pass_limit: 2s\n'
 started="$(date +%s)"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?; elapsed=$(( $(date +%s) - started ))
 check "PassPastThePassLimit_IsStopped: no pass runs forever" [ "$elapsed" -lt "$PASS_LIMIT_BOUND_SECONDS" ]
 check "PassPastThePassLimit_FailsTheRun: a stopped pass is a failed pass" [ "$code" -eq 1 ]
-check "PassPastThePassLimit_StopsTheHostsChildren: nothing the pass started keeps running" sh -c "! kill -0 \$(cat '$work/pass-child.pid')"
+check "PassPastThePassLimit_StopsTheHostsChildren: nothing the pass started keeps running" sh -c "test -s '$work/pass-child.pid' && ! kill -0 \$(cat '$work/pass-child.pid')"
 check "PassPastThePassLimit_CountsTowardFailuresInARow: it counts toward jobs.comments.max_failures" sh -c "read -r count _ < .flow/log/comments.seen/gh_21.fails && [ \"\$count\" = 1 ]"
 check "PassPastThePassLimit_IsLoggedAsStoppedAtTheLimit: the log names the setting that stopped it" grep -q 'gh#21: pass failed, .*jobs.comments.pass_limit' .flow/log/comments.log
 printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
@@ -1600,7 +1600,7 @@ pkill -P "$secondjob" 2>/dev/null; kill "$secondjob" 2>/dev/null; rm -rf "$home2
 jobs_dir_before="$(ls -d .flow/jobs 2>/dev/null)"; mkdir -p .flow/jobs && printf '#!/bin/sh\nexec "%s/jobs/comments.sh" "$@"\n' "$P" > .flow/jobs/comments.sh && chmod +x .flow/jobs/comments.sh
 runs_before="$(grep -c '"job":"comments"' "$home2/log/runs.jsonl" 2>/dev/null)"
 FLOW_HOME="$home2" "$J" run comments >/dev/null 2>&1
-w=0; while [ "$(grep -c '"job":"comments"' "$home2/log/runs.jsonl" 2>/dev/null)" = "$runs_before" ] && [ "$w" -lt 150 ]; do sleep 0.1; w=$((w + 1)); done
+wait_for sh -c '[ "$(grep -c "\"job\":\"comments\"" "$1")" != "$2" ]' _ "$home2/log/runs.jsonl" "$runs_before"
 check "RunOfCommentsWhileOneIsAlive_StartsASecondRun: a comments run starts beside a live one" [ "$(grep -c '"job":"comments"' "$home2/log/runs.jsonl")" -gt "${runs_before:-0}" ]
 rm -f .flow/jobs/comments.sh; [ -n "$jobs_dir_before" ] || rmdir .flow/jobs
 FLOW_HOME="$home2" "$J" stop comments >/dev/null
