@@ -181,9 +181,10 @@ cmd_claim() {
 }
 
 # free_worktree: the first pool worktree with no claim, no reservation and a clean tree, or a
-# pool path missing on disk, recreated and printed resolved (one git cannot add is skipped,
+# pool path missing on disk, recreated and printed resolved (one that cannot be made is skipped,
 # saying why); else one grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name exits 2 inside
-# grow_pool, before the pool_max message, so claim and reserve pass the template's reason through.
+# grow_pool, before the pool_max message, so claim and reserve pass the template's reason through;
+# a worktree that cannot be made exits 1 there, so the pool_max message never stands in for it.
 free_worktree() {
   for p in $(pool_paths); do
     if [ ! -d "$p" ]; then
@@ -497,9 +498,74 @@ run_setup() {
   done
 }
 
+# shell_quoted <value>: the value single-quoted for sh, each ' in it spelt '\''.
+shell_quoted() {
+  quoted_rest="$1"; quoted_done=""
+  while :; do
+    case "$quoted_rest" in
+      *\'*) quoted_done="$quoted_done${quoted_rest%%\'*}'\\''"; quoted_rest="${quoted_rest#*\'}" ;;
+      *) break ;;
+    esac
+  done
+  printf "'%s%s'" "$quoted_done" "$quoted_rest"
+}
+
+# command_filled <command> <path> <base>: the command with every {path} and {base} replaced by
+# the values as they are, in one pass, so a value that holds a placeholder, &, \ or | stays literal.
+command_filled() {
+  FILL_COMMAND="$1" FILL_PATH="$2" FILL_BASE="$3" awk 'BEGIN {
+    rest = ENVIRON["FILL_COMMAND"]; filled = ""
+    while ((brace = index(rest, "{")) > 0) {
+      filled = filled substr(rest, 1, brace - 1); rest = substr(rest, brace)
+      if (index(rest, "{path}") == 1) { filled = filled ENVIRON["FILL_PATH"]; rest = substr(rest, length("{path}") + 1) }
+      else if (index(rest, "{base}") == 1) { filled = filled ENVIRON["FILL_BASE"]; rest = substr(rest, length("{base}") + 1) }
+      else { filled = filled "{"; rest = substr(rest, length("{") + 1) }
+    }
+    printf "%s", filled rest
+  }'
+}
+
+# worktree_at <path>: true when the path is the top level of a git worktree.
+worktree_at() {
+  [ -d "$1" ] && [ "$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$1" && pwd -P)" ]
+}
+
+# worktree_maker: what makes a new worktree, for messages: the worktree_create command, else git.
+worktree_maker() {
+  if [ -n "$(cfg worktree_create)" ]; then printf 'worktree_create'; else printf 'git worktree add'; fi
+}
+
+# run_worktree_create <path> <base>: run the worktree_create command from the main worktree, with
+# {path} and {base} filled shell-quoted and all its output on stderr (callers print the path on
+# stdout). One with no {path} is refused before it runs, exit 2. Returns 1, saying so, when it
+# fails or leaves no worktree at the path.
+run_worktree_create() {
+  create_command="$(cfg worktree_create)"
+  case "$create_command" in *'{path}'*) ;; *) die "worktree_create has no {path}, so it cannot be told where the new worktree goes; add {path} to it in $(config_file)" 2 ;; esac
+  (cd "$main" && sh -c "$(command_filled "$create_command" "$(shell_quoted "$1")" "$(shell_quoted "$2")")") >&2
+  create_exit=$?
+  [ "$create_exit" -eq 0 ] && worktree_at "$1" && return 0
+  echo "flow: worktree_create failed for $1 (exit $create_exit)" >&2
+  return 1
+}
+
+# pool_worktree_create <path>: worktree_create makes a pool worktree at the base tip, then park
+# puts it on its idle branch. One park cannot move stays a valid worktree: health moves a free
+# detached one onto its idle branch later.
+pool_worktree_create() {
+  run_worktree_create "$1" "$(base_ref)" || return 1
+  park "$1"
+  case $? in
+    1) echo "flow: $(idle_branch "$1") has commits not in $(base_ref); kept, and $(basename "$1") starts detached" >&2 ;;
+    2) echo "flow: cannot put $(basename "$1") on $(idle_branch "$1") at $(base_ref); it stays as worktree_create left it, and health moves it when it is free" >&2 ;;
+  esac
+  return 0
+}
+
 # pool_worktree_add <path>: a new pool worktree on its idle branch at the base tip (detached
-# when an idle branch of that name has commits of its own).
+# when an idle branch of that name has commits of its own), made by worktree_create when it is set.
 pool_worktree_add() {
+  [ -z "$(cfg worktree_create)" ] || { pool_worktree_create "$1"; return; }
   pa_branch="$(idle_branch "$1")"
   if idle_kept "$pa_branch"; then
     echo "flow: $pa_branch has commits not in $(base_ref); kept, and $(basename "$1") starts detached" >&2
@@ -519,14 +585,15 @@ pool_recreate() {
 }
 
 # grow_pool: add one worktree when the pool is below pool_max; print its path. Returns 1 when the
-# pool is full or git cannot add the worktree; exits 2 when next_pool_path refuses worktree_name.
+# pool is full; exits 1, naming worktree_create or git, when the worktree cannot be made, and 2
+# when next_pool_path refuses worktree_name or worktree_create has no {path}.
 grow_pool() {
   max="$(cfg_or pool_max 0)"
   count="$(cfg pool | grep -c .)"
   [ "$max" -gt "$count" ] 2>/dev/null || return 1
   rel="$(next_pool_path)" || exit
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
-  pool_worktree_add "$abs" || return 1
+  pool_worktree_add "$abs" || die "cannot add $rel to the pool: $(worktree_maker) failed"
   pool_add_entry "$rel"
   run_setup "$abs" >&2
   echo "flow: added $rel to the pool ($((count + 1)) of $max)" >&2

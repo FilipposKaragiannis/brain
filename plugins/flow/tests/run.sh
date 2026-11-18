@@ -1718,6 +1718,85 @@ n4="$("$P/scripts/new.sh" task "Fourth")"
 g4="$("$P/scripts/steward.sh" claim "$n4" 2>/dev/null)"; code=$?
 check_all "claim recreates a pool path whose parent folder is missing too and prints it without .." '[ "$code" -eq 0 ] && [ -d ../trees/app-wt-4 ] && [ "$g4" = "$(cd ../trees/app-wt-4 && pwd -P)" ] && ! printf "%s" "$g4" | grep -qF .. && [ "$("$P/scripts/steward.sh" find "$n4")" = "$g4" ]'
 
+echo "worktree_create"
+mkdir -p "$work/create" && cd "$work/create" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && printf 'local\n' > .gitignore && printf 'secret\n' > local && git add -A && git commit -qm init
+mkdir -p .flow
+create_log="$work/create/create.log"
+cat > "$work/create/fake-create.sh" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" >> "$create_log"
+echo "fake create made \$1"
+git -C "$PWD" worktree add -q --detach "\$1" "\$2"
+EOF
+cat > "$work/create/failing-create.sh" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" >> "$create_log"
+echo "refused: folder not empty"
+exit 4
+EOF
+cat > "$work/create/idle-create.sh" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" >> "$create_log"
+EOF
+createcfg() { printf 'adapters:\n  default: local\nbase: main\npool:\n%bpool_max: 9\nworktree_name: %s\nworktree_create: %s\nworktree_copy:\n  - local\nworktree_setup:\n  - printf ran > setup.txt\nnotify:\n  desktop: false\n' "$1" "$2" "$3" > .flow/config.yaml; }
+fake_create="sh $work/create/fake-create.sh {path} {base}"
+logged_path() { cd "$(sed -n 1p "$create_log")" 2>/dev/null && pwd -P; }
+createcfg '' "../{repo} 'q-wt-{n}" "$fake_create"
+: > "$create_log"
+c1="$("$P/scripts/new.sh" task "Create")"
+cw1="$("$P/scripts/steward.sh" claim "$c1" 2>"$work/create.err")"
+spaced1="$(cd "../app 'q-wt-1" 2>/dev/null && pwd -P)"
+check_all "worktree_create: claim grows the pool through the command, which gets a path with a space and a quote as one argument" '[ -n "$spaced1" ] && [ "$(logged_path)" = "$spaced1" ]'
+check "worktree_create: the command gets the base branch as {base}" [ "$(sed -n 2p "$create_log")" = main ]
+check_all "worktree_create: claim prints the path alone, the command's own output kept on stderr" '[ "$cw1" = "$spaced1" ] && grep -q "fake create made" "$work/create.err"'
+check "worktree_create: the created worktree's pool entry is appended" [ "$(yaml_get .flow/config.yaml pool)" = "../app 'q-wt-1" ]
+check "worktree_create: the created worktree is put on its idle branch at the base tip" [ "$(git rev-parse --verify -q refs/heads/main-wt-1)" = "$(git rev-parse main)" ]
+check_all "worktree_create: worktree_copy and worktree_setup run in the created worktree" '[ "$(cat "$cw1/local")" = secret ] && [ "$(cat "$cw1/setup.txt")" = ran ]'
+spaced2="../app 'q-wt-2"
+: > "$create_log"
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
+check_all "worktree_create: add with no path makes the worktree through the command" '[ "$code" -eq 0 ] && [ "$(logged_path)" = "$(cd "$spaced2" && pwd -P)" ]'
+check "worktree_create: add with no path appends the made worktree's pool entry" [ "$(yaml_get .flow/config.yaml pool | tail -1)" = "$spaced2" ]
+git worktree remove --force "$spaced2"
+: > "$create_log"
+"$P/scripts/steward.sh" add "$spaced2" > "$work/create.out" 2>&1; code=$?
+check_all "worktree_create: add recreates a pool path missing on disk through the command" '[ "$code" -eq 0 ] && [ "$(logged_path)" = "$(cd "$spaced2" && pwd -P)" ]'
+check "worktree_create: add puts the recreated worktree on its idle branch" [ "$(git -C "$spaced2" symbolic-ref --short HEAD)" = main-wt-2 ]
+createcfg "  - ../app'q-wt-5\n" "../{repo} 'q-wt-{n}" "$fake_create"
+: > "$create_log"
+c2="$("$P/scripts/new.sh" task "Recreate")"
+cw2="$("$P/scripts/steward.sh" claim "$c2" 2>"$work/create.err")"; code=$?
+check_all "worktree_create: claim recreates a pool path missing on disk through the command" '[ "$code" -eq 0 ] && [ -n "$cw2" ] && [ "$(logged_path)" = "$cw2" ] && [ "$cw2" = "$(cd "../app'\''q-wt-5" && pwd -P)" ]'
+check "worktree_create: the recreate names the idle branch the worktree was put on" grep -q "recreated app'q-wt-5, which was missing on disk, on main-wt-5 at main" "$work/create.err"
+createcfg '' '../{repo}-fail-wt-{n}' "sh $work/create/failing-create.sh {path} {base}"
+c3="$("$P/scripts/new.sh" task "Refused")"
+"$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>"$work/create.err"; code=$?
+check "worktree_create: a failing command fails the claim with exit 1, not the full pool's 3" [ "$code" = 1 ]
+check "worktree_create: a failing command's output reaches the claim's stderr" grep -q 'refused: folder not empty' "$work/create.err"
+check "worktree_create: a failing claim names worktree_create as what failed" grep -q 'cannot add ../app-fail-wt-1 to the pool: worktree_create failed' "$work/create.err"
+check_all "worktree_create: a failing command is not blamed on pool_max" '! grep -q pool_max "$work/create.err"'
+check "worktree_create: a claim whose command fails adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
+check "worktree_create: add with a failing command exits 1" [ "$code" = 1 ]
+check "worktree_create: add with a failing command passes its output on" grep -q 'refused: folder not empty' "$work/create.out"
+check "worktree_create: add with a failing command adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
+createcfg '' '../{repo}-idle-wt-{n}' "sh $work/create/idle-create.sh {path} {base}"
+"$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>&1; code=$?
+check "worktree_create: a command that exits 0 but makes no worktree fails the claim with exit 1" [ "$code" = 1 ]
+check "worktree_create: a command that makes no worktree adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
+createcfg '' '../{repo}-bare-wt-{n}' "sh $work/create/fake-create.sh {base}"
+: > "$create_log"
+"$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>&1; code=$?
+check_all "worktree_create: one with no {path} is refused, exit 2, naming the key" '[ "$code" = 2 ] && grep -q "worktree_create has no {path}" "$work/create.out"'
+check "worktree_create: one with no {path} never runs" [ ! -s "$create_log" ]
+kept_tip="$(git commit-tree -p main -m kept "$(git rev-parse 'main^{tree}')")"
+git update-ref refs/heads/main-wt-1 "$kept_tip"
+createcfg '' '../{repo}-kept-wt-{n}' "$fake_create"
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
+check_all "worktree_create: the created worktree starts detached at the base tip when its idle branch has commits of its own" '[ "$code" -eq 0 ] && ! git -C ../app-kept-wt-1 symbolic-ref -q HEAD && [ "$(git -C ../app-kept-wt-1 rev-parse HEAD)" = "$(git rev-parse main)" ]'
+check "worktree_create: an idle branch with commits of its own keeps them" [ "$(git rev-parse main-wt-1)" = "$kept_tip" ]
+
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
