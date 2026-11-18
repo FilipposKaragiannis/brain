@@ -214,7 +214,6 @@ test('ParkedClaim_NotHeld_WaitingForAWorker', async () => {
 const SUB_AGENT_CLAIM_ID = 'adhoc:agent-a2bc735e';
 const SUB_AGENT_BRANCH = 'flow/adhoc-agent-a2bc735e';
 
-/** project-wt-3 claimed by a sub-agent through flow's WorktreeCreate hook instead of gh#9, with no run and no process anywhere. */
 async function subAgentClaim(): Promise<Snapshot> {
   const facts = await parkedNine();
   facts.flow = {
