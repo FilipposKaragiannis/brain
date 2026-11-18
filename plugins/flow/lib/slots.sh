@@ -16,24 +16,18 @@ slot_try() {
   done
   return 1
 }
-# slot_take_over <slot> <pid>: takes the slot for <pid> when the run holding it is gone. The stale
-# slot goes only under <slot>.takeover and only while it still names the dead holder, so two runs
-# that saw the same dead holder never both take it.
-slot_take_over() {
-  stale_holder="$(readlink "$1" 2>/dev/null)"
-  [ -n "$stale_holder" ] && ! job_alive "$stale_holder" && slot_guard_take "$1.takeover" "$2" || return 1
-  [ "$(readlink "$1" 2>/dev/null)" != "$stale_holder" ] || rm -f "$1"
-  rm -f "$1.takeover"
-  ln -sn "$2" "$1" 2>/dev/null
-}
-# slot_guard_take <guard> <pid>: takes the guard for <pid>, a symbolic link to it like a slot, so a
-# taker stopped before it lets the guard go leaves one that the next taker clears instead of
-# waiting on it forever; returns 1 while a live run holds it.
-slot_guard_take() {
-  ln -sn "$2" "$1" 2>/dev/null && return 0
-  guard_holder="$(readlink "$1" 2>/dev/null)"
-  [ -n "$guard_holder" ] && ! job_alive "$guard_holder" || return 1
-  [ "$(readlink "$1" 2>/dev/null)" != "$guard_holder" ] || rm -f "$1"
+# slot_take_over <entry> <pid>: takes the entry, a slot or a guard, for <pid> when the run holding
+# it is gone; returns 1 while a live run holds it.
+slot_take_over() { slot_take_from "$1" "$2" "$(readlink "$1" 2>/dev/null)"; }
+# slot_take_from <entry> <pid> <holder>: takes the entry for <pid> from the dead <holder> under the
+# guard <entry>.<holder>, a symbolic link to the taker like a slot, so only one run takes an entry
+# from a given holder. A guard whose taker died is taken over the same way, under its own guard,
+# so an entry is removed only by the one run that holds its guard.
+slot_take_from() {
+  [ -n "$3" ] && ! job_alive "$3" || return 1
+  ln -sn "$2" "$1.$3" 2>/dev/null || slot_take_over "$1.$3" "$2" || return 1
+  [ "$(readlink "$1" 2>/dev/null)" != "$3" ] || rm -f "$1"
+  rm -f "$1.$3"
   ln -sn "$2" "$1" 2>/dev/null
 }
 # slot_take <pool> <count> <pid>: slot_try until a slot is free, one poll a second; prints its path.

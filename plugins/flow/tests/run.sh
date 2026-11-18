@@ -1421,16 +1421,16 @@ printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$stale_run" 2>/dev/null; wait "$stale_run" 2>/dev/null
 check "SlotOfADeadRun_IsTakenOver: a run that died holds no pass slot" grep -q 'comments gh#21' "$HOST_LOG"
-ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn 999998 .flow/log/comments.slots/1.takeover; : > "$HOST_LOG"
+ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn 999998 .flow/log/comments.slots/1.999999; : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & guarded_run=$!
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
-kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.takeover
+kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.999999
 check "TakeoverGuardOfADeadRun_IsCleared: a takeover stopped halfway never keeps its slot from being taken back" grep -q 'comments gh#21' "$HOST_LOG"
 # The live taker is a stand-in run: its command line names jobs/comments.sh, as a real run's does.
 mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
 GUARD_HOLD_SECONDS=2
 "$work/fake/jobs/comments.sh" >/dev/null 2>&1 & live_taker=$!
-bump 2026-10-25T04:30:00Z; ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn "$live_taker" .flow/log/comments.slots/1.takeover; : > "$HOST_LOG"
+bump 2026-10-25T04:30:00Z; ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn "$live_taker" .flow/log/comments.slots/1.999999; : > "$HOST_LOG"
 log_lines_before="$(wc -l < .flow/log/comments.log | tr -d ' ')"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & guarded_run=$!
 guarded_wait_seen() { tail -n "+$((log_lines_before + 1))" .flow/log/comments.log | grep -q 'gh#21: waits for a free pass slot'; }
@@ -1439,10 +1439,23 @@ guarded_run_waited=no; ! guarded_wait_seen || guarded_run_waited=yes
 sleep "$GUARD_HOLD_SECONDS"; host_calls_while_guarded="$(wc -l < "$HOST_LOG" | tr -d ' ')"
 kill "$live_taker" 2>/dev/null; wait "$live_taker" 2>/dev/null
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
-kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.takeover
+kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.999999
 check_all "TakeoverGuardOfALiveRun_HoldsTheSlotWhileItsTakerLives: a live takeover is never raced by a second taker" \
   '[ "$guarded_run_waited" = yes ] && [ "$host_calls_while_guarded" = 0 ]'
 check "TakeoverGuardOfALiveRun_FreesTheSlotOnceItsTakerEnds: the waiting pass runs when the taker is gone" grep -q 'comments gh#21' "$HOST_LOG"
+stale_pool="$work/stale-guard-pool"; mkdir -p "$stale_pool/slots"
+ln -s 999999 "$stale_pool/slots/1" && ln -s 999998 "$stale_pool/slots/1.999999"
+for taker in 11 12 13 14 15 16 17 18; do
+  ( job_alive() { case "$1" in 99999*) return 1 ;; esac; return 0; }; . "$P/lib/slots.sh"
+    poll_count=0; while [ ! -e "$stale_pool/start" ] && [ "$poll_count" -lt "$POLL_LIMIT" ]; do sleep 0.1; poll_count=$((poll_count + 1)); done
+    slot_try "$stale_pool/slots" 1 "$taker" >/dev/null && echo "$taker" >> "$stale_pool/winners" ) &
+  taker_runs="${taker_runs:-} $!"
+done
+touch "$stale_pool/start"; for taker_run in $taker_runs; do wait "$taker_run"; done
+check_all "SlotAndTakeoverGuardBothStale_AreTakenByOneTakerOnly: two takers of a dead taker's guard never both hold the slot" \
+  '[ "$(wc -l < "$stale_pool/winners" | tr -d " ")" = 1 ] && [ "$(readlink "$stale_pool/slots/1")" = "$(cat "$stale_pool/winners")" ]'
+check_all "SlotAndTakeoverGuardBothStale_LeaveNoGuardOnceTaken: a recovered takeover guard is never left behind" \
+  '[ "$(ls "$stale_pool/slots" | tr "\n" " ")" = "1 " ]'
 "$P/adapters/github/write-state.sh" "$cap" pr= >/dev/null; "$P/adapters/github/close.sh" "$cap" >/dev/null 2>&1
 # A pass still running at jobs.comments.pass_limit is stopped with its children and failed.
 PASS_LIMIT_BOUND_SECONDS=15
