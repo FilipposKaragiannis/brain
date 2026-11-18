@@ -1,10 +1,7 @@
 #!/bin/sh
-# init.sh, machine scope, sourced after the roster: keeps the clone's own outputs out of git status
-# with a marked block in the clone's info/exclude, which git never tracks. The block names
-# /.standards (no trailing slash, so a linked worktree's link to it matches too) and every
-# project-level path this run wrote or kept: the rendered roster agents and the skills and rules
-# links. A re-run replaces the block in place; the lines around it stay. It uses init's check,
-# drifted, note, tmpfile, stamped, kept, project_skills and project_rules.
+# Sourced by init.sh in machine scope. It uses init's check, drifted, note, tmpfile, stamped, kept,
+# project_skills and project_rules.
+# /.standards has no trailing slash, so a linked worktree's link to it matches too.
 exclude_begin="# standards:begin"
 exclude_end="# standards:end"
 excluded_paths() {

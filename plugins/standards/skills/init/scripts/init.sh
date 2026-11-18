@@ -9,10 +9,6 @@
 # never over live hooks in .git/hooks), and, when .standards/config.json "project" names them, the
 # skills and rules links (.claude/skills, .agents/skills, .claude/rules/project) and the roster
 # rendered into .claude/agents/ and .codex/agents/ (with .standards/evals/run.sh and .gitignore).
-# --scope machine (project is the default; the stamp remembers the choice) changes no tracked file:
-# the block, the rules and the Codex agents go to CLAUDE_CONFIG_DIR and CODEX_HOME for every project
-# on this machine, the hook calls to the clone's own hooks folder, its outputs to its info/exclude,
-# and each linked worktree gets a .standards link (scope.sh, exclude.sh, worktree_link.sh).
 # The hosts run the gates from the plugin's hooks/hooks.json: init writes no hook entry into a host
 # settings file, and reports one (the gates would run twice). Old docs/ copies (before v0.2.0) are
 # removed when unchanged, or reported. Re-running replaces only what it wrote, and refuses a copy
@@ -184,17 +180,17 @@ globs="$(json_list "$(config_text)" "languages" | while read -r lang; do json_li
 mkdir -p "$rules_folder"
 for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
   name="$(basename "$src" .md | sed 's/^[0-9]*-//')"
-  dst="$rules_folder/standards-$name.md"
+  destination_file="$rules_folder/standards-$name.md"
   tmp="$(tmpfile rule)"
   { echo "---"; echo "paths:"; echo "$globs"; echo "---"; cat "$src"; } > "$tmp"
-  [ -s "$tmp" ] || die "could not build $dst"
-  install_file "$tmp" "$dst"
+  [ -s "$tmp" ] || die "could not build $destination_file"
+  install_file "$tmp" "$destination_file"
 done
 
 # 5. Codex agents (Codex cannot load agents from a plugin).
 mkdir -p "$codex_agents_folder"
-for src in "$plugin"/codex-agents/*.toml; do
-  install_file "$src" "$codex_agents_folder/$(basename "$src")"
+for source_file in "$plugin"/codex-agents/*.toml; do
+  install_file "$source_file" "$codex_agents_folder/$(basename "$source_file")"
 done
 
 # 6. Hook copies for the git hooks (hosts run the plugin's own copies).

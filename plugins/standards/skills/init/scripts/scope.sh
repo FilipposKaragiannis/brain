@@ -1,9 +1,4 @@
 #!/bin/sh
-# init.sh's scope, sourced once init is in the repo. Project scope writes the rules block, the
-# Claude rules and the Codex agents into the project, as before. Machine scope works on the main
-# worktree and writes them into the owner's host folders (CLAUDE_CONFIG_DIR, CODEX_HOME), where
-# they apply to every project on this machine and no tracked file changes. --scope chooses; else
-# the main worktree's stamp remembers (a stamped absolute path is a host folder); else project.
 stamp_names_a_host_folder() {
   awk -F'\t' 'NR > 1 && substr($2, 1, 1) == "/" { host_folder_found = 1 } END { exit !host_folder_found }' "$1"
 }

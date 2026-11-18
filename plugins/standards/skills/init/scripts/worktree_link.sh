@@ -1,9 +1,6 @@
 #!/bin/sh
-# init.sh, machine scope, sourced after the exclude block. Machine scope tracks no .standards, so a
-# linked worktree checks out none: each one gets a link to the main worktree's, and the git hooks,
-# the gates and the session hooks find the same config there. A real .standards folder in a linked
-# worktree is the owner's and stays. When flow is installed, its worktree_setup gets the line that
-# links the worktrees flow adds later. It uses init's note, repair, tmpfile and main_worktree_folder.
+# Sourced by init.sh in machine scope. A linked worktree checks out no .standards. It uses init's
+# note, repair, tmpfile and main_worktree_folder.
 shared_standards="$main_worktree_folder/.standards"
 flow_config=".flow/config.yaml"
 flow_setup_item="  - [ -e .standards ] || ln -s '$shared_standards' .standards"
@@ -26,9 +23,10 @@ link_worktree_standards() {
   fi
 }
 add_flow_setup_item() {
-  FLOW_SETUP_ITEM="$flow_setup_item" awk '{ print } $0 == "worktree_setup:" && !item_added { print ENVIRON["FLOW_SETUP_ITEM"]; item_added = 1 }' \
-    "$flow_config" > "$(tmpfile flow-config)" || return 0
-  cat "$(tmpfile flow-config)" > "$flow_config" && note "$flow_config: worktree_setup links .standards in a new worktree"
+  config_file="$1"; setup_item="$2"
+  FLOW_SETUP_ITEM="$setup_item" awk '{ print } $0 == "worktree_setup:" && !item_added { print ENVIRON["FLOW_SETUP_ITEM"]; item_added = 1 }' \
+    "$config_file" > "$(tmpfile flow-config)" || return 0
+  cat "$(tmpfile flow-config)" > "$config_file" && note "$config_file: worktree_setup links .standards in a new worktree"
 }
 wire_flow_setup() {
   [ -f "$flow_config" ] || return 0
@@ -38,7 +36,7 @@ wire_flow_setup() {
   esac
   grep -qxF -- "$flow_setup_item" "$flow_config" && return 0
   if grep -qxF 'worktree_setup:' "$flow_config"; then
-    repair "$flow_config: worktree_setup lacks the line that links .standards" add_flow_setup_item
+    repair "$flow_config: worktree_setup lacks the line that links .standards" add_flow_setup_item "$flow_config" "$flow_setup_item"
     return 0
   fi
   echo "init: note: $flow_config has no plain worktree_setup: line, so init leaves it to you. Add this item under worktree_setup: ${flow_setup_item#  - }"
