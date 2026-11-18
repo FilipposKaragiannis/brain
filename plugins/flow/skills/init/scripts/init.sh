@@ -139,6 +139,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "# pick:                     # filters next --pick <name> takes its items through (adapters/README.md)"
       echo "#   mine:"
       echo "#     assignee: me          # also status, labels, kinds, trackers, or one tracker's own query"
+      echo "# local:                    # scope: under a tracker (local, github, jira) bounds every read of it: assignee, status, labels, kinds"
       echo "base: $base"
       echo "# Gates the flow clears itself, by item size. Only plan-approval can be listed. Merge, interview,"
       echo "# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined."
@@ -151,6 +152,7 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  #   size: Size                # a single-select issue field replaces the size: labels"
         echo "  #   priority: Priority        # orders the ready items"
         echo "  #   area: Area                # the area intake files a note under, from its section"
+        echo "  # scope:                      # every list keeps only these: assignee, status, labels, kinds, or query alone"
         echo "  # project: 1                  # the project whose Status follows the flow state"
         echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
@@ -169,6 +171,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "#   transitions:"
       echo "#     done: Done                # the transition close takes"
       echo "#   limit: 500                  # the most issues one list reads"
+      echo "#   scope:                      # every search keeps only these: assignee, status, labels, kinds, or query alone"
       echo "#   answer_from: [you@example.com]  # whose /answer comments clear a gate (default: the token's user)"
       echo "# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism."
       echo "# A claim with no free worktree adds one (named after the last entry, ../$(basename "$main")-wt-<n>)"
@@ -373,6 +376,10 @@ EOF_TRACKERS
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
 $(host_jobs_problems)
 EOF_JOBS
+  # A scope the tracker's list refuses stops every read of that tracker.
+  while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_SCOPES
+$(scope_problems)
+EOF_SCOPES
   [ -z "$(cfg retro.commit)" ] || echo "init: note: .flow/config.yaml sets retro.commit, which is unused: the retro job commits nothing, as the lessons stay on this machine under .flow/; remove the key"
   missing_base_notes | sed 's/^/init: note: /'
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"

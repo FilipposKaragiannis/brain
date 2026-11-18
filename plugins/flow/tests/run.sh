@@ -2074,6 +2074,72 @@ FLOW_PLUGIN="$picks" "$picks/templates/run-unattended.sh" claude --pick mine --m
 check "unattended loop: picks its item through next.sh --pick" grep -qx -- '--json --embed-agent --pick mine' "$work/picks.next"
 cd "$repo"
 
+echo "tracker scope: every read of the local tracker"
+# local.scope narrows every list, so the board, health, the comments job and next see only the
+# items inside it; a named item outside it is refused, and so is a new claim of one.
+mkdir -p "$work/scope/bin" && cd "$work/scope" && git init -q -b main app && cd app && git config user.email me@scope.test && git config user.name t
+printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
+scope_config() { # scope_config <the local.scope block's lines> [<top-level lines after it>]: local items, a pool that grows
+  printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 3\nready:\n  priority_order: [P0, P1, P2]\nnotify:\n  desktop: false\ngithub:\n  repo: acme/widgets\nlocal:\n  scope:\n%s\n%s' "$1" "${2:-}" > .flow/config.yaml
+}
+scope_ids() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(i["id"] for i in (d["items"] if isinstance(d, dict) else d)))'; }
+scope_unpick() { # scope_unpick <next.sh --json output>: the run and its claim go, so the next pick starts clean
+  rm -f ".flow/runs/$(item_slug "$(printf '%s' "$1" | jget item)").json"
+  "$P/scripts/steward.sh" release "$(printf '%s' "$1" | jget item)" --force >/dev/null 2>&1
+}
+scope_config '    labels: [team-a]'
+sin="$("$P/adapters/local/create.sh" task "Inside the scope" --size S --priority P1 --labels team-a)"
+sout="$("$P/adapters/local/create.sh" task "Outside the scope, more urgent" --size S --priority P0 --labels team-b)"
+board_ids="$("$P/scripts/board.sh" --json 2>/dev/null | scope_ids)"
+check_all "ScopedBoard_ShowsItemInside: board --json lists an item local.scope matches" 'case " $board_ids " in *" $sin "*) true ;; *) false ;; esac'
+check_all "ScopedBoard_HidesItemOutside: board --json leaves out an item outside local.scope, because it reads the scoped list" '[ -n "$board_ids" ] && case " $board_ids " in *" $sout "*) false ;; *) true ;; esac'
+out="$("$P/scripts/next.sh" --json 2>/dev/null)"
+check "ScopedNext_PicksOnlyInside: next takes the item inside the scope over a more urgent one outside it" [ "$(printf '%s' "$out" | jget item)" = "$sin" ]
+scope_unpick "$out"
+scope_config '    labels: [team-a]' 'pick:
+  tasks:
+    kinds: [task]
+'
+out="$("$P/scripts/next.sh" --json --pick tasks 2>/dev/null)"
+check "ScopedNextPick_PicksOnlyInside: next --pick takes the item inside the scope, because the scope and the pick both apply" [ "$(printf '%s' "$out" | jget item)" = "$sin" ]
+scope_unpick "$out"
+scope_config '    labels: [team-a]'
+"$P/scripts/next.sh" "$sout" >/dev/null 2>"$work/scope.err"; code=$?
+check "NextNamedOutsideScope_ExitsTwo: next on a named item outside the scope is refused" [ "$code" -eq 2 ]
+check "NextNamedOutsideScope_NamesScope: the refusal names local.scope, because that is the key to change" grep -q "$sout is outside local.scope in .flow/config.yaml" "$work/scope.err"
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>"$work/scope.err"; code=$?
+check "ClaimOutsideScope_ExitsTwo: a new claim of an item outside the scope is refused" [ "$code" -eq 2 ]
+check "ClaimOutsideScope_TakesNoWorktree: the refused claim leaves no worktree claimed for the item" [ -z "$("$P/scripts/steward.sh" find "$sout")" ]
+adhoc_path="$("$P/scripts/steward.sh" claim adhoc:scope-x 2>/dev/null)"
+check "ClaimAdhoc_IsNeverScoped: an adhoc: claim has no tracker, so a scope does not refuse it" [ -n "$adhoc_path" ]
+"$P/scripts/steward.sh" release adhoc:scope-x --force >/dev/null 2>&1
+held_path="$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)"
+python3 -c 'p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("labels: [team-a]", "labels: [team-b]"))'
+check_all "ClaimBeforeScopeChanged_KeepsWorktree: an item claimed before it left the scope keeps its worktree, because only a new claim is refused" '[ -n "$held_path" ] && [ "$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)" = "$held_path" ]'
+"$P/scripts/steward.sh" release "$sin" --force >/dev/null 2>&1
+scope_config '    labels: [team-a]'
+"$P/adapters/local/write-state.sh" "$sin" step=split; "$P/adapters/local/write-state.sh" "$sout" step=split
+: > "$work/scope.procs"; FLOW_HEALTH_PROCS="$work/scope.procs" "$P/scripts/steward.sh" health > "$work/scope.out" 2>&1
+check "ScopedHealth_ReportsItemInside: health says a split item inside the scope is the owner's to close" grep -q "$sin: split, and every child is closed" "$work/scope.out"
+check "ScopedHealth_SkipsItemOutside: health says nothing of a split item outside the scope, because it reads the scoped list" sh -c "[ -s '$work/scope.out' ] && ! grep -q '$sout: split' '$work/scope.out'"
+"$P/adapters/local/write-state.sh" "$sin" step=; "$P/adapters/local/write-state.sh" "$sout" step=
+"$P/adapters/local/link-pr.sh" "$sin" https://github.com/acme/widgets/pull/90 >/dev/null; "$P/adapters/local/link-pr.sh" "$sout" https://github.com/acme/widgets/pull/90 >/dev/null
+mkdir -p "$work/scope/gh" && cp "$P/tests/_fake_gh.py" "$work/scope/gh/"
+printf '{"issues": [], "pr": {"number": 90, "state": "OPEN", "isDraft": false, "mergedAt": null, "url": "https://github.com/acme/widgets/pull/90", "headRefName": "flow/local-task-1", "baseRefName": "main", "mergeable": "MERGEABLE", "updatedAt": "2026-11-09T10:00:00Z", "headRefOid": "c0ffee"}}\n' > "$work/scope/gh/issues.json"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/scope/host.log"\n' "$work" > "$work/scope/bin/claude" && chmod +x "$work/scope/bin/claude"
+ln -sf "$P/tests/fake-gh.sh" "$work/scope/bin/gh"
+: > "$work/scope/host.log"
+PATH="$work/scope/bin:$PATH" FAKE_GH_DIR="$work/scope/gh" FLOW_HEALTH_PROCS="$work/scope.procs" "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check "ScopedCommentsJob_AddressesItemInside: the comments job runs a pass on the PR of an item inside the scope" grep -q "/flow:comments $sin" "$work/scope/host.log"
+check "ScopedCommentsJob_SkipsItemOutside: the comments job runs no pass for an item outside the scope, because it reads the scoped list" sh -c "[ -s '$work/scope/host.log' ] && ! grep -q '/flow:comments $sout' '$work/scope/host.log'"
+scope_config '    query: label:team-a'
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeQueryOnLocal_IsGap: init --check reports local.scope.query as a gap, because the local tracker has no search of its own" grep -q 'gap: .flow/config.yaml: local.scope.query: the local adapter maps assignee, status, labels and kinds, not query' "$work/scope.out"
+scope_config '    trackers: [local]'
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeTrackers_IsGap: init --check reports local.scope.trackers as a gap, because a scope belongs to its tracker" grep -q 'gap: .flow/config.yaml: local.scope.trackers: a scope belongs to its tracker' "$work/scope.out"
+cd "$repo"
+
 echo "help"
 check "help lists every skill" sh -c "for s in \$(ls '$P/skills'); do '$P/scripts/help.sh' | grep -q \"^| \$s |\" || exit 1; done"
 check "help <skill> shows one" sh -c "'$P/scripts/help.sh' gate | grep -q '/flow:gate'"

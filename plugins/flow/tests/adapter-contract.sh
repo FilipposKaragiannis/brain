@@ -128,7 +128,7 @@ echo "contract: $name"
 echo " the folder"
 prefix="$(head -n 1 "$A/prefix" 2>/dev/null)"
 check "the prefix file holds one non-empty line" '[ -n "$prefix" ] && [ "$(wc -l < "$A/prefix" | tr -d " ")" = 1 ]'
-for op in list list-ready read create close comment link-pr write-state; do
+for op in list list-ready read in-scope create close comment link-pr write-state; do
   check "$op.sh is there and executable" '[ -x "$A/$op.sh" ]'
 done
 for op in sync vocabulary answers; do
@@ -372,6 +372,50 @@ if type "set_$name" >/dev/null 2>&1; then
   write_config 0
 else
   skip "no set_$name in this suite to assign or label an item"
+fi
+
+# Tracker scope (adapters/README.md, Tracker scope): <name>.scope bounds every list and list-ready,
+# beside a pick, and in-scope.sh says whether one item is inside it. Per backend:
+# scope_config_<name> <lines> prints the scope block for the end of the adapter's own config
+# section, which config_<name> writes last.
+scope_config_local() { printf 'local:\n  scope:\n%s\n' "$1"; }
+scope_config() { # scope_config <scope lines> [<pick lines>]
+  write_config 0; "scope_config_$name" "$1" >> "$FLOW_HOME/config.yaml"
+  [ -z "${2:-}" ] || printf 'pick:\n%s\n' "$2" >> "$FLOW_HOME/config.yaml"
+}
+if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1; then
+  echo " tracker scope"
+  ps="$("$A/create.sh" task "Scope: mine, unlabelled")"
+  "set_$name" "$ps" assignee "$("me_$name")"
+  scope_config '    labels: [picked]'
+  check "ScopedList_KeepsItemInside: list names an item the scope matches, because the scope only narrows" 'listed "$pa" "$A/list.sh"'
+  check "ScopedList_DropsItemOutside: list leaves out an item the scope does not match, because every read is bounded by it" '! listed "$pb" "$A/list.sh"'
+  check "ScopedListReady_KeepsItemInside: list-ready names a ready item the scope matches" 'listed "$pa" "$A/list-ready.sh"'
+  check "ScopedListReady_DropsItemOutside: list-ready leaves out a ready item the scope does not match, because it reads the scoped list" '! listed "$pb" "$A/list-ready.sh"'
+  check "InScope_ItemInside_ExitsZero: in-scope exits 0 for an item the scope matches" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 0 ]'
+  check "InScope_ItemOutside_ExitsOne: in-scope exits 1 for an item the scope does not match" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
+  check "InScope_NoArguments_ExitsTwo: in-scope with no id is a usage error" '[ "$(code_of "$A/in-scope.sh")" = 2 ]'
+  scope_config '    labels: [picked]' '  mine:
+    assignee: me'
+  check "ScopeAndPick_ItemBothMatch_IsListed: a pick inside a scope keeps the item both match" 'listed "$pa" "$A/list.sh" --pick mine'
+  check "ScopeAndPick_ItemOnlyPickMatches_IsLeftOut: a pick inside a scope leaves out an item outside the scope, because both apply" '! listed "$ps" "$A/list.sh" --pick mine'
+  check "ScopeAndPick_ItemOnlyScopeMatches_IsLeftOut: a pick inside a scope leaves out an item the pick does not match, because both apply" '! listed "$epic" "$A/list.sh" --pick mine'
+  scope_config '    sprint: 12'
+  check "ScopeUnmappedField_ExitsTwo: a scope field the adapter does not map stops the list" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  check "ScopeUnmappedField_NamesScopeKey: the refusal names <tracker>.scope.<field> and the fields the adapter maps" '"$A/list.sh" 2>&1 | grep -q "$name.scope.sprint: the $name adapter maps .*assignee.*, not sprint"'
+  check "InScope_RefusedScope_ExitsTwo: in-scope exits 2 for a scope the checks refuse, because no item is inside a broken scope" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 2 ]'
+  scope_config '    trackers: [other]'
+  check "ScopeTrackers_ExitsTwo: a scope that names trackers stops the list, because a scope belongs to its tracker" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  scope_config '    query: anything
+    labels: [picked]'
+  check "ScopeQueryBesideNeutralField_ExitsTwo: a scope query beside a neutral field stops the list" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  if ! grep -qw query "$A/pick-fields"; then
+    scope_config '    query: anything'
+    check "ScopeQuery_NoSearchOfItsOwn_ExitsTwo: a scope query stops the list where the adapter has no search of its own" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  fi
+  write_config 0
+else
+  skip "no set_$name or scope_config_$name in this suite to scope a list"
 fi
 
 echo "contract $name: $checks checks, $fails failed"

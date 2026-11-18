@@ -1,7 +1,9 @@
 #!/bin/sh
 # Worktree steward: the pool, claims, releases and temporary worktrees.
 #   steward.sh pool                              list the pool with claim, branch and dirt
-#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
+#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path; a
+#                                                new claim of an item outside its tracker's scope
+#                                                exits 2 (adhoc: names have no tracker, no scope)
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh reserve [<worktree>] [--name <who>]
 #                                                claim a free pool worktree for manual work, with
@@ -160,6 +162,7 @@ cmd_claim() {
   base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
+  scope_holds "$item" || exit 2
   slug="$(item_slug "$item")"; branch="flow/$slug"
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null
   ref="$(base_ref "$base")"; claimed_branch "$base" && ref="$base"

@@ -306,21 +306,32 @@ pick_check() {
   [ -n "$(cfg "pick.$1.query")" ] || return 0
   [ "$(printf '%s\n' "$_pick_trackers" | grep -c .)" = 1 ] \
     || die "pick.$1.query is one tracker's own search: set pick.$1.trackers to exactly one tracker, not ${_pick_trackers:-none}" 2
-  # An empty field is unset: Settings saves a field it clears as an empty value, not as no key.
-  for _field in $PICK_NEUTRAL; do
-    [ -z "$(cfg "pick.$1.$_field")" ] \
-      || die "pick.$1.query goes to $_pick_trackers as written, so the filter takes no $_field; put it in the query" 2
+  filter_query_alone "pick.$1" "$_pick_trackers"
+}
+
+# filter_query_alone <key> <tracker>: refuses, exit 2, a neutral field beside <key>.query, which
+# goes to the tracker as written. An empty field is unset: Settings saves a field it clears as an
+# empty value, not as no key.
+filter_query_alone() {
+  [ -n "$(cfg "$1.query")" ] || return 0
+  for _alone_field in $PICK_NEUTRAL; do
+    [ -z "$(cfg "$1.$_alone_field")" ] \
+      || die "$1.query goes to $2 as written, so the filter takes no $_alone_field; put it in the query" 2
   done
 }
 
 # pick_mapped <name> <adapter>: refuses, exit 2, a field of the filter the adapter cannot map,
 # saying the fields it maps (adapters/<adapter>/pick-fields).
-pick_mapped() {
+pick_mapped() { filter_mapped "pick.$1" "$2"; }
+
+# filter_mapped <key> <adapter>: refuses, exit 2, a field under <key> the adapter cannot map,
+# saying the fields it maps (adapters/<adapter>/pick-fields); trackers is no field to map. An
+# empty field is unset, so a cleared field the adapter cannot map is no refusal.
+filter_mapped() {
   _mapped="$(cat "$FLOW_PLUGIN/adapters/$2/pick-fields" 2>/dev/null)"
-  # An empty field is unset, as in pick_check, so a cleared field the adapter cannot map is no refusal.
-  for _field in $(yaml_keys "$(config_file)" "pick.$1"); do
-    [ "$_field" = trackers ] || [ -z "$(cfg "pick.$1.$_field")" ] && continue
-    case " $_mapped " in *" $_field "*) ;; *) die "pick.$1.$_field: the $2 adapter maps $(printf '%s' "${_mapped:-no field}" | sed 's/ /, /g; s/, \([^,]*\)$/ and \1/'), not $_field" 2 ;; esac
+  for _mapped_field in $(yaml_keys "$(config_file)" "$1"); do
+    [ "$_mapped_field" = trackers ] || [ -z "$(cfg "$1.$_mapped_field")" ] && continue
+    case " $_mapped " in *" $_mapped_field "*) ;; *) die "$1.$_mapped_field: the $2 adapter maps $(printf '%s' "${_mapped:-no field}" | sed 's/ /, /g; s/, \([^,]*\)$/ and \1/'), not $_mapped_field" 2 ;; esac
   done
 }
 
@@ -360,6 +371,53 @@ pick_filter() {
   FLOW_PICK_STATUS="$(cfg "pick.$_pick.status" | paste -sd, -)"
   FLOW_PICK_LABELS="$(cfg "pick.$_pick.labels" | paste -sd, -)"
   FLOW_PICK_KINDS="$(cfg "pick.$_pick.kinds" | paste -sd, -)"
+}
+
+# A tracker scope (<tracker>.scope in .flow/config.yaml) bounds every list of that tracker, and
+# the flow runs no named item outside it. It takes the neutral fields a pick filter takes, or
+# query alone, each as the tracker's adapter maps them (adapters/README.md); it belongs to its
+# tracker, so it names no trackers. Every message names <tracker>.scope.
+
+# scope_check <adapter>: refuses, exit 2, trackers in the scope, a field the adapter does not map
+# (pick-fields names neutral fields and query only, so this refuses any other field too) and a
+# query beside a neutral field. An empty field is unset.
+scope_check() {
+  [ -z "$(cfg "$1.scope.trackers")" ] \
+    || die "$1.scope.trackers: a scope belongs to its tracker, so it names no trackers" 2
+  filter_mapped "$1.scope" "$1"
+  filter_query_alone "$1.scope" "$1"
+}
+
+# scope_filter <adapter>: the adapter's scope, checked (scope_check) and exported comma-separated
+# for the adapter to map beside a pick: FLOW_SCOPE_ASSIGNEE, FLOW_SCOPE_STATUS, FLOW_SCOPE_LABELS,
+# FLOW_SCOPE_KINDS and FLOW_SCOPE_QUERY, each empty when the scope leaves it unset.
+scope_filter() {
+  scope_check "$1"
+  FLOW_SCOPE_ASSIGNEE="$(cfg "$1.scope.assignee")"; FLOW_SCOPE_QUERY="$(cfg "$1.scope.query")"
+  FLOW_SCOPE_STATUS="$(cfg "$1.scope.status" | paste -sd, -)"
+  FLOW_SCOPE_LABELS="$(cfg "$1.scope.labels" | paste -sd, -)"
+  FLOW_SCOPE_KINDS="$(cfg "$1.scope.kinds" | paste -sd, -)"
+  export FLOW_SCOPE_ASSIGNEE FLOW_SCOPE_STATUS FLOW_SCOPE_LABELS FLOW_SCOPE_KINDS FLOW_SCOPE_QUERY
+}
+
+# scope_holds <item>: 0 when the item is inside its tracker's scope, or the tracker has none (no
+# adapter call) or no adapter owns the item (an adhoc: name); else the adapter's in-scope exit:
+# 1 outside, said on stderr, 2 for a scope scope_check refuses.
+scope_holds() {
+  _scope_adapter="$(adapter_for "$1")" || return 0
+  [ -n "$(yaml_keys "$(config_file)" "$_scope_adapter.scope")" ] || return 0
+  (adapter in-scope "$1"); _scope_code=$?
+  [ "$_scope_code" -ne 1 ] \
+    || echo "flow: $1 is outside $_scope_adapter.scope in .flow/config.yaml; the flow does not run it" >&2
+  return "$_scope_code"
+}
+
+# scope_problems: what scope_check refuses in the scope of each tracker the flow reads, one line a
+# tracker, for init --check; without the "<script>: " the caller's die puts first.
+scope_problems() {
+  for _scope_tracker in $(adapters_configured 2>/dev/null); do
+    _scope_refusal="$(scope_check "$_scope_tracker" 2>&1 >/dev/null)" || printf '%s\n' "${_scope_refusal#*: }"
+  done
 }
 
 # is_adapter_name <name>: 0 when <name> is a folder under adapters/: not empty, no leading dot,

@@ -6,13 +6,16 @@ Markdown body. Comments are appended under "## Comments". Needs python3 >= 3.9 o
 Usage (always from the shell scripts):
   _item.py list <home> [--all] [--kind KIND] [--pick NAME]
   _item.py read <home> <id>
+  _item.py in-scope <home> <id>
   _item.py write-state <home> <id> key=value...
   _item.py comment <home> <id> <text>
   _item.py close <home> <id> [<text>]
   _item.py create <home> <kind> <title> [--size S] [--blocked-by a,b] [--body TEXT] [--labels a,b] [--parent ID] [--area NAME] [--priority NAME] [--type NAME]
 
 A list with --pick keeps the items its filter matches: the item file's assignee (`me` is the git
-user's email or name), status, labels and kind, each compared without case.
+user's email or name), status, labels and kind, each compared without case. local.scope
+(scope_filter in lib/flow.sh) is matched the same way, on every list beside the filter, and
+in-scope exits 0 when the item matches it, 1 when not.
 
 An item's open_children counts the open items whose parent it is. Its rank places its priority in
 READY_PRIORITY_ORDER and needs lists the READY_NEEDS fields an open, unstarted item lacks (the
@@ -203,15 +206,16 @@ def git_identity():
     return names
 
 
-def pick_rules():
-    """The filter of `list --pick` (pick_filter in lib/flow.sh): each field it sets, as a set of
-    lower-case values an item must match one of."""
+def pick_rules(prefix):
+    """The filter of `list --pick` (pick_filter in lib/flow.sh, prefix FLOW_PICK_) or the scope
+    (scope_filter, prefix FLOW_SCOPE_): each field it sets, as a set of lower-case values an item
+    must match one of."""
     rules = {}
     for field in ("status", "labels", "kinds"):
-        values = {v.strip().lower() for v in ready_list("FLOW_PICK_" + field.upper())}
+        values = {v.strip().lower() for v in ready_list(prefix + field.upper())}
         if values:
             rules[field] = values
-    assignee = os.environ.get("FLOW_PICK_ASSIGNEE", "").strip()
+    assignee = os.environ.get(prefix + "ASSIGNEE", "").strip()
     if assignee:
         rules["assignee"] = git_identity() if assignee == "me" else {assignee.lower()}
     return rules
@@ -238,14 +242,15 @@ def cmd_list(home, args):
             i += 2  # list.sh has exported the filter as FLOW_PICK_* (pick_rules)
         else:
             usage("unknown option %s" % args[i])
-    items, children, rules = [], open_children(home), pick_rules()
+    items, children = [], open_children(home)
+    scope, rules = pick_rules("FLOW_SCOPE_"), pick_rules("FLOW_PICK_")
     for path in sorted(glob.glob(os.path.join(home, "items", "*", "*.md")), key=natural_key):
         meta, body = parse(path)
         if kind and meta.get("kind") != kind:
             continue
         if not want_all and meta.get("status", "open") != "open":
             continue
-        if not picked(meta, rules):
+        if not (picked(meta, scope) and picked(meta, rules)):
             continue
         items.append(to_json(path, meta, body, children))
     print(json.dumps(items))
@@ -263,6 +268,17 @@ def cmd_read(home, args):
         raise SystemExit("flow: no such item %s" % args[0])
     meta, body = parse(path)
     print(json.dumps(to_json(path, meta, body, open_children(home))))
+
+
+def cmd_in_scope(home, args):
+    scope = pick_rules("FLOW_SCOPE_")
+    if not scope:
+        raise SystemExit(0)
+    path = item_path(home, args[0])
+    if not os.path.exists(path):
+        raise SystemExit("flow: no such item %s" % args[0])
+    meta, _ = parse(path)
+    raise SystemExit(0 if picked(meta, scope) else 1)
 
 
 def cmd_write_state(home, args):
@@ -351,8 +367,8 @@ def main():
     if len(sys.argv) < 3:
         raise SystemExit(__doc__)
     cmd, home, args = sys.argv[1], sys.argv[2], sys.argv[3:]
-    {"list": cmd_list, "read": cmd_read, "write-state": cmd_write_state, "comment": cmd_comment,
-     "close": cmd_close, "create": cmd_create}[cmd](home, args)
+    {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "write-state": cmd_write_state,
+     "comment": cmd_comment, "close": cmd_close, "create": cmd_create}[cmd](home, args)
 
 
 if __name__ == "__main__":

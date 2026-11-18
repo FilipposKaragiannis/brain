@@ -9,7 +9,7 @@
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
-# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
+# Exit codes: 0 step ready · 2 the config refuses: a bad --pick, or a named item outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
 # an open item (blocked_by), split and waiting on its children, or its base: line names a branch not on the remote or no valid name · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
@@ -103,6 +103,8 @@ if [ -z "$item" ]; then
 fi
 
 data="$(adapter read "$item")" || die "cannot read $item"
+# A picked item came from the scoped ready list, so only a named one is checked.
+[ -z "$named" ] || scope_holds "$item" || exit 2
 [ "$(json_get "$data" status)" = "open" ] || pass_over "$item is closed" 6
 kind="$(json_get "$data" kind)"; size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"
 [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
