@@ -545,7 +545,40 @@ flow_setup_line="$(sed -n 's/^  - \(\[ -e \.standards \] .*\)$/\1/p' .flow/confi
 (cd "$flow_worktree" && sh -c "$flow_setup_line")
 check "FlowSetupLine_LinksANewWorktree: the worktree_setup line, run in a new worktree, links its .standards to the main one" \
   sh -c '[ -n "$1" ] && [ -L "$2/.standards" ] && [ -f "$2/.standards/config.json" ]' sh "$flow_setup_line" "$flow_worktree"
+check "MachineScope_RepeatedInits_UserFileKeepsOneBlock: after every init above, the user CLAUDE.md still holds exactly one standards block" \
+  sh -c "[ \"\$(grep -c 'standards:begin' '$CLAUDE_CONFIG_DIR/CLAUDE.md')\" = $blocks_per_user_file ]"
+grep -vF .standards/hooks/git/pre-push .git/hooks/pre-push > "$work/pre-push.stripped"; cat "$work/pre-push.stripped" > .git/hooks/pre-push
+"$init" --check > "$work/machine.stripped-call.out" 2>&1
+check "MachineScope_StrippedHookCall_CheckReportsDrift: init --check names the clone's pre-push once its standards call is gone" \
+  grep -q '^init: drift: .*pre-push' "$work/machine.stripped-call.out"
+"$init" >/dev/null 2>&1
+exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
+sed '/^# standards:begin/,/^# standards:end/d' "$exclude_file" > "$work/exclude.stripped"; cat "$work/exclude.stripped" > "$exclude_file"
+"$init" --check > "$work/machine.stripped-exclude.out" 2>&1
+check "MachineScope_RemovedExcludeBlock_CheckReportsDrift: init --check names the exclude file once its standards block is gone" \
+  grep -q '^init: drift: .*exclude' "$work/machine.stripped-exclude.out"
+"$init" >/dev/null 2>&1
+rm "$linked_worktree/.standards"
+"$init" --check > "$work/machine.missing-link.out" 2>&1
+check "LinkedWorktree_MissingLink_CheckReportsDrift: init --check names the linked worktree that lost its .standards link" \
+  grep -q '^init: drift: .*/machine-wt/\.standards is missing' "$work/machine.missing-link.out"
+"$init" >/dev/null 2>&1
 git worktree remove --force "$linked_worktree"; git worktree remove --force "$flow_worktree"
+
+echo "init: machine scope in a clone whose team set core.hooksPath"
+mkdir -p "$work/team-hooks" && cd "$work/team-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .githooks .standards
+printf '#!/bin/sh\necho team\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+git add .githooks && git commit -q -m 'chore: team hooks' && git config core.hooksPath .githooks
+printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope machine > "$work/team-hooks.init.out" 2>&1
+check "TeamHooksPathSet_MachineScopeKeepsTheTeamPath: machine scope leaves the team's core.hooksPath as it was" \
+  sh -c "[ \"\$(git config core.hooksPath)\" = .githooks ]"
+check "TeamHooksPathSet_TrackedHooksUntouched: machine scope adds no call to the team's tracked hooks" git diff --quiet HEAD -- .githooks
+check "TeamHooksPathSet_InitPrintsTheCallToAdd: init shows the hook call the owner adds by hand" grep -qF .standards/hooks/git/pre-commit "$work/team-hooks.init.out"
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+"$init" --check > "$work/team-hooks.check.out" 2>&1
+check "TeamHooksPathSet_CheckIsClean: init --check counts the hand-wired team hooks as no drift" grep -q 'up to date' "$work/team-hooks.check.out"
 unset CLAUDE_CONFIG_DIR CODEX_HOME
 
 [ "$fails" -eq 0 ] && echo "hooks: ok" || { echo "hooks: $fails failed"; exit 1; }
