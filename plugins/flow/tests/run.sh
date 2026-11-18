@@ -1301,10 +1301,9 @@ bump 2026-10-25T04:00:00Z
 "$P/jobs/comments.sh" claude --as comments-fast >/dev/null 2>&1
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
 check "SecondScheduleAddressedThePr_PlainRunFindsNothingNew: every schedule of the job shares one seen record per PR" test ! -s "$HOST_LOG"
-bump 2026-10-25T04:10:00Z
+bump 2026-10-25T04:10:00Z; rm -f .flow/log/comments.seen/gh_21
 "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
-: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
-check "PrNamedByNumberOfAnItem_KeepsTheItemsSeenRecord: the PR's number and its item are one key, so no second pass follows" test ! -s "$HOST_LOG"
+check "PrNamedByNumberOfAnItem_WritesTheItemsSeenRecord: the PR's number and its item are one key" test -s .flow/log/comments.seen/gh_21
 # Another run's lists at the fixed names of before stay as they are: each run keeps its own.
 printf 'another run lists these\n' > .flow/log/comments.targets; cp .flow/log/comments.targets .flow/log/comments.gated
 "$P/adapters/github/write-state.sh" 'gh#21' gate=ambiguity >/dev/null
