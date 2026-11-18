@@ -1749,7 +1749,8 @@ cw1="$("$P/scripts/steward.sh" claim "$c1" 2>"$work/create.err")"
 spaced1="$(cd "../app 'q-wt-1" 2>/dev/null && pwd -P)"
 check_all "worktree_create: claim grows the pool through the command, which gets a path with a space and a quote as one argument" '[ -n "$spaced1" ] && [ "$(logged_path)" = "$spaced1" ]'
 check "worktree_create: the command gets the base branch as {base}" [ "$(sed -n 2p "$create_log")" = main ]
-check_all "worktree_create: claim prints the path alone, the command's own output kept on stderr" '[ "$cw1" = "$spaced1" ] && grep -q "fake create made" "$work/create.err"'
+check "worktree_create: claim prints the path alone though the command prints to stdout" [ "$cw1" = "$spaced1" ]
+check "worktree_create: the command's own output reaches the claim's stderr" grep -q "fake create made" "$work/create.err"
 check "worktree_create: the created worktree's pool entry is appended" [ "$(yaml_get .flow/config.yaml pool)" = "../app 'q-wt-1" ]
 check "worktree_create: the created worktree is put on its idle branch at the base tip" [ "$(git rev-parse --verify -q refs/heads/main-wt-1)" = "$(git rev-parse main)" ]
 check_all "worktree_create: worktree_copy and worktree_setup run in the created worktree" '[ "$(cat "$cw1/local")" = secret ] && [ "$(cat "$cw1/setup.txt")" = ran ]'
@@ -1796,6 +1797,10 @@ createcfg '' '../{repo}-kept-wt-{n}' "$fake_create"
 "$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
 check_all "worktree_create: the created worktree starts detached at the base tip when its idle branch has commits of its own" '[ "$code" -eq 0 ] && ! git -C ../app-kept-wt-1 symbolic-ref -q HEAD && [ "$(git -C ../app-kept-wt-1 rev-parse HEAD)" = "$(git rev-parse main)" ]'
 check "worktree_create: an idle branch with commits of its own keeps them" [ "$(git rev-parse main-wt-1)" = "$kept_tip" ]
+createcfg '' '../{repo}&a|b\c$HOME-wt-{n}' "$fake_create"
+: > "$create_log"
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1
+check "worktree_create: a path holding & | \\ and \$ reaches the command as itself" [ "$(logged_path)" = "$(cd .. && pwd -P)/app&a|b\\c\$HOME-wt-1" ]
 
 echo "temporary worktrees"
 mkdir -p "$work/tmpwt" && cd "$work/tmpwt" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -1852,7 +1857,8 @@ tmpcfg "$fake_tmp_create"
 tp3="$("$P/scripts/steward.sh" tmp add "$t1" phase-3 2>"$work/tmpwt.err")"; code=$?
 check_all "tmp add with worktree_create: the command gets the temporary worktree's path as {path}" '[ "$code" -eq 0 ] && [ "$(sed -n 1p "$tmp_log")" = "$tp3" ]'
 check "tmp add with worktree_create: the command gets the task branch as {base}" [ "$(sed -n 2p "$tmp_log")" = "flow/$tmp_slug" ]
-check_all "tmp add with worktree_create: prints the path alone, the command's own output kept on stderr" '[ "$(cd "$tp3" && pwd -P)" = "$tmp_folder/$tmp_slug-phase-3" ] && grep -q "fake create made" "$work/tmpwt.err"'
+check "tmp add with worktree_create: prints the path alone though the command prints to stdout" [ "$(cd "$tp3" && pwd -P)" = "$tmp_folder/$tmp_slug-phase-3" ]
+check "tmp add with worktree_create: the command's own output reaches stderr" grep -q "fake create made" "$work/tmpwt.err"
 check "tmp add with worktree_create: the made worktree is put on the phase's branch" [ "$(git -C "$tp3" symbolic-ref --short HEAD)" = "flow/$tmp_slug-phase-3" ]
 check "tmp add with worktree_create: the phase's branch starts at the task branch's tip" [ "$(git -C "$tp3" rev-parse HEAD)" = "$(git rev-parse "flow/$tmp_slug")" ]
 tmpcfg "worktree_create: sh $work/tmpwt/failing-create.sh {path} {base}\n"
