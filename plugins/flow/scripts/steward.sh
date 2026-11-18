@@ -437,8 +437,8 @@ cmd_tmp() {
       item="$2"; phase="$3"; slug="$(item_slug "$item")"
       wt="$(cmd_find "$item")"; [ -n "$wt" ] || die "$item has no claimed worktree" 2
       path="$home/tmp/$slug-$phase"; branch="flow/$slug-$phase"
-      git -C "$main" check-ref-format --branch "$branch" >/dev/null 2>&1 || die "tmp add: $branch is not a valid branch name; name the phase as a branch" 2
-      [ ! -e "$path" ] && [ ! -L "$path" ] || die "tmp add: $path already exists" 2
+      refuse_unnamable_phase "$phase" "$branch"
+      refuse_taken_phase "$path" "$branch"
       mkdir -p "$home/tmp"
       if [ -n "$(cfg worktree_create)" ]; then tmp_worktree_create "$path" "flow/$slug" "$branch"
       else git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"; fi
@@ -565,24 +565,64 @@ tmp_worktree_create() {
 
 # run_worktree_remove <path>: run the worktree_remove command from the main worktree, with the
 # path as its "$1" ("$2" empty) and all its output on stderr, then remove git's record of that
-# worktree alone. One that fails or leaves the folder on disk ends the run, exit 1.
+# worktree alone when the command left it. One that fails or leaves the folder on disk ends the
+# run, exit 1.
 run_worktree_remove() {
   remove_command="$(worktree_command worktree_remove)" || exit
+  removed_record="$(worktree_record "$1")"
   (cd "$main" && sh -c "$(worktree_command_filled "$remove_command")" flow-worktree "$1" "") >&2 ||
     die "cannot remove $1: worktree_remove failed (exit $?)"
   [ ! -e "$1" ] || die "cannot remove $1: worktree_remove left it on disk"
-  git -C "$main" worktree remove "$1" || die "cannot remove git's record of $1"
+  forget_removed_worktree "$1" "$removed_record"
 }
+# forget_removed_worktree <path> <record>: remove git's record of the worktree whose folder at the
+# path is gone, while its record folder is still there; ends the run, exit 1, when git cannot.
+forget_removed_worktree() {
+  [ ! -d "$2" ] || git -C "$main" worktree remove "$1" || die "cannot remove git's record of $1"
+}
+# worktree_record <path>: the folder git keeps its record of the worktree at the path in.
+worktree_record() { git -C "$1" rev-parse --absolute-git-dir; }
 
-# removable_worktree <path>: the path as an absolute physical folder when it is a worktree of this
-# repository, listed by git, under the temporary worktrees' folder; else refused, exit 2.
+# removable_worktree <path>: the path as an absolute physical folder when it is a temporary
+# worktree tmp remove may remove; else refused, exit 2, before anything runs.
 removable_worktree() {
-  case "$1" in '') die "tmp remove: no path given" 2 ;; /*) removable_path="$1" ;; *) removable_path="./$1" ;; esac
-  removable_path="$(cd "$removable_path" 2>/dev/null && pwd -P)" || die "tmp remove: $1 is not a folder" 2
-  case "$removable_path" in "$(temporary_folder)"/*) ;; *) die "tmp remove: $1 is not under $home/tmp; only a temporary worktree is removed" 2 ;; esac
-  git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | physical_in "$removable_path" ||
-    die "tmp remove: $1 is not a worktree of this repository" 2
+  [ -n "$1" ] || die "tmp remove: no path given" 2
+  removable_path="$(physical_folder "$1")" || die "tmp remove: $1 is not a folder" 2
+  removable_flaw="$(temporary_place_flaw "$removable_path")"
+  [ -n "$removable_flaw" ] || removable_flaw="$(temporary_record_flaw "$removable_path")"
+  [ -z "$removable_flaw" ] || die "tmp remove: $1 $removable_flaw" 2
   printf '%s' "$removable_path"
+}
+# physical_folder <path>: the folder at the path, absolute and physical; relative to where flow runs.
+physical_folder() {
+  case "$1" in /*) ;; *) set -- "./$1" ;; esac
+  (cd "$1" 2>/dev/null && pwd -P)
+}
+# temporary_place_flaw <physical path>: why the folder is no place for a temporary worktree (outside
+# the temporary folder, the main worktree or a pool worktree); nothing when it is one.
+temporary_place_flaw() {
+  case "$1" in "$(temporary_folder)"/*) ;; *) printf 'is not under %s; only a temporary worktree is removed' "$home/tmp"; return ;; esac
+  [ "$1" != "$(cd "$main" && pwd -P)" ] || { printf 'is the main worktree; only a temporary worktree is removed'; return; }
+  ! pool_paths | physical_in "$1" || printf 'is a pool worktree; only a temporary worktree is removed'
+}
+# temporary_record_flaw <physical path>: why git's record of the folder does not let it go (git
+# lists no worktree there, its .git is missing or broken, it is locked); nothing when it does.
+temporary_record_flaw() {
+  git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | physical_in "$1" || { printf 'is not a worktree of this repository'; return; }
+  worktree_at "$1" || { printf 'has a missing or broken .git, so its changes cannot be checked; not removing'; return; }
+  [ ! -f "$(worktree_record "$1")/locked" ] || printf 'is locked; git worktree unlock it first'
+}
+# refuse_unnamable_phase <phase> <branch>: ends the run, exit 2, when the phase holds a character
+# other than a letter, a digit, ., _ or -, or git refuses its branch's name.
+refuse_unnamable_phase() {
+  case "$1" in '' | *[!A-Za-z0-9._-]*) die "tmp add: phase '$1' may hold only letters, digits, ., _ and -" 2 ;; esac
+  git -C "$main" check-ref-format --branch "$2" >/dev/null 2>&1 || die "tmp add: $2 is not a valid branch name; name the phase as a branch" 2
+}
+# refuse_taken_phase <path> <branch>: ends the run, exit 2, when the phase's branch or folder
+# already exists.
+refuse_taken_phase() {
+  ! git -C "$main" show-ref --verify -q "refs/heads/$2" || die "tmp add: branch $2 already exists" 2
+  [ ! -e "$1" ] && [ ! -L "$1" ] || die "tmp add: $1 already exists" 2
 }
 # temporary_folder: the physical folder tmp add makes its worktrees in; $home/tmp as written while
 # it does not exist, which no physical path lies under.
