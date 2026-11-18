@@ -520,7 +520,7 @@ def stop_group(child, grace, now):
     deadline = now() + grace
     while now() < deadline:
         child.poll()
-        if not signal_group(child.pid, 0):
+        if not _process.group_running(child.pid):
             child.wait()
             return
         time.sleep(BOUNDED_POLL_SECONDS)

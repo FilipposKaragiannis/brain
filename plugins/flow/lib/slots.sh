@@ -36,11 +36,11 @@ slot_take_from() {
 slot_take() {
   until slot_try "$1" "$2" "$3"; do sleep "$SLOT_POLL_SECONDS"; done
 }
-# slot_group_alive <slot>: true while a process of the host group <slot>.group names is left.
+# slot_group_alive <slot>: true while a process of the host group <slot>.group names runs.
 slot_group_alive() {
   read -r live_group 2>/dev/null < "$1.group" || return 1
   case "$live_group" in ''|*[!0-9]*|0|1) return 1 ;; esac
-  kill -0 -"$live_group" 2>/dev/null
+  group_running "$live_group"
 }
 # slot_give <slot>: frees the slot.
 slot_give() { rm -f "$1.group" "$1"; }

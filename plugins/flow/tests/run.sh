@@ -1467,6 +1467,17 @@ wait_for grep -q '^start gh#21' "$work/runs.log"
 check "StoppedRunWhoseHostIgnoresTerm_KeepsItsSlotUntilTheHostGroupIsGone: a new run's pass never starts beside the stopped host, because live passes stay within jobs.comments_workers" \
   grep -q "^start .*comments $cap\..* beside a stubborn host gone\$" "$work/runs.log"
 "$P/adapters/github/write-state.sh" "$cap" pr= >/dev/null; "$P/adapters/github/close.sh" "$cap" >/dev/null 2>&1
+HELPER_HOLD_SECONDS=30
+zombie_pool="$work/zombie-pool"; mkdir -p "$zombie_pool"
+python3 -I -c 'import subprocess, sys, time
+ended = subprocess.Popen(["true"], start_new_session=True)
+open(sys.argv[1], "w").write("%d\n" % ended.pid)
+time.sleep(int(sys.argv[2]))' "$zombie_pool/slot.group" "$HELPER_HOLD_SECONDS" & zombie_keeper=$!
+zombie_group_ended() { read -r zombie_group < "$zombie_pool/slot.group" && case "$(ps -o stat= -p "$zombie_group")" in Z*) ;; *) false ;; esac; }
+zombie_slot_is_free() { zombie_group_ended && ( . "$P/lib/process.sh"; . "$P/lib/slots.sh"; ! slot_group_alive "$zombie_pool/slot" ); }
+wait_for zombie_group_ended
+check "SlotGroupOfZombiesOnly_IsNotAlive: a group with no running process no longer holds its slot" zombie_slot_is_free
+kill "$zombie_keeper" 2>/dev/null; wait "$zombie_keeper" 2>/dev/null
 PASS_LIMIT_BOUND_SECONDS=15
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
