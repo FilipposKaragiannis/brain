@@ -21,9 +21,19 @@ slot_try() {
 # that saw the same dead holder never both take it.
 slot_take_over() {
   stale_holder="$(readlink "$1" 2>/dev/null)"
-  [ -n "$stale_holder" ] && ! job_alive "$stale_holder" && mkdir "$1.takeover" 2>/dev/null || return 1
+  [ -n "$stale_holder" ] && ! job_alive "$stale_holder" && slot_guard_take "$1.takeover" "$2" || return 1
   [ "$(readlink "$1" 2>/dev/null)" != "$stale_holder" ] || rm -f "$1"
-  rmdir "$1.takeover"
+  rm -f "$1.takeover"
+  ln -sn "$2" "$1" 2>/dev/null
+}
+# slot_guard_take <guard> <pid>: takes the guard for <pid>, a symbolic link to it like a slot, so a
+# taker stopped before it lets the guard go leaves one that the next taker clears instead of
+# waiting on it forever; returns 1 while a live run holds it.
+slot_guard_take() {
+  ln -sn "$2" "$1" 2>/dev/null && return 0
+  guard_holder="$(readlink "$1" 2>/dev/null)"
+  [ -n "$guard_holder" ] && ! job_alive "$guard_holder" || return 1
+  [ "$(readlink "$1" 2>/dev/null)" != "$guard_holder" ] || rm -f "$1"
   ln -sn "$2" "$1" 2>/dev/null
 }
 # slot_take <pool> <count> <pid>: slot_try until a slot is free, one poll a second; prints its path.
