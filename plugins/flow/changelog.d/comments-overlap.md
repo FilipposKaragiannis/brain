@@ -6,6 +6,9 @@ bump: minor
 - `jobs.comments_workers` now caps the passes live at once across all runs, through a slot pool in
   `log/comments.slots/`. A pass holds a slot for its host session only and waits for a free one;
   it never skips a PR for lack of a slot. A run given `--workers N` may use slots up to N.
+- `jobs.comments_workers` and `--workers` take a whole number from 1 to 16, as the console does,
+  leading zeros allowed (`02` is 2). Any other count, `0`, `00` or one past 16, stops the run at
+  its start, exit 2, instead of leaving every pass waiting for a slot.
 - No comments pass runs forever: one still running at the new `jobs.comments.pass_limit` (default
   1h) is stopped with what it started and counts as failed, so the next run tries it again and it
   counts toward `jobs.comments.max_failures`. A bad value stops the run at its start, exit 2.

@@ -33,13 +33,13 @@
 # comments.seen/. Each pass holds its PR's lock with no wait: the item's
 # (<flow home>/item:<item slug>.lock), or pr:<number>.lock for a PR the flow did not open, so no
 # two passes work one PR at once: a held one skips the PR, counted in use.
-# --workers N, or jobs.comments_workers in .flow/config.yaml, runs up to N passes at once, each on
-# its own PR; unset or 1 runs them one after another. jobs.comments_workers also caps the passes
-# live at once across all runs, through the slot pool (lib/slots.sh); a run given --workers N may
-# use slots up to N. A pass holds a slot for its host session only and waits for a free one: it
-# never skips a PR for lack of a slot. A pass still running at jobs.comments.pass_limit (1h) is
-# stopped with its children and counts as failed, so the next run tries it again. The processes
-# are listed once per run.
+# --workers N, or jobs.comments_workers in .flow/config.yaml, runs up to N passes at once (1 to
+# 16), each on its own PR; unset or 1 runs them one after another. jobs.comments_workers also caps
+# the passes live at once across all runs, through the slot pool (lib/slots.sh); a run given
+# --workers N may use slots up to N. A pass holds a slot for its host session only and waits for a
+# free one: it never skips a PR for lack of a slot. A pass still running at
+# jobs.comments.pass_limit (1h) is stopped with its children and counts as failed, so the next run
+# tries it again. The processes are listed once per run.
 # The result line names every open PR and what it came to: addressed, nothing new, waits on you
 # (threads still unanswered after two passes, or passes failing in a row), in use (the session in
 # its worktree and how long it has been idle) or at a gate. A red check never holds a PR back: the
@@ -174,8 +174,18 @@ pr_key() {
 }
 max_fails="$(cfg_or jobs.comments.max_failures 3)"
 case "$max_fails" in ''|*[!0-9]*) die "jobs.comments.max_failures takes a whole number" 2 ;; esac
+COMMENTS_WORKERS_MAX=16
+# worker_count <text>: <text> as a count of passes at once, its leading zeros stripped, when it is
+# a whole number from 1 to COMMENTS_WORKERS_MAX, as the console takes it; returns 1 otherwise.
+worker_count() {
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  count_digits="$1"
+  while [ "${count_digits#0}" != "$count_digits" ]; do count_digits="${count_digits#0}"; done
+  [ -n "$count_digits" ] && [ "${#count_digits}" -le "${#COMMENTS_WORKERS_MAX}" ] && [ "$count_digits" -le "$COMMENTS_WORKERS_MAX" ] || return 1
+  printf '%s' "$count_digits"
+}
 [ -n "$workers" ] || workers="$(cfg_or jobs.comments_workers 1)"
-case "$workers" in ''|*[!0-9]*|0*) die "--workers and jobs.comments_workers take a number from 1" 2 ;; esac
+workers="$(worker_count "$workers")" || die "--workers and jobs.comments_workers take a whole number from 1 to $COMMENTS_WORKERS_MAX" 2
 tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 || true; }
 # item_of <target>: the item a target names: the target itself, or for a PR number the item its
 # branch names, flow/<item slug> (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1);
