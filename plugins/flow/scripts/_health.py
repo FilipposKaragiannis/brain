@@ -549,6 +549,8 @@ def bounded(limit, grace, command, now):
     while child.poll() is None and not received and now() < deadline:
         time.sleep(BOUNDED_POLL_SECONDS)
     if child.returncode is not None and not received:
+        if _process.group_running(child.pid):
+            stop_group(child, grace, now)
         return exit_code(child.returncode)
     stop_group(child, grace, now)
     return SIGNAL_EXIT_BASE + received[0] if received else BOUNDED_LIMIT_EXIT

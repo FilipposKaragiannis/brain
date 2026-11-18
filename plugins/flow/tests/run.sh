@@ -1468,6 +1468,15 @@ check "StoppedRunWhoseHostIgnoresTerm_KeepsItsSlotUntilTheHostGroupIsGone: a new
   grep -q "^start .*comments $cap\..* beside a stubborn host gone\$" "$work/runs.log"
 "$P/adapters/github/write-state.sh" "$cap" pr= >/dev/null; "$P/adapters/github/close.sh" "$cap" >/dev/null 2>&1
 HELPER_HOLD_SECONDS=30
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+sleep $HELPER_HOLD_SECONDS </dev/null >/dev/null 2>&1 &
+echo \$! > "$work/helper.pid"
+EOF
+chmod +x "$work/bin/claude"; rm -f "$work/helper.pid"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
+check "HostThatExitsLeavingAHelper_StopsTheHelperBeforeItsSlotIsFreed: a helper left in the host's group never outlives its pass" \
+  sh -c ". '$P/lib/process.sh'; test -s '$work/helper.pid' && ! process_running \$(cat '$work/helper.pid')"
 zombie_pool="$work/zombie-pool"; mkdir -p "$zombie_pool"
 python3 -I -c 'import subprocess, sys, time
 ended = subprocess.Popen(["true"], start_new_session=True)
