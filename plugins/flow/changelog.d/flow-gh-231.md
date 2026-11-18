@@ -1,0 +1,15 @@
+bump: minor
+
+- `worktree_create` in `.flow/config.yaml` names the command that makes a flow worktree in place
+  of `git worktree add`: a grown, added or recreated pool worktree and a `tmp add` phase worktree.
+  `{path}` is the new folder and `{base}` the ref it starts from, both filled in shell-quoted; it
+  runs from the main worktree with its output on stderr, and flow then puts the worktree on its
+  branch. Unset, nothing changes.
+- `worktree_remove` names the command that removes a `tmp remove` worktree in place of
+  `git worktree remove`; flow then prunes git's record and deletes the branch. Pool worktrees are
+  still never removed.
+- A command with no `{path}` is refused before it runs, exit 2, and `init --check` names it as a
+  gap. `init` writes both keys commented out.
+- A pool that cannot grow because the worktree cannot be made now says so, with the command's or
+  git's output, and exits 1. It used to say the pool was at `pool_max` and exit 3, which sent
+  `next` on to another item instead of naming the failure.

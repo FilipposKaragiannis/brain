@@ -64,8 +64,10 @@ that did not fail for an infrastructure reason and counts those BLOCKED runs apa
 
 ## Flow plugin
 `flow:init` writes `.flow/config.yaml` (adapters, base branch, worktree pool and `pool_max`,
-`worktree_copy` and `worktree_setup`, gates, notify), the notify and unattended-run scripts, the
-Codex rules and agents, and reports the config gaps. It stamps what it wrote
+`worktree_copy` and `worktree_setup`, gates, notify, and the commented `worktree_create` and
+`worktree_remove`: commands that make a new pool or phase worktree and remove a phase one in place
+of git, with `{path}` its folder and `{base}` its start ref), the notify and unattended-run scripts,
+the Codex rules and agents, and reports the config gaps. It stamps what it wrote
 (`.flow/stamp`), refuses to replace a guarded copy edited by hand, and a `SessionStart` hook asks for
 `init` when the stamp is behind the plugin and lifts the pool worktrees' pinned plugin versions to the
 newest installed (`scripts/_plugins.py`; Claude pins per directory). `flow:next` runs the next

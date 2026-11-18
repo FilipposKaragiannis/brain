@@ -17,8 +17,8 @@
 #   steward.sh reports <item>                    print (and create) the item's reports folder
 #   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
 #   steward.sh tmp remove <path>                 remove it and its branch
-#   steward.sh add [path]                        add a worktree to the pool (git worktree add,
-#                                                pool entry in config.yaml, copies and setup); a
+#   steward.sh add [path]                        add a worktree to the pool (worktree_create, else
+#                                                git worktree add; pool entry, copies and setup); a
 #                                                pool path missing on disk is recreated in place
 #   steward.sh setup <path>                      run worktree_copy and worktree_setup there
 #   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
@@ -64,6 +64,21 @@
 # refused with its reason, exit 2. worktree_copy lists ignored paths copied from the main
 # worktree when the new one lacks them (.claude/settings.local.json); worktree_setup lists
 # commands run in the new worktree. Both run on add and on setup.
+# worktree_create, when set, is the sh command that makes each new worktree in place of git
+# worktree add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes
+# a tmp remove worktree in place of git worktree remove; flow never removes a pool worktree. In
+# the command {path} is the worktree's absolute folder and {base} the ref it starts from (the
+# pool's base, flow/<slug> for tmp add, empty for a remove), each filled in single-quoted, so the
+# command writes them bare. It runs from the main worktree, all its output on stderr. After a
+# create a git worktree must sit at {path}; then the pool's goes onto its idle branch at the base
+# tip (one that cannot move stays as made, and health moves it once free) and tmp add's onto a
+# new flow/<slug>-<phase>. After a remove the folder must be gone; git's record is pruned and the
+# branch deleted. A command with no {path} is refused before it runs, exit 2. One that fails, or
+# leaves no worktree (a remove: leaves the folder), is named after its output: add, tmp and a
+# growing pool exit 1 with no pool entry added (a pool that cannot grow says why, not that it is
+# at pool_max), and a claim skips a missing pool path it cannot recreate. A folder a failed
+# create leaves stays for the owner. A value must not hold " #" (the config reads a comment
+# there) or start with [ (it reads a list).
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.

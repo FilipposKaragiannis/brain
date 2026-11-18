@@ -15,7 +15,7 @@ path `codex plugin list` prints for `flow`). Call it `$P`. The script is `"$P/sc
 | release after merge | `steward.sh release <item or path>` (a detached verify run of the item ends first); add `--force` only when the owner says the unmerged branch may go. A reserved worktree is released by its path |
 | add a worktree | `steward.sh add [path]`: adds it, appends it under `pool:` in `.flow/config.yaml`, copies the `worktree_copy` files and runs `worktree_setup`. A pool path missing on disk is recreated in place, its entry kept |
 | set up a worktree again | `steward.sh setup <path or item>`: the copies and the setup commands, on demand |
-| temporary worktree for a phase | `steward.sh tmp add <item> <phase>` from the task branch; `steward.sh tmp remove <path>` after the phase is rebased onto the task branch |
+| temporary worktree for a phase | `steward.sh tmp add <item> <phase>` from the task branch; `steward.sh tmp remove <path>` after the phase is rebased onto the task branch. With `worktree_create` set, that command makes the folder from `flow/<slug>` and `tmp add` puts it on a new `flow/<slug>-<phase>`; with `worktree_remove` set, that command removes the folder (it must be gone after), then git's record is pruned and the branch deleted. A failed command ends `tmp` with exit 1 after its output |
 | where an item's reports are | `steward.sh reports <item>` prints the folder (and creates it): the claimed worktree's, else the one that already exists, else the main worktree's |
 | check the pool: a run that died, a claim that holds nothing, branches out of step, gates waiting | `steward.sh health` clears a run record with no live process, releases an empty claim and a sub-agent's `adhoc:` claim whose session has ended, resumes cut-off work (up to `jobs.health.max_resumes`, then an escalation gate that says what the dead runs left: a result the last session wrote that the step did not advance on, the run's last log lines or that it logged none, and the log to read), fast-forwards or pushes clean task branches, discards a free worktree's changes that the base branch's history already holds (named one run first), merges the base into one far behind it, hands a conflicting merge or a diverged branch to the `sync` step, reminds on old gates, clears a stale or wrong planned hold (`held_by`: the holder unreadable, idle with no worktree and no run, or its `changes` apart; a hold on itself; the newest in a cycle; a closed holder's hold is left for `next` to release with its merge note) with an `unheld` line in `events.log`, and names a valid hold waiting over a day once; `--dry-run` lists first. The scheduled `health` job runs it |
 | see the sessions that hold worktrees, stale ones first | `steward.sh sessions [--stale]` lists each claude and codex session in the main worktree and the pool: pid, host, kind, worktree, the item its claim holds, busy or idle and for how long. One idle past `jobs.health.stale_session` (24h; with no status, alive that long) is marked STALE with its `kill <pid>`. A session in a claimed worktree holds that item's PR back from the comments job. The `health` job names each stale one once |
@@ -58,6 +58,17 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   it instead (and `add` without a path): `{repo}` is the main worktree's folder, `{n}` the first
   number no pool entry and no folder uses. A `worktree_name` with no `{n}`, or with `{n}` only in a parent folder (every new worktree would share one idle branch), is refused. At `pool_max` the claim fails with exit 3: tell the
   owner, who raises `pool_max` or releases one. Never edit `pool:` by hand; `add` does it.
+- **A configured command makes the folder.** `worktree_create` in the config (a `sh` command;
+  `{path}` the new worktree's absolute folder, `{base}` the ref it starts from, both filled in
+  single-quoted) replaces `git worktree add` for a grown, added or recreated pool worktree and
+  for `tmp add`; `worktree_remove` (`{path}`) replaces `git worktree remove` for `tmp remove`
+  only. Both run from the main worktree with their output on stderr; a pool worktree then goes
+  onto its idle branch at the base tip, or stays as made for `health` to move it later. A command
+  with no `{path}` is refused, exit 2. A create that fails, or leaves no git worktree at `{path}`,
+  adds no pool entry and says why after the command's output: the claim exits 1, not the
+  `pool_max` exit 3, so tell the owner the command failed and name the folder it may have left
+  (flow does not remove it). A slow create runs under the claim lock: a second claim that waits
+  past `FLOW_LOCK_WAIT` (60 s) exits 75, the claim lock busy; try it again once the create ends.
 - A release of a closed item also deletes its reports in every worktree.
 - A free worktree sits on its own idle branch at the base tip: `main-wt-2` for `../app-wt-2`
   (git checks a branch out in one worktree only, so each has its own). A release moves it back
