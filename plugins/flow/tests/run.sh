@@ -1251,6 +1251,7 @@ printf 'start %s\n' "\$*" >> "$work/overlap.log"
 i=0; while [ "\$(grep -c '^start' "$work/overlap.log")" -lt 2 ] && [ "\$i" -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done
 printf 'end %s\n' "\$*" >> "$work/overlap.log"
 EOF
+cp "$work/bin/claude" "$work/overlap-host"
 jobscfg '  comments_workers: 2\n'; bump 2026-10-25T03:00:00Z; : > "$work/overlap.log"
 "$P/jobs/comments.sh" claude >/dev/null 2>&1; code=$?
 check_all "comments job: jobs.comments_workers 2 starts both PRs' passes before either ends, because each worker takes its own PR" '[ "$code" -eq 0 ] && [ "$(head -n 2 "$work/overlap.log" | grep -c "^start")" = 2 ] && grep -q "^start .*comments gh#21\." "$work/overlap.log" && grep -q "^start .*comments $par\." "$work/overlap.log"'
@@ -1269,8 +1270,32 @@ check "comments job: a lock the run did not take is left to its holder" [ -d ".f
 rm -rf ".flow/item:$(item_slug "$par").lock"
 check "comments job: --workers 0 is refused, exit 2" sh -c "'$P/jobs/comments.sh' claude --workers 0 2>/dev/null; [ \$? = 2 ]"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude --workers 00 >/dev/null 2>&1; code=$?
-check "WorkersWithALeadingZero_RefusesTheRun: 00 workers would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
-check "WorkersWithALeadingZero_StartsNoPass: no host session runs on a zero worker count" test ! -s "$HOST_LOG"
+check "WorkersOfZerosOnly_RefusesTheRun: 00 workers would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
+check "WorkersOfZerosOnly_StartsNoPass: no host session runs on a zero worker count" test ! -s "$HOST_LOG"
+# A count past the cap the console sets stops the run at its start; bounded, so a run it would hang
+# fails the check instead of the suite.
+WORKERS_CAP="$(sed -n 's/^COMMENTS_WORKERS_MAX=//p' "$P/jobs/comments.sh")"
+WORKERS_PAST_ANY_SHELL_INTEGER=99999999999999999999
+REFUSED_RUN_BOUND_SECONDS=15; REFUSED_RUN_STOP_GRACE_SECONDS=1
+bounded_comments_run() { python3 -I "$P/scripts/_health.py" bounded "$REFUSED_RUN_BOUND_SECONDS" "$REFUSED_RUN_STOP_GRACE_SECONDS" "$P/jobs/comments.sh" claude "$@" >/dev/null 2>&1; }
+bump 2026-10-25T03:05:00Z; : > "$HOST_LOG"; bounded_comments_run --workers "$((WORKERS_CAP + 1))"; code=$?
+check "WorkersAboveTheCap_RefusesTheRun: --workers takes no more passes at once than jobs.comments_workers may, exit 2" [ "$code" -eq 2 ]
+check "WorkersAboveTheCap_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
+bump 2026-10-25T03:06:00Z; : > "$HOST_LOG"; bounded_comments_run --workers "$WORKERS_PAST_ANY_SHELL_INTEGER"; code=$?
+check "WorkersPastAnyShellInteger_RefusesTheRun: a count too big to compare would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
+check "WorkersPastAnyShellInteger_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
+jobscfg "  comments_workers: $((WORKERS_CAP + 1))\n"; bump 2026-10-25T03:07:00Z; : > "$HOST_LOG"; bounded_comments_run; code=$?
+check "ConfiguredWorkersAboveTheCap_RefusesTheRun: jobs.comments_workers past the console's range stops the run at its start, exit 2" [ "$code" -eq 2 ]
+check "ConfiguredWorkersAboveTheCap_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
+jobscfg "  comments_workers: $WORKERS_PAST_ANY_SHELL_INTEGER\n"; bump 2026-10-25T03:08:00Z; : > "$HOST_LOG"; bounded_comments_run; code=$?
+check "ConfiguredWorkersPastAnyShellInteger_RefusesTheRun: a count too big to compare would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
+check "ConfiguredWorkersPastAnyShellInteger_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
+# A leading zero the console takes is stripped: 02 is two passes at once, as before the cap.
+cp "$work/overlap-host" "$work/bin/claude"
+jobscfg '  comments_workers: 02\n'; bump 2026-10-25T03:15:00Z; : > "$work/overlap.log"
+"$P/jobs/comments.sh" claude >/dev/null 2>&1
+check "ConfiguredWorkersWithALeadingZero_RunsThatManyPassesAtOnce: 02 starts both PRs' passes before either ends" [ "$(head -n 2 "$work/overlap.log" | grep -c '^start')" = 2 ]
+printf "$okhost" > "$work/bin/claude"; jobscfg ''
 # A pass the host stops ends its own worker; the pass already running in the other one finishes.
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
@@ -1369,7 +1394,7 @@ touch "$work/release"; wait "$first_run"; wait "$second_run"
 check "TwoRunsWithOneWorkerConfigured_NeverOverlapTheirPasses: live passes across runs stay within jobs.comments_workers" \
   [ "$(sed 's/ .*comments \([^ ]*\)\..*/ \1/' "$work/runs.log" | tr '\n' '|')" = "start gh#21|end gh#21|start $cap|end $cap|" ]
 # Two runs started together beside the one slot a dead run left: only one of them takes it.
-rm -f "$work/release"; : > "$work/runs.log"; mkdir -p .flow/log/comments.slots && ln -s 999999 .flow/log/comments.slots/1
+rm -f "$work/release"; : > "$work/runs.log"; mkdir -p .flow/log/comments.slots && ln -sfn 999999 .flow/log/comments.slots/1
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & first_run=$!
 "$P/jobs/comments.sh" claude "$cap" >/dev/null 2>&1 & second_run=$!
 wait_for grep -q '^start .*comments gh#21\.' "$work/runs.log"
@@ -1380,7 +1405,7 @@ check "StaleSlotTakenByTwoRunsAtOnce_NeverOverlapsTheirPasses: a slot a dead run
 check "StaleSlotTakenByTwoRunsAtOnce_AddressesBothPrs: the run that lost the slot waits for it instead of skipping" \
   sh -c "grep -q '^end .*comments gh#21\.' '$work/runs.log' && grep -q '^end .*comments $cap\.' '$work/runs.log'"
 check "SlotHeldByALivePass_NamesItsRunsPid: a slot is never held with no pid" [ "$slot_holder" = "$first_run" ]
-mkdir -p .flow/log/comments.slots && ln -s 999999 .flow/log/comments.slots/1
+mkdir -p .flow/log/comments.slots && ln -sfn 999999 .flow/log/comments.slots/1
 printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & stale_run=$!
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
@@ -1391,16 +1416,23 @@ ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn 999998 .flow/log/comments.s
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.takeover
 check "TakeoverGuardOfADeadRun_IsCleared: a takeover stopped halfway never keeps its slot from being taken back" grep -q 'comments gh#21' "$HOST_LOG"
-GUARD_HOLD_SECONDS=2; LIVE_TAKER_SECONDS=60
-sleep "$LIVE_TAKER_SECONDS" & live_taker=$!
+# The live taker is a stand-in run: its command line names jobs/comments.sh, as a real run's does.
+mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
+GUARD_HOLD_SECONDS=2
+"$work/fake/jobs/comments.sh" >/dev/null 2>&1 & live_taker=$!
 bump 2026-10-25T04:30:00Z; ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn "$live_taker" .flow/log/comments.slots/1.takeover; : > "$HOST_LOG"
+log_lines_before="$(wc -l < .flow/log/comments.log | tr -d ' ')"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & guarded_run=$!
+guarded_wait_seen() { tail -n "+$((log_lines_before + 1))" .flow/log/comments.log | grep -q 'gh#21: waits for a free pass slot'; }
+wait_for guarded_wait_seen
+guarded_run_waited=no; ! guarded_wait_seen || guarded_run_waited=yes
 sleep "$GUARD_HOLD_SECONDS"; host_calls_while_guarded="$(wc -l < "$HOST_LOG" | tr -d ' ')"
 kill "$live_taker" 2>/dev/null; wait "$live_taker" 2>/dev/null
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.takeover
-check "TakeoverGuardOfALiveRun_HoldsTheSlotUntilItsTakerEnds: a live takeover is never raced by a second taker" \
-  sh -c "[ '$host_calls_while_guarded' = 0 ] && grep -q 'comments gh#21' '$HOST_LOG'"
+check_all "TakeoverGuardOfALiveRun_HoldsTheSlotWhileItsTakerLives: a live takeover is never raced by a second taker" \
+  '[ "$guarded_run_waited" = yes ] && [ "$host_calls_while_guarded" = 0 ]'
+check "TakeoverGuardOfALiveRun_FreesTheSlotOnceItsTakerEnds: the waiting pass runs when the taker is gone" grep -q 'comments gh#21' "$HOST_LOG"
 "$P/adapters/github/write-state.sh" "$cap" pr= >/dev/null; "$P/adapters/github/close.sh" "$cap" >/dev/null 2>&1
 # A pass still running at jobs.comments.pass_limit is stopped with its children and failed.
 PASS_LIMIT_BOUND_SECONDS=15
@@ -1433,7 +1465,6 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: merged PR skipped, quiet" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'quiet: no open PR' .flow/log/comments.log"
 # Stand-in runs: each command line names jobs/<job>.sh, as a real run's does, and each has a child.
-mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
 printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/intake.sh" && chmod +x "$work/fake/jobs/intake.sh"
 fakeintake="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/intake.sh")"
 mkdir -p .flow/log/intake.lock && echo "$fakeintake" > .flow/log/intake.lock/pid
