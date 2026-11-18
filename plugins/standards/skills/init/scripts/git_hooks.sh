@@ -48,23 +48,22 @@ create_hook() {
 rewrite_hook_call() {
   hook_file="$1"; call="$2"; needle="$3"
   CALL="$call" NEEDLE="$needle" awk 'index($0, ENVIRON["NEEDLE"]) { print ENVIRON["CALL"]; next } { print }' "$hook_file" > "$(tmpfile hook)" || return 0
-  cat "$(tmpfile hook)" > "$hook_file" && note "$hook_file: standards call now names $main_worktree_folder"
+  cat "$(tmpfile hook)" > "$hook_file" && note "$hook_file: standards call rewritten"
+}
+chained_hook_call() {
+  standards_hook="$1"
+  printf '%s' "hook_status_before_standards=\$?; $standards_hook \"\$@\" || exit 1; (exit \$hook_status_before_standards)  # standards plugin"
 }
 wire_hook() {
   hook_file="$1"; call="$2"; needle="$3"
   if [ ! -f "$hook_file" ]; then repair "$hook_file" create_hook "$hook_file" "$call"; return; fi
+  if grep -F "$needle" "$hook_file" | grep -qvxF "$call"; then
+    repair "$hook_file: the standards call differs from the one init writes" rewrite_hook_call "$hook_file" "$call" "$needle"
+  fi
   if ! grep -qF "$needle" "$hook_file"; then repair "$hook_file lacks the standards call" place_call "$hook_file" "$call" "$needle" "added"; return; fi
   if hook_call_is_dead "$hook_file" "$needle"; then
     repair "$hook_file: the standards call is after an exit and never runs" place_call "$hook_file" "$call" "$needle" "moved before the exit"
   fi
-}
-wire_clone_hook() {
-  hook_file="$1"; call="$2"; needle="$3"
-  if [ ! -f "$hook_file" ]; then repair "$hook_file is missing" create_hook "$hook_file" "$call"; return; fi
-  if grep -F "$needle" "$hook_file" | grep -qvxF "$call"; then
-    repair "$hook_file: the standards call does not name $main_worktree_folder" rewrite_hook_call "$hook_file" "$call" "$needle"
-  fi
-  wire_hook "$hook_file" "$call" "$needle"
 }
 wire_clone_hooks() {
   case "$main_worktree_folder" in *'"'*|*'$'*|*'`'*|*'\'*)
@@ -73,8 +72,8 @@ wire_clone_hooks() {
   clone_hooks_folder="$(git rev-parse --git-path hooks)"
   for clone_hook_name in pre-commit commit-msg pre-push; do
     clone_hook_needle=".standards/hooks/git/$clone_hook_name"
-    clone_hook_call="\"$main_worktree_folder/$clone_hook_needle\" \"\$@\" || exit 1  # standards plugin"
-    if [ -z "$hooks_path" ]; then wire_clone_hook "$clone_hooks_folder/$clone_hook_name" "$clone_hook_call" "$clone_hook_needle"
+    clone_hook_call="$(chained_hook_call "\"$main_worktree_folder/$clone_hook_needle\"")"
+    if [ -z "$hooks_path" ]; then wire_hook "$clone_hooks_folder/$clone_hook_name" "$clone_hook_call" "$clone_hook_needle"
     elif [ "$hooks_path" != .standards/hooks/git ] && ! grep -qsF "$clone_hook_needle" "$hooks_path/$clone_hook_name"; then
       echo "init: note: core.hooksPath is $hooks_path, so git runs the hooks there and init leaves them to you. Add this line to $hooks_path/$clone_hook_name: $clone_hook_call"
     fi
@@ -83,7 +82,7 @@ wire_clone_hooks() {
 wire_project_githooks() {
   for project_hook_name in pre-commit commit-msg pre-push; do
     project_hook_needle=".standards/hooks/git/$project_hook_name"
-    wire_hook ".githooks/$project_hook_name" "\"\$(git rev-parse --show-toplevel)/$project_hook_needle\" \"\$@\" || exit 1  # standards plugin" "$project_hook_needle"
+    wire_hook ".githooks/$project_hook_name" "$(chained_hook_call "\"\$(git rev-parse --show-toplevel)/$project_hook_needle\"")" "$project_hook_needle"
   done
 }
 warn_live_hooks() {

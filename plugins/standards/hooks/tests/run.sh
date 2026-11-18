@@ -615,6 +615,24 @@ check "LinkedWorktree_MissingLink_CheckReportsDrift: init --check names the link
 "$init" >/dev/null 2>&1
 git worktree remove --force "$linked_worktree"; git worktree remove --force "$flow_worktree"
 
+echo "init: the standards call keeps the status of the hook lines before it"
+mkdir -p "$work/failing-hooks" && cd "$work/failing-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
+printf '#!/bin/sh\nfalse\n' > .git/hooks/pre-push
+printf '#!/bin/sh\nfalse\nexit $?\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-push .git/hooks/pre-commit
+"$init" --scope machine >/dev/null 2>&1
+check "ClonePrePushEndingInFalse_StillFailsAfterMachineInit: the pre-push exits non-zero once init chained the standards call" \
+  sh -c '! .git/hooks/pre-push origin url </dev/null'
+check "ClonePreCommitEndingInExitStatus_StillFailsAfterMachineInit: exit \$? after a failing line still exits non-zero once init chained the standards call" \
+  sh -c '! .git/hooks/pre-commit'
+mkdir -p "$work/failing-githooks" && cd "$work/failing-githooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards .githooks && printf '%s\n' "$machine_config" > .standards/config.json
+printf '#!/bin/sh\nfalse\n' > .githooks/pre-push && chmod +x .githooks/pre-push
+"$init" >/dev/null 2>&1
+check "ProjectPrePushEndingInFalse_StillFailsAfterInit: the tracked .githooks/pre-push exits non-zero once init chained the standards call" \
+  sh -c '! .githooks/pre-push origin url </dev/null'
+
 echo "init: machine scope in a clone whose team set core.hooksPath"
 mkdir -p "$work/team-hooks" && cd "$work/team-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
 mkdir -p .githooks .standards
