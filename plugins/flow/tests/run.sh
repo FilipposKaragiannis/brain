@@ -1290,6 +1290,8 @@ check "ConfiguredWorkersAboveTheCap_StartsNoPass: no host session runs on a refu
 jobscfg "  comments_workers: $WORKERS_PAST_ANY_SHELL_INTEGER\n"; bump 2026-10-25T03:08:00Z; : > "$HOST_LOG"; bounded_comments_run; code=$?
 check "ConfiguredWorkersPastAnyShellInteger_RefusesTheRun: a count too big to compare would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
 check "ConfiguredWorkersPastAnyShellInteger_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
+jobscfg ''; bump 2026-10-25T03:09:00Z; : > "$HOST_LOG"; bounded_comments_run --workers "$WORKERS_CAP"
+check "WorkersAtTheCap_AddressesThePrs: the console's top worker count still runs the passes" grep -q 'comments gh#21\.' "$HOST_LOG"
 # A leading zero the console takes is stripped: 02 is two passes at once, as before the cap.
 cp "$work/overlap-host" "$work/bin/claude"
 jobscfg '  comments_workers: 02\n'; bump 2026-10-25T03:15:00Z; : > "$work/overlap.log"
