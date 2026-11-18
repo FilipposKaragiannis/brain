@@ -1,6 +1,6 @@
 ---
 name: init
-description: Install or refresh the coding standards in this repository. Writes the rules block into AGENTS.md, the full rule text and the testing guide under .standards/, path-scoped Claude rules, the Codex agents, the hook copies and the git hook wiring, the project's skills and rules links and its rendered roster; then fills the gaps (commands, the testing guide, gates) with the owner from the project-advisor's recommendations. Use when a repo adopts the standards plugin, after a plugin update, when the user asks to check whether the standards are up to date (init --check is the one drift check), or asks where a new test level, gate, reviewer or rule belongs (init <the ask>).
+description: Install or refresh the coding standards in this repository, at project scope (the default; the rules block in AGENTS.md, path-scoped Claude rules and the Codex agents in the project) or at machine scope (--scope machine; those three in the user's Claude and Codex folders, for every project on the machine, and no tracked file changed). Also writes the full rule text and the testing guide under .standards/, the hook copies and the git hook wiring, the project's skills and rules links and its rendered roster; then fills the gaps (commands, the testing guide, gates) with the owner from the project-advisor's recommendations. Use when a repo adopts the standards plugin, after a plugin update, when the user asks to check whether the standards are up to date (init --check is the one drift check), or asks where a new test level, gate, reviewer or rule belongs (init <the ask>).
 disable-model-invocation: true
 ---
 
@@ -17,6 +17,12 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
    on Codex, the plugin's install path, which `codex plugin list` prints). To only report drift,
    hand edits and gaps, add `--check`. If it refuses a file edited by hand, do not add `--force`
    for the owner: show the refusal and ask. The edit belongs in the plugin source.
+   Add `--scope machine` when the project must not change: rules and agents go to your user
+   folders and apply to every project on this machine. On a first install (no
+   `.standards/stamp` and no `--scope` in the ask), ask the owner which scope before running it:
+   project (the default, committed for the team) or machine. Later runs keep the scope the stamp
+   remembers; `--scope` switches it. A switch to machine scope names the block, rules and agents
+   an earlier project-scope install left in the project, and never removes them.
 2. **Read what it printed.** The script lists every file it wrote, the `Gaps` (values the hooks
    and the verifier cannot run without, and the guide's placeholders) and what the owner must do
    next.
@@ -33,7 +39,9 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
 4. **End with one report**, per W-07, with no copy of the installer's output: the files
    changed, grouped by folder; what the owner must do by hand, in one list (review
    `.standards/config.json` on a first install, the `init: note:` lines, the Codex `/hooks`
-   trust); that the changes are uncommitted; then the gaps as one numbered list, one line each:
+   trust); that the changes are uncommitted (in machine scope there is nothing to commit, unless a
+   switch from project scope rewrote a committed `.standards/`);
+   then the gaps as one numbered list, one line each:
    the target (file and key or section, the file named on every line even when the line above
    names the same one), the advisor's value, its evidence and confidence, so the owner answers
    "1 yes, 2 no, 3 use X" or "all". A gap with no evidence gets one question, nothing more: no
@@ -69,16 +77,29 @@ such and left to `flow:init`.
 | `.claude/rules/standards-*.md` | one file per section with `paths:` for the configured source extensions | replaced |
 | `.codex/agents/*.toml` | the plugin's review agents and the advisor for Codex | replaced |
 | `.standards/hooks/` | the gate scripts and the git hooks (`git/pre-commit`, `git/commit-msg`, `git/pre-push`) for human commits; `check-range.sh` for CI | copies replaced |
-| git hook wiring | a project with its own `.githooks/` gets one appended call per hook (pre-commit, commit-msg, pre-push) and `core.hooksPath .githooks`; a project without one gets `core.hooksPath .standards/hooks/git` and no new folder | the call is appended once; `core.hooksPath` is set only when unset (local config, so every clone runs `init` once) |
+| git hook wiring | a project with its own `.githooks/` gets one appended call per hook (pre-commit, commit-msg, pre-push) and `core.hooksPath .githooks`; a project without one gets `core.hooksPath .standards/hooks/git` and no new folder | the call is appended once; `core.hooksPath` is set only when unset (local config, so every clone runs `init` once) and never over live hooks: when `.git/hooks` holds an executable hook (not `*.sample`) git would stop running, init names it and sets nothing |
 | `.claude/skills`, `.agents/skills` | relative links to `project.skills` from the config, when set | fixed when they point elsewhere; a real folder in the way is reported |
 | `.claude/rules/project` | a relative link to `project.rules`, when set | same |
 | `.claude/agents/<name>.md`, `.codex/agents/<name>.toml` | the project roster (`project.roster`) rendered with the plugin's templates and defaults (`templates/agents/`) | replaced; an agent dropped from the roster is removed |
 | `.standards/evals/run.sh`, `.standards/evals/.gitignore` | with a project roster: the runner for the project's agent evals (cases in `project.evals`, see [AGENT-EVALS.md](AGENT-EVALS.md)) and `results/` ignored | replaced; removed when the roster goes |
-| `.standards/stamp` | a hash of the plugin's install set, then one hash per copy above | rewritten; commit it |
+| `.standards/stamp` | a hash of the plugin's install set, then one hash per copy above | rewritten; commit it (project scope) |
+| machine scope: `$CLAUDE_CONFIG_DIR/CLAUDE.md`, `$CODEX_HOME/AGENTS.md` (default `~/.claude`, `~/.codex`) | the block, instead of `AGENTS.md` and `CLAUDE.md` | the block is replaced, the owner's text around it stays |
+| machine scope: `$CLAUDE_CONFIG_DIR/rules/standards-*.md`, `$CODEX_HOME/agents/*.toml` | the Claude rules with `paths: "**/*"` and the Codex agents, instead of the project's | replaced |
+| machine scope: git hook wiring | one call per hook (pre-commit, commit-msg, pre-push) in the clone's own hooks folder, after the lines already there, naming the main worktree's absolute path; a missing hook is created | placed once and rewritten when the clone moves; `core.hooksPath` and `.githooks/` are never touched, and with `core.hooksPath` set init prints the line to add there |
+| machine scope: `.git/info/exclude` | a `# standards:begin` / `# standards:end` block: `/.standards` and the project-level paths init wrote (roster agents, skills and rules links) | the block is replaced, the lines around it stay |
+| machine scope: `.standards` in each linked worktree | a link to the main worktree's `.standards/` | added when missing, fixed when it points elsewhere; a real folder there is left, with a note |
+| machine scope: `worktree_setup` in `.flow/config.yaml` | when flow is installed, one item that links `.standards` in each worktree flow adds | added once under a plain `worktree_setup:` line; any other shape gets the item printed for the owner |
 
 **Gaps.** `init` ends with a `Gaps` list when the config or the guide cannot do its job yet;
 `init --check` prints them as `init: gap:` lines and exits 1 until they are filled, so one
 command answers "is this project set up". The session-start nudge does not look at gaps.
+
+**Machine scope.** The stamp remembers the scope (a stamped absolute path means machine), so
+`init` and `init --check` without `--scope` keep it. It works on the main worktree even when run
+from a linked one, needs `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to be absolute when set, and the
+user-folder block, rules and agents apply to every project on this machine. When
+`$CODEX_HOME/AGENTS.override.md` is not empty, Codex reads it instead of `AGENTS.md`; `init`
+prints a note.
 
 The agent hosts run the hooks from the plugin itself (`hooks/hooks.json`, the same file on both
 hosts); the copies serve git and CI. `init` writes no hook entry into `.claude/settings.json` or
@@ -86,7 +107,10 @@ hosts); the copies serve git and CI. `init` writes no hook entry into `.claude/s
 twice, and `init --check` reports one as stale. What a project needs is the plugin enabled at
 project scope (`claude plugin install standards@<marketplace> --scope project`; Codex:
 `[plugins."standards@<marketplace>"] enabled = true` in `.codex/config.toml`); `init` prints a
-note while that is missing. On Codex the plugin hooks run only after a one-time `/hooks` trust,
+note while that is missing. Machine scope prints the same project-scope notes; to leave the
+project's files as they are, enable the plugin for your user instead (`claude plugin install
+standards@<marketplace>`; Codex: the same table in `$CODEX_HOME/config.toml`).
+On Codex the plugin hooks run only after a one-time `/hooks` trust,
 again after every plugin update. The plugin writes only under `.standards/` plus the host paths
 above; it never creates `docs/` or `.githooks/`.
 

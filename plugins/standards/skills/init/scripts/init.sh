@@ -1,22 +1,23 @@
 #!/bin/sh
 # Install or refresh the standards plugin in a repository.
-#   init.sh [--root <repo>] [--check] [--force] [--source-hash]
+#   init.sh [--root <repo>] [--scope machine|project] [--check] [--force] [--source-hash]
 # Writes under its own folder: .standards/config.json (once), .standards/testing-guide.md (once),
 # .standards/rules/*.md, .standards/hooks/* and .standards/stamp (what it wrote; see stamp.sh).
 # Outside it only what the hosts and git mandate: the marked block in AGENTS.md (and a separate
-# CLAUDE.md), .claude/rules/standards-*.md, .codex/agents/*.toml, the git hooks (a call appended
-# to the project's own .githooks/pre-commit, commit-msg and pre-push when that folder exists (before
-# a trailing `exit`, and moved there when an earlier init left it after one), else
-# core.hooksPath pointed at .standards/hooks/git), and, when .standards/config.json "project"
-# names them, the skills and rules links (.claude/skills, .agents/skills, .claude/rules/project)
-# and the project roster rendered into .claude/agents/ and .codex/agents/ (with the eval runner
-# .standards/evals/run.sh and its .gitignore). The agent hosts run
-# the gates from the plugin's own hooks/hooks.json: init writes no hook entry into a host
-# settings file, and reports one that would run the gates twice. Old copies under docs/ (before
-# v0.2.0) are removed when unchanged, or reported.
-# Re-running replaces only what it wrote, and refuses a copy edited by hand since (exit 1; --force
-# replaces it). --check reports drift and hand edits and writes nothing (exit 1 on either).
-# --source-hash prints the hash of the plugin's install set and exits (the session-start hook).
+# CLAUDE.md), .claude/rules/standards-*.md, .codex/agents/*.toml, the git hooks (see git_hooks.sh:
+# a call per hook in the project's own .githooks/, else core.hooksPath at .standards/hooks/git,
+# never over live hooks in .git/hooks), and, when .standards/config.json "project" names them, the
+# skills and rules links (.claude/skills, .agents/skills, .claude/rules/project) and the roster
+# rendered into .claude/agents/ and .codex/agents/ (with .standards/evals/run.sh and .gitignore).
+# --scope machine (project is the default; the stamp remembers the choice) changes no tracked file:
+# the block, the rules and the Codex agents go to CLAUDE_CONFIG_DIR and CODEX_HOME for every project
+# on this machine, the hook calls to the clone's own hooks folder, its outputs to its info/exclude,
+# and each linked worktree gets a .standards link (scope.sh, exclude.sh, worktree_link.sh).
+# The hosts run the gates from the plugin's hooks/hooks.json: init writes no hook entry into a host
+# settings file, and reports one (the gates would run twice). Old docs/ copies (before v0.2.0) are
+# removed when unchanged, or reported. Re-running replaces only what it wrote, and refuses a copy
+# edited by hand since (exit 1; --force replaces it). --check reports drift and hand edits and
+# writes nothing (exit 1 on either). --source-hash prints the install set's hash and exits.
 set -u
 plugin="$(cd "$(dirname "$0")/../../.." && pwd)"
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
