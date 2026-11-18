@@ -1282,8 +1282,6 @@ comments_logged_since_mark() { tail -n "+$((comments_log_mark + 1))" .flow/log/c
 mark_comments_log; "$P/jobs/comments.sh" claude --workers 00 >/dev/null 2>&1; code=$?
 check "WorkersOfZerosOnly_RefusesTheRun: 00 workers would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
 check_all "WorkersOfZerosOnly_StartsNoPass: no pass is addressed on a zero worker count" '! comments_logged_since_mark "addressing "'
-# A count past the cap the console sets stops the run at its start; bounded, so a run it would hang
-# fails the check instead of the suite.
 WORKERS_CAP="$(sed -n 's/^COMMENTS_WORKERS_MAX=//p' "$P/jobs/comments.sh")"
 WORKERS_PAST_ANY_SHELL_INTEGER=99999999999999999999
 REFUSED_RUN_BOUND_SECONDS=15; REFUSED_RUN_STOP_GRACE_SECONDS=1
@@ -1302,7 +1300,6 @@ check "ConfiguredWorkersPastAnyShellInteger_RefusesTheRun: a count too big to co
 check_all "ConfiguredWorkersPastAnyShellInteger_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
 jobscfg ''; bump 2026-10-25T03:09:00Z; mark_comments_log; bounded_comments_run --workers "$WORKERS_CAP"
 check "WorkersAtTheCap_AddressesThePrs: the console's top worker count still runs the passes" comments_logged_since_mark 'done: .*addressed: .*gh#21'
-# A leading zero the console takes is stripped: 02 is two passes at once, as before the cap.
 cp "$work/overlap-host" "$work/bin/claude"
 jobscfg '  comments_workers: 02\n'; bump 2026-10-25T03:15:00Z; : > "$work/overlap.log"
 "$P/jobs/comments.sh" claude >/dev/null 2>&1
@@ -1336,7 +1333,6 @@ check "comments job: one failed pass among workers fails the run, exit 1, the li
 # A pass by hand that completes clears the failure and the resume note it left on gh#21.
 printf "$okhost" > "$work/bin/claude"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
 "$P/adapters/github/write-state.sh" "$par" pr= >/dev/null; "$P/adapters/github/close.sh" "$par" >/dev/null 2>&1
-# Overlapping runs share one seen record per PR, keyed by the item when the PR has one.
 bump 2026-10-25T04:00:00Z
 "$P/jobs/comments.sh" claude --as comments-fast >/dev/null 2>&1
 mark_comments_log; "$P/jobs/comments.sh" claude >/dev/null 2>&1
@@ -1351,7 +1347,6 @@ mark_comments_log; "$P/jobs/comments.sh" claude >/dev/null 2>&1
 check_all "PrNamedByNumberOfAnItem_LeavesNothingNewForTheItemsNextRun: a pass named by the PR's number keeps the item's activity" \
   'comments_logged_since_mark "gh#21: nothing new since the last pass, skipped" && ! comments_logged_since_mark "addressing gh#21"'
 "$P/adapters/github/write-state.sh" 'gh#21' "answered_at=$answered_before" >/dev/null
-# Another run's lists at the fixed names of before stay as they are: each run keeps its own.
 printf 'another run lists these\n' > .flow/log/comments.targets; cp .flow/log/comments.targets .flow/log/comments.gated
 "$P/adapters/github/write-state.sh" 'gh#21' gate=ambiguity >/dev/null
 "$P/jobs/comments.sh" claude >/dev/null 2>&1
@@ -1359,7 +1354,6 @@ printf 'another run lists these\n' > .flow/log/comments.targets; cp .flow/log/co
 check "OverlappingRunsTargetList_IsNotWrittenByAnotherRun: each run lists its targets in a file of its own" grep -qx 'another run lists these' .flow/log/comments.targets
 check "OverlappingRunsGatedList_IsNotWrittenByAnotherRun: each run lists its gated items in a file of its own" grep -qx 'another run lists these' .flow/log/comments.gated
 rm -f .flow/log/comments.targets .flow/log/comments.gated
-# A PR the flow did not open, named by hand, takes a lock keyed by its number.
 flow_home_dir="$PWD/.flow"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['headRefName']='feature/by-hand'; json.dump(d, open(p,'w'))"
 cat > "$work/bin/claude" <<EOF
@@ -1378,7 +1372,6 @@ check_all "HandNamedPrWhoseLockIsHeld_IsSkipped: another pass works on that PR" 
 check "HandNamedPrWhoseLockIsHeld_IsNamedInUse: the result line says why the PR was not addressed" sh -c "tail -1 .flow/log/comments.log | grep -q 'in use: 90 '"
 rm -rf .flow/pr:90.lock
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['headRefName']='flow/gh-21'; json.dump(d, open(p,'w'))"
-# Two runs at once: a second PR item, and a host whose gh#21 pass holds until it is released.
 cap="$("$P/adapters/github/create.sh" task "A PR for the second run")"
 "$P/adapters/github/write-state.sh" "$cap" step=pr >/dev/null && "$P/adapters/github/link-pr.sh" "$cap" https://gh/pull/90 >/dev/null
 POLL_LIMIT=150
@@ -1408,7 +1401,6 @@ wait_for grep -q "$cap: waits for a free pass slot" .flow/log/comments.log
 touch "$work/release"; wait "$first_run"; wait "$second_run"
 check "TwoRunsWithOneWorkerConfigured_NeverOverlapTheirPasses: live passes across runs stay within jobs.comments_workers" \
   [ "$(sed 's/ .*comments \([^ ]*\)\..*/ \1/' "$work/runs.log" | tr '\n' '|')" = "start gh#21|end gh#21|start $cap|end $cap|" ]
-# Two runs started together beside the one slot a dead run left: only one of them takes it.
 rm -f "$work/release"; : > "$work/runs.log"; mkdir -p .flow/log/comments.slots && ln -sfn 999999 .flow/log/comments.slots/1
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & first_run=$!
 "$P/jobs/comments.sh" claude "$cap" >/dev/null 2>&1 & second_run=$!
@@ -1431,7 +1423,7 @@ ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn 999998 .flow/log/comments.s
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.999999
 check "TakeoverGuardOfADeadRun_IsCleared: a takeover stopped halfway never keeps its slot from being taken back" comments_logged_since_mark 'addressing gh#21'
-# The live taker is a stand-in run: its command line names jobs/comments.sh, as a real run's does.
+# The path names jobs/comments.sh because the job's liveness check matches that in a command line.
 mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
 GUARD_HOLD_SECONDS=2
 "$work/fake/jobs/comments.sh" >/dev/null 2>&1 & live_taker=$!
@@ -1461,7 +1453,6 @@ check_all "SlotAndTakeoverGuardBothStale_AreTakenByOneTakerOnly: two takers of a
 check_all "SlotAndTakeoverGuardBothStale_LeaveNoGuardOnceTaken: a recovered takeover guard is never left behind" \
   '[ "$(ls "$stale_pool/slots" | tr "\n" " ")" = "1 " ]'
 "$P/adapters/github/write-state.sh" "$cap" pr= >/dev/null; "$P/adapters/github/close.sh" "$cap" >/dev/null 2>&1
-# A pass still running at jobs.comments.pass_limit is stopped with its children and failed.
 PASS_LIMIT_BOUND_SECONDS=15
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
@@ -1491,7 +1482,7 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: merged PR skipped, quiet" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'quiet: no open PR' .flow/log/comments.log"
-# Stand-in runs: each command line names jobs/<job>.sh, as a real run's does, and each has a child.
+# The paths name jobs/<job>.sh because the job's liveness check matches that in a command line.
 printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/intake.sh" && chmod +x "$work/fake/jobs/intake.sh"
 fakeintake="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/intake.sh")"
 mkdir -p .flow/log/intake.lock && echo "$fakeintake" > .flow/log/intake.lock/pid
