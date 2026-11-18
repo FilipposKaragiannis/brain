@@ -2,6 +2,8 @@
 # Human gates.
 #   gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>]
 #                 [--raised-by <who>]       record the gate in the tracker, notify, stop the run;
+#                                           notify.sh writes the gate's record through the flow
+#                                           record, which renders <flow home>/gates/<item>.json;
 #                                           <from step> is the step whose work the gate judges
 #                                           (default: the item's step now), where --back returns.
 #                                           --options: a JSON array of 1 to 9 {label, text,
@@ -107,9 +109,8 @@ gate_drop() {
     gate="$(state_get "$item_data" gate)"; [ "$gate" != none ] || gate=""
   fi
   [ -n "$gate" ] || return 0
-  adapter write-state "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
+  record_set "$item" "gate=none" "gate_from=" "last_event=$(now_iso) gate $gate dropped: $why" >/dev/null \
     || die "cannot drop the $gate gate of $item; it stays"
-  rm -f "$record"
   case "$gate" in
     ambiguity|escalation) gate_unanswered "$item" "$gate" "$why" "$asked" ;;
     *)
@@ -146,13 +147,13 @@ case "${1:-}" in
     answered_by="$(carrier_field "$carrier" "$FIELD_ANSWERED_BY")"
     footer="$(gate_footer "$condition" "$(carrier_field "$carrier" "$FIELD_HOW_TO_CLEAR")")"
     condition_field="condition:=null"; [ -z "$condition" ] || condition_field="condition=$condition"
-    adapter write-state "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" >/dev/null
+    record_set "$item" "gate=$gate" "gate_from=$from" "last_event=$(now_iso) gate $gate" >/dev/null
     adapter comment "$item" --body "**Gate: $gate**
 
 $message
 
 $footer" >/dev/null
-    rm -f "$home/runs/$(item_slug "$item").json"
+    record_set "$item" "run:=null"
     [ "$gate" = "escalation" ] && "$FLOW_PLUGIN/scripts/lesson.sh" escalation "$item" "$message" >/dev/null
     "$FLOW_PLUGIN/scripts/notify.sh" "$gate" "$item" "$message" "options:=$options" "raised_by=$raised_by" \
       "answered_by=$answered_by" "$condition_field" "footer=$footer" ;;

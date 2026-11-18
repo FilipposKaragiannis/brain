@@ -110,11 +110,18 @@ carries out the answer to a cleared gate; empty once a run took it). Those twent
 are comma-separated, `attempts` a whole number, an empty value clears a key, `gate=none` clears
 the gate, `size` sets the item's size too. A key outside the twenty exits 2 and writes nothing.
 
+No flow script calls `write-state` itself: each writes through `record_set` in `lib/state.sh`
+(`scripts/state.sh set` on the command line), which keeps the item's flow record and, while
+`tracker_state` is `labels`, sends the same pairs to `write-state` first and records them only
+when the tracker took them (ADR 0004). `link-pr` still writes `pr` and `pr_host` to the tracker;
+the sweep and the pr step copy both from the tracker into the record.
+
 A gate's own data is not tracker state: the options it offers, who raised it, who carries the
-answer out, the condition it waits on and its footer live in the gate's record in the flow home,
-`<flow home>/gates/<item>.json`, which `scripts/gate.sh raise` writes through `scripts/notify.sh`
-and `gate.sh list` reads (ADR 0003). Of a waiting gate the tracker holds `gate` and `gate_from`
-only, so an adapter stores no more for a gate than it did.
+answer out, the condition it waits on and its footer live in the gate's record (ADR 0003), which
+`scripts/notify.sh` writes, for `scripts/gate.sh raise`, into the item's flow record (ADR 0004).
+The record renders `<flow home>/gates/<item>.json`, which `gate.sh list` reads; an id no adapter
+owns gets no flow record, so no gate file. Of a waiting gate the tracker holds `gate` and
+`gate_from` only, so an adapter stores no more for a gate than it did.
 
 ## Config
 
@@ -124,6 +131,11 @@ item goes. It lists from the trackers `adapters_configured` names: the config's 
 under `adapters.*` and `local`. An adapter reads its own keys under `<name>.*` and nothing else of
 the config but the shared keys here. A token never sits in the
 config: it comes from the environment, and an adapter without one refuses with a plain reason.
+
+The flow records live under `state.dir` (default `<flow home>/state`; a relative path is under
+the main worktree), one JSON file per item; `closed/` holds a closed item's record once its
+worktree is released. `tracker_state` is `labels` (the default), which sends each state write to the tracker
+too, or `none`, which keeps it in the record only; another value exits 2.
 
 Readiness is tracker-neutral: `ready.needs` lists the fields, of `priority` and `size`, an
 unstarted item must have before it is ready, and `ready.priority_order` ranks the priority names.

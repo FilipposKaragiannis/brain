@@ -94,7 +94,7 @@ while [ "$n" -lt "$max" ]; do
   # Another loop stopped the host between this pick and its session: nothing ran, so the run
   # record goes and the item waits at its step, as for a gate.
   if [ "$hcode" -eq 75 ] && [ -n "$(host_stopped "$host")" ]; then
-    rm -f "$(flow_home)/runs/$(item_slug "$item").json"
+    record_set "$item" "run:=null"
     echo "run-unattended: $(host_stopped "$host")"; exit 4
   fi
   host_record "$item" "$(get step)" "$shown" "$effort" "$t0" "$hcode"
