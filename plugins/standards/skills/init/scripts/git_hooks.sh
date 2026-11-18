@@ -1,8 +1,7 @@
 #!/bin/sh
 # Sourced by init.sh after the hook copies. It uses init's check, drifted, note, tmpfile, scope and
 # main_worktree_folder, and leaves wanted_hooks_path for init's Next lines.
-# A hook call goes before a trailing top-level `exit`: a call after the exit never runs.
-hook_with_call() {
+hook_with_call_before_trailing_exit() {
   hook_file="$1"; call="$2"; needle="$3"
   CALL="$call" NEEDLE="$needle" awk '
     index($0, ENVIRON["NEEDLE"]) { existing_call = $0; next }
@@ -26,7 +25,7 @@ hook_call_is_dead() {
 }
 place_call() {
   hook_file="$1"; call="$2"; needle="$3"; outcome="$4"
-  hook_with_call "$hook_file" "$call" "$needle" > "$(tmpfile hook)" || return 0
+  hook_with_call_before_trailing_exit "$hook_file" "$call" "$needle" > "$(tmpfile hook)" || return 0
   cmp -s "$(tmpfile hook)" "$hook_file" && return 0
   cat "$(tmpfile hook)" > "$hook_file" && note "$hook_file: standards call $outcome"
 }
