@@ -1477,16 +1477,18 @@ chmod +x "$work/bin/claude"; rm -f "$work/helper.pid"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
 check "HostThatExitsLeavingAHelper_StopsTheHelperBeforeItsSlotIsFreed: a helper left in the host's group never outlives its pass" \
   sh -c ". '$P/lib/process.sh'; test -s '$work/helper.pid' && ! process_running \$(cat '$work/helper.pid')"
-zombie_pool="$work/zombie-pool"; mkdir -p "$zombie_pool"
-python3 -I -c 'import subprocess, sys, time
+if ! ( . "$P/lib/process.sh"; ps_refused ); then
+  zombie_pool="$work/zombie-pool"; mkdir -p "$zombie_pool"
+  python3 -I -c 'import subprocess, sys, time
 ended = subprocess.Popen(["true"], start_new_session=True)
 open(sys.argv[1], "w").write("%d\n" % ended.pid)
 time.sleep(int(sys.argv[2]))' "$zombie_pool/slot.group" "$HELPER_HOLD_SECONDS" & zombie_keeper=$!
-zombie_group_ended() { read -r zombie_group < "$zombie_pool/slot.group" && case "$(ps -o stat= -p "$zombie_group")" in Z*) ;; *) false ;; esac; }
-zombie_slot_is_free() { zombie_group_ended && ( . "$P/lib/process.sh"; . "$P/lib/slots.sh"; ! slot_group_alive "$zombie_pool/slot" ); }
-wait_for zombie_group_ended
-check "SlotGroupOfZombiesOnly_IsNotAlive: a group with no running process no longer holds its slot" zombie_slot_is_free
-kill "$zombie_keeper" 2>/dev/null; wait "$zombie_keeper" 2>/dev/null
+  zombie_group_ended() { read -r zombie_group < "$zombie_pool/slot.group" && case "$(ps -o stat= -p "$zombie_group")" in Z*) ;; *) false ;; esac; }
+  zombie_slot_is_free() { zombie_group_ended && ( . "$P/lib/process.sh"; . "$P/lib/slots.sh"; ! slot_group_alive "$zombie_pool/slot" ); }
+  wait_for zombie_group_ended
+  check "SlotGroupOfZombiesOnly_IsNotAlive: a group with no running process no longer holds its slot" zombie_slot_is_free
+  kill "$zombie_keeper" 2>/dev/null; wait "$zombie_keeper" 2>/dev/null
+fi
 PASS_LIMIT_BOUND_SECONDS=15
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
