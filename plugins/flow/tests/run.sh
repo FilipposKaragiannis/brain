@@ -1262,6 +1262,7 @@ printf 'start %s\n' "\$*" >> "$work/overlap.log"
 i=0; while [ "\$(grep -c '^start' "$work/overlap.log")" -lt 2 ] && [ "\$i" -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done
 printf 'end %s\n' "\$*" >> "$work/overlap.log"
 EOF
+cp "$work/bin/claude" "$work/overlap-host"
 jobscfg '  comments_workers: 2\n'; bump 2026-10-25T03:00:00Z; : > "$work/overlap.log"
 "$P/jobs/comments.sh" claude >/dev/null 2>&1; code=$?
 check_all "comments job: jobs.comments_workers 2 starts both PRs' passes before either ends, because each worker takes its own PR" '[ "$code" -eq 0 ] && [ "$(head -n 2 "$work/overlap.log" | grep -c "^start")" = 2 ] && grep -q "^start .*comments gh#21\." "$work/overlap.log" && grep -q "^start .*comments $par\." "$work/overlap.log"'
@@ -1279,6 +1280,34 @@ check_all "comments job: a PR skipped for its held lock is named in use in the r
 check "comments job: a lock the run did not take is left to its holder" [ -d ".flow/item:$(item_slug "$par").lock" ]
 rm -rf ".flow/item:$(item_slug "$par").lock"
 check "comments job: --workers 0 is refused, exit 2" sh -c "'$P/jobs/comments.sh' claude --workers 0 2>/dev/null; [ \$? = 2 ]"
+mark_comments_log() { comments_log_mark="$(wc -l < .flow/log/comments.log | tr -d ' ')"; }
+comments_logged_since_mark() { tail -n "+$((comments_log_mark + 1))" .flow/log/comments.log | grep -q "$1"; }
+mark_comments_log; "$P/jobs/comments.sh" claude --workers 00 >/dev/null 2>&1; code=$?
+check "WorkersOfZerosOnly_RefusesTheRun: 00 workers would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
+check_all "WorkersOfZerosOnly_StartsNoPass: no pass is addressed on a zero worker count" '! comments_logged_since_mark "addressing "'
+WORKERS_CAP="$(sed -n 's/^COMMENTS_WORKERS_MAX=//p' "$P/jobs/comments.sh")"
+WORKERS_PAST_ANY_SHELL_INTEGER=99999999999999999999
+REFUSED_RUN_BOUND_SECONDS=15; REFUSED_RUN_STOP_GRACE_SECONDS=1
+bounded_comments_run() { python3 -I "$P/scripts/_health.py" bounded "$REFUSED_RUN_BOUND_SECONDS" "$REFUSED_RUN_STOP_GRACE_SECONDS" "$P/jobs/comments.sh" claude "$@" >/dev/null 2>&1; }
+bump 2026-10-25T03:05:00Z; mark_comments_log; bounded_comments_run --workers "$((WORKERS_CAP + 1))"; code=$?
+check "WorkersAboveTheCap_RefusesTheRun: --workers takes no more passes at once than jobs.comments_workers may, exit 2" [ "$code" -eq 2 ]
+check_all "WorkersAboveTheCap_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
+bump 2026-10-25T03:06:00Z; mark_comments_log; bounded_comments_run --workers "$WORKERS_PAST_ANY_SHELL_INTEGER"; code=$?
+check "WorkersPastAnyShellInteger_RefusesTheRun: a count too big to compare would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
+check_all "WorkersPastAnyShellInteger_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
+jobscfg "  comments_workers: $((WORKERS_CAP + 1))\n"; bump 2026-10-25T03:07:00Z; mark_comments_log; bounded_comments_run; code=$?
+check "ConfiguredWorkersAboveTheCap_RefusesTheRun: jobs.comments_workers past the console's range stops the run at its start, exit 2" [ "$code" -eq 2 ]
+check_all "ConfiguredWorkersAboveTheCap_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
+jobscfg "  comments_workers: $WORKERS_PAST_ANY_SHELL_INTEGER\n"; bump 2026-10-25T03:08:00Z; mark_comments_log; bounded_comments_run; code=$?
+check "ConfiguredWorkersPastAnyShellInteger_RefusesTheRun: a count too big to compare would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
+check_all "ConfiguredWorkersPastAnyShellInteger_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
+jobscfg ''; bump 2026-10-25T03:09:00Z; mark_comments_log; bounded_comments_run --workers "$WORKERS_CAP"
+check "WorkersAtTheCap_AddressesThePrs: the console's top worker count still runs the passes" comments_logged_since_mark 'done: .*addressed: .*gh#21'
+cp "$work/overlap-host" "$work/bin/claude"
+jobscfg '  comments_workers: 02\n'; bump 2026-10-25T03:15:00Z; : > "$work/overlap.log"
+"$P/jobs/comments.sh" claude >/dev/null 2>&1
+check "ConfiguredWorkersWithALeadingZero_RunsThatManyPassesAtOnce: 02 starts both PRs' passes before either ends" [ "$(head -n 2 "$work/overlap.log" | grep -c '^start')" = 2 ]
+printf "$okhost" > "$work/bin/claude"; jobscfg ''
 # A pass the host stops ends its own worker; the pass already running in the other one finishes.
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
@@ -1307,27 +1336,236 @@ check "comments job: one failed pass among workers fails the run, exit 1, the li
 # A pass by hand that completes clears the failure and the resume note it left on gh#21.
 printf "$okhost" > "$work/bin/claude"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
 "$P/adapters/github/write-state.sh" "$par" pr= >/dev/null; "$P/adapters/github/close.sh" "$par" >/dev/null 2>&1
+bump 2026-10-25T04:00:00Z
+"$P/jobs/comments.sh" claude --as comments-fast >/dev/null 2>&1
+mark_comments_log; "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check_all "SecondScheduleAddressedThePr_PlainRunFindsNothingNew: every schedule of the job shares one seen record per PR" \
+  'comments_logged_since_mark "gh#21: nothing new since the last pass, skipped" && ! comments_logged_since_mark "addressing gh#21"'
+bump 2026-10-25T04:10:00Z; rm -f .flow/log/comments.seen/gh_21
+answered_before="$("$P/adapters/github/read.sh" 'gh#21' | jget state.answered_at 2>/dev/null)"
+"$P/adapters/github/write-state.sh" 'gh#21' answered_at=2026-10-25T04:05:00Z >/dev/null
+"$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "PrNamedByNumberOfAnItem_WritesTheItemsSeenRecord: the PR's number and its item are one key" test -s .flow/log/comments.seen/gh_21
+mark_comments_log; "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check_all "PrNamedByNumberOfAnItem_LeavesNothingNewForTheItemsNextRun: a pass named by the PR's number keeps the item's activity" \
+  'comments_logged_since_mark "gh#21: nothing new since the last pass, skipped" && ! comments_logged_since_mark "addressing gh#21"'
+"$P/adapters/github/write-state.sh" 'gh#21' "answered_at=$answered_before" >/dev/null
+printf 'another run lists these\n' > .flow/log/comments.targets; cp .flow/log/comments.targets .flow/log/comments.gated
+"$P/adapters/github/write-state.sh" 'gh#21' gate=ambiguity >/dev/null
+"$P/jobs/comments.sh" claude >/dev/null 2>&1
+"$P/adapters/github/write-state.sh" 'gh#21' gate=none >/dev/null
+check "OverlappingRunsTargetList_IsNotWrittenByAnotherRun: each run lists its targets in a file of its own" grep -qx 'another run lists these' .flow/log/comments.targets
+check "OverlappingRunsGatedList_IsNotWrittenByAnotherRun: each run lists its gated items in a file of its own" grep -qx 'another run lists these' .flow/log/comments.gated
+rm -f .flow/log/comments.targets .flow/log/comments.gated
+flow_home_dir="$PWD/.flow"
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['headRefName']='feature/by-hand'; json.dump(d, open(p,'w'))"
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "\$HOST_LOG"
+[ -d "$flow_home_dir/pr:90.lock" ] && echo held > "$work/pr-lock.during"
+EOF
+chmod +x "$work/bin/claude"; rm -f "$work/pr-lock.during"
+"$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "HandNamedPrWithNoItem_HoldsALockKeyedByItsNumberDuringThePass: no two passes work one PR at once" test -f "$work/pr-lock.during"
+check "HandNamedPrWithNoItem_LetsItsLockGoAfterThePass: the next pass on the PR can start" test ! -d .flow/pr:90.lock
+mkdir .flow/pr:90.lock && echo $$ > .flow/pr:90.lock/pid
+mark_comments_log; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check_all "HandNamedPrWhoseLockIsHeld_IsSkipped: another pass works on that PR" \
+  'comments_logged_since_mark "90: another pass works on it (its lock is held), skipped" && ! comments_logged_since_mark "addressing 90"'
+check "HandNamedPrWhoseLockIsHeld_IsNamedInUse: the result line says why the PR was not addressed" sh -c "tail -1 .flow/log/comments.log | grep -q 'in use: 90 '"
+rm -rf .flow/pr:90.lock
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['headRefName']='flow/gh-21'; json.dump(d, open(p,'w'))"
+cap="$("$P/adapters/github/create.sh" task "A PR for the second run")"
+"$P/adapters/github/write-state.sh" "$cap" step=pr >/dev/null && "$P/adapters/github/link-pr.sh" "$cap" https://gh/pull/90 >/dev/null
+POLL_LIMIT=150
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf 'start %s\n' "\$*" >> "$work/runs.log"
+case "\$*" in *"comments gh#21."*) poll_count=0; while [ ! -f "$work/release" ] && [ "\$poll_count" -lt $POLL_LIMIT ]; do sleep 0.1; poll_count=\$((poll_count + 1)); done ;; esac
+printf 'end %s\n' "\$*" >> "$work/runs.log"
+EOF
+chmod +x "$work/bin/claude"
+wait_for() { # wait_for <condition...>: polls up to 15 s
+  poll_count=0; while ! "$@" 2>/dev/null && [ "$poll_count" -lt "$POLL_LIMIT" ]; do sleep 0.1; poll_count=$((poll_count + 1)); done
+}
+jobscfg '  comments_workers: 2\n'; bump 2026-10-25T04:20:00Z; rm -f "$work/release"; : > "$work/runs.log"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & first_run=$!
+wait_for grep -q '^start .*comments gh#21\.' "$work/runs.log"
+"$P/jobs/comments.sh" claude >/dev/null 2>&1
+second_alive_at_end=no; kill -0 "$first_run" 2>/dev/null && second_alive_at_end=yes
+touch "$work/release"; wait "$first_run"
+check "SecondRunWhileOneIsAlive_AddressesTheFreePr: runs of the comments job overlap" sh -c "[ $second_alive_at_end = yes ] && grep -q '^end .*comments $cap\.' '$work/runs.log'"
+check "SecondRunWhileOneIsAlive_SkipsOnlyThePrWhoseLockIsHeld: the live run's PR is not addressed twice" [ "$(grep -c '^start .*comments gh#21\.' "$work/runs.log")" = 1 ]
+jobscfg '  comments_workers: 1\n'; rm -f "$work/release"; : > "$work/runs.log"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & first_run=$!
+wait_for grep -q '^start .*comments gh#21\.' "$work/runs.log"
+"$P/jobs/comments.sh" claude "$cap" >/dev/null 2>&1 & second_run=$!
+wait_for grep -q "$cap: waits for a free pass slot" .flow/log/comments.log
+touch "$work/release"; wait "$first_run"; wait "$second_run"
+check "TwoRunsWithOneWorkerConfigured_NeverOverlapTheirPasses: live passes across runs stay within jobs.comments_workers" \
+  [ "$(sed 's/ .*comments \([^ ]*\)\..*/ \1/' "$work/runs.log" | tr '\n' '|')" = "start gh#21|end gh#21|start $cap|end $cap|" ]
+rm -f "$work/release"; : > "$work/runs.log"; mkdir -p .flow/log/comments.slots && ln -sfn 999999 .flow/log/comments.slots/1
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & first_run=$!
+"$P/jobs/comments.sh" claude "$cap" >/dev/null 2>&1 & second_run=$!
+wait_for grep -q '^start .*comments gh#21\.' "$work/runs.log"
+slot_holder="$(readlink .flow/log/comments.slots/1)"
+touch "$work/release"; wait "$first_run"; wait "$second_run"
+check "StaleSlotTakenByTwoRunsAtOnce_NeverOverlapsTheirPasses: a slot a dead run left is taken by one run only" \
+  awk '/^start /{live++; if (live > 1) overlap=1} /^end /{live--} END{exit overlap}' "$work/runs.log"
+check "StaleSlotTakenByTwoRunsAtOnce_AddressesBothPrs: the run that lost the slot waits for it instead of skipping" \
+  sh -c "grep -q '^end .*comments gh#21\.' '$work/runs.log' && grep -q '^end .*comments $cap\.' '$work/runs.log'"
+check "SlotHeldByALivePass_NamesItsRunsPid: a slot is never held with no pid" [ "$slot_holder" = "$first_run" ]
+mkdir -p .flow/log/comments.slots && ln -sfn 999999 .flow/log/comments.slots/1
+printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"; mark_comments_log
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & stale_run=$!
+wait_for grep -q 'comments gh#21' "$HOST_LOG"
+kill "$stale_run" 2>/dev/null; wait "$stale_run" 2>/dev/null
+check "SlotOfADeadRun_IsTakenOver: a run that died holds no pass slot" comments_logged_since_mark 'addressing gh#21'
+ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn 999998 .flow/log/comments.slots/1.999999; : > "$HOST_LOG"; mark_comments_log
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & guarded_run=$!
+wait_for grep -q 'comments gh#21' "$HOST_LOG"
+kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.999999
+check "TakeoverGuardOfADeadRun_IsCleared: a takeover stopped halfway never keeps its slot from being taken back" comments_logged_since_mark 'addressing gh#21'
+# The path names jobs/comments.sh because the job's liveness check matches that in a command line.
+mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
+GUARD_HOLD_SECONDS=2
+"$work/fake/jobs/comments.sh" >/dev/null 2>&1 & live_taker=$!
+bump 2026-10-25T04:30:00Z; ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn "$live_taker" .flow/log/comments.slots/1.999999; : > "$HOST_LOG"
+mark_comments_log
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & guarded_run=$!
+wait_for comments_logged_since_mark 'gh#21: waits for a free pass slot'
+guarded_run_waited=no; ! comments_logged_since_mark 'gh#21: waits for a free pass slot' || guarded_run_waited=yes
+sleep "$GUARD_HOLD_SECONDS"; guarded_pass_started=no; ! comments_logged_since_mark 'addressing gh#21' || guarded_pass_started=yes
+kill "$live_taker" 2>/dev/null; wait "$live_taker" 2>/dev/null
+wait_for grep -q 'comments gh#21' "$HOST_LOG"
+kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.999999
+check_all "TakeoverGuardOfALiveRun_HoldsTheSlotWhileItsTakerLives: a live takeover is never raced by a second taker" \
+  '[ "$guarded_run_waited" = yes ] && [ "$guarded_pass_started" = no ]'
+check "TakeoverGuardOfALiveRun_FreesTheSlotOnceItsTakerEnds: the waiting pass runs when the taker is gone" comments_logged_since_mark 'addressing gh#21'
+stale_pool="$work/stale-guard-pool"; mkdir -p "$stale_pool/slots"
+ln -s 999999 "$stale_pool/slots/1" && ln -s 999998 "$stale_pool/slots/1.999999"
+for taker in 11 12 13 14 15 16 17 18; do
+  ( job_alive() { case "$1" in 99999*) return 1 ;; esac; return 0; }; . "$P/lib/slots.sh"
+    poll_count=0; while [ ! -e "$stale_pool/start" ] && [ "$poll_count" -lt "$POLL_LIMIT" ]; do sleep 0.1; poll_count=$((poll_count + 1)); done
+    slot_try "$stale_pool/slots" 1 "$taker" >/dev/null && echo "$taker" >> "$stale_pool/winners" ) &
+  taker_runs="${taker_runs:-} $!"
+done
+touch "$stale_pool/start"; for taker_run in $taker_runs; do wait "$taker_run"; done
+check_all "SlotAndTakeoverGuardBothStale_AreTakenByOneTakerOnly: two takers of a dead taker's guard never both hold the slot" \
+  '[ "$(wc -l < "$stale_pool/winners" | tr -d " ")" = 1 ] && [ "$(readlink "$stale_pool/slots/1")" = "$(cat "$stale_pool/winners")" ]'
+check_all "SlotAndTakeoverGuardBothStale_LeaveNoGuardOnceTaken: a recovered takeover guard is never left behind" \
+  '[ "$(ls "$stale_pool/slots" | tr "\n" " ")" = "1 " ]'
+STUBBORN_HOST_SECONDS=30
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+case "\$*" in *"comments gh#21."*) trap '' TERM; echo \$\$ > "$work/stubborn-host.pid"; printf 'start gh#21\n' >> "$work/runs.log"; sleep $STUBBORN_HOST_SECONDS; exit 0 ;; esac
+if kill -0 "\$(cat "$work/stubborn-host.pid")" 2>/dev/null; then stubborn=alive; else stubborn=gone; fi
+printf 'start %s beside a stubborn host %s\n' "\$*" "\$stubborn" >> "$work/runs.log"
+EOF
+chmod +x "$work/bin/claude"; : > "$work/runs.log"; rm -f "$work/stubborn-host.pid"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & stopped_run=$!
+wait_for grep -q '^start gh#21' "$work/runs.log"
+"$P/scripts/jobs.sh" stop comments >/dev/null 2>&1; wait "$stopped_run" 2>/dev/null
+"$P/jobs/comments.sh" claude "$cap" >/dev/null 2>&1
+check "StoppedRunWhoseHostIgnoresTerm_KeepsItsSlotUntilTheHostGroupIsGone: a new run's pass never starts beside the stopped host, because live passes stay within jobs.comments_workers" \
+  grep -q "^start .*comments $cap\..* beside a stubborn host gone\$" "$work/runs.log"
+"$P/adapters/github/write-state.sh" "$cap" pr= >/dev/null; "$P/adapters/github/close.sh" "$cap" >/dev/null 2>&1
+HELPER_HOLD_SECONDS=30
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+sleep $HELPER_HOLD_SECONDS </dev/null >/dev/null 2>&1 &
+echo \$! > "$work/helper.pid"
+EOF
+chmod +x "$work/bin/claude"; rm -f "$work/helper.pid"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
+check "HostThatExitsLeavingAHelper_StopsTheHelperBeforeItsSlotIsFreed: a helper left in the host's group never outlives its pass" \
+  sh -c ". '$P/lib/process.sh'; test -s '$work/helper.pid' && ! process_running \$(cat '$work/helper.pid')"
+if ! ( . "$P/lib/process.sh"; ps_refused ); then
+  zombie_pool="$work/zombie-pool"; mkdir -p "$zombie_pool"
+  python3 -I -c 'import subprocess, sys, time
+ended = subprocess.Popen(["true"], start_new_session=True)
+open(sys.argv[1], "w").write("%d\n" % ended.pid)
+time.sleep(int(sys.argv[2]))' "$zombie_pool/slot.group" "$HELPER_HOLD_SECONDS" & zombie_keeper=$!
+  zombie_group_ended() { read -r zombie_group < "$zombie_pool/slot.group" && case "$(ps -o stat= -p "$zombie_group")" in Z*) ;; *) false ;; esac; }
+  zombie_slot_is_free() { zombie_group_ended && ( . "$P/lib/process.sh"; . "$P/lib/slots.sh"; ! slot_group_alive "$zombie_pool/slot" ); }
+  wait_for zombie_group_ended
+  check "SlotGroupOfZombiesOnly_IsNotAlive: a group with no running process no longer holds its slot" zombie_slot_is_free
+  kill "$zombie_keeper" 2>/dev/null; wait "$zombie_keeper" 2>/dev/null
+fi
+PASS_LIMIT_BOUND_SECONDS=15
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+sleep 30 & echo \$! > "$work/pass-child.pid"
+wait
+EOF
+chmod +x "$work/bin/claude"; rm -f .flow/log/comments.seen/gh_21.fails "$work/pass-child.pid"
+jobscfg '  comments:\n    pass_limit: 2s\n'
+started="$(date +%s)"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?; elapsed=$(( $(date +%s) - started ))
+check "PassPastThePassLimit_IsStopped: no pass runs forever" [ "$elapsed" -lt "$PASS_LIMIT_BOUND_SECONDS" ]
+check "PassPastThePassLimit_FailsTheRun: a stopped pass is a failed pass" [ "$code" -eq 1 ]
+check "PassPastThePassLimit_StopsTheHostsChildren: nothing the pass started keeps running" sh -c "test -s '$work/pass-child.pid' && ! kill -0 \$(cat '$work/pass-child.pid')"
+check "PassPastThePassLimit_CountsTowardFailuresInARow: it counts toward jobs.comments.max_failures" sh -c "read -r count _ < .flow/log/comments.seen/gh_21.fails && [ \"\$count\" = 1 ]"
+check "PassPastThePassLimit_IsLoggedAsStoppedAtTheLimit: the log names the setting that stopped it" grep -q 'gh#21: pass failed, .*jobs.comments.pass_limit' .flow/log/comments.log
+printf "$okhost" > "$work/bin/claude"; mark_comments_log; "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check "PassStoppedAtThePassLimit_IsTriedAgainByTheNextRun: a stopped pass is retried with nothing new" comments_logged_since_mark 'done: .*addressed: .*gh#21'
+jobscfg '  comments:\n    pass_limit: soon\n'; mark_comments_log
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?
+check "PassLimitThatIsNoDuration_RefusesTheRun: a bad setting fails at startup, exit 2" [ "$code" -eq 2 ]
+check_all "PassLimitThatIsNoDuration_StartsNoPass: no pass is addressed on a bad setting" '! comments_logged_since_mark "addressing "'
+jobscfg '  comments:\n    pass_limit: 0m\n'; mark_comments_log
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?
+check "PassLimitOfZero_RefusesTheRun: a limit that would stop every pass at once fails at startup, exit 2" [ "$code" -eq 2 ]
+check_all "PassLimitOfZero_StartsNoPass: no pass is addressed on a zero limit" '! comments_logged_since_mark "addressing "'
 cp "$work/config.workers" .flow/config.yaml
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: merged PR skipped, quiet" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'quiet: no open PR' .flow/log/comments.log"
-# A stand-in run: its command line names jobs/comments.sh, as a real run's does, and it has a child.
-mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
-fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
-mkdir -p .flow/log/comments.lock && echo "$fakejob" > .flow/log/comments.lock/pid
-check "job lock: live pid skips"  sh -c "'$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
+# The paths name jobs/<job>.sh because the job's liveness check matches that in a command line.
+printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/intake.sh" && chmod +x "$work/fake/jobs/intake.sh"
+fakeintake="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/intake.sh")"
+mkdir -p .flow/log/intake.lock && echo "$fakeintake" > .flow/log/intake.lock/pid
+check "IntakeRunBesideALiveRunOfItsSchedule_Skips: an intake schedule runs one at a time" sh -c "'$P/jobs/intake.sh' claude | grep -q 'skipped: run $fakeintake still going'"
 check "JobLockWhereNoPsRuns_LivePidSkips: pgrep sees the run, so a live lock is never taken for a stale one" \
-  sh -c "PATH='$refused_ps':\$PATH '$P/jobs/comments.sh' claude | grep -q 'skipped: run $fakejob still going'"
+  sh -c "PATH='$refused_ps':\$PATH '$P/jobs/intake.sh' claude | grep -q 'skipped: run $fakeintake still going'"
+mkdir -p .flow/log/intake.shared.lock && echo "$fakeintake" > .flow/log/intake.shared.lock/pid && printf intake > .flow/log/intake.shared.lock/name
+"$P/jobs/intake.sh" claude --as intake-nightly > "$work/shared.out" 2>&1
+check "IntakeScheduleBesideAHeldSharedLock_Skips: the schedules of intake share its state, so they take turns" grep -q "skipped: intake is running (pid $fakeintake), which shares the intake job.s state" "$work/shared.out"
+check "IntakeScheduleBesideAHeldSharedLock_RemovesItsOwnLock: a skipped run leaves no lock behind" test ! -d .flow/log/intake-nightly.lock
+check "IntakeScheduleBesideAHeldSharedLock_LeavesTheSharedLockToItsHolder: the live holder keeps its turn" sh -c "[ \"\$(cat .flow/log/intake.shared.lock/pid)\" = $fakeintake ]"
+rm -rf .flow/log/intake.shared.lock .flow/log/intake.lock
+pkill -P "$fakeintake" 2>/dev/null; kill "$fakeintake" 2>/dev/null
+printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/retro.sh" && chmod +x "$work/fake/jobs/retro.sh"
+fakeretro="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/retro.sh")"
+mkdir -p .flow/log/retro.shared.lock && echo "$fakeretro" > .flow/log/retro.shared.lock/pid && printf retro > .flow/log/retro.shared.lock/name
+"$P/jobs/retro.sh" claude --as retro-weekly > "$work/shared.out" 2>&1
+check "RetroScheduleBesideAHeldSharedLock_Skips: the schedules of retro share its state, so they take turns" grep -q "skipped: retro is running (pid $fakeretro), which shares the retro job.s state" "$work/shared.out"
+rm -rf .flow/log/retro.shared.lock
+pkill -P "$fakeretro" 2>/dev/null; kill "$fakeretro" 2>/dev/null
+fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
+mkdir -p ".flow/log/comments-$fakejob.lock" && echo "$fakejob" > ".flow/log/comments-$fakejob.lock/pid"
+"$P/jobs/comments.sh" claude > "$work/beside.out" 2>&1
+check "CommentsRunBesideALiveRun_Starts: runs of the comments job overlap" grep -q 'quiet: no open PR' "$work/beside.out"
+check "CommentsRunBesideALiveRun_LeavesOnlyTheLiveRunsLock: a run removes its own lock and never a live one" \
+  sh -c "[ \"\$(ls -d .flow/log/comments-[0-9]*.lock)\" = '.flow/log/comments-$fakejob.lock' ]"
+check "JobLockWhereNoPsRuns_KeepsALiveRunsLock: pgrep sees the run, so a live lock is never taken for a stale one" \
+  sh -c "PATH='$refused_ps':\$PATH '$P/jobs/comments.sh' claude >/dev/null 2>&1; [ -d '.flow/log/comments-$fakejob.lock' ]"
 mkdir -p .flow/log/comments.shared.lock && echo "$fakejob" > .flow/log/comments.shared.lock/pid && printf comments > .flow/log/comments.shared.lock/name
-check "job lock: another schedule of the job skips while one runs, as they share its state" sh -c "'$P/jobs/comments.sh' claude --as comments-fast | grep -q 'skipped: comments is running (pid $fakejob), which shares the comments job.s state' && [ ! -d .flow/log/comments-fast.lock ] && [ \"\$(cat .flow/log/comments.shared.lock/pid)\" = $fakejob ]"
-rm -rf .flow/log/comments.shared.lock
+"$P/jobs/comments.sh" claude --as comments-fast > "$work/beside.out" 2>&1
+check "CommentsScheduleBesideAHeldSharedLock_Starts: the comments job takes no shared lock" grep -q 'quiet: no open PR' "$work/beside.out"
+check "CommentsScheduleBesideAHeldSharedLock_LeavesItToItsHolder: a comments run never takes over the shared lock" \
+  sh -c "[ \"\$(cat .flow/log/comments.shared.lock/pid)\" = $fakejob ]"
+rm -rf .flow/log/comments.shared.lock ".flow/log/comments-$fakejob.lock"
 pkill -P "$fakejob" 2>/dev/null; kill "$fakejob" 2>/dev/null
-echo 999999 > .flow/log/comments.lock/pid
-check "job lock: stale pid runs, and leaves neither its lock nor the shared one" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ] && [ ! -d .flow/log/comments.shared.lock ]"
+mkdir -p .flow/log/comments-999999.lock && echo 999999 > .flow/log/comments-999999.lock/pid
+"$P/jobs/comments.sh" claude > "$work/stale.out" 2>&1
+check "CommentsRunBesideAStaleLock_Starts: a lock whose pid is gone holds nothing" grep -q 'quiet: no open PR' "$work/stale.out"
+check "StaleCommentsRunLock_IsRemovedByTheNextRun: the next run clears a lock whose pid is gone" test ! -d .flow/log/comments-999999.lock
 sleep 60 & other=$!
-mkdir -p .flow/log/comments.lock && echo "$other" > .flow/log/comments.lock/pid
-check "job lock: a pid a restart gave to another process is stale, and that process is left alone" sh -c "'$P/jobs/comments.sh' claude | grep -q 'quiet: no open PR' && [ ! -d .flow/log/comments.lock ] && kill -0 $other"
+mkdir -p ".flow/log/comments-$other.lock" && echo "$other" > ".flow/log/comments-$other.lock/pid"
+"$P/jobs/comments.sh" claude >/dev/null 2>&1
+check "CommentsRunLockOfAPidARestartGaveAway_IsRemoved: a pid that runs something else is stale" test ! -d ".flow/log/comments-$other.lock"
+check "CommentsRunLockOfAPidARestartGaveAway_LeavesThatProcessAlone: only the lock goes" kill -0 "$other"
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
 check "job: unknown host refused" sh -c "! '$P/jobs/comments.sh' vim 2>/dev/null"
 home2="$work/home2"; mkdir -p "$home2"
@@ -1402,6 +1640,31 @@ FLOW_HOME="$home2" "$J" install > "$work/install.out"
 check "install writes a launchd agent per scheduled job and loads it" sh -c "[ \$(ls '$work/agents'/*.plist | wc -l) = 4 ] && [ \$(grep -c bootstrap '$LAUNCH_LOG') = 4 ]"
 check "install: every 30m is a 1800 s interval, with the job's args" sh -c "grep -q '<integer>1800</integer>' '$work/agents/$lbl.next.plist' && grep -q 'next.sh claude --workers 2 --max-steps 15' '$work/agents/$lbl.next.plist' && grep -q '<integer>7200</integer>' '$work/agents/$lbl.comments.plist'"
 check "install: daily and weekly are calendar times, Sunday is 0" sh -c "grep -q '<key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer>' '$work/agents/$lbl.intake.plist' && grep -q '<key>Minute</key><integer>30</integer><key>Weekday</key><integer>0</integer>' '$work/agents/$lbl.retro.plist'"
+cat > "$work/agent_run.py" <<'PY'
+import os, plistlib, subprocess, sys, time
+agent = plistlib.load(open(sys.argv[1], "rb"))
+program = agent["ProgramArguments"]
+if not os.path.exists(program[0]):
+    program = ["/bin/sh"] + program[1:]
+started = time.time()
+with open(sys.argv[2], "ab") as log:
+    subprocess.run(program, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                   env=dict(os.environ, **agent["EnvironmentVariables"]), timeout=30)
+print("%.1f" % (time.time() - started))
+PY
+agent_jobs_before="$(ls -d "$repo/.flow/jobs" 2>/dev/null)"; mkdir -p "$repo/.flow/jobs"
+for j in comments next; do
+  printf '#!/bin/sh\necho $$ > "%s/agent-%s.pid"\nsleep 3\n' "$work" "$j" > "$repo/.flow/jobs/$j.sh"; chmod +x "$repo/.flow/jobs/$j.sh"
+done
+agent_comments_took="$(python3 "$work/agent_run.py" "$work/agents/$lbl.comments.plist" "$work/agent-comments.log")"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$work/agent-comments.pid" ] && break; sleep 0.2; done
+check_all "CommentsAgentStarted_ReturnsWhileItsRunIsAlive: the next interval starts a second run beside it" \
+  "python3 -c 'import sys; assert float(sys.argv[1]) < 2' '$agent_comments_took' && kill -0 \"\$(cat '$work/agent-comments.pid')\""
+agent_next_took="$(python3 "$work/agent_run.py" "$work/agents/$lbl.next.plist" "$work/agent-next.log")"
+check_all "NextAgentStarted_RunsUntilItsRunEnds: launchd starts no second next run" \
+  "python3 -c 'import sys; assert float(sys.argv[1]) >= 3' '$agent_next_took' && ! kill -0 \"\$(cat '$work/agent-next.pid')\""
+kill "$(cat "$work/agent-comments.pid")" 2>/dev/null
+rm -f "$repo/.flow/jobs/comments.sh" "$repo/.flow/jobs/next.sh"; [ -n "$agent_jobs_before" ] || rmdir "$repo/.flow/jobs"
 FLOW_HOME="$home2" "$J" install next > /dev/null
 check "install again unloads the old agent first" sh -c "grep -q 'bootout gui/.*/$lbl.next' '$LAUNCH_LOG'"
 FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
@@ -1463,22 +1726,35 @@ printf 'the job said this\n' >> "$home2/log/next.log"; printf 'a worker said thi
 check "logs prints the job's log and each worker's" sh -c "FLOW_HOME='$home2' '$J' logs next 5 > '$work/logs.out' && grep -q '^== next.log' '$work/logs.out' && grep -q 'the job said this' '$work/logs.out' && grep -q '^== next-1.log' '$work/logs.out' && grep -q 'a worker said this' '$work/logs.out'"
 fakejob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
 sleep 1; fakechild="$(pgrep -P "$fakejob")"
-mkdir -p "$home2/log/comments.lock" && echo "$fakejob" > "$home2/log/comments.lock/pid"
-check "run refuses a job that is running" sh -c "FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
+mkdir -p "$home2/log/comments-$fakejob.lock" && echo "$fakejob" > "$home2/log/comments-$fakejob.lock/pid"
+fakeintake="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/intake.sh")"
+mkdir -p "$home2/log/intake.lock" && echo "$fakeintake" > "$home2/log/intake.lock/pid"
+check "RunOfAJobThatIsRunning_IsRefused: a job other than comments runs one at a time" sh -c "FLOW_HOME='$home2' '$J' run intake | grep -q 'running already'"
 check "RunWhereNoPsRuns_RefusesAJobThatIsRunning: pgrep sees the run, so no second one starts beside it" \
-  sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' run comments | grep -q 'running already'"
+  sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' run intake | grep -q 'running already'"
+pkill -P "$fakeintake" 2>/dev/null; kill "$fakeintake" 2>/dev/null; rm -rf "$home2/log/intake.lock"
 check "status shows a running job" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
 check "StatusWhereNoPsRuns_ShowsARunningJob: pgrep sees the run, so status never calls it stopped" \
   sh -c "PATH='$refused_ps':\$PATH FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"][0][\"pid\"]==$fakejob'"
+secondjob="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
+mkdir -p "$home2/log/comments-$secondjob.lock" && echo "$secondjob" > "$home2/log/comments-$secondjob.lock/pid"
+check "StatusWithTwoLiveCommentsRuns_ListsBoth: runs of the comments job overlap, and status shows each" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert sorted(e[\"pid\"] for e in r[\"comments\"][\"running\"])==sorted([$fakejob,$secondjob])'"
+pkill -P "$secondjob" 2>/dev/null; kill "$secondjob" 2>/dev/null; rm -rf "$home2/log/comments-$secondjob.lock"
+jobs_dir_before="$(ls -d .flow/jobs 2>/dev/null)"; mkdir -p .flow/jobs && printf '#!/bin/sh\nexec "%s/jobs/comments.sh" "$@"\n' "$P" > .flow/jobs/comments.sh && chmod +x .flow/jobs/comments.sh
+runs_before="$(grep -c '"job":"comments"' "$home2/log/runs.jsonl" 2>/dev/null)"
+FLOW_HOME="$home2" "$J" run comments >/dev/null 2>&1
+wait_for sh -c '[ "$(grep -c "\"job\":\"comments\"" "$1")" != "$2" ]' _ "$home2/log/runs.jsonl" "$runs_before"
+check "RunOfCommentsWhileOneIsAlive_StartsASecondRun: a comments run starts beside a live one" [ "$(grep -c '"job":"comments"' "$home2/log/runs.jsonl")" -gt "${runs_before:-0}" ]
+rm -f .flow/jobs/comments.sh; [ -n "$jobs_dir_before" ] || rmdir .flow/jobs
 FLOW_HOME="$home2" "$J" stop comments >/dev/null
 sleep 1
 check "stop ends the running run and every process under it" sh -c "[ -n '$fakechild' ] && ! kill -0 $fakejob 2>/dev/null && ! kill -0 $fakechild 2>/dev/null"
 sleep 60 & other=$!
-echo "$other" > "$home2/log/comments.lock/pid"
+mv "$home2/log/comments-$fakejob.lock" "$home2/log/comments-$other.lock" && echo "$other" > "$home2/log/comments-$other.lock/pid"
 check "a lock whose pid now runs something else is not a running job" sh -c "FLOW_HOME='$home2' '$J' status --json | python3 -c 'import json,sys; r={x[\"job\"]:x for x in json.load(sys.stdin)}; assert r[\"comments\"][\"running\"]==[]'"
 check "stop leaves that process alone" sh -c "FLOW_HOME='$home2' '$J' stop comments | grep -q 'not running' && kill -0 $other"
 kill "$other" 2>/dev/null; wait "$other" 2>/dev/null
-rm -rf "$home2/log/comments.lock"
+rm -rf "$home2/log/comments-$other.lock"
 # Named schedules: one job on several schedules, each its own agent, name and host.
 printf 'jobs:\n  schedule:\n    next: every 30m --max-steps 15\n    next-codex: every 30m codex --workers 2 --max-steps 5\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" install next-codex > "$work/install.out" 2>&1
