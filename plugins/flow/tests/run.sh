@@ -2116,6 +2116,9 @@ check "ClaimAdhoc_IsNeverScoped: an adhoc: claim has no tracker, so a scope does
 held_path="$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)"
 python3 -c 'p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("labels: [team-a]", "labels: [team-b]"))'
 check_all "ClaimBeforeScopeChanged_KeepsWorktree: an item claimed before it left the scope keeps its worktree, because only a new claim is refused" '[ -n "$held_path" ] && [ "$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)" = "$held_path" ]'
+"$P/scripts/next.sh" "$sin" --json >/dev/null 2>"$work/scope.err"; code=$?
+check "NextNamedClaimedBeforeScopeChanged_GetsStep: next on an item claimed before it left the scope prepares its step, because a run under way goes on" [ "$code" -eq 0 ]
+rm -f ".flow/runs/$(item_slug "$sin").json"
 "$P/scripts/steward.sh" release "$sin" --force >/dev/null 2>&1
 scope_config '    labels: [team-a]'
 "$P/adapters/local/write-state.sh" "$sin" step=split; "$P/adapters/local/write-state.sh" "$sout" step=split
