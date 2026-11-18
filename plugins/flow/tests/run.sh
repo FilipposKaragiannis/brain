@@ -1948,6 +1948,9 @@ tmpcfg "$fake_tmp_create"
 check "TmpAddOfPhaseWithShellCharacters_ExitsTwo: a phase holding a character outside letters, digits, . _ and - is refused, exit 2" [ "$code" = 2 ]
 check "TmpAddOfPhaseWithShellCharacters_RunsNoCreateCommand: the command never runs, so it gets no path" [ ! -s "$tmp_log" ]
 check "TmpAddOfPhaseWithShellCharacters_MakesNoFolder: the phase's folder never appears" [ ! -e "$tmp_folder/$tmp_slug-$injecting_phase" ]
+"$P/scripts/steward.sh" tmp add "$t1" nested/inner > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpAddOfPhaseWithSlash_ExitsTwo: a phase holding / is refused, exit 2" [ "$code" = 2 ]
+check "TmpAddOfPhaseWithSlash_MakesNoFolder: the phase's folder never appears" [ ! -e "$tmp_folder/$tmp_slug-nested" ]
 cat > "$work/tmpwt/main-create.sh" <<SCRIPT
 #!/bin/sh
 git -C "$PWD" worktree add -q --detach "\$1" main
@@ -2016,6 +2019,9 @@ check "TmpRemoveOfPoolWorktreeUnderTmp_ExitsTwo: a pool worktree under .flow/tmp
 check "TmpRemoveOfPoolWorktreeUnderTmp_KeepsPoolWorktree: the remove command never runs on a pool worktree" [ -f "$tmp_folder/pool-x/README.md" ]
 tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
 mv .flow/tmp .flow/tmp-moved && ln -s "$(cd .. && pwd -P)" .flow/tmp
+"$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfPoolWorktreeUnderSymlinkedTmp_ExitsTwo: a pool worktree is refused though a symlinked .flow/tmp puts it under the temporary folder" [ "$code" = 2 ]
+check "TmpRemoveOfPoolWorktreeUnderSymlinkedTmp_KeepsPoolWorktree: the remove command never runs on the pool worktree" [ -f ../app-wt-1/README.md ]
 "$P/scripts/steward.sh" tmp remove "$(pwd -P)" > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfMainWorktreeUnderSymlinkedTmp_ExitsTwo: the main worktree is refused though a symlinked .flow/tmp puts it under the temporary folder" [ "$code" = 2 ]
 check "TmpRemoveOfMainWorktreeUnderSymlinkedTmp_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
