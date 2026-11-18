@@ -524,6 +524,28 @@ mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
 cd "$work/machine"
 "$init" --check > "$work/machine.second-check.out" 2>&1
 check "SecondProjectSameHome_CheckStaysClean: a second project installed on the same user folders leaves the first one's --check up to date" grep -q 'up to date' "$work/machine.second-check.out"
+
+echo "init: machine scope links .standards into the linked worktrees and flow's worktree_setup"
+linked_worktree="$work/machine-wt"; flow_worktree="$work/machine-wt-flow"; flow_items_wanted=1
+git worktree add -q "$linked_worktree" 2>/dev/null
+mkdir -p .flow && printf 'pool:\nworktree_setup:\n  # - dotnet restore\ngates:\n' > .flow/config.yaml
+"$init" >/dev/null 2>&1
+"$init" >/dev/null 2>&1
+check "LinkedWorktree_SeesTheConfig: the linked worktree reads the main worktree's config through .standards" test -f "$linked_worktree/.standards/config.json"
+check "LinkedWorktree_StatusStaysClean: git status in the linked worktree lists nothing init wrote" sh -c "[ -z \"\$(git -C '$linked_worktree' status --porcelain --untracked-files=all)\" ]"
+check "FlowConfig_WorktreeSetupGetsOneLine: two inits leave one item that links .standards under worktree_setup" \
+  sh -c "[ \"\$(grep -c 'ln -s .*\\.standards' .flow/config.yaml)\" = $flow_items_wanted ]"
+(cd "$linked_worktree" && "$init" --check > "$work/machine-wt.check.out" 2>&1)
+check "LinkedWorktree_CheckIsClean: init --check run in the linked worktree finds the install up to date" grep -q 'up to date' "$work/machine-wt.check.out"
+rm -f "$gate_ran"
+(cd "$linked_worktree" && printf 'linked\n' > linked.txt && git add linked.txt && git commit -q -m 'docs: add a linked note' >/dev/null 2>&1)
+check "LinkedWorktree_CommitRunsTheHook: a commit in the linked worktree runs the standards pre-commit and its project gate" test -f "$gate_ran"
+git worktree add -q "$flow_worktree" 2>/dev/null
+flow_setup_line="$(sed -n 's/^  - \(\[ -e \.standards \] .*\)$/\1/p' .flow/config.yaml)"
+(cd "$flow_worktree" && sh -c "$flow_setup_line")
+check "FlowSetupLine_LinksANewWorktree: the worktree_setup line, run in a new worktree, links its .standards to the main one" \
+  sh -c '[ -n "$1" ] && [ -L "$2/.standards" ] && [ -f "$2/.standards/config.json" ]' sh "$flow_setup_line" "$flow_worktree"
+git worktree remove --force "$linked_worktree"; git worktree remove --force "$flow_worktree"
 unset CLAUDE_CONFIG_DIR CODEX_HOME
 
 [ "$fails" -eq 0 ] && echo "hooks: ok" || { echo "hooks: $fails failed"; exit 1; }

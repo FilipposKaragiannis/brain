@@ -276,7 +276,7 @@ done
 if [ "$check" -eq 0 ] && [ -d .standards/evals ] && [ ! -f .standards/evals/run.sh ]; then
   rm -rf .standards/evals/.bin; rmdir .standards/evals 2>/dev/null
 fi
-[ "$scope" = machine ] && . "$plugin/skills/init/scripts/exclude.sh"
+[ "$scope" = machine ] && for machine_step in exclude worktree_link; do . "$plugin/skills/init/scripts/$machine_step.sh"; done
 
 # 10. Gaps: the values the hooks and the verifier cannot run without, and the guide's
 # placeholders. Reported every run; drift under --check. The init skill fills them with the
