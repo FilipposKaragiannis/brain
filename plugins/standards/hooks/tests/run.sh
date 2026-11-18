@@ -472,4 +472,36 @@ git config --unset core.hooksPath
 "$init" --check > "$work/live-hooks.check.out" 2>&1
 check "LiveHookInGitHooks_CheckReportsNoHooksPathDrift: init --check does not count the unset core.hooksPath as drift" sh -c "[ -s '$work/live-hooks.check.out' ] && ! grep -q 'core.hooksPath is unset' '$work/live-hooks.check.out'"
 
+echo "init: machine scope puts the block, the rules and the agents in the user folders"
+CLAUDE_CONFIG_DIR="$work/claude home"; CODEX_HOME="$work/codex"; export CLAUDE_CONFIG_DIR CODEX_HOME
+owner_line="the owner's own instructions"; usage_error_status=2; blocks_per_user_file=1
+mkdir -p "$CLAUDE_CONFIG_DIR" && printf '%s\n' "$owner_line" > "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+machine_config='{"version":"0.1.0","languages":[{"name":"shell","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[]}'
+mkdir -p "$work/machine" && cd "$work/machine" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p docs .githooks .standards
+printf '# Instructions\n' > docs/INSTRUCTIONS.md && ln -s docs/INSTRUCTIONS.md AGENTS.md && printf 'AGENTS.md\n' > .gitignore
+printf '#!/bin/sh\necho mine\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+git add docs .gitignore .githooks && git commit -q -m 'chore: tracked instructions and hooks'
+printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope project-wide > "$work/machine.bad-scope.out" 2>&1; bad_scope_status=$?
+check "UnknownScope_InitExitsWithUsageError: a --scope value other than machine or project stops init with exit 2" [ "$bad_scope_status" = "$usage_error_status" ]
+"$init" --scope machine > "$work/machine.init.out" 2>&1
+check "MachineScope_TrackedFilesUnchanged: init --scope machine runs to its stamp and changes no tracked file" sh -c "[ -f .standards/stamp ] && git diff --quiet HEAD"
+check "MachineScope_UserClaudeFileHoldsOneBlock: the user CLAUDE.md under \$work holds exactly one standards block" sh -c "[ \"\$(grep -c 'standards:begin' '$CLAUDE_CONFIG_DIR/CLAUDE.md')\" = $blocks_per_user_file ]"
+check "MachineScope_UserCodexFileHoldsOneBlock: the user AGENTS.md under \$work holds exactly one standards block" sh -c "[ \"\$(grep -c 'standards:begin' '$CODEX_HOME/AGENTS.md')\" = $blocks_per_user_file ]"
+check "MachineScope_OwnerTextKeptAboveBlock: the owner's line in the user CLAUDE.md survives the install" grep -qxF "$owner_line" "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+check "MachineScope_RulesInUserClaudeFolder: the Claude rules land in the user rules folder under \$work" test -f "$CLAUDE_CONFIG_DIR/rules/standards-design.md"
+check "MachineScope_AgentsInUserCodexFolder: the Codex agents land in the user agents folder under \$work" test -f "$CODEX_HOME/agents/standards-reviewer.toml"
+check "MachineScope_NoRulesInProjectFolder: machine scope writes no Claude rule into the project" sh -c "! ls .claude/rules/standards-* >/dev/null 2>&1"
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+"$init" --check > "$work/machine.check.out" 2>&1
+check "MachineScope_CheckWithoutFlagIsClean: init --check, with no --scope, finds the machine install up to date" grep -q 'up to date' "$work/machine.check.out"
+mkdir -p "$work/machine-second" && cd "$work/machine-second" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope machine >/dev/null 2>&1
+cd "$work/machine"
+"$init" --check > "$work/machine.second-check.out" 2>&1
+check "SecondProjectSameHome_CheckStaysClean: a second project installed on the same user folders leaves the first one's --check up to date" grep -q 'up to date' "$work/machine.second-check.out"
+unset CLAUDE_CONFIG_DIR CODEX_HOME
+
 [ "$fails" -eq 0 ] && echo "hooks: ok" || { echo "hooks: $fails failed"; exit 1; }

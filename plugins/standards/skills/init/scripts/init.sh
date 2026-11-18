@@ -20,13 +20,14 @@
 set -u
 plugin="$(cd "$(dirname "$0")/../../.." && pwd)"
 root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-check=0; force=0; source_hash=0
+check=0; force=0; source_hash=0; scope=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --root) root="$2"; shift 2 ;;
     --check) check=1; shift ;;
     --force) force=1; shift ;;
     --source-hash) source_hash=1; shift ;;
+    --scope) scope="${2:-}"; case "$scope" in machine|project) shift 2 ;; *) echo "init: --scope takes machine or project, not ${scope:-nothing}" >&2; exit 2 ;; esac ;;
     *) echo "init: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -34,12 +35,13 @@ STANDARDS_HOOKS="$plugin/hooks"; . "$plugin/hooks/lib.sh"
 source_hash() { standards_source_hash "$plugin"; }   # the install set lives in hooks/lib.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
+. "$plugin/skills/init/scripts/scope.sh"
 version="$(json_get "$(cat "$plugin/.claude-plugin/plugin.json")" "version")"
 begin="<!-- standards:begin v$version -->"
 end="<!-- standards:end -->"
 stamp=".standards/stamp"
 drift=0; refused=0
-changed=""; stamped=""; kept=""
+changed=""; stamped=""; kept=""; newline="$(printf '\n.')"; newline="${newline%.}"
 note() { changed="$changed  $1
 "; }
 drifted() { drift=1; echo "init: drift: $1"; }
@@ -54,20 +56,20 @@ install_file() {
   # install_file <built file> <target> [mode]: replace the target when it differs from the built
   # file, unless the target also differs from what init last wrote (a hand edit) and --force is
   # off. Every target handled here lands in the stamp.
-  if [ -f "$2" ] && cmp -s "$1" "$2"; then stamped="$stamped $2"; return; fi
+  if [ -f "$2" ] && cmp -s "$1" "$2"; then stamped="$stamped$2$newline"; return; fi
   if [ -f "$2" ] && [ "$force" -eq 0 ]; then
     last="$(stamp_get "$stamp" "$2")"
-    if [ -n "$last" ] && [ "$last" != "$(hash_file "$2")" ]; then edited "$2"; kept="$kept $2"; return; fi
+    if [ -n "$last" ] && [ "$last" != "$(hash_file "$2")" ]; then edited "$2"; kept="$kept$2$newline"; return; fi
   fi
   if [ "$check" -eq 1 ]; then drifted "$2"; else mkdir -p "$(dirname "$2")" && cp "$1" "$2" && { [ -z "${3:-}" ] || chmod "$3" "$2"; } && note "$2"; fi
-  stamped="$stamped $2"
+  stamped="$stamped$2$newline"
 }
 write_stamp() {
   tmp="$(tmpfile stamp)"
   {
     printf 'source\t%s\n' "$(source_hash)"
-    for t in $stamped; do printf '%s\t%s\n' "$(hash_file "$t")" "$t"; done
-    for t in $kept; do printf '%s\t%s\n' "$(stamp_get "$stamp" "$t")" "$t"; done
+    printf '%s' "$stamped" | while IFS= read -r stamped_path; do printf '%s\t%s\n' "$(hash_file "$stamped_path")" "$stamped_path"; done
+    printf '%s' "$kept" | while IFS= read -r kept_path; do printf '%s\t%s\n' "$(stamp_get "$stamp" "$kept_path")" "$kept_path"; done
   } > "$tmp"
   if [ ! -f "$stamp" ] || ! cmp -s "$tmp" "$stamp"; then cp "$tmp" "$stamp" && note "$stamp"; fi
 }
@@ -173,16 +175,15 @@ install_block() {
     if [ "$check" -eq 1 ]; then drifted "$target block"; else cat "$tmp" > "$target" && note "$target: standards block v$version"; fi
   fi
 }
-if [ -e AGENTS.md ]; then install_block AGENTS.md; elif [ -e CLAUDE.md ]; then install_block CLAUDE.md; else install_block AGENTS.md; fi
-if [ -e CLAUDE.md ] && [ -e AGENTS.md ] && [ "$(realpath_py CLAUDE.md)" != "$(realpath_py AGENTS.md)" ]; then install_block CLAUDE.md; fi
+install_scope_blocks
 
 # 4. Claude path-scoped rules, one per section, scoped to the configured source extensions.
 globs="$(json_list "$(config_text)" "languages" | while read -r lang; do json_list "$lang" "extensions"; done | sed 's|^|  - "**/*|; s|$|"|')"
-[ -n "$globs" ] || globs='  - "**/*"'
-mkdir -p .claude/rules
+[ -n "$globs" ] && [ "$scope" = project ] || globs='  - "**/*"'
+mkdir -p "$rules_folder"
 for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
   name="$(basename "$src" .md | sed 's/^[0-9]*-//')"
-  dst=".claude/rules/standards-$name.md"
+  dst="$rules_folder/standards-$name.md"
   tmp="$(tmpfile rule)"
   { echo "---"; echo "paths:"; echo "$globs"; echo "---"; cat "$src"; } > "$tmp"
   [ -s "$tmp" ] || die "could not build $dst"
@@ -190,9 +191,9 @@ for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
 done
 
 # 5. Codex agents (Codex cannot load agents from a plugin).
-mkdir -p .codex/agents
+mkdir -p "$codex_agents_folder"
 for src in "$plugin"/codex-agents/*.toml; do
-  install_file "$src" ".codex/agents/$(basename "$src")"
+  install_file "$src" "$codex_agents_folder/$(basename "$src")"
 done
 
 # 6. Hook copies for the git hooks (hosts run the plugin's own copies).
@@ -201,7 +202,7 @@ for src in "$plugin"/hooks/*.sh "$plugin"/hooks/git/*; do
   case "$src" in */git/*) dst=".standards/hooks/git/$(basename "$src")" ;; *) dst=".standards/hooks/$(basename "$src")" ;; esac
   install_file "$src" "$dst" +x
 done
-. "$plugin/skills/init/scripts/git_hooks.sh"
+[ "$scope" = machine ] || . "$plugin/skills/init/scripts/git_hooks.sh"
 
 # 7. Host wiring. Both hosts run the gates from the plugin's hooks/hooks.json once the plugin is
 # enabled, so init writes no PreToolUse entry: one in .claude/settings.json or .codex/hooks.json
@@ -263,7 +264,8 @@ fi
 # A rendered agent the roster dropped, or the eval runner once the roster is gone: stamped, no
 # longer written, removed when still what init wrote.
 for old in $(awk -F'\t' 'NR > 1 && ($2 ~ /^\.claude\/agents\// || $2 ~ /^\.codex\/agents\// || $2 ~ /^\.standards\/evals\//) { print $2 }' "$stamp" 2>/dev/null); do
-  case " $stamped $kept " in *" $old "*) continue ;; esac
+  printf '%s' "$stamped$kept" | grep -qxF -- "$old" && continue
+  case "$old" in .codex/agents/*) [ -f "$plugin/codex-agents/${old##*/}" ] && continue ;; esac
   [ -f "$old" ] || continue
   case "$old" in .standards/evals/*) why="no project roster" ;; *) why="no longer in the roster" ;; esac
   if [ "$check" -eq 1 ]; then drifted "stale: $old ($why)"
@@ -312,8 +314,7 @@ if [ "$refused" -eq 1 ]; then echo "standards v$version: some copies were refuse
 echo "Next:"
 echo "  - review .standards/config.json (format, build, test and mutation commands, protected files, hot paths)"
 echo "  - fill in .standards/testing-guide.md (fixtures, declared exceptions, what you test by hand)"
-echo "  - commit the changes with [config] in the message: .standards/ and .githooks/ are protected files"
-echo "  - every clone sets the git hooks path once: git config core.hooksPath $wanted_hooks_path (init does it here)"
+print_scope_next_steps
 echo "  - Codex: the plugin hooks need a one-time trust. Run /hooks in Codex once, and again after a plugin update."
 echo "  - CI: one step runs the commit gates per commit: uses: FilipposKaragiannis/brain/plugins/standards/action@main (after a checkout with fetch-depth: 0 and the toolchain setup)"
 for tool in jq python3; do command -v "$tool" >/dev/null 2>&1 || echo "  - $tool is not installed; the hooks need jq or python3"; done
