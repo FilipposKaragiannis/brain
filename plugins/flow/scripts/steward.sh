@@ -72,15 +72,16 @@
 # the command writes them bare and no value is read as shell. It runs from the main worktree, all
 # its output on stderr. After a create a git worktree of this repository must sit at {path}; then
 # the pool's goes onto its idle branch at the base tip (one that cannot move stays as made, and
-# health moves it once free) and tmp add's onto a new flow/<slug>-<phase> at {base}. tmp remove
-# takes only a listed worktree other than the main one and the pool's (else exit 2, nothing run);
-# after a remove the folder must be gone; git's record is pruned and the branch deleted. A command
-# with no {path}, or with a placeholder inside quotes, is refused before it runs, exit 2. One
-# that fails, or leaves no worktree (a remove: leaves the folder), is named after its output:
-# add, tmp and a growing pool exit 1 with no pool entry added (a pool that cannot grow says why,
-# not that it is at pool_max), and a claim skips a missing pool path it cannot recreate. A folder
-# a failed create leaves stays for the owner. A value must not hold " #" (the config reads a
-# comment there) or start with [ (it reads a list).
+# health moves it once free) and tmp add's onto a new flow/<slug>-<phase> at {base}. tmp add
+# refuses a phase that makes no valid branch name, or a folder that exists, and tmp remove takes
+# only a listed worktree under .flow/tmp: else exit 2, nothing run. After a remove the folder must
+# be gone; git's record of it goes, and its branch when that is flow/<its folder under .flow/tmp>.
+# A command with no {path}, or with a placeholder inside quotes, is refused before it runs,
+# exit 2. One that fails, or leaves no worktree (a remove: leaves the folder), is named after its
+# output: add, tmp and a growing pool exit 1 with no pool entry added (a pool that cannot grow
+# says why, not that it is at pool_max), and a claim skips a missing pool path it cannot recreate.
+# A folder a failed create leaves stays for the owner. A value must not hold " #" (the config
+# reads a comment there) or start with [ (it reads a list).
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.
@@ -436,13 +437,15 @@ cmd_tmp() {
       item="$2"; phase="$3"; slug="$(item_slug "$item")"
       wt="$(cmd_find "$item")"; [ -n "$wt" ] || die "$item has no claimed worktree" 2
       path="$home/tmp/$slug-$phase"; branch="flow/$slug-$phase"
+      git -C "$main" check-ref-format --branch "$branch" >/dev/null 2>&1 || die "tmp add: $branch is not a valid branch name; name the phase as a branch" 2
+      [ ! -e "$path" ] && [ ! -L "$path" ] || die "tmp add: $path already exists" 2
       mkdir -p "$home/tmp"
       if [ -n "$(cfg worktree_create)" ]; then tmp_worktree_create "$path" "flow/$slug" "$branch"
       else git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
     remove)
       path="$(removable_worktree "$2")" || exit
-      branch="$(git -C "$path" symbolic-ref --short -q HEAD)"
+      branch="$(temporary_branch "$path")"
       dirty "$path" && die "$path has uncommitted changes. Not removing." 3
       if [ -n "$(cfg worktree_remove)" ]; then run_worktree_remove "$path"
       else git -C "$main" worktree remove "$path" || die "cannot remove $path"; fi
@@ -561,26 +564,35 @@ tmp_worktree_create() {
 }
 
 # run_worktree_remove <path>: run the worktree_remove command from the main worktree, with the
-# path as its "$1" ("$2" empty) and all its output on stderr, then prune git's record of the
-# worktree. One that fails or leaves the folder on disk ends the run, exit 1.
+# path as its "$1" ("$2" empty) and all its output on stderr, then remove git's record of that
+# worktree alone. One that fails or leaves the folder on disk ends the run, exit 1.
 run_worktree_remove() {
   remove_command="$(worktree_command worktree_remove)" || exit
   (cd "$main" && sh -c "$(worktree_command_filled "$remove_command")" flow-worktree "$1" "") >&2 ||
     die "cannot remove $1: worktree_remove failed (exit $?)"
   [ ! -e "$1" ] || die "cannot remove $1: worktree_remove left it on disk"
-  git -C "$main" worktree prune
+  git -C "$main" worktree remove "$1" || die "cannot remove git's record of $1"
 }
 
 # removable_worktree <path>: the path as an absolute physical folder when it is a worktree of this
-# repository, listed by git, other than the main worktree and the pool's; else refused, exit 2.
+# repository, listed by git, under the temporary worktrees' folder; else refused, exit 2.
 removable_worktree() {
   case "$1" in '') die "tmp remove: no path given" 2 ;; /*) removable_path="$1" ;; *) removable_path="./$1" ;; esac
   removable_path="$(cd "$removable_path" 2>/dev/null && pwd -P)" || die "tmp remove: $1 is not a folder" 2
+  case "$removable_path" in "$(temporary_folder)"/*) ;; *) die "tmp remove: $1 is not under $home/tmp; only a temporary worktree is removed" 2 ;; esac
   git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | physical_in "$removable_path" ||
     die "tmp remove: $1 is not a worktree of this repository" 2
-  [ "$removable_path" != "$(cd "$main" && pwd -P)" ] || die "tmp remove: $1 is the main worktree; only a temporary worktree is removed" 2
-  ! pool_paths | physical_in "$removable_path" || die "tmp remove: $1 is a pool worktree; only a temporary worktree is removed" 2
   printf '%s' "$removable_path"
+}
+# temporary_folder: the physical folder tmp add makes its worktrees in; $home/tmp as written while
+# it does not exist, which no physical path lies under.
+temporary_folder() { (cd "$home/tmp" 2>/dev/null && pwd -P) || printf '%s' "$home/tmp"; }
+# temporary_branch <path>: the branch tmp add made for the temporary worktree at the physical path,
+# flow/ and its folder under the temporary folder, when the worktree has it checked out; else
+# nothing, so a branch the worktree_create command checked out is never deleted.
+temporary_branch() {
+  temporary_branch_name="flow/${1#"$(temporary_folder)"/}"
+  [ "$(git -C "$1" symbolic-ref --short -q HEAD)" != "$temporary_branch_name" ] || printf '%s' "$temporary_branch_name"
 }
 # physical_in <folder>: true when a path read from stdin, one per line, resolves to the folder.
 physical_in() {
