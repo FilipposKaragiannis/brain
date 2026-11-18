@@ -1917,6 +1917,17 @@ check "CreateCommandSingleQuotingPath_ExitsTwo: a template with {path} inside si
 tmpcfg "$fake_tmp_create"
 "$P/scripts/steward.sh" tmp add "$t1" 'p$(touch injected)' > "$work/tmpwt.out" 2>&1
 check "BarePathWithCommandSubstitutionInPhase_RunsNoPhaseNameText: a phase name holding \$(touch ...) reaches a bare {path} as text" [ ! -e injected ]
+cat > "$work/tmpwt/main-create.sh" <<SCRIPT
+#!/bin/sh
+git -C "$PWD" worktree add -q --detach "\$1" main
+SCRIPT
+tmpcfg "worktree_create: sh $work/tmpwt/main-create.sh {path} {base}\n"
+tp8="$("$P/scripts/steward.sh" tmp add "$t1" phase-8 2>/dev/null)"
+check "CreateCommandIgnoringBase_PhaseBranchStartsAtTaskTip: the phase's branch starts at the task branch's tip whatever the command checked out" [ "$(git -C "$tp8" rev-parse HEAD)" = "$(git rev-parse "flow/$tmp_slug")" ]
+git branch -q "flow/$tmp_slug-phase-9" main
+tmpcfg "$fake_tmp_create"
+"$P/scripts/steward.sh" tmp add "$t1" phase-9 > "$work/tmpwt.out" 2>"$work/tmpwt.err"
+check "TmpAddWhoseBranchCannotBeMade_NamesLeftoverWorktree: the message names the made worktree and how to remove it" grep -q "tmp remove .*phase-9" "$work/tmpwt.err"
 
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t

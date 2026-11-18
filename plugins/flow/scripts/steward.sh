@@ -70,12 +70,12 @@
 # the command {path} is the worktree's absolute folder and {base} the ref it starts from (the
 # pool's base, flow/<slug> for tmp add, empty for a remove); sh -c gets them as "$1" and "$2", so
 # the command writes them bare and no value is read as shell. It runs from the main worktree, all
-# its output on stderr. After a create a git worktree must sit at {path}; then the pool's goes
-# onto its idle branch at the base tip (one that cannot move stays as made, and health moves it
-# once free) and tmp add's onto a new flow/<slug>-<phase>. tmp remove takes only a listed
-# worktree other than the main one and the pool's (else exit 2, nothing run); after a remove the
-# folder must be gone; git's record is pruned and the branch deleted. A command with no {path},
-# or with a placeholder inside quotes, is refused before it runs, exit 2. One
+# its output on stderr. After a create a git worktree of this repository must sit at {path}; then
+# the pool's goes onto its idle branch at the base tip (one that cannot move stays as made, and
+# health moves it once free) and tmp add's onto a new flow/<slug>-<phase> at {base}. tmp remove
+# takes only a listed worktree other than the main one and the pool's (else exit 2, nothing run);
+# after a remove the folder must be gone; git's record is pruned and the branch deleted. A command
+# with no {path}, or with a placeholder inside quotes, is refused before it runs, exit 2. One
 # that fails, or leaves no worktree (a remove: leaves the folder), is named after its output:
 # add, tmp and a growing pool exit 1 with no pool entry added (a pool that cannot grow says why,
 # not that it is at pool_max), and a claim skips a missing pool path it cannot recreate. A folder
@@ -518,10 +518,13 @@ run_setup() {
   done
 }
 
-# worktree_at <path>: true when the path is the top level of a git worktree.
+# worktree_at <path>: true when the path is the top level of a git worktree of this repository.
 worktree_at() {
-  [ -d "$1" ] && [ "$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$1" && pwd -P)" ]
+  [ -d "$1" ] && [ "$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$1" && pwd -P)" ] &&
+    [ "$(git_common_folder "$1")" = "$(git_common_folder "$main")" ]
 }
+# git_common_folder <path>: the physical folder of the repository the worktree at the path shares.
+git_common_folder() { (cd "$1" && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P); }
 
 # worktree_maker: what makes a new worktree, for messages: the worktree_create command, else git.
 worktree_maker() {
@@ -549,11 +552,12 @@ run_worktree_create() {
   return 1
 }
 
-# tmp_worktree_create <path> <base> <branch>: worktree_create makes a temporary worktree at the
-# base, then the worktree gets the new branch there. Either failing ends the run, exit 1.
+# tmp_worktree_create <path> <base> <branch>: worktree_create makes a temporary worktree, then the
+# worktree gets the new branch at the base, whatever the command checked out. Either failing ends
+# the run, exit 1; a worktree made but not put on the branch stays, and the message names it.
 tmp_worktree_create() {
   run_worktree_create "$1" "$2" || die "cannot add $1"
-  git -C "$1" switch -q -c "$3" >&2 || die "cannot put $1 on a new branch $3"
+  git -C "$1" switch -q -c "$3" "$2" >&2 || die "cannot put $1 on a new branch $3 at $2; the worktree stays there, remove it with steward.sh tmp remove $1"
 }
 
 # run_worktree_remove <path>: run the worktree_remove command from the main worktree, with the
