@@ -76,6 +76,10 @@ const CLOSE_TODO: Record<CloseReason, string> = {
 };
 /** What a board item's `state.gate` holds when no tracker label names a gate (an empty value means the same). */
 const NO_LABEL_GATE = 'none';
+/** What starts the id of a claim flow's WorktreeCreate hook made with no item, a sub-agent's (`isolation: worktree`). */
+const SUB_AGENT_CLAIM = 'adhoc:';
+/** The kind a sub-agent's claim shows on the board, which lists no tracker item for it. */
+const SUB_AGENT_KIND = 'sub-agent';
 /** The needs-you row of a gate only the tracker label sets: there is no question to show. */
 export const LABEL_GATE_DETAIL = 'No question recorded: only the tracker label is set (no gate.sh raise).';
 
@@ -191,13 +195,13 @@ function worktreeState(context: WorktreeContext, flags: WorktreeFlag[]): Worktre
 
 /**
  * A flow claim on an open item with no run record, no agent and no gate: parked between steps until
- * a worker takes the next one, or until the item it waits behind closes. A reservation, a merge
- * gate that waits on reviewers, a dead run's record and a closed item the sweep has yet to free
- * are not parked.
+ * a worker takes the next one, or until the item it waits behind closes. A reservation, a
+ * sub-agent's claim, a merge gate that waits on reviewers, a dead run's record and a closed item
+ * the sweep has yet to free are not parked.
  */
 function parked(context: WorktreeContext): boolean {
   const claim = context.claim;
-  if (claim === null || claim.reserved !== '' || claim.item === '') return false;
+  if (claim === null || claim.reserved !== '' || claim.item === '' || claim.item.startsWith(SUB_AGENT_CLAIM)) return false;
   if (context.run !== null || context.agents.length > 0 || context.gate !== null || context.inReview) return false;
   if (context.item === null) return true;
   // A split item's work is its children's: while one is open, no worker takes the parent.
@@ -350,14 +354,19 @@ function buildItems(input: ReconcileInput, worktrees: Worktree[], held: Set<stri
   for (const id of [...engagedIds].filter((entry) => !seen.has(entry)).sort()) {
     const worktree = byItem.get(id) ?? null;
     const gate = input.flow.gates.find((entry) => entry.item === id) ?? null;
+    const subAgent = id.startsWith(SUB_AGENT_CLAIM);
     items.push({
-      id, title: '', kind: '', size: '', priority: '', status: 'open', state: itemState(null, worktree, gate),
+      id, title: subAgent ? subAgentTitle(worktree) : '', kind: subAgent ? SUB_AGENT_KIND : '', size: '', priority: '', status: 'open', state: itemState(null, worktree, gate),
       step: worktree?.claim?.step ?? '', gate: gate?.gate ?? 'none', worktree: worktree?.name ?? null, pr: null, url: null,
       parent: null, blockedBy: [], openBlockers: [], openChildren: 0, needs: [], rank: UNRANKED, lastEvent: null,
       heldBy: null, heldReason: null, answerPending: null, spend: itemSpend(input.board?.spend[id]),
     });
   }
   return items.sort((left, right) => STATE_ORDER[left.state] - STATE_ORDER[right.state] || left.rank - right.rank || left.id.localeCompare(right.id));
+}
+
+function subAgentTitle(worktree: Worktree | null): string {
+  return `Sub-agent in ${worktree?.name ?? 'no worktree'} on ${worktree?.branch ?? 'no branch'}`;
 }
 
 function itemSpend(spend: BoardSpend | undefined): ItemSpend | null {
