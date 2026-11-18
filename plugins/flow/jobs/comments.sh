@@ -65,8 +65,6 @@ job_start "$host" model
 out="$(job_log_dir)/$job.out.$$"
 slot_pool="$(job_log_dir)/$(job_base).slots"
 trap 'c=$?; slot_give_all "$slot_pool" $$; rm -rf "$out.run"; rm -f "$out.login" "$out.procs" "$out.procs.failed" "$out.targets" "$out.gated"; job_end $c' EXIT
-# A pass still running at jobs.comments.pass_limit is stopped with its children: TERM, then KILL
-# after PASS_STOP_GRACE seconds; it ends with PASS_LIMIT_EXIT and counts as failed.
 PASS_STOP_GRACE=10
 PASS_LIMIT_EXIT=124
 pass_limit="$(cfg_or jobs.comments.pass_limit 1h)"
