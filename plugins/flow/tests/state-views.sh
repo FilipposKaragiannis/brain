@@ -85,7 +85,7 @@ check "GateFileOfAnotherGate_StaysOutOfTheSeed: the tracker's open gate wins ove
 "$local_adapter/write-state.sh" "$started" step=review
 check "LaterTrackerChange_DoesNotReachTheRecord: once a record exists it wins and is never compared again" '[ "$(record get "$started" step)" = implement ]'
 tracker_attempts_outside_ascii='²'
-other_digits=gh#7
+seeded_item=gh#7
 seeded_step="$(
   export FAKE_GH_DIR="$work/gh"; mkdir -p "$FAKE_GH_DIR" "$work/gh-bin" && cp "$here/_fake_gh.py" "$FAKE_GH_DIR/" && ln -sf "$here/fake-gh.sh" "$work/gh-bin/gh"
   PATH="$work/gh-bin:$PATH"
@@ -95,8 +95,8 @@ issue={"number": 7, "title": "Tracker attempts in other digits", "body": "", "st
 json.dump({"issues": [issue]}, open(sys.argv[2], "w"))' "$tracker_attempts_outside_ascii" "$FAKE_GH_DIR/issues.json"
   cp .flow/config.yaml "$work/config.local"
   printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\ntracker_state: none\nnotify:\n  desktop: false\n' > .flow/config.yaml
-  record set "$other_digits" last_event=resumed >/dev/null 2>&1
-  record get "$other_digits" step
+  record set "$seeded_item" last_event=resumed >/dev/null 2>&1
+  record get "$seeded_item" step
   cp "$work/config.local" .flow/config.yaml
 )"
 check "SeedWithAttemptsInNonAsciiDigits_StillMakesTheRecord: a tracker number outside 0-9 stays out of the seed, never failing the first write" \

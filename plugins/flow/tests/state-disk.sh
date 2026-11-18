@@ -31,11 +31,11 @@ let_go_of_lock() { kill "$lock_holder" 2>/dev/null; wait "$lock_holder" 2>/dev/n
 echo "a write waits for the item's lock"
 waiting="$(new_task "Waits for the lock")"
 record set "$waiting" step=plan >/dev/null 2>&1
-lock_held_seconds_within_the_wait=30
+lock_holder_cap_seconds=30
 lock_wait_seconds="$(python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import _state_schema as schema; print(schema.LOCK_TRIES * schema.LOCK_RETRY_SECONDS)' "$plugin/scripts")"
 writer_poll_seconds=0.1
 writer_polls_within_half_the_wait="$(python3 -c 'import sys; print(int(float(sys.argv[1]) / 2 / float(sys.argv[2])))' "$lock_wait_seconds" "$writer_poll_seconds")"
-if hold_lock "$waiting" "$lock_held_seconds_within_the_wait"; then
+if hold_lock "$waiting" "$lock_holder_cap_seconds"; then
   record set "$waiting" step=review >/dev/null 2>&1 & waiting_writer=$!
   polls=0
   while kill -0 "$waiting_writer" 2>/dev/null && [ "$polls" -lt "$writer_polls_within_half_the_wait" ]; do
@@ -115,15 +115,19 @@ printf 'kept\n' > "$work/record-victim"
 first_planted="$(plant_links "$(record path "$linked")" "$work/record-victim")"
 record set "$linked" step=review >/dev/null 2>&1
 after_write="$(next_pid)"
+check "PlantedLinksForTheRecordWrite_CoverTheWritersPid: the links sit at every old temporary name the write could have picked" \
+  'window_covered_the_write "$first_planted" "$after_write"'
 check "PlantedLinkAtTheRecordsOldTemporaryName_IsNotWrittenThrough: a record write makes its own new temporary, never one someone else placed" \
-  'window_covered_the_write "$first_planted" "$after_write" && [ "$(cat "$work/record-victim")" = kept ]'
+  '[ "$(cat "$work/record-victim")" = kept ]'
 mkdir -p .flow/runs
 printf 'kept\n' > "$work/run-victim"
 first_planted="$(plant_links "$(run_file "$linked")" "$work/run-victim")"
 record set "$linked" "run:=$run_record" >/dev/null 2>&1
 after_write="$(next_pid)"
+check "PlantedLinksForTheRunFileWrite_CoverTheWritersPid: the links sit at every old temporary name the write could have picked" \
+  'window_covered_the_write "$first_planted" "$after_write"'
 check "PlantedLinkAtTheRunFilesOldTemporaryName_IsNotWrittenThrough: a view write makes its own new temporary, never one someone else placed" \
-  'window_covered_the_write "$first_planted" "$after_write" && [ "$(cat "$work/run-victim")" = kept ]'
+  '[ "$(cat "$work/run-victim")" = kept ]'
 
 [ "$fails" -eq 0 ] && { echo "state-disk: ok"; exit 0; }
 echo "state-disk: $fails failed"; exit 1
