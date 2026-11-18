@@ -1391,6 +1391,16 @@ ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn 999998 .flow/log/comments.s
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.takeover
 check "TakeoverGuardOfADeadRun_IsCleared: a takeover stopped halfway never keeps its slot from being taken back" grep -q 'comments gh#21' "$HOST_LOG"
+GUARD_HOLD_SECONDS=2; LIVE_TAKER_SECONDS=60
+sleep "$LIVE_TAKER_SECONDS" & live_taker=$!
+bump 2026-10-25T04:30:00Z; ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn "$live_taker" .flow/log/comments.slots/1.takeover; : > "$HOST_LOG"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & guarded_run=$!
+sleep "$GUARD_HOLD_SECONDS"; host_calls_while_guarded="$(wc -l < "$HOST_LOG" | tr -d ' ')"
+kill "$live_taker" 2>/dev/null; wait "$live_taker" 2>/dev/null
+wait_for grep -q 'comments gh#21' "$HOST_LOG"
+kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.takeover
+check "TakeoverGuardOfALiveRun_HoldsTheSlotUntilItsTakerEnds: a live takeover is never raced by a second taker" \
+  sh -c "[ '$host_calls_while_guarded' = 0 ] && grep -q 'comments gh#21' '$HOST_LOG'"
 "$P/adapters/github/write-state.sh" "$cap" pr= >/dev/null; "$P/adapters/github/close.sh" "$cap" >/dev/null 2>&1
 # A pass still running at jobs.comments.pass_limit is stopped with its children and failed.
 PASS_LIMIT_BOUND_SECONDS=15
