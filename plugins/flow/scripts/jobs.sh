@@ -27,7 +27,8 @@
 # its line in the config, a next schedule whose args set --workers while jobs.workers does too,
 # and a bad schedule name.
 # On macOS a schedule is a launchd agent, com.<repo>.flow.<name>, loaded at login: it runs while
-# you are logged in and the Mac is awake. Elsewhere install prints the crontab lines to add.
+# you are logged in and the Mac is awake; a comments agent starts its run in the background, so
+# its next interval starts a run while one is alive. Elsewhere install prints the crontab lines to add.
 set -u
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/host.sh"
@@ -77,6 +78,13 @@ command_for() {
   s="$(spec "$1")"; a=""; [ -n "$s" ] && a=" $(py args "$s")"
   as=""; [ "$1" = "$(job_of "$1")" ] || as=" --as $1"
   printf '.flow/jobs/%s.sh %s%s%s' "$(job_of "$1")" "$(host_of "$1")" "$as" "$a"
+}
+# launchd_command <name>: the command its launchd agent runs; a comments run is detached.
+launchd_command() {
+  case "$(job_of "$1")" in
+    comments) printf 'nohup %s &' "$(command_for "$1")" ;;
+    *) command_for "$1" ;;
+  esac
 }
 label() { printf '%s.%s' "$prefix" "$1"; }
 plist() { printf '%s/%s.plist' "$agents" "$(label "$1")"; }
@@ -171,7 +179,7 @@ case "$cmd" in
         launchctl bootout "$domain/$(label "$j")" 2>/dev/null
       fi
       mkdir -p "$agents"
-      py plist "$(label "$j")" "$main" "$(command_for "$j")" "$s" "$log/launchd-$j.log" "$PATH" > "$(plist "$j")" || exit 1
+      py plist "$(label "$j")" "$main" "$(launchd_command "$j")" "$s" "$log/launchd-$j.log" "$PATH" > "$(plist "$j")" || exit 1
       launchctl enable "$domain/$(label "$j")" 2>/dev/null
       launchctl bootstrap "$domain" "$(plist "$j")" || die "launchd refused $(plist "$j")"
       echo "$j: $s, as $(label "$j")"

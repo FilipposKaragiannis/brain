@@ -1593,6 +1593,28 @@ FLOW_HOME="$home2" "$J" install > "$work/install.out"
 check "install writes a launchd agent per scheduled job and loads it" sh -c "[ \$(ls '$work/agents'/*.plist | wc -l) = 4 ] && [ \$(grep -c bootstrap '$LAUNCH_LOG') = 4 ]"
 check "install: every 30m is a 1800 s interval, with the job's args" sh -c "grep -q '<integer>1800</integer>' '$work/agents/$lbl.next.plist' && grep -q 'next.sh claude --workers 2 --max-steps 15' '$work/agents/$lbl.next.plist' && grep -q '<integer>7200</integer>' '$work/agents/$lbl.comments.plist'"
 check "install: daily and weekly are calendar times, Sunday is 0" sh -c "grep -q '<key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer>' '$work/agents/$lbl.intake.plist' && grep -q '<key>Minute</key><integer>30</integer><key>Weekday</key><integer>0</integer>' '$work/agents/$lbl.retro.plist'"
+cat > "$work/agent_run.py" <<'PY'
+import os, plistlib, subprocess, sys, time
+agent = plistlib.load(open(sys.argv[1], "rb"))
+started = time.time()
+with open(sys.argv[2], "ab") as log:
+    subprocess.run(agent["ProgramArguments"], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+                   env=dict(os.environ, **agent["EnvironmentVariables"]), timeout=30)
+print("%.1f" % (time.time() - started))
+PY
+agent_jobs_before="$(ls -d "$repo/.flow/jobs" 2>/dev/null)"; mkdir -p "$repo/.flow/jobs"
+for j in comments next; do
+  printf '#!/bin/sh\necho $$ > "%s/agent-%s.pid"\nsleep 3\n' "$work" "$j" > "$repo/.flow/jobs/$j.sh"; chmod +x "$repo/.flow/jobs/$j.sh"
+done
+agent_comments_took="$(python3 "$work/agent_run.py" "$work/agents/$lbl.comments.plist" "$work/agent-comments.log")"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$work/agent-comments.pid" ] && break; sleep 0.2; done
+check_all "CommentsAgentStarted_ReturnsWhileItsRunIsAlive: the next interval starts a second run beside it" \
+  "python3 -c 'import sys; assert float(sys.argv[1]) < 2' '$agent_comments_took' && kill -0 \"\$(cat '$work/agent-comments.pid')\""
+agent_next_took="$(python3 "$work/agent_run.py" "$work/agents/$lbl.next.plist" "$work/agent-next.log")"
+check_all "NextAgentStarted_RunsUntilItsRunEnds: launchd starts no second next run" \
+  "python3 -c 'import sys; assert float(sys.argv[1]) >= 3' '$agent_next_took' && ! kill -0 \"\$(cat '$work/agent-next.pid')\""
+kill "$(cat "$work/agent-comments.pid")" 2>/dev/null
+rm -f "$repo/.flow/jobs/comments.sh" "$repo/.flow/jobs/next.sh"; [ -n "$agent_jobs_before" ] || rmdir "$repo/.flow/jobs"
 FLOW_HOME="$home2" "$J" install next > /dev/null
 check "install again unloads the old agent first" sh -c "grep -q 'bootout gui/.*/$lbl.next' '$LAUNCH_LOG'"
 FLOW_HOME="$home2" "$J" status --json > "$work/status.json"
