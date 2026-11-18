@@ -515,13 +515,14 @@ def signal_group(group, signum):
     return True
 
 
-def stop_group(child, grace):
+def stop_group(child, grace, now):
     signal_group(child.pid, signal.SIGTERM)
-    deadline = time.monotonic() + grace
-    while time.monotonic() < deadline:
+    deadline = now() + grace
+    while now() < deadline:
         child.poll()
         if not signal_group(child.pid, 0):
-            break
+            child.wait()
+            return
         time.sleep(BOUNDED_POLL_SECONDS)
     signal_group(child.pid, signal.SIGKILL)
     child.wait()
@@ -531,22 +532,25 @@ def exit_code(returncode):
     return SIGNAL_EXIT_BASE - returncode if returncode < 0 else returncode
 
 
-def bounded(limit, grace, command):
-    child = subprocess.Popen(command, start_new_session=True)
+def bounded(limit, grace, command, now):
     received = []
+    started = []
 
     def forward(signum, _frame):
         received.append(signum)
-        signal_group(child.pid, signum)
+        for child in started:
+            signal_group(child.pid, signum)
 
     for signum in FORWARDED_SIGNALS:
         signal.signal(signum, forward)
-    deadline = time.monotonic() + limit
-    while child.poll() is None and not received and time.monotonic() < deadline:
+    child = subprocess.Popen(command, start_new_session=True)
+    started.append(child)
+    deadline = now() + limit
+    while child.poll() is None and not received and now() < deadline:
         time.sleep(BOUNDED_POLL_SECONDS)
     if child.returncode is not None and not received:
         return exit_code(child.returncode)
-    stop_group(child, grace)
+    stop_group(child, grace, now)
     return SIGNAL_EXIT_BASE + received[0] if received else BOUNDED_LIMIT_EXIT
 
 
@@ -736,7 +740,7 @@ def main():
     elif command == "spawn":
         spawn(args[0], args[1:])
     elif command == "bounded":
-        sys.exit(bounded(int(args[0]), int(args[1]), args[2:]))
+        sys.exit(bounded(int(args[0]), int(args[1]), args[2:], time.monotonic))
     else:
         sys.exit("flow: unknown command %s" % command)
 
