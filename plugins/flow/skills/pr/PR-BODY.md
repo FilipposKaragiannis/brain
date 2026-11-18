@@ -18,7 +18,8 @@ only. No preamble.
 
 ## Review
 
-<P1 findings from the review step that were declared, one line each; "none" when clean>
+<P1 findings from the review step that were declared, one line each; "none" when clean. Never an
+unmet acceptance line: the review step sends that back to implement>
 
 ## Merge danger
 

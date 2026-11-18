@@ -24,6 +24,14 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 3. **Check the result file** `<reports>/test.json` (or `reproduce.json`): `done` with the count
    per level and the unpinned acceptance lines; `fail` when the suite does not run; `gate`
    when a seam is missing (the implementer fixes the interface, never the test writer).
+   **For `reproduce`, review the diagnosis** before the fix is written: on `done`, spawn
+   `epic-plan-reviewer` with the item, `<reports>/reproduce.json` and the committed test, asking
+   for its diagnosis review. Write its report to `<reports>/diagnosis.md`. A Blocker (the test
+   shows a lead, not the reported symptom; a named suspect neither measured nor ruled out; an
+   acceptance line the fix path cannot meet) turns `reproduce.json` into `fail` with the first
+   Blocker as the summary, and the fix loop sends the item back to reproduce. A Blocker only
+   the owner can settle is `gate`, gate `ambiguity`. One pass; Risks and Gaps go to the
+   implementer through `diagnosis.md`.
 4. **End with one report** (W-07), in this shape: the `test-writer` subagent wrote the behaviour
    list from the acceptance lines to `<reports>/tests.md`, then the tests; the count per level;
    the result file (`<reports>/test.json`) and its status; the acceptance lines left unpinned;

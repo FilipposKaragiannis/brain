@@ -1,5 +1,11 @@
 # standards
 
+## 1.5.1 (2026-11-17)
+
+- The spec-reviewer grades an acceptance check the diff must carry and the reports call
+  unproven as a partial requirement, leaves a check a later step proves as pending, and for a
+  bug treats the Problem steps as a requirement the reproducing test must show.
+
 ## 1.5.0 (2026-11-16)
 
 - init asks one plain question for a gap the repository gives no evidence for: no second

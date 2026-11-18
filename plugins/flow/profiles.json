@@ -114,10 +114,10 @@
       "summary": "Check every task of the epic is closed, run the epic-level verification, close the epic (flow:verify, verifier)."
     },
     "reproduce": {
-      "agent": "test-writer",
+      "agent": "",
       "worktree": true,
       "skill": "test",
-      "summary": "Write the failing test that reproduces the bug and commit it (test-writer)."
+      "summary": "Write the failing test that reproduces the reported symptom and commit it (test-writer), then review the diagnosis before the fix (flow:test, epic-plan-reviewer)."
     },
     "design": {
       "agent": "",
