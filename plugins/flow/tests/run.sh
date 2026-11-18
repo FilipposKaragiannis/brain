@@ -1959,6 +1959,7 @@ check "TmpAddOntoExistingFolder_MakesNoWorktreeThere: the existing folder does n
 tmpcfg ''
 "$P/scripts/steward.sh" tmp add "$t1" 'a/../../../../escaped' > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpAddOfPhaseClimbingOutOfTmpWithoutCreateCommand_ExitsTwo: a phase holding .. is refused, exit 2, when git makes the worktree" [ "$code" = 2 ]
+check "TmpAddOfPhaseClimbingOutOfTmpWithoutCreateCommand_MakesNoFolderOutsideTmp: git never makes the folder the .. would reach" [ ! -e "$work/tmpwt/escaped" ]
 tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
 git worktree add -q --detach ../app-sibling
 "$P/scripts/steward.sh" tmp remove ../app-sibling > "$work/tmpwt.out" 2>&1; code=$?
@@ -1972,6 +1973,7 @@ tp12="$("$P/scripts/steward.sh" tmp add "$t1" phase-12 2>/dev/null)"
 git -C "$tp12" switch -q -c owner-branch
 "$P/scripts/steward.sh" tmp remove "$tp12" > "$work/tmpwt.out" 2>&1
 check "TmpRemoveOfWorktreeOnOtherBranch_KeepsThatBranch: a branch other than the phase's is never deleted" git rev-parse --verify -q refs/heads/owner-branch
+check "TmpRemoveOfWorktreeOnOtherBranch_RemovesWorktree: a temporary worktree on another branch is still removed" [ ! -e "$tp12" ]
 
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
