@@ -1787,6 +1787,14 @@ createcfg '' '../{repo}-idle-wt-{n}' "sh $work/create/idle-create.sh {path} {bas
 "$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>&1; code=$?
 check "CreateCommandMakingNoWorktree_FailsClaimWithExitOne: a command that exits 0 but makes no worktree fails the claim with exit 1" [ "$code" = 1 ]
 check "CreateCommandMakingNoWorktree_AddsNoPoolEntry: a command that makes no worktree adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
+cat > "$work/create/foreign-create.sh" <<'EOF'
+#!/bin/sh
+git init -q "$1"
+EOF
+createcfg '' '../{repo}-foreign-wt-{n}' "sh $work/create/foreign-create.sh {path} {base}"
+"$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>&1; code=$?
+check "CreateCommandMakingForeignRepository_FailsClaimWithExitOne: a command that makes a repository of its own, not a worktree of this one, fails the claim with exit 1" [ "$code" = 1 ]
+check "CreateCommandMakingForeignRepository_AddsNoPoolEntry: a command that makes a repository of its own adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
 createcfg '' '../{repo}-bare-wt-{n}' "sh $work/create/fake-create.sh ../app-bare-made {base}"
 "$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>&1; code=$?
 check_all "CreateCommandWithoutPath_IsRefusedWithExitTwo: one with no {path} is refused, exit 2, naming the key" '[ "$code" = 2 ] && grep -q "worktree_create has no {path}" "$work/create.out"'
@@ -1904,6 +1912,12 @@ check "TmpRemoveOfEmptyPath_ExitsTwo: an empty path is refused" [ "$code" = 2 ]
 "$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfPoolWorktree_ExitsTwo: a pool worktree is refused" [ "$code" = 2 ]
 check "TmpRemoveOfPoolWorktree_KeepsPoolWorktree: the remove command never runs on a pool worktree" [ -d ../app-wt-1 ]
+tmpcfg ''
+"$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfPoolWorktreeWithoutRemoveCommand_ExitsTwo: a pool worktree is refused when git does the remove too" [ "$code" = 2 ]
+"$P/scripts/steward.sh" tmp remove "$work/tmpwt/plain" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfPlainFolderWithoutRemoveCommand_ExitsTwo: a folder that is no worktree is refused when git does the remove" [ "$code" = 2 ]
+tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
 tp6="$("$P/scripts/steward.sh" tmp add "$t1" phase-6 2>/dev/null)"
 "$P/scripts/steward.sh" tmp remove ".flow/tmp/$tmp_slug-phase-6" > "$work/tmpwt.out" 2>&1
 check "TmpRemoveOfRelativePath_RemovesThatWorktree: a path relative to where tmp remove runs names the worktree removed" [ ! -e "$tp6" ]
