@@ -109,22 +109,40 @@ def pair_problem(pair):
         return record_pair_problem(pair)
     if pair.key not in STATE_KEYS:
         return "unknown state key %s" % pair.key
+    return number_pair_problem(pair)
+
+
+def number_pair_problem(pair):
     if STATE_KEYS[pair.key].kind == NUMBER and pair.value != "" and not whole_number_shaped(pair.value):
         return "%s takes a whole number, not %s" % (pair.key, pair.value)
     return ""
 
 
 def record_pair_problem(pair):
+    if pair.key == RUN_STEP:
+        return ""
     try:
-        value = json.loads(pair.value) if pair.key != RUN_STEP else None
+        value = json.loads(pair.value)
     except ValueError:
         return "%s= takes JSON, not %s" % (pair.key, pair.value)
+    return run_object_problem(pair, value) or gate_object_problem(pair, value)
+
+
+def run_object_problem(pair, value):
     if pair.key == RUN_OBJECT and not (value is None or isinstance(value, dict)):
         return "run:= takes the run as a JSON object, or null, not %s" % pair.value
-    gate_name = value.get(NOTIFY_GATE_FIELD) if isinstance(value, dict) else None
-    if pair.key == GATE_OBJECT and (not isinstance(gate_name, str) or gate_name in GATE_CLEARED):
+    return ""
+
+
+def gate_object_problem(pair, value):
+    if pair.key == GATE_OBJECT and not names_an_open_gate(value):
         return "gate:= takes the gate's record with its name in %s, not %s" % (NOTIFY_GATE_FIELD, pair.value)
     return ""
+
+
+def names_an_open_gate(value):
+    gate_name = value.get(NOTIFY_GATE_FIELD) if isinstance(value, dict) else None
+    return isinstance(gate_name, str) and gate_name not in GATE_CLEARED
 
 
 def pairs_outcome(pairs):
@@ -255,13 +273,22 @@ def claimed_elsewhere(record, machine):
 def path_value(record, path):
     value = record
     for step in path.split("."):
-        if isinstance(value, list) and whole_number_shaped(step) and int(step) < len(value):
-            value = value[int(step)]
-        elif isinstance(value, dict) and step in value:
-            value = value[step]
-        else:
+        value = step_value(value, step)
+        if value is None:
             return None
     return value
+
+
+def step_value(value, step):
+    if isinstance(value, list):
+        return list_step_value(value, step)
+    if isinstance(value, dict):
+        return value.get(step)
+    return None
+
+
+def list_step_value(values, step):
+    return values[int(step)] if whole_number_shaped(step) and int(step) < len(values) else None
 
 
 def record_get(record, key):

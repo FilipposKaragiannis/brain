@@ -85,17 +85,29 @@ def words_problem(command, words):
     return "" if len(words) == wanted else "the words after -- for %s number %d, not %d" % (command, wanted, len(words))
 
 
+def command_word(arguments):
+    return arguments[0] if arguments else ""
+
+
+def end_of_options_index(rest):
+    return rest.index(END_OF_OPTIONS) if END_OF_OPTIONS in rest else len(rest)
+
+
+def assembled_options(command, option_words, words):
+    fields = dict(UNSET_OPTIONS, **{option_field(name): value for name, value in given_options(option_words).items()})
+    pairs = words if command == PAIRS_COMMAND else ()
+    key = words[0] if command == KEY_COMMAND else ""
+    return Options(command=command, pairs=pairs, key=key, **fields)
+
+
 def parsed(arguments):
-    command = arguments[0] if arguments else ""
+    command = command_word(arguments)
     if command not in COMMAND_OPTIONS:
         return refused(command, "the command is one of %s, not %r" % (", ".join(COMMAND_OPTIONS), command))
     rest = list(arguments[1:])
-    marker = rest.index(END_OF_OPTIONS) if END_OF_OPTIONS in rest else len(rest)
+    marker = end_of_options_index(rest)
     option_words, words = rest[:marker], tuple(rest[marker + 1:])
     problem = options_problem(command, option_words) or words_problem(command, words)
     if problem:
         return refused(command, problem)
-    fields = dict(UNSET_OPTIONS, **{option_field(name): value for name, value in given_options(option_words).items()})
-    pairs = words if command == PAIRS_COMMAND else ()
-    key = words[0] if command == KEY_COMMAND else ""
-    return CommandLine(Options(command=command, pairs=pairs, key=key, **fields), schema.DONE)
+    return CommandLine(assembled_options(command, option_words, words), schema.DONE)
