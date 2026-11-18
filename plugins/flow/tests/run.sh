@@ -1888,6 +1888,25 @@ tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh\n"
 "$P/scripts/steward.sh" tmp remove "$tp5" > "$work/tmpwt.out" 2>&1; code=$?
 check_all "RemoveCommandWithoutPath_IsRefusedWithExitTwo: one with no {path} is refused, exit 2, naming the key" '[ "$code" = 2 ] && grep -q "worktree_remove has no {path}" "$work/tmpwt.out"'
 check "RemoveCommandWithoutPath_NeverRuns: one with no {path} never runs" [ ! -s "$tmp_log" ]
+tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
+"$P/scripts/steward.sh" tmp remove . > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfDotInMainWorktree_ExitsTwo: . run in the main worktree is the main worktree, refused" [ "$code" = 2 ]
+check "TmpRemoveOfDotInMainWorktree_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
+"$P/scripts/steward.sh" tmp remove "$(pwd -P)" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfMainWorktree_ExitsTwo: the main worktree's absolute path is refused" [ "$code" = 2 ]
+check "TmpRemoveOfMainWorktree_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
+mkdir -p "$work/tmpwt/plain"
+"$P/scripts/steward.sh" tmp remove "$work/tmpwt/plain" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfPlainFolder_ExitsTwo: a folder that is no worktree is refused" [ "$code" = 2 ]
+check "TmpRemoveOfPlainFolder_KeepsFolder: the remove command never runs on a folder that is no worktree" [ -d "$work/tmpwt/plain" ]
+"$P/scripts/steward.sh" tmp remove "" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfEmptyPath_ExitsTwo: an empty path is refused" [ "$code" = 2 ]
+"$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfPoolWorktree_ExitsTwo: a pool worktree is refused" [ "$code" = 2 ]
+check "TmpRemoveOfPoolWorktree_KeepsPoolWorktree: the remove command never runs on a pool worktree" [ -d ../app-wt-1 ]
+tp6="$("$P/scripts/steward.sh" tmp add "$t1" phase-6 2>/dev/null)"
+"$P/scripts/steward.sh" tmp remove ".flow/tmp/$tmp_slug-phase-6" > "$work/tmpwt.out" 2>&1
+check "TmpRemoveOfRelativePath_RemovesThatWorktree: a path relative to where tmp remove runs names the worktree removed" [ ! -e "$tp6" ]
 tmpcfg "worktree_create: sh $work/tmpwt/fake-create.sh \"{path}\" {base}\n"
 "$P/scripts/steward.sh" tmp add "$t1" 'p$(touch injected)' > "$work/tmpwt.out" 2>&1; code=$?
 check "CreateCommandQuotingPath_ExitsTwo: a template with {path} inside double quotes is refused" [ "$code" = 2 ]

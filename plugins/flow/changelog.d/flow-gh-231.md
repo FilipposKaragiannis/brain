@@ -10,6 +10,8 @@ bump: minor
   still never removed.
 - A command with no `{path}`, or with a placeholder inside quotes, is refused before it runs,
   exit 2, and `init --check` names it as a gap. `init` writes both keys commented out.
+- `tmp remove` refuses, exit 2, a path that is not a worktree git lists, the main worktree or a
+  pool worktree, and resolves a relative path from where it runs.
 - A pool that cannot grow because the worktree cannot be made now says so, with the command's or
   git's output, and exits 1. It used to say the pool was at `pool_max` and exit 3, which sent
   `next` on to another item instead of naming the failure.

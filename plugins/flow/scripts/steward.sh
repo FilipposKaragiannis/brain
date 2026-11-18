@@ -72,9 +72,10 @@
 # the command writes them bare and no value is read as shell. It runs from the main worktree, all
 # its output on stderr. After a create a git worktree must sit at {path}; then the pool's goes
 # onto its idle branch at the base tip (one that cannot move stays as made, and health moves it
-# once free) and tmp add's onto a new flow/<slug>-<phase>. After a remove the folder must be
-# gone; git's record is pruned and the branch deleted. A command with no {path}, or with a
-# placeholder inside quotes, is refused before it runs, exit 2. One
+# once free) and tmp add's onto a new flow/<slug>-<phase>. tmp remove takes only a listed
+# worktree other than the main one and the pool's (else exit 2, nothing run); after a remove the
+# folder must be gone; git's record is pruned and the branch deleted. A command with no {path},
+# or with a placeholder inside quotes, is refused before it runs, exit 2. One
 # that fails, or leaves no worktree (a remove: leaves the folder), is named after its output:
 # add, tmp and a growing pool exit 1 with no pool entry added (a pool that cannot grow says why,
 # not that it is at pool_max), and a claim skips a missing pool path it cannot recreate. A folder
@@ -440,7 +441,7 @@ cmd_tmp() {
       else git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
     remove)
-      path="$2"
+      path="$(removable_worktree "$2")" || exit
       branch="$(git -C "$path" symbolic-ref --short -q HEAD)"
       dirty "$path" && die "$path has uncommitted changes. Not removing." 3
       if [ -n "$(cfg worktree_remove)" ]; then run_worktree_remove "$path"
@@ -564,6 +565,23 @@ run_worktree_remove() {
     die "cannot remove $1: worktree_remove failed (exit $?)"
   [ ! -e "$1" ] || die "cannot remove $1: worktree_remove left it on disk"
   git -C "$main" worktree prune
+}
+
+# removable_worktree <path>: the path as an absolute physical folder when it is a worktree of this
+# repository, listed by git, other than the main worktree and the pool's; else refused, exit 2.
+removable_worktree() {
+  case "$1" in '') die "tmp remove: no path given" 2 ;; /*) removable_path="$1" ;; *) removable_path="./$1" ;; esac
+  removable_path="$(cd "$removable_path" 2>/dev/null && pwd -P)" || die "tmp remove: $1 is not a folder" 2
+  git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | physical_in "$removable_path" ||
+    die "tmp remove: $1 is not a worktree of this repository" 2
+  [ "$removable_path" != "$(cd "$main" && pwd -P)" ] || die "tmp remove: $1 is the main worktree; only a temporary worktree is removed" 2
+  ! pool_paths | physical_in "$removable_path" || die "tmp remove: $1 is a pool worktree; only a temporary worktree is removed" 2
+  printf '%s' "$removable_path"
+}
+# physical_in <folder>: true when a path read from stdin, one per line, resolves to the folder.
+physical_in() {
+  while IFS= read -r listed_path; do [ "$(cd "$listed_path" 2>/dev/null && pwd -P)" = "$1" ] && return 0; done
+  return 1
 }
 
 # pool_worktree_create <path>: worktree_create makes a pool worktree at the base tip, then park
