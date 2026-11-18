@@ -1268,6 +1268,9 @@ check_all "comments job: a PR skipped for its held lock is named in use in the r
 check "comments job: a lock the run did not take is left to its holder" [ -d ".flow/item:$(item_slug "$par").lock" ]
 rm -rf ".flow/item:$(item_slug "$par").lock"
 check "comments job: --workers 0 is refused, exit 2" sh -c "'$P/jobs/comments.sh' claude --workers 0 2>/dev/null; [ \$? = 2 ]"
+: > "$HOST_LOG"; "$P/jobs/comments.sh" claude --workers 00 >/dev/null 2>&1; code=$?
+check "WorkersWithALeadingZero_RefusesTheRun: 00 workers would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
+check "WorkersWithALeadingZero_StartsNoPass: no host session runs on a zero worker count" test ! -s "$HOST_LOG"
 # A pass the host stops ends its own worker; the pass already running in the other one finishes.
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
