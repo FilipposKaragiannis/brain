@@ -127,18 +127,21 @@ checks_note() {
 chase_reviewers() { # chase_reviewers <target> <pr>
   "$FLOW_PLUGIN/scripts/comments.sh" chase "$2" 2>&1 | while IFS= read -r line; do job_say "$1: $line" >/dev/null; done
 }
-# activity <target>: one line that changes when anything lands on the PR, read after the chase.
+# activity <target> <item>: one line that changes when anything lands on the PR, read after the chase.
 # $awaiting holds the last comment ids of the unresolved threads whose last word is not the
 # flow's reply, space separated, and they are part of the line. So is the time the item's last
 # gate was cleared (gate.sh clear), once one was: a pass that stopped at a gate left the PR as it
-# was, and the owner's answer is what is new. A line with no clear is the line before 1.23.0.
+# was, and the owner's answer is what is new; <item>'s, the item item_of found, for a PR named by
+# number, so both names of one PR give one line. A line with no clear is the line before 1.23.0.
 # The checks failing on the head close the line only when one fails, so a PR with none keeps the
 # line it had before failing checks were read, and gets no extra pass after the upgrade.
 activity() {
   awaiting=""; cleared=""
   if adapter_for "$1" >/dev/null; then
     data="$(adapter read "$1" 2>/dev/null)"; pull="$(json_get "$data" state.pr)"; cleared="$(json_get "$data" state.answered_at)"
-  else pull="$1"; fi
+  else
+    pull="$1"; [ -z "$2" ] || cleared="$(json_get "$(adapter read "$2" 2>/dev/null)" state.answered_at)"
+  fi
   [ -n "$pull" ] && act="$("$FLOW_PLUGIN/scripts/comments.sh" activity "$pull" 2>/dev/null)" || return 0
   awaiting="$(json_list "$act" awaiting | tr '\n' ' ' | sed 's/ $//')"
   failing="$(json_list "$act" failing | tr '\n' ',' | sed 's/,$//')"
@@ -325,7 +328,7 @@ pass() {
     return 0
   fi
   note="$(prepare_pr "$t")"
-  activity "${2:-$t}" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$(pr_key "$t" "$2")")"; mkdir -p "$(dirname "$f")"
+  activity "$t" "$2" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$(pr_key "$t" "$2")")"; mkdir -p "$(dirname "$f")"
   rm -f "$f.answer"; answer_note "$t" "$f.answer"
   fails=0
   [ -f "$f.fails" ] && { read -r fails _ < "$f.fails"; case "$fails" in ''|*[!0-9]*) fails=0 ;; esac; }
