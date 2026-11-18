@@ -71,6 +71,7 @@ PASS_STOP_GRACE=10
 PASS_LIMIT_EXIT=124
 pass_limit="$(cfg_or jobs.comments.pass_limit 1h)"
 pass_limit_seconds="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.comments.pass_limit "$pass_limit" 2>&1)" || die "${pass_limit_seconds#flow: }" 2
+[ "$pass_limit_seconds" -ge 1 ] || die "jobs.comments.pass_limit is '$pass_limit': a pass needs at least 1s" 2
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 targets=""; gated=""; rm -f "$out.gated"

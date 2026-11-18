@@ -1388,6 +1388,10 @@ jobscfg '  comments:\n    pass_limit: soon\n'; : > "$HOST_LOG"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?
 check "PassLimitThatIsNoDuration_RefusesTheRun: a bad setting fails at startup, exit 2" [ "$code" -eq 2 ]
 check "PassLimitThatIsNoDuration_StartsNoPass: no host session runs on a bad setting" test ! -s "$HOST_LOG"
+jobscfg '  comments:\n    pass_limit: 0m\n'; : > "$HOST_LOG"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?
+check "PassLimitOfZero_RefusesTheRun: a limit that would stop every pass at once fails at startup, exit 2" [ "$code" -eq 2 ]
+check "PassLimitOfZero_StartsNoPass: no host session runs on a zero limit" test ! -s "$HOST_LOG"
 cp "$work/config.workers" .flow/config.yaml
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"
