@@ -76,8 +76,8 @@ realpath_py() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))'
 die() { echo "init: $1" >&2; exit 1; }
 
 # Scratch files live inside the repo: mktemp is not available in every sandbox, and a failed
-# temp file must never truncate a target.
-scratch=".standards/.init-tmp"
+# temp file must never truncate a target. One folder per run, so two runs never delete each other's.
+scratch=".standards/.init-tmp.$$"
 mkdir -p "$scratch" || die "cannot create $scratch"
 trap 'rm -rf "$scratch"' EXIT
 tmpfile() { printf '%s/%s' "$scratch" "$1"; }
@@ -201,66 +201,7 @@ for src in "$plugin"/hooks/*.sh "$plugin"/hooks/git/*; do
   case "$src" in */git/*) dst=".standards/hooks/git/$(basename "$src")" ;; *) dst=".standards/hooks/$(basename "$src")" ;; esac
   install_file "$src" "$dst" +x
 done
-# Wiring git to them. The plugin never creates .githooks/: a project that has one keeps it and
-# gets one call per hook, placed before a trailing top-level `exit` so it runs (a call after the
-# exit never does); a project without one points core.hooksPath (local git config, per clone) at
-# the plugin's own folder.
-hook_with_call() {
-  # hook_with_call <file> <call> <needle>: prints the file with the call before its trailing
-  # `exit` (else last). A line that already holds the needle is moved, not duplicated.
-  CALL="$2" NEEDLE="$3" awk '
-    index($0, ENVIRON["NEEDLE"]) { mine = $0; next }
-    { line[++n] = $0 }
-    END {
-      call = (mine != "") ? mine : ENVIRON["CALL"]
-      last = n
-      while (last > 0 && line[last] ~ /^[ \t]*$/) last--
-      at = (last > 0 && line[last] ~ /^exit([ \t]+[^ \t]+)?[ \t]*(#.*)?$/) ? last : n + 1
-      for (i = 1; i < at; i++) print line[i]
-      print call
-      for (i = at; i <= n; i++) print line[i]
-    }' "$1"
-}
-hook_call_is_dead() {
-  # hook_call_is_dead <file> <needle>: true when the call sits after a top-level `exit`.
-  NEEDLE="$2" awk '
-    index($0, ENVIRON["NEEDLE"]) && seen { dead = 1 }
-    /^exit([ \t]|$)/ { seen = 1 }
-    END { exit !dead }' "$1"
-}
-place_call() {
-  # place_call <file> <call> <needle> <what>: rewrites the hook in place (its mode stays) when the
-  # placement changes it.
-  hook_with_call "$1" "$2" "$3" > "$(tmpfile hook)" || return 0
-  cmp -s "$(tmpfile hook)" "$1" && return 0
-  cat "$(tmpfile hook)" > "$1" && note "$1: standards call $4"
-}
-hooks_path="$(git config core.hooksPath 2>/dev/null || true)"
-if [ -d .githooks ]; then
-  for hook in pre-commit commit-msg pre-push; do
-    needle=".standards/hooks/git/$hook"
-    call="\"\$(git rev-parse --show-toplevel)/$needle\" \"\$@\" || exit 1  # standards plugin"
-    if [ ! -f ".githooks/$hook" ]; then
-      if [ "$check" -eq 1 ]; then drifted ".githooks/$hook"; else printf '#!/bin/sh\n%s\n' "$call" > ".githooks/$hook" && chmod +x ".githooks/$hook" && note ".githooks/$hook"; fi
-    elif ! grep -qF "$needle" ".githooks/$hook"; then
-      if [ "$check" -eq 1 ]; then drifted ".githooks/$hook lacks the standards call"
-      else place_call ".githooks/$hook" "$call" "$needle" "added"; fi
-    elif hook_call_is_dead ".githooks/$hook" "$needle"; then
-      if [ "$check" -eq 1 ]; then drifted ".githooks/$hook: the standards call is after an exit and never runs"
-      else place_call ".githooks/$hook" "$call" "$needle" "moved before the exit"; fi
-    fi
-  done
-  wanted=".githooks"
-else
-  wanted=".standards/hooks/git"
-fi
-if [ -z "$hooks_path" ]; then
-  if [ "$check" -eq 1 ]; then drifted "core.hooksPath is unset (wanted $wanted)"
-  elif git config core.hooksPath "$wanted" 2>/dev/null; then note "git config core.hooksPath $wanted"
-  else echo "init: could not set core.hooksPath. Run: git config core.hooksPath $wanted"; fi
-elif [ "$hooks_path" != "$wanted" ]; then
-  echo "init: core.hooksPath is $hooks_path, not $wanted. Call .standards/hooks/git/pre-commit, commit-msg and pre-push from your hooks."
-fi
+. "$plugin/skills/init/scripts/git_hooks.sh"
 
 # 7. Host wiring. Both hosts run the gates from the plugin's hooks/hooks.json once the plugin is
 # enabled, so init writes no PreToolUse entry: one in .claude/settings.json or .codex/hooks.json
@@ -372,7 +313,7 @@ echo "Next:"
 echo "  - review .standards/config.json (format, build, test and mutation commands, protected files, hot paths)"
 echo "  - fill in .standards/testing-guide.md (fixtures, declared exceptions, what you test by hand)"
 echo "  - commit the changes with [config] in the message: .standards/ and .githooks/ are protected files"
-echo "  - every clone sets the git hooks path once: git config core.hooksPath $wanted (init does it here)"
+echo "  - every clone sets the git hooks path once: git config core.hooksPath $wanted_hooks_path (init does it here)"
 echo "  - Codex: the plugin hooks need a one-time trust. Run /hooks in Codex once, and again after a plugin update."
 echo "  - CI: one step runs the commit gates per commit: uses: FilipposKaragiannis/brain/plugins/standards/action@main (after a checkout with fetch-depth: 0 and the toolchain setup)"
 for tool in jq python3; do command -v "$tool" >/dev/null 2>&1 || echo "  - $tool is not installed; the hooks need jq or python3"; done
