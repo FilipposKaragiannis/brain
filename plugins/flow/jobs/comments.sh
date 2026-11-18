@@ -426,7 +426,7 @@ worker() {
   for wk_t in $targets; do
     wk_n=$((wk_n + 1))
     [ ! -f "$run/stopped" ] || return 0
-    slot="$run/$wk_n"; mkdir "$slot" 2>/dev/null || continue
+    slot="$run/$wk_n"; mkdir_exclusive "$slot" || continue
     out="$slot/out"
     locked_pass "$wk_t"
   done

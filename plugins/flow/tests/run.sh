@@ -77,7 +77,15 @@ check_all "write-state"       '[ "$("$P/adapters/local/read.sh" "$t1" | jget sta
 "$P/adapters/local/write-state.sh" "$t1" step= attempts=0 touches=
 printf 'hello: world\n' | "$P/adapters/local/comment.sh" "$t1"
 check "comment appended"  grep -q 'hello: world' .flow/items/task/1.md
-check "list open"         [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
+chmod 600 .flow/items/task/1.md
+"$P/adapters/local/write-state.sh" "$t1" step=
+check "PrivateItemWrittenAgain_StaysPrivate: an item made 0600 is still 0600 after a state write, because the whole-file replace keeps the old file's mode" \
+  [ "$(python3 -I -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode)))' .flow/items/task/1.md)" = "0o600" ]
+chmod 644 .flow/items/task/1.md
+check "TemporaryItemFile_IsOwnerOnlyFromCreation: the temporary file a whole-item write fills is 0600 under umask 022 before any content is written, because a private item's contents never sit in a file others can read" \
+  python3 -I -B -c 'import os, stat, sys; sys.path.insert(0, sys.argv[1]); import _item; os.umask(0o022)
+with _item.create_owner_only(sys.argv[2]) as f: sys.exit(stat.S_IMODE(os.fstat(f.fileno()).st_mode) != 0o600)' "$P/adapters/local" "$work/owner-only.tmp"
+check "list open"        [ "$("$P/adapters/local/list.sh" | jget 2.id)" = "local:task/2" ]
 printf '[{"id":"local:task/90","status":"open","state":{"gate":"none"},"blocked_by":["gh#999999"],"open_blockers":[]},{"id":"local:task/91","status":"open","state":{"gate":"none"},"blocked_by":[],"open_blockers":["gh#1"]}]' | "$P/scripts/filter-ready.sh" > "$work/ready.out"
 check "ready: an item that lists its open blockers is judged by that list, with no read per blocker" sh -c "grep -q 'local:task/90' '$work/ready.out' && ! grep -q 'local:task/91' '$work/ready.out'"
 check "ready excludes blocked" [ "$("$P/adapters/local/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "local:task/1,local:task/2" ]
@@ -2096,6 +2104,10 @@ mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
 - [ ] three" >/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "a live holder makes the next pick wait, then exit 7 (quiet)" [ "$code" -eq 7 ]
+lying_mkdir="$work/lying-mkdir"; mkdir -p "$lying_mkdir"
+printf '#!/bin/sh\nexec %s -p "$@"\n' "$(command -v mkdir)" > "$lying_mkdir/mkdir" && chmod +x "$lying_mkdir/mkdir"
+PATH="$lying_mkdir:$PATH" FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
+check "MkdirThatExitsZeroOnExistingDirectory_PickWaitsForLiveHolder: the pick exits 7 (quiet) because only the call that makes the lock directory holds the lock" [ "$code" -eq 7 ]
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check_all "a stale lock (holder gone) is taken over" '[ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]'
@@ -2118,6 +2130,8 @@ mkdir -p "$work/slow"; rm -f "$work/slow.go" "$work/slow.groups"
 printf '#!/bin/sh\npython3 -I -c "import os; print(os.getpgrp())" >> "%s/slow.groups"\nn=0; while [ ! -f "%s/slow.go" ] && [ "$n" -lt 60 ]; do sleep 1; n=$((n + 1)); done\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' "$work" "$work" > "$work/slow/claude"; chmod +x "$work/slow/claude"
 PATH="$work/slow:$PATH" "$P/jobs/next.sh" claude --workers 2 --max-steps 1 >/dev/null 2>&1; code=$?
 check_all "--workers: the job starts the workers and ends before they do" '[ "$code" -eq 0 ] && [ ! -s "$HOST_LOG" ]'
+both_sessions_started() { [ "$(grep -c . "$work/slow.groups" 2>/dev/null)" = 2 ]; }
+waited=0; while ! both_sessions_started && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
 touch "$work/slow.go"
 waited=0; while { [ "$(grep -c . "$HOST_LOG")" -lt 2 ] || ls -d .flow/log/next-[0-9]*.lock; } >/dev/null 2>&1 && [ "$waited" -lt 60 ]; do sleep 1; waited=$((waited + 1)); done
 check "--workers: the workers end within a minute" [ "$waited" -lt 60 ]

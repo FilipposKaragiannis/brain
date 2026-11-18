@@ -1,5 +1,30 @@
 # standards
 
+## 1.5.1 (2026-11-17)
+
+- The spec-reviewer grades an acceptance check the diff must carry and the reports call
+  unproven as a partial requirement, leaves a check a later step proves as pending, and for a
+  bug treats the Problem steps as a requirement the reproducing test must show.
+
+## 1.5.0 (2026-11-16)
+
+- init asks one plain question for a gap the repository gives no evidence for: no second
+  question, no example value, no default the owner could accept with "all".
+- A command gate runs without git's repository variables (`GIT_DIR`, `GIT_INDEX_FILE`,
+  `GIT_WORK_TREE` and the rest of `git rev-parse --local-env-vars`). Git exports them to its
+  hooks, so a gate that ran tests from the pre-commit hook aimed the tests' git at the repository
+  being committed: a test's `git init --bare` made the main checkout bare and its `git config`
+  wrote the test identity into it. The gate still runs from the repository root, where git finds
+  the repository on its own. The hooks' own suite now runs in the repository's test sandbox.
+- W-07 keeps the one report at the end but no longer bans notes on the way: during long work a
+  one-line note on the current step is welcome. Current models read the old "no narration" as
+  silence through long tasks.
+- The reviewers and the project advisor lose their word caps ("under 400 words"); the review
+  skill drops its per-reviewer cap. The findings-only shape keeps the reports tight, and current
+  models cut facts to fit a number.
+- The init skill ends with one report and drops "about ten lines, no step narration". Each gap
+  line names its file, even when the line above names the same one.
+
 ## 1.4.2 (2026-11-15)
 
 - U-05 says a renamed line is touched code, and that a U-02 declaration covers a [judgement]

@@ -1,5 +1,87 @@
 # flow
 
+## 1.40.0 (2026-11-17)
+
+- The review step fails on a surviving Spec P1, an acceptance line the diff must carry and
+  meets in part or not at all, and sends the item back to implement. A line the verify step or
+  the feel test proves later is pending, not unmet. A PR-body note no longer meets a line; only
+  the owner drops one, in the item. The quick depth refutes Spec P1s as well as P0s.
+- The reproduce step pins the reported symptom from the item's Problem steps, never a lead
+  alone, and measures the source when the item names several suspects. It now runs through
+  `flow:test`, which has the epic-plan-reviewer review the diagnosis before the fix.
+- The epic-plan-reviewer reads M task plans as well as L ones, and checks in the tracker each
+  item a plan leans on: a closed prerequisite is met when its work is in the code, and a closed
+  item the plan still expects work from is a Blocker.
+
+## 1.39.2 (2026-11-16)
+
+- The local tracker writes an item whole: a run that lists the items while another run updates
+  one no longer reads it empty. Two runs started together could fail the pick with "cannot read",
+  and a worker could end without a step.
+- Every flow lock lets one holder in, also on Ubuntu 26.04: its default mkdir (uutils coreutils
+  0.8) exits 0 when another process made the directory first, so two runs could take the pick lock,
+  an item's lock or a job's lock together, and pick the same item or address one PR twice. The
+  locks now make their directory through Python, which reports the kernel's answer.
+
+## 1.39.1 (2026-11-16)
+
+- The comments job starts each pass in the item's worktree, or the main worktree when the item
+  holds none. Since Claude Code 2.1.323 a sandboxed session commits only in the worktree it
+  started in, so a pass started in the main worktree could fix a thread but never commit, push
+  or reply.
+- comments says so when run by hand from elsewhere: it names the failed commit in the report
+  instead of looking for a way around the sandbox.
+- init words each config question the same way: the value it wrote ("written `3`", "written
+  empty") and a value it recommends, never only advice. With no reviewer that can answer on the
+  repository, it recommends `reviews.reviewers: []`.
+- implement's report names the task branch and the worktree, also when the step fails or stops
+  at a gate, so the owner knows where uncommitted work sits.
+- verify runs where ps cannot run, as in a sandbox that refuses the setuid /bin/ps on macOS. The
+  detached run no longer stops before its first check, and --wait no longer reads a run still
+  going as one that died: it falls back to pgrep to see whether the run still goes.
+- On Linux, where pgrep lists a zombie, that fallback reads the process state from /proc, so a
+  verify run that has ended but is not yet reaped no longer holds steward stop or release for the
+  whole wait.
+- The PR step opens the PR with `gh pr create` and the whole body at once, for a local item too.
+  The tracker only records the PR, and a pushed branch is no PR.
+- Tests cover a Claude session cut by a time-window limit (#190): the line for any number of
+  hours, daily or weekly, on the result, stdout or stderr, has the cause `spend-limit`; a good
+  session that quotes it has none; and the unattended loop runs one session, keeps the item's
+  attempt count and stops the host with the host's line.
+- The explorer, researcher and architect lose their word caps; their named sections bound the
+  reports. `new` asks for an issue body short enough to read in one pass, not under 150 words.
+- The step skills end with one report instead of "report once", which current models read as a
+  ban on any note during the work.
+- Health, the jobs and their locks work where ps cannot run, as in a sandbox that refuses the
+  setuid /bin/ps on macOS. They fall back to pgrep for the command lines, lsof for a parent and
+  python for a process group, so a live run, job or host session is no longer taken for dead: a
+  job's lock no longer reads as stale, `jobs.sh run` no longer starts a second run beside one
+  still going, `jobs.sh status` shows it running, health lists the processes instead of judging
+  no run, and a run records the host session that started it.
+- implement, test, next and steward say what the comments skill says: a sandboxed Claude session
+  commits and switches branches only in the worktree it started in. Run by hand from the main
+  checkout, a step that commits, and next's or steward's claim of a pool worktree, fail on
+  `index.lock`; the skill now names that in its report and stops instead of looking for a way
+  around the sandbox. The unattended run already claims from a shell and starts each step in the
+  item's worktree.
+- The implementer, test-writer, comment-addresser and worktree-steward stop with that error on a
+  commit, claim or release that fails on `index.lock`, and never work around it.
+- The implement, test and next evals start their session in the item's pool worktree, with the
+  main checkout inside it, as the comments eval does. implement and test pass only when a commit
+  lands on the task branch and the result file says done; before, they passed on a failed step
+  that never committed.
+- The flow suite can no longer change the checkout it runs from. Run with `GIT_DIR` exported, as
+  from a git hook or an agent's session, its very first steps wrote its test identity into that
+  repository's config, made commits on its `main` and added worktrees to it, and every later git
+  call followed. Every flow suite now runs in the repository's test sandbox
+  (`tools/lib/sandbox.sh`): it clears the git variables that point git at a repository and the
+  ones that point git, Claude, Codex or flow at the owner's config, keeps git from looking above
+  the suite's temp folder, and watches the checkout the suite runs from. A run that changes that
+  repository's `core.bare`, `core.worktree` or `user.*`, adds a worktree into the temp folder or
+  edits the plugin's files fails, and the lint fails on a suite that does not run in the sandbox.
+- A verify run under dash stopped by TERM or INT just after it made its first temp file no longer
+  leaves that file behind: the cleanup is set before the temp files exist.
+
 ## 1.39.0 (2026-11-15)
 
 - An item's work starts from its base and its PR merges into it, resolved once when it is first

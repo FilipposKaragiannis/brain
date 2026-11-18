@@ -51,7 +51,7 @@ job_record() {
   # One write per line: workers ending together would otherwise interleave a line and its newline.
   _line="$(json_obj job="$job" host="${host:-}" at="${job_at:-$(now_iso)}" seconds:="$((_end - ${job_t0:-$_end}))" exit:="$1" result="${job_last:-}")"
   printf '%s\n' "$_line" >> "$_runs"
-  [ "$(wc -l < "$_runs")" -ge 4000 ] && mkdir "$_runs.trim" 2>/dev/null || return 0
+  [ "$(wc -l < "$_runs")" -ge 4000 ] && mkdir_exclusive "$_runs.trim" || return 0
   if [ "$(wc -l 2>/dev/null < "$_runs" || echo 0)" -ge 4000 ]; then mv "$_runs" "$(job_log_dir)/runs.1.jsonl"; fi
   rmdir "$_runs.trim"
 }
@@ -85,10 +85,10 @@ job_lock() {
   job_shared=
   d="$(job_log_dir)/$job.lock"
   if [ "$job_lock_kind" = run ]; then job_drop_stale_run_locks; d="$(job_log_dir)/$job-$$.lock"; rm -rf "$d"; fi
-  if mkdir "$d" 2>/dev/null; then :; else
+  if mkdir_exclusive "$d"; then :; else
     pid="$(cat "$d/pid" 2>/dev/null)"
     if [ -n "$pid" ] && job_alive "$pid"; then job_say "skipped: run $pid still going"; job_record 0; exit 0; fi
-    rm -rf "$d"; mkdir "$d" || die "cannot lock $d"
+    rm -rf "$d"; mkdir_exclusive "$d" || die "cannot lock $d"
   fi
   echo $$ > "$d/pid"; printf '%s' "$job_at" > "$d/at"; printf '%s' "$host" > "$d/host"
   trap 'job_end $?' EXIT
@@ -96,10 +96,10 @@ job_lock() {
   trap 'exit 143' TERM
   [ "$job_lock_kind" = schedule ] && [ "$(job_base)" != next ] || return 0
   _s="$(job_log_dir)/$(job_base).shared.lock"
-  if mkdir "$_s" 2>/dev/null; then :; else
+  if mkdir_exclusive "$_s"; then :; else
     _spid="$(cat "$_s/pid" 2>/dev/null)"
     if [ -n "$_spid" ] && job_alive "$_spid"; then job_say "skipped: $(cat "$_s/name" 2>/dev/null) is running (pid $_spid), which shares the $(job_base) job's state"; exit 0; fi
-    rm -rf "$_s"; mkdir "$_s" || die "cannot lock $_s"
+    rm -rf "$_s"; mkdir_exclusive "$_s" || die "cannot lock $_s"
   fi
   job_shared="$_s"; echo $$ > "$_s/pid"; printf '%s' "$job" > "$_s/name"
 }
