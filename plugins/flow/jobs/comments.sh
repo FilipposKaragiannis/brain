@@ -36,8 +36,9 @@
 # --workers N, or jobs.comments_workers in .flow/config.yaml, runs up to N passes at once (1 to
 # 16), each on its own PR; unset or 1 runs them one after another. jobs.comments_workers also caps
 # the passes live at once across all runs, through the slot pool (lib/slots.sh); a run given
-# --workers N may use slots up to N. A pass holds a slot for its host session only and waits for a
-# free one: it never skips a PR for lack of a slot. A pass still running at
+# --workers N may use slots up to N. A pass holds a slot for its host session only, until the
+# session's process group is gone even when the run is stopped first, and waits for a free one: it
+# never skips a PR for lack of a slot. A pass still running at
 # jobs.comments.pass_limit (1h) is stopped with its children and counts as failed, so the next run
 # tries it again. The processes are listed once per run.
 # The result line names every open PR and what it came to: addressed, nothing new, waits on you
@@ -297,11 +298,11 @@ tell_in_use() {
 # outcome <word> [<why>]: what this pass came to, in its slot, for the run's result line:
 # addressed, failed, unchanged, waits (on the owner), busy or stopped, and why.
 outcome() { printf '%s\t%s\n' "$1" "${2:-}" > "$slot/outcome"; }
-# pass_host_run <dir> <prompt>: job_host_run as the leader of its own session, stopped with its
-# children at the pass limit.
+# pass_host_run <dir> <prompt> <group file>: job_host_run as the leader of its own session, its
+# process group's id written to <group file>, stopped with its children at the pass limit.
 pass_host_run() {
   python3 -I "$FLOW_PLUGIN/scripts/_health.py" bounded "$pass_limit_seconds" "$PASS_STOP_GRACE" \
-    sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run "$@"' host_run "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is
+    sh -c 'printf "%s\n" "$$" > "$1"; shift; . "$FLOW_PLUGIN/lib/host.sh"; host_run "$@"' host_run "$3" "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is
 }
 # pass_session <target> <notes>: the pass's host session on <target>, the brief's <notes> added,
 # in a pass slot it waits for. The output goes to the log as it comes, so a pass killed half way
@@ -312,7 +313,7 @@ pass_session() {
     pass_slot="$(slot_take "$slot_pool" "$workers" $$)"
   }
   job_say "addressing $1"; rm -f "$(in_use_marker "$1" "$pull")"
-  { pass_host_run "$(pass_dir "$1")" "$(host_skill_prompt "$host" flow comments "$1.$2 Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
+  { pass_host_run "$(pass_dir "$1")" "$(host_skill_prompt "$host" flow comments "$1.$2 Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" "$pass_slot.group" 2>&1
     echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
   slot_give "$pass_slot"
   session_code="$(cat "$out.code" 2>/dev/null)"

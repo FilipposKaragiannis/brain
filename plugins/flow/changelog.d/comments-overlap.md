@@ -4,8 +4,9 @@ bump: minor
   `comments-<pid>.lock`, and skips a PR whose lock another pass holds. `jobs.sh run comments` starts
   a run beside a live one; other jobs still refuse. intake and retro keep their shared lock.
 - `jobs.comments_workers` now caps the passes live at once across all runs, through a slot pool in
-  `log/comments.slots/`. A pass holds a slot for its host session only and waits for a free one;
-  it never skips a PR for lack of a slot. A run given `--workers N` may use slots up to N.
+  `log/comments.slots/`. A pass holds a slot for its host session only, until the session's
+  process group is gone even when its run was stopped first, and waits for a free one; it never
+  skips a PR for lack of a slot. A run given `--workers N` may use slots up to N.
 - `jobs.comments_workers` and `--workers` take a whole number from 1 to 16, as the console does,
   leading zeros allowed (`02` is 2). Any other count, `0`, `00` or one past 16, stops the run at
   its start, exit 2, instead of leaving every pass waiting for a slot.

@@ -1452,6 +1452,20 @@ check_all "SlotAndTakeoverGuardBothStale_AreTakenByOneTakerOnly: two takers of a
   '[ "$(wc -l < "$stale_pool/winners" | tr -d " ")" = 1 ] && [ "$(readlink "$stale_pool/slots/1")" = "$(cat "$stale_pool/winners")" ]'
 check_all "SlotAndTakeoverGuardBothStale_LeaveNoGuardOnceTaken: a recovered takeover guard is never left behind" \
   '[ "$(ls "$stale_pool/slots" | tr "\n" " ")" = "1 " ]'
+STUBBORN_HOST_SECONDS=30
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+case "\$*" in *"comments gh#21."*) trap '' TERM; echo \$\$ > "$work/stubborn-host.pid"; printf 'start gh#21\n' >> "$work/runs.log"; sleep $STUBBORN_HOST_SECONDS; exit 0 ;; esac
+if kill -0 "\$(cat "$work/stubborn-host.pid")" 2>/dev/null; then stubborn=alive; else stubborn=gone; fi
+printf 'start %s beside a stubborn host %s\n' "\$*" "\$stubborn" >> "$work/runs.log"
+EOF
+chmod +x "$work/bin/claude"; : > "$work/runs.log"; rm -f "$work/stubborn-host.pid"
+"$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & stopped_run=$!
+wait_for grep -q '^start gh#21' "$work/runs.log"
+"$P/scripts/jobs.sh" stop comments >/dev/null 2>&1; wait "$stopped_run" 2>/dev/null
+"$P/jobs/comments.sh" claude "$cap" >/dev/null 2>&1
+check "StoppedRunWhoseHostIgnoresTerm_KeepsItsSlotUntilTheHostGroupIsGone: a new run's pass never starts beside the stopped host, because live passes stay within jobs.comments_workers" \
+  grep -q "^start .*comments $cap\..* beside a stubborn host gone\$" "$work/runs.log"
 "$P/adapters/github/write-state.sh" "$cap" pr= >/dev/null; "$P/adapters/github/close.sh" "$cap" >/dev/null 2>&1
 PASS_LIMIT_BOUND_SECONDS=15
 cat > "$work/bin/claude" <<EOF
