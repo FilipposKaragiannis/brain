@@ -31,6 +31,10 @@ print_scope_next_steps() {
   [ "$(git config core.hooksPath 2>/dev/null)" = "$wanted_hooks_path" ] && hooks_path_outcome="init does it here"
   echo "  - every clone sets the git hooks path once: git config core.hooksPath $wanted_hooks_path ($hooks_path_outcome)"
 }
+scope_copy() {
+  if [ "$scope" = machine ]; then printf '%s' "$2"; return; fi
+  project_copy "$1" "$2"
+}
 
 main_worktree_folder="$(main_worktree)"
 [ -n "$main_worktree_folder" ] || main_worktree_folder="$PWD"

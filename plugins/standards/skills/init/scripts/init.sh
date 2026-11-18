@@ -99,7 +99,7 @@ if solutions:
         "comments": {"line": "//", "doc": "///", "public": "public", "doc_inside": ["interface", "enum"], "allow_markers": ["float-boundary:"]},
     })
 config = {
-    "_readme": "Project settings for the standards plugin hooks and the flow verifier. Edit freely; init never overwrites this file. format[].command runs from the repo root with {files} replaced by the staged files under prefix. build runs in the git pre-push hook and in verify; test and mutation run in verify (mutation is a signal; empty turns it off; {files} limits it to the changed source files). protected files need [config] in the commit message. comments: line and doc are the comment tokens, public the modifier a doc comment must sit above, doc_inside the type kinds whose members may carry a doc without it (their members have no modifier), allow_markers the prefixes that make a line comment legal. gates: the project's own gates, run by the plugin hook, the git hooks and CI (check-gates.sh): {name, command, paths, when: [commit|push|ci], marker} runs command when a committed file matches a path glob (the command sees STANDARDS_COMMIT_MESSAGE and STANDARDS_STAGE; a commit whose message carries the marker skips the gate); {name, forbid: [text], marker} blocks a command that runs a text (as a word, not inside a heredoc, comment or quoted text, except sh -c, bash -c and eval) unless it carries the marker. project: skills (a folder; init links .claude/skills and .agents/skills to it), rules (a folder; init links .claude/rules/project to it), roster (a roster JSON in the marketplace schema; init renders it into .claude/agents/ and .codex/agents/ and installs the eval runner .standards/evals/run.sh; the review skill spawns its reviewers by paths), evals (a folder of claude plugin eval cases, one per subfolder, for the roster's agents; .standards/evals/run.sh runs them). Empty strings mean none.",
+    "_readme": "Project settings for the standards plugin hooks and the flow verifier. Edit freely; init never overwrites this file. format[].command runs from the repo root with {files} replaced by the staged files under prefix. build runs in the git pre-push hook and in verify; test and mutation run in verify (mutation is a signal; empty turns it off; {files} limits it to the changed source files). protected files need [config] in the commit message. comments: line and doc are the comment tokens, public the modifier a doc comment must sit above, doc_inside the type kinds whose members may carry a doc without it (their members have no modifier), allow_markers the prefixes that make a line comment legal. gates: the project's own gates, run by the plugin hook, the git hooks and CI (check-gates.sh): {name, command, paths, when: [commit|push|ci], marker} runs command when a committed file matches a path glob (the command sees STANDARDS_COMMIT_MESSAGE and STANDARDS_STAGE; a commit whose message carries the marker skips the gate); {name, forbid: [text], marker} blocks a command that runs a text (as a word, not inside a heredoc, comment or quoted text, except sh -c, bash -c and eval) unless it carries the marker. project: skills (a folder; init links .claude/skills and .agents/skills to it), rules (a folder; init links .claude/rules/project to it), roster (a roster JSON in the marketplace schema; init renders it into .claude/agents/ and .codex/agents/ and installs the eval runner .standards/evals/run.sh; the review skill spawns its reviewers by paths), evals (a folder of claude plugin eval cases, one per subfolder, for the roster's agents; .standards/evals/run.sh runs them). Empty strings mean none. rules: relaxed lists the rule ids this project waives (never raised), judgement the hard or signal rule ids it grades as [judgement] (P2, declared per U-02); neither list reaches the plugin hooks, so C-01, C-02, W-01 and L-03 stay hard; re-run init after editing them, it renders the rule copies and the block from them.",
     "version": version,
     "languages": languages,
     "build": " && ".join("dotnet build %s --nologo" % s for s in solutions),
@@ -110,6 +110,7 @@ config = {
     "review": {"security_paths": [], "performance_paths": []},
     "gates": [],
     "project": {"skills": "", "rules": "", "roster": "", "evals": ""},
+    "rules": {"relaxed": [], "judgement": []},
 }
 print(json.dumps(config, indent=2))
 PY
@@ -150,22 +151,36 @@ sys.stdout.write(open(template, encoding="utf-8").read().replace("{{test}}", tes
   fi
 fi
 
+# The rules the project relaxes (.standards/config.json "rules"). With none, every copy below is
+# the plugin's file as it is.
+relaxed="$(json_list "$(config_text)" rules.relaxed)"
+judgement="$(json_list "$(config_text)" rules.judgement)"
+project_copy() {
+  # project_copy <section|block> <plugin file>: prints the path of the text this project gets.
+  if [ -z "$relaxed$judgement" ]; then printf '%s' "$2"; return; fi
+  out="$(tmpfile "relaxed-$(basename "$2")")"
+  python3 "$plugin/skills/init/scripts/relaxed_rules.py" --config .standards/config.json --index "$plugin/rules/index.json" "$1" "$2" > "$out" && [ -s "$out" ] && printf '%s' "$out"
+}
+[ "$scope" = machine ] && [ -n "$relaxed$judgement" ] && echo "init: note: the config's rules lists do not apply at machine scope: the block and the Claude rules in $claude_home are shared by every project, so they keep the plugin's text. .standards/rules keeps this project's copy."
+
 # 2. Full rule text.
 for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
-  install_file "$src" ".standards/rules/$(basename "$src")"
+  copy="$(project_copy section "$src")" || die "could not render $src"
+  install_file "$copy" ".standards/rules/$(basename "$src")"
 done
 
 # 3. The marked block in AGENTS.md, and in CLAUDE.md when that is a different file.
+block_source="$(scope_copy block "$plugin/rules/block.md")" || die "could not render the block"
 install_block() {
   target="$1"
   tmp="$(tmpfile block)"
   if [ -f "$target" ] && grep -q '<!-- standards:begin' "$target"; then
-    awk -v begin="$begin" -v end="$end" -v block="$plugin/rules/block.md" '
+    awk -v begin="$begin" -v end="$end" -v block="$block_source" '
       /<!-- standards:begin/ { print begin; while ((getline line < block) > 0) print line; print end; skip = 1; next }
       /<!-- standards:end -->/ { skip = 0; next }
       !skip { print }' "$target" > "$tmp"
   else
-    { [ -f "$target" ] && cat "$target"; [ -f "$target" ] && echo; echo "$begin"; cat "$plugin/rules/block.md"; echo "$end"; } > "$tmp"
+    { [ -f "$target" ] && cat "$target"; [ -f "$target" ] && echo; echo "$begin"; cat "$block_source"; echo "$end"; } > "$tmp"
   fi
   [ -s "$tmp" ] || die "could not build the block for $target"
   if [ ! -f "$target" ] || ! cmp -s "$tmp" "$target"; then
@@ -182,7 +197,8 @@ for src in "$plugin"/rules/common/*.md "$plugin"/rules/csharp.md; do
   name="$(basename "$src" .md | sed 's/^[0-9]*-//')"
   destination_file="$rules_folder/standards-$name.md"
   tmp="$(tmpfile rule)"
-  { echo "---"; echo "paths:"; echo "$globs"; echo "---"; cat "$src"; } > "$tmp"
+  copy="$(scope_copy section "$src")" || die "could not render $src"
+  { echo "---"; echo "paths:"; echo "$globs"; echo "---"; cat "$copy"; } > "$tmp"
   [ -s "$tmp" ] || die "could not build $destination_file"
   install_file "$tmp" "$destination_file"
 done
@@ -275,9 +291,10 @@ if [ "$check" -eq 0 ] && [ -d .standards/evals ] && [ ! -f .standards/evals/run.
 fi
 [ "$scope" = machine ] && for machine_step in exclude worktree_link; do . "$plugin/skills/init/scripts/$machine_step.sh"; done
 
-# 10. Gaps: the values the hooks and the verifier cannot run without, and the guide's
-# placeholders. Reported every run; drift under --check. The init skill fills them with the
-# owner (the project-advisor agent recommends the values from the repository).
+# 10. Gaps: the values the hooks and the verifier cannot run without, the guide's placeholders
+# and the rule ids the config's "rules" lists cannot take. Reported every run; drift under
+# --check. The init skill fills them with the owner (the project-advisor agent recommends the
+# values from the repository).
 if [ -f .standards/config.json ]; then
   gap_lines="$(python3 - <<'PY'
 import json
@@ -296,6 +313,8 @@ holes = [n for n, t in enumerate(lines, 1) if "_fill in" in t]
 if holes: print(".standards/testing-guide.md: %d placeholder(s) left (line%s %s)" % (len(holes), "s" if len(holes) > 1 else "", ", ".join(map(str, holes))))
 PY
 )"
+  [ -n "$(json_get "$(config_text)" rules)" ] && gap_lines="$gap_lines
+$(python3 "$plugin/skills/init/scripts/relaxed_rules.py" --config .standards/config.json --index "$plugin/rules/index.json" gaps)"
   while IFS= read -r line; do [ -n "$line" ] && gap "$line"; done <<EOF
 $gap_lines
 EOF

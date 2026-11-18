@@ -70,11 +70,11 @@ such and left to `flow:init`.
 
 | Target | Content | Re-run behaviour |
 |---|---|---|
-| `.standards/config.json` | format, build, test and mutation commands, protected files, hot paths, gates, project links, roster and eval cases folder (`project.evals`) | written once, never overwritten; empty `build`, `test`, `languages` or a language without `format` is a gap |
+| `.standards/config.json` | format, build, test and mutation commands, protected files, hot paths, gates, project links, roster and eval cases folder (`project.evals`), the rules the project relaxes (`rules.relaxed`, `rules.judgement`) | written once, never overwritten; empty `build`, `test`, `languages` or a language without `format` is a gap, and so is a bad id in `rules` |
 | `.standards/testing-guide.md` | levels and commands, fixtures, declared exceptions, the hand-test list | written once, never overwritten; a `_fill in_` placeholder is a gap |
-| `.standards/rules/*.md` | the full rule text with ids and reasons | replaced |
-| `AGENTS.md` (and a separate `CLAUDE.md`) | one block between `<!-- standards:begin vX.Y.Z -->` and `<!-- standards:end -->`: hard rules, signals, `## Code Review Rules` | the block is replaced, nothing outside it is touched |
-| `.claude/rules/standards-*.md` | one file per section with `paths:` for the configured source extensions | replaced |
+| `.standards/rules/*.md` | the full rule text with ids and reasons, without the `rules.relaxed` rules and with the `rules.judgement` ones tagged judgement | replaced |
+| `AGENTS.md` (and a separate `CLAUDE.md`) | one block between `<!-- standards:begin vX.Y.Z -->` and `<!-- standards:end -->`: hard rules, signals, `## Code Review Rules`; with `rules.relaxed` or `rules.judgement` set, those ids leave the hard rules and signals for a `## Waived by this project` and a `## Judgement in this project` list | the block is replaced, nothing outside it is touched |
+| `.claude/rules/standards-*.md` | one file per section with `paths:` for the configured source extensions, filtered like `.standards/rules/*.md` | replaced |
 | `.codex/agents/*.toml` | the plugin's review agents and the advisor for Codex | replaced |
 | `.standards/hooks/` | the gate scripts and the git hooks (`git/pre-commit`, `git/commit-msg`, `git/pre-push`) for human commits; `check-range.sh` for CI | copies replaced |
 | git hook wiring | a project with its own `.githooks/` gets one appended call per hook (pre-commit, commit-msg, pre-push) and `core.hooksPath .githooks`; a project without one gets `core.hooksPath .standards/hooks/git` and no new folder | the call is appended once; `core.hooksPath` is set only when unset (local config, so every clone runs `init` once) and never over live hooks: when `.git/hooks` holds an executable hook (not `*.sample`) git would stop running, init names it and sets nothing |
@@ -89,6 +89,16 @@ such and left to `flow:init`.
 | machine scope: `.git/info/exclude` | a `# standards:begin` / `# standards:end` block: `/.standards` and the project-level paths init wrote (roster agents, skills and rules links) | the block is replaced, the lines around it stay |
 | machine scope: `.standards` in each linked worktree | a link to the main worktree's `.standards/` | added when missing, fixed when it points elsewhere; a real folder there is left, with a note |
 | machine scope: `worktree_setup` in `.flow/config.yaml` | when flow is installed, one item that links `.standards` in each worktree flow adds | added once under a plain `worktree_setup:` line; any other shape gets the item printed for the owner |
+
+**Relaxed rules.** `rules.relaxed` in `.standards/config.json` lists the rule ids the project
+waives: no copy or block line names them and no reviewer raises them. `rules.judgement` lists the
+hard or signal rule ids it grades as [judgement]: P2 at most, a breach declared per U-02. `init`
+renders the rule copies and the block from both lists, so re-run it after editing them (the
+session-start nudge does not see the edit). An unknown id, a usage rule, a `judgement` id that is
+not hard or signal, an id in both lists, or an id a plugin hook enforces (C-01, C-02, W-01, L-03:
+the lists do not reach the hooks; the gap names the hook and its switch) is a gap.
+At machine scope the user-folder block and Claude rules are shared by every project, so they keep
+the plugin's text and init says so; `.standards/rules/` still takes the lists.
 
 **Gaps.** `init` ends with a `Gaps` list when the config or the guide cannot do its job yet;
 `init --check` prints them as `init: gap:` lines and exits 1 until they are filled, so one

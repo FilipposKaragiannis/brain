@@ -23,7 +23,9 @@ Read the full rule text for every rule you cite.
    message or PR body is P1. A [judgement] disagreement is P2. A breach declared in the commit
    message and PR body per U-02 is reported as P2 with the declaration quoted, when the rule is
    [judgement]; a declared [hard] breach stays P0. A moved, copied or renamed line is touched
-   code (U-05): grade it like a new line.
+   code (U-05): grade it like a new line. The block's `## Waived by this project` and
+   `## Judgement in this project` lists override the tag: never raise a waived rule, and grade a
+   demoted one P2 at most.
 
 ## Smell baseline (judgement, P1 at most)
 - Feature Envy: a method that reaches into another object's data more than its own. Move it.

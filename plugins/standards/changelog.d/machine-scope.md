@@ -8,6 +8,8 @@ bump: minor
   clone's outputs are listed in a marked block in `.git/info/exclude`. The stamp remembers the
   scope, so `init` and `init --check` keep it; `--check` is clean. An earlier project-scope
   install is named, never removed.
+  The user-folder block and Claude rules keep the plugin's text, because every project shares
+  them, so a project's `rules.relaxed` and `rules.judgement` reach only its `.standards/rules/`.
 - init no longer points `core.hooksPath` away from live hooks: when `.git/hooks` holds an
   executable hook (not `*.sample`) that git would stop running, init names it, sets nothing and
   says how to call the standards hooks from it, or to use `--scope machine`. `--check` reports it

@@ -427,6 +427,56 @@ check "init: the runner goes with the roster" sh -c "'$init' | grep -q 'run.sh r
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q
 check "session-start: silent in a project without the standards" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
 
+echo "init: a project waives and demotes rules (config: rules.relaxed, rules.judgement)"
+mkdir -p "$work/relaxed" && cd "$work/relaxed" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["D-11","S-09"],"judgement":["M-06"]}}\n' > .standards/config.json
+"$init" >/dev/null
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+hard_rules="sed -n '/^## Hard rules/,/^## Signals/p' AGENTS.md"
+waived_rules="sed -n '/^## Waived by this project/,/^\$/p' AGENTS.md"
+check "init: a waived rule leaves the block's hard rules, its neighbour stays" sh -c "! $hard_rules | grep -q '^- D-11 ' && $hard_rules | grep -q '^- D-10 '"
+check "init: the block lists every waived rule under Waived by this project" sh -c "$waived_rules | grep -q '^- D-11 ' && $waived_rules | grep -q '^- S-09 '"
+check "init: a waived rule leaves the Claude rule copy, D-10 and D-12 stay" sh -c "! grep -qF '**D-11 ' .claude/rules/standards-design.md && grep -qF '**D-10 ' .claude/rules/standards-design.md && grep -qF '**D-12 ' .claude/rules/standards-design.md"
+check "init: a waived rule leaves the full rule text, D-10 and D-12 stay" sh -c "! grep -qF '**D-11 ' .standards/rules/01-design.md && grep -qF '**D-10 ' .standards/rules/01-design.md && grep -qF '**D-12 ' .standards/rules/01-design.md"
+check "init: --check is clean right after a relaxed install" sh -c "'$init' --check | grep -q 'up to date'"
+demoted_rule="grep -F '**M-06 ' .claude/rules/standards-methods.md"
+judgement_rules="sed -n '/^## Judgement in this project/,/^\$/p' AGENTS.md"
+check "init: a demoted rule is tagged judgement, relaxed from hard, in the Claude rule copy" sh -c "$demoted_rule | grep -qF '[judgement, relaxed from hard by this project]'"
+check "init: a demoted rule loses its hard tag in the Claude rule copy" sh -c "$demoted_rule && ! $demoted_rule | grep -qF '[hard]'"
+check "init: the block lists a demoted rule under Judgement in this project" sh -c "$judgement_rules | grep -q '^- M-06 '"
+check "init: a demoted rule leaves the block's hard rules" sh -c "$hard_rules | grep -q '^- M-05 ' && ! $hard_rules | grep -q '^- M-06 '"
+printf '# mine\n' >> .claude/rules/standards-design.md
+check "init: --check names a hand edit to a relaxed rule copy" sh -c "'$init' --check | grep -q 'edited by hand: .claude/rules/standards-design.md'"
+"$init" --force >/dev/null
+python3 -c 'import json; p = ".standards/config.json"; c = json.load(open(p)); del c["rules"]; json.dump(c, open(p, "w"), indent=2)'
+check "init: dropping the list replaces the relaxed copy with the waived rule back" sh -c "! '$init' | grep -q 'refused' && grep -qF '**D-11 ' .claude/rules/standards-design.md"
+check "init: --check is clean once the list is gone" sh -c "'$init' --check | grep -q 'up to date'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["N-01","D-01"],"judgement":["M-01"]}}\n' > .standards/config.json
+"$init" >/dev/null
+signal_rules="sed -n '/^## Signals/,/^## /p' AGENTS.md"
+check "init: a waived signal leaves the block's signals, its neighbour stays" sh -c "! $signal_rules | grep -q '^- N-01 ' && $signal_rules | grep -q '^- N-02 '"
+check "init: a demoted signal is tagged judgement, relaxed from signal, in the Claude rule copy" sh -c "grep -F '**M-01 ' .claude/rules/standards-methods.md | grep -qF '[judgement, relaxed from signal by this project]'"
+check "init: a waived judgement rule leaves the Claude rule copy" sh -c "! grep -qF '**D-01 ' .claude/rules/standards-design.md && grep -qF '**D-02 ' .claude/rules/standards-design.md"
+check "init: --check is clean with a waived judgement rule and a demoted signal" sh -c "'$init' --check | grep -q 'up to date'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["D-11"],"judgement":["D-11"]}}\n' > .standards/config.json
+check "init: --check names an id in both lists as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.* D-11 '"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"judgement":["D-01"]}}\n' > .standards/config.json
+check "init: --check names a demoted rule that is already judgement as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.judgement names D-01'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["X-99"]}}\n' > .standards/config.json
+check "init: --check fails on a waived id that is not a rule" sh -c "! '$init' --check"
+check "init: --check names the waived id that is not a rule as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.relaxed names X-99'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"judgement":["U-02"]}}\n' > .standards/config.json
+check "init: --check names a demoted usage rule as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.judgement names U-02'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["C-01"],"judgement":["W-01"]}}\n' > .standards/config.json
+"$init" >/dev/null
+check "init: --check names a waived rule a plugin hook enforces as a gap, with the hook" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.relaxed names C-01, which the plugin hook hooks/check-comments.sh enforces'"
+check "init: --check names a demoted rule a plugin hook enforces as a gap, with the hook" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.judgement names W-01, which the plugin hook hooks/check-subject.sh enforces'"
+check "init: a relaxed rule a plugin hook enforces stays in the block's hard rules" sh -c "$hard_rules | grep -q '^- C-01 ' && $hard_rules | grep -q '^- W-01 '"
+check "init: a relaxed rule a plugin hook enforces is listed as neither waived nor demoted" sh -c "! sed -n '/^## Waived by this project/,/^## Code Review Rules/p' AGENTS.md | grep -qE '^- (C-01|W-01) '"
+check "init: a new config carries empty relaxed and judgement lists" python3 -c "import json, sys; sys.exit(json.load(open('$work/fresh/.standards/config.json')).get('rules') != {'relaxed': [], 'judgement': []})"
+check "init: without a rules key the block is the plugin's block, byte for byte" sh -c "sed -n '/^<!-- standards:begin/,/^<!-- standards:end/p' '$work/fresh/AGENTS.md' | sed '1d;\$d' | cmp -s - '$plugin_copy/rules/block.md'"
+
 echo "init: upgrade from the docs/ layout (v0.1.0), project with its own .githooks"
 mkdir -p "$work/old" && cd "$work/old" && git init -q -b main && git config user.email t@t && git config user.name t
 mkdir -p docs/standards .githooks .standards

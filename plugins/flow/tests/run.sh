@@ -1198,7 +1198,10 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" codex >/dev/null
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec --json -C $realrepo -s workspace-write' '$HOST_LOG'"
-check "a job starts its skill as typed: /plugin:skill on Claude, \$skill on Codex" sh -c "grep -q 'codex	.*workspace-write.* \\\$comments gh#21' '$HOST_LOG' && [ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow implement gh#7')\" = '/flow:implement gh#7' ]"
+check "CommentsJobOnCodex_StartsItsSkillAsPluginColonSkill: the codex pass starts with \$flow:comments gh#21, because Codex starts a plugin's skill only when the prompt names it as \$plugin:skill" sh -c "grep -q 'codex	.*workspace-write.* \\\$flow:comments gh#21' '$HOST_LOG'"
+check "HostSkillPrompt_CodexSkill_PrefixesThePluginName: the Codex prompt for flow review is \$flow:review gh#9, because a bare \$review could resolve to the standards plugin's review skill" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex flow review gh#9')\" = '\$flow:review gh#9' ]"
+check "HostSkillPrompt_CodexSkillOfAnotherPlugin_NamesThatPlugin: the Codex prompt for meta retro is \$meta:retro gh#9 now, because the prompt names the plugin that owns the skill and passes the text untouched" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex meta retro \"gh#9 now\"')\" = '\$meta:retro gh#9 now' ]"
+check "HostSkillPrompt_ClaudeSkill_KeepsTheSlashPluginForm: the Claude prompt for flow review is /flow:review gh#9, because Claude starts a plugin's skill as /plugin:skill" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow review gh#9')\" = '/flow:review gh#9' ]"
 check "the unattended loop starts a skill step as typed" grep -q 'host_skill_prompt "$host" flow "$skill"' "$P/templates/run-unattended.sh"
 # The chase asks the reviewers of the PR's author host: the pr_host of the item its branch names.
 cp .flow/config.yaml "$work/config.jobs"; printf 'reviews:\n  reviewers:\n    claude: [codex]\n    codex: [octo-cat]\n  chase_after: 30m\n' >> .flow/config.yaml
@@ -2348,6 +2351,47 @@ printf 'hello\nSECRET\n' > ../wt-2/README.md
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
 check_all "health: bytes a clean filter strips are hashed raw, so the file is kept and never discarded" 'grep -q "so no claim can use it: the disk version of README.md is not in origin/main" "$hroot/out" && ! grep -q discard "$hroot/out2" && grep -q SECRET ../wt-2/README.md'
 rm -f "$common/info/attributes"; git -C ../wt-2 config --unset filter.strip.clean; git -C ../wt-2 checkout -q -- README.md; hs >/dev/null 2>&1
+
+ended_agent_worktree="$(printf '{"name":"agent-a2bc735e","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
+stale_claim "$ended_agent_worktree"; : > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check "health: a sub-agent's ad hoc claim whose session has ended is released with no hand step" [ ! -f "$ended_agent_worktree/.flow/claim.json" ]
+"$P/scripts/steward.sh" release "$ended_agent_worktree" --force >/dev/null 2>&1
+
+dirty_agent_worktree="$(printf '{"name":"agent-d1e7c0de","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
+printf 'unsaved\n' > "$dirty_agent_worktree/sub-agent-notes.txt"; touch -t 202401010000 "$dirty_agent_worktree/sub-agent-notes.txt"
+stale_claim "$dirty_agent_worktree"; : > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
+check "health: an ended sub-agent's ad hoc claim with uncommitted changes is kept" [ -f "$dirty_agent_worktree/.flow/claim.json" ]
+check "health: an ended sub-agent's uncommitted changes are never reset" [ "$(cat "$dirty_agent_worktree/sub-agent-notes.txt")" = unsaved ]
+dirty_agent_name="$(basename "$dirty_agent_worktree")"
+check_all "health: an ended sub-agent's claim with uncommitted changes is named once" 'grep -qw "$dirty_agent_name" "$hroot/out" && ! grep -qw "$dirty_agent_name" "$hroot/out2"'
+rm -f "$dirty_agent_worktree/sub-agent-notes.txt"; "$P/scripts/steward.sh" release "$dirty_agent_worktree" --force >/dev/null 2>&1
+
+subagent_host="$hroot/subagent-host/run-unattended.sh"; mkdir -p "$hroot/subagent-host"
+printf '#!/bin/sh\necho "$$"\n"$1"\n' > "$subagent_host"; chmod +x "$subagent_host"
+printf '{"name":"agent-11fe5e55","cwd":"%s"}' "$PWD" | "$subagent_host" "$P/hooks/worktree-create.sh" > "$hroot/hook.out" 2>/dev/null
+live_host_pid="$(head -1 "$hroot/hook.out")"; live_agent_worktree="$(tail -1 "$hroot/hook.out")"
+stale_claim "$live_agent_worktree"; printf '%s\t\t/bin/sh %s\n' "$live_host_pid" "$subagent_host" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check "health: a sub-agent's ad hoc claim is kept while the session that claimed it still runs" [ -f "$live_agent_worktree/.flow/claim.json" ]
+: > "$FLOW_HEALTH_PROCS"; "$P/scripts/steward.sh" release "$live_agent_worktree" --force >/dev/null 2>&1
+
+working_agent_worktree="$(printf '{"name":"agent-3a6e17ed","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
+stale_claim "$working_agent_worktree"; printf '4646\t%s\tclaude\n' "$working_agent_worktree" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check "health: a sub-agent's ad hoc claim is kept while an agent works in its worktree" [ -f "$working_agent_worktree/.flow/claim.json" ]
+: > "$FLOW_HEALTH_PROCS"; "$P/scripts/steward.sh" release "$working_agent_worktree" --force >/dev/null 2>&1
+
+calling_agent_worktree="$(printf '{"name":"agent-5e1fca11","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
+stale_claim "$calling_agent_worktree"; python3 -c '
+import json, sys
+p = sys.argv[1] + "/.flow/claim.json"
+d = json.load(open(p)); d.pop("pid", None); json.dump(d, open(p, "w"))' "$calling_agent_worktree"
+printf '%s\t%s\tclaude\n' "$$" "$calling_agent_worktree" > "$FLOW_HEALTH_PROCS"
+hs > "$hroot/out" 2>&1
+check "health: a sub-agent's ad hoc claim with no recorded pid is kept while its session calls health from an ancestor process" [ -f "$calling_agent_worktree/.flow/claim.json" ]
+: > "$FLOW_HEALTH_PROCS"; "$P/scripts/steward.sh" release "$calling_agent_worktree" --force >/dev/null 2>&1
 
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"

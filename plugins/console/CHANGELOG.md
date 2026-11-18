@@ -1,5 +1,10 @@
 # console
 
+## 0.24.1 (2026-11-18)
+
+- A terminal pane with an iTerm profile keeps the cursor blink the profile sets when the shell
+  sends mode 12 (`CSI ? 12 l` or `h`), as iTerm does; other modes in the same sequence still apply.
+
 ## 0.24.0 (2026-11-16)
 
 - The installer uses the npm that came with the node it runs, not an older npm found first on the

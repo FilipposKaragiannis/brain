@@ -39,8 +39,10 @@ reviewer is skipped and the report says so.
   `standards:end` markers, and the full text in `.standards/rules/`. If neither exists, use the
   plugin's own `rules/` directory and say the project has not run `init`.
 - Project rules outside the block, the `## Glossary`, and `docs/adr/`.
-- `.standards/config.json` for `hot_paths` and `review.security_paths` /
-  `review.performance_paths`.
+- `.standards/config.json` for `hot_paths`, `review.security_paths` /
+  `review.performance_paths`, and the rule ids the project relaxes: `rules.relaxed` (waived) and
+  `rules.judgement` (demoted to judgement). The block lists them under `## Waived by this project`
+  and `## Judgement in this project`, and those lists override every other rule text.
 
 Skip what tooling enforces (the build, the formatter, the hooks). The reviewers get this list and
 the rule index; they do not search for it.
@@ -66,6 +68,8 @@ not contents), the spec text or path, and the grading scale:
 - **P1**: a crossed [signal] with no explanation in the commit or PR, a partial requirement, a
   smell from the baseline in the standards-reviewer brief. Blocks until explained.
 - **P2**: a [judgement] disagreement or a nit. A comment.
+- A rule in `rules.relaxed` is never raised. A rule in `rules.judgement` is graded as
+  [judgement]: P2 at most, with the U-02 declaration quoted when the commit or PR has one.
 
 Every finding: grade, rule id (or spec line), file and line, what is wrong, the fix. Touched
 code only.
@@ -75,8 +79,8 @@ code only.
 For each P0 and P1, spawn one more `standards-reviewer` (or `spec-reviewer` for spec findings)
 with a refutation brief: "Here is a finding. Try to knock it down: is the rule misread, is the
 code outside the touched scope, is the breach declared in the commit or PR body, is it enforced
-by tooling already?" A finding survives only if the refuter cannot. Drop the ones that fall and
-say how many fell.
+by tooling already, is the rule waived or demoted by the project?" A finding survives only if the
+refuter cannot. Drop the ones that fall and say how many fell.
 
 ## 6. Aggregate
 

@@ -405,6 +405,10 @@ snapshots.
 - A claimed item with no live run whose board item lists open blockers (`open_blockers`) is
   `blocked`, not `waiting`: flow's next job passes it over until the last blocker closes. A run
   already under way when the blocker was added stays `running` until it ends.
+- A claim flow's `WorktreeCreate` hook made with no item (`adhoc:<name>`, a sub-agent's
+  `isolation: worktree`) is an item of kind `sub-agent` titled with its worktree and branch
+  (`Sub-agent in app-wt-3 on flow/adhoc-agent-a2bc735e`). It is `claimed`, or `running` with an
+  agent in its worktree, never `waiting`: no worker takes a next step for it.
 - A gate carries `pull`: `{number, url, state, unresolvedThreads}` for its item's open PR (the one
   its `pr` field names, else the one on its claimed branch, whatever order GitHub lists them in),
   or null. A merge gate whose PR still
