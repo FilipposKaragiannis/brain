@@ -12,7 +12,7 @@ fake backend, and `tests/run.sh` runs it for every adapter.
 |---|---|---|
 | `prefix` | yes | one line: the id prefix the adapter owns (`gh#`, `local:`, `jira:`) |
 | `slug.sed` | yes | a `sed -n` script that turns an item's slug back into its id, printing nothing for a slug it does not own |
-| `list.sh`, `list-ready.sh`, `read.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh` | yes | the operations below, executable |
+| `list.sh`, `list-ready.sh`, `read.sh`, `in-scope.sh`, `create.sh`, `close.sh`, `comment.sh`, `link-pr.sh`, `write-state.sh` | yes | the operations below, executable |
 | `sync.sh`, `vocabulary.sh`, `answers.sh` | no | the optional operations below; the flow checks for each before it runs it |
 
 Every script sources `lib/flow.sh` (`. "$(dirname "$0")/../../lib/flow.sh"`) for `die`, `cfg`,
@@ -48,7 +48,8 @@ prefix.
 |---|---|---|
 | `list` | `[--all] [--kind KIND]` | a JSON array of items: the open ones, every one with `--all`, one kind with `--kind` |
 | `list-ready` | `[--kind KIND]` | the ready items, best first: `list` piped through `scripts/filter-ready.sh` |
-| `read` | `<id>` | one item |
+| `read` | `<id>` | one item, whether or not it is inside the tracker's scope |
+| `in-scope` | `<id>` | nothing; exit 0 when the item is inside `<name>.scope` or no scope is set (no tracker call), 1 when it is outside, 2 for a scope the checks refuse (Tracker scope, below) |
 | `create` | `<kind> <title> [--size S\|M\|L] [--priority NAME] [--area NAME] [--type NAME] [--blocked-by id,id] [--parent id] [--body TEXT]` | the new id, one line |
 | `close` | `<id> [--comment TEXT]` | nothing; the item reads `closed` and the comment lands |
 | `comment` | `<id> [--body TEXT]` | nothing; the text is `--body` or stdin |
@@ -60,8 +61,9 @@ prefix.
 
 `kind` is `epic`, `task` or `bug`. `create` puts a value the tracker has no place for nowhere
 and says so on stderr (`--type` on a tracker without types, `--priority` without a field for it);
-it never fails for one. `--blocked-by` may name items of other adapters. A `list` cut short by a
-tracker limit says so on stderr, and fails when `FLOW_LIST_WHOLE` is set (the board graph needs
+it never fails for one. `--blocked-by` may name items of other adapters. A tracker scope bounds
+the list first (Tracker scope, below), and a tracker limit caps what is left. A `list` cut short by
+a tracker limit says so on stderr, and fails when `FLOW_LIST_WHOLE` is set (the board graph needs
 every item).
 
 Exit codes, for every script:
@@ -69,7 +71,7 @@ Exit codes, for every script:
 | Code | When | stdout |
 |---|---|---|
 | 0 | done | as above |
-| 1 | the tracker failed, or the item does not exist | nothing |
+| 1 | the tracker failed, or the item does not exist; for `in-scope`, also an item outside the scope | nothing |
 | 2 | a usage error: a missing argument, an unknown option, an unknown state key, an id the adapter does not own | nothing |
 
 A tracker reached over the network retries a 5xx answer or a dropped connection the way `gh()` in
@@ -157,7 +159,8 @@ The `jira` adapter reaches Jira Cloud through its REST API v3 with `curl`. Name 
 | `jira.types.epic`, `.task`, `.bug` | `Epic`, `Task`, `Bug` | the issue type each kind is created as and read back from; any other type reads as a task |
 | `jira.fields.size`, `jira.fields.area` | unset | a custom field, by id (`customfield_10040`) or name, for the size and the area; unset, the size is a label and the area is not kept |
 | `jira.transitions.done` | the first transition named `Done` | the transition `close` takes |
-| `jira.limit` | `500` | the most issues `list` reads |
+| `jira.limit` | `500` | the most issues `list` reads, inside `jira.scope` |
+| `jira.scope` | unset | the issues every search keeps (Tracker scope, below) |
 | `jira.answer_from` | the token's user | the account ids or emails whose `/answer` comments clear a gate |
 
 The token is `JIRA_API_TOKEN` in the environment, never a config key; without it every script
@@ -214,7 +217,7 @@ the failing call.
 
 ## A new adapter
 
-1. `adapters/<name>/` with `prefix`, `slug.sed` and the eight scripts; the optional ones when the
+1. `adapters/<name>/` with `prefix`, `slug.sed` and the nine scripts; the optional ones when the
    tracker has a board, a type list or a place for the owner's answers.
 2. Its keys under `<name>.*`, commented in the config `skills/init/scripts/init.sh` writes, and
    the name in the console's `ADAPTERS` (`plugins/console/app/daemon/src/plugins/flow/schema.ts`).
@@ -268,3 +271,78 @@ a child out. The fakes in tests read the filter as the trackers do: `_fake_gh.py
 cannot pass unseen. The contract suite assigns and labels items through `set_<name>` and reads
 `me_<name>`, `open_status_<name>` and `query_<name>`; a new adapter adds those and its
 `pick-fields`.
+
+## Tracker scope
+
+A tracker scope bounds every list and search of one tracker, for a tracker the team shares: the
+board, `next`, the health and comments jobs and `answers` see only the items inside it, and the
+flow runs and claims no named item outside it. The config sets it under the tracker's own key:
+
+```yaml
+github:
+  scope:
+    assignee: me              # the fields a pick filter takes, each as the pick table maps it
+    labels: [team-api]
+jira:
+  scope:
+    query: 'component = Backend'  # or the tracker's own search, alone
+```
+
+A scope takes `assignee`, `status`, `labels` and `kinds`, or `query` alone, the same fields a pick
+filter takes and checked by the same code, and it names no `trackers`: it belongs to its tracker.
+An empty field is unset, and a tracker with no scope reads as it did. `list` and `in-scope` call
+`scope_filter <adapter>` from `lib/flow.sh`, which runs `scope_check` and exports the fields
+comma-separated as `FLOW_SCOPE_ASSIGNEE`, `FLOW_SCOPE_STATUS`, `FLOW_SCOPE_LABELS`,
+`FLOW_SCOPE_KINDS` and `FLOW_SCOPE_QUERY`, beside the `FLOW_PICK_*` of a pick. `scope_check`
+refuses, exit 2, `trackers` in a scope, a field the adapter's `pick-fields` does not name and a
+`query` beside a neutral field, and every message names the scope key
+(`jira.scope.sprint: the jira adapter maps assignee, status, labels, kinds and query, not sprint`).
+A refused scope stops every list of its tracker, so the board shows a tracker error and the health
+job counts the tracker as failed; `init --check` names it as a gap.
+
+A scope and a pick both apply: `list --pick <name>` keeps the items the scope and the filter both
+match, and `list-ready` reads that list. A tracker limit (`jira.limit`, `github.limit`) caps the
+scoped list, not the whole tracker.
+
+| Adapter | assignee, status, labels | kinds | query | search |
+|---|---|---|---|---|
+| `github` | `assignee:<login>` (`me` is the `gh` user); `label:"a","b"` (any of them); `is:open` or `is:closed` when `status` names exactly one of them, no qualifier for both or neither | the item's kind, matched on the built item | GitHub search qualifiers, as written | with a scope set, every list is one `search(query: ...)`, `repo:<repo> is:issue [is:open] <scope> <pick query>`, so `github.limit` counts matches; a pick's neutral fields still match on what it reads |
+| `local` | the item file's `assignee`, `status` and `labels`, as for a pick | the item file's kind | not mapped, refused | none: every item file, matched on its frontmatter |
+| `jira` | JQL, as for a pick | the item's kind, matched on the built items | a JQL condition, as written | `project = "<project>" AND (<scope>) AND (<pick>) AND statusCategory != Done ORDER BY created DESC` (no `statusCategory` clause with `--all`), so a scope `query` composes with a pick `query` or with a pick's neutral fields |
+
+`in-scope <id>` says whether one item is inside the scope, and with no scope set it exits 0 with
+no tracker call. Local matches the item file. Jira sends one search,
+`key = "<KEY>" AND project = "<project>" AND (<scope>)`, then matches the scope's kinds on the
+built item. GitHub matches the kinds on the item `read` prints, then pages the scoped search's
+issue numbers up to `github.limit`, so an issue past the limit reads as outside.
+
+`read` stays unscoped. Blockers, parents, holders and bases resolve through it, so a blocker or an
+epic outside the scope stays readable. An item that leaves the scope while it runs drops out of the
+board, the health listing and the comments job, and keeps its claim, its worktree and its run. The
+flow refuses to start one outside the scope:
+
+- `next.sh <id>` on a named item outside the scope that holds no claim exits 2 with
+  `<id> is outside <tracker>.scope in .flow/config.yaml; the flow does not run it`. An item claimed
+  before it left the scope goes on. A picked item came from the scoped list, so it is not checked
+  again.
+- `steward.sh claim <id>` refuses a new claim of an item outside the scope the same way, exit 2,
+  after the check for a claim it already holds. `adhoc:` claims have no tracker and are never
+  scoped.
+
+Open children differ. Jira ANDs the scope into both of its open-children searches (the
+`parent in (...)` search of a list, which then always runs when a scope or a pick is set, and the
+count in `read`), so a parent counts only its children inside the scope: with
+`assignee = currentUser()`, a parent whose open children are all a teammate's reads as having
+none, and can read ready. GitHub reads `subIssuesSummary`, which no search narrows, and local
+scans every item file, so both count every open child.
+
+`answers` reads the gates of the items inside the scope only (GitHub through its scoped list, Jira
+with the scope in its search). A gate on an item that has left the scope waits until the owner
+clears it with `scripts/gate.sh clear`.
+
+GitHub caps a search at 1000 results, so a scope that matches more is cut there, below a higher
+`github.limit`; narrow the scope rather than raise the limit.
+
+The contract suite writes a scope through `scope_config_<name> <lines>`, which prints the scope
+block at the end of the adapter's own config section; a new adapter adds it, its `in-scope.sh`
+and the fields it maps in `pick-fields`.
