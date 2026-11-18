@@ -202,7 +202,7 @@ for src in "$plugin"/hooks/*.sh "$plugin"/hooks/git/*; do
   case "$src" in */git/*) dst=".standards/hooks/git/$(basename "$src")" ;; *) dst=".standards/hooks/$(basename "$src")" ;; esac
   install_file "$src" "$dst" +x
 done
-[ "$scope" = machine ] || . "$plugin/skills/init/scripts/git_hooks.sh"
+. "$plugin/skills/init/scripts/git_hooks.sh"
 
 # 7. Host wiring. Both hosts run the gates from the plugin's hooks/hooks.json once the plugin is
 # enabled, so init writes no PreToolUse entry: one in .claude/settings.json or .codex/hooks.json
@@ -276,6 +276,7 @@ done
 if [ "$check" -eq 0 ] && [ -d .standards/evals ] && [ ! -f .standards/evals/run.sh ]; then
   rm -rf .standards/evals/.bin; rmdir .standards/evals 2>/dev/null
 fi
+[ "$scope" = machine ] && . "$plugin/skills/init/scripts/exclude.sh"
 
 # 10. Gaps: the values the hooks and the verifier cannot run without, and the guide's
 # placeholders. Reported every run; drift under --check. The init skill fills them with the

@@ -472,7 +472,7 @@ git config --unset core.hooksPath
 "$init" --check > "$work/live-hooks.check.out" 2>&1
 check "LiveHookInGitHooks_CheckReportsNoHooksPathDrift: init --check does not count the unset core.hooksPath as drift" sh -c "[ -s '$work/live-hooks.check.out' ] && ! grep -q 'core.hooksPath is unset' '$work/live-hooks.check.out'"
 
-echo "init: machine scope puts the block, the rules and the agents in the user folders"
+echo "init: machine scope puts the block, the rules and the agents in the user folders, and wires the clone's hooks"
 CLAUDE_CONFIG_DIR="$work/claude home"; CODEX_HOME="$work/codex"; export CLAUDE_CONFIG_DIR CODEX_HOME
 owner_line="the owner's own instructions"; usage_error_status=2; blocks_per_user_file=1
 mkdir -p "$CLAUDE_CONFIG_DIR" && printf '%s\n' "$owner_line" > "$CLAUDE_CONFIG_DIR/CLAUDE.md"
@@ -482,6 +482,8 @@ mkdir -p docs .githooks .standards
 printf '# Instructions\n' > docs/INSTRUCTIONS.md && ln -s docs/INSTRUCTIONS.md AGENTS.md && printf 'AGENTS.md\n' > .gitignore
 printf '#!/bin/sh\necho mine\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
 git add docs .gitignore .githooks && git commit -q -m 'chore: tracked instructions and hooks'
+lfs_line='git lfs pre-push "$@"'
+printf '#!/bin/sh\n%s\n' "$lfs_line" > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
 printf '%s\n' "$machine_config" > .standards/config.json
 "$init" --scope project-wide > "$work/machine.bad-scope.out" 2>&1; bad_scope_status=$?
 check "UnknownScope_InitExitsWithUsageError: a --scope value other than machine or project stops init with exit 2" [ "$bad_scope_status" = "$usage_error_status" ]
@@ -493,9 +495,29 @@ check "MachineScope_OwnerTextKeptAboveBlock: the owner's line in the user CLAUDE
 check "MachineScope_RulesInUserClaudeFolder: the Claude rules land in the user rules folder under \$work" test -f "$CLAUDE_CONFIG_DIR/rules/standards-design.md"
 check "MachineScope_AgentsInUserCodexFolder: the Codex agents land in the user agents folder under \$work" test -f "$CODEX_HOME/agents/standards-reviewer.toml"
 check "MachineScope_NoRulesInProjectFolder: machine scope writes no Claude rule into the project" sh -c "! ls .claude/rules/standards-* >/dev/null 2>&1"
+check "MachineScope_HooksPathNeverSet: machine scope leaves core.hooksPath unset so git runs the clone's own hooks" sh -c "[ -z \"\$(git config core.hooksPath)\" ]"
+check "MachineScope_ExistingPrePushLineRunsFirst: the standards call in .git/hooks/pre-push comes after the line already there" \
+  awk -v existing="$lfs_line" -v needle=.standards/hooks/git/pre-push '$0 == existing { existing_line = NR } index($0, needle) { call_line = NR } END { exit !(existing_line && call_line > existing_line) }' .git/hooks/pre-push
+check "MachineScope_MissingHookCreatedExecutable: a hook the clone lacked is created executable with the standards call" \
+  sh -c "[ -x .git/hooks/commit-msg ] && grep -qF .standards/hooks/git/commit-msg .git/hooks/commit-msg"
+check "MachineScope_TrackedGithooksUntouched: the tracked .githooks/pre-commit keeps its committed text" git diff --quiet HEAD -- .githooks/pre-commit
+check "MachineScope_OutputsExcluded: git status lists none of the files machine scope wrote in the clone" sh -c "[ -z \"\$(git status --porcelain --untracked-files=all)\" ]"
+wired_files="hooks/pre-commit hooks/commit-msg hooks/pre-push info/exclude"
+mkdir -p "$work/machine.before"
+for wired_file in $wired_files; do cp ".git/$wired_file" "$work/machine.before/${wired_file##*/}"; done
+"$init" >/dev/null 2>&1
+check "MachineScope_SecondRunChangesNothing: a second init leaves the clone's hook files and its exclude byte-equal" sh -c "
+  for wired_file in $wired_files; do cmp -s \".git/\$wired_file\" \"$work/machine.before/\${wired_file##*/}\" || exit 1; done"
 python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
 "$init" --check > "$work/machine.check.out" 2>&1
 check "MachineScope_CheckWithoutFlagIsClean: init --check, with no --scope, finds the machine install up to date" grep -q 'up to date' "$work/machine.check.out"
+gate_ran="$work/machine.gate-ran"
+python3 -c 'import json, sys
+config = json.load(open(".standards/config.json"))
+config["gates"] = [{"name": "marker", "command": "echo ran > \"%s\"" % sys.argv[1], "when": ["commit"]}]
+json.dump(config, open(".standards/config.json", "w"))' "$gate_ran"
+printf 'note\n' > note.txt && git add note.txt && git commit -q -m 'docs: add a note' >/dev/null 2>&1
+check "MachineScope_CommitRunsTheHook: a commit in the clone runs the standards pre-commit and its project gate" test -f "$gate_ran"
 mkdir -p "$work/machine-second" && cd "$work/machine-second" && git init -q -b main && git config user.email t@t && git config user.name t
 mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
 "$init" --scope machine >/dev/null 2>&1
