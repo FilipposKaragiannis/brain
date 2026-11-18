@@ -1,7 +1,18 @@
 #!/bin/sh
 # Worktree steward: the pool, claims, releases and temporary worktrees.
 #   steward.sh pool                              list the pool with claim, branch and dirt
-#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
+#   steward.sh claim <item> [--base <branch>] [--branch <name>]
+#                                                claim a free pool worktree, print its path. The
+#                                                task branch is the one --branch names (next.sh
+#                                                passes the one claim_at_base picked), else the
+#                                                one the item's state records, else an existing
+#                                                flow/<slug>, else the branch template (config
+#                                                branch, flow/{slug} unset); it goes into
+#                                                claim.json and the state (branch). A
+#                                                name git refuses, or a template that needs an
+#                                                item it cannot read, exits 2; a name another
+#                                                claim holds exits 4; both before anything is
+#                                                created
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh reserve [<worktree>] [--name <who>]
 #                                                claim a free pool worktree for manual work, with
@@ -15,7 +26,8 @@
 #                                                (<base>-wt-<n>) at the base tip, delete the task
 #                                                branch, clear the claim and a closed item's reports
 #   steward.sh reports <item>                    print (and create) the item's reports folder
-#   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
+#   steward.sh tmp add <item> <phase>            temporary worktree on <branch>-<phase>, from the
+#                                                claim's task branch <branch>
 #   steward.sh tmp remove <path>                 remove it and its branch
 #   steward.sh add [path]                        add a worktree to the pool (git worktree add,
 #                                                pool entry in config.yaml, copies and setup); a
@@ -71,6 +83,7 @@
 # exception is health's, for a free worktree whose changes the base's history already holds.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 
 home="$(flow_home)"
@@ -160,7 +173,13 @@ cmd_claim() {
   base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
-  slug="$(item_slug "$item")"; branch="flow/$slug"
+  branch="flow/$(item_slug "$item")"
+  if adapter_for "$item" >/dev/null 2>&1; then
+    branch="$(claim_branch_option "$@")"
+    [ -n "$branch" ] || branch="$(claim_branch "$item" "$(adapter read "$item" </dev/null 2>/dev/null)")" || refuse_claim "$item" "$branch_unread_refused" 2
+    branch_name_valid "$branch" || refuse_claim "$item" "$branch_name_refused" 2
+    ! claimed_branch "$branch" || refuse_claim "$item" "another claim holds its task branch $branch" 4
+  fi
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null
   ref="$(base_ref "$base")"; claimed_branch "$base" && ref="$base"
   claim_lock
@@ -176,7 +195,7 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
-  write_state "$item" "worktree=$(basename "$free")" "base=$base" "last_event=$(now_iso) claimed $(basename "$free")"
+  write_state "$item" "worktree=$(basename "$free")" "base=$base" "branch=$branch" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
 
@@ -416,9 +435,11 @@ cmd_tmp() {
     add)
       item="$2"; phase="$3"; slug="$(item_slug "$item")"
       wt="$(cmd_find "$item")"; [ -n "$wt" ] || die "$item has no claimed worktree" 2
-      path="$home/tmp/$slug-$phase"; branch="flow/$slug-$phase"
+      task_branch="$(json_get "$(claim_of "$wt")" branch)"
+      path="$home/tmp/$slug-$phase"; branch="$task_branch-$phase"
+      branch_name_valid "$branch" || die "$item: its phase branch is not a valid branch name" 2
       mkdir -p "$home/tmp"
-      git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"
+      git -C "$wt" worktree add -q -b "$branch" "$path" "$task_branch" || die "cannot add $path"
       printf '%s\n' "$path" ;;
     remove)
       path="$2"
@@ -612,8 +633,8 @@ cmd_sweep() {
     data="$(adapter read "$it" 2>/dev/null)" || continue
     status="$(json_get "$data" status)"; gate="$(state_get "$data" gate)"; pr="$(state_get "$data" pr)"
     # A PR the pr step's worker could not record (a local item file lies outside its sandbox) is
-    # found by the claim's task branch, flow/<slug>, while the item waits at the merge gate, and
-    # recorded on the item.
+    # found by the claim's task branch while the item waits at the merge gate, and recorded on the
+    # item.
     if [ -z "$pr" ] && [ "$gate" = merge ]; then
       gh_repo="$(cfg github.repo)"
       found="$(cd "$main" && gh pr list ${gh_repo:+-R "$gh_repo"} --head "$br" --state all --json url 2>/dev/null)" && pr="$(json_get "$found" 0.url)"

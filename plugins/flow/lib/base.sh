@@ -115,14 +115,19 @@ fetch_item_base() {
 # carry control characters.
 base_name_refused='its base is not a valid branch name'
 
-# claim_base_option <default> [--base <branch>]: the base steward.sh claim cuts the worktree from and
-# records in claim.json and the item state (base): the branch --base names (next.sh passes the one
-# claim_at_base resolved), else the default, the config base. An unknown option, --base with no
-# branch, or a base that fails base_name_valid, dies with exit 2. An item that holds a claim keeps
-# it and its base, whatever --base says.
+# claim_base_option <default> [--base <branch>] [--branch <name>]: the base steward.sh claim cuts the
+# worktree from and records in claim.json and the item state (base): the branch --base names
+# (next.sh passes the one claim_at_base resolved), else the default, the config base. An unknown
+# option, --base or --branch with no branch, or a base that fails base_name_valid, dies with exit 2.
+# An item that holds a claim keeps it and its base, whatever --base says. --branch is
+# claim_branch_option's.
 claim_base_option() {
   option_base="$1"; shift
-  while [ $# -gt 0 ]; do case "$1" in --base) [ $# -ge 2 ] || die "--base takes a branch" 2; option_base="$2"; shift 2 ;; *) die "unknown option $1" 2 ;; esac; done
+  while [ $# -gt 0 ]; do case "$1" in
+    --base) [ $# -ge 2 ] || die "--base takes a branch" 2; option_base="$2"; shift 2 ;;
+    --branch) [ $# -ge 2 ] || die "--branch takes a branch" 2; shift 2 ;;
+    *) die "unknown option $1" 2 ;;
+  esac; done
   base_name_valid "$option_base" || die "the base is not a valid branch name" 2
   printf '%s' "$option_base"
 }
@@ -131,8 +136,10 @@ claim_base_option() {
 # claim starts from the base fetch_item_base resolves, and the events log says which and why; an
 # item that holds a claim keeps it and its base, and nothing is fetched. A base: line naming a
 # branch not on the remote, or no valid name, writes why to the item's last_event and stderr and
-# returns 4: a claim from the config base would put the work on the wrong history. Else the exit
-# code of steward.sh claim (3: no free worktree).
+# returns 4: a claim from the config base would put the work on the wrong history. The task branch
+# comes from the item JSON too (claim_branch), so the claim reads no item again. Else the exit
+# code of steward.sh claim (2: the branch template gives no valid task branch name; 3: no free
+# worktree; 4: another claim holds the task branch).
 claim_at_base() {
   claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$1")"
   if [ -n "$claimed_worktree" ]; then printf '%s\n' "$claimed_worktree"; return 0; fi
@@ -144,7 +151,8 @@ claim_at_base() {
     adapter write-state "$1" "last_event=$(now_iso) $claim_refusal" >/dev/null
     echo "$1: $claim_refusal" >&2; return 4
   fi
-  claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$1" --base "$claim_base")" || return
+  claim_task_branch="$(claim_branch "$1" "$2")" || claim_task_branch=""
+  claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$1" --base "$claim_base" ${claim_task_branch:+--branch "$claim_task_branch"})" || return
   printf '%s\t%s\tclaim\tbase %s (%s)\n' "$(now_iso)" "$1" "$claim_base" "$claim_why" >> "$(flow_home)/events.log"
   printf '%s\n' "$claimed_worktree"
 }
