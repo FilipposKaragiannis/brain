@@ -292,6 +292,29 @@ pass_host_run() {
   python3 -I "$FLOW_PLUGIN/scripts/_health.py" bounded "$pass_limit_seconds" "$PASS_STOP_GRACE" \
     sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run "$@"' host_run "$host" "$1" "$2" "$(job_model)" "$(job_effort)" as-is
 }
+# pass_session <target> <notes>: the pass's host session on <target>, the brief's <notes> added,
+# in a pass slot it waits for. The output goes to the log as it comes, so a pass killed half way
+# keeps what it said, and to $out. Returns the host's exit code.
+pass_session() {
+  pass_slot="$(slot_try "$slot_pool" "$workers" $$)" || {
+    job_say "$1: waits for a free pass slot, $workers across the runs" >/dev/null
+    pass_slot="$(slot_take "$slot_pool" "$workers" $$)"
+  }
+  job_say "addressing $1"; rm -f "$(in_use_marker "$1" "$pull")"
+  { pass_host_run "$(pass_dir "$1")" "$(host_skill_prompt "$host" flow comments "$1.$2 Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
+    echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
+  slot_give "$pass_slot"
+  session_code="$(cat "$out.code" 2>/dev/null)"
+  return "${session_code:-1}"
+}
+# pass_failure <code> <answer record>: why the pass that ended with <code>, its output in $out,
+# failed, or nothing when it completed.
+pass_failure() {
+  if [ "$1" -eq "$PASS_LIMIT_EXIT" ]; then printf 'stopped at the pass limit of %s (jobs.comments.pass_limit)' "$pass_limit"
+  elif [ "$1" -ne 0 ]; then printf 'host exit %s' "$1"
+  elif [ -n "$(cut_short "$out")" ]; then printf 'the host stopped the addresser before it finished'
+  elif [ -n "$answer" ] && ! answer_taken "$2"; then printf "the pass did not confirm it carried out the owner's answer"; fi
+}
 # pass <target> <item>: one pass on one PR, its outcome in $slot.
 pass() {
   t="$1"
@@ -335,26 +358,14 @@ pass() {
     fi
   fi
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
-  pass_slot="$(slot_try "$slot_pool" "$workers" $$)" || {
-    job_say "$t: waits for a free pass slot, $workers across the runs" >/dev/null
-    pass_slot="$(slot_take "$slot_pool" "$workers" $$)"
-  }
-  job_say "addressing $t"; rm -f "$(in_use_marker "$t" "$pull")"
-  # The output goes to the log as it comes, so a pass killed half way keeps what it said.
-  { pass_host_run "$(pass_dir "$t")" "$(host_skill_prompt "$host" flow comments "$t.$note$answer$rnote Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" 2>&1
-    echo $? > "$out.code"; } | tee -a "$(job_log_dir)/$job.log" > "$out"
-  slot_give "$pass_slot"
-  code="$(cat "$out.code" 2>/dev/null)"; code="${code:-1}"
+  pass_session "$t" "$note$answer$rnote"; code=$?
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR
   # is tried again after the clear, with no failure counted. The saved activity goes, so the extra
   # pass this run may have marked as taken still runs. The stop's line is the run's last word.
-  why=""
-  if [ "$code" -eq "$PASS_LIMIT_EXIT" ]; then why="stopped at the pass limit of $pass_limit (jobs.comments.pass_limit)"
-  elif [ "$code" -ne 0 ] && job_host_stopped; then
+  if [ "$code" -ne 0 ] && [ "$code" -ne "$PASS_LIMIT_EXIT" ] && job_host_stopped; then
     rm -f "$f"; printf '%s' "$job_last" > "$run/stopped"; outcome stopped; return 0
-  elif [ "$code" -ne 0 ]; then why="host exit $code"
-  elif [ -n "$(cut_short "$out")" ]; then why="the host stopped the addresser before it finished"
-  elif [ -n "$answer" ] && ! answer_taken "$f.answer"; then why="the pass did not confirm it carried out the owner's answer"; fi
+  fi
+  why="$(pass_failure "$code" "$f.answer")"
   if [ -z "$why" ]; then
     [ -z "$seen" ] || printf '%s\n' "$seen" > "$f"
     rm -f "$f.fails" "$f.told-fails"
