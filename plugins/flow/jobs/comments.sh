@@ -175,7 +175,7 @@ pr_key() {
 max_fails="$(cfg_or jobs.comments.max_failures 3)"
 case "$max_fails" in ''|*[!0-9]*) die "jobs.comments.max_failures takes a whole number" 2 ;; esac
 [ -n "$workers" ] || workers="$(cfg_or jobs.comments_workers 1)"
-case "$workers" in ''|*[!0-9]*|0) die "--workers and jobs.comments_workers take a number from 1" 2 ;; esac
+case "$workers" in ''|*[!0-9]*|0*) die "--workers and jobs.comments_workers take a number from 1" 2 ;; esac
 tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 || true; }
 # item_of <target>: the item a target names: the target itself, or for a PR number the item its
 # branch names, flow/<item slug> (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1);
