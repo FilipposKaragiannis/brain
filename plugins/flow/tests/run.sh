@@ -1277,29 +1277,31 @@ check_all "comments job: a PR skipped for its held lock is named in use in the r
 check "comments job: a lock the run did not take is left to its holder" [ -d ".flow/item:$(item_slug "$par").lock" ]
 rm -rf ".flow/item:$(item_slug "$par").lock"
 check "comments job: --workers 0 is refused, exit 2" sh -c "'$P/jobs/comments.sh' claude --workers 0 2>/dev/null; [ \$? = 2 ]"
-: > "$HOST_LOG"; "$P/jobs/comments.sh" claude --workers 00 >/dev/null 2>&1; code=$?
+mark_comments_log() { comments_log_mark="$(wc -l < .flow/log/comments.log | tr -d ' ')"; }
+comments_logged_since_mark() { tail -n "+$((comments_log_mark + 1))" .flow/log/comments.log | grep -q "$1"; }
+mark_comments_log; "$P/jobs/comments.sh" claude --workers 00 >/dev/null 2>&1; code=$?
 check "WorkersOfZerosOnly_RefusesTheRun: 00 workers would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
-check "WorkersOfZerosOnly_StartsNoPass: no host session runs on a zero worker count" test ! -s "$HOST_LOG"
+check_all "WorkersOfZerosOnly_StartsNoPass: no pass is addressed on a zero worker count" '! comments_logged_since_mark "addressing "'
 # A count past the cap the console sets stops the run at its start; bounded, so a run it would hang
 # fails the check instead of the suite.
 WORKERS_CAP="$(sed -n 's/^COMMENTS_WORKERS_MAX=//p' "$P/jobs/comments.sh")"
 WORKERS_PAST_ANY_SHELL_INTEGER=99999999999999999999
 REFUSED_RUN_BOUND_SECONDS=15; REFUSED_RUN_STOP_GRACE_SECONDS=1
 bounded_comments_run() { python3 -I "$P/scripts/_health.py" bounded "$REFUSED_RUN_BOUND_SECONDS" "$REFUSED_RUN_STOP_GRACE_SECONDS" "$P/jobs/comments.sh" claude "$@" >/dev/null 2>&1; }
-bump 2026-10-25T03:05:00Z; : > "$HOST_LOG"; bounded_comments_run --workers "$((WORKERS_CAP + 1))"; code=$?
+bump 2026-10-25T03:05:00Z; mark_comments_log; bounded_comments_run --workers "$((WORKERS_CAP + 1))"; code=$?
 check "WorkersAboveTheCap_RefusesTheRun: --workers takes no more passes at once than jobs.comments_workers may, exit 2" [ "$code" -eq 2 ]
-check "WorkersAboveTheCap_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
-bump 2026-10-25T03:06:00Z; : > "$HOST_LOG"; bounded_comments_run --workers "$WORKERS_PAST_ANY_SHELL_INTEGER"; code=$?
+check_all "WorkersAboveTheCap_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
+bump 2026-10-25T03:06:00Z; mark_comments_log; bounded_comments_run --workers "$WORKERS_PAST_ANY_SHELL_INTEGER"; code=$?
 check "WorkersPastAnyShellInteger_RefusesTheRun: a count too big to compare would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
-check "WorkersPastAnyShellInteger_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
-jobscfg "  comments_workers: $((WORKERS_CAP + 1))\n"; bump 2026-10-25T03:07:00Z; : > "$HOST_LOG"; bounded_comments_run; code=$?
+check_all "WorkersPastAnyShellInteger_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
+jobscfg "  comments_workers: $((WORKERS_CAP + 1))\n"; bump 2026-10-25T03:07:00Z; mark_comments_log; bounded_comments_run; code=$?
 check "ConfiguredWorkersAboveTheCap_RefusesTheRun: jobs.comments_workers past the console's range stops the run at its start, exit 2" [ "$code" -eq 2 ]
-check "ConfiguredWorkersAboveTheCap_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
-jobscfg "  comments_workers: $WORKERS_PAST_ANY_SHELL_INTEGER\n"; bump 2026-10-25T03:08:00Z; : > "$HOST_LOG"; bounded_comments_run; code=$?
+check_all "ConfiguredWorkersAboveTheCap_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
+jobscfg "  comments_workers: $WORKERS_PAST_ANY_SHELL_INTEGER\n"; bump 2026-10-25T03:08:00Z; mark_comments_log; bounded_comments_run; code=$?
 check "ConfiguredWorkersPastAnyShellInteger_RefusesTheRun: a count too big to compare would leave every pass waiting for a slot, exit 2" [ "$code" -eq 2 ]
-check "ConfiguredWorkersPastAnyShellInteger_StartsNoPass: no host session runs on a refused worker count" test ! -s "$HOST_LOG"
-jobscfg ''; bump 2026-10-25T03:09:00Z; : > "$HOST_LOG"; bounded_comments_run --workers "$WORKERS_CAP"
-check "WorkersAtTheCap_AddressesThePrs: the console's top worker count still runs the passes" grep -q 'comments gh#21\.' "$HOST_LOG"
+check_all "ConfiguredWorkersPastAnyShellInteger_StartsNoPass: no pass is addressed on a refused worker count" '! comments_logged_since_mark "addressing "'
+jobscfg ''; bump 2026-10-25T03:09:00Z; mark_comments_log; bounded_comments_run --workers "$WORKERS_CAP"
+check "WorkersAtTheCap_AddressesThePrs: the console's top worker count still runs the passes" comments_logged_since_mark 'done: .*addressed: .*gh#21'
 # A leading zero the console takes is stripped: 02 is two passes at once, as before the cap.
 cp "$work/overlap-host" "$work/bin/claude"
 jobscfg '  comments_workers: 02\n'; bump 2026-10-25T03:15:00Z; : > "$work/overlap.log"
@@ -1337,15 +1339,17 @@ printf "$okhost" > "$work/bin/claude"; "$P/jobs/comments.sh" claude 'gh#21' >/de
 # Overlapping runs share one seen record per PR, keyed by the item when the PR has one.
 bump 2026-10-25T04:00:00Z
 "$P/jobs/comments.sh" claude --as comments-fast >/dev/null 2>&1
-: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
-check "SecondScheduleAddressedThePr_PlainRunFindsNothingNew: every schedule of the job shares one seen record per PR" test ! -s "$HOST_LOG"
+mark_comments_log; "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check_all "SecondScheduleAddressedThePr_PlainRunFindsNothingNew: every schedule of the job shares one seen record per PR" \
+  'comments_logged_since_mark "gh#21: nothing new since the last pass, skipped" && ! comments_logged_since_mark "addressing gh#21"'
 bump 2026-10-25T04:10:00Z; rm -f .flow/log/comments.seen/gh_21
 answered_before="$("$P/adapters/github/read.sh" 'gh#21' | jget state.answered_at 2>/dev/null)"
 "$P/adapters/github/write-state.sh" 'gh#21' answered_at=2026-10-25T04:05:00Z >/dev/null
 "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "PrNamedByNumberOfAnItem_WritesTheItemsSeenRecord: the PR's number and its item are one key" test -s .flow/log/comments.seen/gh_21
-: > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
-check "PrNamedByNumberOfAnItem_LeavesNothingNewForTheItemsNextRun: a pass named by the PR's number keeps the item's activity" test ! -s "$HOST_LOG"
+mark_comments_log; "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check_all "PrNamedByNumberOfAnItem_LeavesNothingNewForTheItemsNextRun: a pass named by the PR's number keeps the item's activity" \
+  'comments_logged_since_mark "gh#21: nothing new since the last pass, skipped" && ! comments_logged_since_mark "addressing gh#21"'
 "$P/adapters/github/write-state.sh" 'gh#21' "answered_at=$answered_before" >/dev/null
 # Another run's lists at the fixed names of before stay as they are: each run keeps its own.
 printf 'another run lists these\n' > .flow/log/comments.targets; cp .flow/log/comments.targets .flow/log/comments.gated
@@ -1368,8 +1372,9 @@ chmod +x "$work/bin/claude"; rm -f "$work/pr-lock.during"
 check "HandNamedPrWithNoItem_HoldsALockKeyedByItsNumberDuringThePass: no two passes work one PR at once" test -f "$work/pr-lock.during"
 check "HandNamedPrWithNoItem_LetsItsLockGoAfterThePass: the next pass on the PR can start" test ! -d .flow/pr:90.lock
 mkdir .flow/pr:90.lock && echo $$ > .flow/pr:90.lock/pid
-: > "$HOST_LOG"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
-check "HandNamedPrWhoseLockIsHeld_IsSkipped: another pass works on that PR" test ! -s "$HOST_LOG"
+mark_comments_log; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check_all "HandNamedPrWhoseLockIsHeld_IsSkipped: another pass works on that PR" \
+  'comments_logged_since_mark "90: another pass works on it (its lock is held), skipped" && ! comments_logged_since_mark "addressing 90"'
 check "HandNamedPrWhoseLockIsHeld_IsNamedInUse: the result line says why the PR was not addressed" sh -c "tail -1 .flow/log/comments.log | grep -q 'in use: 90 '"
 rm -rf .flow/pr:90.lock
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['headRefName']='flow/gh-21'; json.dump(d, open(p,'w'))"
@@ -1416,33 +1421,32 @@ check "StaleSlotTakenByTwoRunsAtOnce_AddressesBothPrs: the run that lost the slo
   sh -c "grep -q '^end .*comments gh#21\.' '$work/runs.log' && grep -q '^end .*comments $cap\.' '$work/runs.log'"
 check "SlotHeldByALivePass_NamesItsRunsPid: a slot is never held with no pid" [ "$slot_holder" = "$first_run" ]
 mkdir -p .flow/log/comments.slots && ln -sfn 999999 .flow/log/comments.slots/1
-printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"
+printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"; mark_comments_log
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & stale_run=$!
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$stale_run" 2>/dev/null; wait "$stale_run" 2>/dev/null
-check "SlotOfADeadRun_IsTakenOver: a run that died holds no pass slot" grep -q 'comments gh#21' "$HOST_LOG"
-ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn 999998 .flow/log/comments.slots/1.999999; : > "$HOST_LOG"
+check "SlotOfADeadRun_IsTakenOver: a run that died holds no pass slot" comments_logged_since_mark 'addressing gh#21'
+ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn 999998 .flow/log/comments.slots/1.999999; : > "$HOST_LOG"; mark_comments_log
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & guarded_run=$!
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.999999
-check "TakeoverGuardOfADeadRun_IsCleared: a takeover stopped halfway never keeps its slot from being taken back" grep -q 'comments gh#21' "$HOST_LOG"
+check "TakeoverGuardOfADeadRun_IsCleared: a takeover stopped halfway never keeps its slot from being taken back" comments_logged_since_mark 'addressing gh#21'
 # The live taker is a stand-in run: its command line names jobs/comments.sh, as a real run's does.
 mkdir -p "$work/fake/jobs" && printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$work/fake/jobs/comments.sh" && chmod +x "$work/fake/jobs/comments.sh"
 GUARD_HOLD_SECONDS=2
 "$work/fake/jobs/comments.sh" >/dev/null 2>&1 & live_taker=$!
 bump 2026-10-25T04:30:00Z; ln -sfn 999999 .flow/log/comments.slots/1 && ln -sfn "$live_taker" .flow/log/comments.slots/1.999999; : > "$HOST_LOG"
-log_lines_before="$(wc -l < .flow/log/comments.log | tr -d ' ')"
+mark_comments_log
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1 & guarded_run=$!
-guarded_wait_seen() { tail -n "+$((log_lines_before + 1))" .flow/log/comments.log | grep -q 'gh#21: waits for a free pass slot'; }
-wait_for guarded_wait_seen
-guarded_run_waited=no; ! guarded_wait_seen || guarded_run_waited=yes
-sleep "$GUARD_HOLD_SECONDS"; host_calls_while_guarded="$(wc -l < "$HOST_LOG" | tr -d ' ')"
+wait_for comments_logged_since_mark 'gh#21: waits for a free pass slot'
+guarded_run_waited=no; ! comments_logged_since_mark 'gh#21: waits for a free pass slot' || guarded_run_waited=yes
+sleep "$GUARD_HOLD_SECONDS"; guarded_pass_started=no; ! comments_logged_since_mark 'addressing gh#21' || guarded_pass_started=yes
 kill "$live_taker" 2>/dev/null; wait "$live_taker" 2>/dev/null
 wait_for grep -q 'comments gh#21' "$HOST_LOG"
 kill "$guarded_run" 2>/dev/null; wait "$guarded_run" 2>/dev/null; rm -f .flow/log/comments.slots/1.999999
 check_all "TakeoverGuardOfALiveRun_HoldsTheSlotWhileItsTakerLives: a live takeover is never raced by a second taker" \
-  '[ "$guarded_run_waited" = yes ] && [ "$host_calls_while_guarded" = 0 ]'
-check "TakeoverGuardOfALiveRun_FreesTheSlotOnceItsTakerEnds: the waiting pass runs when the taker is gone" grep -q 'comments gh#21' "$HOST_LOG"
+  '[ "$guarded_run_waited" = yes ] && [ "$guarded_pass_started" = no ]'
+check "TakeoverGuardOfALiveRun_FreesTheSlotOnceItsTakerEnds: the waiting pass runs when the taker is gone" comments_logged_since_mark 'addressing gh#21'
 stale_pool="$work/stale-guard-pool"; mkdir -p "$stale_pool/slots"
 ln -s 999999 "$stale_pool/slots/1" && ln -s 999998 "$stale_pool/slots/1.999999"
 for taker in 11 12 13 14 15 16 17 18; do
@@ -1472,16 +1476,16 @@ check "PassPastThePassLimit_FailsTheRun: a stopped pass is a failed pass" [ "$co
 check "PassPastThePassLimit_StopsTheHostsChildren: nothing the pass started keeps running" sh -c "test -s '$work/pass-child.pid' && ! kill -0 \$(cat '$work/pass-child.pid')"
 check "PassPastThePassLimit_CountsTowardFailuresInARow: it counts toward jobs.comments.max_failures" sh -c "read -r count _ < .flow/log/comments.seen/gh_21.fails && [ \"\$count\" = 1 ]"
 check "PassPastThePassLimit_IsLoggedAsStoppedAtTheLimit: the log names the setting that stopped it" grep -q 'gh#21: pass failed, .*jobs.comments.pass_limit' .flow/log/comments.log
-printf "$okhost" > "$work/bin/claude"; : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null 2>&1
-check "PassStoppedAtThePassLimit_IsTriedAgainByTheNextRun: a stopped pass is retried with nothing new" grep -q 'comments gh#21' "$HOST_LOG"
-jobscfg '  comments:\n    pass_limit: soon\n'; : > "$HOST_LOG"
+printf "$okhost" > "$work/bin/claude"; mark_comments_log; "$P/jobs/comments.sh" claude >/dev/null 2>&1
+check "PassStoppedAtThePassLimit_IsTriedAgainByTheNextRun: a stopped pass is retried with nothing new" comments_logged_since_mark 'done: .*addressed: .*gh#21'
+jobscfg '  comments:\n    pass_limit: soon\n'; mark_comments_log
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?
 check "PassLimitThatIsNoDuration_RefusesTheRun: a bad setting fails at startup, exit 2" [ "$code" -eq 2 ]
-check "PassLimitThatIsNoDuration_StartsNoPass: no host session runs on a bad setting" test ! -s "$HOST_LOG"
-jobscfg '  comments:\n    pass_limit: 0m\n'; : > "$HOST_LOG"
+check_all "PassLimitThatIsNoDuration_StartsNoPass: no pass is addressed on a bad setting" '! comments_logged_since_mark "addressing "'
+jobscfg '  comments:\n    pass_limit: 0m\n'; mark_comments_log
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1; code=$?
 check "PassLimitOfZero_RefusesTheRun: a limit that would stop every pass at once fails at startup, exit 2" [ "$code" -eq 2 ]
-check "PassLimitOfZero_StartsNoPass: no host session runs on a zero limit" test ! -s "$HOST_LOG"
+check_all "PassLimitOfZero_StartsNoPass: no pass is addressed on a zero limit" '! comments_logged_since_mark "addressing "'
 cp "$work/config.workers" .flow/config.yaml
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"
