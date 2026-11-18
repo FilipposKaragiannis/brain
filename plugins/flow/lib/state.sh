@@ -168,12 +168,12 @@ record_seeded() {
       --now "$(now_iso)" --machine "$(flow_machine)" --host "$(host_name)" --seed "$flow_record_seed" "$@"
 }
 
-# record_claim_file <item> <pair>...: the item's claim file, when a pair names its step (step=,
-# run.step= or a run); nothing otherwise.
+# record_claim_file <item> <pair>...: the item's claim file, when a pair can name its step (step=,
+# run.step= or any run:= value, whose JSON _state.py reads); nothing otherwise.
 record_claim_file() (
   flow_record_item="$1"; shift
   for flow_record_pair in "$@"; do
-    case "$flow_record_pair" in step=*|run.step=*|run:=\{*) item_claim_file "$flow_record_item"; exit 0 ;; esac
+    case "$flow_record_pair" in step=*|run.step=*|run:=*) item_claim_file "$flow_record_item"; exit 0 ;; esac
   done
 )
 

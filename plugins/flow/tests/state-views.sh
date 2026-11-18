@@ -52,6 +52,9 @@ record set "$claimed" step=implement >/dev/null 2>&1
 check "StepOfAClaimedItem_IsTheClaimsStep: the worktree's claim follows the item's step" '[ "$(claim_step "$claimed")" = implement ]'
 record set "$claimed" "run:=$run_record" >/dev/null 2>&1; record set "$claimed" run.step=sync >/dev/null 2>&1
 check "RunStepOfAClaimedItem_IsTheClaimsStep: the step the run is on is the claim's step" '[ "$(claim_step "$claimed")" = sync ]'
+record set "$claimed" "run:= $run_record" >/dev/null 2>&1
+check "RunObjectWithLeadingWhitespace_IsTheClaimsStep: a run's JSON layout does not hide its step from the claim" \
+  '[ "$(claim_step "$claimed")" = implement ]'
 unclaimed="$(new_task "No claim view")"
 record set "$unclaimed" step=implement >/dev/null 2>&1
 check "StepOfAnUnclaimedItem_MakesNoClaimFile: only a claimed worktree carries the step" '[ -z "$("$plugin/scripts/steward.sh" find "$unclaimed")" ]'
