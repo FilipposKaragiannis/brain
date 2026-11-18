@@ -88,7 +88,7 @@ such and left to `flow:init`.
 | machine scope: git hook wiring | one call per hook (pre-commit, commit-msg, pre-push) in the clone's own hooks folder, after the lines already there, naming the main worktree's absolute path; a missing hook is created | placed once and rewritten when the clone moves; `core.hooksPath` and `.githooks/` are never touched, and with `core.hooksPath` set init prints the line to add there |
 | machine scope: `.git/info/exclude` | a `# standards:begin` / `# standards:end` block: `/.standards` and the project-level paths init wrote (roster agents, skills and rules links) | the block is replaced, the lines around it stay |
 | machine scope: `.standards` in each linked worktree | a link to the main worktree's `.standards/` | added when missing, fixed when it points elsewhere; a real folder there is left, with a note |
-| machine scope: `worktree_setup` in `.flow/config.yaml` | when flow is installed, one item that links `.standards` in each worktree flow adds | added once under a plain `worktree_setup:` line; any other shape gets the item printed for the owner |
+| machine scope: `worktree_setup` in `.flow/config.yaml` | when flow is installed, one item that links `.standards` in each worktree flow adds | added once under a plain `worktree_setup:` line in an untracked config; a tracked config or any other shape gets the item printed for the owner |
 
 **Relaxed rules.** `rules.relaxed` in `.standards/config.json` lists the rule ids the project
 waives: no copy or block line names them and no reviewer raises them. `rules.judgement` lists the

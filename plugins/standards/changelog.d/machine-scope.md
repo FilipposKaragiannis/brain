@@ -16,4 +16,5 @@ bump: minor
   as a note, not drift. This changes the default for a clone with its own hooks, such as Git LFS.
 - In machine scope each linked worktree gets a `.standards` link to the main worktree's, so the
   git hooks, the gates and the session hooks find the config there. When flow is installed, init
-  adds the line that makes the link to `worktree_setup` in `.flow/config.yaml`.
+  adds the line that makes the link to `worktree_setup` in `.flow/config.yaml`, or prints it for
+  the owner when that file is tracked.

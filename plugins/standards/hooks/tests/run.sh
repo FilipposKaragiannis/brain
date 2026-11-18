@@ -615,6 +615,17 @@ check "LinkedWorktree_MissingLink_CheckReportsDrift: init --check names the link
 "$init" >/dev/null 2>&1
 git worktree remove --force "$linked_worktree"; git worktree remove --force "$flow_worktree"
 
+echo "init: machine scope leaves a tracked flow config alone"
+mkdir -p "$work/tracked-flow" && cd "$work/tracked-flow" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .flow .standards && printf '%s\n' "$machine_config" > .standards/config.json
+printf 'pool:\nworktree_setup:\n  # - dotnet restore\n' > .flow/config.yaml
+git add .flow && git commit -q -m 'chore: flow config'
+"$init" --scope machine > "$work/tracked-flow.init.out" 2>&1
+check "TrackedFlowConfig_StaysUnchanged: machine init leaves a committed .flow/config.yaml with worktree_setup: unchanged" \
+  sh -c "[ -z \"\$(git status --porcelain -- .flow/config.yaml)\" ]"
+check "TrackedFlowConfig_InitPrintsTheItem: machine init prints the worktree_setup item that links .standards for the owner to add" \
+  grep -q 'worktree_setup: .*ln -s .*\.standards' "$work/tracked-flow.init.out"
+
 echo "init: the standards call keeps the status of the hook lines before it"
 mkdir -p "$work/failing-hooks" && cd "$work/failing-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
 mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json

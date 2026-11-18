@@ -35,6 +35,10 @@ wire_flow_setup() {
     return 0 ;;
   esac
   grep -qxF -- "$flow_setup_item" "$flow_config" && return 0
+  if git ls-files --error-unmatch -- "$flow_config" >/dev/null 2>&1; then
+    echo "init: note: $flow_config is tracked and machine scope changes no tracked file, so init leaves it to you. Add this item under worktree_setup: ${flow_setup_item#  - }"
+    return 0
+  fi
   if grep -qxF 'worktree_setup:' "$flow_config"; then
     repair "$flow_config: worktree_setup lacks the line that links .standards" add_flow_setup_item "$flow_config" "$flow_setup_item"
     return 0
