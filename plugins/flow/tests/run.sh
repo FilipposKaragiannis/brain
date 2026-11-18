@@ -1604,9 +1604,12 @@ check "install: daily and weekly are calendar times, Sunday is 0" sh -c "grep -q
 cat > "$work/agent_run.py" <<'PY'
 import os, plistlib, subprocess, sys, time
 agent = plistlib.load(open(sys.argv[1], "rb"))
+program = agent["ProgramArguments"]
+if not os.path.exists(program[0]):
+    program = ["/bin/sh"] + program[1:]
 started = time.time()
 with open(sys.argv[2], "ab") as log:
-    subprocess.run(agent["ProgramArguments"], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
+    subprocess.run(program, stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                    env=dict(os.environ, **agent["EnvironmentVariables"]), timeout=30)
 print("%.1f" % (time.time() - started))
 PY
