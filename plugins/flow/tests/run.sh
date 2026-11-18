@@ -1198,10 +1198,10 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" codex >/dev/null
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec --json -C $realrepo -s workspace-write' '$HOST_LOG'"
-check "CommentsJobOnCodex_StartsItsSkillAsPluginColonSkill" sh -c "grep -q 'codex	.*workspace-write.* \\\$flow:comments gh#21' '$HOST_LOG'"
-check "HostSkillPrompt_CodexSkillNameAnotherPluginShares_NamesFlowAsThePlugin" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex flow review gh#9')\" = '\$flow:review gh#9' ]"
-check "HostSkillPrompt_CodexSkillOfAnotherPlugin_NamesThatPlugin" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex meta retro x')\" = '\$meta:retro x' ]"
-check "HostSkillPrompt_ClaudeSkillNameAnotherPluginShares_IsUnchanged" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow review gh#9')\" = '/flow:review gh#9' ]"
+check "CommentsJobOnCodex_StartsItsSkillAsPluginColonSkill: the codex pass starts with \$flow:comments gh#21, because Codex starts a plugin's skill only when the prompt names it as \$plugin:skill" sh -c "grep -q 'codex	.*workspace-write.* \\\$flow:comments gh#21' '$HOST_LOG'"
+check "HostSkillPrompt_CodexSkill_PrefixesThePluginName: the Codex prompt for flow review is \$flow:review gh#9, because a bare \$review could resolve to the standards plugin's review skill" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex flow review gh#9')\" = '\$flow:review gh#9' ]"
+check "HostSkillPrompt_CodexSkillOfAnotherPlugin_NamesThatPlugin: the Codex prompt for meta retro is \$meta:retro gh#9 now, because the prompt names the plugin that owns the skill and passes the text untouched" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex meta retro \"gh#9 now\"')\" = '\$meta:retro gh#9 now' ]"
+check "HostSkillPrompt_ClaudeSkill_KeepsTheSlashPluginForm: the Claude prompt for flow review is /flow:review gh#9, because Claude starts a plugin's skill as /plugin:skill" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow review gh#9')\" = '/flow:review gh#9' ]"
 check "the unattended loop starts a skill step as typed" grep -q 'host_skill_prompt "$host" flow "$skill"' "$P/templates/run-unattended.sh"
 # The chase asks the reviewers of the PR's author host: the pr_host of the item its branch names.
 cp .flow/config.yaml "$work/config.jobs"; printf 'reviews:\n  reviewers:\n    claude: [codex]\n    codex: [octo-cat]\n  chase_after: 30m\n' >> .flow/config.yaml
