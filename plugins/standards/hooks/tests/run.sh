@@ -468,6 +468,12 @@ check "init: --check fails on a waived id that is not a rule" sh -c "! '$init' -
 check "init: --check names the waived id that is not a rule as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.relaxed names X-99'"
 printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"judgement":["U-02"]}}\n' > .standards/config.json
 check "init: --check names a demoted usage rule as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.judgement names U-02'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["C-01"],"judgement":["W-01"]}}\n' > .standards/config.json
+"$init" >/dev/null
+check "init: --check names a waived rule a plugin hook enforces as a gap, with the hook" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.relaxed names C-01, which the plugin hook hooks/check-comments.sh enforces'"
+check "init: --check names a demoted rule a plugin hook enforces as a gap, with the hook" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.judgement names W-01, which the plugin hook hooks/check-subject.sh enforces'"
+check "init: a relaxed rule a plugin hook enforces stays in the block's hard rules" sh -c "$hard_rules | grep -q '^- C-01 ' && $hard_rules | grep -q '^- W-01 '"
+check "init: a relaxed rule a plugin hook enforces is listed as neither waived nor demoted" sh -c "! sed -n '/^## Waived by this project/,/^## Code Review Rules/p' AGENTS.md | grep -qE '^- (C-01|W-01) '"
 check "init: a new config carries empty relaxed and judgement lists" python3 -c "import json, sys; sys.exit(json.load(open('$work/fresh/.standards/config.json')).get('rules') != {'relaxed': [], 'judgement': []})"
 check "init: without a rules key the block is the plugin's block, byte for byte" sh -c "sed -n '/^<!-- standards:begin/,/^<!-- standards:end/p' '$work/fresh/AGENTS.md' | sed '1d;\$d' | cmp -s - '$plugin_copy/rules/block.md'"
 

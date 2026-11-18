@@ -81,7 +81,8 @@ waives: no copy or block line names them and no reviewer raises them. `rules.jud
 hard or signal rule ids it grades as [judgement]: P2 at most, a breach declared per U-02. `init`
 renders the rule copies and the block from both lists, so re-run it after editing them (the
 session-start nudge does not see the edit). An unknown id, a usage rule, a `judgement` id that is
-not hard or signal, or an id in both lists is a gap.
+not hard or signal, an id in both lists, or an id a plugin hook enforces (C-01, C-02, W-01, L-03:
+the lists do not reach the hooks; the gap names the hook and its switch) is a gap.
 
 **Gaps.** `init` ends with a `Gaps` list when the config or the guide cannot do its job yet;
 `init --check` prints them as `init: gap:` lines and exits 1 until they are filled, so one

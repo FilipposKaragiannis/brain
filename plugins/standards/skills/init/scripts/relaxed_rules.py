@@ -32,6 +32,12 @@ DEMOTED_TAG = r"[judgement, relaxed from \1 by this project]"
 DEMOTABLE_TAGS = ("hard", "signal")
 USAGE_TAG = "usage"
 USAGE_PREFIX = "U-"
+HOOK_ENFORCED = {
+    "C-01": ("hooks/check-comments.sh", "a commit message with [why-comment] or a comments.allow_markers prefix passes it"),
+    "C-02": ("hooks/check-comments.sh", "a commit message with [allow-docs] passes it"),
+    "W-01": ("hooks/check-subject.sh", "it has no off switch"),
+    "L-03": ("hooks/check-format.sh", "an empty languages[].format command turns it off"),
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -59,6 +65,10 @@ def id_gap(rule_id, key, index):
     tag = index[rule_id]["tag"]
     if tag == USAGE_TAG or rule_id.startswith(USAGE_PREFIX):
         return "%s: rules.%s names %s, a usage rule; the usage rules are never relaxed" % (CONFIG_NAME, key, rule_id)
+    if rule_id in HOOK_ENFORCED:
+        hook, switch = HOOK_ENFORCED[rule_id]
+        return "%s: rules.%s names %s, which the plugin hook %s enforces; the lists do not reach it (%s)" % (
+            CONFIG_NAME, key, rule_id, hook, switch)
     if key == "judgement" and tag not in DEMOTABLE_TAGS:
         return "%s: rules.judgement names %s, a %s rule; only hard and signal rules are demoted" % (CONFIG_NAME, rule_id, tag)
     return ""
