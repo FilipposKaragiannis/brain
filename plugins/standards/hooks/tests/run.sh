@@ -345,6 +345,25 @@ check "init: writes only under .standards and the host paths" sh -c "[ ! -d docs
 check "init: no project roster, no eval runner" sh -c "[ ! -e .standards/evals ]"
 check "init: no .githooks, hooksPath is the plugin folder" sh -c "[ \"\$(git config core.hooksPath)\" = .standards/hooks/git ]"
 check "init: --check is clean after install" sh -c "'$init' --check | grep -q 'up to date'"
+cp .standards/testing-guide.md "$work/fresh-guide.md"
+cat > .standards/testing-guide.md <<'GUIDE'
+# Testing guide
+
+## Levels and commands
+
+| level | when | command |
+|---|---|---|
+| unit | every change | `dotnet test` |
+| integration | a boundary is crossed | `dotnet test --filter Category=Integration` |
+| regression | every bug fix, named after the bug | part of the unit run |
+| mutation | on PRs for changed files | `dotnet stryker` |
+
+## Fixtures and helpers
+
+- Where fixtures live and how to add one: tests/Fixtures.
+GUIDE
+check "ThreeColumnGuideFilled_CheckIsClean: init --check finds a guide filled from the three-column template up to date, with no gap" "$init" --check
+mv "$work/fresh-guide.md" .standards/testing-guide.md
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
 printf '# mine\n' >> .codex/agents/standards-reviewer.toml
 check "init: --check names a hand edit" sh -c "'$init' --check | grep -q 'edited by hand: .codex/agents/standards-reviewer.toml'"
