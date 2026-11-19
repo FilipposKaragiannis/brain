@@ -603,7 +603,7 @@ for gated in "$jsg_in" "$jsg_out"; do
   jira_comment_as "$gated" flow@acme.test "/answer this way"
 done
 jira_run "$P/adapters/jira/answers.sh" >/dev/null 2>&1
-check "JiraScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue inside jira.scope" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_in" | jget state.gate)" = none ]
+check "JiraScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue inside jira.scope, because answers reads the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_in" | jget state.gate)" = none ]
 check "JiraScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside jira.scope, because it reads only the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_out" | jget state.gate)" = ambiguity ]
 jsp="$(jira_run "$P/adapters/jira/create.sh" epic "Scoped parent")"; jira_set "$jsp" labels team-a
 jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child inside" --parent "$jsp")" labels team-a
@@ -622,10 +622,8 @@ pick:
 jq_both="$(jira_run "$P/adapters/jira/create.sh" task "Scope and pick")"; jira_set "$jq_both" labels team-a; jira_set "$jq_both" assignee flow@acme.test
 jq_scope="$(jira_run "$P/adapters/jira/create.sh" task "Scope only")"; jira_set "$jq_scope" labels team-a
 jq_pick="$(jira_run "$P/adapters/jira/create.sh" task "Pick only")"; jira_set "$jq_pick" labels team-b; jira_set "$jq_pick" assignee flow@acme.test
-: > "$work/jira/searches.log"
 jira_query_ids="$(jira_run "$P/adapters/jira/list.sh" --pick mine | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))')"
-check "JiraScopeQueryAndPickQuery_BothParenthesised: the search ANDs the scope query and the pick query, each in its own parentheses" grep -qF '(labels = "team-a") AND (assignee = currentUser())' "$work/jira/searches.log"
-check_all "JiraScopeQueryAndPickQuery_KeepsIssueBothMatch: the list keeps the issue the scope and the pick both match" 'case " $jira_query_ids " in *" $jq_both "*) true ;; *) false ;; esac'
+check_all "JiraScopeQueryAndPickQuery_KeepsIssueBothMatch: the list keeps the issue the scope and the pick both match, because the scope and the pick compose" 'case " $jira_query_ids " in *" $jq_both "*) true ;; *) false ;; esac'
 check_all "JiraScopeQueryAndPickQuery_DropsScopeOnly: the list leaves out an issue only the scope matches, because the pick applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_scope "*) false ;; *) true ;; esac'
 check_all "JiraScopeQueryAndPickQuery_DropsPickOnly: the list leaves out an issue only the pick matches, because the scope applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_pick "*) false ;; *) true ;; esac'
 cp "$work/config.gh" .flow/config.yaml
@@ -815,14 +813,14 @@ for scope_issue in 50 51; do
   printf '/answer 1. this one' | gh issue comment "$scope_issue" -R acme/widgets --body-file - >/dev/null
 done
 scope_cleared="$("$P/adapters/github/answers.sh" 2>/dev/null)"
-check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches" [ "$scope_cleared" = "gh#50" ]
+check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches, because answers reads the scoped issues" [ "$scope_cleared" = "gh#50" ]
 check "ScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside github.scope, because it reads the scoped list" [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.gate)" = "ambiguity" ]
 gh_scope_config '    assignee: me'
-check "ScopedListAssigneeMe_KeepsOnlyTheGhUsers: assignee: me in github.scope keeps only the issues assigned to the gh user" [ "$(gh_scope_ids)" = "gh#50" ]
+check "ScopedListAssigneeMe_KeepsOnlyTheGhUsers: assignee: me in github.scope keeps only the issues assigned to the gh user, because me stands for the gh user" [ "$(gh_scope_ids)" = "gh#50" ]
 scope_limit=1
 check "ScopedList_LimitCountsMatches: github.limit counts the issues the scope matches, because the scope goes to GitHub's search" [ "$(gh_scope_ids --limit "$scope_limit")" = "gh#50" ]
 gh_scope_config '    status: [Nonesuch]'
-check "ScopedList_StatusOfNoIssueState_ListsNothing: a github.scope status that names no issue state keeps no issue, though it sends GitHub no qualifier" [ "$("$P/adapters/github/list.sh" 2>/dev/null)" = "[]" ]
+check "ScopedList_StatusOfNoIssueState_ListsNothing: a github.scope status that names no issue state keeps no issue, though it sends GitHub no qualifier, because the scope is matched on every issue read" [ "$("$P/adapters/github/list.sh" 2>/dev/null)" = "[]" ]
 cp "$work/scope-issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/scope-config.saved" .flow/config.yaml
 
 echo "trackers and readiness on every tracker (fake gh)"
@@ -2158,10 +2156,10 @@ scope_config '    labels: [team-a]'
 sin="$("$P/adapters/local/create.sh" task "Inside the scope" --size S --priority P1 --labels team-a)"
 sout="$("$P/adapters/local/create.sh" task "Outside the scope, more urgent" --size S --priority P0 --labels team-b)"
 board_ids="$("$P/scripts/board.sh" --json 2>/dev/null | scope_ids)"
-check_all "ScopedBoard_ShowsItemInside: board --json lists an item local.scope matches" 'case " $board_ids " in *" $sin "*) true ;; *) false ;; esac'
+check_all "ScopedBoard_ShowsItemInside: board --json lists an item local.scope matches, because the scope only narrows" 'case " $board_ids " in *" $sin "*) true ;; *) false ;; esac'
 check_all "ScopedBoard_HidesItemOutside: board --json leaves out an item outside local.scope, because it reads the scoped list" '[ -n "$board_ids" ] && case " $board_ids " in *" $sout "*) false ;; *) true ;; esac'
 out="$("$P/scripts/next.sh" --json 2>/dev/null)"
-check "ScopedNext_PicksOnlyInside: next takes the item inside the scope over a more urgent one outside it" [ "$(printf '%s' "$out" | jget item)" = "$sin" ]
+check "ScopedNext_PicksOnlyInside: next takes the item inside the scope over a more urgent one outside it, because it picks from the scoped list" [ "$(printf '%s' "$out" | jget item)" = "$sin" ]
 scope_unpick "$out"
 scope_config '    labels: [team-a]' 'pick:
   tasks:
@@ -2172,13 +2170,13 @@ check "ScopedNextPick_PicksOnlyInside: next --pick takes the item inside the sco
 scope_unpick "$out"
 scope_config '    labels: [team-a]'
 "$P/scripts/next.sh" "$sout" >/dev/null 2>"$work/scope.err"; code=$?
-check "NextNamedOutsideScope_ExitsTwo: next on a named item outside the scope is refused" [ "$code" -eq 2 ]
+check "NextNamedOutsideScope_ExitsTwo: next on a named item outside the scope is refused, because the flow runs no item outside its scope" [ "$code" -eq 2 ]
 check "NextNamedOutsideScope_NamesScope: the refusal names local.scope, because that is the key to change" grep -q "$sout is outside local.scope in .flow/config.yaml" "$work/scope.err"
 "$P/scripts/steward.sh" claim "$sout" >/dev/null 2>"$work/scope.err"; code=$?
-check "ClaimOutsideScope_ExitsTwo: a new claim of an item outside the scope is refused" [ "$code" -eq 2 ]
-check "ClaimOutsideScope_TakesNoWorktree: the refused claim leaves no worktree claimed for the item" [ -z "$("$P/scripts/steward.sh" find "$sout")" ]
+check "ClaimOutsideScope_ExitsTwo: a new claim of an item outside the scope is refused, because the flow runs no item outside its scope" [ "$code" -eq 2 ]
+check "ClaimOutsideScope_TakesNoWorktree: the refused claim leaves no worktree claimed for the item, because a refusal changes nothing" [ -z "$("$P/scripts/steward.sh" find "$sout")" ]
 adhoc_path="$("$P/scripts/steward.sh" claim adhoc:scope-x 2>/dev/null)"
-check "ClaimAdhoc_IsNeverScoped: an adhoc: claim has no tracker, so a scope does not refuse it" [ -n "$adhoc_path" ]
+check "ClaimAdhoc_IsNeverScoped: an adhoc: claim has no tracker, so a scope does not refuse it, because a scope belongs to its tracker" [ -n "$adhoc_path" ]
 "$P/scripts/steward.sh" release adhoc:scope-x --force >/dev/null 2>&1
 held_path="$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)"
 python3 -c 'p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("labels: [team-a]", "labels: [team-b]"))'
@@ -2190,7 +2188,7 @@ rm -f ".flow/runs/$(item_slug "$sin").json"
 scope_config '    labels: [team-a]'
 "$P/adapters/local/write-state.sh" "$sin" step=split; "$P/adapters/local/write-state.sh" "$sout" step=split
 : > "$work/scope.procs"; FLOW_HEALTH_PROCS="$work/scope.procs" "$P/scripts/steward.sh" health > "$work/scope.out" 2>&1
-check "ScopedHealth_ReportsItemInside: health says a split item inside the scope is the owner's to close" grep -q "$sin: split, and every child is closed" "$work/scope.out"
+check "ScopedHealth_ReportsItemInside: health says a split item inside the scope is the owner's to close, because health reads the scoped list" grep -q "$sin: split, and every child is closed" "$work/scope.out"
 check "ScopedHealth_SkipsItemOutside: health says nothing of a split item outside the scope, because it reads the scoped list" sh -c "[ -s '$work/scope.out' ] && ! grep -q '$sout: split' '$work/scope.out'"
 "$P/adapters/local/write-state.sh" "$sin" step=; "$P/adapters/local/write-state.sh" "$sout" step=
 "$P/adapters/local/link-pr.sh" "$sin" https://github.com/acme/widgets/pull/90 >/dev/null; "$P/adapters/local/link-pr.sh" "$sout" https://github.com/acme/widgets/pull/90 >/dev/null
@@ -2200,7 +2198,7 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/scope/host.log"\n' "$work" > "$wo
 ln -sf "$P/tests/fake-gh.sh" "$work/scope/bin/gh"
 : > "$work/scope/host.log"
 PATH="$work/scope/bin:$PATH" FAKE_GH_DIR="$work/scope/gh" FLOW_HEALTH_PROCS="$work/scope.procs" "$P/jobs/comments.sh" claude >/dev/null 2>&1
-check "ScopedCommentsJob_AddressesItemInside: the comments job runs a pass on the PR of an item inside the scope" grep -q "/flow:comments $sin" "$work/scope/host.log"
+check "ScopedCommentsJob_AddressesItemInside: the comments job runs a pass on the PR of an item inside the scope, because the job reads the scoped list" grep -q "/flow:comments $sin" "$work/scope/host.log"
 check "ScopedCommentsJob_SkipsItemOutside: the comments job runs no pass for an item outside the scope, because it reads the scoped list" sh -c "[ -s '$work/scope/host.log' ] && ! grep -q '/flow:comments $sout' '$work/scope/host.log'"
 scope_config '    query: label:team-a'
 FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1

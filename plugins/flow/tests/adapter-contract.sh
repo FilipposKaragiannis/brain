@@ -392,34 +392,34 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
   write_config 0
   check "InScope_NoScopeSet_ExitsZero: in-scope exits 0 for any item when the tracker has no scope, because unset reads as today" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 0 ]'
   scope_config '    assignee: me'
-  check "ScopedListAssigneeMe_KeepsItemAssigned: a scope assignee of me keeps an item assigned to the user the adapter acts as" 'listed "$pa" "$A/list.sh"'
-  check "ScopedListAssigneeMe_DropsItemOfOthers: a scope assignee of me leaves out an item assigned to someone else" '! listed "$pb" "$A/list.sh"'
+  check "ScopedListAssigneeMe_KeepsItemAssigned: a scope assignee of me keeps an item assigned to the user the adapter acts as, because me stands for that user" 'listed "$pa" "$A/list.sh"'
+  check "ScopedListAssigneeMe_DropsItemOfOthers: a scope assignee of me leaves out an item assigned to someone else, because the scope narrows every list to its assignee" '! listed "$pb" "$A/list.sh"'
   scope_config '    kinds: [bug]'
-  check "ScopedListKinds_KeepsItemOfKind: a scope of kinds keeps an item of one of them" 'listed "$pb" "$A/list.sh"'
-  check "ScopedListKinds_DropsItemOfOtherKind: a scope of kinds leaves out an item of another kind" '! listed "$pa" "$A/list.sh"'
-  check "InScopeKinds_ItemOfOtherKind_ExitsOne: in-scope exits 1 for an item whose kind the scope leaves out" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 1 ]'
+  check "ScopedListKinds_KeepsItemOfKind: a scope of kinds keeps an item of one of them, because a scope only narrows" 'listed "$pb" "$A/list.sh"'
+  check "ScopedListKinds_DropsItemOfOtherKind: a scope of kinds leaves out an item of another kind, because every list is bounded by the scope" '! listed "$pa" "$A/list.sh"'
+  check "InScopeKinds_ItemOfOtherKind_ExitsOne: in-scope exits 1 for an item whose kind the scope leaves out, because in-scope reads the scope as list does" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 1 ]'
   if grep -qw query "$A/pick-fields"; then
     scope_config "    query: '$("query_$name" picked)'"
-    check "ScopedListQuery_KeepsItemTheSearchMatches: a scope query goes to the tracker's search and keeps what it matches" 'listed "$pa" "$A/list.sh"'
-    check "ScopedListQuery_DropsItemTheSearchMisses: a scope query leaves out an item the tracker's search does not match" '! listed "$pb" "$A/list.sh"'
-    check "InScopeQuery_ItemTheSearchMisses_ExitsOne: in-scope exits 1 for an item the scope query does not match" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
+    check "ScopedListQuery_KeepsItemTheSearchMatches: a scope query goes to the tracker's search and keeps what it matches, because a query goes to the tracker as written" 'listed "$pa" "$A/list.sh"'
+    check "ScopedListQuery_DropsItemTheSearchMisses: a scope query leaves out an item the tracker's search does not match, because every list is bounded by the scope" '! listed "$pb" "$A/list.sh"'
+    check "InScopeQuery_ItemTheSearchMisses_ExitsOne: in-scope exits 1 for an item the scope query does not match, because in-scope reads the scope as list does" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
   fi
   scope_config '    labels: [picked]'
   check "ScopedList_KeepsItemInside: list names an item the scope matches, because the scope only narrows" 'listed "$pa" "$A/list.sh"'
   check "ScopedList_DropsItemOutside: list leaves out an item the scope does not match, because every read is bounded by it" '! listed "$pb" "$A/list.sh"'
-  check "ScopedListReady_KeepsItemInside: list-ready names a ready item the scope matches" 'listed "$pa" "$A/list-ready.sh"'
+  check "ScopedListReady_KeepsItemInside: list-ready names a ready item the scope matches, because the scope only narrows" 'listed "$pa" "$A/list-ready.sh"'
   check "ScopedListReady_DropsItemOutside: list-ready leaves out a ready item the scope does not match, because it reads the scoped list" '! listed "$pb" "$A/list-ready.sh"'
-  check "InScope_ItemInside_ExitsZero: in-scope exits 0 for an item the scope matches" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 0 ]'
-  check "InScope_ItemOutside_ExitsOne: in-scope exits 1 for an item the scope does not match" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
-  check "InScope_NoArguments_ExitsTwo: in-scope with no id is a usage error" '[ "$(code_of "$A/in-scope.sh")" = 2 ]'
+  check "InScope_ItemInside_ExitsZero: in-scope exits 0 for an item the scope matches, because the flow runs an item inside its scope" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 0 ]'
+  check "InScope_ItemOutside_ExitsOne: in-scope exits 1 for an item the scope does not match, because the flow runs no item outside its scope" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
+  check "InScope_NoArguments_ExitsTwo: in-scope with no id is a usage error, because there is no item to say anything of" '[ "$(code_of "$A/in-scope.sh")" = 2 ]'
   scope_config '    labels: [picked]' '  mine:
     assignee: me'
-  check "ScopeAndPick_ItemBothMatch_IsListed: a pick inside a scope keeps the item both match" 'listed "$pa" "$A/list.sh" --pick mine'
+  check "ScopeAndPick_ItemBothMatch_IsListed: a pick inside a scope keeps the item both match, because the scope and the pick compose" 'listed "$pa" "$A/list.sh" --pick mine'
   check "ScopeAndPick_ItemOnlyPickMatches_IsLeftOut: a pick inside a scope leaves out an item outside the scope, because both apply" '! listed "$ps" "$A/list.sh" --pick mine'
   check "ScopeAndPick_ItemOnlyScopeMatches_IsLeftOut: a pick inside a scope leaves out an item the pick does not match, because both apply" '! listed "$epic" "$A/list.sh" --pick mine'
   scope_config '    sprint: 12'
-  check "ScopeUnmappedField_ExitsTwo: a scope field the adapter does not map stops the list" '[ "$(code_of "$A/list.sh")" = 2 ]'
-  check "ScopeUnmappedField_NamesScopeKey: the refusal names <tracker>.scope.<field> and the fields the adapter maps" '"$A/list.sh" 2>&1 | grep -q "$name.scope.sprint: the $name adapter maps .*assignee.*, not sprint"'
+  check "ScopeUnmappedField_ExitsTwo: a scope field the adapter does not map stops the list, because an unmapped field would narrow nothing" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  check "ScopeUnmappedField_NamesScopeKey: the refusal names <tracker>.scope.<field> and the fields the adapter maps, because that is the key to change" '"$A/list.sh" 2>&1 | grep -q "$name.scope.sprint: the $name adapter maps .*assignee.*, not sprint"'
   scope_config '    sprint: 12'
   check "InScope_RefusedScope_ExitsTwo: in-scope exits 2 for a scope the checks refuse, because no item is inside a broken scope" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 2 ]'
   write_config 0; "scope_config_$name" '' | sed 's/^  scope:$/  scope: "labels = picked"/' >> "$FLOW_HOME/config.yaml"
@@ -440,10 +440,10 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
   check "ScopeTrackers_ExitsTwo: a scope that names trackers stops the list, because a scope belongs to its tracker" '[ "$(code_of "$A/list.sh")" = 2 ]'
   scope_config '    query: anything
     labels: [picked]'
-  check "ScopeQueryBesideNeutralField_ExitsTwo: a scope query beside a neutral field stops the list" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  check "ScopeQueryBesideNeutralField_ExitsTwo: a scope query beside a neutral field stops the list, because a query goes to the tracker as written and takes no other field" '[ "$(code_of "$A/list.sh")" = 2 ]'
   if ! grep -qw query "$A/pick-fields"; then
     scope_config '    query: anything'
-    check "ScopeQuery_NoSearchOfItsOwn_ExitsTwo: a scope query stops the list where the adapter has no search of its own" '[ "$(code_of "$A/list.sh")" = 2 ]'
+    check "ScopeQuery_NoSearchOfItsOwn_ExitsTwo: a scope query stops the list where the adapter has no search of its own, because nothing could run the query" '[ "$(code_of "$A/list.sh")" = 2 ]'
   fi
   write_config 0
 else
