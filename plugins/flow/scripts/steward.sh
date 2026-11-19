@@ -530,7 +530,7 @@ worktree_at() {
     [ "$(git_common_folder "$1")" = "$(git_common_folder "$main")" ]
 }
 # git_common_folder <path>: the physical folder of the repository the worktree at the path shares.
-git_common_folder() { (cd "$1" && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P); }
+git_common_folder() { (CDPATH='' cd -P -- "$1" && CDPATH='' cd -P -- "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P); }
 
 # worktree_maker: what makes a new worktree, for messages: the worktree_create command, else git.
 worktree_maker() {
