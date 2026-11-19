@@ -1,5 +1,9 @@
 ---
-type: file_exists
-path: .flow/gates/local-task-1.json
-exists: false
+type: regex
+target:
+  source: file
+  path: .flow/state/local-task-1.json
+pattern: '"gate"\s*:\s*null'
+flags: ""
+match: contains
 ---
