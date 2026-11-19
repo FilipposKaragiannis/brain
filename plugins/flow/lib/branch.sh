@@ -1,13 +1,22 @@
 # The task branch of an item: named once, when the item is first claimed, from the branch template
 # of .flow/config.yaml, and recorded in claim.json and the item state (branch). Every reader takes
 # it from there. Sourced after lib/flow.sh and lib/base.sh by scripts/steward.sh, scripts/next.sh
-# and hooks/worktree-create.sh (claim_at_base picks the branch from the item it read), and after
-# lib/flow.sh alone by scripts/comments.sh and jobs/comments.sh (branch_item).
+# and hooks/worktree-create.sh (claim_at_base picks the branch from the item it read), after
+# lib/flow.sh alone by scripts/comments.sh and jobs/comments.sh (branch_item), and after lib/flow.sh
+# and lib/base.sh by skills/init/scripts/init.sh (branch_problems).
 #
 # branch: one template, or one per kind (epic, task, bug). Its placeholders: {slug} (item_slug),
 # {key} (branch_key), {kind} and {title} (branch_title).
 
 branch_default_template='flow/{slug}'
+
+# The kinds branch: takes a template for, and the placeholders a template takes.
+branch_kinds='epic task bug'
+branch_placeholders='{slug} {key} {kind} {title}'
+
+# The item init renders a template for when it checks the name: local:<kind>/<number>.
+branch_sample_number=1
+branch_sample_title='A sample title'
 
 # The most characters {title} keeps of a title.
 branch_title_length_cap=40
@@ -108,4 +117,47 @@ branch_item() {
   owning_item="$("$FLOW_PLUGIN/scripts/steward.sh" owner "$1" 2>/dev/null)"
   if [ -n "$owning_item" ] && adapter_for "$owning_item" >/dev/null; then printf '%s' "$owning_item"; return; fi
   case "$1" in flow/?*) slug_item "${1#flow/}" ;; esac
+}
+
+# branch_problems: one line per problem with the branch config of .flow/config.yaml, for init: a
+# key under branch: that names no kind, then the problems of each template.
+branch_problems() {
+  configured_kinds="$(yaml_keys "$(config_file)" branch)"
+  if [ -z "$configured_kinds" ]; then
+    branch_template_problems branch task "$(cfg branch)"
+    return 0
+  fi
+  printf '%s\n' "$configured_kinds" | while IFS= read -r configured_kind; do
+    case " $branch_kinds " in
+      *" $configured_kind "*) branch_template_problems "branch.$configured_kind" "$configured_kind" "$(cfg "branch.$configured_kind")" ;;
+      *) printf 'branch.%s names no kind; branch takes a template for each of %s\n' "$configured_kind" "$branch_kinds" ;;
+    esac
+  done
+}
+
+# branch_template_problems <key> <kind> <template>: one line per problem with the template under
+# the key: each placeholder it does not take; neither {key} nor {slug}, so two items would share a
+# branch; and, when it takes every placeholder, a name for a sample item of the kind that
+# branch_name_valid refuses. An empty template is flow/{slug}, which has none.
+branch_template_problems() {
+  [ -n "$3" ] || return 0
+  unknown_placeholders="$(branch_unknown_placeholders "$3")"
+  printf '%s\n' "$unknown_placeholders" | while IFS= read -r unknown_placeholder; do
+    [ -z "$unknown_placeholder" ] || printf '%s is %s; %s is not a placeholder, it takes %s\n' "$1" "$3" "$unknown_placeholder" "$branch_placeholders"
+  done
+  case "$3" in *'{key}'*|*'{slug}'*) ;; *) printf '%s is %s; it has neither {key} nor {slug}, so two items would share one branch\n' "$1" "$3" ;; esac
+  [ -z "$unknown_placeholders" ] || return 0
+  sample_branch="$(branch_render "$3" "local:$2/$branch_sample_number" "$2" "$branch_sample_title")"
+  branch_name_valid "$sample_branch" || printf '%s is %s; it gives %s, not a valid branch name\n' "$1" "$3" "$sample_branch"
+}
+
+# branch_unknown_placeholders <template>: each {...} in the template that branch_placeholders leaves
+# out, once, one per line.
+branch_unknown_placeholders() {
+  printf '%s\n' "$1" | awk -v known=" $branch_placeholders " '{
+    while (match($0, /[{][^{}]*[}]/)) {
+      placeholder = substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH)
+      if (index(known, " " placeholder " ") == 0 && !(placeholder in seen)) { seen[placeholder] = 1; print placeholder }
+    }
+  }'
 }
