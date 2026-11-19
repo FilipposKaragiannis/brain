@@ -2245,6 +2245,10 @@ scope_value '"labels = team-a"'
 check "ClaimUnderScopeValue_ExitsTwo: a new claim under a local.scope it cannot read is refused, because an unread scope is no missing scope" [ "$code" -eq 2 ]
 FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
 check "InitCheck_ScopeValueOnItsKey_IsGap: init --check reports a local.scope written as a value as a gap, because every list of the tracker stops on it" grep -q 'gap: .flow/config.yaml: local.scope' "$work/scope.out"
+scope_config '    labels: [team-a]' && python3 -c 'p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  \"scope\":\n", 1))'
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ClaimUnderQuotedScopeKey_ExitsTwo: a new claim of an item outside a local.scope whose key is quoted is refused, because a quoted key is the same scope every list applies" [ "$code" -eq 2 ]
 scope_config ''
 empty_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
 check_all "ScopeEmpty_ListsEveryItem: an empty local.scope lists the items inside and outside the labels, because an empty scope is unset" 'case " $empty_scope_ids " in *" $sin "*) ;; *) false ;; esac && case " $empty_scope_ids " in *" $sout "*) true ;; *) false ;; esac'

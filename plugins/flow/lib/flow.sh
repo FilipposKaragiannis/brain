@@ -417,13 +417,11 @@ scope_written() {
   [ -n "$(cfg "$1.scope")" ] || yaml_nested "$(config_file)" "$1.scope"
 }
 
-# scope_holds <item>: 0 when the item is inside its tracker's scope, or the tracker has none (no
-# adapter call) or no adapter owns the item (an adhoc: name); else the adapter's in-scope exit:
-# 1 outside and 3 when the tracker cannot say, each said on stderr, 2 for a scope scope_check
-# refuses.
+# scope_holds <item>: 0 when no adapter owns the item (an adhoc: name); else the adapter's in-scope
+# exit, which reads the scope as list does: 0 inside or with no scope, 1 outside and 3 when the
+# tracker cannot say, each said on stderr, 2 for a scope scope_check refuses.
 scope_holds() {
   _scope_adapter="$(adapter_for "$1")" || return 0
-  scope_written "$_scope_adapter" || return 0
   (adapter in-scope "$1"); _scope_code=$?
   case "$_scope_code" in
     1) echo "flow: $1 is outside $_scope_adapter.scope in .flow/config.yaml; the flow does not run it" >&2 ;;
