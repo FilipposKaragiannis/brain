@@ -379,7 +379,8 @@ pick_filter() {
 # tracker, so it names no trackers. Every message names <tracker>.scope.
 
 # scope_check <adapter>: refuses, exit 2, a scope that is no map of fields read two spaces in (a
-# value, a list, fields no key of which reads), trackers in the scope, a field the adapter does not
+# value, a list, fields no key of which reads), trackers in the scope, a field with lines under it
+# no value of which reads (a map, a list at the field's own indent), a field the adapter does not
 # map (pick-fields names neutral fields and query only, so this refuses any other field too) and a
 # query beside a neutral field. An empty field is unset, and so is an empty scope.
 scope_check() {
@@ -390,6 +391,10 @@ scope_check() {
   fi
   [ -z "$(cfg "$1.scope.trackers")" ] \
     || die "$1.scope.trackers: a scope belongs to its tracker, so it names no trackers" 2
+  for _scope_field in $(yaml_keys "$(config_file)" "$1.scope"); do
+    [ -n "$(cfg "$1.scope.$_scope_field")" ] || ! yaml_nested "$(config_file)" "$1.scope.$_scope_field" \
+      || die "$1.scope.$_scope_field: no value under it reads; put the value on its line, or each list item two spaces further in" 2
+  done
   filter_mapped "$1.scope" "$1"
   filter_query_alone "$1.scope" "$1"
 }

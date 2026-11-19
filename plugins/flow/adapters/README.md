@@ -296,7 +296,8 @@ comma-separated as `FLOW_SCOPE_ASSIGNEE`, `FLOW_SCOPE_STATUS`, `FLOW_SCOPE_LABEL
 `FLOW_SCOPE_KINDS` and `FLOW_SCOPE_QUERY`, beside the `FLOW_PICK_*` of a pick. `scope_check`
 refuses, exit 2, a scope that is no map of fields two spaces in (a value, a list, an inline map, or
 fields no key of which reads), so a scope it cannot read never lists every item, `trackers` in a
-scope, a field the adapter's `pick-fields` does not name and a `query` beside a neutral field, and
+scope, a field with lines under it no value of which reads (a map, a list at the field's own indent),
+a field the adapter's `pick-fields` does not name and a `query` beside a neutral field, and
 every message names the scope key
 (`jira.scope.sprint: the jira adapter maps assignee, status, labels, kinds and query, not sprint`).
 A refused scope stops every list of its tracker, so the board shows a tracker error and the health

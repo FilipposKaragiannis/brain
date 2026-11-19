@@ -2223,6 +2223,22 @@ check "ScopeAsList_ListExitsTwo: a local.scope written as a list is refused, bec
 scope_config '     labels: [team-a]'
 "$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
 check "ScopeFieldsThreeSpacesIn_ListExitsTwo: a local.scope whose fields sit three spaces in is refused, because no field of it reads" [ "$code" -eq 2 ]
+scope_config '    labels:
+    - team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldListAtItsIndent_ListExitsTwo: a local.scope field whose list sits at the field's own indent is refused, because a field no value of which reads would list every item" [ "$code" -eq 2 ]
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ScopeFieldListAtItsIndent_ClaimExitsTwo: a new claim under a local.scope field whose list sits at the field's own indent is refused, because an unread field is no unset field" [ "$code" -eq 2 ]
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeFieldListAtItsIndent_IsGap: init --check reports a local.scope field no value of which reads as a gap, naming the field, because every list of the tracker stops on it" grep -q 'gap: .flow/config.yaml: local.scope.labels' "$work/scope.out"
+scope_config '    labels:
+      team: team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldNestedMap_ListExitsTwo: a local.scope field written as a map is refused, because a field no value of which reads would list every item" [ "$code" -eq 2 ]
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ScopeFieldNestedMap_ClaimExitsTwo: a new claim under a local.scope field written as a map is refused, because an unread field is no unset field" [ "$code" -eq 2 ]
 scope_value '"labels = team-a"'
 "$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
 "$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
