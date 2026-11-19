@@ -391,12 +391,18 @@ scope_check() {
   fi
   [ -z "$(cfg "$1.scope.trackers")" ] \
     || die "$1.scope.trackers: a scope belongs to its tracker, so it names no trackers" 2
+  scope_fields_read "$1"
+  filter_mapped "$1.scope" "$1"
+  filter_query_alone "$1.scope" "$1"
+}
+
+# scope_fields_read <adapter>: refuses, exit 2, a field under <adapter>.scope with lines under it
+# no value of which reads (a map, a list at the field's own indent).
+scope_fields_read() {
   for _scope_field in $(yaml_keys "$(config_file)" "$1.scope"); do
     [ -n "$(cfg "$1.scope.$_scope_field")" ] || ! yaml_nested "$(config_file)" "$1.scope.$_scope_field" \
       || die "$1.scope.$_scope_field: no value under it reads; put the value on its line, or each list item two spaces further in" 2
   done
-  filter_mapped "$1.scope" "$1"
-  filter_query_alone "$1.scope" "$1"
 }
 
 # scope_filter <adapter>: the adapter's scope, checked (scope_check) and exported comma-separated
