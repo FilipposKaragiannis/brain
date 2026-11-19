@@ -345,61 +345,6 @@ check "init: writes only under .standards and the host paths" sh -c "[ ! -d docs
 check "init: no project roster, no eval runner" sh -c "[ ! -e .standards/evals ]"
 check "init: no .githooks, hooksPath is the plugin folder" sh -c "[ \"\$(git config core.hooksPath)\" = .standards/hooks/git ]"
 check "init: --check is clean after install" sh -c "'$init' --check | grep -q 'up to date'"
-cp .standards/testing-guide.md "$work/fresh-guide.md"
-cat > .standards/testing-guide.md <<'GUIDE'
-# Testing guide
-
-## Levels and commands
-
-| level | when | command |
-|---|---|---|
-| unit | every change | `dotnet test` |
-| integration | a boundary is crossed | `dotnet test --filter Category=Integration` |
-| regression | every bug fix, named after the bug | part of the unit run |
-| mutation | on PRs for changed files | `dotnet stryker` |
-
-## Fixtures and helpers
-
-- Where fixtures live and how to add one: tests/Fixtures.
-GUIDE
-check "ThreeColumnGuideFilled_CheckIsClean: init --check finds a guide filled from the three-column template up to date, with no gap" "$init" --check
-"$init" > "$work/three-column.init.out" 2>&1; three_column_init_status=$?
-check "ThreeColumnGuideFilled_InitRunsWithoutError: init exits 0 on a project whose guide was filled from the three-column template" [ "$three_column_init_status" -eq 0 ]
-check "ThreeColumnGuideFilled_InitKeepsTheOwnersGuide: init leaves the owner's filled guide as written" grep -qF 'tests/Fixtures' .standards/testing-guide.md
-mv "$work/fresh-guide.md" .standards/testing-guide.md
-
-echo "testing guide template: the levels table"
-template_rows="$work/template-rows.tsv"; template_slots="$work/template-slots.txt"
-python3 - "$hooks/../templates/testing-guide.md" "$template_rows" "$template_slots" <<'PARSE'
-import re, sys
-guide_text = open(sys.argv[1]).read()
-levels_section = guide_text.split("## Levels and commands", 1)[1].split("\n## ", 1)[0]
-header_cells = None
-with open(sys.argv[2], "w") as rows_file:
-    for line in levels_section.splitlines():
-        if not line.startswith("|") or set(line) <= set("|-"):
-            continue
-        cells = [cell.strip() for cell in line.strip("|").split("|")]
-        if header_cells is None:
-            header_cells = cells
-            continue
-        row = dict(zip(header_cells, cells))
-        rows_file.write("\t".join([row.get("level", ""), row.get("when", ""), row.get("slot", ""), row.get("command", "")]) + "\n")
-with open(sys.argv[3], "w") as slots_file:
-    for match in re.finditer(r"^- ([a-z ]+):", levels_section, re.M):
-        slots_file.write(match.group(1) + "\n")
-PARSE
-for level_and_name in smoke:Smoke property-based:PropertyBased "runtime evidence:RuntimeEvidence"; do
-  level="${level_and_name%%:*}"; test_name="${level_and_name#*:}"
-  check "TemplateLevelsTable_HasA${test_name}Row: the template gives a $level check its own row" \
-    awk -F '\t' -v level="$level" '$1 == level { found = 1 } END { exit !found }' "$template_rows"
-  check "TemplateLevelsTable_${test_name}RowSaysWhenItRunsAndHasACommandCell: the $level row fills its when and command cells" \
-    awk -F '\t' -v level="$level" '$1 == level && $2 != "" && $4 != "" { found = 1 } END { exit !found }' "$template_rows"
-done
-check "TemplateLevelsTable_EveryRowNamesAKnownSlot: each row's slot cell names one of the slots the template lists" \
-  awk -F '\t' 'NR == FNR { known[$0] = 1; next } { named = 0; for (slot in known) if (index($3, slot)) named = 1; if (!named) unnamed++; rows++ } END { exit unnamed > 0 || rows == 0 }' "$template_slots" "$template_rows"
-check "TemplateLevelsTable_RowNothingRunsSaysNothing: every row whose command is not set up names the slot nothing, and there is at least one" \
-  awk -F '\t' '$4 == "not set up" { unrun++; if ($3 != "nothing") misnamed++ } END { exit misnamed > 0 || unrun == 0 }' "$template_rows"
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
 printf '# mine\n' >> .codex/agents/standards-reviewer.toml
 check "init: --check names a hand edit" sh -c "'$init' --check | grep -q 'edited by hand: .codex/agents/standards-reviewer.toml'"

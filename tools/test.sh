@@ -9,6 +9,7 @@ tools/lint.sh || status=1
 # reaches them. Each suite also stubs the network, desktop and agent tools itself.
 clean() { env -i HOME="$HOME" PATH="$PATH" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" "$@"; }
 clean plugins/standards/hooks/tests/run.sh || status=1
+clean plugins/standards/hooks/tests/testing-guide.sh || status=1
 clean plugins/flow/tests/run.sh || status=1
 clean plugins/meta/tests/run.sh || status=1
 clean plugins/console/tests/run.sh || status=1
