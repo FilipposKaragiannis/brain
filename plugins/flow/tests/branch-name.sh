@@ -172,6 +172,15 @@ check "BranchOptionNamingTheConfigBase_CreatesNoBranch: no branch is left behind
 check "BranchOptionNamingTheConfigBase_LeavesTheBaseUntouched: main keeps its tip" \
   '[ "$(git rev-parse main)" = "$main_tip_before" ]'
 
+remote_branch develop && git fetch -q origin && git remote set-head origin develop
+"$plugin/scripts/steward.sh" claim "$onto_base" --branch develop >/dev/null 2>&1; origin_default_code=$?
+check "BranchOptionNamingOriginsDefault_ExitsWithTheConfigCode: --branch develop when origin's HEAD is develop would make origin's default a task branch, exit 2" \
+  '[ "$origin_default_code" -eq 2 ]'
+check "BranchOptionNamingOriginsDefault_ClaimsNoWorktree: the item is not claimed" \
+  '[ -z "$("$plugin/scripts/steward.sh" find "$onto_base")" ]'
+check "BranchOptionNamingOriginsDefault_CreatesNoBranch: no local develop branch is left behind" \
+  '! git show-ref --verify --quiet refs/heads/develop'
+
 new_repo taken
 set_branch_config 'branch: task/shared'
 holder="$(new_task "Drill timer")"
