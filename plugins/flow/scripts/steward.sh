@@ -601,9 +601,11 @@ physical_folder() {
   case "$1" in /*) ;; *) set -- "./$1" ;; esac
   (cd "$1" 2>/dev/null && pwd -P)
 }
-# temporary_place_flaw <physical path>: why the folder is no place for a temporary worktree (outside
-# the temporary folder, the main worktree or a pool worktree); nothing when it is one.
+# temporary_place_flaw <physical path>: why the folder is no place for a temporary worktree (the
+# temporary folder is a symlink, so what lies under it is unknown; outside the temporary folder; the
+# main worktree or a pool worktree); nothing when it is one.
 temporary_place_flaw() {
+  [ ! -L "$home/tmp" ] || { printf 'is not removed while %s is a symlink; only a temporary worktree is removed' "$home/tmp"; return; }
   case "$1" in "$(temporary_folder)"/*) ;; *) printf 'is not under %s; only a temporary worktree is removed' "$home/tmp"; return ;; esac
   [ "$1" != "$(cd "$main" && pwd -P)" ] || { printf 'is the main worktree; only a temporary worktree is removed'; return; }
   ! pool_paths | physical_in "$1" || printf 'is a pool worktree; only a temporary worktree is removed'

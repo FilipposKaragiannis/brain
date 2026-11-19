@@ -2032,6 +2032,12 @@ check "TmpRemoveOfPoolWorktreeUnderSymlinkedTmp_KeepsPoolWorktree: the remove co
 check "TmpRemoveOfMainWorktreeUnderSymlinkedTmp_ExitsTwo: the main worktree is refused though a symlinked .flow/tmp puts it under the temporary folder" [ "$code" = 2 ]
 check "TmpRemoveOfMainWorktreeUnderSymlinkedTmp_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
 rm .flow/tmp && mv .flow/tmp-moved .flow/tmp
+symlinked_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" symlinked 2>/dev/null)"
+mv .flow/tmp .flow/tmp-real && ln -s tmp-real .flow/tmp
+"$P/scripts/steward.sh" tmp remove "$symlinked_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveUnderSymlinkedTmp_ExitsTwo: a temporary worktree is refused while .flow/tmp is a symlink, exit 2" [ "$code" = 2 ]
+check "TmpRemoveUnderSymlinkedTmp_KeepsWorktree: the remove command never runs while .flow/tmp is a symlink" [ -f "$symlinked_phase_worktree/README.md" ]
+rm .flow/tmp && mv .flow/tmp-real .flow/tmp
 submodule_source="$work/tmpwt/submodule-source"
 git init -q -b main "$submodule_source" && git -C "$submodule_source" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
 submodule_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" submodule 2>/dev/null)"
