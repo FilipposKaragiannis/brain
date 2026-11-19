@@ -30,7 +30,7 @@ else
   case "$kind" in epic) labels="epic" ;; bug) labels="bug" ;; esac
 fi
 [ -n "$size" ] && [ -z "$GH_SIZE_FIELD" ] && { ensure_label "size:$size"; labels="${labels:+$labels,}size:$size"; }
-[ -n "$priority" ] && [ -z "$GH_PRIORITY_FIELD" ] && { ensure_label "priority:$priority"; labels="${labels:+$labels,}priority:$priority"; }
+[ -n "$priority" ] && [ -z "$GH_PRIORITY_FIELD" ] && { ensure_label "$GH_PRIORITY_LABEL$priority"; labels="${labels:+$labels,}$GH_PRIORITY_LABEL$priority"; }
 tail=""
 [ -n "$parent" ] && tail="$tail
 Parent #$(issue_number "$parent")"

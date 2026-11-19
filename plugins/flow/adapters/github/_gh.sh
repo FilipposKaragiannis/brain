@@ -22,8 +22,8 @@ issue_number() {
 # project whose Status the adapter keeps in step. The readiness rules are every tracker's
 # (ready_rules in lib/flow.sh); list and read take them before they build items.
 GH_SIZE_FIELD="$(cfg github.fields.size)"; GH_PRIORITY_FIELD="$(cfg github.fields.priority)"; GH_AREA_FIELD="$(cfg github.fields.area)"
-GH_PROJECT="$(cfg github.project)"
-export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT
+GH_PROJECT="$(cfg github.project)"; GH_PRIORITY_LABEL="priority:"
+export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT GH_PRIORITY_LABEL
 for _key in backlog ready gate running review; do
   _v="$(cfg "github.status.$_key")"
   [ -n "$_v" ] && export "GH_STATUS_$(printf '%s' "$_key" | tr a-z A-Z)=$_v"
@@ -67,10 +67,11 @@ size_field, priority_field = os.environ.get("GH_SIZE_FIELD", ""), os.environ.get
 size = (fields.get(size_field) or "") if size_field else ""
 size = size or labelled("size:", state.get("size", ""))
 state["size"] = size
-order = [p for p in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if p]
+order = [priority_name for priority_name in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if priority_name]
 def order_place(name):
     return order.index(name) if name in order else len(order)
-labelled_priorities = sorted((label[len("priority:"):] for label in labels if label.startswith("priority:")), key=order_place)
+priority_label = os.environ["GH_PRIORITY_LABEL"]
+labelled_priorities = sorted((label[len(priority_label):] for label in labels if label.startswith(priority_label)), key=order_place)
 priority = (fields.get(priority_field) or "") if priority_field else next(iter(labelled_priorities), "")
 area_field = os.environ.get("GH_AREA_FIELD", "")
 area = (fields.get(area_field) or "") if area_field else ""
@@ -124,7 +125,7 @@ else:
 # ensure_label <label>: create it when missing (gh issue edit fails on unknown labels).
 ensure_label() {
   case "$1" in
-    step:*) color="1D76DB" ;; gate:*) color="D93F0B" ;; wt:*) color="0E8A16" ;; flow:*) color="5319E7" ;; size:*) color="FBCA04" ;; priority:*) color="B60205" ;; *) color="EDEDED" ;;
+    step:*) color="1D76DB" ;; gate:*) color="D93F0B" ;; wt:*) color="0E8A16" ;; flow:*) color="5319E7" ;; size:*) color="FBCA04" ;; "$GH_PRIORITY_LABEL"*) color="B60205" ;; *) color="EDEDED" ;;
   esac
   gh label create "$1" --color "$color" --description "flow state" --force >/dev/null 2>&1 || true
 }
