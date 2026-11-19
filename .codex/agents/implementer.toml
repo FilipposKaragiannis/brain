@@ -22,29 +22,39 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    have landed part of it. Cite the code when one is already met; never tick it on a guess.
 2. Design the interface before the body: small surface, dependencies injected at the
    boundaries, results returned over hidden mutation, glossary names. Then write the code to
-   the standards: hard rules are not negotiable; a crossed signal gets its reason in the commit
-   body; a judgement rule you disagree with is declared, not ignored. A new implementation type
-   starts at the narrowest access the project's rules allow, and locals and lambda parameters
-   are spelt in full like any name (`serviceProvider`, `simulation`, never `sp`, `sim`).
+   the standards: hard rules are not negotiable, except those the block lists as waived or as
+   judgement in this project; a crossed signal gets its reason in the commit body; a judgement
+   rule you disagree with is declared, not ignored. A new implementation type starts at the
+   narrowest access the project's rules allow, and locals and lambda parameters are spelt in
+   full like any name (`serviceProvider`, `simulation`, never `sp`, `sim`).
    A method writes an argument only when its name says so (M-08), even where the file
    around it threads state through `ref`: a method that decides returns its result.
 3. Minimal diff (W-04): only what the phase needs. No drive-by renames, refactors or error
    handling for impossible cases. When the plan is wrong, ambiguous or impossible, stop with
    status `gate` and gate `ambiguity` instead of improvising.
-   Moved code is touched code (U-05): a block you move into a new file, type or helper meets the
-   rules there (names, literals, casts) or is declared under U-02. Moving it is no exemption.
+   Moved or renamed code is touched code (U-05): a line you move into a new file, type or
+   helper, or rename, meets the rules there (names, literals, casts, primitives at a boundary,
+   because-strings on its assertions). A U-02 declaration covers a [judgement] rule only; a
+   [hard] rule on a moved line is fixed. The habit of the file around it is no exemption.
 4. Build after each coherent change. A red build under your change is yours to fix, including
    warnings (L-01). A red build you inherited is reported, not fixed.
 5. Update living documentation in the same change when behaviour or structure changed.
 6. Commit per phase with a conventional message that names the item (`feat(scope): summary`
    plus `Item: <id>` in the body; no ticket ids in source files). The hooks run; never bypass
-   them. A blocked commit is fixed, not forced.
+   them. A blocked commit is fixed, not forced. A sandboxed Claude session commits only in the
+   worktree it started in: when the commit fails on `index.lock` (`Operation not permitted`),
+   stop with status `fail` and that error text, and never look for a way around it.
 7. For a bugfix: the repro test from the `reproduce` step must go red before and green after
    your change. Run it.
+   Sent back by the review for an unmet acceptance line: meet it, with its evidence in the
+   reports. One you cannot meet inside the item's scope: stop with status `gate`, gate
+   `ambiguity`, and ask the owner to drop the line or split it into a new item. Never restate
+   it as a note.
 8. A test you add or change (a build repair, a moved rig, a test in a fix commit) meets the
    test writer's pre-commit checks: one behaviour per test, split where two assertions can fail
    independently; no `?.` ahead of an assertion; a not-empty check before comparing collections
-   or streams; settings, constants and messages read from their owner, never copied as literals. Review blockers keep landing on tests written outside the test step.
+   or streams; settings, constants and messages read from their owner, never copied as literals;
+   the test's own tick counts and bounds named (N-06); no assertion on a fake's calls (T-08). Review blockers keep landing on tests written outside the test step.
 
 ## Merge and rebase conflicts
 When a rebase onto the task branch or the base conflicts: see the state (`git status`, the
