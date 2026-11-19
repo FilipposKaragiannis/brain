@@ -6,9 +6,10 @@ Comments keep their author, the user the -K login names (/rest/api/3/myself answ
 answers.sh can tell the owner's /answer from anyone else's. The project (types, plus a sub-task
 type) and the createmeta of each type (the option fields' allowedValues) feed vocabulary.sh; the
 createmeta answers in pages of at most createmeta_page fields (default 50), as Jira caps them. A
-search reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other; an issue's assignee is a
-fields.assignee object, as Jira returns one."""
-import json, re, sys
+search reads the JQL clauses in JQL_CLAUSES, ANDed, and refuses any other, and writes its JQL as a
+line of searches.log beside the store; an issue's assignee is a fields.assignee object, as Jira
+returns one."""
+import json, os, re, sys
 from functools import reduce
 from urllib.parse import parse_qs, urlsplit
 
@@ -87,6 +88,7 @@ signed_in = re.search(r'^user = "([^:"]+):', login, re.M)
 me = signed_in.group(1) if signed_in else ""
 JQL_CLAUSES = [
     (re.compile(r'project = "([^"]+)"'), lambda i, m: i["key"].startswith(m.group(1) + "-")),
+    (re.compile(r'key = "([A-Z][A-Z0-9_]*-\d+)"'), lambda i, m: i["key"] == m.group(1)),
     (re.compile(r"parent = ([A-Z][A-Z0-9_]*-\d+)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") == m.group(1)),
     (re.compile(r"parent in \(([^)]*)\)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") in [k.strip() for k in m.group(1).split(",")]),
     (re.compile(r"statusCategory != Done"), lambda i, m: status_of(i)["statusCategory"]["key"] != "done"),
@@ -146,6 +148,8 @@ if path == "/rest/api/3/issueLink" and method == "POST":
     answer(201)
 if path == "/rest/api/3/search/jql" and method == "POST":
     jql = body["jql"]
+    with open(os.path.join(os.path.dirname(db_path), "searches.log"), "a") as searches:
+        searches.write(jql + "\n")
     rows = sorted(issues.values(), key=lambda i: int(i["key"].rsplit("-", 1)[1]), reverse="ORDER BY created DESC" in jql)
     where = jql.split(" ORDER BY ")[0]
     for clause in JQL_CLAUSES:

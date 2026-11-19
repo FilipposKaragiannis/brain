@@ -3,8 +3,9 @@
 # adapter items. Stops at jira.limit (default 500) and says so. With FLOW_LIST_WHOLE set, a cut list
 # fails. --pick keeps the issues the filter pick.<name> matches (pick_filter in lib/flow.sh), as JQL
 # on the assignee (me is currentUser(), the jira.email login), status and labels, and on the kind,
-# or its query as a JQL condition.
+# or its query as a JQL condition. jira.scope (scope_filter in lib/flow.sh) is ANDed in beside it.
 . "$(dirname "$0")/_jira.sh"
 ready_rules
+scope_filter jira
 pick_filter jira "$@" || { echo '[]'; exit 0; }
 jira list "$@"

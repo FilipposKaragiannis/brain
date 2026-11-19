@@ -107,6 +107,7 @@ setup_jira() {
 config_jira() {
   printf 'jira:\n  site: https://acme.atlassian.net\n  project: WID\n  email: flow@acme.test\n  fields:\n    area: Area\n'
 }
+scope_config_jira() { printf '  scope:\n%s\n' "$1"; }
 missing_jira() { echo 'jira:WID-999'; }
 comments_jira() {
   python3 -c 'import json,sys

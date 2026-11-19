@@ -588,6 +588,50 @@ jira_comment_as "$jira_gated" stranger@acme.test "/answer"
 jira_area_config '  answer_from: [stranger@acme.test]
 '
 check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
+echo "jira tracker scope (fake curl)"
+# jira.scope is ANDed into every search: answers reads only the gates inside it, list and read
+# count only the open children inside it, and a scope query and a pick query each keep their own
+# parentheses.
+# jira_set <id> labels|assignee <value>: the issue's labels become [value], or value is its assignee.
+jira_set() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=d["issues"][sys.argv[2]]["fields"]
+if sys.argv[3] == "labels": f["labels"] = [sys.argv[4]]
+else: f["assignee"] = {"accountId": "acct-" + sys.argv[4], "emailAddress": sys.argv[4], "displayName": sys.argv[4]}
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${1#jira:}" "$2" "$3"; }
+jira_area_config '  scope:
+    labels: [team-a]
+'
+jsg_in="$(jira_run "$P/adapters/jira/create.sh" task "Scoped gate inside")"; jira_set "$jsg_in" labels team-a
+jsg_out="$(jira_run "$P/adapters/jira/create.sh" task "Scoped gate outside")"; jira_set "$jsg_out" labels team-b
+for gated in "$jsg_in" "$jsg_out"; do
+  jira_run "$P/scripts/gate.sh" raise "$gated" ambiguity "1. Which way?" >/dev/null 2>&1
+  jira_comment_as "$gated" flow@acme.test "/answer this way"
+done
+jira_run "$P/adapters/jira/answers.sh" >/dev/null 2>&1
+check "JiraScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue inside jira.scope" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_in" | jget state.gate)" = none ]
+check "JiraScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside jira.scope, because it reads only the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_out" | jget state.gate)" = ambiguity ]
+jsp="$(jira_run "$P/adapters/jira/create.sh" epic "Scoped parent")"; jira_set "$jsp" labels team-a
+jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child inside" --parent "$jsp")" labels team-a
+jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child outside" --parent "$jsp")" labels team-b
+children_inside=1
+listed_children="$(jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print([i["open_children"] for i in json.load(sys.stdin) if i["id"] == sys.argv[1]])' "$jsp")"
+check "JiraScopedList_CountsChildrenInside: list counts only the open children inside jira.scope, because the scope is ANDed into the children search" [ "$listed_children" = "[$children_inside]" ]
+check "JiraScopedRead_CountsChildrenInside: read counts only the open children inside jira.scope, because the scope is ANDed into its children search" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsp" | jget open_children)" = "$children_inside" ]
+jira_area_config '  scope:
+    query: '"'"'labels = "team-a"'"'"'
+pick:
+  mine:
+    query: assignee = currentUser()
+    trackers: [jira]
+'
+jq_both="$(jira_run "$P/adapters/jira/create.sh" task "Scope and pick")"; jira_set "$jq_both" labels team-a; jira_set "$jq_both" assignee flow@acme.test
+jq_scope="$(jira_run "$P/adapters/jira/create.sh" task "Scope only")"; jira_set "$jq_scope" labels team-a
+jq_pick="$(jira_run "$P/adapters/jira/create.sh" task "Pick only")"; jira_set "$jq_pick" labels team-b; jira_set "$jq_pick" assignee flow@acme.test
+: > "$work/jira/searches.log"
+jira_query_ids="$(jira_run "$P/adapters/jira/list.sh" --pick mine | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))')"
+check "JiraScopeQueryAndPickQuery_BothParenthesised: the search ANDs the scope query and the pick query, each in its own parentheses" grep -qF '(labels = "team-a") AND (assignee = currentUser())' "$work/jira/searches.log"
+check_all "JiraScopeQueryAndPickQuery_KeepsIssueBothMatch: the list keeps the issue the scope and the pick both match" 'case " $jira_query_ids " in *" $jq_both "*) true ;; *) false ;; esac'
+check_all "JiraScopeQueryAndPickQuery_DropsScopeOnly: the list leaves out an issue only the scope matches, because the pick applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_scope "*) false ;; *) true ;; esac'
+check_all "JiraScopeQueryAndPickQuery_DropsPickOnly: the list leaves out an issue only the pick matches, because the scope applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_pick "*) false ;; *) true ;; esac'
 cp "$work/config.gh" .flow/config.yaml
 
 echo "github blips (fake gh)"
