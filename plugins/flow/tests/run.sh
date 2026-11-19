@@ -3564,16 +3564,26 @@ check "comments job: no dirty-tree note when the worktree's claim names another 
 rm -f "$wm/other.txt"
 # A PR head the branch template named maps to its item through the claim that holds it, from any tracker.
 templated_local_bug="$("$P/adapters/local/create.sh" bug "Stuck ball" --body x)"
+mv "$work/bin/claude" "$work/claude-logging-only"
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf '%s\t%s\t%s\n' "\$0" "\$PWD" "\$*" >> "$work/host77.log"
+: > pass-ran
+resume_note="\$(printf '%s' "\$*" | sed -n 's/.*read \(.*comments-resume\.md\) first.*/\1/p')"
+[ -z "\$resume_note" ] || cp "\$resume_note" continued-note.md
+EOF
+chmod +x "$work/bin/claude"
 for templated_row in "jira:PROJ-123 task/proj-123-drill-timer 2026-10-25T02:10:00Z" "$templated_local_bug bugfix/12-x 2026-10-25T02:20:00Z"; do
   templated_item="${templated_row%% *}"; templated_rest="${templated_row#* }"; templated_head="${templated_rest% *}"
   python3 -c "import json,sys; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName=sys.argv[1], updatedAt=sys.argv[2]); json.dump(d, open(p,'w'))" "$templated_head" "${templated_rest#* }"
   printf '{"item":"%s","branch":"%s","base":"main"}\n' "$templated_item" "$templated_head" > "$wm/.flow/claim.json"
   printf 'half done\n' > "$wm/half.txt"
   : > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
-  check "CommentsJob_TemplatedHead_PassStartsInTheWorktreeItsClaimHolds [$templated_head]: the head maps to $templated_item through its claim, so the pass runs where the item's work is" sh -c "[ \"\$(cd \"\$(head -1 '$work/host77.log' | cut -f2)\" && pwd -P)\" = \"\$(cd '$wm' && pwd -P)\" ]"
-  check "CommentsJob_TemplatedHead_PassReadsTheItemsResumeNote [$templated_head]: the uncommitted work is noted in $templated_item's reports, so the next pass continues it" grep -q "read .*$(item_slug "$templated_item")/comments-resume.md first" "$work/host77.log"
-  rm -f "$wm/half.txt"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
+  check "CommentsJob_TemplatedHead_PassStartsInTheWorktreeItsClaimHolds [$templated_head]: the head maps to $templated_item through its claim, so the pass's work lands where the item's work is" [ -f "$wm/pass-ran" ]
+  check "CommentsJob_TemplatedHead_PassReadsTheItemsResumeNote [$templated_head]: the uncommitted work is noted in $templated_item's reports, so the pass continues from that note" cmp -s "$wm/.flow/reports/$(item_slug "$templated_item")/comments-resume.md" "$wm/continued-note.md"
+  rm -f "$wm/half.txt" "$wm/pass-ran" "$wm/continued-note.md"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 done
+mv "$work/claude-logging-only" "$work/bin/claude"
 git init -q --bare "$work/split-origin.git" && git remote add origin "$work/split-origin.git" && git push -q origin main 2>/dev/null
 up="$("$P/scripts/new.sh" task "Pushed branch" --size S --body x)"; wu="$("$P/scripts/steward.sh" claim "$up")"; bu="$(git -C "$wu" symbolic-ref --short HEAD)"
 printf 'x\n' > "$wu/x.txt" && git -C "$wu" add x.txt && git -C "$wu" commit -qm x && git -C "$wu" push -q -u origin "$bu" 2>/dev/null
