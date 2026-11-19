@@ -46,3 +46,9 @@ except (OSError, ValueError):
 # leads_own_group: true when the calling shell leads its process group, as the run --start starts
 # does.
 leads_own_group() { [ "$(process_group "$$")" = "$$" ]; }
+# group_running <pgid>: true while a process of the group runs: a zombie has ended. Where ps cannot
+# run, any process left in the group counts.
+group_running() {
+  if ps_refused; then kill -0 -"$1" 2>/dev/null; return; fi
+  ps -A -o pgid=,stat= 2>/dev/null | awk -v group="$1" '$1 == group && $2 !~ /^Z/ { found = 1 } END { exit !found }'
+}
