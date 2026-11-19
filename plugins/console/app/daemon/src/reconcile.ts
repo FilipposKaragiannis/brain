@@ -746,23 +746,28 @@ function namesPull(field: string | null, pull: { number: number; url: string }):
 
 type PullLink = { item: string | null; worktree: string | null };
 
-/** What the flow's task branches start with, before the item's slug. */
+/** What the task branch of an item with no recorded task branch starts with, before the item's slug. */
 const TASK_BRANCH_PREFIX = 'flow/';
 
-function linkPull(pull: PullFact, items: Item[], contexts: WorktreeContext[]): PullLink {
+function linkPull(pull: PullFact, items: Item[], contexts: WorktreeContext[], recorded: ReadonlyMap<string, string>): PullLink {
   const named = items.find((item) => namesPull(item.pr, pull));
   if (named !== undefined) return { item: named.id, worktree: named.worktree };
   if (pull.crossRepository) return { item: null, worktree: null };
   const claimed = contexts.find((context) => context.claim !== null && context.claim.branch === pull.branch);
   if (claimed !== undefined) return { item: claimed.claim?.item ?? null, worktree: claimed.name };
-  const onTaskBranch = items.find((item) => item.status === 'open' && item.pr === null && taskBranch(item.id) === pull.branch);
+  const onTaskBranch = items.find((item) => item.status === 'open' && item.pr === null && taskBranch(item.id, recorded) === pull.branch);
   if (onTaskBranch !== undefined) return { item: onTaskBranch.id, worktree: onTaskBranch.worktree };
   return { item: null, worktree: null };
 }
 
-/** The branch the flow works an item on, `flow/<slug>`: `flow/gh-134` for gh#134. */
-function taskBranch(item: string): string {
-  return `${TASK_BRANCH_PREFIX}${itemSlug(item)}`;
+/** Each board item's recorded task branch by id, empty for one its claim has not recorded. */
+function recordedTaskBranches(input: ReconcileInput): ReadonlyMap<string, string> {
+  return new Map((input.board?.items ?? []).map((item) => [item.id, item.state.branch ?? '']));
+}
+
+/** The branch the flow works an item on: its recorded task branch, else `flow/<slug>` (`flow/gh-134` for gh#134). */
+function taskBranch(item: string, recorded: ReadonlyMap<string, string>): string {
+  return recorded.get(item) || `${TASK_BRANCH_PREFIX}${itemSlug(item)}`;
 }
 
 /** The states a reviewer asked by a mention and not yet answered turns into `in-review`: GitHub alone would call the pull further along. */
@@ -774,11 +779,12 @@ function mentionWaiting(record: ReviewRecord | undefined): boolean {
 }
 
 function buildPulls(input: ReconcileInput, items: Item[], contexts: WorktreeContext[]): PullRequest[] {
+  const recorded = recordedTaskBranches(input);
   return (input.pulls?.pulls ?? []).map((pull) => {
     const record = input.flow.reviews.find((entry) => entry.pr === pull.number);
     const live = pullState(pull);
     const state = mentionWaiting(record) && MENTION_REVIEW_OVERRIDES.includes(live) ? 'in-review' : live;
-    const linked = linkPull(pull, items, contexts);
+    const linked = linkPull(pull, items, contexts, recorded);
     return {
     number: pull.number, title: pull.title, url: pull.url, branch: pull.branch, base: pull.base, author: pull.author,
     draft: pull.draft, state, checks: pull.checks, checkRuns: pull.checkRuns, head: pull.head, autoMerge: pull.autoMerge, reviewDecision: pull.reviewDecision,
@@ -807,13 +813,14 @@ function taskBranchItem(branch: string): string | null {
 }
 
 /**
- * The item a merged pull carried: the one whose `pr` names it, else the one whose task branch is
- * its head, else the item its task branch names, since a merged item is often closed and gone
- * from the board.
+ * The item a merged pull carried: the one whose `pr` names it, else the one whose recorded task
+ * branch (or `flow/<slug>` without one) is its head, else the item an old `flow/<slug>` head
+ * names, since a merged item is often closed and gone from the board.
  */
 function buildMergedToday(input: ReconcileInput, items: Item[]): MergedPull[] {
+  const recorded = recordedTaskBranches(input);
   return (input.pulls?.merged ?? []).map((merged) => {
-    const item = items.find((entry) => namesPull(entry.pr, merged)) ?? items.find((entry) => taskBranch(entry.id) === merged.branch);
+    const item = items.find((entry) => namesPull(entry.pr, merged)) ?? items.find((entry) => taskBranch(entry.id, recorded) === merged.branch);
     return { number: merged.number, title: merged.title, url: merged.url, branch: merged.branch, item: item?.id ?? taskBranchItem(merged.branch), createdAt: merged.createdAt, mergedAt: merged.mergedAt };
   });
 }
