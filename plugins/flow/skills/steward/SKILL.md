@@ -60,16 +60,18 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   owner, who raises `pool_max` or releases one. Never edit `pool:` by hand; `add` does it.
 - **A configured command makes the folder.** `worktree_create` in the config (a `sh` command;
   `{path}` the new worktree's absolute folder, `{base}` the ref it starts from, both written bare:
-  `sh -c` gets them as `"$1"` and `"$2"`, so no value is read as shell) replaces
+  `sh -c` gets them as `"$1"` and `"$2"`, so no value is read as shell; a command that passes
+  `{path}` on to `ssh`, `eval` or `sh -c`, which parse it again, must quote it again there) replaces
   `git worktree add` for a grown, added or recreated pool worktree and for `tmp add`;
   `worktree_remove` (`{path}`) replaces `git worktree remove` for `tmp remove` only. Both run from
   the main worktree with their output on stderr; a pool worktree then goes onto its idle branch at
   the base tip, or stays as made for `health` to move it later. A command with no `{path}`, or
-  with a placeholder inside quotes or after a backslash, is refused, exit 2. `tmp remove` takes
+  with a placeholder inside quotes (a quoted `$(...)` or backticks too) or after a backslash, is
+  refused, exit 2. `tmp remove` takes
   only a worktree git lists under `.flow/tmp`, never the main or a pool worktree, one whose
   `.git` is missing or broken, or a locked one, and nothing while `.flow/tmp` is a symlink: else exit 2 before anything
   runs. It counts a change in a submodule as uncommitted whatever `.gitmodules` says, and
-  refuses it, exit 3. A create that fails, or leaves no git worktree at `{path}`,
+  refuses it, exit 3, as it does a worktree whose `git status` fails. A create that fails, or leaves no git worktree at `{path}`,
   adds no pool entry and says why after the command's output: the claim exits 1, not the
   `pool_max` exit 3, so tell the owner the command failed and name the folder it may have left
   (flow does not remove it). A slow create runs under the claim lock: a second claim that waits

@@ -69,19 +69,21 @@
 # a tmp remove worktree in place of git worktree remove; flow never removes a pool worktree. In
 # the command {path} is the worktree's absolute folder and {base} the ref it starts from (the
 # pool's base, flow/<slug> for tmp add, empty for a remove); sh -c gets them as "$1" and "$2", so
-# the command writes them bare and no value is read as shell. It runs from the main worktree, all
-# its output on stderr. After a create a git worktree of this repository must sit at {path}; then
-# the pool's goes onto its idle branch at the base tip (one that cannot move stays as made, and
-# health moves it once free) and tmp add's onto a new flow/<slug>-<phase> at {base}. tmp add
-# refuses a phase that makes no valid branch name, or a folder that exists, and tmp remove takes
-# only a listed worktree under .flow/tmp: else exit 2, nothing run. After a remove the folder must
-# be gone; git's record of it goes, and its branch when that is flow/<its folder under .flow/tmp>.
-# A command with no {path}, or with a placeholder inside quotes, is refused before it runs,
-# exit 2. One that fails, or leaves no worktree (a remove: leaves the folder), is named after its
-# output: add, tmp and a growing pool exit 1 with no pool entry added (a pool that cannot grow
-# says why, not that it is at pool_max), and a claim skips a missing pool path it cannot recreate.
-# A folder a failed create leaves stays for the owner. A value must not hold " #" (the config
-# reads a comment there) or start with [ (it reads a list).
+# the command writes them bare and no value is read as shell. A command that passes {path} on to
+# ssh, eval or sh -c, which parse it again, must quote it again there. It runs from the main
+# worktree, all its output on stderr. After a create a git worktree of this repository must sit at
+# {path}; then the pool's goes onto its idle branch at the base tip (one that cannot move stays as
+# made, and health moves it once free) and tmp add's onto a new flow/<slug>-<phase> at {base}.
+# tmp add refuses a phase that makes no valid branch name, or a folder that exists, and tmp remove
+# takes only a listed worktree under .flow/tmp: else exit 2, nothing run. tmp remove refuses a
+# worktree with uncommitted changes, or one whose git status fails, exit 3. After a remove the
+# folder must be gone; git's record of it goes, and its branch when that is flow/<its folder under
+# .flow/tmp>. A command with no {path}, or with a placeholder inside quotes (a quoted $(...) too),
+# is refused before it runs, exit 2. One that fails, or leaves no worktree (a remove: leaves the
+# folder), is named after its output: add, tmp and a growing pool exit 1 with no pool entry added
+# (a pool that cannot grow says why, not that it is at pool_max), and a claim skips a missing pool
+# path it cannot recreate. A folder a failed create leaves stays for the owner. A value must not
+# hold " #" (the config reads a comment there) or start with [ (it reads a list).
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.
