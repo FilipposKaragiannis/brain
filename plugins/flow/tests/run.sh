@@ -589,10 +589,6 @@ jira_area_config '  answer_from: [stranger@acme.test]
 '
 check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
 echo "jira tracker scope (fake curl)"
-# jira.scope is ANDed into every search: answers reads only the gates inside it, list and read
-# count only the open children inside it, and a scope query and a pick query each keep their own
-# parentheses.
-# jira_set <id> labels|assignee <value>: the issue's labels become [value], or value is its assignee.
 jira_set() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=d["issues"][sys.argv[2]]["fields"]
 if sys.argv[3] == "labels": f["labels"] = [sys.argv[4]]
 else: f["assignee"] = {"accountId": "acct-" + sys.argv[4], "emailAddress": sys.argv[4], "displayName": sys.argv[4]}
@@ -2148,8 +2144,6 @@ check "unattended loop: picks its item through next.sh --pick" grep -qx -- '--js
 cd "$repo"
 
 echo "tracker scope: every read of the local tracker"
-# local.scope narrows every list, so the board, health, the comments job and next see only the
-# items inside it; a named item outside it is refused, and so is a new claim of one.
 mkdir -p "$work/scope/bin" && cd "$work/scope" && git init -q -b main app && cd app && git config user.email me@scope.test && git config user.name t
 printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
 scope_config() { # scope_config <the local.scope block's lines> [<top-level lines after it>]: local items, a pool that grows

@@ -94,9 +94,9 @@ def flow_state(issue, labels, fields):
     return state
 
 
-def kind_of(data):
+def kind_of(issue_fields):
     """The flow kind of an issue's fields, as jira.types maps the issue types; any other type is a task."""
-    type_name = (data.get("issuetype") or {}).get("name", "")
+    type_name = (issue_fields.get("issuetype") or {}).get("name", "")
     return {name: kind for kind, name in type_names().items()}.get(type_name, "task")
 
 

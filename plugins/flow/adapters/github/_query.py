@@ -21,10 +21,12 @@ import _call  # noqa: E402
 
 WANT_FIELDS = bool(os.environ.get("GH_SIZE_FIELD") or os.environ.get("GH_PRIORITY_FIELD") or os.environ.get("GH_AREA_FIELD"))
 WANT_PROJECT = bool(os.environ.get("GH_PROJECT"))
+LABELS = "labels(first: 50) { nodes { name } }"
+ASSIGNEES = "assignees(first: 20) { nodes { login } }"
 BASE = """
   number title body state url
-  labels(first: 50) { nodes { name } }
-  assignees(first: 20) { nodes { login } }
+  """ + LABELS + """
+  """ + ASSIGNEES + """
   issueType { name }
   parent { number }
   blockedBy(first: 50) { nodes { number state } }
@@ -53,7 +55,7 @@ SEARCH = """query($q: String!, $first: Int!, $after: String) {
 MEMBERS = """query($q: String!, $first: Int!, $after: String) {
   search(query: $q, type: ISSUE, first: $first, after: $after) {
     pageInfo { hasNextPage endCursor } nodes { ... on Issue {
-      number state labels(first: 50) { nodes { name } } assignees(first: 20) { nodes { login } } } } } }"""
+      number state """ + LABELS + " " + ASSIGNEES + " } } } }"
 
 
 def filter_values(prefix, name):
@@ -110,27 +112,42 @@ def issue_page(owner, name, states, first, after):
     return data and data["data"]["repository"]["issues"]
 
 
+def scope_is_empty():
+    return not scope_qualifiers() and not any(SCOPE_RULES.values())
+
+
+def scoped_numbers(query, limit, number):
+    """The numbers of the issues github.scope's search holds and SCOPE_RULES match, page by page up
+    to the limit; None for a failed call, after which nothing more. Stopping at the limit says so,
+    naming gh#number, the issue asked about."""
+    after, seen = None, 0
+    while seen < limit:
+        response = graphql(MEMBERS, q=query, first=min(PAGE_SIZE, limit - seen), after=after)
+        if not response:
+            yield None
+            return
+        found = response["data"]["search"]
+        yield from (node.get("number") for node in found["nodes"] if matches(node, SCOPE_RULES))
+        seen += len(found["nodes"])
+        if not found["pageInfo"]["hasNextPage"]:
+            return
+        after = found["pageInfo"]["endCursor"]
+    sys.stderr.write("flow: stopped at github.limit %d issues in github.scope before gh#%d; raise it in .flow/config.yaml\n"
+                     % (limit, number))
+
+
 def in_scope(owner, name, number, limit):
     """INSIDE when github.scope's search, paged up to the limit, holds the issue, OUTSIDE when not,
     UNKNOWN when a call fails; INSIDE with no call when the scope sets no qualifier and no rule. No
     state comment is read."""
-    qualifiers = scope_qualifiers()
-    if not qualifiers and not any(SCOPE_RULES.values()):
+    if scope_is_empty():
         return INSIDE
-    query, after, seen = "repo:%s/%s is:issue %s" % (owner, name, qualifiers), None, 0
-    while seen < limit:
-        data = graphql(MEMBERS, q=query, first=min(PAGE_SIZE, limit - seen), after=after)
-        if not data:
+    query = "repo:%s/%s is:issue %s" % (owner, name, scope_qualifiers())
+    for scoped_number in scoped_numbers(query, limit, number):
+        if scoped_number is None:
             return UNKNOWN
-        found = data["data"]["search"]
-        if any(node.get("number") == number for node in found["nodes"] if matches(node, SCOPE_RULES)):
+        if scoped_number == number:
             return INSIDE
-        seen += len(found["nodes"])
-        if not found["pageInfo"]["hasNextPage"]:
-            return OUTSIDE
-        after = found["pageInfo"]["endCursor"]
-    sys.stderr.write("flow: stopped at github.limit %d issues in github.scope before gh#%d; raise it in .flow/config.yaml\n"
-                     % (limit, number))
     return OUTSIDE
 
 
