@@ -14,6 +14,8 @@
 #                                                claim holds exits 4; both before anything is
 #                                                created
 #   steward.sh find <item>                       print the claimed path, or nothing
+#   steward.sh owner <branch>                    print the item whose pool claim holds the branch
+#                                                as its task branch, or nothing
 #   steward.sh reserve [<worktree>] [--name <who>]
 #                                                claim a free pool worktree for manual work, with
 #                                                no item, under <who> (default: git user.name, else
@@ -166,6 +168,16 @@ cmd_find() {
   pool_paths | while read -r p; do
     [ "$(json_get "$(claim_of "$p")" item)" = "$1" ] && { printf '%s\n' "$p"; exit 0; }
   done
+}
+
+cmd_owner() {
+  pool_paths | while read -r p; do
+    owner_claim="$(claim_of "$p")"
+    [ "$(json_get "$owner_claim" branch)" = "$1" ] || continue
+    owner_item="$(json_get "$owner_claim" item)"
+    [ -z "$owner_item" ] || { printf '%s\n' "$owner_item"; break; }
+  done
+  return 0
 }
 
 cmd_claim() {
@@ -1617,6 +1629,7 @@ case "$cmd" in
   pool) cmd_pool ;;
   claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>]" 2; cmd_claim "$@" ;;
   find) [ $# -ge 1 ] || die "usage: find <item>" 2; cmd_find "$1" ;;
+  owner) [ $# -ge 1 ] || die "usage: owner <branch>" 2; cmd_owner "$1" ;;
   reserve) cmd_reserve "$@" ;;
   release) [ $# -ge 1 ] || die "usage: release <item|path> [--force]" 2; cmd_release "$@" ;;
   tmp) cmd_tmp "$@" ;;

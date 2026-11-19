@@ -43,6 +43,7 @@
 set -u
 job=comments
 . "$(dirname "$0")/_job.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 host="${1:-}"; [ $# -eq 0 ] || shift
 one=""; workers=""
 while [ $# -gt 0 ]; do
@@ -146,13 +147,12 @@ case "$max_fails" in ''|*[!0-9]*) die "jobs.comments.max_failures takes a whole 
 [ -n "$workers" ] || workers="$(cfg_or jobs.comments_workers 1)"
 case "$workers" in ''|*[!0-9]*|0) die "--workers and jobs.comments_workers take a number from 1" 2 ;; esac
 tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 || true; }
-# item_of <target>: the item a target names: the target itself, or for a PR number the item its
-# branch names, flow/<item slug> (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1);
-# nothing for a PR the flow did not open.
+# item_of <target>: the item a target names: the target itself, or for a PR number the item of its
+# head branch (branch_item); nothing for a PR the flow did not open.
 item_of() {
   if adapter_for "$1" >/dev/null; then printf '%s' "$1"; return; fi
   io_head="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("headRefName", ""))' 2>/dev/null)"
-  case "$io_head" in flow/?*) slug_item "${io_head#flow/}" ;; esac
+  branch_item "$io_head"
 }
 # pass_dir <target>: where the pass's session starts: the worktree the item holds, else the main
 # worktree. A sandboxed Claude session commits only in the worktree it started in.

@@ -1,7 +1,8 @@
 # The task branch of an item: named once, when the item is first claimed, from the branch template
 # of .flow/config.yaml, and recorded in claim.json and the item state (branch). Every reader takes
 # it from there. Sourced after lib/flow.sh and lib/base.sh by scripts/steward.sh, scripts/next.sh
-# and hooks/worktree-create.sh (claim_at_base picks the branch from the item it read).
+# and hooks/worktree-create.sh (claim_at_base picks the branch from the item it read), and after
+# lib/flow.sh alone by scripts/comments.sh and jobs/comments.sh (branch_item).
 #
 # branch: one template, or one per kind (epic, task, bug). Its placeholders: {slug} (item_slug),
 # {key} (branch_key), {kind} and {title} (branch_title).
@@ -97,4 +98,14 @@ claim_branch_option() {
 refuse_claim() {
   adapter write-state "$1" "last_event=$(now_iso) $2" >/dev/null 2>&1
   die "$1: $2" "$3"
+}
+
+# branch_item <branch>: the item whose task branch it is: the tracker item whose pool claim holds it
+# (steward.sh owner), else for flow/<slug> the item the slug names (its claim released); nothing
+# for a branch the flow did not name.
+branch_item() {
+  [ -n "$1" ] || return 0
+  owning_item="$("$FLOW_PLUGIN/scripts/steward.sh" owner "$1" 2>/dev/null)"
+  if [ -n "$owning_item" ] && adapter_for "$owning_item" >/dev/null; then printf '%s' "$owning_item"; return; fi
+  case "$1" in flow/?*) slug_item "${1#flow/}" ;; esac
 }
