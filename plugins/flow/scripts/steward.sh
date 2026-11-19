@@ -1145,10 +1145,10 @@ condition_met() {
   esac
 }
 
-# health_condition_gate <gate record file>: the gate clears here once condition_met reads the
+# health_condition_gate <gate row>: the gate clears here once condition_met reads the
 # condition it was raised with ended; a gate without a condition is left to the owner.
 health_condition_gate() {
-  gate_record="$(cat "$1")"; gate_condition="$(json_get "$gate_record" condition)"
+  gate_record="$1"; gate_condition="$(json_get "$gate_record" condition)"
   [ -n "$gate_condition" ] || return 0
   gate_item="$(json_get "$gate_record" item)"; gate_name="$(json_get "$gate_record" gate)"
   condition_met "$gate_item" "$gate_condition" || return 0
@@ -1162,20 +1162,22 @@ health_condition_gate() {
 # alone (health_condition_gate). Run before the pool loop, so the claims it frees count as no
 # longer at a gate in this pass.
 health_conditions() {
-  for gate_file in "$home"/gates/*.json; do
-    [ -f "$gate_file" ] || continue
-    health_condition_gate "$gate_file"
-  done
+  record_list gates > "$home/health/.gates.$$"
+  while IFS= read -r gate_row <&3; do   # no pipe: health_say counts a finding in this shell
+    health_condition_gate "$gate_row"
+  done 3< "$home/health/.gates.$$"
+  rm -f "$home/health/.gates.$$"
 }
 
 # health_gates: a gate pending longer than gate_reminder says so once per interval. A gate with a
 # condition says what it waits on: the health job clears it when that ends. A gate on a closed
 # item waits on nobody, so it is a defect (health_gate_closed), not a gate waiting.
 health_gates() {
-  hgs_closed=""
-  for f in "$home"/gates/*.json; do
-    [ -f "$f" ] || continue
-    g="$(cat "$f")"; gi="$(json_get "$g" item)"; gt="$(json_get "$g" gate)"; since="$(hpy epoch "$(json_get "$g" time)")"
+  hgs_closed=""; hgs_listed=""
+  record_list gates > "$home/health/.gates.$$"
+  while IFS= read -r g <&3; do   # no pipe: health_say counts a finding in this shell
+    gi="$(json_get "$g" item)"; gt="$(json_get "$g" gate)"; since="$(hpy epoch "$(json_get "$g" time)")"
+    hgs_listed="$hgs_listed $(item_slug "$gi")"
     # A closed item's gate is a defect before anything else, even with its PR still in review.
     if [ "$(item_status "$gi")" = closed ]; then
       hgs_closed="$hgs_closed gate-closed-$(item_slug "$gi")"
@@ -1193,10 +1195,11 @@ health_gates() {
     health_say "$gi" "$msg"
     health_notify "$gi $msg. Answer with: flow:gate $gi \"<answer>\""
     [ "$dry" -eq 1 ] || printf '%s %s\n' "$gt" "$now" > "$rf"
-  done
+  done 3< "$home/health/.gates.$$"
+  rm -f "$home/health/.gates.$$"
   for rf in "$home"/health/*.remind; do
     [ -f "$rf" ] || continue
-    [ -f "$home/gates/$(basename "$rf" .remind).json" ] || { [ "$dry" -eq 1 ] || rm -f "$rf"; }
+    case " $hgs_listed " in *" $(basename "$rf" .remind) "*) ;; *) [ "$dry" -eq 1 ] || rm -f "$rf" ;; esac
   done
   health_gate_closed_sweep "$hgs_closed"
 }
@@ -1260,7 +1263,7 @@ for line in sys.stdin:
 health_list() {
   health_items="$home/health/.items.$$"; health_list_failed=""
   for a in $health_trackers; do
-    if hl_out="$(adapter list "$a" 2>/dev/null)"; then printf '%s\n' "$hl_out"
+    if hl_out="$(items_listed "$a" 2>/dev/null)"; then printf '%s\n' "$hl_out"
     else health_list_failed="$health_list_failed $a "; fi
   done > "$health_items"
 }
@@ -1275,6 +1278,7 @@ health_list() {
 # failed this run and whose read fails too keeps its holds as they are.
 health_holds() {
   hh_reads="$home/health/.reads.$$"; hh_claims="$home/health/.claims.$$"; hh_out="$home/health/.holds.$$"
+  hh_runs="$home/health/.runs.$$"; record_list runs > "$hh_runs"
   for hh_p in $(pool_paths); do json_get "$(claim_of "$hh_p")" item; echo; done | grep . > "$hh_claims"
   : > "$hh_reads"
   for hh_h in $(hpy holders "$health_items"); do
@@ -1288,7 +1292,7 @@ health_holds() {
     echo >> "$hh_reads"
   done
   hh_keys=""
-  hpy holds "$health_items" "$hh_reads" "$hh_claims" "$home/runs" "$home/events.log" 86400 > "$hh_out"
+  hpy holds "$health_items" "$hh_reads" "$hh_claims" "$hh_runs" "$home/events.log" 86400 > "$hh_out"
   while IFS="$(printf '\t')" read -r hh_what hh_it hh_by hh_a hh_b; do   # no pipe: health_say counts here
     if [ "$hh_what" = clear ]; then
       if [ "$dry" -eq 1 ]; then health_say "$hh_it" "would clear its hold behind $hh_by: $hh_a"
@@ -1305,7 +1309,7 @@ health_holds() {
     health_say "$hh_it" "$hh_msg"
     health_notify "$hh_it $hh_msg. It is released once $hh_by closes."
   done < "$hh_out"
-  rm -f "$hh_out" "$hh_reads" "$hh_claims"
+  rm -f "$hh_out" "$hh_reads" "$hh_claims" "$hh_runs"
   for hh_f in "$home"/health/held-old-*.seen; do
     [ -f "$hh_f" ] || continue
     case " $hh_keys " in *" $(basename "$hh_f" .seen) "*) ;; *) health_cleared "$(basename "$hh_f" .seen)" ;; esac

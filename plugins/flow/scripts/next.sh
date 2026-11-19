@@ -93,7 +93,7 @@ fi
 # claim and the run record happen under one lock. The brief is written after it is released.
 flow_lock pick || { echo "another run is picking an item for over ${FLOW_LOCK_WAIT:-60}s; try again" >&2; exit 7; }
 if [ -z "$item" ]; then
-  item="$(printf '%s\n%s\n' "$ready" "$notready" | python3 -I "$FLOW_PLUGIN/scripts/_pick.py" "$FLOW_PLUGIN" "$home/runs" "${FLOW_NEXT_FULL:-}" "${FLOW_NEXT_SKIP:-}")"; code=$?
+  item="$(printf '%s\n%s\n' "$ready" "$notready" | python3 -I "$FLOW_PLUGIN/scripts/_pick.py" "$FLOW_PLUGIN" "$(record_list runs)" "${FLOW_NEXT_FULL:-}" "${FLOW_NEXT_SKIP:-}")"; code=$?
   case "$code" in
     0) ;;
     3|5) echo "$item" >&2; exit "$code" ;;

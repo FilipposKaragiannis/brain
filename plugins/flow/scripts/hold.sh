@@ -24,8 +24,8 @@ main="$(dirname "$home")"
 # event <item> <kind> <text>: one events.log line, the text on one line.
 event() { mkdir -p "$home"; printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$1" "$2" "$(printf '%s' "$3" | tr '\n\t' '  ')" >> "$home/events.log"; }
 
-# claimed: "<item>\t<worktree>" for every item a pool worktree claims (not a reservation) or a run
-# record names, once each.
+# claimed: "<item>\t<worktree>" for every item a pool worktree claims (not a reservation) or that
+# has a run in flight (record_list runs), once each.
 claimed() {
   {
     cfg pool | while read -r p; do
@@ -37,9 +37,8 @@ claimed() {
       [ -z "$(json_get "$c" reserved)" ] || continue
       printf '%s\t%s\n' "$it" "$(cd "$p" && pwd)"
     done
-    for f in "$home"/runs/*.json; do
-      [ -f "$f" ] || continue
-      r="$(cat "$f")"; it="$(json_get "$r" item)"; [ -n "$it" ] || continue
+    record_list runs | while IFS= read -r r; do
+      it="$(json_get "$r" item)"; [ -n "$it" ] || continue
       printf '%s\t%s\n' "$it" "$(json_get "$r" worktree)"
     done
   } | awk -F '\t' '!seen[$1]++'

@@ -1,7 +1,8 @@
 #!/bin/sh
 # board.sh [--json] [--graph <epic-id>|priorities [--mermaid]]: every tracker read, every claim. The pool
-# with item, step and last event; open items with their state and open blockers (--json:
-# open_blockers on every item, the tracker's own list, else those of blocked_by not read as closed,
+# with item, step and last event; open items with their state, from the flow record, and open
+# blockers (--json: state_from on every item, as lib/state.sh items_join stamps it; open_blockers
+# on every item, the tracker's own list, else those of blocked_by not read as closed,
 # as next.sh judges them; a claimed item waits on them at every step), and in the gate column
 # the owner's answer to a cleared gate while it waits on a run (answer_pending; in Health too once
 # it waits past the gate reminder); pending gates; overlapping claims; the spend per item, from
@@ -38,7 +39,7 @@ print(json.dumps(out))'; }
 # through and stops when one fails. FLOW_LIST_WHOLE makes a list cut at its limit fail. The board
 # shows what it can.
 if [ -n "$graph" ]; then
-  lists="$(for a in $trackers; do FLOW_LIST_WHOLE=1 adapter list "$a" || exit 1; done)" || die "an adapter could not list its items, so no graph" 1
+  lists="$(for a in $trackers; do FLOW_LIST_WHOLE=1 items_listed "$a" || exit 1; done)" || die "an adapter could not list its items, so no graph" 1
   case "$graph" in priorities) set -- priorities ;; *) set -- epic "$graph" ;; esac
   printf '%s\n' "$lists" | merge_lists | python3 -I "$FLOW_PLUGIN/scripts/_graph.py" "$@" $mermaid
   exit
@@ -46,8 +47,10 @@ fi
 procs="$(mktemp)"; failed="$(mktemp)"; said="$(mktemp)"; listed="$(mktemp)"; trap 'rm -f "$procs" "$failed" "$said" "$listed"' EXIT
 # A tracker whose list fails is named with its exit code and its last stderr line (a missing token,
 # a refused config key), so the board says why its items are missing instead of showing fewer.
+# Each item carries its flow record as its state (lib/state.sh items_listed); a failed join fails
+# the list.
 items="$(for a in $trackers; do
-  adapter list "$a" 2>"$said"; code=$?
+  items_listed "$a" 2>"$said"; code=$?
   [ "$code" -eq 0 ] || { json_obj "tracker=$a" "code:=$code" "message=$(grep . "$said" | tail -n 1)"; echo; } >> "$failed"
 done | merge_lists)"
 tracker_errors="$(sed 's/.*/[&]/' "$failed" | merge_lists)"
@@ -55,17 +58,11 @@ tracker_errors="$(sed 's/.*/[&]/' "$failed" | merge_lists)"
 grace="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.grace "$(cfg_or jobs.health.grace 10m)")" || exit 2
 reminder="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.health.gate_reminder "$(cfg_or jobs.health.gate_reminder 24h)")" || exit 2
 python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$procs"
-runs="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" runs "$home/runs" "$procs" "$grace")"
-# A record that does not parse (one written before 1.20.2 with a value such as 007) is skipped.
-gates="$(for f in "$home"/gates/*.json; do [ -f "$f" ] && cat "$f" && echo; done | python3 -I -c '
+runs="$(record_list runs | python3 -I "$FLOW_PLUGIN/scripts/_health.py" runs - "$procs" "$grace")"
+# The gate rows of the records; record_list leaves out a record that does not parse and names it.
+gates="$(record_list gates | python3 -I -c '
 import json, sys
-out = []
-for l in sys.stdin:
-    try:
-        out.append(json.loads(l))
-    except ValueError:
-        pass
-print(json.dumps(out))')"
+print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))')"
 pool="$("$FLOW_PLUGIN/scripts/steward.sh" pool 2>/dev/null | tail -n +2)"
 # The list has open items only, so a holder (state.held_by) it leaves out is read, once each:
 # open, closed, or unknown when it cannot be read. A closed one holds nothing (filter-ready.sh).

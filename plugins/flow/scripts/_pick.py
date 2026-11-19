@@ -1,10 +1,11 @@
 """The pick in next.sh: which ready item to try next, or why there is none.
 
-  _pick.py <plugin> <runs dir> <full> <skip>
+  _pick.py <plugin> <runs> <full> <skip>
 
 stdin: line 1 the ready list (a JSON array, best first), line 2 the items filter-ready held back
-(a JSON array of its FLOW_READY_NOTES lines; may be absent). <full> is the item whose claim found
-the pool full in this pick, empty while none did; <skip> the items this pick passed over,
+(a JSON array of its FLOW_READY_NOTES lines; may be absent). <runs> is the text of lib/state.sh
+record_list runs: one JSON run in flight per line, {"item", ...}. <full> is the item whose claim
+found the pool full in this pick, empty while none did; <skip> the items this pick passed over,
 space-separated.
 
 Prints the first item to try and exits 0. An item with a run in flight is not tried, nor one this
@@ -17,6 +18,7 @@ the filter held back for its open blockers is said as held behind them: "<id> be
 import json, os, sys
 
 plugin, runs, full = sys.argv[1], sys.argv[2], sys.argv[3]
+running_items = {json.loads(line).get("item") for line in runs.splitlines() if line.strip()}
 skip = set(sys.argv[4].split())
 lines = sys.stdin.read().split("\n")
 ready = json.loads(lines[0]) if lines[0].strip() else []
@@ -25,12 +27,8 @@ with open(os.path.join(plugin, "profiles.json"), encoding="utf-8") as f:
     profiles = json.load(f)
 
 
-def slug(item_id):
-    return item_id.translate(str.maketrans(":/#", "---"))
-
-
 def running(item_id):
-    return os.path.isfile(os.path.join(runs, slug(item_id) + ".json"))
+    return item_id in running_items
 
 
 def profile(item):

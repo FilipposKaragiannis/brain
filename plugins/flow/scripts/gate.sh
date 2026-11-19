@@ -62,17 +62,15 @@
 . "$FLOW_PLUGIN/lib/gate.sh"
 home="$(flow_home)"
 
-# gates_json: each gate record with its claimed worktree (steward.sh find) or null, through
-# scripts/_gates.py, which adds the age and the parsed questions. A record that is not a JSON
-# object is skipped with a warning, so one bad file never hides the other gates.
+# gates_json: each gate row (record_list gates) with its claimed worktree (steward.sh find) or
+# null, through scripts/_gates.py, which adds the age and the parsed questions. record_list leaves
+# out a record that does not parse and names it on stderr, so one bad record never hides the
+# other gates.
 gates_json() {
-  for f in "$home"/gates/*.json; do
-    [ -f "$f" ] || continue
-    record="$(json_set "$(cat "$f")" worktree null 2>/dev/null)"
-    [ -n "$record" ] || { echo "flow: skipping $f, not a JSON gate record" >&2; continue; }
+  record_list gates | while IFS= read -r record; do
     item="$(json_get "$record" item)"; worktree=""
-    [ -n "$item" ] && worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$item")"
-    if [ -n "$worktree" ]; then json_set "$record" worktree "$(json_string "$worktree")"; else printf '%s\n' "$record"; fi
+    [ -n "$item" ] && worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$item" </dev/null)"
+    if [ -n "$worktree" ]; then json_set "$record" worktree "$(json_string "$worktree")"; else json_set "$record" worktree null; fi
   done | python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
 }
 
@@ -204,9 +202,7 @@ $footer" >/dev/null
       2:--json) gates_json; exit ;;
       *) die "usage: gate.sh list [--json]" 2 ;;
     esac
-    for f in "$home"/gates/*.json; do
-      [ -f "$f" ] || continue
-      c="$(cat "$f")"
+    record_list gates | while IFS= read -r c; do
       printf '%s\t%s\t%s\t%s\n' "$(json_get "$c" time)" "$(json_get "$c" item)" "$(json_get "$c" gate)" "$(json_get "$c" message | head -1)"
     done
     # A stopped host is a line too: the host for the item, stopped for the gate.

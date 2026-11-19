@@ -3308,8 +3308,8 @@ unset FLOW_HEALTH_PROCS
 echo "gate list --json"
 mkdir -p "$work/gates" && cd "$work/gates" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach ../app-wt-2
-mkdir -p .flow/gates ../app-wt-1/.flow
-printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\n  - ../app-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+mkdir -p .flow ../app-wt-1/.flow
+printf 'adapters:\n  default: local\nbase: main\ntracker_state: none\npool:\n  - ../app-wt-1\n  - ../app-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
 printf '{"item":"local:task/7"}\n' > ../app-wt-1/.flow/claim.json
 record set local:task/7 "gate:=$(json_obj gate=ambiguity "message=Two choices.
 1. Keep the old name? Recommended: yes, because callers depend on it.
@@ -3330,34 +3330,32 @@ check "gate list: an unknown flag exits 2" [ "$code" -eq 2 ]
 check "gate list: an extra argument exits 2" [ "$code" -eq 2 ]
 json_obj gate=escalation message=42 time=20261025 host=shell > "$work/gates/42.json"
 record set local:task/9 "gate:=$(cat "$work/gates/42.json")"
-printf '{"gate":"merge","message":"Merge it.","time":"2026-10-25T07:00:00Z"}\n' > .flow/gates/no-item.json
-printf 'not json\n' > .flow/gates/broken.json
+broken_record="$(record path local:task/11)"; printf 'not json\n' > "$broken_record"
 gj="$(FLOW_NOW=2026-10-25T09:00:00Z "$P/scripts/gate.sh" list --json 2>"$work/gates/err")"; code=$?
 gq() { printf '%s' "$gj" | jget "$1"; }
 check "gate json: exits 0 past a broken record" [ "$code" -eq 0 ]
-check "gate json: a broken record is named on stderr" grep -q 'broken.json' "$work/gates/err"
-check "gate json: every valid record is listed" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 4 ]
-check "gate json: each gate has the fields the console reads" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)[2]))')" = "item,gate,message,time,host,worktree,age_seconds,questions,options,raised_by,answered_by,condition,footer" ]
-check "gate json: oldest first" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(g["item"]) for g in json.load(sys.stdin)))')" = "local:task/3,None,local:task/7,local:task/9" ]
+check "CorruptGateRecord_IsNamedOnStderr: gate list --json names the record file that does not parse, because one bad record must never hide silently" grep -qF "$broken_record" "$work/gates/err"
+check "gate json: every valid record is listed" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 3 ]
+check "gate json: each gate has the fields the console reads" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)[1]))')" = "item,gate,message,time,host,worktree,age_seconds,questions,options,raised_by,answered_by,condition,footer" ]
+check "gate json: oldest first" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(g["item"]) for g in json.load(sys.stdin)))')" = "local:task/3,local:task/7,local:task/9" ]
 check "gate json: the age of a day-old gate is against FLOW_NOW" [ "$(gq 0.age_seconds)" = 86400 ]
-check "gate json: the age of an hour-old gate is against FLOW_NOW" [ "$(gq 2.age_seconds)" = 3600 ]
-check "gate json: the claimed pool worktree" [ "$(gq 2.worktree)" = "$(cd ../app-wt-1 && pwd -P)" ]
+check "gate json: the age of an hour-old gate is against FLOW_NOW" [ "$(gq 1.age_seconds)" = 3600 ]
+check "gate json: the claimed pool worktree" [ "$(gq 1.worktree)" = "$(cd ../app-wt-1 && pwd -P)" ]
 check "gate json: no claim, worktree null" [ "$(gq 0.worktree)" = null ]
-check "gate json: no item, no worktree even beside a free one" [ "$(gq 1.worktree)" = null ]
-check "gate json: a digits-only message is a string" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(json.load(sys.stdin)[3]["message"] == "42")')" = True ]
+check "gate json: a digits-only message is a string" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(json.load(sys.stdin)[2]["message"] == "42")')" = True ]
 check "json_obj: a digits-only message is written as a string" [ "$(python3 -c 'import json,sys; print(repr(json.load(open(sys.argv[1]))["message"]))' "$work/gates/42.json")" = "'42'" ]
-check "gate json: a time that is no ISO time has no age" [ "$(gq 3.age_seconds)" = null ]
-check "gate json: one question per numbered line, dot or bracket" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(q["number"]) for q in json.load(sys.stdin)[2]["questions"]))')" = "1,2,3,4" ]
-check "gate json: an inline Recommended ends the question" [ "$(gq 2.questions.0.text)" = "Keep the old name?" ]
-check "gate json: an inline Recommended is the recommended answer" [ "$(gq 2.questions.0.recommended)" = "yes, because callers depend on it." ]
-check "gate json: a following line joins the question" [ "$(gq 2.questions.1.text)" = "Same for the tap and the depth pass?" ]
-check "gate json: a bold Recommended line, continued, is the recommended answer" [ "$(gq 2.questions.1.recommended)" = "the same, until a feel test says otherwise." ]
-check "gate json: Recommended without a colon is prose" [ "$(gq 2.questions.2.text)" = "Anything else? Recommended reading is plan.md." ]
-check "gate json: no Recommended line, recommended null" [ "$(gq 2.questions.2.recommended)" = null ]
-check "gate json: a listed Recommended line is the recommended answer" [ "$(gq 2.questions.3.recommended)" = "no." ]
+check "gate json: a time that is no ISO time has no age" [ "$(gq 2.age_seconds)" = null ]
+check "gate json: one question per numbered line, dot or bracket" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(q["number"]) for q in json.load(sys.stdin)[1]["questions"]))')" = "1,2,3,4" ]
+check "gate json: an inline Recommended ends the question" [ "$(gq 1.questions.0.text)" = "Keep the old name?" ]
+check "gate json: an inline Recommended is the recommended answer" [ "$(gq 1.questions.0.recommended)" = "yes, because callers depend on it." ]
+check "gate json: a following line joins the question" [ "$(gq 1.questions.1.text)" = "Same for the tap and the depth pass?" ]
+check "gate json: a bold Recommended line, continued, is the recommended answer" [ "$(gq 1.questions.1.recommended)" = "the same, until a feel test says otherwise." ]
+check "gate json: Recommended without a colon is prose" [ "$(gq 1.questions.2.text)" = "Anything else? Recommended reading is plan.md." ]
+check "gate json: no Recommended line, recommended null" [ "$(gq 1.questions.2.recommended)" = null ]
+check "gate json: a listed Recommended line is the recommended answer" [ "$(gq 1.questions.3.recommended)" = "no." ]
 check "gate json: no numbered line, no questions" [ "$(gq 0.questions)" = "[]" ]
-for gated_item in local:task/7 local:task/3 local:task/9; do FLOW_TRACKER_STATE=none "$P/scripts/state.sh" set "$gated_item" gate=none; done
-rm -f .flow/gates/no-item.json .flow/gates/broken.json
+for gated_item in local:task/7 local:task/3 local:task/9; do record set "$gated_item" gate=none; done
+rm -f "$broken_record"
 check "gate json: nothing pending, an empty array" [ "$("$P/scripts/gate.sh" list --json)" = "[]" ]
 
 echo "quiz: parse, grade, record and mark the draft ready (fake gh)"
@@ -3447,10 +3445,13 @@ check "the run record: a pid with leading zeros is the number without them, not 
 check "a gate raised with the message 007: the record parses, the message the string" [ "$(record list gates "$d1" | jtype message)" = "str 007" ]
 check "gate list --json: the message 007 is the string" [ "$("$P/scripts/gate.sh" list --json | jtype 0.message)" = "str 007" ]
 # Records from before 1.20.2: a digits message is a number, and one with a leading zero does not parse.
+# Their items are on no tracker, so nothing is mirrored to one.
+printf 'tracker_state: none\n' >> .flow/config.yaml
 record set local:task/98 "gate:=$(json_obj gate=merge message:=42 time=2026-10-24T10:00:00Z host=shell)"
-printf '{"gate":"merge","item":"local:task/99","message":007,"time":"2026-10-24T10:00:00Z","host":"shell"}\n' > .flow/gates/local-task-99.json
+old_record="$(record path local:task/99)"
+printf '{"gate":{"name":"merge","message":007,"time":"2026-10-24T10:00:00Z","host":"shell"}}\n' > "$old_record"
 check_all "board: an old gate with a number message shows, an old one that does not parse is skipped" 'b="$("$P/scripts/board.sh")" && printf "%s" "$b" | grep -q "local:task/98 (.*): 42" && printf "%s" "$b" | grep -q "escalation\*\* on $d1" && ! printf "%s" "$b" | grep -q "local:task/99"'
-FLOW_TRACKER_STATE=none "$P/scripts/state.sh" set local:task/98 gate=none; rm -f .flow/gates/local-task-99.json
+record set local:task/98 gate=none; rm -f "$old_record"
 "$P/scripts/lesson.sh" other "$d1" 12345 >/dev/null
 check "a lesson whose text is 12345 is the string" [ "$(tail -1 .flow/lessons.jsonl | jtype text)" = "str 12345" ]
 mkdir -p "$work/nojq" && ln -sf "$(command -v python3)" "$work/nojq/python3"
