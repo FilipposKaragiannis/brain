@@ -148,7 +148,10 @@ cmd_pool() {
     [ -d "$p" ] || { printf '%-28s %s\n' "$(basename "$p")" "MISSING ($p)"; continue; }
     branch="$(git -C "$p" symbolic-ref --short -q HEAD || git -C "$p" rev-parse --short HEAD 2>/dev/null)"
     c="$(claim_of "$p")"
-    item="$(json_get "$c" item)"; step="$(json_get "$c" step)"
+    item="$(json_get "$c" item)"; step=""
+    if [ -n "$item" ] && item_id_shaped "$item" 2>/dev/null; then
+      step="$(record_get "$item" run.step)"; [ -n "$step" ] || step="$(record_get "$item" step)"
+    fi
     st="free"; [ -n "$item" ] && st="claimed"
     rv="$(json_get "$c" reserved)"; [ -z "$rv" ] || st="reserved by $rv"
     dirty "$p" && st="$st, uncommitted changes"
@@ -346,7 +349,7 @@ kept_whole() {
 # epic, has no open children, or its plan.md does not say tracker tasks.
 cmd_split() {
   sp_item="$1"; split_msg=""; split_kept=""
-  sp_data="$(adapter read "$sp_item" 2>/dev/null)" || { echo "flow: cannot read $sp_item, so it is not split" >&2; return 1; }
+  sp_data="$(item_read "$sp_item" 2>/dev/null)" || { echo "flow: cannot read $sp_item, so it is not split" >&2; return 1; }
   [ "$(json_get "$sp_data" kind)" != epic ] || { echo "$sp_item is an epic: its tasks are its children, nothing to split"; return 1; }
   sp_kids="$(json_get "$sp_data" open_children)"
   [ "${sp_kids:-0}" -gt 0 ] 2>/dev/null || { echo "$sp_item has no open children, so it is not split"; return 1; }
@@ -367,7 +370,7 @@ cmd_split() {
       sp_tmp="$(mktemp)"; sp_procs="$sp_tmp"
       python3 -I "$FLOW_PLUGIN/scripts/_health.py" procs > "$sp_tmp" 2>/dev/null || : > "$sp_tmp.failed"
     fi
-    if [ -f "$home/runs/$(item_slug "$sp_item").json" ]; then split_kept="a run is in flight"
+    if [ -n "$(run_record "$sp_item")" ]; then split_kept="a run is in flight"
     elif dirty "$sp_path"; then split_kept="it has uncommitted changes: commit or stash them; the health job then releases it"
     elif [ -n "$sp_tmp" ] && [ -f "$sp_tmp.failed" ]; then split_kept="the processes cannot be listed, so a session may be working in it"
     else
@@ -617,7 +620,7 @@ cmd_sweep() {
     c="$(claim_of "$p")"; it="$(json_get "$c" item)"; br="$(json_get "$c" branch)"; name="$(basename "$p")"
     [ -z "$only" ] || [ "$it" = "$only" ] || continue
     [ -n "$it" ] && adapter_for "$it" >/dev/null 2>&1 || continue
-    data="$(adapter read "$it" 2>/dev/null)" || continue
+    data="$(item_read "$it" 2>/dev/null)" || continue
     status="$(json_get "$data" status)"; gate="$(state_get "$data" gate)"; pr="$(state_get "$data" pr)"
     # A PR the pr step's worker could not record (a local item file lies outside its sandbox) is
     # found by the claim's task branch, flow/<slug>, while the item waits at the merge gate, and
@@ -633,7 +636,7 @@ cmd_sweep() {
     fi
     [ "$status" = closed ] || [ "$merged" -eq 1 ] || continue
     why="$it is closed"; [ "$merged" -eq 1 ] && why="$pr merged"
-    if [ -f "$home/runs/$(item_slug "$it").json" ]; then echo "$it: kept $name, a run is in flight"; continue; fi
+    if [ -n "$(run_record "$it")" ]; then echo "$it: kept $name, a run is in flight"; continue; fi
     if dirty "$p"; then echo "$it: kept $name, it has uncommitted changes ($why)"; continue; fi
     if [ "$dry" -eq 1 ]; then echo "$it: would release $name ($why)"; continue; fi
     # A gate that cannot go keeps the claim: the sweep only reads claimed worktrees, so the next
@@ -652,11 +655,10 @@ cmd_sweep() {
 }
 
 # link_pr <item> <pr>: the PR on the tracker (adapter link-pr), then in the item's flow record with
-# the pr_host the tracker took.
+# the pr_host the tracker took (record_linked_pr).
 link_pr() {
   adapter link-pr "$1" "$2" >/dev/null || { echo "flow: could not record $2 on $1" >&2; return 1; }
-  lp_linked_item="$(adapter read "$1" 2>/dev/null)" || return 0
-  write_state "$1" "pr=$2" "pr_host=$(state_get "$lp_linked_item" pr_host)"
+  record_linked_pr "$1" >/dev/null || echo "flow: could not write state for $1" >&2
 }
 
 # sweep_drop_gate <item> <gate> <answer> <why>: the gate of an item the sweep closes goes with it.
@@ -742,7 +744,7 @@ health_branch_state() {
   if [ "$dry" -eq 1 ]; then health_say "$hb_item" "would merge $hb_base into $hb_branch ($hb_late commits behind)"; return 0; fi
   # Under the pick lock, so a next that starts a step here waits for the merge to finish.
   flow_lock pick || return 0
-  if [ -f "$home/runs/$(item_slug "$hb_item").json" ]; then flow_unlock; return 0; fi
+  if [ -n "$(run_record "$hb_item")" ]; then flow_unlock; return 0; fi
   if git -C "$hb_path" merge -q --no-edit -m "chore: merge $hb_base into $hb_branch" "$hb_base" >/dev/null 2>&1; then
     health_say "$hb_item" "merged $hb_base into $hb_branch ($hb_late commits behind)"
   else
@@ -863,15 +865,14 @@ health_claim() {
   case "$it" in adhoc:*) health_sub_agent "$p" "$it" "$c" "$bs"; return 0 ;; esac
   if ! adapter_for "$it" >/dev/null 2>&1; then holders="$holders$name $it a session outside the flow
 "; return 0; fi
-  slug="$(item_slug "$it")"; rec="$home/runs/$slug.json"; health_reports="$p/.flow/reports/$slug"; health_gate=""; health_sync=""
-  if ! data="$(adapter read "$it" 2>/dev/null)"; then holders="$holders$name $it unreadable
+  slug="$(item_slug "$it")"; health_reports="$p/.flow/reports/$slug"; health_gate=""; health_sync=""
+  if ! data="$(item_read "$it" 2>/dev/null)"; then holders="$holders$name $it unreadable
 "; health_say "$it" "cannot read it on the tracker; $name is left alone"; return 0; fi
   step="$(state_get "$data" step)"; health_gate="$(state_get "$data" gate)"
   [ "$health_gate" != none ] || health_gate=""
-  [ -n "$health_gate" ] || [ ! -f "$home/gates/$slug.json" ] || health_gate="$(json_get "$(cat "$home/gates/$slug.json")" gate)"
-  state=none; dead=0; pid=""; started=0
-  if [ -f "$rec" ]; then
-    pid="$(json_get "$(cat "$rec")" pid)"; started="$(hpy epoch "$(json_get "$(cat "$rec")" started)")"
+  state=none; dead=0; pid=""; started=0; health_run="$(run_record "$it")"
+  if [ -n "$health_run" ]; then
+    pid="$(json_get "$health_run" pid)"; started="$(hpy epoch "$(json_get "$health_run" started)")"
     if [ -n "$(hpy alive "$procs" "$it" "$p" "$pid")" ]; then state=running
     elif [ $((now - started)) -le "$grace" ]; then state=running
     else state=dead; fi
@@ -907,7 +908,7 @@ health_claim() {
   claimed="$(hpy epoch "$(json_get "$c" claimed_at)")"
   quiet_for=$((now - last)); [ "$last" -gt "$claimed" ] || quiet_for=$((now - claimed))
   if [ -z "$health_gate" ] && [ "$isdirty" -eq 0 ] && [ "$ahead" -eq 0 ] && [ -z "$results" ] && [ "$quiet_for" -gt "$grace" ]; then
-    health_empty "$it" "$p" "$rec" "$last"; [ "$released" -eq 1 ] && return 0
+    health_empty "$it" "$p" "$last"; [ "$released" -eq 1 ] && return 0
   fi
   if [ -z "$health_gate" ] && [ "$dead" -eq 1 ] && { [ "$isdirty" -eq 1 ] || [ "$ahead" -gt 0 ] || [ -n "$results" ]; }; then
     health_branch_notes "$it" "$p" "$br" "$bs" "$isdirty" "$(state_get "$data" pr)"
@@ -1090,17 +1091,17 @@ health_note_refs() {
   done
 }
 
-# health_empty <item> <path> <record> <last activity>: release a claim that holds nothing, under
+# health_empty <item> <path> <last activity>: release a claim that holds nothing, under
 # the pick lock so a next that is claiming it right now wins.
 health_empty() {
   released=0
   if [ "$dry" -eq 1 ]; then
-    health_say "$1" "would release the empty claim on $name (no run, no commits past $bs, nothing changed since $(health_ago "$4"))"
+    health_say "$1" "would release the empty claim on $name (no run, no commits past $bs, nothing changed since $(health_ago "$3"))"
     released=1; claims=$((claims - 1)); claimable=$((claimable + 1)); return 0
   fi
   flow_lock pick || { health_say "$1" "$name looks empty but the pick lock is busy; left for the next run"; return 0; }
-  if [ ! -f "$3" ] && [ -f "$2/.flow/claim.json" ] && (cmd_release "$2" >/dev/null 2>&1); then
-    health_say "$1" "released the empty claim on $name (no run, no commits past $bs, nothing changed since $(health_ago "$4"))"
+  if health_empty_run="$(run_record "$1")" && [ -z "$health_empty_run" ] && [ -f "$2/.flow/claim.json" ] && (cmd_release "$2" >/dev/null 2>&1); then
+    health_say "$1" "released the empty claim on $name (no run, no commits past $bs, nothing changed since $(health_ago "$3"))"
     released=1; claims=$((claims - 1)); claimable=$((claimable + 1))
   else health_say "$1" "could not release the empty claim on $name"; fi
   flow_unlock
@@ -1124,7 +1125,7 @@ pr_conflict_met() {
 # ci_down_met <item>: 0 when no check fails on the item's PR (comments.sh failing-checks); 1 while
 # one does; 2 when the item, its PR or its checks cannot be read.
 ci_down_met() {
-  gated_item="$(adapter read "$1" 2>/dev/null)" || return 2
+  gated_item="$(item_read "$1" 2>/dev/null)" || return 2
   condition_pr="$(state_get "$gated_item" pr)"; [ -n "$condition_pr" ] || return 2
   condition_failing="$("$FLOW_PLUGIN/scripts/comments.sh" failing-checks "$condition_pr" 2>/dev/null)" || return 2
   [ -z "$condition_failing" ] || return 1
@@ -1278,7 +1279,7 @@ health_holds() {
   : > "$hh_reads"
   for hh_h in $(hpy holders "$health_items"); do
     hh_a="$(adapter_for "$hh_h" 2>/dev/null)"
-    if [ -n "$hh_a" ] && hh_data="$(adapter read "$hh_h" 2>/dev/null)" && [ -n "$hh_data" ]; then
+    if [ -n "$hh_a" ] && hh_data="$(item_read "$hh_h" 2>/dev/null)" && [ -n "$hh_data" ]; then
       printf '%s\n' "$hh_data" | tr -d '\n' >> "$hh_reads"
     else
       case "$health_list_failed" in *" $hh_a "*) hh_why=skip ;; *) hh_why=unreadable ;; esac
@@ -1516,12 +1517,11 @@ run_procs() {
   hpy procs > "$procs" 2>/dev/null || { rm -f "$procs"; die "cannot list processes (ps failed or listed nothing), so the run is left as it is" 1; }
 }
 run_procs_done() { [ "${FLOW_HEALTH_PROCS:-}" = "$procs" ] || rm -f "$procs"; }
-# run_of <item>: the run record's fields: rn_rec, rn_step, rn_pid, rn_path (the record's worktree,
+# run_of <item>: the run record's fields: rn_run, rn_step, rn_pid, rn_path (the record's worktree,
 # else the claim's). Returns 1 when the item has no record.
 run_of() {
-  rn_rec="$home/runs/$(item_slug "$1").json"
-  [ -f "$rn_rec" ] || return 1
-  rn_run="$(cat "$rn_rec")"; rn_step="$(json_get "$rn_run" step)"; rn_pid="$(json_get "$rn_run" pid)"
+  rn_run="$(run_record "$1")" && [ -n "$rn_run" ] || return 1
+  rn_step="$(json_get "$rn_run" step)"; rn_pid="$(json_get "$rn_run" pid)"
   rn_path="$(json_get "$rn_run" worktree)"; [ -n "$rn_path" ] || rn_path="$(cmd_find "$1")"
 }
 
@@ -1597,7 +1597,7 @@ cmd_resume() {
   [ -z "$rs_live" ] || die "$rs_item: the run of ${rn_step:-?} is still alive ($rs_live): end it first with steward.sh stop $rs_item" 1
   host_check "$resume_host" || exit 2
   # The step health counts resumes by is the item's own (a sync run's record says sync).
-  rs_step="$(state_get "$(adapter read "$rs_item" 2>/dev/null)" step)"; [ -n "$rs_step" ] || rs_step="$rn_step"
+  rs_step="$(state_get "$(item_read "$rs_item" 2>/dev/null)" step)"; [ -n "$rs_step" ] || rs_step="$rn_step"
   mkdir -p "$home/health" "$home/log"
   health_reports="$rn_path/.flow/reports/$(item_slug "$rs_item")"
   record_set "$rs_item" "run:=null"

@@ -40,9 +40,9 @@ while [ $# -gt 0 ]; do
 done
 named="$item"
 [ -z "$pick" ] || [ -z "$item" ] || die "--pick narrows the ready list a pick reads; $item is named, so drop one of them" 2
-ready_cache="$home/runs/.ready.$$"
+ready_cache="$home/tmp/.ready.$$"
 if [ "${FLOW_NEXT_PID:-}" != "$$" ]; then FLOW_NEXT_SKIP=""; FLOW_NEXT_FULL=""; rm -f "$ready_cache"; fi
-mkdir -p "$home/runs"
+mkdir -p "$home/tmp"
 # pick_again: try the next ready item, without $item. Only a pick (no item named) can.
 pick_again() {
   flow_unlock
@@ -56,7 +56,6 @@ pick_again() {
 # pass_over <message> <code>: a picked item has nothing to run; say why and pick again. A named
 # item exits with the code.
 pass_over() { echo "$1" >&2; [ -z "$named" ] || exit "$2"; pick_again; }
-run_file() { printf '%s/runs/%s.json' "$home" "$(item_slug "$1")"; }
 
 # The ready list is read before the pick lock is taken: listing a tracker can take a minute, and
 # a worker that waits that long on the lock gives up. The lock covers what must not race: the
@@ -71,7 +70,7 @@ elif [ -z "$item" ]; then
   trackers="$(adapters_configured)" || exit 2
   # shellcheck disable=SC2086
   [ -z "$pick" ] || trackers="$(pick_trackers "$pick" $trackers)" || exit 2
-  notes="$home/runs/.notes.$$"; rm -f "$notes"
+  notes="$home/tmp/.notes.$$"; rm -f "$notes"
   listed="$(FLOW_READY_NOTES="$notes"; export FLOW_READY_NOTES
     for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | python3 -I -c '
 import json, os, sys
@@ -102,7 +101,7 @@ if [ -z "$item" ]; then
   esac
 fi
 
-data="$(adapter read "$item")" || die "cannot read $item"
+data="$(item_read "$item")" || die "cannot read $item"
 [ "$(json_get "$data" status)" = "open" ] || pass_over "$item is closed" 6
 kind="$(json_get "$data" kind)"; size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"
 [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
@@ -143,8 +142,9 @@ if [ -n "$blockers" ]; then
   pass_over "$item is held behind $blockers (blocked by)" 4
 fi
 json_get "$profiles" "steps.$step" >/dev/null 2>&1 || die "unknown step '$step' for $item"
-if [ -f "$(run_file "$item")" ]; then
-  echo "$item already has a run in flight: $(cat "$(run_file "$item")"). Finish it with advance.sh, or delete the run file if that session died." >&2; exit 7
+in_flight="$(run_record "$item")" || die "cannot read the run of $item"
+if [ -n "$in_flight" ]; then
+  echo "$item already has a run in flight: $in_flight. Finish it with advance.sh, or end it with steward.sh stop $item if that session died." >&2; exit 7
 fi
 
 attempts="$(state_get "$data" attempts)"; attempts="${attempts:-0}"; max_attempts="$(json_get "$profiles" max_attempts)"

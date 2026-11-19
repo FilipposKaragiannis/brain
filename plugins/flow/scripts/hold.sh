@@ -55,14 +55,14 @@ cmd_candidates() {
     esac
   done
   if [ -z "$mine" ]; then
-    data="$(adapter read "$item")" || die "cannot read $item"
+    data="$(item_read "$item")" || die "cannot read $item"
     mine="$(json_list "$data" state.touches)"
   fi
   rows=""
   if [ -n "$mine" ]; then
     rows="$(claimed | while IFS="$(printf '\t')" read -r other wt; do
       [ "$other" != "$item" ] || continue
-      od="$(adapter read "$other" 2>/dev/null </dev/null)" || continue
+      od="$(item_read "$other" 2>/dev/null </dev/null)" || continue
       [ "$(json_get "$od" status)" = open ] || continue
       [ "$(state_get "$od" held_by)" != "$item" ] || continue
       kind=changes; globs="$(json_list "$od" state.changes)"
@@ -106,7 +106,7 @@ cmd_set() {
 
 cmd_clear() {
   item="$1"; why="$2"
-  data="$(adapter read "$item")" || die "cannot read $item"
+  data="$(item_read "$item")" || die "cannot read $item"
   [ -n "$(state_get "$data" held_by)" ] || return 0
   record_set "$item" held_by= held_reason= >/dev/null || die "could not clear the hold on $item"
   event "$item" unheld "$why"

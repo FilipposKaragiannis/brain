@@ -26,9 +26,8 @@ while [ $# -gt 0 ]; do
     *) die "unknown option $1" 2 ;;
   esac
 done
-run_file="$home/runs/$(item_slug "$item").json"
-[ -f "$run_file" ] || die "$item has no run in flight (run next.sh $item first)" 2
-run="$(cat "$run_file")"
+run="$(run_record "$item")" || die "cannot read the run of $item"
+[ -n "$run" ] || die "$item has no run in flight (run next.sh $item first)" 2
 step="$(json_get "$run" step)"; profile="$(json_get "$run" profile)"; wt="$(json_get "$run" worktree)"; reports="$(json_get "$run" reports)"
 result=""; [ -f "$reports/$step.json" ] && result="$(cat "$reports/$step.json")"
 [ -n "$status" ] || status="$(json_get "$result" status)"
@@ -45,19 +44,19 @@ if [ "$step" = "verify" ] && [ -z "$summary" ] && [ -n "$result" ]; then
 fi
 [ -n "$status" ] || die "no result for step $step: write $reports/$step.json or pass --status" 2
 
-data="$(adapter read "$item")" || die "cannot read $item"
+data="$(item_read "$item")" || die "cannot read $item"
 attempts="$(state_get "$data" attempts)"; case "$attempts" in ''|*[!0-9]*) attempts=0 ;; 0*) attempts="${attempts#"${attempts%%[!0]*}"}"; attempts="${attempts:-0}" ;; esac
 size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
 kind="$(json_get "$data" kind)"
-# The pr step's worker may be unable to record its PR (a local item file lies outside its
-# sandbox): the URL its result names is recorded here when the item has none.
-if [ "$step" = pr ] && pr_url="$(json_get "$result" pr)" && [ -n "$pr_url" ] && [ -z "$(state_get "$data" pr)" ]; then
-  adapter link-pr "$item" "$pr_url" >/dev/null || echo "advance: could not record $pr_url on $item" >&2
-  data="$(adapter read "$item")" || die "cannot read $item"
-fi
-# The worker's link-pr writes only the tracker: the record takes the PR the tracker holds.
-if [ "$step" = pr ] && [ -n "$(state_get "$data" pr)" ]; then
-  record_set "$item" "pr=$(state_get "$data" pr)" "pr_host=$(state_get "$data" pr_host)"
+# The worker's link-pr writes only the tracker: the record takes the PR the tracker holds. The
+# pr step's worker may be unable to record its PR (a local item file lies outside its sandbox):
+# the URL its result names is linked here when the tracker holds none.
+if [ "$step" = pr ]; then
+  if linked="$(record_linked_pr "$item")" && [ -z "$linked" ] && pr_url="$(json_get "$result" pr)" && [ -n "$pr_url" ]; then
+    adapter link-pr "$item" "$pr_url" >/dev/null || echo "advance: could not record $pr_url on $item" >&2
+    record_linked_pr "$item" >/dev/null
+  fi
+  data="$(item_read "$item")" || die "cannot read $item"
 fi
 
 finish_run() { record_set "$item" "run:=null" >/dev/null; }

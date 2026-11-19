@@ -35,8 +35,8 @@ check_all() { # check_all <name> '<condition>': the condition is shell text run 
 jget() { python3 -c 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
 print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
-# claim_step <item>: the step the item's claim in the pool holds.
-claim_step() { jget step < "$("$P/scripts/steward.sh" find "$1")/.flow/claim.json"; }
+# claim_step <item>: the step the pool table shows for the item's claim.
+claim_step() { "$P/scripts/steward.sh" pool | awk -v item="$1" '$3 == item { print $4 }'; }
 # record <command> <argument>...: the flow record of the project in the current folder.
 record() { "$P/scripts/state.sh" "$@"; }
 # end_run <item>: the item's run is over, as when its agent is gone.
@@ -1786,7 +1786,7 @@ check "a full pool: next takes the item that holds a claim, not exit 3" sh -c '[
 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "a full pool with only unclaimed items left: exit 3, not 5" [ "$code" -eq 3 ]
 check "the pick lock is released after a skipped pick" [ ! -d .flow/pick.lock ]
-check "a skipped pick leaves no cached ready list behind" sh -c '! ls .flow/runs/.ready.* >/dev/null 2>&1'
+check "a skipped pick leaves no cached ready list behind" sh -c '! ls .flow/tmp/.ready.* >/dev/null 2>&1'
 end_run "$f2"
 out="$(FLOW_NEXT_SKIP="$f2" "$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
 check "a FLOW_NEXT_SKIP from the caller's environment is ignored" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$f2"
@@ -1808,13 +1808,13 @@ out="$("$P/scripts/next.sh" --json 2>"$work/pass.err")"; code=$?
 check "a pick leaves the item whose every step ran to the owner and takes the next" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb"
 end_run "$pb"
 # The ready list a pick reads can be older than the item's state: here a gate raised in between.
-stale_pick() { sh -c 'printf "%s\n" "$2" > ".flow/runs/.ready.$$"; FLOW_NEXT_PID=$$ exec "$1" --json' _ "$P/scripts/next.sh" "$stale"; }
+stale_pick() { sh -c 'printf "%s\n" "$2" > ".flow/tmp/.ready.$$"; FLOW_NEXT_PID=$$ exec "$1" --json' _ "$P/scripts/next.sh" "$stale"; }
 record set "$pa" step=implement gate=plan-approval
 out="$(stale_pick 2>"$work/pass.err")"; code=$?
 check "a pick passes over an item its ready list holds that waits at a gate, and says so" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ] && grep -q "$4 waits at gate .plan-approval." "$5"' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb" "$pa" "$work/pass.err"
 stale_pick >/dev/null 2>"$work/pass.err"; code=$?
 check "a pass-over with nothing left is nothing ready (exit 5), not a full pool (exit 3)" sh -c "[ $code -eq 5 ] && grep -q 'nothing ready' '$work/pass.err'"
-check "a pass-over leaves no cached ready list behind" sh -c '! ls .flow/runs/.ready.* >/dev/null 2>&1'
+check "a pass-over leaves no cached ready list behind" sh -c '! ls .flow/tmp/.ready.* >/dev/null 2>&1'
 "$P/scripts/next.sh" "$pa" >/dev/null 2>&1; code=$?
 check "a named item at a gate still exits 4" [ "$code" -eq 4 ]
 record set "$pa" step=done gate=none

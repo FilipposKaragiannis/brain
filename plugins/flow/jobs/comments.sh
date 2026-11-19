@@ -84,7 +84,7 @@ fi
 # prepare_pr <target>: chase its silent reviewers (not on a draft, which waits on its quiz in the console) and
 # print the brief's notes: the PR conflicts with its base, checks fail on its head. Model free.
 prepare_pr() {
-  if adapter_for "$1" >/dev/null; then pull="$(json_get "$(adapter read "$1" 2>/dev/null)" state.pr)"; else pull="$1"; fi
+  if adapter_for "$1" >/dev/null; then pull="$(state_get "$(item_read "$1" 2>/dev/null)" pr)"; else pull="$1"; fi
   [ -n "$pull" ] && state="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pull" 2>/dev/null)" || return 0
   [ "$(json_get "$state" isDraft)" = "true" ] || chase_reviewers "$1" "$pull"
   conflict_note "$1" "$pull"
@@ -120,7 +120,7 @@ chase_reviewers() { # chase_reviewers <target> <pr>
 activity() {
   awaiting=""; cleared=""
   if adapter_for "$1" >/dev/null; then
-    data="$(adapter read "$1" 2>/dev/null)"; pull="$(json_get "$data" state.pr)"; cleared="$(json_get "$data" state.answered_at)"
+    data="$(item_read "$1" 2>/dev/null)"; pull="$(state_get "$data" pr)"; cleared="$(state_get "$data" answered_at)"
   else pull="$1"; fi
   [ -n "$pull" ] && act="$("$FLOW_PLUGIN/scripts/comments.sh" activity "$pull" 2>/dev/null)" || return 0
   awaiting="$(json_list "$act" awaiting | tr '\n' ' ' | sed 's/ $//')"
@@ -175,21 +175,21 @@ resume_note() {
 # writes it to <record> once it carried the answer out or raised it again as a gate.
 answer_note() {
   answer=""; answer_at=""; answer_item="$(item_of "$1")"; [ -n "$answer_item" ] || return 0
-  an_data="$(adapter read "$answer_item" 2>/dev/null)"
-  [ "$(json_get "$an_data" state.answer_pending)" = comments ] || return 0
-  an_gate="$(json_get "$an_data" state.answered)"
-  answer_at="$(json_get "$an_data" state.answered_at)"; answer_at="${answer_at:-unknown}"
+  an_data="$(item_read "$answer_item" 2>/dev/null)"
+  [ "$(state_get "$an_data" answer_pending)" = comments ] || return 0
+  an_gate="$(state_get "$an_data" answered)"
+  answer_at="$(state_get "$an_data" answered_at)"; answer_at="${answer_at:-unknown}"
   answer="$(printf ' The owner answered the %s gate: %s. Run the Answer step first; once it is carried out or raised again as a gate, write the line %s to %s.' \
-    "${an_gate:-last}" "$(json_get "$an_data" state.answer | tr '\n' ' ' | sed 's/[. ]*$//')" "$answer_at" "$2")"
+    "${an_gate:-last}" "$(state_get "$an_data" answer | tr '\n' ' ' | sed 's/[. ]*$//')" "$answer_at" "$2")"
 }
 # answer_taken <record>: the pass confirmed the answer named $answer_at (answer_note).
 answer_taken() { [ "$(head -n 1 "$1" 2>/dev/null)" = "$answer_at" ]; }
 # take_answer <target>: the answer is taken, unless a newer one came while the pass ran (gate.sh
 # clear takes no item lock): only the same answer, by its answered_at, is marked taken.
 take_answer() {
-  ta_data="$(adapter read "$answer_item" 2>/dev/null)"
-  [ "$(json_get "$ta_data" state.answer_pending)" = comments ] || return 0
-  ta_at="$(json_get "$ta_data" state.answered_at)"
+  ta_data="$(item_read "$answer_item" 2>/dev/null)"
+  [ "$(state_get "$ta_data" answer_pending)" = comments ] || return 0
+  ta_at="$(state_get "$ta_data" answered_at)"
   if [ "${ta_at:-unknown}" != "$answer_at" ]; then
     job_say "$1: a newer answer to its gate came while the pass ran; it waits for the next pass" >/dev/null; return 0
   fi
@@ -227,7 +227,7 @@ in_use() {
 # once <file> <value>: true the first time <value> is seen for <file>, and records it.
 once() { [ "$(cat "$1" 2>/dev/null)" != "$2" ] && printf '%s\n' "$2" > "$1"; }
 # pr_of <target>: the PR a target names: the item's recorded PR, or the target itself.
-pr_of() { if adapter_for "$1" >/dev/null; then json_get "$(adapter read "$1" 2>/dev/null)" state.pr; else printf '%s' "$1"; fi; }
+pr_of() { if adapter_for "$1" >/dev/null; then state_get "$(item_read "$1" 2>/dev/null)" pr; else printf '%s' "$1"; fi; }
 # in_use_marker <target> <pr>: the told-in-use marker of the PR <target> names, keyed by the PR's
 # number (<pr> as a number, #<n> or URL); by the target when no PR is known.
 in_use_marker() {
