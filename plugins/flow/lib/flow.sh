@@ -405,16 +405,25 @@ scope_fields_read() {
   done
 }
 
-# scope_filter <adapter>: the adapter's scope, checked (scope_check) and exported comma-separated
-# for the adapter to map beside a pick: FLOW_SCOPE_ASSIGNEE, FLOW_SCOPE_STATUS, FLOW_SCOPE_LABELS,
-# FLOW_SCOPE_KINDS and FLOW_SCOPE_QUERY, each empty when the scope leaves it unset.
+# scope_filter <adapter>: the adapter's scope, checked (scope_check) when the config names a scope
+# (scope_in_config), and exported comma-separated for the adapter to map beside a pick:
+# FLOW_SCOPE_ASSIGNEE, FLOW_SCOPE_STATUS, FLOW_SCOPE_LABELS, FLOW_SCOPE_KINDS and
+# FLOW_SCOPE_QUERY, each empty when the scope leaves it unset.
 scope_filter() {
+  FLOW_SCOPE_ASSIGNEE=""; FLOW_SCOPE_STATUS=""; FLOW_SCOPE_LABELS=""; FLOW_SCOPE_KINDS=""; FLOW_SCOPE_QUERY=""
+  export FLOW_SCOPE_ASSIGNEE FLOW_SCOPE_STATUS FLOW_SCOPE_LABELS FLOW_SCOPE_KINDS FLOW_SCOPE_QUERY
+  scope_in_config || return 0
   scope_check "$1"
   FLOW_SCOPE_ASSIGNEE="$(cfg "$1.scope.assignee")"; FLOW_SCOPE_QUERY="$(cfg "$1.scope.query")"
   FLOW_SCOPE_STATUS="$(cfg "$1.scope.status" | paste -sd, -)"
   FLOW_SCOPE_LABELS="$(cfg "$1.scope.labels" | paste -sd, -)"
   FLOW_SCOPE_KINDS="$(cfg "$1.scope.kinds" | paste -sd, -)"
-  export FLOW_SCOPE_ASSIGNEE FLOW_SCOPE_STATUS FLOW_SCOPE_LABELS FLOW_SCOPE_KINDS FLOW_SCOPE_QUERY
+}
+
+# scope_in_config: 0 when a line of .flow/config.yaml outside a comment says scope, quoted or not;
+# 1 says, with one grep, that no tracker has a scope.
+scope_in_config() {
+  grep -Eq '^[[:space:]]*([^#[:space:]].*)?scope' "$(config_file)" 2>/dev/null
 }
 
 # scope_written <adapter>: 0 when <adapter>.scope has a value or lines under it, however they read;
@@ -423,11 +432,12 @@ scope_written() {
   [ -n "$(cfg "$1.scope")" ] || yaml_nested "$(config_file)" "$1.scope"
 }
 
-# scope_holds <item>: 0 when no adapter owns the item (an adhoc: name); else the adapter's in-scope
-# exit, which reads the scope as list does: 0 inside or with no scope, 1 outside and 3 when the
-# tracker cannot say, each said on stderr, 2 for a scope scope_check refuses.
+# scope_holds <item>: 0 when no adapter owns the item (an adhoc: name) or the config names no scope
+# (scope_in_config); else the adapter's in-scope exit, which reads the scope as list does: 0 inside
+# or with no scope, 1 outside and 3 when the tracker cannot say, each said on stderr, 2 for a scope
+# scope_check refuses.
 scope_holds() {
-  _scope_adapter="$(adapter_for "$1")" || return 0
+  _scope_adapter="$(adapter_for "$1")" && scope_in_config || return 0
   (adapter in-scope "$1"); _scope_code=$?
   case "$_scope_code" in
     1) echo "flow: $1 is outside $_scope_adapter.scope in .flow/config.yaml; the flow does not run it" >&2 ;;

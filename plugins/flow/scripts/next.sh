@@ -106,7 +106,7 @@ data="$(adapter read "$item")" || die "cannot read $item"
 # A picked item came from the scoped ready list, and a named one that holds a claim was in the
 # scope when it was claimed, so its run goes on after it leaves it: only a named item with no
 # claim is checked.
-[ -z "$named" ] || [ -n "$("$FLOW_PLUGIN/scripts/steward.sh" find "$item" </dev/null 2>/dev/null)" ] \
+[ -z "$named" ] || ! scope_in_config || [ -n "$("$FLOW_PLUGIN/scripts/steward.sh" find "$item" </dev/null 2>/dev/null)" ] \
   || scope_holds "$item" || exit 2
 [ "$(json_get "$data" status)" = "open" ] || pass_over "$item is closed" 6
 kind="$(json_get "$data" kind)"; size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"
