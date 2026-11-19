@@ -3296,9 +3296,8 @@ for templated_row in "jira:PROJ-123 task/proj-123-drill-timer 2026-10-25T02:10:0
   : > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
   check "CommentsJob_TemplatedHead_PassStartsInTheWorktreeItsClaimHolds [$templated_head]: the head maps to $templated_item through its claim, so the pass runs where the item's work is" sh -c "[ \"\$(cd \"\$(head -1 '$work/host77.log' | cut -f2)\" && pwd -P)\" = \"\$(cd '$wm' && pwd -P)\" ]"
   check "CommentsJob_TemplatedHead_PassReadsTheItemsResumeNote [$templated_head]: the uncommitted work is noted in $templated_item's reports, so the next pass continues it" grep -q "read .*$(item_slug "$templated_item")/comments-resume.md first" "$work/host77.log"
-  rm -f "$wm/half.txt"
+  rm -f "$wm/half.txt"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 done
-printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 git init -q --bare "$work/split-origin.git" && git remote add origin "$work/split-origin.git" && git push -q origin main 2>/dev/null
 up="$("$P/scripts/new.sh" task "Pushed branch" --size S --body x)"; wu="$("$P/scripts/steward.sh" claim "$up")"; bu="$(git -C "$wu" symbolic-ref --short HEAD)"
 printf 'x\n' > "$wu/x.txt" && git -C "$wu" add x.txt && git -C "$wu" commit -qm x && git -C "$wu" push -q -u origin "$bu" 2>/dev/null

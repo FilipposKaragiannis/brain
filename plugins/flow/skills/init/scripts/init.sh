@@ -376,7 +376,7 @@ if [ -f .flow/config.yaml ]; then
   while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_TRACKERS
 $(trackers_unread)
 EOF_TRACKERS
-  while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_BRANCH
+  while IFS= read -r branch_problem; do [ -z "$branch_problem" ] || gap ".flow/config.yaml: $branch_problem"; done <<EOF_BRANCH
 $(branch_problems)
 EOF_BRANCH
   # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;

@@ -28,11 +28,12 @@ worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verif
    `fail` naming both values. Say "base <b>, recorded at claim" in the result. When
    `state.base` is empty, the claim predates the recorded base and its `claim.json` `base` is
    only the config base, so use the old rule: the parent item's task branch when the item has a
-   parent with a claimed branch (its `claim.json` `branch`), else an `epic/<n>` branch on the remote
-   for that parent, else `base` from the config; never the default branch by default when a
-   parent exists. Say which base and why in the result. Check the base before any `git` or
-   `gh` command takes it: it does not start with `-`, it matches `^[A-Za-z0-9._/-]+$`, and
-   `git check-ref-format --branch <b>` accepts it; otherwise stop with status `fail` naming it.
+   parent with a task branch (its `claim.json` `branch`, else its item state `branch` when it holds
+   no claim), else an `epic/<n>` branch on the remote for that parent, else `base` from the config;
+   never the default branch by default when a parent exists. Say which base and why in the
+   result. Check the base before any `git` or `gh` command takes it: it does not start with
+   `-`, it matches `^[A-Za-z0-9._/-]+$`, and `git check-ref-format --branch <b>` accepts it;
+   otherwise stop with status `fail` naming it.
 3. Push: `git push -u origin <branch>`.
 4. Body: the repo template when one exists, else the house template: Summary with the
    smallest view that makes the point (pseudocode, call tree, file tree, diff sketch or

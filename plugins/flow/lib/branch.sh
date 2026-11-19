@@ -78,21 +78,55 @@ branch_name_valid() {
   base_name_valid "$1" && git -C "$(flow_repository)" check-ref-format --branch "$1" >/dev/null 2>&1
 }
 
-# claim_branch <item> <item-json>: the task branch a new claim of the item takes. The branch its
-# state records (a release keeps it, and a title edit never renames it); else flow/<slug> when that
-# branch exists (a claim made before the template); else the item's template rendered. With no
-# item JSON (the item could not be read) it renders from the id alone, and gives nothing and 1 when
-# the template needs the kind or the title, or is a per-kind map.
+# claim_branch <item> <item-json> <base>: the task branch a new claim of the item from the base
+# takes. The branch its state records when branch_recorded_trusted takes it (a release keeps it,
+# and a title edit never renames it); else flow/<slug> when that branch exists (a claim made before
+# the template); else the item's template rendered. With no item JSON (the item could not be read)
+# it renders from the id alone, and gives nothing and 1 when the template needs the kind or the
+# title, or is a per-kind map.
 claim_branch() {
   claimed_item_json="$2"
+  claimed_kind="$(json_get "$claimed_item_json" kind)"
   recorded_branch="$(state_get "$claimed_item_json" branch)"
-  if [ -n "$recorded_branch" ]; then printf '%s' "$recorded_branch"; return; fi
+  if [ -n "$recorded_branch" ] && branch_recorded_trusted "$recorded_branch" "$1" "$claimed_kind" "$3"; then printf '%s' "$recorded_branch"; return; fi
   legacy_branch="flow/$(item_slug "$1")"
   if git -C "$(flow_repository)" show-ref --verify --quiet "refs/heads/$legacy_branch"; then printf '%s' "$legacy_branch"; return; fi
-  claimed_kind="$(json_get "$claimed_item_json" kind)"
   claimed_template="$(branch_template "$claimed_kind")"
   if [ -z "$claimed_kind" ]; then case "$claimed_template" in ''|*'{kind}'*|*'{title}'*) return 1 ;; esac; fi
   branch_render "$claimed_template" "$1" "$claimed_kind" "$(json_get "$claimed_item_json" title)"
+}
+
+# branch_recorded_trusted <branch> <item> <kind> <base>: true when the flow could have named the
+# branch for the item: flow/<slug>, or the kind's template with any title. Never the claim base,
+# the config base or origin's default branch. The item state is tracker text anyone may write.
+branch_recorded_trusted() {
+  case "$1" in "$4"|"$(cfg_or base main)"|"$(branch_remote_default)") return 1 ;; esac
+  [ "$1" != "flow/$(item_slug "$2")" ] || return 0
+  branch_fits_template "$1" "$(branch_template "$3")" "$(item_slug "$2")" "$(branch_key "$2")" "$3"
+}
+
+# branch_remote_default: the branch origin/HEAD points at, or nothing.
+branch_remote_default() {
+  remote_head="$(git -C "$(flow_repository)" symbolic-ref --short -q refs/remotes/origin/HEAD)"
+  [ -z "$remote_head" ] || printf '%s' "${remote_head#origin/}"
+}
+
+# branch_fits_template <branch> <template> <slug> <key> <kind>: true when branch_render gives the
+# branch for some title: {slug}, {key} and {kind} exact, {title} any run of a-z, 0-9 and - up to
+# branch_title_length_cap, the rest literal.
+branch_fits_template() {
+  [ -n "$2" ] || return 1
+  python3 -I -c '
+import re, sys
+branch, template, cap = sys.argv[1], sys.argv[2], int(sys.argv[6])
+exact_placeholders = list(zip(("{slug}", "{key}", "{kind}"), sys.argv[3:6]))
+def filled(part):
+    for placeholder, value in exact_placeholders: part = part.replace(placeholder, value)
+    return re.escape(part)
+pattern = ("[a-z0-9-]{0,%d}" % cap).join(filled(part) for part in template.split("{title}"))
+untrimmed = (branch + "-" * dashes for dashes in range(len(template) + 1))
+sys.exit(0 if not branch.endswith("-") and any(re.fullmatch(pattern, name) for name in untrimmed) else 1)' \
+    "$1" "$2" "$3" "$4" "$5" "$branch_title_length_cap"
 }
 
 # claim_branch_option [--base <branch>] [--branch <name>]: the name --branch gives, or nothing.

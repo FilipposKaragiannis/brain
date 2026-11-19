@@ -151,7 +151,7 @@ claim_at_base() {
     adapter write-state "$1" "last_event=$(now_iso) $claim_refusal" >/dev/null
     echo "$1: $claim_refusal" >&2; return 4
   fi
-  claim_task_branch="$(claim_branch "$1" "$2")" || claim_task_branch=""
+  claim_task_branch="$(claim_branch "$1" "$2" "$claim_base")" || claim_task_branch=""
   claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" claim "$1" --base "$claim_base" ${claim_task_branch:+--branch "$claim_task_branch"})" || return
   printf '%s\t%s\tclaim\tbase %s (%s)\n' "$(now_iso)" "$1" "$claim_base" "$claim_why" >> "$(flow_home)/events.log"
   printf '%s\n' "$claimed_worktree"

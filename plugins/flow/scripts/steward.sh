@@ -171,8 +171,8 @@ cmd_find() {
 }
 
 cmd_owner() {
-  pool_paths | while read -r p; do
-    owner_claim="$(claim_of "$p")"
+  pool_paths | while read -r pool_path; do
+    owner_claim="$(claim_of "$pool_path")"
     [ "$(json_get "$owner_claim" branch)" = "$1" ] || continue
     owner_item="$(json_get "$owner_claim" item)"
     [ -z "$owner_item" ] || { printf '%s\n' "$owner_item"; break; }
@@ -188,7 +188,7 @@ cmd_claim() {
   branch="flow/$(item_slug "$item")"
   if adapter_for "$item" >/dev/null 2>&1; then
     branch="$(claim_branch_option "$@")"
-    [ -n "$branch" ] || branch="$(claim_branch "$item" "$(adapter read "$item" </dev/null 2>/dev/null)")" || refuse_claim "$item" "$branch_unread_refused" 2
+    [ -n "$branch" ] || branch="$(claim_branch "$item" "$(adapter read "$item" </dev/null 2>/dev/null)" "$base")" || refuse_claim "$item" "$branch_unread_refused" 2
     branch_name_valid "$branch" || refuse_claim "$item" "$branch_name_refused" 2
     ! claimed_branch "$branch" || refuse_claim "$item" "another claim holds its task branch $branch" 4
   fi
@@ -197,6 +197,7 @@ cmd_claim() {
   claim_lock
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then flow_unlock; printf '%s\n' "$existing"; return 0; fi
+  ! claimed_branch "$branch" || { flow_unlock; refuse_claim "$item" "another claim holds its task branch $branch" 4; }
   free="$(free_worktree)" || exit $?
   if git -C "$free" show-ref --verify --quiet "refs/heads/$branch"; then
     git -C "$free" switch -q "$branch" || die "cannot switch $free to $branch"
@@ -1627,7 +1628,7 @@ cmd_resume() {
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
-  claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>]" 2; cmd_claim "$@" ;;
+  claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>] [--branch <name>]" 2; cmd_claim "$@" ;;
   find) [ $# -ge 1 ] || die "usage: find <item>" 2; cmd_find "$1" ;;
   owner) [ $# -ge 1 ] || die "usage: owner <branch>" 2; cmd_owner "$1" ;;
   reserve) cmd_reserve "$@" ;;
