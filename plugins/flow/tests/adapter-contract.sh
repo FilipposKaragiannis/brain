@@ -380,6 +380,7 @@ fi
 # scope_config_<name> <lines> prints the scope block for the end of the adapter's own config
 # section, which config_<name> writes last.
 scope_config_local() { printf 'local:\n  scope:\n%s\n' "$1"; }
+scope_config_github() { printf '  scope:\n%s\n' "$1"; }
 scope_config() { # scope_config <scope lines> [<pick lines>]
   write_config 0; "scope_config_$name" "$1" >> "$FLOW_HOME/config.yaml"
   [ -z "${2:-}" ] || printf 'pick:\n%s\n' "$2" >> "$FLOW_HOME/config.yaml"

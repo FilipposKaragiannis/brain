@@ -800,6 +800,35 @@ check_all "slack: a gate on a local item says to answer in a session, as its ada
 mkdir -p "$work/slackplugin/scripts" "$work/slackplugin/adapters/linear" && cp "$P/scripts/_slack.py" "$work/slackplugin/scripts/" && printf 'lin:\n' > "$work/slackplugin/adapters/linear/prefix"
 check_all "slack: an id reads as code by the prefix file of any adapter folder, not a fixed list" '[ "$(python3 -I "$work/slackplugin/scripts/_slack.py" t "" "" "" "" "See lin:ENG-4 and gh#5" | slack_codes)" = "lin:ENG-4" ]'
 check "slack: a link that is not https stays out of the fallback" sh -c "python3 -I '$P/scripts/_slack.py' t 'gh#1 x' 'javascript:x|<!channel>' ambiguity 'gh#1' m | python3 -c 'import json,sys; t=json.load(sys.stdin)[\"text\"]; assert \"javascript\" not in t and \"<!channel>\" not in t, t'"
+echo "github tracker scope (fake gh)"
+cp "$FAKE_GH_DIR/issues.json" "$work/scope-issues.saved"; cp .flow/config.yaml "$work/scope-config.saved"
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
+import json, sys
+path = sys.argv[1]; data = json.load(open(path))
+data["issues"] += [{"number": 50, "title": "Team A's, mine", "state": "OPEN", "labels": ["team-a"], "assignees": ["owner"]},
+                   {"number": 51, "title": "Team B's", "state": "OPEN", "labels": ["team-b"]}]
+json.dump(data, open(path, "w"))
+PY2
+gh_scope_config() { # gh_scope_config <the github.scope block's lines>
+  printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  scope:\n%s\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' "$1" > .flow/config.yaml
+}
+gh_scope_ids() { "$P/adapters/github/list.sh" "$@" 2>/dev/null | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+gh_scope_config '    labels: [team-a]'
+for scope_issue in 50 51; do
+  "$P/scripts/gate.sh" raise "gh#$scope_issue" ambiguity "1. Which team?" >/dev/null 2>&1
+  printf '/answer 1. this one' | gh issue comment "$scope_issue" -R acme/widgets --body-file - >/dev/null
+done
+scope_cleared="$("$P/adapters/github/answers.sh" 2>/dev/null)"
+check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches" [ "$scope_cleared" = "gh#50" ]
+check "ScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside github.scope, because it reads the scoped list" [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.gate)" = "ambiguity" ]
+gh_scope_config '    assignee: me'
+check "ScopedListAssigneeMe_KeepsOnlyTheGhUsers: assignee: me in github.scope keeps only the issues assigned to the gh user" [ "$(gh_scope_ids)" = "gh#50" ]
+scope_limit=1
+check "ScopedList_LimitCountsMatches: github.limit counts the issues the scope matches, because the scope goes to GitHub's search" [ "$(gh_scope_ids --limit "$scope_limit")" = "gh#50" ]
+gh_scope_config '    status: [Nonesuch]'
+check "ScopedList_StatusOfNoIssueState_ListsNothing: a github.scope status that names no issue state keeps no issue, though it sends GitHub no qualifier" [ "$("$P/adapters/github/list.sh" 2>/dev/null)" = "[]" ]
+cp "$work/scope-issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/scope-config.saved" .flow/config.yaml
+
 echo "trackers and readiness on every tracker (fake gh)"
 mkdir -p "$work/trackers" && cd "$work/trackers" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow

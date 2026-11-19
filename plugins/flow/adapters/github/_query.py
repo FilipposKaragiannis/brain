@@ -1,7 +1,8 @@
 """Issues as raw adapter input, through GraphQL. See list.sh and read.sh.
 
-  _query.py list <repo> <marker> <open|all> <limit>   (narrowed by FLOW_PICK_*, see picked)
+  _query.py list <repo> <marker> <open|all> <limit>   (narrowed by FLOW_SCOPE_* and FLOW_PICK_*, see matches)
   _query.py read <repo> <marker> <number>
+  _query.py in-scope <repo> <marker> <number> <limit> (exit 0 inside FLOW_SCOPE_*, 1 outside, 3 when the search fails)
 
 One paged query returns each issue with its labels, type, native parent, blockers, open sub-issue
 count, issue field
@@ -49,38 +50,88 @@ READ = """query($owner: String!, $name: String!, $number: Int!) {
 SEARCH = """query($q: String!, $first: Int!, $after: String) {
   search(query: $q, type: ISSUE, first: $first, after: $after) {
     pageInfo { hasNextPage endCursor } nodes { ...F } } }""" + FIELDS
+MEMBERS = """query($q: String!, $first: Int!, $after: String) {
+  search(query: $q, type: ISSUE, first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor } nodes { ... on Issue {
+      number state labels(first: 50) { nodes { name } } assignees(first: 20) { nodes { login } } } } } }"""
 
 
-def pick_values(name):
-    return {v.strip().lower() for v in os.environ.get("FLOW_PICK_" + name, "").split(",") if v.strip()}
+def filter_values(prefix, name):
+    return {value.strip().lower() for value in os.environ.get(prefix + name, "").split(",") if value.strip()}
 
 
-# The pick filter of `list --pick` (pick_filter in lib/flow.sh; list.sh turns `me` into the gh
-# user's login): a login, label names and issue states (open, closed), compared without case as
-# GitHub does. The kinds are matched in list.sh, on the built item. A query is GitHub search
-# qualifiers, sent as written within the repository's issues.
-PICK_ASSIGNEE = os.environ.get("FLOW_PICK_ASSIGNEE", "").strip().lower()
-PICK_LABELS = pick_values("LABELS")
-PICK_STATUS = pick_values("STATUS")
-PICK_QUERY = os.environ.get("FLOW_PICK_QUERY", "").strip()
+def filter_rules(prefix):
+    """The neutral fields of a filter (FLOW_PICK_ for `list --pick`, pick_filter in lib/flow.sh;
+    FLOW_SCOPE_ for github.scope, scope_filter; list.sh turns `me` into the gh user's login): a
+    login, label names and issue states (open, closed), compared without case as GitHub does. The
+    kinds are matched on the built item, in list.sh and in-scope.sh."""
+    assignee = os.environ.get(prefix + "ASSIGNEE", "").strip().lower()
+    return {"assignee": {assignee} if assignee else set(),
+            "labels": filter_values(prefix, "LABELS"), "status": filter_values(prefix, "STATUS")}
 
 
-def picked(node):
-    if PICK_ASSIGNEE and PICK_ASSIGNEE not in {a["login"].lower() for a in node["assignees"]["nodes"]}:
-        return False
-    if PICK_LABELS and not PICK_LABELS & {l["name"].lower() for l in node["labels"]["nodes"]}:
-        return False
-    return not PICK_STATUS or node["state"].lower() in PICK_STATUS
+# A query is GitHub search qualifiers, sent as written within the repository's issues.
+PICK_RULES, PICK_QUERY = filter_rules("FLOW_PICK_"), os.environ.get("FLOW_PICK_QUERY", "").strip()
+SCOPE_RULES, SCOPE_QUERY = filter_rules("FLOW_SCOPE_"), os.environ.get("FLOW_SCOPE_QUERY", "").strip()
+ISSUE_STATES = {"open", "closed"}
+PAGE_SIZE = int(os.environ.get("FLOW_GH_PAGE", "50"))
+INSIDE, OUTSIDE, UNKNOWN = 0, 1, 3
+
+
+def matches(node, rules):
+    have = {"assignee": {assignee["login"].lower() for assignee in node["assignees"]["nodes"]},
+            "labels": {label["name"].lower() for label in node["labels"]["nodes"]},
+            "status": {node["state"].lower()}}
+    return all(have[field] & wanted for field, wanted in rules.items() if wanted)
+
+
+def scope_qualifiers():
+    """github.scope as search qualifiers: assignee:<login>, label:"a","b" (any of them), is:open or
+    is:closed when the status names exactly one of them, and its query as written. A status of
+    both or neither sends no qualifier; matches keeps the issues it names."""
+    words = ["assignee:" + login for login in SCOPE_RULES["assignee"]]
+    if SCOPE_RULES["labels"]:
+        words.append("label:" + ",".join('"%s"' % label for label in sorted(SCOPE_RULES["labels"])))
+    states = SCOPE_RULES["status"] & ISSUE_STATES
+    if len(states) == 1:
+        words.append("is:" + states.pop())
+    return " ".join(words + ([SCOPE_QUERY] if SCOPE_QUERY else []))
 
 
 def issue_page(owner, name, states, first, after):
-    """One page of the repository's issues, or of the search PICK_QUERY names; None on a failed call."""
-    if PICK_QUERY:
-        query = "repo:%s/%s is:issue %s%s" % (owner, name, "is:open " if states else "", PICK_QUERY)
+    """One page of the repository's issues, or of the search github.scope and PICK_QUERY name; None
+    on a failed call."""
+    words = " ".join(word for word in (scope_qualifiers(), PICK_QUERY) if word)
+    if words:
+        query = "repo:%s/%s is:issue %s%s" % (owner, name, "is:open " if states else "", words)
         data = graphql(SEARCH, q=query, first=first, after=after)
         return data and data["data"]["search"]
     data = graphql(LIST, owner=owner, name=name, first=first, after=after, states=states)
     return data and data["data"]["repository"]["issues"]
+
+
+def in_scope(owner, name, number, limit):
+    """INSIDE when github.scope's search, paged up to the limit, holds the issue, OUTSIDE when not,
+    UNKNOWN when a call fails; INSIDE with no call when the scope sets no qualifier and no rule. No
+    state comment is read."""
+    qualifiers = scope_qualifiers()
+    if not qualifiers and not any(SCOPE_RULES.values()):
+        return INSIDE
+    query, after, seen = "repo:%s/%s is:issue %s" % (owner, name, qualifiers), None, 0
+    while seen < limit:
+        data = graphql(MEMBERS, q=query, first=min(PAGE_SIZE, limit - seen), after=after)
+        if not data:
+            return UNKNOWN
+        found = data["data"]["search"]
+        if any(node.get("number") == number for node in found["nodes"] if matches(node, SCOPE_RULES)):
+            return INSIDE
+        seen += len(found["nodes"])
+        if not found["pageInfo"]["hasNextPage"]:
+            return OUTSIDE
+        after = found["pageInfo"]["endCursor"]
+    sys.stderr.write("flow: stopped at github.limit %d issues in github.scope before gh#%d; raise it in .flow/config.yaml\n"
+                     % (limit, number))
+    return OUTSIDE
 
 
 def gh(*args):
@@ -148,6 +199,8 @@ def raw(repo, node, marker, always=False):
 def main():
     mode, repo, marker = sys.argv[1], sys.argv[2], sys.argv[3]
     owner, name = repo.split("/", 1)
+    if mode == "in-scope":
+        sys.exit(in_scope(owner, name, int(sys.argv[4]), int(sys.argv[5])))
     if mode == "read":
         data = graphql(READ, owner=owner, name=name, number=int(sys.argv[4]))
         node = data and data["data"]["repository"]["issue"]
@@ -157,14 +210,14 @@ def main():
         return
     states = "OPEN" if sys.argv[4] == "open" else None
     what = "open issues" if states else "issues"
-    limit, page, after, seen = int(sys.argv[5]), int(os.environ.get("FLOW_GH_PAGE", "50")), None, 0
+    limit, after, seen = int(sys.argv[5]), None, 0
     while seen < limit:
-        issues = issue_page(owner, name, states, min(page, limit - seen), after)
+        issues = issue_page(owner, name, states, min(PAGE_SIZE, limit - seen), after)
         if not issues:
             sys.exit(1)
         for node in issues["nodes"]:
             # A node the filter leaves out costs no state comment read.
-            issue = raw(repo, node, marker) if picked(node) else None
+            issue = raw(repo, node, marker) if matches(node, SCOPE_RULES) and matches(node, PICK_RULES) else None
             if issue is not None:
                 print(json.dumps(issue))
             seen += 1

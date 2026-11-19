@@ -17,6 +17,15 @@ issue_number() {
   case "$1" in gh#*) printf '%s' "${1#gh#}" ;; *) die "not a GitHub item id: $1" 2 ;; esac
 }
 
+# assignee_login <assignee>: the login a pick or github.scope names as its assignee, with me read
+# as the gh user.
+assignee_login() {
+  [ "$1" = me ] || { printf '%s' "$1"; return 0; }
+  _login="$(gh api user -q .login)" && [ -n "$_login" ] \
+    || die "cannot read the gh user that assignee: me stands for; log in with gh auth login"
+  printf '%s' "$_login"
+}
+
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority
 # name org issue fields (the size field replaces the size: labels), github.project numbers the
 # project whose Status the adapter keeps in step. The readiness rules are every tracker's
