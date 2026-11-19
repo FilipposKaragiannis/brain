@@ -132,7 +132,14 @@ write_state() {
   # write_state <item> key=value... ; skipped for ids no adapter owns (ad hoc worktree sessions).
   adapter_for "$1" >/dev/null 2>&1 || return 0
   item="$1"; shift
-  adapter write-state "$item" "$@" >/dev/null || echo "flow: could not write state for $item" >&2
+  record_set "$item" "$@" >/dev/null || echo "flow: could not write state for $item" >&2
+}
+
+# write_claimed_state <claim file> <item> key=value...: write_state where the caller knows the
+# item's claim.json, or empty when it holds no pool worktree.
+write_claimed_state() {
+  adapter_for "$2" >/dev/null 2>&1 || return 0
+  record_set_with_claim "$@" >/dev/null || echo "flow: could not write state for $2" >&2
 }
 
 cmd_pool() {
@@ -176,6 +183,7 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
+  if adapter_for "$item" >/dev/null 2>&1; then take_item "$item"; fi
   write_state "$item" "worktree=$(basename "$free")" "base=$base" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
@@ -288,6 +296,7 @@ cmd_release() {
       d="$root/.flow/reports/$(item_slug "$item")"
       [ -d "$d" ] && rm -rf "$d" && echo "removed $d ($item is closed)"
     done
+    record_archive "$item"
   fi
   return 0
 }
@@ -345,8 +354,9 @@ cmd_split() {
   ! kept_whole "$sp_item" || { echo "$sp_item: the owner kept it whole, so it is not split until its plan step rewrites plan.md"; return 1; }
   sp_was="$(state_get "$sp_data" step)"
   sp_said="split into $sp_kids open child item(s), it waits on them"
-  [ "$sp_was" = split ] || write_state "$sp_item" "step=split" "last_event=$(now_iso) $sp_said"
-  sp_path="$(cmd_find "$sp_item")"
+  sp_path="$(cmd_find "$sp_item")"; sp_claim_file=""
+  [ -z "$sp_path" ] || sp_claim_file="$(claim_file "$sp_path")"
+  [ "$sp_was" = split ] || write_claimed_state "$sp_claim_file" "$sp_item" "step=split" "last_event=$(now_iso) $sp_said"
   if [ -z "$sp_path" ]; then
     [ "$sp_was" = split ] || split_msg="$sp_said; it holds no worktree"
   else
@@ -366,9 +376,7 @@ cmd_split() {
     fi
     [ -z "$sp_tmp" ] || rm -f "$sp_tmp" "$sp_tmp.failed"
     if [ -n "$split_kept" ]; then
-      # Through a temp file beside it: a failed write never leaves an empty claim (a free look).
-      sp_new="$sp_path/.flow/claim.json.tmp.$$"
-      if json_set "$sp_claim" step "$(json_string split)" > "$sp_new" && [ -s "$sp_new" ]; then mv "$sp_new" "$sp_path/.flow/claim.json"; else rm -f "$sp_new"; fi
+      [ "$(json_get "$sp_claim" step)" = split ] || write_claimed_state "$sp_claim_file" "$sp_item" "step=split"
       [ "$sp_was" = split ] && [ "$(json_get "$sp_claim" step)" = split ] || split_msg="$sp_said; $sp_name is kept: $split_kept"
     else
       sp_ahead="$(git -C "$sp_path" rev-list --count "$(base_ref "$sp_base")..refs/heads/$sp_branch" 2>/dev/null)"
@@ -617,7 +625,7 @@ cmd_sweep() {
     if [ -z "$pr" ] && [ "$gate" = merge ]; then
       gh_repo="$(cfg github.repo)"
       found="$(cd "$main" && gh pr list ${gh_repo:+-R "$gh_repo"} --head "$br" --state all --json url 2>/dev/null)" && pr="$(json_get "$found" 0.url)"
-      [ -z "$pr" ] || [ "$dry" -eq 1 ] || adapter link-pr "$it" "$pr" >/dev/null || echo "flow: could not record $pr on $it" >&2
+      [ -z "$pr" ] || [ "$dry" -eq 1 ] || link_pr "$it" "$pr"
     fi
     merged=0; head=""
     if [ -n "$pr" ] && st="$("$FLOW_PLUGIN/scripts/comments.sh" state "$pr" 2>/dev/null)" && [ "$(json_get "$st" state)" = MERGED ]; then
@@ -641,6 +649,14 @@ cmd_sweep() {
     [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
     (cmd_release "$p" $force >/dev/null) && echo "$it: released $name ($why)"
   done
+}
+
+# link_pr <item> <pr>: the PR on the tracker (adapter link-pr), then in the item's flow record with
+# the pr_host the tracker took.
+link_pr() {
+  adapter link-pr "$1" "$2" >/dev/null || { echo "flow: could not record $2 on $1" >&2; return 1; }
+  lp_linked_item="$(adapter read "$1" 2>/dev/null)" || return 0
+  write_state "$1" "pr=$2" "pr_host=$(state_get "$lp_linked_item" pr_host)"
 }
 
 # sweep_drop_gate <item> <gate> <answer> <why>: the gate of an item the sweep closes goes with it.
@@ -869,8 +885,8 @@ health_claim() {
     dead=1
     if [ "$dry" -eq 1 ]; then health_say "$it" "would clear the dead run of ${step:-?} (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     else
-      rm -f "$rec"
-      adapter write-state "$it" "last_event=$(now_iso) health: cleared the dead run of ${step:-?}" >/dev/null 2>&1 || true
+      record_set "$it" "run:=null"
+      record_set "$it" "last_event=$(now_iso) health: cleared the dead run of ${step:-?}" >/dev/null 2>&1 || true
       health_say "$it" "dead run of ${step:-?} cleared (record $(health_ago "$started"), no process; last activity $(health_ago "$last"))"
     fi
   fi
@@ -1275,7 +1291,7 @@ health_holds() {
   while IFS="$(printf '\t')" read -r hh_what hh_it hh_by hh_a hh_b; do   # no pipe: health_say counts here
     if [ "$hh_what" = clear ]; then
       if [ "$dry" -eq 1 ]; then health_say "$hh_it" "would clear its hold behind $hh_by: $hh_a"
-      elif adapter write-state "$hh_it" held_by= held_reason= >/dev/null 2>&1; then
+      elif record_set "$hh_it" held_by= held_reason= >/dev/null 2>&1; then
         health_kind=unheld; health_say "$hh_it" "no longer held behind $hh_by: $hh_a"; health_kind=""
       else health_say "$hh_it" "could not clear its hold behind $hh_by ($hh_a)"; fi
       continue
@@ -1525,7 +1541,7 @@ cmd_stop() {
   # shellcheck disable=SC2086
   [ -z "$st_pids" ] || kill -TERM $st_pids 2>/dev/null
   stopped_verify="$(verify_run_end "$1" "$rn_path")"; verify_end_status=$?
-  rm -f "$rn_rec"
+  record_set "$1" "run:=null"
   st_said="run of ${rn_step:-?} stopped by the owner"
   printf '%s\t%s\tstopped\t%s\n' "$(now_iso)" "$1" "$st_said" >> "$home/events.log"
   write_state "$1" "last_event=$(now_iso) $st_said"
@@ -1584,7 +1600,7 @@ cmd_resume() {
   rs_step="$(state_get "$(adapter read "$rs_item" 2>/dev/null)" step)"; [ -n "$rs_step" ] || rs_step="$rn_step"
   mkdir -p "$home/health" "$home/log"
   health_reports="$rn_path/.flow/reports/$(item_slug "$rs_item")"
-  rm -f "$rn_rec"
+  record_set "$rs_item" "run:=null"
   write_state "$rs_item" "last_event=$(now_iso) owner: cleared the dead run of ${rs_step:-?} to resume it"
   health_say "$rs_item" "dead run of ${rs_step:-?} cleared by the owner"
   health_resume "$rs_item" "$rs_step" "$rn_path"

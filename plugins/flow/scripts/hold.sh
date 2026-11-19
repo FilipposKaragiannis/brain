@@ -100,7 +100,7 @@ cmd_set() {
   [ -n "$holder" ] || die "a hold names the item it waits behind" 2
   [ "$holder" != "$item" ] && hd="$(adapter read "$holder" 2>/dev/null)" && [ "$(json_get "$hd" status)" = open ] \
     || { echo "flow: $item is not held behind $holder: it is the item itself, closed or unreadable" >&2; exit 1; }
-  adapter write-state "$item" "held_by=$holder" "held_reason=$reason" >/dev/null || die "could not write the hold on $item"
+  record_set "$item" "held_by=$holder" "held_reason=$reason" >/dev/null || die "could not write the hold on $item"
   event "$item" held "behind $holder: ${reason:-no reason given}"
 }
 
@@ -108,7 +108,7 @@ cmd_clear() {
   item="$1"; why="$2"
   data="$(adapter read "$item")" || die "cannot read $item"
   [ -n "$(state_get "$data" held_by)" ] || return 0
-  adapter write-state "$item" held_by= held_reason= >/dev/null || die "could not clear the hold on $item"
+  record_set "$item" held_by= held_reason= >/dev/null || die "could not clear the hold on $item"
   event "$item" unheld "$why"
 }
 
