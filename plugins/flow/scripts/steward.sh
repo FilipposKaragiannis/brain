@@ -190,6 +190,7 @@ cmd_claim() {
     branch="$(claim_branch_option "$@")"
     [ -n "$branch" ] || branch="$(claim_branch "$item" "$(adapter read "$item" </dev/null 2>/dev/null)" "$base")" || refuse_claim "$item" "$branch_unread_refused" 2
     branch_name_valid "$branch" || refuse_claim "$item" "$branch_name_refused" 2
+    ! branch_is_base "$branch" "$base" || refuse_claim "$item" "$branch_base_refused" 2
     ! claimed_branch "$branch" || refuse_claim "$item" "another claim holds its task branch $branch" 4
   fi
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null

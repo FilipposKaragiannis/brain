@@ -140,6 +140,38 @@ check "TemplateRenderingAnInvalidName_CreatesNoBranch: no branch is left behind"
 check "StewardClaimOfAnInvalidName_ExitsWithTheConfigCode: steward's own claim refuses the name too" \
   '[ "$direct_invalid_code" -eq 2 ]'
 
+new_repo base_named
+set_branch_config 'branch: task/{key}'
+onto_base="$(new_task "Drill timer")"
+template_base="task/task-$(number_of "$onto_base")"
+git branch "$template_base" main
+worktrees_before="$(worktree_count)"; branches_before="$(git branch --list | wc -l | tr -d ' ')"
+base_tip_before="$(git rev-parse "$template_base")"
+"$plugin/scripts/steward.sh" claim "$onto_base" --base "$template_base" >/dev/null 2>&1; template_base_code=$?
+check "TemplateRenderingTheClaimBase_ExitsWithTheConfigCode: a task branch that is its own base would put the work straight onto the base, exit 2" \
+  '[ "$template_base_code" -eq 2 ]'
+check "TemplateRenderingTheClaimBase_ClaimsNoWorktree: the item is not claimed" \
+  '[ -z "$("$plugin/scripts/steward.sh" find "$onto_base")" ]'
+check "TemplateRenderingTheClaimBase_GrowsNoWorktree: the pool is not grown for a refused claim" \
+  '[ "$(worktree_count)" = "$worktrees_before" ]'
+check "TemplateRenderingTheClaimBase_CreatesNoBranch: no branch is left behind" \
+  '[ "$(git branch --list | wc -l | tr -d " ")" = "$branches_before" ]'
+check "TemplateRenderingTheClaimBase_LeavesTheBaseUntouched: the base keeps its tip" \
+  '[ "$(git rev-parse "$template_base")" = "$base_tip_before" ]'
+
+main_tip_before="$(git rev-parse main)"
+"$plugin/scripts/steward.sh" claim "$onto_base" --branch main >/dev/null 2>&1; option_base_code=$?
+check "BranchOptionNamingTheConfigBase_ExitsWithTheConfigCode: --branch main would put the work straight onto the base, exit 2" \
+  '[ "$option_base_code" -eq 2 ]'
+check "BranchOptionNamingTheConfigBase_ClaimsNoWorktree: the item is not claimed" \
+  '[ -z "$("$plugin/scripts/steward.sh" find "$onto_base")" ]'
+check "BranchOptionNamingTheConfigBase_GrowsNoWorktree: the pool is not grown for a refused claim" \
+  '[ "$(worktree_count)" = "$worktrees_before" ]'
+check "BranchOptionNamingTheConfigBase_CreatesNoBranch: no branch is left behind" \
+  '[ "$(git branch --list | wc -l | tr -d " ")" = "$branches_before" ]'
+check "BranchOptionNamingTheConfigBase_LeavesTheBaseUntouched: main keeps its tip" \
+  '[ "$(git rev-parse main)" = "$main_tip_before" ]'
+
 new_repo taken
 set_branch_config 'branch: task/shared'
 holder="$(new_task "Drill timer")"

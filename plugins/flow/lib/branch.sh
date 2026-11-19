@@ -24,6 +24,7 @@ branch_title_length_cap=40
 # Why a claim refuses a task branch name. The name stays out: the template is free text.
 branch_name_refused='the branch template gives no valid branch name for its task branch'
 branch_unread_refused='the branch template needs the item, which could not be read'
+branch_base_refused="the task branch would be the claim base, the config base or origin's default branch"
 
 # branch_template <kind>: the template for a kind: branch.<kind>, else a scalar branch, else
 # flow/{slug}. A per-kind map that leaves the kind out gives flow/{slug}; with no kind (the item
@@ -100,9 +101,16 @@ claim_branch() {
 # branch for the item: flow/<slug>, or the kind's template with any title. Never the claim base,
 # the config base or origin's default branch. The item state is tracker text anyone may write.
 branch_recorded_trusted() {
-  case "$1" in "$4"|"$(cfg_or base main)"|"$(branch_remote_default)") return 1 ;; esac
+  ! branch_is_base "$1" "$4" || return 1
   [ "$1" != "flow/$(item_slug "$2")" ] || return 0
   branch_fits_template "$1" "$(branch_template "$3")" "$(item_slug "$2")" "$(branch_key "$2")" "$3"
+}
+
+# branch_is_base <branch> <base>: true when the branch is the claim base, the config base or
+# origin's default branch, which no task branch may be.
+branch_is_base() {
+  case "$1" in "$2"|"$(cfg_or base main)"|"$(branch_remote_default)") return 0 ;; esac
+  return 1
 }
 
 # branch_remote_default: the branch origin/HEAD points at, or nothing.
