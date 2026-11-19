@@ -1739,41 +1739,44 @@ cat > "$work/create/idle-create.sh" <<EOF
 #!/bin/sh
 printf '%s\n' "\$@" >> "$create_log"
 EOF
-createcfg() { printf 'adapters:\n  default: local\nbase: main\npool:\n%bpool_max: 9\nworktree_name: %s\nworktree_create: %s\nworktree_copy:\n  - local\nworktree_setup:\n  - printf ran > setup.txt\nnotify:\n  desktop: false\n' "$1" "$2" "$3" > .flow/config.yaml; }
+write_create_config() { printf 'adapters:\n  default: local\nbase: main\npool:\n%bpool_max: 9\nworktree_name: %s\nworktree_create: %s\nworktree_copy:\n  - local\nworktree_setup:\n  - printf ran > setup.txt\nnotify:\n  desktop: false\n' "$1" "$2" "$3" > .flow/config.yaml; }
 fake_create="sh $work/create/fake-create.sh {path} {base}"
 logged_path() { cd "$(sed -n 1p "$create_log")" 2>/dev/null && pwd -P; }
-createcfg '' "../{repo} 'q-wt-{n}" "$fake_create"
+write_create_config '' "../{repo} 'q-wt-{n}" "$fake_create"
 : > "$create_log"
-c1="$("$P/scripts/new.sh" task "Create")"
-cw1="$("$P/scripts/steward.sh" claim "$c1" 2>"$work/create.err")"
+grown_item="$("$P/scripts/new.sh" task "Create")"
+grown_worktree_path="$("$P/scripts/steward.sh" claim "$grown_item" 2>"$work/create.err")"
 spaced1="$(cd "../app 'q-wt-1" 2>/dev/null && pwd -P)"
 check_all "CreateCommandOnPoolGrowth_GetsQuotedPathAsOneArgument: claim grows the pool through worktree_create, which gets a path with a space and a quote as one argument" '[ -n "$spaced1" ] && [ "$(logged_path)" = "$spaced1" ]'
 check "CreateCommandOnPoolGrowth_GetsBaseBranch: the command gets the base branch as {base}" [ "$(sed -n 2p "$create_log")" = main ]
-check "CreateCommandPrintingToStdout_ClaimPrintsPathAlone: claim prints the path alone though the command prints to stdout" [ "$cw1" = "$spaced1" ]
+check "CreateCommandPrintingToStdout_ClaimPrintsPathAlone: claim prints the path alone though the command prints to stdout" [ "$grown_worktree_path" = "$spaced1" ]
 check "CreateCommandOutput_ReachesClaimStderr: the command's own output reaches the claim's stderr" grep -q "fake create made" "$work/create.err"
 check "CreatedPoolWorktree_GetsPoolEntry: the created worktree's pool entry is appended" [ "$(yaml_get .flow/config.yaml pool)" = "../app 'q-wt-1" ]
 check "CreatedPoolWorktree_SitsOnIdleBranchAtBaseTip: the created worktree is put on its idle branch at the base tip" [ "$(git rev-parse --verify -q refs/heads/main-wt-1)" = "$(git rev-parse main)" ]
-check "CreatedPoolWorktree_GetsWorktreeCopyFiles: worktree_copy copies its files into the created worktree" [ "$(cat "$cw1/local")" = secret ]
-check "CreatedPoolWorktree_RunsWorktreeSetup: worktree_setup runs in the created worktree" [ "$(cat "$cw1/setup.txt")" = ran ]
+check "CreatedPoolWorktree_GetsWorktreeCopyFiles: worktree_copy copies its files into the created worktree" [ "$(cat "$grown_worktree_path/local")" = secret ]
+check "CreatedPoolWorktree_RunsWorktreeSetup: worktree_setup runs in the created worktree" [ "$(cat "$grown_worktree_path/setup.txt")" = ran ]
 spaced2="../app 'q-wt-2"
 : > "$create_log"
 "$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
-check_all "AddWithNoPathAndCreateCommand_MakesWorktreeThroughCommand: add with no path makes the worktree through the command" '[ "$code" -eq 0 ] && [ "$(logged_path)" = "$(cd "$spaced2" && pwd -P)" ]'
+check "AddWithNoPathAndCreateCommand_ExitsZero: add with no path succeeds through the command" [ "$code" -eq 0 ]
+check_all "AddWithNoPathAndCreateCommand_MakesWorktreeThroughCommand: add with no path makes the worktree through the command" '[ "$(logged_path)" = "$(cd "$spaced2" && pwd -P)" ]'
 check "AddWithNoPathAndCreateCommand_AppendsPoolEntry: add with no path appends the made worktree's pool entry" [ "$(yaml_get .flow/config.yaml pool | tail -1)" = "$spaced2" ]
 git worktree remove --force "$spaced2"
 : > "$create_log"
 "$P/scripts/steward.sh" add "$spaced2" > "$work/create.out" 2>&1; code=$?
-check_all "AddOfMissingPoolPathWithCreateCommand_RecreatesThroughCommand: add recreates a pool path missing on disk through the command" '[ "$code" -eq 0 ] && [ "$(logged_path)" = "$(cd "$spaced2" && pwd -P)" ]'
+check "AddOfMissingPoolPathWithCreateCommand_ExitsZero: add of a pool path missing on disk succeeds through the command" [ "$code" -eq 0 ]
+check_all "AddOfMissingPoolPathWithCreateCommand_RecreatesThroughCommand: add recreates a pool path missing on disk through the command" '[ "$(logged_path)" = "$(cd "$spaced2" && pwd -P)" ]'
 check "AddOfMissingPoolPathWithCreateCommand_PutsItOnIdleBranch: add puts the recreated worktree on its idle branch" [ "$(git -C "$spaced2" symbolic-ref --short HEAD)" = main-wt-2 ]
-createcfg "  - ../app'q-wt-5\n" "../{repo} 'q-wt-{n}" "$fake_create"
+write_create_config "  - ../app'q-wt-5\n" "../{repo} 'q-wt-{n}" "$fake_create"
 : > "$create_log"
-c2="$("$P/scripts/new.sh" task "Recreate")"
-cw2="$("$P/scripts/steward.sh" claim "$c2" 2>"$work/create.err")"; code=$?
-check_all "ClaimOfMissingPoolPathWithCreateCommand_RecreatesThroughCommand: claim recreates a pool path missing on disk through the command" '[ "$code" -eq 0 ] && [ -n "$cw2" ] && [ "$(logged_path)" = "$cw2" ] && [ "$cw2" = "$(cd "../app'\''q-wt-5" && pwd -P)" ]'
+recreated_item="$("$P/scripts/new.sh" task "Recreate")"
+recreated_worktree_path="$("$P/scripts/steward.sh" claim "$recreated_item" 2>"$work/create.err")"; code=$?
+check "ClaimOfMissingPoolPathWithCreateCommand_ExitsZero: claim of a pool path missing on disk succeeds through the command" [ "$code" -eq 0 ]
+check_all "ClaimOfMissingPoolPathWithCreateCommand_RecreatesThroughCommand: claim recreates a pool path missing on disk through the command" '[ -n "$recreated_worktree_path" ] && [ "$(logged_path)" = "$recreated_worktree_path" ] && [ "$recreated_worktree_path" = "$(cd "../app'\''q-wt-5" && pwd -P)" ]'
 check "ClaimRecreateWithCreateCommand_NamesIdleBranch: the recreate names the idle branch the worktree was put on" grep -q "main-wt-5" "$work/create.err"
-createcfg '' '../{repo}-fail-wt-{n}' "sh $work/create/failing-create.sh {path} {base}"
-c3="$("$P/scripts/new.sh" task "Refused")"
-"$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>"$work/create.err"; code=$?
+write_create_config '' '../{repo}-fail-wt-{n}' "sh $work/create/failing-create.sh {path} {base}"
+refused_item="$("$P/scripts/new.sh" task "Refused")"
+"$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>"$work/create.err"; code=$?
 check "FailingCreateCommandOnClaim_ExitsOne: a failing command fails the claim with exit 1, not the full pool's 3" [ "$code" = 1 ]
 check "FailingCreateCommandOnClaim_PassesItsOutputOn: a failing command's output reaches the claim's stderr" grep -q 'refused: folder not empty' "$work/create.err"
 check "FailingCreateCommandOnClaim_NamesWorktreeCreate: a failing claim names worktree_create as what failed" grep -q 'worktree_create failed' "$work/create.err"
@@ -1783,30 +1786,31 @@ check "FailingCreateCommandOnClaim_AddsNoPoolEntry: a claim whose command fails 
 check "FailingCreateCommandOnAdd_ExitsOne: add with a failing command exits 1" [ "$code" = 1 ]
 check "FailingCreateCommandOnAdd_PassesItsOutputOn: add with a failing command passes its output on" grep -q 'refused: folder not empty' "$work/create.out"
 check "FailingCreateCommandOnAdd_AddsNoPoolEntry: add with a failing command adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
-createcfg '' '../{repo}-idle-wt-{n}' "sh $work/create/idle-create.sh {path} {base}"
-"$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>&1; code=$?
+write_create_config '' '../{repo}-idle-wt-{n}' "sh $work/create/idle-create.sh {path} {base}"
+"$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>&1; code=$?
 check "CreateCommandMakingNoWorktree_FailsClaimWithExitOne: a command that exits 0 but makes no worktree fails the claim with exit 1" [ "$code" = 1 ]
 check "CreateCommandMakingNoWorktree_AddsNoPoolEntry: a command that makes no worktree adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
 cat > "$work/create/foreign-create.sh" <<'EOF'
 #!/bin/sh
 git init -q "$1"
 EOF
-createcfg '' '../{repo}-foreign-wt-{n}' "sh $work/create/foreign-create.sh {path} {base}"
-"$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>&1; code=$?
+write_create_config '' '../{repo}-foreign-wt-{n}' "sh $work/create/foreign-create.sh {path} {base}"
+"$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>&1; code=$?
 check "CreateCommandMakingForeignRepository_FailsClaimWithExitOne: a command that makes a repository of its own, not a worktree of this one, fails the claim with exit 1" [ "$code" = 1 ]
 check "CreateCommandMakingForeignRepository_AddsNoPoolEntry: a command that makes a repository of its own adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
-createcfg '' '../{repo}-bare-wt-{n}' "sh $work/create/fake-create.sh ../app-bare-made {base}"
-"$P/scripts/steward.sh" claim "$c3" > "$work/create.out" 2>&1; code=$?
+write_create_config '' '../{repo}-bare-wt-{n}' "sh $work/create/fake-create.sh ../app-bare-made {base}"
+"$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>&1; code=$?
 check "CreateCommandWithoutPath_ExitsTwo: one with no {path} is refused, exit 2" [ "$code" = 2 ]
 check "CreateCommandWithoutPath_NamesKey: the refusal names worktree_create" grep -q "worktree_create has no {path}" "$work/create.out"
 check "CreateCommandWithoutPath_MakesNoWorktree: one with no {path} never runs, so the worktree it names never appears" [ ! -e ../app-bare-made ]
 kept_tip="$(git commit-tree -p main -m kept "$(git rev-parse 'main^{tree}')")"
 git update-ref refs/heads/main-wt-1 "$kept_tip"
-createcfg '' '../{repo}-kept-wt-{n}' "$fake_create"
+write_create_config '' '../{repo}-kept-wt-{n}' "$fake_create"
 "$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
-check_all "CreatedPoolWorktreeWhoseIdleBranchHasOwnCommits_StartsDetachedAtBaseTip: the created worktree starts detached at the base tip when its idle branch has commits of its own" '[ "$code" -eq 0 ] && ! git -C ../app-kept-wt-1 symbolic-ref -q HEAD && [ "$(git -C ../app-kept-wt-1 rev-parse HEAD)" = "$(git rev-parse main)" ]'
+check "CreatedPoolWorktreeWhoseIdleBranchHasOwnCommits_ExitsZero: add succeeds though the idle branch has commits of its own" [ "$code" -eq 0 ]
+check_all "CreatedPoolWorktreeWhoseIdleBranchHasOwnCommits_StartsDetachedAtBaseTip: the created worktree starts detached at the base tip when its idle branch has commits of its own" '! git -C ../app-kept-wt-1 symbolic-ref -q HEAD && [ "$(git -C ../app-kept-wt-1 rev-parse HEAD)" = "$(git rev-parse main)" ]'
 check "CreatedPoolWorktreeWhoseIdleBranchHasOwnCommits_KeepsThoseCommits: an idle branch with commits of its own keeps them" [ "$(git rev-parse main-wt-1)" = "$kept_tip" ]
-createcfg '' '../{repo}&a|b\c$HOME-wt-{n}' "$fake_create"
+write_create_config '' '../{repo}&a|b\c$HOME-wt-{n}' "$fake_create"
 : > "$create_log"
 "$P/scripts/steward.sh" add > "$work/create.out" 2>&1
 check "PathWithShellCharacters_ReachesCreateCommandAsItself: a path holding & | \\ and \$ reaches the command as itself" [ "$(logged_path)" = "$(cd .. && pwd -P)/app&a|b\\c\$HOME-wt-1" ]
@@ -1845,71 +1849,76 @@ cat > "$work/tmpwt/git-remove.sh" <<EOF
 #!/bin/sh
 git -C "$PWD" worktree remove --force "\$1"
 EOF
-tmpcfg() { printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\n%bnotify:\n  desktop: false\n' "$1" > .flow/config.yaml; }
+write_tmp_config() { printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\n%bnotify:\n  desktop: false\n' "$1" > .flow/config.yaml; }
 fake_tmp_create="worktree_create: sh $work/tmpwt/fake-create.sh {path} {base}\n"
-tmpcfg ''
-t1="$("$P/scripts/new.sh" task "Phases")"
-tw1="$("$P/scripts/steward.sh" claim "$t1" 2>/dev/null)"
-git -C "$tw1" commit -q --allow-empty -m "task work"
-tmp_slug="$(item_slug "$t1")"
-tp1="$("$P/scripts/steward.sh" tmp add "$t1" phase-1 2>/dev/null)"; code=$?
+write_tmp_config ''
+phases_item="$("$P/scripts/new.sh" task "Phases")"
+task_worktree_path="$("$P/scripts/steward.sh" claim "$phases_item" 2>/dev/null)"
+git -C "$task_worktree_path" commit -q --allow-empty -m "task work"
+tmp_slug="$(item_slug "$phases_item")"
+plain_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-1 2>/dev/null)"; code=$?
 tmp_folder="$(pwd -P)/.flow/tmp"
-check_all "TmpAdd_PrintsPathAlone: tmp add prints the temporary worktree's path alone" '[ "$code" -eq 0 ] && [ -d "$tp1" ] && [ "$(cd "$tp1" && pwd -P)" = "$tmp_folder/$tmp_slug-phase-1" ]'
-check "TmpAdd_PutsWorktreeOnPhaseBranch: the temporary worktree is on the phase's branch" [ "$(git -C "$tp1" symbolic-ref --short HEAD)" = "flow/$tmp_slug-phase-1" ]
-check "TmpAdd_StartsPhaseBranchAtTaskTip: the phase's branch starts at the task branch's tip" [ "$(git -C "$tp1" rev-parse HEAD)" = "$(git rev-parse "flow/$tmp_slug")" ]
-"$P/scripts/steward.sh" tmp remove "$tp1" > "$work/tmpwt.out" 2>&1; code=$?
-check_all "TmpRemove_RemovesFolder: tmp remove removes the temporary worktree's folder" '[ "$code" -eq 0 ] && [ ! -e "$tp1" ]'
+check "TmpAdd_ExitsZero: tmp add of a new phase succeeds" [ "$code" -eq 0 ]
+check_all "TmpAdd_PrintsPathAlone: tmp add prints the temporary worktree's path alone" '[ -d "$plain_phase_worktree" ] && [ "$(cd "$plain_phase_worktree" && pwd -P)" = "$tmp_folder/$tmp_slug-phase-1" ]'
+check "TmpAdd_PutsWorktreeOnPhaseBranch: the temporary worktree is on the phase's branch" [ "$(git -C "$plain_phase_worktree" symbolic-ref --short HEAD)" = "flow/$tmp_slug-phase-1" ]
+check "TmpAdd_StartsPhaseBranchAtTaskTip: the phase's branch starts at the task branch's tip" [ "$(git -C "$plain_phase_worktree" rev-parse HEAD)" = "$(git rev-parse "flow/$tmp_slug")" ]
+"$P/scripts/steward.sh" tmp remove "$plain_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemove_ExitsZero: tmp remove of a clean temporary worktree succeeds" [ "$code" -eq 0 ]
+check "TmpRemove_RemovesFolder: tmp remove removes the temporary worktree's folder" [ ! -e "$plain_phase_worktree" ]
 check_all "TmpRemove_DeletesPhaseBranch: tmp remove deletes the phase's branch" '! git rev-parse --verify -q "refs/heads/flow/$tmp_slug-phase-1"'
-tp2="$("$P/scripts/steward.sh" tmp add "$t1" phase-2 2>/dev/null)"
-printf 'wip\n' > "$tp2/wip.txt"
-"$P/scripts/steward.sh" tmp remove "$tp2" > "$work/tmpwt.out" 2>&1; code=$?
+dirty_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-2 2>/dev/null)"
+printf 'wip\n' > "$dirty_phase_worktree/wip.txt"
+"$P/scripts/steward.sh" tmp remove "$dirty_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfDirtyWorktree_ExitsThree: a temporary worktree with uncommitted changes is refused, exit 3" [ "$code" = 3 ]
-check "TmpRemoveOfDirtyWorktree_KeepsChanges: a refused temporary worktree keeps its changes on disk" [ -f "$tp2/wip.txt" ]
-tmpcfg "$fake_tmp_create"
+check "TmpRemoveOfDirtyWorktree_KeepsChanges: a refused temporary worktree keeps its changes on disk" [ -f "$dirty_phase_worktree/wip.txt" ]
+write_tmp_config "$fake_tmp_create"
 : > "$tmp_log"
-tp3="$("$P/scripts/steward.sh" tmp add "$t1" phase-3 2>"$work/tmpwt.err")"; code=$?
-check_all "TmpAddWithCreateCommand_PassesWorktreePath: the command gets the temporary worktree's path as {path}" '[ "$code" -eq 0 ] && [ "$(sed -n 1p "$tmp_log")" = "$tp3" ]'
+created_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-3 2>"$work/tmpwt.err")"; code=$?
+check "TmpAddWithCreateCommand_ExitsZero: tmp add through the command succeeds" [ "$code" -eq 0 ]
+check "TmpAddWithCreateCommand_PassesWorktreePath: the command gets the temporary worktree's path as {path}" [ "$(sed -n 1p "$tmp_log")" = "$created_phase_worktree" ]
 check "TmpAddWithCreateCommand_PassesTaskBranchAsBase: the command gets the task branch as {base}" [ "$(sed -n 2p "$tmp_log")" = "flow/$tmp_slug" ]
-check "TmpAddWithCreateCommandPrintingToStdout_PrintsPathAlone: tmp add prints the path alone though the command prints to stdout" [ "$(cd "$tp3" && pwd -P)" = "$tmp_folder/$tmp_slug-phase-3" ]
+check "TmpAddWithCreateCommandPrintingToStdout_PrintsPathAlone: tmp add prints the path alone though the command prints to stdout" [ "$(cd "$created_phase_worktree" && pwd -P)" = "$tmp_folder/$tmp_slug-phase-3" ]
 check "TmpAddWithCreateCommand_PassesItsOutputToStderr: the command's own output reaches stderr" grep -q "fake create made" "$work/tmpwt.err"
-check "TmpAddWithCreateCommand_PutsWorktreeOnPhaseBranch: the made worktree is put on the phase's branch" [ "$(git -C "$tp3" symbolic-ref --short HEAD)" = "flow/$tmp_slug-phase-3" ]
-check "TmpAddWithCreateCommand_StartsPhaseBranchAtTaskTip: the phase's branch starts at the task branch's tip" [ "$(git -C "$tp3" rev-parse HEAD)" = "$(git rev-parse "flow/$tmp_slug")" ]
-tmpcfg "worktree_create: sh $work/tmpwt/failing-create.sh {path} {base}\n"
-"$P/scripts/steward.sh" tmp add "$t1" phase-4 > "$work/tmpwt.out" 2>"$work/tmpwt.err"; code=$?
+check "TmpAddWithCreateCommand_PutsWorktreeOnPhaseBranch: the made worktree is put on the phase's branch" [ "$(git -C "$created_phase_worktree" symbolic-ref --short HEAD)" = "flow/$tmp_slug-phase-3" ]
+check "TmpAddWithCreateCommand_StartsPhaseBranchAtTaskTip: the phase's branch starts at the task branch's tip" [ "$(git -C "$created_phase_worktree" rev-parse HEAD)" = "$(git rev-parse "flow/$tmp_slug")" ]
+write_tmp_config "worktree_create: sh $work/tmpwt/failing-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" phase-4 > "$work/tmpwt.out" 2>"$work/tmpwt.err"; code=$?
 check "TmpAddWithFailingCreateCommand_ExitsOne: a failing command fails the add with exit 1" [ "$code" = 1 ]
 check "TmpAddWithFailingCreateCommand_PassesItsOutputOn: a failing command's output reaches stderr" grep -q 'refused: folder not empty' "$work/tmpwt.err"
 check "TmpAddWithFailingCreateCommand_PrintsNoPath: a failing add prints no path" [ ! -s "$work/tmpwt.out" ]
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
 : > "$tmp_log"
-"$P/scripts/steward.sh" tmp remove "$tp3" > "$work/tmpwt.out" 2>&1; code=$?
-check_all "TmpRemoveWithRemoveCommand_PassesWorktreePath: the command gets the temporary worktree's path as {path}" '[ "$code" -eq 0 ] && [ "$(sed -n 1p "$tmp_log")" = "$tp3" ]'
-check "TmpRemoveWithRemoveCommand_RemovesFolder: the folder is gone" [ ! -e "$tp3" ]
+"$P/scripts/steward.sh" tmp remove "$created_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveWithRemoveCommand_ExitsZero: tmp remove through the command succeeds" [ "$code" -eq 0 ]
+check "TmpRemoveWithRemoveCommand_PassesWorktreePath: the command gets the temporary worktree's path as {path}" [ "$(sed -n 1p "$tmp_log")" = "$created_phase_worktree" ]
+check "TmpRemoveWithRemoveCommand_RemovesFolder: the folder is gone" [ ! -e "$created_phase_worktree" ]
 check_all "TmpRemoveWithRemoveCommand_PrunesGitRecord: git keeps no record of the removed worktree" '! git worktree list --porcelain | grep -qF "$tmp_slug-phase-3"'
 check_all "TmpRemoveWithRemoveCommand_DeletesPhaseBranch: tmp remove deletes the phase's branch" '! git rev-parse --verify -q "refs/heads/flow/$tmp_slug-phase-3"'
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/git-remove.sh {path}\n"
-tp4="$("$P/scripts/steward.sh" tmp add "$t1" record-cleared 2>/dev/null)"
-"$P/scripts/steward.sh" tmp remove "$tp4" > "$work/tmpwt.out" 2>&1; code=$?
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/git-remove.sh {path}\n"
+record_cleared_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" record-cleared 2>/dev/null)"
+"$P/scripts/steward.sh" tmp remove "$record_cleared_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
 check "RemoveCommandClearingGitRecord_ExitsZero: a command that removes git's record itself still makes tmp remove succeed" [ "$code" = 0 ]
-check "RemoveCommandClearingGitRecord_RemovesFolder: the folder is gone" [ ! -e "$tp4" ]
+check "RemoveCommandClearingGitRecord_RemovesFolder: the folder is gone" [ ! -e "$record_cleared_phase_worktree" ]
 check_all "RemoveCommandClearingGitRecord_LeavesNoGitRecord: git keeps no record of the removed worktree" '! git worktree list --porcelain | grep -qF "$tmp_slug-record-cleared"'
 check_all "RemoveCommandClearingGitRecord_DeletesPhaseBranch: tmp remove deletes the phase's branch" '! git rev-parse --verify -q "refs/heads/flow/$tmp_slug-record-cleared"'
-tp5="$("$P/scripts/steward.sh" tmp add "$t1" phase-5 2>/dev/null)"
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/failing-remove.sh {path}\n"
-"$P/scripts/steward.sh" tmp remove "$tp5" > "$work/tmpwt.out" 2>"$work/tmpwt.err"; code=$?
+kept_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-5 2>/dev/null)"
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/failing-remove.sh {path}\n"
+"$P/scripts/steward.sh" tmp remove "$kept_phase_worktree" > "$work/tmpwt.out" 2>"$work/tmpwt.err"; code=$?
 check "TmpRemoveWithFailingRemoveCommand_ExitsOne: a failing command fails the remove with exit 1" [ "$code" = 1 ]
 check "TmpRemoveWithFailingRemoveCommand_PassesItsOutputOn: a failing command's output reaches stderr" grep -q 'refused: worktree busy' "$work/tmpwt.err"
 check "TmpRemoveWithFailingRemoveCommand_KeepsPhaseBranch: a failing remove keeps the phase's branch" git rev-parse --verify -q "refs/heads/flow/$tmp_slug-phase-5"
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/idle-remove.sh {path}\n"
-"$P/scripts/steward.sh" tmp remove "$tp5" > "$work/tmpwt.out" 2>"$work/tmpwt.err"; code=$?
-check_all "RemoveCommandLeavingFolder_FailsRemoveWithExitOne: a command that exits 0 but leaves the folder fails the remove with exit 1" '[ "$code" = 1 ] && [ -d "$tp5" ]'
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/idle-remove.sh {path}\n"
+"$P/scripts/steward.sh" tmp remove "$kept_phase_worktree" > "$work/tmpwt.out" 2>"$work/tmpwt.err"; code=$?
+check "RemoveCommandLeavingFolder_FailsRemoveWithExitOne: a command that exits 0 but leaves the folder fails the remove with exit 1" [ "$code" = 1 ]
+check "RemoveCommandLeavingFolder_KeepsFolder: a remove whose command leaves the folder keeps it" [ -d "$kept_phase_worktree" ]
 check "RemoveCommandLeavingFolder_KeepsPhaseBranch: a remove that leaves the folder keeps the phase's branch" git rev-parse --verify -q "refs/heads/flow/$tmp_slug-phase-5"
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh $tp5\n"
-"$P/scripts/steward.sh" tmp remove "$tp5" > "$work/tmpwt.out" 2>&1; code=$?
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh $kept_phase_worktree\n"
+"$P/scripts/steward.sh" tmp remove "$kept_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
 check "RemoveCommandWithoutPath_ExitsTwo: one with no {path} is refused, exit 2" [ "$code" = 2 ]
 check "RemoveCommandWithoutPath_NamesKey: the refusal names worktree_remove" grep -q "worktree_remove has no {path}" "$work/tmpwt.out"
-check "RemoveCommandWithoutPath_KeepsFolder: one with no {path} never runs, so the folder it names stays" [ -d "$tp5" ]
+check "RemoveCommandWithoutPath_KeepsFolder: one with no {path} never runs, so the folder it names stays" [ -d "$kept_phase_worktree" ]
 check_all "RemoveCommandWithoutPath_KeepsGitRecord: git still lists the worktree" 'git worktree list --porcelain | grep -qF "$tmp_slug-phase-5"'
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
 "$P/scripts/steward.sh" tmp remove . > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfDotInMainWorktree_ExitsTwo: . run in the main worktree is the main worktree, refused" [ "$code" = 2 ]
 check "TmpRemoveOfDotInMainWorktree_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
@@ -1925,99 +1934,96 @@ check "TmpRemoveOfEmptyPath_ExitsTwo: an empty path is refused" [ "$code" = 2 ]
 "$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfPoolWorktree_ExitsTwo: a pool worktree is refused" [ "$code" = 2 ]
 check "TmpRemoveOfPoolWorktree_KeepsPoolWorktree: the remove command never runs on a pool worktree" [ -d ../app-wt-1 ]
-tmpcfg ''
+write_tmp_config ''
 "$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfPoolWorktreeWithoutRemoveCommand_ExitsTwo: a pool worktree is refused when git does the remove too" [ "$code" = 2 ]
 "$P/scripts/steward.sh" tmp remove "$work/tmpwt/plain" > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfPlainFolderWithoutRemoveCommand_ExitsTwo: a folder that is no worktree is refused when git does the remove" [ "$code" = 2 ]
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
-tp6="$("$P/scripts/steward.sh" tmp add "$t1" phase-6 2>/dev/null)"
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
+relative_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-6 2>/dev/null)"
 "$P/scripts/steward.sh" tmp remove ".flow/tmp/$tmp_slug-phase-6" > "$work/tmpwt.out" 2>&1
-check "TmpRemoveOfRelativePath_RemovesThatWorktree: a path relative to where tmp remove runs names the worktree removed" [ ! -e "$tp6" ]
-tmpcfg "worktree_create: sh $work/tmpwt/fake-create.sh \"{path}\" {base}\n"
-"$P/scripts/steward.sh" tmp add "$t1" quoted > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfRelativePath_RemovesThatWorktree: a path relative to where tmp remove runs names the worktree removed" [ ! -e "$relative_phase_worktree" ]
+write_tmp_config "worktree_create: sh $work/tmpwt/fake-create.sh \"{path}\" {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" quoted > "$work/tmpwt.out" 2>&1; code=$?
 check "CreateCommandQuotingPath_ExitsTwo: a template with {path} inside double quotes is refused" [ "$code" = 2 ]
 check "CreateCommandQuotingPath_MakesNoWorktree: the refused command never runs, so the phase's folder never appears" [ ! -e "$tmp_folder/$tmp_slug-quoted" ]
-tmpcfg "worktree_create: sh $work/tmpwt/fake-create.sh '{path}' {base}\n"
-"$P/scripts/steward.sh" tmp add "$t1" phase-7 > "$work/tmpwt.out" 2>&1; code=$?
+write_tmp_config "worktree_create: sh $work/tmpwt/fake-create.sh '{path}' {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" phase-7 > "$work/tmpwt.out" 2>&1; code=$?
 check "CreateCommandSingleQuotingPath_ExitsTwo: a template with {path} inside single quotes is refused" [ "$code" = 2 ]
 injecting_phase='p$(>injected)'
-tmpcfg "$fake_tmp_create"
-: > "$tmp_log"
-"$P/scripts/steward.sh" tmp add "$t1" "$injecting_phase" > "$work/tmpwt.out" 2>&1; code=$?
+write_tmp_config "$fake_tmp_create"
+"$P/scripts/steward.sh" tmp add "$phases_item" "$injecting_phase" > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpAddOfPhaseWithShellCharacters_ExitsTwo: a phase holding a character outside letters, digits, . _ and - is refused, exit 2" [ "$code" = 2 ]
-check "TmpAddOfPhaseWithShellCharacters_RunsNoCreateCommand: the command never runs, so it gets no path" [ ! -s "$tmp_log" ]
 check "TmpAddOfPhaseWithShellCharacters_MakesNoFolder: the phase's folder never appears" [ ! -e "$tmp_folder/$tmp_slug-$injecting_phase" ]
-"$P/scripts/steward.sh" tmp add "$t1" nested/inner > "$work/tmpwt.out" 2>&1; code=$?
+"$P/scripts/steward.sh" tmp add "$phases_item" nested/inner > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpAddOfPhaseWithSlash_ExitsTwo: a phase holding / is refused, exit 2" [ "$code" = 2 ]
 check "TmpAddOfPhaseWithSlash_MakesNoFolder: the phase's folder never appears" [ ! -e "$tmp_folder/$tmp_slug-nested" ]
 cat > "$work/tmpwt/main-create.sh" <<SCRIPT
 #!/bin/sh
 git -C "$PWD" worktree add -q --detach "\$1" main
 SCRIPT
-tmpcfg "worktree_create: sh $work/tmpwt/main-create.sh {path} {base}\n"
-tp8="$("$P/scripts/steward.sh" tmp add "$t1" phase-8 2>/dev/null)"
-check "CreateCommandIgnoringBase_PhaseBranchStartsAtTaskTip: the phase's branch starts at the task branch's tip whatever the command checked out" [ "$(git -C "$tp8" rev-parse HEAD)" = "$(git rev-parse "flow/$tmp_slug")" ]
+write_tmp_config "worktree_create: sh $work/tmpwt/main-create.sh {path} {base}\n"
+base_ignored_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-8 2>/dev/null)"
+check "CreateCommandIgnoringBase_PhaseBranchStartsAtTaskTip: the phase's branch starts at the task branch's tip whatever the command checked out" [ "$(git -C "$base_ignored_phase_worktree" rev-parse HEAD)" = "$(git rev-parse "flow/$tmp_slug")" ]
 git branch -q "flow/$tmp_slug-phase-9" main
-tmpcfg "$fake_tmp_create"
-: > "$tmp_log"
-"$P/scripts/steward.sh" tmp add "$t1" phase-9 > "$work/tmpwt.out" 2>&1; code=$?
+write_tmp_config "$fake_tmp_create"
+"$P/scripts/steward.sh" tmp add "$phases_item" phase-9 > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpAddOfPhaseWhoseBranchExists_ExitsTwo: a phase whose branch already exists is refused, exit 2" [ "$code" = 2 ]
-check "TmpAddOfPhaseWhoseBranchExists_RunsNoCreateCommand: the command never runs, so it gets no path" [ ! -s "$tmp_log" ]
+check "TmpAddOfPhaseWhoseBranchExists_MakesNoFolder: the phase's folder never appears" [ ! -e "$tmp_folder/$tmp_slug-phase-9" ]
 check "TmpAddOfPhaseWhoseBranchExists_KeepsThatBranch: the existing branch stays where it was" [ "$(git rev-parse "flow/$tmp_slug-phase-9")" = "$(git rev-parse main)" ]
 cat > "$work/tmpwt/branching-create.sh" <<SCRIPT
 #!/bin/sh
 git -C "$PWD" worktree add -q -b "flow/\$(basename "\$1")" "\$1" "\$2"
 SCRIPT
-tmpcfg "worktree_create: sh $work/tmpwt/branching-create.sh {path} {base}\n"
-"$P/scripts/steward.sh" tmp add "$t1" branched > "$work/tmpwt.out" 2>"$work/tmpwt.err"
+write_tmp_config "worktree_create: sh $work/tmpwt/branching-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" branched > "$work/tmpwt.out" 2>"$work/tmpwt.err"
 check "TmpAddWhoseBranchCannotBeMade_NamesLeftoverWorktree: the message names the made worktree and how to remove it" grep -q "tmp remove .*branched" "$work/tmpwt.err"
-"$P/scripts/steward.sh" tmp add "$t1" 'a/../../../../escaped' > "$work/tmpwt.out" 2>&1; code=$?
+"$P/scripts/steward.sh" tmp add "$phases_item" 'a/../../../../escaped' > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpAddOfPhaseClimbingOutOfTmp_ExitsTwo: a phase holding .. is refused, exit 2" [ "$code" = 2 ]
 check "TmpAddOfPhaseClimbingOutOfTmp_MakesNoFolderOutsideTmp: the command never makes the folder the .. would reach" [ ! -e "$work/tmpwt/escaped" ]
-"$P/scripts/steward.sh" tmp add "$t1" 'b c~' > "$work/tmpwt.out" 2>&1; code=$?
+"$P/scripts/steward.sh" tmp add "$phases_item" 'b c~' > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpAddOfPhaseWithInvalidBranchCharacter_ExitsTwo: a phase that makes no valid branch name is refused, exit 2" [ "$code" = 2 ]
 check "TmpAddOfPhaseWithInvalidBranchCharacter_MakesNoFolder: the command never makes the phase's folder" [ ! -e "$tmp_folder/$tmp_slug-b c~" ]
 mkdir -p "$tmp_folder/$tmp_slug-phase-10"
-"$P/scripts/steward.sh" tmp add "$t1" phase-10 > "$work/tmpwt.out" 2>&1; code=$?
+"$P/scripts/steward.sh" tmp add "$phases_item" phase-10 > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpAddOntoExistingFolder_ExitsTwo: a phase whose folder already exists is refused, exit 2" [ "$code" = 2 ]
 check "TmpAddOntoExistingFolder_MakesNoWorktreeThere: the existing folder does not become a worktree" [ ! -e "$tmp_folder/$tmp_slug-phase-10/.git" ]
-tmpcfg ''
-"$P/scripts/steward.sh" tmp add "$t1" 'a/../../../../escaped' > "$work/tmpwt.out" 2>&1; code=$?
+write_tmp_config ''
+"$P/scripts/steward.sh" tmp add "$phases_item" 'a/../../../../escaped' > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpAddOfPhaseClimbingOutOfTmpWithoutCreateCommand_ExitsTwo: a phase holding .. is refused, exit 2, when git makes the worktree" [ "$code" = 2 ]
 check "TmpAddOfPhaseClimbingOutOfTmpWithoutCreateCommand_MakesNoFolderOutsideTmp: git never makes the folder the .. would reach" [ ! -e "$work/tmpwt/escaped" ]
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
 git worktree add -q --detach ../app-sibling
 "$P/scripts/steward.sh" tmp remove ../app-sibling > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfWorktreeOutsideTmp_ExitsTwo: a listed worktree outside .flow/tmp is refused, exit 2" [ "$code" = 2 ]
 check "TmpRemoveOfWorktreeOutsideTmp_KeepsFolder: the remove command never runs on a worktree outside .flow/tmp" [ -d ../app-sibling ]
 git worktree add -q --detach ../app-gone && rm -rf ../app-gone
-tp11="$("$P/scripts/steward.sh" tmp add "$t1" phase-11 2>/dev/null)"
-"$P/scripts/steward.sh" tmp remove "$tp11" > "$work/tmpwt.out" 2>&1
+other_records_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-11 2>/dev/null)"
+"$P/scripts/steward.sh" tmp remove "$other_records_phase_worktree" > "$work/tmpwt.out" 2>&1
 check_all "TmpRemoveWithRemoveCommand_KeepsOtherGitRecords: another worktree's record stays though its folder is gone" 'git worktree list --porcelain | grep -q "app-gone"'
-tp12="$("$P/scripts/steward.sh" tmp add "$t1" phase-12 2>/dev/null)"
-git -C "$tp12" switch -q -c owner-branch
-"$P/scripts/steward.sh" tmp remove "$tp12" > "$work/tmpwt.out" 2>&1
+other_branch_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-12 2>/dev/null)"
+git -C "$other_branch_phase_worktree" switch -q -c owner-branch
+"$P/scripts/steward.sh" tmp remove "$other_branch_phase_worktree" > "$work/tmpwt.out" 2>&1
 check "TmpRemoveOfWorktreeOnOtherBranch_KeepsThatBranch: a branch other than the phase's is never deleted" git rev-parse --verify -q refs/heads/owner-branch
-check "TmpRemoveOfWorktreeOnOtherBranch_RemovesWorktree: a temporary worktree on another branch is still removed" [ ! -e "$tp12" ]
-tp13="$("$P/scripts/steward.sh" tmp add "$t1" phase-13 2>/dev/null)"
+check "TmpRemoveOfWorktreeOnOtherBranch_RemovesWorktree: a temporary worktree on another branch is still removed" [ ! -e "$other_branch_phase_worktree" ]
+gitless_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-13 2>/dev/null)"
 printf '.flow/\n' >> "$(git rev-parse --git-common-dir)/info/exclude"
-printf 'precious\n' > "$tp13/precious.txt"
-rm -f "$tp13/.git"
-"$P/scripts/steward.sh" tmp remove "$tp13" > "$work/tmpwt.out" 2>&1; code=$?
+printf 'precious\n' > "$gitless_phase_worktree/precious.txt"
+rm -f "$gitless_phase_worktree/.git"
+"$P/scripts/steward.sh" tmp remove "$gitless_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfWorktreeWithoutGitFile_ExitsTwo: a temporary worktree whose .git is gone is refused, exit 2" [ "$code" = 2 ]
-check "TmpRemoveOfWorktreeWithoutGitFile_KeepsItsFiles: the remove command never runs, so its files stay" [ -f "$tp13/precious.txt" ]
-tp14="$("$P/scripts/steward.sh" tmp add "$t1" phase-14 2>/dev/null)"
-git worktree lock "$tp14"
-"$P/scripts/steward.sh" tmp remove "$tp14" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfWorktreeWithoutGitFile_KeepsItsFiles: the remove command never runs, so its files stay" [ -f "$gitless_phase_worktree/precious.txt" ]
+locked_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-14 2>/dev/null)"
+git worktree lock "$locked_phase_worktree"
+"$P/scripts/steward.sh" tmp remove "$locked_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfLockedWorktree_ExitsTwo: a locked temporary worktree is refused, exit 2" [ "$code" = 2 ]
-check "TmpRemoveOfLockedWorktree_KeepsFolder: the remove command never runs on a locked worktree" [ -f "$tp14/README.md" ]
+check "TmpRemoveOfLockedWorktree_KeepsFolder: the remove command never runs on a locked worktree" [ -f "$locked_phase_worktree/README.md" ]
 git worktree add -q --detach "$tmp_folder/pool-x"
-tmpcfg "  - .flow/tmp/pool-x\n${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
+write_tmp_config "  - .flow/tmp/pool-x\n${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
 "$P/scripts/steward.sh" tmp remove "$tmp_folder/pool-x" > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfPoolWorktreeUnderTmp_ExitsTwo: a pool worktree under .flow/tmp is refused, exit 2" [ "$code" = 2 ]
 check "TmpRemoveOfPoolWorktreeUnderTmp_KeepsPoolWorktree: the remove command never runs on a pool worktree" [ -f "$tmp_folder/pool-x/README.md" ]
-tmpcfg "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
+write_tmp_config "${fake_tmp_create}worktree_remove: sh $work/tmpwt/folder-remove.sh {path}\n"
 mv .flow/tmp .flow/tmp-moved && ln -s "$(cd .. && pwd -P)" .flow/tmp
 "$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/tmpwt.out" 2>&1; code=$?
 check "TmpRemoveOfPoolWorktreeUnderSymlinkedTmp_ExitsTwo: a pool worktree is refused though a symlinked .flow/tmp puts it under the temporary folder" [ "$code" = 2 ]
@@ -3194,25 +3200,25 @@ check "session-start: no stamp asks for one init" sh -c "echo '{}' | FLOW_PLUGIN
 printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 0\n' > .flow/config.yaml
 check "init: --check flags an empty pool with pool_max 0 as a gap" sh -c "! FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date' && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .flow/config.yaml: the pool is empty'"
 check "init: lists the gap after an install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' | grep -q 'Gaps'"
-commandcfg() { printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 1\n%b' "$1" > .flow/config.yaml; }
-commandcfg 'worktree_create: workspace new --from {base}\n'
+write_command_config() { printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 1\n%b' "$1" > .flow/config.yaml; }
+write_command_config 'worktree_create: workspace new --from {base}\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-create.out" 2>&1; code=$?
 check "InitCheckOfCreateCommandWithoutPath_NamesGap: --check names a worktree_create without {path} as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create has no {path}' "$work/init-create.out"
 check "InitCheckOfCreateCommandWithoutPath_ExitsNonZero: --check exits non-zero on a worktree_create without {path}" [ "$code" != 0 ]
-commandcfg 'worktree_remove: workspace remove\n'
+write_command_config 'worktree_remove: workspace remove\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-remove.out" 2>&1; code=$?
 check "InitCheckOfRemoveCommandWithoutPath_NamesGap: --check names a worktree_remove without {path} as a gap" grep -qF 'gap: .flow/config.yaml: worktree_remove has no {path}' "$work/init-remove.out"
 check "InitCheckOfRemoveCommandWithoutPath_ExitsNonZero: --check exits non-zero on a worktree_remove without {path}" [ "$code" != 0 ]
-commandcfg 'worktree_create: workspace new "{path}" --from {base}\n'
+write_command_config 'worktree_create: workspace new "{path}" --from {base}\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-quoted.out" 2>&1
 check "InitCheckOfCreateCommandQuotingPath_NamesGap: --check names a worktree_create with {path} inside quotes as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-quoted.out"
-commandcfg "worktree_create: workspace new '{path}' --from {base}\n"
+write_command_config "worktree_create: workspace new '{path}' --from {base}\n"
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-single-quoted.out" 2>&1
 check "InitCheckOfCreateCommandSingleQuotingPath_NamesGap: --check names a worktree_create with {path} inside single quotes as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-single-quoted.out"
-commandcfg 'worktree_remove: workspace remove "{path}"\n'
+write_command_config 'worktree_remove: workspace remove "{path}"\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-remove-quoted.out" 2>&1
 check "InitCheckOfRemoveCommandQuotingPath_NamesGap: --check names a worktree_remove with {path} inside quotes as a gap" grep -qF 'gap: .flow/config.yaml: worktree_remove quotes {path}' "$work/init-remove-quoted.out"
-commandcfg 'worktree_create: workspace new {path} --from {base}\nworktree_remove: workspace remove {path}\n'
+write_command_config 'worktree_create: workspace new {path} --from {base}\nworktree_remove: workspace remove {path}\n'
 check "InitCheckOfCommandsHoldingPath_IsClean: --check is clean with a worktree_create and a worktree_remove that hold {path}" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q
 check "session-start: silent in a project without the flow" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
