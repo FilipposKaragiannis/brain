@@ -1961,6 +1961,14 @@ check "CreateCommandQuotingPathAfterQuoteInSubstitution_RunsNothing: the refused
 write_temporary_config 'worktree_create: touch {path}.ran; echo "`dirname "{path}"`"\n'
 "$P/scripts/steward.sh" tmp add "$phases_item" backticked > "$work/temporary-worktrees.out" 2>&1; code=$?
 check "CreateCommandQuotingPathInQuotedBackticks_ExitsTwo: a template with {path} quoted inside quoted backticks is refused, as sh would split the path there" [ "$code" = 2 ]
+write_temporary_config 'worktree_create: touch {path}.ran; rm -rf "`cd \\"{path}\\" && pwd`"\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" escaped-backticked > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandEscapingQuotesAroundPathInQuotedBackticks_ExitsTwo: a template with {path} between escaped quotes inside quoted backticks is refused, as sh drops those backslashes and would split the path there" [ "$code" = 2 ]
+check "CreateCommandEscapingQuotesAroundPathInQuotedBackticks_RunsNothing: the refused command never runs, so its marker never appears" [ ! -e "$temporary_folder/$temporary_slug-escaped-backticked.ran" ]
+write_temporary_config 'worktree_create: touch {path}.ran; echo `basename {path}`\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" bare-backticked > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandWithBarePathInBackticks_ExitsTwo: a template with {path} anywhere inside backticks is refused, as backticks cannot quote it" [ "$code" = 2 ]
+check "CreateCommandWithBarePathInBackticks_RunsNothing: the refused command never runs, so its marker never appears" [ ! -e "$temporary_folder/$temporary_slug-bare-backticked.ran" ]
 write_temporary_config "worktree_create: echo \"\$(date)\" > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
 "$P/scripts/steward.sh" tmp add "$phases_item" beside-substitution > "$work/temporary-worktrees.out" 2>&1
 check "CreateCommandWithBarePathBesideQuotedSubstitution_MakesWorktree: a quoted \$(...) that closes before a bare {path} leaves the path unquoted, so the command runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-beside-substitution" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-beside-substitution" ]
@@ -3263,6 +3271,9 @@ check "InitCheckOfCreateCommandEscapingPath_NamesGap: --check names a worktree_c
 write_command_config 'worktree_create: workspace new "$(dirname "{path}")" --from {base}\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-substituted.out" 2>&1
 check "InitCheckOfCreateCommandQuotingPathInQuotedSubstitution_NamesGap: --check names a worktree_create with {path} quoted inside a quoted \$(...) as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-substituted.out"
+write_command_config 'worktree_create: workspace new `basename {path}` --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-backticked.out" 2>&1
+check "InitCheckOfCreateCommandWithPathInBackticks_NamesGap: --check names a worktree_create with {path} inside backticks as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create has {path} inside backticks' "$work/init-backticked.out"
 write_command_config 'worktree_create: workspace new {path} --from {base}\nworktree_remove: workspace remove {path}\n'
 check "InitCheckOfCommandsHoldingPath_IsClean: --check is clean with a worktree_create and a worktree_remove that hold {path}" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q

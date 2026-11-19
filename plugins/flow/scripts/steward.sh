@@ -78,8 +78,8 @@
 # takes only a listed worktree under .flow/tmp: else exit 2, nothing run. tmp remove refuses a
 # worktree with uncommitted changes, or one whose git status fails, exit 3. After a remove the
 # folder must be gone; git's record of it goes, and its branch when that is flow/<its folder under
-# .flow/tmp>. A command with no {path}, or with a placeholder inside quotes (a quoted $(...) too),
-# is refused before it runs, exit 2. One that fails, or leaves no worktree (a remove: leaves the
+# .flow/tmp>. A command with no {path}, or with a placeholder inside quotes (a quoted $(...) too)
+# or inside backticks, is refused before it runs, exit 2. One that fails, or leaves no worktree (a remove: leaves the
 # folder), is named after its output: add, tmp and a growing pool exit 1 with no pool entry added
 # (a pool that cannot grow says why, not that it is at pool_max), and a claim skips a missing pool
 # path it cannot recreate. A folder a failed create leaves stays for the owner. A value must not

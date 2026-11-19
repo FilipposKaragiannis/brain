@@ -12,8 +12,9 @@ bump: minor
   are still never removed.
 - A command with no `{path}`, or with a placeholder inside quotes or after a backslash, is
   refused before it runs, exit 2, and `init --check` names it as a gap. That holds inside a
-  quoted `$(...)` or backticks too, as in `"$(dirname "{path}")"`, where `sh` would split the
-  path. `init` writes both keys commented out.
+  quoted `$(...)` too, as in `"$(dirname "{path}")"`, where `sh` would split the path. A
+  placeholder anywhere inside backticks is refused too, as backticks cannot quote it: write
+  `$(...)` instead. `init` writes both keys commented out.
 - `tmp remove` refuses, exit 2, a path that is not a worktree git lists under `.flow/tmp`, the
   main or a pool worktree, a worktree whose `.git` is missing or broken, a locked one and any
   path while `.flow/tmp` is a symlink, and resolves a relative path from where it runs. It
