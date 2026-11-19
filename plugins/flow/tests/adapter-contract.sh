@@ -412,6 +412,9 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
   check "InScope_ItemInside_ExitsZero: in-scope exits 0 for an item the scope matches, because the flow runs an item inside its scope" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 0 ]'
   check "InScope_ItemOutside_ExitsOne: in-scope exits 1 for an item the scope does not match, because the flow runs no item outside its scope" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
   check "InScope_NoArguments_ExitsTwo: in-scope with no id is a usage error, because there is no item to say anything of" '[ "$(code_of "$A/in-scope.sh")" = 2 ]'
+  write_config 0; "scope_config_$name" '    labels: [picked]' | sed 's/^  scope:$/  "scope":/' >> "$FLOW_HOME/config.yaml"
+  check "InScopeQuotedScopeKey_ItemOutside_ExitsOne: in-scope exits 1 for an item outside a scope under a quoted key, because a quoted key is the same scope every list applies" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
+  check "InScopeQuotedScopeKey_ItemInside_ExitsZero: in-scope exits 0 for an item inside a scope under a quoted key, because the quoted scope only narrows" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 0 ]'
   scope_config '    labels: [picked]' '  mine:
     assignee: me'
   check "ScopeAndPick_ItemBothMatch_IsListed: a pick inside a scope keeps the item both match, because the scope and the pick compose" 'listed "$pa" "$A/list.sh" --pick mine'

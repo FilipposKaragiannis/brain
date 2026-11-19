@@ -2247,6 +2247,9 @@ scope_config '    labels: [team-a]' && python3 -c 'p=".flow/config.yaml"; t=open
 "$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
 "$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
 check "ClaimUnderQuotedScopeKey_ExitsTwo: a new claim of an item outside a local.scope whose key is quoted is refused, because a quoted key is the same scope every list applies" [ "$code" -eq 2 ]
+"$P/scripts/next.sh" "$sout" >/dev/null 2>&1; code=$?
+scope_unpick "{\"item\": \"$sout\"}"
+check "NextNamedUnderQuotedScopeKey_ExitsTwo: next on a named item outside a local.scope whose key is quoted is refused, because a quoted key is the same scope every list applies" [ "$code" -eq 2 ]
 scope_config ''
 empty_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
 check_all "ScopeEmpty_ListsEveryItem: an empty local.scope lists the items inside and outside the labels, because an empty scope is unset" 'case " $empty_scope_ids " in *" $sin "*) ;; *) false ;; esac && case " $empty_scope_ids " in *" $sout "*) true ;; *) false ;; esac'
