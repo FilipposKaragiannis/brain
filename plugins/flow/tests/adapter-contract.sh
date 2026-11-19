@@ -415,6 +415,9 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
   write_config 0; "scope_config_$name" '    labels: [picked]' | sed 's/^  scope:$/  "scope":/' >> "$FLOW_HOME/config.yaml"
   check "InScopeQuotedScopeKey_ItemOutside_ExitsOne: in-scope exits 1 for an item outside a scope under a quoted key, because a quoted key is the same scope every list applies" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
   check "InScopeQuotedScopeKey_ItemInside_ExitsZero: in-scope exits 0 for an item inside a scope under a quoted key, because the quoted scope only narrows" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 0 ]'
+  write_config 0; "scope_config_$name" '    labels: [picked]' | sed -e 's/^  scope:/  # scope:/' -e 's/^    labels:/    # labels:/' >> "$FLOW_HOME/config.yaml"
+  check "CommentedOutScope_ListKeepsItemOutsideIt: a scope only in comments lists an item it would leave out, because a commented scope is unset" 'listed "$pb" "$A/list.sh"'
+  check "InScopeCommentedOutScope_ItemOutsideIt_ExitsZero: in-scope exits 0 for an item a commented scope would leave out, because a commented scope is unset" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 0 ]'
   scope_config '    labels: [picked]' '  mine:
     assignee: me'
   check "ScopeAndPick_ItemBothMatch_IsListed: a pick inside a scope keeps the item both match, because the scope and the pick compose" 'listed "$pa" "$A/list.sh" --pick mine'
