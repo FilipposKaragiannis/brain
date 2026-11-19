@@ -443,7 +443,7 @@ cmd_tmp() {
       refuse_unnamable_phase "$phase" "$branch"
       refuse_taken_phase "$path" "$branch"
       mkdir -p "$home/tmp"
-      if [ -n "$(cfg worktree_create)" ]; then tmp_worktree_create "$path" "flow/$slug" "$branch"
+      if [ -n "$(cfg worktree_create)" ]; then temporary_worktree_create "$path" "flow/$slug" "$branch"
       else git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
     remove)
@@ -524,7 +524,6 @@ run_setup() {
   done
 }
 
-# worktree_at <path>: true when the path is the top level of a git worktree of this repository.
 worktree_at() {
   [ -d "$1" ] && [ "$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$1" && pwd -P)" ] &&
     [ "$(git_common_folder "$1")" = "$(git_common_folder "$main")" ]
@@ -558,10 +557,10 @@ run_worktree_create() {
   return 1
 }
 
-# tmp_worktree_create <path> <base> <branch>: worktree_create makes a temporary worktree, then the
+# temporary_worktree_create <path> <base> <branch>: worktree_create makes a temporary worktree, then the
 # worktree gets the new branch at the base, whatever the command checked out. Either failing ends
 # the run, exit 1; a worktree made but not put on the branch stays, and the message names it.
-tmp_worktree_create() {
+temporary_worktree_create() {
   run_worktree_create "$1" "$2" || die "cannot add $1"
   git -C "$1" switch -q -c "$3" "$2" >&2 || die "cannot put $1 on a new branch $3 at $2; the worktree stays there, remove it with steward.sh tmp remove $1"
 }
@@ -583,7 +582,6 @@ run_worktree_remove() {
 forget_removed_worktree() {
   [ ! -d "$2" ] || git -C "$main" worktree remove "$1" || die "cannot remove git's record of $1"
 }
-# worktree_record <path>: the folder git keeps its record of the worktree at the path in.
 worktree_record() { git -C "$1" rev-parse --absolute-git-dir; }
 
 # removable_worktree <path>: the path as an absolute physical folder when it is a temporary
@@ -639,7 +637,6 @@ temporary_branch() {
   temporary_branch_name="flow/${1#"$(temporary_folder)"/}"
   [ "$(git -C "$1" symbolic-ref --short -q HEAD)" != "$temporary_branch_name" ] || printf '%s' "$temporary_branch_name"
 }
-# physical_in <folder>: true when a path read from stdin, one per line, resolves to the folder.
 physical_in() {
   while IFS= read -r listed_path; do [ "$(cd "$listed_path" 2>/dev/null && pwd -P)" = "$1" ] && return 0; done
   return 1
