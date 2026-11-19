@@ -427,6 +427,56 @@ check "init: the runner goes with the roster" sh -c "'$init' | grep -q 'run.sh r
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q
 check "session-start: silent in a project without the standards" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
 
+echo "init: a project waives and demotes rules (config: rules.relaxed, rules.judgement)"
+mkdir -p "$work/relaxed" && cd "$work/relaxed" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["D-11","S-09"],"judgement":["M-06"]}}\n' > .standards/config.json
+"$init" >/dev/null
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+hard_rules="sed -n '/^## Hard rules/,/^## Signals/p' AGENTS.md"
+waived_rules="sed -n '/^## Waived by this project/,/^\$/p' AGENTS.md"
+check "init: a waived rule leaves the block's hard rules, its neighbour stays" sh -c "! $hard_rules | grep -q '^- D-11 ' && $hard_rules | grep -q '^- D-10 '"
+check "init: the block lists every waived rule under Waived by this project" sh -c "$waived_rules | grep -q '^- D-11 ' && $waived_rules | grep -q '^- S-09 '"
+check "init: a waived rule leaves the Claude rule copy, D-10 and D-12 stay" sh -c "! grep -qF '**D-11 ' .claude/rules/standards-design.md && grep -qF '**D-10 ' .claude/rules/standards-design.md && grep -qF '**D-12 ' .claude/rules/standards-design.md"
+check "init: a waived rule leaves the full rule text, D-10 and D-12 stay" sh -c "! grep -qF '**D-11 ' .standards/rules/01-design.md && grep -qF '**D-10 ' .standards/rules/01-design.md && grep -qF '**D-12 ' .standards/rules/01-design.md"
+check "init: --check is clean right after a relaxed install" sh -c "'$init' --check | grep -q 'up to date'"
+demoted_rule="grep -F '**M-06 ' .claude/rules/standards-methods.md"
+judgement_rules="sed -n '/^## Judgement in this project/,/^\$/p' AGENTS.md"
+check "init: a demoted rule is tagged judgement, relaxed from hard, in the Claude rule copy" sh -c "$demoted_rule | grep -qF '[judgement, relaxed from hard by this project]'"
+check "init: a demoted rule loses its hard tag in the Claude rule copy" sh -c "$demoted_rule && ! $demoted_rule | grep -qF '[hard]'"
+check "init: the block lists a demoted rule under Judgement in this project" sh -c "$judgement_rules | grep -q '^- M-06 '"
+check "init: a demoted rule leaves the block's hard rules" sh -c "$hard_rules | grep -q '^- M-05 ' && ! $hard_rules | grep -q '^- M-06 '"
+printf '# mine\n' >> .claude/rules/standards-design.md
+check "init: --check names a hand edit to a relaxed rule copy" sh -c "'$init' --check | grep -q 'edited by hand: .claude/rules/standards-design.md'"
+"$init" --force >/dev/null
+python3 -c 'import json; p = ".standards/config.json"; c = json.load(open(p)); del c["rules"]; json.dump(c, open(p, "w"), indent=2)'
+check "init: dropping the list replaces the relaxed copy with the waived rule back" sh -c "! '$init' | grep -q 'refused' && grep -qF '**D-11 ' .claude/rules/standards-design.md"
+check "init: --check is clean once the list is gone" sh -c "'$init' --check | grep -q 'up to date'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["N-01","D-01"],"judgement":["M-01"]}}\n' > .standards/config.json
+"$init" >/dev/null
+signal_rules="sed -n '/^## Signals/,/^## /p' AGENTS.md"
+check "init: a waived signal leaves the block's signals, its neighbour stays" sh -c "! $signal_rules | grep -q '^- N-01 ' && $signal_rules | grep -q '^- N-02 '"
+check "init: a demoted signal is tagged judgement, relaxed from signal, in the Claude rule copy" sh -c "grep -F '**M-01 ' .claude/rules/standards-methods.md | grep -qF '[judgement, relaxed from signal by this project]'"
+check "init: a waived judgement rule leaves the Claude rule copy" sh -c "! grep -qF '**D-01 ' .claude/rules/standards-design.md && grep -qF '**D-02 ' .claude/rules/standards-design.md"
+check "init: --check is clean with a waived judgement rule and a demoted signal" sh -c "'$init' --check | grep -q 'up to date'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["D-11"],"judgement":["D-11"]}}\n' > .standards/config.json
+check "init: --check names an id in both lists as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.* D-11 '"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"judgement":["D-01"]}}\n' > .standards/config.json
+check "init: --check names a demoted rule that is already judgement as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.judgement names D-01'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["X-99"]}}\n' > .standards/config.json
+check "init: --check fails on a waived id that is not a rule" sh -c "! '$init' --check"
+check "init: --check names the waived id that is not a rule as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.relaxed names X-99'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"judgement":["U-02"]}}\n' > .standards/config.json
+check "init: --check names a demoted usage rule as a gap" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.judgement names U-02'"
+printf '{"version":"0.1.0","languages":[{"name":"sh","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[],"rules":{"relaxed":["C-01"],"judgement":["W-01"]}}\n' > .standards/config.json
+"$init" >/dev/null
+check "init: --check names a waived rule a plugin hook enforces as a gap, with the hook" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.relaxed names C-01, which the plugin hook hooks/check-comments.sh enforces'"
+check "init: --check names a demoted rule a plugin hook enforces as a gap, with the hook" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: rules.judgement names W-01, which the plugin hook hooks/check-subject.sh enforces'"
+check "init: a relaxed rule a plugin hook enforces stays in the block's hard rules" sh -c "$hard_rules | grep -q '^- C-01 ' && $hard_rules | grep -q '^- W-01 '"
+check "init: a relaxed rule a plugin hook enforces is listed as neither waived nor demoted" sh -c "! sed -n '/^## Waived by this project/,/^## Code Review Rules/p' AGENTS.md | grep -qE '^- (C-01|W-01) '"
+check "init: a new config carries empty relaxed and judgement lists" python3 -c "import json, sys; sys.exit(json.load(open('$work/fresh/.standards/config.json')).get('rules') != {'relaxed': [], 'judgement': []})"
+check "init: without a rules key the block is the plugin's block, byte for byte" sh -c "sed -n '/^<!-- standards:begin/,/^<!-- standards:end/p' '$work/fresh/AGENTS.md' | sed '1d;\$d' | cmp -s - '$plugin_copy/rules/block.md'"
+
 echo "init: upgrade from the docs/ layout (v0.1.0), project with its own .githooks"
 mkdir -p "$work/old" && cd "$work/old" && git init -q -b main && git config user.email t@t && git config user.name t
 mkdir -p docs/standards .githooks .standards
@@ -461,5 +511,153 @@ check "init: the user's own lines stay" sh -c "grep -q 'echo mine' .githooks/pre
 cp .githooks/pre-commit "$work/pc.after"
 "$init" >/dev/null
 check "init: a second run changes nothing" sh -c "cmp -s .githooks/pre-commit '$work/pc.after' && ! '$init' --check | grep -q 'githooks'"
+
+echo "init: a live hook in .git/hooks keeps core.hooksPath unset"
+mkdir -p "$work/live-hooks" && cd "$work/live-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+printf '#!/bin/sh\ngit lfs pre-push "$@"\n' > .git/hooks/pre-push; chmod +x .git/hooks/pre-push
+"$init" > "$work/live-hooks.init.out" 2>&1
+check "LiveHookInGitHooks_HooksPathStaysUnset: init leaves core.hooksPath unset so git still runs .git/hooks/pre-push" sh -c "[ -z \"\$(git config core.hooksPath)\" ]"
+check "LiveHookInGitHooks_InitNamesTheHook: init names the live hook it would have bypassed" grep -q 'init: .git/hooks holds pre-push;' "$work/live-hooks.init.out"
+git config --unset core.hooksPath
+"$init" --check > "$work/live-hooks.check.out" 2>&1
+check "LiveHookInGitHooks_CheckReportsNoHooksPathDrift: init --check does not count the unset core.hooksPath as drift" sh -c "[ -s '$work/live-hooks.check.out' ] && ! grep -q 'core.hooksPath is unset' '$work/live-hooks.check.out'"
+
+echo "init: machine scope puts the block, the rules and the agents in the user folders, and wires the clone's hooks"
+CLAUDE_CONFIG_DIR="$work/claude home"; CODEX_HOME="$work/codex"; export CLAUDE_CONFIG_DIR CODEX_HOME
+owner_line="the owner's own instructions"; usage_error_status=2; blocks_per_user_file=1
+mkdir -p "$CLAUDE_CONFIG_DIR" && printf '%s\n' "$owner_line" > "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+machine_config='{"version":"0.1.0","languages":[{"name":"shell","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[]}'
+mkdir -p "$work/machine" && cd "$work/machine" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p docs .githooks .standards
+printf '# Instructions\n' > docs/INSTRUCTIONS.md && ln -s docs/INSTRUCTIONS.md AGENTS.md && printf 'AGENTS.md\n' > .gitignore
+printf '#!/bin/sh\necho mine\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+git add docs .gitignore .githooks && git commit -q -m 'chore: tracked instructions and hooks'
+lfs_line='git lfs pre-push "$@"'
+printf '#!/bin/sh\n%s\n' "$lfs_line" > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope project-wide > "$work/machine.bad-scope.out" 2>&1; bad_scope_status=$?
+check "UnknownScope_InitExitsWithUsageError: a --scope value other than machine or project stops init with exit 2" [ "$bad_scope_status" = "$usage_error_status" ]
+"$init" --scope machine > "$work/machine.init.out" 2>&1
+check "MachineScope_TrackedFilesUnchanged: init --scope machine runs to its stamp and changes no tracked file" sh -c "[ -f .standards/stamp ] && git diff --quiet HEAD"
+check "MachineScope_UserClaudeFileHoldsOneBlock: the user CLAUDE.md under \$work holds exactly one standards block" sh -c "[ \"\$(grep -c 'standards:begin' '$CLAUDE_CONFIG_DIR/CLAUDE.md')\" = $blocks_per_user_file ]"
+check "MachineScope_UserCodexFileHoldsOneBlock: the user AGENTS.md under \$work holds exactly one standards block" sh -c "[ \"\$(grep -c 'standards:begin' '$CODEX_HOME/AGENTS.md')\" = $blocks_per_user_file ]"
+check "MachineScope_OwnerTextKeptAboveBlock: the owner's line in the user CLAUDE.md survives the install" grep -qxF "$owner_line" "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+check "MachineScope_RulesInUserClaudeFolder: the Claude rules land in the user rules folder under \$work" test -f "$CLAUDE_CONFIG_DIR/rules/standards-design.md"
+check "MachineScope_AgentsInUserCodexFolder: the Codex agents land in the user agents folder under \$work" test -f "$CODEX_HOME/agents/standards-reviewer.toml"
+check "MachineScope_NoRulesInProjectFolder: machine scope writes no Claude rule into the project" sh -c "! ls .claude/rules/standards-* >/dev/null 2>&1"
+check "MachineScope_HooksPathNeverSet: machine scope leaves core.hooksPath unset so git runs the clone's own hooks" sh -c "[ -z \"\$(git config core.hooksPath)\" ]"
+check "MachineScope_ExistingPrePushLineRunsFirst: the standards call in .git/hooks/pre-push comes after the line already there" \
+  awk -v existing="$lfs_line" -v needle=.standards/hooks/git/pre-push '$0 == existing { existing_line = NR } index($0, needle) { call_line = NR } END { exit !(existing_line && call_line > existing_line) }' .git/hooks/pre-push
+check "MachineScope_MissingHookCreatedExecutable: a hook the clone lacked is created executable with the standards call" \
+  sh -c "[ -x .git/hooks/commit-msg ] && grep -qF .standards/hooks/git/commit-msg .git/hooks/commit-msg"
+check "MachineScope_TrackedGithooksUntouched: the tracked .githooks/pre-commit keeps its committed text" git diff --quiet HEAD -- .githooks/pre-commit
+check "MachineScope_OutputsExcluded: git status lists none of the files machine scope wrote in the clone" sh -c "[ -z \"\$(git status --porcelain --untracked-files=all)\" ]"
+wired_files="hooks/pre-commit hooks/commit-msg hooks/pre-push info/exclude"
+mkdir -p "$work/machine.before"
+for wired_file in $wired_files; do cp ".git/$wired_file" "$work/machine.before/${wired_file##*/}"; done
+"$init" >/dev/null 2>&1
+check "MachineScope_SecondRunChangesNothing: a second init leaves the clone's hook files and its exclude byte-equal" sh -c "
+  for wired_file in $wired_files; do cmp -s \".git/\$wired_file\" \"$work/machine.before/\${wired_file##*/}\" || exit 1; done"
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+"$init" --check > "$work/machine.check.out" 2>&1
+check "MachineScope_CheckWithoutFlagIsClean: init --check, with no --scope, finds the machine install up to date" grep -q 'up to date' "$work/machine.check.out"
+gate_ran="$work/machine.gate-ran"
+python3 -c 'import json, sys
+config = json.load(open(".standards/config.json"))
+config["gates"] = [{"name": "marker", "command": "echo ran > \"%s\"" % sys.argv[1], "when": ["commit"]}]
+json.dump(config, open(".standards/config.json", "w"))' "$gate_ran"
+printf 'note\n' > note.txt && git add note.txt && git commit -q -m 'docs: add a note' >/dev/null 2>&1
+check "MachineScope_CommitRunsTheHook: a commit in the clone runs the standards pre-commit and its project gate" test -f "$gate_ran"
+mkdir -p "$work/machine-second" && cd "$work/machine-second" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope machine >/dev/null 2>&1
+cd "$work/machine"
+"$init" --check > "$work/machine.second-check.out" 2>&1
+check "SecondProjectSameHome_CheckStaysClean: a second project installed on the same user folders leaves the first one's --check up to date" grep -q 'up to date' "$work/machine.second-check.out"
+
+echo "init: machine scope links .standards into the linked worktrees and flow's worktree_setup"
+linked_worktree="$work/machine-wt"; flow_worktree="$work/machine-wt-flow"; flow_items_wanted=1
+git worktree add -q "$linked_worktree" 2>/dev/null
+mkdir -p .flow && printf 'pool:\nworktree_setup:\n  # - dotnet restore\ngates:\n' > .flow/config.yaml
+"$init" >/dev/null 2>&1
+"$init" >/dev/null 2>&1
+check "LinkedWorktree_SeesTheConfig: the linked worktree reads the main worktree's config through .standards" test -f "$linked_worktree/.standards/config.json"
+check "LinkedWorktree_StatusStaysClean: git status in the linked worktree lists nothing init wrote" sh -c "[ -z \"\$(git -C '$linked_worktree' status --porcelain --untracked-files=all)\" ]"
+check "FlowConfig_WorktreeSetupGetsOneLine: two inits leave one item that links .standards under worktree_setup" \
+  sh -c "[ \"\$(grep -c 'ln -s .*\\.standards' .flow/config.yaml)\" = $flow_items_wanted ]"
+(cd "$linked_worktree" && "$init" --check > "$work/machine-wt.check.out" 2>&1)
+check "LinkedWorktree_CheckIsClean: init --check run in the linked worktree finds the install up to date" grep -q 'up to date' "$work/machine-wt.check.out"
+rm -f "$gate_ran"
+(cd "$linked_worktree" && printf 'linked\n' > linked.txt && git add linked.txt && git commit -q -m 'docs: add a linked note' >/dev/null 2>&1)
+check "LinkedWorktree_CommitRunsTheHook: a commit in the linked worktree runs the standards pre-commit and its project gate" test -f "$gate_ran"
+git worktree add -q "$flow_worktree" 2>/dev/null
+flow_setup_line="$(sed -n 's/^  - \(\[ -e \.standards \] .*\)$/\1/p' .flow/config.yaml)"
+(cd "$flow_worktree" && sh -c "$flow_setup_line")
+check "FlowSetupLine_LinksANewWorktree: the worktree_setup line, run in a new worktree, links its .standards to the main one" \
+  sh -c '[ -n "$1" ] && [ -L "$2/.standards" ] && [ -f "$2/.standards/config.json" ]' sh "$flow_setup_line" "$flow_worktree"
+check "MachineScope_RepeatedInits_UserFileKeepsOneBlock: after every init above, the user CLAUDE.md still holds exactly one standards block" \
+  sh -c "[ \"\$(grep -c 'standards:begin' '$CLAUDE_CONFIG_DIR/CLAUDE.md')\" = $blocks_per_user_file ]"
+grep -vF .standards/hooks/git/pre-push .git/hooks/pre-push > "$work/pre-push.stripped"; cat "$work/pre-push.stripped" > .git/hooks/pre-push
+"$init" --check > "$work/machine.stripped-call.out" 2>&1
+check "MachineScope_StrippedHookCall_CheckReportsDrift: init --check names the clone's pre-push once its standards call is gone" \
+  grep -q '^init: drift: .*pre-push' "$work/machine.stripped-call.out"
+"$init" >/dev/null 2>&1
+exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
+sed '/^# standards:begin/,/^# standards:end/d' "$exclude_file" > "$work/exclude.stripped"; cat "$work/exclude.stripped" > "$exclude_file"
+"$init" --check > "$work/machine.stripped-exclude.out" 2>&1
+check "MachineScope_RemovedExcludeBlock_CheckReportsDrift: init --check names the exclude file once its standards block is gone" \
+  grep -q '^init: drift: .*exclude' "$work/machine.stripped-exclude.out"
+"$init" >/dev/null 2>&1
+rm "$linked_worktree/.standards"
+"$init" --check > "$work/machine.missing-link.out" 2>&1
+check "LinkedWorktree_MissingLink_CheckReportsDrift: init --check names the linked worktree that lost its .standards link" \
+  grep -q '^init: drift: .*/machine-wt/\.standards is missing' "$work/machine.missing-link.out"
+"$init" >/dev/null 2>&1
+git worktree remove --force "$linked_worktree"; git worktree remove --force "$flow_worktree"
+
+echo "init: machine scope leaves a tracked flow config alone"
+mkdir -p "$work/tracked-flow" && cd "$work/tracked-flow" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .flow .standards && printf '%s\n' "$machine_config" > .standards/config.json
+printf 'pool:\nworktree_setup:\n  # - dotnet restore\n' > .flow/config.yaml
+git add .flow && git commit -q -m 'chore: flow config'
+"$init" --scope machine > "$work/tracked-flow.init.out" 2>&1
+check "TrackedFlowConfig_StaysUnchanged: machine init leaves a committed .flow/config.yaml with worktree_setup: unchanged" \
+  sh -c "[ -z \"\$(git status --porcelain -- .flow/config.yaml)\" ]"
+check "TrackedFlowConfig_InitPrintsTheItem: machine init prints the worktree_setup item that links .standards for the owner to add" \
+  grep -q 'worktree_setup: .*ln -s .*\.standards' "$work/tracked-flow.init.out"
+
+echo "init: the standards call keeps the status of the hook lines before it"
+mkdir -p "$work/failing-hooks" && cd "$work/failing-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
+printf '#!/bin/sh\nfalse\n' > .git/hooks/pre-push
+printf '#!/bin/sh\nfalse\nexit $?\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-push .git/hooks/pre-commit
+"$init" --scope machine >/dev/null 2>&1
+check "ClonePrePushEndingInFalse_StillFailsAfterMachineInit: the pre-push exits non-zero once init chained the standards call" \
+  sh -c '! .git/hooks/pre-push origin url </dev/null'
+check "ClonePreCommitEndingInExitStatus_StillFailsAfterMachineInit: exit \$? after a failing line still exits non-zero once init chained the standards call" \
+  sh -c '! .git/hooks/pre-commit'
+mkdir -p "$work/failing-githooks" && cd "$work/failing-githooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards .githooks && printf '%s\n' "$machine_config" > .standards/config.json
+printf '#!/bin/sh\nfalse\n' > .githooks/pre-push && chmod +x .githooks/pre-push
+"$init" >/dev/null 2>&1
+check "ProjectPrePushEndingInFalse_StillFailsAfterInit: the tracked .githooks/pre-push exits non-zero once init chained the standards call" \
+  sh -c '! .githooks/pre-push origin url </dev/null'
+
+echo "init: machine scope in a clone whose team set core.hooksPath"
+mkdir -p "$work/team-hooks" && cd "$work/team-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .githooks .standards
+printf '#!/bin/sh\necho team\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+git add .githooks && git commit -q -m 'chore: team hooks' && git config core.hooksPath .githooks
+printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope machine > "$work/team-hooks.init.out" 2>&1
+check "TeamHooksPathSet_MachineScopeKeepsTheTeamPath: machine scope leaves the team's core.hooksPath as it was" \
+  sh -c "[ \"\$(git config core.hooksPath)\" = .githooks ]"
+check "TeamHooksPathSet_TrackedHooksUntouched: machine scope adds no call to the team's tracked hooks" git diff --quiet HEAD -- .githooks
+check "TeamHooksPathSet_InitPrintsTheCallToAdd: init shows the hook call the owner adds by hand" grep -qF .standards/hooks/git/pre-commit "$work/team-hooks.init.out"
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+"$init" --check > "$work/team-hooks.check.out" 2>&1
+check "TeamHooksPathSet_CheckIsClean: init --check counts the hand-wired team hooks as no drift" grep -q 'up to date' "$work/team-hooks.check.out"
+unset CLAUDE_CONFIG_DIR CODEX_HOME
 
 [ "$fails" -eq 0 ] && echo "hooks: ok" || { echo "hooks: $fails failed"; exit 1; }

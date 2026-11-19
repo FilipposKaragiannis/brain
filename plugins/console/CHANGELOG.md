@@ -1,5 +1,17 @@
 # console
 
+## 0.24.2 (2026-11-18)
+
+- The settings page has a Longest pass field under the Comments job (`jobs.comments.pass_limit`):
+  how long one comments pass may run before it is stopped and counted as failed. Unset, 1h. The
+  help of PRs addressed at once (`jobs.comments_workers`) now says it caps the passes across all
+  runs. Needs flow with the comments pass limit.
+
+## 0.24.1 (2026-11-18)
+
+- A terminal pane with an iTerm profile keeps the cursor blink the profile sets when the shell
+  sends mode 12 (`CSI ? 12 l` or `h`), as iTerm does; other modes in the same sequence still apply.
+
 ## 0.24.0 (2026-11-16)
 
 - The installer uses the npm that came with the node it runs, not an older npm found first on the
