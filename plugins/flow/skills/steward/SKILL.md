@@ -71,7 +71,8 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   something already exists (`add` of the main or a pool worktree). `tmp remove` takes
   only a worktree git lists under `.flow/tmp`, never the main or a pool worktree, one whose
   `.git` is missing or broken, or a locked one, and nothing while `.flow/tmp` is a symlink: else exit 2 before anything
-  runs. It counts a change in a submodule as uncommitted whatever `.gitmodules` says, and
+  runs. It counts as uncommitted a change in a submodule whatever `.gitmodules` says and an
+  untracked file whatever `status.showUntrackedFiles` says, and
   refuses it, exit 3, as it does a worktree whose `git status` fails. A create that fails, or leaves no git worktree at `{path}`,
   adds no pool entry and says why after the command's output: the claim exits 1, not the
   `pool_max` exit 3, so tell the owner the command failed and name the folder it may have left

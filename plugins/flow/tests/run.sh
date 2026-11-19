@@ -1949,6 +1949,13 @@ write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/tempor
 relative_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-6 2>/dev/null)"
 "$P/scripts/steward.sh" tmp remove ".flow/tmp/$temporary_slug-phase-6" > "$work/temporary-worktrees.out" 2>&1
 check "TmpRemoveOfRelativePath_RemovesThatWorktree: a path relative to where tmp remove runs names the worktree removed" [ ! -e "$relative_phase_worktree" ]
+hidden_untracked_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" hidden-untracked 2>/dev/null)"
+printf 'wip\n' > "$hidden_untracked_phase_worktree/wip.txt"
+git config status.showUntrackedFiles no
+"$P/scripts/steward.sh" tmp remove "$hidden_untracked_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+git config --unset status.showUntrackedFiles
+check "TmpRemoveOfUntrackedFileHiddenByStatusConfig_ExitsThree: an untracked file counts as uncommitted though status.showUntrackedFiles=no hides it from git status, exit 3" [ "$code" = 3 ]
+check "TmpRemoveOfUntrackedFileHiddenByStatusConfig_KeepsFile: the remove command never runs, so the untracked file stays" [ -f "$hidden_untracked_phase_worktree/wip.txt" ]
 write_temporary_config "worktree_create: sh $work/temporary-worktrees/fake-create.sh \"{path}\" {base}\n"
 "$P/scripts/steward.sh" tmp add "$phases_item" quoted > "$work/temporary-worktrees.out" 2>&1; code=$?
 check "CreateCommandQuotingPath_ExitsTwo: a template with {path} inside double quotes is refused" [ "$code" = 2 ]

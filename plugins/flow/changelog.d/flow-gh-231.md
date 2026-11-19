@@ -22,10 +22,10 @@ bump: minor
   main or a pool worktree, a worktree whose `.git` is missing or broken, a locked one and any
   path while `.flow/tmp` is a symlink, and resolves a relative path from where it runs. It
   refuses, exit 3, a change in a submodule even when `.gitmodules` tells `git status` to ignore
-  it, and a worktree whose `git status` fails (a corrupt index), since no change can be ruled
-  out. `tmp add` refuses, exit 2, a phase with a character other than a letter, a digit, `.`,
-  `_` or `-`, one that makes no valid branch name (one holding `..`), and a phase whose branch or
-  folder already exists.
+  it, an untracked file that `status.showUntrackedFiles=no` hides, and a worktree whose
+  `git status` fails (a corrupt index), since no change can be ruled out. `tmp add` refuses,
+  exit 2, a phase with a character other than a letter, a digit, `.`, `_` or `-`, one that makes
+  no valid branch name (one holding `..`), and a phase whose branch or folder already exists.
 - A pool that cannot grow because the worktree cannot be made now says so, with the command's or
   git's output, and exits 1. It used to say the pool was at `pool_max` and exit 3, which sent
   `next` on to another item instead of naming the failure.
