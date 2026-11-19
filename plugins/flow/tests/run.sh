@@ -632,6 +632,33 @@ child2="$("$P/adapters/github/create.sh" task "Slice two" --blocked-by 'gh#21')"
 check "gh create: blocker edge recorded" [ "$("$P/adapters/github/read.sh" "$child2" | jget blocked_by)" = '["gh#21"]' ]
 check "gh parent from the body line in list" sh -c "'$P/adapters/github/list.sh' | grep -q '\"parent\": *\"gh#20\"'"
 
+echo "github priority labels (fake gh)"
+cp "$FAKE_GH_DIR/issues.json" "$work/issues.labels"; cp .flow/config.yaml "$work/config.labels"
+label_config() { # label_config <fields block>: GitHub with ready.needs priority and an order
+  printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n%bready:\n  needs: [priority]\n  priority_order: [P0, P1, P2]\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' "$1" > .flow/config.yaml
+}
+label_config ''
+python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['issues'] += [
+  {'number': 90, 'title': 'Two priorities', 'body': '', 'state': 'OPEN', 'labels': ['size:S', 'priority:P2', 'priority:P0'], 'url': 'https://gh/90'},
+  {'number': 91, 'title': 'No priority', 'body': '', 'state': 'OPEN', 'labels': ['size:S'], 'url': 'https://gh/91'},
+  {'number': 92, 'title': 'Field and label', 'body': '', 'state': 'OPEN', 'labels': ['size:S', 'priority:P0'], 'fields': {'Priority': 'P2'}, 'url': 'https://gh/92'}]; json.dump(d, open(p, 'w'))"
+priority_and_rank() { "$P/adapters/github/read.sh" "$1" | python3 -c 'import json,sys; i=json.load(sys.stdin); print("%s %s" % (i["priority"], i["rank"]))'; }
+lpar="$("$P/scripts/new.sh" task "Labelled parent" --size S --priority P1 2>/dev/null)"
+check "gh create: --priority with no priority field adds a priority label" sh -c "'$P/adapters/github/read.sh' '$lpar' | python3 -c 'import json,sys; assert \"priority:P1\" in json.load(sys.stdin)[\"labels\"]'"
+check "gh read: with no priority field a priority label gives the priority and its rank in ready.priority_order" [ "$(priority_and_rank "$lpar")" = "P1 1" ]
+lkid="$("$P/scripts/new.sh" task "Labelled kid" --size S --parent "$lpar" 2>/dev/null)"
+check "gh create: a child takes its parent's priority label" [ "$(priority_and_rank "$lkid")" = "P1 1" ]
+check "gh read: two priority labels read as the one earlier in ready.priority_order" [ "$(priority_and_rank 'gh#90')" = "P0 0" ]
+check "gh list-ready: a priority label orders the ready items" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; ids=[i["id"] for i in json.load(sys.stdin)]; print(ids.index("gh#90") < ids.index(sys.argv[1]))' "$lkid")" = True ]
+check "ready: an unstarted GitHub item with no priority label lacks the priority ready.needs asks for" [ "$("$P/adapters/github/read.sh" 'gh#91' | jget needs)" = '["priority"]' ]
+check "ready: an unstarted GitHub item with no priority label is not ready" sh -c "! '$P/adapters/github/list-ready.sh' | grep -q '\"gh#91\"'"
+check "board: Health names an item with two priority labels and the priority it reads as" sh -c "'$P/scripts/board.sh' 2>/dev/null | grep -qx -- '- gh#90: labels priority:P2, priority:P0, read as priority P0'"
+label_config '  fields:\n    priority: Priority\n'
+check "gh read: with the priority field set the field wins over a priority label" [ "$(priority_and_rank 'gh#92')" = "P2 2" ]
+fpri="$("$P/scripts/new.sh" task "Field priority" --size S --priority P1 2>/dev/null)"
+check "gh create: with the priority field set --priority adds no priority label" sh -c "'$P/adapters/github/read.sh' '$fpri' | python3 -c 'import json,sys; assert not [l for l in json.load(sys.stdin)[\"labels\"] if l.startswith(\"priority:\")]'"
+cp "$work/issues.labels" "$FAKE_GH_DIR/issues.json"; cp "$work/config.labels" .flow/config.yaml
+
 echo "github fields, types and project (fake gh)"
 cp "$FAKE_GH_DIR/issues.json" "$work/issues.saved"; cp .flow/config.yaml "$work/config.saved"
 cat > "$FAKE_GH_DIR/issues.json" <<'JSON'

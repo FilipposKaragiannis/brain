@@ -134,7 +134,7 @@ and `github.priority_order` stand in for an unset key) and refuses a field it do
 
 | Adapter | priority | size | state |
 |---|---|---|---|
-| `github` | the issue field `github.fields.priority` | the issue field `github.fields.size`, else the `size:<S>` label | labels `step:<step>`, `gate:<gate>`, `wt:<worktree>`, `flow:<profile>`, `size:<size>` (not with a size field), and the whole state as JSON in one issue comment marked `<!-- flow:state -->`; a label wins over the comment on read; an empty value or `gate=none` removes the label |
+| `github` | the issue field `github.fields.priority`, else the `priority:<name>` label (of two, the one earlier in `ready.priority_order`; the board says so); with the field set the label is ignored | the issue field `github.fields.size`, else the `size:<S>` label | labels `step:<step>`, `gate:<gate>`, `wt:<worktree>`, `flow:<profile>`, `size:<size>` (not with a size field), and the whole state as JSON in one issue comment marked `<!-- flow:state -->`; a label wins over the comment on read; an empty value or `gate=none` removes the label |
 | `local` | the item file's `priority` | the item file's `size` | the item file's frontmatter, one key each |
 | `jira` | Jira's own priority field | the field `jira.fields.size` (an id or a name), else the `size:<S>` label | the same labels as `github`, and the whole state as JSON in the issue property `flow-state`; a label wins over the property on read |
 

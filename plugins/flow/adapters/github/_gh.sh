@@ -18,7 +18,7 @@ issue_number() {
 }
 
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority
-# name org issue fields (the size field replaces the size: labels), github.project numbers the
+# name org issue fields (each replaces its size: or priority: labels), github.project numbers the
 # project whose Status the adapter keeps in step. The readiness rules are every tracker's
 # (ready_rules in lib/flow.sh); list and read take them before they build items.
 GH_SIZE_FIELD="$(cfg github.fields.size)"; GH_PRIORITY_FIELD="$(cfg github.fields.priority)"; GH_AREA_FIELD="$(cfg github.fields.area)"
@@ -38,10 +38,11 @@ project_sync() {
 
 # issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: the issue
 # type Epic or Bug, else the label epic or bug, else task. Parent: the native sub-issue parent,
-# else a "Parent #N" line in the body. rank orders ready items (lower first) by
-# READY_PRIORITY_ORDER; needs lists the READY_NEEDS fields an unstarted item still lacks, the
-# same rule as the local adapter's _item.py (change both); open_children counts its open native
-# sub-issues.
+# else a "Parent #N" line in the body. Priority: the github.fields.priority field when set, else
+# the priority: label, the one earliest in READY_PRIORITY_ORDER when there are two. rank orders
+# ready items (lower first) by READY_PRIORITY_ORDER; needs lists the READY_NEEDS fields an
+# unstarted item still lacks, the same rule as the local adapter's _item.py (change both);
+# open_children counts its open native sub-issues.
 issue_to_item() {
   python3 -I -c '
 import json, os, re, sys
@@ -66,11 +67,14 @@ size_field, priority_field = os.environ.get("GH_SIZE_FIELD", ""), os.environ.get
 size = (fields.get(size_field) or "") if size_field else ""
 size = size or labelled("size:", state.get("size", ""))
 state["size"] = size
-priority = (fields.get(priority_field) or "") if priority_field else ""
+order = [p for p in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if p]
+def order_place(name):
+    return order.index(name) if name in order else len(order)
+labelled_priorities = sorted((label[len("priority:"):] for label in labels if label.startswith("priority:")), key=order_place)
+priority = (fields.get(priority_field) or "") if priority_field else next(iter(labelled_priorities), "")
 area_field = os.environ.get("GH_AREA_FIELD", "")
 area = (fields.get(area_field) or "") if area_field else ""
-order = [p for p in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if p]
-rank = 999 if not priority else order.index(priority) if priority in order else len(order)
+rank = 999 if not priority else order_place(priority)
 m = re.search(r"(?im)^Parent:? #(\d+)", raw.get("body", "") or "")
 parent = "gh#%d" % raw["parent"]["number"] if raw.get("parent") else "gh#%s" % m.group(1) if m else ""
 kind = {"Epic": "epic", "Bug": "bug"}.get(raw.get("type") or "", "")
@@ -120,7 +124,7 @@ else:
 # ensure_label <label>: create it when missing (gh issue edit fails on unknown labels).
 ensure_label() {
   case "$1" in
-    step:*) color="1D76DB" ;; gate:*) color="D93F0B" ;; wt:*) color="0E8A16" ;; flow:*) color="5319E7" ;; size:*) color="FBCA04" ;; *) color="EDEDED" ;;
+    step:*) color="1D76DB" ;; gate:*) color="D93F0B" ;; wt:*) color="0E8A16" ;; flow:*) color="5319E7" ;; size:*) color="FBCA04" ;; priority:*) color="B60205" ;; *) color="EDEDED" ;;
   esac
   gh label create "$1" --color "$color" --description "flow state" --force >/dev/null 2>&1 || true
 }
