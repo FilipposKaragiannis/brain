@@ -516,6 +516,11 @@ sh "$here/state-disk.sh" > "$work/state-disk.out" 2>&1; code=$?
 check "state-disk: $(tail -n 1 "$work/state-disk.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/state-disk.out"
 
+echo "the flow record joined onto items and its runs and gates listed (tests/state-join.sh)"
+sh "$here/state-join.sh" > "$work/state-join.out" 2>&1; code=$?
+check "state-join: $(tail -n 1 "$work/state-join.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/state-join.out"
+
 echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
 sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
 check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]

@@ -1,7 +1,7 @@
-# _state_fixture.sh: the fixture state.sh and state-views.sh source: the base fixture, a repo
-# on the local adapter, the helpers that read an item's flow record and its tracker side by side,
-# and one gate record and one run record as notify.sh and next.sh write them. Each suite enters
-# the sandbox, then makes its repo with new_repo records. Sourced, never run.
+# _state_fixture.sh: the fixture state.sh, state-views.sh and state-join.sh source: the base
+# fixture, a repo on the local adapter, the helpers that read an item's flow record and its tracker
+# side by side, and one gate record and one run record as notify.sh and next.sh write them. Each
+# suite enters the sandbox, then makes its repo with new_repo records. Sourced, never run.
 . "$(dirname "$0")/_base_fixture.sh"
 
 record() { "$plugin/scripts/state.sh" "$@"; }
