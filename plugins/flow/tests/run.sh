@@ -634,13 +634,14 @@ check "gh parent from the body line in list" sh -c "'$P/adapters/github/list.sh'
 
 echo "github priority labels (fake gh)"
 cp "$FAKE_GH_DIR/issues.json" "$work/issues.labels"; cp .flow/config.yaml "$work/config.labels"
-label_config() { # label_config <fields block>: GitHub with ready.needs priority and an order
+write_label_config() { # write_label_config <fields block>: GitHub with ready.needs priority and an order
   printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n%bready:\n  needs: [priority]\n  priority_order: [P0, P1, P2]\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' "$1" > .flow/config.yaml
 }
-label_config ''
+write_label_config ''
 rank_of_p0=0; rank_of_p1=1; rank_of_p2=2
 python3 -c "import json; issues_path='$FAKE_GH_DIR/issues.json'; document=json.load(open(issues_path)); document['issues'] += [
   {'number': 90, 'title': 'Two priorities', 'body': '', 'state': 'OPEN', 'labels': ['size:S', 'priority:P2', 'priority:P0'], 'url': 'https://gh/90'},
+  {'number': 93, 'title': 'Two priorities, the better first', 'body': '', 'state': 'OPEN', 'labels': ['size:S', 'priority:P0', 'priority:P2'], 'url': 'https://gh/93'},
   {'number': 91, 'title': 'No priority', 'body': '', 'state': 'OPEN', 'labels': ['size:S'], 'url': 'https://gh/91'},
   {'number': 92, 'title': 'Field and label', 'body': '', 'state': 'OPEN', 'labels': ['size:S', 'priority:P0'], 'fields': {'Priority': 'P2'}, 'url': 'https://gh/92'}]; json.dump(document, open(issues_path, 'w'))"
 github_item_field() { "$P/adapters/github/read.sh" "$1" | jget "$2"; } # github_item_field <id> <key>
@@ -650,19 +651,21 @@ check "gh read: with no priority field a priority label gives the priority" [ "$
 check "gh read: with no priority field a labelled priority ranks by its place in ready.priority_order" [ "$(github_item_field "$labelled_parent" rank)" = "$rank_of_p1" ]
 labelled_child="$("$P/scripts/new.sh" task "Labelled child" --size S --parent "$labelled_parent" 2>/dev/null)"
 check "gh create: a child takes its parent's priority label" [ "$(github_item_field "$labelled_child" priority)" = "P1" ]
-check "gh read: two priority labels read as the one earlier in ready.priority_order" [ "$(github_item_field 'gh#90' priority)" = "P0" ]
+check "gh read: two priority labels with the worse first read as the one earlier in ready.priority_order" [ "$(github_item_field 'gh#90' priority)" = "P0" ]
+check "gh read: two priority labels with the better first read as the one earlier in ready.priority_order" [ "$(github_item_field 'gh#93' priority)" = "P0" ]
 check "gh read: two priority labels rank by the one earlier in ready.priority_order" [ "$(github_item_field 'gh#90' rank)" = "$rank_of_p0" ]
-check "gh list-ready: a priority label orders the ready items" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; ids=[item["id"] for item in json.load(sys.stdin)]; print(ids.index("gh#90") < ids.index(sys.argv[1]))' "$labelled_child")" = True ]
+check "gh list-ready: a priority label orders the ready items" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; item_ids=[item["id"] for item in json.load(sys.stdin)]; print(item_ids.index("gh#90") < item_ids.index(sys.argv[1]))' "$labelled_child")" = True ]
 check "ready: an unstarted GitHub item with no priority label lacks the priority ready.needs asks for" [ "$(github_item_field 'gh#91' needs)" = '["priority"]' ]
 check "ready: an unstarted GitHub item with no priority label is not ready" sh -c "! '$P/adapters/github/list-ready.sh' | grep -q '\"gh#91\"'"
-check "board: Health names an item with two priority labels and the priority it reads as" sh -c "'$P/scripts/board.sh' 2>/dev/null | grep -q -- 'gh#90.*priority:P2.*priority:P0.*P0'"
+check "board: Health names an item with two priority labels and both its labels" sh -c "'$P/scripts/board.sh' 2>/dev/null | grep -- 'gh#90:' | grep -- 'priority:P2' | grep -q -- 'priority:P0'"
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\nready:\n  priority_order: [P0, P1, P2]\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
 newer_without_priority="$("$P/scripts/new.sh" task "Newer, no priority" --size S 2>/dev/null)"
-check "gh list-ready: an older item with a priority label goes ahead of a newer one with none" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; ids=[item["id"] for item in json.load(sys.stdin)]; print(ids.index(sys.argv[1]) < ids.index(sys.argv[2]))' "$labelled_child" "$newer_without_priority")" = True ]
-label_config '  fields:\n    priority: Priority\n'
+check "gh list-ready: an older item with a priority label goes ahead of a newer one with none" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; item_ids=[item["id"] for item in json.load(sys.stdin)]; print(item_ids.index(sys.argv[1]) < item_ids.index(sys.argv[2]))' "$labelled_child" "$newer_without_priority")" = True ]
+write_label_config '  fields:\n    priority: Priority\n'
 check "gh read: with the priority field set a priority label on an item with no field value is ignored" sh -c "'$P/adapters/github/read.sh' 'gh#90' | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin)[\"priority\"] != \"\")'"
 check "gh read: with the priority field set the field wins over a priority label" [ "$(github_item_field 'gh#92' priority)" = "P2" ]
 check "gh read: with the priority field set the rank follows the field" [ "$(github_item_field 'gh#92' rank)" = "$rank_of_p2" ]
+check "board: with the priority field set Health leaves out an item with two priority labels" sh -c "'$P/scripts/board.sh' 2>/dev/null | grep -q -- 'gh#92' && ! '$P/scripts/board.sh' 2>/dev/null | grep -q -- 'gh#90:'"
 field_priority_item="$("$P/scripts/new.sh" task "Field priority" --size S --priority P1 2>/dev/null)"
 check "gh create: with the priority field set --priority adds no priority label" sh -c "'$P/adapters/github/read.sh' '$field_priority_item' | python3 -c 'import json,sys; assert not [label for label in json.load(sys.stdin)[\"labels\"] if label.startswith(\"priority:\")]'"
 cp "$work/issues.labels" "$FAKE_GH_DIR/issues.json"; cp "$work/config.labels" .flow/config.yaml

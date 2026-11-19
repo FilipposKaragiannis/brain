@@ -39,7 +39,8 @@ project_sync() {
 # issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: the issue
 # type Epic or Bug, else the label epic or bug, else task. Parent: the native sub-issue parent,
 # else a "Parent #N" line in the body. Priority: the github.fields.priority field when set, else
-# the priority: label, the one earliest in READY_PRIORITY_ORDER when there are two. rank orders
+# the priority: label, the one earliest in READY_PRIORITY_ORDER when there are two; priority_labels
+# lists the priority: labels that decided it, empty with the field set. rank orders
 # ready items (lower first) by READY_PRIORITY_ORDER; needs lists the READY_NEEDS fields an
 # unstarted item still lacks, the same rule as the local adapter's _item.py (change both);
 # open_children counts its open native sub-issues.
@@ -71,11 +72,13 @@ order = [priority_name for priority_name in os.environ.get("READY_PRIORITY_ORDER
 def order_place(name):
     return order.index(name) if name in order else len(order)
 priority_label = os.environ["GH_PRIORITY_LABEL"]
-labelled_priorities = sorted((label[len(priority_label):] for label in labels if label.startswith(priority_label)), key=order_place)
+priority_labels = [] if priority_field else [label for label in labels if label.startswith(priority_label)]
+labelled_priorities = sorted((label[len(priority_label):] for label in priority_labels), key=order_place)
 priority = (fields.get(priority_field) or "") if priority_field else next(iter(labelled_priorities), "")
 area_field = os.environ.get("GH_AREA_FIELD", "")
 area = (fields.get(area_field) or "") if area_field else ""
-rank = 999 if not priority else order_place(priority)
+NO_RANK = 999
+rank = NO_RANK if not priority else order_place(priority)
 m = re.search(r"(?im)^Parent:? #(\d+)", raw.get("body", "") or "")
 parent = "gh#%d" % raw["parent"]["number"] if raw.get("parent") else "gh#%s" % m.group(1) if m else ""
 kind = {"Epic": "epic", "Bug": "bug"}.get(raw.get("type") or "", "")
@@ -91,7 +94,7 @@ project = os.environ.get("GH_PROJECT", "")
 item = next((p for p in raw.get("project_items", []) if project and str(p["project"]) == project), None)
 print(json.dumps({
     "id": "gh#%d" % raw["number"], "kind": kind, "type": raw.get("type") or "", "title": raw.get("title", ""), "size": size,
-    "priority": priority, "area": area, "rank": rank, "needs": needs,
+    "priority": priority, "priority_labels": priority_labels, "area": area, "rank": rank, "needs": needs,
     "status": "open" if is_open else "closed",
     "labels": labels, "blocked_by": ["gh#%d" % b["number"] for b in raw.get("blocked_by", [])],
     "open_blockers": ["gh#%d" % b["number"] for b in raw.get("blocked_by", []) if b.get("state", "open") != "closed"],

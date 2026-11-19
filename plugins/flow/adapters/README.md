@@ -59,7 +59,7 @@ prefix.
 | `answers` | | optional: clears each gate the owner answered on the tracker (a comment after the gate's `**Gate: <gate>**` comment whose first word is `/answer`, by an owner the adapter trusts; never the merge gate) through `scripts/gate.sh clear`, prints each cleared id; `jobs/next.sh` runs it, and a Slack gate message says to answer on the issue |
 
 `kind` is `epic`, `task` or `bug`. `create` puts a value the tracker has no place for nowhere
-and says so on stderr (`--type` on a tracker without types, `--priority` without a field for it);
+and says so on stderr (`--type` on a tracker without types);
 it never fails for one. `--blocked-by` may name items of other adapters. A `list` cut short by a
 tracker limit says so on stderr, and fails when `FLOW_LIST_WHOLE` is set (the board graph needs
 every item).
@@ -97,6 +97,7 @@ that landed. The Jira adapter's waits come from `FLOW_JIRA_RETRY_WAIT`.
 | `rank` | number | lower is picked first: the priority's place in `READY_PRIORITY_ORDER`, the order's length for a priority not in it, 999 without one; `_filter_ready.py` and `_graph.py` sort on it |
 | `needs` | list | the fields of `READY_NEEDS` an open item with no step yet lacks; an epic never needs a size. `_filter_ready.py` holds back an item with any |
 | `type` | string, optional | the tracker's own issue type |
+| `priority_labels` | list of strings, optional | the labels the priority came from, when the tracker reads it from labels; the board flags an item with more than one |
 
 `state` always has `step`, `profile`, `size`, `worktree`, `last_event`, `pr` (strings),
 `attempts` (a number), `touches` (a list of globs), `changes` (the globs among them whose existing
