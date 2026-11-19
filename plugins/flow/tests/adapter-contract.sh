@@ -425,6 +425,17 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
   write_config 0; "scope_config_$name" '' | sed 's/^  scope:$/  scope: "labels = picked"/' >> "$FLOW_HOME/config.yaml"
   check "ScopeWrittenAsValue_ListExitsTwo: a scope written as a value stops the list, because a scope it cannot read would list every item" '[ "$(code_of "$A/list.sh")" = 2 ]'
   check "InScope_ScopeWrittenAsValue_ExitsTwo: in-scope exits 2 under a scope written as a value, because an unread scope is no missing scope" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 2 ]'
+  scope_config '    labels:
+    - picked'
+  check "ScopeFieldListAtItsIndent_ListExitsTwo: a scope field whose list sits at the field's own indent stops the list, because a field no value of which reads would list every item" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  check "InScope_ScopeFieldListAtItsIndent_ExitsTwo: in-scope exits 2 under a scope field whose list sits at its own indent, because an unread field is no unset field" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 2 ]'
+  scope_config '    labels:
+      team: picked'
+  check "ScopeFieldNestedMap_ListExitsTwo: a scope field written as a map stops the list, because a field no value of which reads would list every item" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  scope_config '    labels:
+    kinds: [bug]'
+  check "ScopeFieldWithNothingUnder_KeepsItemOtherFieldsMatch: a scope field with nothing under it is unset and the list runs, because an empty field narrows nothing" 'listed "$pb" "$A/list.sh"'
+  check "ScopeFieldWithNothingUnder_DropsItemOtherFieldsMiss: the scope's other fields still apply beside a field with nothing under it, because only that field is unset" '! listed "$pa" "$A/list.sh"'
   scope_config '    trackers: [other]'
   check "ScopeTrackers_ExitsTwo: a scope that names trackers stops the list, because a scope belongs to its tracker" '[ "$(code_of "$A/list.sh")" = 2 ]'
   scope_config '    query: anything
