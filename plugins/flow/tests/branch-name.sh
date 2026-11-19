@@ -104,6 +104,24 @@ git branch "flow/$(slug "$legacy")" main
 check "ClaimMadeBeforeTheTemplate_KeepsFlowSlug: an item whose flow/<slug> branch exists keeps it under a template, so its work is not left behind" \
   '[ "$(claim_branch_of "$legacy")" = "flow/$(slug "$legacy")" ]'
 
+echo "branch: a claim trusts a recorded name only when the flow could have given it"
+new_repo recorded
+set_branch_config "$per_kind_templates"
+remote_branch develop && git fetch -q origin && git remote set-head origin develop
+for recorded_row in 'ForeignBranch release/2.0' 'ConfigBase main' 'OriginDefaultBranch develop'; do
+  recorded_label="${recorded_row% *}"; recorded_name="${recorded_row#* }"
+  forged="$(new_task "Drill timer")"
+  "$local_adapter/write-state.sh" "$forged" "branch=$recorded_name" >/dev/null 2>&1
+  "$plugin/scripts/steward.sh" claim "$forged" >/dev/null 2>&1
+  check "RecordedBranchIs${recorded_label}_ClaimRendersTheTemplate [$recorded_name]: the item state is tracker text anyone may write, so a claim never commits to a branch the template could not name" \
+    '[ "$(claim_branch_of "$forged")" = "task/task-$(number_of "$forged")-drill-timer" ]'
+done
+recorded_legacy="$(new_task "Drill timer")"
+"$local_adapter/write-state.sh" "$recorded_legacy" "branch=flow/$(slug "$recorded_legacy")" >/dev/null 2>&1
+"$plugin/scripts/steward.sh" claim "$recorded_legacy" >/dev/null 2>&1
+check "RecordedFlowSlugWithNoLocalBranch_ClaimKeepsFlowSlug: a claim made before the template, released and pruned, keeps its pushed name" \
+  '[ "$(claim_branch_of "$recorded_legacy")" = "flow/$(slug "$recorded_legacy")" ]'
+
 echo "branch: a claim refuses a name before it creates anything"
 new_repo refused
 set_branch_config 'branch: task/{key}..x'
