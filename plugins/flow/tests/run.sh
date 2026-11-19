@@ -1959,6 +1959,17 @@ check "CreateCommandSingleQuotingPath_ExitsTwo: a template with {path} inside si
 write_temporary_config "worktree_create: sh $work/temporary-worktrees/fake-create.sh \\\\{path} {base}\n"
 "$P/scripts/steward.sh" tmp add "$phases_item" escaped > "$work/temporary-worktrees.out" 2>&1; code=$?
 check "CreateCommandEscapingPath_ExitsTwo: a template with {path} after a backslash is refused" [ "$code" = 2 ]
+write_temporary_config 'worktree_create: touch {path}.ran; echo "$(dirname "{path}")"\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" substituted > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandQuotingPathInQuotedSubstitution_ExitsTwo: a template with {path} quoted inside a quoted \$(...) is refused, as sh would split the path there" [ "$code" = 2 ]
+check "CreateCommandQuotingPathInQuotedSubstitution_RunsNothing: the refused command never runs, so its marker never appears" [ ! -e "$temporary_folder/$temporary_slug-substituted.ran" ]
+write_temporary_config 'worktree_create: touch {path}.ran; echo "$(printf %s " {path}")"\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" split > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandQuotingPathAfterQuoteInSubstitution_ExitsTwo: a template with {path} inside a quoted string that a quoted \$(...) opens is refused, as sh would split the path there" [ "$code" = 2 ]
+check "CreateCommandQuotingPathAfterQuoteInSubstitution_RunsNothing: the refused command never runs, so its marker never appears" [ ! -e "$temporary_folder/$temporary_slug-split.ran" ]
+write_temporary_config 'worktree_create: touch {path}.ran; echo "`dirname "{path}"`"\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" backticked > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandQuotingPathInQuotedBackticks_ExitsTwo: a template with {path} quoted inside quoted backticks is refused, as sh would split the path there" [ "$code" = 2 ]
 injecting_phase='p$(>injected)'
 write_temporary_config "$fake_temporary_create"
 "$P/scripts/steward.sh" tmp add "$phases_item" "$injecting_phase" > "$work/temporary-worktrees.out" 2>&1; code=$?
@@ -3246,6 +3257,9 @@ check "InitCheckOfRemoveCommandQuotingPath_NamesGap: --check names a worktree_re
 write_command_config 'worktree_create: workspace new \\{path} --from {base}\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-escaped.out" 2>&1
 check "InitCheckOfCreateCommandEscapingPath_NamesGap: --check names a worktree_create with {path} after a backslash as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-escaped.out"
+write_command_config 'worktree_create: workspace new "$(dirname "{path}")" --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-substituted.out" 2>&1
+check "InitCheckOfCreateCommandQuotingPathInQuotedSubstitution_NamesGap: --check names a worktree_create with {path} quoted inside a quoted \$(...) as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-substituted.out"
 write_command_config 'worktree_create: workspace new {path} --from {base}\nworktree_remove: workspace remove {path}\n'
 check "InitCheckOfCommandsHoldingPath_IsClean: --check is clean with a worktree_create and a worktree_remove that hold {path}" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q
