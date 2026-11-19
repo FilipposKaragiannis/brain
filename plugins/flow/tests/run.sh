@@ -2208,6 +2208,30 @@ check "InitCheck_ScopeQueryOnLocal_IsGap: init --check reports local.scope.query
 scope_config '    trackers: [local]'
 FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
 check "InitCheck_ScopeTrackers_IsGap: init --check reports local.scope.trackers as a gap, because a scope belongs to its tracker" grep -q 'gap: .flow/config.yaml: local.scope.trackers: a scope belongs to its tracker' "$work/scope.out"
+scope_value() { # scope_value <local.scope's value, on the key's own line>
+  scope_config '' && python3 -c 'import sys; p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  scope: " + sys.argv[1] + "\n", 1))' "$1"
+}
+scope_value '"labels = team-a"'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeValueOnItsKey_ListExitsTwo: a local.scope written as a value is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_value '{labels: [team-a]}'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeInlineMap_ListExitsTwo: a local.scope written as an inline map is refused, because the config reads no inline map" [ "$code" -eq 2 ]
+scope_config '    - team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeAsList_ListExitsTwo: a local.scope written as a list is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_config '     labels: [team-a]'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldsThreeSpacesIn_ListExitsTwo: a local.scope whose fields sit three spaces in is refused, because no field of it reads" [ "$code" -eq 2 ]
+scope_value '"labels = team-a"'
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ClaimUnderScopeValue_ExitsTwo: a new claim under a local.scope it cannot read is refused, because an unread scope is no missing scope" [ "$code" -eq 2 ]
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeValueOnItsKey_IsGap: init --check reports a local.scope written as a value as a gap, because every list of the tracker stops on it" grep -q 'gap: .flow/config.yaml: local.scope' "$work/scope.out"
+scope_config ''
+empty_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
+check_all "ScopeEmpty_ListsEveryItem: an empty local.scope lists the items inside and outside the labels, because an empty scope is unset" 'case " $empty_scope_ids " in *" $sin "*) ;; *) false ;; esac && case " $empty_scope_ids " in *" $sout "*) true ;; *) false ;; esac'
 cd "$repo"
 
 echo "help"

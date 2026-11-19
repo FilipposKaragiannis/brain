@@ -10,7 +10,7 @@ scope_filter github
 number="$(issue_number "$1")" || exit 2
 if [ -n "$FLOW_SCOPE_KINDS" ]; then
   item="$("$FLOW_PLUGIN/adapters/github/read.sh" "$1")" || exit 3
-  case ",$(printf '%s' "$FLOW_SCOPE_KINDS" | tr '[:upper:]' '[:lower:]')," in *",$(json_get "$item" kind),"*) ;; *) exit 1 ;; esac
+  case ",$(printf '%s' "$FLOW_SCOPE_KINDS" | tr '[:upper:]' '[:lower:]')," in *,"$(json_get "$item" kind)",*) ;; *) exit 1 ;; esac
 fi
 FLOW_SCOPE_ASSIGNEE="$(assignee_login "$FLOW_SCOPE_ASSIGNEE")" || exit 3
 python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" in-scope "$(gh_repo)" "$STATE_MARKER" "$number" "$(cfg_or github.limit 500)"

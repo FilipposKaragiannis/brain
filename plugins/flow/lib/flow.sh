@@ -378,10 +378,16 @@ pick_filter() {
 # query alone, each as the tracker's adapter maps them (adapters/README.md); it belongs to its
 # tracker, so it names no trackers. Every message names <tracker>.scope.
 
-# scope_check <adapter>: refuses, exit 2, trackers in the scope, a field the adapter does not map
-# (pick-fields names neutral fields and query only, so this refuses any other field too) and a
-# query beside a neutral field. An empty field is unset.
+# scope_check <adapter>: refuses, exit 2, a scope that is no map of fields read two spaces in (a
+# value, a list, fields no key of which reads), trackers in the scope, a field the adapter does not
+# map (pick-fields names neutral fields and query only, so this refuses any other field too) and a
+# query beside a neutral field. An empty field is unset, and so is an empty scope.
 scope_check() {
+  [ -z "$(cfg "$1.scope")" ] \
+    || die "$1.scope takes its fields on the lines under it, two spaces in, not a value or a list" 2
+  if scope_written "$1" && [ -z "$(yaml_keys "$(config_file)" "$1.scope")" ]; then
+    die "$1.scope: no field under it reads; put each field on its own line, two spaces in" 2
+  fi
   [ -z "$(cfg "$1.scope.trackers")" ] \
     || die "$1.scope.trackers: a scope belongs to its tracker, so it names no trackers" 2
   filter_mapped "$1.scope" "$1"
@@ -400,15 +406,24 @@ scope_filter() {
   export FLOW_SCOPE_ASSIGNEE FLOW_SCOPE_STATUS FLOW_SCOPE_LABELS FLOW_SCOPE_KINDS FLOW_SCOPE_QUERY
 }
 
+# scope_written <adapter>: 0 when <adapter>.scope has a value or lines under it, however they read;
+# an empty scope is unset.
+scope_written() {
+  [ -n "$(cfg "$1.scope")" ] || yaml_nested "$(config_file)" "$1.scope"
+}
+
 # scope_holds <item>: 0 when the item is inside its tracker's scope, or the tracker has none (no
 # adapter call) or no adapter owns the item (an adhoc: name); else the adapter's in-scope exit:
-# 1 outside, said on stderr, 2 for a scope scope_check refuses.
+# 1 outside and 3 when the tracker cannot say, each said on stderr, 2 for a scope scope_check
+# refuses.
 scope_holds() {
   _scope_adapter="$(adapter_for "$1")" || return 0
-  [ -n "$(yaml_keys "$(config_file)" "$_scope_adapter.scope")" ] || return 0
+  scope_written "$_scope_adapter" || return 0
   (adapter in-scope "$1"); _scope_code=$?
-  [ "$_scope_code" -ne 1 ] \
-    || echo "flow: $1 is outside $_scope_adapter.scope in .flow/config.yaml; the flow does not run it" >&2
+  case "$_scope_code" in
+    1) echo "flow: $1 is outside $_scope_adapter.scope in .flow/config.yaml; the flow does not run it" >&2 ;;
+    3) echo "flow: $_scope_adapter could not say whether $1 is inside $_scope_adapter.scope; the flow does not run it" >&2 ;;
+  esac
   return "$_scope_code"
 }
 
@@ -522,6 +537,22 @@ yaml_keys() {
       depth = indent + 1
       if (depth == n) found = 1
     }' "$1"
+}
+
+# yaml_nested <file> <dotted.path>: 0 when lines sit under the key: indented deeper than it, or a
+# block list at its own indentation.
+yaml_nested() {
+  _nested_at="$(yaml_line "$1" "$2")"
+  [ -n "$_nested_at" ] || return 1
+  awk -v at="$_nested_at" '
+    NR == at { match($0, /^ */); key_indent = RLENGTH; next }
+    NR < at || /^[ \t]*(#|$)/ { next }
+    {
+      match($0, /^ */)
+      nested = RLENGTH > key_indent || (RLENGTH == key_indent && substr($0, RLENGTH + 1) ~ /^-( |$)/)
+      exit
+    }
+    END { exit !nested }' "$1"
 }
 
 # yaml_line <file> <dotted.path>: the line number of the key, empty when it is absent. For

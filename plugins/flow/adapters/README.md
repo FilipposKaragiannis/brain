@@ -294,8 +294,10 @@ An empty field is unset, and a tracker with no scope reads as it did. `list` and
 `scope_filter <adapter>` from `lib/flow.sh`, which runs `scope_check` and exports the fields
 comma-separated as `FLOW_SCOPE_ASSIGNEE`, `FLOW_SCOPE_STATUS`, `FLOW_SCOPE_LABELS`,
 `FLOW_SCOPE_KINDS` and `FLOW_SCOPE_QUERY`, beside the `FLOW_PICK_*` of a pick. `scope_check`
-refuses, exit 2, `trackers` in a scope, a field the adapter's `pick-fields` does not name and a
-`query` beside a neutral field, and every message names the scope key
+refuses, exit 2, a scope that is no map of fields two spaces in (a value, a list, an inline map, or
+fields no key of which reads), so a scope it cannot read never lists every item, `trackers` in a
+scope, a field the adapter's `pick-fields` does not name and a `query` beside a neutral field, and
+every message names the scope key
 (`jira.scope.sprint: the jira adapter maps assignee, status, labels, kinds and query, not sprint`).
 A refused scope stops every list of its tracker, so the board shows a tracker error and the health
 job counts the tracker as failed; `init --check` names it as a gap.
@@ -328,6 +330,8 @@ flow refuses to start one outside the scope:
 - `steward.sh claim <id>` refuses a new claim of an item outside the scope the same way, exit 2,
   after the check for a claim it already holds. `adhoc:` claims have no tracker and are never
   scoped.
+- When the tracker cannot say (GitHub's exit 3), both refuse with exit 2 and
+  `<tracker> could not say whether <id> is inside <tracker>.scope; the flow does not run it`.
 
 Open children differ. Jira ANDs the scope into both of its open-children searches (the
 `parent in (...)` search of a list, which then always runs when a scope or a pick is set, and the
