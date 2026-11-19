@@ -146,9 +146,14 @@ park() {
 
 # .flow/ holds the claim and the reports and is never part of the work.
 dirty() { [ -n "$(git -C "$1" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; }
-# dirty_with_submodules <path>: dirty, counting changes in submodules that .gitmodules tells git
-# status to ignore; tmp remove checks this before worktree_remove, which takes submodules too.
-dirty_with_submodules() { [ -n "$(git -C "$1" status --porcelain --ignore-submodules=none -- . ":!.flow" 2>/dev/null)" ]; }
+# refuse_uncommitted_changes <path>: ends the run, exit 3, when the worktree has uncommitted changes,
+# counting changes in submodules that .gitmodules tells git status to ignore (worktree_remove takes
+# submodules too), or when git status fails, since then no change can be ruled out.
+refuse_uncommitted_changes() {
+  uncommitted_changes="$(git -C "$1" status --porcelain --ignore-submodules=none -- . ":!.flow")" ||
+    die "$1: git status failed, so its changes cannot be checked. Not removing." 3
+  [ -z "$uncommitted_changes" ] || die "$1 has uncommitted changes. Not removing." 3
+}
 
 write_state() {
   # write_state <item> key=value... ; skipped for ids no adapter owns (ad hoc worktree sessions).
@@ -449,7 +454,7 @@ cmd_tmp() {
     remove)
       path="$(removable_worktree "$2")" || exit
       branch="$(temporary_branch "$path")"
-      dirty_with_submodules "$path" && die "$path has uncommitted changes. Not removing." 3
+      refuse_uncommitted_changes "$path"
       if [ -n "$(cfg worktree_remove)" ]; then run_worktree_remove "$path"
       else git -C "$main" worktree remove "$path" || die "cannot remove $path"; fi
       [ -n "$branch" ] && git -C "$main" branch -q -D "$branch" 2>/dev/null
