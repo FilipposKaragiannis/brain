@@ -421,6 +421,9 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
   check "ScopeUnmappedField_ExitsTwo: a scope field the adapter does not map stops the list" '[ "$(code_of "$A/list.sh")" = 2 ]'
   check "ScopeUnmappedField_NamesScopeKey: the refusal names <tracker>.scope.<field> and the fields the adapter maps" '"$A/list.sh" 2>&1 | grep -q "$name.scope.sprint: the $name adapter maps .*assignee.*, not sprint"'
   check "InScope_RefusedScope_ExitsTwo: in-scope exits 2 for a scope the checks refuse, because no item is inside a broken scope" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 2 ]'
+  write_config 0; "scope_config_$name" '' | sed 's/^  scope:$/  scope: "labels = picked"/' >> "$FLOW_HOME/config.yaml"
+  check "ScopeWrittenAsValue_ListExitsTwo: a scope written as a value stops the list, because a scope it cannot read would list every item" '[ "$(code_of "$A/list.sh")" = 2 ]'
+  check "InScope_ScopeWrittenAsValue_ExitsTwo: in-scope exits 2 under a scope written as a value, because an unread scope is no missing scope" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 2 ]'
   scope_config '    trackers: [other]'
   check "ScopeTrackers_ExitsTwo: a scope that names trackers stops the list, because a scope belongs to its tracker" '[ "$(code_of "$A/list.sh")" = 2 ]'
   scope_config '    query: anything
