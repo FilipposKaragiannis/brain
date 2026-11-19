@@ -69,16 +69,18 @@ size = (fields.get(size_field) or "") if size_field else ""
 size = size or labelled("size:", state.get("size", ""))
 state["size"] = size
 order = [priority_name for priority_name in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if priority_name]
-def order_place(name):
-    return order.index(name) if name in order else len(order)
+order_places = {priority_name: order.index(priority_name) for priority_name in order}
 priority_label = os.environ["GH_PRIORITY_LABEL"]
 priority_labels = [] if priority_field else [label for label in labels if label.startswith(priority_label)]
-labelled_priorities = sorted((label[len(priority_label):] for label in priority_labels), key=order_place)
-priority = (fields.get(priority_field) or "") if priority_field else next(iter(labelled_priorities), "")
+labelled_priorities = sorted((label[len(priority_label):] for label in priority_labels), key=lambda name: order_places.get(name, len(order)))
+if priority_field:
+    priority = fields.get(priority_field) or ""
+else:
+    priority = (labelled_priorities or [""])[0]
 area_field = os.environ.get("GH_AREA_FIELD", "")
 area = (fields.get(area_field) or "") if area_field else ""
 NO_RANK = 999
-rank = NO_RANK if not priority else order_place(priority)
+rank = NO_RANK if not priority else order_places.get(priority, len(order))
 m = re.search(r"(?im)^Parent:? #(\d+)", raw.get("body", "") or "")
 parent = "gh#%d" % raw["parent"]["number"] if raw.get("parent") else "gh#%s" % m.group(1) if m else ""
 kind = {"Epic": "epic", "Bug": "bug"}.get(raw.get("type") or "", "")
