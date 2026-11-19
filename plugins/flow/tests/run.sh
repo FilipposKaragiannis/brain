@@ -653,7 +653,11 @@ check "gh list-ready: a priority label orders the ready items" [ "$("$P/adapters
 check "ready: an unstarted GitHub item with no priority label lacks the priority ready.needs asks for" [ "$("$P/adapters/github/read.sh" 'gh#91' | jget needs)" = '["priority"]' ]
 check "ready: an unstarted GitHub item with no priority label is not ready" sh -c "! '$P/adapters/github/list-ready.sh' | grep -q '\"gh#91\"'"
 check "board: Health names an item with two priority labels and the priority it reads as" sh -c "'$P/scripts/board.sh' 2>/dev/null | grep -qx -- '- gh#90: labels priority:P2, priority:P0, read as priority P0'"
+printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\nready:\n  priority_order: [P0, P1, P2]\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+lnew="$("$P/scripts/new.sh" task "Newer, no priority" --size S 2>/dev/null)"
+check "gh list-ready: an older item with a priority label goes ahead of a newer one with none" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; ids=[i["id"] for i in json.load(sys.stdin)]; print(ids.index(sys.argv[1]) < ids.index(sys.argv[2]))' "$lkid" "$lnew")" = True ]
 label_config '  fields:\n    priority: Priority\n'
+check "gh read: with the priority field set a priority label on an item with no field value is ignored" [ "$("$P/adapters/github/read.sh" 'gh#90' | python3 -c 'import json,sys; i=json.load(sys.stdin); print("%s|%s" % (i["id"], i["priority"]))')" = "gh#90|" ]
 check "gh read: with the priority field set the field wins over a priority label" [ "$(priority_and_rank 'gh#92')" = "P2 2" ]
 fpri="$("$P/scripts/new.sh" task "Field priority" --size S --priority P1 2>/dev/null)"
 check "gh create: with the priority field set --priority adds no priority label" sh -c "'$P/adapters/github/read.sh' '$fpri' | python3 -c 'import json,sys; assert not [l for l in json.load(sys.stdin)[\"labels\"] if l.startswith(\"priority:\")]'"
