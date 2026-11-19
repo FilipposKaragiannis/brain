@@ -1966,6 +1966,12 @@ check "CreateCommandQuotingPathAfterQuoteInSubstitution_RunsNothing: the refused
 write_temporary_config 'worktree_create: touch {path}.ran; echo "`dirname "{path}"`"\n'
 "$P/scripts/steward.sh" tmp add "$phases_item" backticked > "$work/temporary-worktrees.out" 2>&1; code=$?
 check "CreateCommandQuotingPathInQuotedBackticks_ExitsTwo: a template with {path} quoted inside quoted backticks is refused, as sh would split the path there" [ "$code" = 2 ]
+write_temporary_config "worktree_create: echo \"\$(date)\" > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" beside-substitution > "$work/temporary-worktrees.out" 2>&1
+check "CreateCommandWithBarePathBesideQuotedSubstitution_MakesWorktree: a quoted \$(...) that closes before a bare {path} leaves the path unquoted, so the command runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-beside-substitution" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-beside-substitution" ]
+write_temporary_config "worktree_create: printf %s '\$(' > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" after-quoted-opener > "$work/temporary-worktrees.out" 2>&1
+check "CreateCommandWithBarePathAfterSingleQuotedOpener_MakesWorktree: a \$( inside single quotes opens no substitution, so a later bare {path} runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-after-quoted-opener" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-after-quoted-opener" ]
 injecting_phase='p$(>injected)'
 write_temporary_config "$fake_temporary_create"
 "$P/scripts/steward.sh" tmp add "$phases_item" "$injecting_phase" > "$work/temporary-worktrees.out" 2>&1; code=$?
