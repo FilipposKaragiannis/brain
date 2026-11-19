@@ -49,7 +49,7 @@ prefix.
 | `list` | `[--all] [--kind KIND]` | a JSON array of items: the open ones, every one with `--all`, one kind with `--kind` |
 | `list-ready` | `[--kind KIND]` | the ready items, best first: `list` piped through `scripts/filter-ready.sh` |
 | `read` | `<id>` | one item, whether or not it is inside the tracker's scope |
-| `in-scope` | `<id>` | nothing; exit 0 when the item is inside `<name>.scope` or no scope is set (no tracker call), 1 when it is outside, 2 for a scope the checks refuse (Tracker scope, below) |
+| `in-scope` | `<id>` | nothing; exit 0 when the item is inside `<name>.scope` or no scope is set (no tracker call), 1 when it is outside, 2 for a scope the checks refuse (Tracker scope, below); GitHub exits 3 when the tracker cannot answer, so a failed call never reads as outside |
 | `create` | `<kind> <title> [--size S\|M\|L] [--priority NAME] [--area NAME] [--type NAME] [--blocked-by id,id] [--parent id] [--body TEXT]` | the new id, one line |
 | `close` | `<id> [--comment TEXT]` | nothing; the item reads `closed` and the comment lands |
 | `comment` | `<id> [--body TEXT]` | nothing; the text is `--body` or stdin |
