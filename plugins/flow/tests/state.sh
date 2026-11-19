@@ -93,10 +93,10 @@ check "IdNoAdapterOwns_WritesNoRecord: nothing is written for an id no adapter o
 echo "the mirror: the tracker gets each state write first"
 mirrored="$(new_task "Mirror")"
 record set "$mirrored" step=verify >/dev/null 2>&1
-check "DefaultTrackerState_TrackerReadsTheValueSet: with tracker_state labels the tracker takes every state write" '[ "$(state "$mirrored" step)" = verify ]'
+check "DefaultTrackerState_TrackerReadsTheValueSet: with tracker_state labels the tracker takes every state write" '[ "$(tracker "$mirrored" step)" = verify ]'
 tracker_state_is none
 record set "$mirrored" step=review >/dev/null 2>&1
-check "TrackerStateNone_TrackerKeepsItsValue: with tracker_state none no write reaches the tracker" '[ "$(state "$mirrored" step)" = verify ]'
+check "TrackerStateNone_TrackerKeepsItsValue: with tracker_state none no write reaches the tracker" '[ "$(tracker "$mirrored" step)" = verify ]'
 check "TrackerStateNone_RecordTakesTheWrite: with the mirror off the record still takes the write" '[ "$(record get "$mirrored" step)" = review ]'
 tracker_state_is sometimes
 record set "$mirrored" step=done >/dev/null 2>&1; code=$?

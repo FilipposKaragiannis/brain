@@ -71,7 +71,7 @@ printf '%s' "$started_gate_file" > "$(gate_file "$started")"; printf '%s' "$star
 env FLOW_MACHINE=gamma "$plugin/scripts/state.sh" set "$started" last_event=resumed >/dev/null 2>&1
 for key in step profile size worktree attempts touches changes base held_by held_reason gate gate_from answered asked answer answered_at answer_pending pr pr_host; do
   check "FirstWriteOfAStartedItem_Copies_${key}: the record starts from the tracker's state, so nothing in flight is lost" \
-    '[ "$(record get "$started" "$key" | canonical)" = "$(state "$started" "$key" | canonical)" ]'
+    '[ "$(record get "$started" "$key" | canonical)" = "$(tracker "$started" "$key" | canonical)" ]'
 done
 check "FirstWriteOfAStartedItem_ClaimsItForThisMachine: an item with a step was started here" '[ "$(record get "$started" claim.machine)" = gamma ]'
 check "FirstWriteOfAStartedItem_TakesTheGateFilesOptions: the open gate's options outlive the move to the record" \

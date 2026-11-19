@@ -52,7 +52,11 @@ new_item() {
 }
 # record_a_dead_agent: the item's run record names a pid that is gone and started two days ago, as
 # one whose agent ended while its verify goes on; stop and health then act on nothing else.
-record_a_dead_agent() { python3 -c 'import json,sys,time; path=sys.argv[1]; record=json.load(open(path)); record["pid"]=999999; record["started"]=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()-172800)); json.dump(record, open(path,"w"))' ".flow/runs/$(slug "$item").json"; }
+pid_of_no_process=999999; two_days_in_seconds=172800
+record_a_dead_agent() {
+  dead_agent_run="$(state "$item" run | python3 -c 'import json,sys,time; run=json.load(sys.stdin); run["pid"]=int(sys.argv[1]); run["started"]=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()-int(sys.argv[2]))); print(json.dumps(run))' "$pid_of_no_process" "$two_days_in_seconds")" &&
+    "$plugin/scripts/state.sh" set "$item" "run:=$dead_agent_run"
+}
 # held_gate <name>: a gate that counts its runs in <name>.count and ends once release-<name>
 # exists or the test's folder is gone, failing when fail-<name> exists. Health counts any detached
 # run of the item id as live, so a gate left waiting would hold a later test run's health checks.

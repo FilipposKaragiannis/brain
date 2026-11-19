@@ -142,7 +142,7 @@ check "ReleasedRun_GateStarts: the gate must be running, or the rows below prove
 released_pid="$(run_pid)"
 check "ReleasedRun_RecordNamesALiveProcess: the record must name the run, or its end below proves nothing" \
   'process_running "$released_pid"'
-rm -f ".flow/runs/$(slug "$item").json"
+end_run "$item"
 "$plugin/scripts/steward.sh" release "$item" --force >/dev/null 2>&1
 check "StewardReleaseOfAnItemWithADetachedVerify_EndsTheVerifyRun: a released worktree is not checked on" \
   'until_true 30 "! process_running $released_pid"'
@@ -166,7 +166,7 @@ check "HealthAfterTheDetachedVerifyEnded_TakesTheRunForDead: the record is the s
 
 echo "steward stop with no run record still ends the detached run"
 new_item stopless "$(held_gate stopless)"
-rm -f ".flow/runs/$(slug "$item").json"
+end_run "$item"
 verify --start >/dev/null 2>&1
 check "StoplessRun_GateStarts: the gate must be running, or the rows below prove nothing" \
   'until_true 20 "[ -s $work/stopless.count ]"'
@@ -182,7 +182,7 @@ check "StewardStopWithNoRunRecord_ReportSaysFail: a stopped run is a fail" '[ "$
 
 echo "steward release of a dirty worktree still ends the detached run"
 new_item dirty "$(held_gate dirty)"
-rm -f ".flow/runs/$(slug "$item").json"
+end_run "$item"
 verify --start >/dev/null 2>&1
 check "DirtyRun_GateStarts: the gate must be running, or the rows below prove nothing" \
   'until_true 20 "[ -s $work/dirty.count ]"'
@@ -210,7 +210,7 @@ item="$("$local_adapter/create.sh" task "Detached planter" --size S --body x)"
 "$plugin/scripts/next.sh" "$item" >/dev/null 2>&1
 worktree="$("$plugin/scripts/steward.sh" find "$item")"
 reports="$worktree/.flow/reports/$(slug "$item")"; mkdir -p "$reports"
-rm -f ".flow/runs/$(slug "$item").json"
+end_run "$item"
 check "PlanterItem_HoldsAWorktree: stop and release must reach the planted record, or they prove nothing" '[ -n "$worktree" ]'
 check "PlanterItem_IsAnotherItem: the record must name another item's run, or the run's survival proves nothing" \
   '[ "$item" != "$victim_item" ]'
@@ -225,7 +225,7 @@ touch "$work/release-planted"
 
 echo "steward release waits for a run that will not end, then gives up"
 new_item stubborn "  ok: 'true'"
-rm -f ".flow/runs/$(slug "$item").json"
+end_run "$item"
 stubborn_pid="$(fake_run stubborn ignore-term)"
 write_run_record "$reports" "$stubborn_pid"
 check "StubbornRun_IsLiveBeforeTheRelease: the run must be live, or the release's refusal below proves nothing" \

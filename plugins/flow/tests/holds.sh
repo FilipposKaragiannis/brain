@@ -28,7 +28,9 @@ jget() { python3 -c 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
 print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
 L="$P/adapters/local"
-st() { "$L/read.sh" "$1" | jget "state.$2"; }
+# record <command> <argument>...: the flow record, through state.sh.
+record() { "$P/scripts/state.sh" "$@"; }
+st() { record get "$1" "$2"; }
 slug() { printf '%s' "$1" | tr ':/#' '---'; }
 
 cd "$work" || exit 1
@@ -50,13 +52,13 @@ c="$("$L/create.sh" task "Parser errors" --size M --body x)"
 f="$("$L/create.sh" task "Other corner" --size M --body x)"
 wa="$("$P/scripts/steward.sh" claim "$a")"; "$P/scripts/steward.sh" claim "$b" >/dev/null
 "$P/scripts/steward.sh" claim "$e" >/dev/null; "$P/scripts/steward.sh" claim "$g" >/dev/null
-"$L/write-state.sh" "$a" step=implement 'touches=src/parse/**,docs/**' 'changes=src/parse/**'
-"$L/write-state.sh" "$b" step=implement 'touches=docs/guide/**'
-"$L/write-state.sh" "$e" step=implement 'touches=src/parse/x.py,src/z/**' 'changes=src/z/**'
-"$L/write-state.sh" "$g" step=implement 'changes=src/parse/**'; "$L/close.sh" "$g"
-"$L/write-state.sh" "$d" 'changes=src/parse/**'
-"$L/write-state.sh" "$c" step=plan profile=task-M 'touches=src/parse/**,docs/**'
-"$L/write-state.sh" "$f" step=plan profile=task-M 'touches=src/other/**'
+record set "$a" step=implement 'touches=src/parse/**,docs/**' 'changes=src/parse/**'
+record set "$b" step=implement 'touches=docs/guide/**'
+record set "$e" step=implement 'touches=src/parse/x.py,src/z/**' 'changes=src/z/**'
+record set "$g" step=implement 'changes=src/parse/**'; "$L/close.sh" "$g"
+record set "$d" 'changes=src/parse/**'
+record set "$c" step=plan profile=task-M 'touches=src/parse/**,docs/**'
+record set "$f" step=plan profile=task-M 'touches=src/other/**'
 mkdir -p "$wa/.flow/reports/$(slug "$a")" && printf '# plan\n' > "$wa/.flow/reports/$(slug "$a")/plan.md"
 "$P/scripts/hold.sh" candidates "$c" > "$work/cand" 2>&1
 check "candidates: a claimed open item whose changes overlap is listed with its changes and its plan report" \
@@ -66,9 +68,9 @@ check "candidates: changes, when recorded, are what counts, not the wider touche
 check "candidates: an unclaimed item and a closed one are not listed" "! grep -q '$d' '$work/cand' && ! grep -q '$g' '$work/cand' && [ \$(wc -l < '$work/cand') -eq 2 ]"
 check "candidates --touches: the globs given replace the item's own" "[ \"\$('$P/scripts/hold.sh' candidates '$c' --touches 'src/z/y.py' --json | jget 0.id)\" = '$e' ] && [ \"\$('$P/scripts/hold.sh' candidates '$c' --touches 'src/z/y.py' --json | jget 1 2>/dev/null)\" = '' ]"
 check "candidates: an item with no touches has none, and prints nothing" "[ -z \"\$('$P/scripts/hold.sh' candidates '$d')\" ]"
-"$L/write-state.sh" "$b" "held_by=$c"
+record set "$b" "held_by=$c"
 check "candidates: an item already held behind this one is left out, so two never wait on each other" "! '$P/scripts/hold.sh' candidates '$c' | grep -q '$b'"
-"$L/write-state.sh" "$b" held_by=
+record set "$b" held_by=
 
 echo "holds: the plan brief"
 out="$("$P/scripts/next.sh" "$c" --json)"; rc="$(printf '%s' "$out" | jget reports)"
@@ -84,7 +86,7 @@ printf '{"status":"done","summary":"planned","touches":["src/parse/**"],"changes
 check "advance: a plan with a hold writes held_by, held_reason and changes, and raises its gate as before" \
   "[ $code -eq 4 ] && [ \"\$(st '$c' held_by)\" = '$a' ] && [ \"\$(st '$c' held_reason)\" = 'both rewrite the token loop' ] && [ \"\$(st '$c' changes)\" = '[\"src/parse/errors.py\"]' ] && [ \"\$(st '$c' gate)\" = plan-approval ]"
 check "advance: the hold is one held line in events.log" "grep -q \"	$c	held	behind $a: both rewrite the token loop\$\" '$events'"
-check "advance: the gate tells the owner about the hold" "grep -q 'Held behind $a' .flow/gates/$(slug "$c").json"
+check "advance: the gate tells the owner about the hold" "record get '$c' gate.message | grep -q 'Held behind $a'"
 "$P/scripts/hold.sh" set "$f" "$b" "an earlier plan" >/dev/null
 printf '{"status":"done","summary":"planned","touches":["src/other/**"],"changes":["src/other/a.py"]}\n' > "$rf/plan.json"
 "$P/scripts/advance.sh" "$f" >/dev/null 2>&1
@@ -111,7 +113,7 @@ echo "holds: release"
 "$P/scripts/next.sh" "$c" >/dev/null 2>&1
 rc="$(dirname "$rc")/$(slug "$c")"
 check "release: while the holder is open the hold stays and the brief says nothing of it" "[ \"\$(st '$c' held_by)\" = '$a' ] && ! grep -q 'hold is over' '$rc/brief-implement.md'"
-rm -f ".flow/runs/$(slug "$c").json"
+record set "$c" run:=null
 "$L/close.sh" "$a"
 check "board: a holder the open-item list leaves out is read once and named with its status" \
   "[ \"\$('$P/scripts/board.sh' --json | python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)[\"holders\"]))')\" = '[{\"id\": \"$a\", \"status\": \"closed\"}]' ]"
@@ -119,13 +121,13 @@ check "board: a holder the open-item list leaves out is read once and named with
 check "release: once the holder closed the brief says merge the base first and check the plan" \
   "grep -q '^## The hold is over' '$rc/brief-implement.md' && grep -q 'You were held behind $a, which has closed. First merge \`main\` into the branch' '$rc/brief-implement.md' && grep -q 'never rebase' '$rc/brief-implement.md' && grep -q 'gate ambiguity' '$rc/brief-implement.md'"
 check "release: the hold is cleared and an unheld line written" "[ -z \"\$(st '$c' held_by)\" ] && [ -z \"\$(st '$c' held_reason)\" ] && grep -q \"	$c	unheld	$a closed\$\" '$events'"
-rm -f ".flow/runs/$(slug "$c").json"
+record set "$c" run:=null
 
 echo "verify: the base merged in first"
 for x in "$b" "$e" "$c" "$f"; do "$P/scripts/steward.sh" release "$x" --force >/dev/null 2>&1; done
 v="$("$L/create.sh" task "Verify behind" --size S --body x)"; w="$("$L/create.sh" task "Verify conflicted" --size S --body x)"
 wv="$("$P/scripts/steward.sh" claim "$v")"; ww="$("$P/scripts/steward.sh" claim "$w")"
-"$L/write-state.sh" "$v" step=verify profile=task-S; "$L/write-state.sh" "$w" step=verify profile=task-S
+record set "$v" step=verify profile=task-S; record set "$w" step=verify profile=task-S
 printf 'v\n' > "$wv/v.txt" && git -C "$wv" add v.txt && git -C "$wv" commit -qm v
 printf 'mine\n' > "$ww/conflict.txt" && git -C "$ww" commit -qam w
 printf 'theirs\n' > conflict.txt && printf 'm\n' > m.txt && git add conflict.txt m.txt && git commit -qm main-moves
@@ -137,7 +139,7 @@ outw="$("$P/scripts/next.sh" "$w" --json)"
 rw="$(printf '%s' "$outw" | jget reports)"
 check "verify: a base merge that conflicts is aborted and the run is the sync step, verify after it" \
   "[ \"\$(printf '%s' '$outw' | jget step)\" = sync ] && [ \"\$(cat '$rw/sync.md')\" = main ] && [ \"\$(git -C '$ww' rev-parse HEAD)\" = '$wpre' ] && [ -z \"\$(git -C '$ww' status --porcelain -- . ':!.flow')\" ] && grep -q 'Your own step is verify' '$rw/brief-sync.md' && [ \"\$(st '$w' step)\" = verify ]"
-rm -f ".flow/runs/$(slug "$v").json"
+record set "$v" run:=null
 "$P/scripts/next.sh" "$v" >/dev/null 2>&1
 check "verify: a branch already in step with its base is left as it is" "[ \$(grep -c \"	$v	sync	\" '$events') -eq 1 ]"
 
