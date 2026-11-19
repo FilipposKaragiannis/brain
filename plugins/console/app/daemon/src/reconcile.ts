@@ -814,14 +814,16 @@ function taskBranchItem(branch: string): string | null {
 
 /**
  * The item a merged pull carried: the one whose `pr` names it, else the one whose recorded task
- * branch (or `flow/<slug>` without one) is its head, else the item an old `flow/<slug>` head
- * names, since a merged item is often closed and gone from the board.
+ * branch (or `flow/<slug>` without one) is its head, else the item a retained claim on its head
+ * names, else the item an old `flow/<slug>` head names, since a merged item is often closed and
+ * gone from the board.
  */
-function buildMergedToday(input: ReconcileInput, items: Item[]): MergedPull[] {
+function buildMergedToday(input: ReconcileInput, items: Item[], contexts: WorktreeContext[]): MergedPull[] {
   const recorded = recordedTaskBranches(input);
   return (input.pulls?.merged ?? []).map((merged) => {
     const item = items.find((entry) => namesPull(entry.pr, merged)) ?? items.find((entry) => taskBranch(entry.id, recorded) === merged.branch);
-    return { number: merged.number, title: merged.title, url: merged.url, branch: merged.branch, item: item?.id ?? taskBranchItem(merged.branch), createdAt: merged.createdAt, mergedAt: merged.mergedAt };
+    const claimed = contexts.find((context) => context.claim !== null && context.claim.branch === merged.branch);
+    return { number: merged.number, title: merged.title, url: merged.url, branch: merged.branch, item: item?.id ?? claimed?.claim?.item ?? taskBranchItem(merged.branch), createdAt: merged.createdAt, mergedAt: merged.mergedAt };
   });
 }
 
@@ -1158,7 +1160,7 @@ export function reconcile(given: ReconcileInput): Snapshot {
     readiness: buildReadiness(items),
     attention: buildAttention({ gates, toClose, labelGates, worktrees, items, runs, jobs, pulls, disagreements, stoppedHosts: input.flow.stoppedHosts }, input.now),
     worktrees, items, gates, toClose, labelGates, runs, agents, processList: input.processes?.list ?? PROCESSES_NOT_READ, servers, ended, jobs, stoppedHosts: input.flow.stoppedHosts, pulls,
-    mergedToday: buildMergedToday(input, items),
+    mergedToday: buildMergedToday(input, items, contexts),
     events: input.flow.events,
     lessons: input.flow.retro.lessons,
     retros: input.flow.retro.retros,

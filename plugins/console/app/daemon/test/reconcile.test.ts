@@ -1435,6 +1435,16 @@ test('MergedToday_HeadIsARecordedTemplatedBranch_NamesTheItem', async () => {
   assert.deepEqual(reconcile(facts).mergedToday.map((pull) => pull.item), ['gh#12'], 'because gh#12\'s state records task/12-drill-timer as its task branch, which no flow/<slug> reading could name');
 });
 
+test('MergedToday_HeadIsARetainedClaimsTemplatedBranchOfAnItemOffTheBoard_NamesTheItem', async () => {
+  const facts = await input();
+  facts.board!.items = facts.board!.items.filter((item) => item.id !== 'gh#7');
+  facts.flow = { ...facts.flow, claims: facts.flow.claims.map((claim) => (claim.item === 'gh#7' ? { ...claim, branch: 'task/7-drill-timer' } : claim)) };
+  facts.pulls = { pulls: facts.pulls?.pulls ?? [], merged: [
+    { number: 43, title: 'Forty-three', url: 'https://github.com/example/fixture/pull/43', branch: 'task/7-drill-timer', createdAt: '2026-10-24T09:00:00Z', mergedAt: '2026-10-24T17:45:00Z' },
+  ] };
+  assert.deepEqual(reconcile(facts).mergedToday.map((pull) => pull.item), ['gh#7'], 'because merging closed gh#7 and took it off the board, while the claim kept in project-wt-2 still names it as task/7-drill-timer\'s item');
+});
+
 test('MergedToday_PullsNotRead_Empty', async () => {
   const facts = await input();
   facts.pulls = null;
