@@ -79,11 +79,13 @@
 # worktree with uncommitted changes, or one whose git status fails, exit 3. After a remove the
 # folder must be gone; git's record of it goes, and its branch when that is flow/<its folder under
 # .flow/tmp>. A command with no {path}, or with a placeholder inside quotes (a quoted $(...) too)
-# or inside backticks, is refused before it runs, exit 2. One that fails, or leaves no worktree (a remove: leaves the
-# folder), is named after its output: add, tmp and a growing pool exit 1 with no pool entry added
-# (a pool that cannot grow says why, not that it is at pool_max), and a claim skips a missing pool
-# path it cannot recreate. A folder a failed create leaves stays for the owner. A value must not
-# hold " #" (the config reads a comment there) or start with [ (it reads a list).
+# or inside backticks, is refused before it runs, exit 2, and so is a create at a path where
+# something already exists (add of the main or a pool worktree). One that fails, or leaves no
+# worktree (a remove: leaves the folder), is named after its output: add, tmp and a growing pool
+# exit 1 with no pool entry added (a pool that cannot grow says why, not that it is at pool_max),
+# and a claim skips a missing pool path it cannot recreate. A folder a failed create leaves stays
+# for the owner. A value must not hold " #" (the config reads a comment there) or start with [
+# (it reads a list).
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.
@@ -211,9 +213,11 @@ cmd_claim() {
 
 # free_worktree: the first pool worktree with no claim, no reservation and a clean tree, or a
 # pool path missing on disk, recreated and printed resolved (one that cannot be made is skipped,
-# saying why); else one grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name exits 2 inside
-# grow_pool, before the pool_max message, so claim and reserve pass the template's reason through;
-# a worktree that cannot be made exits 1 there, so the pool_max message never stands in for it.
+# saying why; with worktree_create set, a file or symlink at the path exits 2 before the command
+# runs); else one grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name
+# exits 2 inside grow_pool, before the pool_max message, so claim and reserve pass the template's
+# reason through; a worktree that cannot be made exits 1 there, so the pool_max message never
+# stands in for it.
 free_worktree() {
   for p in $(pool_paths); do
     if [ ! -d "$p" ]; then
@@ -554,9 +558,12 @@ worktree_command() {
 
 # run_worktree_create <path> <base>: run the worktree_create command from the main worktree, with
 # the path and the base as its "$1" and "$2" and all its output on stderr (callers print the path
-# on stdout). Returns 1, saying so, when it fails or leaves no worktree at the path.
+# on stdout). Returns 1, saying so, when it fails or leaves no worktree at the path. Refused, exit
+# 2, before it runs when something already sits at the path, as a command that tolerates an
+# existing folder would hand flow a worktree it never made, the main one even.
 run_worktree_create() {
   create_command="$(worktree_command worktree_create)" || exit
+  [ ! -e "$1" ] && [ ! -L "$1" ] || die "$1 already exists; worktree_create makes a new worktree only" 2
   (cd "$main" && sh -c "$(worktree_command_filled "$create_command")" flow-worktree "$1" "$2") >&2
   create_exit=$?
   [ "$create_exit" -eq 0 ] && worktree_at "$1" && return 0

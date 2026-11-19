@@ -67,7 +67,8 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   the main worktree with their output on stderr; a pool worktree then goes onto its idle branch at
   the base tip, or stays as made for `health` to move it later. A command with no `{path}`, or
   with a placeholder inside quotes (a quoted `$(...)` too), after a backslash or anywhere inside
-  backticks (write `$(...)` there), is refused, exit 2. `tmp remove` takes
+  backticks (write `$(...)` there), is refused, exit 2, and so is a create at a path where
+  something already exists (`add` of the main or a pool worktree). `tmp remove` takes
   only a worktree git lists under `.flow/tmp`, never the main or a pool worktree, one whose
   `.git` is missing or broken, or a locked one, and nothing while `.flow/tmp` is a symlink: else exit 2 before anything
   runs. It counts a change in a submodule as uncommitted whatever `.gitmodules` says, and

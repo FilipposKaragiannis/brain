@@ -15,6 +15,9 @@ bump: minor
   quoted `$(...)` too, as in `"$(dirname "{path}")"`, where `sh` would split the path. A
   placeholder anywhere inside backticks is refused too, as backticks cannot quote it: write
   `$(...)` instead. `init` writes both keys commented out.
+- `worktree_create` never runs on a path where something already exists: `add` of the main
+  worktree, of a pool worktree on disk or of any other folder, file or symlink is refused, exit 2,
+  so a command that tolerates an existing folder cannot hand flow a worktree it never made.
 - `tmp remove` refuses, exit 2, a path that is not a worktree git lists under `.flow/tmp`, the
   main or a pool worktree, a worktree whose `.git` is missing or broken, a locked one and any
   path while `.flow/tmp` is a symlink, and resolves a relative path from where it runs. It

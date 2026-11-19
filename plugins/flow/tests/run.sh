@@ -1817,6 +1817,15 @@ write_create_config '' '../{repo}-cdpath-wt-{n}' "$fake_create"
 CDPATH="$cdpath_decoy" "$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
 check "CreateCommandUnderCdpathWithDecoyGitFolder_ExitsZero: a CDPATH holding a decoy .git folder does not make the created worktree look foreign" [ "$code" -eq 0 ]
 check "CreateCommandUnderCdpathWithDecoyGitFolder_AppendsPoolEntry: a CDPATH holding a decoy .git folder does not make the created worktree look foreign, so its pool entry is appended" [ "$(yaml_get .flow/config.yaml pool)" = ../app-cdpath-wt-1 ]
+write_create_config '' '../{repo}-lenient-wt-{n}' 'git worktree add -q --detach {path} {base} 2>/dev/null || test -d {path}'
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1
+"$P/scripts/steward.sh" add ../app-lenient-wt-1 > "$work/create.out" 2>&1; code=$?
+check "AddOfExistingPoolWorktreeWithLenientCreateCommand_ExitsTwo: add of a pool worktree already on disk is refused before a command that tolerates an existing folder runs, exit 2" [ "$code" = 2 ]
+check "AddOfExistingPoolWorktreeWithLenientCreateCommand_AddsNoPoolEntry: the refused add leaves the pool its one entry" [ "$(yaml_get .flow/config.yaml pool)" = ../app-lenient-wt-1 ]
+"$P/scripts/steward.sh" add "$(pwd -P)" > "$work/create.out" 2>&1; code=$?
+check "AddOfMainWorktreeWithLenientCreateCommand_ExitsTwo: add of the main worktree is refused before a command that tolerates an existing folder runs, exit 2" [ "$code" = 2 ]
+check "AddOfMainWorktreeWithLenientCreateCommand_AddsNoPoolEntry: the refused add puts no main worktree entry in the pool" [ "$(yaml_get .flow/config.yaml pool)" = ../app-lenient-wt-1 ]
+check "AddOfMainWorktreeWithLenientCreateCommand_KeepsMainBranch: the main worktree stays on its branch" [ "$(git symbolic-ref --short HEAD)" = main ]
 
 echo "temporary worktrees"
 mkdir -p "$work/temporary-worktrees" && cd "$work/temporary-worktrees" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
