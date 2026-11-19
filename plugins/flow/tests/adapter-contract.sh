@@ -389,6 +389,21 @@ if type "set_$name" >/dev/null 2>&1 && type "scope_config_$name" >/dev/null 2>&1
   echo " tracker scope"
   ps="$("$A/create.sh" task "Scope: mine, unlabelled")"
   "set_$name" "$ps" assignee "$("me_$name")"
+  write_config 0
+  check "InScope_NoScopeSet_ExitsZero: in-scope exits 0 for any item when the tracker has no scope, because unset reads as today" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 0 ]'
+  scope_config '    assignee: me'
+  check "ScopedListAssigneeMe_KeepsItemAssigned: a scope assignee of me keeps an item assigned to the user the adapter acts as" 'listed "$pa" "$A/list.sh"'
+  check "ScopedListAssigneeMe_DropsItemOfOthers: a scope assignee of me leaves out an item assigned to someone else" '! listed "$pb" "$A/list.sh"'
+  scope_config '    kinds: [bug]'
+  check "ScopedListKinds_KeepsItemOfKind: a scope of kinds keeps an item of one of them" 'listed "$pb" "$A/list.sh"'
+  check "ScopedListKinds_DropsItemOfOtherKind: a scope of kinds leaves out an item of another kind" '! listed "$pa" "$A/list.sh"'
+  check "InScopeKinds_ItemOfOtherKind_ExitsOne: in-scope exits 1 for an item whose kind the scope leaves out" '[ "$(code_of "$A/in-scope.sh" "$pa")" = 1 ]'
+  if grep -qw query "$A/pick-fields"; then
+    scope_config "    query: '$("query_$name" picked)'"
+    check "ScopedListQuery_KeepsItemTheSearchMatches: a scope query goes to the tracker's search and keeps what it matches" 'listed "$pa" "$A/list.sh"'
+    check "ScopedListQuery_DropsItemTheSearchMisses: a scope query leaves out an item the tracker's search does not match" '! listed "$pb" "$A/list.sh"'
+    check "InScopeQuery_ItemTheSearchMisses_ExitsOne: in-scope exits 1 for an item the scope query does not match" '[ "$(code_of "$A/in-scope.sh" "$pb")" = 1 ]'
+  fi
   scope_config '    labels: [picked]'
   check "ScopedList_KeepsItemInside: list names an item the scope matches, because the scope only narrows" 'listed "$pa" "$A/list.sh"'
   check "ScopedList_DropsItemOutside: list leaves out an item the scope does not match, because every read is bounded by it" '! listed "$pb" "$A/list.sh"'
