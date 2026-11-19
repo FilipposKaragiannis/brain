@@ -1774,6 +1774,7 @@ recreated_worktree_path="$("$P/scripts/steward.sh" claim "$recreated_item" 2>"$w
 check "ClaimOfMissingPoolPathWithCreateCommand_ExitsZero: claim of a pool path missing on disk succeeds through the command" [ "$code" -eq 0 ]
 check_all "ClaimOfMissingPoolPathWithCreateCommand_RecreatesThroughCommand: claim recreates a pool path missing on disk through the command" '[ -n "$recreated_worktree_path" ] && [ "$(logged_path)" = "$recreated_worktree_path" ] && [ "$recreated_worktree_path" = "$(cd "../app'\''q-wt-5" && pwd -P)" ]'
 check "ClaimRecreateWithCreateCommand_NamesIdleBranch: the recreate names the idle branch the worktree was put on" grep -q "main-wt-5" "$work/create.err"
+check "ClaimRecreateWithCreateCommand_MakesIdleBranchAtBaseTip: the recreated worktree's idle branch is made at the base tip before the claim moves it to the item's branch" [ "$(git rev-parse --verify -q refs/heads/main-wt-5)" = "$(git rev-parse main)" ]
 write_create_config '' '../{repo}-fail-wt-{n}' "sh $work/create/failing-create.sh {path} {base}"
 refused_item="$("$P/scripts/new.sh" task "Refused")"
 "$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>"$work/create.err"; code=$?
