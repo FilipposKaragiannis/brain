@@ -1950,6 +1950,9 @@ check "CreateCommandQuotingPath_MakesNoWorktree: the refused command never runs,
 write_tmp_config "worktree_create: sh $work/tmpwt/fake-create.sh '{path}' {base}\n"
 "$P/scripts/steward.sh" tmp add "$phases_item" phase-7 > "$work/tmpwt.out" 2>&1; code=$?
 check "CreateCommandSingleQuotingPath_ExitsTwo: a template with {path} inside single quotes is refused" [ "$code" = 2 ]
+write_tmp_config "worktree_create: sh $work/tmpwt/fake-create.sh \\\\{path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" escaped > "$work/tmpwt.out" 2>&1; code=$?
+check "CreateCommandEscapingPath_ExitsTwo: a template with {path} after a backslash is refused" [ "$code" = 2 ]
 injecting_phase='p$(>injected)'
 write_tmp_config "$fake_tmp_create"
 "$P/scripts/steward.sh" tmp add "$phases_item" "$injecting_phase" > "$work/tmpwt.out" 2>&1; code=$?

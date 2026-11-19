@@ -65,9 +65,9 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   `worktree_remove` (`{path}`) replaces `git worktree remove` for `tmp remove` only. Both run from
   the main worktree with their output on stderr; a pool worktree then goes onto its idle branch at
   the base tip, or stays as made for `health` to move it later. A command with no `{path}`, or
-  with a placeholder inside quotes, is refused, exit 2. `tmp remove` takes only a worktree git
-  lists under `.flow/tmp`, never the main or a pool worktree, one whose `.git` is missing or
-  broken, or a locked one, and nothing while `.flow/tmp` is a symlink: else exit 2 before anything
+  with a placeholder inside quotes or after a backslash, is refused, exit 2. `tmp remove` takes
+  only a worktree git lists under `.flow/tmp`, never the main or a pool worktree, one whose
+  `.git` is missing or broken, or a locked one, and nothing while `.flow/tmp` is a symlink: else exit 2 before anything
   runs. It counts a change in a submodule as uncommitted whatever `.gitmodules` says, and
   refuses it, exit 3. A create that fails, or leaves no git worktree at `{path}`,
   adds no pool entry and says why after the command's output: the claim exits 1, not the
