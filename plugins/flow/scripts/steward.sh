@@ -146,6 +146,9 @@ park() {
 
 # .flow/ holds the claim and the reports and is never part of the work.
 dirty() { [ -n "$(git -C "$1" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; }
+# dirty_with_submodules <path>: dirty, counting changes in submodules that .gitmodules tells git
+# status to ignore; tmp remove checks this before worktree_remove, which takes submodules too.
+dirty_with_submodules() { [ -n "$(git -C "$1" status --porcelain --ignore-submodules=none -- . ":!.flow" 2>/dev/null)" ]; }
 
 write_state() {
   # write_state <item> key=value... ; skipped for ids no adapter owns (ad hoc worktree sessions).
@@ -446,7 +449,7 @@ cmd_tmp() {
     remove)
       path="$(removable_worktree "$2")" || exit
       branch="$(temporary_branch "$path")"
-      dirty "$path" && die "$path has uncommitted changes. Not removing." 3
+      dirty_with_submodules "$path" && die "$path has uncommitted changes. Not removing." 3
       if [ -n "$(cfg worktree_remove)" ]; then run_worktree_remove "$path"
       else git -C "$main" worktree remove "$path" || die "cannot remove $path"; fi
       [ -n "$branch" ] && git -C "$main" branch -q -D "$branch" 2>/dev/null

@@ -67,7 +67,8 @@ names it, and `steward.sh add <path>` recreates it now. Codex has no equivalent:
   the base tip, or stays as made for `health` to move it later. A command with no `{path}`, or
   with a placeholder inside quotes, is refused, exit 2. `tmp remove` takes only a worktree git
   lists under `.flow/tmp`, never the main or a pool worktree, one whose `.git` is missing or
-  broken, or a locked one: else exit 2 before anything runs. A create that fails, or leaves no git worktree at `{path}`,
+  broken, or a locked one: else exit 2 before anything runs. It counts a change in a submodule
+  as uncommitted whatever `.gitmodules` says, and refuses it, exit 3. A create that fails, or leaves no git worktree at `{path}`,
   adds no pool entry and says why after the command's output: the claim exits 1, not the
   `pool_max` exit 3, so tell the owner the command failed and name the folder it may have left
   (flow does not remove it). A slow create runs under the claim lock: a second claim that waits

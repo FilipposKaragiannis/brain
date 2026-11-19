@@ -2032,6 +2032,16 @@ check "TmpRemoveOfPoolWorktreeUnderSymlinkedTmp_KeepsPoolWorktree: the remove co
 check "TmpRemoveOfMainWorktreeUnderSymlinkedTmp_ExitsTwo: the main worktree is refused though a symlinked .flow/tmp puts it under the temporary folder" [ "$code" = 2 ]
 check "TmpRemoveOfMainWorktreeUnderSymlinkedTmp_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
 rm .flow/tmp && mv .flow/tmp-moved .flow/tmp
+submodule_source="$work/tmpwt/submodule-source"
+git init -q -b main "$submodule_source" && git -C "$submodule_source" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+submodule_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" submodule 2>/dev/null)"
+git -C "$submodule_phase_worktree" -c protocol.file.allow=always submodule add -q "$submodule_source" sub
+git config -f "$submodule_phase_worktree/.gitmodules" submodule.sub.ignore all
+git -C "$submodule_phase_worktree" add .gitmodules && git -C "$submodule_phase_worktree" commit -qm "submodule whose changes git status hides"
+printf 'change\n' > "$submodule_phase_worktree/sub/change.txt"
+"$P/scripts/steward.sh" tmp remove "$submodule_phase_worktree" > "$work/tmpwt.out" 2>&1; code=$?
+check "TmpRemoveOfWorktreeWithIgnoredSubmoduleChange_ExitsThree: a change in a submodule that .gitmodules tells git status to ignore is uncommitted, exit 3" [ "$code" = 3 ]
+check "TmpRemoveOfWorktreeWithIgnoredSubmoduleChange_KeepsChange: the remove command never runs, so the submodule's change stays" [ -f "$submodule_phase_worktree/sub/change.txt" ]
 
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
