@@ -119,3 +119,15 @@ changes. A new suite starts with the same two lines as `plugins/flow/tests/run.s
   say `workingFolder`.
 - **env**: environment variables; only at the node-pty boundary, daemon-owned names say
   `environment`.
+
+### Verify report
+
+- **verdict**: the report's first line, `Verdict: pass at <sha>` or `fail at <sha>`, then how
+  many acceptance lines are proven live or by test.
+- **proof**: what shows one acceptance line holds: a grade and a link to its evidence.
+- **evidence**: a file a proof points to, such as a screenshot, a log or a test result file.
+- **grade**: how an acceptance line was checked. **live**: run in the real app, with a captured
+  file. **test**: a named automated test passed in this run. **build-only**: only that it
+  builds. **blocked**: it could not be checked, with why.
+- **Not checked list**: the report section, always present, of the acceptance lines graded
+  build-only or blocked, each with its reason.
