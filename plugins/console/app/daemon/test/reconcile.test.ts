@@ -737,6 +737,13 @@ test('Pulls_TaskBranchSlug_ColonAndSlashBecomeDashes', async () => {
   assert.equal(pullNumbered(reconcile(facts), 560)?.item, 'local:task/3', 'because item_slug turns each :, / and # of the id into a dash');
 });
 
+const RECORDED_TASK_BRANCH = 'task/12-drill-timer';
+
+test('Pulls_NoPrRecordedOnATemplatedBranch_LinksTheItemWhoseRecordedBranchIsTheHead', async () => {
+  const facts = withPull560On(withBoardItem(await input(), 'gh#12', { branch: RECORDED_TASK_BRANCH }), RECORDED_TASK_BRANCH);
+  assert.equal(pullNumbered(reconcile(facts), 560)?.item, 'gh#12', 'because the claim recorded task/12-drill-timer as gh#12\'s task branch, so a pull from it is gh#12\'s whatever the template');
+});
+
 test('Pulls_TaskBranchOfAClosedItem_NoLink', async () => {
   const facts = withPull560On(await input(), 'flow/gh-12');
   facts.board!.items.find((item) => item.id === 'gh#12')!.status = 'closed';
@@ -1418,6 +1425,14 @@ test('MergedToday_ClosedItem_NamedByItsTaskBranch', async () => {
     { number: 41, title: 'Forty-one', url: 'https://github.com/example/fixture/pull/41', branch: 'flow/local-task-3', createdAt: '2026-10-24T09:00:00Z', mergedAt: '2026-10-24T16:00:00Z' },
   ] };
   assert.deepEqual(reconcile(facts).mergedToday.map((pull) => pull.item), ['gh#140', 'local:task/3'], 'because a merged item is often closed and off the board, and its task branch still names it');
+});
+
+test('MergedToday_HeadIsARecordedTemplatedBranch_NamesTheItem', async () => {
+  const facts = withBoardItem(await input(), 'gh#12', { branch: RECORDED_TASK_BRANCH });
+  facts.pulls = { pulls: facts.pulls?.pulls ?? [], merged: [
+    { number: 42, title: 'Forty-two', url: 'https://github.com/example/fixture/pull/42', branch: RECORDED_TASK_BRANCH, createdAt: '2026-10-24T09:00:00Z', mergedAt: '2026-10-24T17:30:00Z' },
+  ] };
+  assert.deepEqual(reconcile(facts).mergedToday.map((pull) => pull.item), ['gh#12'], 'because gh#12\'s state records task/12-drill-timer as its task branch, which no flow/<slug> reading could name');
 });
 
 test('MergedToday_PullsNotRead_Empty', async () => {
