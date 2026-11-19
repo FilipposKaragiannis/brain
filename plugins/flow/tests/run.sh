@@ -1826,6 +1826,12 @@ check "AddOfExistingPoolWorktreeWithLenientCreateCommand_AddsNoPoolEntry: the re
 check "AddOfMainWorktreeWithLenientCreateCommand_ExitsTwo: add of the main worktree is refused before a command that tolerates an existing folder runs, exit 2" [ "$code" = 2 ]
 check "AddOfMainWorktreeWithLenientCreateCommand_AddsNoPoolEntry: the refused add puts no main worktree entry in the pool" [ "$(yaml_get .flow/config.yaml pool)" = ../app-lenient-wt-1 ]
 check "AddOfMainWorktreeWithLenientCreateCommand_KeepsMainBranch: the main worktree stays on its branch" [ "$(git symbolic-ref --short HEAD)" = main ]
+ln -s "$work/create/dangling-target" ../app-dangling-wt-1
+write_create_config "  - ../app-dangling-wt-1\n" '../{repo}-dangling-wt-{n}' "$fake_create"
+dangling_item="$("$P/scripts/new.sh" task "Dangling")"
+"$P/scripts/steward.sh" claim "$dangling_item" > "$work/create.out" 2>&1; code=$?
+check "ClaimOfDanglingSymlinkPoolPathWithCreateCommand_ExitsTwo: a claim that meets a dangling symlink at a pool path refuses before the command runs, exit 2" [ "$code" = 2 ]
+rm ../app-dangling-wt-1
 
 echo "temporary worktrees"
 mkdir -p "$work/temporary-worktrees" && cd "$work/temporary-worktrees" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -1991,6 +1997,12 @@ check "CreateCommandWithBarePathBesideQuotedSubstitution_MakesWorktree: a quoted
 write_temporary_config "worktree_create: printf %s '\$(' > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
 "$P/scripts/steward.sh" tmp add "$phases_item" after-quoted-opener > "$work/temporary-worktrees.out" 2>&1
 check "CreateCommandWithBarePathAfterSingleQuotedOpener_MakesWorktree: a \$( inside single quotes opens no substitution, so a later bare {path} runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-after-quoted-opener" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-after-quoted-opener" ]
+write_temporary_config "worktree_create: echo \"\`date\`\" > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" beside-backticks > "$work/temporary-worktrees.out" 2>&1
+check "CreateCommandWithBarePathBesideClosedBackticks_MakesWorktree: backticks that close before a bare {path} leave the path outside them, so the command runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-beside-backticks" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-beside-backticks" ]
+write_temporary_config "worktree_create: printf %s '\`' > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" after-quoted-backtick > "$work/temporary-worktrees.out" 2>&1
+check "CreateCommandWithBarePathAfterSingleQuotedBacktick_MakesWorktree: a backtick inside single quotes opens nothing, so a later bare {path} runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-after-quoted-backtick" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-after-quoted-backtick" ]
 injecting_phase='p$(>injected)'
 write_temporary_config "$fake_temporary_create"
 "$P/scripts/steward.sh" tmp add "$phases_item" "$injecting_phase" > "$work/temporary-worktrees.out" 2>&1; code=$?
