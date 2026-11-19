@@ -1815,6 +1815,11 @@ write_create_config '' '../{repo}&a|b\c$HOME-wt-{n}' "$fake_create"
 : > "$create_log"
 "$P/scripts/steward.sh" add > "$work/create.out" 2>&1
 check "PathWithShellCharacters_ReachesCreateCommandAsItself: a path holding & | \\ and \$ reaches the command as itself" [ "$(logged_path)" = "$(cd .. && pwd -P)/app&a|b\\c\$HOME-wt-1" ]
+cdpath_decoy="$work/create/cdpath-decoy"
+mkdir -p "$cdpath_decoy/.git"
+write_create_config '' '../{repo}-cdpath-wt-{n}' "$fake_create"
+CDPATH="$cdpath_decoy" "$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
+check "CreateCommandUnderCdpathWithDecoyGitFolder_ExitsZero: a CDPATH holding a decoy .git folder does not make the created worktree look foreign" [ "$code" -eq 0 ]
 
 echo "temporary worktrees"
 mkdir -p "$work/tmpwt" && cd "$work/tmpwt" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
@@ -3238,6 +3243,9 @@ check "InitCheckOfCreateCommandSingleQuotingPath_NamesGap: --check names a workt
 write_command_config 'worktree_remove: workspace remove "{path}"\n'
 FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-remove-quoted.out" 2>&1
 check "InitCheckOfRemoveCommandQuotingPath_NamesGap: --check names a worktree_remove with {path} inside quotes as a gap" grep -qF 'gap: .flow/config.yaml: worktree_remove quotes {path}' "$work/init-remove-quoted.out"
+write_command_config 'worktree_create: workspace new \\{path} --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-escaped.out" 2>&1
+check "InitCheckOfCreateCommandEscapingPath_NamesGap: --check names a worktree_create with {path} after a backslash as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-escaped.out"
 write_command_config 'worktree_create: workspace new {path} --from {base}\nworktree_remove: workspace remove {path}\n'
 check "InitCheckOfCommandsHoldingPath_IsClean: --check is clean with a worktree_create and a worktree_remove that hold {path}" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q
