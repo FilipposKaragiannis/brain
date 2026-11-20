@@ -2503,12 +2503,17 @@ check "ScopedHealth_SkipsItemOutside: health says nothing of a split item outsid
 "$P/adapters/local/link-pr.sh" "$sin" https://github.com/acme/widgets/pull/90 >/dev/null; "$P/adapters/local/link-pr.sh" "$sout" https://github.com/acme/widgets/pull/90 >/dev/null
 mkdir -p "$work/scope/gh" && cp "$P/tests/_fake_gh.py" "$work/scope/gh/"
 printf '{"issues": [], "pr": {"number": 90, "state": "OPEN", "isDraft": false, "mergedAt": null, "url": "https://github.com/acme/widgets/pull/90", "headRefName": "flow/local-task-1", "baseRefName": "main", "mergeable": "MERGEABLE", "updatedAt": "2026-11-09T10:00:00Z", "headRefOid": "c0ffee"}}\n' > "$work/scope/gh/issues.json"
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/scope/host.log"\n' "$work" > "$work/scope/bin/claude" && chmod +x "$work/scope/bin/claude"
+cat > "$work/scope/bin/claude" <<EOF_SCOPE_HOST
+#!/bin/sh
+item="\$(printf '%s\\n' "\$*" | sed -n 's|.*/flow:comments \\([^ ]*\\)\\..*|\\1|p' | head -1)"
+"$P/adapters/local/comment.sh" "\$item" --body "Addressed every review thread"
+EOF_SCOPE_HOST
+chmod +x "$work/scope/bin/claude"
 ln -sf "$P/tests/fake-gh.sh" "$work/scope/bin/gh"
-: > "$work/scope/host.log"
 PATH="$work/scope/bin:$PATH" FAKE_GH_DIR="$work/scope/gh" FLOW_HEALTH_PROCS="$work/scope.procs" "$P/jobs/comments.sh" claude >/dev/null 2>&1
-check "ScopedCommentsJob_AddressesItemInside: the comments job runs a pass on the PR of an item inside the scope, because the job reads the scoped list" grep -q "/flow:comments $sin" "$work/scope/host.log"
-check "ScopedCommentsJob_SkipsItemOutside: the comments job runs no pass for an item outside the scope, because it reads the scoped list" sh -c "[ -s '$work/scope/host.log' ] && ! grep -q '/flow:comments $sout' '$work/scope/host.log'"
+sin_body="$("$P/adapters/local/read.sh" "$sin" | jget body)"; sout_body="$("$P/adapters/local/read.sh" "$sout" | jget body)"
+check "ScopedCommentsJob_AddressesItemInside: an item inside the scope gets the comments pass's reply, because the job reads the scoped list" sh -c 'case "$1" in *"Addressed every review thread"*) true ;; *) false ;; esac' _ "$sin_body"
+check "ScopedCommentsJob_SkipsItemOutside: an item outside the scope gets no comments pass reply, because the job reads the scoped list" sh -c 'case "$1" in *"Addressed every review thread"*) case "$2" in *"Addressed every review thread"*) false ;; *) true ;; esac ;; *) false ;; esac' _ "$sin_body" "$sout_body"
 scope_config '    query: label:team-a'
 FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
 check "InitCheck_ScopeQueryOnLocal_IsGap: init --check reports local.scope.query as a gap, because the local tracker has no search of its own" grep -q 'gap: .flow/config.yaml: local.scope.query: the local adapter maps assignee, status, labels and kinds, not query' "$work/scope.out"
