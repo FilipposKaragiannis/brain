@@ -266,6 +266,20 @@ check "ChildOfAnEpicWhoseBranchWasPushedSince_IsReady: the filter fetches an epi
 check "ChildOfAnEpicWhoseBranchWasPushedSince_TakesTheEpicBranch: the wait ends on the epic's history" \
   '[ "$(claim_base "$orphan")" = "$bare_branch" ]'
 
+echo "base: with no remote, the epic branch is a local one"
+new_repo unpublished
+git remote remove origin
+local_epic="$("$local_adapter/create.sh" epic "Offline" --size L --body x)"
+local_child="$(new_task "Offline slice" "$local_epic")"
+check "ChildOfAnEpicInARepositoryWithNoRemote_IsNotReadyWithoutALocalEpicBranch: with no remote the epic branch is looked for among the local branches" \
+  '! ready_ids | grep -qxF -- "$local_child"'
+git branch -q "$(epic_of "$local_epic")"
+check "ChildOfAnEpicInARepositoryWithNoRemote_IsReadyOnceTheLocalEpicBranchExists: the local branch is the epic branch there, as the claim reads it" \
+  'ready_ids | grep -qxF -- "$local_child"'
+"$plugin/scripts/next.sh" "$local_child" >/dev/null 2>&1
+check "ChildOfAnEpicInARepositoryWithNoRemote_TakesTheLocalEpicBranch: the filter and the claim agree on where the branch lives" \
+  '[ "$(claim_base "$local_child")" = "$(epic_of "$local_epic")" ]'
+
 echo "base: a pick says which epic branch its items wait for"
 new_repo waiting
 branchless="$("$local_adapter/create.sh" epic "Seasons" --size L --body x)"
