@@ -17,7 +17,8 @@
 # session works in (the health job's process scan), named or not: the pass would edit under it.
 # A session a person started that has been idle for jobs.comments.idle_session (30m) holds a
 # worktree with nothing uncommitted in it no longer, so an abandoned session stops a PR's
-# comments for half an hour, not for days.
+# comments for half an hour, not for days. A pass that waited for a slot checks the worktree
+# again before it starts, so a person back in that session keeps it out.
 # The owner is told once per PR while it stays in use (event comments-skipped): the item, the PR,
 # the worktree and what works there; again only after a pass addressed the PR.
 # A PR whose activity (last update, head commit, mergeable, unresolved threads, their comments,
@@ -321,7 +322,8 @@ pass_host_run() {
 }
 # pass_session <target> <notes>: the pass's host session on <target>, the brief's <notes> added,
 # in a pass slot it waits for. The output goes to the log as it comes, so a pass killed half way
-# keeps what it said, and to $out. Returns the host's exit code.
+# keeps what it said, and to $out. Returns the host's exit code; starts nothing, with
+# $in_use_why set, when the worktree came into use while it waited.
 pass_session() {
   pass_slot="$(slot_try "$slot_pool" "$workers" $$)" || {
     # A run that names its PR says the wait where its caller reads it, with the runs that hold
@@ -329,6 +331,9 @@ pass_session() {
     if [ -n "$one" ]; then job_say "$1: waits for a free pass slot, $workers across the runs (held by run $(slot_holders "$slot_pool"))"
     else job_say "$1: waits for a free pass slot, $workers across the runs" >/dev/null; fi
     pass_slot="$(slot_take "$slot_pool" "$workers" $$)"
+    # The person in_use passed over as idle may be back by now, or have left work in the tree.
+    in_use "$1"
+    [ -z "$in_use_why" ] || { slot_give "$pass_slot"; return 0; }
   }
   job_say "addressing $1"; rm -f "$(in_use_marker "$1" "$pull")"
   { pass_host_run "$(pass_dir "$1")" "$(host_skill_prompt "$host" flow comments "$1.$2 Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" "$pass_slot.group" 2>&1
@@ -345,15 +350,16 @@ pass_failure() {
   elif [ -n "$(cut_short "$out")" ]; then printf 'the host stopped the addresser before it finished'
   elif [ -n "$answer" ] && ! answer_taken "$2"; then printf "the pass did not confirm it carried out the owner's answer"; fi
 }
+# skip_in_use <target>: skips the pass on <target> for the session in_use found, and says why.
+skip_in_use() {
+  job_say "$1: $in_use_why, skipped" >/dev/null; tell_in_use "$1"
+  if [ -n "$iu_how" ]; then outcome busy "$(session_named "$iu_how") in $(basename "$iu_wt")"; else outcome busy "processes not listed"; fi
+}
 # pass <target> <item>: one pass on one PR, its outcome in $slot.
 pass() {
   t="$1"
   in_use "$t"
-  if [ -n "$in_use_why" ]; then
-    job_say "$t: $in_use_why, skipped" >/dev/null; tell_in_use "$t"
-    if [ -n "$iu_how" ]; then outcome busy "$(session_named "$iu_how") in $(basename "$iu_wt")"; else outcome busy "processes not listed"; fi
-    return 0
-  fi
+  if [ -n "$in_use_why" ]; then skip_in_use "$t"; return 0; fi
   note="$(prepare_pr "$t")"
   activity "$t" "$2" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$(pr_key "$t" "$2")")"; mkdir -p "$(dirname "$f")"
   rm -f "$f.answer"; answer_note "$t" "$f.answer"
@@ -389,6 +395,8 @@ pass() {
   fi
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
   pass_session "$t" "$note$answer$rnote"; code=$?
+  # The saved activity goes, as for a stopped host, so the pass this run did not start still runs.
+  if [ -n "$in_use_why" ]; then rm -f "$f"; skip_in_use "$t"; return 0; fi
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR
   # is tried again after the clear, with no failure counted. The saved activity goes, so the extra
   # pass this run may have marked as taken still runs. The stop's line is the run's last word.
