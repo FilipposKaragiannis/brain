@@ -150,16 +150,22 @@ fetch_epic_start() {
   return 1
 }
 
-# cut_branch <branch> <start>: makes the branch at the start branch's tip: pushed to the remote
-# from the tip the remote holds, never forced, or a local branch in a repository with no origin.
-# Returns 1 and prints why when git refuses.
+# start_ref <start>: the ref a new branch is cut from: the start branch as the remote holds it,
+# else the local one (a claimed parent's task branch nobody pushed yet).
+start_ref() {
+  fetch_base "$1"
+  if git -C "$(flow_repository)" show-ref --verify --quiet "refs/remotes/origin/$1"; then printf 'refs/remotes/origin/%s' "$1"; else printf 'refs/heads/%s' "$1"; fi
+}
+
+# cut_branch <branch> <start>: makes the branch at the start branch's tip: pushed to the remote,
+# never forced, or a local branch in a repository with no origin. Returns 1 and prints why when
+# git refuses.
 cut_branch() {
   if ! git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1; then
     git -C "$(flow_repository)" branch -q "$1" "$2" >/dev/null 2>&1 && return 0
     printf 'git could not make %s from %s' "$1" "$2"; return 1
   fi
-  fetch_base "$2"
-  if git -C "$(flow_repository)" push -q origin "refs/remotes/origin/$2:refs/heads/$1" >/dev/null 2>&1; then fetch_base "$1"; return 0; fi
+  if git -C "$(flow_repository)" push -q origin "$(start_ref "$2"):refs/heads/$1" >/dev/null 2>&1; then fetch_base "$1"; return 0; fi
   printf 'git could not push %s from %s' "$1" "$2"; return 1
 }
 

@@ -135,6 +135,19 @@ ask_for_the_split "$inner"
 check "ApprovedSplitOfAnEpicUnderAnEpicWithABranch_StartsFromThatBranch: the inner epic builds on the outer epic's work" \
   '[ -n "$(remote_tip "$(epic_of "$outer")")" ] && [ "$(remote_tip "$(epic_of "$inner")")" = "$(remote_tip "$(epic_of "$outer")")" ]'
 
+claimed_parent="$(new_task "Cup run")"
+"$plugin/scripts/steward.sh" claim "$claimed_parent" >/dev/null 2>&1
+claimed_parent_branch="flow/$(slug "$claimed_parent")"
+git -C "$("$plugin/scripts/steward.sh" find "$claimed_parent")" commit -q --allow-empty -m "work nobody pushed yet"
+under_a_claim="$("$local_adapter/create.sh" epic "Cup final" --body x --parent "$claimed_parent")"
+new_task "Final venue" "$under_a_claim" >/dev/null
+ask_for_the_split "$under_a_claim"
+"$plugin/scripts/gate.sh" clear "$under_a_claim" "Approved." >/dev/null 2>&1
+check "ClaimedParentBranchNobodyPushed_IsNotOnTheRemote: the parent's branch is local only, or the check below proves nothing" \
+  '[ -z "$(remote_tip "$claimed_parent_branch")" ] && [ -n "$(git rev-parse -q --verify "refs/heads/$claimed_parent_branch")" ]'
+check "ApprovedSplitOfAnEpicUnderAClaimedParentNobodyPushed_StartsFromTheParentsLocalTip: the epic builds on its parent's work wherever that work is" \
+  '[ "$(remote_tip "$(epic_of "$under_a_claim")")" = "$(git rev-parse "refs/heads/$claimed_parent_branch")" ]'
+
 echo "epic gates: a branch the remote refuses leaves the gate cleared and the children waiting"
 new_repo refused
 printf '#!/bin/sh\nexit 1\n' > "$root/origin.git/hooks/pre-receive"; chmod +x "$root/origin.git/hooks/pre-receive"
