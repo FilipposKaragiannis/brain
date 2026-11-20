@@ -1,6 +1,7 @@
 #!/bin/sh
 # next.sh [item] [--json] [--embed-agent] [--pick <name>]: prepare the next step of one item. Without an item,
-# picks the first ready item, by rank (ready.priority_order), from every tracker read that no run holds.
+# picks the first ready item, by rank (ready.priority_order) and among equals the lowest item number
+# (the oldest), from every tracker read that no run holds.
 # Items whose touches overlap may run side by side: the plan step puts an item behind another
 # (state.held_by), and a held item is not ready (filter-ready.sh). --pick narrows the items read
 # to the filter pick.<name> in .flow/config.yaml (pick_trackers in lib/flow.sh) before

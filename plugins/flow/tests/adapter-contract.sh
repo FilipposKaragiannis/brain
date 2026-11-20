@@ -253,6 +253,8 @@ if [ "$ready_lib" = 1 ] || "$A/read.sh" "$t2" | python3 -c 'import json,sys; sys
   check "list-ready leaves out an item that needs a field" '! listed "$rn" "$A/list-ready.sh"'
   check "the priority order ranks P0 before P2" '[ "$(field "$r0" rank)" -lt "$(field "$r2" rank)" ]'
   check "list-ready puts the higher priority first" 'before "$r0" "$r2" "$A/list-ready.sh"'
+  r2_made_later="$("$A/create.sh" task "Ready at P2, made later" --priority P2)"
+  check "ReadyItemsOfOnePriority_OldestFirst: of two items of one priority list-ready names the one made first, because a tie must not go to the newest" 'before "$r2" "$r2_made_later" "$A/list-ready.sh"'
   write_config 0
 else
   skip "the items carry no needs and lib/flow.sh has no ready_rules yet"
