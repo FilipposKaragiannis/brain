@@ -10,7 +10,7 @@
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
 
-ready_ids() { "$local_adapter/list-ready.sh" | python3 -c 'import json,sys; print(",".join(item["id"] for item in json.load(sys.stdin)))'; }
+ready_ids() { "$local_adapter/list-ready.sh" "$@" |python3 -c 'import json,sys; print(",".join(item["id"] for item in json.load(sys.stdin)))'; }
 # step_result <item> <step> <json>: writes the result file of the item's run in flight.
 step_result() { printf '%s\n' "$3" > "$(json_value reports < "$(run_file "$1")")/$2.json"; }
 # start_step <item>: next.sh on the named item; its exit code is the function's.
@@ -26,6 +26,8 @@ start_step "$started_child"
 "$plugin/scripts/gate.sh" raise "$epic" decomposition "Approve the split." >/dev/null 2>&1
 check "ChildOfAParentAtTheDecompositionGate_IsNotReady: the pick must not start work on a split the owner has not approved" \
   '! ready_ids | grep -q -- "$child"'
+check "ChildOfAParentAtTheDecompositionGate_IsNotReadyInAListOfTasksOnly: the parent is read through its adapter when the filter leaves it out of the list" \
+  '! ready_ids --kind task | grep -q -- "$child"'
 start_step "$child"; named_code=$?
 check "NamedRunOfAChildBehindTheDecompositionGate_StartsNothing: exit 4 and no run record, as for any item that waits" \
   '[ "$named_code" -eq 4 ] && [ ! -f "$(run_file "$child")" ]'

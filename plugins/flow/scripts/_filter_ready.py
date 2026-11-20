@@ -24,24 +24,43 @@ PREFIXES = [(prefix, name) for name in sorted(os.listdir(os.path.join(plugin, "a
 def adapter_for(item_id):
     return next((name for prefix, name in PREFIXES if item_id.startswith(prefix)), None)
 
+# How long one adapter read may take before the item counts as unread.
+READ_TIMEOUT_SECONDS = 60
+
+def read_item(item_id):
+    """An item not in the list, read once through its adapter; empty when no adapter owns the id or
+    its read failed."""
+    if item_id not in cache:
+        name = adapter_for(item_id)
+        item = {}
+        if name:
+            try:
+                out = subprocess.run([os.path.join(plugin, "adapters", name, "read.sh"), item_id],
+                                     capture_output=True, text=True, timeout=READ_TIMEOUT_SECONDS)
+                if out.returncode == 0 and out.stdout.strip():
+                    item = json.loads(out.stdout)
+            except Exception:
+                pass
+        cache[item_id] = item if isinstance(item, dict) else {}
+    return cache[item_id]
+
 def status_of(item_id):
     """open, closed, or unknown (no adapter owns the id, or its read failed). An item in the list
     is known without a read; any other is read once through its adapter."""
     if item_id in known:
         return known[item_id]
-    if item_id not in cache:
-        name = adapter_for(item_id)
-        status = "unknown"
-        if name:
-            try:
-                out = subprocess.run([os.path.join(plugin, "adapters", name, "read.sh"), item_id],
-                                     capture_output=True, text=True, timeout=60)
-                if out.returncode == 0 and out.stdout.strip():
-                    status = json.loads(out.stdout).get("status", "open")
-            except Exception:
-                pass
-        cache[item_id] = status
-    return cache[item_id]
+    item = read_item(item_id)
+    return item.get("status", "open") if item else "unknown"
+
+def gate_of(item_id):
+    """The gate an open item waits at, else none. An item in the list is known without a read; one
+    a filter left out (list-ready --kind or --pick) is read once through its adapter."""
+    if item_id in known:
+        return gates.get(item_id, "none")
+    item = read_item(item_id)
+    if item.get("status", "open") != "open":
+        return "none"
+    return (item.get("state") or {}).get("gate", "none")
 
 # A blocker holds unless it reads closed: one that cannot be read may still be open.
 def blocker_open(item_id):
@@ -97,7 +116,7 @@ def held_back(item):
         return "needs"
     if item.get("open_children"):
         return "children"
-    if item.get("parent") and not state.get("step") and gates.get(item["parent"]) == GATE_THAT_HOLDS_CHILDREN:
+    if item.get("parent") and not state.get("step") and gate_of(item["parent"]) == GATE_THAT_HOLDS_CHILDREN:
         return "parent"
     if state.get("step") in ("split", "done"):
         return state["step"]
