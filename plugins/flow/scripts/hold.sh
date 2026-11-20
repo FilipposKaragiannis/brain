@@ -55,7 +55,7 @@ cmd_candidates() {
   done
   if [ -z "$mine" ]; then
     data="$(item_read "$item")" || die "cannot read $item"
-    mine="$(json_list "$data" state.touches)"
+    mine="$(state_list "$data" touches)"
   fi
   rows=""
   if [ -n "$mine" ]; then
@@ -64,8 +64,8 @@ cmd_candidates() {
       od="$(item_read "$other" 2>/dev/null </dev/null)" || continue
       [ "$(json_get "$od" status)" = open ] || continue
       [ "$(state_get "$od" held_by)" != "$item" ] || continue
-      kind=changes; globs="$(json_list "$od" state.changes)"
-      [ -n "$globs" ] || { kind=touches; globs="$(json_list "$od" state.touches)"; }
+      kind=changes; globs="$(state_list "$od" changes)"
+      [ -n "$globs" ] || { kind=touches; globs="$(state_list "$od" touches)"; }
       [ -n "$globs" ] && touches_overlap "$mine" "$globs" || continue
       plan=""
       for root in "$wt" "$main"; do

@@ -384,8 +384,21 @@ adapter() {
   if [ "$name" = "$who" ]; then "$script" "$@"; else "$script" "$who" "$@"; fi
 }
 
-# state_get <item-json> <key>: one state field from an item read.
-state_get() { json_get "$1" "state.$2"; }
+# state_get <item-json> <key>: one state field of an item that item_read or items_join joined
+# with its flow record. An adapter's own read carries no state_from and dies: its state is the
+# tracker's. An empty text reads empty, as a failed read has no state.
+state_get() { state_joined "$1" "$2" && json_get "$1" "state.$2"; }
+
+# state_list <item-json> <key>: a list state field (touches, changes), one element per line, with
+# the guard of state_get.
+state_list() { state_joined "$1" "$2" && json_list "$1" "state.$2"; }
+
+state_joined() {
+  case "$1" in
+    ''|*'"state_from"'*) ;;
+    *) die "state $2 asked of an item read from its adapter alone: read it with item_read" ;;
+  esac
+}
 
 # Reports for an item live in the repository the step runs in: the claimed worktree for work
 # steps, the main worktree for planning steps. reports_dir <item> [root].

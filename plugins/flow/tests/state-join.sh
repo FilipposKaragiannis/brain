@@ -84,6 +84,15 @@ check "ItemsListed_JoinsTheAdaptersList: a listed item reads its record" \
   '[ "$(python3 -c "import json,sys; print([item[\"state_from\"] for item in json.load(open(sys.argv[1])) if item[\"id\"] == sys.argv[2]][0])" "$work/listed.json" "$recorded")" = record ]'
 rm -f "$(record path "$corrupt")"
 
+echo "state_get and state_list: only a joined item has flow state"
+adapters_own="$("$local_adapter/read.sh" "$unrecorded")"
+check "StateGetOfAnAdaptersOwnRead_Refuses: an item not joined with its record would read the tracker's state" \
+  '! flow state_get "$adapters_own" step >/dev/null 2>&1'
+check "StateListOfAnAdaptersOwnRead_Refuses: a list key of an unjoined item would read the tracker's too" \
+  '! flow state_list "$adapters_own" touches >/dev/null 2>&1'
+check "StateGetOfAJoinedItem_ReadsItsState: the guard lets the joined item through" \
+  '[ "$(flow state_get "$(record read "$recorded")" step)" = implement ]'
+
 echo "FLOW_TRACKER_STATE: the mode when the config names none"
 check "TrackerStateNoneFromTheEnvironment_ReadsTheEmptyState: the variable sets the mode of a config that has no line" \
   '[ "$(env FLOW_TRACKER_STATE=none "$plugin/scripts/state.sh" read "$unrecorded" | json_value state_from)" = none ]'

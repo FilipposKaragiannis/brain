@@ -1,7 +1,9 @@
 #!/bin/sh
 # Tests for the flow plugin: config parsing, both adapters (GitHub through a fake gh), the
 # steward, next/advance, gates, re-sizing, overlap, holds, the board and the worktree hooks. Builds a
-# throwaway repo with a two-worktree pool. Run from anywhere. Exit 1 on any failure.
+# throwaway repo with a two-worktree pool. Run from anywhere. Exit 1 on any failure. The checks run
+# with the mirror on (tracker_state labels); FLOW_TRACKER_STATE=none runs them, on demand, with the
+# mirror off, where no reader may lean on the tracker's state.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
@@ -39,6 +41,13 @@ print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
 claim_step() { "$P/scripts/steward.sh" pool | awk -v item="$1" '$3 == item { print $4 }'; }
 # record <command> <argument>...: the flow record of the project in the current folder.
 record() { "$P/scripts/state.sh" "$@"; }
+# The mode of the tracker's state the checks run under: FLOW_TRACKER_STATE when set, else labels.
+tracker_mode="${FLOW_TRACKER_STATE:-labels}"
+# mirror_on <what ends the need> <check...>: a check of what the tracker shows after a flow write
+# runs only while the mirror is on; the first argument names the change that lets the check go.
+mirror_on() { mirror_need="$1"; shift; if [ "$tracker_mode" = none ]; then echo "  skip $2 (with the mirror off, until $mirror_need)"; else "$@"; fi; }
+# archived <item> <path>: a field of the item's record once its release archived it.
+archived() { open_record="$(record path "$1")"; jget "$2" < "$(dirname "$open_record")/closed/$(basename "$open_record")"; }
 # end_run <item>: the item's run is over, as when its agent is gone.
 end_run() { record set "$1" run:=null; }
 # running_items: every item with a run in its record, one per line.
@@ -117,7 +126,7 @@ w1="$("$P/scripts/steward.sh" claim "$t1")"
 check "claim path"        [ "$w1" = "$(cd ../wt-1 && pwd -P)" ]
 check "claim branch"      [ "$(git -C "$w1" symbolic-ref --short HEAD)" = "flow/local-task-1" ]
 check "claim file"        [ "$(jget item < "$w1/.flow/claim.json")" = "$t1" ]
-check "claim in tracker"  [ "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" = "wt-1" ]
+mirror_on "a claim is shared through the record, not the tracker" check "claim in tracker"  [ "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" = "wt-1" ]
 check "claim again same"  [ "$("$P/scripts/steward.sh" claim "$t1")" = "$w1" ]
 check "find"              [ "$("$P/scripts/steward.sh" find "$t1")" = "$w1" ]
 printf 'x\n' > "$w1/dirty.txt"
@@ -491,12 +500,15 @@ check "gh close"          [ "$("$P/adapters/github/read.sh" 'gh#11' | jget statu
 check "gh next.sh end to end" sh -c "'$P/scripts/next.sh' --json | grep -q '\"item\":\"gh#10\"'"
 check "cross-tracker blocker: local waits on gh" sh -c "'$P/adapters/local/create.sh' task Cross --blocked-by 'gh#12' >/dev/null && ! '$P/adapters/local/list-ready.sh' | grep -q Cross"
 
+# The suites that pin their mode, or need one run, run only while the mirror is on.
+if [ "$tracker_mode" != none ]; then
 echo "adapter contract (adapters/README.md)"
 for contract_adapter in github local jira; do
   sh "$here/adapter-contract.sh" "$contract_adapter" > "$work/contract-$contract_adapter.out" 2>&1; code=$?
   check "the $contract_adapter adapter meets the contract: $(tail -n 1 "$work/contract-$contract_adapter.out")" [ "$code" -eq 0 ]
   [ "$code" -eq 0 ] || grep '^  FAIL' "$work/contract-$contract_adapter.out"
 done
+fi
 
 echo "holds and the merge before verify (tests/holds.sh)"
 sh "$here/holds.sh" > "$work/holds.out" 2>&1; code=$?
@@ -513,6 +525,7 @@ sh "$here/base-readers.sh" > "$work/base-readers.out" 2>&1; code=$?
 check "base-readers: $(tail -n 1 "$work/base-readers.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-readers.out"
 
+if [ "$tracker_mode" != none ]; then
 echo "an item's base is resolved once at claim (tests/base-claim.sh)"
 sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
 check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
@@ -547,6 +560,7 @@ echo "stop and release end only the item's own verify run, and stop says when on
 sh "$here/verify-ends.sh" > "$work/verify-ends.out" 2>&1; code=$?
 check "verify-ends: $(tail -n 1 "$work/verify-ends.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-ends.out"
+fi
 
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
@@ -617,14 +631,14 @@ jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "1. Which way?" >/de
 jira_comment_as "$jira_gated" stranger@acme.test "/answer the stranger's way"
 jira_comment_as "$jira_gated" flow@acme.test "thinking about it"
 jira_comment_as "$jira_gated" flow@acme.test "/answer the owner's way"
-check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ]'
-check_all "jira answers: the owner's words, not a stranger's or an earlier one, become the answer" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "the owner'"'"'s way" ]'
-check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh")" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the owner's words, not a stranger's or an earlier one, become the answer" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "the owner'"'"'s way" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh")" ]'
 jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "2. And now?" >/dev/null 2>&1
 jira_comment_as "$jira_gated" stranger@acme.test "/answer"
 jira_area_config '  answer_from: [stranger@acme.test]
 '
-check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
 cp "$work/config.gh" .flow/config.yaml
 
 echo "github blips (fake gh)"
@@ -714,7 +728,7 @@ check "gh a Parent: line with a colon names the parent" [ "$("$P/adapters/github
 check "gh an unstarted item lists the fields it lacks" sh -c "grep -qx 'gh#33 task S - priority' '$work/ghlist' && grep -qx 'gh#34 task - P1 size' '$work/ghlist'"
 check "gh an epic needs no size" grep -qx 'gh#30 epic - P1 -' "$work/ghlist"
 check "gh a started item needs nothing" grep -qx 'gh#36 task S P2 -' "$work/ghlist"
-check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
+mirror_on "no step or gate is read from the tracker's labels" check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
 check_all "graph: a GitHub epic's children come from the item list, native parent or Parent: line" '[ "$("$P/scripts/board.sh" --graph gh#39 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#40'\'']" ] && [ "$("$P/scripts/board.sh" --graph gh#30 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#31'\'']" ]'
 sed -i.bak 's/^  priority_order: .*/  priority_order: [P2, P0, P1, P3]/' .flow/config.yaml
 check_all "graph priorities: GitHub columns follow ready.priority_order, not the names" '[ "$("$P/scripts/board.sh" --graph priorities | python3 -c "import json,sys; print(\" \".join(c[\"priority\"] or \"-\" for c in json.load(sys.stdin)[\"columns\"]))")" = "P2 P0 P1 P3 -" ]'
@@ -768,8 +782,8 @@ printf '/answer 1. no, let it touch the ball' | FAKE_GH_USER=stranger gh issue c
 printf 'thinking about it' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
 printf '/answer 1. no, keep it visual' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
 check "answers: an /answer from the owner after the gate clears it" [ "$("$P/adapters/github/answers.sh")" = "gh#37" ]
-check "answers: the owner's words, not a stranger's, and the question stay in the state" sh -c "'$P/adapters/github/read.sh' 'gh#37' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; assert (s[\"gate\"],s[\"answer\"],s[\"answered\"])==(\"none\",\"1. no, keep it visual\",\"ambiguity\") and \"Visual only?\" in s[\"asked\"]'"
-check "answers: the answer gets a +1 and a second pass finds nothing" sh -c "grep -q '\"content\": \"+1\"' '$FAKE_GH_DIR/issues.json' && [ -z \"\$('$P/adapters/github/answers.sh')\" ]"
+mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the owner's words, not a stranger's, and the question stay in the state" sh -c "'$P/adapters/github/read.sh' 'gh#37' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; assert (s[\"gate\"],s[\"answer\"],s[\"answered\"])==(\"none\",\"1. no, keep it visual\",\"ambiguity\") and \"Visual only?\" in s[\"asked\"]'"
+mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the answer gets a +1 and a second pass finds nothing" sh -c "grep -q '\"content\": \"+1\"' '$FAKE_GH_DIR/issues.json' && [ -z \"\$('$P/adapters/github/answers.sh')\" ]"
 picked="$("$P/scripts/next.sh" 'gh#37' --json)"; brief="$(printf '%s' "$picked" | jget brief)"
 check "the next brief carries the owner's answer and the question" sh -c "grep -q \"The owner's answer to the last gate (ambiguity)\" '$brief' && grep -q 'Answer: 1. no, keep it visual' '$brief' && grep -q 'Visual only?' '$brief'"
 rm -f .flow/runs/gh-37.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
@@ -920,6 +934,7 @@ pr_as flow/x "Adds the slide."; "$P/scripts/comments.sh" request-review 91 "plea
 check "request-review: a PR whose author host is unknown asks the default list" [ "$(asked)" = "hubot" ]
 env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/91 >/dev/null
 check "link-pr: records the host that wrote the PR as pr_host" [ "$("$P/adapters/github/read.sh" 'gh#21' | jget state.pr_host)" = "codex" ]
+record set 'gh#21' pr=https://gh/pull/91 pr_host=codex >/dev/null
 pr_as flow/gh-21 "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
 check "request-review: the pr_host of the item the branch names wins over the body" [ "$(asked)" = "mona" ]
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers:\n    claude: [octo-cat]\n' >> .flow/config.yaml
@@ -2187,7 +2202,7 @@ feel_item="$("$P/adapters/github/create.sh" task "Merged with a feel-test gate o
 record set "$feel_item" pr=https://gh/pull/90
 "$P/scripts/gate.sh" raise "$feel_item" feel-test "Launch it and play a match." >/dev/null 2>&1
 issue_labels() { python3 -c 'import json,sys; print("\n".join(next(i for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2]))["labels"]))' "$FAKE_GH_DIR/issues.json" "${1#gh#}"; }
-check_all "GateRaise_GitHubItem_CarriesTheGateLabel: a gate raised on a GitHub item labels the issue" 'issue_labels "$feel_item" | grep -qx gate:feel-test'
+mirror_on "the tracker's labels and cards follow the record" check_all "GateRaise_GitHubItem_CarriesTheGateLabel: a gate raised on a GitHub item labels the issue" 'issue_labels "$feel_item" | grep -qx gate:feel-test'
 fake_pr MERGED "$(commit_in "$feel_worktree" felt)"
 "$P/scripts/steward.sh" sweep > "$work/sweep-feel.out" 2>/dev/null
 check "Sweep_MergedGitHubItem_ClosesTheIssue: the sweep closes the merged GitHub item" [ "$("$P/adapters/github/read.sh" "$feel_item" | jget status)" = closed ]
@@ -2218,10 +2233,10 @@ for kept_gate in ambiguity merge; do
   kept_file=".flow/items/task/${kept_item##*/}.md"; chmod a-w "$kept_file"
   "$P/scripts/steward.sh" sweep > "$work/sweep-kept.out" 2>/dev/null
   chmod u+w "$kept_file"
-  check_all "Sweep_${kept_gate}GateDropFails_KeepsTheClaim: the sweep keeps the worktree of an item whose gate stays, so the next sweep can retry" '[ -f "$kept_worktree/.flow/claim.json" ] && grep -q "^$kept_item: kept .*could not drop its $kept_gate gate.*the next sweep tries again" "$work/sweep-kept.out" && ! grep -q "^$kept_item: released" "$work/sweep-kept.out"'
-  check_all "Sweep_${kept_gate}GateDropFails_LeavesTheItemOpenAndGated: the item the sweep could not ungate stays open, its gate listed" '[ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" != closed ] && "$P/scripts/gate.sh" list | grep -q "	$kept_item	$kept_gate	"'
+  mirror_on "dropping a gate writes the tracker no more" check_all "Sweep_${kept_gate}GateDropFails_KeepsTheClaim: the sweep keeps the worktree of an item whose gate stays, so the next sweep can retry" '[ -f "$kept_worktree/.flow/claim.json" ] && grep -q "^$kept_item: kept .*could not drop its $kept_gate gate.*the next sweep tries again" "$work/sweep-kept.out" && ! grep -q "^$kept_item: released" "$work/sweep-kept.out"'
+  mirror_on "dropping a gate writes the tracker no more" check_all "Sweep_${kept_gate}GateDropFails_LeavesTheItemOpenAndGated: the item the sweep could not ungate stays open, its gate listed" '[ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" != closed ] && "$P/scripts/gate.sh" list | grep -q "	$kept_item	$kept_gate	"'
   "$P/scripts/steward.sh" sweep > "$work/sweep-kept.out" 2>/dev/null
-  check_all "Sweep_${kept_gate}GateDropRetried_ReleasesAndCloses: the next sweep takes the gate off, closes the item and releases its worktree" 'grep -q "^$kept_item: released" "$work/sweep-kept.out" && [ ! -f "$kept_worktree/.flow/claim.json" ] && [ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" = closed ] && ! "$P/scripts/gate.sh" list | grep -q "	$kept_item	"'
+  mirror_on "dropping a gate writes the tracker no more" check_all "Sweep_${kept_gate}GateDropRetried_ReleasesAndCloses: the next sweep takes the gate off, closes the item and releases its worktree" 'grep -q "^$kept_item: released" "$work/sweep-kept.out" && [ ! -f "$kept_worktree/.flow/claim.json" ] && [ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" = closed ] && ! "$P/scripts/gate.sh" list | grep -q "	$kept_item	"'
 done
 # A pr step whose worker cannot write the local item file (it lies outside the worker's sandbox)
 # leaves the PR unrecorded: advance records the URL the step's result names, and the sweep finds
@@ -2236,8 +2251,8 @@ printf '{"status":"done","summary":"PR open"}\n' > "$("$P/scripts/next.sh" "$sp"
 "$P/scripts/advance.sh" "$sp" >/dev/null 2>&1
 fake_pr MERGED "$(git -C "$("$P/scripts/steward.sh" find "$sp")" rev-parse HEAD)" "flow/$(item_slug "$sp")"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
-check "sweep: an item at the merge gate with no PR recorded finds it by its branch, and the merge gate clears" [ "$(record read "$sp" | jget state.gate)" = none ]
-check "sweep: the PR found by the branch is recorded on the item" [ "$(record read "$sp" | jget state.pr)" = https://gh/pull/90 ]
+check "sweep: an item at the merge gate with no PR recorded finds it by its branch, and the merge gate clears" [ "$(archived "$sp" gate)" = null ]
+check "sweep: the PR found by the branch is recorded on the item" [ "$(archived "$sp" pr.url)" = https://gh/pull/90 ]
 # The console sweeps one item once its gated PR leaves the open list; a sweep already running is enough.
 si="$("$P/adapters/local/create.sh" task "Swept alone")"; wi="$("$P/scripts/steward.sh" claim "$si")"
 "$P/adapters/local/close.sh" "$si" >/dev/null

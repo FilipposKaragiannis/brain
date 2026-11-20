@@ -170,7 +170,7 @@ else
   base="$(state_get "$data" base)"; base_name_valid "$base" || base="$config_base"
 fi
 reports="$(reports_dir "$item" "$worktree")"; mkdir -p "$reports"
-touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
+touches="$(state_list "$data" touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
 # script. The health job reads it to tell a live run from a dead one.
 owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
