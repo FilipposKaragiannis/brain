@@ -25,6 +25,7 @@ SLOWER_BY_SECONDS = 60
 RUNS_TO_COMPARE = 3
 ITEMS_LISTED = 5
 LOG_FILES = ("runs.1.jsonl", "runs.jsonl")
+STEP_FIELDS = ("item", "step", "at", "seconds")
 
 
 def epoch(timestamp):
@@ -40,18 +41,23 @@ def duration(seconds):
     return "%dh %02dm" % (seconds // SECONDS_PER_HOUR, seconds % SECONDS_PER_HOUR // SECONDS_PER_MINUTE)
 
 
+def step_run(line):
+    try:
+        record = json.loads(line)
+        if not isinstance(record, dict) or any(field not in record for field in STEP_FIELDS):
+            return None
+        return {"item": str(record["item"]), "step": str(record["step"]), "at": epoch(record["at"]),
+                "seconds": int(record["seconds"]), "failed": record.get("exit", 0) != 0,
+                "cost": float(record.get("cost_usd") or 0)}
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 def step_runs(log):
     for name in LOG_FILES:
         path = os.path.join(log, name)
-        for line in open(path, encoding="utf-8", errors="replace") if os.path.exists(path) else []:
-            try:
-                record = json.loads(line)
-                run = {"item": str(record["item"]), "step": str(record["step"]), "at": epoch(record["at"]),
-                       "seconds": int(record["seconds"]), "failed": record.get("exit", 0) != 0,
-                       "cost": float(record.get("cost_usd") or 0)}
-            except (ValueError, KeyError, TypeError):
-                continue
-            yield run
+        lines = open(path, encoding="utf-8", errors="replace") if os.path.exists(path) else []
+        yield from filter(None, map(step_run, lines))
 
 
 def median(values):
