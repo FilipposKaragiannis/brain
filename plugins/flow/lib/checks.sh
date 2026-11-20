@@ -1,6 +1,7 @@
 #!/bin/sh
-# The build and test commands verify has passed, kept by the key of their inputs, so a command
-# that passed on the same command text and the same files is not run again. Sourced after
+# The test commands verify has passed, kept by the key of their inputs, so a command that passed
+# on the same command text and the same files is not run again. A build is never kept: its outputs
+# are ignored files the key does not cover. Sourced after
 # lib/flow.sh by scripts/verify.sh. The store is <flow home>/checks: every worktree of the clone
 # reads it and it is never committed. One file per key (scripts/_checks.py key), one line:
 # `<time> <item> <head>`, the run the pass came from.
@@ -38,3 +39,6 @@ check_keep() {
   find "$(checks_store)" -type f -mtime "+$CHECKS_KEPT_DAYS" -exec rm -f {} + 2>/dev/null
   return 0
 }
+
+# check_drop <key>: drops the kept pass of the key, as a run of the same inputs failed since.
+check_drop() { check_key_valid "$1" && rm -f "$(checks_store)/$1"; return 0; }

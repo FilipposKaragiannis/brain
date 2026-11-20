@@ -149,14 +149,14 @@ case "$status" in
   fail)
     # A verify run that was stopped (its limit, a signal, a run that died: the report's `stopped`)
     # failed no check, so no step has anything to fix: the item stays at verify, no attempt is
-    # counted, and the owner decides at the gate. The run after the clear reuses every build and
-    # test command that passed.
+    # counted, and the owner decides at the gate. The run after the clear reuses every test
+    # command that passed.
     if [ "$step" = verify ] && [ -n "$(json_get "$result" stopped)" ]; then
       "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**Verify did not finish, and no check failed. Give it room, then clear the gate to run it again.**
 
 - What happened: $(json_get "$result" checks.0.summary).
 - A check that needs longer: raise \`verify.limit\` in \`.flow/config.yaml\`. A busy machine: clear the gate once it is free.
-- The next run reuses every build and test command that already passed." >/dev/null
+- The next run reuses every test command that already passed." >/dev/null
       report 4 "" escalation
     fi
     attempts=$((attempts + 1))

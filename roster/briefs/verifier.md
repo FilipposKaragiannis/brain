@@ -16,8 +16,8 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
 2. Start the run: `"<plugin>/scripts/verify.sh" <item> --start`. It runs build, format on the
    changed files, tests, mutation (a signal) and every project gate, once each, detached from
    your shell, and writes `<reports>/verify.json` and `verify.md`. A build or test command
-   with paths runs only when a changed file is under them, and one that passed on the same
-   command and files is reported as that pass, reused: both are the run's own decisions and
+   with paths runs only when a changed file is under them, and a test command that passed on the
+   same command and files is reported as that pass, reused: both are the run's own decisions and
    count as checked. Pass `--fresh` only when the owner asks for every command to run. It returns at once; a run
    already going is not started again. Then call `"<plugin>/scripts/verify.sh" <item> --wait`
    again and again, each a single shell call with a timeout above its wait (540 s by default;
