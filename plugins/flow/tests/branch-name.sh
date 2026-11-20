@@ -208,6 +208,16 @@ check "TmpAddUnderATemplate_PhaseBranchIsTheTaskBranchAndPhase: the phase branch
   '[ "$(git -C "$phase_worktree" branch --show-current)" = "task/task-$(number_of "$phased")-drill-timer-render" ]'
 check "TmpAddUnderATemplate_PhaseStartsFromTheTaskBranch: the phase holds the task branch's work" \
   '[ -f "$phase_worktree/task.txt" ]'
+"$plugin/scripts/steward.sh" tmp remove "$phase_worktree" >/dev/null 2>&1
+check "TmpRemoveUnderATemplate_DeletesThePhaseBranch: the phase branch tmp add named from the task branch goes with its worktree" \
+  '! git show-ref --verify -q "refs/heads/task/task-$(number_of "$phased")-drill-timer-render"'
+printf '#!/bin/sh\ngit -C "%s" worktree add -q --detach "$1" "$2"\n' "$PWD" > "$work/phase-create.sh"
+set_branch_config "worktree_create: sh $work/phase-create.sh {path} {base}"
+created_phase_worktree="$("$plugin/scripts/steward.sh" tmp add "$phased" created 2>/dev/null | tail -n 1)"
+check "TmpAddUnderATemplateWithCreateCommand_PhaseBranchIsTheTaskBranchAndPhase: the made worktree goes onto the phase branch the template's task branch names" \
+  '[ "$(git -C "$created_phase_worktree" branch --show-current)" = "task/task-$(number_of "$phased")-drill-timer-created" ]'
+check "TmpAddUnderATemplateWithCreateCommand_PhaseStartsFromTheTaskBranch: the command gets the task branch as {base}, so the phase holds its work" \
+  '[ -f "$created_phase_worktree/task.txt" ]'
 
 [ "$fails" -eq 0 ] && { echo "branch-name: ok"; exit 0; }
 echo "branch-name: $fails failed"; exit 1
