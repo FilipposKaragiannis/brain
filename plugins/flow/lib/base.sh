@@ -1,7 +1,7 @@
 # The base of an item: the branch its work starts from and its PR merges into. Resolved once, when
 # the item is first claimed, and recorded in claim.json and the item state (base). Sourced after
 # lib/flow.sh by scripts/next.sh, scripts/verify.sh, scripts/steward.sh, scripts/board.sh,
-# hooks/worktree-create.sh and skills/init/scripts/init.sh.
+# scripts/gate.sh, hooks/worktree-create.sh and skills/init/scripts/init.sh.
 
 # The ancestors fetch_item_base reads for an epic branch, from the parent up.
 base_ancestor_levels=5
@@ -131,6 +131,39 @@ base_name_refused='its base is not a valid branch name'
 # has an epic branch, and the two ways out.
 epic_branch_missing() { printf 'its epic %s has no epic branch on the remote: push %s, or put a base: line in the item' "$1" "$2"; }
 
+# base_refusal <code> <branch> <why>: why a base fetch_item_base did not resolve (its return code
+# and its two fields) is refused.
+base_refusal() {
+  base_name_valid "$2" || { printf '%s' "$base_name_refused"; return 0; }
+  if [ "$1" -eq "$epic_without_branch" ]; then epic_branch_missing "$3" "$2"; else printf 'its base %s is not on the remote' "$2"; fi
+}
+
+# create_epic_branch <epic> <epic-json>: gives an epic that has none its epic branch and prints
+# the branch. It starts where the epic itself would: the base fetch_item_base resolves for the
+# epic, as the remote holds it (an epic branch above it, a base: line in its body, else the config
+# base). With an origin the branch is pushed, never forced; with none it is a local branch. An
+# epic that has its branch is left as it is. Returns 1 and prints why when the branch cannot be
+# made: the epic's own base does not resolve, or git refused.
+create_epic_branch() {
+  wanted_branch="$(epic_branch "$1")"
+  base_name_valid "$wanted_branch" || { printf '%s' "$base_name_refused"; return 1; }
+  fetch_base "$wanted_branch"
+  if base_exists "$wanted_branch"; then printf '%s' "$wanted_branch"; return 0; fi
+  epic_start="$(fetch_item_base "$2")"; epic_start_code=$?
+  epic_start_branch="$(printf '%s\n' "$epic_start" | cut -f1)"
+  if [ "$epic_start_code" -ne 0 ]; then base_refusal "$epic_start_code" "$epic_start_branch" "$(printf '%s\n' "$epic_start" | cut -f2-)"; return 1; fi
+  if git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1; then
+    fetch_base "$epic_start_branch"
+    git -C "$(flow_repository)" push -q origin "refs/remotes/origin/$epic_start_branch:refs/heads/$wanted_branch" >/dev/null 2>&1 \
+      || { printf 'git could not push %s from %s' "$wanted_branch" "$epic_start_branch"; return 1; }
+    fetch_base "$wanted_branch"
+  else
+    git -C "$(flow_repository)" branch -q "$wanted_branch" "$epic_start_branch" >/dev/null 2>&1 \
+      || { printf 'git could not make %s from %s' "$wanted_branch" "$epic_start_branch"; return 1; }
+  fi
+  printf '%s' "$wanted_branch"
+}
+
 # claim_base_option <default> [--base <branch>] [--branch <name>]: the base steward.sh claim cuts the
 # worktree from and records in claim.json and the item state (base): the branch --base names
 # (next.sh passes the one claim_at_base resolved), else the default, the config base. An unknown
@@ -164,11 +197,7 @@ claim_at_base() {
   resolved_base="$(fetch_item_base "$2")"; resolved_code=$?
   claim_base="$(printf '%s\n' "$resolved_base" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved_base" | cut -f2-)"
   if [ "$resolved_code" -ne 0 ]; then
-    claim_refusal="$base_name_refused"
-    if base_name_valid "$claim_base"; then
-      claim_refusal="its base $claim_base is not on the remote"
-      [ "$resolved_code" -ne "$epic_without_branch" ] || claim_refusal="$(epic_branch_missing "$claim_why" "$claim_base")"
-    fi
+    claim_refusal="$(base_refusal "$resolved_code" "$claim_base" "$claim_why")"
     adapter write-state "$1" "last_event=$(now_iso) $claim_refusal" >/dev/null
     echo "$1: $claim_refusal" >&2; return 4
   fi
