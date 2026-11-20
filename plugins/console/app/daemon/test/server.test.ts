@@ -40,7 +40,7 @@ async function started(makeSettings: (registry: ProjectRegistry) => SettingsStor
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
   }, silentLogger);
   const panes = new PaneSessions({ spawner: () => ({ ok: false, error: 'this test opens no pane' }), host: { shell: '/bin/sh', environment: {}, isFolder: () => false }, scheduler: realScheduler, log: silentLogger });
-  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger, panes, terminal: noTerminalProfiles(), ...open });
+  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger, panes, terminal: noTerminalProfiles(), graphReportRunner: fakeRunner, ...open });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   await registry.apply([PROJECT]);
   const monitor = registry.get('project')!.monitor;
