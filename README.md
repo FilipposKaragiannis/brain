@@ -48,7 +48,11 @@ broken fixture under `tools/tests/fixtures/`.
 full text and the testing guide under `.standards/`, path-scoped Claude rules, the Codex agents,
 the commit hooks and the git hook wiring (the project's own `.githooks/` when it has one, else
 `core.hooksPath` at `.standards/hooks/git`), the project's skills and rules links and its rendered
-roster (`project` in the config). Hook settings and the project's own gates (`gates`) live in
+roster (`project` in the config). `init --scope machine` changes no tracked file: the block, the
+Claude rules and the Codex agents go to `~/.claude` and `~/.codex` for every project on the
+machine, the hook calls go into the clone's own hooks folder, its outputs into
+`.git/info/exclude`, and each linked worktree gets a `.standards` link. In any scope `init` never
+points `core.hooksPath` away from live hooks in `.git/hooks`; it names them instead. Hook settings and the project's own gates (`gates`) live in
 `.standards/config.json`; CI runs the gates per commit through `plugins/standards/action`. `init` ends
 with the gaps (empty commands, guide placeholders) and the `project-advisor` recommends a value for
 each from the repository; `init --check` reports gaps until they are filled. Commit message markers:

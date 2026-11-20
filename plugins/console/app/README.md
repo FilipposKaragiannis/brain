@@ -529,8 +529,9 @@ The PRs are those of `github.repo`, read whatever tracker holds the items (local
 since the flow opens every item's PR there. A PR belongs to the item whose `pr` field names it (a
 number such as `#20`, or its URL compared without case or scheme), whichever tracker holds it,
 else to the item claimed on its head branch unless the PR comes from a fork, else to the open item
-that records no PR whose task branch, `flow/<slug>` with the flow's `item_slug` (`gh#134` is
-`flow/gh-134`, `local:task/3` is `flow/local-task-3`), is its head branch, so a PR whose `link-pr`
+that records no PR whose task branch is its head branch: the recorded task branch (the `branch`
+the claim wrote to the item's state), else `flow/<slug>` with the flow's `item_slug` (`gh#134` is
+`flow/gh-134`, `local:task/3` is `flow/local-task-3`) for an item without one, so a PR whose `link-pr`
 failed still finds its item; that gives its worktree. A PR's `mergeState` is GitHub's merge state
 status as read (`CLEAN`, `BLOCKED`, `BEHIND`, `UNSTABLE`, …), null when GitHub gave none. `checks-failing`, `changes-requested` and `mergeable` each add an attention row
 (`pr-failing`, `pr-changes-requested`, `pr-mergeable`), and `counts` carries `pullsFailing`,

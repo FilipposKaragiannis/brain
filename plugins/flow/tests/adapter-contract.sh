@@ -202,6 +202,10 @@ check "write-state: a new size is the item size too" '[ "$(field "$t1" size)" = 
 check "WriteStateBase_ReadsBackAsStateBase: the base a claim records is the item's state.base, which every reader of a claim-less step falls back on" '[ "$(field "$t1" state.base)" = epic/9 ]'
 "$A/write-state.sh" "$t1" base= >/dev/null 2>&1
 check "WriteStateEmptyBase_ClearsIt: an empty base reads back empty, so the readers fall back on the config base" '[ -z "$(field "$t1" state.base)" ]'
+"$A/write-state.sh" "$t1" branch=bugfix/proj-7-stuck-ball >/dev/null 2>&1
+check "WriteStateBranch_ReadsBackAsStateBranch: the task branch a claim records is the item's state.branch, which a re-claim and the readers take" '[ "$(field "$t1" state.branch)" = bugfix/proj-7-stuck-ball ]'
+"$A/write-state.sh" "$t1" branch= >/dev/null 2>&1
+check "WriteStateEmptyBranch_ClearsIt: an empty branch reads back empty, so the next claim names the branch from the template" '[ -z "$(field "$t1" state.branch)" ]'
 "$A/write-state.sh" "$t1" gate=plan-approval gate_from=implement >/dev/null 2>&1
 check "write-state: a gate and its from step read back" '[ "$(field "$t1" state.gate)" = plan-approval ] && [ "$(field "$t1" state.gate_from)" = implement ]'
 check "list-ready leaves out an item at a gate" '! listed "$t1" "$A/list-ready.sh"'

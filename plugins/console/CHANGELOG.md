@@ -1,5 +1,12 @@
 # console
 
+## 0.24.2 (2026-11-18)
+
+- The settings page has a Longest pass field under the Comments job (`jobs.comments.pass_limit`):
+  how long one comments pass may run before it is stopped and counted as failed. Unset, 1h. The
+  help of PRs addressed at once (`jobs.comments_workers`) now says it caps the passes across all
+  runs. Needs flow with the comments pass limit.
+
 ## 0.24.1 (2026-11-18)
 
 - A terminal pane with an iTerm profile keeps the cursor blink the profile sets when the shell

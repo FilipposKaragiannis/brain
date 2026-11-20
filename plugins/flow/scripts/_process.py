@@ -80,3 +80,20 @@ def parent_of(pid):
         listed = proc_parent(pid) if os.path.isdir("/proc/self") else lsof_parent(pid)
     listed = listed.strip()
     return int(listed) if listed.isdigit() else 0
+
+
+def group_running(group):
+    """True while a process of the process group runs: a zombie has ended. Where ps cannot run,
+    any process left in the group counts."""
+    listed = ps(["-A", "-o", "pgid=,stat="])
+    if listed is None:
+        try:
+            os.killpg(group, 0)
+        except OSError:
+            return False
+        return True
+    for line in listed.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0] == str(group) and not fields[1].startswith("Z"):
+            return True
+    return False

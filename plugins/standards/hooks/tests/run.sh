@@ -512,4 +512,152 @@ cp .githooks/pre-commit "$work/pc.after"
 "$init" >/dev/null
 check "init: a second run changes nothing" sh -c "cmp -s .githooks/pre-commit '$work/pc.after' && ! '$init' --check | grep -q 'githooks'"
 
+echo "init: a live hook in .git/hooks keeps core.hooksPath unset"
+mkdir -p "$work/live-hooks" && cd "$work/live-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+printf '#!/bin/sh\ngit lfs pre-push "$@"\n' > .git/hooks/pre-push; chmod +x .git/hooks/pre-push
+"$init" > "$work/live-hooks.init.out" 2>&1
+check "LiveHookInGitHooks_HooksPathStaysUnset: init leaves core.hooksPath unset so git still runs .git/hooks/pre-push" sh -c "[ -z \"\$(git config core.hooksPath)\" ]"
+check "LiveHookInGitHooks_InitNamesTheHook: init names the live hook it would have bypassed" grep -q 'init: .git/hooks holds pre-push;' "$work/live-hooks.init.out"
+git config --unset core.hooksPath
+"$init" --check > "$work/live-hooks.check.out" 2>&1
+check "LiveHookInGitHooks_CheckReportsNoHooksPathDrift: init --check does not count the unset core.hooksPath as drift" sh -c "[ -s '$work/live-hooks.check.out' ] && ! grep -q 'core.hooksPath is unset' '$work/live-hooks.check.out'"
+
+echo "init: machine scope puts the block, the rules and the agents in the user folders, and wires the clone's hooks"
+CLAUDE_CONFIG_DIR="$work/claude home"; CODEX_HOME="$work/codex"; export CLAUDE_CONFIG_DIR CODEX_HOME
+owner_line="the owner's own instructions"; usage_error_status=2; blocks_per_user_file=1
+mkdir -p "$CLAUDE_CONFIG_DIR" && printf '%s\n' "$owner_line" > "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+machine_config='{"version":"0.1.0","languages":[{"name":"shell","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[]}'
+mkdir -p "$work/machine" && cd "$work/machine" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p docs .githooks .standards
+printf '# Instructions\n' > docs/INSTRUCTIONS.md && ln -s docs/INSTRUCTIONS.md AGENTS.md && printf 'AGENTS.md\n' > .gitignore
+printf '#!/bin/sh\necho mine\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+git add docs .gitignore .githooks && git commit -q -m 'chore: tracked instructions and hooks'
+lfs_line='git lfs pre-push "$@"'
+printf '#!/bin/sh\n%s\n' "$lfs_line" > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope project-wide > "$work/machine.bad-scope.out" 2>&1; bad_scope_status=$?
+check "UnknownScope_InitExitsWithUsageError: a --scope value other than machine or project stops init with exit 2" [ "$bad_scope_status" = "$usage_error_status" ]
+"$init" --scope machine > "$work/machine.init.out" 2>&1
+check "MachineScope_TrackedFilesUnchanged: init --scope machine runs to its stamp and changes no tracked file" sh -c "[ -f .standards/stamp ] && git diff --quiet HEAD"
+check "MachineScope_UserClaudeFileHoldsOneBlock: the user CLAUDE.md under \$work holds exactly one standards block" sh -c "[ \"\$(grep -c 'standards:begin' '$CLAUDE_CONFIG_DIR/CLAUDE.md')\" = $blocks_per_user_file ]"
+check "MachineScope_UserCodexFileHoldsOneBlock: the user AGENTS.md under \$work holds exactly one standards block" sh -c "[ \"\$(grep -c 'standards:begin' '$CODEX_HOME/AGENTS.md')\" = $blocks_per_user_file ]"
+check "MachineScope_OwnerTextKeptAboveBlock: the owner's line in the user CLAUDE.md survives the install" grep -qxF "$owner_line" "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+check "MachineScope_RulesInUserClaudeFolder: the Claude rules land in the user rules folder under \$work" test -f "$CLAUDE_CONFIG_DIR/rules/standards-design.md"
+check "MachineScope_AgentsInUserCodexFolder: the Codex agents land in the user agents folder under \$work" test -f "$CODEX_HOME/agents/standards-reviewer.toml"
+check "MachineScope_NoRulesInProjectFolder: machine scope writes no Claude rule into the project" sh -c "! ls .claude/rules/standards-* >/dev/null 2>&1"
+check "MachineScope_HooksPathNeverSet: machine scope leaves core.hooksPath unset so git runs the clone's own hooks" sh -c "[ -z \"\$(git config core.hooksPath)\" ]"
+check "MachineScope_ExistingPrePushLineRunsFirst: the standards call in .git/hooks/pre-push comes after the line already there" \
+  awk -v existing="$lfs_line" -v needle=.standards/hooks/git/pre-push '$0 == existing { existing_line = NR } index($0, needle) { call_line = NR } END { exit !(existing_line && call_line > existing_line) }' .git/hooks/pre-push
+check "MachineScope_MissingHookCreatedExecutable: a hook the clone lacked is created executable with the standards call" \
+  sh -c "[ -x .git/hooks/commit-msg ] && grep -qF .standards/hooks/git/commit-msg .git/hooks/commit-msg"
+check "MachineScope_TrackedGithooksUntouched: the tracked .githooks/pre-commit keeps its committed text" git diff --quiet HEAD -- .githooks/pre-commit
+check "MachineScope_OutputsExcluded: git status lists none of the files machine scope wrote in the clone" sh -c "[ -z \"\$(git status --porcelain --untracked-files=all)\" ]"
+wired_files="hooks/pre-commit hooks/commit-msg hooks/pre-push info/exclude"
+mkdir -p "$work/machine.before"
+for wired_file in $wired_files; do cp ".git/$wired_file" "$work/machine.before/${wired_file##*/}"; done
+"$init" >/dev/null 2>&1
+check "MachineScope_SecondRunChangesNothing: a second init leaves the clone's hook files and its exclude byte-equal" sh -c "
+  for wired_file in $wired_files; do cmp -s \".git/\$wired_file\" \"$work/machine.before/\${wired_file##*/}\" || exit 1; done"
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+"$init" --check > "$work/machine.check.out" 2>&1
+check "MachineScope_CheckWithoutFlagIsClean: init --check, with no --scope, finds the machine install up to date" grep -q 'up to date' "$work/machine.check.out"
+gate_ran="$work/machine.gate-ran"
+python3 -c 'import json, sys
+config = json.load(open(".standards/config.json"))
+config["gates"] = [{"name": "marker", "command": "echo ran > \"%s\"" % sys.argv[1], "when": ["commit"]}]
+json.dump(config, open(".standards/config.json", "w"))' "$gate_ran"
+printf 'note\n' > note.txt && git add note.txt && git commit -q -m 'docs: add a note' >/dev/null 2>&1
+check "MachineScope_CommitRunsTheHook: a commit in the clone runs the standards pre-commit and its project gate" test -f "$gate_ran"
+mkdir -p "$work/machine-second" && cd "$work/machine-second" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope machine >/dev/null 2>&1
+cd "$work/machine"
+"$init" --check > "$work/machine.second-check.out" 2>&1
+check "SecondProjectSameHome_CheckStaysClean: a second project installed on the same user folders leaves the first one's --check up to date" grep -q 'up to date' "$work/machine.second-check.out"
+
+echo "init: machine scope links .standards into the linked worktrees and flow's worktree_setup"
+linked_worktree="$work/machine-wt"; flow_worktree="$work/machine-wt-flow"; flow_items_wanted=1
+git worktree add -q "$linked_worktree" 2>/dev/null
+mkdir -p .flow && printf 'pool:\nworktree_setup:\n  # - dotnet restore\ngates:\n' > .flow/config.yaml
+"$init" >/dev/null 2>&1
+"$init" >/dev/null 2>&1
+check "LinkedWorktree_SeesTheConfig: the linked worktree reads the main worktree's config through .standards" test -f "$linked_worktree/.standards/config.json"
+check "LinkedWorktree_StatusStaysClean: git status in the linked worktree lists nothing init wrote" sh -c "[ -z \"\$(git -C '$linked_worktree' status --porcelain --untracked-files=all)\" ]"
+check "FlowConfig_WorktreeSetupGetsOneLine: two inits leave one item that links .standards under worktree_setup" \
+  sh -c "[ \"\$(grep -c 'ln -s .*\\.standards' .flow/config.yaml)\" = $flow_items_wanted ]"
+(cd "$linked_worktree" && "$init" --check > "$work/machine-wt.check.out" 2>&1)
+check "LinkedWorktree_CheckIsClean: init --check run in the linked worktree finds the install up to date" grep -q 'up to date' "$work/machine-wt.check.out"
+rm -f "$gate_ran"
+(cd "$linked_worktree" && printf 'linked\n' > linked.txt && git add linked.txt && git commit -q -m 'docs: add a linked note' >/dev/null 2>&1)
+check "LinkedWorktree_CommitRunsTheHook: a commit in the linked worktree runs the standards pre-commit and its project gate" test -f "$gate_ran"
+git worktree add -q "$flow_worktree" 2>/dev/null
+flow_setup_line="$(sed -n 's/^  - \(\[ -e \.standards \] .*\)$/\1/p' .flow/config.yaml)"
+(cd "$flow_worktree" && sh -c "$flow_setup_line")
+check "FlowSetupLine_LinksANewWorktree: the worktree_setup line, run in a new worktree, links its .standards to the main one" \
+  sh -c '[ -n "$1" ] && [ -L "$2/.standards" ] && [ -f "$2/.standards/config.json" ]' sh "$flow_setup_line" "$flow_worktree"
+check "MachineScope_RepeatedInits_UserFileKeepsOneBlock: after every init above, the user CLAUDE.md still holds exactly one standards block" \
+  sh -c "[ \"\$(grep -c 'standards:begin' '$CLAUDE_CONFIG_DIR/CLAUDE.md')\" = $blocks_per_user_file ]"
+grep -vF .standards/hooks/git/pre-push .git/hooks/pre-push > "$work/pre-push.stripped"; cat "$work/pre-push.stripped" > .git/hooks/pre-push
+"$init" --check > "$work/machine.stripped-call.out" 2>&1
+check "MachineScope_StrippedHookCall_CheckReportsDrift: init --check names the clone's pre-push once its standards call is gone" \
+  grep -q '^init: drift: .*pre-push' "$work/machine.stripped-call.out"
+"$init" >/dev/null 2>&1
+exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
+sed '/^# standards:begin/,/^# standards:end/d' "$exclude_file" > "$work/exclude.stripped"; cat "$work/exclude.stripped" > "$exclude_file"
+"$init" --check > "$work/machine.stripped-exclude.out" 2>&1
+check "MachineScope_RemovedExcludeBlock_CheckReportsDrift: init --check names the exclude file once its standards block is gone" \
+  grep -q '^init: drift: .*exclude' "$work/machine.stripped-exclude.out"
+"$init" >/dev/null 2>&1
+rm "$linked_worktree/.standards"
+"$init" --check > "$work/machine.missing-link.out" 2>&1
+check "LinkedWorktree_MissingLink_CheckReportsDrift: init --check names the linked worktree that lost its .standards link" \
+  grep -q '^init: drift: .*/machine-wt/\.standards is missing' "$work/machine.missing-link.out"
+"$init" >/dev/null 2>&1
+git worktree remove --force "$linked_worktree"; git worktree remove --force "$flow_worktree"
+
+echo "init: machine scope leaves a tracked flow config alone"
+mkdir -p "$work/tracked-flow" && cd "$work/tracked-flow" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .flow .standards && printf '%s\n' "$machine_config" > .standards/config.json
+printf 'pool:\nworktree_setup:\n  # - dotnet restore\n' > .flow/config.yaml
+git add .flow && git commit -q -m 'chore: flow config'
+"$init" --scope machine > "$work/tracked-flow.init.out" 2>&1
+check "TrackedFlowConfig_StaysUnchanged: machine init leaves a committed .flow/config.yaml with worktree_setup: unchanged" \
+  sh -c "[ -z \"\$(git status --porcelain -- .flow/config.yaml)\" ]"
+check "TrackedFlowConfig_InitPrintsTheItem: machine init prints the worktree_setup item that links .standards for the owner to add" \
+  grep -q 'worktree_setup: .*ln -s .*\.standards' "$work/tracked-flow.init.out"
+
+echo "init: the standards call keeps the status of the hook lines before it"
+mkdir -p "$work/failing-hooks" && cd "$work/failing-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
+printf '#!/bin/sh\nfalse\n' > .git/hooks/pre-push
+printf '#!/bin/sh\nfalse\nexit $?\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-push .git/hooks/pre-commit
+"$init" --scope machine >/dev/null 2>&1
+check "ClonePrePushEndingInFalse_StillFailsAfterMachineInit: the pre-push exits non-zero once init chained the standards call" \
+  sh -c '! .git/hooks/pre-push origin url </dev/null'
+check "ClonePreCommitEndingInExitStatus_StillFailsAfterMachineInit: exit \$? after a failing line still exits non-zero once init chained the standards call" \
+  sh -c '! .git/hooks/pre-commit'
+mkdir -p "$work/failing-githooks" && cd "$work/failing-githooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards .githooks && printf '%s\n' "$machine_config" > .standards/config.json
+printf '#!/bin/sh\nfalse\n' > .githooks/pre-push && chmod +x .githooks/pre-push
+"$init" >/dev/null 2>&1
+check "ProjectPrePushEndingInFalse_StillFailsAfterInit: the tracked .githooks/pre-push exits non-zero once init chained the standards call" \
+  sh -c '! .githooks/pre-push origin url </dev/null'
+
+echo "init: machine scope in a clone whose team set core.hooksPath"
+mkdir -p "$work/team-hooks" && cd "$work/team-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .githooks .standards
+printf '#!/bin/sh\necho team\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+git add .githooks && git commit -q -m 'chore: team hooks' && git config core.hooksPath .githooks
+printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope machine > "$work/team-hooks.init.out" 2>&1
+check "TeamHooksPathSet_MachineScopeKeepsTheTeamPath: machine scope leaves the team's core.hooksPath as it was" \
+  sh -c "[ \"\$(git config core.hooksPath)\" = .githooks ]"
+check "TeamHooksPathSet_TrackedHooksUntouched: machine scope adds no call to the team's tracked hooks" git diff --quiet HEAD -- .githooks
+check "TeamHooksPathSet_InitPrintsTheCallToAdd: init shows the hook call the owner adds by hand" grep -qF .standards/hooks/git/pre-commit "$work/team-hooks.init.out"
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+"$init" --check > "$work/team-hooks.check.out" 2>&1
+check "TeamHooksPathSet_CheckIsClean: init --check counts the hand-wired team hooks as no drift" grep -q 'up to date' "$work/team-hooks.check.out"
+unset CLAUDE_CONFIG_DIR CODEX_HOME
+
 [ "$fails" -eq 0 ] && echo "hooks: ok" || { echo "hooks: $fails failed"; exit 1; }
