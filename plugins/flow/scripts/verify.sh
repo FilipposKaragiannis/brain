@@ -270,7 +270,7 @@ scoped_check() {
   # scoped_check <name> <command> <globs, one per line>: a build or test command. With globs it
   # runs only when a changed file matches one. A pass kept for the same command and files
   # (lib/checks.sh) is reported as that pass, named with its run, and nothing runs; --fresh runs
-  # the command whatever is kept. A pass is kept for the next run.
+  # the command whatever is kept. A pass is kept for the next run, and a fail drops what is kept.
   if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
   inputs_key="$(check_key "$2" "$3")"
   if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
@@ -278,7 +278,8 @@ scoped_check() {
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
   fi
-  run_check "$1" "$2" gate && check_keep "$inputs_key" "$item" "$(git rev-parse --short HEAD 2>/dev/null)"
+  if run_check "$1" "$2" gate; then check_keep "$inputs_key" "$item" "$(git rev-parse --short HEAD 2>/dev/null)"
+  else check_drop "$inputs_key"; fi
 }
 
 planned_checks() {

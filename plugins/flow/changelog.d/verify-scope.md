@@ -7,9 +7,10 @@ bump: minor
   no paths always runs, and a config written before behaves as before.
 - Verify does not run a build or test command again that passed on the same command and the same
   files. The check is a pass that names the run it came from. A command with no paths is reused
-  only while the whole tree is unchanged, a failed one never, and one with an uncommitted change
-  under its paths always runs. `verify.sh <item> --fresh` runs every command. The passes are kept
-  in `.flow/checks` of the main worktree, shared by its worktrees, never committed.
+  only while the whole tree is unchanged, a failed one never (a failed run drops the pass kept for
+  its inputs), and one with an uncommitted change under its paths always runs.
+  `verify.sh <item> --fresh` runs every command. The passes are kept in `.flow/checks` of the
+  main worktree, shared by its worktrees, never committed.
 - Every check in `verify.json` carries its `seconds`, the report the run's total, and `verify.md`
   shows the time beside each check.
 - A verify run that was stopped at `verify.limit`, by a signal or by a kill failed no check: its

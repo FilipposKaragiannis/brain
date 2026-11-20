@@ -38,3 +38,6 @@ check_keep() {
   find "$(checks_store)" -type f -mtime "+$CHECKS_KEPT_DAYS" -exec rm -f {} + 2>/dev/null
   return 0
 }
+
+# check_drop <key>: drops the kept pass of the key, as a run of the same inputs failed since.
+check_drop() { check_key_valid "$1" && rm -f "$(checks_store)/$1"; return 0; }

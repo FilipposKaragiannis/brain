@@ -85,6 +85,12 @@ python3 -c 'import json,sys; path=sys.argv[1]; config=json.load(open(path)); con
 git -C "$worktree" commit -qam "another command"
 verify >/dev/null 2>&1
 check "CommandTextChanged_RunsAgain: a third run, because a pass is kept for one command text" '[ "$(runs_of flaky)" = 3 ]'
+: > "$work/fail-flaky"
+verify --fresh >/dev/null 2>&1
+verify >/dev/null 2>&1; after_fresh_code=$?
+rm -f "$work/fail-flaky"
+check "FreshRunThatFails_DropsTheKeptPass: the next verify runs the command again and fails, because a known failure outranks an older pass" \
+  '[ "$after_fresh_code" -eq 1 ] && [ "$(runs_of flaky)" = 5 ]'
 
 echo "scope: a command with no paths, and a build with paths"
 new_item whole "$passing_gate"
