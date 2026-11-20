@@ -69,31 +69,32 @@ raise_asked() {
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$@" >/dev/null
 }
 
-# close_out_epic: an epic's closeout that passed ends in the epic's pull request when it has work
-# to merge (epic-pr.sh): the epic waits at the merge gate, and the merge closes it (steward.sh
-# sweep). With nothing to merge the flow closes the epic, and the step ends as any last step. A
-# PR that cannot be opened is the owner's to open: the epic stays at closeout behind an
-# escalation gate that says why, and the run after the clear takes the PR the owner opened.
-close_out_epic() {
-  if ! epic_pull_request="$("$FLOW_PLUGIN/scripts/epic-pr.sh" "$item" "$reports" "$summary" 2>"$reports/epic-pr.err")"; then
-    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the epic's pull request could not be opened. Open it, then clear the gate.**
+escalate_unopened_epic_pull_request() {
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the epic's pull request could not be opened. Open it, then clear the gate.**
 
 $(cat "$reports/epic-pr.err")" >/dev/null
-    report 4 "" escalation
-  fi
-  rm -f "$reports/epic-pr.err"
-  if [ -z "$epic_pull_request" ]; then
-    [ "$(json_get "$data" status)" = closed ] || adapter close "$item" --comment "Closed by flow: every task is closed and the closeout passed." >/dev/null \
-      || echo "advance: could not close $item" >&2
-    return 0
-  fi
-  step_write "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; $epic_pull_request waits for the merge" >/dev/null
-  adapter comment "$item" --body "Step $step done: ${summary:-no summary}. The epic's pull request: $epic_pull_request." >/dev/null
+  report 4 "" escalation
+}
+
+close_epic_with_nothing_to_merge() {
+  [ "$(json_get "$data" status)" != closed ] || return 0
+  adapter close "$item" --comment "Closed by flow: every task is closed and the closeout passed." >/dev/null || echo "advance: could not close $item" >&2
+}
+
+wait_for_the_merge_of() {
+  step_write "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; $1 waits for the merge" >/dev/null
+  adapter comment "$item" --body "Step $step done: ${summary:-no summary}. The epic's pull request: $1." >/dev/null
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" merge "**$(json_get "$profiles" "gates.merge.asks")**
 
-$epic_pull_request brings the epic's branch into its base. ${summary:-$step done.}" "$step" >/dev/null
+$1 brings the epic's branch into its base. ${summary:-$step done.}" "$step" >/dev/null
   finish_run
   report 4 "done" merge
+}
+
+close_out_epic() {
+  epic_pull_request="$("$FLOW_PLUGIN/scripts/epic-pr.sh" "$item" "$reports" "$summary" 2>"$reports/epic-pr.err")" || escalate_unopened_epic_pull_request
+  rm -f "$reports/epic-pr.err"
+  if [ -z "$epic_pull_request" ]; then close_epic_with_nothing_to_merge; else wait_for_the_merge_of "$epic_pull_request"; fi
 }
 
 size_index() { i=0; for s in $(json_list "$profiles" sizes); do [ "$s" = "$1" ] && { printf '%s' "$i"; return; }; i=$((i + 1)); done; printf '%s' -1; }

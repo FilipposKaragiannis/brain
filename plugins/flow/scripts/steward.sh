@@ -830,26 +830,53 @@ cmd_sweep() {
   sweep_unclaimed_merges
 }
 
+# unclaimed_merge_gate_item <gate record>: the item of a merge gate record when it holds no claim
+# (and is the one --item names, when it names one); nothing, and 1, for any other record.
+unclaimed_merge_gate_item() {
+  waiting_gate="$(cat "$1")"; gate_item="$(json_get "$waiting_gate" item)"
+  [ "$(json_get "$waiting_gate" gate)" = merge ] || return 1
+  [ -z "$only" ] || [ "$gate_item" = "$only" ] || return 1
+  [ -z "$(cmd_find "$gate_item")" ] || return 1
+  printf '%s' "$gate_item"
+}
+
+# merged_pull_request_of <item record>: the PR the item records when it is merged; nothing, and
+# 1, when it records none or the PR is open, closed or unreadable.
+merged_pull_request_of() {
+  recorded_pull_request="$(state_get "$1" pr)"
+  [ -n "$recorded_pull_request" ] && [ "$(read_pull_request_state "$recorded_pull_request")" = MERGED ] || return 1
+  printf '%s' "$recorded_pull_request"
+}
+
+# close_merged_item <item> <item record> <pr>: the item closes, then its merge gate clears with
+# the PR's URL. The gate goes last: while the item cannot be closed its gate record stays, so the
+# next sweep finds the item again.
+close_merged_item() {
+  if [ "$(json_get "$2" status)" != closed ] && ! adapter close "$1" --comment "Closed by flow: $3 is merged." >/dev/null 2>&1; then
+    echo "$1: could not close it ($3 merged); the next sweep tries again"; return 0
+  fi
+  if ! "$FLOW_PLUGIN/scripts/gate.sh" clear "$1" "merged: $3" >/dev/null 2>&1; then
+    echo "$1: closed, but its merge gate stays; the next sweep tries again"; return 0
+  fi
+  echo "$1: closed ($3 merged)"
+}
+
+# sweep_unclaimed_merge <gate record>: one gate record of sweep_unclaimed_merges.
+sweep_unclaimed_merge() {
+  unclaimed_item="$(unclaimed_merge_gate_item "$1")" || return 0
+  unclaimed_record="$(adapter read "$unclaimed_item" 2>/dev/null)" || return 0
+  merged_pull_request="$(merged_pull_request_of "$unclaimed_record")" || return 0
+  if [ "$dry" -eq 1 ]; then echo "$unclaimed_item: would close it ($merged_pull_request merged)"; return 0; fi
+  close_merged_item "$unclaimed_item" "$unclaimed_record" "$merged_pull_request"
+}
+
 # sweep_unclaimed_merges: an item that waits at the merge gate and holds no claim is not among the
 # claimed worktrees: an epic, whose PR comes from its epic branch (epic-pr.sh). Its merged PR is
-# the owner's answer all the same: the merge gate clears with the PR's URL and the item closes.
+# the owner's answer all the same: the item closes and its merge gate clears with the PR's URL.
 # --item reads one item's gate, and --dry-run says what it would do.
 sweep_unclaimed_merges() {
   for merge_gate_record in "$home"/gates/*.json; do
-    [ -f "$merge_gate_record" ] || continue
-    waiting_gate="$(cat "$merge_gate_record")"; unclaimed_item="$(json_get "$waiting_gate" item)"
-    [ "$(json_get "$waiting_gate" gate)" = merge ] && [ -z "$(cmd_find "$unclaimed_item")" ] || continue
-    [ -z "$only" ] || [ "$unclaimed_item" = "$only" ] || continue
-    unclaimed_json="$(adapter read "$unclaimed_item" 2>/dev/null)" || continue
-    merged_pull_request="$(state_get "$unclaimed_json" pr)"
-    [ -n "$merged_pull_request" ] && [ "$(read_pull_request_state "$merged_pull_request")" = MERGED ] || continue
-    if [ "$dry" -eq 1 ]; then echo "$unclaimed_item: would close it ($merged_pull_request merged)"; continue; fi
-    if ! "$FLOW_PLUGIN/scripts/gate.sh" clear "$unclaimed_item" "merged: $merged_pull_request" >/dev/null 2>&1; then
-      echo "$unclaimed_item: could not clear its merge gate; the next sweep tries again"; continue
-    fi
-    [ "$(json_get "$unclaimed_json" status)" = closed ] || adapter close "$unclaimed_item" --comment "Closed by flow: $merged_pull_request is merged." >/dev/null \
-      || echo "flow: could not close $unclaimed_item" >&2
-    echo "$unclaimed_item: closed ($merged_pull_request merged)"
+    [ ! -f "$merge_gate_record" ] || sweep_unclaimed_merge "$merge_gate_record"
   done
 }
 

@@ -75,6 +75,32 @@ check "EpicWhosePullRequestMerged_IsClosedByTheSweep: the merge is the owner's a
 check "EpicWhosePullRequestMerged_HasNoGateLeft: a closed item must not keep a gate waiting" \
   '[ "$(state "$epic" gate)" = none ]'
 
+echo "epic closeout: an epic the tracker refuses to close is closed by a later sweep"
+github_repo retried
+sed -i.bak 's/^  default: local$/  default: github/' .flow/config.yaml && rm -f .flow/config.yaml.bak
+printf '{"issues": [{"number": 1, "title": "Seed", "body": "", "state": "CLOSED", "labels": [], "url": "https://gh/1"}]}\n' > "$FAKE_GH_DIR/issues.json"
+export FLOW_GH_RETRY_WAIT="0 0"
+tracked="$("$plugin/adapters/github/create.sh" epic "Loans" --body x)"
+tracked_field() { "$plugin/adapters/github/read.sh" "$tracked" | json_value "$1"; }
+remote_branch "$(epic_of "$tracked")"; remote_commit "$(epic_of "$tracked")" loans.txt
+"$plugin/adapters/github/write-state.sh" "$tracked" step=closeout profile=epic
+start_step "$tracked"
+step_result "$tracked" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
+finish_step "$tracked"
+merge_pull_request
+check "GitHubEpicWithAMergedPullRequest_WaitsAtTheMergeGateBeforeTheSweep: the closeout left it there, or the checks below prove nothing" \
+  '[ "$(tracked_field status)" = open ] && [ "$(tracked_field state.gate)" = merge ]'
+printf '9\nGitHub refused the close\nissue close\n' > "$FAKE_GH_DIR/fail"
+"$plugin/scripts/steward.sh" sweep > "$work/sweep-refused.out" 2>&1
+rm -f "$FAKE_GH_DIR/fail"
+check "MergedEpicTheTrackerRefusesToClose_KeepsItsMergeGate: the gate record is what the next sweep finds the epic by" \
+  '[ "$(tracked_field status)" = open ] && [ "$(tracked_field state.gate)" = merge ]'
+check "MergedEpicTheTrackerRefusesToClose_IsNotSaidToBeClosed: the sweep reports what happened" \
+  '! grep -qF "$tracked: closed" "$work/sweep-refused.out"'
+"$plugin/scripts/steward.sh" sweep >/dev/null 2>&1
+check "MergedEpicTheTrackerRefusedToClose_IsClosedByTheNextSweep: a failed close is tried again" \
+  '[ "$(tracked_field status)" = closed ] && [ "$(tracked_field state.gate)" = none ]'
+
 echo "epic closeout: an epic with nothing to merge is closed"
 github_repo nothing
 branchless="$("$local_adapter/create.sh" epic "Friendlies" --body x)"
@@ -119,5 +145,15 @@ check "EpicCloseoutWhosePullRequestCannotBeOpened_NamesTheCommandInTheGate: the 
   'json_value message < ".flow/gates/$(slug "$stuck").json" | grep -qF -- "--head $(epic_of "$stuck")"'
 check "EpicCloseoutWhosePullRequestCannotBeOpened_LeavesTheEpicOpenAtCloseout: clearing the gate runs the closeout again, which takes the PR the owner opened" \
   '[ "$(item_status "$stuck")" = open ] && [ "$(state "$stuck" step)" = closeout ]'
+
+echo "epic closeout: a base that is not on the remote is no empty difference"
+github_repo baseless
+adrift="$(epic_with_work "Friendlies abroad")"
+sed -i.bak 's/^base: main$/base: trunk/' .flow/config.yaml && rm -f .flow/config.yaml.bak
+pass_closeout "$adrift"
+check "EpicCloseoutWhoseBaseIsNotOnTheRemote_LeavesTheEpicOpen: its branch still holds work nothing merged, so it must not be closed" \
+  '[ "$(item_status "$adrift")" = open ]'
+check "EpicCloseoutWhoseBaseIsNotOnTheRemote_RaisesAnEscalationGate: the owner hears the branch has nowhere to merge" \
+  '[ "$(state "$adrift" gate)" = escalation ] && json_value message < ".flow/gates/$(slug "$adrift").json" | grep -qF "trunk is not on the remote"'
 
 if [ "$fails" -eq 0 ]; then echo "epic-closeout: ok"; else echo "epic-closeout: $fails failed"; exit 1; fi
