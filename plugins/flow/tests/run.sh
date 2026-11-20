@@ -786,7 +786,7 @@ mirror_on "answers finds the gate in the record, not on the tracker" check "answ
 mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the answer gets a +1 and a second pass finds nothing" sh -c "grep -q '\"content\": \"+1\"' '$FAKE_GH_DIR/issues.json' && [ -z \"\$('$P/adapters/github/answers.sh')\" ]"
 picked="$("$P/scripts/next.sh" 'gh#37' --json)"; brief="$(printf '%s' "$picked" | jget brief)"
 check "the next brief carries the owner's answer and the question" sh -c "grep -q \"The owner's answer to the last gate (ambiguity)\" '$brief' && grep -q 'Answer: 1. no, keep it visual' '$brief' && grep -q 'Visual only?' '$brief'"
-rm -f .flow/runs/gh-37.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
+end_run 'gh#37'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 mkdir -p "$work/slackbin" && printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done >> "%s/slack.log"\n' "$work" > "$work/slackbin/curl" && chmod +x "$work/slackbin/curl"
 PATH="$work/slackbin:$PATH" FLOW_SLACK_WEBHOOK=https://hook.example "$P/scripts/notify.sh" ambiguity 'gh#32' "1. Visual only?
    Recommended: yes, hash-inert." >/dev/null
@@ -3321,7 +3321,7 @@ check "new: an unreadable parent is warned about, and the child is still made" s
 unset FLOW_HEALTH_PROCS
 
 echo "gate list --json"
-mkdir -p "$work/gates" && cd "$work/gates" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+mkdir -p "$work/gate-list" && cd "$work/gate-list" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach ../app-wt-2
 mkdir -p .flow ../app-wt-1/.flow
 printf 'adapters:\n  default: local\nbase: main\ntracker_state: none\npool:\n  - ../app-wt-1\n  - ../app-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
@@ -3343,13 +3343,13 @@ check "gate list: the plain output is unchanged" [ "$("$P/scripts/gate.sh" list)
 check "gate list: an unknown flag exits 2" [ "$code" -eq 2 ]
 "$P/scripts/gate.sh" list --json extra >/dev/null 2>&1; code=$?
 check "gate list: an extra argument exits 2" [ "$code" -eq 2 ]
-json_obj gate=escalation message=42 time=20261025 host=shell > "$work/gates/42.json"
-record set local:task/9 "gate:=$(cat "$work/gates/42.json")"
+json_obj gate=escalation message=42 time=20261025 host=shell > "$work/gate-list/42.json"
+record set local:task/9 "gate:=$(cat "$work/gate-list/42.json")"
 broken_record="$(record path local:task/11)"; printf 'not json\n' > "$broken_record"
-gj="$(FLOW_NOW=2026-10-25T09:00:00Z "$P/scripts/gate.sh" list --json 2>"$work/gates/err")"; code=$?
+gj="$(FLOW_NOW=2026-10-25T09:00:00Z "$P/scripts/gate.sh" list --json 2>"$work/gate-list/err")"; code=$?
 gq() { printf '%s' "$gj" | jget "$1"; }
 check "gate json: exits 0 past a broken record" [ "$code" -eq 0 ]
-check "CorruptGateRecord_IsNamedOnStderr: gate list --json names the record file that does not parse, because one bad record must never hide silently" grep -qF "$broken_record" "$work/gates/err"
+check "CorruptGateRecord_IsNamedOnStderr: gate list --json names the record file that does not parse, because one bad record must never hide silently" grep -qF "$broken_record" "$work/gate-list/err"
 check "gate json: every valid record is listed" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 3 ]
 check "gate json: each gate has the fields the console reads" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)[1]))')" = "item,gate,message,time,host,worktree,age_seconds,questions,options,raised_by,answered_by,condition,footer" ]
 check "gate json: oldest first" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(g["item"]) for g in json.load(sys.stdin)))')" = "local:task/3,local:task/7,local:task/9" ]
@@ -3358,7 +3358,7 @@ check "gate json: the age of an hour-old gate is against FLOW_NOW" [ "$(gq 1.age
 check "gate json: the claimed pool worktree" [ "$(gq 1.worktree)" = "$(cd ../app-wt-1 && pwd -P)" ]
 check "gate json: no claim, worktree null" [ "$(gq 0.worktree)" = null ]
 check "gate json: a digits-only message is a string" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(json.load(sys.stdin)[2]["message"] == "42")')" = True ]
-check "json_obj: a digits-only message is written as a string" [ "$(python3 -c 'import json,sys; print(repr(json.load(open(sys.argv[1]))["message"]))' "$work/gates/42.json")" = "'42'" ]
+check "json_obj: a digits-only message is written as a string" [ "$(python3 -c 'import json,sys; print(repr(json.load(open(sys.argv[1]))["message"]))' "$work/gate-list/42.json")" = "'42'" ]
 check "gate json: a time that is no ISO time has no age" [ "$(gq 2.age_seconds)" = null ]
 check "gate json: one question per numbered line, dot or bracket" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(q["number"]) for q in json.load(sys.stdin)[1]["questions"]))')" = "1,2,3,4" ]
 check "gate json: an inline Recommended ends the question" [ "$(gq 1.questions.0.text)" = "Keep the old name?" ]

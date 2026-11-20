@@ -12,20 +12,22 @@ Open or update the pull request for an item from the verify report, with the hou
 right base branch, the verify summary, the quiz when one exists, and the review requests.
 
 ## Inputs
-The item (its `parent`, acceptance lines, `state.base`), the task branch in the claimed
-worktree and its `.flow/claim.json` (`base`), `<reports>/verify.json` and `verify.md` (must be pass), `<reports>/explain.html` and
+The item (its `parent`, acceptance lines, `state.base`), the flow plugin root (the brief names
+it), the task branch in the claimed worktree and its `.flow/claim.json` (`base`),
+`<reports>/verify.json` and `verify.md` (must be pass), `<reports>/explain.html` and
 `quiz.md` when the explain step ran, the PR body template in the `flow:pr` skill, the repo's
 `.github/PULL_REQUEST_TEMPLATE.md` when there is one, and `.flow/config.yaml` (`base`).
 
 ## How to open the PR
 1. `cd` into the worktree. Confirm `verify.json` is `pass`; otherwise stop with status `fail`
    naming the failing check. Confirm the tree is clean and every commit is on the task branch.
-2. Pick the base. The item's `state.base` tells a claim that recorded its base from one made
-   before. When `state.base` is set, the base is `base` in the worktree's `.flow/claim.json`,
-   the branch the claim resolved once and cut the task branch from (the brief's
-   `(base ...)`). `state.base` is a copy on the tracker that anyone who can edit the item can
-   change: when the claim has no base or its base differs from `state.base`, stop with status
-   `fail` naming both values. Say "base <b>, recorded at claim" in the result. When
+2. Pick the base. The item's `state.base` is the base the flow recorded at the claim; read it
+   from the item's flow record with `<plugin>/scripts/state.sh get <item> base`, never from the
+   tracker, whose copy anyone who can edit the item can change. It tells a claim that recorded
+   its base from one made before. When `state.base` is set, the base is `base` in the worktree's
+   `.flow/claim.json`, the branch the claim resolved once and cut the task branch from (the
+   brief's `(base ...)`): when the claim has no base or its base differs from `state.base`, stop
+   with status `fail` naming both values. Say "base <b>, recorded at claim" in the result. When
    `state.base` is empty, the claim predates the recorded base and its `claim.json` `base` is
    only the config base, so use the old rule: the parent item's task branch when the item has a
    parent with a claimed branch (`flow/<parent slug>`), else an `epic/<n>` branch on the remote

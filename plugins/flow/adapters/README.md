@@ -47,7 +47,7 @@ prefix.
 | Script | Arguments | Prints |
 |---|---|---|
 | `list` | `[--all] [--kind KIND]` | a JSON array of items: the open ones, every one with `--all`, one kind with `--kind` |
-| `list-ready` | `[--kind KIND]` | the ready items, best first: `list` piped through `scripts/filter-ready.sh` |
+| `list-ready` | `[--kind KIND]` | the ready items, best first: `list` piped through `scripts/filter-ready.sh`, which joins each item's flow record on before it filters |
 | `read` | `<id>` | one item |
 | `create` | `<kind> <title> [--size S\|M\|L] [--priority NAME] [--area NAME] [--type NAME] [--blocked-by id,id] [--parent id] [--body TEXT]` | the new id, one line |
 | `close` | `<id> [--comment TEXT]` | nothing; the item reads `closed` and the comment lands |
@@ -92,7 +92,7 @@ that landed. The Jira adapter's waits come from `FLOW_JIRA_RETRY_WAIT`.
 | `parent` | id or empty | |
 | `open_children` | number | open items whose parent this is; a parent with any is not ready |
 | `url` | string | where the owner opens it (the file path for a local item) |
-| `state` | object | the flow state, below |
+| `state` | object | the flow state the tracker holds, below; flow scripts read the flow record in its place |
 | `open_blockers` | list of ids, optional | the open ones among `blocked_by`, when the adapter knows; without it `filter-ready` reads each blocker through its adapter |
 | `rank` | number | lower is picked first: the priority's place in `READY_PRIORITY_ORDER`, the order's length for a priority not in it, 999 without one; `_filter_ready.py` and `_graph.py` sort on it |
 | `needs` | list | the fields of `READY_NEEDS` an open item with no step yet lacks; an epic never needs a size. `_filter_ready.py` holds back an item with any |
@@ -116,12 +116,19 @@ No flow script calls `write-state` itself: each writes through `record_set` in `
 when the tracker took them (ADR 0004). `link-pr` still writes `pr` and `pr_host` to the tracker;
 the sweep and the pr step copy both from the tracker into the record.
 
+No flow script reads `state` from an adapter either. A script reads one item with `item_read`
+(`scripts/state.sh read`) and a list with `items_join` or `items_listed`, which join the item's
+flow record on as `state` (all twenty keys; the record wins whole) and stamp `state_from`:
+`record`; `tracker` for an item with no record while `tracker_state` is `labels`, its state then
+the tracker's; `none` under `none`, its state empty. `state_get` and `state_list` in
+`lib/flow.sh` refuse an item with no `state_from`, so an adapter's own read never stands in.
+
 A gate's own data is not tracker state: the options it offers, who raised it, who carries the
 answer out, the condition it waits on and its footer live in the gate's record (ADR 0003), which
 `scripts/notify.sh` writes, for `scripts/gate.sh raise`, into the item's flow record (ADR 0004).
-The record renders `<flow home>/gates/<item>.json`, which `gate.sh list` reads; an id no adapter
-owns gets no flow record, so no gate file. Of a waiting gate the tracker holds `gate` and
-`gate_from` only, so an adapter stores no more for a gate than it did.
+`gate.sh list`, the board and the health job list gates and runs from the records
+(`record_list`); an id no adapter owns gets no flow record, so no listed gate. Of a waiting gate
+the tracker holds `gate` and `gate_from` only, so an adapter stores no more for a gate than it did.
 
 ## Config
 

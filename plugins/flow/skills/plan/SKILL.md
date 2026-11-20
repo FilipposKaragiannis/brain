@@ -10,7 +10,8 @@ on Codex the path `codex plugin list` prints for `flow`).
 
 ## 1. Resolve the item and the step
 
-- Item id from the argument (`gh#310`, `local:task/3`). Read it: `"$P/adapters/<github|local>/read.sh" <id>`.
+- Item id from the argument (`gh#310`, `local:task/3`). Read it with its flow state:
+  `"$P/scripts/state.sh" read <id>`.
 - Step: the one `next.sh` gave you, else from the state, else by kind: epic → `grill`; task M or
   L → `design`; S or bug → say planning is not in that profile and stop.
 - Reports directory: the one the `next.sh` brief names, else the path

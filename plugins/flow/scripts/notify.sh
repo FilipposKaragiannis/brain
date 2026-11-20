@@ -5,9 +5,8 @@
 # blank line, in the notification, never in the record's message. Desktop (osascript on macOS,
 # notify-send elsewhere) unless notify.desktop is false; Slack through the incoming webhook in the
 # FLOW_SLACK_WEBHOOK environment variable (so the URL stays out of the repository), else
-# notify.slack_webhook in the config; and always the gate in the item's flow record (record_set,
-# which renders <flow home>/gates/<item>.json) plus a line in <flow home>/events.log, which the
-# board reads.
+# notify.slack_webhook in the config; and always the gate in the item's flow record (record_set;
+# its view: scripts/_state_views.py) plus a line in <flow home>/events.log, which the board reads.
 # The events: idle (the next job found nothing ready; notify.idle) and health (the health job found
 # something: a gate waiting past its reminder, a diverged branch, a full pool; notify.health, on
 # unless set to false) and review-stalled (a reviewer stayed silent through every chase). A gate names the item by its
