@@ -3574,6 +3574,8 @@ check "IdleSessionInACleanWorktree_PassRuns: a session idle two hours with nothi
 printf 'theirs\n' > "$wm/uncommitted.txt"
 : > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "IdleSessionInAWorktreeWithUncommittedWork_PassStaysOut: the change may be the person's, so the pass does not edit under it" [ ! -s "$work/host77.log" ]
+: > "$work/host77.log"; GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=status.showUntrackedFiles GIT_CONFIG_VALUE_0=no "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "IdleSessionBesideAnUntrackedFileTheGitConfigHides_PassStaysOut: the file is the person's work all the same" [ ! -s "$work/host77.log" ]
 rm -f "$wm/uncommitted.txt" "$HOME/.claude/sessions/4242.json"
 : > "$FLOW_HEALTH_PROCS"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 # P2-7: a reports folder in a worktree another item holds gets no dirty-tree note.

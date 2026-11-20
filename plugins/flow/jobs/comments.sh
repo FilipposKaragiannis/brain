@@ -247,8 +247,9 @@ take_answer() {
 # claimed_by <worktree> <item>: the worktree's claim names the item, so its changes are this
 # item's. A released item's reports can sit in a pool worktree another item now holds.
 claimed_by() { [ "$(json_get "$(cat "$1/.flow/claim.json" 2>/dev/null)" item)" = "$2" ]; }
-# dirty_tree <worktree>: uncommitted changes outside .flow.
-dirty_tree() { [ -n "$(git -C "$1" status --porcelain -- . ':!.flow' 2>/dev/null)" ]; }
+# dirty_tree <worktree>: uncommitted changes outside .flow, untracked files counted even when the
+# person's git config hides them (status.showUntrackedFiles=no).
+dirty_tree() { [ -n "$(git -C "$1" status --porcelain --untracked-files=normal -- . ':!.flow' 2>/dev/null)" ]; }
 # The flow's GitHub login, read at most once per run and only when a thread lacks the reply
 # marker (a reply from before 1.19.0): comments.sh activity reads this cache.
 FLOW_GH_LOGIN_CACHE="$out.login"; export FLOW_GH_LOGIN_CACHE
