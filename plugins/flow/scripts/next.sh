@@ -9,8 +9,8 @@
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
-# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
-# an open item (blocked_by), split and waiting on its children, or its base: line names a branch not on the remote or no valid name · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# Exit codes: 0 step ready · 2 the branch template gives no valid task branch name for it · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
+# an open item (blocked_by), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
@@ -26,6 +26,7 @@
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/blockers.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 item=""; as_json=0; embed=0; pick=""

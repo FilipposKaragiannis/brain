@@ -501,6 +501,11 @@ sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
 check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-claim.out"
 
+echo "a task branch is named from the branch template at claim and recorded (tests/branch-name.sh)"
+sh "$here/branch-name.sh" > "$work/branch-name.out" 2>&1; code=$?
+check "branch-name: $(tail -n 1 "$work/branch-name.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/branch-name.out"
+
 echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
 sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
 check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]
@@ -885,6 +890,12 @@ env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" 'gh#21' http
 check "link-pr: records the host that wrote the PR as pr_host" [ "$("$P/adapters/github/read.sh" 'gh#21' | jget state.pr_host)" = "codex" ]
 pr_as flow/gh-21 "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
 check "request-review: the pr_host of the item the branch names wins over the body" [ "$(asked)" = "mona" ]
+templated_bug="$("$P/adapters/local/create.sh" bug "Stuck ball" --body x)"
+templated_bug_worktree="$("$P/scripts/steward.sh" claim "$templated_bug" --branch bugfix/12-x 2>/dev/null)"
+"$P/adapters/local/write-state.sh" "$templated_bug" pr_host=codex >/dev/null
+pr_as bugfix/12-x "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
+check_all "RequestReviewOfATemplatedHead_AsksThePrHostListOfTheItemItsClaimNames: the head bugfix/12-x maps to the local bug through its claim, so its codex pr_host wins over the Claude footer" '[ "$(asked)" = "mona" ]'
+"$P/scripts/steward.sh" release "$templated_bug_worktree" --force >/dev/null 2>&1
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers:\n    claude: [octo-cat]\n' >> .flow/config.yaml
 check "reviewers --host codex: a map with no codex list and no default gets codex and claude" [ "$("$P/scripts/comments.sh" reviewers --host codex | tr '\n' ' ')" = "codex claude " ]
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers: [octo-cat]\n' >> .flow/config.yaml
@@ -2011,6 +2022,20 @@ for s in design plan; do "$P/scripts/next.sh" "$a2" >/dev/null 2>&1; rb2="$(cat 
 check_all "an unlisted size still stops at plan-approval" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$a2" | jget state.gate)" = "plan-approval" ]'
 printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nauto_gates:\n  merge: S\n' > .flow/config.yaml
 check "init: --check flags an auto gate that is not allowed" sh -c "FLOW_PLUGIN='$P' '$P/skills/init/scripts/init.sh' --check | grep -q 'gap: .flow/config.yaml: auto_gates lists merge'"
+branch_check() { printf 'adapters:\n  default: local\nbase: main\npool_max: 1\n%s\n' "$1" > .flow/config.yaml; FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/branch-check.out" 2>&1; }
+branch_check 'branch: task/{ticket}'; code=$?
+check "InitCheckOfAnUnknownPlaceholder_NamesItAsABranchGap: a template with {ticket} would claim a branch named with the brace text, so init names it" grep -q 'gap: .flow/config.yaml: branch.*{ticket}' "$work/branch-check.out"
+check "InitCheckOfAnUnknownPlaceholder_ExitsDrift: a bad template is drift, so a scripted init check fails" [ "$code" -eq 1 ]
+branch_check 'branch:
+  story: story/{key}'
+check "InitCheckOfAnUnknownKindKey_NamesTheKind: branch takes only epic, task and bug, so a story template is never read" grep -q 'gap: .flow/config.yaml: branch.story' "$work/branch-check.out"
+branch_check 'branch: task/{title}'
+check "InitCheckOfATemplateWithNeitherKeyNorSlug_IsABranchGap: two items with one title would share a branch" grep -q 'gap: .flow/config.yaml: branch.*task/{title}' "$work/branch-check.out"
+branch_check 'branch:
+  task: task/{key}-{title}
+  bug: bugfix/{key}-{title}
+  epic: feature/{key}-{title}'
+check_all "InitCheckOfAValidPerKindMap_ReportsNoBranchGap: the item's own CI-prefix example is a valid config" '[ -s "$work/branch-check.out" ] && ! grep -q "gap: .flow/config.yaml: branch" "$work/branch-check.out"'
 echo "a full pool: next skips what needs a new worktree"
 mkdir -p "$work/full" && cd "$work/full" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
@@ -3537,6 +3562,28 @@ mkdir -p "$wm/.flow/reports/gh-78" && printf 'other work\n' > "$wm/other.txt"
 "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: no dirty-tree note when the worktree's claim names another item" sh -c "[ ! -f '$wm/.flow/reports/gh-78/comments-resume.md' ] && ! grep -q 'gh-78/comments-resume.md' '$work/host77.log'"
 rm -f "$wm/other.txt"
+# A PR head the branch template named maps to its item through the claim that holds it, from any tracker.
+templated_local_bug="$("$P/adapters/local/create.sh" bug "Stuck ball" --body x)"
+mv "$work/bin/claude" "$work/claude-logging-only"
+cat > "$work/bin/claude" <<EOF
+#!/bin/sh
+printf '%s\t%s\t%s\n' "\$0" "\$PWD" "\$*" >> "$work/host77.log"
+: > pass-ran
+resume_note="\$(printf '%s' "\$*" | sed -n 's/.*read \(.*comments-resume\.md\) first.*/\1/p')"
+[ -z "\$resume_note" ] || cp "\$resume_note" continued-note.md
+EOF
+chmod +x "$work/bin/claude"
+for templated_row in "jira:PROJ-123 task/proj-123-drill-timer 2026-10-25T02:10:00Z" "$templated_local_bug bugfix/12-x 2026-10-25T02:20:00Z"; do
+  templated_item="${templated_row%% *}"; templated_rest="${templated_row#* }"; templated_head="${templated_rest% *}"
+  python3 -c "import json,sys; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName=sys.argv[1], updatedAt=sys.argv[2]); json.dump(d, open(p,'w'))" "$templated_head" "${templated_rest#* }"
+  printf '{"item":"%s","branch":"%s","base":"main"}\n' "$templated_item" "$templated_head" > "$wm/.flow/claim.json"
+  printf 'half done\n' > "$wm/half.txt"
+  : > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+  check "CommentsJob_TemplatedHead_PassStartsInTheWorktreeItsClaimHolds [$templated_head]: the head maps to $templated_item through its claim, so the pass's work lands where the item's work is" [ -f "$wm/pass-ran" ]
+  check "CommentsJob_TemplatedHead_PassReadsTheItemsResumeNote [$templated_head]: the uncommitted work is noted in $templated_item's reports, so the pass continues from that note" cmp -s "$wm/.flow/reports/$(item_slug "$templated_item")/comments-resume.md" "$wm/continued-note.md"
+  rm -f "$wm/half.txt" "$wm/pass-ran" "$wm/continued-note.md"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
+done
+mv "$work/claude-logging-only" "$work/bin/claude"
 git init -q --bare "$work/split-origin.git" && git remote add origin "$work/split-origin.git" && git push -q origin main 2>/dev/null
 up="$("$P/scripts/new.sh" task "Pushed branch" --size S --body x)"; wu="$("$P/scripts/steward.sh" claim "$up")"; bu="$(git -C "$wu" symbolic-ref --short HEAD)"
 printf 'x\n' > "$wu/x.txt" && git -C "$wu" add x.txt && git -C "$wu" commit -qm x && git -C "$wu" push -q -u origin "$bu" 2>/dev/null

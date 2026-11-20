@@ -31,8 +31,9 @@ argument no prefix owns that has a `/`, starts with a dot or names no folder the
 turns the id's slug back into the id, so a gate's `blocked_by:<id>` condition is never a path.
 
 `item_slug` turns an id into a name safe for a branch and a folder (`tr ':/#' '---'`: `gh-12`,
-`local-task-3`, `jira-WID-7`); task branches are `flow/<slug>`, reports live in
-`.flow/reports/<slug>`, and a `claude --worktree <slug>` session claims for the item.
+`local-task-3`, `jira-WID-7`); task branches come from the `branch` template (default
+`flow/<slug>`), reports live in `.flow/reports/<slug>`, and a `claude --worktree <slug>` session
+claims for the item.
 `slug_item <slug>` reverses it through each adapter's `slug.sed`, so the reverse must be unique:
 `s/^gh-\([0-9][0-9]*\)$/gh#\1/p`.
 
@@ -104,11 +105,13 @@ behavior the plan changes, a list), `held_by` (the item this one waits behind, e
 `held_reason` (one line, why) and `gate` (`none` when clear), and, once written, `gate_from`,
 `pr_host` (claude or codex, the host that wrote the PR), `base` (the branch the item's work starts
 from and merges into, written at its claim; empty for claims made before the base was recorded),
-`answered`, `asked`, `answer`, `answered_at` and `answer_pending` (`next` or `comments`, what
-carries out the answer to a cleared gate; empty once a run took it). Those twenty are the state keys.
+`branch` (the task branch, named from the `branch` template at its first claim and taken again by
+every later claim; empty for claims made before the branch was recorded), `answered`, `asked`,
+`answer`, `answered_at` and `answer_pending` (`next` or `comments`, what carries out the answer to
+a cleared gate; empty once a run took it). Those twenty-one are the state keys.
 `write-state` takes them as `key=value` (a dash reads as an underscore): `touches` and `changes`
 are comma-separated, `attempts` a whole number, an empty value clears a key, `gate=none` clears
-the gate, `size` sets the item's size too. A key outside the twenty exits 2 and writes nothing.
+the gate, `size` sets the item's size too. A key outside the twenty-one exits 2 and writes nothing.
 
 A gate's own data is not tracker state: the options it offers, who raised it, who carries the
 answer out, the condition it waits on and its footer live in the gate's record in the flow home,
