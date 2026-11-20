@@ -23,8 +23,7 @@ print(json.dumps({"item": sys.argv[2], "step": sys.argv[3], "at": at, "seconds":
 graph_report() { FLOW_NOW="$REPORT_NOW" "$plugin/scripts/graph-report.sh" "$@"; }
 # row_of <step>: the step's row of the report's table.
 row_of() { graph_report | grep "^| $1 |"; }
-# verdict [options]: the lines of the report's In short section.
-verdict() { graph_report "$@" | sed -n '/^## In short$/,/^## Steps$/p'; }
+in_short_section() { graph_report "$@" | sed -n '/^## In short$/,/^## Steps$/p'; }
 
 echo "graph report: a period with no run"
 check "LogWithNoRun_SaysNoStepRan: an empty period is said, never shown as an empty table" \
@@ -48,15 +47,15 @@ echo "graph report: the verdict it opens with"
 check "Verdict_ComesBeforeTheTables: the owner reads what stands out before any number" \
   '[ "$(graph_report | grep -n "^## In short$" | cut -d: -f1)" -lt "$(graph_report | grep -n "^## Steps$" | cut -d: -f1)" ]'
 check "StepRunTwiceForEachItem_IsNamedAsRepeated: implement ran four times on two items, which is rework" \
-  'verdict | grep -q "implement ran 2.0 times per item"'
+  'in_short_section | grep -q "implement ran 2.0 times per item"'
 check "StepRunLessThanTwicePerItem_IsNotNamedAsRepeated: verify ran three times on two items" \
-  '! verdict | grep -q "verify ran"'
+  '! in_short_section | grep -q "verify ran"'
 check "StepWithAFailedRun_IsNamedWithItsFailedRuns: one of the three verify runs failed" \
-  'verdict | grep -q "1 of 3 verify runs failed"'
+  'in_short_section | grep -q "1 of 3 verify runs failed"'
 check "StepWithNoFailedRun_IsNotNamedAsFailed: every implement run passed" \
-  '! verdict | grep -q "implement runs failed"'
+  '! in_short_section | grep -q "implement runs failed"'
 check "PeriodWithNothingNotable_SaysNothingStandsOut: in the last day each step ran once and none failed, so the verdict is not left empty" \
-  'verdict --days 1 | grep -q "Nothing stands out"'
+  'in_short_section --days 1 | grep -q "Nothing stands out"'
 
 echo "graph report: nine runs in ten"
 for seconds in 1 2 3 4 5 6 7 8 9 3600; do ran local:task/5 deliver 4 "$seconds"; done
@@ -73,9 +72,9 @@ check "StepWhoseMedianGrewFourfold_IsNamedWithBothMedians: review went from 1m 4
 check "StepAtNearlyTheSamePace_IsNotNamed: ten seconds more is no slowdown" \
   '! graph_report | grep -q "^- plan:"'
 check "StepWhoseMedianGrewFourfold_LeadsTheVerdict: a slowdown is the first thing the owner reads" \
-  'verdict | sed -n 3p | grep -q "review takes 6m 40s at the median, up from 1m 40s"'
+  'in_short_section | sed -n 3p | grep -q "review takes 6m 40s at the median, up from 1m 40s"'
 check "ItemThatTookTheMostStepTime_IsNamedInTheVerdict: the ten deliver runs of local:task/5 add up to more than any other item" \
-  'verdict | grep -q "local:task/5 took 1h 00m over 10 step runs"'
+  'in_short_section | grep -q "local:task/5 took 1h 00m over 10 step runs"'
 
 echo "graph report: the period"
 check "DaysGiven_SetThePeriod: with --days 1 only the runs of the last day count, one verify run" \
