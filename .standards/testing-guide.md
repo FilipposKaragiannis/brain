@@ -20,7 +20,7 @@ runs once, in verify, and a suite that passed on the same files is not run again
 
 - A flow test in a suite file of its own, alone: `sh plugins/flow/tests/<file>.sh` (`holds.sh`, `blockers.sh`, `base-claim.sh`, `base-readers.sh`, `verify-detached.sh`, `verify-ends.sh`, `verify-scope.sh`; `adapter-contract.sh <adapter>`). Each takes one to four minutes.
 - A new flow test goes in a suite file of its own, on `_base_fixture.sh`, with a block in `run.sh` that runs it, so it runs alone.
-- `plugins/flow/tests/run.sh` has no filter and takes over an hour on this machine: its inline sections run only as a whole, in verify and in CI. Never start it, or `tools/test.sh`, in an implement, test or comments step.
+- `plugins/flow/tests/run.sh` has no filter and takes over an hour on this machine: its inline sections run only as a whole, in verify and in CI. Never start it, or `tools/test.sh`, in an implement, test or comments step: the `whole-suite` gate in `.standards/config.json` blocks a command that starts either, until the owner approves the run with `[whole-suite]`. Reading or staging the files is not blocked.
 - One console daemon test file: `cd plugins/console/app && sh ../../../tools/lib/sandboxed.sh . node --test daemon/test/<file>.test.ts`.
 - One console UI test file: `cd plugins/console/app/ui && npx vitest run test/<file>`.
 - The standards, meta, console and tools shell suites have no filter and take minutes, not an hour: `plugins/standards/hooks/tests/run.sh`, `plugins/meta/tests/run.sh`, `plugins/console/tests/run.sh`, `tools/tests/run.sh`.

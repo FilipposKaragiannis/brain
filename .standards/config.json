@@ -115,6 +115,14 @@
       "when": [
         "commit"
       ]
+    },
+    {
+      "name": "whole-suite",
+      "forbid_run": [
+        "tools/test.sh",
+        "plugins/flow/tests/run.sh"
+      ],
+      "marker": "[whole-suite]"
     }
   ],
   "project": {
