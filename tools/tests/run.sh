@@ -257,6 +257,16 @@ PY2
 out="$("$repo/tools/lint.sh" 2>/dev/null)"; code=$?
 check "AppTestScriptOutsideSandbox_FailsLint: lint exits 1 and names an app whose test script skips tools/lib/sandboxed.sh" sh -c "[ $code -eq 1 ] && printf '%s' \"\$0\" | grep -q 'sandbox.*plugins/demo/app/package.json'" "$out"
 
+echo "test.sh fails a part named on the command line that cannot run"
+# The seed copies tracked and unignored files only, so it has no node_modules; node is a stub.
+mkdir -p "$work/node-bin"; printf '#!/bin/sh\nexit 0\n' > "$work/node-bin/node"; chmod +x "$work/node-bin/node"
+out="$(PATH="$work/node-bin:$PATH" "$seed/tools/test.sh" console-app 2>&1)"; code=$?
+check "NamedConsoleAppWithoutDependencies_Fails: exits 1 and gives the command that installs them, because a skipped suite is no pass" \
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -qF "cd plugins/console/app && npm ci && cd ui && npm ci"' sh "$code" "$out"
+out="$(PATH="/usr/bin:/bin" "$seed/tools/test.sh" plugins 2>&1)"; code=$?
+check "NamedPluginsWithoutClaudeCli_Fails: exits 1 and says the claude CLI is missing, because a skipped validation is no pass" \
+  sh -c '[ "$1" -eq 1 ] && printf "%s" "$2" | grep -qF "plugins cannot run, the claude CLI missing"' sh "$code" "$out"
+
 echo "the sandbox keeps a suite off the checkout it runs from"
 # host stands in for the real checkout: a repo with one commit whose config the tests watch.
 host="$work/host"

@@ -21,7 +21,8 @@
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
 # the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
-# else the config base. Exit 0 on pass, 1 on fail; 2 when --base is no valid branch name.
+# else the config base. A moved file is changed at its old path and its new one. Exit 0 on pass,
+# 1 on fail; 2 when --base is no valid branch name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -213,7 +214,7 @@ esac
 
 ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
-changed="$(git diff --name-only "$merge_base" HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"
+changed="$(git diff --no-renames --name-only "$merge_base" HEAD 2>/dev/null; git diff --no-renames --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"
 changed="$(printf '%s\n' "$changed" | grep -v '^$' | grep -v '^\.flow/' | sort -u)"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"

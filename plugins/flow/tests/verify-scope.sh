@@ -78,6 +78,16 @@ rm -f "$work/fail-server"
 check "FreshRunThatFails_DropsTheKeptPass: the next verify runs the server tests again and fails, because a known failure outranks an older pass" \
   '[ "$after_fresh_code" -eq 1 ] && [ "$(runs_of server)" = 7 ]'
 
+echo "scope: a file moved out of a command's paths runs that command"
+new_item moved "$passing_gate"
+standards '"true"' "[$(test_entry moved 'server/**')]"
+committed server/handler.txt
+git -C "$worktree" branch moved-base
+mkdir -p "$worktree/docs" && git -C "$worktree" mv server/handler.txt docs/handler.txt && git -C "$worktree" commit -qm "move handler"
+verify --base moved-base >/dev/null 2>&1
+check "FileMovedOutOfTheCommandsPaths_RunsTheCommand: the tests under server/** run, because a file they read left it though git names the move by docs/ alone" \
+  '[ "$(runs_of moved)" = 1 ] && [ "$(check_status "tests moved")" = pass ]'
+
 echo "scope: a failed command is never reused, and a changed command runs"
 new_item failing "$passing_gate"
 standards '"true"' "[$(test_entry flaky 'src/**')]"
