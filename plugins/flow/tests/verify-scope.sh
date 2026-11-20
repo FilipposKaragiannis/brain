@@ -1,10 +1,10 @@
 #!/bin/sh
 # verify-scope.sh: which build and test commands a verify run starts, on the local adapter in
 # throwaway repos. A test command with paths runs only when a changed file matches a glob, and a
-# skipped one says why; a command with no paths always runs; a build takes paths too. A command
-# that passed on the same command and files is not run again and names the run it came from; a
-# changed file under its paths, a changed command, an uncommitted change, a failed run and --fresh
-# each run it again. Every check carries its whole seconds and the report the run's total. A
+# skipped one says why; a command with no paths always runs; a build takes paths too. A test
+# command that passed on the same command and files is not run again and names the run it came
+# from; a changed file under its paths, a changed command, an uncommitted change, a failed run and
+# --fresh each run it again. A build always runs. Every check carries its whole seconds and the report the run's total. A
 # malformed entry is a failed check that names it. A run stopped at its limit leaves a report
 # advance.sh keeps at verify, with no attempt counted, behind the escalation gate. An epic whose
 # step names a size moves on with no re-size gate.
@@ -109,6 +109,9 @@ check "CommandWithNoPathsAfterAnyChange_RunsAgain: a second run, because with no
 committed engine/core.txt
 verify >/dev/null 2>&1
 check "BuildWithAChangeUnderItsPaths_Runs: the build ran once the engine changed" '[ "$(runs_of engine-build)" = 1 ] && [ "$(check_status build)" = pass ]'
+verify >/dev/null 2>&1
+check "BuildOnTheSameFiles_RunsAgain: a second build, because its outputs are ignored files a kept pass cannot bring back to this worktree" \
+  '[ "$(runs_of engine-build)" = 2 ] && [ -z "$(check_field build reused_from)" ]'
 
 echo "scope: every check carries its time"
 new_item timed "$passing_gate"

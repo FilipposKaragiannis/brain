@@ -7,12 +7,13 @@
 # Commands come from .standards/config.json (build, test, mutation, languages[].format). build and
 # test are a command, or a map with `command` and `paths`; test is also a list of {name, command,
 # paths}, one check `tests <name>` each (scripts/_checks.py plan). A build or test command with
-# paths runs when a changed file matches a glob, else it is a skipped check that says so. One that
-# passed on the same command and the same files is not run again: the check is a pass that names
-# the run it came from (lib/checks.sh); a command with no paths is reused only while the whole
-# tree is unchanged, a failed one never, and --fresh runs every command. An empty mutation is
-# the off switch (a skipped check); a mutation command with {files} runs on the changed source
-# files only, like a format command, and is skipped when none changed. A project gate is
+# paths runs when a changed file matches a glob, else it is a skipped check that says so. A test
+# command that passed on the same command and the same files is not run again: the check is a pass
+# that names the run it came from (lib/checks.sh); a command with no paths is reused only while the
+# whole tree is unchanged, a failed one never, and --fresh runs every command. A build always runs:
+# its outputs are ignored files, which a pass kept in another worktree cannot bring back. An empty
+# mutation is the off switch (a skipped check); a mutation command with {files} runs on the changed
+# source files only, like a format command, and is skipped when none changed. A project gate is
 # `name: command` (always runs) or a map with `command:` and `paths:` (runs when a changed file
 # matches a glob; otherwise a skipped check). feel_test is true when a changed file matches
 # feel_test_paths in the flow config. Never edits anything. The report is built from data by
@@ -267,12 +268,13 @@ run_check() {
 }
 
 scoped_check() {
-  # scoped_check <name> <command> <globs, one per line>: a build or test command. With globs it
-  # runs only when a changed file matches one. A pass kept for the same command and files
-  # (lib/checks.sh) is reported as that pass, named with its run, and nothing runs; --fresh runs
-  # the command whatever is kept. A pass is kept for the next run, and a fail drops what is kept.
+  # scoped_check <name> <command> <globs, one per line> <build|test>: a build or test command.
+  # With globs it runs only when a changed file matches one. A test pass kept for the same command
+  # and files (lib/checks.sh) is reported as that pass, named with its run, and nothing runs;
+  # --fresh runs the command whatever is kept. A test pass is kept for the next run, and a fail
+  # drops what is kept. A build has no key, so it always runs and nothing of it is kept.
   if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
-  inputs_key="$(check_key "$2" "$3")"
+  inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
   if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
@@ -289,7 +291,7 @@ planned_checks() {
   if [ "${planned_count:-0}" -eq 0 ]; then skipped "$2" "no $1 command in .standards/config.json"; return; fi
   planned_index=0
   while [ "$planned_index" -lt "$planned_count" ]; do
-    scoped_check "$(json_get "$planned" "$1.$planned_index.name")" "$(json_get "$planned" "$1.$planned_index.command")" "$(json_list "$planned" "$1.$planned_index.paths")"
+    scoped_check "$(json_get "$planned" "$1.$planned_index.name")" "$(json_get "$planned" "$1.$planned_index.command")" "$(json_list "$planned" "$1.$planned_index.paths")" "$1"
     planned_index=$((planned_index + 1))
   done
 }
