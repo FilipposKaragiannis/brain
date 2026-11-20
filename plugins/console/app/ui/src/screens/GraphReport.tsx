@@ -13,16 +13,17 @@ type GraphReportRead =
 
 /**
  * The flow's graph report of the project, asked from the daemon when the screen opens and again
- * each time `asked` changes. The daemon runs the flow script on every ask and keeps no copy.
+ * each time `asked` changes. The daemon runs the flow script on every ask and keeps no copy, so a
+ * screen that closes cancels its request and the daemon ends the script.
  */
 function useGraphReport(projectId: string, asked: number): GraphReportRead {
   const { api } = useServices();
   const [read, setRead] = useState<GraphReportRead>({ kind: 'reading' });
   useEffect(() => {
-    let cancelled = false;
+    const leaving = new AbortController();
     setRead({ kind: 'reading' });
-    void api.request(projectPath(projectId, '/graph-report'), 'GET', null).then((response) => {
-      if (cancelled) return;
+    void api.get(projectPath(projectId, '/graph-report'), leaving.signal).then((response) => {
+      if (leaving.signal.aborted) return;
       const body = response.body as { days?: unknown; markdown?: unknown; error?: unknown } | null;
       if (response.status === HTTP_OK && typeof body?.markdown === 'string') {
         setRead({ kind: 'read', days: Number(body.days ?? 0), markdown: body.markdown });
@@ -30,7 +31,7 @@ function useGraphReport(projectId: string, asked: number): GraphReportRead {
       }
       setRead({ kind: 'failed', message: typeof body?.error === 'string' ? body.error : unreachableMessage(response.status) });
     });
-    return () => { cancelled = true; };
+    return () => { leaving.abort(); };
   }, [api, projectId, asked]);
   return read;
 }

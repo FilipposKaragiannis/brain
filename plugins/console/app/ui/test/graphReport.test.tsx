@@ -3,6 +3,7 @@ import { afterEach, expect, test } from 'vitest';
 import { parseRoute } from '../src/route.ts';
 import { GraphReport } from '../src/screens/GraphReport.tsx';
 import { HTTP_OK } from '../src/useProject.ts';
+import type { ApiResponse } from '../src/api.ts';
 import { FakeDaemon, snapshotAt, TAKEN_AT } from './fakeDaemon.tsx';
 
 afterEach(cleanup);
@@ -22,6 +23,16 @@ function reportWith(step: string, median: string): string {
     `| ${step} | 4 | ${median} | 31m 02s | 1 | $2.50 | 2.0 |`,
     '',
   ].join('\n');
+}
+
+/** A daemon whose report script is still running: it never answers, and keeps the signal of the screen that asked. */
+class DaemonWithASlowReport extends FakeDaemon {
+  asking: AbortSignal | null = null;
+
+  override get(_path: string, signal: AbortSignal): Promise<ApiResponse> {
+    this.asking = signal;
+    return new Promise(() => {});
+  }
 }
 
 async function renderReport(daemon: FakeDaemon): Promise<void> {
@@ -64,6 +75,15 @@ test('GraphReport_ReadAgain_ShowsTheNewReport', async () => {
   await renderReport(daemon);
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Read again' })); });
   expect(firstStepRow()[2], 'because the report is read when asked and the runs since the page opened must show').toBe('4m 10s');
+});
+
+test('GraphReport_ScreenClosesWhileTheReportIsRead_CancelsItsRequest', async () => {
+  const daemon = new DaemonWithASlowReport();
+  const Wrapper = daemon.screenWrapper();
+  const { unmount } = render(<Wrapper><GraphReport snapshot={snapshotAt(TAKEN_AT, 0)} /></Wrapper>);
+  await act(async () => {});
+  unmount();
+  expect(daemon.asking?.aborted, 'because the daemon ends the script only when the request behind it is cancelled').toBe(true);
 });
 
 test('GraphRoute_Parses_AsItsOwnScreen', () => {
