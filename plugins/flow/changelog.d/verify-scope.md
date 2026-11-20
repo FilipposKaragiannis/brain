@@ -3,8 +3,9 @@ bump: minor
 - Verify runs only the build and test commands a change can affect. `build` and `test` in
   `.standards/config.json` take a map `{command, paths}`, and `test` a list of
   `{name, command, paths}`, one check `tests <name>` each. A command with paths runs when a file
-  changed since the base matches a glob, else it is a skipped check that says why. A command with
-  no paths always runs, and a config written before behaves as before.
+  changed since the base matches a glob, else it is a skipped check that says why. A moved file
+  counts at its old path and its new one. A command with no paths always runs, and a config
+  written before behaves as before.
 - Verify does not run a test command again that passed on the same command and the same files. The
   check is a pass that names the run it came from. A command with no paths is reused only while
   the whole tree is unchanged, a failed one never (a failed run drops the pass kept for its
