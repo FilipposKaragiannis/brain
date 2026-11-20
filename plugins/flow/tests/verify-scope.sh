@@ -57,7 +57,6 @@ check "SecondVerifyOnTheSameFiles_DoesNotRunTheCommand: the server tests pass fr
   'reused "tests server"'
 check "ReusedCheck_NamesTheRunItCameFrom: the report names the item whose run passed, so the pass can be traced" \
   'check_field "tests server" reused_from | grep -q -- "$item"'
-check "ReusedCheck_TakesNoTime: nothing ran, so its seconds are 0" '[ "$(check_field "tests server" seconds)" = 0 ]'
 check "KeptPass_LivesInTheFlowHomeOfTheMainWorktree: every worktree of the clone reads one store, and none holds it in its own tree" \
   '[ -n "$(ls "$root/app/.flow/checks" 2>/dev/null)" ] && [ ! -e "$worktree/.flow/checks" ]'
 committed server/handler.txt
@@ -140,6 +139,9 @@ check "Report_CarriesTheTotalOfTheRun: the total covers at least the slow check"
   '[ "$(json_value seconds < "$reports/verify.json")" -ge "$slow_seconds" ]'
 check "VerifyMarkdown_ShowsTheTimeBesideEachCheck: the table has a time column and the run total" \
   'grep -q "^| check | status | time | summary |" "$reports/verify.md" && grep -q "^| tests idle | skipped | 0s |" "$reports/verify.md" && grep -q "^The run took " "$reports/verify.md"'
+verify >/dev/null 2>&1
+check "ReusedCheck_TakesNoTime: the slow tests are reused, so their seconds are 0, where a run takes at least the seconds they sleep" \
+  '[ "$(check_field "tests slow" seconds)" = 0 ]'
 (export FLOW_NOW_SECONDS=1000; verify --fresh >/dev/null 2>&1)
 check "ClockGivenToTheRun_TimesEveryCheck: the slow tests and the run take 0 seconds, because a clock that stands still is the one the run reads" \
   '[ "$(check_field "tests slow" seconds)" = 0 ] && [ "$(json_value seconds < "$reports/verify.json")" = 0 ]'
