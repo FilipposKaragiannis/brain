@@ -127,7 +127,8 @@ changes. A new suite starts with the same two lines as `plugins/flow/tests/run.s
 - **proof**: what shows one acceptance line holds: a grade and a link to its evidence.
 - **evidence**: a file a proof points to, such as a screenshot, a log or a test result file.
 - **grade**: how an acceptance line was checked. **live**: run in the real app, with a captured
-  file. **test**: a named automated test passed in this run. **build-only**: only that it
-  builds. **blocked**: it could not be checked, with why.
+  file. **test**: a named automated test passed in this run, or in an earlier run verify reused:
+  the same test command on the same files, and the report names that run. **build-only**: only
+  that it builds. **blocked**: it could not be checked, with why.
 - **Not checked list**: the report section, always present, of the acceptance lines graded
   build-only or blocked, each with its reason.
