@@ -65,8 +65,9 @@ session only: the marketplace checkout is opened in step 4, for the findings the
 - Marketplace changes: never in the marketplace checkout itself (the path the prompt names, else
   ask the owner for it): someone may work there and the jobs may run from it. Work in a throwaway
   worktree cut from the remote's default branch: `git -C <checkout> fetch origin`, then
-  `git -C <checkout> worktree add -b retro/<date> <checkout>-retro-<date> origin/<default>`
-  (`<default>` is what `git -C <checkout> symbolic-ref --short refs/remotes/origin/HEAD` names).
+  `git -C <checkout> worktree add -b retro/<date> <checkout>-retro-<date> <start>`, where
+  `<start>` is what `git -C <checkout> symbolic-ref --short refs/remotes/origin/HEAD` prints,
+  whole (`origin/main`: it already carries the remote's name).
   There: the edits, a changelog fragment `plugins/<plugin>/changelog.d/retro-<date>.md` for each
   plugin changed (a `bump:` line, a blank line, the bullets; never the version or `CHANGELOG.md`,
   the release PR folds them), `tools/generate.sh`, and the tests the edits touch, run the way the
