@@ -249,6 +249,16 @@ claimed_before_the_rule="$(new_task "Slice in flight" "$bare")"
 "$plugin/scripts/steward.sh" claim "$claimed_before_the_rule" >/dev/null 2>&1
 check "ChildOfAnEpicWithNoEpicBranchThatHoldsAClaim_StaysReady: a claim keeps the base it recorded, so work in flight goes on" \
   'ready_ids | grep -qxF -- "$claimed_before_the_rule"'
+claim_the_tracker_missed="$(new_task "Slice the tracker lost" "$bare")"
+"$plugin/scripts/steward.sh" claim "$claim_the_tracker_missed" >/dev/null 2>&1
+"$local_adapter/write-state.sh" "$claim_the_tracker_missed" worktree= >/dev/null 2>&1
+check "ClaimTheTrackerMissed_HasNoWorktreeInItsState: the state write is undone, or the check below proves nothing" \
+  '[ -z "$(state "$claim_the_tracker_missed" worktree)" ] && [ -n "$("$plugin/scripts/steward.sh" find "$claim_the_tracker_missed")" ]'
+check "ChildOfAnEpicWithNoEpicBranchWhoseClaimTheTrackerMissed_StaysReady: the pool holds its claim, so the filter must not stop work the claim would let go on" \
+  'ready_ids | grep -qxF -- "$claim_the_tracker_missed"'
+kid_of_the_missed_claim="$(new_task "Lost slice detail" "$claim_the_tracker_missed")"
+check "ChildOfAParentWhoseClaimTheTrackerMissed_IsReady: its claim starts from the parent's task branch, which the pool still records" \
+  'ready_ids | grep -qxF -- "$kid_of_the_missed_claim"'
 kid_of_the_claimed="$(new_task "Slice detail" "$claimed_before_the_rule")"
 check "ChildOfAClaimedParentUnderAnEpicWithNoEpicBranch_IsReady: its claim starts from the parent's task branch, so it waits for no epic branch" \
   'ready_ids | grep -qxF -- "$kid_of_the_claimed"'

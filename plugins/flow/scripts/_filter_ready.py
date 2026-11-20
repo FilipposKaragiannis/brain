@@ -158,6 +158,18 @@ def item_of(item_id):
 def holds_claim(item):
     return bool((item.get("state") or {}).get("worktree"))
 
+@functools.lru_cache(maxsize=None)
+def pool_claim(item_id):
+    """Whether a pool worktree holds a claim of the item, as steward.sh find reads the claim files.
+    The tracker's worktree field misses a claim whose state write failed, and the claim keeps such
+    an item its base (claim_at_base in lib/base.sh)."""
+    try:
+        found = subprocess.run([os.path.join(plugin, "scripts", "steward.sh"), "find", item_id],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=READ_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return found.returncode == 0 and bool(found.stdout.strip())
+
 def epics_above(item):
     """The epics among the item's ancestors, nearest first, as far as the walk reads."""
     epics, walked, ancestor_id = [], set(), item.get("parent")
@@ -184,6 +196,8 @@ def epic_without_branch(item):
         return None
     epics = epics_above(item)
     if not epics or not all(epic_branch_missing(epic_id) for epic_id in epics):
+        return None
+    if pool_claim(item["id"]) or pool_claim(item["parent"]):
         return None
     return epics[0]
 
