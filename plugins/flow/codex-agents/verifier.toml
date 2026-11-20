@@ -41,8 +41,10 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
 ## Closeout (epic)
 Read every sub-item through the adapter; any open one is a `fail` naming it. Run `verify.sh`
 on the epic branch when there is one, started and waited for as in step 2. Walk the epic's
-acceptance lines as in step 4; close the epic through the adapter only when every line is
-proven.
+acceptance lines as in step 4; the result is `done` only when every line is proven. Never close
+the epic and never open its pull request: after a `done` the orchestrator opens the PR from the
+epic branch into the epic's base and the merge closes the epic, or it closes the epic itself
+when there is nothing to merge.
 
 ## Output
 `verify.json` is the step result (status `pass` or `fail`, checks, attempts). `verify.md` is

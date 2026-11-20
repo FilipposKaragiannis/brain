@@ -526,6 +526,11 @@ sh "$here/epic-gates.sh" > "$work/epic-gates.out" 2>&1; code=$?
 check "epic-gates: $(tail -n 1 "$work/epic-gates.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/epic-gates.out"
 
+echo "an epic's closeout opens its pull request, and the merge closes the epic (tests/epic-closeout.sh)"
+sh "$here/epic-closeout.sh" > "$work/epic-closeout.out" 2>&1; code=$?
+check "epic-closeout: $(tail -n 1 "$work/epic-closeout.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/epic-closeout.out"
+
 echo "an idle session stops holding a worktree, and a session's status is read in full (tests/sessions.sh)"
 sh "$here/sessions.sh" > "$work/sessions.out" 2>&1; code=$?
 check "sessions: $(tail -n 1 "$work/sessions.out")" [ "$code" -eq 0 ]

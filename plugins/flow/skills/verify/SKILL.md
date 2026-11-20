@@ -32,8 +32,10 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    reuses every test command that passed. A pass with `feel_test: true`
    raises the feel-test gate after the step (the orchestrator does it from the report).
 4. **Closeout** (epic): the verifier reads every sub-item, fails on any open one, runs
-   `verify.sh` on the epic branch when there is one, walks the epic's acceptance lines, and
-   closes the epic through the adapter only when every line is proven.
+   `verify.sh` on the epic branch when there is one, and walks the epic's acceptance lines. It
+   never closes the epic: after a pass the orchestrator opens the PR from the epic branch into
+   the epic's base (`scripts/epic-pr.sh`) and raises the merge gate, and the merge closes the
+   epic; with nothing to merge the orchestrator closes it.
 5. End with one report: the status, the failing checks, where the report is.
 
 The verifier never edits anything. A flaky check is a finding, not a retry. Never run the
