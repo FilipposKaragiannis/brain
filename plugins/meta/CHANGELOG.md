@@ -1,5 +1,10 @@
 # meta
 
+## 1.1.7 (2026-11-20)
+
+- The retro reads the flow's graph report when the retro job names one: a step that got slower,
+  fails often or runs more than twice per item is a finding, routed like a lesson.
+
 ## 1.1.6 (2026-11-16)
 
 - `retro` no longer names the owner's own marketplace folder. It opens the marketplace only to

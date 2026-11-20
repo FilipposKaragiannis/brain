@@ -1,5 +1,58 @@
 # flow
 
+## 1.44.0 (2026-11-20)
+
+- A session a person started that has been idle for `jobs.comments.idle_session` (30m) no longer
+  keeps the comments job out of a worktree with nothing uncommitted in it. One idle session held
+  a PR's comments for hours. With an uncommitted change in the tree the pass still stays out,
+  and a pass that waited for a slot checks again before it starts.
+- A session running a shell command reads as busy and one waiting on its user as idle. Both read
+  as a session with no status before, shown as "running" for its whole age.
+- A comments run that names its PR prints that it waits for a free pass slot, and the runs that
+  hold the slots. The wait was written to the log only, so a run by hand looked hung.
+- The log line of the failed pass that reaches `jobs.comments.max_failures` says the job stops
+  trying the PR. It said the next run would try again.
+- A child no step has started waits while its parent's decomposition gate is open: it is not
+  ready, and a run that names it starts nothing. It started on a split the owner had not approved.
+- An epic's closeout starts nothing while a child is open. A run that named the epic went to
+  closeout and failed on the open children.
+- A gate a step asked for by itself is not raised again by the profile once the owner answered
+  it. The tasks step asked for the decomposition gate, and the profile then asked it a second
+  time. A step the owner sent back, and one that never asked, still get the gate.
+- `scripts/graph-report.sh [--days N]` prints what each step of the flow cost over the last N
+  days (default 7) from the run log, with no model: per step the runs, the median time, the time
+  nine runs in ten finish within, the failed runs, the cost and the runs per item; the steps
+  whose median grew by half or more against the N days before; and the items that took the most
+  step time.
+- The retro job writes that report to `.flow/reports/graph-<date>.md` and names it to the retro,
+  so a step that got slower or runs again and again is a finding beside the lessons.
+- Verify runs only the build and test commands a change can affect. `build` and `test` in
+  `.standards/config.json` take a map `{command, paths}`, and `test` a list of
+  `{name, command, paths}`, one check `tests <name>` each. A command with paths runs when a file
+  changed since the base matches a glob, else it is a skipped check that says why. A moved file
+  counts at its old path and its new one. A command with no paths always runs, and a config
+  written before behaves as before.
+- Verify does not run a test command again that passed on the same command and the same files. The
+  check is a pass that names the run it came from. A command with no paths is reused only while
+  the whole tree is unchanged, a failed one never (a failed run drops the pass kept for its
+  inputs), and one with an uncommitted change under its paths always runs.
+  `verify.sh <item> --fresh` runs every command. The passes are kept in `.flow/checks` of the main
+  worktree, shared by its worktrees, never committed. A build always runs: its outputs are ignored
+  files, which a pass kept in another worktree cannot bring back.
+- Every check in `verify.json` carries its `seconds`, the report the run's total, and `verify.md`
+  shows the time beside each check.
+- A verify run that was stopped at `verify.limit`, by a signal or by a kill failed no check: its
+  report says `stopped`, and the item stays at verify behind the escalation gate with no attempt
+  counted. It went back to implement before, where there was nothing to fix. A run stopped after
+  a check failed names that check and goes back to implement, as a failed run does.
+- The implementer, the test writer and the comment addresser run only the tests they touched,
+  alone, and never the project's whole test command: verify runs it once. A plan phase's
+  verification names the tests that cover the phase. No agent stops a process it did not start
+  or one by its name, which ended other worktrees' runs.
+- An epic's step that names a size no longer raises the re-size gate. An epic has no size, so
+  the gate came back each time it was cleared.
+- A build or test entry that cannot be read is a failed `config` check that names the entry.
+
 ## 1.43.0 (2026-11-20)
 
 - `worktree_create` in `.flow/config.yaml` names the command that makes a flow worktree in place
