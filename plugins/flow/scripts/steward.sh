@@ -1425,36 +1425,42 @@ for line in sys.stdin:
 
 # health_epic_branches: an open epic with an open child and an approved split gets its epic
 # branch when it has none (create_epic_branch in lib/base.sh): one approved before the flow made
-# the branch at the gate, or one whose children the owner made by hand. An epic that waits at its
-# decomposition gate, or whose steps have not reached it, is left: its split is not approved.
-# A branch made is said; one that cannot be made is said and notified once, with why.
+# the branch at the gate, one whose branch could not be made then, or one whose children the
+# owner made by hand. Approved means it does not wait at its decomposition gate and either its
+# steps are past that gate or the owner's last answer cleared it (an answer or an option, not a
+# split sent back). A branch made is said; one that cannot be made is said and notified once,
+# with why.
 health_epic_branches() {
-  heb_epics="$(python3 -I -c '
+  branchless_epics="$(python3 -I -c '
 import json, sys
 profiles = json.load(open(sys.argv[1], encoding="utf-8"))["profiles"]
-SPLIT_GATE = "gate:decomposition"
+SPLIT_GATE = "decomposition"
+
+def approved(state):
+    steps = profiles.get(state.get("profile") or "epic", [])
+    before_the_gate = steps[:steps.index("gate:" + SPLIT_GATE)] if "gate:" + SPLIT_GATE in steps else []
+    answered = state.get("answered") or ""
+    cleared_by_the_owner = answered == SPLIT_GATE or answered.startswith(SPLIT_GATE + ", option ")
+    return state.get("gate") != SPLIT_GATE and (cleared_by_the_owner or state.get("step") not in before_the_gate)
+
 for line in sys.stdin:
     if not line.strip():
         continue
     for item in json.loads(line):
-        state = item.get("state") or {}
-        steps = profiles.get(state.get("profile") or "epic", [])
-        before_approval = steps[:steps.index(SPLIT_GATE)] if SPLIT_GATE in steps else []
-        approved = state.get("gate") != "decomposition" and state.get("step") not in before_approval
-        if item.get("kind") == "epic" and item.get("open_children") and approved:
+        if item.get("kind") == "epic" and item.get("open_children") and approved(item.get("state") or {}):
             print(item["id"])' "$FLOW_PLUGIN/profiles.json" < "$health_items")"
-  for heb_epic in $heb_epics; do   # no pipe: health_say counts a finding in this shell
-    heb_key="epic-branch-$(item_slug "$heb_epic")"; heb_branch="$(epic_branch "$heb_epic")"
-    if base_exists "$heb_branch"; then health_cleared "$heb_key"; continue; fi
-    if [ "$dry" -eq 1 ]; then health_say "$heb_epic" "would make its epic branch $heb_branch"; continue; fi
-    heb_data="$(adapter read "$heb_epic" 2>/dev/null)"
-    [ -n "$heb_data" ] || continue
-    if heb_made="$(create_epic_branch "$heb_epic" "$heb_data")"; then
-      health_cleared "$heb_key"
-      health_say "$heb_epic" "made its epic branch $heb_made: its children start from it"
-    elif health_changed "$heb_key" "$heb_made"; then
-      health_say "$heb_epic" "has no epic branch, so its children wait: $heb_made"
-      health_notify "$heb_epic has no epic branch, so its children wait: $heb_made"
+  for branchless_epic in $branchless_epics; do   # no pipe: health_say counts a finding in this shell
+    branchless_key="epic-branch-$(item_slug "$branchless_epic")"; missing_epic_branch="$(epic_branch "$branchless_epic")"
+    if base_exists "$missing_epic_branch"; then health_cleared "$branchless_key"; continue; fi
+    if [ "$dry" -eq 1 ]; then health_say "$branchless_epic" "would make its epic branch $missing_epic_branch"; continue; fi
+    branchless_epic_json="$(adapter read "$branchless_epic" 2>/dev/null)"
+    [ -n "$branchless_epic_json" ] || continue
+    if made_epic_branch="$(create_epic_branch "$branchless_epic" "$branchless_epic_json")"; then
+      health_cleared "$branchless_key"
+      health_say "$branchless_epic" "made its epic branch $made_epic_branch: its children start from it"
+    elif health_changed "$branchless_key" "$made_epic_branch"; then
+      health_say "$branchless_epic" "has no epic branch, so its children wait: $made_epic_branch"
+      health_notify "$branchless_epic has no epic branch, so its children wait: $made_epic_branch"
     fi
   done
 }

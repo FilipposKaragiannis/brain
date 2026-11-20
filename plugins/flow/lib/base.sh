@@ -138,28 +138,41 @@ base_refusal() {
   if [ "$1" -eq "$epic_without_branch" ]; then epic_branch_missing "$3" "$2"; else printf 'its base %s is not on the remote' "$2"; fi
 }
 
-# create_epic_branch <epic> <epic-json>: gives an epic that has none its epic branch and prints
-# the branch. It starts where the epic itself would: the base fetch_item_base resolves for the
-# epic, as the remote holds it (an epic branch above it, a base: line in its body, else the config
-# base). With an origin the branch is pushed, never forced; with none it is a local branch. An
-# epic that has its branch is left as it is. Returns 1 and prints why when the branch cannot be
-# made: the epic's own base does not resolve, or git refused.
+# fetch_epic_start <epic-json>: the branch a new epic branch of the epic is cut from, where the
+# epic itself would start: the base fetch_item_base resolves for it (an epic branch above it, a
+# base: line in its body, else the config base). Returns 1 and prints why when that base does not
+# resolve.
+fetch_epic_start() {
+  resolved_start="$(fetch_item_base "$1")"; resolved_start_code=$?
+  start_branch="$(printf '%s\n' "$resolved_start" | cut -f1)"
+  [ "$resolved_start_code" -ne 0 ] || { printf '%s' "$start_branch"; return 0; }
+  base_refusal "$resolved_start_code" "$start_branch" "$(printf '%s\n' "$resolved_start" | cut -f2-)"
+  return 1
+}
+
+# cut_branch <branch> <start>: makes the branch at the start branch's tip: pushed to the remote
+# from the tip the remote holds, never forced, or a local branch in a repository with no origin.
+# Returns 1 and prints why when git refuses.
+cut_branch() {
+  if ! git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1; then
+    git -C "$(flow_repository)" branch -q "$1" "$2" >/dev/null 2>&1 && return 0
+    printf 'git could not make %s from %s' "$1" "$2"; return 1
+  fi
+  fetch_base "$2"
+  if git -C "$(flow_repository)" push -q origin "refs/remotes/origin/$2:refs/heads/$1" >/dev/null 2>&1; then fetch_base "$1"; return 0; fi
+  printf 'git could not push %s from %s' "$1" "$2"; return 1
+}
+
+# create_epic_branch <epic> <epic-json>: gives an epic that has none its epic branch
+# (fetch_epic_start, cut_branch) and prints the branch. An epic that has its branch is left as it
+# is. Returns 1 and prints why when the branch cannot be made.
 create_epic_branch() {
   wanted_branch="$(epic_branch "$1")"
   base_name_valid "$wanted_branch" || { printf '%s' "$base_name_refused"; return 1; }
   fetch_base "$wanted_branch"
-  if base_exists "$wanted_branch"; then printf '%s' "$wanted_branch"; return 0; fi
-  epic_start="$(fetch_item_base "$2")"; epic_start_code=$?
-  epic_start_branch="$(printf '%s\n' "$epic_start" | cut -f1)"
-  if [ "$epic_start_code" -ne 0 ]; then base_refusal "$epic_start_code" "$epic_start_branch" "$(printf '%s\n' "$epic_start" | cut -f2-)"; return 1; fi
-  if git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1; then
-    fetch_base "$epic_start_branch"
-    git -C "$(flow_repository)" push -q origin "refs/remotes/origin/$epic_start_branch:refs/heads/$wanted_branch" >/dev/null 2>&1 \
-      || { printf 'git could not push %s from %s' "$wanted_branch" "$epic_start_branch"; return 1; }
-    fetch_base "$wanted_branch"
-  else
-    git -C "$(flow_repository)" branch -q "$wanted_branch" "$epic_start_branch" >/dev/null 2>&1 \
-      || { printf 'git could not make %s from %s' "$wanted_branch" "$epic_start_branch"; return 1; }
+  if ! base_exists "$wanted_branch"; then
+    wanted_start="$(fetch_epic_start "$2")" || { printf '%s' "$wanted_start"; return 1; }
+    cut_refusal="$(cut_branch "$wanted_branch" "$wanted_start")" || { printf '%s' "$cut_refusal"; return 1; }
   fi
   printf '%s' "$wanted_branch"
 }

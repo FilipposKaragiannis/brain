@@ -148,6 +148,12 @@ check "ApprovedSplitWhoseBranchTheRemoteRefuses_SaysTheChildrenWait: the owner h
   'grep -qF "its children wait" "$work/refused.out"'
 check "ApprovedSplitWhoseBranchTheRemoteRefuses_KeepsTheChildOutOfTheReadyList: no child starts on the default branch instead" \
   '! ready_ids | grep -qxF -- "$refused_child"'
+check "ApprovedSplitWhoseBranchTheRemoteRefuses_KeepsItsTasksStep: the step that asked the gate has not run again, so only the owner's answer says the split is approved" \
+  '[ "$(state "$refused_epic" step)" = tasks ]'
+rm "$root/origin.git/hooks/pre-receive"
+health_pass > "$work/health-retry.out"
+check "ApprovedSplitWhoseBranchTheRemoteRefused_GetsItFromTheHealthJobOnceTheRemoteTakesIt: the approval stands, so the health job makes the branch without another run of the tasks step" \
+  '[ -n "$(remote_tip main)" ] && [ "$(remote_tip "$(epic_of "$refused_epic")")" = "$(remote_tip main)" ]'
 
 echo "epic gates: the health job gives an approved epic the branch it lacks"
 new_repo backfill
