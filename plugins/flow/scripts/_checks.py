@@ -25,10 +25,7 @@ TEST_NAME = "tests"
 FLOW_FOLDER = ".flow/"
 RENAME_STATES = ("R", "C")
 STATUS_PATH_OFFSET = 3
-
-
-class Malformed(Exception):
-    pass
+MALFORMED_EXIT = 2
 
 
 def shell_pattern(glob):
@@ -39,56 +36,93 @@ def under(path, globs):
     return not globs or any(fnmatch.fnmatchcase(path, shell_pattern(glob)) for glob in globs)
 
 
-def check_of(key, entry, name):
+def entry_problem(key, entry, name):
     if not isinstance(entry, dict):
-        raise Malformed("%s: each entry is a map with command and paths, not %s" % (key, json.dumps(entry)))
+        return "%s: each entry is a map with command and paths, not %s" % (key, json.dumps(entry))
     command = entry.get("command")
     if not isinstance(command, str) or not command.strip():
-        raise Malformed("%s: %s has no command" % (key, name))
+        return "%s: %s has no command" % (key, name)
     paths = entry.get("paths", [])
     if not isinstance(paths, list) or not all(isinstance(glob, str) and glob for glob in paths):
-        raise Malformed("%s: the paths of %s are a list of globs" % (key, name))
-    return {"name": name, "command": command, "paths": paths}
+        return "%s: the paths of %s are a list of globs" % (key, name)
+    return ""
 
 
-def named_checks(key, entries):
-    checks = []
-    for entry in entries:
-        entry_name = entry.get("name") if isinstance(entry, dict) else None
-        if not isinstance(entry_name, str) or not entry_name.strip():
-            raise Malformed("%s: each test command in the list has a name, and %s has none" % (key, json.dumps(entry)))
-        checks.append(check_of(key, entry, "%s %s" % (TEST_NAME, entry_name.strip())))
-    names = [check["name"] for check in checks]
+def test_name(entry):
+    entry_name = entry.get("name") if isinstance(entry, dict) else None
+    if not isinstance(entry_name, str) or not entry_name.strip():
+        return ""
+    return "%s %s" % (TEST_NAME, entry_name.strip())
+
+
+def list_problem(key, entries):
+    names = [test_name(entry) for entry in entries]
+    for entry, name in zip(entries, names):
+        if not name:
+            return "%s: each test command in the list has a name, and %s has none" % (key, json.dumps(entry))
+        problem = entry_problem(key, entry, name)
+        if problem:
+            return problem
     repeated = sorted({name for name in names if names.count(name) > 1})
     if repeated:
-        raise Malformed("%s: the name %s is used more than once" % (key, repeated[0][len(TEST_NAME) + 1:]))
-    return checks
+        return "%s: the name %s is used more than once" % (key, repeated[0][len(TEST_NAME) + 1:])
+    return ""
 
 
-def checks_of(key, value, name):
+def value_problem(key, value, name):
+    if value is None or isinstance(value, str) or value == []:
+        return ""
+    if isinstance(value, dict):
+        return entry_problem(key, value, name)
+    if isinstance(value, list) and key == "test":
+        return list_problem(key, value)
+    return "%s is a command, a map with command and paths%s" % (key, ", or a list of them" if key == "test" else "")
+
+
+def config_problem(config):
+    if not isinstance(config, dict):
+        return "the file is not a JSON object"
+    return value_problem("build", config.get("build"), BUILD_NAME) or value_problem("test", config.get("test"), TEST_NAME)
+
+
+def check_of(entry, name):
+    return {"name": name, "command": entry["command"], "paths": entry.get("paths", [])}
+
+
+def checks_of(value, name):
     if value is None or value == "" or value == []:
         return []
     if isinstance(value, str):
         return [{"name": name, "command": value, "paths": []}]
     if isinstance(value, dict):
-        return [check_of(key, value, name)]
-    if isinstance(value, list) and key == "test":
-        return named_checks(key, value)
-    raise Malformed("%s is a command, a map with command and paths%s" % (key, ", or a list of them" if key == "test" else ""))
+        return [check_of(value, name)]
+    return [check_of(entry, test_name(entry)) for entry in value]
 
 
-def plan(config_path):
+def config_text(config_path):
     try:
         with open(config_path, encoding="utf-8") as config_file:
-            config = json.load(config_file)
+            return config_file.read()
     except FileNotFoundError:
-        config = {}
+        return "{}"
+
+
+def print_plan(config_path):
+    try:
+        config = json.loads(config_text(config_path))
     except ValueError as error:
-        raise Malformed("the file is not JSON: %s" % error)
-    if not isinstance(config, dict):
-        raise Malformed("the file is not a JSON object")
-    return {"build": checks_of("build", config.get("build"), BUILD_NAME),
-            "test": checks_of("test", config.get("test"), TEST_NAME)}
+        return said_malformed("the file is not JSON: %s" % error)
+    problem = config_problem(config)
+    if problem:
+        return said_malformed(problem)
+    print(json.dumps({"build": checks_of(config.get("build"), BUILD_NAME),
+                      "test": checks_of(config.get("test"), TEST_NAME)}))
+    return 0
+
+
+def said_malformed(problem):
+    print(".standards/config.json: %s" % problem, file=sys.stderr)
+    return MALFORMED_EXIT
 
 
 def git(*arguments):
@@ -129,12 +163,7 @@ def input_key(command, globs):
 
 def main(argv):
     if len(argv) == 2 and argv[0] == "plan":
-        try:
-            print(json.dumps(plan(argv[1])))
-        except Malformed as problem:
-            print(".standards/config.json: %s" % problem, file=sys.stderr)
-            return 2
-        return 0
+        return print_plan(argv[1])
     if len(argv) == 2 and argv[0] == "key":
         globs = [line.strip() for line in sys.stdin if line.strip()]
         print(input_key(argv[1], globs), end="")

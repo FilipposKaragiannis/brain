@@ -1,13 +1,14 @@
 #!/bin/sh
 # verify-scope.sh: which build and test commands a verify run starts, on the local adapter in
 # throwaway repos. A test command with paths runs only when a changed file matches a glob, and a
-# skipped one says why; a command with no paths always runs; a build takes paths too. A command
-# that passed on the same command and files is not run again and names the run it came from; a
-# changed file under its paths, a changed command, an uncommitted change, a failed run and --fresh
-# each run it again. Every check carries its whole seconds and the report the run's total. A
+# skipped one says why; a command with no paths always runs; a build takes paths too. A test
+# command that passed on the same command and files is not run again and names the run it came
+# from; a changed file under its paths, a changed command, an uncommitted change, a failed run and
+# --fresh each run it again. A build always runs. Every check carries its whole seconds and the report the run's total. A
 # malformed entry is a failed check that names it. A run stopped at its limit leaves a report
-# advance.sh keeps at verify, with no attempt counted, behind the escalation gate. An epic whose
-# step names a size moves on with no re-size gate.
+# advance.sh keeps at verify, with no attempt counted, behind the escalation gate; one stopped
+# after a check failed names it and goes back to implement. An epic whose step names a size moves
+# on with no re-size gate.
 # Each counted command appends a line to <name>.count, so a check that did not run adds none.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
@@ -70,6 +71,12 @@ printf 'edited\n' >> "$worktree/server/handler.txt"
 verify >/dev/null 2>&1; verify >/dev/null 2>&1
 check "UncommittedChangeUnderThePaths_AlwaysRunsTheCommand: two more runs, because an uncommitted file has no kept pass" '[ "$(runs_of server)" = 5 ]'
 git -C "$worktree" checkout -q -- server/handler.txt
+: > "$work/fail-server"
+verify --fresh >/dev/null 2>&1
+verify >/dev/null 2>&1; after_fresh_code=$?
+rm -f "$work/fail-server"
+check "FreshRunThatFails_DropsTheKeptPass: the next verify runs the server tests again and fails, because a known failure outranks an older pass" \
+  '[ "$after_fresh_code" -eq 1 ] && [ "$(runs_of server)" = 7 ]'
 
 echo "scope: a failed command is never reused, and a changed command runs"
 new_item failing "$passing_gate"
@@ -103,6 +110,9 @@ check "CommandWithNoPathsAfterAnyChange_RunsAgain: a second run, because with no
 committed engine/core.txt
 verify >/dev/null 2>&1
 check "BuildWithAChangeUnderItsPaths_Runs: the build ran once the engine changed" '[ "$(runs_of engine-build)" = 1 ] && [ "$(check_status build)" = pass ]'
+verify >/dev/null 2>&1
+check "BuildOnTheSameFiles_RunsAgain: a second build, because its outputs are ignored files a kept pass cannot bring back to this worktree" \
+  '[ "$(runs_of engine-build)" = 2 ] && [ -z "$(check_field build reused_from)" ]'
 
 echo "scope: every check carries its time"
 new_item timed "$passing_gate"
@@ -117,6 +127,9 @@ check "Report_CarriesTheTotalOfTheRun: the total covers at least the slow check"
   '[ "$(json_value seconds < "$reports/verify.json")" -ge "$slow_seconds" ]'
 check "VerifyMarkdown_ShowsTheTimeBesideEachCheck: the table has a time column and the run total" \
   'grep -q "^| check | status | time | summary |" "$reports/verify.md" && grep -q "^| tests idle | skipped | 0s |" "$reports/verify.md" && grep -q "^The run took " "$reports/verify.md"'
+(export FLOW_NOW_SECONDS=1000; verify --fresh >/dev/null 2>&1)
+check "ClockGivenToTheRun_TimesEveryCheck: the slow tests and the run take 0 seconds, because a clock that stands still is the one the run reads" \
+  '[ "$(check_field "tests slow" seconds)" = 0 ] && [ "$(json_value seconds < "$reports/verify.json")" = 0 ]'
 
 echo "scope: a malformed entry is named"
 new_item malformed "$passing_gate"
@@ -124,6 +137,10 @@ standards '"true"' '[{"name": "nameless-command", "paths": ["src/**"]}]'
 verify >/dev/null 2>&1; malformed_code=$?
 check "TestEntryWithNoCommand_FailsVerifyAndNamesTheEntry: the config check fails and says which entry has no command" \
   '[ "$malformed_code" -eq 1 ] && [ "$(check_status config)" = fail ] && check_field config summary | grep -q "nameless-command has no command"'
+printf '{"test": [{"name": "twice", "command": "true"}, {"name": "twice", "command": "false"}]}' > "$work/repeated-names.json"
+repeated_said="$(python3 "$plugin/scripts/_checks.py" plan "$work/repeated-names.json" 2>&1)"; repeated_code=$?
+check "TestNameUsedTwice_PlansNothingAndNamesIt: the plan exits 2 and says which name repeats, so no command runs under a name it shares" \
+  '[ "$repeated_code" -eq 2 ] && printf "%s" "$repeated_said" | grep -q "the name twice is used more than once"'
 
 echo "scope: a run stopped at its limit stays at verify"
 limit_yaml="verify:
@@ -145,6 +162,27 @@ check "VerifyStoppedAtTheLimit_StaysAtVerifyBehindTheEscalationGate: no step has
 check "VerifyStoppedAtTheLimit_CountsNoAttempt: a run that failed no check uses up none of the three attempts" \
   '[ "$(state "$item" attempts)" = 0 ] || [ -z "$(state "$item" attempts)" ]'
 : > "$work/release-stopped"
+
+echo "scope: a run stopped after a check failed goes back to implement"
+limit_yaml="verify:
+  limit: 5s
+"
+new_item stopped-after-fail "$(held_gate late)"
+limit_yaml=""
+standards "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(counted broken-build)")" '""'
+: > "$work/fail-broken-build"
+for earlier_step in implement test review; do
+  printf '{"status":"done"}\n' > "$reports/$earlier_step.json"
+  "$plugin/scripts/advance.sh" "$item" >/dev/null 2>&1; "$plugin/scripts/next.sh" "$item" >/dev/null 2>&1
+done
+verify --start >/dev/null 2>&1
+wait_until_ended
+check "RunStoppedAfterAFailedCheck_ReportNamesTheFailureAndNoStop: the build failed before the limit, so the report says so and carries no stop" \
+  '[ "$(report_status)" = fail ] && [ -z "$(json_value stopped < "$reports/verify.json")" ] && check_field "gate late" summary | grep -q "^build failed, then stopped at the verify limit"'
+"$plugin/scripts/advance.sh" "$item" >/dev/null 2>&1; stopped_after_fail_code=$?
+check "VerifyStoppedAfterAFailedCheck_GoesBackToImplement: a failed build has something to fix, so the item returns to implement with an attempt counted" \
+  '[ "$stopped_after_fail_code" -eq 0 ] && [ "$(state "$item" step)" = implement ] && [ "$(state "$item" attempts)" = 1 ]'
+: > "$work/release-late"
 
 echo "scope: an epic's step that names a size raises no re-size gate"
 new_repo epic-size
