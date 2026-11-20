@@ -92,6 +92,9 @@ duration() {
   elif [ "$1" -lt "$seconds_per_hour" ]; then printf '%dm %02ds' $(($1 / seconds_per_minute)) $(($1 % seconds_per_minute))
   else printf '%dh %02dm' $(($1 / seconds_per_hour)) $(($1 % seconds_per_hour / seconds_per_minute)); fi
 }
+# now_seconds: the clock the seconds of each check and of the run read: FLOW_NOW_SECONDS when it is
+# whole seconds since the epoch, else the system clock. It exists for tests, like FLOW_NOW in gate.sh.
+now_seconds() { case "${FLOW_NOW_SECONDS:-}" in ''|*[!0-9]*) date +%s ;; *) printf '%s' "$FLOW_NOW_SECONDS" ;; esac; }
 # limit_seconds: verify.limit from the flow config in seconds; a value that is no duration says so
 # on stderr and returns 1.
 limit_seconds() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds verify.limit "$(cfg_or verify.limit 2h)"; }
@@ -208,7 +211,7 @@ std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
 overall="pass"
-run_started="$(date +%s)"
+run_started="$(now_seconds)"
 records=""; changed_list=""; timings=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
@@ -251,7 +254,7 @@ run_check() {
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
   cmd="$(printf '%s' "$command" | sed "s|{files}|$files|g")"
   printf '\n== %s: %s\n' "$name" "$cmd" >> "$log"
-  check_started="$(date +%s)"
+  check_started="$(now_seconds)"
   if out="$(sh -c "$cmd" 2>&1)"; then st="pass"; summary="ok"
   else
     st="fail"; [ "$kind" = "signal" ] && st="signal"
@@ -259,7 +262,7 @@ run_check() {
   fi
   printf '%s\n' "$out" >> "$log"
   [ "$st" = "fail" ] && overall="fail"
-  record "$name" "$st" "$cmd" "$summary" "$(( $(date +%s) - check_started ))" ""
+  record "$name" "$st" "$cmd" "$summary" "$(( $(now_seconds) - check_started ))" ""
   [ "$st" = "pass" ]
 }
 
@@ -342,7 +345,7 @@ report_failed() {
   fail_report report "could not build the report: $cause" "The report could not be built: $cause"
   exit 1
 }
-err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$merge_base" "$head_sha" "$feel" "$log" "$timings" "$(( $(date +%s) - run_started ))" 2>&1 >/dev/null)" \
+err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$merge_base" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
   || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]

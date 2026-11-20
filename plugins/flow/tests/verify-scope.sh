@@ -117,6 +117,9 @@ check "Report_CarriesTheTotalOfTheRun: the total covers at least the slow check"
   '[ "$(json_value seconds < "$reports/verify.json")" -ge "$slow_seconds" ]'
 check "VerifyMarkdown_ShowsTheTimeBesideEachCheck: the table has a time column and the run total" \
   'grep -q "^| check | status | time | summary |" "$reports/verify.md" && grep -q "^| tests idle | skipped | 0s |" "$reports/verify.md" && grep -q "^The run took " "$reports/verify.md"'
+(export FLOW_NOW_SECONDS=1000; verify --fresh >/dev/null 2>&1)
+check "ClockGivenToTheRun_TimesEveryCheck: the slow tests and the run take 0 seconds, because a clock that stands still is the one the run reads" \
+  '[ "$(check_field "tests slow" seconds)" = 0 ] && [ "$(json_value seconds < "$reports/verify.json")" = 0 ]'
 
 echo "scope: a malformed entry is named"
 new_item malformed "$passing_gate"
