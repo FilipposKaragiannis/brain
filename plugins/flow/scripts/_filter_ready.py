@@ -222,6 +222,12 @@ def held_back(item):
         return "held"
     return None
 
+AFTER_EVERY_NUMBERED_ITEM = float("inf")
+
+def number_ending_the_id(item):
+    digits = item["id"][len(item["id"].rstrip("0123456789")):]
+    return int(digits) if digits else AFTER_EVERY_NUMBERED_ITEM
+
 ready, notes = [], []
 for item in items:
     if item.get("status", "open") != "open":
@@ -240,7 +246,7 @@ for item in items:
         epic_id = epic_without_branch(item)
         note.update(epic=epic_id, branch=epic_branch(epic_id))
     notes.append(note)
-ready.sort(key=lambda i: i.get("rank", 999))
+ready.sort(key=lambda i: (i.get("rank", 999), number_ending_the_id(i)))
 print(json.dumps(ready))
 # FLOW_READY_NOTES names a file that gets one JSON line per open item held back, with why: next.sh
 # reads them to say why a pick found nothing, at no extra tracker call.
