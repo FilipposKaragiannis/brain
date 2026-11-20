@@ -62,13 +62,20 @@ session only: the marketplace checkout is opened in step 4, for the findings the
 
 ## 4. Apply
 
-- Marketplace changes: in the marketplace checkout (the path the prompt names, else ask the
-  owner for it), on a branch `retro/<date>`, the edits, a changelog fragment
-  `plugins/<plugin>/changelog.d/retro-<date>.md` for each plugin changed (a `bump:` line, a blank
-  line, the bullets; never the version or `CHANGELOG.md`, the release PR folds them),
-  `tools/generate.sh`, `tools/test.sh`, then a PR (`gh pr create`) titled `retro: <summary>`
-  with the findings as the body. Only the owner merges; a standards change changes the enforcing
-  plugin in the same PR (W-06).
+- Marketplace changes: never in the marketplace checkout itself (the path the prompt names, else
+  ask the owner for it): someone may work there and the jobs may run from it. Work in a throwaway
+  worktree cut from the remote's default branch: `git -C <checkout> fetch origin`, then
+  `git -C <checkout> worktree add -b retro/<date> <checkout>-retro-<date> <start>`, where
+  `<start>` is what `git -C <checkout> symbolic-ref --short refs/remotes/origin/HEAD` prints,
+  whole (`origin/main`: it already carries the remote's name).
+  There: the edits, a changelog fragment `plugins/<plugin>/changelog.d/retro-<date>.md` for each
+  plugin changed (a `bump:` line, a blank line, the bullets; never the version or `CHANGELOG.md`,
+  the release PR folds them), `tools/generate.sh`, and the tests the edits touch, run the way the
+  worktree's `.standards/testing-guide.md` says to run one. Never start the whole `tools/test.sh`:
+  it takes over an hour, and CI runs it on the PR. Push the branch, open a PR (`gh pr create`)
+  titled `retro: <summary>` with the findings as the body, then remove the worktree
+  (`git -C <checkout> worktree remove <checkout>-retro-<date>`). Only the owner merges; a
+  standards change changes the enforcing plugin in the same PR (W-06).
 - Project changes: the edits in the project, uncommitted, listed in the report.
 - Append one line to `.flow/retros.log`: `<time>\t<lessons read so far>\t<findings>\t<applied>`,
   where `<time>` is the UTC time of the run (`date -u +%FT%TZ`; the scheduled job reads the lessons
@@ -88,3 +95,5 @@ The final message names the report and says the project was not edited.
 
 - Never manufacture a finding to look thorough. Never legislate a one-off. Never reopen a
   pinned decision. Never merge the marketplace PR yourself.
+- Never switch the branch of the marketplace checkout or edit a file in it: the retro's work goes
+  in its own worktree.
