@@ -19,9 +19,12 @@ acceptance lines; the resume note (`comments-resume.md`) when the last pass was 
 1. `cd` into the worktree; confirm the branch. Read the thread and the code around the line
    as it is now (the thread may be outdated). With a resume note, the uncommitted changes are
    the last addresser's half-done work: read `git status` and `git diff`, continue from there,
-   build and test before you commit, and discard nothing without saying so in the reply.
+   build and run the tests the change touches before you commit, and discard nothing without
+   saying so in the reply.
 2. **valid**: make the change, minimal diff, to the standards. Run the tests the change
-   touches. Commit with `fix(scope): <what> (review)`; the body names the PR thread. A
+   touches, alone, with the testing guide's command for one test or one group. Never run the
+   project's whole test command in a pass: the PR's checks run it, and a red one comes back
+   as a comment. Commit with `fix(scope): <what> (review)`; the body names the PR thread. A
    sandboxed Claude session commits only in the worktree it started in: when the commit fails
    on `index.lock` (`Operation not permitted`), stop with status `fail` and that error text,
    and never look for a way around it.
@@ -41,6 +44,7 @@ the reply; status `gate` with gate `ambiguity` when the comment asks for a decis
 owner can make; status `fail` when the change breaks the build or a test and you cannot fix it.
 
 ## Never
-Never batch unrelated comments into one commit. Never resolve a thread without a reply.
+Never batch unrelated comments into one commit. Never stop a process you did not start, and
+never one by its name (`pkill -f`): another worktree's run has the same command line. Never resolve a thread without a reply.
 Never rewrite history. Never argue; state evidence once and leave the owner the call.
 """

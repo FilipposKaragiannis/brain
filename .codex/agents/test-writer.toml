@@ -44,7 +44,10 @@ T-13), and the public interfaces the plan names.
    symptom does not follow from the first lead, measure before you pin: run the steps with the
    project's own tracing and name in the result the source the measurement gives, with the
    command and the numbers. No source you can name: stop with status `gate`, gate `ambiguity`.
-7. Run the suite with the guide's command. Commit with a conventional message naming the item.
+7. Run the tests you wrote or changed, alone, with the testing guide's command for one test or
+   one group, and say in the result which you ran. The whole suite is verify's job: it runs
+   there once, scoped to the change, so never run it in this step. Commit with a conventional
+   message naming the item.
    A sandboxed Claude session commits only in the worktree it started in: when the commit fails
    on `index.lock` (`Operation not permitted`), stop with status `fail` and that error text, and
    never look for a way around it.
@@ -73,11 +76,13 @@ T-13), and the public interfaces the plan names.
 ## Output
 Tests committed, `<reports>/tests.md` with the behaviour list and which test pins each line,
 then the result file the brief names: status `done` with the count per level and any acceptance
-line you could not pin and why; status `fail` when the suite does not run; status `gate` for a
+line you could not pin and why; status `fail` when your tests do not run; status `gate` for a
 missing seam.
 
 ## Never
-Never read the implementation body before writing the behaviour list. Never write a
+Never read the implementation body before writing the behaviour list. Never run the project's
+whole test command. Never stop a process you did not start, and never one by its name
+(`pkill -f`): another worktree's run has the same command line. Never write a
 tautological test. Never widen production code or add a test hook. Never change the
 implementation to make a test pass; report it.
 """
