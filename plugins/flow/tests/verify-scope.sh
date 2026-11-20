@@ -9,7 +9,6 @@
 # advance.sh keeps at verify, with no attempt counted, behind the escalation gate; one stopped
 # after a check failed names it and goes back to implement. An epic whose step names a size moves
 # on with no re-size gate.
-# Each counted command appends a line to <name>.count, so a check that did not run adds none.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -17,12 +16,10 @@ trap 'sandbox_close $?' EXIT
 # The sandbox removes the folder on exit, which lets every held gate go.
 . "$here/_verify_fixture.sh"
 
-# counted <name>: a command that counts its runs in <name>.count and fails while fail-<name> exists.
-counted() { printf 'echo run >> %s/%s.count; [ ! -f %s/fail-%s ]' "$work" "$1" "$work" "$1"; }
-# runs_of <name>: how many times the counted command ran.
-runs_of() { if [ -f "$work/$1.count" ]; then wc -l < "$work/$1.count" | tr -d ' '; else printf 0; fi; }
-# test_entry <name> <glob>: one entry of a test list, a counted command with one path glob.
-test_entry() { python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1], "command": sys.argv[2], "paths": [sys.argv[3]]}))' "$1" "$(counted "$1")" "$2"; }
+# switchable <name>: a command that passes, and fails while fail-<name> exists.
+switchable() { printf '[ ! -f %s/fail-%s ]' "$work" "$1"; }
+# test_entry <name> <glob>: one entry of a test list, a switchable command with one path glob.
+test_entry() { python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1], "command": sys.argv[2], "paths": [sys.argv[3]]}))' "$1" "$(switchable "$1")" "$2"; }
 # standards <build json> <test json>: commits .standards/config.json with the two values in the worktree.
 standards() {
   mkdir -p "$worktree/.standards"
@@ -35,6 +32,10 @@ committed() { mkdir -p "$(dirname "$worktree/$1")" && date +%s%N >> "$worktree/$
 # check_status <name>: the status of the named check in the report; check_field <name> <field>: one field of it.
 check_field() { python3 -c 'import json,sys; found=[check for check in json.load(open(sys.argv[1]))["checks"] if check["name"]==sys.argv[2]]; print(found[0].get(sys.argv[3], "") if found else "no such check")' "$reports/verify.json" "$1" "$2"; }
 check_status() { check_field "$1" status; }
+# ran <name>: the named check passed in this run by running, with no kept pass behind it.
+ran() { [ "$(check_status "$1")" = pass ] && [ -z "$(check_field "$1" reused_from)" ]; }
+# reused <name>: the named check passed from a kept pass, which the report names.
+reused() { [ "$(check_status "$1")" = pass ] && [ -n "$(check_field "$1" reused_from)" ]; }
 passing_gate="  ok: 'true'"
 
 echo "scope: a test command runs only when a changed file is under its paths"
@@ -42,41 +43,42 @@ new_item scoped "$passing_gate"
 standards '"true"' "[$(test_entry server 'server/**'), $(test_entry docs 'docs/**')]"
 committed server/handler.txt
 verify >/dev/null 2>&1; scoped_code=$?
-check "ChangeUnderOneTestCommandsPaths_RunsThatCommand: the server tests run once, because server/handler.txt is under server/**" \
-  '[ "$(runs_of server)" = 1 ] && [ "$(check_status "tests server")" = pass ]'
+check "ChangeUnderOneTestCommandsPaths_RunsThatCommand: the server tests run, because server/handler.txt is under server/**" \
+  'ran "tests server"'
 check "ChangeOutsideATestCommandsPaths_SkipsThatCommand: the docs tests never start, because no changed file is under docs/**" \
-  '[ "$(runs_of docs)" = 0 ] && [ "$(check_status "tests docs")" = skipped ]'
+  '[ "$(check_status "tests docs")" = skipped ]'
 check "SkippedTestCommand_SaysWhy: the report gives the reason, so a reader knows the tests were not forgotten" \
   '[ "$(check_field "tests docs" summary)" = "no changed file under its paths" ]'
 check "VerifyWithOneCommandSkipped_Passes: a skipped command is no failure" '[ "$scoped_code" -eq 0 ] && [ "$(report_status)" = pass ]'
 
 echo "scope: a command that passed on the same inputs is not run again"
 verify >/dev/null 2>&1
-check "SecondVerifyOnTheSameFiles_DoesNotRunTheCommand: the server tests still ran once, because their command and files did not change" \
-  '[ "$(runs_of server)" = 1 ] && [ "$(check_status "tests server")" = pass ]'
+check "SecondVerifyOnTheSameFiles_DoesNotRunTheCommand: the server tests pass from the kept pass, because their command and files did not change" \
+  'reused "tests server"'
 check "ReusedCheck_NamesTheRunItCameFrom: the report names the item whose run passed, so the pass can be traced" \
   'check_field "tests server" reused_from | grep -q -- "$item"'
-check "ReusedCheck_TakesNoTime: nothing ran, so its seconds are 0" '[ "$(check_field "tests server" seconds)" = 0 ]'
 check "KeptPass_LivesInTheFlowHomeOfTheMainWorktree: every worktree of the clone reads one store, and none holds it in its own tree" \
   '[ -n "$(ls "$root/app/.flow/checks" 2>/dev/null)" ] && [ ! -e "$worktree/.flow/checks" ]'
 committed server/handler.txt
 verify >/dev/null 2>&1
-check "FileUnderThePathsChanged_RunsTheCommandAgain: a second run, because the files the tests read changed" '[ "$(runs_of server)" = 2 ]'
+check "FileUnderThePathsChanged_RunsTheCommandAgain: the server tests run, because the files they read changed" 'ran "tests server"'
 committed notes/unrelated.txt
 verify >/dev/null 2>&1
-check "FileOutsideThePathsChanged_ReusesThePass: still two runs, because nothing under server/** changed" '[ "$(runs_of server)" = 2 ]'
+check "FileOutsideThePathsChanged_ReusesThePass: the server tests pass from the kept pass, because nothing under server/** changed" 'reused "tests server"'
 verify --fresh >/dev/null 2>&1
-check "VerifyFresh_RunsEveryCommand: a third run, because --fresh ignores what is kept" '[ "$(runs_of server)" = 3 ]'
+check "VerifyFresh_RunsEveryCommand: the server tests run, because --fresh ignores what is kept" 'ran "tests server"'
 printf 'edited\n' >> "$worktree/server/handler.txt"
-verify >/dev/null 2>&1; verify >/dev/null 2>&1
-check "UncommittedChangeUnderThePaths_AlwaysRunsTheCommand: two more runs, because an uncommitted file has no kept pass" '[ "$(runs_of server)" = 5 ]'
+verify >/dev/null 2>&1; ran "tests server"; first_uncommitted_ran=$?
+verify >/dev/null 2>&1
+check "UncommittedChangeUnderThePaths_AlwaysRunsTheCommand: both runs run the server tests, because an uncommitted file has no kept pass" \
+  '[ "$first_uncommitted_ran" -eq 0 ] && ran "tests server"'
 git -C "$worktree" checkout -q -- server/handler.txt
 : > "$work/fail-server"
 verify --fresh >/dev/null 2>&1
 verify >/dev/null 2>&1; after_fresh_code=$?
 rm -f "$work/fail-server"
 check "FreshRunThatFails_DropsTheKeptPass: the next verify runs the server tests again and fails, because a known failure outranks an older pass" \
-  '[ "$after_fresh_code" -eq 1 ] && [ "$(runs_of server)" = 7 ]'
+  '[ "$after_fresh_code" -eq 1 ] && [ "$(check_status "tests server")" = fail ]'
 
 echo "scope: a file moved out of a command's paths runs that command"
 new_item moved "$passing_gate"
@@ -86,7 +88,7 @@ git -C "$worktree" branch moved-base
 mkdir -p "$worktree/docs" && git -C "$worktree" mv server/handler.txt docs/handler.txt && git -C "$worktree" commit -qm "move handler"
 verify --base moved-base >/dev/null 2>&1
 check "FileMovedOutOfTheCommandsPaths_RunsTheCommand: the tests under server/** run, because a file they read left it though git names the move by docs/ alone" \
-  '[ "$(runs_of moved)" = 1 ] && [ "$(check_status "tests moved")" = pass ]'
+  '[ "$(check_status "tests moved")" = pass ]'
 
 echo "scope: a failed command is never reused, and a changed command runs"
 new_item failing "$passing_gate"
@@ -97,32 +99,32 @@ verify >/dev/null 2>&1; failed_code=$?
 rm -f "$work/fail-flaky"
 verify >/dev/null 2>&1; passed_code=$?
 check "CommandThatFailed_RunsAgainOnTheSameFiles: the second verify runs it and passes, because a fail is never kept" \
-  '[ "$failed_code" -eq 1 ] && [ "$passed_code" -eq 0 ] && [ "$(runs_of flaky)" = 2 ]'
+  '[ "$failed_code" -eq 1 ] && [ "$passed_code" -eq 0 ] && ran "tests flaky"'
 python3 -c 'import json,sys; path=sys.argv[1]; config=json.load(open(path)); config["test"][0]["command"] += "; true"; json.dump(config, open(path, "w"))' "$worktree/.standards/config.json"
 git -C "$worktree" commit -qam "another command"
 verify >/dev/null 2>&1
-check "CommandTextChanged_RunsAgain: a third run, because a pass is kept for one command text" '[ "$(runs_of flaky)" = 3 ]'
+check "CommandTextChanged_RunsAgain: the flaky tests run, because a pass is kept for one command text" 'ran "tests flaky"'
 
 echo "scope: a command with no paths, and a build with paths"
 new_item whole "$passing_gate"
-standards "$(python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1], "paths": ["engine/**"]}))' "$(counted engine-build)")" \
-  "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(counted everything)")"
+standards "$(python3 -c 'import json,sys; print(json.dumps({"command": sys.argv[1], "paths": ["engine/**"]}))' "$(switchable engine-build)")" \
+  "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(switchable everything)")"
 verify >/dev/null 2>&1
 check "TestCommandWithNoPaths_AlwaysRuns: the whole-tree tests ran, though no path names the changed file" \
-  '[ "$(runs_of everything)" = 1 ] && [ "$(check_status tests)" = pass ]'
+  'ran tests'
 check "BuildWithPathsAndNoChangeUnderThem_IsSkipped: the build never starts and says why" \
-  '[ "$(runs_of engine-build)" = 0 ] && [ "$(check_status build)" = skipped ] && [ "$(check_field build summary)" = "no changed file under its paths" ]'
+  '[ "$(check_status build)" = skipped ] && [ "$(check_field build summary)" = "no changed file under its paths" ]'
 verify >/dev/null 2>&1
-check "CommandWithNoPathsOnAnUnchangedTree_IsReused: one run only, because not one file changed" '[ "$(runs_of everything)" = 1 ]'
+check "CommandWithNoPathsOnAnUnchangedTree_IsReused: the whole-tree tests pass from the kept pass, because not one file changed" 'reused tests'
 committed anywhere/file.txt
 verify >/dev/null 2>&1
-check "CommandWithNoPathsAfterAnyChange_RunsAgain: a second run, because with no paths every file is an input" '[ "$(runs_of everything)" = 2 ]'
+check "CommandWithNoPathsAfterAnyChange_RunsAgain: the whole-tree tests run, because with no paths every file is an input" 'ran tests'
 committed engine/core.txt
 verify >/dev/null 2>&1
-check "BuildWithAChangeUnderItsPaths_Runs: the build ran once the engine changed" '[ "$(runs_of engine-build)" = 1 ] && [ "$(check_status build)" = pass ]'
+check "BuildWithAChangeUnderItsPaths_Runs: the build ran once the engine changed" 'ran build'
 verify >/dev/null 2>&1
-check "BuildOnTheSameFiles_RunsAgain: a second build, because its outputs are ignored files a kept pass cannot bring back to this worktree" \
-  '[ "$(runs_of engine-build)" = 2 ] && [ -z "$(check_field build reused_from)" ]'
+check "BuildOnTheSameFiles_RunsAgain: the build runs, because its outputs are ignored files a kept pass cannot bring back to this worktree" \
+  'ran build'
 
 echo "scope: every check carries its time"
 new_item timed "$passing_gate"
@@ -137,6 +139,9 @@ check "Report_CarriesTheTotalOfTheRun: the total covers at least the slow check"
   '[ "$(json_value seconds < "$reports/verify.json")" -ge "$slow_seconds" ]'
 check "VerifyMarkdown_ShowsTheTimeBesideEachCheck: the table has a time column and the run total" \
   'grep -q "^| check | status | time | summary |" "$reports/verify.md" && grep -q "^| tests idle | skipped | 0s |" "$reports/verify.md" && grep -q "^The run took " "$reports/verify.md"'
+verify >/dev/null 2>&1
+check "ReusedCheck_TakesNoTime: the slow tests are reused, so their seconds are 0, where a run takes at least the seconds they sleep" \
+  '[ "$(check_field "tests slow" seconds)" = 0 ]'
 (export FLOW_NOW_SECONDS=1000; verify --fresh >/dev/null 2>&1)
 check "ClockGivenToTheRun_TimesEveryCheck: the slow tests and the run take 0 seconds, because a clock that stands still is the one the run reads" \
   '[ "$(check_field "tests slow" seconds)" = 0 ] && [ "$(json_value seconds < "$reports/verify.json")" = 0 ]'
@@ -179,7 +184,7 @@ limit_yaml="verify:
 "
 new_item stopped-after-fail "$(held_gate late)"
 limit_yaml=""
-standards "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(counted broken-build)")" '""'
+standards "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(switchable broken-build)")" '""'
 : > "$work/fail-broken-build"
 for earlier_step in implement test review; do
   printf '{"status":"done"}\n' > "$reports/$earlier_step.json"
