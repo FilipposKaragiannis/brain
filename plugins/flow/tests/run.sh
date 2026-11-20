@@ -551,6 +551,11 @@ sh "$here/state-join.sh" > "$work/state-join.out" 2>&1; code=$?
 check "state-join: $(tail -n 1 "$work/state-join.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/state-join.out"
 
+echo "the flow readers take state, runs and gates from the record, not the tracker (tests/state-readers.sh)"
+sh "$here/state-readers.sh" > "$work/state-readers.out" 2>&1; code=$?
+check "state-readers: $(tail -n 1 "$work/state-readers.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/state-readers.out"
+
 echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
 sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
 check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]

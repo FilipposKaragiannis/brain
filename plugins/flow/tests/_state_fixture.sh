@@ -1,4 +1,4 @@
-# _state_fixture.sh: the fixture state.sh, state-views.sh and state-join.sh source: the base
+# _state_fixture.sh: the fixture state.sh, state-views.sh, state-join.sh and state-readers.sh source: the base
 # fixture, a repo on the local adapter, the helpers that read an item's flow record and its tracker
 # side by side, and one gate record and one run record as notify.sh and next.sh write them. Each
 # suite enters the sandbox, then makes its repo with new_repo records, whose config sets the mode:
