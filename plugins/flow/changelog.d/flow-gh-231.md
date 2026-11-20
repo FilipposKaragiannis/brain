@@ -23,7 +23,8 @@ bump: minor
   main or a pool worktree, a worktree whose `.git` is missing or broken, a locked one and any
   path while `.flow/tmp` is a symlink, and resolves a relative path from where it runs. It
   refuses, exit 3, a change in a submodule even when `.gitmodules` tells `git status` to ignore
-  it, an untracked file that `status.showUntrackedFiles=no` hides, and a worktree whose
+  it, an untracked file that `status.showUntrackedFiles=no` hides, in the worktree or in any
+  initialized submodule at any depth, and a worktree whose
   `git status` fails (a corrupt index), since no change can be ruled out. `tmp add` refuses,
   exit 2, a phase with a character other than a letter, a digit, `.`, `_` or `-`, one that makes
   no valid branch name (one holding `..`), and a phase whose branch or folder already exists.

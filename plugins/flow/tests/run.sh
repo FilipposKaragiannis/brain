@@ -2391,6 +2391,15 @@ printf 'change\n' > "$submodule_phase_worktree/sub/change.txt"
 "$P/scripts/steward.sh" tmp remove "$submodule_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
 check "TmpRemoveOfWorktreeWithIgnoredSubmoduleChange_ExitsThree: a change in a submodule that .gitmodules tells git status to ignore is uncommitted, exit 3" [ "$code" = 3 ]
 check "TmpRemoveOfWorktreeWithIgnoredSubmoduleChange_KeepsChange: the remove command never runs, so the submodule's change stays" [ -f "$submodule_phase_worktree/sub/change.txt" ]
+untracked_submodule_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" untracked-submodule 2>/dev/null)"
+git -C "$untracked_submodule_phase_worktree" -c protocol.file.allow=always submodule add -q "$submodule_source" sub
+git -C "$untracked_submodule_phase_worktree" commit -qm "submodule"
+printf 'wip\n' > "$untracked_submodule_phase_worktree/sub/wip.txt"
+git config --global status.showUntrackedFiles no
+"$P/scripts/steward.sh" tmp remove "$untracked_submodule_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+git config --global --unset status.showUntrackedFiles
+check "TmpRemoveOfSubmoduleUntrackedFileHiddenByGlobalStatusConfig_ExitsThree: an untracked file in a submodule counts as uncommitted though a global status.showUntrackedFiles=no hides it from the submodule's git status, exit 3" [ "$code" = 3 ]
+check "TmpRemoveOfSubmoduleUntrackedFileHiddenByGlobalStatusConfig_KeepsFile: the remove command never runs, so the submodule's untracked file stays" [ -f "$untracked_submodule_phase_worktree/sub/wip.txt" ]
 corrupt_index_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" corrupt-index 2>/dev/null)"
 printf 'change\n' >> "$corrupt_index_phase_worktree/README.md"
 printf 'corrupt\n' > "$(git -C "$corrupt_index_phase_worktree" rev-parse --absolute-git-dir)/index"

@@ -168,10 +168,10 @@ park() {
 dirty() { [ -n "$(git -C "$1" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; }
 # refuse_uncommitted_changes <path>: ends the run, exit 3, when the worktree has uncommitted changes,
 # counting changes in submodules that .gitmodules tells git status to ignore (worktree_remove takes
-# submodules too) and untracked files that status.showUntrackedFiles hides, or when git status
-# fails, since then no change can be ruled out.
+# submodules too) and untracked files that status.showUntrackedFiles hides, in the worktree and in
+# every initialized submodule, or when git status fails, since then no change can be ruled out.
 refuse_uncommitted_changes() {
-  uncommitted_changes="$(git -C "$1" status --porcelain --untracked-files=normal --ignore-submodules=none -- . ":!.flow")" ||
+  uncommitted_changes="$(git -C "$1" -c status.showUntrackedFiles=all status --porcelain --untracked-files=all --ignore-submodules=none -- . ":!.flow")" ||
     die "$1: git status failed, so its changes cannot be checked. Not removing." 3
   [ -z "$uncommitted_changes" ] || die "$1 has uncommitted changes. Not removing." 3
 }
