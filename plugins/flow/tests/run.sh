@@ -603,6 +603,73 @@ jira_comment_as "$jira_gated" stranger@acme.test "/answer"
 jira_area_config '  answer_from: [stranger@acme.test]
 '
 check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
+echo "jira tracker scope (fake curl)"
+jira_set() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=d["issues"][sys.argv[2]]["fields"]
+if sys.argv[3] == "labels": f["labels"] = [sys.argv[4]]
+else: f["assignee"] = {"accountId": "acct-" + sys.argv[4], "emailAddress": sys.argv[4], "displayName": sys.argv[4]}
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${1#jira:}" "$2" "$3"; }
+jira_area_config '  scope:
+    labels: [team-a]
+'
+jsg_in="$(jira_run "$P/adapters/jira/create.sh" task "Scoped gate inside")"; jira_set "$jsg_in" labels team-a
+jsg_out="$(jira_run "$P/adapters/jira/create.sh" task "Scoped gate outside")"; jira_set "$jsg_out" labels team-b
+for gated in "$jsg_in" "$jsg_out"; do
+  jira_run "$P/scripts/gate.sh" raise "$gated" ambiguity "1. Which way?" >/dev/null 2>&1
+  jira_comment_as "$gated" flow@acme.test "/answer this way"
+done
+jira_run "$P/adapters/jira/answers.sh" >/dev/null 2>&1
+check "JiraScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue inside jira.scope, because answers reads the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_in" | jget state.gate)" = none ]
+check "JiraScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside jira.scope, because it reads only the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_out" | jget state.gate)" = ambiguity ]
+jsp="$(jira_run "$P/adapters/jira/create.sh" epic "Scoped parent")"; jira_set "$jsp" labels team-a
+jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child inside" --parent "$jsp")" labels team-a
+jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child outside" --parent "$jsp")" labels team-b
+children_inside=1
+listed_children="$(jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print([i["open_children"] for i in json.load(sys.stdin) if i["id"] == sys.argv[1]])' "$jsp")"
+check "JiraScopedList_CountsChildrenInside: list counts only the open children inside jira.scope, because the scope is ANDed into the children search" [ "$listed_children" = "[$children_inside]" ]
+check "JiraScopedRead_CountsChildrenInside: read counts only the open children inside jira.scope, because the scope is ANDed into its children search" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsp" | jget open_children)" = "$children_inside" ]
+jira_area_config '  scope:
+    kinds: [epic]
+'
+jke="$(jira_run "$P/adapters/jira/create.sh" epic "Epic with a task child")"
+jira_run "$P/adapters/jira/create.sh" task "Task child outside the kinds" --parent "$jke" >/dev/null
+kind_listed_children="$(jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print([i["open_children"] for i in json.load(sys.stdin) if i["id"] == sys.argv[1]])' "$jke")"
+check "JiraKindScopedList_ChildOfOtherKind_NotCounted: list counts no open child of a kind outside jira.scope, because the scope's kinds bound the children too" [ "$kind_listed_children" = "[0]" ]
+check "JiraKindScopedRead_ChildOfOtherKind_NotCounted: read counts no open child of a kind outside jira.scope, because the scope's kinds bound the children too" [ "$(jira_run "$P/adapters/jira/read.sh" "$jke" | jget open_children)" = 0 ]
+jira_kind_ids() { jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+jira_labelled() { # jira_labelled <label> <create.sh args...>: a new issue carrying the label; prints its id
+  jira_label="$1"; shift
+  jira_new="$(jira_run "$P/adapters/jira/create.sh" "$@")"; jira_set "$jira_new" labels "$jira_label"; printf '%s' "$jira_new"
+}
+jira_area_config '  limit: 1
+  scope:
+    labels: [kind-limit-bug]
+    kinds: [bug]
+'
+jkb="$(jira_labelled kind-limit-bug bug "Bug older than the tasks")"
+jira_labelled kind-limit-bug task "Newer task" >/dev/null; jira_labelled kind-limit-bug task "Newest task" >/dev/null
+check "JiraKindScopedList_NewerIssuesOfOtherKinds_ListsScopedPastThem: list keeps a bug past the newer tasks jira.limit 1 would hold, because the scope's kinds go into the search the limit counts" [ "$(jira_kind_ids)" = "$jkb" ]
+jira_area_config '  limit: 1
+  scope:
+    labels: [kind-limit-task]
+    kinds: [task]
+'
+jks="$(jira_labelled kind-limit-task task "Story older than the epic and the bug" --type Story)"
+jira_labelled kind-limit-task epic "Newer epic" >/dev/null; jira_labelled kind-limit-task bug "Newest bug" >/dev/null
+check "JiraTaskScopedList_NewerEpicAndBug_ListsStoryPastThem: list keeps a Story as a task past the newer epic and bug jira.limit 1 would hold, because every type but the epic and bug ones is a task in the search" [ "$(jira_kind_ids)" = "$jks" ]
+jira_area_config '  scope:
+    query: '"'"'labels = "team-a"'"'"'
+pick:
+  mine:
+    query: assignee = currentUser()
+    trackers: [jira]
+'
+jq_both="$(jira_run "$P/adapters/jira/create.sh" task "Scope and pick")"; jira_set "$jq_both" labels team-a; jira_set "$jq_both" assignee flow@acme.test
+jq_scope="$(jira_run "$P/adapters/jira/create.sh" task "Scope only")"; jira_set "$jq_scope" labels team-a
+jq_pick="$(jira_run "$P/adapters/jira/create.sh" task "Pick only")"; jira_set "$jq_pick" labels team-b; jira_set "$jq_pick" assignee flow@acme.test
+jira_query_ids="$(jira_run "$P/adapters/jira/list.sh" --pick mine | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))')"
+check_all "JiraScopeQueryAndPickQuery_KeepsIssueBothMatch: the list keeps the issue the scope and the pick both match, because the scope and the pick compose" 'case " $jira_query_ids " in *" $jq_both "*) true ;; *) false ;; esac'
+check_all "JiraScopeQueryAndPickQuery_DropsScopeOnly: the list leaves out an issue only the scope matches, because the pick applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_scope "*) false ;; *) true ;; esac'
+check_all "JiraScopeQueryAndPickQuery_DropsPickOnly: the list leaves out an issue only the pick matches, because the scope applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_pick "*) false ;; *) true ;; esac'
 cp "$work/config.gh" .flow/config.yaml
 
 echo "github blips (fake gh)"
@@ -771,6 +838,48 @@ check_all "slack: a gate on a local item says to answer in a session, as its ada
 mkdir -p "$work/slackplugin/scripts" "$work/slackplugin/adapters/linear" && cp "$P/scripts/_slack.py" "$work/slackplugin/scripts/" && printf 'lin:\n' > "$work/slackplugin/adapters/linear/prefix"
 check_all "slack: an id reads as code by the prefix file of any adapter folder, not a fixed list" '[ "$(python3 -I "$work/slackplugin/scripts/_slack.py" t "" "" "" "" "See lin:ENG-4 and gh#5" | slack_codes)" = "lin:ENG-4" ]'
 check "slack: a link that is not https stays out of the fallback" sh -c "python3 -I '$P/scripts/_slack.py' t 'gh#1 x' 'javascript:x|<!channel>' ambiguity 'gh#1' m | python3 -c 'import json,sys; t=json.load(sys.stdin)[\"text\"]; assert \"javascript\" not in t and \"<!channel>\" not in t, t'"
+echo "github tracker scope (fake gh)"
+cp "$FAKE_GH_DIR/issues.json" "$work/scope-issues.saved"; cp .flow/config.yaml "$work/scope-config.saved"
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
+import json, sys
+path = sys.argv[1]; data = json.load(open(path))
+data["issues"] += [{"number": 50, "title": "Team A's, mine", "state": "OPEN", "labels": ["team-a"], "assignees": ["owner"]},
+                   {"number": 51, "title": "Team B's", "state": "OPEN", "labels": ["team-b"]}]
+json.dump(data, open(path, "w"))
+PY2
+gh_scope_config() { # gh_scope_config <the github.scope block's lines>
+  printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  scope:\n%s\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' "$1" > .flow/config.yaml
+}
+gh_scope_ids() { "$P/adapters/github/list.sh" "$@" 2>/dev/null | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+gh_scope_config '    labels: [team-a]'
+for scope_issue in 50 51; do
+  "$P/scripts/gate.sh" raise "gh#$scope_issue" ambiguity "1. Which team?" >/dev/null 2>&1
+  printf '/answer 1. this one' | gh issue comment "$scope_issue" -R acme/widgets --body-file - >/dev/null
+done
+scope_cleared="$("$P/adapters/github/answers.sh" 2>/dev/null)"
+check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches, because answers reads the scoped issues" [ "$scope_cleared" = "gh#50" ]
+check "ScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside github.scope, because it reads the scoped list" [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.gate)" = "ambiguity" ]
+gh_scope_config '    assignee: me'
+check "ScopedListAssigneeMe_KeepsOnlyTheGhUsers: assignee: me in github.scope keeps only the issues assigned to the gh user, because me stands for the gh user" [ "$(gh_scope_ids)" = "gh#50" ]
+scope_limit=1
+check "ScopedList_LimitCountsMatches: github.limit counts the issues the scope matches, because the scope goes to GitHub's search" [ "$(gh_scope_ids --limit "$scope_limit")" = "gh#50" ]
+gh_scope_config '    status: [Nonesuch]'
+check "ScopedList_StatusOfNoIssueState_ListsNothing: a github.scope status that names no issue state keeps no issue, though it sends GitHub no qualifier, because the scope is matched on every issue read" [ "$("$P/adapters/github/list.sh" 2>/dev/null)" = "[]" ]
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
+import json, sys
+path = sys.argv[1]; data = json.load(open(path))
+data["issues"] = [{"number": 60, "title": "Newest task", "state": "OPEN", "labels": ["team-c"], "type": "Task"},
+                  {"number": 61, "title": "Newer epic", "state": "OPEN", "labels": ["team-c", "epic"]},
+                  {"number": 62, "title": "Bug past them", "state": "OPEN", "labels": ["team-c"], "type": "Bug"}]
+json.dump(data, open(path, "w"))
+PY2
+gh_scope_config '    kinds: [bug]'
+check "KindScopedList_NewerIssuesOfOtherKinds_ListsScopedPastThem: a list under github.scope kinds keeps a bug past the newer issues github.limit 1 would hold, because the kinds are matched before the limit counts an issue" [ "$(gh_scope_ids --limit 1)" = "gh#62" ]
+gh_scope_config '    labels: [team-c]
+    kinds: [bug]'
+check "KindScopedSearch_NewerIssuesOfOtherKinds_ListsScopedPastThem: a scoped search under github.scope kinds keeps a bug past the newer matches github.limit 1 would hold, because the kinds are matched before the limit counts an issue" [ "$(gh_scope_ids --limit 1)" = "gh#62" ]
+cp "$work/scope-issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/scope-config.saved" .flow/config.yaml
+
 echo "trackers and readiness on every tracker (fake gh)"
 mkdir -p "$work/trackers" && cd "$work/trackers" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
@@ -2018,6 +2127,405 @@ n4="$("$P/scripts/new.sh" task "Fourth")"
 g4="$("$P/scripts/steward.sh" claim "$n4" 2>/dev/null)"; code=$?
 check_all "claim recreates a pool path whose parent folder is missing too and prints it without .." '[ "$code" -eq 0 ] && [ -d ../trees/app-wt-4 ] && [ "$g4" = "$(cd ../trees/app-wt-4 && pwd -P)" ] && ! printf "%s" "$g4" | grep -qF .. && [ "$("$P/scripts/steward.sh" find "$n4")" = "$g4" ]'
 
+echo "worktree_create"
+mkdir -p "$work/create" && cd "$work/create" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && printf 'local\n' > .gitignore && printf 'secret\n' > local && git add -A && git commit -qm init
+mkdir -p .flow
+cat > "$work/create/fake-create.sh" <<EOF
+#!/bin/sh
+echo "fake create made \$1"
+[ "\$2" = main ] || { echo "fake create refuses the base \$2"; exit 1; }
+git -C "$PWD" worktree add -q --detach "\$1" "\$2"
+EOF
+cat > "$work/create/failing-create.sh" <<EOF
+#!/bin/sh
+echo "refused: folder not empty"
+exit 4
+EOF
+cat > "$work/create/idle-create.sh" <<EOF
+#!/bin/sh
+exit 0
+EOF
+write_create_config() { printf 'adapters:\n  default: local\nbase: main\npool:\n%bpool_max: 9\nworktree_name: %s\nworktree_create: %s\nworktree_copy:\n  - local\nworktree_setup:\n  - printf ran > setup.txt\nnotify:\n  desktop: false\n' "$1" "$2" "$3" > .flow/config.yaml; }
+fake_create="sh $work/create/fake-create.sh {path} {base}"
+write_create_config '' "../{repo} 'q-wt-{n}" "$fake_create"
+grown_item="$("$P/scripts/new.sh" task "Create")"
+grown_worktree_path="$("$P/scripts/steward.sh" claim "$grown_item" 2>"$work/create.err")"; code=$?
+grown_pool_path="$(cd .. && pwd -P)/app 'q-wt-1"
+check "CreateCommandRefusingAnyBaseButBaseBranch_ClaimExitsZero: claim grows the pool through a command that refuses any {base} but the base branch, so the command got the base branch" [ "$code" -eq 0 ]
+check "CreateCommandOnPoolGrowth_MakesWorktreeAtQuotedPath: claim grows the pool through worktree_create, which gets a path with a space and a quote as one argument and makes the worktree there" [ "$(git -C "$grown_pool_path" rev-parse --show-toplevel 2>/dev/null)" = "$grown_pool_path" ]
+check "CreateCommandPrintingToStdout_ClaimPrintsPathAlone: claim prints the path alone though the command prints to stdout" [ "$grown_worktree_path" = "$grown_pool_path" ]
+check "CreateCommandOutput_ReachesClaimStderr: the command's own output reaches the claim's stderr" grep -q "fake create made" "$work/create.err"
+check "CreatedPoolWorktree_GetsPoolEntry: the created worktree's pool entry is appended" [ "$(yaml_get .flow/config.yaml pool)" = "../app 'q-wt-1" ]
+check "CreatedPoolWorktree_MakesIdleBranchAtBaseTip: the created worktree's idle branch is made at the base tip" [ "$(git rev-parse --verify -q refs/heads/main-wt-1)" = "$(git rev-parse main)" ]
+check "CreatedPoolWorktree_GetsWorktreeCopyFiles: worktree_copy copies its files into the created worktree" [ "$(cat "$grown_worktree_path/local")" = secret ]
+check "CreatedPoolWorktree_RunsWorktreeSetup: worktree_setup runs in the created worktree" [ "$(cat "$grown_worktree_path/setup.txt")" = ran ]
+added_pool_path="../app 'q-wt-2"
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
+check "AddWithNoPathAndCreateCommand_ExitsZero: add with no path succeeds through the command" [ "$code" -eq 0 ]
+check "AddWithNoPathAndCreateCommand_MakesWorktreeAtNextPath: add with no path has the command make the worktree at the next pool path" [ "$(git -C "$added_pool_path" rev-parse --show-toplevel 2>/dev/null)" = "$(cd .. && pwd -P)/app 'q-wt-2" ]
+check "AddWithNoPathAndCreateCommand_AppendsPoolEntry: add with no path appends the made worktree's pool entry" [ "$(yaml_get .flow/config.yaml pool | tail -1)" = "$added_pool_path" ]
+git worktree remove --force "$added_pool_path"
+"$P/scripts/steward.sh" add "$added_pool_path" > "$work/create.out" 2>&1; code=$?
+check "AddOfMissingPoolPathWithCreateCommand_ExitsZero: add of a pool path missing on disk succeeds through the command" [ "$code" -eq 0 ]
+check "AddOfMissingPoolPathWithCreateCommand_RecreatesWorktree: add has the command make a worktree again at a pool path missing on disk" [ "$(git -C "$added_pool_path" rev-parse --show-toplevel 2>/dev/null)" = "$(cd .. && pwd -P)/app 'q-wt-2" ]
+check "AddOfMissingPoolPathWithCreateCommand_PutsItOnIdleBranch: add puts the recreated worktree on its idle branch" [ "$(git -C "$added_pool_path" symbolic-ref --short HEAD)" = main-wt-2 ]
+write_create_config "  - ../app'q-wt-5\n" "../{repo} 'q-wt-{n}" "$fake_create"
+recreated_item="$("$P/scripts/new.sh" task "Recreate")"
+recreated_worktree_path="$("$P/scripts/steward.sh" claim "$recreated_item" 2>"$work/create.err")"; code=$?
+check "ClaimOfMissingPoolPathWithCreateCommand_ExitsZero: claim of a pool path missing on disk succeeds through the command" [ "$code" -eq 0 ]
+recreated_pool_path="$(cd .. && pwd -P)/app'q-wt-5"
+check "ClaimOfMissingPoolPathWithCreateCommand_RecreatesWorktree: claim has the command make a worktree again at a pool path missing on disk" [ "$(git -C "$recreated_pool_path" rev-parse --show-toplevel 2>/dev/null)" = "$recreated_pool_path" ]
+check "ClaimOfMissingPoolPathWithCreateCommand_PrintsThatPath: claim prints the recreated pool path as the claimed worktree" [ "$recreated_worktree_path" = "$recreated_pool_path" ]
+check "ClaimRecreateWithCreateCommand_NamesIdleBranch: the recreate names the idle branch the worktree was put on" grep -q "main-wt-5" "$work/create.err"
+check "ClaimRecreateWithCreateCommand_MakesIdleBranchAtBaseTip: the recreated worktree's idle branch is made at the base tip before the claim moves it to the item's branch" [ "$(git rev-parse --verify -q refs/heads/main-wt-5)" = "$(git rev-parse main)" ]
+write_create_config '' '../{repo}-fail-wt-{n}' "sh $work/create/failing-create.sh {path} {base}"
+refused_item="$("$P/scripts/new.sh" task "Refused")"
+"$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>"$work/create.err"; code=$?
+check "FailingCreateCommandOnClaim_ExitsOne: a failing command fails the claim with exit 1, not the full pool's 3" [ "$code" = 1 ]
+check "FailingCreateCommandOnClaim_PassesItsOutputOn: a failing command's output reaches the claim's stderr" grep -q 'refused: folder not empty' "$work/create.err"
+check "FailingCreateCommandOnClaim_NamesWorktreeCreate: a failing claim names worktree_create as what failed" grep -q 'worktree_create failed' "$work/create.err"
+check_all "FailingCreateCommandOnClaim_IsNotBlamedOnPoolMax: a failing command is not blamed on pool_max" '! grep -q pool_max "$work/create.err"'
+check "FailingCreateCommandOnClaim_AddsNoPoolEntry: a claim whose command fails adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
+check "FailingCreateCommandOnAdd_ExitsOne: add with a failing command exits 1" [ "$code" = 1 ]
+check "FailingCreateCommandOnAdd_PassesItsOutputOn: add with a failing command passes its output on" grep -q 'refused: folder not empty' "$work/create.out"
+check "FailingCreateCommandOnAdd_AddsNoPoolEntry: add with a failing command adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
+write_create_config '' '../{repo}-idle-wt-{n}' "sh $work/create/idle-create.sh {path} {base}"
+"$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>&1; code=$?
+check "CreateCommandMakingNoWorktree_FailsClaimWithExitOne: a command that exits 0 but makes no worktree fails the claim with exit 1" [ "$code" = 1 ]
+check "CreateCommandMakingNoWorktree_AddsNoPoolEntry: a command that makes no worktree adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
+cat > "$work/create/foreign-create.sh" <<'EOF'
+#!/bin/sh
+git init -q "$1"
+EOF
+write_create_config '' '../{repo}-foreign-wt-{n}' "sh $work/create/foreign-create.sh {path} {base}"
+"$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>&1; code=$?
+check "CreateCommandMakingForeignRepository_FailsClaimWithExitOne: a command that makes a repository of its own, not a worktree of this one, fails the claim with exit 1" [ "$code" = 1 ]
+check "CreateCommandMakingForeignRepository_AddsNoPoolEntry: a command that makes a repository of its own adds no pool entry" [ -z "$(yaml_get .flow/config.yaml pool)" ]
+write_create_config '' '../{repo}-bare-wt-{n}' "sh $work/create/fake-create.sh ../app-bare-made {base}"
+"$P/scripts/steward.sh" claim "$refused_item" > "$work/create.out" 2>&1; code=$?
+check "CreateCommandWithoutPath_ExitsTwo: one with no {path} is refused, exit 2" [ "$code" = 2 ]
+check "CreateCommandWithoutPath_NamesKey: the refusal names worktree_create" grep -q "worktree_create has no {path}" "$work/create.out"
+check "CreateCommandWithoutPath_MakesNoWorktree: one with no {path} never runs, so the worktree it names never appears" [ ! -e ../app-bare-made ]
+kept_tip="$(git commit-tree -p main -m kept "$(git rev-parse 'main^{tree}')")"
+git update-ref refs/heads/main-wt-1 "$kept_tip"
+write_create_config '' '../{repo}-kept-wt-{n}' "$fake_create"
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
+check "CreatedPoolWorktreeWhoseIdleBranchHasOwnCommits_ExitsZero: add succeeds though the idle branch has commits of its own" [ "$code" -eq 0 ]
+check_all "CreatedPoolWorktreeWhoseIdleBranchHasOwnCommits_StartsDetached: the created worktree is on no branch when its idle branch has commits of its own, so those commits are not moved" '! git -C ../app-kept-wt-1 symbolic-ref -q HEAD'
+check "CreatedPoolWorktreeWhoseIdleBranchHasOwnCommits_StartsAtBaseTip: the created worktree starts at the base tip though its idle branch has commits of its own" [ "$(git -C ../app-kept-wt-1 rev-parse HEAD)" = "$(git rev-parse main)" ]
+check "CreatedPoolWorktreeWhoseIdleBranchHasOwnCommits_KeepsThoseCommits: an idle branch with commits of its own keeps them" [ "$(git rev-parse main-wt-1)" = "$kept_tip" ]
+write_create_config '' '../{repo}&a|b\c$HOME-wt-{n}' "$fake_create"
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1
+shell_characters_path="$(cd .. && pwd -P)/app&a|b\\c\$HOME-wt-1"
+check "PathWithShellCharacters_GetsWorktreeAtThatLiteralPath: a path holding & | \\ and \$ reaches the command as itself, so the worktree sits at that literal folder" [ "$(git -C "$shell_characters_path" rev-parse --show-toplevel 2>/dev/null)" = "$shell_characters_path" ]
+cdpath_decoy="$work/create/cdpath-decoy"
+mkdir -p "$cdpath_decoy/.git"
+write_create_config '' '../{repo}-cdpath-wt-{n}' "$fake_create"
+CDPATH="$cdpath_decoy" "$P/scripts/steward.sh" add > "$work/create.out" 2>&1; code=$?
+check "CreateCommandUnderCdpathWithDecoyGitFolder_ExitsZero: a CDPATH holding a decoy .git folder does not make the created worktree look foreign" [ "$code" -eq 0 ]
+check "CreateCommandUnderCdpathWithDecoyGitFolder_AppendsPoolEntry: a CDPATH holding a decoy .git folder does not make the created worktree look foreign, so its pool entry is appended" [ "$(yaml_get .flow/config.yaml pool)" = ../app-cdpath-wt-1 ]
+write_create_config '' '../{repo}-lenient-wt-{n}' 'git worktree add -q --detach {path} {base} 2>/dev/null || test -d {path}'
+"$P/scripts/steward.sh" add > "$work/create.out" 2>&1
+"$P/scripts/steward.sh" add ../app-lenient-wt-1 > "$work/create.out" 2>&1; code=$?
+check "AddOfExistingPoolWorktreeWithLenientCreateCommand_ExitsTwo: add of a pool worktree already on disk is refused before a command that tolerates an existing folder runs, exit 2" [ "$code" = 2 ]
+check "AddOfExistingPoolWorktreeWithLenientCreateCommand_AddsNoPoolEntry: the refused add leaves the pool its one entry" [ "$(yaml_get .flow/config.yaml pool)" = ../app-lenient-wt-1 ]
+"$P/scripts/steward.sh" add "$(pwd -P)" > "$work/create.out" 2>&1; code=$?
+check "AddOfMainWorktreeWithLenientCreateCommand_ExitsTwo: add of the main worktree is refused before a command that tolerates an existing folder runs, exit 2" [ "$code" = 2 ]
+check "AddOfMainWorktreeWithLenientCreateCommand_AddsNoPoolEntry: the refused add puts no main worktree entry in the pool" [ "$(yaml_get .flow/config.yaml pool)" = ../app-lenient-wt-1 ]
+check "AddOfMainWorktreeWithLenientCreateCommand_KeepsMainBranch: the main worktree stays on its branch" [ "$(git symbolic-ref --short HEAD)" = main ]
+ln -s "$work/create/dangling-target" ../app-dangling-wt-1
+write_create_config "  - ../app-dangling-wt-1\n" '../{repo}-dangling-wt-{n}' "$fake_create"
+dangling_item="$("$P/scripts/new.sh" task "Dangling")"
+"$P/scripts/steward.sh" claim "$dangling_item" > "$work/create.out" 2>&1; code=$?
+check "ClaimOfDanglingSymlinkPoolPathWithCreateCommand_ExitsTwo: a claim that meets a dangling symlink at a pool path refuses before the command runs, exit 2" [ "$code" = 2 ]
+rm ../app-dangling-wt-1
+
+echo "temporary worktrees"
+mkdir -p "$work/temporary-worktrees" && cd "$work/temporary-worktrees" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
+printf 'hi\n' > README.md && git add -A && git commit -qm init
+git worktree add -q --detach ../app-wt-1 && mkdir -p .flow
+cat > "$work/temporary-worktrees/failing-create.sh" <<EOF
+#!/bin/sh
+echo "refused: folder not empty"
+exit 4
+EOF
+cat > "$work/temporary-worktrees/folder-remove.sh" <<EOF
+#!/bin/sh
+rm -rf "\$1"
+EOF
+cat > "$work/temporary-worktrees/failing-remove.sh" <<EOF
+#!/bin/sh
+echo "refused: worktree busy"
+exit 5
+EOF
+cat > "$work/temporary-worktrees/idle-remove.sh" <<EOF
+#!/bin/sh
+exit 0
+EOF
+cat > "$work/temporary-worktrees/git-remove.sh" <<EOF
+#!/bin/sh
+git -C "$PWD" worktree remove --force "\$1"
+EOF
+write_temporary_config() { printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\n%bnotify:\n  desktop: false\n' "$1" > .flow/config.yaml; }
+fake_temporary_create="worktree_create: sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+write_temporary_config ''
+phases_item="$("$P/scripts/new.sh" task "Phases")"
+task_worktree_path="$("$P/scripts/steward.sh" claim "$phases_item" 2>/dev/null)"
+git -C "$task_worktree_path" commit -q --allow-empty -m "task work"
+temporary_slug="$(item_slug "$phases_item")"
+cat > "$work/temporary-worktrees/fake-create.sh" <<EOF
+#!/bin/sh
+echo "fake create made \$1"
+[ "\$2" = "flow/$temporary_slug" ] || { echo "fake create refuses the base \$2"; exit 1; }
+git -C "$PWD" worktree add -q --detach "\$1" "\$2"
+EOF
+plain_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-1 2>/dev/null)"; code=$?
+temporary_folder="$(pwd -P)/.flow/tmp"
+check "TmpAddOfNewPhase_ExitsZero: tmp add of a new phase succeeds" [ "$code" -eq 0 ]
+check "TmpAddOfNewPhase_PrintsPathAlone: tmp add prints the temporary worktree's path alone" [ "$(cd "$plain_phase_worktree" 2>/dev/null && pwd -P)" = "$temporary_folder/$temporary_slug-phase-1" ]
+check "TmpAddOfNewPhase_PutsWorktreeOnPhaseBranch: the temporary worktree is on the phase's branch" [ "$(git -C "$plain_phase_worktree" symbolic-ref --short HEAD)" = "flow/$temporary_slug-phase-1" ]
+check "TmpAddOfNewPhase_StartsPhaseBranchAtTaskTip: the phase's branch starts at the task branch's tip" [ "$(git -C "$plain_phase_worktree" rev-parse HEAD)" = "$(git rev-parse "flow/$temporary_slug")" ]
+"$P/scripts/steward.sh" tmp remove "$plain_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfCleanWorktree_ExitsZero: tmp remove of a clean temporary worktree succeeds" [ "$code" -eq 0 ]
+check "TmpRemoveOfCleanWorktree_RemovesFolder: tmp remove removes the temporary worktree's folder" [ ! -e "$plain_phase_worktree" ]
+check_all "TmpRemoveOfCleanWorktree_DeletesPhaseBranch: tmp remove deletes the phase's branch" '! git rev-parse --verify -q "refs/heads/flow/$temporary_slug-phase-1"'
+dirty_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-2 2>/dev/null)"
+printf 'wip\n' > "$dirty_phase_worktree/wip.txt"
+"$P/scripts/steward.sh" tmp remove "$dirty_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfDirtyWorktree_ExitsThree: a temporary worktree with uncommitted changes is refused, exit 3" [ "$code" = 3 ]
+check "TmpRemoveOfDirtyWorktree_KeepsChanges: a refused temporary worktree keeps its changes on disk" [ -f "$dirty_phase_worktree/wip.txt" ]
+write_temporary_config "$fake_temporary_create"
+created_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-3 2>"$work/temporary-worktrees.err")"; code=$?
+check "TmpAddWithCreateCommandRefusingAnyBaseButTaskBranch_ExitsZero: tmp add succeeds through a command that refuses any {base} but the task branch, so the command got the task branch" [ "$code" -eq 0 ]
+check "TmpAddWithCreateCommand_MakesWorktreeAtPhasePath: the command gets the temporary worktree's path as {path} and makes the worktree there" [ "$(git -C "$temporary_folder/$temporary_slug-phase-3" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-phase-3" ]
+check "TmpAddWithCreateCommandPrintingToStdout_PrintsPathAlone: tmp add prints the path alone though the command prints to stdout" [ "$(cd "$created_phase_worktree" && pwd -P)" = "$temporary_folder/$temporary_slug-phase-3" ]
+check "TmpAddWithCreateCommand_PassesItsOutputToStderr: the command's own output reaches stderr" grep -q "fake create made" "$work/temporary-worktrees.err"
+check "TmpAddWithCreateCommand_PutsWorktreeOnPhaseBranch: the made worktree is put on the phase's branch" [ "$(git -C "$created_phase_worktree" symbolic-ref --short HEAD)" = "flow/$temporary_slug-phase-3" ]
+check "TmpAddWithCreateCommand_StartsPhaseBranchAtTaskTip: the phase's branch starts at the task branch's tip" [ "$(git -C "$created_phase_worktree" rev-parse HEAD)" = "$(git rev-parse "flow/$temporary_slug")" ]
+write_temporary_config "worktree_create: sh $work/temporary-worktrees/failing-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" phase-4 > "$work/temporary-worktrees.out" 2>"$work/temporary-worktrees.err"; code=$?
+check "TmpAddWithFailingCreateCommand_ExitsOne: a failing command fails the add with exit 1" [ "$code" = 1 ]
+check "TmpAddWithFailingCreateCommand_PassesItsOutputOn: a failing command's output reaches stderr" grep -q 'refused: folder not empty' "$work/temporary-worktrees.err"
+check "TmpAddWithFailingCreateCommand_PrintsNoPath: a failing add prints no path" [ ! -s "$work/temporary-worktrees.out" ]
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/folder-remove.sh {path}\n"
+"$P/scripts/steward.sh" tmp remove "$created_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveWithRemoveCommand_ExitsZero: tmp remove through the command succeeds" [ "$code" -eq 0 ]
+check "TmpRemoveWithRemoveCommand_RemovesFolder: the command gets the temporary worktree's path as {path}, so the folder it removes is that worktree's" [ ! -e "$created_phase_worktree" ]
+check_all "TmpRemoveWithRemoveCommand_PrunesGitRecord: git keeps no record of the removed worktree" '! git worktree list --porcelain | grep -qF "$temporary_slug-phase-3"'
+check_all "TmpRemoveWithRemoveCommand_DeletesPhaseBranch: tmp remove deletes the phase's branch" '! git rev-parse --verify -q "refs/heads/flow/$temporary_slug-phase-3"'
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/git-remove.sh {path}\n"
+record_cleared_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" record-cleared 2>/dev/null)"
+"$P/scripts/steward.sh" tmp remove "$record_cleared_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "RemoveCommandClearingGitRecord_ExitsZero: a command that removes git's record itself still makes tmp remove succeed" [ "$code" = 0 ]
+check "RemoveCommandClearingGitRecord_RemovesFolder: a command that removes the worktree through git worktree remove takes the folder as a plain rm would, since flow passes it the worktree's path" [ ! -e "$record_cleared_phase_worktree" ]
+check_all "RemoveCommandClearingGitRecord_LeavesNoGitRecord: git keeps no record of the removed worktree" '! git worktree list --porcelain | grep -qF "$temporary_slug-record-cleared"'
+check_all "RemoveCommandClearingGitRecord_DeletesPhaseBranch: tmp remove deletes the phase's branch" '! git rev-parse --verify -q "refs/heads/flow/$temporary_slug-record-cleared"'
+kept_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-5 2>/dev/null)"
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/failing-remove.sh {path}\n"
+"$P/scripts/steward.sh" tmp remove "$kept_phase_worktree" > "$work/temporary-worktrees.out" 2>"$work/temporary-worktrees.err"; code=$?
+check "TmpRemoveWithFailingRemoveCommand_ExitsOne: a failing command fails the remove with exit 1" [ "$code" = 1 ]
+check "TmpRemoveWithFailingRemoveCommand_PassesItsOutputOn: a failing command's output reaches stderr" grep -q 'refused: worktree busy' "$work/temporary-worktrees.err"
+check "TmpRemoveWithFailingRemoveCommand_KeepsPhaseBranch: a failing remove keeps the phase's branch" git rev-parse --verify -q "refs/heads/flow/$temporary_slug-phase-5"
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/idle-remove.sh {path}\n"
+"$P/scripts/steward.sh" tmp remove "$kept_phase_worktree" > "$work/temporary-worktrees.out" 2>"$work/temporary-worktrees.err"; code=$?
+check "RemoveCommandLeavingFolder_FailsRemoveWithExitOne: a command that exits 0 but leaves the folder fails the remove with exit 1" [ "$code" = 1 ]
+check "RemoveCommandLeavingFolder_KeepsFolder: a remove whose command leaves the folder keeps it" [ -d "$kept_phase_worktree" ]
+check "RemoveCommandLeavingFolder_KeepsPhaseBranch: a remove that leaves the folder keeps the phase's branch" git rev-parse --verify -q "refs/heads/flow/$temporary_slug-phase-5"
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/folder-remove.sh $kept_phase_worktree\n"
+"$P/scripts/steward.sh" tmp remove "$kept_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "RemoveCommandWithoutPath_ExitsTwo: one with no {path} is refused, exit 2" [ "$code" = 2 ]
+check "RemoveCommandWithoutPath_NamesKey: the refusal names worktree_remove" grep -q "worktree_remove has no {path}" "$work/temporary-worktrees.out"
+check "RemoveCommandWithoutPath_KeepsFolder: one with no {path} never runs, so the folder it names stays" [ -d "$kept_phase_worktree" ]
+check_all "RemoveCommandWithoutPath_KeepsGitRecord: git still lists the worktree" 'git worktree list --porcelain | grep -qF "$temporary_slug-phase-5"'
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/folder-remove.sh {path}\n"
+"$P/scripts/steward.sh" tmp remove . > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfDotInMainWorktree_ExitsTwo: . run in the main worktree is the main worktree, refused" [ "$code" = 2 ]
+check "TmpRemoveOfDotInMainWorktree_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
+"$P/scripts/steward.sh" tmp remove "$(pwd -P)" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfMainWorktree_ExitsTwo: the main worktree's absolute path is refused" [ "$code" = 2 ]
+check "TmpRemoveOfMainWorktree_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
+mkdir -p "$work/temporary-worktrees/plain"
+"$P/scripts/steward.sh" tmp remove "$work/temporary-worktrees/plain" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfPlainFolder_ExitsTwo: a folder that is no worktree is refused" [ "$code" = 2 ]
+check "TmpRemoveOfPlainFolder_KeepsFolder: the remove command never runs on a folder that is no worktree" [ -d "$work/temporary-worktrees/plain" ]
+"$P/scripts/steward.sh" tmp remove "" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfEmptyPath_ExitsTwo: an empty path is refused" [ "$code" = 2 ]
+"$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfPoolWorktree_ExitsTwo: a pool worktree is refused" [ "$code" = 2 ]
+check "TmpRemoveOfPoolWorktree_KeepsPoolWorktree: the remove command never runs on a pool worktree" [ -d ../app-wt-1 ]
+write_temporary_config ''
+"$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfPoolWorktreeWithoutRemoveCommand_ExitsTwo: a pool worktree is refused when git does the remove too" [ "$code" = 2 ]
+"$P/scripts/steward.sh" tmp remove "$work/temporary-worktrees/plain" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfPlainFolderWithoutRemoveCommand_ExitsTwo: a folder that is no worktree is refused when git does the remove" [ "$code" = 2 ]
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/folder-remove.sh {path}\n"
+relative_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-6 2>/dev/null)"
+"$P/scripts/steward.sh" tmp remove ".flow/tmp/$temporary_slug-phase-6" > "$work/temporary-worktrees.out" 2>&1
+check "TmpRemoveOfRelativePath_RemovesThatWorktree: a path relative to where tmp remove runs names the worktree removed" [ ! -e "$relative_phase_worktree" ]
+hidden_untracked_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" hidden-untracked 2>/dev/null)"
+printf 'wip\n' > "$hidden_untracked_phase_worktree/wip.txt"
+git config status.showUntrackedFiles no
+"$P/scripts/steward.sh" tmp remove "$hidden_untracked_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+git config --unset status.showUntrackedFiles
+check "TmpRemoveOfUntrackedFileHiddenByStatusConfig_ExitsThree: an untracked file counts as uncommitted though status.showUntrackedFiles=no hides it from git status, exit 3" [ "$code" = 3 ]
+check "TmpRemoveOfUntrackedFileHiddenByStatusConfig_KeepsFile: the remove command never runs, so the untracked file stays" [ -f "$hidden_untracked_phase_worktree/wip.txt" ]
+write_temporary_config "worktree_create: sh $work/temporary-worktrees/fake-create.sh \"{path}\" {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" quoted > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandQuotingPath_ExitsTwo: a template with {path} inside double quotes is refused" [ "$code" = 2 ]
+check "CreateCommandQuotingPath_MakesNoWorktree: the refused command never runs, so the phase's folder never appears" [ ! -e "$temporary_folder/$temporary_slug-quoted" ]
+write_temporary_config "worktree_create: sh $work/temporary-worktrees/fake-create.sh '{path}' {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" phase-7 > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandSingleQuotingPath_ExitsTwo: a template with {path} inside single quotes is refused" [ "$code" = 2 ]
+write_temporary_config "worktree_create: sh $work/temporary-worktrees/fake-create.sh \\\\{path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" escaped > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandEscapingPath_ExitsTwo: a template with {path} after a backslash is refused" [ "$code" = 2 ]
+write_temporary_config 'worktree_create: touch {path}.ran; echo "$(dirname "{path}")"\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" substituted > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandQuotingPathInQuotedSubstitution_ExitsTwo: a template with {path} quoted inside a quoted \$(...) is refused, as sh would split the path there" [ "$code" = 2 ]
+check "CreateCommandQuotingPathInQuotedSubstitution_RunsNothing: the refused command never runs, so its marker never appears" [ ! -e "$temporary_folder/$temporary_slug-substituted.ran" ]
+write_temporary_config 'worktree_create: touch {path}.ran; echo "$(printf %s " {path}")"\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" split > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandQuotingPathAfterQuoteInSubstitution_ExitsTwo: a template with {path} inside a quoted string that a quoted \$(...) opens is refused, as sh would split the path there" [ "$code" = 2 ]
+check "CreateCommandQuotingPathAfterQuoteInSubstitution_RunsNothing: the refused command never runs, so its marker never appears" [ ! -e "$temporary_folder/$temporary_slug-split.ran" ]
+write_temporary_config 'worktree_create: touch {path}.ran; echo "`dirname "{path}"`"\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" backticked > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandQuotingPathInQuotedBackticks_ExitsTwo: a template with {path} quoted inside quoted backticks is refused, as sh would split the path there" [ "$code" = 2 ]
+write_temporary_config 'worktree_create: touch {path}.ran; rm -rf "`cd \\"{path}\\" && pwd`"\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" escaped-backticked > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandEscapingQuotesAroundPathInQuotedBackticks_ExitsTwo: a template with {path} between escaped quotes inside quoted backticks is refused, as sh drops those backslashes and would split the path there" [ "$code" = 2 ]
+check "CreateCommandEscapingQuotesAroundPathInQuotedBackticks_RunsNothing: the refused command never runs, so its marker never appears" [ ! -e "$temporary_folder/$temporary_slug-escaped-backticked.ran" ]
+write_temporary_config 'worktree_create: touch {path}.ran; echo `basename {path}`\n'
+"$P/scripts/steward.sh" tmp add "$phases_item" bare-backticked > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "CreateCommandWithBarePathInBackticks_ExitsTwo: a template with {path} anywhere inside backticks is refused, as backticks cannot quote it" [ "$code" = 2 ]
+check "CreateCommandWithBarePathInBackticks_RunsNothing: the refused command never runs, so its marker never appears" [ ! -e "$temporary_folder/$temporary_slug-bare-backticked.ran" ]
+write_temporary_config "worktree_create: echo \"\$(date)\" > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" beside-substitution > "$work/temporary-worktrees.out" 2>&1
+check "CreateCommandWithBarePathBesideQuotedSubstitution_MakesWorktree: a quoted \$(...) that closes before a bare {path} leaves the path unquoted, so the command runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-beside-substitution" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-beside-substitution" ]
+write_temporary_config "worktree_create: printf %s '\$(' > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" after-quoted-opener > "$work/temporary-worktrees.out" 2>&1
+check "CreateCommandWithBarePathAfterSingleQuotedOpener_MakesWorktree: a \$( inside single quotes opens no substitution, so a later bare {path} runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-after-quoted-opener" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-after-quoted-opener" ]
+write_temporary_config "worktree_create: echo \"\`date\`\" > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" beside-backticks > "$work/temporary-worktrees.out" 2>&1
+check "CreateCommandWithBarePathBesideClosedBackticks_MakesWorktree: backticks that close before a bare {path} leave the path outside them, so the command runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-beside-backticks" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-beside-backticks" ]
+write_temporary_config "worktree_create: printf %s '\`' > /dev/null; sh $work/temporary-worktrees/fake-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" after-quoted-backtick > "$work/temporary-worktrees.out" 2>&1
+check "CreateCommandWithBarePathAfterSingleQuotedBacktick_MakesWorktree: a backtick inside single quotes opens nothing, so a later bare {path} runs and makes the worktree" [ "$(git -C "$temporary_folder/$temporary_slug-after-quoted-backtick" rev-parse --show-toplevel 2>/dev/null)" = "$temporary_folder/$temporary_slug-after-quoted-backtick" ]
+injecting_phase='p$(>injected)'
+write_temporary_config "$fake_temporary_create"
+"$P/scripts/steward.sh" tmp add "$phases_item" "$injecting_phase" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpAddOfPhaseWithShellCharacters_ExitsTwo: a phase holding a character outside letters, digits, . _ and - is refused, exit 2" [ "$code" = 2 ]
+check "TmpAddOfPhaseWithShellCharacters_MakesNoFolder: the phase's folder never appears" [ ! -e "$temporary_folder/$temporary_slug-$injecting_phase" ]
+"$P/scripts/steward.sh" tmp add "$phases_item" nested/inner > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpAddOfPhaseWithSlash_ExitsTwo: a phase holding / is refused, exit 2" [ "$code" = 2 ]
+check "TmpAddOfPhaseWithSlash_MakesNoFolder: the phase's folder never appears" [ ! -e "$temporary_folder/$temporary_slug-nested" ]
+cat > "$work/temporary-worktrees/main-create.sh" <<SCRIPT
+#!/bin/sh
+git -C "$PWD" worktree add -q --detach "\$1" main
+SCRIPT
+write_temporary_config "worktree_create: sh $work/temporary-worktrees/main-create.sh {path} {base}\n"
+base_ignored_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-8 2>/dev/null)"
+check "CreateCommandIgnoringBase_PhaseBranchStartsAtTaskTip: the phase's branch starts at the task branch's tip whatever the command checked out" [ "$(git -C "$base_ignored_phase_worktree" rev-parse HEAD)" = "$(git rev-parse "flow/$temporary_slug")" ]
+git branch -q "flow/$temporary_slug-phase-9" main
+write_temporary_config "$fake_temporary_create"
+"$P/scripts/steward.sh" tmp add "$phases_item" phase-9 > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpAddOfPhaseWhoseBranchExists_ExitsTwo: a phase whose branch already exists is refused, exit 2" [ "$code" = 2 ]
+check "TmpAddOfPhaseWhoseBranchExists_MakesNoFolder: the phase's folder never appears" [ ! -e "$temporary_folder/$temporary_slug-phase-9" ]
+check "TmpAddOfPhaseWhoseBranchExists_KeepsThatBranch: the existing branch stays where it was" [ "$(git rev-parse "flow/$temporary_slug-phase-9")" = "$(git rev-parse main)" ]
+cat > "$work/temporary-worktrees/branching-create.sh" <<SCRIPT
+#!/bin/sh
+git -C "$PWD" worktree add -q -b "flow/\$(basename "\$1")" "\$1" "\$2"
+SCRIPT
+write_temporary_config "worktree_create: sh $work/temporary-worktrees/branching-create.sh {path} {base}\n"
+"$P/scripts/steward.sh" tmp add "$phases_item" branched > "$work/temporary-worktrees.out" 2>"$work/temporary-worktrees.err"
+check "TmpAddWhoseBranchCannotBeMade_NamesLeftoverWorktree: the message names the made worktree and how to remove it" grep -q "tmp remove .*branched" "$work/temporary-worktrees.err"
+"$P/scripts/steward.sh" tmp add "$phases_item" 'a/../../../../escaped' > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpAddOfPhaseClimbingOutOfTmp_ExitsTwo: a phase holding .. is refused, exit 2" [ "$code" = 2 ]
+check "TmpAddOfPhaseClimbingOutOfTmp_MakesNoFolderOutsideTmp: the command never makes the folder the .. would reach" [ ! -e "$work/temporary-worktrees/escaped" ]
+"$P/scripts/steward.sh" tmp add "$phases_item" 'b c~' > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpAddOfPhaseWithInvalidBranchCharacter_ExitsTwo: a phase that makes no valid branch name is refused, exit 2" [ "$code" = 2 ]
+check "TmpAddOfPhaseWithInvalidBranchCharacter_MakesNoFolder: the command never makes the phase's folder" [ ! -e "$temporary_folder/$temporary_slug-b c~" ]
+mkdir -p "$temporary_folder/$temporary_slug-phase-10"
+"$P/scripts/steward.sh" tmp add "$phases_item" phase-10 > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpAddOntoExistingFolder_ExitsTwo: a phase whose folder already exists is refused, exit 2" [ "$code" = 2 ]
+check "TmpAddOntoExistingFolder_MakesNoWorktreeThere: the existing folder does not become a worktree" [ ! -e "$temporary_folder/$temporary_slug-phase-10/.git" ]
+write_temporary_config ''
+"$P/scripts/steward.sh" tmp add "$phases_item" 'a/../../../../escaped' > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpAddOfPhaseClimbingOutOfTmpWithoutCreateCommand_ExitsTwo: a phase holding .. is refused, exit 2, when git makes the worktree" [ "$code" = 2 ]
+check "TmpAddOfPhaseClimbingOutOfTmpWithoutCreateCommand_MakesNoFolderOutsideTmp: git never makes the folder the .. would reach" [ ! -e "$work/temporary-worktrees/escaped" ]
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/folder-remove.sh {path}\n"
+git worktree add -q --detach ../app-sibling
+"$P/scripts/steward.sh" tmp remove ../app-sibling > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfWorktreeOutsideTmp_ExitsTwo: a listed worktree outside .flow/tmp is refused, exit 2" [ "$code" = 2 ]
+check "TmpRemoveOfWorktreeOutsideTmp_KeepsFolder: the remove command never runs on a worktree outside .flow/tmp" [ -d ../app-sibling ]
+git worktree add -q --detach ../app-gone && rm -rf ../app-gone
+other_records_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-11 2>/dev/null)"
+"$P/scripts/steward.sh" tmp remove "$other_records_phase_worktree" > "$work/temporary-worktrees.out" 2>&1
+check_all "TmpRemoveWithRemoveCommand_KeepsOtherGitRecords: another worktree's record stays though its folder is gone" 'git worktree list --porcelain | grep -q "app-gone"'
+other_branch_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-12 2>/dev/null)"
+git -C "$other_branch_phase_worktree" switch -q -c owner-branch
+"$P/scripts/steward.sh" tmp remove "$other_branch_phase_worktree" > "$work/temporary-worktrees.out" 2>&1
+check "TmpRemoveOfWorktreeOnOtherBranch_KeepsThatBranch: a branch other than the phase's is never deleted" git rev-parse --verify -q refs/heads/owner-branch
+check "TmpRemoveOfWorktreeOnOtherBranch_RemovesWorktree: a temporary worktree on another branch is still removed" [ ! -e "$other_branch_phase_worktree" ]
+gitless_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-13 2>/dev/null)"
+printf '.flow/\n' >> "$(git rev-parse --git-common-dir)/info/exclude"
+printf 'precious\n' > "$gitless_phase_worktree/precious.txt"
+rm -f "$gitless_phase_worktree/.git"
+"$P/scripts/steward.sh" tmp remove "$gitless_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfWorktreeWithoutGitFile_ExitsTwo: a temporary worktree whose .git is gone is refused, exit 2" [ "$code" = 2 ]
+check "TmpRemoveOfWorktreeWithoutGitFile_KeepsItsFiles: the remove command never runs, so its files stay" [ -f "$gitless_phase_worktree/precious.txt" ]
+locked_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" phase-14 2>/dev/null)"
+git worktree lock "$locked_phase_worktree"
+"$P/scripts/steward.sh" tmp remove "$locked_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfLockedWorktree_ExitsTwo: a locked temporary worktree is refused, exit 2" [ "$code" = 2 ]
+check "TmpRemoveOfLockedWorktree_KeepsFolder: the remove command never runs on a locked worktree" [ -f "$locked_phase_worktree/README.md" ]
+git worktree add -q --detach "$temporary_folder/pool-x"
+write_temporary_config "  - .flow/tmp/pool-x\n${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/folder-remove.sh {path}\n"
+"$P/scripts/steward.sh" tmp remove "$temporary_folder/pool-x" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfPoolWorktreeUnderTmp_ExitsTwo: a pool worktree under .flow/tmp is refused, exit 2" [ "$code" = 2 ]
+check "TmpRemoveOfPoolWorktreeUnderTmp_KeepsPoolWorktree: the remove command never runs on a pool worktree" [ -f "$temporary_folder/pool-x/README.md" ]
+write_temporary_config "${fake_temporary_create}worktree_remove: sh $work/temporary-worktrees/folder-remove.sh {path}\n"
+mv .flow/tmp .flow/tmp-moved && ln -s "$(cd .. && pwd -P)" .flow/tmp
+"$P/scripts/steward.sh" tmp remove ../app-wt-1 > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfPoolWorktreeUnderSymlinkedTmp_ExitsTwo: a pool worktree is refused though a symlinked .flow/tmp puts it under the temporary folder" [ "$code" = 2 ]
+check "TmpRemoveOfPoolWorktreeUnderSymlinkedTmp_KeepsPoolWorktree: the remove command never runs on the pool worktree" [ -f ../app-wt-1/README.md ]
+"$P/scripts/steward.sh" tmp remove "$(pwd -P)" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfMainWorktreeUnderSymlinkedTmp_ExitsTwo: the main worktree is refused though a symlinked .flow/tmp puts it under the temporary folder" [ "$code" = 2 ]
+check "TmpRemoveOfMainWorktreeUnderSymlinkedTmp_KeepsMainWorktree: the remove command never runs on the main worktree" [ -f README.md ]
+rm .flow/tmp && mv .flow/tmp-moved .flow/tmp
+symlinked_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" symlinked 2>/dev/null)"
+mv .flow/tmp .flow/tmp-real && ln -s tmp-real .flow/tmp
+"$P/scripts/steward.sh" tmp remove "$symlinked_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveUnderSymlinkedTmp_ExitsTwo: a temporary worktree is refused while .flow/tmp is a symlink, exit 2" [ "$code" = 2 ]
+check "TmpRemoveUnderSymlinkedTmp_KeepsWorktree: the remove command never runs while .flow/tmp is a symlink" [ -f "$symlinked_phase_worktree/README.md" ]
+rm .flow/tmp && mv .flow/tmp-real .flow/tmp
+submodule_source="$work/temporary-worktrees/submodule-source"
+git init -q -b main "$submodule_source" && git -C "$submodule_source" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+submodule_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" submodule 2>/dev/null)"
+git -C "$submodule_phase_worktree" -c protocol.file.allow=always submodule add -q "$submodule_source" sub
+git config -f "$submodule_phase_worktree/.gitmodules" submodule.sub.ignore all
+git -C "$submodule_phase_worktree" add .gitmodules && git -C "$submodule_phase_worktree" commit -qm "submodule whose changes git status hides"
+printf 'change\n' > "$submodule_phase_worktree/sub/change.txt"
+"$P/scripts/steward.sh" tmp remove "$submodule_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfWorktreeWithIgnoredSubmoduleChange_ExitsThree: a change in a submodule that .gitmodules tells git status to ignore is uncommitted, exit 3" [ "$code" = 3 ]
+check "TmpRemoveOfWorktreeWithIgnoredSubmoduleChange_KeepsChange: the remove command never runs, so the submodule's change stays" [ -f "$submodule_phase_worktree/sub/change.txt" ]
+untracked_submodule_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" untracked-submodule 2>/dev/null)"
+git -C "$untracked_submodule_phase_worktree" -c protocol.file.allow=always submodule add -q "$submodule_source" sub
+git -C "$untracked_submodule_phase_worktree" commit -qm "submodule"
+printf 'wip\n' > "$untracked_submodule_phase_worktree/sub/wip.txt"
+git config --global status.showUntrackedFiles no
+"$P/scripts/steward.sh" tmp remove "$untracked_submodule_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+git config --global --unset status.showUntrackedFiles
+check "TmpRemoveOfSubmoduleUntrackedFileHiddenByGlobalStatusConfig_ExitsThree: an untracked file in a submodule counts as uncommitted though a global status.showUntrackedFiles=no hides it from the submodule's git status, exit 3" [ "$code" = 3 ]
+check "TmpRemoveOfSubmoduleUntrackedFileHiddenByGlobalStatusConfig_KeepsFile: the remove command never runs, so the submodule's untracked file stays" [ -f "$untracked_submodule_phase_worktree/sub/wip.txt" ]
+corrupt_index_phase_worktree="$("$P/scripts/steward.sh" tmp add "$phases_item" corrupt-index 2>/dev/null)"
+printf 'change\n' >> "$corrupt_index_phase_worktree/README.md"
+printf 'corrupt\n' > "$(git -C "$corrupt_index_phase_worktree" rev-parse --absolute-git-dir)/index"
+"$P/scripts/steward.sh" tmp remove "$corrupt_index_phase_worktree" > "$work/temporary-worktrees.out" 2>&1; code=$?
+check "TmpRemoveOfWorktreeWhoseStatusFails_ExitsThree: a temporary worktree whose git status fails is refused as possibly dirty, exit 3" [ "$code" = 3 ]
+check "TmpRemoveOfWorktreeWhoseStatusFails_KeepsChange: the remove command never runs, so the uncommitted change stays" grep -q change "$corrupt_index_phase_worktree/README.md"
+
 echo "auto_gates"
 mkdir -p "$work/auto" && cd "$work/auto" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
@@ -2383,6 +2891,142 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/picks.next"\nexit 5\n' "$work" > 
 cp "$P/templates/run-unattended.sh" "$picks/templates/run-unattended.sh"; : > "$work/picks.next"
 FLOW_PLUGIN="$picks" "$picks/templates/run-unattended.sh" claude --pick mine --max-steps 1 >/dev/null 2>&1
 check "unattended loop: picks its item through next.sh --pick" grep -qx -- '--json --embed-agent --pick mine' "$work/picks.next"
+cd "$repo"
+
+echo "tracker scope: every read of the local tracker"
+mkdir -p "$work/scope/bin" && cd "$work/scope" && git init -q -b main app && cd app && git config user.email me@scope.test && git config user.name t
+printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
+scope_config() { # scope_config <the local.scope block's lines> [<top-level lines after it>]: local items, a pool that grows
+  printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 3\nready:\n  priority_order: [P0, P1, P2]\nnotify:\n  desktop: false\ngithub:\n  repo: acme/widgets\nlocal:\n  scope:\n%s\n%s' "$1" "${2:-}" > .flow/config.yaml
+}
+scope_ids() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(i["id"] for i in (d["items"] if isinstance(d, dict) else d)))'; }
+scope_unpick() { # scope_unpick <next.sh --json output>: the run and its claim go, so the next pick starts clean
+  rm -f ".flow/runs/$(item_slug "$(printf '%s' "$1" | jget item)").json"
+  "$P/scripts/steward.sh" release "$(printf '%s' "$1" | jget item)" --force >/dev/null 2>&1
+}
+scope_config '    labels: [team-a]'
+sin="$("$P/adapters/local/create.sh" task "Inside the scope" --size S --priority P1 --labels team-a)"
+sout="$("$P/adapters/local/create.sh" task "Outside the scope, more urgent" --size S --priority P0 --labels team-b)"
+board_ids="$("$P/scripts/board.sh" --json 2>/dev/null | scope_ids)"
+check_all "ScopedBoard_ShowsItemInside: board --json lists an item local.scope matches, because the scope only narrows" 'case " $board_ids " in *" $sin "*) true ;; *) false ;; esac'
+check_all "ScopedBoard_HidesItemOutside: board --json leaves out an item outside local.scope, because it reads the scoped list" '[ -n "$board_ids" ] && case " $board_ids " in *" $sout "*) false ;; *) true ;; esac'
+out="$("$P/scripts/next.sh" --json 2>/dev/null)"
+check "ScopedNext_PicksOnlyInside: next takes the item inside the scope over a more urgent one outside it, because it picks from the scoped list" [ "$(printf '%s' "$out" | jget item)" = "$sin" ]
+scope_unpick "$out"
+scope_config '    labels: [team-a]' 'pick:
+  tasks:
+    kinds: [task]
+'
+out="$("$P/scripts/next.sh" --json --pick tasks 2>/dev/null)"
+check "ScopedNextPick_PicksOnlyInside: next --pick takes the item inside the scope, because the scope and the pick both apply" [ "$(printf '%s' "$out" | jget item)" = "$sin" ]
+scope_unpick "$out"
+scope_config '    labels: [team-a]'
+"$P/scripts/next.sh" "$sout" >/dev/null 2>"$work/scope.err"; code=$?
+check "NextNamedOutsideScope_ExitsTwo: next on a named item outside the scope is refused, because the flow runs no item outside its scope" [ "$code" -eq 2 ]
+check "NextNamedOutsideScope_NamesScope: the refusal names local.scope, because that is the key to change" grep -q "$sout is outside local.scope in .flow/config.yaml" "$work/scope.err"
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>"$work/scope.err"; code=$?
+check "ClaimOutsideScope_ExitsTwo: a new claim of an item outside the scope is refused, because the flow runs no item outside its scope" [ "$code" -eq 2 ]
+check "ClaimOutsideScope_TakesNoWorktree: the refused claim leaves no worktree claimed for the item, because a refusal changes nothing" [ -z "$("$P/scripts/steward.sh" find "$sout")" ]
+adhoc_path="$("$P/scripts/steward.sh" claim adhoc:scope-x 2>/dev/null)"
+check "ClaimAdhoc_IsNeverScoped: an adhoc: claim has no tracker, so a scope does not refuse it, because a scope belongs to its tracker" [ -n "$adhoc_path" ]
+"$P/scripts/steward.sh" release adhoc:scope-x --force >/dev/null 2>&1
+held_path="$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)"
+python3 -c 'p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("labels: [team-a]", "labels: [team-b]"))'
+check_all "ClaimBeforeScopeChanged_KeepsWorktree: an item claimed before it left the scope keeps its worktree, because only a new claim is refused" '[ -n "$held_path" ] && [ "$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)" = "$held_path" ]'
+"$P/scripts/next.sh" "$sin" --json >/dev/null 2>"$work/scope.err"; code=$?
+check "NextNamedClaimedBeforeScopeChanged_GetsStep: next on an item claimed before it left the scope prepares its step, because a run under way goes on" [ "$code" -eq 0 ]
+rm -f ".flow/runs/$(item_slug "$sin").json"
+"$P/scripts/steward.sh" release "$sin" --force >/dev/null 2>&1
+scope_config '    labels: [team-a]'
+"$P/adapters/local/write-state.sh" "$sin" step=split; "$P/adapters/local/write-state.sh" "$sout" step=split
+: > "$work/scope.procs"; FLOW_HEALTH_PROCS="$work/scope.procs" "$P/scripts/steward.sh" health > "$work/scope.out" 2>&1
+check "ScopedHealth_ReportsItemInside: health says a split item inside the scope is the owner's to close, because health reads the scoped list" grep -q "$sin: split, and every child is closed" "$work/scope.out"
+check "ScopedHealth_SkipsItemOutside: health says nothing of a split item outside the scope, because it reads the scoped list" sh -c "[ -s '$work/scope.out' ] && ! grep -q '$sout: split' '$work/scope.out'"
+"$P/adapters/local/write-state.sh" "$sin" step=; "$P/adapters/local/write-state.sh" "$sout" step=
+"$P/adapters/local/link-pr.sh" "$sin" https://github.com/acme/widgets/pull/90 >/dev/null; "$P/adapters/local/link-pr.sh" "$sout" https://github.com/acme/widgets/pull/90 >/dev/null
+mkdir -p "$work/scope/gh" && cp "$P/tests/_fake_gh.py" "$work/scope/gh/"
+printf '{"issues": [], "pr": {"number": 90, "state": "OPEN", "isDraft": false, "mergedAt": null, "url": "https://github.com/acme/widgets/pull/90", "headRefName": "flow/local-task-1", "baseRefName": "main", "mergeable": "MERGEABLE", "updatedAt": "2026-11-09T10:00:00Z", "headRefOid": "c0ffee"}}\n' > "$work/scope/gh/issues.json"
+cat > "$work/scope/bin/claude" <<EOF_SCOPE_HOST
+#!/bin/sh
+item="\$(printf '%s\\n' "\$*" | sed -n 's|.*/flow:comments \\([^ ]*\\)\\..*|\\1|p' | head -1)"
+"$P/adapters/local/comment.sh" "\$item" --body "Addressed every review thread"
+EOF_SCOPE_HOST
+chmod +x "$work/scope/bin/claude"
+ln -sf "$P/tests/fake-gh.sh" "$work/scope/bin/gh"
+PATH="$work/scope/bin:$PATH" FAKE_GH_DIR="$work/scope/gh" FLOW_HEALTH_PROCS="$work/scope.procs" "$P/jobs/comments.sh" claude >/dev/null 2>&1
+sin_body="$("$P/adapters/local/read.sh" "$sin" | jget body)"; sout_body="$("$P/adapters/local/read.sh" "$sout" | jget body)"
+check "ScopedCommentsJob_AddressesItemInside: an item inside the scope gets the comments pass's reply, because the job reads the scoped list" sh -c 'case "$1" in *"Addressed every review thread"*) true ;; *) false ;; esac' _ "$sin_body"
+check "ScopedCommentsJob_SkipsItemOutside: an item outside the scope gets no comments pass reply, because the job reads the scoped list" sh -c 'case "$1" in *"Addressed every review thread"*) case "$2" in *"Addressed every review thread"*) false ;; *) true ;; esac ;; *) false ;; esac' _ "$sin_body" "$sout_body"
+scope_config '    query: label:team-a'
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeQueryOnLocal_IsGap: init --check reports local.scope.query as a gap, because the local tracker has no search of its own" grep -q 'gap: .flow/config.yaml: local.scope.query: the local adapter maps assignee, status, labels and kinds, not query' "$work/scope.out"
+scope_config '    trackers: [local]'
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeTrackers_IsGap: init --check reports local.scope.trackers as a gap, because a scope belongs to its tracker" grep -q 'gap: .flow/config.yaml: local.scope.trackers: a scope belongs to its tracker' "$work/scope.out"
+scope_value() { # scope_value <local.scope's value, on the key's own line>
+  scope_config '' && python3 -c 'import sys; p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  scope: " + sys.argv[1] + "\n", 1))' "$1"
+}
+scope_value '"labels = team-a"'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeValueOnItsKey_ListExitsTwo: a local.scope written as a value is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_value '{labels: [team-a]}'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeInlineMap_ListExitsTwo: a local.scope written as an inline map is refused, because the config reads no inline map" [ "$code" -eq 2 ]
+scope_config '    - team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeAsList_ListExitsTwo: a local.scope written as a list is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_config '     labels: [team-a]'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldsThreeSpacesIn_ListExitsTwo: a local.scope whose fields sit three spaces in is refused, because no field of it reads" [ "$code" -eq 2 ]
+scope_config '    labels:
+    - team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldListAtItsIndent_ListExitsTwo: a local.scope field whose list sits at the field's own indent is refused, because a field no value of which reads would list every item" [ "$code" -eq 2 ]
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ScopeFieldListAtItsIndent_ClaimExitsTwo: a new claim under a local.scope field whose list sits at the field's own indent is refused, because an unread field is no unset field" [ "$code" -eq 2 ]
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeFieldListAtItsIndent_IsGap: init --check reports a local.scope field no value of which reads as a gap, naming the field, because every list of the tracker stops on it" grep -q 'gap: .flow/config.yaml: local.scope.labels' "$work/scope.out"
+scope_config '    labels:
+      team: team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldNestedMap_ListExitsTwo: a local.scope field written as a map is refused, because a field no value of which reads would list every item" [ "$code" -eq 2 ]
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ScopeFieldNestedMap_ClaimExitsTwo: a new claim under a local.scope field written as a map is refused, because an unread field is no unset field" [ "$code" -eq 2 ]
+scope_value '"labels = team-a"'
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ClaimUnderScopeValue_ExitsTwo: a new claim under a local.scope it cannot read is refused, because an unread scope is no missing scope" [ "$code" -eq 2 ]
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeValueOnItsKey_IsGap: init --check reports a local.scope written as a value as a gap, because every list of the tracker stops on it" grep -q 'gap: .flow/config.yaml: local.scope' "$work/scope.out"
+scope_config '    labels: [team-a]' && python3 -c 'p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  \"scope\":\n", 1))'
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ClaimUnderQuotedScopeKey_ExitsTwo: a new claim of an item outside a local.scope whose key is quoted is refused, because a quoted key is the same scope every list applies" [ "$code" -eq 2 ]
+"$P/scripts/next.sh" "$sout" >/dev/null 2>&1; code=$?
+scope_unpick "{\"item\": \"$sout\"}"
+check "NextNamedUnderQuotedScopeKey_ExitsTwo: next on a named item outside a local.scope whose key is quoted is refused, because a quoted key is the same scope every list applies" [ "$code" -eq 2 ]
+scope_quoted() { # scope_quoted <quote> <the local.scope block's lines>: scope_config with the scope key in <quote>
+  scope_config "$2" && python3 -c 'import sys; p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  %sscope%s:\n" % (sys.argv[1], sys.argv[1]), 1))' "$1"
+}
+scope_quoted '"' '    milestone: v1'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "DoubleQuotedScopeKeyUnknownField_ListExitsTwo: a local.scope whose key is in double quotes and names a field the adapter does not map is refused, because a quoted key is checked as the unquoted one is" [ "$code" -eq 2 ]
+scope_quoted "'" '    milestone: v1'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "SingleQuotedScopeKeyUnknownField_ListExitsTwo: a local.scope whose key is in single quotes and names a field the adapter does not map is refused, because a quoted key is checked as the unquoted one is" [ "$code" -eq 2 ]
+scope_quoted '"' '    labels:
+      team: team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "QuotedScopeKeyNestedMapField_ListExitsTwo: a field written as a map under a quoted local.scope key is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_quoted "'" "    'labels': [team-a]"
+quoted_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
+check_all "QuotedScopeKeys_ListShowsItemInside: a local.scope with quoted keys lists an item it matches, because a quoted key reads as the unquoted one" 'case " $quoted_scope_ids " in *" $sin "*) true ;; *) false ;; esac'
+check_all "QuotedScopeKeys_ListHidesItemOutside: a local.scope with quoted keys leaves out an item outside it, because a quoted key reads as the unquoted one" '[ -n "$quoted_scope_ids" ] && case " $quoted_scope_ids " in *" $sout "*) false ;; *) true ;; esac'
+scope_config ''
+empty_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
+check_all "ScopeEmpty_ListsEveryItem: an empty local.scope lists the items inside and outside the labels, because an empty scope is unset" 'case " $empty_scope_ids " in *" $sin "*) ;; *) false ;; esac && case " $empty_scope_ids " in *" $sout "*) true ;; *) false ;; esac'
 cd "$repo"
 
 echo "help"
@@ -3199,6 +3843,35 @@ check "session-start: no stamp asks for one init" sh -c "echo '{}' | FLOW_PLUGIN
 printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 0\n' > .flow/config.yaml
 check "init: --check flags an empty pool with pool_max 0 as a gap" sh -c "! FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date' && FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'gap: .flow/config.yaml: the pool is empty'"
 check "init: lists the gap after an install" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' | grep -q 'Gaps'"
+write_command_config() { printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 1\n%b' "$1" > .flow/config.yaml; }
+write_command_config 'worktree_create: workspace new --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-create.out" 2>&1; code=$?
+check "InitCheckOfCreateCommandWithoutPath_NamesGap: --check names a worktree_create without {path} as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create has no {path}' "$work/init-create.out"
+check "InitCheckOfCreateCommandWithoutPath_ExitsNonZero: --check exits non-zero on a worktree_create without {path}" [ "$code" != 0 ]
+write_command_config 'worktree_remove: workspace remove\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-remove.out" 2>&1; code=$?
+check "InitCheckOfRemoveCommandWithoutPath_NamesGap: --check names a worktree_remove without {path} as a gap" grep -qF 'gap: .flow/config.yaml: worktree_remove has no {path}' "$work/init-remove.out"
+check "InitCheckOfRemoveCommandWithoutPath_ExitsNonZero: --check exits non-zero on a worktree_remove without {path}" [ "$code" != 0 ]
+write_command_config 'worktree_create: workspace new "{path}" --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-quoted.out" 2>&1
+check "InitCheckOfCreateCommandQuotingPath_NamesGap: --check names a worktree_create with {path} inside quotes as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-quoted.out"
+write_command_config "worktree_create: workspace new '{path}' --from {base}\n"
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-single-quoted.out" 2>&1
+check "InitCheckOfCreateCommandSingleQuotingPath_NamesGap: --check names a worktree_create with {path} inside single quotes as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-single-quoted.out"
+write_command_config 'worktree_remove: workspace remove "{path}"\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-remove-quoted.out" 2>&1
+check "InitCheckOfRemoveCommandQuotingPath_NamesGap: --check names a worktree_remove with {path} inside quotes as a gap" grep -qF 'gap: .flow/config.yaml: worktree_remove quotes {path}' "$work/init-remove-quoted.out"
+write_command_config 'worktree_create: workspace new \\{path} --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-escaped.out" 2>&1
+check "InitCheckOfCreateCommandEscapingPath_NamesGap: --check names a worktree_create with {path} after a backslash as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-escaped.out"
+write_command_config 'worktree_create: workspace new "$(dirname "{path}")" --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-substituted.out" 2>&1
+check "InitCheckOfCreateCommandQuotingPathInQuotedSubstitution_NamesGap: --check names a worktree_create with {path} quoted inside a quoted \$(...) as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create quotes {path}' "$work/init-substituted.out"
+write_command_config 'worktree_create: workspace new `basename {path}` --from {base}\n'
+FLOW_PLUGIN="$plugin_copy" "$init" --check > "$work/init-backticked.out" 2>&1
+check "InitCheckOfCreateCommandWithPathInBackticks_NamesGap: --check names a worktree_create with {path} inside backticks as a gap" grep -qF 'gap: .flow/config.yaml: worktree_create has {path} inside backticks' "$work/init-backticked.out"
+write_command_config 'worktree_create: workspace new {path} --from {base}\nworktree_remove: workspace remove {path}\n'
+check "InitCheckOfCommandsHoldingPath_IsClean: --check is clean with a worktree_create and a worktree_remove that hold {path}" sh -c "FLOW_PLUGIN='$plugin_copy' '$init' --check | grep -q 'up to date'"
 mkdir -p "$work/plain" && cd "$work/plain" && git init -q
 check "session-start: silent in a project without the flow" sh -c "[ -z \"\$(echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start')\" ]"
 
