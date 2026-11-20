@@ -96,7 +96,8 @@ def held_list(rows):
 
 
 WHY = [("gate", "at a gate"), ("blocked", "blocked"), ("needs", "missing a field ready.needs asks for"),
-       ("children", "waiting on child items"), ("done", "done (every step ran)"), ("split", "split")]
+       ("children", "waiting on child items"), ("parent", "waiting on the parent's decomposition gate"),
+       ("done", "done (every step ran)"), ("split", "split")]
 
 
 def reasons(rows, live):
