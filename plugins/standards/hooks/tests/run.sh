@@ -174,6 +174,8 @@ expect "ProgramRunWithTheMarker_Passes: the owner approved this run" check-gates
 expect "ProgramPathStaged_Passes: git add starts nothing" check-gates.sh 'git add tools/test.sh && git commit -m "chore: tidy"' 0 ""
 expect "ProgramPathRead_Passes: sed and grep read the file" check-gates.sh 'sed -n 1,20p tools/test.sh; grep -n lint tools/test.sh' 0 ""
 expect "ProgramPathSyntaxChecked_Passes: sh -n parses the script and starts nothing" check-gates.sh 'sh -n tools/test.sh' 0 ""
+expect "ProgramPathLookedUp_Passes: command -v and -V only describe the name" check-gates.sh 'command -v tools/test.sh && command -V tools/test.sh' 0 ""
+expect "ProgramRunThroughCommand_IsBlocked: command without -v or -V starts it" check-gates.sh 'command -p tools/test.sh' 2 "gate whole-suite"
 expect "ProgramPathInAnAssignment_Passes: a variable that holds the path starts nothing" check-gates.sh 'script=tools/test.sh; wc -l "$script"' 0 ""
 expect "ProgramWithALongerName_Passes: tools/test.sh.bak is another file" check-gates.sh 'tools/test.sh.bak' 0 ""
 expect "forbid: a quoted script path still runs it" check-gates.sh '"./tools/update-golden.sh"' 2 "gate pause"

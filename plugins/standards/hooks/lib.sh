@@ -183,7 +183,8 @@ code_runs() {
   # program: it is the command's first word, as written or at the end of a longer path, after
   # any VAR=value words and the words that only pass a command on (a shell, env, exec, nohup,
   # command, nice, timeout, caffeinate, with their options). A shell given -n only parses the
-  # script and starts nothing. A path that is an argument (git add, sed, grep) starts nothing.
+  # script and command -v or -V only looks the name up: both start nothing. A path that is an
+  # argument (git add, sed, grep) starts nothing.
   printf '%s\n' "$1" | T="$2" awk '
     BEGIN { t = ENVIRON["T"]; found = 0 }
     function names_program(word) {
@@ -199,6 +200,7 @@ code_runs() {
       return base ~ /^(sh|bash|zsh|dash|ksh|env|exec|nohup|command|nice|timeout|caffeinate)$/
     }
     function starts_nothing(passer, option) {
+      if (passer == "command") return option ~ /^-[A-Za-z]*[vV][A-Za-z]*$/
       return passer ~ /^(sh|bash|zsh|dash|ksh)$/ && option ~ /^-[A-Za-z]*n[A-Za-z]*$/
     }
     function started_by(command,    count, words, position, word, base, passer) {
