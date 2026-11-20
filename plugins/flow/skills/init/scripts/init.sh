@@ -33,6 +33,7 @@ FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/host.sh"
 . "$plugin/lib/base.sh"
 . "$plugin/lib/branch.sh"
+. "$plugin/lib/worktree_command.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
@@ -179,6 +180,8 @@ if [ ! -f .flow/config.yaml ]; then
       pool_n="$(printf '%s\n' "$pool" | grep -c .)"; pool_max=3; [ "$pool_n" -gt 3 ] && pool_max="$pool_n"
       echo "pool_max: $pool_max"
       echo "# worktree_name: ../{repo}-wt-{n}   # names a new one instead: {repo} the main worktree's folder, {n} the first free number"
+      echo "# worktree_create: workspace new {path} --from {base}   # makes a new one instead of git worktree add: {path} its folder, {base} the ref it starts from"
+      echo "# worktree_remove: workspace remove {path}   # removes a temporary one instead of git worktree remove"
       echo "# Task branch names: one template, or one per kind (epic, task, bug); unset, flow/{slug}. The claim"
       echo "# names the branch once and records it. {slug} the item slug (gh-73), {key} the tracker's id"
       echo "# lower-cased (73, proj-123), {kind}, {title} the title in ASCII, at most $branch_title_length_cap characters."
@@ -370,6 +373,7 @@ tracked="$(git ls-files -- .flow | grep -c .)"
 if [ -f .flow/config.yaml ]; then
   [ -n "$(cfg pool | grep .)" ] || [ "$(cfg_or pool_max 0)" -gt 0 ] 2>/dev/null || gap ".flow/config.yaml: the pool is empty and pool_max is 0; list a worktree under pool: or set pool_max"
   [ -n "$(cfg base)" ] || gap ".flow/config.yaml: base is empty; name the branch tasks start from"
+  for key in worktree_create worktree_remove; do flaw="$(worktree_command_flaw "$key" "$(cfg "$key")")"; [ -z "$flaw" ] || gap ".flow/config.yaml: $flaw"; done
   for k in epic task bug; do a="$(cfg "adapters.$k")"; [ -z "$a" ] || [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.$k names $a, not an adapter"; done
   bad_auto="$(sed -n '/^auto_gates:/,/^[^ #]/p' .flow/config.yaml | grep -E '^  [A-Za-z]' | grep -v '^  plan-approval:' | sed 's/:.*//; s/^ *//' | head -1)"
   [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"
