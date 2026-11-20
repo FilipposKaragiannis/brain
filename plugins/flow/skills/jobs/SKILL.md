@@ -100,6 +100,11 @@ Facts to answer with:
   that confirmation counts as failed, so after `jobs.comments.max_failures` the owner is told.
 - The `retro` job commits nothing: `lessons.jsonl` and `retros.log` stay on this machine under
   `.flow/`, which is excluded from git, so each clone keeps its own lessons.
+- The `retro` job writes the graph report of the last week to `.flow/reports/graph-<date>.md`
+  first and hands it to the retro. `"$P/scripts/graph-report.sh" [--days N]` prints the same
+  report by hand, with no model: per step the runs, the median time, the failed runs, the cost
+  and the runs per item, the steps that got slower since the period before, and the items that
+  took the most step time.
 - The `health` job (every 15 minutes in the config `flow:init` writes) checks each claim and spends
   no model while all is well: it clears a dead run's record, releases an empty claim, resumes
   cut-off work up to `jobs.health.max_resumes` times, then raises an escalation gate, syncs clean

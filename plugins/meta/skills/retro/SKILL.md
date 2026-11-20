@@ -17,6 +17,11 @@ home and a specific change. Three routed improvements beat a page of observation
   `.flow/`, which is excluded from git: never commit it or `retros.log`. Read the lines whose `time` is
   after the last retro's time (the first column of the last `.flow/retros.log` line, written in
   step 4; all lines on the first run). Trust the times, not a line count: the log can be rewritten.
+- **The graph report**, when the retro job names one (`.flow/reports/graph-<date>.md`; by hand,
+  the flow plugin's `scripts/graph-report.sh`): per step the runs, the median time, the failed
+  runs, the cost and the runs per item, and the steps that got slower since the period before.
+  A step that got slower, fails often or runs more than twice per item is a finding: name the
+  brief, skill, hook or config that makes it so.
 - **The session** (manual form): the goal, what changed, which skills and agents ran.
 - **The lenses**: repetitive work; bottlenecks (prompts, denied tools, slow loops, round-trips
   for ambiguity); corrections the owner made; what worked and should be the default; wrong
