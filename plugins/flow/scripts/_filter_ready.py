@@ -126,14 +126,13 @@ def held_back(item):
         return "held"
     return None
 
-# An id that ends in no number comes after the numbered ones of its rank, as listed.
-NO_NUMBER = float("inf")
+AFTER_EVERY_NUMBERED_ITEM = float("inf")
 
 def item_number(item):
     """The number the item's id ends in. A tracker numbers its items in the order they are made, so
     among items of one rank the lowest is the oldest."""
     digits = item["id"][len(item["id"].rstrip("0123456789")):]
-    return int(digits) if digits else NO_NUMBER
+    return int(digits) if digits else AFTER_EVERY_NUMBERED_ITEM
 
 ready, notes = [], []
 for item in items:
