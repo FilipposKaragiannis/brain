@@ -261,9 +261,9 @@ name the config does not have (naming the ones it has), a `query` without exactl
 
 | Adapter | assignee | status | labels | kinds | query |
 |---|---|---|---|---|---|
-| `github` | an issue assignee's login, any case; `me` is the `gh` user (`gh api user`) | the issue state, `open` or `closed` | the issue's labels, any case | the item's kind | GitHub search qualifiers, sent as `repo:<repo> is:issue is:open <query>` |
+| `github` | an issue assignee's login, any case; `me` is the `gh` user (`gh api user`) | the issue state, `open` or `closed` | the issue's labels, any case | the issue's kind, matched before `github.limit` counts it | GitHub search qualifiers, sent as `repo:<repo> is:issue is:open <query>` |
 | `local` | the item file's `assignee`, any case; `me` is the git `user.email` or `user.name` | the item file's `status` (`open`, `closed`) | the item file's `labels`, any case | the item file's kind | not mapped |
-| `jira` | JQL `assignee = "<value>"`; `me` is `currentUser()`, the `jira.email` user the token belongs to | JQL `status in (...)`, the status names | JQL `labels in (...)` | the item's kind, matched on the built items (a Story is a task) | a JQL condition, sent as `project = "<project>" AND (<query>) AND statusCategory != Done ORDER BY created DESC`, so it takes no `ORDER BY` |
+| `jira` | JQL `assignee = "<value>"`; `me` is `currentUser()`, the `jira.email` user the token belongs to | JQL `status in (...)`, the status names | JQL `labels in (...)` | JQL `issuetype in (...)` with the `jira.types` names of an epic and a bug, and `issuetype not in (...)` for a task, since every other type is one (a Story is a task) | a JQL condition, sent as `project = "<project>" AND (<query>) AND statusCategory != Done ORDER BY created DESC`, so it takes no `ORDER BY` |
 
 GitHub and local match the filter on what they read; Jira puts it in the search, then counts each
 listed issue's open children with a second search (`parent in (...)`), since the filter can leave
@@ -312,15 +312,15 @@ scoped list, not the whole tracker.
 
 | Adapter | assignee, status, labels | kinds | query | search |
 |---|---|---|---|---|
-| `github` | `assignee:<login>` (`me` is the `gh` user); `label:"a","b"` (any of them); `is:open` or `is:closed` when `status` names exactly one of them, no qualifier for both or neither | the item's kind, matched on the built item | GitHub search qualifiers, as written | with a scope set, every list is one `search(query: ...)`, `repo:<repo> is:issue [is:open] <scope> <pick query>`, so `github.limit` counts matches; a pick's neutral fields still match on what it reads |
+| `github` | `assignee:<login>` (`me` is the `gh` user); `label:"a","b"` (any of them); `is:open` or `is:closed` when `status` names exactly one of them, no qualifier for both or neither | the issue's kind, matched on each page it reads | GitHub search qualifiers, as written | with a scope set, every list is one `search(query: ...)`, `repo:<repo> is:issue [is:open] <scope> <pick query>`; the scope's kinds and a pick's neutral fields match on what it reads, and `github.limit` counts only the issues they keep, so the list pages on past the ones they leave out |
 | `local` | the item file's `assignee`, `status` and `labels`, as for a pick | the item file's kind | not mapped, refused | none: every item file, matched on its frontmatter |
-| `jira` | JQL, as for a pick | the item's kind, matched on the built items | a JQL condition, as written | `project = "<project>" AND (<scope>) AND (<pick>) AND statusCategory != Done ORDER BY created DESC` (no `statusCategory` clause with `--all`), so a scope `query` composes with a pick `query` or with a pick's neutral fields |
+| `jira` | JQL, as for a pick | JQL, as for a pick, so `jira.limit` counts only the scope's kinds | a JQL condition, as written | `project = "<project>" AND (<scope>) AND (<pick>) AND statusCategory != Done ORDER BY created DESC` (no `statusCategory` clause with `--all`), so a scope `query` composes with a pick `query` or with a pick's neutral fields |
 
 `in-scope <id>` says whether one item is inside the scope, and with no scope set it exits 0 with
 no tracker call. Local matches the item file. Jira sends one search,
-`key = "<KEY>" AND project = "<project>" AND (<scope>)`, then matches the scope's kinds on the
-built item. GitHub matches the kinds on the item `read` prints, then pages the scoped search's
-issue numbers up to `github.limit`, so an issue past the limit reads as outside.
+`key = "<KEY>" AND project = "<project>" AND (<scope>)`, its kinds in it. GitHub matches the
+kinds on the item `read` prints, then pages the scoped search's issue numbers until
+`github.limit` of them match the scope, so an issue past the limit reads as outside.
 
 `read` stays unscoped. Blockers, parents, holders and bases resolve through it, so a blocker or an
 epic outside the scope stays readable. An item that leaves the scope while it runs drops out of the

@@ -625,6 +625,27 @@ jira_run "$P/adapters/jira/create.sh" task "Task child outside the kinds" --pare
 kind_listed_children="$(jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print([i["open_children"] for i in json.load(sys.stdin) if i["id"] == sys.argv[1]])' "$jke")"
 check "JiraKindScopedList_ChildOfOtherKind_NotCounted: list counts no open child of a kind outside jira.scope, because the scope's kinds bound the children too" [ "$kind_listed_children" = "[0]" ]
 check "JiraKindScopedRead_ChildOfOtherKind_NotCounted: read counts no open child of a kind outside jira.scope, because the scope's kinds bound the children too" [ "$(jira_run "$P/adapters/jira/read.sh" "$jke" | jget open_children)" = 0 ]
+jira_kind_ids() { jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+jira_labelled() { # jira_labelled <label> <create.sh args...>: a new issue carrying the label; prints its id
+  jira_label="$1"; shift
+  jira_new="$(jira_run "$P/adapters/jira/create.sh" "$@")"; jira_set "$jira_new" labels "$jira_label"; printf '%s' "$jira_new"
+}
+jira_area_config '  limit: 1
+  scope:
+    labels: [kind-limit-bug]
+    kinds: [bug]
+'
+jkb="$(jira_labelled kind-limit-bug bug "Bug older than the tasks")"
+jira_labelled kind-limit-bug task "Newer task" >/dev/null; jira_labelled kind-limit-bug task "Newest task" >/dev/null
+check "JiraKindScopedList_NewerIssuesOfOtherKinds_ListsScopedPastThem: list keeps a bug past the newer tasks jira.limit 1 would hold, because the scope's kinds go into the search the limit counts" [ "$(jira_kind_ids)" = "$jkb" ]
+jira_area_config '  limit: 1
+  scope:
+    labels: [kind-limit-task]
+    kinds: [task]
+'
+jks="$(jira_labelled kind-limit-task task "Story older than the epic and the bug" --type Story)"
+jira_labelled kind-limit-task epic "Newer epic" >/dev/null; jira_labelled kind-limit-task bug "Newest bug" >/dev/null
+check "JiraTaskScopedList_NewerEpicAndBug_ListsStoryPastThem: list keeps a Story as a task past the newer epic and bug jira.limit 1 would hold, because every type but the epic and bug ones is a task in the search" [ "$(jira_kind_ids)" = "$jks" ]
 jira_area_config '  scope:
     query: '"'"'labels = "team-a"'"'"'
 pick:
@@ -834,6 +855,19 @@ scope_limit=1
 check "ScopedList_LimitCountsMatches: github.limit counts the issues the scope matches, because the scope goes to GitHub's search" [ "$(gh_scope_ids --limit "$scope_limit")" = "gh#50" ]
 gh_scope_config '    status: [Nonesuch]'
 check "ScopedList_StatusOfNoIssueState_ListsNothing: a github.scope status that names no issue state keeps no issue, though it sends GitHub no qualifier, because the scope is matched on every issue read" [ "$("$P/adapters/github/list.sh" 2>/dev/null)" = "[]" ]
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
+import json, sys
+path = sys.argv[1]; data = json.load(open(path))
+data["issues"] = [{"number": 60, "title": "Newest task", "state": "OPEN", "labels": ["team-c"], "type": "Task"},
+                  {"number": 61, "title": "Newer epic", "state": "OPEN", "labels": ["team-c", "epic"]},
+                  {"number": 62, "title": "Bug past them", "state": "OPEN", "labels": ["team-c"], "type": "Bug"}]
+json.dump(data, open(path, "w"))
+PY2
+gh_scope_config '    kinds: [bug]'
+check "KindScopedList_NewerIssuesOfOtherKinds_ListsScopedPastThem: a list under github.scope kinds keeps a bug past the newer issues github.limit 1 would hold, because the kinds are matched before the limit counts an issue" [ "$(gh_scope_ids --limit 1)" = "gh#62" ]
+gh_scope_config '    labels: [team-c]
+    kinds: [bug]'
+check "KindScopedSearch_NewerIssuesOfOtherKinds_ListsScopedPastThem: a scoped search under github.scope kinds keeps a bug past the newer matches github.limit 1 would hold, because the kinds are matched before the limit counts an issue" [ "$(gh_scope_ids --limit 1)" = "gh#62" ]
 cp "$work/scope-issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/scope-config.saved" .flow/config.yaml
 
 echo "trackers and readiness on every tracker (fake gh)"

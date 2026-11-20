@@ -45,9 +45,9 @@ project_sync() {
   python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" sync "$(gh_repo)" "$GH_PROJECT"
 }
 
-# issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: the issue
-# type Epic or Bug, else the label epic or bug, else task. Parent: the native sub-issue parent,
-# else a "Parent #N" line in the body. rank orders ready items (lower first) by
+# issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: as
+# _query.py's kind_of reads it, the issue type Epic or Bug, else the label epic or bug, else task.
+# Parent: the native sub-issue parent, else a "Parent #N" line in the body. rank orders ready items (lower first) by
 # READY_PRIORITY_ORDER; needs lists the READY_NEEDS fields an unstarted item still lacks, the
 # same rule as the local adapter's _item.py (change both); open_children counts its open native
 # sub-issues.
@@ -82,9 +82,7 @@ order = [p for p in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if p]
 rank = 999 if not priority else order.index(priority) if priority in order else len(order)
 m = re.search(r"(?im)^Parent:? #(\d+)", raw.get("body", "") or "")
 parent = "gh#%d" % raw["parent"]["number"] if raw.get("parent") else "gh#%s" % m.group(1) if m else ""
-kind = {"Epic": "epic", "Bug": "bug"}.get(raw.get("type") or "", "")
-if not kind and raw.get("type"): kind = "task"
-if not kind: kind = "epic" if "epic" in labels or "kind:epic" in labels else "bug" if "bug" in labels or "kind:bug" in labels else labelled("kind:", "task")
+kind = raw.get("kind") or "task"
 is_open = raw.get("state", "OPEN").upper() == "OPEN"
 needs = []
 if is_open and not state["step"]:

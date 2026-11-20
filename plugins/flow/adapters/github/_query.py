@@ -11,8 +11,9 @@ are asked for only when GH_SIZE_FIELD, GH_PRIORITY_FIELD or GH_AREA_FIELD is set
 GH_PROJECT is set, because they need the read:project scope a default login lacks. The state
 comment is read for a single issue, and in a list only for issues that carry a flow label: an
 unstarted item keeps the last gate's answer there with no label. Prints one JSON object per
-line. FLOW_GH_PAGE sets the page size (tests). A list cut at the limit says so and exits 0, or 1
-with FLOW_LIST_WHOLE set, for a caller that needs every item (a board graph). A call GitHub fails with a 5xx is tried again
+line. FLOW_GH_PAGE sets the page size (tests). The limit counts the issues the scope and the pick
+keep, their kinds too, so issues they leave out never use it up. A list cut at the limit says so
+and exits 0, or 1 with FLOW_LIST_WHOLE set, for a caller that needs every item (a board graph). A call GitHub fails with a 5xx is tried again
 (_call.py); a call that still fails ends the read with a message, never with half an item."""
 import json, os, re, sys
 
@@ -55,7 +56,7 @@ SEARCH = """query($q: String!, $first: Int!, $after: String) {
 MEMBERS = """query($q: String!, $first: Int!, $after: String) {
   search(query: $q, type: ISSUE, first: $first, after: $after) {
     pageInfo { hasNextPage endCursor } nodes { ... on Issue {
-      number state """ + LABELS + " " + ASSIGNEES + " } } } }"
+      number state issueType { name } """ + LABELS + " " + ASSIGNEES + " } } } }"
 
 
 def filter_values(prefix, name):
@@ -65,11 +66,12 @@ def filter_values(prefix, name):
 def filter_rules(prefix):
     """The neutral fields of a filter (FLOW_PICK_ for `list --pick`, pick_filter in lib/flow.sh;
     FLOW_SCOPE_ for github.scope, scope_filter; list.sh turns `me` into the gh user's login): a
-    login, label names and issue states (open, closed), compared without case as GitHub does. The
-    kinds are matched on the built item, in list.sh and in-scope.sh."""
+    login, label names and issue states (open, closed), compared without case as GitHub does, and
+    the kinds (kind_of)."""
     assignee = os.environ.get(prefix + "ASSIGNEE", "").strip().lower()
     return {"assignee": {assignee} if assignee else set(),
-            "labels": filter_values(prefix, "LABELS"), "status": filter_values(prefix, "STATUS")}
+            "labels": filter_values(prefix, "LABELS"), "status": filter_values(prefix, "STATUS"),
+            "kinds": filter_values(prefix, "KINDS")}
 
 
 # A query is GitHub search qualifiers, sent as written within the repository's issues.
@@ -80,10 +82,23 @@ PAGE_SIZE = int(os.environ.get("FLOW_GH_PAGE", "50"))
 INSIDE, OUTSIDE, UNKNOWN = 0, 1, 3
 
 
+def kind_of(node):
+    """The flow kind of an issue: its type Epic or Bug, any other type a task; with no type, the
+    label epic or bug (or kind:epic, kind:bug), else the first kind: label, else task."""
+    type_name = (node.get("issueType") or {}).get("name") or ""
+    if type_name:
+        return {"Epic": "epic", "Bug": "bug"}.get(type_name, "task")
+    labels = [label["name"] for label in node["labels"]["nodes"]]
+    for kind in ("epic", "bug"):
+        if kind in labels or "kind:" + kind in labels:
+            return kind
+    return next((label[len("kind:"):] for label in labels if label.startswith("kind:")), "task")
+
+
 def matches(node, rules):
     have = {"assignee": {assignee["login"].lower() for assignee in node["assignees"]["nodes"]},
             "labels": {label["name"].lower() for label in node["labels"]["nodes"]},
-            "status": {node["state"].lower()}}
+            "status": {node["state"].lower()}, "kinds": {kind_of(node)}}
     return all(have[field] & wanted for field, wanted in rules.items() if wanted)
 
 
@@ -113,27 +128,37 @@ def issue_page(owner, name, states, first, after):
 
 
 def scope_is_empty():
-    return not scope_qualifiers() and not any(SCOPE_RULES.values())
+    """True when github.scope sets no qualifier and no rule but its kinds, which in-scope.sh
+    matches on the issue it reads."""
+    return not scope_qualifiers() and not any(wanted for field, wanted in SCOPE_RULES.items() if field != "kinds")
 
 
 def scoped_numbers(query, limit, number):
-    """The numbers of the issues github.scope's search holds and SCOPE_RULES match, page by page up
-    to the limit; None for a failed call, after which nothing more. Stopping at the limit says so,
-    naming gh#number, the issue asked about."""
+    """The numbers of the issues github.scope's search holds and SCOPE_RULES match, page by page
+    until the limit of them; None for a failed call, after which nothing more. Stopping at the
+    limit says so, naming gh#number, the issue asked about."""
     after, seen = None, 0
-    while seen < limit:
-        response = graphql(MEMBERS, q=query, first=min(PAGE_SIZE, limit - seen), after=after)
+    while True:
+        response = graphql(MEMBERS, q=query, first=PAGE_SIZE, after=after)
         if not response:
             yield None
             return
         found = response["data"]["search"]
-        yield from (node.get("number") for node in found["nodes"] if matches(node, SCOPE_RULES))
-        seen += len(found["nodes"])
+        inside = [node.get("number") for node in found["nodes"] if matches(node, SCOPE_RULES)]
+        yield from inside[:limit - seen]
+        seen += len(inside)
+        if past_limit(seen, limit, found["pageInfo"]["hasNextPage"]):
+            break
         if not found["pageInfo"]["hasNextPage"]:
             return
         after = found["pageInfo"]["endCursor"]
     sys.stderr.write("flow: stopped at github.limit %d issues in github.scope before gh#%d; raise it in .flow/config.yaml\n"
                      % (limit, number))
+
+
+def past_limit(kept, limit, more):
+    """True when the issues kept so far run past the limit, or reach it with more pages to read."""
+    return kept > limit or (kept == limit and more)
 
 
 def in_scope(owner, name, number, limit):
@@ -200,7 +225,7 @@ def raw(repo, node, marker, always=False):
         "number": node["number"], "title": node["title"], "body": node["body"] or "",
         "state": node["state"], "url": node["url"],
         "labels": [{"name": l["name"]} for l in node["labels"]["nodes"]],
-        "type": (node.get("issueType") or {}).get("name", ""),
+        "type": (node.get("issueType") or {}).get("name", ""), "kind": kind_of(node),
         "parent": node.get("parent"),
         "blocked_by": [{"number": b["number"], "state": b["state"].lower()} for b in node["blockedBy"]["nodes"]],
         "fields": fields,
@@ -228,16 +253,18 @@ def main():
     states = "OPEN" if sys.argv[4] == "open" else None
     what = "open issues" if states else "issues"
     limit, after, seen = int(sys.argv[5]), None, 0
-    while seen < limit:
-        issues = issue_page(owner, name, states, min(PAGE_SIZE, limit - seen), after)
+    while True:
+        issues = issue_page(owner, name, states, PAGE_SIZE, after)
         if not issues:
             sys.exit(1)
-        for node in issues["nodes"]:
-            # A node the filter leaves out costs no state comment read.
-            issue = raw(repo, node, marker) if matches(node, SCOPE_RULES) and matches(node, PICK_RULES) else None
+        kept = [node for node in issues["nodes"] if matches(node, SCOPE_RULES) and matches(node, PICK_RULES)]
+        for node in kept[:limit - seen]:
+            issue = raw(repo, node, marker)
             if issue is not None:
                 print(json.dumps(issue))
-            seen += 1
+        seen += len(kept)
+        if past_limit(seen, limit, issues["pageInfo"]["hasNextPage"]):
+            break
         if not issues["pageInfo"]["hasNextPage"]:
             return
         after = issues["pageInfo"]["endCursor"]

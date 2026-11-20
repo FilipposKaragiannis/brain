@@ -97,6 +97,9 @@ JQL_CLAUSES = [
      lambda i, m: status_of(i)["name"].lower() in [s.lower() for s in quoted(m.group(1) or m.group(2))]),
     (re.compile(r'labels (?:in \(([^)]*)\)|= ("(?:[^"\\]|\\.)*"))'),
      lambda i, m: bool(set(i["fields"].get("labels") or []) & set(quoted(m.group(1) or m.group(2))))),
+    (re.compile(r"issuetype (not in|in) \(([^)]*)\)"),
+     lambda i, m: (i["fields"]["issuetype"]["name"] in quoted(m.group(2))) == (m.group(1) == "in")),
+    (re.compile(r"issuetype is EMPTY"), lambda i, m: False),
 ]
 
 

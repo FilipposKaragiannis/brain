@@ -5,7 +5,8 @@
 # fails. github.scope bounds every list (scope_filter in lib/flow.sh), and --pick keeps the issues
 # the filter pick.<name> matches inside it (pick_filter): the assignee's login (me is the gh user),
 # labels, state and kind, or its query as search qualifiers. A scope goes to GitHub as search
-# qualifiers (_query.py), so github.limit counts the issues it matches.
+# qualifiers (_query.py), and its kinds and the pick's fields are matched before github.limit
+# counts an issue, so the limit counts the issues they keep.
 . "$(dirname "$0")/_gh.sh"
 ready_rules
 scope_filter github
@@ -25,11 +26,7 @@ done
 repo="$(gh_repo)"
 raw="$(python3 -I "$FLOW_PLUGIN/adapters/github/_query.py" list "$repo" "$STATE_MARKER" "$state" "$limit")" || die "cannot list issues"
 printf '%s\n' "$raw" | while read -r line; do [ -n "$line" ] && printf '%s\n' "$line" | issue_to_item; done | python3 -I -c '
-import json, os, sys
+import json, sys
 kind = sys.argv[1]
-def kinds(name):
-    return {value.strip().lower() for value in os.environ.get(name, "").split(",") if value.strip()}
-filters = [wanted for wanted in (kinds("FLOW_SCOPE_KINDS"), kinds("FLOW_PICK_KINDS")) if wanted]
 items = [json.loads(line) for line in sys.stdin if line.strip()]
-print(json.dumps([item for item in items
-                  if (not kind or item["kind"] == kind) and all(item["kind"] in wanted for wanted in filters)]))' "$kind"
+print(json.dumps([item for item in items if not kind or item["kind"] == kind]))' "$kind"
