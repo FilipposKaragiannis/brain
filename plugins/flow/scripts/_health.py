@@ -34,6 +34,10 @@ carries no pid when an older flow wrote it; the scan covers it. Times print in l
 Where a sandbox refuses ps, procs, owner and the ancestors a run's liveness skips are read through
 pgrep, and lsof or /proc, instead (_process.py).
 
+alive <procs> <item> <worktree> <pid> [<idle seconds>] names the process that holds the item or
+works in the worktree. With the idle seconds, a session a person started that has been idle that
+long is passed over: the comments job gives it so an abandoned session stops holding a worktree.
+
 session names one process for a line a person reads: `claude process 62102, idle 3d 2h` (idle
 since Claude last changed its status), `claude process 4242, busy`, or `codex process 7, running
 7d 2h` when the host keeps no status. Claude writes ~/.claude/sessions/<pid>.json for each running
@@ -199,10 +203,20 @@ def ancestors():
     return found
 
 
-def alive(rows, item, worktree, pid, skip_self=True):
+def sits_idle(number, where, command, idle_after, now):
+    """True for a session a person started (not claude -p or codex exec) whose status says idle
+    for at least idle_after seconds. A session with no status of its own never sits idle."""
+    if UNATTENDED.search(command):
+        return False
+    state, idle_for = describe(number, where, command, started([number]).get(number, 0), now)
+    return state == "idle" and idle_for >= idle_after
+
+
+def alive(rows, item, worktree, pid, skip_self=True, idle_after=None):
     """The process that holds the item or works in the worktree, or "". A run's liveness skips
     this script's own ancestors (the health job runs under a host); a destructive check passes
-    skip_self=False, so a session that called health from that worktree still counts."""
+    skip_self=False, so a session that called health from that worktree still counts. With
+    idle_after, a person's session idle that many seconds in the worktree does not hold it."""
     own = ancestors() if skip_self else set()
     for number, _, command in rows:
         if number == pid and is_host(command):
@@ -214,6 +228,8 @@ def alive(rows, item, worktree, pid, skip_self=True):
             continue
         real = os.path.realpath(where) if where else ""
         if (is_agent(command) or (VERIFY_RUN.search(command) and item in command.split())) and any(real == w or real.startswith(w + "/") for w in wts):
+            if idle_after is not None and is_agent(command) and sits_idle(number, where, command, idle_after, int(time.time())):
+                continue
             return "process %s" % number
         if is_host(command) and (named.search(command) or item in command.split()):
             return "process %s" % number
@@ -252,9 +268,15 @@ def elapsed(text):
 SAME_START_SLACK = 2 * 3600
 
 
+# The statuses Claude writes for a session, as the two the flow reads: a session running a shell
+# command works, and one waiting on its user does not.
+CLAUDE_STATES = {"busy": "busy", "shell": "busy", "idle": "idle", "waiting": "idle"}
+
+
 def claude_status(pid, cwd, alive_for, now):
     """(busy|idle, since epoch) from ~/.claude/sessions/<pid>.json, or None when the file is
-    missing or belongs to an earlier process with the same pid (another folder or start)."""
+    missing, names a status the flow does not know, or belongs to an earlier process with the
+    same pid (another folder or start)."""
     home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     try:
         with open(os.path.join(home, "sessions", "%s.json" % pid)) as f:
@@ -270,9 +292,9 @@ def claude_status(pid, cwd, alive_for, now):
         if abs(began // 1000 - (now - alive_for)) > SAME_START_SLACK:
             return None
     status, since = record.get("status"), record.get("statusUpdatedAt")
-    if status not in ("busy", "idle") or not isinstance(since, (int, float)) or isinstance(since, bool):
+    if status not in CLAUDE_STATES or not isinstance(since, (int, float)) or isinstance(since, bool):
         return None
-    return status, int(since // 1000)
+    return CLAUDE_STATES[status], int(since // 1000)
 
 
 def host_name(command):
@@ -705,7 +727,8 @@ def main():
     if command == "procs":
         procs()
     elif command == "alive":
-        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else ""))
+        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "",
+                    idle_after=int(args[4]) if len(args) > 4 else None))
     elif command == "present":
         print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "", skip_self=False))
     elif command == "session":

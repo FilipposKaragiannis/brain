@@ -137,6 +137,17 @@ if [ "$step" = "done" ]; then
   [ "$(state_get "$data" answer_pending)" != comments ] || pass_over "$item is done; its answer to the last gate waits on the comments job: jobs/comments.sh <host> $item" 6
   pass_over "$item is done (every step ran). Merge or close it." 6
 fi
+# An item no step has started waits while its parent's split is not approved (the decomposition
+# gate), as the ready filter holds it. A started one goes on: the owner let it start.
+parent="$(json_get "$data" parent)"
+if [ -z "$(state_get "$data" step)" ] && [ -n "$parent" ] && [ "$(state_get "$(adapter read "$parent" 2>/dev/null)" gate)" = decomposition ]; then
+  pass_over "$item waits: its parent $parent waits at the decomposition gate" 4
+fi
+# An epic's closeout checks that every child is closed: it runs nothing while one is open.
+if [ "$step" = closeout ]; then
+  kids="$(json_get "$data" open_children)"
+  if [ "${kids:-0}" -gt 0 ] 2>/dev/null; then pass_over "$item waits on its $kids open child item(s) before closeout" 4; fi
+fi
 # A split item (steward.sh split) runs no step: its children do the work.
 if [ "$step" = split ]; then
   kids="$(json_get "$data" open_children)"
