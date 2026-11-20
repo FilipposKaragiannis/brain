@@ -189,7 +189,8 @@ code_runs() {
   # $1 code text (command_code), $2 a program. True when one command of the code starts that
   # program: it is the command's first word, as written or at the end of a longer path, after
   # any VAR=value words and the words that only pass a command on (a shell, env, exec, nohup,
-  # command, nice, timeout, caffeinate, with their options). A shell given -n only parses the
+  # command, nice, timeout, caffeinate, with their options; a number only after nice, timeout or
+  # caffeinate, as after a shell it is the script). A shell given -n only parses the
   # script and command -v or -V only looks the name up: both start nothing. A path that is an
   # argument (git add, sed, grep) starts nothing. An escaped character (\;) separates nothing.
   printf '%s\n' "$1" | T="$2" awk '
@@ -201,7 +202,7 @@ code_runs() {
       return word == "" || word ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || word ~ /^(if|then|else|elif|do|while|until|!|time)$/
     }
     function is_passer_argument(passer, word) {
-      return passer != "" && word ~ /^(-|[0-9]+[smhd]?$)/
+      return passer != "" && (word ~ /^-/ || (passer ~ /^(nice|timeout|caffeinate)$/ && word ~ /^[0-9]+[smhd]?$/))
     }
     function passes_on(base) {
       return base ~ /^(sh|bash|zsh|dash|ksh|env|exec|nohup|command|nice|timeout|caffeinate)$/

@@ -168,6 +168,8 @@ expect "ProgramRunWithArgumentsAfterAnotherCommand_IsBlocked: each command of th
 expect "ProgramRunThroughAShell_IsBlocked: sh only passes the script on" check-gates.sh 'sh ./tools/test.sh' 2 "gate whole-suite"
 expect "ProgramRunByItsFullPath_IsBlocked: a longer path ends in the same program" check-gates.sh '/work/app-wt-2/tools/test.sh' 2 "gate whole-suite"
 expect "ProgramRunBehindEnvAndTimeout_IsBlocked: words that pass a command on do not hide it" check-gates.sh 'env -i LANG=C timeout 3600 tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterANumberedShellScript_Passes: the number after the shell is the script it runs" check-gates.sh 'bash 123 tools/test.sh' 0 ""
+expect "ProgramRunBehindNiceWithANumber_IsBlocked: the number nice takes does not hide the command" check-gates.sh 'nice -n 5 tools/test.sh' 2 "gate whole-suite"
 expect "ProgramRunInsideShDashC_IsBlocked: the quoted command is the command" check-gates.sh "nohup sh -c 'tools/test.sh; echo done' &" 2 "gate whole-suite"
 expect "ProgramRunInTheBackgroundInASubshell_IsBlocked: a subshell starts it all the same" check-gates.sh '(tools/test.sh > /tmp/out.log 2>&1 &)' 2 "gate whole-suite"
 expect "ProgramRunWithTheMarker_Passes: the owner approved this run" check-gates.sh 'tools/test.sh flow # [whole-suite]' 0 ""
