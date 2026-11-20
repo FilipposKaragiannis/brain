@@ -2564,6 +2564,23 @@ check "ClaimUnderQuotedScopeKey_ExitsTwo: a new claim of an item outside a local
 "$P/scripts/next.sh" "$sout" >/dev/null 2>&1; code=$?
 scope_unpick "{\"item\": \"$sout\"}"
 check "NextNamedUnderQuotedScopeKey_ExitsTwo: next on a named item outside a local.scope whose key is quoted is refused, because a quoted key is the same scope every list applies" [ "$code" -eq 2 ]
+scope_quoted() { # scope_quoted <quote> <the local.scope block's lines>: scope_config with the scope key in <quote>
+  scope_config "$2" && python3 -c 'import sys; p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  %sscope%s:\n" % (sys.argv[1], sys.argv[1]), 1))' "$1"
+}
+scope_quoted '"' '    milestone: v1'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "DoubleQuotedScopeKeyUnknownField_ListExitsTwo: a local.scope whose key is in double quotes and names a field the adapter does not map is refused, because a quoted key is checked as the unquoted one is" [ "$code" -eq 2 ]
+scope_quoted "'" '    milestone: v1'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "SingleQuotedScopeKeyUnknownField_ListExitsTwo: a local.scope whose key is in single quotes and names a field the adapter does not map is refused, because a quoted key is checked as the unquoted one is" [ "$code" -eq 2 ]
+scope_quoted '"' '    labels:
+      team: team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "QuotedScopeKeyNestedMapField_ListExitsTwo: a field written as a map under a quoted local.scope key is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_quoted "'" "    'labels': [team-a]"
+quoted_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
+check_all "QuotedScopeKeys_ListShowsItemInside: a local.scope with quoted keys lists an item it matches, because a quoted key reads as the unquoted one" 'case " $quoted_scope_ids " in *" $sin "*) true ;; *) false ;; esac'
+check_all "QuotedScopeKeys_ListHidesItemOutside: a local.scope with quoted keys leaves out an item outside it, because a quoted key reads as the unquoted one" '[ -n "$quoted_scope_ids" ] && case " $quoted_scope_ids " in *" $sout "*) false ;; *) true ;; esac'
 scope_config ''
 empty_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
 check_all "ScopeEmpty_ListsEveryItem: an empty local.scope lists the items inside and outside the labels, because an empty scope is unset" 'case " $empty_scope_ids " in *" $sin "*) ;; *) false ;; esac && case " $empty_scope_ids " in *" $sout "*) true ;; *) false ;; esac'

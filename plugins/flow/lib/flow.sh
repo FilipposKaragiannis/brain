@@ -539,7 +539,7 @@ json_obj() {
 }
 
 # yaml_keys <file> <dotted.path>: the child keys of a map, one per line (top level when the
-# path is empty).
+# path is empty). A quoted key reads as yaml_get reads it, without its quotes.
 yaml_keys() {
   [ -f "$1" ] || return 0
   awk -v want="$2" '
@@ -550,6 +550,7 @@ yaml_keys() {
       body = substr($0, RLENGTH + 1); sub(/[ \t]+#.*$/, "", body)
       if (body ~ /^- /) next
       key = body; sub(/:.*$/, "", key); sub(/^[ \t]+/, "", key); sub(/[ \t]+$/, "", key)
+      if (key ~ /^".*"$/ || key ~ /^'\''.*'\''$/) key = substr(key, 2, length(key) - 2)
       if (found) { if (indent < depth) exit; if (indent == depth && index(body, ":")) print key; next }
       if (indent != depth) { if (indent < depth) exit; next }
       if (key != keys[depth + 1]) next
@@ -574,8 +575,8 @@ yaml_nested() {
     END { exit !nested }' "$1"
 }
 
-# yaml_line <file> <dotted.path>: the line number of the key, empty when it is absent. For
-# messages that point the owner at the line to fix.
+# yaml_line <file> <dotted.path>: the line number of the key, quoted or not, empty when it is
+# absent. For messages that point the owner at the line to fix.
 yaml_line() {
   [ -f "$1" ] || return 0
   awk -v want="$2" '
@@ -586,6 +587,7 @@ yaml_line() {
       body = substr($0, RLENGTH + 1); sub(/[ \t]+#.*$/, "", body)
       if (body ~ /^- /) next
       key = body; sub(/:.*$/, "", key); sub(/^[ \t]+/, "", key); sub(/[ \t]+$/, "", key)
+      if (key ~ /^".*"$/ || key ~ /^'\''.*'\''$/) key = substr(key, 2, length(key) - 2)
       if (indent != depth) { if (indent < depth) exit; next }
       if (key != keys[depth + 1]) next
       depth = indent + 1
