@@ -56,7 +56,10 @@ before the slices they block, and verify every blocker edge came back from a `re
    carries them.
 2. Write `<reports>/plan.md` from the template in the `flow:plan` skill: goal, non-goals,
    phases (each with concrete items, an autonomous verification with the expected result, its
-   `touches` globs, and `independent: yes|no`), the test seams, the docs to update, risks.
+   `touches` globs, and `independent: yes|no`), the test seams, the docs to update, risks. A
+   phase's verification names the tests that cover the phase, one test or one group as the
+   testing guide runs them. It is never the project's whole test command: verify runs that
+   once, scoped to the change, and a phase that asks for it makes every phase pay for it.
 3. Re-estimate the size from the plan. Report it in the result file when it changed.
 4. Write the union of the phase `touches` to the result file so the board can show overlaps,
    and `changes`: the globs among them whose existing behavior the plan changes (additive work
