@@ -124,6 +124,10 @@ standards '"true"' '[{"name": "nameless-command", "paths": ["src/**"]}]'
 verify >/dev/null 2>&1; malformed_code=$?
 check "TestEntryWithNoCommand_FailsVerifyAndNamesTheEntry: the config check fails and says which entry has no command" \
   '[ "$malformed_code" -eq 1 ] && [ "$(check_status config)" = fail ] && check_field config summary | grep -q "nameless-command has no command"'
+printf '{"test": [{"name": "twice", "command": "true"}, {"name": "twice", "command": "false"}]}' > "$work/repeated-names.json"
+repeated_said="$(python3 "$plugin/scripts/_checks.py" plan "$work/repeated-names.json" 2>&1)"; repeated_code=$?
+check "TestNameUsedTwice_PlansNothingAndNamesIt: the plan exits 2 and says which name repeats, so no command runs under a name it shares" \
+  '[ "$repeated_code" -eq 2 ] && printf "%s" "$repeated_said" | grep -q "the name twice is used more than once"'
 
 echo "scope: a run stopped at its limit stays at verify"
 limit_yaml="verify:
