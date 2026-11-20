@@ -190,11 +190,21 @@ code_runs() {
   # program: it is the command's first word, as written or at the end of a longer path, after
   # any VAR=value words and the words that only pass a command on (a shell, env, exec, nohup,
   # command, nice, timeout, caffeinate, with their options; a number only after nice, timeout or
-  # caffeinate, as after a shell it is the script). A shell given -n only parses the
+  # caffeinate, as after a shell it is the script). An option that takes a separate operand (exec
+  # -a, env -u -C -P -S -a, nice -n, timeout -k -s, caffeinate -t -w, a shell's -o -O, and their
+  # long forms) passes that operand on too. A shell given -n only parses the
   # script and command -v or -V only looks the name up: both start nothing. A path that is an
   # argument (git add, sed, grep) starts nothing. An escaped character (\;) separates nothing.
   printf '%s\n' "$1" | T="$2" awk '
-    BEGIN { t = ENVIRON["T"]; found = 0 }
+    BEGIN {
+      t = ENVIRON["T"]; found = 0
+      operand_letters["exec"] = "a"; operand_letters["env"] = "aCPSu"; operand_letters["nice"] = "n"
+      operand_letters["timeout"] = "ks"; operand_letters["caffeinate"] = "tw"
+      operand_words["env"] = "unset|chdir|split-string|argv0"; operand_words["nice"] = "adjustment"
+      operand_words["timeout"] = "kill-after|signal"
+      split("sh bash zsh dash ksh", shells, " ")
+      for (each in shells) { operand_letters[shells[each]] = "oO"; operand_words[shells[each]] = "rcfile|init-file" }
+    }
     function names_program(word) {
       return word == t || (length(word) > length(t) && substr(word, length(word) - length(t)) == "/" t)
     }
@@ -203,6 +213,10 @@ code_runs() {
     }
     function is_passer_argument(passer, word) {
       return passer != "" && (word ~ /^-/ || (passer ~ /^(nice|timeout|caffeinate)$/ && word ~ /^[0-9]+[smhd]?$/))
+    }
+    function takes_operand(passer, option) {
+      if (option ~ /^--/) return (passer in operand_words) && option ~ ("^--(" operand_words[passer] ")$")
+      return (passer in operand_letters) && option ~ ("^-[^" operand_letters[passer] "]*[" operand_letters[passer] "]$")
     }
     function passes_on(base) {
       return base ~ /^(sh|bash|zsh|dash|ksh|env|exec|nohup|command|nice|timeout|caffeinate)$/
@@ -216,7 +230,7 @@ code_runs() {
       for (position = 1; position <= count; position++) {
         word = words[position]; base = word; sub(/^.*\//, "", base)
         if (starts_nothing(passer, word)) return 0
-        if (is_setup_word(word) || is_passer_argument(passer, word)) continue
+        if (is_setup_word(word) || is_passer_argument(passer, word)) { position += takes_operand(passer, word); continue }
         if (passes_on(base)) { passer = base; continue }
         return names_program(word)
       }
