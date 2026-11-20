@@ -29,17 +29,17 @@ worktree_placeholder_flaw() {
     BEGIN {
       text = ENVIRON["PLACEHOLDER_COMMAND"]; width = length("{path}"); depth = 0; backticks = 0; quote[0] = ""; closed_by[0] = ""
       for (at = 1; at <= length(text); at++) {
-        char = substr(text, at, 1); state = quote[depth]
+        character = substr(text, at, 1); state = quote[depth]
         if (backticks > 0 && placeholder(substr(text, at, width))) backticked(substr(text, at, width))
-        else if (state != "\047" && char == "\\") { if (placeholder(substr(text, at + 1, width))) quoted(substr(text, at + 1, width)); at++ }
+        else if (state != "\047" && character == "\\") { if (placeholder(substr(text, at + 1, width))) quoted(substr(text, at + 1, width)); at++ }
         else if (state != "" && placeholder(substr(text, at, width))) quoted(substr(text, at, width))
-        else if (state == "\047") { if (char == "\047") quote[depth] = "" }
-        else if (char == "`" && closed_by[depth] == "`") close_context()
-        else if (char == "`") open_context("`")
-        else if (opens_substitution(at)) { at += (char == "$"); open_context(")") }
-        else if (state == "\"") { if (char == "\"") quote[depth] = "" }
-        else if (char == ")" && closed_by[depth] == ")") close_context()
-        else if (char == "\047" || char == "\"") quote[depth] = char
+        else if (state == "\047") { if (character == "\047") quote[depth] = "" }
+        else if (character == "`" && closed_by[depth] == "`") close_context()
+        else if (character == "`") open_context("`")
+        else if (opens_substitution(at)) { at += (character == "$"); open_context(")") }
+        else if (state == "\"") { if (character == "\"") quote[depth] = "" }
+        else if (character == ")" && closed_by[depth] == ")") close_context()
+        else if (character == "\047" || character == "\"") quote[depth] = character
       }
     }'
 }
