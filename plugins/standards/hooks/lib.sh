@@ -102,8 +102,10 @@ command_code() {
   # flag (-m, --message, -F, -e, --grep), or an argument of a text tool (echo, printf, grep, rg,
   # sed, awk, cat). Kept: a one-word quoted argument of any other command ("update-golden" passed
   # to make or dotnet) with its ; | & ( ) { } as spaces, the quoted argument of `sh -c`, `bash -c`
-  # and `eval` as written, and any $( ) inside double quotes. A forbid gate matches against this, so a doc, a commit message or an echo that
-  # names a paused verb does not trip it, but quoting the verb does not hide a run.
+  # and `eval` as written, and any $( ) inside double quotes. A -c script is followed by `; :`, so
+  # the shell's own arguments after it start nothing; a shell given -n runs no -c script, so that
+  # one counts as quoted text. A forbid gate matches against this, so a doc, a commit message or
+  # an echo that names a paused verb does not trip it, but quoting the verb does not hide a run.
   printf '%s\n' "$1" | awk '
     BEGIN { sq = sprintf("%c", 39); dq = sprintf("%c", 34); term = ""; n = 0 }
     {
@@ -121,7 +123,7 @@ command_code() {
     END {
       text = ""
       for (i = 1; i <= n; i++) text = text src[i] "\n"
-      len = length(text); i = 1; out = ""; tok = ""; last = ""; cmdword = ""
+      len = length(text); i = 1; out = ""; tok = ""; last = ""; cmdword = ""; shell_mode = ""
       while (i <= len) {
         c = substr(text, i, 1)
         if (c == sq || c == dq) {
@@ -141,11 +143,12 @@ command_code() {
           prev = (tok != "") ? tok : last
           inert = (cmdword ~ /^(.*\/)?(echo|printf|grep|egrep|fgrep|rg|sed|awk|cat)$/)
           prose = (body ~ /[ \t\n]/ || prev ~ /^(-m|--message|-F|--file|-e|--regexp|--grep)$/ || prev ~ /^--(message|file|grep)=$/)
-          script = (prev == "eval" || prev ~ /^-[A-Za-z]*c$/)
+          script = (shell_mode != "parses" && (prev == "eval" || prev ~ /^-[A-Za-z]*c$/))
           keep = (script || (!inert && !prose))
           if (cmdword == "" && tok == "") cmdword = body
           if (!script) gsub(/[;|&(){}]/, " ", body)
           out = out " " (keep ? body : "") " " run " "
+          if (script && prev != "eval") out = out "; : "
           tok = ""; last = ""; i = j + 1; continue
         }
         if (c == "\\") { out = out substr(text, i, 2); i += 2; continue }
@@ -153,8 +156,10 @@ command_code() {
         out = out c
         if (c ~ /[ \t\n;|&()<>]/) {
           if (tok != "") { last = tok; if (cmdword == "" && tok !~ /=/) cmdword = tok }
+          if (tok ~ /^(.*\/)?(sh|bash|zsh|dash|ksh)$/) shell_mode = "runs"
+          else if (shell_mode == "runs" && tok ~ /^-[A-Za-z]*n[A-Za-z]*$/) shell_mode = "parses"
           tok = ""
-          if (c ~ /[\n;|&(]/) cmdword = ""
+          if (c ~ /[\n;|&(]/) { cmdword = ""; shell_mode = "" }
         } else tok = tok c
         i++
       }
