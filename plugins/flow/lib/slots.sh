@@ -42,6 +42,13 @@ slot_group_alive() {
   case "$live_group" in ''|*[!0-9]*|0|1) return 1 ;; esac
   group_running "$live_group"
 }
+# slot_holders <pool>: the pids of the runs that hold the pool's slots, comma-separated.
+slot_holders() {
+  for held_path in "$1"/*; do
+    case "${held_path##*/}" in ''|*[!0-9]*) continue ;; esac
+    readlink "$held_path" 2>/dev/null
+  done | paste -sd, - | sed 's/,/, /g'
+}
 # slot_give <slot>: frees the slot.
 slot_give() { rm -f "$1.group" "$1"; }
 # slot_give_all <pool> <pid>: frees every slot of the pool <pid> holds whose host group is gone.

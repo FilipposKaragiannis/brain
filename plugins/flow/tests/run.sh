@@ -526,6 +526,11 @@ sh "$here/epic-gates.sh" > "$work/epic-gates.out" 2>&1; code=$?
 check "epic-gates: $(tail -n 1 "$work/epic-gates.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/epic-gates.out"
 
+echo "an idle session stops holding a worktree, and a session's status is read in full (tests/sessions.sh)"
+sh "$here/sessions.sh" > "$work/sessions.out" 2>&1; code=$?
+check "sessions: $(tail -n 1 "$work/sessions.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/sessions.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
@@ -4238,6 +4243,27 @@ check "comments job: a run named by the item after one named by its PR number te
 printf '4242\t%s\tclaude --resume\n' "$wm" > "$FLOW_HEALTH_PROCS"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
 check "comments job: a pass named by the item clears the marker a run named by the PR number reads" [ "$(grep -c '	comments-skipped	' .flow/events.log)" = "$((told + 1))" ]
 check "comments job: the in-use marker is keyed by the PR number" sh -c "ls .flow/log/comments.seen/ | grep -qx 'pr-90.told-in-use' && ! ls .flow/log/comments.seen/ | grep -q '^90.told-in-use'"
+# A person's session idle past jobs.comments.idle_session holds a worktree with nothing uncommitted
+# no longer; with an uncommitted change in it the pass still stays out.
+mkdir -p "$HOME/.claude/sessions"
+python3 -c 'import json, sys, time; json.dump({"pid": 4242, "cwd": sys.argv[1], "status": "idle", "statusUpdatedAt": int((time.time() - 7200) * 1000)}, open(sys.argv[2], "w"))' "$wm" "$HOME/.claude/sessions/4242.json"
+: > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "IdleSessionInACleanWorktree_PassRuns: a session idle two hours with nothing uncommitted leaves no work the pass could edit under" grep -q 'comments 90' "$work/host77.log"
+printf 'theirs\n' > "$wm/uncommitted.txt"
+: > "$work/host77.log"; "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "IdleSessionInAWorktreeWithUncommittedWork_PassStaysOut: the change may be the person's, so the pass does not edit under it" [ ! -s "$work/host77.log" ]
+: > "$work/host77.log"; GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=status.showUntrackedFiles GIT_CONFIG_VALUE_0=no "$P/jobs/comments.sh" claude 90 >/dev/null 2>&1
+check "IdleSessionBesideAnUntrackedFileTheGitConfigHides_PassStaysOut: the file is the person's work all the same" [ ! -s "$work/host77.log" ]
+rm -f "$wm/uncommitted.txt"
+slot_keeper="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$work/fake/jobs/comments.sh")"
+mkdir -p .flow/log/comments.slots && ln -sfn "$slot_keeper" .flow/log/comments.slots/1
+: > "$work/host77.log"; mark_comments_log
+"$P/jobs/comments.sh" claude 90 >/dev/null 2>&1 & slot_waiting_run=$!
+wait_for comments_logged_since_mark '90: waits for a free pass slot'
+python3 -c 'import json, sys, time; json.dump({"pid": 4242, "cwd": sys.argv[1], "status": "busy", "statusUpdatedAt": int(time.time() * 1000)}, open(sys.argv[2], "w"))' "$wm" "$HOME/.claude/sessions/4242.json"
+kill "$slot_keeper" 2>/dev/null; wait "$slot_waiting_run"
+check "IdleSessionResumedWhileThePassWaitsForASlot_PassStaysOut: the person is back at work in the worktree" [ ! -s "$work/host77.log" ]
+rm -f "$HOME/.claude/sessions/4242.json"
 : > "$FLOW_HEALTH_PROCS"; printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
 # P2-7: a reports folder in a worktree another item holds gets no dirty-tree note.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-78', updatedAt='2026-10-25T02:00:00Z'); json.dump(d, open(p,'w'))"
