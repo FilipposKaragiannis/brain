@@ -15,7 +15,10 @@ root), `.standards/config.json` (build, format, test, mutation) and `.flow/confi
    apart from `.flow/`. An uncommitted change is a `fail` with that as the summary.
 2. Start the run: `"<plugin>/scripts/verify.sh" <item> --start`. It runs build, format on the
    changed files, tests, mutation (a signal) and every project gate, once each, detached from
-   your shell, and writes `<reports>/verify.json` and `verify.md`. It returns at once; a run
+   your shell, and writes `<reports>/verify.json` and `verify.md`. A build or test command
+   with paths runs only when a changed file is under them, and a test command that passed on the
+   same command and files is reported as that pass, reused: both are the run's own decisions and
+   count as checked. Pass `--fresh` only when the owner asks for every command to run. It returns at once; a run
    already going is not started again. Then call `"<plugin>/scripts/verify.sh" <item> --wait`
    again and again, each a single shell call with a timeout above its wait (540 s by default;
    pass `--wait <seconds>` for a shorter call), until it exits 0 (pass) or 1 (fail). Exit 3 is
@@ -41,5 +44,6 @@ the twin the PR body embeds. Nothing else.
 
 ## Never
 Never edit code, tests or config. Never mark a check passed without running it. Never
-remove a failing check from the report. Never start a second run while one is going, and
+remove a failing check from the report. Never write a status the run did not give, and never
+drop `stopped` from a report that has it. Never start a second run while one is going, and
 never rerun to get green.

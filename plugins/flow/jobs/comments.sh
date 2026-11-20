@@ -364,7 +364,7 @@ pass() {
   if [ -n "$resume" ] && [ ! -s "$resume" ]; then
     rwt="${resume%/.flow/reports/*}"
     if [ -d "$rwt" ] && claimed_by "$rwt" "$rn_item" && dirty_tree "$rwt"; then
-      printf 'An earlier run on PR #%s left uncommitted changes in %s (found by the comments job at %s). Read git status and git diff, continue from there, build and test before you commit, discard nothing without saying so in the reply.\n' \
+      printf 'An earlier run on PR #%s left uncommitted changes in %s (found by the comments job at %s). Read git status and git diff, continue from there, build and run only the tests the change touches before you commit, discard nothing without saying so in the reply.\n' \
         "${pull##*/}" "$rwt" "$(now_iso)" > "$resume"
       job_say "$t: $rwt holds uncommitted changes from an earlier run; the pass continues from them" >/dev/null
     fi
@@ -397,7 +397,7 @@ pass() {
     job_say "$t: pass failed, $why; the next run tries it again"
     if [ -n "$resume" ]; then
       rwt="${resume%/.flow/reports/*}"
-      printf 'The previous comments pass on PR #%s was cut short at %s (%s). %s may hold its uncommitted work. Read git status and git diff, continue from there, build and test before you commit, discard nothing without saying so in the reply.\n' \
+      printf 'The previous comments pass on PR #%s was cut short at %s (%s). %s may hold its uncommitted work. Read git status and git diff, continue from there, build and run only the tests the change touches before you commit, discard nothing without saying so in the reply.\n' \
         "${pull##*/}" "$(now_iso)" "$why" "$rwt" > "$resume"
     fi
     outcome failed

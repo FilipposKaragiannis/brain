@@ -271,6 +271,11 @@ printf 'class E {\n\tTABS\n}\n' > src/App/E.cs; git add src/App/E.cs
 if "$hooks/git/pre-commit" >/dev/null 2>&1; then fail "pre-commit lets a format failure through"; else pass "pre-commit blocks on the formatter"; fi
 git reset -q src/App/E.cs; rm src/App/E.cs
 if "$hooks/git/pre-push" >/dev/null 2>&1; then pass "pre-push runs the build"; else fail "pre-push failed"; fi
+cp .standards/config.json "$work/config.before-build-map"
+python3 -c 'import json,sys; path=".standards/config.json"; config=json.load(open(path)); config["build"]={"command": "touch " + sys.argv[1], "paths": ["src/**"]}; json.dump(config, open(path, "w"))' "$work/built-from-a-map"
+"$hooks/git/pre-push" >/dev/null 2>&1
+check "BuildGivenAsAMapWithPaths_PrePushRunsItsCommand: a push builds whatever changed, because the paths scope verify only" [ -f "$work/built-from-a-map" ]
+cp "$work/config.before-build-map" .standards/config.json
 
 echo "check-range: the gates per commit over a range"
 mkdir -p "$work/range" && cp -R .standards "$work/range/" && cd "$work/range" && git init -q -b main && git config user.email t@t && git config user.name t
@@ -334,16 +339,22 @@ PATH="$orig_path"; export PATH
 plugin_copy="$work/plugin"; cp -R "$hooks/.." "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
 mkdir -p "$work/empty" && cd "$work/empty" && git init -q -b main && git config user.email t@t && git config user.name t
-check "init: an empty repo installs and lists the gaps" sh -c "'$init' | grep -q 'Gaps' && '$init' | grep -q 'build is empty' && '$init' | grep -q 'languages is empty' && '$init' | grep -q 'testing-guide.md: 4 placeholder'"
+check "init: an empty repo installs and lists the gaps" sh -c "'$init' | grep -q 'Gaps' && '$init' | grep -q 'build is empty' && '$init' | grep -q 'languages is empty' && '$init' | grep -q 'testing-guide.md: 5 placeholder'"
 check "init: --check flags the gaps (exit 1)" sh -c "! '$init' --check >/dev/null && '$init' --check | grep -q 'gap: .standards/config.json: test is empty'"
 mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config user.email t@t && git config user.name t
 mkdir -p src/App && printf 'Microsoft Visual Studio Solution File\n' > src/App.sln && printf 'class A {}\n' > src/App/A.cs
 check "init: a fresh install writes the stamp" sh -c "'$init' >/dev/null && grep -q '^source	' .standards/stamp && grep -q '	.standards/rules/' .standards/stamp"
-check "init: detected commands leave only the guide placeholders as gaps" sh -c "'$init' --check | grep -c 'gap:' | grep -qx 1 && '$init' --check | grep -q 'gap: .standards/testing-guide.md: 4 placeholder'"
+check "init: detected commands leave only the guide placeholders as gaps" sh -c "'$init' --check | grep -c 'gap:' | grep -qx 1 && '$init' --check | grep -q 'gap: .standards/testing-guide.md: 5 placeholder'"
 python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
 check "init: writes only under .standards and the host paths" sh -c "[ ! -d docs ] && [ ! -d .githooks ] && [ -f .standards/testing-guide.md ] && [ -f .standards/rules/csharp.md ]"
 check "init: no project roster, no eval runner" sh -c "[ ! -e .standards/evals ]"
 check "init: no .githooks, hooksPath is the plugin folder" sh -c "[ \"\$(git config core.hooksPath)\" = .standards/hooks/git ]"
+cp .standards/config.json "$work/config.before-test-list"
+python3 -c 'import json; path=".standards/config.json"; config=json.load(open(path)); config["test"]=[{"name": "unit", "command": "dotnet test", "paths": ["src/**"]}, {"name": "nameless-command", "paths": ["docs/**"]}]; json.dump(config, open(path, "w"))'
+check "TestListEntryWithNoCommand_InitNamesItAmongTheGaps: the owner reads which entry verify could not run" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: test\[1\] (nameless-command) has no command'"
+python3 -c 'import json; path=".standards/config.json"; config=json.load(open(path)); config["test"]=[{"name": "unit", "command": "dotnet test", "paths": ["src/**"]}]; json.dump(config, open(path, "w"))'
+check "WellFormedTestList_AddsNoGap: a list of named commands with paths is a setting like any other" sh -c "! '$init' --check | grep -q 'gap: .standards/config.json: test'"
+cp "$work/config.before-test-list" .standards/config.json
 check "init: --check is clean after install" sh -c "'$init' --check | grep -q 'up to date'"
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
 printf '# mine\n' >> .codex/agents/standards-reviewer.toml
