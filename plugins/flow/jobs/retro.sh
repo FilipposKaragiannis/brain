@@ -7,7 +7,10 @@
 # written for the console and never used to find the new lessons. Fewer than N new lessons (default 1): quiet exit,
 # no model spend. Otherwise runs the meta `retro` skill in a fresh host session from the main
 # worktree in unattended mode: marketplace findings become a PR on retro/<date>, project
-# findings are listed in <flow home>/reports/retro-<date>.md, nothing is asked.
+# findings are listed in <flow home>/reports/retro-<date>.md, nothing is asked. The graph report
+# of the last week (scripts/graph-report.sh) is written to <flow home>/reports/graph-<date>.md
+# first and named to the retro, so a step that got slower or runs again and again is a finding
+# beside the lessons.
 # The lessons stay on this machine under the flow home: .flow/ is excluded from git, so the job
 # commits nothing and each clone keeps its own lessons.
 set -u
@@ -23,7 +26,10 @@ since=''; [ -f "$home/retros.log" ] && since="$(tail -1 "$home/retros.log" | cut
 new=0; [ -f "$home/lessons.jsonl" ] && new="$(awk -v since="$since" 'match($0, /"time":"[^"]*"/) { if (substr($0, RSTART + 8, RLENGTH - 9) > since) n++ } END { print n + 0 }' "$home/lessons.jsonl")"
 [ "$new" -ge "$min" ] || { job_say "quiet: $new new lesson(s), minimum $min"; exit 0; }
 job_say "running over $new new lesson(s)"
-job_host_run "$main" "$(host_skill_prompt "$host" meta retro "Unattended: nobody answers questions. Read the $new lessons since the last retro from $home/lessons.jsonl ($total lines; the new ones are those with a time after ${since:-the start}). Marketplace changes go in a PR${market:+ from the marketplace at $market}; project changes are listed, not applied, in $home/reports/retro-$(date +%F).md. Append the retros.log line with $total as the lessons read so far.")" \
+graph_report="$home/reports/graph-$(date +%F).md"; mkdir -p "$home/reports"
+"$FLOW_PLUGIN/scripts/graph-report.sh" > "$graph_report" 2>/dev/null || rm -f "$graph_report"
+graph_note=""; [ ! -s "$graph_report" ] || graph_note=" Read the graph report of the last week at $graph_report too: a step that got slower, fails often or runs more than twice per item is a finding."
+job_host_run "$main" "$(host_skill_prompt "$host" meta retro "Unattended: nobody answers questions. Read the $new lessons since the last retro from $home/lessons.jsonl ($total lines; the new ones are those with a time after ${since:-the start}). Marketplace changes go in a PR${market:+ from the marketplace at $market}; project changes are listed, not applied, in $home/reports/retro-$(date +%F).md. Append the retros.log line with $total as the lessons read so far.$graph_note")" \
   >> "$(job_log_dir)/$job.log" 2>&1 || { job_say "host exit $?"; job_host_stopped && exit 0; }
 [ -f "$home/reports/retro-$(date +%F).md" ] && job_say "report: $home/reports/retro-$(date +%F).md"
 job_say "done"
