@@ -12,7 +12,9 @@
 #                                                name git refuses, or a template that needs an
 #                                                item it cannot read, exits 2; a name another
 #                                                claim holds exits 4; both before anything is
-#                                                created
+#                                                created. A new claim of an item outside its
+#                                                tracker's scope exits 2 (adhoc: names have no
+#                                                tracker, no scope)
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh owner <branch>                    print the item whose pool claim holds the branch
 #                                                as its task branch, or nothing
@@ -214,6 +216,7 @@ cmd_claim() {
   base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
+  scope_holds "$item" || exit 2
   branch="flow/$(item_slug "$item")"
   if adapter_for "$item" >/dev/null 2>&1; then
     branch="$(claim_branch_option "$@")"

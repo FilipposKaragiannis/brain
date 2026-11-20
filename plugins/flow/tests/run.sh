@@ -593,6 +593,73 @@ jira_comment_as "$jira_gated" stranger@acme.test "/answer"
 jira_area_config '  answer_from: [stranger@acme.test]
 '
 check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
+echo "jira tracker scope (fake curl)"
+jira_set() { python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); f=d["issues"][sys.argv[2]]["fields"]
+if sys.argv[3] == "labels": f["labels"] = [sys.argv[4]]
+else: f["assignee"] = {"accountId": "acct-" + sys.argv[4], "emailAddress": sys.argv[4], "displayName": sys.argv[4]}
+json.dump(d, open(sys.argv[1], "w"))' "$work/jira/jira.json" "${1#jira:}" "$2" "$3"; }
+jira_area_config '  scope:
+    labels: [team-a]
+'
+jsg_in="$(jira_run "$P/adapters/jira/create.sh" task "Scoped gate inside")"; jira_set "$jsg_in" labels team-a
+jsg_out="$(jira_run "$P/adapters/jira/create.sh" task "Scoped gate outside")"; jira_set "$jsg_out" labels team-b
+for gated in "$jsg_in" "$jsg_out"; do
+  jira_run "$P/scripts/gate.sh" raise "$gated" ambiguity "1. Which way?" >/dev/null 2>&1
+  jira_comment_as "$gated" flow@acme.test "/answer this way"
+done
+jira_run "$P/adapters/jira/answers.sh" >/dev/null 2>&1
+check "JiraScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue inside jira.scope, because answers reads the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_in" | jget state.gate)" = none ]
+check "JiraScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside jira.scope, because it reads only the scoped issues" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsg_out" | jget state.gate)" = ambiguity ]
+jsp="$(jira_run "$P/adapters/jira/create.sh" epic "Scoped parent")"; jira_set "$jsp" labels team-a
+jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child inside" --parent "$jsp")" labels team-a
+jira_set "$(jira_run "$P/adapters/jira/create.sh" task "Child outside" --parent "$jsp")" labels team-b
+children_inside=1
+listed_children="$(jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print([i["open_children"] for i in json.load(sys.stdin) if i["id"] == sys.argv[1]])' "$jsp")"
+check "JiraScopedList_CountsChildrenInside: list counts only the open children inside jira.scope, because the scope is ANDed into the children search" [ "$listed_children" = "[$children_inside]" ]
+check "JiraScopedRead_CountsChildrenInside: read counts only the open children inside jira.scope, because the scope is ANDed into its children search" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsp" | jget open_children)" = "$children_inside" ]
+jira_area_config '  scope:
+    kinds: [epic]
+'
+jke="$(jira_run "$P/adapters/jira/create.sh" epic "Epic with a task child")"
+jira_run "$P/adapters/jira/create.sh" task "Task child outside the kinds" --parent "$jke" >/dev/null
+kind_listed_children="$(jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print([i["open_children"] for i in json.load(sys.stdin) if i["id"] == sys.argv[1]])' "$jke")"
+check "JiraKindScopedList_ChildOfOtherKind_NotCounted: list counts no open child of a kind outside jira.scope, because the scope's kinds bound the children too" [ "$kind_listed_children" = "[0]" ]
+check "JiraKindScopedRead_ChildOfOtherKind_NotCounted: read counts no open child of a kind outside jira.scope, because the scope's kinds bound the children too" [ "$(jira_run "$P/adapters/jira/read.sh" "$jke" | jget open_children)" = 0 ]
+jira_kind_ids() { jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+jira_labelled() { # jira_labelled <label> <create.sh args...>: a new issue carrying the label; prints its id
+  jira_label="$1"; shift
+  jira_new="$(jira_run "$P/adapters/jira/create.sh" "$@")"; jira_set "$jira_new" labels "$jira_label"; printf '%s' "$jira_new"
+}
+jira_area_config '  limit: 1
+  scope:
+    labels: [kind-limit-bug]
+    kinds: [bug]
+'
+jkb="$(jira_labelled kind-limit-bug bug "Bug older than the tasks")"
+jira_labelled kind-limit-bug task "Newer task" >/dev/null; jira_labelled kind-limit-bug task "Newest task" >/dev/null
+check "JiraKindScopedList_NewerIssuesOfOtherKinds_ListsScopedPastThem: list keeps a bug past the newer tasks jira.limit 1 would hold, because the scope's kinds go into the search the limit counts" [ "$(jira_kind_ids)" = "$jkb" ]
+jira_area_config '  limit: 1
+  scope:
+    labels: [kind-limit-task]
+    kinds: [task]
+'
+jks="$(jira_labelled kind-limit-task task "Story older than the epic and the bug" --type Story)"
+jira_labelled kind-limit-task epic "Newer epic" >/dev/null; jira_labelled kind-limit-task bug "Newest bug" >/dev/null
+check "JiraTaskScopedList_NewerEpicAndBug_ListsStoryPastThem: list keeps a Story as a task past the newer epic and bug jira.limit 1 would hold, because every type but the epic and bug ones is a task in the search" [ "$(jira_kind_ids)" = "$jks" ]
+jira_area_config '  scope:
+    query: '"'"'labels = "team-a"'"'"'
+pick:
+  mine:
+    query: assignee = currentUser()
+    trackers: [jira]
+'
+jq_both="$(jira_run "$P/adapters/jira/create.sh" task "Scope and pick")"; jira_set "$jq_both" labels team-a; jira_set "$jq_both" assignee flow@acme.test
+jq_scope="$(jira_run "$P/adapters/jira/create.sh" task "Scope only")"; jira_set "$jq_scope" labels team-a
+jq_pick="$(jira_run "$P/adapters/jira/create.sh" task "Pick only")"; jira_set "$jq_pick" labels team-b; jira_set "$jq_pick" assignee flow@acme.test
+jira_query_ids="$(jira_run "$P/adapters/jira/list.sh" --pick mine | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))')"
+check_all "JiraScopeQueryAndPickQuery_KeepsIssueBothMatch: the list keeps the issue the scope and the pick both match, because the scope and the pick compose" 'case " $jira_query_ids " in *" $jq_both "*) true ;; *) false ;; esac'
+check_all "JiraScopeQueryAndPickQuery_DropsScopeOnly: the list leaves out an issue only the scope matches, because the pick applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_scope "*) false ;; *) true ;; esac'
+check_all "JiraScopeQueryAndPickQuery_DropsPickOnly: the list leaves out an issue only the pick matches, because the scope applies too" '[ -n "$jira_query_ids" ] && case " $jira_query_ids " in *" $jq_pick "*) false ;; *) true ;; esac'
 cp "$work/config.gh" .flow/config.yaml
 
 echo "github blips (fake gh)"
@@ -761,6 +828,48 @@ check_all "slack: a gate on a local item says to answer in a session, as its ada
 mkdir -p "$work/slackplugin/scripts" "$work/slackplugin/adapters/linear" && cp "$P/scripts/_slack.py" "$work/slackplugin/scripts/" && printf 'lin:\n' > "$work/slackplugin/adapters/linear/prefix"
 check_all "slack: an id reads as code by the prefix file of any adapter folder, not a fixed list" '[ "$(python3 -I "$work/slackplugin/scripts/_slack.py" t "" "" "" "" "See lin:ENG-4 and gh#5" | slack_codes)" = "lin:ENG-4" ]'
 check "slack: a link that is not https stays out of the fallback" sh -c "python3 -I '$P/scripts/_slack.py' t 'gh#1 x' 'javascript:x|<!channel>' ambiguity 'gh#1' m | python3 -c 'import json,sys; t=json.load(sys.stdin)[\"text\"]; assert \"javascript\" not in t and \"<!channel>\" not in t, t'"
+echo "github tracker scope (fake gh)"
+cp "$FAKE_GH_DIR/issues.json" "$work/scope-issues.saved"; cp .flow/config.yaml "$work/scope-config.saved"
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
+import json, sys
+path = sys.argv[1]; data = json.load(open(path))
+data["issues"] += [{"number": 50, "title": "Team A's, mine", "state": "OPEN", "labels": ["team-a"], "assignees": ["owner"]},
+                   {"number": 51, "title": "Team B's", "state": "OPEN", "labels": ["team-b"]}]
+json.dump(data, open(path, "w"))
+PY2
+gh_scope_config() { # gh_scope_config <the github.scope block's lines>
+  printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\n  scope:\n%s\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' "$1" > .flow/config.yaml
+}
+gh_scope_ids() { "$P/adapters/github/list.sh" "$@" 2>/dev/null | python3 -c 'import json,sys; print(" ".join(i["id"] for i in json.load(sys.stdin)))'; }
+gh_scope_config '    labels: [team-a]'
+for scope_issue in 50 51; do
+  "$P/scripts/gate.sh" raise "gh#$scope_issue" ambiguity "1. Which team?" >/dev/null 2>&1
+  printf '/answer 1. this one' | gh issue comment "$scope_issue" -R acme/widgets --body-file - >/dev/null
+done
+scope_cleared="$("$P/adapters/github/answers.sh" 2>/dev/null)"
+check "ScopedAnswers_GateInside_IsCleared: answers clears an answered gate on an issue github.scope matches, because answers reads the scoped issues" [ "$scope_cleared" = "gh#50" ]
+check "ScopedAnswers_GateOutside_IsLeft: answers leaves an answered gate on an issue outside github.scope, because it reads the scoped list" [ "$("$P/adapters/github/read.sh" 'gh#51' | jget state.gate)" = "ambiguity" ]
+gh_scope_config '    assignee: me'
+check "ScopedListAssigneeMe_KeepsOnlyTheGhUsers: assignee: me in github.scope keeps only the issues assigned to the gh user, because me stands for the gh user" [ "$(gh_scope_ids)" = "gh#50" ]
+scope_limit=1
+check "ScopedList_LimitCountsMatches: github.limit counts the issues the scope matches, because the scope goes to GitHub's search" [ "$(gh_scope_ids --limit "$scope_limit")" = "gh#50" ]
+gh_scope_config '    status: [Nonesuch]'
+check "ScopedList_StatusOfNoIssueState_ListsNothing: a github.scope status that names no issue state keeps no issue, though it sends GitHub no qualifier, because the scope is matched on every issue read" [ "$("$P/adapters/github/list.sh" 2>/dev/null)" = "[]" ]
+python3 - "$FAKE_GH_DIR/issues.json" <<'PY2'
+import json, sys
+path = sys.argv[1]; data = json.load(open(path))
+data["issues"] = [{"number": 60, "title": "Newest task", "state": "OPEN", "labels": ["team-c"], "type": "Task"},
+                  {"number": 61, "title": "Newer epic", "state": "OPEN", "labels": ["team-c", "epic"]},
+                  {"number": 62, "title": "Bug past them", "state": "OPEN", "labels": ["team-c"], "type": "Bug"}]
+json.dump(data, open(path, "w"))
+PY2
+gh_scope_config '    kinds: [bug]'
+check "KindScopedList_NewerIssuesOfOtherKinds_ListsScopedPastThem: a list under github.scope kinds keeps a bug past the newer issues github.limit 1 would hold, because the kinds are matched before the limit counts an issue" [ "$(gh_scope_ids --limit 1)" = "gh#62" ]
+gh_scope_config '    labels: [team-c]
+    kinds: [bug]'
+check "KindScopedSearch_NewerIssuesOfOtherKinds_ListsScopedPastThem: a scoped search under github.scope kinds keeps a bug past the newer matches github.limit 1 would hold, because the kinds are matched before the limit counts an issue" [ "$(gh_scope_ids --limit 1)" = "gh#62" ]
+cp "$work/scope-issues.saved" "$FAKE_GH_DIR/issues.json"; cp "$work/scope-config.saved" .flow/config.yaml
+
 echo "trackers and readiness on every tracker (fake gh)"
 mkdir -p "$work/trackers" && cd "$work/trackers" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t
 printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
@@ -2772,6 +2881,142 @@ printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "%s/picks.next"\nexit 5\n' "$work" > 
 cp "$P/templates/run-unattended.sh" "$picks/templates/run-unattended.sh"; : > "$work/picks.next"
 FLOW_PLUGIN="$picks" "$picks/templates/run-unattended.sh" claude --pick mine --max-steps 1 >/dev/null 2>&1
 check "unattended loop: picks its item through next.sh --pick" grep -qx -- '--json --embed-agent --pick mine' "$work/picks.next"
+cd "$repo"
+
+echo "tracker scope: every read of the local tracker"
+mkdir -p "$work/scope/bin" && cd "$work/scope" && git init -q -b main app && cd app && git config user.email me@scope.test && git config user.name t
+printf 'hi\n' > README.md && printf '.flow/\n' > .gitignore && git add -A && git commit -qm init && mkdir -p .flow
+scope_config() { # scope_config <the local.scope block's lines> [<top-level lines after it>]: local items, a pool that grows
+  printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 3\nready:\n  priority_order: [P0, P1, P2]\nnotify:\n  desktop: false\ngithub:\n  repo: acme/widgets\nlocal:\n  scope:\n%s\n%s' "$1" "${2:-}" > .flow/config.yaml
+}
+scope_ids() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(" ".join(i["id"] for i in (d["items"] if isinstance(d, dict) else d)))'; }
+scope_unpick() { # scope_unpick <next.sh --json output>: the run and its claim go, so the next pick starts clean
+  rm -f ".flow/runs/$(item_slug "$(printf '%s' "$1" | jget item)").json"
+  "$P/scripts/steward.sh" release "$(printf '%s' "$1" | jget item)" --force >/dev/null 2>&1
+}
+scope_config '    labels: [team-a]'
+sin="$("$P/adapters/local/create.sh" task "Inside the scope" --size S --priority P1 --labels team-a)"
+sout="$("$P/adapters/local/create.sh" task "Outside the scope, more urgent" --size S --priority P0 --labels team-b)"
+board_ids="$("$P/scripts/board.sh" --json 2>/dev/null | scope_ids)"
+check_all "ScopedBoard_ShowsItemInside: board --json lists an item local.scope matches, because the scope only narrows" 'case " $board_ids " in *" $sin "*) true ;; *) false ;; esac'
+check_all "ScopedBoard_HidesItemOutside: board --json leaves out an item outside local.scope, because it reads the scoped list" '[ -n "$board_ids" ] && case " $board_ids " in *" $sout "*) false ;; *) true ;; esac'
+out="$("$P/scripts/next.sh" --json 2>/dev/null)"
+check "ScopedNext_PicksOnlyInside: next takes the item inside the scope over a more urgent one outside it, because it picks from the scoped list" [ "$(printf '%s' "$out" | jget item)" = "$sin" ]
+scope_unpick "$out"
+scope_config '    labels: [team-a]' 'pick:
+  tasks:
+    kinds: [task]
+'
+out="$("$P/scripts/next.sh" --json --pick tasks 2>/dev/null)"
+check "ScopedNextPick_PicksOnlyInside: next --pick takes the item inside the scope, because the scope and the pick both apply" [ "$(printf '%s' "$out" | jget item)" = "$sin" ]
+scope_unpick "$out"
+scope_config '    labels: [team-a]'
+"$P/scripts/next.sh" "$sout" >/dev/null 2>"$work/scope.err"; code=$?
+check "NextNamedOutsideScope_ExitsTwo: next on a named item outside the scope is refused, because the flow runs no item outside its scope" [ "$code" -eq 2 ]
+check "NextNamedOutsideScope_NamesScope: the refusal names local.scope, because that is the key to change" grep -q "$sout is outside local.scope in .flow/config.yaml" "$work/scope.err"
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>"$work/scope.err"; code=$?
+check "ClaimOutsideScope_ExitsTwo: a new claim of an item outside the scope is refused, because the flow runs no item outside its scope" [ "$code" -eq 2 ]
+check "ClaimOutsideScope_TakesNoWorktree: the refused claim leaves no worktree claimed for the item, because a refusal changes nothing" [ -z "$("$P/scripts/steward.sh" find "$sout")" ]
+adhoc_path="$("$P/scripts/steward.sh" claim adhoc:scope-x 2>/dev/null)"
+check "ClaimAdhoc_IsNeverScoped: an adhoc: claim has no tracker, so a scope does not refuse it, because a scope belongs to its tracker" [ -n "$adhoc_path" ]
+"$P/scripts/steward.sh" release adhoc:scope-x --force >/dev/null 2>&1
+held_path="$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)"
+python3 -c 'p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("labels: [team-a]", "labels: [team-b]"))'
+check_all "ClaimBeforeScopeChanged_KeepsWorktree: an item claimed before it left the scope keeps its worktree, because only a new claim is refused" '[ -n "$held_path" ] && [ "$("$P/scripts/steward.sh" claim "$sin" 2>/dev/null)" = "$held_path" ]'
+"$P/scripts/next.sh" "$sin" --json >/dev/null 2>"$work/scope.err"; code=$?
+check "NextNamedClaimedBeforeScopeChanged_GetsStep: next on an item claimed before it left the scope prepares its step, because a run under way goes on" [ "$code" -eq 0 ]
+rm -f ".flow/runs/$(item_slug "$sin").json"
+"$P/scripts/steward.sh" release "$sin" --force >/dev/null 2>&1
+scope_config '    labels: [team-a]'
+"$P/adapters/local/write-state.sh" "$sin" step=split; "$P/adapters/local/write-state.sh" "$sout" step=split
+: > "$work/scope.procs"; FLOW_HEALTH_PROCS="$work/scope.procs" "$P/scripts/steward.sh" health > "$work/scope.out" 2>&1
+check "ScopedHealth_ReportsItemInside: health says a split item inside the scope is the owner's to close, because health reads the scoped list" grep -q "$sin: split, and every child is closed" "$work/scope.out"
+check "ScopedHealth_SkipsItemOutside: health says nothing of a split item outside the scope, because it reads the scoped list" sh -c "[ -s '$work/scope.out' ] && ! grep -q '$sout: split' '$work/scope.out'"
+"$P/adapters/local/write-state.sh" "$sin" step=; "$P/adapters/local/write-state.sh" "$sout" step=
+"$P/adapters/local/link-pr.sh" "$sin" https://github.com/acme/widgets/pull/90 >/dev/null; "$P/adapters/local/link-pr.sh" "$sout" https://github.com/acme/widgets/pull/90 >/dev/null
+mkdir -p "$work/scope/gh" && cp "$P/tests/_fake_gh.py" "$work/scope/gh/"
+printf '{"issues": [], "pr": {"number": 90, "state": "OPEN", "isDraft": false, "mergedAt": null, "url": "https://github.com/acme/widgets/pull/90", "headRefName": "flow/local-task-1", "baseRefName": "main", "mergeable": "MERGEABLE", "updatedAt": "2026-11-09T10:00:00Z", "headRefOid": "c0ffee"}}\n' > "$work/scope/gh/issues.json"
+cat > "$work/scope/bin/claude" <<EOF_SCOPE_HOST
+#!/bin/sh
+item="\$(printf '%s\\n' "\$*" | sed -n 's|.*/flow:comments \\([^ ]*\\)\\..*|\\1|p' | head -1)"
+"$P/adapters/local/comment.sh" "\$item" --body "Addressed every review thread"
+EOF_SCOPE_HOST
+chmod +x "$work/scope/bin/claude"
+ln -sf "$P/tests/fake-gh.sh" "$work/scope/bin/gh"
+PATH="$work/scope/bin:$PATH" FAKE_GH_DIR="$work/scope/gh" FLOW_HEALTH_PROCS="$work/scope.procs" "$P/jobs/comments.sh" claude >/dev/null 2>&1
+sin_body="$("$P/adapters/local/read.sh" "$sin" | jget body)"; sout_body="$("$P/adapters/local/read.sh" "$sout" | jget body)"
+check "ScopedCommentsJob_AddressesItemInside: an item inside the scope gets the comments pass's reply, because the job reads the scoped list" sh -c 'case "$1" in *"Addressed every review thread"*) true ;; *) false ;; esac' _ "$sin_body"
+check "ScopedCommentsJob_SkipsItemOutside: an item outside the scope gets no comments pass reply, because the job reads the scoped list" sh -c 'case "$1" in *"Addressed every review thread"*) case "$2" in *"Addressed every review thread"*) false ;; *) true ;; esac ;; *) false ;; esac' _ "$sin_body" "$sout_body"
+scope_config '    query: label:team-a'
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeQueryOnLocal_IsGap: init --check reports local.scope.query as a gap, because the local tracker has no search of its own" grep -q 'gap: .flow/config.yaml: local.scope.query: the local adapter maps assignee, status, labels and kinds, not query' "$work/scope.out"
+scope_config '    trackers: [local]'
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeTrackers_IsGap: init --check reports local.scope.trackers as a gap, because a scope belongs to its tracker" grep -q 'gap: .flow/config.yaml: local.scope.trackers: a scope belongs to its tracker' "$work/scope.out"
+scope_value() { # scope_value <local.scope's value, on the key's own line>
+  scope_config '' && python3 -c 'import sys; p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  scope: " + sys.argv[1] + "\n", 1))' "$1"
+}
+scope_value '"labels = team-a"'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeValueOnItsKey_ListExitsTwo: a local.scope written as a value is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_value '{labels: [team-a]}'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeInlineMap_ListExitsTwo: a local.scope written as an inline map is refused, because the config reads no inline map" [ "$code" -eq 2 ]
+scope_config '    - team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeAsList_ListExitsTwo: a local.scope written as a list is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_config '     labels: [team-a]'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldsThreeSpacesIn_ListExitsTwo: a local.scope whose fields sit three spaces in is refused, because no field of it reads" [ "$code" -eq 2 ]
+scope_config '    labels:
+    - team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldListAtItsIndent_ListExitsTwo: a local.scope field whose list sits at the field's own indent is refused, because a field no value of which reads would list every item" [ "$code" -eq 2 ]
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ScopeFieldListAtItsIndent_ClaimExitsTwo: a new claim under a local.scope field whose list sits at the field's own indent is refused, because an unread field is no unset field" [ "$code" -eq 2 ]
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeFieldListAtItsIndent_IsGap: init --check reports a local.scope field no value of which reads as a gap, naming the field, because every list of the tracker stops on it" grep -q 'gap: .flow/config.yaml: local.scope.labels' "$work/scope.out"
+scope_config '    labels:
+      team: team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "ScopeFieldNestedMap_ListExitsTwo: a local.scope field written as a map is refused, because a field no value of which reads would list every item" [ "$code" -eq 2 ]
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ScopeFieldNestedMap_ClaimExitsTwo: a new claim under a local.scope field written as a map is refused, because an unread field is no unset field" [ "$code" -eq 2 ]
+scope_value '"labels = team-a"'
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ClaimUnderScopeValue_ExitsTwo: a new claim under a local.scope it cannot read is refused, because an unread scope is no missing scope" [ "$code" -eq 2 ]
+FLOW_PLUGIN="$P" "$P/skills/init/scripts/init.sh" --check > "$work/scope.out" 2>&1
+check "InitCheck_ScopeValueOnItsKey_IsGap: init --check reports a local.scope written as a value as a gap, because every list of the tracker stops on it" grep -q 'gap: .flow/config.yaml: local.scope' "$work/scope.out"
+scope_config '    labels: [team-a]' && python3 -c 'p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  \"scope\":\n", 1))'
+"$P/scripts/steward.sh" claim "$sout" >/dev/null 2>&1; code=$?
+"$P/scripts/steward.sh" release "$sout" --force >/dev/null 2>&1
+check "ClaimUnderQuotedScopeKey_ExitsTwo: a new claim of an item outside a local.scope whose key is quoted is refused, because a quoted key is the same scope every list applies" [ "$code" -eq 2 ]
+"$P/scripts/next.sh" "$sout" >/dev/null 2>&1; code=$?
+scope_unpick "{\"item\": \"$sout\"}"
+check "NextNamedUnderQuotedScopeKey_ExitsTwo: next on a named item outside a local.scope whose key is quoted is refused, because a quoted key is the same scope every list applies" [ "$code" -eq 2 ]
+scope_quoted() { # scope_quoted <quote> <the local.scope block's lines>: scope_config with the scope key in <quote>
+  scope_config "$2" && python3 -c 'import sys; p=".flow/config.yaml"; t=open(p).read(); open(p, "w").write(t.replace("  scope:\n", "  %sscope%s:\n" % (sys.argv[1], sys.argv[1]), 1))' "$1"
+}
+scope_quoted '"' '    milestone: v1'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "DoubleQuotedScopeKeyUnknownField_ListExitsTwo: a local.scope whose key is in double quotes and names a field the adapter does not map is refused, because a quoted key is checked as the unquoted one is" [ "$code" -eq 2 ]
+scope_quoted "'" '    milestone: v1'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "SingleQuotedScopeKeyUnknownField_ListExitsTwo: a local.scope whose key is in single quotes and names a field the adapter does not map is refused, because a quoted key is checked as the unquoted one is" [ "$code" -eq 2 ]
+scope_quoted '"' '    labels:
+      team: team-a'
+"$P/adapters/local/list.sh" >/dev/null 2>&1; code=$?
+check "QuotedScopeKeyNestedMapField_ListExitsTwo: a field written as a map under a quoted local.scope key is refused, because a scope it cannot read would list every item" [ "$code" -eq 2 ]
+scope_quoted "'" "    'labels': [team-a]"
+quoted_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
+check_all "QuotedScopeKeys_ListShowsItemInside: a local.scope with quoted keys lists an item it matches, because a quoted key reads as the unquoted one" 'case " $quoted_scope_ids " in *" $sin "*) true ;; *) false ;; esac'
+check_all "QuotedScopeKeys_ListHidesItemOutside: a local.scope with quoted keys leaves out an item outside it, because a quoted key reads as the unquoted one" '[ -n "$quoted_scope_ids" ] && case " $quoted_scope_ids " in *" $sout "*) false ;; *) true ;; esac'
+scope_config ''
+empty_scope_ids="$("$P/adapters/local/list.sh" 2>/dev/null | scope_ids)"
+check_all "ScopeEmpty_ListsEveryItem: an empty local.scope lists the items inside and outside the labels, because an empty scope is unset" 'case " $empty_scope_ids " in *" $sin "*) ;; *) false ;; esac && case " $empty_scope_ids " in *" $sout "*) true ;; *) false ;; esac'
 cd "$repo"
 
 echo "help"

@@ -20,6 +20,9 @@ path `codex plugin list` prints for `flow`). Call it `$P` below.
    keeps (assignee, status, labels, kinds, trackers, or one tracker's query; the mapping is in
    `adapters/README.md`, Pick filters), when the user asks for their own items or a named filter.
    Exit 2 names the filters there are, or what the filter has wrong; say so and stop.
+   Exit 2 also refuses a named item outside its tracker's scope (`<tracker>.scope` in
+   `.flow/config.yaml`; `adapters/README.md`, Tracker scope) that holds no claim; say so and stop.
+   An item claimed before it left the scope keeps its claim, its worktree and its run.
    Exit 0 prints JSON: `item, step, agent, skill, worktree, branch, brief, reports, model, effort`.
    Exit 3: no free worktree, and every ready item left needs a new one; give the reason its
    last stderr line names (the unclaimed items waiting, what the claimed ones are doing), say
