@@ -149,6 +149,13 @@ export function createConsoleServer(registry: ProjectRegistry, settings: Setting
       void transcriptRoute(owner.monitor, decodeURIComponent(transcript[2]!), request, response, url);
       return;
     }
+    const graphReport = /^\/api\/projects\/([^/]+)\/graph-report$/.exec(url.pathname);
+    if (graphReport !== null) {
+      const owner = registry.get(decodeURIComponent(graphReport[1]!));
+      if (owner === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: 'not found' }); return; }
+      void graphReportRoute(owner.monitor, request, response);
+      return;
+    }
     const match = /^\/api\/projects\/([^/]+)\/(snapshot|events|refresh|actions)(?:\/([^/]+))?$/.exec(url.pathname);
     const served = match === null ? undefined : registry.get(decodeURIComponent(match[1]!));
     if (match === null || served === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: 'not found' }); return; }
@@ -283,6 +290,18 @@ async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: In
   const read = await readTranscript(agent.session.transcript, agent.session.host, { turns: Math.min(wanted, TRANSCRIPT_TURNS_MAX), lines }, transcriptTailStart(lines));
   if (read === null) { sendJson(response, HTTP_NOT_FOUND, { error: `${agent.session.transcript} cannot be read` }); return; }
   sendJson(response, HTTP_OK, { session: agent.session.id, ...read });
+}
+
+/**
+ * `GET` the flow's graph report of the project as `{days, markdown}`: what each step cost in the
+ * last `days` days and which got slower. 404 with why when it cannot be read: no flow plugin, a
+ * flow older than the report, or the script's own error.
+ */
+async function graphReportRoute(monitor: ProjectMonitor, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
+  const report = await monitor.graphReport();
+  if (!report.ok) { sendJson(response, HTTP_NOT_FOUND, { error: report.error }); return; }
+  sendJson(response, HTTP_OK, { days: report.days, markdown: report.markdown });
 }
 
 /** `GET` the `TerminalProfile` the panes take: iTerm's default profile, or null without one, and where the font is served. */

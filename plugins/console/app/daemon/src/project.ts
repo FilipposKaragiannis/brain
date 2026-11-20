@@ -9,6 +9,8 @@ import type { FlowHomeFacts, GateQuestionCache } from './collectors/flowHome.ts'
 import { flowHomeOf, poolPaths, readFlowHome } from './collectors/flowHome.ts';
 import type { GitFacts } from './collectors/git.ts';
 import { readGit } from './collectors/git.ts';
+import type { GraphReport } from './collectors/graphReport.ts';
+import { readGraphReport } from './collectors/graphReport.ts';
 import type { JobFacts } from './collectors/jobs.ts';
 import { readJobs } from './collectors/jobs.ts';
 import type { EndedProcess, ProcessFacts } from './collectors/processes.ts';
@@ -151,6 +153,16 @@ export class ProjectMonitor {
   }
 
   get snapshot(): Snapshot | null { return this.current; }
+
+  /**
+   * The flow's graph report of the project, read when a page asks for it and kept nowhere. It
+   * cannot be read before the first read of the flow home has found the plugin.
+   */
+  async graphReport(): Promise<GraphReport> {
+    const flow = this.facts.files.facts;
+    if (flow?.pluginRoot == null) return { ok: false, error: 'no flow plugin found for the project' };
+    return readGraphReport(this.project.root, flow.pluginRoot, flow.pluginScripts, this.runner);
+  }
 
   /** What a terminal pane may open in the project right now: the folders a shell may open in, the root's jobs' logs, and the sessions it may resume. */
   paneFacts(): PaneFacts {
