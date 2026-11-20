@@ -6,6 +6,24 @@ import { Markdown } from '../Markdown.tsx';
 import { Empty, Module } from '../ui.tsx';
 import { HTTP_OK } from '../useProject.ts';
 
+/** What the report's numbers mean, as markdown: the page's own words, shown above the flow script's report. */
+function howToRead(days: number): string {
+  return [
+    `A **step run** is one agent session on one step of one item. The report covers the last ${days} days and compares them with the ${days} days before.`,
+    '',
+    '- **runs**: how many times the step ran.',
+    '- **median**: the typical time of one run. Half of the runs were shorter.',
+    '- **nine in ten within**: nine runs out of ten finished within this time. It shows the slow runs.',
+    '- **failed**: runs that ended with an error.',
+    '- **cost**: what the model spent on the step.',
+    '- **runs per item**: how often the step ran for one item. 1.0 means once. Above 2, items went back and forth.',
+    '',
+    'A step is listed as **slower** when its median grew by half or more. The last table names the five items that used the most agent time.',
+    '',
+    'Watch for a step listed as slower, runs per item above 2, and a failed count that grows.',
+  ].join('\n');
+}
+
 type GraphReportRead =
   | { kind: 'reading' }
   | { kind: 'read'; days: number; markdown: string }
@@ -55,7 +73,15 @@ export function GraphReport({ snapshot }: { snapshot: Snapshot }) {
       >
         {read.kind === 'reading' && <Empty>Reading the run log…</Empty>}
         {read.kind === 'failed' && <Empty>No graph report: {read.message}.</Empty>}
-        {read.kind === 'read' && <Markdown text={read.markdown} />}
+        {read.kind === 'read' && (
+          <>
+            <details className="gate-doc" open>
+              <summary>How to read this</summary>
+              <Markdown text={howToRead(read.days)} />
+            </details>
+            <Markdown text={read.markdown} />
+          </>
+        )}
       </Module>
     </div>
   );

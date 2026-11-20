@@ -996,8 +996,10 @@ and applied columns, its report rendered as markdown, the newest open and the ot
 Graph report (`#/<project>/graph`: the flow's graph report from `/graph-report`, rendered as
 markdown: a table of the steps with their runs, median time, the time nine runs in ten finish
 within, failed runs, cost and runs per item, the steps whose median grew by half or more against
-the days before, and the five items that took the most step time; read when the screen opens and
-with "Read again", and a report that cannot be read says why, such as a flow older than 1.44.0). A
+the days before, and the five items that took the most step time, under a "How to read this"
+block that says what a step run is, what each column means and what to watch for; read when the
+screen opens and with "Read again", and a report that cannot be read says why, such as a flow
+older than 1.44.0). A
 row above every screen holds the project's fields, each a small uppercase label over its
 value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker, or
 Trackers for several (each tracker the flow reads: "GitHub issues" and "Jira" linked to their

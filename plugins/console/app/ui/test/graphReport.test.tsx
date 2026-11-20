@@ -61,6 +61,17 @@ test('GraphReport_DaemonHasAReport_SaysWhichDaysItCovers', async () => {
   expect(screen.getByText(/the last 7 days against the 7 before/), 'because "slower" means nothing without the two periods compared').toBeTruthy();
 });
 
+test('GraphReport_HowToReadThis_ExplainsEveryNumberColumnOfTheStepsTable', async () => {
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', REPORT_PATH, () => ({ status: HTTP_OK, body: { days: 7, markdown: reportWith('verify', '20m 24s') } }));
+  await renderReport(daemon);
+  const [headerRow] = within(screen.getByRole('table')).getAllByRole('row');
+  const numberColumns = within(headerRow!).getAllByRole('columnheader').map((cell) => cell.textContent ?? '').filter((name) => name !== 'step');
+  const legend = screen.getByText('How to read this').closest('details')!;
+  const explained = numberColumns.filter((name) => within(legend).queryByText(name, { selector: 'strong' }) !== null);
+  expect(explained, 'because a column nobody explains is a number the owner cannot use').toEqual(numberColumns);
+});
+
 test('GraphReport_DaemonCannotReadIt_SaysWhy', async () => {
   const daemon = new FakeDaemon();
   daemon.answer('GET', REPORT_PATH, () => ({ status: HTTP_NOT_FOUND, body: { error: 'the installed flow has no graph report: it needs flow 1.44.0 or later' } }));
