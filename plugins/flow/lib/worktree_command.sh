@@ -1,18 +1,16 @@
 # The worktree_create and worktree_remove commands of .flow/config.yaml. Sourced by
 # scripts/steward.sh, which runs them, and skills/init/scripts/init.sh, which checks them.
 # A command reaches sh -c with each {path} spelt "$1" and each {base} "$2", and the values as the
-# arguments, so no text of a value is ever read as shell.
+# arguments, so no text of a value is ever read as shell. That holds only for a bare placeholder:
+# inside double quotes or after a backslash the "$1" would be split into words, inside single
+# quotes never expanded, and inside backticks sh drops the backslash of a \" before it reads the
+# quotes, so no quoting there holds. A command with no {path}, or with a placeholder in one of
+# those places, is refused.
 
-# worktree_command_filled <command>: the command with each {path} spelt "$1" and each {base} "$2".
 worktree_command_filled() {
   printf '%s' "$1" | sed 's/{path}/"$1"/g; s/{base}/"$2"/g'
 }
 
-# worktree_command_flaw <key> <command>: why the key's command cannot run, or nothing when it can
-# or is unset: it has no {path}, a placeholder sits inside quotes or after a backslash, where
-# the "$1" it becomes would be split into words (double quotes, a backslash) or never expanded
-# (single quotes), or a placeholder sits inside backticks, where sh drops the backslash of a \"
-# before it reads the quotes, so no quoting there holds.
 worktree_command_flaw() {
   [ -n "$2" ] || return 0
   case "$2" in *'{path}'*) ;; *) printf '%s has no {path}, where flow passes the worktree'\''s folder' "$1"; return 0 ;; esac
@@ -20,11 +18,6 @@ worktree_command_flaw() {
   [ -z "$placeholder_flaw" ] || printf '%s %s' "$1" "$placeholder_flaw"
 }
 
-# worktree_placeholder_flaw <command>: how the first misplaced {path} or {base} sits, or nothing:
-# inside backticks, or inside single or double quotes or right after a backslash. A backslash
-# outside single quotes escapes the character after it. Quotes are tracked per context: $(, ( and
-# a backtick open a fresh unquoted one, the matching ) or backtick closes it, so "$(f "{path}")"
-# counts as quoted, as sh would split the "$1" it becomes.
 worktree_placeholder_flaw() {
   PLACEHOLDER_COMMAND="$1" awk '
     function placeholder(word) { return word == "{path}" || word == "{base}" }

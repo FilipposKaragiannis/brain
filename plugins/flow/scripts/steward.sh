@@ -166,11 +166,7 @@ park() {
 
 # .flow/ holds the claim and the reports and is never part of the work.
 dirty() { [ -n "$(git -C "$1" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; }
-# refuse_uncommitted_changes <path>: ends the run, exit 3, when the worktree has uncommitted changes,
-# counting changes in submodules that .gitmodules tells git status to ignore (worktree_remove takes
-# submodules too) and untracked files that status.showUntrackedFiles hides, in the worktree and in
-# every initialized submodule, or when git status fails, since then no change can be ruled out.
-refuse_uncommitted_changes() {
+refuse_removal_with_uncommitted_changes() {
   uncommitted_changes="$(git -C "$1" -c status.showUntrackedFiles=all status --porcelain --untracked-files=all --ignore-submodules=none -- . ":!.flow")" ||
     die "$1: git status failed, so its changes cannot be checked. Not removing." 3
   [ -z "$uncommitted_changes" ] || die "$1 has uncommitted changes. Not removing." 3
@@ -491,13 +487,13 @@ cmd_tmp() {
       branch_name_valid "$branch" || die "$item: its phase branch is not a valid branch name" 2
       refuse_taken_phase "$path" "$branch"
       mkdir -p "$home/tmp"
-      if [ -n "$(cfg worktree_create)" ]; then temporary_worktree_create "$path" "$task_branch" "$branch"
+      if [ -n "$(cfg worktree_create)" ]; then create_temporary_worktree_on_new_branch "$path" "$task_branch" "$branch"
       else git -C "$wt" worktree add -q -b "$branch" "$path" "$task_branch" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
     remove)
-      path="$(removable_worktree "$2")" || exit
-      branch="$(temporary_branch "$path")"
-      refuse_uncommitted_changes "$path"
+      path="$(removable_temporary_worktree "$2")" || exit
+      branch="$(checked_out_phase_branch "$path")"
+      refuse_removal_with_uncommitted_changes "$path"
       if [ -n "$(cfg worktree_remove)" ]; then run_worktree_remove "$path"
       else git -C "$main" worktree remove "$path" || die "cannot remove $path"; fi
       [ -n "$branch" ] && git -C "$main" branch -q -D "$branch" 2>/dev/null
@@ -572,72 +568,52 @@ run_setup() {
   done
 }
 
-worktree_at() {
+is_worktree_of_this_repository() {
   [ -d "$1" ] && [ "$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$1" && pwd -P)" ] &&
-    [ "$(git_common_folder "$1")" = "$(git_common_folder "$main")" ]
+    [ "$(shared_repository_folder "$1")" = "$(shared_repository_folder "$main")" ]
 }
-# git_common_folder <path>: the physical folder of the repository the worktree at the path shares.
-git_common_folder() { (CDPATH='' cd -P -- "$1" && CDPATH='' cd -P -- "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P); }
+shared_repository_folder() { (CDPATH='' cd -P -- "$1" && CDPATH='' cd -P -- "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P); }
 
-# worktree_maker: what makes a new worktree, for messages: the worktree_create command, else git.
-worktree_maker() {
+worktree_maker_name() {
   if [ -n "$(cfg worktree_create)" ]; then printf 'worktree_create'; else printf 'git worktree add'; fi
 }
 
-# worktree_command <key>: the key's command, refused before it runs, exit 2, when it has no {path}
-# or quotes a placeholder.
-worktree_command() {
+runnable_worktree_command() {
   command_text="$(cfg "$1")"
   command_flaw="$(worktree_command_flaw "$1" "$command_text")"
   [ -z "$command_flaw" ] || die "$command_flaw; fix it in $(config_file)" 2
   printf '%s' "$command_text"
 }
 
-# run_worktree_create <path> <base>: run the worktree_create command from the main worktree, with
-# the path and the base as its "$1" and "$2" and all its output on stderr (callers print the path
-# on stdout). Returns 1, saying so, when it fails or leaves no worktree at the path. Refused, exit
-# 2, before it runs when something already sits at the path, as a command that tolerates an
-# existing folder would hand flow a worktree it never made, the main one even.
 run_worktree_create() {
-  create_command="$(worktree_command worktree_create)" || exit
+  create_command="$(runnable_worktree_command worktree_create)" || exit
   [ ! -e "$1" ] && [ ! -L "$1" ] || die "$1 already exists; worktree_create makes a new worktree only" 2
   (cd "$main" && sh -c "$(worktree_command_filled "$create_command")" flow-worktree "$1" "$2") >&2
   create_exit=$?
-  [ "$create_exit" -eq 0 ] && worktree_at "$1" && return 0
+  [ "$create_exit" -eq 0 ] && is_worktree_of_this_repository "$1" && return 0
   echo "flow: worktree_create failed for $1 (exit $create_exit)" >&2
   return 1
 }
 
-# temporary_worktree_create <path> <base> <branch>: worktree_create makes a temporary worktree, then the
-# worktree gets the new branch at the base, whatever the command checked out. Either failing ends
-# the run, exit 1; a worktree made but not put on the branch stays, and the message names it.
-temporary_worktree_create() {
+create_temporary_worktree_on_new_branch() {
   run_worktree_create "$1" "$2" || die "cannot add $1"
   git -C "$1" switch -q -c "$3" "$2" >&2 || die "cannot put $1 on a new branch $3 at $2; the worktree stays there, remove it with steward.sh tmp remove $1"
 }
 
-# run_worktree_remove <path>: run the worktree_remove command from the main worktree, with the
-# path as its "$1" ("$2" empty) and all its output on stderr, then remove git's record of that
-# worktree alone when the command left it. One that fails or leaves the folder on disk ends the
-# run, exit 1.
 run_worktree_remove() {
-  remove_command="$(worktree_command worktree_remove)" || exit
-  removed_record="$(worktree_record "$1")"
+  remove_command="$(runnable_worktree_command worktree_remove)" || exit
+  removed_git_folder="$(worktree_git_folder "$1")"
   (cd "$main" && sh -c "$(worktree_command_filled "$remove_command")" flow-worktree "$1" "") >&2 ||
     die "cannot remove $1: worktree_remove failed (exit $?)"
   [ ! -e "$1" ] || die "cannot remove $1: worktree_remove left it on disk"
-  forget_removed_worktree "$1" "$removed_record"
+  forget_removed_worktree_record "$1" "$removed_git_folder"
 }
-# forget_removed_worktree <path> <record>: remove git's record of the worktree whose folder at the
-# path is gone, while its record folder is still there; ends the run, exit 1, when git cannot.
-forget_removed_worktree() {
+forget_removed_worktree_record() {
   [ ! -d "$2" ] || git -C "$main" worktree remove "$1" || die "cannot remove git's record of $1"
 }
-worktree_record() { git -C "$1" rev-parse --absolute-git-dir; }
+worktree_git_folder() { git -C "$1" rev-parse --absolute-git-dir; }
 
-# removable_worktree <path>: the path as an absolute physical folder when it is a temporary
-# worktree tmp remove may remove; else refused, exit 2, before anything runs.
-removable_worktree() {
+removable_temporary_worktree() {
   [ -n "$1" ] || die "tmp remove: no path given" 2
   removable_path="$(physical_folder "$1")" || die "tmp remove: $1 is not a folder" 2
   removable_flaw="$(temporary_place_flaw "$removable_path")"
@@ -645,54 +621,36 @@ removable_worktree() {
   [ -z "$removable_flaw" ] || die "tmp remove: $1 $removable_flaw" 2
   printf '%s' "$removable_path"
 }
-# physical_folder <path>: the folder at the path, absolute and physical; relative to where flow runs.
 physical_folder() {
   case "$1" in /*) ;; *) set -- "./$1" ;; esac
   (cd "$1" 2>/dev/null && pwd -P)
 }
-# temporary_place_flaw <physical path>: why the folder is no place for a temporary worktree (the
-# temporary folder is a symlink, so what lies under it is unknown; outside the temporary folder; the
-# main worktree or a pool worktree); nothing when it is one.
 temporary_place_flaw() {
   [ ! -L "$home/tmp" ] || { printf 'is not removed while %s is a symlink; only a temporary worktree is removed' "$home/tmp"; return; }
-  case "$1" in "$(temporary_folder)"/*) ;; *) printf 'is not under %s; only a temporary worktree is removed' "$home/tmp"; return ;; esac
+  case "$1" in "$(physical_temporary_folder)"/*) ;; *) printf 'is not under %s; only a temporary worktree is removed' "$home/tmp"; return ;; esac
   [ "$1" != "$(cd "$main" && pwd -P)" ] || { printf 'is the main worktree; only a temporary worktree is removed'; return; }
-  ! pool_paths | physical_in "$1" || printf 'is a pool worktree; only a temporary worktree is removed'
+  ! pool_paths | listed_physical_folder "$1" || printf 'is a pool worktree; only a temporary worktree is removed'
 }
-# temporary_record_flaw <physical path>: why git's record of the folder does not let it go (git
-# lists no worktree there, its .git is missing or broken, it is locked); nothing when it does.
 temporary_record_flaw() {
-  git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | physical_in "$1" || { printf 'is not a worktree of this repository'; return; }
-  worktree_at "$1" || { printf 'has a missing or broken .git, so its changes cannot be checked; not removing'; return; }
-  [ ! -f "$(worktree_record "$1")/locked" ] || printf 'is locked; git worktree unlock it first'
+  git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | listed_physical_folder "$1" || { printf 'is not a worktree of this repository'; return; }
+  is_worktree_of_this_repository "$1" || { printf 'has a missing or broken .git, so its changes cannot be checked; not removing'; return; }
+  [ ! -f "$(worktree_git_folder "$1")/locked" ] || printf 'is locked; git worktree unlock it first'
 }
-# refuse_unnamable_phase <phase> <branch>: ends the run, exit 2, when the phase holds a character
-# other than a letter, a digit, ., _ or -, or git refuses its branch's name.
 refuse_unnamable_phase() {
   case "$1" in '' | *[!A-Za-z0-9._-]*) die "tmp add: phase '$1' may hold only letters, digits, ., _ and -" 2 ;; esac
   git -C "$main" check-ref-format --branch "$2" >/dev/null 2>&1 || die "tmp add: $2 is not a valid branch name; name the phase as a branch" 2
 }
-# refuse_taken_phase <path> <branch>: ends the run, exit 2, when the phase's branch or folder
-# already exists.
 refuse_taken_phase() {
   ! git -C "$main" show-ref --verify -q "refs/heads/$2" || die "tmp add: branch $2 already exists" 2
   [ ! -e "$1" ] && [ ! -L "$1" ] || die "tmp add: $1 already exists" 2
 }
-# temporary_folder: the physical folder tmp add makes its worktrees in; $home/tmp as written while
-# it does not exist, which no physical path lies under.
-temporary_folder() { (cd "$home/tmp" 2>/dev/null && pwd -P) || printf '%s' "$home/tmp"; }
-# temporary_branch <path>: the branch tmp add made for the temporary worktree at the physical path,
-# when the worktree has it checked out: <branch>-<phase> of the pool claim whose item's slug starts
-# its folder name, or flow/ and its folder under the temporary folder; else nothing, so a branch
-# the worktree_create command checked out is never deleted.
-temporary_branch() {
-  temporary_folder_name="${1#"$(temporary_folder)"/}"
+physical_temporary_folder() { (cd "$home/tmp" 2>/dev/null && pwd -P) || printf '%s' "$home/tmp"; }
+checked_out_phase_branch() {
+  temporary_folder_name="${1#"$(physical_temporary_folder)"/}"
   checked_out_branch="$(git -C "$1" symbolic-ref --short -q HEAD)"
   [ -n "$checked_out_branch" ] || return 0
   ! phase_branches_of_folder "$temporary_folder_name" | grep -qxF -- "$checked_out_branch" || printf '%s' "$checked_out_branch"
 }
-# phase_branches_of_folder <folder name>: the branches tmp add may have named for a temporary
-# worktree with that folder name under the temporary folder, one per line.
 phase_branches_of_folder() {
   printf 'flow/%s\n' "$1"
   pool_paths | while IFS= read -r claimed_pool_path; do
@@ -704,14 +662,11 @@ phase_branches_of_folder() {
     case "$1" in "$phase_item_slug"-?*) printf '%s-%s\n' "$phase_task_branch" "${1#"$phase_item_slug"-}" ;; esac
   done
 }
-physical_in() {
+listed_physical_folder() {
   while IFS= read -r listed_path; do [ "$(cd "$listed_path" 2>/dev/null && pwd -P)" = "$1" ] && return 0; done
   return 1
 }
 
-# pool_worktree_create <path>: worktree_create makes a pool worktree at the base tip, then park
-# puts it on its idle branch. One park cannot move stays a valid worktree: health moves a free
-# detached one onto its idle branch later.
 pool_worktree_create() {
   run_worktree_create "$1" "$(base_ref)" || return 1
   park "$1"
@@ -753,7 +708,7 @@ grow_pool() {
   [ "$max" -gt "$count" ] 2>/dev/null || return 1
   rel="$(next_pool_path)" || exit
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
-  pool_worktree_add "$abs" || die "cannot add $rel to the pool: $(worktree_maker) failed"
+  pool_worktree_add "$abs" || die "cannot add $rel to the pool: $(worktree_maker_name) failed"
   pool_add_entry "$rel"
   run_setup "$abs" >&2
   echo "flow: added $rel to the pool ($((count + 1)) of $max)" >&2
