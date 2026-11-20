@@ -128,9 +128,7 @@ def held_back(item):
 
 AFTER_EVERY_NUMBERED_ITEM = float("inf")
 
-def item_number(item):
-    """The number the item's id ends in. A tracker numbers its items in the order they are made, so
-    among items of one rank the lowest is the oldest."""
+def number_ending_the_id(item):
     digits = item["id"][len(item["id"].rstrip("0123456789")):]
     return int(digits) if digits else AFTER_EVERY_NUMBERED_ITEM
 
@@ -149,7 +147,7 @@ for item in items:
     elif why == "blocked":
         note.update(blocked_by=open_blockers(item))
     notes.append(note)
-ready.sort(key=lambda i: (i.get("rank", 999), item_number(i)))
+ready.sort(key=lambda i: (i.get("rank", 999), number_ending_the_id(i)))
 print(json.dumps(ready))
 # FLOW_READY_NOTES names a file that gets one JSON line per open item held back, with why: next.sh
 # reads them to say why a pick found nothing, at no extra tracker call.
