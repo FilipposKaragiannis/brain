@@ -178,6 +178,41 @@ code_has_word() {
     END { exit !found }'
 }
 
+code_runs() {
+  # $1 code text (command_code), $2 a program. True when one command of the code starts that
+  # program: it is the command's first word, as written or at the end of a longer path, after
+  # any VAR=value words and the words that only pass a command on (a shell, env, exec, nohup,
+  # command, nice, timeout, caffeinate, with their options). A shell given -n only parses the
+  # script and starts nothing. A path that is an argument (git add, sed, grep) starts nothing.
+  printf '%s\n' "$1" | T="$2" awk '
+    BEGIN { t = ENVIRON["T"]; found = 0 }
+    function names_program(word) {
+      return word == t || (length(word) > length(t) && substr(word, length(word) - length(t)) == "/" t)
+    }
+    function started_by(command,    count, words, position, word, base, passed_on, shell, parses_only) {
+      count = split(command, words, /[ \t]+/); passed_on = 0; shell = 0; parses_only = 0
+      for (position = 1; position <= count; position++) {
+        word = words[position]
+        if (word == "" || word ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || word ~ /^(if|then|else|elif|do|while|until|!|time)$/) continue
+        base = word; sub(/^.*\//, "", base)
+        if (base ~ /^(sh|bash|zsh|dash|ksh)$/) { passed_on = 1; shell = 1; continue }
+        if (base ~ /^(env|exec|nohup|command|nice|timeout|caffeinate)$/) { passed_on = 1; shell = 0; continue }
+        if (passed_on && word ~ /^-/) { if (shell && word ~ /^-[A-Za-z]*n[A-Za-z]*$/) parses_only = 1; continue }
+        if (passed_on && !shell && word ~ /^[0-9]+[smhd]?$/) continue
+        return !parses_only && names_program(word)
+      }
+      return 0
+    }
+    {
+      line = $0
+      gsub(/\$\(/, "\n", line); gsub(/`/, "\n", line)
+      gsub(/&&|\|\||[;|&(){}]/, "\n", line)
+      count = split(line, commands, "\n")
+      for (number = 1; number <= count; number++) if (t != "" && started_by(commands[number])) { found = 1; exit }
+    }
+    END { exit !found }'
+}
+
 # The agent hook and git's own hooks both see an agent's commit. When a check passes in the agent
 # hook for a plain `git commit` of the index, it records the index tree; git's pre-commit and
 # commit-msg (STANDARDS_FROM_GIT=1) skip that check when the index they see is the same tree,
