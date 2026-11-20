@@ -29,8 +29,9 @@
 # first removes the earlier verify.json and verify.md, so no report of an earlier run reads as this
 # one's. A run of the item still going is not started again: --start says so and exits 0. The run
 # lasts at most verify.limit from the flow config (s, m, h or d; default 2h): past it, its whole
-# process group is stopped and the report is a fail naming the check that was running and the
-# limit. A run stopped by a signal, or ended with no report, also leaves a fail report that says so.
+# process group is stopped and the report is a fail naming the check that was running, the limit
+# and any check that failed before it. A run stopped by a signal, or ended with no report, also
+# leaves a fail report that says so.
 # verify.sh <item> --wait [seconds]: waits up to the seconds (default 540) for the started run.
 # Exit 0 when it passed and 1 when it failed, printing what the run printed, as the plain run
 # does; 3 while it still runs, printing how long it has run and the check it is on. A run that died
@@ -63,6 +64,9 @@ cd "$root" || exit 1
 [ -n "$base" ] || base="$(recorded_base "$root")"
 reports="$(reports_dir "$item" "$root")"; mkdir -p "$reports"
 log="$reports/verify.log"; run_out="$reports/verify.out"
+# The checks the run failed so far, one name per line, so a run stopped before its report still
+# names them.
+failed_file="$reports/verify.failed"
 
 # next_attempt: the attempt this run is, one past the item's recorded attempts.
 next_attempt() {
@@ -102,12 +106,15 @@ limit_seconds() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds verify.li
 # running_now: the check the run is on, as the log names it, or starting before the first.
 running_now() { current_check="$(verify_running_check "$log")"; printf '%s' "${current_check:-starting}"; }
 # unfinished_report <cause> <stop cause>: the fail report of a run that ended with none, naming the
-# check the log shows running and the cause, said on stdout and in the log. Exits 1.
+# check the log shows running and the cause, said on stdout and in the log. Exits 1. A check that
+# failed before the stop is named too, and the report then has no stop cause: the run failed it.
 unfinished_report() {
   running_header="$(verify_running_check "$log")"; unfinished_check="${running_header%%: *}"; unfinished_command="${running_header#*: }"
   if [ -n "$running_header" ]; then unfinished_summary="$(report_text "$1 while $unfinished_check ran ($unfinished_command)")"
   else unfinished_check=verify; unfinished_summary="$(report_text "$1 before the first check")"; fi
-  fail_report "$(report_text "$unfinished_check")" "$unfinished_summary" "Verify did not finish: $unfinished_summary." "$2"
+  failed_before="$(tr '\n' ',' < "$failed_file" 2>/dev/null | sed 's/,$//; s/,/, /g')"; reported_stop="$2"
+  [ -z "$failed_before" ] || { unfinished_summary="$(report_text "$failed_before failed, then $unfinished_summary")"; reported_stop=""; }
+  fail_report "$(report_text "$unfinished_check")" "$unfinished_summary" "Verify did not finish: $unfinished_summary." "$reported_stop"
   printf '\nverify: %s\n' "$unfinished_summary" >> "$log"
   echo "verify: fail (attempt $attempts): $unfinished_summary; report $reports/verify.json"
   exit 1
@@ -122,7 +129,7 @@ say_live_run() {
 # make_run_files: removes the earlier run's record, reports, log and output, and makes the log and
 # the output new, never written through a link someone left at a name.
 make_run_files() {
-  rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out"
+  rm -f "$(verify_run_file "$reports")" "$reports/verify.json" "$reports/verify.md" "$log" "$run_out" "$failed_file"
   (set -C; : > "$log" && : > "$run_out")
 }
 # may_start: takes the item's verify lock, so two starts never run the checks twice. False, saying
@@ -209,7 +216,7 @@ merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
 changed="$(git diff --name-only "$merge_base" HEAD 2>/dev/null; git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"
 changed="$(printf '%s\n' "$changed" | grep -v '^$' | grep -v '^\.flow/' | sort -u)"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
-rm -f "$log"; (set -C; : > "$log") || die "could not create the verify log $log"
+rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
@@ -230,6 +237,10 @@ record() {
   # the summary; nothing here is JSON.
   printf '%s\000%s\000%s\000%s\000' "$1" "$2" "$3" "$4" >> "$records"
   printf '%s\t%s\n' "$5" "$6" >> "$timings"
+}
+failed() {
+  # failed <name>: the run failed the check, kept in the failed file too.
+  overall="fail"; printf '%s\n' "$1" >> "$failed_file"
 }
 skipped() {
   # skipped <name> <why>: a check that did not apply, kept in the report so the reader sees why.
@@ -262,7 +273,7 @@ run_check() {
     summary="$out"
   fi
   printf '%s\n' "$out" >> "$log"
-  [ "$st" = "fail" ] && overall="fail"
+  [ "$st" = "fail" ] && failed "$name"
   record "$name" "$st" "$cmd" "$summary" "$(( $(now_seconds) - check_started ))" ""
   [ "$st" = "pass" ]
 }
@@ -299,7 +310,7 @@ planned_checks() {
 # A build or test entry the plan cannot read is a failed check that names the entry, and neither
 # kind runs.
 if ! planned="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
-  record config fail "" "$planned" 0 ""; overall="fail"; planned='{"build": [], "test": []}'
+  record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""

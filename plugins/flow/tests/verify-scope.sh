@@ -6,8 +6,9 @@
 # from; a changed file under its paths, a changed command, an uncommitted change, a failed run and
 # --fresh each run it again. A build always runs. Every check carries its whole seconds and the report the run's total. A
 # malformed entry is a failed check that names it. A run stopped at its limit leaves a report
-# advance.sh keeps at verify, with no attempt counted, behind the escalation gate. An epic whose
-# step names a size moves on with no re-size gate.
+# advance.sh keeps at verify, with no attempt counted, behind the escalation gate; one stopped
+# after a check failed names it and goes back to implement. An epic whose step names a size moves
+# on with no re-size gate.
 # Each counted command appends a line to <name>.count, so a check that did not run adds none.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
@@ -161,6 +162,27 @@ check "VerifyStoppedAtTheLimit_StaysAtVerifyBehindTheEscalationGate: no step has
 check "VerifyStoppedAtTheLimit_CountsNoAttempt: a run that failed no check uses up none of the three attempts" \
   '[ "$(state "$item" attempts)" = 0 ] || [ -z "$(state "$item" attempts)" ]'
 : > "$work/release-stopped"
+
+echo "scope: a run stopped after a check failed goes back to implement"
+limit_yaml="verify:
+  limit: 5s
+"
+new_item stopped-after-fail "$(held_gate late)"
+limit_yaml=""
+standards "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(counted broken-build)")" '""'
+: > "$work/fail-broken-build"
+for earlier_step in implement test review; do
+  printf '{"status":"done"}\n' > "$reports/$earlier_step.json"
+  "$plugin/scripts/advance.sh" "$item" >/dev/null 2>&1; "$plugin/scripts/next.sh" "$item" >/dev/null 2>&1
+done
+verify --start >/dev/null 2>&1
+wait_until_ended
+check "RunStoppedAfterAFailedCheck_ReportNamesTheFailureAndNoStop: the build failed before the limit, so the report says so and carries no stop" \
+  '[ "$(report_status)" = fail ] && [ -z "$(json_value stopped < "$reports/verify.json")" ] && check_field "gate late" summary | grep -q "^build failed, then stopped at the verify limit"'
+"$plugin/scripts/advance.sh" "$item" >/dev/null 2>&1; stopped_after_fail_code=$?
+check "VerifyStoppedAfterAFailedCheck_GoesBackToImplement: a failed build has something to fix, so the item returns to implement with an attempt counted" \
+  '[ "$stopped_after_fail_code" -eq 0 ] && [ "$(state "$item" step)" = implement ] && [ "$(state "$item" attempts)" = 1 ]'
+: > "$work/release-late"
 
 echo "scope: an epic's step that names a size raises no re-size gate"
 new_repo epic-size
