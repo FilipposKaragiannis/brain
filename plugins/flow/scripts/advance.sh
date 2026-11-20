@@ -56,6 +56,9 @@ if [ "$step" = pr ] && pr_url="$(json_get "$result" pr)" && [ -n "$pr_url" ] && 
 fi
 
 finish_run() { rm -f "$run_file"; }
+# The gate a step asked for by itself, `<step> <gate>` in <flow home>/asked/<item>, kept until the
+# step ends: the profile's gate after that step would ask the owner the same question again.
+asked_file="$home/asked/$(item_slug "$item")"
 
 # raise_asked <gate> <message>: raise the gate the step asked for, with the options and condition
 # its result names; an empty options list is no options.
@@ -145,8 +148,10 @@ case "$status" in
     [ -n "$gate" ] || gate="ambiguity"
     raise_asked "$gate" "${message:-$summary}"
     step_write "$item" "step=$step" >/dev/null
+    mkdir -p "$home/asked" && printf '%s %s\n' "$step" "$gate" > "$asked_file"
     report 4 "" "$gate" ;;
   fail)
+    rm -f "$asked_file"
     # A verify run that was stopped (its limit, a signal, a run that died: the report's `stopped`)
     # failed no check, so no step has anything to fix: the item stays at verify, no attempt is
     # counted, and the owner decides at the gate. The run after the clear reuses every build and
@@ -174,6 +179,7 @@ case "$status" in
   done) ;;
   *) die "unknown status '$status' (done, fail or gate)" 2 ;;
 esac
+step_asked="$(cat "$asked_file" 2>/dev/null)"; rm -f "$asked_file"
 
 # done: a passing verify that touched rendered code raises the feel-test gate after moving on.
 feel_test=0
@@ -213,6 +219,15 @@ case "$following" in
     g="${following#gate:}"
     after="$(profile_steps "$profile" | awk -v s="$following" 'f {print; exit} $0 == s {f = 1}')"
     [ -n "$after" ] || after="done"
+    # The step asked this gate itself and the owner answered it, not sent it back: the answer
+    # stands, and the gate is not raised a second time for the same step.
+    if [ "$step_asked" = "$step $g" ] && case "$(state_get "$data" answered)" in "$g"|"$g, option "*) true ;; *) false ;; esac; then
+      step_write "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g answered at the step" >/dev/null
+      adapter comment "$item" --body "Step $step done: ${summary:-no summary}. The owner answered the $g gate at this step, so it is not asked again. Next: $after." >/dev/null
+      printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$item" "$g" "not asked again: the owner answered it at step $step" >> "$home/events.log"
+      finish_run
+      report 0 "$after" ""
+    fi
     # auto_gates: only plan-approval can be cleared by the flow, by item size; every other gate waits.
     if [ "$g" = "plan-approval" ] && case ",$(cfg auto_gates.plan-approval | tr -d ' ')," in *",$size,"*) true ;; *) false ;; esac; then
       step_write "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g auto-approved (size $size)" >/dev/null

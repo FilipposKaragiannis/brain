@@ -1,0 +1,84 @@
+#!/bin/sh
+# epic-gates.sh: what waits on an epic's gates, on the local adapter in throwaway repos. A child
+# no step has started is not ready, and a run that names it starts nothing, while its parent
+# waits at the decomposition gate; it is ready once the gate clears, and a child already started
+# goes on. An epic's closeout starts nothing while a child is open. A gate a step asked for by
+# itself is not raised again by the profile once the owner answered it; it is raised when the
+# owner sent the step back, and when the step never asked.
+# Exit 0 when every check passes, 1 on any failure. run.sh runs it.
+. "$(dirname "$0")/_base_fixture.sh"
+. "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
+trap 'sandbox_close $?' EXIT
+
+ready_ids() { "$local_adapter/list-ready.sh" | python3 -c 'import json,sys; print(",".join(item["id"] for item in json.load(sys.stdin)))'; }
+# step_result <item> <step> <json>: writes the result file of the item's run in flight.
+step_result() { printf '%s\n' "$3" > "$(json_value reports < "$(run_file "$1")")/$2.json"; }
+# start_step <item>: next.sh on the named item; its exit code is the function's.
+start_step() { "$plugin/scripts/next.sh" "$1" >/dev/null 2>&1; }
+finish_step() { "$plugin/scripts/advance.sh" "$1" >/dev/null 2>&1; }
+
+echo "epic gates: a child waits while its parent's split is not approved"
+new_repo children
+epic="$("$local_adapter/create.sh" epic "Physics" --body x)"
+child="$(new_task "Ball spin" "$epic")"
+started_child="$(new_task "Ball drag" "$epic")"
+start_step "$started_child"
+"$plugin/scripts/gate.sh" raise "$epic" decomposition "Approve the split." >/dev/null 2>&1
+check "ChildOfAParentAtTheDecompositionGate_IsNotReady: the pick must not start work on a split the owner has not approved" \
+  '! ready_ids | grep -q -- "$child"'
+start_step "$child"; named_code=$?
+check "NamedRunOfAChildBehindTheDecompositionGate_StartsNothing: exit 4 and no run record, as for any item that waits" \
+  '[ "$named_code" -eq 4 ] && [ ! -f "$(run_file "$child")" ]'
+check "ChildAlreadyStarted_KeepsItsRun: the owner let it start, so the parent gate does not take its run away" \
+  '[ -f "$(run_file "$started_child")" ]'
+"$plugin/scripts/gate.sh" clear "$epic" "Approved." >/dev/null 2>&1
+check "ChildAfterTheDecompositionGateClears_IsReady: the owner approved the split" 'ready_ids | grep -q -- "$child"'
+
+echo "epic gates: closeout waits for the children"
+new_repo closeout
+closing_epic="$("$local_adapter/create.sh" epic "Rendering" --body x)"
+open_child="$(new_task "Sprite batch" "$closing_epic")"
+"$local_adapter/write-state.sh" "$closing_epic" step=closeout profile=epic
+start_step "$closing_epic"; closeout_code=$?
+check "CloseoutWithAnOpenChild_StartsNothing: exit 4 and no run record, because closeout checks that every child is closed" \
+  '[ "$closeout_code" -eq 4 ] && [ ! -f "$(run_file "$closing_epic")" ]'
+"$local_adapter/close.sh" "$open_child" >/dev/null 2>&1
+start_step "$closing_epic"; closed_code=$?
+check "CloseoutWithEveryChildClosed_Starts: the run is recorded once nothing is open" \
+  '[ "$closed_code" -eq 0 ] && [ -f "$(run_file "$closing_epic")" ]'
+
+echo "epic gates: a gate the step asked for is not asked twice"
+new_repo asked
+asking_epic="$("$local_adapter/create.sh" epic "Audio" --body x)"
+"$local_adapter/write-state.sh" "$asking_epic" step=tasks profile=epic
+start_step "$asking_epic"
+step_result "$asking_epic" tasks '{"status":"gate","gate":"decomposition","message":"**Approve these two slices?**"}'
+finish_step "$asking_epic"
+"$plugin/scripts/gate.sh" clear "$asking_epic" "Approved." >/dev/null 2>&1
+start_step "$asking_epic"
+step_result "$asking_epic" tasks '{"status":"done","summary":"two tasks created"}'
+finish_step "$asking_epic"; answered_code=$?
+check "StepThatAskedItsProfileGateAndWasAnswered_MovesOn: no gate after the step, because the owner already approved this split" \
+  '[ "$answered_code" -eq 0 ] && [ "$(state "$asking_epic" gate)" = none ] && [ "$(state "$asking_epic" step)" = closeout ]'
+
+sent_back_epic="$("$local_adapter/create.sh" epic "Input" --body x)"
+"$local_adapter/write-state.sh" "$sent_back_epic" step=tasks profile=epic
+start_step "$sent_back_epic"
+step_result "$sent_back_epic" tasks '{"status":"gate","gate":"decomposition","message":"**Approve these two slices?**"}'
+finish_step "$sent_back_epic"
+"$plugin/scripts/gate.sh" clear "$sent_back_epic" --back "Split the second slice." >/dev/null 2>&1
+start_step "$sent_back_epic"
+step_result "$sent_back_epic" tasks '{"status":"done","summary":"three tasks created"}'
+finish_step "$sent_back_epic"
+check "StepSentBackAtItsOwnGate_IsAskedAgain: the owner never approved the reworked split, so the profile gate is raised" \
+  '[ "$(state "$sent_back_epic" gate)" = decomposition ]'
+
+silent_epic="$("$local_adapter/create.sh" epic "Netcode" --body x)"
+"$local_adapter/write-state.sh" "$silent_epic" step=tasks profile=epic
+start_step "$silent_epic"
+step_result "$silent_epic" tasks '{"status":"done","summary":"two tasks created"}'
+finish_step "$silent_epic"
+check "StepThatNeverAsked_GetsTheProfileGate: nobody approved the split, so the gate is raised" \
+  '[ "$(state "$silent_epic" gate)" = decomposition ]'
+
+if [ "$fails" -eq 0 ]; then echo "epic-gates: ok"; else echo "epic-gates: $fails failed"; exit 1; fi

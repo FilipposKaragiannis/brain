@@ -5,6 +5,9 @@ plugin = sys.argv[1]
 home = sys.argv[2] if len(sys.argv) > 2 else ""
 items = json.load(sys.stdin)
 known = {i["id"]: i.get("status", "open") for i in items}
+# The gate each open item waits at: a child waits while its parent's split is not approved.
+GATE_THAT_HOLDS_CHILDREN = "decomposition"
+gates = {i["id"]: i.get("state", {}).get("gate", "none") for i in items if i.get("status", "open") == "open"}
 cache = {}
 
 def read_prefix(name):
@@ -94,6 +97,8 @@ def held_back(item):
         return "needs"
     if item.get("open_children"):
         return "children"
+    if item.get("parent") and not state.get("step") and gates.get(item["parent"]) == GATE_THAT_HOLDS_CHILDREN:
+        return "parent"
     if state.get("step") in ("split", "done"):
         return state["step"]
     if open_blockers(item):

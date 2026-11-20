@@ -521,6 +521,11 @@ sh "$here/verify-scope.sh" > "$work/verify-scope.out" 2>&1; code=$?
 check "verify-scope: $(tail -n 1 "$work/verify-scope.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-scope.out"
 
+echo "children wait on the parent's decomposition gate, and a gate is asked once (tests/epic-gates.sh)"
+sh "$here/epic-gates.sh" > "$work/epic-gates.out" 2>&1; code=$?
+check "epic-gates: $(tail -n 1 "$work/epic-gates.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/epic-gates.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
