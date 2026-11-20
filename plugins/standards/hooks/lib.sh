@@ -189,17 +189,26 @@ code_runs() {
     function names_program(word) {
       return word == t || (length(word) > length(t) && substr(word, length(word) - length(t)) == "/" t)
     }
-    function started_by(command,    count, words, position, word, base, passed_on, shell, parses_only) {
-      count = split(command, words, /[ \t]+/); passed_on = 0; shell = 0; parses_only = 0
+    function is_setup_word(word) {
+      return word == "" || word ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || word ~ /^(if|then|else|elif|do|while|until|!|time)$/
+    }
+    function is_passer_argument(passer, word) {
+      return passer != "" && word ~ /^(-|[0-9]+[smhd]?$)/
+    }
+    function passes_on(base) {
+      return base ~ /^(sh|bash|zsh|dash|ksh|env|exec|nohup|command|nice|timeout|caffeinate)$/
+    }
+    function starts_nothing(passer, option) {
+      return passer ~ /^(sh|bash|zsh|dash|ksh)$/ && option ~ /^-[A-Za-z]*n[A-Za-z]*$/
+    }
+    function started_by(command,    count, words, position, word, base, passer) {
+      count = split(command, words, /[ \t]+/); passer = ""
       for (position = 1; position <= count; position++) {
-        word = words[position]
-        if (word == "" || word ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || word ~ /^(if|then|else|elif|do|while|until|!|time)$/) continue
-        base = word; sub(/^.*\//, "", base)
-        if (base ~ /^(sh|bash|zsh|dash|ksh)$/) { passed_on = 1; shell = 1; continue }
-        if (base ~ /^(env|exec|nohup|command|nice|timeout|caffeinate)$/) { passed_on = 1; shell = 0; continue }
-        if (passed_on && word ~ /^-/) { if (shell && word ~ /^-[A-Za-z]*n[A-Za-z]*$/) parses_only = 1; continue }
-        if (passed_on && !shell && word ~ /^[0-9]+[smhd]?$/) continue
-        return !parses_only && names_program(word)
+        word = words[position]; base = word; sub(/^.*\//, "", base)
+        if (starts_nothing(passer, word)) return 0
+        if (is_setup_word(word) || is_passer_argument(passer, word)) continue
+        if (passes_on(base)) { passer = base; continue }
+        return names_program(word)
       }
       return 0
     }
