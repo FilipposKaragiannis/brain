@@ -71,6 +71,12 @@ printf 'edited\n' >> "$worktree/server/handler.txt"
 verify >/dev/null 2>&1; verify >/dev/null 2>&1
 check "UncommittedChangeUnderThePaths_AlwaysRunsTheCommand: two more runs, because an uncommitted file has no kept pass" '[ "$(runs_of server)" = 5 ]'
 git -C "$worktree" checkout -q -- server/handler.txt
+: > "$work/fail-server"
+verify --fresh >/dev/null 2>&1
+verify >/dev/null 2>&1; after_fresh_code=$?
+rm -f "$work/fail-server"
+check "FreshRunThatFails_DropsTheKeptPass: the next verify runs the server tests again and fails, because a known failure outranks an older pass" \
+  '[ "$after_fresh_code" -eq 1 ] && [ "$(runs_of server)" = 7 ]'
 
 echo "scope: a failed command is never reused, and a changed command runs"
 new_item failing "$passing_gate"
@@ -86,12 +92,6 @@ python3 -c 'import json,sys; path=sys.argv[1]; config=json.load(open(path)); con
 git -C "$worktree" commit -qam "another command"
 verify >/dev/null 2>&1
 check "CommandTextChanged_RunsAgain: a third run, because a pass is kept for one command text" '[ "$(runs_of flaky)" = 3 ]'
-: > "$work/fail-flaky"
-verify --fresh >/dev/null 2>&1
-verify >/dev/null 2>&1; after_fresh_code=$?
-rm -f "$work/fail-flaky"
-check "FreshRunThatFails_DropsTheKeptPass: the next verify runs the command again and fails, because a known failure outranks an older pass" \
-  '[ "$after_fresh_code" -eq 1 ] && [ "$(runs_of flaky)" = 5 ]'
 
 echo "scope: a command with no paths, and a build with paths"
 new_item whole "$passing_gate"
