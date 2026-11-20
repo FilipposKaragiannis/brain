@@ -1,5 +1,11 @@
 # console
 
+## 0.24.3 (2026-11-20)
+
+- A pull request finds its item by the item's recorded task branch (the `branch` the claim wrote
+  to its state), so a branch named from a project's template links its PR and its merge; an item
+  without one still links by `flow/<slug>`.
+
 ## 0.24.2 (2026-11-18)
 
 - The settings page has a Longest pass field under the Comments job (`jobs.comments.pass_limit`):

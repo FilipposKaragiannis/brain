@@ -64,8 +64,8 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    Step 2 pushed a merge → skip: they ran on the old head, the next pass sees the new one's.
    Else in the claimed worktree, with a clean tree, note the head (`git rev-parse HEAD`) and
    spawn the `implementer` with this brief: read the failed logs (`gh pr checks <pr>`, `gh run
-   view <run> --log-failed`), find the cause, fix it in the task branch, build and run the tests,
-   commit as `fix: make <check> pass`. Then the
+   view <run> --log-failed`), find the cause, fix it in the task branch, build and run the tests
+   the fix touches, commit as `fix: make <check> pass`. Then the
    `verifier`; on `pass` run `git push origin "HEAD:<headRefName>"` (never force) and re-request
    review (step 8) naming the fix. A failure that is not the change's (infra, billing, a flake,
    a check red on the base too), or a check still red on the head of an earlier `fix: make

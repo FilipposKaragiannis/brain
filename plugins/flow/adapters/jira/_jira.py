@@ -2,6 +2,7 @@
 
   _jira.py list [--all] [--kind KIND] [--pick NAME]
   _jira.py read <id>
+  _jira.py in-scope <id>
   _jira.py create <kind> <title> [--size S] [--priority NAME] [--area NAME] [--type NAME]
                   [--blocked-by id,id] [--parent id] [--body TEXT]
   _jira.py write-state <id> key=value...
@@ -19,8 +20,10 @@ size:* unless jira.fields.size names a field) and kept whole in the issue proper
 A blocker in another tracker has no Jira link, so it sits in the description as a line
 "Blocked by: <id>, <id>", as does a Jira blocker whose link Jira refused.
 answers prints one JSON line {"id", "text"} per gated item the owner answered with an /answer
-comment; answers.sh clears the gates. vocabulary prints the project's issue types and the options
-of the jira.fields.area field.
+comment; answers.sh clears the gates. jira.scope (scope_filter in lib/flow.sh, FLOW_SCOPE_*) is
+ANDed into every search: list, its children counts, read's children count and answers; in-scope
+exits 0 when the issue is inside it, 1 when not. vocabulary prints the project's issue types and
+the options of the jira.fields.area field.
 """
 import json
 import os
@@ -47,6 +50,8 @@ GATE_COMMENT = "**Gate: "
 ANSWER_WORD = "/answer"
 # Gates an /answer comment clears; the merge gate clears when the PR is merged.
 UNANSWERABLE_GATES = ("none", "merge")
+PICK = "FLOW_PICK_"
+SCOPE = "FLOW_SCOPE_"
 
 
 def key_of(item_id):
@@ -89,6 +94,12 @@ def flow_state(issue, labels, fields):
     return state
 
 
+def kind_of(issue_fields):
+    """The flow kind of an issue's fields, as jira.types maps the issue types; any other type is a task."""
+    type_name = (issue_fields.get("issuetype") or {}).get("name", "")
+    return {name: kind for kind, name in type_names().items()}.get(type_name, "task")
+
+
 def to_item(issue, fields, open_children):
     data = issue["fields"]
     labels = data.get("labels") or []
@@ -96,7 +107,7 @@ def to_item(issue, fields, open_children):
     if "size" in fields:
         state["size"] = field_text(data.get(fields["size"]["id"])) or state.get("size", "")
     type_name = (data.get("issuetype") or {}).get("name", "")
-    kind = {name: kind for kind, name in type_names().items()}.get(type_name, "task")
+    kind = kind_of(data)
     is_open = ((data.get("status") or {}).get("statusCategory") or {}).get("key") != "done"
     body = from_document(data.get("description"))
     links = [l for l in data.get("issuelinks") or [] if (l.get("type") or {}).get("name") == "Blocks" and l.get("inwardIssue")]
@@ -142,34 +153,55 @@ def jql_text(value):
     return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def pick_values(name):
-    return [v.strip() for v in os.environ.get("FLOW_PICK_" + name, "").split(",") if v.strip()]
+def pick_values(prefix, name):
+    return [v.strip() for v in os.environ.get(prefix + name, "").split(",") if v.strip()]
 
 
-def pick_conditions():
-    """The JQL conditions of `list --pick` (pick_filter in lib/flow.sh): its query as written, else
-    the assignee (me is currentUser(), the jira.email login the token belongs to), the statuses and
-    the labels. The kinds are matched on the built items, as read maps the issue types back."""
-    query = os.environ.get("FLOW_PICK_QUERY", "").strip()
+def pick_conditions(prefix):
+    """The JQL conditions of `list --pick` (pick_filter in lib/flow.sh, prefix FLOW_PICK_) or of
+    jira.scope (scope_filter, prefix FLOW_SCOPE_): its query as written, else the assignee (me is
+    currentUser(), the jira.email login the token belongs to), the statuses, the labels and the
+    kinds (kind_condition), so jira.limit counts only the issues the filter keeps."""
+    query = os.environ.get(prefix + "QUERY", "").strip()
     if query:
         return ["(%s)" % query]
     conditions = []
-    assignee = os.environ.get("FLOW_PICK_ASSIGNEE", "").strip()
+    assignee = os.environ.get(prefix + "ASSIGNEE", "").strip()
     if assignee:
         conditions.append("assignee = %s" % ("currentUser()" if assignee == "me" else jql_text(assignee)))
     for field, name in (("status", "STATUS"), ("labels", "LABELS")):
-        if pick_values(name):
-            conditions.append("%s in (%s)" % (field, ", ".join(jql_text(v) for v in pick_values(name))))
-    return conditions
+        if pick_values(prefix, name):
+            conditions.append("%s in (%s)" % (field, ", ".join(jql_text(v) for v in pick_values(prefix, name))))
+    return conditions + kind_condition({k.lower() for k in pick_values(prefix, "KINDS")})
 
 
-def children_of(issues, narrowed):
-    """Each listed issue's open children. A list a filter narrowed can leave a child out, so its
-    children are searched for apart, every page of them: a count cut at jira.limit would read a
-    parent with open children as having none, and so as ready."""
+def kind_condition(kinds):
+    """The JQL for the issue types of the kinds, as kind_of maps them back: an epic or a bug is its
+    jira.types name, a task any other type. Empty for no kinds or every kind; a kind that is no
+    flow kind matches no issue."""
+    names = type_names()
+    wanted = kinds & set(names)
+    if not kinds or wanted == set(names):
+        return []
+    if "task" in wanted:
+        return ["issuetype not in (%s)" % ", ".join(jql_text(names[k]) for k in sorted(set(names) - wanted))]
+    if wanted:
+        return ["issuetype in (%s)" % ", ".join(jql_text(names[k]) for k in sorted(wanted))]
+    return ["issuetype is EMPTY"]
+
+
+def scope_conditions():
+    return pick_conditions(SCOPE)
+
+
+def children_of(issues, scope, narrowed):
+    """Each listed issue's open children inside the scope. A list a scope or a filter narrowed can
+    leave a child out, so its children are searched for apart, every page of them: a count cut at
+    jira.limit would read a parent with open children as having none, and so as ready."""
     rows = issues
     if narrowed and issues:
-        rows, _ = search("parent in (%s) AND statusCategory != Done" % ", ".join(i["key"] for i in issues), ["parent", "status"], sys.maxsize)
+        conditions = ["parent in (%s)" % ", ".join(i["key"] for i in issues)] + scope + ["statusCategory != Done"]
+        rows, _ = search(" AND ".join(conditions), ["parent", "status"], sys.maxsize)
     children = {}
     for issue in rows:
         parent = issue["fields"].get("parent")
@@ -190,17 +222,17 @@ def cmd_list(args):
         else:
             fail("unknown option %s" % args[i], 2)
     fields, limit = custom_fields(), int(setting("LIMIT", "500"))
-    picked = pick_conditions()
-    conditions = ["project = %s" % jql_text(setting("PROJECT"))] + picked + ([] if want_all else ["statusCategory != Done"])
+    scope, picked = scope_conditions(), pick_conditions(PICK)
+    conditions = ["project = %s" % jql_text(setting("PROJECT"))] + scope + picked + ([] if want_all else ["statusCategory != Done"])
     issues, cut = search(" AND ".join(conditions) + " ORDER BY created DESC", field_list(fields), limit)
     if cut:
         sys.stderr.write("flow: stopped at jira.limit %d issues; raise it in .flow/config.yaml\n" % limit)
         if os.environ.get("FLOW_LIST_WHOLE"):
             sys.exit(1)
-    children = children_of(issues, bool(picked))
-    kinds = {k.lower() for k in pick_values("KINDS")}
+    children = children_of(issues, scope, bool(scope or picked))
     items = [to_item(issue, fields, children.get(issue["key"], 0)) for issue in issues]
-    print(json.dumps([i for i in items if (not kind or i["kind"] == kind) and (not kinds or i["kind"] in kinds)]))
+    kept = [i for i in items if not kind or i["kind"] == kind]
+    print(json.dumps(kept))
 
 
 def read_issue(key, fields):
@@ -215,8 +247,19 @@ def read_issue(key, fields):
 def cmd_read(args):
     key, fields = key_of(args[0]), custom_fields()
     issue = read_issue(key, fields)
-    children, _ = search('parent = %s AND statusCategory != Done' % key, ["summary"], int(setting("LIMIT", "500")))
+    conditions = ["parent = %s" % key] + scope_conditions() + ["statusCategory != Done"]
+    children, _ = search(" AND ".join(conditions), ["summary"], int(setting("LIMIT", "500")))
     print(json.dumps(to_item(issue, fields, len(children))))
+
+
+def cmd_in_scope(args):
+    """Exit 0 when the issue is inside jira.scope, or no scope is set (no call); 1 when it is not."""
+    key, scope = key_of(args[0]), scope_conditions()
+    if not scope:
+        sys.exit(0)
+    conditions = ["key = %s" % jql_text(key), "project = %s" % jql_text(setting("PROJECT"))] + scope
+    issues, _ = search(" AND ".join(conditions), ["summary"], 1)
+    sys.exit(0 if issues else 1)
 
 
 # --- writing
@@ -393,8 +436,8 @@ def answer_after_gate(comments, allowed):
 def cmd_answers(args):
     if args:
         fail("answers takes no arguments", 2)
-    jql = 'project = "%s" AND statusCategory != Done ORDER BY created DESC' % setting("PROJECT")
-    issues, _ = search(jql, ["labels"], int(setting("LIMIT", "500")))
+    conditions = ['project = "%s"' % setting("PROJECT")] + scope_conditions() + ["statusCategory != Done"]
+    issues, _ = search(" AND ".join(conditions) + " ORDER BY created DESC", ["labels"], int(setting("LIMIT", "500")))
     gated = [i for i in issues if flow_state(i, i["fields"].get("labels") or [], {})["gate"] not in UNANSWERABLE_GATES]
     if not gated:
         return
@@ -447,7 +490,7 @@ def main():
     if len(sys.argv) < 2:
         fail(__doc__.strip().splitlines()[0], 2)
     command, args = sys.argv[1], sys.argv[2:]
-    commands = {"list": cmd_list, "read": cmd_read, "create": cmd_create, "write-state": cmd_write_state,
+    commands = {"list": cmd_list, "read": cmd_read, "in-scope": cmd_in_scope, "create": cmd_create, "write-state": cmd_write_state,
                 "comment": cmd_comment, "close": cmd_close, "remote-link": cmd_remote_link,
                 "answers": cmd_answers, "vocabulary": cmd_vocabulary}
     if command not in commands:

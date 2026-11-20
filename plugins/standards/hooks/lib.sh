@@ -35,6 +35,13 @@ config_text() {
   [ -f "$root/.standards/config.json" ] && cat "$root/.standards/config.json"
 }
 
+# config_command <config json> <key>: the command of a setting that is a command or a map with
+# `command` (and `paths`, which the flow verifier reads).
+config_command() {
+  mapped_command="$(json_get "$1" "$2.command")"
+  if [ -n "$mapped_command" ]; then printf '%s' "$mapped_command"; else json_get "$1" "$2"; fi
+}
+
 read_payload() { cat 2>/dev/null || true; }
 
 payload_command() { json_get "$1" "tool_input.command"; }

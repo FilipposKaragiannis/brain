@@ -12,7 +12,9 @@
 #                                                name git refuses, or a template that needs an
 #                                                item it cannot read, exits 2; a name another
 #                                                claim holds exits 4; both before anything is
-#                                                created
+#                                                created. A new claim of an item outside its
+#                                                tracker's scope exits 2 (adhoc: names have no
+#                                                tracker, no scope)
 #   steward.sh find <item>                       print the claimed path, or nothing
 #   steward.sh owner <branch>                    print the item whose pool claim holds the branch
 #                                                as its task branch, or nothing
@@ -31,8 +33,8 @@
 #   steward.sh tmp add <item> <phase>            temporary worktree on <branch>-<phase>, from the
 #                                                claim's task branch <branch>
 #   steward.sh tmp remove <path>                 remove it and its branch
-#   steward.sh add [path]                        add a worktree to the pool (git worktree add,
-#                                                pool entry in config.yaml, copies and setup); a
+#   steward.sh add [path]                        add a worktree to the pool (worktree_create, else
+#                                                git worktree add; pool entry, copies and setup); a
 #                                                pool path missing on disk is recreated in place
 #   steward.sh setup <path>                      run worktree_copy and worktree_setup there
 #   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
@@ -78,6 +80,29 @@
 # refused with its reason, exit 2. worktree_copy lists ignored paths copied from the main
 # worktree when the new one lacks them (.claude/settings.local.json); worktree_setup lists
 # commands run in the new worktree. Both run on add and on setup.
+# worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
+# add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes a tmp
+# remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
+# command {path} is the worktree's absolute folder and {base} the ref it starts from (the pool's
+# base, the claim's task branch for tmp add, empty for a remove); sh -c gets them as "$1" and "$2",
+# so the command writes them bare and no value is read as shell. A command that passes {path} on to
+# ssh, eval or sh -c, which parse it again, must quote it again there. It runs from the main
+# worktree, all its output on stderr. After a create a git worktree of this repository must sit at
+# {path}; then the pool's goes onto its idle branch at the base tip (one that cannot move stays as
+# made, and health moves it once free) and tmp add's onto a new <branch>-<phase> at {base}. tmp add
+# refuses a phase that makes no valid branch name, or a folder that exists, and tmp remove takes
+# only a listed worktree under .flow/tmp: else exit 2, nothing run. tmp remove refuses a worktree
+# with uncommitted changes (untracked files and submodule changes that status config hides count
+# too), or one whose git status fails, exit 3. After a remove the folder must be gone; git's record
+# of it goes, and its branch when that is the phase branch tmp add named for its folder:
+# <branch>-<phase> of a pool claim's task branch, or flow/<its folder under .flow/tmp>. A command
+# with no {path}, or with a placeholder inside quotes (a quoted $(...) too) or inside backticks, is
+# refused before it runs, exit 2, and so is a create at a path where something already exists (add
+# of the main or a pool worktree). One that fails, or leaves no worktree (a remove: leaves the
+# folder), is named after its output: add, tmp and a growing pool exit 1 with no pool entry added (a
+# pool that cannot grow says why, not that it is at pool_max), and a claim skips a missing pool path
+# it cannot recreate. A folder a failed create leaves stays for the owner. A value must not hold
+# " #" (the config reads a comment there) or start with [ (it reads a list).
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.
@@ -87,6 +112,7 @@
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/branch.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
+. "$FLOW_PLUGIN/lib/worktree_command.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -142,6 +168,11 @@ park() {
 
 # .flow/ holds the claim and the reports and is never part of the work.
 dirty() { [ -n "$(git -C "$1" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; }
+refuse_removal_with_uncommitted_changes() {
+  uncommitted_changes="$(git -C "$1" -c status.showUntrackedFiles=all status --porcelain --untracked-files=all --ignore-submodules=none -- . ":!.flow")" ||
+    die "$1: git status failed, so its changes cannot be checked. Not removing." 3
+  [ -z "$uncommitted_changes" ] || die "$1 has uncommitted changes. Not removing." 3
+}
 
 write_state() {
   # write_state <item> key=value... ; skipped for ids no adapter owns (ad hoc worktree sessions).
@@ -185,6 +216,7 @@ cmd_claim() {
   base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
+  scope_holds "$item" || exit 2
   branch="flow/$(item_slug "$item")"
   if adapter_for "$item" >/dev/null 2>&1; then
     branch="$(claim_branch_option "$@")"
@@ -214,9 +246,12 @@ cmd_claim() {
 }
 
 # free_worktree: the first pool worktree with no claim, no reservation and a clean tree, or a
-# pool path missing on disk, recreated and printed resolved (one git cannot add is skipped,
-# saying why); else one grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name exits 2 inside
-# grow_pool, before the pool_max message, so claim and reserve pass the template's reason through.
+# pool path missing on disk, recreated and printed resolved (one that cannot be made is skipped,
+# saying why; with worktree_create set, a file or symlink at the path exits 2 before the command
+# runs); else one grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name
+# exits 2 inside grow_pool, before the pool_max message, so claim and reserve pass the template's
+# reason through; a worktree that cannot be made exits 1 there, so the pool_max message never
+# stands in for it.
 free_worktree() {
   for p in $(pool_paths); do
     if [ ! -d "$p" ]; then
@@ -451,15 +486,19 @@ cmd_tmp() {
       wt="$(cmd_find "$item")"; [ -n "$wt" ] || die "$item has no claimed worktree" 2
       task_branch="$(json_get "$(claim_of "$wt")" branch)"
       path="$home/tmp/$slug-$phase"; branch="$task_branch-$phase"
+      refuse_unnamable_phase "$phase" "$branch"
       branch_name_valid "$branch" || die "$item: its phase branch is not a valid branch name" 2
+      refuse_taken_phase "$path" "$branch"
       mkdir -p "$home/tmp"
-      git -C "$wt" worktree add -q -b "$branch" "$path" "$task_branch" || die "cannot add $path"
+      if [ -n "$(cfg worktree_create)" ]; then create_temporary_worktree_on_new_branch "$path" "$task_branch" "$branch"
+      else git -C "$wt" worktree add -q -b "$branch" "$path" "$task_branch" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
     remove)
-      path="$2"
-      branch="$(git -C "$path" symbolic-ref --short -q HEAD)"
-      dirty "$path" && die "$path has uncommitted changes. Not removing." 3
-      git -C "$main" worktree remove "$path" || die "cannot remove $path"
+      path="$(removable_temporary_worktree "$2")" || exit
+      branch="$(checked_out_phase_branch "$path")"
+      refuse_removal_with_uncommitted_changes "$path"
+      if [ -n "$(cfg worktree_remove)" ]; then run_worktree_remove "$path"
+      else git -C "$main" worktree remove "$path" || die "cannot remove $path"; fi
       [ -n "$branch" ] && git -C "$main" branch -q -D "$branch" 2>/dev/null
       echo "removed $path" ;;
     *) die "usage: tmp add <item> <phase> | tmp remove <path>" 2 ;;
@@ -532,9 +571,119 @@ run_setup() {
   done
 }
 
+is_worktree_of_this_repository() {
+  [ -d "$1" ] && [ "$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$1" && pwd -P)" ] &&
+    [ "$(shared_repository_folder "$1")" = "$(shared_repository_folder "$main")" ]
+}
+shared_repository_folder() { (CDPATH='' cd -P -- "$1" && CDPATH='' cd -P -- "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P); }
+
+worktree_maker_name() {
+  if [ -n "$(cfg worktree_create)" ]; then printf 'worktree_create'; else printf 'git worktree add'; fi
+}
+
+runnable_worktree_command() {
+  command_text="$(cfg "$1")"
+  command_flaw="$(worktree_command_flaw "$1" "$command_text")"
+  [ -z "$command_flaw" ] || die "$command_flaw; fix it in $(config_file)" 2
+  printf '%s' "$command_text"
+}
+
+run_worktree_create() {
+  create_command="$(runnable_worktree_command worktree_create)" || exit
+  [ ! -e "$1" ] && [ ! -L "$1" ] || die "$1 already exists; worktree_create makes a new worktree only" 2
+  (cd "$main" && sh -c "$(worktree_command_filled "$create_command")" flow-worktree "$1" "$2") >&2
+  create_exit=$?
+  [ "$create_exit" -eq 0 ] && is_worktree_of_this_repository "$1" && return 0
+  echo "flow: worktree_create failed for $1 (exit $create_exit)" >&2
+  return 1
+}
+
+create_temporary_worktree_on_new_branch() {
+  run_worktree_create "$1" "$2" || die "cannot add $1"
+  git -C "$1" switch -q -c "$3" "$2" >&2 || die "cannot put $1 on a new branch $3 at $2; the worktree stays there, remove it with steward.sh tmp remove $1"
+}
+
+run_worktree_remove() {
+  remove_command="$(runnable_worktree_command worktree_remove)" || exit
+  removed_git_folder="$(worktree_git_folder "$1")"
+  (cd "$main" && sh -c "$(worktree_command_filled "$remove_command")" flow-worktree "$1" "") >&2 ||
+    die "cannot remove $1: worktree_remove failed (exit $?)"
+  [ ! -e "$1" ] || die "cannot remove $1: worktree_remove left it on disk"
+  forget_removed_worktree_record "$1" "$removed_git_folder"
+}
+forget_removed_worktree_record() {
+  [ ! -d "$2" ] || git -C "$main" worktree remove "$1" || die "cannot remove git's record of $1"
+}
+worktree_git_folder() { git -C "$1" rev-parse --absolute-git-dir; }
+
+removable_temporary_worktree() {
+  [ -n "$1" ] || die "tmp remove: no path given" 2
+  removable_path="$(physical_folder "$1")" || die "tmp remove: $1 is not a folder" 2
+  removable_flaw="$(temporary_place_flaw "$removable_path")"
+  [ -n "$removable_flaw" ] || removable_flaw="$(temporary_record_flaw "$removable_path")"
+  [ -z "$removable_flaw" ] || die "tmp remove: $1 $removable_flaw" 2
+  printf '%s' "$removable_path"
+}
+physical_folder() {
+  case "$1" in /*) ;; *) set -- "./$1" ;; esac
+  (cd "$1" 2>/dev/null && pwd -P)
+}
+temporary_place_flaw() {
+  [ ! -L "$home/tmp" ] || { printf 'is not removed while %s is a symlink; only a temporary worktree is removed' "$home/tmp"; return; }
+  case "$1" in "$(physical_temporary_folder)"/*) ;; *) printf 'is not under %s; only a temporary worktree is removed' "$home/tmp"; return ;; esac
+  [ "$1" != "$(cd "$main" && pwd -P)" ] || { printf 'is the main worktree; only a temporary worktree is removed'; return; }
+  ! pool_paths | listed_physical_folder "$1" || printf 'is a pool worktree; only a temporary worktree is removed'
+}
+temporary_record_flaw() {
+  git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | listed_physical_folder "$1" || { printf 'is not a worktree of this repository'; return; }
+  is_worktree_of_this_repository "$1" || { printf 'has a missing or broken .git, so its changes cannot be checked; not removing'; return; }
+  [ ! -f "$(worktree_git_folder "$1")/locked" ] || printf 'is locked; git worktree unlock it first'
+}
+refuse_unnamable_phase() {
+  case "$1" in '' | *[!A-Za-z0-9._-]*) die "tmp add: phase '$1' may hold only letters, digits, ., _ and -" 2 ;; esac
+  git -C "$main" check-ref-format --branch "$2" >/dev/null 2>&1 || die "tmp add: $2 is not a valid branch name; name the phase as a branch" 2
+}
+refuse_taken_phase() {
+  ! git -C "$main" show-ref --verify -q "refs/heads/$2" || die "tmp add: branch $2 already exists" 2
+  [ ! -e "$1" ] && [ ! -L "$1" ] || die "tmp add: $1 already exists" 2
+}
+physical_temporary_folder() { (cd "$home/tmp" 2>/dev/null && pwd -P) || printf '%s' "$home/tmp"; }
+checked_out_phase_branch() {
+  temporary_folder_name="${1#"$(physical_temporary_folder)"/}"
+  checked_out_branch="$(git -C "$1" symbolic-ref --short -q HEAD)"
+  [ -n "$checked_out_branch" ] || return 0
+  ! phase_branches_of_folder "$temporary_folder_name" | grep -qxF -- "$checked_out_branch" || printf '%s' "$checked_out_branch"
+}
+phase_branches_of_folder() {
+  printf 'flow/%s\n' "$1"
+  pool_paths | while IFS= read -r claimed_pool_path; do
+    phase_claim="$(claim_of "$claimed_pool_path")"
+    phase_item="$(json_get "$phase_claim" item)"
+    phase_task_branch="$(json_get "$phase_claim" branch)"
+    [ -n "$phase_item" ] && [ -n "$phase_task_branch" ] || continue
+    phase_item_slug="$(item_slug "$phase_item")"
+    case "$1" in "$phase_item_slug"-?*) printf '%s-%s\n' "$phase_task_branch" "${1#"$phase_item_slug"-}" ;; esac
+  done
+}
+listed_physical_folder() {
+  while IFS= read -r listed_path; do [ "$(cd "$listed_path" 2>/dev/null && pwd -P)" = "$1" ] && return 0; done
+  return 1
+}
+
+pool_worktree_create() {
+  run_worktree_create "$1" "$(base_ref)" || return 1
+  park "$1"
+  case $? in
+    1) echo "flow: $(idle_branch "$1") has commits not in $(base_ref); kept, and $(basename "$1") starts detached" >&2 ;;
+    2) echo "flow: cannot put $(basename "$1") on $(idle_branch "$1") at $(base_ref); it stays as worktree_create left it, and health moves it when it is free" >&2 ;;
+  esac
+  return 0
+}
+
 # pool_worktree_add <path>: a new pool worktree on its idle branch at the base tip (detached
-# when an idle branch of that name has commits of its own).
+# when an idle branch of that name has commits of its own), made by worktree_create when it is set.
 pool_worktree_add() {
+  [ -z "$(cfg worktree_create)" ] || { pool_worktree_create "$1"; return; }
   pa_branch="$(idle_branch "$1")"
   if idle_kept "$pa_branch"; then
     echo "flow: $pa_branch has commits not in $(base_ref); kept, and $(basename "$1") starts detached" >&2
@@ -554,14 +703,15 @@ pool_recreate() {
 }
 
 # grow_pool: add one worktree when the pool is below pool_max; print its path. Returns 1 when the
-# pool is full or git cannot add the worktree; exits 2 when next_pool_path refuses worktree_name.
+# pool is full; exits 1, naming worktree_create or git, when the worktree cannot be made, and 2
+# when next_pool_path refuses worktree_name or worktree_create has no {path}.
 grow_pool() {
   max="$(cfg_or pool_max 0)"
   count="$(cfg pool | grep -c .)"
   [ "$max" -gt "$count" ] 2>/dev/null || return 1
   rel="$(next_pool_path)" || exit
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
-  pool_worktree_add "$abs" || return 1
+  pool_worktree_add "$abs" || die "cannot add $rel to the pool: $(worktree_maker_name) failed"
   pool_add_entry "$rel"
   run_setup "$abs" >&2
   echo "flow: added $rel to the pool ($((count + 1)) of $max)" >&2

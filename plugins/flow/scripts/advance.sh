@@ -147,6 +147,18 @@ case "$status" in
     step_write "$item" "step=$step" >/dev/null
     report 4 "" "$gate" ;;
   fail)
+    # A verify run that was stopped (its limit, a signal, a run that died: the report's `stopped`)
+    # failed no check, so no step has anything to fix: the item stays at verify, no attempt is
+    # counted, and the owner decides at the gate. The run after the clear reuses every test
+    # command that passed.
+    if [ "$step" = verify ] && [ -n "$(json_get "$result" stopped)" ]; then
+      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**Verify did not finish, and no check failed. Give it room, then clear the gate to run it again.**
+
+- What happened: $(json_get "$result" checks.0.summary).
+- A check that needs longer: raise \`verify.limit\` in \`.flow/config.yaml\`. A busy machine: clear the gate once it is free.
+- The next run reuses every test command that already passed." >/dev/null
+      report 4 "" escalation
+    fi
     attempts=$((attempts + 1))
     max="$(json_get "$profiles" max_attempts)"
     if [ "$attempts" -ge "${max:-3}" ]; then
@@ -166,9 +178,10 @@ esac
 # done: a passing verify that touched rendered code raises the feel-test gate after moving on.
 feel_test=0
 [ "$step" = "$(json_get "$profiles" feel_test_step)" ] && [ "$(json_get "$result" feel_test)" = "true" ] && feel_test=1
-# re-size at the step boundary, then move on.
+# re-size at the step boundary, then move on. An epic has no size: every size selects the one
+# epic profile and next.sh clears the size it starts with, so a size its step names re-sizes nothing.
 next_profile="$profile"
-if [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
+if [ "$kind" != epic ] && [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
   old_i="$(size_index "$size")"; new_i="$(size_index "$new_size")"
   [ "$new_i" -ge 0 ] || die "unknown size $new_size" 2
   adapter write-state "$item" "size=$new_size" >/dev/null
