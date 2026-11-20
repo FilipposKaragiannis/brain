@@ -60,14 +60,14 @@ def whole_seconds(raw):
     return int(raw) if raw.strip().isdigit() else 0
 
 
-def timed(cs, timings):
+def timed(report_checks, timings):
     lines = timings.split("\n")
-    for position, check in enumerate(cs):
+    for position, check in enumerate(report_checks):
         seconds, _, reused_from = (lines[position] if position < len(lines) else "").partition("\t")
         check["seconds"] = whole_seconds(seconds)
         if reused_from.strip():
             check["reused_from"] = one_line(reused_from)
-    return cs
+    return report_checks
 
 
 def duration(seconds):
@@ -98,15 +98,15 @@ def main(argv):
     records, changed, reports, status, attempts, base, merge_base, head, feel, log = argv[:ARGUMENTS_WITHOUT_TIMINGS]
     has_timings = len(argv) > ARGUMENTS_WITHOUT_TIMINGS
     with open(records, "rb") as f:
-        cs = checks(f.read())
+        report_checks = checks(f.read())
     if has_timings:
         with open(argv[ARGUMENTS_WITHOUT_TIMINGS], "rb") as f:
-            cs = timed(cs, text(f.read()))
+            report_checks = timed(report_checks, text(f.read()))
     with open(changed, "rb") as f:
         files = [l for l in text(f.read()).split("\n") if l.strip()]
     report = {
         "status": status,
-        "checks": cs,
+        "checks": report_checks,
         "attempts": int(attempts),
         "base": base,
         "head": head,
@@ -117,11 +117,11 @@ def main(argv):
     if has_timings:
         report["seconds"] = whole_seconds(argv[ARGUMENTS_WITHOUT_TIMINGS + 1])
         md += ["| check | status | time | summary |", "|---|---|---|---|"]
-        md += ["| %s | %s | %s | %s |" % (md_cell(c["name"]), md_cell(c["status"]), duration(c["seconds"]), md_cell(c["summary"], MD_SUMMARY_MAX)) for c in cs]
+        md += ["| %s | %s | %s | %s |" % (md_cell(c["name"]), md_cell(c["status"]), duration(c["seconds"]), md_cell(c["summary"], MD_SUMMARY_MAX)) for c in report_checks]
         md += ["", "The run took %s." % duration(report["seconds"])]
     else:
         md += ["| check | status | summary |", "|---|---|---|"]
-        md += ["| %s | %s | %s |" % (md_cell(c["name"]), md_cell(c["status"]), md_cell(c["summary"], MD_SUMMARY_MAX)) for c in cs]
+        md += ["| %s | %s | %s |" % (md_cell(c["name"]), md_cell(c["status"]), md_cell(c["summary"], MD_SUMMARY_MAX)) for c in report_checks]
     md += ["", "Base `%s` (%s), head `%s`, %d changed files. Log: `%s`." % (base, merge_base, head, len(files), log)]
     if report["feel_test"]:
         md.append("**Feel-test needed:** a changed file matches `feel_test_paths`.")
