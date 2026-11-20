@@ -115,7 +115,9 @@ elif args[0] == "api" and "graphql" in args:
             if key == "is" and value in ("open", "closed"):
                 if i["state"].lower() != value: return False
             elif key == "label":
-                if value not in [l.lower() for l in i["labels"]]: return False
+                # A comma list of names is any of them, as GitHub reads label:"a","b".
+                names = {name.strip('"') for name in value.split(",")}
+                if not names & {label.lower() for label in i["labels"]}: return False
             elif key == "assignee":
                 if value not in [a.lower() for a in i.get("assignees", [])]: return False
             else:
