@@ -1,8 +1,21 @@
 #!/bin/sh
 # Worktree steward: the pool, claims, releases and temporary worktrees.
 #   steward.sh pool                              list the pool with claim, branch and dirt
-#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
+#   steward.sh claim <item> [--base <branch>] [--branch <name>]
+#                                                claim a free pool worktree, print its path. The
+#                                                task branch is the one --branch names (next.sh
+#                                                passes the one claim_at_base picked), else the
+#                                                one the item's state records, else an existing
+#                                                flow/<slug>, else the branch template (config
+#                                                branch, flow/{slug} unset); it goes into
+#                                                claim.json and the state (branch). A
+#                                                name git refuses, or a template that needs an
+#                                                item it cannot read, exits 2; a name another
+#                                                claim holds exits 4; both before anything is
+#                                                created
 #   steward.sh find <item>                       print the claimed path, or nothing
+#   steward.sh owner <branch>                    print the item whose pool claim holds the branch
+#                                                as its task branch, or nothing
 #   steward.sh reserve [<worktree>] [--name <who>]
 #                                                claim a free pool worktree for manual work, with
 #                                                no item, under <who> (default: git user.name, else
@@ -15,7 +28,8 @@
 #                                                (<base>-wt-<n>) at the base tip, delete the task
 #                                                branch, clear the claim and a closed item's reports
 #   steward.sh reports <item>                    print (and create) the item's reports folder
-#   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
+#   steward.sh tmp add <item> <phase>            temporary worktree on <branch>-<phase>, from the
+#                                                claim's task branch <branch>
 #   steward.sh tmp remove <path>                 remove it and its branch
 #   steward.sh add [path]                        add a worktree to the pool (worktree_create, else
 #                                                git worktree add; pool entry, copies and setup); a
@@ -64,28 +78,29 @@
 # refused with its reason, exit 2. worktree_copy lists ignored paths copied from the main
 # worktree when the new one lacks them (.claude/settings.local.json); worktree_setup lists
 # commands run in the new worktree. Both run on add and on setup.
-# worktree_create, when set, is the sh command that makes each new worktree in place of git
-# worktree add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes
-# a tmp remove worktree in place of git worktree remove; flow never removes a pool worktree. In
-# the command {path} is the worktree's absolute folder and {base} the ref it starts from (the
-# pool's base, flow/<slug> for tmp add, empty for a remove); sh -c gets them as "$1" and "$2", so
-# the command writes them bare and no value is read as shell. A command that passes {path} on to
+# worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
+# add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes a tmp
+# remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
+# command {path} is the worktree's absolute folder and {base} the ref it starts from (the pool's
+# base, the claim's task branch for tmp add, empty for a remove); sh -c gets them as "$1" and "$2",
+# so the command writes them bare and no value is read as shell. A command that passes {path} on to
 # ssh, eval or sh -c, which parse it again, must quote it again there. It runs from the main
 # worktree, all its output on stderr. After a create a git worktree of this repository must sit at
 # {path}; then the pool's goes onto its idle branch at the base tip (one that cannot move stays as
-# made, and health moves it once free) and tmp add's onto a new flow/<slug>-<phase> at {base}.
-# tmp add refuses a phase that makes no valid branch name, or a folder that exists, and tmp remove
-# takes only a listed worktree under .flow/tmp: else exit 2, nothing run. tmp remove refuses a
-# worktree with uncommitted changes, or one whose git status fails, exit 3. After a remove the
-# folder must be gone; git's record of it goes, and its branch when that is flow/<its folder under
-# .flow/tmp>. A command with no {path}, or with a placeholder inside quotes (a quoted $(...) too)
-# or inside backticks, is refused before it runs, exit 2, and so is a create at a path where
-# something already exists (add of the main or a pool worktree). One that fails, or leaves no
-# worktree (a remove: leaves the folder), is named after its output: add, tmp and a growing pool
-# exit 1 with no pool entry added (a pool that cannot grow says why, not that it is at pool_max),
-# and a claim skips a missing pool path it cannot recreate. A folder a failed create leaves stays
-# for the owner. A value must not hold " #" (the config reads a comment there) or start with [
-# (it reads a list).
+# made, and health moves it once free) and tmp add's onto a new <branch>-<phase> at {base}. tmp add
+# refuses a phase that makes no valid branch name, or a folder that exists, and tmp remove takes
+# only a listed worktree under .flow/tmp: else exit 2, nothing run. tmp remove refuses a worktree
+# with uncommitted changes (untracked files and submodule changes that status config hides count
+# too), or one whose git status fails, exit 3. After a remove the folder must be gone; git's record
+# of it goes, and its branch when that is the phase branch tmp add named for its folder:
+# <branch>-<phase> of a pool claim's task branch, or flow/<its folder under .flow/tmp>. A command
+# with no {path}, or with a placeholder inside quotes (a quoted $(...) too) or inside backticks, is
+# refused before it runs, exit 2, and so is a create at a path where something already exists (add
+# of the main or a pool worktree). One that fails, or leaves no worktree (a remove: leaves the
+# folder), is named after its output: add, tmp and a growing pool exit 1 with no pool entry added (a
+# pool that cannot grow says why, not that it is at pool_max), and a claim skips a missing pool path
+# it cannot recreate. A folder a failed create leaves stays for the owner. A value must not hold
+# " #" (the config reads a comment there) or start with [ (it reads a list).
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.
@@ -93,6 +108,7 @@
 # exception is health's, for a free worktree whose changes the base's history already holds.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/worktree_command.sh"
 
@@ -187,17 +203,35 @@ cmd_find() {
   done
 }
 
+cmd_owner() {
+  pool_paths | while read -r pool_path; do
+    owner_claim="$(claim_of "$pool_path")"
+    [ "$(json_get "$owner_claim" branch)" = "$1" ] || continue
+    owner_item="$(json_get "$owner_claim" item)"
+    [ -z "$owner_item" ] || { printf '%s\n' "$owner_item"; break; }
+  done
+  return 0
+}
+
 cmd_claim() {
   item="$1"; shift
   base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
-  slug="$(item_slug "$item")"; branch="flow/$slug"
+  branch="flow/$(item_slug "$item")"
+  if adapter_for "$item" >/dev/null 2>&1; then
+    branch="$(claim_branch_option "$@")"
+    [ -n "$branch" ] || branch="$(claim_branch "$item" "$(adapter read "$item" </dev/null 2>/dev/null)" "$base")" || refuse_claim "$item" "$branch_unread_refused" 2
+    branch_name_valid "$branch" || refuse_claim "$item" "$branch_name_refused" 2
+    ! branch_is_base "$branch" "$base" || refuse_claim "$item" "$branch_base_refused" 2
+    ! claimed_branch "$branch" || refuse_claim "$item" "another claim holds its task branch $branch" 4
+  fi
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null
   ref="$(base_ref "$base")"; claimed_branch "$base" && ref="$base"
   claim_lock
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then flow_unlock; printf '%s\n' "$existing"; return 0; fi
+  ! claimed_branch "$branch" || { flow_unlock; refuse_claim "$item" "another claim holds its task branch $branch" 4; }
   free="$(free_worktree)" || exit $?
   if git -C "$free" show-ref --verify --quiet "refs/heads/$branch"; then
     git -C "$free" switch -q "$branch" || die "cannot switch $free to $branch"
@@ -208,7 +242,7 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
-  write_state "$item" "worktree=$(basename "$free")" "base=$base" "last_event=$(now_iso) claimed $(basename "$free")"
+  write_state "$item" "worktree=$(basename "$free")" "base=$base" "branch=$branch" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
 
@@ -451,12 +485,14 @@ cmd_tmp() {
     add)
       item="$2"; phase="$3"; slug="$(item_slug "$item")"
       wt="$(cmd_find "$item")"; [ -n "$wt" ] || die "$item has no claimed worktree" 2
-      path="$home/tmp/$slug-$phase"; branch="flow/$slug-$phase"
+      task_branch="$(json_get "$(claim_of "$wt")" branch)"
+      path="$home/tmp/$slug-$phase"; branch="$task_branch-$phase"
       refuse_unnamable_phase "$phase" "$branch"
+      branch_name_valid "$branch" || die "$item: its phase branch is not a valid branch name" 2
       refuse_taken_phase "$path" "$branch"
       mkdir -p "$home/tmp"
-      if [ -n "$(cfg worktree_create)" ]; then temporary_worktree_create "$path" "flow/$slug" "$branch"
-      else git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"; fi
+      if [ -n "$(cfg worktree_create)" ]; then temporary_worktree_create "$path" "$task_branch" "$branch"
+      else git -C "$wt" worktree add -q -b "$branch" "$path" "$task_branch" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
     remove)
       path="$(removable_worktree "$2")" || exit
@@ -646,11 +682,27 @@ refuse_taken_phase() {
 # it does not exist, which no physical path lies under.
 temporary_folder() { (cd "$home/tmp" 2>/dev/null && pwd -P) || printf '%s' "$home/tmp"; }
 # temporary_branch <path>: the branch tmp add made for the temporary worktree at the physical path,
-# flow/ and its folder under the temporary folder, when the worktree has it checked out; else
-# nothing, so a branch the worktree_create command checked out is never deleted.
+# when the worktree has it checked out: <branch>-<phase> of the pool claim whose item's slug starts
+# its folder name, or flow/ and its folder under the temporary folder; else nothing, so a branch
+# the worktree_create command checked out is never deleted.
 temporary_branch() {
-  temporary_branch_name="flow/${1#"$(temporary_folder)"/}"
-  [ "$(git -C "$1" symbolic-ref --short -q HEAD)" != "$temporary_branch_name" ] || printf '%s' "$temporary_branch_name"
+  temporary_folder_name="${1#"$(temporary_folder)"/}"
+  checked_out_branch="$(git -C "$1" symbolic-ref --short -q HEAD)"
+  [ -n "$checked_out_branch" ] || return 0
+  ! phase_branches_of_folder "$temporary_folder_name" | grep -qxF -- "$checked_out_branch" || printf '%s' "$checked_out_branch"
+}
+# phase_branches_of_folder <folder name>: the branches tmp add may have named for a temporary
+# worktree with that folder name under the temporary folder, one per line.
+phase_branches_of_folder() {
+  printf 'flow/%s\n' "$1"
+  pool_paths | while IFS= read -r claimed_pool_path; do
+    phase_claim="$(claim_of "$claimed_pool_path")"
+    phase_item="$(json_get "$phase_claim" item)"
+    phase_task_branch="$(json_get "$phase_claim" branch)"
+    [ -n "$phase_item" ] && [ -n "$phase_task_branch" ] || continue
+    phase_item_slug="$(item_slug "$phase_item")"
+    case "$1" in "$phase_item_slug"-?*) printf '%s-%s\n' "$phase_task_branch" "${1#"$phase_item_slug"-}" ;; esac
+  done
 }
 physical_in() {
   while IFS= read -r listed_path; do [ "$(cd "$listed_path" 2>/dev/null && pwd -P)" = "$1" ] && return 0; done
@@ -787,8 +839,8 @@ cmd_sweep() {
     data="$(adapter read "$it" 2>/dev/null)" || continue
     status="$(json_get "$data" status)"; gate="$(state_get "$data" gate)"; pr="$(state_get "$data" pr)"
     # A PR the pr step's worker could not record (a local item file lies outside its sandbox) is
-    # found by the claim's task branch, flow/<slug>, while the item waits at the merge gate, and
-    # recorded on the item.
+    # found by the claim's task branch while the item waits at the merge gate, and recorded on the
+    # item.
     if [ -z "$pr" ] && [ "$gate" = merge ]; then
       gh_repo="$(cfg github.repo)"
       found="$(cd "$main" && gh pr list ${gh_repo:+-R "$gh_repo"} --head "$br" --state all --json url 2>/dev/null)" && pr="$(json_get "$found" 0.url)"
@@ -1769,8 +1821,9 @@ cmd_resume() {
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
-  claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>]" 2; cmd_claim "$@" ;;
+  claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>] [--branch <name>]" 2; cmd_claim "$@" ;;
   find) [ $# -ge 1 ] || die "usage: find <item>" 2; cmd_find "$1" ;;
+  owner) [ $# -ge 1 ] || die "usage: owner <branch>" 2; cmd_owner "$1" ;;
   reserve) cmd_reserve "$@" ;;
   release) [ $# -ge 1 ] || die "usage: release <item|path> [--force]" 2; cmd_release "$@" ;;
   tmp) cmd_tmp "$@" ;;

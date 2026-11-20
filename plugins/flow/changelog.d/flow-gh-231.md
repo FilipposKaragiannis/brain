@@ -8,8 +8,9 @@ bump: minor
   command that passes `{path}` on to `ssh`, `eval` or `sh -c` must quote it again there.
 - `worktree_remove` names the command that removes a `tmp remove` worktree in place of
   `git worktree remove`; flow then removes git's record of that worktree alone, when the command
-  left it, and deletes its branch when it is `flow/<its folder under .flow/tmp>`. Pool worktrees
-  are still never removed.
+  left it, and deletes its branch when it is the phase branch `tmp add` named for that folder
+  (`<branch>-<phase>` of a pool claim's task branch, or `flow/<its folder under .flow/tmp>`). Pool
+  worktrees are still never removed.
 - A command with no `{path}`, or with a placeholder inside quotes or after a backslash, is
   refused before it runs, exit 2, and `init --check` names it as a gap. That holds inside a
   quoted `$(...)` too, as in `"$(dirname "{path}")"`, where `sh` would split the path. A

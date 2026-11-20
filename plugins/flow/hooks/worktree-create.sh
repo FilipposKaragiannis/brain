@@ -12,6 +12,7 @@
 FLOW_PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"; export FLOW_PLUGIN
 . "$FLOW_PLUGIN/lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 payload="$(cat 2>/dev/null || true)"
 name="$(json_get "$payload" name)"
 cwd="$(json_get "$payload" cwd)"

@@ -32,6 +32,7 @@ FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/flow.sh"
 . "$plugin/lib/host.sh"
 . "$plugin/lib/base.sh"
+. "$plugin/lib/branch.sh"
 . "$plugin/lib/worktree_command.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
@@ -181,6 +182,13 @@ if [ ! -f .flow/config.yaml ]; then
       echo "# worktree_name: ../{repo}-wt-{n}   # names a new one instead: {repo} the main worktree's folder, {n} the first free number"
       echo "# worktree_create: workspace new {path} --from {base}   # makes a new one instead of git worktree add: {path} its folder, {base} the ref it starts from"
       echo "# worktree_remove: workspace remove {path}   # removes a temporary one instead of git worktree remove"
+      echo "# Task branch names: one template, or one per kind (epic, task, bug); unset, flow/{slug}. The claim"
+      echo "# names the branch once and records it. {slug} the item slug (gh-73), {key} the tracker's id"
+      echo "# lower-cased (73, proj-123), {kind}, {title} the title in ASCII, at most $branch_title_length_cap characters."
+      echo "# branch:"
+      echo "#   task: task/{key}-{title}"
+      echo "#   bug: bugfix/{key}-{title}"
+      echo "#   epic: feature/{key}-{title}"
       echo "# Git-ignored files a new worktree gets from the main worktree when it lacks them, and"
       echo "# commands run in a new worktree after that (steward.sh setup <path> re-runs both)."
       echo "worktree_copy:"
@@ -374,6 +382,9 @@ if [ -f .flow/config.yaml ]; then
   while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_TRACKERS
 $(trackers_unread)
 EOF_TRACKERS
+  while IFS= read -r branch_problem; do [ -z "$branch_problem" ] || gap ".flow/config.yaml: $branch_problem"; done <<EOF_BRANCH
+$(branch_problems)
+EOF_BRANCH
   # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;
   # the old jobs.model and jobs.effort still work for one release, with a note.
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
