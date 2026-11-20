@@ -11,6 +11,7 @@ runs: the retro job hands the report to the retro, and the owner reads it as it 
 """
 import calendar
 import json
+import math
 import os
 import sys
 import time
@@ -61,7 +62,7 @@ def median(values):
 
 def within(values, share):
     ordered = sorted(values)
-    return ordered[min(len(ordered) - 1, int(len(ordered) * share))]
+    return ordered[math.ceil(len(ordered) * share) - 1]
 
 
 def by_step(runs):

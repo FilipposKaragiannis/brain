@@ -1,7 +1,7 @@
 #!/bin/sh
 # graph-report.sh: the graph report scripts/graph-report.sh prints from a run log, on the local
-# adapter in a throwaway repo. A step shows its runs, its median time, its failed runs and its
-# runs per item; a step whose median grew by half or more against the period before is named,
+# adapter in a throwaway repo. A step shows its runs, its median time, the time nine runs in ten
+# finish within, its failed runs and its runs per item; a step whose median grew by half or more against the period before is named,
 # one at the same pace is not; runs outside the period are left out; a period with no run says
 # so; a line of the log that is no step record is passed over; a bad --days is refused.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
@@ -41,6 +41,11 @@ check "StepRunFourTimesOnTwoItems_ShowsTwoRunsPerItem: the reruns per item are w
   '[ "$(row_of implement | cut -d"|" -f8 | tr -d " ")" = 2.0 ]'
 check "RunOlderThanBothPeriods_IsLeftOut: the 9000 second run of a month ago changes no number" \
   '! graph_report | grep -q "local:task/9"'
+
+echo "graph report: nine runs in ten"
+for seconds in 1 2 3 4 5 6 7 8 9 3600; do ran local:task/5 deliver 4 "$seconds"; done
+check "TenRunsWithOneSlowOutlier_ShowTheNinthAsNineInTenWithin: nine of the ten deliver runs end within 9 seconds, the one hour run is the tenth" \
+  '[ "$(row_of deliver | cut -d"|" -f5 | tr -d " ")" = 9s ]'
 
 echo "graph report: a step that got slower"
 ran local:task/3 review 8 100; ran local:task/3 review 9 100; ran local:task/3 review 10 100
