@@ -613,6 +613,14 @@ listed_children="$(jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json
 check "JiraScopedList_CountsChildrenInside: list counts only the open children inside jira.scope, because the scope is ANDed into the children search" [ "$listed_children" = "[$children_inside]" ]
 check "JiraScopedRead_CountsChildrenInside: read counts only the open children inside jira.scope, because the scope is ANDed into its children search" [ "$(jira_run "$P/adapters/jira/read.sh" "$jsp" | jget open_children)" = "$children_inside" ]
 jira_area_config '  scope:
+    kinds: [epic]
+'
+jke="$(jira_run "$P/adapters/jira/create.sh" epic "Epic with a task child")"
+jira_run "$P/adapters/jira/create.sh" task "Task child outside the kinds" --parent "$jke" >/dev/null
+kind_listed_children="$(jira_run "$P/adapters/jira/list.sh" | python3 -c 'import json,sys; print([i["open_children"] for i in json.load(sys.stdin) if i["id"] == sys.argv[1]])' "$jke")"
+check "JiraKindScopedList_ChildOfOtherKind_NotCounted: list counts no open child of a kind outside jira.scope, because the scope's kinds bound the children too" [ "$kind_listed_children" = "[0]" ]
+check "JiraKindScopedRead_ChildOfOtherKind_NotCounted: read counts no open child of a kind outside jira.scope, because the scope's kinds bound the children too" [ "$(jira_run "$P/adapters/jira/read.sh" "$jke" | jget open_children)" = 0 ]
+jira_area_config '  scope:
     query: '"'"'labels = "team-a"'"'"'
 pick:
   mine:

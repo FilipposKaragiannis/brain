@@ -192,11 +192,12 @@ def children_of(issues, scope, narrowed):
     rows = issues
     if narrowed and issues:
         conditions = ["parent in (%s)" % ", ".join(i["key"] for i in issues)] + scope + ["statusCategory != Done"]
-        rows, _ = search(" AND ".join(conditions), ["parent", "status"], sys.maxsize)
+        rows, _ = search(" AND ".join(conditions), ["parent", "status", "issuetype"], sys.maxsize)
     children = {}
     for issue in rows:
         parent = issue["fields"].get("parent")
-        if parent and (issue["fields"].get("status") or {}).get("statusCategory", {}).get("key") != "done":
+        open_child = (issue["fields"].get("status") or {}).get("statusCategory", {}).get("key") != "done"
+        if parent and open_child and kind_wanted(kind_of(issue["fields"]), SCOPE):
             children[parent["key"]] = children.get(parent["key"], 0) + 1
     return children
 
@@ -220,7 +221,7 @@ def cmd_list(args):
         sys.stderr.write("flow: stopped at jira.limit %d issues; raise it in .flow/config.yaml\n" % limit)
         if os.environ.get("FLOW_LIST_WHOLE"):
             sys.exit(1)
-    children = children_of(issues, scope, bool(scope or picked))
+    children = children_of(issues, scope, bool(scope or picked or pick_values(SCOPE, "KINDS")))
     items = [to_item(issue, fields, children.get(issue["key"], 0)) for issue in issues]
     kept = [i for i in items if (not kind or i["kind"] == kind) and kind_wanted(i["kind"], SCOPE) and kind_wanted(i["kind"], PICK)]
     print(json.dumps(kept))
@@ -239,8 +240,9 @@ def cmd_read(args):
     key, fields = key_of(args[0]), custom_fields()
     issue = read_issue(key, fields)
     conditions = ["parent = %s" % key] + scope_conditions() + ["statusCategory != Done"]
-    children, _ = search(" AND ".join(conditions), ["summary"], int(setting("LIMIT", "500")))
-    print(json.dumps(to_item(issue, fields, len(children))))
+    children, _ = search(" AND ".join(conditions), ["issuetype"], int(setting("LIMIT", "500")))
+    inside = [c for c in children if kind_wanted(kind_of(c["fields"]), SCOPE)]
+    print(json.dumps(to_item(issue, fields, len(inside))))
 
 
 def cmd_in_scope(args):
