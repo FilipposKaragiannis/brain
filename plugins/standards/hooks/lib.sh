@@ -104,8 +104,10 @@ command_code() {
   # to make or dotnet) with its ; | & ( ) { } as spaces, the quoted argument of `sh -c`, `bash -c`
   # and `eval` as written, and any $( ) inside double quotes. A -c script is followed by `; :`, so
   # the shell's own arguments after it start nothing; a shell given -n runs no -c script, so that
-  # one counts as quoted text. A forbid gate matches against this, so a doc, a commit message or
-  # an echo that names a paused verb does not trip it, but quoting the verb does not hide a run.
+  # one counts as quoted text. A quoted word that stands alone and leaves no text (dropped or
+  # empty) leaves '' in its place, so the words after it keep their places. A forbid gate matches
+  # against this, so a doc, a commit message or an echo that names a paused verb does not trip it,
+  # but quoting the verb does not hide a run.
   printf '%s\n' "$1" | awk '
     BEGIN { sq = sprintf("%c", 39); dq = sprintf("%c", 34); term = ""; n = 0 }
     {
@@ -147,7 +149,9 @@ command_code() {
           keep = (script || (!inert && !prose))
           if (cmdword == "" && tok == "") cmdword = body
           if (!script) gsub(/[;|&(){}]/, " ", body)
-          out = out " " (keep ? body : "") " " run " "
+          shown = keep ? body : ""
+          if (shown run == "" && tok == "" && substr(text, j + 1, 1) ~ /^[ \t\n;|&()<>]?$/) shown = sq sq
+          out = out " " shown " " run " "
           if (script && prev != "eval") out = out "; : "
           tok = ""; last = ""; i = j + 1; continue
         }
