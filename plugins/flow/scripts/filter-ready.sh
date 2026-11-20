@@ -3,8 +3,9 @@
 # none, no field the adapter lists under needs, no open blocker the owner did not waive (gate.sh
 # clear --option, lib/blockers.sh), a step left to run (not done, not split), not held behind an
 # open item, and, for an item no step has started, no parent that waits at the decomposition gate
-# (read through its adapter when the list leaves it out); lowest rank first, else as listed. An
-# item that lists its open blockers (open_blockers) is judged by that list; else each blocker is
+# (read through its adapter when the list leaves it out); lowest rank first, then the lowest item
+# number (the oldest: GitHub and Jira list the newest first), else as listed. An item
+# that lists its open blockers (open_blockers) is judged by that list; else each blocker is
 # looked up through its own adapter's read operation, so a local item can wait on a GitHub issue
 # and the other way round.
 # A blocker that cannot be read still holds. The item a plan put this one behind (state.held_by)
