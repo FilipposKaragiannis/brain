@@ -10,7 +10,6 @@
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
 
-ready_ids() { "$local_adapter/list-ready.sh" "$@" |python3 -c 'import json,sys; print(",".join(item["id"] for item in json.load(sys.stdin)))'; }
 # step_result <item> <step> <json>: writes the result file of the item's run in flight.
 step_result() { printf '%s\n' "$3" > "$(json_value reports < "$(run_file "$1")")/$2.json"; }
 # start_step <item>: next.sh on the named item; its exit code is the function's.
@@ -20,6 +19,7 @@ finish_step() { "$plugin/scripts/advance.sh" "$1" >/dev/null 2>&1; }
 echo "epic gates: a child waits while its parent's split is not approved"
 new_repo children
 epic="$("$local_adapter/create.sh" epic "Physics" --body x)"
+remote_branch "$(epic_of "$epic")"
 child="$(new_task "Ball spin" "$epic")"
 started_child="$(new_task "Ball drag" "$epic")"
 start_step "$started_child"
