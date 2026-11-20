@@ -1,12 +1,15 @@
 """The verify report, built from data. See scripts/verify.sh.
 
   _verify_report.py <records> <changed> <reports dir> <status> <attempts> <base> <merge base>
-                    <head> <feel_test true|false> <log>
+                    <head> <feel_test true|false> <log> [<timings> <total seconds>]
 
 <records> holds one check after another as four NUL-terminated fields: name, status, command and
 the summary source (the command's whole output for a failed check, a fixed sentence otherwise).
-<changed> holds the changed files, one per line. Bytes that are not UTF-8 are replaced, never
-fatal. The summary is the last five non-empty lines of its source on one line, without control
+<changed> holds the changed files, one per line. <timings> holds one line per check, in the same
+order: the whole seconds the check ran, a tab, and the run a reused pass came from (empty for a
+check that ran). Each check then carries `seconds`, a reused one `reused_from`, and the report
+the run's total `seconds`; a line that is missing or no number counts as 0. Bytes that are not
+UTF-8 are replaced, never fatal. The summary is the last five non-empty lines of its source on one line, without control
 characters, terminal colours or terminal hyperlinks (OSC 8: the target goes and the link's text
 stays; one cut short with no terminator goes to the end), cut to 400 characters. Writes
 verify.json and verify.md through a temp file and a rename each, so a reader sees the old report
@@ -19,6 +22,9 @@ import sys
 
 SUMMARY_MAX = 400
 MD_SUMMARY_MAX = 200
+SECONDS_PER_MINUTE = 60
+SECONDS_PER_HOUR = 3600
+ARGUMENTS_WITHOUT_TIMINGS = 10
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _OSC = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\|$)")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
@@ -50,6 +56,28 @@ def checks(records):
     return out
 
 
+def whole_seconds(raw):
+    return int(raw) if raw.strip().isdigit() else 0
+
+
+def timed(cs, timings):
+    lines = timings.split("\n")
+    for position, check in enumerate(cs):
+        seconds, _, reused_from = (lines[position] if position < len(lines) else "").partition("\t")
+        check["seconds"] = whole_seconds(seconds)
+        if reused_from.strip():
+            check["reused_from"] = one_line(reused_from)
+    return cs
+
+
+def duration(seconds):
+    if seconds < SECONDS_PER_MINUTE:
+        return "%ds" % seconds
+    if seconds < SECONDS_PER_HOUR:
+        return "%dm %02ds" % (seconds // SECONDS_PER_MINUTE, seconds % SECONDS_PER_MINUTE)
+    return "%dh %02dm" % (seconds // SECONDS_PER_HOUR, seconds % SECONDS_PER_HOUR // SECONDS_PER_MINUTE)
+
+
 def write_atomic(path, content):
     tmp = "%s/.%s.%d.tmp" % (os.path.dirname(path), os.path.basename(path), os.getpid())
     try:
@@ -67,9 +95,13 @@ def md_cell(s, limit=None):
 
 
 def main(argv):
-    records, changed, reports, status, attempts, base, merge_base, head, feel, log = argv
+    records, changed, reports, status, attempts, base, merge_base, head, feel, log = argv[:ARGUMENTS_WITHOUT_TIMINGS]
+    has_timings = len(argv) > ARGUMENTS_WITHOUT_TIMINGS
     with open(records, "rb") as f:
         cs = checks(f.read())
+    if has_timings:
+        with open(argv[ARGUMENTS_WITHOUT_TIMINGS], "rb") as f:
+            cs = timed(cs, text(f.read()))
     with open(changed, "rb") as f:
         files = [l for l in text(f.read()).split("\n") if l.strip()]
     report = {
@@ -81,9 +113,15 @@ def main(argv):
         "changed_files": files,
         "feel_test": feel == "true",
     }
-    md = ["## Verify: %s (attempt %s)" % (status, attempts), "",
-          "| check | status | summary |", "|---|---|---|"]
-    md += ["| %s | %s | %s |" % (md_cell(c["name"]), md_cell(c["status"]), md_cell(c["summary"], MD_SUMMARY_MAX)) for c in cs]
+    md = ["## Verify: %s (attempt %s)" % (status, attempts), ""]
+    if has_timings:
+        report["seconds"] = whole_seconds(argv[ARGUMENTS_WITHOUT_TIMINGS + 1])
+        md += ["| check | status | time | summary |", "|---|---|---|---|"]
+        md += ["| %s | %s | %s | %s |" % (md_cell(c["name"]), md_cell(c["status"]), duration(c["seconds"]), md_cell(c["summary"], MD_SUMMARY_MAX)) for c in cs]
+        md += ["", "The run took %s." % duration(report["seconds"])]
+    else:
+        md += ["| check | status | summary |", "|---|---|---|"]
+        md += ["| %s | %s | %s |" % (md_cell(c["name"]), md_cell(c["status"]), md_cell(c["summary"], MD_SUMMARY_MAX)) for c in cs]
     md += ["", "Base `%s` (%s), head `%s`, %d changed files. Log: `%s`." % (base, merge_base, head, len(files), log)]
     if report["feel_test"]:
         md.append("**Feel-test needed:** a changed file matches `feel_test_paths`.")

@@ -1,10 +1,16 @@
 #!/bin/sh
-# verify.sh <item> [--base <ref>]: the one verify run. From the claimed worktree, runs in order
-# build, format (changed files only), tests, mutation (signal, never a fail) and the project
+# verify.sh <item> [--base <ref>] [--fresh]: the one verify run. From the claimed worktree, runs in
+# order build, format (changed files only), tests, mutation (signal, never a fail) and the project
 # gates from .flow/config.yaml, each once, and writes
-# <reports>/verify.json {status, checks: [{name, status, command, summary}], attempts, base,
-# head, changed_files, feel_test} and its Markdown twin verify.md for the PR body. Commands come
-# from .standards/config.json (build, test, mutation, languages[].format). An empty mutation is
+# <reports>/verify.json {status, checks: [{name, status, command, summary, seconds}], attempts,
+# base, head, changed_files, feel_test, seconds} and its Markdown twin verify.md for the PR body.
+# Commands come from .standards/config.json (build, test, mutation, languages[].format). build and
+# test are a command, or a map with `command` and `paths`; test is also a list of {name, command,
+# paths}, one check `tests <name>` each (scripts/_checks.py plan). A build or test command with
+# paths runs when a changed file matches a glob, else it is a skipped check that says so. One that
+# passed on the same command and the same files is not run again: the check is a pass that names
+# the run it came from (lib/checks.sh); a command with no paths is reused only while the whole
+# tree is unchanged, a failed one never, and --fresh runs every command. An empty mutation is
 # the off switch (a skipped check); a mutation command with {files} runs on the changed source
 # files only, like a format command, and is skipped when none changed. A project gate is
 # `name: command` (always runs) or a map with `command:` and `paths:` (runs when a changed file
@@ -32,14 +38,16 @@
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
-usage="usage: verify.sh <item> [--base <ref>] [--start | --wait [seconds]]"
+. "$FLOW_PLUGIN/lib/checks.sh"
+usage="usage: verify.sh <item> [--base <ref>] [--fresh] [--start | --wait [seconds]]"
 [ $# -ge 1 ] || die "$usage" 2
 item="$1"; shift
 # A --wait call by default: nine minutes, under the ten after which a host cuts a shell call.
-default_wait_seconds=540; base=""; mode=run; wait_for="$default_wait_seconds"
+default_wait_seconds=540; base=""; mode=run; wait_for="$default_wait_seconds"; fresh=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --base) base="$2"; shift 2 ;;
+    --fresh) fresh=fresh; shift ;;
     --start) mode=start; shift ;;
     --wait) mode=wait; shift; case "${1:-}" in ''|-*) ;; *) wait_for="$1"; shift ;; esac ;;
     --detached) mode=detached; shift ;;
@@ -64,14 +72,16 @@ next_attempt() {
 # cut to report_text_max_characters, safe inside the JSON string of a minimal report.
 report_text_max_characters=400
 report_text() { printf '%s' "$1" | LC_ALL=C tr -c '[:print:]' ' ' | LC_ALL=C tr -d '"\\' | cut -c1-"$report_text_max_characters"; }
-# fail_report <check name> <summary> <sentence>: the minimal report with status fail and one failed
-# check, written without the builder and renamed in, with its verify.md twin saying the sentence.
-# Name, summary and sentence are report_text already; $attempts, $base and $head_sha are set. Each
-# file is written to a new one mktemp makes, never through a link left at a name, and renamed in.
+# fail_report <check name> <summary> <sentence> <stop cause>: the minimal report with status fail
+# and one failed check, written without the builder and renamed in, with its verify.md twin saying
+# the sentence. The stop cause (limit, signal or ended) is the report's `stopped`, empty for a
+# report no stop made: advance.sh reads it, as a stopped run failed no check. Name, summary and
+# sentence are report_text already; $attempts, $base and $head_sha are set. Each file is written
+# to a new one mktemp makes, never through a link left at a name, and renamed in.
 fail_report() {
   safe_name() { printf '%s' "$1" | LC_ALL=C tr -cd 'A-Za-z0-9._/-'; }
-  minimal_json_file="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false}\n' \
-    "$1" "$2" "$attempts" "$(safe_name "$base")" "$(safe_name "$head_sha")" > "$minimal_json_file" && mv -f "$minimal_json_file" "$reports/verify.json"
+  minimal_json_file="$(mktemp "$reports/.verify.json.XXXXXX")" && printf '{"status": "fail", "checks": [{"name": "%s", "status": "fail", "command": "", "summary": "%s"}], "attempts": %d, "base": "%s", "head": "%s", "changed_files": [], "feel_test": false, "stopped": "%s"}\n' \
+    "$1" "$2" "$attempts" "$(safe_name "$base")" "$(safe_name "$head_sha")" "$(safe_name "${4:-}")" > "$minimal_json_file" && mv -f "$minimal_json_file" "$reports/verify.json"
   minimal_md_file="$(mktemp "$reports/.verify.md.XXXXXX")" && printf '## Verify: fail (attempt %d)\n\n%s\n\nLog: `%s`.\n' "$attempts" "$3" "$log" \
     > "$minimal_md_file" && mv -f "$minimal_md_file" "$reports/verify.md"
 }
@@ -87,13 +97,13 @@ duration() {
 limit_seconds() { python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds verify.limit "$(cfg_or verify.limit 2h)"; }
 # running_now: the check the run is on, as the log names it, or starting before the first.
 running_now() { current_check="$(verify_running_check "$log")"; printf '%s' "${current_check:-starting}"; }
-# unfinished_report <cause>: the fail report of a run that ended with none, naming the check the
-# log shows running and the cause, said on stdout and in the log. Exits 1.
+# unfinished_report <cause> <stop cause>: the fail report of a run that ended with none, naming the
+# check the log shows running and the cause, said on stdout and in the log. Exits 1.
 unfinished_report() {
   running_header="$(verify_running_check "$log")"; unfinished_check="${running_header%%: *}"; unfinished_command="${running_header#*: }"
   if [ -n "$running_header" ]; then unfinished_summary="$(report_text "$1 while $unfinished_check ran ($unfinished_command)")"
   else unfinished_check=verify; unfinished_summary="$(report_text "$1 before the first check")"; fi
-  fail_report "$(report_text "$unfinished_check")" "$unfinished_summary" "Verify did not finish: $unfinished_summary."
+  fail_report "$(report_text "$unfinished_check")" "$unfinished_summary" "Verify did not finish: $unfinished_summary." "$2"
   printf '\nverify: %s\n' "$unfinished_summary" >> "$log"
   echo "verify: fail (attempt $attempts): $unfinished_summary; report $reports/verify.json"
   exit 1
@@ -122,7 +132,7 @@ start_run() {
   may_start || exit 0
   limit="$(limit_seconds)" || exit 2
   make_run_files || die "could not create the log of the verify run of $item"
-  pid="$(verify_run_start "$reports" "$run_out" "$limit" "$item" "$given_base")" || exit 1
+  pid="$(verify_run_start "$reports" "$run_out" "$limit" "$item" "$given_base" "$fresh")" || exit 1
   echo "verify: started the run of $item (pid $pid, limit $(duration "$limit")); wait for it with verify.sh $item --wait"
   exit 0
 }
@@ -143,7 +153,7 @@ wait_run() {
   cat "$run_out" 2>/dev/null
   if [ ! -f "$reports/verify.json" ]; then
     attempts="$(next_attempt)"; head_sha="$(verify_run_field "$reports" head)"
-    unfinished_report "the verify run (pid $(verify_run_field "$reports" pid)) ended with no report, killed or crashed,"
+    unfinished_report "the verify run (pid $(verify_run_field "$reports" pid)) ended with no report, killed or crashed," ended
   fi
   [ "$(json_get "$(cat "$reports/verify.json")" status)" = pass ]
   exit
@@ -161,9 +171,9 @@ child_ends_in_time() {
 # at the limit, stopped by a signal, or ended on its own. Exits 1.
 stopped_run_report() {
   case "$1" in
-    limit) unfinished_report "stopped at the verify limit of $(duration "$limit") (verify.limit)" ;;
-    signal) unfinished_report "stopped by a signal" ;;
-    *) unfinished_report "the run ended (exit $2) with no report" ;;
+    limit) unfinished_report "stopped at the verify limit of $(duration "$limit") (verify.limit)" limit ;;
+    signal) unfinished_report "stopped by a signal" signal ;;
+    *) unfinished_report "the run ended (exit $2) with no report" ended ;;
   esac
 }
 
@@ -174,7 +184,7 @@ run_detached() {
   limit="$(limit_seconds)" || exit 2
   started="$(date +%s)"; stop_cause=""
   trap 'stop_cause="${stop_cause:-signal}"' TERM INT HUP
-  sh "$FLOW_PLUGIN/scripts/verify.sh" "$item" ${given_base:+--base "$given_base"} &
+  sh "$FLOW_PLUGIN/scripts/verify.sh" "$item" ${given_base:+--base "$given_base"} ${fresh:+--fresh} &
   child=$!
   child_ends_in_time "$child" || stop_cause="${stop_cause:-limit}"
   [ -z "$stop_cause" ] || verify_stop_group
@@ -198,23 +208,28 @@ std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log"; (set -C; : > "$log") || die "could not create the verify log $log"
 attempts="$(next_attempt)"
 overall="pass"
-records=""; changed_list=""
+run_started="$(date +%s)"
+records=""; changed_list=""; timings=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}' EXIT
-trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"}; kill -TERM $$' TERM
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 
 record() {
-  # record <name> <status> <command> <summary source>: one check, four NUL-terminated fields. The
-  # report builder turns the source into the summary; nothing here is JSON.
+  # record <name> <status> <command> <summary source> <seconds> <reused from>: one check, four
+  # NUL-terminated fields, and its line in the timings: the whole seconds it ran, then the run a
+  # reused pass came from (empty for a check that ran). The report builder turns the source into
+  # the summary; nothing here is JSON.
   printf '%s\000%s\000%s\000%s\000' "$1" "$2" "$3" "$4" >> "$records"
+  printf '%s\t%s\n' "$5" "$6" >> "$timings"
 }
 skipped() {
   # skipped <name> <why>: a check that did not apply, kept in the report so the reader sees why.
-  record "$1" skipped "" "$2"
+  record "$1" skipped "" "$2" 0 ""
 }
 changed_matches() {
   # changed_matches <globs, one per line>: true when a changed file matches one of them.
@@ -232,10 +247,11 @@ EOF_GLOBS
 }
 
 run_check() {
-  # run_check <name> <command> <kind: gate|signal> [files]
+  # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
   cmd="$(printf '%s' "$command" | sed "s|{files}|$files|g")"
   printf '\n== %s: %s\n' "$name" "$cmd" >> "$log"
+  check_started="$(date +%s)"
   if out="$(sh -c "$cmd" 2>&1)"; then st="pass"; summary="ok"
   else
     st="fail"; [ "$kind" = "signal" ] && st="signal"
@@ -243,11 +259,43 @@ run_check() {
   fi
   printf '%s\n' "$out" >> "$log"
   [ "$st" = "fail" ] && overall="fail"
-  record "$name" "$st" "$cmd" "$summary"
+  record "$name" "$st" "$cmd" "$summary" "$(( $(date +%s) - check_started ))" ""
+  [ "$st" = "pass" ]
 }
 
-build="$(json_get "$std" build)"
-if [ -n "$build" ]; then run_check build "$build" gate; else skipped build "no build command in .standards/config.json"; fi
+scoped_check() {
+  # scoped_check <name> <command> <globs, one per line>: a build or test command. With globs it
+  # runs only when a changed file matches one. A pass kept for the same command and files
+  # (lib/checks.sh) is reported as that pass, named with its run, and nothing runs; --fresh runs
+  # the command whatever is kept. A pass is kept for the next run.
+  if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
+  inputs_key="$(check_key "$2" "$3")"
+  if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
+    printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
+    record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
+    return
+  fi
+  run_check "$1" "$2" gate && check_keep "$inputs_key" "$item" "$(git rev-parse --short HEAD 2>/dev/null)"
+}
+
+planned_checks() {
+  # planned_checks <build|test> <name of the check when the config has none>: each command the
+  # plan holds for the kind, as a scoped check.
+  planned_count="$(json_length "$planned" "$1")"
+  if [ "${planned_count:-0}" -eq 0 ]; then skipped "$2" "no $1 command in .standards/config.json"; return; fi
+  planned_index=0
+  while [ "$planned_index" -lt "$planned_count" ]; do
+    scoped_check "$(json_get "$planned" "$1.$planned_index.name")" "$(json_get "$planned" "$1.$planned_index.command")" "$(json_list "$planned" "$1.$planned_index.paths")"
+    planned_index=$((planned_index + 1))
+  done
+}
+
+# A build or test entry the plan cannot read is a failed check that names the entry, and neither
+# kind runs.
+if ! planned="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
+  record config fail "" "$planned" 0 ""; overall="fail"; planned='{"build": [], "test": []}'
+fi
+planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
   lang="$(json_get "$std" "languages.$i")"
@@ -262,8 +310,7 @@ while [ "$i" -lt "${nlang:-0}" ]; do
   i=$((i + 1))
 done
 [ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule"
-test_cmd="$(json_get "$std" test)"
-if [ -n "$test_cmd" ]; then run_check tests "$test_cmd" gate; else skipped tests "no test command in .standards/config.json"; fi
+planned_checks test tests
 mutation="$(json_get "$std" mutation)"
 if [ -z "$mutation" ]; then skipped mutation "mutation is empty in .standards/config.json (off)"
 else
@@ -295,7 +342,7 @@ report_failed() {
   fail_report report "could not build the report: $cause" "The report could not be built: $cause"
   exit 1
 }
-err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$merge_base" "$head_sha" "$feel" "$log" 2>&1 >/dev/null)" \
+err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$merge_base" "$head_sha" "$feel" "$log" "$timings" "$(( $(date +%s) - run_started ))" 2>&1 >/dev/null)" \
   || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]

@@ -516,6 +516,11 @@ sh "$here/verify-ends.sh" > "$work/verify-ends.out" 2>&1; code=$?
 check "verify-ends: $(tail -n 1 "$work/verify-ends.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-ends.out"
 
+echo "verify runs the build and test commands a change can affect, once per input (tests/verify-scope.sh)"
+sh "$here/verify-scope.sh" > "$work/verify-scope.out" 2>&1; code=$?
+check "verify-scope: $(tail -n 1 "$work/verify-scope.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-scope.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
