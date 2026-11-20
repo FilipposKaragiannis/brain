@@ -101,8 +101,8 @@ command_code() {
   # Quoted text is dropped when it is prose: more than one word, the value of a message or pattern
   # flag (-m, --message, -F, -e, --grep), or an argument of a text tool (echo, printf, grep, rg,
   # sed, awk, cat). Kept: a one-word quoted argument of any other command ("update-golden" passed
-  # to make or dotnet), the quoted argument of `sh -c`, `bash -c` and `eval`, and any $( ) inside
-  # double quotes. A forbid gate matches against this, so a doc, a commit message or an echo that
+  # to make or dotnet) with its ; | & ( ) { } as spaces, the quoted argument of `sh -c`, `bash -c`
+  # and `eval` as written, and any $( ) inside double quotes. A forbid gate matches against this, so a doc, a commit message or an echo that
   # names a paused verb does not trip it, but quoting the verb does not hide a run.
   printf '%s\n' "$1" | awk '
     BEGIN { sq = sprintf("%c", 39); dq = sprintf("%c", 34); term = ""; n = 0 }
@@ -141,8 +141,10 @@ command_code() {
           prev = (tok != "") ? tok : last
           inert = (cmdword ~ /^(.*\/)?(echo|printf|grep|egrep|fgrep|rg|sed|awk|cat)$/)
           prose = (body ~ /[ \t\n]/ || prev ~ /^(-m|--message|-F|--file|-e|--regexp|--grep)$/ || prev ~ /^--(message|file|grep)=$/)
-          keep = (prev == "eval" || prev ~ /^-[A-Za-z]*c$/ || (!inert && !prose))
+          script = (prev == "eval" || prev ~ /^-[A-Za-z]*c$/)
+          keep = (script || (!inert && !prose))
           if (cmdword == "" && tok == "") cmdword = body
+          if (!script) gsub(/[;|&(){}]/, " ", body)
           out = out " " (keep ? body : "") " " run " "
           tok = ""; last = ""; i = j + 1; continue
         }
@@ -184,7 +186,7 @@ code_runs() {
   # any VAR=value words and the words that only pass a command on (a shell, env, exec, nohup,
   # command, nice, timeout, caffeinate, with their options). A shell given -n only parses the
   # script and command -v or -V only looks the name up: both start nothing. A path that is an
-  # argument (git add, sed, grep) starts nothing.
+  # argument (git add, sed, grep) starts nothing. An escaped character (\;) separates nothing.
   printf '%s\n' "$1" | T="$2" awk '
     BEGIN { t = ENVIRON["T"]; found = 0 }
     function names_program(word) {
@@ -216,6 +218,7 @@ code_runs() {
     }
     {
       line = $0
+      gsub(/\\./, "_", line)
       gsub(/\$\(/, "\n", line); gsub(/`/, "\n", line)
       gsub(/&&|\|\||[;|&(){}]/, "\n", line)
       count = split(line, commands, "\n")
