@@ -27,8 +27,8 @@ ITEMS_LISTED = 5
 LOG_FILES = ("runs.1.jsonl", "runs.jsonl")
 
 
-def epoch(iso):
-    return calendar.timegm(time.strptime(iso, "%Y-%m-%dT%H:%M:%SZ"))
+def epoch(timestamp):
+    return calendar.timegm(time.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ"))
 
 
 def duration(seconds):
@@ -107,8 +107,8 @@ def item_rows(runs):
     return ["| %s | %d | %s | $%.2f |" % (item, total["steps"], duration(total["seconds"]), total["cost"]) for item, total in ranked]
 
 
-def report(log, days, now_iso):
-    now = epoch(now_iso)
+def report(log, days, now_timestamp):
+    now = epoch(now_timestamp)
     period = days * SECONDS_PER_DAY
     this_period, before = [], []
     for run in step_runs(log):
@@ -118,7 +118,7 @@ def report(log, days, now_iso):
             before.append(run)
     lines = ["# Flow graph report", "",
              "The %d days before %s: %d step runs, %s of step time. The %d days before that: %d runs, %s." % (
-                 days, now_iso, len(this_period), duration(sum(run["seconds"] for run in this_period)),
+                 days, now_timestamp, len(this_period), duration(sum(run["seconds"] for run in this_period)),
                  days, len(before), duration(sum(run["seconds"] for run in before)))]
     if not this_period:
         return lines + ["", "No step ran in this period."]
@@ -131,14 +131,14 @@ def report(log, days, now_iso):
     return lines
 
 
-def main(argv):
-    if len(argv) != 3 or not argv[1].isdigit() or int(argv[1]) < 1:
+def main(arguments):
+    if len(arguments) != 3 or not arguments[1].isdigit() or int(arguments[1]) < 1:
         print("usage: _graph_report.py <log dir> <days> <now>", file=sys.stderr)
         return 2
     try:
-        print("\n".join(report(argv[0], int(argv[1]), argv[2])))
+        print("\n".join(report(arguments[0], int(arguments[1]), arguments[2])))
     except ValueError:
-        print("flow: %s is no ISO time (2026-10-25T09:00:00Z)" % argv[2], file=sys.stderr)
+        print("flow: %s is no ISO time (2026-10-25T09:00:00Z)" % arguments[2], file=sys.stderr)
         return 2
     return 0
 
