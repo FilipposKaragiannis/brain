@@ -19,6 +19,11 @@
 #     part of the command that runs: heredoc bodies, comments and quoted text do not count, except
 #     the argument of `sh -c`, `bash -c` and `eval`. Agent hosts only: a git hook never sees a
 #     command.
+#   {"name": "whole-suite", "forbid_run": ["tools/test.sh"], "marker": "[whole-suite]"}
+#     a forbidden-program gate: blocks a command that starts one of the programs, as written or
+#     at the end of a longer path, through a shell, env, exec, nohup, nice or timeout too. A
+#     command that only names the path (git add, sed, grep, sh -n) starts nothing and passes.
+#     Use it for a script that must not run by hand; forbid is for a verb passed as an argument.
 # Agent hosts feed the Bash payload on stdin; the git hooks feed a plain `git commit` or `git push`;
 # check-range.sh sets STANDARDS_STAGE=ci so only the gates that list "ci" run. An agent's commit
 # runs the gates once: the agent hook records the index it passed, and git's hooks skip that same
@@ -53,25 +58,32 @@ while [ "$i" -lt "$count" ]; do
   command="$(json_get "$config" "gates.$i.command")"
   marker="$(json_get "$config" "gates.$i.marker")"
   forbid="$(json_list "$config" "gates.$i.forbid")"
+  forbid_run="$(json_list "$config" "gates.$i.forbid_run")"
   paths="$(json_list "$config" "gates.$i.paths")"
   when="$(json_list "$config" "gates.$i.when" | tr '\n' ' ')"; [ -n "$(printf '%s' "$when" | tr -d ' ')" ] || when="commit"
   i=$((i + 1))
-  if [ -n "$forbid" ]; then
-    hit=""
+  if [ -n "$forbid$forbid_run" ]; then
+    hit=""; said="contains"
     while IFS= read -r text; do
       [ -n "$text" ] || continue
       code_has_word "$code" "$text" && hit="$text"
     done <<FORBID
 $forbid
 FORBID
+    while IFS= read -r program; do
+      [ -n "$program" ] || continue
+      code_runs "$code" "$program" && { hit="$program"; said="runs"; }
+    done <<FORBID_RUN
+$forbid_run
+FORBID_RUN
     [ -n "$hit" ] || continue
     if [ -n "$marker" ]; then
       printf '%s' "$cmd" | grep -qiF -- "$marker" && continue
       [ -n "$commit_seg" ] && commit_has_marker "$commit_seg" "$marker" && continue
-      block "gate $name: the command contains \"$hit\"" "  $cmd
+      block "gate $name: the command $said \"$hit\"" "  $cmd
   It is blocked until the owner approves it: then add $marker to the command or the commit message."
     fi
-    block "gate $name: the command contains \"$hit\"" "  $cmd"
+    block "gate $name: the command $said \"$hit\"" "  $cmd"
   fi
   [ -n "$command" ] && [ -n "$stage" ] || continue
   case " $when " in *" $stage "*) ;; *) continue ;; esac
