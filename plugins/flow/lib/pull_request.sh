@@ -6,8 +6,8 @@
 # pull_request_on_branch <home> <branch>: the URL of a PR whose head is the branch, or nothing; fails
 # when gh cannot answer. The same lookup as the sweep's.
 pull_request_on_branch() {
-  gh_repo="$(cfg github.repo)"
-  pull_requests_found="$(cd "$(dirname "$1")" && gh pr list ${gh_repo:+-R "$gh_repo"} --head "$2" --state all --json url 2>/dev/null)" || return 1
+  github_repository="$(cfg github.repo)"
+  pull_requests_found="$(cd "$(dirname "$1")" && gh pr list ${github_repository:+-R "$github_repository"} --head "$2" --state all --json url 2>/dev/null)" || return 1
   json_get "$pull_requests_found" 0.url
 }
 
