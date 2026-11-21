@@ -29,7 +29,7 @@ remote_holds_branch() {
 }
 
 fetch_fresh() {
-  git -C "$repository" fetch -q origin "$1" >/dev/null 2>&1 || die "$epic: $1 could not be fetched, so what the remote holds of it is not known"
+  git -C "$repository" fetch -q origin "+refs/heads/$1:refs/remotes/origin/$1" >/dev/null 2>&1 || die "$epic: $1 could not be fetched, so what the remote holds of it is not known"
 }
 
 open_pull_request() {

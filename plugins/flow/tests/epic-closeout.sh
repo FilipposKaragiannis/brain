@@ -16,7 +16,7 @@ ln -s "$plugin/tests/fake-gh.sh" "$work/github/gh"
 PATH="$work/github:$PATH"; export PATH
 
 CLOSEOUT_SUMMARY="Every acceptance line is proven."
-github_repo() {
+github_repository() {
   new_repo "$1"
   printf 'github:\n  repo: acme/widgets\n' >> .flow/config.yaml
   printf '{"issues": []}' > "$FAKE_GH_DIR/issues.json"; rm -f "$FAKE_GH_DIR/fail"
@@ -38,7 +38,7 @@ pass_closeout() {
 }
 
 echo "epic closeout: a passed closeout opens the epic's pull request"
-github_repo merging
+github_repository merging
 epic="$(epic_with_work "Playoffs")"
 pass_closeout "$epic"
 check "EpicCloseoutWithWorkOnItsBranch_OpensAPullRequestFromTheEpicBranch: the epic's work reaches its base through one PR" \
@@ -69,7 +69,7 @@ check "EpicWhosePullRequestMerged_HasNoGateLeft: a closed item must not keep a g
   '[ "$(state "$epic" gate)" = none ]'
 
 echo "epic closeout: an epic the tracker refuses to close is closed by a later sweep"
-github_repo retried
+github_repository retried
 sed -i.bak 's/^  default: local$/  default: github/' .flow/config.yaml && rm -f .flow/config.yaml.bak
 printf '{"issues": [{"number": 1, "title": "Seed", "body": "", "state": "CLOSED", "labels": [], "url": "https://gh/1"}]}\n' > "$FAKE_GH_DIR/issues.json"
 export FLOW_GH_RETRY_WAIT="0 0"
@@ -95,7 +95,7 @@ check "MergedEpicTheTrackerRefusedToClose_IsClosedByTheNextSweep: a failed close
   '[ "$(tracked_field status)" = closed ] && [ "$(tracked_field state.gate)" = none ]'
 
 echo "epic closeout: a tracker that refuses to close an epic with nothing to merge leaves the closeout to run again"
-github_repo unclosed
+github_repository unclosed
 sed -i.bak 's/^  default: local$/  default: github/' .flow/config.yaml && rm -f .flow/config.yaml.bak
 printf '{"issues": [{"number": 1, "title": "Seed", "body": "", "state": "CLOSED", "labels": [], "url": "https://gh/1"}]}\n' > "$FAKE_GH_DIR/issues.json"
 tracked="$("$plugin/adapters/github/create.sh" epic "Preseason" --body x)"
@@ -117,7 +117,7 @@ check "EpicTheTrackerRefusedToClose_IsClosedByTheCloseoutAfterTheGateClears: the
   '[ "$(tracked_field status)" = closed ]'
 
 echo "epic closeout: a pull request that was never recorded on the epic is found by its epic branch"
-github_repo unrecorded
+github_repository unrecorded
 lost="$(epic_with_work "Derbies")"
 pass_closeout "$lost"
 "$local_adapter/write-state.sh" "$lost" pr=
@@ -129,7 +129,7 @@ check "EpicWhosePullRequestWasNeverRecorded_IsClosedByTheSweepOnceItMerges: the 
   '[ "$(item_status "$lost")" = closed ] && [ "$(state "$lost" gate)" = none ]'
 
 echo "epic closeout: an epic with nothing to merge is closed"
-github_repo nothing
+github_repository nothing
 branchless="$("$local_adapter/create.sh" epic "Friendlies" --body x)"
 pass_closeout "$branchless"
 check "EpicCloseoutWithNoEpicBranch_ClosesTheEpic: its tasks merged into the base one by one, so nothing is left to merge" \
@@ -143,7 +143,7 @@ check "EpicCloseoutWhoseBranchHoldsNothingItsBaseLacks_ClosesTheEpic: GitHub ref
   '[ "$(item_status "$level")" = closed ] && [ -z "$(pull_request url)" ]'
 
 echo "epic closeout: an open pull request from the epic branch is taken as it is"
-github_repo taken
+github_repository taken
 owned="$(epic_with_work "Transfers")"
 set_pull_request "{\"number\": 77, \"state\": \"OPEN\", \"url\": \"https://gh/pull/77\", \"headRefName\": \"$(epic_of "$owned")\", \"baseRefName\": \"main\"}"
 pass_closeout "$owned"
@@ -151,7 +151,7 @@ check "EpicCloseoutWithAnOpenPullRequestFromItsBranch_RecordsThatOne: the owner'
   '[ "$(state "$owned" pr)" = https://gh/pull/77 ] && [ "$(pull_request number)" = 77 ]'
 
 echo "epic closeout: an epic under an epic merges into that epic's branch"
-github_repo nested
+github_repository nested
 outer="$("$local_adapter/create.sh" epic "Season" --body x)"
 remote_branch "$(epic_of "$outer")"
 inner="$("$local_adapter/create.sh" epic "Final" --body x --parent "$outer")"
@@ -162,7 +162,7 @@ check "CloseoutOfAnEpicUnderAnEpicWithABranch_AimsThePullRequestAtThatBranch: th
   '[ "$(pull_request baseRefName)" = "$(epic_of "$outer")" ]'
 
 echo "epic closeout: a pull request gh cannot open is the owner's to open"
-github_repo refused
+github_repository refused
 stuck="$(epic_with_work "Awards")"
 printf '9\nGitHub is down\n' > "$FAKE_GH_DIR/fail"
 pass_closeout "$stuck"
@@ -174,7 +174,7 @@ check "EpicCloseoutWhosePullRequestCannotBeOpened_LeavesTheEpicOpenAtCloseout: c
   '[ "$(item_status "$stuck")" = open ] && [ "$(state "$stuck" step)" = closeout ]'
 
 echo "epic closeout: a base that is not on the remote is no empty difference"
-github_repo baseless
+github_repository baseless
 adrift="$(epic_with_work "Friendlies abroad")"
 sed -i.bak 's/^base: main$/base: trunk/' .flow/config.yaml && rm -f .flow/config.yaml.bak
 pass_closeout "$adrift"
@@ -184,7 +184,7 @@ check "EpicCloseoutWhoseBaseIsNotOnTheRemote_RaisesAnEscalationGate: the owner h
   '[ "$(state "$adrift" gate)" = escalation ] && json_value message < ".flow/gates/$(slug "$adrift").json" | grep -qF "trunk is not on the remote"'
 
 echo "epic closeout: a remote that cannot be reached is no missing epic branch"
-github_repo unreachable
+github_repository unreachable
 far="$(epic_with_work "Away games")"
 git remote set-url origin "$work/no-such-remote.git"
 pass_closeout "$far"
@@ -194,7 +194,7 @@ check "EpicCloseoutWithAnUnreachableRemote_RaisesAnEscalationGate: the owner hea
   '[ "$(state "$far" gate)" = escalation ] && json_value message < ".flow/gates/$(slug "$far").json" | grep -qF "could not be asked"'
 
 echo "epic closeout: a fetch the remote refuses is no empty difference"
-github_repo stale
+github_repository stale
 moved_on="$("$local_adapter/create.sh" epic "Cup replays" --body x)"
 remote_branch "$(epic_of "$moved_on")"; git fetch -q origin "$(epic_of "$moved_on")"
 remote_commit "$(epic_of "$moved_on")" replays.txt
@@ -210,5 +210,15 @@ check "EpicCloseoutWhoseBranchCannotBeFetched_LeavesTheEpicOpen: a stale copy of
   '[ "$(item_status "$moved_on")" = open ]'
 check "EpicCloseoutWhoseBranchCannotBeFetched_RaisesAnEscalationGate: the owner hears the branch could not be fetched" \
   '[ "$(state "$moved_on" gate)" = escalation ] && json_value message < ".flow/gates/$(slug "$moved_on").json" | grep -qF "could not be fetched"'
+
+echo "epic closeout: a clone that tracks only the default branch still sees the epic's work"
+github_repository narrowed
+tracked_apart="$("$local_adapter/create.sh" epic "Cup draws" --body x)"
+remote_branch "$(epic_of "$tracked_apart")"; git fetch -q origin "$(epic_of "$tracked_apart"):refs/remotes/origin/$(epic_of "$tracked_apart")"
+git config remote.origin.fetch "+refs/heads/main:refs/remotes/origin/main"
+remote_commit "$(epic_of "$tracked_apart")" draws.txt
+pass_closeout "$tracked_apart"
+check "EpicCloseoutInACloneThatTracksOnlyTheDefaultBranch_OpensThePullRequest: the fetch must refresh the very copy the comparison reads, or the remote's newer work looks merged" \
+  '[ "$(pull_request headRefName)" = "$(epic_of "$tracked_apart")" ] && [ "$(item_status "$tracked_apart")" = open ]'
 
 if [ "$fails" -eq 0 ]; then echo "epic-closeout: ok"; else echo "epic-closeout: $fails failed"; exit 1; fi
