@@ -1,11 +1,6 @@
 #!/bin/sh
-# worktree-setup.sh: when a pool worktree is set up again, on the local adapter in throwaway repos
-# with a bare origin. The steward records the commit a worktree's setup ran at; a claim runs
-# worktree_setup again when a file worktree_setup_paths names differs between that commit and the
-# worktree's HEAD, or when there is no record, and not otherwise; unset, no setup runs at a claim.
-# A setup that fails at a claim is reported and the worktree is still handed out. While a claim's
-# setup runs, health keeps the claim and another claim of the item waits for it. The init template
-# and the docs name the key.
+# worktree-setup.sh: worktree_setup_paths and the setup record, on the local adapter in throwaway
+# repos with a bare origin.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"

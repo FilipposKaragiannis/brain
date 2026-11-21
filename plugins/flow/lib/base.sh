@@ -209,8 +209,7 @@ claim_base_option() {
 
 # claim_at_base <item> <item-json>: claims a pool worktree for the item and prints its path. A new
 # claim starts from the base fetch_item_base resolves, and the events log says which and why; an
-# item that holds a claim keeps it and its base, and nothing is fetched; its path is printed once
-# a worktree_setup running there has ended. A base: line naming a
+# item that holds a claim keeps it and its base, and nothing is fetched. A base: line naming a
 # branch not on the remote, or no valid name, writes why to the item's last_event and stderr and
 # returns 4: a claim from the config base would put the work on the wrong history. So does an
 # epic's child while no epic above it has an epic branch; the reason names the epic, the branch to
