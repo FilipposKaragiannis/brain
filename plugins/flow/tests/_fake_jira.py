@@ -87,6 +87,7 @@ signed_in = re.search(r'^user = "([^:"]+):', login, re.M)
 me = signed_in.group(1) if signed_in else ""
 JQL_CLAUSES = [
     (re.compile(r'project = "([^"]+)"'), lambda i, m: i["key"].startswith(m.group(1) + "-")),
+    (re.compile(r'key = "([A-Z][A-Z0-9_]*-\d+)"'), lambda i, m: i["key"] == m.group(1)),
     (re.compile(r"parent = ([A-Z][A-Z0-9_]*-\d+)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") == m.group(1)),
     (re.compile(r"parent in \(([^)]*)\)"), lambda i, m: (i["fields"].get("parent") or {}).get("key") in [k.strip() for k in m.group(1).split(",")]),
     (re.compile(r"statusCategory != Done"), lambda i, m: status_of(i)["statusCategory"]["key"] != "done"),
@@ -96,6 +97,9 @@ JQL_CLAUSES = [
      lambda i, m: status_of(i)["name"].lower() in [s.lower() for s in quoted(m.group(1) or m.group(2))]),
     (re.compile(r'labels (?:in \(([^)]*)\)|= ("(?:[^"\\]|\\.)*"))'),
      lambda i, m: bool(set(i["fields"].get("labels") or []) & set(quoted(m.group(1) or m.group(2))))),
+    (re.compile(r"issuetype (not in|in) \(([^)]*)\)"),
+     lambda i, m: (i["fields"]["issuetype"]["name"] in quoted(m.group(2))) == (m.group(1) == "in")),
+    (re.compile(r"issuetype is EMPTY"), lambda i, m: False),
 ]
 
 

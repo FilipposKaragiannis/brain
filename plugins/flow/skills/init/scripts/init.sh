@@ -32,6 +32,8 @@ FLOW_PLUGIN="$plugin"; export FLOW_PLUGIN
 . "$plugin/lib/flow.sh"
 . "$plugin/lib/host.sh"
 . "$plugin/lib/base.sh"
+. "$plugin/lib/branch.sh"
+. "$plugin/lib/worktree_command.sh"
 source_hash() { flow_source_hash "$plugin"; }   # the install set lives in lib/flow.sh
 [ "$source_hash" -eq 1 ] && { source_hash; exit 0; }
 cd "$root" || exit 2
@@ -139,6 +141,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "# pick:                     # filters next --pick <name> takes its items through (adapters/README.md)"
       echo "#   mine:"
       echo "#     assignee: me          # also status, labels, kinds, trackers, or one tracker's own query"
+      echo "# local:                    # scope: under a tracker (local, github, jira) bounds every read of it: assignee, status, labels, kinds"
       echo "base: $base"
       echo "# Gates the flow clears itself, by item size. Only plan-approval can be listed. Merge, interview,"
       echo "# feel-test, escalation and ambiguity always wait for you. Use it for items that were grilled and defined."
@@ -151,6 +154,7 @@ if [ ! -f .flow/config.yaml ]; then
         echo "  #   size: Size                # a single-select issue field replaces the size: labels"
         echo "  #   priority: Priority        # orders the ready items"
         echo "  #   area: Area                # the area intake files a note under, from its section"
+        echo "  # scope:                      # every list keeps only these: assignee, status, labels, kinds, or query alone"
         echo "  # project: 1                  # the project whose Status follows the flow state"
         echo "  # answer_from: [login]        # whose /answer comments clear a gate (default: the gh user)"
         echo "  # status:                     # override the Status names, one key each:"
@@ -169,6 +173,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "#   transitions:"
       echo "#     done: Done                # the transition close takes"
       echo "#   limit: 500                  # the most issues one list reads"
+      echo "#   scope:                      # every search keeps only these: assignee, status, labels, kinds, or query alone"
       echo "#   answer_from: [you@example.com]  # whose /answer comments clear a gate (default: the token's user)"
       echo "# The worktree pool: persistent linked worktrees, one task each. Pool size = parallelism."
       echo "# A claim with no free worktree adds one (named after the last entry, ../$(basename "$main")-wt-<n>)"
@@ -178,6 +183,15 @@ if [ ! -f .flow/config.yaml ]; then
       pool_n="$(printf '%s\n' "$pool" | grep -c .)"; pool_max=3; [ "$pool_n" -gt 3 ] && pool_max="$pool_n"
       echo "pool_max: $pool_max"
       echo "# worktree_name: ../{repo}-wt-{n}   # names a new one instead: {repo} the main worktree's folder, {n} the first free number"
+      echo "# worktree_create: workspace new {path} --from {base}   # makes a new one instead of git worktree add: {path} its folder, {base} the ref it starts from"
+      echo "# worktree_remove: workspace remove {path}   # removes a temporary one instead of git worktree remove"
+      echo "# Task branch names: one template, or one per kind (epic, task, bug); unset, flow/{slug}. The claim"
+      echo "# names the branch once and records it. {slug} the item slug (gh-73), {key} the tracker's id"
+      echo "# lower-cased (73, proj-123), {kind}, {title} the title in ASCII, at most $branch_title_length_cap characters."
+      echo "# branch:"
+      echo "#   task: task/{key}-{title}"
+      echo "#   bug: bugfix/{key}-{title}"
+      echo "#   epic: feature/{key}-{title}"
       echo "# Git-ignored files a new worktree gets from the main worktree when it lacks them, and"
       echo "# commands run in a new worktree after that (steward.sh setup <path> re-runs both)."
       echo "worktree_copy:"
@@ -224,6 +238,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  # comments_workers: 1       # comments passes at once across all runs, one PR each; 1 runs them one after another"
       echo "  # comments:"
       echo "  #   pass_limit: 1h          # a comments pass running longer is stopped and counted as failed"
+      echo "  #   idle_session: 30m       # a person's session idle this long no longer keeps a pass out of a clean worktree"
       echo "  # The model and effort of the session a job starts (comments, intake, retro, and the next"
       echo "  # job's steps with no agent: design, implement, review, explain), one pair per host: a job"
       echo "  # reads the pair of the host it runs on. Each value goes to that host as written,"
@@ -362,6 +377,7 @@ tracked="$(git ls-files -- .flow | grep -c .)"
 if [ -f .flow/config.yaml ]; then
   [ -n "$(cfg pool | grep .)" ] || [ "$(cfg_or pool_max 0)" -gt 0 ] 2>/dev/null || gap ".flow/config.yaml: the pool is empty and pool_max is 0; list a worktree under pool: or set pool_max"
   [ -n "$(cfg base)" ] || gap ".flow/config.yaml: base is empty; name the branch tasks start from"
+  for key in worktree_create worktree_remove; do flaw="$(worktree_command_flaw "$key" "$(cfg "$key")")"; [ -z "$flaw" ] || gap ".flow/config.yaml: $flaw"; done
   for k in epic task bug; do a="$(cfg "adapters.$k")"; [ -z "$a" ] || [ -d "$plugin/adapters/$a" ] || gap ".flow/config.yaml: adapters.$k names $a, not an adapter"; done
   bad_auto="$(sed -n '/^auto_gates:/,/^[^ #]/p' .flow/config.yaml | grep -E '^  [A-Za-z]' | grep -v '^  plan-approval:' | sed 's/:.*//; s/^ *//' | head -1)"
   [ -z "$bad_auto" ] || gap ".flow/config.yaml: auto_gates lists $bad_auto; only plan-approval can be cleared by the flow"
@@ -370,11 +386,18 @@ if [ -f .flow/config.yaml ]; then
   while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_TRACKERS
 $(trackers_unread)
 EOF_TRACKERS
+  while IFS= read -r branch_problem; do [ -z "$branch_problem" ] || gap ".flow/config.yaml: $branch_problem"; done <<EOF_BRANCH
+$(branch_problems)
+EOF_BRANCH
   # A bad jobs.host or effort stops every job at its start. The jobs.<host> maps are optional;
   # the old jobs.model and jobs.effort still work for one release, with a note.
   while IFS= read -r p; do [ -z "$p" ] || gap "$p"; done <<EOF_JOBS
 $(host_jobs_problems)
 EOF_JOBS
+  # A scope the tracker's list refuses stops every read of that tracker.
+  while IFS= read -r p; do [ -z "$p" ] || gap ".flow/config.yaml: $p"; done <<EOF_SCOPES
+$(scope_problems)
+EOF_SCOPES
   [ -z "$(cfg retro.commit)" ] || echo "init: note: .flow/config.yaml sets retro.commit, which is unused: the retro job commits nothing, as the lessons stay on this machine under .flow/; remove the key"
   missing_base_notes | sed 's/^/init: note: /'
   host_jobs_legacy && echo "init: note: jobs.model and jobs.effort are deprecated; move them to jobs.claude.model/effort and jobs.codex.model/effort, read as is by each host (they are read only while jobs.<host> is absent, until the next release)"

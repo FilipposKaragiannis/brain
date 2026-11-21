@@ -192,6 +192,21 @@ keep_whole_when_children_closed() {
   echo "gate cleared on $item; its children are closed, so it is whole again: next $item runs the plan step"
 }
 
+# branch_approved_epic: the owner approved an epic's split, so the epic gets its epic branch
+# (create_epic_branch in lib/base.sh): its children start from it and their PRs merge into it. A
+# branch that cannot be made is said and kept in the epic's last_event; the children wait until
+# the health job makes it or the owner pushes it.
+branch_approved_epic() {
+  [ "$gate" = decomposition ] && [ "$(json_get "$data" kind)" = epic ] || return 0
+  if epic_base="$(create_epic_branch "$item" "$data")"; then
+    printf '%s\t%s\tbase\tepic branch %s: the split is approved\n' "$(now_iso)" "$item" "$epic_base" >> "$home/events.log"
+    echo "$item: its children start from $epic_base"
+    return 0
+  fi
+  adapter write-state "$item" "last_event=$(now_iso) no epic branch: $epic_base" >/dev/null
+  echo "$item: no epic branch, so its children wait: $epic_base" >&2
+}
+
 # clear_with_answer <answer> <answered as> <answered line> <pending>: the gate clears with the
 # owner's answer. The question and the answer stay in the state, so the next step's brief carries
 # them; answered_at stays too: the comments job counts a clear as new activity on the item's PR.
@@ -204,6 +219,7 @@ clear_with_answer() {
   log_answered "$item" "$3"
   rm -f "$record"
   keep_whole_when_children_closed && return 0
+  branch_approved_epic
   case "$4:$step" in
     comments:*) echo "gate cleared on $item; it is done, so the comments job carries the answer out on its next pass on $pr (now: jobs/comments.sh <host> $item)" ;;
     next:*|*:split) echo "gate cleared on $item; run next $item to continue" ;;

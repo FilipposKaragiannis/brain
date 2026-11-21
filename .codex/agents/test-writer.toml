@@ -28,15 +28,29 @@ T-13), and the public interfaces the plan names.
    assertion with a because-string that states the invariant; expected values worked out by
    hand or from an independent source, never recomputed with the code's own formula; values
    chosen so a wrong answer is visibly wrong. Locals and lambda parameters state their role
-   too (N-04, N-05): `left` and `right`, `simulation`, never `a`, `b`, `sim`.
+   too (N-04, N-05): `left` and `right`, `simulation`, never `a`, `b`, `sim`. A tick count,
+   loop bound, settle length or angle the test chooses gets a named constant (N-06), as the
+   sibling fixtures name theirs; a tick rate or duration is read from its setting.
 4. Levels per T-04: unit on every change; an integration test where a boundary is crossed; a
    regression test named after the bug for a fix. Collapse same-path variants into one
    data-driven test with rows that each probe a real boundary.
 5. Doubles at system boundaries only (external services, time, randomness, file system).
    Never assert on a double's calls (T-08). Never mock the project's own types.
 6. For `reproduce`: write the single test that fails on the bug as described, run it, confirm
-   it is red for the right reason, commit it.
-7. Run the suite with the guide's command. Commit with a conventional message naming the item.
+   it is red for the right reason, commit it. As described means the `## Problem` steps and
+   the symptom the reporter saw, under the conditions they saw it in. A lead or a suspect the
+   item names is a hypothesis: a test that shows only the lead misbehaving, in conditions the
+   steps never reach, is not the reproduction. When the item names several suspects, or the
+   symptom does not follow from the first lead, measure before you pin: run the steps with the
+   project's own tracing and name in the result the source the measurement gives, with the
+   command and the numbers. No source you can name: stop with status `gate`, gate `ambiguity`.
+7. Run the tests you wrote or changed, alone, with the testing guide's command for one test or
+   one group, and say in the result which you ran. The whole suite is verify's job: it runs
+   there once, scoped to the change, so never run it in this step. Commit with a conventional
+   message naming the item.
+   A sandboxed Claude session commits only in the worktree it started in: when the commit fails
+   on `index.lock` (`Operation not permitted`), stop with status `fail` and that error text, and
+   never look for a way around it.
 8. Ask of every test: would it reveal a bug a sibling would not? Delete it when the answer is no.
 9. Before committing, read each test's assertions and split it when two of them can fail
    independently (a state and a position, a release and a placement, a verdict and a null on
@@ -44,7 +58,10 @@ T-13), and the public interfaces the plan names.
    added to it is a second test. Names with "And" or a test with more than three assertions are
    the usual offenders.
 10. A double that counts calls may drive a loop, never an assertion, and never a setup guard
-    (T-08). The outcome assertions already fail when the call is missing.
+    (T-08). The outcome assertions already fail when the call is missing. A hand-rolled fake of
+    the project's own interface is a double too: its counter (`ExitCount`), its last call
+    (`LastReached`) or its list of calls is what it was called with. Assert the state the real
+    collaborator ends in instead (the screen is covered, the navigator shows the next screen).
 11. A test must not pass on nothing (T-01). No `?.` ahead of an assertion: a null skips it, so
     assert the whole value, or chain from one not-null assertion into the behaviour assertion so
     a null fails that one assertion. A separate not-null assertion ahead of the behaviour
@@ -59,11 +76,13 @@ T-13), and the public interfaces the plan names.
 ## Output
 Tests committed, `<reports>/tests.md` with the behaviour list and which test pins each line,
 then the result file the brief names: status `done` with the count per level and any acceptance
-line you could not pin and why; status `fail` when the suite does not run; status `gate` for a
+line you could not pin and why; status `fail` when your tests do not run; status `gate` for a
 missing seam.
 
 ## Never
-Never read the implementation body before writing the behaviour list. Never write a
+Never read the implementation body before writing the behaviour list. Never run the project's
+whole test command. Never stop a process you did not start, and never one by its name
+(`pkill -f`): another worktree's run has the same command line. Never write a
 tautological test. Never widen production code or add a test hook. Never change the
 implementation to make a test pass; report it.
 """

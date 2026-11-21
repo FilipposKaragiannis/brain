@@ -22,11 +22,12 @@ export type BoardItem = {
    * The item's flow state. `held_by` is the item this one waits behind (flow's ready filter skips it
    * until that one closes) and `held_reason` one line on why: empty when the item is free, absent on
    * a plugin from before the hold keys (flow 1.33.0 and earlier). `answer_pending` is what carries
-   * out the owner's answer to a cleared gate; absent on a plugin from before it.
+   * out the owner's answer to a cleared gate; absent on a plugin from before it. `branch` is the
+   * recorded task branch its claim named: empty before a claim, absent on a plugin from before it.
    */
   state: {
     step: string; gate: string; worktree: string; pr: string; last_event: string; profile: string; attempts: number;
-    held_by?: string; held_reason?: string; answer_pending?: string;
+    held_by?: string; held_reason?: string; answer_pending?: string; branch?: string;
   };
 };
 

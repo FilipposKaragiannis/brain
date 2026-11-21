@@ -15,6 +15,10 @@
 # that ends without the confirmation is a failed pass: the answer stays pending.
 # An item waiting at a gate other than merge is skipped, and so is an item whose worktree another
 # session works in (the health job's process scan), named or not: the pass would edit under it.
+# A session a person started that has been idle for jobs.comments.idle_session (30m) holds a
+# worktree with nothing uncommitted in it no longer, so an abandoned session stops a PR's
+# comments for half an hour, not for days. A pass that waited for a slot checks the worktree
+# again before it starts, so a person back in that session keeps it out.
 # The owner is told once per PR while it stays in use (event comments-skipped): the item, the PR,
 # the worktree and what works there; again only after a pass addressed the PR.
 # A PR whose activity (last update, head commit, mergeable, unresolved threads, their comments,
@@ -38,7 +42,8 @@
 # the passes live at once across all runs, through the slot pool (lib/slots.sh); a run given
 # --workers N may use slots up to N. A pass holds a slot for its host session only, until the
 # session's process group is gone even when the run is stopped first, and waits for a free one: it
-# never skips a PR for lack of a slot. A pass still running at
+# never skips a PR for lack of a slot. A run that names its PR prints the wait and the runs that
+# hold the slots. A pass still running at
 # jobs.comments.pass_limit (1h) is stopped with its children and counts as failed, so the next run
 # tries it again. The processes are listed once per run.
 # The result line names every open PR and what it came to: addressed, nothing new, waits on you
@@ -52,6 +57,7 @@ set -u
 job=comments
 job_lock_kind=run
 . "$(dirname "$0")/_job.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 . "$FLOW_PLUGIN/lib/slots.sh"
 host="${1:-}"; [ $# -eq 0 ] || shift
 one=""; workers=""
@@ -71,6 +77,8 @@ PASS_LIMIT_EXIT=124
 pass_limit="$(cfg_or jobs.comments.pass_limit 1h)"
 pass_limit_seconds="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.comments.pass_limit "$pass_limit" 2>&1)" || die "${pass_limit_seconds#flow: }" 2
 [ "$pass_limit_seconds" -ge 1 ] || die "jobs.comments.pass_limit is '$pass_limit': a pass needs at least 1s" 2
+idle_session="$(cfg_or jobs.comments.idle_session 30m)"
+idle_session_seconds="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" seconds jobs.comments.idle_session "$idle_session" 2>&1)" || die "${idle_session_seconds#flow: }" 2
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 main="$(main_worktree)"; [ -n "$main" ] || main="$(pwd)"
 targets=""; gated=""; rm -f "$out.gated"
@@ -188,13 +196,12 @@ worker_count() {
 [ -n "$workers" ] || workers="$(cfg_or jobs.comments_workers 1)"
 workers="$(worker_count "$workers")" || die "--workers and jobs.comments_workers take a whole number from 1 to $COMMENTS_WORKERS_MAX" 2
 tell() { "$FLOW_PLUGIN/scripts/notify.sh" --event comments "$1" >/dev/null 2>&1 || true; }
-# item_of <target>: the item a target names: the target itself, or for a PR number the item its
-# branch names, flow/<item slug> (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1);
-# nothing for a PR the flow did not open.
+# item_of <target>: the item a target names: the target itself, or for a PR number the item of its
+# head branch (branch_item); nothing for a PR the flow did not open.
 item_of() {
   if adapter_for "$1" >/dev/null; then printf '%s' "$1"; return; fi
   io_head="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null | python3 -I -c 'import json, sys; print(json.load(sys.stdin).get("headRefName", ""))' 2>/dev/null)"
-  case "$io_head" in flow/?*) slug_item "${io_head#flow/}" ;; esac
+  branch_item "$io_head"
 }
 # pass_dir <target>: where the pass's session starts: the worktree the item holds, else the main
 # worktree. A sandboxed Claude session commits only in the worktree it started in.
@@ -241,8 +248,9 @@ take_answer() {
 # claimed_by <worktree> <item>: the worktree's claim names the item, so its changes are this
 # item's. A released item's reports can sit in a pool worktree another item now holds.
 claimed_by() { [ "$(json_get "$(cat "$1/.flow/claim.json" 2>/dev/null)" item)" = "$2" ]; }
-# dirty_tree <worktree>: uncommitted changes outside .flow.
-dirty_tree() { [ -n "$(git -C "$1" status --porcelain -- . ':!.flow' 2>/dev/null)" ]; }
+# dirty_tree <worktree>: uncommitted changes outside .flow, untracked files counted even when the
+# person's git config hides them (status.showUntrackedFiles=no).
+dirty_tree() { [ -n "$(git -C "$1" status --porcelain --untracked-files=normal -- . ':!.flow' 2>/dev/null)" ]; }
 # The flow's GitHub login, read at most once per run and only when a thread lacks the reply
 # marker (a reply from before 1.19.0): comments.sh activity reads this cache.
 FLOW_GH_LOGIN_CACHE="$out.login"; export FLOW_GH_LOGIN_CACHE
@@ -264,7 +272,15 @@ in_use() {
   list_procs
   if [ -f "$procs.failed" ]; then in_use_why="the processes cannot be listed, so a session may be working in $iu_wt"; return 0; fi
   iu_how="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$procs" "$iu_item" "$iu_wt" "" 2>/dev/null)"
-  [ -z "$iu_how" ] || in_use_why="another session works in $iu_wt ($(session_named "$iu_how"))"
+  [ -n "$iu_how" ] || return 0
+  # A session a person left idle past jobs.comments.idle_session holds a worktree with nothing
+  # uncommitted in it no longer: the pass has no work of theirs to edit under.
+  if ! dirty_tree "$iu_wt"; then
+    iu_idle="$iu_how"
+    iu_how="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" alive "$procs" "$iu_item" "$iu_wt" "" "$idle_session_seconds" 2>/dev/null)"
+    [ -n "$iu_how" ] || { job_say "$1: $(session_named "$iu_idle") sits in $iu_wt past $idle_session with nothing uncommitted, so the pass runs" >/dev/null; return 0; }
+  fi
+  in_use_why="another session works in $iu_wt ($(session_named "$iu_how"))"
 }
 # once <file> <value>: true the first time <value> is seen for <file>, and records it.
 once() { [ "$(cat "$1" 2>/dev/null)" != "$2" ] && printf '%s\n' "$2" > "$1"; }
@@ -306,11 +322,18 @@ pass_host_run() {
 }
 # pass_session <target> <notes>: the pass's host session on <target>, the brief's <notes> added,
 # in a pass slot it waits for. The output goes to the log as it comes, so a pass killed half way
-# keeps what it said, and to $out. Returns the host's exit code.
+# keeps what it said, and to $out. Returns the host's exit code; starts nothing, with
+# $in_use_why set, when the worktree came into use while it waited.
 pass_session() {
   pass_slot="$(slot_try "$slot_pool" "$workers" $$)" || {
-    job_say "$1: waits for a free pass slot, $workers across the runs" >/dev/null
+    # A run that names its PR says the wait where its caller reads it, with the runs that hold
+    # the slots: the wait can last a whole pass, and a silent one reads as a hung job.
+    if [ -n "$one" ]; then job_say "$1: waits for a free pass slot, $workers across the runs (held by run $(slot_holders "$slot_pool"))"
+    else job_say "$1: waits for a free pass slot, $workers across the runs" >/dev/null; fi
     pass_slot="$(slot_take "$slot_pool" "$workers" $$)"
+    # The person in_use passed over as idle may be back by now, or have left work in the tree.
+    in_use "$1"
+    [ -z "$in_use_why" ] || { slot_give "$pass_slot"; return 0; }
   }
   job_say "addressing $1"; rm -f "$(in_use_marker "$1" "$pull")"
   { pass_host_run "$(pass_dir "$1")" "$(host_skill_prompt "$host" flow comments "$1.$2 Unattended: nobody answers questions; collect owner decisions in the report, never wait on them, and address every thread before you end.")" "$pass_slot.group" 2>&1
@@ -327,15 +350,16 @@ pass_failure() {
   elif [ -n "$(cut_short "$out")" ]; then printf 'the host stopped the addresser before it finished'
   elif [ -n "$answer" ] && ! answer_taken "$2"; then printf "the pass did not confirm it carried out the owner's answer"; fi
 }
+# skip_in_use <target>: skips the pass on <target> for the session in_use found, and says why.
+skip_in_use() {
+  job_say "$1: $in_use_why, skipped" >/dev/null; tell_in_use "$1"
+  if [ -n "$iu_how" ]; then outcome busy "$(session_named "$iu_how") in $(basename "$iu_wt")"; else outcome busy "processes not listed"; fi
+}
 # pass <target> <item>: one pass on one PR, its outcome in $slot.
 pass() {
   t="$1"
   in_use "$t"
-  if [ -n "$in_use_why" ]; then
-    job_say "$t: $in_use_why, skipped" >/dev/null; tell_in_use "$t"
-    if [ -n "$iu_how" ]; then outcome busy "$(session_named "$iu_how") in $(basename "$iu_wt")"; else outcome busy "processes not listed"; fi
-    return 0
-  fi
+  if [ -n "$in_use_why" ]; then skip_in_use "$t"; return 0; fi
   note="$(prepare_pr "$t")"
   activity "$t" "$2" > "$out"; seen="$(cat "$out")"; f="$(seen_file "$(pr_key "$t" "$2")")"; mkdir -p "$(dirname "$f")"
   rm -f "$f.answer"; answer_note "$t" "$f.answer"
@@ -364,13 +388,15 @@ pass() {
   if [ -n "$resume" ] && [ ! -s "$resume" ]; then
     rwt="${resume%/.flow/reports/*}"
     if [ -d "$rwt" ] && claimed_by "$rwt" "$rn_item" && dirty_tree "$rwt"; then
-      printf 'An earlier run on PR #%s left uncommitted changes in %s (found by the comments job at %s). Read git status and git diff, continue from there, build and test before you commit, discard nothing without saying so in the reply.\n' \
+      printf 'An earlier run on PR #%s left uncommitted changes in %s (found by the comments job at %s). Read git status and git diff, continue from there, build and run only the tests the change touches before you commit, discard nothing without saying so in the reply.\n' \
         "${pull##*/}" "$rwt" "$(now_iso)" > "$resume"
       job_say "$t: $rwt holds uncommitted changes from an earlier run; the pass continues from them" >/dev/null
     fi
   fi
   [ -z "$resume" ] || [ ! -s "$resume" ] || rnote=" An earlier pass was cut short: read $resume first and continue from its work."
   pass_session "$t" "$note$answer$rnote"; code=$?
+  # The saved activity goes, as for a stopped host, so the pass this run did not start still runs.
+  if [ -n "$in_use_why" ]; then rm -f "$f"; skip_in_use "$t"; return 0; fi
   # A pass the stopped host refused or cut ends its worker: no later pass would start, and this PR
   # is tried again after the clear, with no failure counted. The saved activity goes, so the extra
   # pass this run may have marked as taken still runs. The stop's line is the run's last word.
@@ -394,10 +420,11 @@ pass() {
   else
     rm -f "$f"
     printf '%s %s\n' "$((fails + 1))" "$seen" > "$f.fails"
-    job_say "$t: pass failed, $why; the next run tries it again"
+    if [ "$((fails + 1))" -ge "$max_fails" ]; then job_say "$t: pass failed, $why; $((fails + 1)) in a row, so the job stops trying it until a pass run by hand completes"
+    else job_say "$t: pass failed, $why; the next run tries it again"; fi
     if [ -n "$resume" ]; then
       rwt="${resume%/.flow/reports/*}"
-      printf 'The previous comments pass on PR #%s was cut short at %s (%s). %s may hold its uncommitted work. Read git status and git diff, continue from there, build and test before you commit, discard nothing without saying so in the reply.\n' \
+      printf 'The previous comments pass on PR #%s was cut short at %s (%s). %s may hold its uncommitted work. Read git status and git diff, continue from there, build and run only the tests the change touches before you commit, discard nothing without saying so in the reply.\n' \
         "${pull##*/}" "$(now_iso)" "$why" "$rwt" > "$resume"
     fi
     outcome failed

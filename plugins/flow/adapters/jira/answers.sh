@@ -4,9 +4,11 @@
 # to or an account id or email in jira.answer_from; the rest of the comment is the answer
 # ("/answer" alone means as recommended). The merge gate is left alone: it clears when the PR is
 # merged. gate.sh comments "Gate cleared: ..." on the issue, the owner's receipt, since Jira's REST
-# API has no reactions. The item's id prints once it is cleared.
+# API has no reactions. The item's id prints once it is cleared. Only issues inside jira.scope
+# (scope_filter in lib/flow.sh) are read.
 . "$(dirname "$0")/_jira.sh"
 [ $# -eq 0 ] || die "usage: answers" 2
+scope_filter jira
 found="$(jira answers)" || exit 1
 printf '%s\n' "$found" | while read -r line; do
   [ -n "$line" ] || continue

@@ -28,6 +28,13 @@ A row whose command is `not set up` is a check the project does not have yet.
 | property-based | a change to logic with invariants over many inputs (parsers, serializers, math, state machines) | nothing | not set up |
 | runtime evidence | a change to behaviour only the running app shows (logs, a screen, a live endpoint, a performance budget) | nothing | not set up |
 
+## One test or one group
+
+The implement and test steps run only the tests they touched; the whole test command runs once,
+in verify, scoped to the change (`build` and `test` in `.standards/config.json` take `paths`).
+
+- The command that runs one test, one file or one group alone: _fill in_ (example: `dotnet test --filter FullyQualifiedName~BallSpin`).
+
 ## Fixtures and helpers
 
 - Where fixtures live and how to add one: _fill in_.
