@@ -97,6 +97,28 @@ export function fakeGateList(request: CommandRequest, stdout = GATE_LIST_JSON): 
   return ok(stdout);
 }
 
+/** `graph-report.sh` of the fixture project: one step with two runs in the week. */
+export const GRAPH_REPORT_MARKDOWN = [
+  '# Flow graph report',
+  '',
+  'The 7 days before 2026-10-24T18:16:04Z: 2 step runs, 20m 00s of step time. The 7 days before that: 0 runs, 0s.',
+  '',
+  '## Steps',
+  '',
+  '| step | runs | median | nine in ten within | failed | cost | runs per item |',
+  '|---|---|---|---|---|---|---|',
+  '| implement | 2 | 10m 00s | 10m 00s | 0 | $1.00 | 2.0 |',
+  '',
+].join('\n');
+
+/** The fake `graph-report.sh`: the report, when called as the daemon must call it, for seven days from the project root. */
+export function fakeGraphReport(request: CommandRequest): CommandResult {
+  const asked = request.args.slice(1);
+  if (asked.length !== 2 || asked[0] !== '--days' || asked[1] !== '7') return usage('graph-report.sh [--days N]');
+  if (request.cwd !== FIXTURE_ROOT) return { code: 2, stdout: '', stderr: `flow: no .flow in ${request.cwd}`, timedOut: false };
+  return ok(GRAPH_REPORT_MARKDOWN);
+}
+
 /** Answers every command the collectors run against the fixture project, without a shell. */
 export const fakeRunner: CommandRunner = async (request: CommandRequest): Promise<CommandResult> => {
   const [first, second] = request.args;
@@ -104,6 +126,7 @@ export const fakeRunner: CommandRunner = async (request: CommandRequest): Promis
   if (request.command === 'sh' && first?.endsWith('jobs.sh')) return ok(JOBS_JSON);
   if (request.command === 'sh' && first?.endsWith('board.sh')) return ok(BOARD_JSON);
   if (request.command === 'sh' && first?.endsWith('gate.sh')) return fakeGateList(request);
+  if (request.command === 'sh' && first?.endsWith('graph-report.sh')) return fakeGraphReport(request);
   if (request.command === 'git' && first === 'worktree') return ok(WORKTREE_LIST);
   if (request.command === 'git' && first === 'rev-list') return ok(request.cwd.endsWith('project-wt-4') ? '35\t4\n' : '0\t2\n');
   if (request.command === 'git' && first === 'status') return ok(request.cwd.endsWith('project-wt-3') ? ' M a.cs\n?? b.cs\n' : '');

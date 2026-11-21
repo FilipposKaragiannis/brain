@@ -46,7 +46,7 @@ export async function daemonOver(spawner: PtySpawner, ptys: FakePty[]): Promise<
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
   }, silentLogger);
   const panes = new PaneSessions({ spawner, host: HOST, scheduler: realScheduler, log: silentLogger });
-  const server = createConsoleServer(registry, null, { host: '127.0.0.1', port: 0, token: TOKEN, staticDir: null, log: silentLogger, panes, terminal: noTerminalProfiles() });
+  const server = createConsoleServer(registry, null, { host: '127.0.0.1', port: 0, token: TOKEN, staticDir: null, log: silentLogger, panes, terminal: noTerminalProfiles(), graphReportRunner: fakeRunner });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   await registry.apply([PROJECT, OTHER_PROJECT]);
   await Promise.all([PROJECT, OTHER_PROJECT].map((project) => registry.get(project.id)!.monitor.refresh('git')));

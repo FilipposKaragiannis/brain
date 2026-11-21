@@ -7,8 +7,9 @@
 # config base and records the pid of the host session that ran the hook, which the health job
 # reads to release the claim once that session has ended (Claude Code runs no WorktreeRemove for a
 # sub-agent). Fails (exit 1) when the project has no .flow/config.yaml, the item cannot be read,
-# its base: line names a branch not on the remote or the pool is full, so Claude reports the error
-# instead of creating a worktree outside the pool or on the wrong history.
+# its base: line names a branch not on the remote, no epic above it has an epic branch or the pool
+# is full, so Claude reports the error instead of creating a worktree outside the pool or on the
+# wrong history.
 FLOW_PLUGIN="$(cd "$(dirname "$0")/.." && pwd)"; export FLOW_PLUGIN
 . "$FLOW_PLUGIN/lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"

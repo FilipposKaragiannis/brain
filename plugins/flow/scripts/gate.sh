@@ -17,6 +17,8 @@
 #   gate.sh clear <item> [<message>]        the owner's answer: gate back to none, run can resume;
 #                                           on the decomposition gate of a split task whose
 #                                           children are all closed, the plan step runs again;
+#                                           on the decomposition gate of an epic, the epic gets
+#                                           its epic branch, which its children start from;
 #                                           a host the gate stopped starts sessions again. The
 #                                           answer waits (answer_pending) on next, or at done
 #                                           with an open PR on the comments job; an answer no
@@ -57,6 +59,7 @@
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/host.sh"
 . "$FLOW_PLUGIN/lib/blockers.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
 . "$FLOW_PLUGIN/lib/gate.sh"
 home="$(flow_home)"
 
