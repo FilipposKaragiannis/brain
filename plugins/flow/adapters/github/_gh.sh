@@ -79,13 +79,13 @@ size = size or labelled("size:", state.get("size", ""))
 state["size"] = size
 order = [priority_name for priority_name in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if priority_name]
 order_places = {priority_name: order.index(priority_name) for priority_name in order}
-priority_label = os.environ["GH_PRIORITY_LABEL"]
-priority_labels = [] if priority_field else [label for label in labels if label.startswith(priority_label)]
-labelled_priorities = sorted((label[len(priority_label):] for label in priority_labels), key=lambda name: order_places.get(name, len(order)))
-if priority_field:
-    priority = fields.get(priority_field) or ""
-else:
-    priority = (labelled_priorities or [""])[0]
+def read_priority(labels, fields, priority_field, priority_place, prefix):
+    if priority_field:
+        return fields.get(priority_field) or "", []
+    priority_labels = [label for label in labels if label.startswith(prefix)]
+    labelled_priorities = sorted((label[len(prefix):] for label in priority_labels), key=priority_place)
+    return (labelled_priorities or [""])[0], priority_labels
+priority, priority_labels = read_priority(labels, fields, priority_field, lambda name: order_places.get(name, len(order)), os.environ["GH_PRIORITY_LABEL"])
 area_field = os.environ.get("GH_AREA_FIELD", "")
 area = (fields.get(area_field) or "") if area_field else ""
 NO_RANK = 999
