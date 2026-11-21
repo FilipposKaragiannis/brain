@@ -11,12 +11,24 @@ const GRAPH_REPORT_TIMEOUT_MS = 30000;
 /** What the script exits with for an option it does not know: a flow from before `--json`. */
 const USAGE_EXIT = 2;
 
+declare const meaning: unique symbol;
+/** A string or a number that carries what it means in its type, so one meaning is never passed for another. */
+type Meaning<Value, Name extends string> = Value & { readonly [meaning]: Name };
+/** A UTC day as `2026-11-20`. */
+export type IsoDay = Meaning<string, 'IsoDay'>;
+/** A step of the flow, by its name in profiles.json. */
+export type StepName = Meaning<string, 'StepName'>;
+export type Seconds = Meaning<number, 'Seconds'>;
+export type RunCount = Meaning<number, 'RunCount'>;
+export type ItemCount = Meaning<number, 'ItemCount'>;
+export type Dollars = Meaning<number, 'Dollars'>;
+
 /**
  * One day of one step in the flow's history, as `graph-report.sh --json` prints it: how many
- * runs the step had that day (UTC), their median and the time nine in ten finished within, both
- * in seconds, the failed runs, the cost in dollars and the items they worked on.
+ * runs the step had that day (UTC), the time they took in all, their median and the time nine in
+ * ten finished within, the failed runs, the cost and the items they worked on.
  */
-export type StepDay = { day: string; step: string; runs: number; median: number; within: number; failed: number; cost: number; items: number };
+export type StepDay = Readonly<{ day: IsoDay; step: StepName; runs: RunCount; seconds: Seconds; median: Seconds; within: Seconds; failed: RunCount; cost: Dollars; items: ItemCount }>;
 
 /**
  * The flow's graph report of a project: what each step cost in the last days, which steps got
@@ -25,7 +37,7 @@ export type StepDay = { day: string; step: string; runs: number; median: number;
  * chart from (none from a flow that keeps no history yet). A report that cannot be read is a
  * value that says why.
  */
-export type GraphReport = { ok: true; days: number; markdown: string; daily: StepDay[] } | { ok: false; error: string };
+export type GraphReport = Readonly<{ ok: true; days: number; markdown: string; daily: readonly StepDay[] }> | Readonly<{ ok: false; error: string }>;
 
 /**
  * Where a project's graph report is read from: the project whose run log the script reads, the
@@ -34,7 +46,7 @@ export type GraphReport = { ok: true; days: number; markdown: string; daily: Ste
  */
 export type GraphReportSource = { projectRoot: string; pluginRoot: string; pluginScripts: string[] | null };
 
-const DAILY_NUMBERS = ['runs', 'median', 'within', 'failed', 'cost', 'items'] as const;
+const DAILY_NUMBERS = ['runs', 'seconds', 'median', 'within', 'failed', 'cost', 'items'] as const;
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 function isStepDay(line: unknown): line is StepDay {
@@ -47,8 +59,7 @@ function isStepDay(line: unknown): line is StepDay {
   });
 }
 
-/** The report `--json` printed: its Markdown and the daily lines that are whole; null when the output is no such report. */
-function parseStructuredReport(output: string): { markdown: string; daily: StepDay[] } | null {
+function parseStructuredReport(output: string): { markdown: string; daily: readonly StepDay[] } | null {
   let printed: unknown;
   try { printed = JSON.parse(output); } catch { return null; }
   if (typeof printed !== 'object' || printed === null) return null;
@@ -90,7 +101,6 @@ export async function readGraphReport(source: GraphReportSource, runner: Cancell
   return report === null ? { ok: false, error: `${GRAPH_REPORT_SCRIPT} printed no report` } : { ok: true, days: GRAPH_REPORT_DAYS, ...report };
 }
 
-/** The report of a flow from before the daily lines: its Markdown, and no day to chart. */
 function readMarkdownAlone(plain: CommandResult, signal: AbortSignal): GraphReport {
   if (signal.aborted) return CANCELLED;
   return plain.code === 0 ? { ok: true, days: GRAPH_REPORT_DAYS, markdown: plain.stdout, daily: [] } : failure(plain);

@@ -6,8 +6,9 @@ import { daysCharted, stepTrends, TRENDS_SHOWN } from '../src/stepTrends.ts';
 
 afterEach(cleanup);
 
+/** A daily line as the daemon serves it, with every run of the day as long as the median. */
 function stepDay(day: string, step: string, median: number, runs: number): StepDay {
-  return { day, step, runs, median, within: median, failed: 0, cost: 0, items: 1 };
+  return { day, step, runs, seconds: median * runs, median, within: median, failed: 0, cost: 0, items: 1 } as unknown as StepDay;
 }
 
 /** Verify got slower over three days, with no run on the day between; review ran once, quickly. */
@@ -31,13 +32,19 @@ test('StepTrends_StepsWithDifferentStepTime_AreOrderedBusiestFirst', () => {
   expect(stepTrends(DAILY).map((trend) => trend.step), 'because verify used an hour and ten minutes and review ninety seconds, and the owner looks at the costly step first').toEqual(['verify', 'review']);
 });
 
+test('StepTrends_StepWithOneVeryLongRun_IsRankedByTheTimeItsRunsTook', () => {
+  const unevenRuns = { ...stepDay('2026-10-24', 'verify', 1, 3), seconds: 10002 } as StepDay;
+  const evenRuns = Array.from({ length: TRENDS_SHOWN }, (_, index) => stepDay('2026-10-24', `step-${index}`, 10, 1));
+  expect(stepTrends([...evenRuns, unevenRuns])[0]?.step, 'because runs of 1, 1 and 10000 seconds took the most time, though their median times three is 3 seconds').toBe('verify');
+});
+
 test('StepTrends_DaysGivenOutOfOrder_AreChartedOldestFirst', () => {
   expect(stepTrends(DAILY)[0]?.days.map((line) => line.day), 'because a line drawn in the order the days arrived would run backwards').toEqual(['2026-10-22', '2026-10-24']);
 });
 
 test('StepTrends_MoreStepsThanTheChartsShown_KeepsTheBusiestOnes', () => {
   const many = Array.from({ length: TRENDS_SHOWN + 2 }, (_, index) => stepDay('2026-10-24', `step-${index}`, 100 * (index + 1), 1));
-  const shown = stepTrends(many).map((trend) => trend.step);
+  const shown = stepTrends(many).map((trend) => String(trend.step));
   expect([shown.length, shown.includes('step-0')], 'because the two quietest steps give way, and the report\'s tables still list them').toEqual([TRENDS_SHOWN, false]);
 });
 

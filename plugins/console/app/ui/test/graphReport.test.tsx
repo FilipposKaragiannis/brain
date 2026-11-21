@@ -74,7 +74,7 @@ test('GraphReport_HowToReadThis_ExplainsEveryNumberColumnOfTheStepsTable', async
 
 test('GraphReport_DaemonSendsDailyLines_DrawsAChartForTheStep', async () => {
   const daemon = new FakeDaemon();
-  const daily = [{ day: '2026-10-23', step: 'verify', runs: 2, median: 300, within: 300, failed: 0, cost: 0.2, items: 1 }];
+  const daily = [{ day: '2026-10-23', step: 'verify', runs: 2, seconds: 600, median: 300, within: 300, failed: 0, cost: 0.2, items: 1 }];
   daemon.answer('GET', REPORT_PATH, () => ({ status: HTTP_OK, body: { days: 7, markdown: reportWith('verify', '20m 24s'), daily } }));
   await renderReport(daemon);
   expect(screen.getByRole('region', { name: 'verify: typical run time by day' }), 'because the days the flow kept are what shows a step getting slower').toBeTruthy();

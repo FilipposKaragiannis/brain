@@ -113,8 +113,8 @@ export const GRAPH_REPORT_MARKDOWN = [
 
 /** The daily lines `graph-report.sh --json` prints for the fixture project: implement on two days. */
 export const GRAPH_REPORT_DAILY = [
-  { day: '2026-10-22', step: 'implement', runs: 1, median: 540, within: 540, failed: 0, cost: 0.4, items: 1 },
-  { day: '2026-10-24', step: 'implement', runs: 1, median: 660, within: 660, failed: 0, cost: 0.6, items: 1 },
+  { day: '2026-10-22', step: 'implement', runs: 1, seconds: 540, median: 540, within: 540, failed: 0, cost: 0.4, items: 1 },
+  { day: '2026-10-24', step: 'implement', runs: 1, seconds: 660, median: 660, within: 660, failed: 0, cost: 0.6, items: 1 },
 ];
 
 /**

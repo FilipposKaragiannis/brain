@@ -30,7 +30,7 @@ function howToRead(days: number): string {
 
 type GraphReportRead =
   | { kind: 'reading' }
-  | { kind: 'read'; days: number; markdown: string; daily: StepDay[] }
+  | { kind: 'read'; days: number; markdown: string; daily: readonly StepDay[] }
   | { kind: 'failed'; message: string };
 
 /**

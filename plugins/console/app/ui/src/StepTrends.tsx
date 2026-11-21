@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { StepDay } from '../../daemon/src/collectors/graphReport.ts';
+import type { IsoDay, StepDay } from '../../daemon/src/collectors/graphReport.ts';
 import { formatDuration } from './clock.tsx';
 import { daysCharted, stepTrends } from './stepTrends.ts';
 import type { StepTrend } from './stepTrends.ts';
@@ -14,22 +14,16 @@ function count(runs: number, noun: string): string {
   return `${runs} ${noun}${runs === 1 ? '' : 's'}`;
 }
 
-/** What a step did on one day, in words: its typical time, its runs and the failed ones. */
 function dayInWords(line: StepDay | undefined): string {
   if (line === undefined) return 'no run';
   const failed = line.failed === 0 ? '' : `, ${line.failed} failed`;
   return `${formatDuration(line.median)}, ${count(line.runs, 'run')}${failed}`;
 }
 
-/**
- * One step's typical run time, day by day: a line over the days the charts share, the last day's
- * value as the figure, and a readout of the day the pointer is on. The scale is the step's own:
- * the top line is its slowest day.
- */
-function TrendPanel({ trend, days, activeDay, onActiveDay }: { trend: StepTrend; days: string[]; activeDay: string | null; onActiveDay: (day: string | null) => void }) {
+function TrendPanel({ trend, days, activeDay, onActiveDay }: { trend: StepTrend; days: readonly IsoDay[]; activeDay: IsoDay | null; onActiveDay: (day: IsoDay | null) => void }) {
   const slowest = Math.max(...trend.days.map((line) => line.median), 1);
   const span = Math.max(days.length - 1, 1);
-  const across = (day: string): number => PLOT.left + (days.indexOf(day) / span) * (PLOT.width - PLOT.left - PLOT.right);
+  const across = (day: IsoDay): number => PLOT.left + (days.indexOf(day) / span) * (PLOT.width - PLOT.left - PLOT.right);
   const up = (seconds: number): number => PLOT.top + (1 - seconds / slowest) * (PLOT.height - PLOT.top - PLOT.bottom);
   const line = trend.days.map((point, index) => `${index === 0 ? 'M' : 'L'}${across(point.day).toFixed(1)} ${up(point.median).toFixed(1)}`).join(' ');
   const latest = trend.days.at(-1)!;
@@ -59,8 +53,7 @@ function TrendPanel({ trend, days, activeDay, onActiveDay }: { trend: StepTrend;
   );
 }
 
-/** The same numbers as the charts, as a table: every day, newest first, with each step's typical time and runs. */
-function DailyNumbers({ trends, days }: { trends: StepTrend[]; days: string[] }) {
+function DailyNumbers({ trends, days }: { trends: readonly StepTrend[]; days: readonly IsoDay[] }) {
   return (
     <details className="gate-doc">
       <summary>Daily numbers</summary>
@@ -86,15 +79,15 @@ function DailyNumbers({ trends, days }: { trends: StepTrend[]; days: string[] })
  * small chart per step on a shared time axis, so a step that got slower shows as a line that
  * climbs. Pointing at a day reads that day out in every chart. Nothing is drawn without a day.
  */
-export function StepTrends({ daily }: { daily: StepDay[] }) {
-  const [activeDay, setActiveDay] = useState<string | null>(null);
+export function StepTrends({ daily }: { daily: readonly StepDay[] }) {
+  const [activeDay, setActiveDay] = useState<IsoDay | null>(null);
   const trends = stepTrends(daily);
   const days = daysCharted(trends);
   if (trends.length === 0) return null;
   return (
     <section className="step-trends" aria-label="Steps over time">
       <h3 className="step-trends-title">Typical time of one run, day by day</h3>
-      <p className="muted step-trends-note">One chart per step, for the {trends.length === 1 ? 'step' : `${trends.length} steps`} that used the most time. Each has its own scale: the top line is that step's slowest day.</p>
+      <p className="muted step-trends-note">One chart per step, for the {trends.length === 1 ? 'step' : `${trends.length} steps`} whose runs took the most time. Each has its own scale: the top line is that step's slowest day.</p>
       <div className="step-trends-grid">
         {trends.map((trend) => <TrendPanel key={trend.step} trend={trend} days={days} activeDay={activeDay} onActiveDay={setActiveDay} />)}
       </div>
