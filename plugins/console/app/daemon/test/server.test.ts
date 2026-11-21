@@ -21,7 +21,7 @@ import type { OpenRunner } from '../src/openFile.ts';
 import type { ProjectCheck } from '../src/snapshot.ts';
 import type { Snapshot } from '../src/snapshot.ts';
 import { SNAPSHOT_SCHEMA_VERSION } from '../src/snapshot.ts';
-import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner, LONG_CADENCE } from './fakeRunner.ts';
+import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner, GRAPH_REPORT_MARKDOWN, LONG_CADENCE } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
 import type { FakeProcess } from './fakeSpawner.ts';
 import { noSubagents } from './fakeSubagents.ts';
@@ -40,7 +40,7 @@ async function started(makeSettings: (registry: ProjectRegistry) => SettingsStor
     return { monitor, actions, flowConfig: new FlowConfigEditor({ projectId: project.id, root: project.root, runner: fakeRunner, refresh: () => monitor.refresh('files'), log: silentLogger, home: path.join(FIXTURES, 'home') }) };
   }, silentLogger);
   const panes = new PaneSessions({ spawner: () => ({ ok: false, error: 'this test opens no pane' }), host: { shell: '/bin/sh', environment: {}, isFolder: () => false }, scheduler: realScheduler, log: silentLogger });
-  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger, panes, terminal: noTerminalProfiles(), ...open });
+  const server = createConsoleServer(registry, makeSettings(registry), { host: '127.0.0.1', port: 0, token: 'tok', staticDir: null, log: silentLogger, panes, terminal: noTerminalProfiles(), graphReportRunner: fakeRunner, ...open });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   await registry.apply([PROJECT]);
   const monitor = registry.get('project')!.monitor;
@@ -225,6 +225,28 @@ test('Events_Post_MethodNotAllowed', async () => {
   const { base, close } = await started();
   try {
     assert.equal((await fetch(`${base}/api/projects/project/events?item=gh%23213&token=tok`, { method: 'POST' })).status, 405, 'because the events are only ever read');
+  } finally { await close(); }
+});
+
+test('GraphReport_Get_ServedAsTheScriptsMarkdown', async () => {
+  const { base, close } = await started();
+  try {
+    const response = await fetch(`${base}/api/projects/project/graph-report`, { headers: { authorization: 'Bearer tok' } });
+    assert.deepEqual([response.status, ((await response.json()) as { markdown?: string }).markdown], [200, GRAPH_REPORT_MARKDOWN], 'because the page renders the report the flow script printed for the project');
+  } finally { await close(); }
+});
+
+test('GraphReport_Post_MethodNotAllowed', async () => {
+  const { base, close } = await started();
+  try {
+    assert.equal((await fetch(`${base}/api/projects/project/graph-report?token=tok`, { method: 'POST' })).status, 405, 'because the report is only ever read');
+  } finally { await close(); }
+});
+
+test('GraphReport_UnknownProject_NotFound', async () => {
+  const { base, close } = await started();
+  try {
+    assert.equal((await fetch(`${base}/api/projects/elsewhere/graph-report?token=tok`)).status, 404, 'because the daemon reports only on the projects it watches');
   } finally { await close(); }
 });
 

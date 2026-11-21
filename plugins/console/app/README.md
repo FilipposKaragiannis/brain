@@ -193,6 +193,7 @@ The port counts only after a restart.
 | `PUT /api/projects/<id>/plugins/flow/config` | change it, body `{"changes": [{"path", "value"}], "hash", "force"?}` or `{"text", "hash", "force"?}`; 200 with the new document plus `saved` and `followUps`, 400 with the reason, 409 with `reason: "stale"` or `"dirty"` |
 | `GET /api/projects/<id>/snapshot` | the current snapshot |
 | `GET /api/projects/<id>/agents/<pid>/transcript?lines=<n>` | `{session, turns, lines, bytes, turnCount}` of the claude or Codex transcript of an agent or session in `agents` or `ended`, oldest first: `turns` the last `n` turns with text (`[{at, role, text}]`, default 20, at most 200), user and assistant lines, their `message.content` text parts, without meta lines, side chains, tool calls or tool results, and without the host's wrapper turns (a user line that opens with a tag such as `<task-notification>`, `<local-command-stdout>` or `<command-name>`, and a compaction summary); `lines` the last `n` entries as one line each (`[{at, kind, text}]`, at most 2000; `kind` is `say`, `think`, `tool`, `result` or `user`, a result only when it failed, each text cut to 300 characters); `bytes` the file's size and `turnCount` its user and assistant entries. A Codex session (`~/.codex/sessions/<day>/rollout-*.jsonl`) is read from its `item_completed` events when it has any (Codex 0.16x): a `UserMessage` or `AgentMessage` is a `user` or `say` line and a turn, a `Reasoning` a `think` line (its summary, else `thinking`), a `CommandExecution` a `tool` line `shell · <script>` (the script of `<shell> -lc`), an `McpToolCall` `<server>.<tool> · <first text argument>`, and a failed command or tool adds a `result` line (`error: exit code N`, or the tool's error); an older session is read from its `response_item` messages, tool calls and reasoning. Codex's developer instructions and the context it puts in a user message (AGENTS.md, a tag such as `<environment_context>`) make no line or turn, and its `turnCount` is its `response_item` entries without the developer ones. Read from the last 64 KB of the file per line asked (at most 4 MB to start), doubled up to 64 MB while it holds fewer lines than asked; each tail is parsed once for its lines and its turns (`daemon/src/collectors/codexTranscript.ts` for Codex). 404 for a pid not listed or without a transcript, 400 for a bad `lines` |
+| `GET /api/projects/<id>/graph-report` | `{days, markdown}`: the flow's graph report of the project for the last `days` days against as many before, as `scripts/graph-report.sh` prints it (what each step cost, the steps that got slower, the items that took the most step time). The daemon runs the script on every ask and keeps no copy, and ends it when the page that asked has left. 404 with `{error}` when it cannot be read: no flow plugin, a flow older than 1.44.0, or the script's own error |
 | `GET /api/projects/<id>/events` | SSE stream: `event: snapshot` on every change, `event: action` on every action update, `event: projects` (the project list) when Settings change it, a heartbeat every 15s; the stream of a removed project ends after that list |
 | `GET /api/projects/<id>/events?item=<id>&limit=<n>` | the kept events as JSON instead, `{events, total, kept}`: newest first, only `item`'s when given, at most `limit` (default and cap 200); `total` is how many of the kept 200 matched before the limit, not every event the project ever logged. URL-encode the item (`item=gh%23213`: a bare `#` starts the fragment and never reaches the daemon). Any of `item`, `limit` or `Accept: application/json` asks for JSON; a bad limit is 400, any method but GET 405 |
 | `POST /api/projects/<id>/refresh?source=<files\|git\|processes\|jobs\|board\|pulls>` | re-read one source now (all when omitted), then send the snapshot even when nothing changed, so the new read times show |
@@ -843,7 +844,7 @@ person has to look:
 ## The UI
 `ui/` is Vite + React 18 + TypeScript, plain CSS with custom properties (light and dark follow
 the system). It reads the daemon's types straight from `daemon/src/snapshot.ts` (type-only
-imports). Nine project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
+imports). Ten project screens, routed by hash (`#/<project>/<screen>/<detail>`), and Settings: Overview (five tiles,
 Needs you, Running, Stale, Checks red and Free, each with a line under its count: the oldest wait
 and its item, the steps running on which items, the stale worktrees, the red PRs and the free
 worktrees; a
@@ -984,14 +985,21 @@ item, the time, how long it was open and its branch. Before that source is read,
 table of the items with a PR) and
 Activity (`#/<project>/activity/<item>`: every kept event from `/events?limit=200`, narrowed to one
 item with the filter box; a failed read shows a banner over the last events and is tried again every
-10 s), and Retro (`#/<project>/retro`, its nav entry saying "<n> new" while lessons wait for a
+10 s), Retro (`#/<project>/retro`, its nav entry saying "<n> new" while lessons wait for a
 retro: a head line with the lessons in all, those since the last retro and when the last retro
 ran, and "Run retro now" with a host picker (the retro schedule's host, else `jobsHost`), which
 runs `job.start` with `job: retro` and the config's model and effort; Lessons, by kind then by
 rule, the kinds and rules with the most lessons first and the lessons naming no rule last, each
 with its text, item, step, host and day, the lessons since the last retro first and All a tab
 away; Retros, newest first, each with its day and time, the lessons it read and the log's findings
-and applied columns, its report rendered as markdown, the newest open and the others folded). A
+and applied columns, its report rendered as markdown, the newest open and the others folded), and
+Graph report (`#/<project>/graph`: the flow's graph report from `/graph-report`, rendered as
+markdown: a table of the steps with their runs, median time, the time nine runs in ten finish
+within, failed runs, cost and runs per item, the steps whose median grew by half or more against
+the days before, and the five items that took the most step time, under a "How to read this"
+block that says what a step run is, what each column means and what to watch for; read when the
+screen opens and with "Read again", and a report that cannot be read says why, such as a flow
+older than 1.44.0). A
 row above every screen holds the project's fields, each a small uppercase label over its
 value: Project (the name; its title is the root), Repository (`owner/name`, linked), Tracker, or
 Trackers for several (each tracker the flow reads: "GitHub issues" and "Jira" linked to their

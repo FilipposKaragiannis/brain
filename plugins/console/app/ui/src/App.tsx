@@ -14,6 +14,7 @@ import { Activity } from './screens/Activity.tsx';
 import { Agents } from './screens/Agents.tsx';
 import { Board } from './screens/Board.tsx';
 import { Gates, GatesHeading, waitingOnYou } from './screens/Gates.tsx';
+import { GraphReport } from './screens/GraphReport.tsx';
 import { Jobs } from './screens/Jobs.tsx';
 import { Overview } from './screens/Overview.tsx';
 import { Pulls } from './screens/Pulls.tsx';
@@ -150,6 +151,7 @@ function ScreenView({ route, snapshot, go }: { route: Route; snapshot: Snapshot;
     case 'pulls': return <Pulls snapshot={snapshot} />;
     case 'activity': return <Activity key={route.detail ?? ''} snapshot={snapshot} item={route.detail} go={go} />;
     case 'retro': return <Retro snapshot={snapshot} />;
+    case 'graph': return <GraphReport snapshot={snapshot} />;
     case 'settings': return <Settings />;
   }
 }
@@ -162,7 +164,7 @@ function NavBadge({ screen, snapshot }: { screen: Screen; snapshot: Snapshot }) 
     case 'agents': return snapshot.counts.agents > 0 ? <span className="badge-plain tone-running"><Dot tone="running" />{snapshot.counts.agents} live</span> : null;
     case 'jobs': return snapshot.counts.jobsRunning > 0 ? <span className="badge-plain tone-running"><Dot tone="running" />{snapshot.counts.jobsRunning} running</span> : null;
     case 'retro': return snapshot.counts.lessonsSinceRetro > 0 ? <span className="badge-plain">{snapshot.counts.lessonsSinceRetro} new</span> : null;
-    case 'overview': case 'board': case 'pulls': case 'activity': case 'settings': return null;
+    case 'overview': case 'board': case 'pulls': case 'activity': case 'graph': case 'settings': return null;
   }
 }
 
