@@ -1,5 +1,23 @@
 # flow
 
+## 1.47.0 (2026-11-21)
+
+- On GitHub with no `github.fields.priority`, a `priority:<name>` label gives an item its
+  priority: the ready list orders by it, `ready.needs: [priority]` holds back an unstarted item
+  without one, and `flow:new --priority` (and a child taking its parent's priority) writes it. With
+  the field set, the field wins and the label is ignored. An item with two priority labels reads as
+  the one earlier in `ready.priority_order`, and the board's Health names it.
+- A pr step that ends `done` with no PR no longer leaves the item at a merge gate nothing clears.
+  `advance.sh` looks for a PR on the task branch, as the sweep does, and records one it finds
+  before the merge gate. With none and nothing to merge (a clean tree and no diff against the
+  claim's base) it closes the item with the step's summary, says why in the closing comment and
+  releases the worktree. With none and changes on the branch it raises an escalation gate. A
+  tracker that refuses the close raises an escalation gate too.
+- `board` lists a merge gate whose item has no PR linked under Health, not under "Waiting on
+  you", and leaves it out of the gate reminder.
+- The pr skill and `pr-creator` define the result with no PR: `done` with no `pr` key, only when
+  the branch has nothing to merge.
+
 ## 1.46.0 (2026-11-21)
 
 - The health job says when a step got slower. Each pass asks the graph report which steps its
