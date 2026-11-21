@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import type { StepDay } from '../../../daemon/src/collectors/graphReport.ts';
 import type { Snapshot } from '../../../daemon/src/snapshot.ts';
 import { projectPath, unreachableMessage } from '../api.ts';
 import { useServices } from '../console.tsx';
 import { Markdown } from '../Markdown.tsx';
+import { StepTrends } from '../StepTrends.tsx';
 import { Empty, Module } from '../ui.tsx';
 import { HTTP_OK } from '../useProject.ts';
 
@@ -21,12 +23,14 @@ function howToRead(days: number): string {
     'A step is listed as **slower** when its median grew by half or more. The last table names the five items that used the most agent time.',
     '',
     'Watch for a step listed as slower, runs per item above 2, and a failed count that grows.',
+    '',
+    'The charts on top show the typical time of one run for each day. A line that climbs is a step getting slower.',
   ].join('\n');
 }
 
 type GraphReportRead =
   | { kind: 'reading' }
-  | { kind: 'read'; days: number; markdown: string }
+  | { kind: 'read'; days: number; markdown: string; daily: StepDay[] }
   | { kind: 'failed'; message: string };
 
 /**
@@ -42,9 +46,9 @@ function useGraphReport(projectId: string, asked: number): GraphReportRead {
     setRead({ kind: 'reading' });
     void api.get(projectPath(projectId, '/graph-report'), leaving.signal).then((response) => {
       if (leaving.signal.aborted) return;
-      const body = response.body as { days?: unknown; markdown?: unknown; error?: unknown } | null;
+      const body = response.body as { days?: unknown; markdown?: unknown; daily?: unknown; error?: unknown } | null;
       if (response.status === HTTP_OK && typeof body?.markdown === 'string') {
-        setRead({ kind: 'read', days: Number(body.days ?? 0), markdown: body.markdown });
+        setRead({ kind: 'read', days: Number(body.days ?? 0), markdown: body.markdown, daily: Array.isArray(body.daily) ? (body.daily as StepDay[]) : [] });
         return;
       }
       setRead({ kind: 'failed', message: typeof body?.error === 'string' ? body.error : unreachableMessage(response.status) });
@@ -75,7 +79,8 @@ export function GraphReport({ snapshot }: { snapshot: Snapshot }) {
         {read.kind === 'failed' && <Empty>No graph report: {read.message}.</Empty>}
         {read.kind === 'read' && (
           <>
-            <details className="gate-doc" open>
+            <StepTrends daily={read.daily} />
+            <details className="gate-doc">
               <summary>How to read this</summary>
               <Markdown text={howToRead(read.days)} />
             </details>

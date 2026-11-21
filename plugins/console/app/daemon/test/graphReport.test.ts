@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { CancellableCommandRunner } from '../src/collectors/exec.ts';
 import { GRAPH_REPORT_SCRIPT, GRAPH_REPORT_SINCE, readGraphReport } from '../src/collectors/graphReport.ts';
 import type { GraphReport, GraphReportSource } from '../src/collectors/graphReport.ts';
-import { FAKE_PLUGIN, FIXTURE_ROOT, fakeRunner, GRAPH_REPORT_MARKDOWN } from './fakeRunner.ts';
+import { FAKE_PLUGIN, FIXTURE_ROOT, fakeGraphReportWithoutHistory, fakeRunner, GRAPH_REPORT_DAILY, GRAPH_REPORT_MARKDOWN } from './fakeRunner.ts';
 
 /** The fixture project with a plugin whose scripts could not be listed, and with the scripts given. */
 const SOURCE: GraphReportSource = { projectRoot: FIXTURE_ROOT, pluginRoot: FAKE_PLUGIN, pluginScripts: null };
@@ -15,6 +15,32 @@ const staying = (): AbortSignal => new AbortController().signal;
 const markdownOf = (report: GraphReport): string | null => (report.ok ? report.markdown : null);
 /** Why a report could not be read, or null when it was. */
 const errorOf = (report: GraphReport): string | null => (report.ok ? null : report.error);
+/** The daily lines of a report that was read, or null. */
+const dailyOf = (report: GraphReport): unknown => (report.ok ? report.daily : null);
+/** A script that prints the given text for the report with its daily lines. */
+const printing = (stdout: string): CancellableCommandRunner => async () => ({ code: 0, stdout, stderr: '', timedOut: false });
+
+test('GraphReport_FlowPrintsItsDailyLines_ReadsThemBesideTheMarkdown', async () => {
+  const report = await readGraphReport(SOURCE, fakeRunner, staying());
+  assert.deepEqual(dailyOf(report), GRAPH_REPORT_DAILY, 'because the page draws its chart from the days the flow kept');
+});
+
+test('GraphReport_FlowFromBeforeTheDailyLines_ReadsTheMarkdownAlone', async () => {
+  const report = await readGraphReport(SOURCE, async (request) => fakeGraphReportWithoutHistory(request), staying());
+  assert.deepEqual([markdownOf(report), dailyOf(report)], [GRAPH_REPORT_MARKDOWN, []], 'because an older flow still has a report to show, only no chart');
+});
+
+test('GraphReport_DailyLineWithANumberMissing_IsLeftOut', async () => {
+  const whole = GRAPH_REPORT_DAILY[0];
+  const broken = { day: '2026-10-23', step: 'verify', runs: 2 };
+  const report = await readGraphReport(SOURCE, printing(JSON.stringify({ markdown: GRAPH_REPORT_MARKDOWN, daily: [broken, whole] })), staying());
+  assert.deepEqual(dailyOf(report), [whole], 'because a point with no time cannot be drawn, and the rest of the chart still can');
+});
+
+test('GraphReport_ScriptPrintsSomethingThatIsNoReport_ErrorSaysSo', async () => {
+  const report = await readGraphReport(SOURCE, printing('not a report'), staying());
+  assert.match(errorOf(report) ?? '', /printed no report/, 'because the page must say the report is missing instead of showing an empty one');
+});
 
 test('GraphReport_ScriptPrintsAReport_ReadAsItsMarkdown', async () => {
   const report = await readGraphReport(SOURCE, fakeRunner, staying());

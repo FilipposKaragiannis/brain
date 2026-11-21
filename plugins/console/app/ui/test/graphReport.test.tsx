@@ -72,6 +72,21 @@ test('GraphReport_HowToReadThis_ExplainsEveryNumberColumnOfTheStepsTable', async
   expect(explained, 'because a column nobody explains is a number the owner cannot use').toEqual(numberColumns);
 });
 
+test('GraphReport_DaemonSendsDailyLines_DrawsAChartForTheStep', async () => {
+  const daemon = new FakeDaemon();
+  const daily = [{ day: '2026-10-23', step: 'verify', runs: 2, median: 300, within: 300, failed: 0, cost: 0.2, items: 1 }];
+  daemon.answer('GET', REPORT_PATH, () => ({ status: HTTP_OK, body: { days: 7, markdown: reportWith('verify', '20m 24s'), daily } }));
+  await renderReport(daemon);
+  expect(screen.getByRole('region', { name: 'verify: typical run time by day' }), 'because the days the flow kept are what shows a step getting slower').toBeTruthy();
+});
+
+test('GraphReport_FlowWithNoDailyLines_ShowsTheReportWithNoChart', async () => {
+  const daemon = new FakeDaemon();
+  daemon.answer('GET', REPORT_PATH, () => ({ status: HTTP_OK, body: { days: 7, markdown: reportWith('verify', '20m 24s') } }));
+  await renderReport(daemon);
+  expect([screen.queryByRole('region', { name: 'Steps over time' }), firstStepRow()[0]], 'because an older flow keeps no history, and its report must still show').toEqual([null, 'verify']);
+});
+
 test('GraphReport_DaemonCannotReadIt_SaysWhy', async () => {
   const daemon = new FakeDaemon();
   daemon.answer('GET', REPORT_PATH, () => ({ status: HTTP_NOT_FOUND, body: { error: 'the installed flow has no graph report: it needs flow 1.44.0 or later' } }));

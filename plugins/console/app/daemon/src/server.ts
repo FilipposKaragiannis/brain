@@ -296,8 +296,8 @@ async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: In
 }
 
 /**
- * `GET` the flow's graph report of the project as `{days, markdown}`: what each step cost in the
- * last `days` days and which got slower. 404 with why when it cannot be read: no flow plugin, a
+ * `GET` the flow's graph report of the project as `{days, markdown, daily}`: what each step cost in
+ * the last `days` days and which got slower, and the daily lines of the last 30 days for the chart. 404 with why when it cannot be read: no flow plugin, a
  * flow older than the report, or the script's own error. A page that leaves ends the script.
  */
 async function graphReportRoute(monitor: ProjectMonitor, runner: CancellableCommandRunner, request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -307,7 +307,7 @@ async function graphReportRoute(monitor: ProjectMonitor, runner: CancellableComm
   const report = await readGraphReport(source, runner, whenClosed(response));
   if (response.destroyed) return;
   if (!report.ok) { sendJson(response, HTTP_NOT_FOUND, { error: report.error }); return; }
-  sendJson(response, HTTP_OK, { days: report.days, markdown: report.markdown });
+  sendJson(response, HTTP_OK, { days: report.days, markdown: report.markdown, daily: report.daily });
 }
 
 /** `GET` the `TerminalProfile` the panes take: iTerm's default profile, or null without one, and where the font is served. */
