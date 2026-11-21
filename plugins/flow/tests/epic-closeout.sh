@@ -22,8 +22,8 @@ github_repository() {
   printf '{"issues": []}' > "$FAKE_GH_DIR/issues.json"; rm -f "$FAKE_GH_DIR/fail"
 }
 pull_request() { python3 -c 'import json, sys; print((json.load(open(sys.argv[1])).get("pr") or {}).get(sys.argv[2], ""))' "$FAKE_GH_DIR/issues.json" "$1"; }
-set_pull_request() { python3 -c 'import json, sys; data = json.load(open(sys.argv[1])); data["pr"] = json.loads(sys.argv[2]); json.dump(data, open(sys.argv[1], "w"))' "$FAKE_GH_DIR/issues.json" "$1"; }
-merge_pull_request() { python3 -c 'import json, sys; data = json.load(open(sys.argv[1])); data["pr"]["state"] = "MERGED"; json.dump(data, open(sys.argv[1], "w"))' "$FAKE_GH_DIR/issues.json"; }
+set_pull_request() { python3 -c 'import json, sys; github_record = json.load(open(sys.argv[1])); github_record["pr"] = json.loads(sys.argv[2]); json.dump(github_record, open(sys.argv[1], "w"))' "$FAKE_GH_DIR/issues.json" "$1"; }
+merge_pull_request() { python3 -c 'import json, sys; github_record = json.load(open(sys.argv[1])); github_record["pr"]["state"] = "MERGED"; json.dump(github_record, open(sys.argv[1], "w"))' "$FAKE_GH_DIR/issues.json"; }
 item_status() { "$local_adapter/read.sh" "$1" | json_value status; }
 epic_with_work() {
   worked_epic="$("$local_adapter/create.sh" epic "$1" --body x)"
