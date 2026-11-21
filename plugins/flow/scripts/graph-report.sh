@@ -5,10 +5,12 @@
 # runs in ten finish within, the failed runs, the cost and the runs per item; the steps whose
 # median grew against the N days before; and the items that took the most step time. No model
 # runs. The retro job writes it to <flow home>/reports/graph-<date>.md and hands it to the retro.
-# The run log is cut at 4000 lines, so every call first keeps each finished day of the log in
-# <flow home>/log/steps.daily.jsonl, one line per day and step. --keep does only that (the job
-# that cuts the log calls it first). --json prints {days, now, markdown, daily}: the report and
-# the daily lines of the last 30 days, which the console draws its chart from.
+# The run log is cut at 4000 lines, so every call first keeps the history of the steps
+# (scripts/_step_history.py): <flow home>/log/steps.daily.jsonl gets one line per day and step
+# once the day is settled, a full day after it ended, and steps.pending.jsonl carries the step
+# records of the younger days over every cut. --keep does only that (the job that cuts the log
+# calls it first). --json prints {days, now, markdown, daily}: the report and the daily lines of
+# the last 30 days, which the console draws its chart from.
 # FLOW_NOW (an ISO time) stands in for the clock, for tests.
 . "$(dirname "$0")/../lib/flow.sh"
 DEFAULT_DAYS=7

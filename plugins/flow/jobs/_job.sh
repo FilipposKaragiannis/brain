@@ -45,9 +45,9 @@ job_base() { printf '%s' "${job%%-*}"; }
 # a pause or a live lock skips is a line too, so every scheduled start shows. At 4000 lines the
 # file moves to runs.1.jsonl, replacing the one before: a rename, so a line another worker appends
 # meanwhile lands in one file or the other, never lost. The step runs of the file that goes are
-# kept by day first (scripts/graph-report.sh --keep), so the history of the steps outlives the
-# cut. The trim lock stops two workers rotating at once; a worker that finds it held leaves the
-# trim to the holder.
+# kept first (scripts/graph-report.sh --keep): the settled days by day, the younger ones as they
+# are, so the history of the steps outlives any number of cuts. The trim lock stops two workers
+# rotating at once; a worker that finds it held leaves the trim to the holder.
 job_record() {
   _runs="$(job_log_dir)/runs.jsonl"; _end="$(date +%s)"
   # One write per line: workers ending together would otherwise interleave a line and its newline.
