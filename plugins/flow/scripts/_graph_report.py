@@ -4,10 +4,13 @@
 
 Reads every step record of <log dir>/runs.1.jsonl and runs.jsonl (one JSON object per line with
 item, step, at, seconds, exit and cost_usd; a line that is no such record is skipped) and prints
-Markdown for the <days> before <now> (an ISO time): per step the runs, the median time, the time
-nine runs in ten finish within, the failed runs, the cost and the runs per item; the steps whose
-median grew against the period before; and the items that took the most step time. No model
-runs: the retro job hands the report to the retro, and the owner reads it as it is.
+Markdown for the <days> before <now> (an ISO time). It opens with the verdict, "In short": the
+steps that got slower, the steps an item goes through twice or more, the steps with failed runs
+and the item that took the most time, or that nothing stands out. Then the numbers behind it: per
+step the runs, the median time, the time nine runs in ten finish within, the failed runs, the
+cost and the runs per item; the steps whose median grew against the period before; and the items
+that took the most step time. No model runs: the retro job hands the report to the retro, and
+the owner reads it as it is.
 """
 import calendar
 import json
@@ -23,6 +26,7 @@ NINE_IN_TEN = 0.9
 SLOWER_FACTOR = 1.5
 SLOWER_BY_SECONDS = 60
 RUNS_TO_COMPARE = 3
+REPEATED_RUNS_PER_ITEM = 2.0
 ITEMS_LISTED = 5
 LOG_FILES = ("runs.1.jsonl", "runs.jsonl")
 STEP_FIELDS = ("item", "step", "at", "seconds")
@@ -78,39 +82,73 @@ def by_step(runs):
     return grouped
 
 
+def runs_per_item(runs):
+    return len(runs) / len({run["item"] for run in runs})
+
+
+def failed_count(runs):
+    return sum(1 for run in runs if run["failed"])
+
+
 def step_rows(grouped):
     rows = []
     for step, runs in sorted(grouped.items(), key=lambda pair: -sum(run["seconds"] for run in pair[1])):
         times = [run["seconds"] for run in runs]
-        items = {run["item"] for run in runs}
         rows.append("| %s | %d | %s | %s | %d | $%.2f | %.1f |" % (
             step, len(runs), duration(median(times)), duration(within(times, NINE_IN_TEN)),
-            sum(1 for run in runs if run["failed"]), sum(run["cost"] for run in runs), len(runs) / len(items)))
+            failed_count(runs), sum(run["cost"] for run in runs), runs_per_item(runs)))
     return rows
 
 
-def slower_lines(now_grouped, before_grouped):
-    lines = []
+def slower_steps(now_grouped, before_grouped):
+    slower = []
     for step, runs in sorted(now_grouped.items()):
         earlier = before_grouped.get(step, [])
         if len(runs) < RUNS_TO_COMPARE or len(earlier) < RUNS_TO_COMPARE:
             continue
         now_median, before_median = median([run["seconds"] for run in runs]), median([run["seconds"] for run in earlier])
         if now_median >= before_median * SLOWER_FACTOR and now_median - before_median >= SLOWER_BY_SECONDS:
-            lines.append("- %s: %s to %s at the median, %.1f times" % (
-                step, duration(before_median), duration(now_median), now_median / max(before_median, 1)))
-    return lines
+            slower.append({"step": step, "before": before_median, "now": now_median, "factor": now_median / max(before_median, 1)})
+    return slower
 
 
-def item_rows(runs):
+def slower_lines(slower):
+    return ["- %s: %s to %s at the median, %.1f times" % (
+        step["step"], duration(step["before"]), duration(step["now"]), step["factor"]) for step in slower]
+
+
+def ranked_items(runs):
     totals = {}
     for run in runs:
         total = totals.setdefault(run["item"], {"steps": 0, "seconds": 0, "cost": 0.0})
         total["steps"] += 1
         total["seconds"] += run["seconds"]
         total["cost"] += run["cost"]
-    ranked = sorted(totals.items(), key=lambda pair: -pair[1]["seconds"])[:ITEMS_LISTED]
-    return ["| %s | %d | %s | $%.2f |" % (item, total["steps"], duration(total["seconds"]), total["cost"]) for item, total in ranked]
+    return sorted(totals.items(), key=lambda pair: -pair[1]["seconds"])
+
+
+def item_rows(ranked):
+    return ["| %s | %d | %s | $%.2f |" % (item, total["steps"], duration(total["seconds"]), total["cost"])
+            for item, total in ranked[:ITEMS_LISTED]]
+
+
+def findings(grouped, slower):
+    lines = ["- **Slower:** %s takes %s at the median, up from %s. That is %.1f times slower." % (
+        step["step"], duration(step["now"]), duration(step["before"]), step["factor"]) for step in slower]
+    repeated = sorted(((runs_per_item(runs), step) for step, runs in grouped.items()
+                       if runs_per_item(runs) >= REPEATED_RUNS_PER_ITEM), reverse=True)
+    if repeated:
+        lines.append("- **Repeated:** %s. A step that runs twice or more for one item is rework." % ", ".join(
+            "%s ran %.1f times per item" % (step, rate) for rate, step in repeated))
+    lines += ["- **Failed:** %d of %d %s runs failed." % (failed_count(runs), len(runs), step)
+              for step, runs in sorted(grouped.items()) if failed_count(runs)]
+    return lines
+
+
+def in_short(grouped, slower, ranked):
+    busiest, total = ranked[0]
+    return (findings(grouped, slower) or ["- Nothing stands out: no step got slower, none ran twice or more per item, and no run failed."]) + [
+        "- **Most time:** %s took %s over %d step run%s." % (busiest, duration(total["seconds"]), total["steps"], "" if total["steps"] == 1 else "s")]
 
 
 def report(log, days, now_timestamp):
@@ -128,12 +166,14 @@ def report(log, days, now_timestamp):
                  days, len(before), duration(sum(run["seconds"] for run in before)))]
     if not this_period:
         return lines + ["", "No step ran in this period."]
+    grouped, ranked = by_step(this_period), ranked_items(this_period)
+    slower = slower_steps(grouped, by_step(before))
+    lines += ["", "## In short", ""] + in_short(grouped, slower, ranked)
     lines += ["", "## Steps", "", "| step | runs | median | nine in ten within | failed | cost | runs per item |", "|---|---|---|---|---|---|---|"]
-    lines += step_rows(by_step(this_period))
-    slower = slower_lines(by_step(this_period), by_step(before))
-    lines += ["", "## Slower than the period before", ""] + (slower or ["No step's median grew by half or more."])
+    lines += step_rows(grouped)
+    lines += ["", "## Slower than the period before", ""] + (slower_lines(slower) or ["No step's median grew by half or more."])
     lines += ["", "## Items that took the most step time", "", "| item | step runs | step time | cost |", "|---|---|---|---|"]
-    lines += item_rows(this_period)
+    lines += item_rows(ranked)
     return lines
 
 
