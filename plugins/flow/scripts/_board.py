@@ -132,13 +132,10 @@ ROLES = (("raised_by", "raised by"), ("answered_by", "answered by"), ("condition
 def roles_of(g):
     said = ["%s %s" % (label, g[key]) for key, label in ROLES if g.get(key)]
     return " (%s)" % ", ".join(said) if said else ""
-# A merge gate on a listed item with no PR linked has nothing for the owner to merge, so it is a
-# Health line, not a gate waiting on the owner. An item the lists left out is not known to have no
-# PR, so its gate still waits on the owner.
-def merges_no_pull_request(g):
+def merge_gate_of_listed_item_without_pull_request(g):
     return g["gate"] == "merge" and g["item"] in by_id and not by_id[g["item"]]["state"].get("pr")
-merge_gates_without_pull_request = [g for g in gates if merges_no_pull_request(g)]
-owner_gates = [g for g in gates if not merges_no_pull_request(g)]
+merge_gates_without_pull_request = [g for g in gates if merge_gate_of_listed_item_without_pull_request(g)]
+owner_gates = [g for g in gates if not merge_gate_of_listed_item_without_pull_request(g)]
 if owner_gates:
     print("\n## Waiting on you")
     for g in owner_gates:
