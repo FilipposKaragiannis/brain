@@ -1,4 +1,4 @@
-import type { IsoDay, StepDay, StepName } from '../../daemon/src/collectors/graphReport.ts';
+import type { IsoDay, Seconds, StepDay, StepName } from '../../daemon/src/collectors/graphReport.ts';
 
 /** How many steps get a chart: the ones that used the most time. The report's tables list every step. */
 export const TRENDS_SHOWN = 6;
@@ -6,7 +6,7 @@ const MILLISECONDS_PER_DAY = 86400000;
 const ISO_DAY_LENGTH = 10;
 
 /** One step's days in the chart, oldest first, and the time its runs took in all on those days, in seconds. */
-export type StepTrend = Readonly<{ step: StepName; days: readonly StepDay[]; seconds: number }>;
+export type StepTrend = Readonly<{ step: StepName; days: readonly StepDay[]; seconds: Seconds }>;
 
 /** The steps whose runs took the most time in the daily lines, most first, each with its days oldest first. */
 export function stepTrends(daily: readonly StepDay[]): readonly StepTrend[] {
@@ -16,7 +16,7 @@ export function stepTrends(daily: readonly StepDay[]): readonly StepTrend[] {
     .map(([step, days]) => ({
       step,
       days: [...days].sort((earlier, later) => earlier.day.localeCompare(later.day)),
-      seconds: days.reduce((sum, line) => sum + line.seconds, 0),
+      seconds: days.reduce((sum, line) => sum + line.seconds, 0) as Seconds,
     }))
     .sort((busier, quieter) => quieter.seconds - busier.seconds || busier.step.localeCompare(quieter.step))
     .slice(0, TRENDS_SHOWN);
