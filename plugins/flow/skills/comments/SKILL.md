@@ -12,7 +12,8 @@ GitHub only (`"$P/scripts/comments.sh"`).
 path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
 `local:<kind>/<n>`. Never build the path by hand.
 
-1. **Resolve the PR**: from the argument, or the item's `pr`, `"$P/scripts/state.sh" get <item> pr`.
+1. **Resolve the PR**: from the argument, or `state.pr` of the item read with its flow state,
+   `"$P/scripts/state.sh" read <item>`.
    `comments.sh state <pr>`: merged or closed → release is the steward's job; report and stop.
    The item is the one the PR's branch names (`flow/gh-310` is `gh#310`).
    **Answer**: the brief names the owner's answer to the item's last gate ("The owner answered
