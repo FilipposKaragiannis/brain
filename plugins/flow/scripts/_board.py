@@ -147,7 +147,8 @@ dead = [r for r in runs if not r["alive"] and not r["starting"]]
 unanswered = [i for i in items if (i["state"].get("gate") or "none") == "none" and owner_of(i)
               and epoch(i["state"].get("answered_at")) and now - epoch(i["state"].get("answered_at")) > reminder]
 missing_bases = [claimed for claimed in claimed_bases.values() if claimed["missing"]]
-if dead or waiting or unanswered or missing_bases or merge_gates_without_pull_request:
+twice_prioritised = [item for item in items if len(item.get("priority_labels", [])) > 1]
+if dead or waiting or unanswered or missing_bases or merge_gates_without_pull_request or twice_prioritised:
     print("\n## Health")
     for r in dead:
         print("- %s: dead run of %s, no process since the record was written (%s ago)" % (r["item"], r["step"], age(r["age"])))
@@ -159,6 +160,8 @@ if dead or waiting or unanswered or missing_bases or merge_gates_without_pull_re
         print("- %s: base %s is not on the remote" % (claimed["item"], claimed["base"]))
     for g in merge_gates_without_pull_request:
         print("- %s: at the merge gate with no pull request linked: link its PR, or close the item and run the sweep" % g["item"])
+    for item in twice_prioritised:
+        print("- %s: labels %s, read as priority %s" % (item["id"], ", ".join(item["priority_labels"]), item.get("priority") or "none"))
 if overlap:
     print("\n## Overlapping claims")
     for a, b in overlap:

@@ -11,7 +11,8 @@
 # held behind that the list leaves out (--json: holders, [{"id", "status"}], status open, closed or
 # unknown); the base each claimed pool worktree records in claim.json, beside its worktree when it
 # is not the config base, and in Health when it is not on the remote (no fetch: the last fetch
-# decides; --json: base and base_missing on each pool entry). --graph prints a graph model built
+# decides; --json: base and base_missing on each pool entry); in Health, an item whose priority comes
+# from more than one label (its priority_labels) and what it reads as. --graph prints a graph model built
 # from every adapter's open items (scripts/_graph.py): the dependency waves of one epic's children,
 # or every open item by priority. --mermaid prints it as a Mermaid flowchart instead of JSON.
 . "$(dirname "$0")/../lib/flow.sh"
