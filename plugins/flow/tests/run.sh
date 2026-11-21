@@ -531,6 +531,11 @@ sh "$here/epic-closeout.sh" > "$work/epic-closeout.out" 2>&1; code=$?
 check "epic-closeout: $(tail -n 1 "$work/epic-closeout.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/epic-closeout.out"
 
+echo "a pr step that opens no pull request leaves nothing to merge (tests/pr-without-pull-request.sh)"
+sh "$here/pr-without-pull-request.sh" > "$work/pr-without-pull-request.out" 2>&1; code=$?
+check "pr-without-pull-request: $(tail -n 1 "$work/pr-without-pull-request.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/pr-without-pull-request.out"
+
 echo "an idle session stops holding a worktree, and a session's status is read in full (tests/sessions.sh)"
 sh "$here/sessions.sh" > "$work/sessions.out" 2>&1; code=$?
 check "sessions: $(tail -n 1 "$work/sessions.out")" [ "$code" -eq 0 ]
