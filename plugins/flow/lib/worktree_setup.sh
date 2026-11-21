@@ -1,12 +1,8 @@
-# The worktree_setup commands of .flow/config.yaml and the commit they last ran at in a pool
-# worktree. Sourced by scripts/steward.sh. The record is <worktree>/.flow/setup-commit, because
-# .flow/ is never part of the work and a release removes only the claim there. A claim runs the
-# setup again when a file worktree_setup_paths names differs between that commit and the
-# worktree's HEAD; with no record, or a recorded commit git no longer has, it counts as changed.
-# A failed command keeps the old record, so the next claim tries again, and the worktree is
-# handed out all the same, as after a failed setup when the steward adds a worktree.
+# The worktree_setup commands of .flow/config.yaml in a pool worktree, and the commit they last
+# ran at there. Sourced by scripts/steward.sh.
 
 setup_record_file() { printf '%s/.flow/setup-commit' "$1"; }
+setup_pid_file() { printf '%s/.flow/setup-pid' "$1"; }
 
 run_setup_commands() {
   setup_status=0
@@ -21,8 +17,16 @@ EOF
   return "$setup_status"
 }
 
-record_setup_commit() {
-  mkdir -p "$1/.flow" && git -C "$1" rev-parse HEAD > "$(setup_record_file "$1")"
+set_up_and_record() {
+  mkdir -p "$1/.flow" && printf '%s\n' "$$" > "$(setup_pid_file "$1")"
+  if run_setup_commands "$1"; then git -C "$1" rev-parse HEAD > "$(setup_record_file "$1")"; fi
+  rm -f "$(setup_pid_file "$1")"
+}
+
+setup_running() {
+  running_setup_pid="$(cat "$(setup_pid_file "$1")" 2>/dev/null)"
+  case "$running_setup_pid" in '' | *[!0-9]*) return 1 ;; esac
+  kill -0 "$running_setup_pid" 2>/dev/null
 }
 
 setup_outdated() {
@@ -55,5 +59,5 @@ EOF
 set_up_again_when_outdated() {
   setup_outdated "$1" || return 0
   echo "flow: running worktree_setup again in $(basename "$1"): it has no setup record, or a worktree_setup_paths file changed since its last setup" >&2
-  if run_setup_commands "$1"; then record_setup_commit "$1"; fi
+  set_up_and_record "$1"
 }

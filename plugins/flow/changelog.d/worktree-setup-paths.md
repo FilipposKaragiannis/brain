@@ -8,5 +8,6 @@ bump: minor
   between that commit and the worktree's HEAD, then records the new commit. A worktree with no
   record counts as changed. Unset, nothing changes.
 - A setup command that fails at a claim is reported and the worktree is handed out, as after a
-  failed setup at add; the record stays, so the next claim tries again. The init template
-  documents the key in a commented line beside `worktree_setup`.
+  failed setup at add; the record stays, so the next claim tries again. While a setup runs the
+  worktree holds `.flow/setup-pid`, and `health` does not release that claim as empty. The init
+  template documents the key in a commented line beside `worktree_setup`.

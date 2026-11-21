@@ -83,7 +83,10 @@
 # commands run in the new worktree. Both run on add and on setup. worktree_setup_paths lists globs
 # of the files whose change means the setup must run again (a lockfile): a claim runs
 # worktree_setup again before it hands a worktree out when such a file differs between the commit
-# its setup last ran at and its HEAD (lib/worktree_setup.sh).
+# its setup last ran at (.flow/setup-commit, written when every command passed) and its HEAD; no
+# record counts as changed. A failed command is reported and the worktree handed out, as at add;
+# the record stays, so the next claim tries again. While a setup runs, .flow/setup-pid holds the
+# steward's pid and health leaves the claim alone.
 # worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
 # add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes a tmp
 # remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
@@ -569,7 +572,7 @@ run_setup() {
     [ -e "$p/$rel" ] && continue
     mkdir -p "$(dirname "$p/$rel")" && cp -R "$main/$rel" "$p/$rel" && echo "copied $rel"
   done
-  if run_setup_commands "$p"; then record_setup_commit "$p"; fi
+  set_up_and_record "$p"
 }
 
 is_worktree_of_this_repository() {
@@ -1090,6 +1093,8 @@ health_claim() {
   bs="$(json_get "$c" base)"; [ -n "$bs" ] || bs="$base_branch"
   claims=$((claims + 1))
   if [ "$procs_ok" -eq 0 ]; then holders="$holders$name $it not checked: no process list
+"; return 0; fi
+  if setup_running "$p"; then running=$((running + 1)); holders="$holders$name $it running worktree_setup
 "; return 0; fi
   case "$it" in adhoc:*) health_sub_agent "$p" "$it" "$c" "$bs"; return 0 ;; esac
   if ! adapter_for "$it" >/dev/null 2>&1; then holders="$holders$name $it a session outside the flow

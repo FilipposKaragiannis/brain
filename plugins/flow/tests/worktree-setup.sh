@@ -3,8 +3,8 @@
 # with a bare origin. The steward records the commit a worktree's setup ran at; a claim runs
 # worktree_setup again when a file worktree_setup_paths names differs between that commit and the
 # worktree's HEAD, or when there is no record, and not otherwise; unset, no setup runs at a claim.
-# A setup that fails at a claim is reported and the worktree is still handed out. The init
-# template and the docs name the key.
+# A setup that fails at a claim is reported and the worktree is still handed out; health keeps a
+# claim whose setup still runs. The init template and the docs name the key.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -12,55 +12,59 @@ trap 'sandbox_close $?' EXIT
 
 steward="$plugin/scripts/steward.sh"
 lockfile_glob='**/package-lock.json'
-marking_setup() { printf 'worktree_setup:\n  - basename "$PWD" >> %s/setup-runs.log%s\n' "$root" "$1" >> .flow/config.yaml; : > "$root/setup-runs.log"; }
+installing_setup() {
+  printf 'worktree_setup:\n  - mkdir -p installed && git rev-parse HEAD > installed/from; cat package-lock.json > installed/lock 2>/dev/null || :%s\n' "$1" >> .flow/config.yaml
+  printf 'installed/\n' >> .git/info/exclude
+}
 watching_lockfiles() { printf 'worktree_setup_paths:\n  - "%s"\n' "$lockfile_glob" >> .flow/config.yaml; }
-setup_runs() { grep -cxF "$1" "$root/setup-runs.log"; }
+installed_from() { cat "$root/$1/installed/from" 2>/dev/null; }
 recorded_commit() { cat "$root/$1/.flow/setup-commit" 2>/dev/null; }
 head_commit() { git -C "$root/$1" rev-parse HEAD; }
 worktree_path() { (cd "$root/$1" && pwd -P); }
+stale_claim() { python3 -c 'import json, sys; path = sys.argv[1] + "/.flow/claim.json"; claim = json.load(open(path)); claim["claimed_at"] = "2000-01-01T00:00:00Z"; json.dump(claim, open(path, "w"))' "$root/$1"; }
 
 echo "worktree setup: with worktree_setup_paths unset a claim sets nothing up"
 new_repo unset
-marking_setup ""
+installing_setup ""
 unwatched="$(new_task "Fixtures")"
 "$steward" claim "$unwatched" >/dev/null 2>&1
-check "ClaimWithNoSetupPaths_RunsNoSetup: without the key a claim behaves as before" \
-  '[ "$(setup_runs wt-1)" = 0 ]'
+check "ClaimWithNoSetupPaths_InstallsNothing: without the key a claim behaves as before" \
+  '[ ! -e "$root/wt-1/installed" ]'
 check "ClaimWithNoSetupPaths_WritesNoRecord: without the key the claim needs no record" \
   '[ ! -e "$root/wt-1/.flow/setup-commit" ]'
 
 echo "worktree setup: a claim sets up a worktree whose watched files changed"
 new_repo watched
-marking_setup ""
+installing_setup ""
 watching_lockfiles
 first="$(new_task "Ledger")"
 "$steward" claim "$first" > "$work/first.out" 2> "$work/first.err"
-check "ClaimOfAWorktreeWithNoSetupRecord_RunsTheSetup: a worktree never set up by the steward may hold any packages" \
-  '[ "$(setup_runs wt-1)" = 1 ]'
+check "ClaimOfAWorktreeWithNoSetupRecord_InstallsAtTheCommitItStandsAt: a worktree never set up by the steward may hold any packages" \
+  '[ -n "$(installed_from wt-1)" ] && [ "$(installed_from wt-1)" = "$(head_commit wt-1)" ]'
 check "ClaimOfAWorktreeWithNoSetupRecord_RecordsTheCommitItStandsAt: the next claim compares against the setup that just ran" \
   '[ -n "$(recorded_commit wt-1)" ] && [ "$(recorded_commit wt-1)" = "$(head_commit wt-1)" ]'
 check "ClaimThatRunsTheSetup_PrintsOnlyTheWorktreePath: next.sh reads the path from what the claim prints" \
   '[ "$(cat "$work/first.out")" = "$(worktree_path wt-1)" ]'
 "$steward" setup "$root/wt-2" >/dev/null 2>&1
 check "SetupByHand_RecordsTheCommitTheSetupRanAt: a hand setup counts as the last setup too" \
-  '[ -n "$(recorded_commit wt-2)" ] && [ "$(recorded_commit wt-2)" = "$(head_commit wt-2)" ]'
+  '[ -n "$(recorded_commit wt-2)" ] && [ "$(recorded_commit wt-2)" = "$(installed_from wt-2)" ]'
 remote_commit main notes.txt
 second="$(new_task "Notes")"
 "$steward" claim "$second" >/dev/null 2>&1
-check "ClaimWhereNoSetupPathChanged_SkipsTheSetup: a commit that leaves the lockfiles alone needs no reinstall" \
-  '[ "$(recorded_commit wt-2)" != "$(head_commit wt-2)" ] && [ "$(setup_runs wt-2)" = 1 ]'
+check "ClaimWhereNoSetupPathChanged_KeepsTheEarlierInstall: a commit that leaves the lockfiles alone needs no reinstall" \
+  '[ "$(installed_from wt-2)" = "$(recorded_commit wt-2)" ] && [ "$(installed_from wt-2)" != "$(head_commit wt-2)" ]'
 "$steward" setup "$root/wt-3" >/dev/null 2>&1
 remote_commit main package-lock.json
 third="$(new_task "Packages")"
 "$steward" claim "$third" >/dev/null 2>&1
-check "ClaimWhereASetupPathChanged_RunsTheSetupAgain: a changed lockfile means the installed packages are stale" \
-  '[ "$(setup_runs wt-3)" = 2 ]'
+check "ClaimWhereASetupPathChanged_InstallsTheNewLockfile: a changed lockfile means the installed packages are stale" \
+  '[ -s "$root/wt-3/installed/lock" ] && cmp -s "$root/wt-3/installed/lock" "$root/wt-3/package-lock.json"'
 check "ClaimWhereASetupPathChanged_RecordsTheNewCommit: the next claim compares against the setup that just ran" \
   '[ "$(recorded_commit wt-3)" = "$(head_commit wt-3)" ]'
 
 echo "worktree setup: a setup that fails at a claim"
 new_repo failing
-marking_setup "; exit 1"
+installing_setup "; exit 1"
 watching_lockfiles
 failed="$(new_task "Broken install")"
 "$steward" claim "$failed" > "$work/failed.out" 2> "$work/failed.err"; claim_code=$?
@@ -69,7 +73,24 @@ check "ClaimWhoseSetupFails_StillHandsOutTheWorktree: a failed setup at add hand
 check "ClaimWhoseSetupFails_ReportsTheFailedCommand: the owner learns the packages may be stale" \
   'grep -qF "flow: worktree_setup failed in $(worktree_path wt-1)" "$work/failed.err"'
 check "ClaimWhoseSetupFails_LeavesNoRecord: the next claim must try the setup again" \
-  '[ "$(setup_runs wt-1)" = 1 ] && [ ! -e "$root/wt-1/.flow/setup-commit" ]'
+  '[ -n "$(installed_from wt-1)" ] && [ ! -e "$root/wt-1/.flow/setup-commit" ]'
+
+echo "worktree setup: health while a claim's setup runs"
+new_repo busy
+installing_setup "; touch $root/setup-started; while [ ! -f $root/setup-may-end ]; do sleep 1; done"
+watching_lockfiles
+slow="$(new_task "Slow install")"
+"$steward" claim "$slow" > "$work/slow.out" 2>&1 & claim_pid=$!
+while [ ! -f "$root/setup-started" ] && kill -0 "$claim_pid" 2>/dev/null; do sleep 1; done
+stale_claim wt-1
+"$steward" health > "$work/health-during.out" 2>&1
+check "HealthWhileTheSetupAtAClaimRuns_KeepsTheClaim: an install longer than the grace is work, not an empty claim" \
+  '[ -f "$root/wt-1/.flow/claim.json" ] && ! grep -q "released the empty claim" "$work/health-during.out"'
+touch "$root/setup-may-end"; wait "$claim_pid"
+stale_claim wt-1
+"$steward" health > "$work/health-after.out" 2>&1
+check "HealthAfterTheSetupAtAClaimEnded_ReleasesTheEmptyClaim: the mark of a running setup goes when the setup ends" \
+  '[ ! -f "$root/wt-1/.flow/claim.json" ] && grep -q "released the empty claim" "$work/health-after.out"'
 
 echo "worktree setup: the init template and the docs name the key"
 git init -q "$work/fresh"
