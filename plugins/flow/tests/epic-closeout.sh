@@ -201,9 +201,10 @@ remote_commit "$(epic_of "$moved_on")" replays.txt
 "$local_adapter/write-state.sh" "$moved_on" step=closeout profile=epic
 start_step "$moved_on"
 step_result "$moved_on" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
-chmod -R a-w .git/objects
-finish_step "$moved_on"
-chmod -R u+w .git/objects
+mkdir -p "$work/git-that-refuses-fetch"
+printf '#!/bin/sh\ncase " $* " in *" fetch "*) echo "fatal: the remote refused the fetch" >&2; exit 128 ;; esac\nexec "%s" "$@"\n' "$(command -v git)" > "$work/git-that-refuses-fetch/git"
+chmod +x "$work/git-that-refuses-fetch/git"
+(PATH="$work/git-that-refuses-fetch:$PATH"; export PATH; finish_step "$moved_on")
 check "EpicBranchCachedAtItsBaseWhileTheRemoteMovedOn_HasNothingAheadLocally: the stale copy shows no work, or the checks below prove nothing" \
   '[ "$(git rev-list --count "origin/main..origin/$(epic_of "$moved_on")")" = 0 ] && [ "$(remote_tip "$(epic_of "$moved_on")")" != "$(remote_tip main)" ]'
 check "EpicCloseoutWhoseBranchCannotBeFetched_LeavesTheEpicOpen: a stale copy of the branch is no proof that nothing is left to merge" \
