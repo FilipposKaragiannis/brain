@@ -1,6 +1,6 @@
 #!/bin/sh
 # health-slow-steps.sh: the health job says when a step got slower, on the local adapter in
-# throwaway repos with a fake Slack hook. graph-report.sh --slower names the steps the report's
+# throwaway repos with a fake Slack destination and fake model hosts. graph-report.sh --slower names the steps the report's
 # verdict calls slower, and keeps no history. A health pass says and notifies each such step once,
 # with its median now and before; a step that stays slower is not said again, one that recovered
 # is said again when it slows down anew. --dry-run says it and records nothing. A project with no
@@ -12,28 +12,41 @@
 trap 'sandbox_close $?' EXIT
 
 REPORT_NOW="2026-10-25T00:00:00Z"
+SECONDS_PER_DAY=86400
 SLACK_HOOK=https://hook.example/flow
-# ran <step> <days before the report's time> <seconds>: one step record in the run log.
+SLACK_INBOX="$work/slack-inbox.jsonl"
+MODEL_SPEND="$work/model-spend.log"
+mkdir -p "$work/destinations"
+cat > "$work/destinations/curl" <<EOF
+#!/bin/sh
+while [ \$# -gt 0 ]; do
+  [ "\$1" != --data ] || printf '%s' "\$2" | python3 -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["text"]))' >> "$SLACK_INBOX"
+  shift
+done
+EOF
+for model_host in claude codex; do
+  printf '#!/bin/sh\necho "%s $*" >> "%s"\n' "$model_host" "$MODEL_SPEND" > "$work/destinations/$model_host"
+done
+chmod +x "$work/destinations/curl" "$work/destinations/claude" "$work/destinations/codex"
+PATH="$work/destinations:$PATH"; export PATH
 ran() {
   mkdir -p .flow/log
   python3 -c 'import json, sys, time, calendar
 now = calendar.timegm(time.strptime(sys.argv[1], "%Y-%m-%dT%H:%M:%SZ"))
-at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - float(sys.argv[3]) * 86400))
+at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now - float(sys.argv[3]) * int(sys.argv[5])))
 print(json.dumps({"item": "local:task/1", "step": sys.argv[2], "at": at, "seconds": int(sys.argv[4]), "exit": 0, "cost_usd": 0.5}))' \
-    "$REPORT_NOW" "$1" "$2" "$3" >> .flow/log/runs.jsonl
+    "$REPORT_NOW" "$1" "$2" "$3" "$SECONDS_PER_DAY" >> .flow/log/runs.jsonl
 }
-# runs_of <step> <seconds> <days before>...: one run of that length on each of the days.
 runs_of() { runs_step="$1"; runs_seconds="$2"; shift 2; for runs_day in "$@"; do ran "$runs_step" "$runs_day" "$runs_seconds"; done; }
 review_got_slower() { runs_of review 100 8 9 10; runs_of review 400 1 2 3; }
 plan_kept_its_pace() { runs_of plan 100 8 9 10; runs_of plan 110 1 2 3; }
-# health_pass <output file> [health options]: one health pass; its exit code is in the file's .code.
 health_pass() {
   health_output="$1"; shift
   FLOW_NOW="${HEALTH_NOW:-$REPORT_NOW}" FLOW_SLACK_WEBHOOK="$SLACK_HOOK" "$plugin/scripts/steward.sh" health "$@" > "$health_output" 2>&1
   echo "$?" > "$health_output.code"
 }
 slower_findings() { grep -c "got slower" "$1" || true; }
-notifications_sent() { cat "$work/offline.log" 2>/dev/null | grep -c "^curl " || true; }
+messages_received() { cat "$SLACK_INBOX" 2>/dev/null | grep -c . || true; }
 events_said() { cat .flow/events.log 2>/dev/null | grep -c "got slower" || true; }
 
 echo "health slow steps: the report names the slower steps"
@@ -55,16 +68,16 @@ check "StepTheReportNamesAsSlower_IsSaidWithItsMedianNowAndBefore: the owner lea
 check "StepAtNearlyTheSamePace_IsNotSaid: ten seconds more is no slowdown to the report, so not to the health job" \
   '! grep -q "plan got slower" "$work/first.out"'
 check "StepTheReportNamesAsSlower_IsNotifiedToTheOwner: the owner hears of it without reading the health log" \
-  '[ "$(notifications_sent)" = 1 ] && grep -q "review got slower: its median run took 6m 40s" "$work/offline.log"'
+  '[ "$(messages_received)" = 1 ] && grep -q "review got slower: its median run took 6m 40s" "$SLACK_INBOX"'
 check "StepTheReportNamesAsSlower_IsLoggedInEvents: the board reads the findings from events.log" \
   '[ "$(events_said)" = 1 ]'
 check "HealthPassWithASlowerStep_SpendsNoModel: the job runs every few minutes, so only a report is read" \
-  '! grep -q "^claude \|^codex " "$work/offline.log"'
+  '[ ! -s "$MODEL_SPEND" ]'
 health_pass "$work/second.out"
 check "StepStillSlowerOnTheNextPass_IsNotSaidAgain: a finding is said once per change, not every pass" \
   '[ "$(slower_findings "$work/second.out")" = 0 ]'
 check "StepStillSlowerOnTheNextPass_IsNotNotifiedAgain: the owner was told once already" \
-  '[ "$(notifications_sent)" = 1 ]'
+  '[ "$(messages_received)" = 1 ]'
 
 echo "health slow steps: a step that recovered and slowed down again"
 runs_of review 100 1 2 3 4
@@ -76,11 +89,11 @@ health_pass "$work/again.out"
 check "StepSlowerAgainAfterItRecovered_IsSaidAgain: the recovery forgot the first slowdown, so the new one is news" \
   'grep -q "the step review got slower" "$work/again.out"'
 check "StepSlowerAgainAfterItRecovered_IsNotifiedAgain: the owner hears of the new slowdown too" \
-  '[ "$(notifications_sent)" = 2 ]'
+  '[ "$(messages_received)" = 2 ]'
 
 echo "health slow steps: --dry-run"
 new_repo dry
-: > "$work/offline.log"
+: > "$SLACK_INBOX"
 review_got_slower
 health_pass "$work/dry.out" --dry-run
 check "DryRunWithASlowerStep_SaysTheFinding: a dry run shows what a pass would find" \
@@ -88,7 +101,7 @@ check "DryRunWithASlowerStep_SaysTheFinding: a dry run shows what a pass would f
 check "DryRunWithASlowerStep_SaysItWouldNotify: the notification it would send is shown, not sent" \
   'grep -q "^would notify: The step review got slower" "$work/dry.out"'
 check "DryRunWithASlowerStep_SendsNoNotification: a dry run changes nothing the owner sees" \
-  '[ "$(notifications_sent)" = 0 ]'
+  '[ "$(messages_received)" = 0 ]'
 check "DryRunWithASlowerStep_WritesNoEventsLine: a dry run records nothing" \
   '[ "$(events_said)" = 0 ]'
 check "DryRunWithASlowerStep_KeepsNoStepHistory: a dry run records nothing, the history of the steps included" \

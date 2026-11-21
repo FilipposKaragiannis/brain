@@ -37,7 +37,7 @@ health_slow_steps() {
   fi
   rm -f "$slow_steps_error_file"; health_cleared "$SLOW_STEP_REPORT_KEY"
   slow_step_keys=""
-  while IFS="$(printf '\t')" read -r slow_step slow_step_now slow_step_before; do   # no pipe: health_say counts a finding in this shell
+  while IFS="$(printf '\t')" read -r slow_step slow_step_now slow_step_before; do
     [ -n "$slow_step" ] || continue
     slow_step_keys="$slow_step_keys$(slow_step_key "$slow_step")
 "
