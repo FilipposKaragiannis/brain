@@ -19,7 +19,7 @@ The record is one JSON file per item behind one module (`scripts/_state.py` and 
 | `scripts/_state.py` (new) | the record on disk: arguments, lock, atomic write, views, archive; later join, status derivation, import |
 | `scripts/_state_arguments.py` (new) | the command line of `_state.py`, pure and hand-written: argparse and dataclasses were most of each write's Python start |
 | `lib/state.sh` (new, sourced by `lib/flow.sh`) | the shell face below, and the one place a record write meets the tracker; no script opens a record file |
-| `scripts/state.sh` (new) | CLI for tests, skills and the owner: `get set show path archive` (1a), `list` (1b), `import` (4a), `prune` (5) |
+| `scripts/state.sh` (new) | CLI for tests, skills and the owner: `get set show path archive` (1a), `read join list` (1b), `import` (4a), `prune` (5) |
 | `scripts/_filter_ready.py` | readiness on (normalised item, record, `ready:` policy) |
 | `adapters/*/{set-status,assign,me}.sh` (new) | native status, assignment, the flow's own user |
 | `scripts/_health.py drift`, `lib/drift.sh` (new) | pure classifier to repair codes; one repair per code |
@@ -73,7 +73,12 @@ Shell API (`lib/state.sh`)
 | `record_set <item> <pair>...` | 1a | the mirror, then create or merge under the lock, then the views the pairs name; a pair outside the grammar exits 2 |
 | `take_item <item>` | 1a | this machine holds the item: `claim.machine`, `.host`, `.claimed_at` when the claim has no machine; slice 3 adds assign and push |
 | `record_archive <item>` | 1a | to `closed/` |
-| `item_read <id>`, `items_join` (stdin) | 1b | adapter item(s) with `state` joined from the record |
+| `item_read <id>`, `items_join` (stdin) | 1b | adapter item(s) with `state` joined from the record (all twenty keys, the record winning whole) and stamped `state_from`: `record`; `tracker` with no record under `labels`; `none`, an empty state, under `none` |
+| `items_listed <adapter> [<argument>...]` | 1b | `adapter list`, joined as `items_join` does |
+| `record_list runs\|gates [<item>]` | 1b | one row per line of each run in flight or gate raised, from the records; under `labels` an item with no record lists its run or gate file |
+| `run_record <item>`, `gate_record <item>` | 1b | the item's run or gate row |
+| `record_linked_pr <item>` | 1b | the `pr` and `pr_host` `link-pr` left on the tracker, copied into the record |
+| `state_get <item-json> <key>`, `state_list` (`lib/flow.sh`) | 1b | one state field of a joined item; refuse an item with no `state_from` (an adapter's own read) |
 | `tracker_push <item>` | 3 | `set-status` from the record |
 | `record_drop <item>` | 5 | delete, for the tidy |
 
@@ -230,6 +235,7 @@ Order: 1a (gh#180), 1b (gh#176), 2 (gh#181), 3 (gh#177), 4a (gh#182), 5 (gh#178)
 - Compat: mirror still on; `board.sh --json` keeps `state`, so the console is untouched.
 - Touches: `plugins/flow/scripts/**`, `plugins/flow/jobs/{comments,health,next}.sh`, `plugins/flow/lib/{state,blockers,gate}.sh`, `plugins/flow/templates/run-unattended.sh`, `plugins/flow/evals/board-shows-state/**`, `plugins/flow/tests/{run,holds,blockers}.sh`.
 - Proof: run.sh, holds.sh, blockers.sh with fixtures renamed from `adapters/<x>/write-state.sh` to `scripts/state.sh set` and from `read.sh | jget state.*` to `state.sh get`. Same grammar and the mirror keeps both stores equal, so a red test is a real bug. The adapters' own write-state tests stay until 4b.
+- As built: the fixtures moved first, then the readers of one item, then the readers of lists, then the guard. An item with no record reads the tracker's state while `tracker_state` is `labels` and an empty state under `none`; `state_from` says which, and `state_get` refuses an item without it. `tests/run.sh` runs under `labels`; the `none` pass, which proves no reader is left on the tracker, runs on demand (`FLOW_TRACKER_STATE=none plugins/flow/tests/run.sh`), since both passes together took about two hours. CI and `tools/test.sh` run only `labels`. Under `none`, `mirror_on` skips the checks that need the mirror and names the change that lets each go: `answers` finding the gate in the record, the labels and cards following the record, no step or gate read from the labels, a claim shared through the record, a gate drop that writes the tracker no more.
 
 **2. Normalised item and readiness**
 - Goal: readiness obeys category and assignees.

@@ -90,7 +90,7 @@ def held_back(item):
     state = item.get("state", {})
     if state.get("gate", "none") not in ("", "none"):
         return "gate"
-    if item.get("needs"):
+    if item.get("needs") and not state.get("step"):
         return "needs"
     if item.get("open_children"):
         return "children"

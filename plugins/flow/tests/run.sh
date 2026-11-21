@@ -1,7 +1,9 @@
 #!/bin/sh
 # Tests for the flow plugin: config parsing, both adapters (GitHub through a fake gh), the
 # steward, next/advance, gates, re-sizing, overlap, holds, the board and the worktree hooks. Builds a
-# throwaway repo with a two-worktree pool. Run from anywhere. Exit 1 on any failure.
+# throwaway repo with a two-worktree pool. Run from anywhere. Exit 1 on any failure. The checks run
+# with the mirror on (tracker_state labels); FLOW_TRACKER_STATE=none runs them, on demand, with the
+# mirror off, where no reader may lean on the tracker's state.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 P="$(cd "$here/.." && pwd)"; export FLOW_PLUGIN="$P"
@@ -35,8 +37,32 @@ check_all() { # check_all <name> '<condition>': the condition is shell text run 
 jget() { python3 -c 'import json,sys; v=json.load(sys.stdin)
 for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
 print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
-# claim_step <item>: the step the item's claim in the pool holds.
-claim_step() { jget step < "$("$P/scripts/steward.sh" find "$1")/.flow/claim.json"; }
+# claim_step <item>: the step the pool table shows for the item's claim.
+claim_step() { "$P/scripts/steward.sh" pool | awk -v item="$1" '$3 == item { print $4 }'; }
+# record <command> <argument>...: the flow record of the project in the current folder.
+record() { "$P/scripts/state.sh" "$@"; }
+# The mode of the tracker's state the checks run under: FLOW_TRACKER_STATE when set, else labels.
+tracker_mode="${FLOW_TRACKER_STATE:-labels}"
+# mirror_on <what ends the need> <check...>: a check of what the tracker shows after a flow write
+# runs only while the mirror is on; the first argument names the change that lets the check go.
+mirror_on() { mirror_need="$1"; shift; if [ "$tracker_mode" = none ]; then echo "  skip $2 (with the mirror off, until $mirror_need)"; else "$@"; fi; }
+# archived <item> <path>: a field of the item's record once its release archived it.
+archived() { open_record="$(record path "$1")"; jget "$2" < "$(dirname "$open_record")/closed/$(basename "$open_record")"; }
+# end_run <item>: the item's run is over, as when its agent is gone.
+end_run() { record set "$1" run:=null; }
+# running_items: every item with a run in its record, one per line.
+running_items() { record list runs | python3 -c 'import json,sys
+for line in sys.stdin: print(json.loads(line)["item"])'; }
+# end_runs: every run in the project is over.
+end_runs() { for running_item in $(running_items); do end_run "$running_item"; done; }
+# running <item>: yes when the item's record holds a run, else no.
+running() { if [ -n "$(record get "$1" run)" ]; then echo yes; else echo no; fi; }
+# gate_with <item> <key> <value>: the item's raised gate with one key set to the value.
+gate_with() {
+  edited_gate="$(record list gates "$1" | python3 -c 'import json,sys
+gate = json.load(sys.stdin); gate[sys.argv[1]] = sys.argv[2]; print(json.dumps(gate))' "$2" "$3")" &&
+    record set "$1" "gate:=$edited_gate"
+}
 
 cd "$work"
 git init -q -b main repo && cd repo
@@ -100,7 +126,7 @@ w1="$("$P/scripts/steward.sh" claim "$t1")"
 check "claim path"        [ "$w1" = "$(cd ../wt-1 && pwd -P)" ]
 check "claim branch"      [ "$(git -C "$w1" symbolic-ref --short HEAD)" = "flow/local-task-1" ]
 check "claim file"        [ "$(jget item < "$w1/.flow/claim.json")" = "$t1" ]
-check "claim in tracker"  [ "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" = "wt-1" ]
+mirror_on "a claim is shared through the record, not the tracker" check "claim in tracker"  [ "$("$P/adapters/local/read.sh" "$t1" | jget state.worktree)" = "wt-1" ]
 check "claim again same"  [ "$("$P/scripts/steward.sh" claim "$t1")" = "$w1" ]
 check "find"              [ "$("$P/scripts/steward.sh" find "$t1")" = "$w1" ]
 printf 'x\n' > "$w1/dirty.txt"
@@ -117,8 +143,8 @@ out="$("$P/scripts/next.sh" --json)"; code=$?
 check_all "next picks first ready" '[ "$code" -eq 0 ] && [ "$(printf '\''%s'\'' "$out" | jget item)" = "$t1" ] && [ "$(printf '\''%s'\'' "$out" | jget step)" = "implement" ]'
 brief="$(printf '%s' "$out" | jget brief)"; reports="$(printf '%s' "$out" | jget reports)"
 check_all "brief written in the worktree" '[ -f "$brief" ] && grep -q '\''cd "'\'' "$brief" && grep -q '\''implement.json'\'' "$brief"'
-check "run recorded"      [ -f .flow/runs/local-task-1.json ]
-check_all "state step"        '[ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "implement" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.profile)" = "task-S" ]'
+check "run recorded"      [ "$(running "$t1")" = yes ]
+check_all "state step"        '[ "$(record get "$t1" step)" = "implement" ] && [ "$(record get "$t1" profile)" = "task-S" ]'
 "$P/scripts/next.sh" "$t1" >/dev/null 2>&1; code=$?
 check "second next on a running item: exit 7" [ "$code" -eq 7 ]
 out2="$("$P/scripts/next.sh" --json)"
@@ -130,19 +156,19 @@ check "advance without a result: exit 2" [ "$code" -eq 2 ]
 printf '{"status":"done","summary":"built","touches":["src/a/**"]}\n' > "$reports/implement.json"
 check "advance done -> test" sh -c "'$P/scripts/advance.sh' '$t1' --json | grep -q '\"next_step\":\"test\"'"
 check "advance done: the claim follows the issue to test" [ "$(claim_step "$t1")" = test ]
-check "touches stored"    [ "$("$P/adapters/local/read.sh" "$t1" | jget state.touches)" = '["src/a/**"]' ]
-check "run cleared"       [ ! -f .flow/runs/local-task-1.json ]
+check "touches stored"    [ "$(record get "$t1" touches)" = '["src/a/**"]' ]
+check "run cleared"       [ "$(running "$t1")" = no ]
 "$P/scripts/next.sh" "$t1" >/dev/null
 "$P/scripts/advance.sh" "$t1" --status fail --summary "red" >/dev/null; "$P/scripts/next.sh" "$t1" >/dev/null
-check_all "fail: attempt 1, step test stays" '[ "$("$P/adapters/local/read.sh" "$t1" | jget state.attempts)" = "1" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "test" ]'
+check_all "fail: attempt 1, step test stays" '[ "$(record get "$t1" attempts)" = "1" ] && [ "$(record get "$t1" step)" = "test" ]'
 "$P/scripts/advance.sh" "$t1" --status fail --summary "red again" >/dev/null; "$P/scripts/next.sh" "$t1" >/dev/null
 "$P/scripts/advance.sh" "$t1" --status fail --summary "still red" >/dev/null 2>&1; code=$?
-check_all "third fail: escalation gate (exit 4)" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "escalation" ] && [ -f .flow/gates/local-task-1.json ]'
+check_all "third fail: escalation gate (exit 4)" '[ "$code" -eq 4 ] && [ "$(record get "$t1" gate)" = "escalation" ] && [ -n "$(record list gates "$t1")" ]'
 "$P/scripts/next.sh" "$t1" >/dev/null 2>&1; code=$?
 check "next at a gate: exit 4" [ "$code" -eq 4 ]
 check "gate list"         sh -c "'$P/scripts/gate.sh' list | grep -q escalation"
 "$P/scripts/gate.sh" clear "$t1" "fixed" >/dev/null
-check_all "gate cleared"      '[ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "none" ] && [ ! -f .flow/gates/local-task-1.json ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.attempts)" = "0" ]'
+check_all "gate cleared"      '[ "$(record get "$t1" gate)" = "none" ] && [ -z "$(record list gates "$t1")" ] && [ "$(record get "$t1" attempts)" = "0" ]'
 for s in test review; do "$P/scripts/next.sh" "$t1" >/dev/null; printf '{"status":"done"}\n' > "$reports/$s.json"; "$P/scripts/advance.sh" "$t1" >/dev/null; done
 "$P/scripts/next.sh" "$t1" >/dev/null
 printf '{"status":"fail","attempts":1,"checks":[{"name":"tests","status":"fail","summary":"1 failed"}]}\n' > "$reports/verify.json"
@@ -155,7 +181,7 @@ printf '{"status":"pass","attempts":2,"checks":[{"name":"tests","status":"pass",
 check "verify pass -> pr" sh -c "'$P/scripts/advance.sh' '$t1' --json | grep -q '\"next_step\":\"pr\"'"
 "$P/scripts/next.sh" "$t1" >/dev/null; printf '{"status":"done","summary":"PR open"}\n' > "$reports/pr.json"
 "$P/scripts/advance.sh" "$t1" >/dev/null 2>&1; code=$?
-check_all "pr done -> merge gate (exit 4), step done" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "merge" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "done" ]'
+check_all "pr done -> merge gate (exit 4), step done" '[ "$code" -eq 4 ] && [ "$(record get "$t1" gate)" = "merge" ] && [ "$(record get "$t1" step)" = "done" ]'
 check "pr done at the merge gate: the claim says done, as the issue does" [ "$(claim_step "$t1")" = done ]
 "$P/scripts/gate.sh" clear "$t1" merged >/dev/null
 "$P/scripts/next.sh" "$t1" >/dev/null 2>&1; code=$?
@@ -165,49 +191,49 @@ echo "re-size and gates"
 r2="$(printf '%s' "$out2" | jget reports)"
 printf '{"status":"done","size":"L","summary":"bigger"}\n' > "$r2/design.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
-check_all "M -> L stops at plan-approval" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "plan-approval" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.size)" = "L" ]'
+check_all "M -> L stops at plan-approval" '[ "$code" -eq 4 ] && [ "$(record get "$t2" gate)" = "plan-approval" ] && [ "$(record get "$t2" size)" = "L" ]'
 "$P/scripts/gate.sh" clear "$t2" "replanned" >/dev/null
 "$P/scripts/next.sh" "$t2" >/dev/null; printf '{"status":"done"}\n' > "$r2/design.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1
-check_all "L profile after re-size" '[ "$("$P/adapters/local/read.sh" "$t2" | jget state.profile)" = "task-L" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "plan" ]'
+check_all "L profile after re-size" '[ "$(record get "$t2" profile)" = "task-L" ] && [ "$(record get "$t2" step)" = "plan" ]'
 "$P/scripts/next.sh" "$t2" >/dev/null; printf '{"status":"done","summary":"planned"}\n' > "$r2/plan.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
-check_all "plan -> plan-approval gate, step implement" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "implement" ]'
+check_all "plan -> plan-approval gate, step implement" '[ "$code" -eq 4 ] && [ "$(record get "$t2" step)" = "implement" ]'
 check "plan at the plan-approval gate: the claim says implement, as the issue does" [ "$(claim_step "$t2")" = implement ]
-check_all "plan-approval message leads with the ask in bold" 'jget message < .flow/gates/local-task-2.json | head -1 | grep -q "^\*\*Approve the plan"'
+check_all "plan-approval message leads with the ask in bold" 'record get "$t2" gate.message | head -1 | grep -q "^\*\*Approve the plan"'
 check "send back with no message: refused, exit 2" sh -c "'$P/scripts/gate.sh' clear '$t2' --back; [ \$? -eq 2 ]"
 "$P/scripts/gate.sh" clear "$t2" --back "Add a rollback phase." >/dev/null
-check_all "send back: the plan step runs again, gate none, the note kept" '[ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "plan" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "none" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.answer)" = "Add a rollback phase." ] && [ ! -f .flow/gates/local-task-2.json ]'
+check_all "send back: the plan step runs again, gate none, the note kept" '[ "$(record get "$t2" step)" = "plan" ] && [ "$(record get "$t2" gate)" = "none" ] && [ "$(record get "$t2" answer)" = "Add a rollback phase." ] && [ -z "$(record list gates "$t2")" ]'
 check "send back: the claim follows the issue back to plan" [ "$(claim_step "$t2")" = plan ]
 check_all "send back: one answered line in events.log, the note on one line" 'tail -1 .flow/events.log | grep -q "	$t2	answered	plan-approval, sent back to plan: Add a rollback phase.\$"'
 brief2="$("$P/scripts/next.sh" "$t2" 2>/dev/null | sed -n 's/^  brief: //p')"
 check_all "send back: the plan brief carries the note" '[ -n "$brief2" ] && grep -q "Add a rollback phase." "$brief2"'
 printf '{"status":"done","summary":"replanned"}\n' > "$r2/plan.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
-check_all "replanned -> plan-approval again" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "plan-approval" ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.step)" = "implement" ]'
+check_all "replanned -> plan-approval again" '[ "$code" -eq 4 ] && [ "$(record get "$t2" gate)" = "plan-approval" ] && [ "$(record get "$t2" step)" = "implement" ]'
 "$P/scripts/gate.sh" clear "$t2" approved >/dev/null
 check_all "clear: one answered line in events.log with the gate and the answer" 'tail -1 .flow/events.log | grep -q "	$t2	answered	plan-approval: approved\$"'
 "$P/scripts/next.sh" "$t2" >/dev/null
 printf '{"status":"gate","gate":"ambiguity","message":"A or B?"}\n' > "$r2/implement.json"
 "$P/scripts/advance.sh" "$t2" >/dev/null 2>&1; code=$?
-check_all "agent raises ambiguity" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t2" | jget state.gate)" = "ambiguity" ] && grep -q '\''A or B'\'' .flow/gates/local-task-2.json'
+check_all "agent raises ambiguity" '[ "$code" -eq 4 ] && [ "$(record get "$t2" gate)" = "ambiguity" ] && record get "$t2" gate.message | grep -q '\''A or B'\'''
 "$P/scripts/gate.sh" clear "$t2" "A" > "$work/answer.out"
-check_all "clear at a step next runs: the answer waits on next, and the clear says to run it" '[ "$("$P/adapters/local/read.sh" "$t2" | jget state.answer_pending)" = next ] && grep -q "run next $t2" "$work/answer.out"'
+check_all "clear at a step next runs: the answer waits on next, and the clear says to run it" '[ "$(record get "$t2" answer_pending)" = next ] && grep -q "run next $t2" "$work/answer.out"'
 check "board: a cleared gate whose answer waits on a run shows it" sh -c "'$P/scripts/board.sh' | grep -q '| $t2 | .* | none, answer waits on next |'"
 b2="$("$P/adapters/local/create.sh" bug "Small bug" --size S)"
 "$P/scripts/steward.sh" release "$t1" >/dev/null
 "$P/scripts/next.sh" "$b2" >/dev/null
-rb="$(cat .flow/runs/local-bug-2.json | jget reports)"
+rb="$(record get "$b2" run.reports)"
 printf '{"status":"done","size":"M"}\n' > "$rb/reproduce.json"
 check "S -> M continues" sh -c "'$P/scripts/advance.sh' '$b2' --json | grep -q '\"next_step\":\"implement\"'"
-check "bugfix profile kept for a bug" [ "$("$P/adapters/local/read.sh" "$b2" | jget state.profile)" = "bugfix" ]
+check "bugfix profile kept for a bug" [ "$(record get "$b2" profile)" = "bugfix" ]
 
 echo "overlap"
-"$P/adapters/local/write-state.sh" "$t2" touches=src/a/**
+record set "$t2" touches=src/a/**
 t3="$("$P/adapters/local/create.sh" task "Overlapping" --size S)"
-"$P/adapters/local/write-state.sh" "$t3" touches=src/a/sub/**
+record set "$t3" touches=src/a/sub/**
 "$P/scripts/next.sh" "$t2" >/dev/null
-check "next takes the answer: a run starts with it in its brief, nothing waits" [ -z "$("$P/adapters/local/read.sh" "$t2" | jget state.answer_pending)" ]
+check "next takes the answer: a run starts with it in its brief, nothing waits" [ -z "$(record get "$t2" answer_pending)" ]
 "$P/scripts/next.sh" "$t3" >/dev/null 2>&1; code=$?
 check "overlapping claim refused? (explicit item runs; pool full)" [ "$code" -ne 0 ]
 "$P/adapters/local/close.sh" "$b2" --comment done
@@ -217,8 +243,8 @@ check "overlap holds no pick: the queue takes the item whose touches overlap a r
 "$P/scripts/next.sh" >/dev/null 2>"$work/nothing.err"; code=$?
 check "nothing ready says why: the running, the blocked and the done items, counted" sh -c "[ $code -eq 5 ] && grep -qx 'nothing ready: 2 running, 1 blocked, 1 done (every step ran)' '$work/nothing.err'"
 # Back as the sections below expect it: t3 neither running nor claimed.
-rm -f ".flow/runs/$(item_slug "$t3").json"; "$P/scripts/steward.sh" release "$t3" --force >/dev/null 2>&1
-"$P/adapters/local/write-state.sh" "$t3" step= profile= last_event=
+end_run "$t3"; "$P/scripts/steward.sh" release "$t3" --force >/dev/null 2>&1
+record set "$t3" step= profile= last_event=
 
 echo "verify runner"
 mkdir -p .standards
@@ -364,7 +390,7 @@ for s in implement test review; do printf '{"status":"done"}\n' > "$rv/$s.json";
 (cd "$wv" && "$P/scripts/verify.sh" "$v1" >/dev/null 2>&1); code=$?
 check "verify passes without the broken gate" sh -c '[ "$1" -eq 0 ] && [ "$2" = pass ]' _ "$code" "$(jget status < "$rv/verify.json" 2>/dev/null)"
 "$P/scripts/advance.sh" "$v1" >/dev/null 2>&1; code=$?
-check "passing verify with feel_test raises the feel-test gate, step pr" sh -c '[ "$1" -eq 4 ] && [ "$2" = feel-test ] && [ "$3" = pr ]' _ "$code" "$("$P/adapters/local/read.sh" "$v1" | jget state.gate)" "$("$P/adapters/local/read.sh" "$v1" | jget state.step)"
+check "passing verify with feel_test raises the feel-test gate, step pr" sh -c '[ "$1" -eq 4 ] && [ "$2" = feel-test ] && [ "$3" = pr ]' _ "$code" "$(record get "$v1" gate)" "$(record get "$v1" step)"
 "$P/scripts/gate.sh" clear "$v1" "looks right" >/dev/null
 "$P/scripts/steward.sh" release "$v1" --force >/dev/null 2>&1
 
@@ -426,7 +452,7 @@ check_all "graph: blockers in a cycle end it with a word, not a hang" '! gr "$P/
 check_all "graph: --mermaid alone is refused, and says why" '! gr "$P/scripts/board.sh" --mermaid 2>"$work/graph.err" && grep -q -- "--mermaid goes with --graph" "$work/graph.err"'
 
 echo "worktree hooks"
-rm -f .flow/runs/*.json
+end_runs
 "$P/scripts/steward.sh" release "$t2" --force >/dev/null 2>&1
 path="$(printf '{"name":"local-task-2","cwd":"%s"}' "$PWD" | "$P/hooks/worktree-create.sh" 2>/dev/null | tail -1)"
 check_all "WorktreeCreate claims a pool path" '[ -d "$path" ] && [ "$(jget item < "$path/.flow/claim.json")" = "$t2" ]'
@@ -474,12 +500,15 @@ check "gh close"          [ "$("$P/adapters/github/read.sh" 'gh#11' | jget statu
 check "gh next.sh end to end" sh -c "'$P/scripts/next.sh' --json | grep -q '\"item\":\"gh#10\"'"
 check "cross-tracker blocker: local waits on gh" sh -c "'$P/adapters/local/create.sh' task Cross --blocked-by 'gh#12' >/dev/null && ! '$P/adapters/local/list-ready.sh' | grep -q Cross"
 
+# The suites that pin their mode, or need one run, run only while the mirror is on.
+if [ "$tracker_mode" != none ]; then
 echo "adapter contract (adapters/README.md)"
 for contract_adapter in github local jira; do
   sh "$here/adapter-contract.sh" "$contract_adapter" > "$work/contract-$contract_adapter.out" 2>&1; code=$?
   check "the $contract_adapter adapter meets the contract: $(tail -n 1 "$work/contract-$contract_adapter.out")" [ "$code" -eq 0 ]
   [ "$code" -eq 0 ] || grep '^  FAIL' "$work/contract-$contract_adapter.out"
 done
+fi
 
 echo "holds and the merge before verify (tests/holds.sh)"
 sh "$here/holds.sh" > "$work/holds.out" 2>&1; code=$?
@@ -496,6 +525,7 @@ sh "$here/base-readers.sh" > "$work/base-readers.out" 2>&1; code=$?
 check "base-readers: $(tail -n 1 "$work/base-readers.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-readers.out"
 
+if [ "$tracker_mode" != none ]; then
 echo "an item's base is resolved once at claim (tests/base-claim.sh)"
 sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
 check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
@@ -516,6 +546,16 @@ sh "$here/state-disk.sh" > "$work/state-disk.out" 2>&1; code=$?
 check "state-disk: $(tail -n 1 "$work/state-disk.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/state-disk.out"
 
+echo "the flow record joined onto items and its runs and gates listed (tests/state-join.sh)"
+sh "$here/state-join.sh" > "$work/state-join.out" 2>&1; code=$?
+check "state-join: $(tail -n 1 "$work/state-join.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/state-join.out"
+
+echo "the flow readers take state, runs and gates from the record, not the tracker (tests/state-readers.sh)"
+sh "$here/state-readers.sh" > "$work/state-readers.out" 2>&1; code=$?
+check "state-readers: $(tail -n 1 "$work/state-readers.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/state-readers.out"
+
 echo "a verify run started detached is waited on in short calls (tests/verify-detached.sh)"
 sh "$here/verify-detached.sh" > "$work/verify-detached.out" 2>&1; code=$?
 check "verify-detached: $(tail -n 1 "$work/verify-detached.out")" [ "$code" -eq 0 ]
@@ -525,6 +565,7 @@ echo "stop and release end only the item's own verify run, and stop says when on
 sh "$here/verify-ends.sh" > "$work/verify-ends.out" 2>&1; code=$?
 check "verify-ends: $(tail -n 1 "$work/verify-ends.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/verify-ends.out"
+fi
 
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
@@ -595,14 +636,14 @@ jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "1. Which way?" >/de
 jira_comment_as "$jira_gated" stranger@acme.test "/answer the stranger's way"
 jira_comment_as "$jira_gated" flow@acme.test "thinking about it"
 jira_comment_as "$jira_gated" flow@acme.test "/answer the owner's way"
-check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ]'
-check_all "jira answers: the owner's words, not a stranger's or an earlier one, become the answer" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "the owner'"'"'s way" ]'
-check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh")" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the token user's /answer after the gate clears it and prints the id" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: the owner's words, not a stranger's or an earlier one, become the answer" '[ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "the owner'"'"'s way" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: a second pass finds nothing to clear" '[ -z "$(jira_run "$P/adapters/jira/answers.sh")" ]'
 jira_run "$P/scripts/gate.sh" raise "$jira_gated" ambiguity "2. And now?" >/dev/null 2>&1
 jira_comment_as "$jira_gated" stranger@acme.test "/answer"
 jira_area_config '  answer_from: [stranger@acme.test]
 '
-check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
+mirror_on "answers finds the gate in the record, not on the tracker" check_all "jira answers: an email in jira.answer_from counts, and /answer alone takes the recommendations" '[ "$(jira_run "$P/adapters/jira/answers.sh")" = "$jira_gated" ] && [ "$(jira_run "$P/adapters/jira/read.sh" "$jira_gated" | jget state.answer)" = "as recommended" ]'
 cp "$work/config.gh" .flow/config.yaml
 
 echo "github blips (fake gh)"
@@ -692,7 +733,7 @@ check "gh a Parent: line with a colon names the parent" [ "$("$P/adapters/github
 check "gh an unstarted item lists the fields it lacks" sh -c "grep -qx 'gh#33 task S - priority' '$work/ghlist' && grep -qx 'gh#34 task - P1 size' '$work/ghlist'"
 check "gh an epic needs no size" grep -qx 'gh#30 epic - P1 -' "$work/ghlist"
 check "gh a started item needs nothing" grep -qx 'gh#36 task S P2 -' "$work/ghlist"
-check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
+mirror_on "no step or gate is read from the tracker's labels" check "gh ready: missing fields, blockers, gates and open sub-issues are out; priority orders the rest" [ "$("$P/adapters/github/list-ready.sh" | python3 -c 'import json,sys; print(",".join(i["id"] for i in json.load(sys.stdin)))')" = "gh#32,gh#30,gh#31,gh#36" ]
 check_all "graph: a GitHub epic's children come from the item list, native parent or Parent: line" '[ "$("$P/scripts/board.sh" --graph gh#39 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#40'\'']" ] && [ "$("$P/scripts/board.sh" --graph gh#30 | python3 -c "import json,sys; print(list(json.load(sys.stdin)[\"nodes\"]))")" = "['\''gh#31'\'']" ]'
 sed -i.bak 's/^  priority_order: .*/  priority_order: [P2, P0, P1, P3]/' .flow/config.yaml
 check_all "graph priorities: GitHub columns follow ready.priority_order, not the names" '[ "$("$P/scripts/board.sh" --graph priorities | python3 -c "import json,sys; print(\" \".join(c[\"priority\"] or \"-\" for c in json.load(sys.stdin)[\"columns\"]))")" = "P2 P0 P1 P3 -" ]'
@@ -737,7 +778,7 @@ check "gh create: a child left without the priority ready.needs asks for is said
 check "gh vocabulary: the issue types and the area options" sh -c "'$P/adapters/github/vocabulary.sh' | python3 -c 'import json,sys; v=json.load(sys.stdin); assert \"Chore\" in v[\"types\"] and v[\"areas\"]==[\"Bots\",\"Debugging & Observability\"], v'"
 picked="$("$P/scripts/next.sh" --json)"
 check "gh next picks the highest priority" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
-rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
+end_run 'gh#32'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [i.update(state='CLOSED') for i in d['issues'] if i['number']==40]; json.dump(d,open(p,'w'))"
 check "gh an epic is ready again once its sub-issues close" sh -c "'$P/adapters/github/list-ready.sh' | grep -q '\"gh#39\"'"
 "$P/scripts/gate.sh" raise 'gh#37' ambiguity "1. Visual only?
@@ -746,11 +787,11 @@ printf '/answer 1. no, let it touch the ball' | FAKE_GH_USER=stranger gh issue c
 printf 'thinking about it' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
 printf '/answer 1. no, keep it visual' | gh issue comment 37 -R acme/widgets --body-file - >/dev/null
 check "answers: an /answer from the owner after the gate clears it" [ "$("$P/adapters/github/answers.sh")" = "gh#37" ]
-check "answers: the owner's words, not a stranger's, and the question stay in the state" sh -c "'$P/adapters/github/read.sh' 'gh#37' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; assert (s[\"gate\"],s[\"answer\"],s[\"answered\"])==(\"none\",\"1. no, keep it visual\",\"ambiguity\") and \"Visual only?\" in s[\"asked\"]'"
-check "answers: the answer gets a +1 and a second pass finds nothing" sh -c "grep -q '\"content\": \"+1\"' '$FAKE_GH_DIR/issues.json' && [ -z \"\$('$P/adapters/github/answers.sh')\" ]"
+mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the owner's words, not a stranger's, and the question stay in the state" sh -c "'$P/adapters/github/read.sh' 'gh#37' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; assert (s[\"gate\"],s[\"answer\"],s[\"answered\"])==(\"none\",\"1. no, keep it visual\",\"ambiguity\") and \"Visual only?\" in s[\"asked\"]'"
+mirror_on "answers finds the gate in the record, not on the tracker" check "answers: the answer gets a +1 and a second pass finds nothing" sh -c "grep -q '\"content\": \"+1\"' '$FAKE_GH_DIR/issues.json' && [ -z \"\$('$P/adapters/github/answers.sh')\" ]"
 picked="$("$P/scripts/next.sh" 'gh#37' --json)"; brief="$(printf '%s' "$picked" | jget brief)"
 check "the next brief carries the owner's answer and the question" sh -c "grep -q \"The owner's answer to the last gate (ambiguity)\" '$brief' && grep -q 'Answer: 1. no, keep it visual' '$brief' && grep -q 'Visual only?' '$brief'"
-rm -f .flow/runs/gh-37.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
+end_run 'gh#37'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
 mkdir -p "$work/slackbin" && printf '#!/bin/sh\nfor a in "$@"; do printf "%%s\\n" "$a"; done >> "%s/slack.log"\n' "$work" > "$work/slackbin/curl" && chmod +x "$work/slackbin/curl"
 PATH="$work/slackbin:$PATH" FLOW_SLACK_WEBHOOK=https://hook.example "$P/scripts/notify.sh" ambiguity 'gh#32' "1. Visual only?
    Recommended: yes, hash-inert." >/dev/null
@@ -793,8 +834,8 @@ tracked_config 'trackers: [github, local]' 'ready:
   priority_order: [P0, P1, P2, P3]'
 picked="$("$P/scripts/next.sh" --json 2>/dev/null)"
 check "trackers: next picks the most urgent ready item from every named tracker" [ "$(printf '%s' "$picked" | jget item)" = "gh#32" ]
-rm -f .flow/runs/gh-32.json; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
-"$P/adapters/github/write-state.sh" 'gh#36' step=done >/dev/null 2>&1
+end_run 'gh#32'; "$P/scripts/steward.sh" release "$(printf '%s' "$picked" | jget worktree)" --force >/dev/null 2>&1
+record set 'gh#36' step=done >/dev/null 2>&1
 check "trackers: health reads every named tracker" sh -c "'$P/scripts/steward.sh' health 2>/dev/null | grep -q 'gh#36: done (every step ran)'"
 tracked_config 'trackers: [github, linear]' ''
 "$P/scripts/board.sh" >/dev/null 2>"$work/trackers.err"; code=$?
@@ -898,6 +939,7 @@ pr_as flow/x "Adds the slide."; "$P/scripts/comments.sh" request-review 91 "plea
 check "request-review: a PR whose author host is unknown asks the default list" [ "$(asked)" = "hubot" ]
 env -u CLAUDECODE CODEX_THREAD_ID=t "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/91 >/dev/null
 check "link-pr: records the host that wrote the PR as pr_host" [ "$("$P/adapters/github/read.sh" 'gh#21' | jget state.pr_host)" = "codex" ]
+record set 'gh#21' pr=https://gh/pull/91 pr_host=codex >/dev/null
 pr_as flow/gh-21 "$claude_footer"; "$P/scripts/comments.sh" request-review 91 "please review" >/dev/null
 check "request-review: the pr_host of the item the branch names wins over the body" [ "$(asked)" = "mona" ]
 cp "$work/config.reviews" .flow/config.yaml; printf 'reviews:\n  reviewers:\n    claude: [octo-cat]\n' >> .flow/config.yaml
@@ -992,7 +1034,7 @@ cp "$work/config.reviews" .flow/config.yaml
 echo "jobs (fake hosts)"
 export HOST_LOG="$work/host.log"; realrepo="$(cd "$repo" && pwd -P)"
 for h in claude codex; do printf '#!/bin/sh\nprintf "%%s\\t%%s\\t%%s\\n" "$0" "$PWD" "$*" >> "$HOST_LOG"\n' > "$work/bin/$h"; chmod +x "$work/bin/$h"; done
-"$P/adapters/github/write-state.sh" 'gh#21' step=pr && "$P/adapters/github/link-pr.sh" 'gh#21' https://gh/pull/90
+record set 'gh#21' step=pr pr=https://gh/pull/90
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: runs the skill per open PR from the main worktree when the item holds none" sh -c "grep -q 'claude	$realrepo	-p /flow:comments gh#21' '$HOST_LOG' && grep -q 'addressing gh#21' .flow/log/comments.log"
 check "comments job: one PR, one run" [ "$(grep -c comments "$HOST_LOG")" = "1" ]
@@ -1092,19 +1134,19 @@ check "activity: the owner's reply under the flow's login, after a marked reply,
 check "comments job: the owner's answer on the thread starts a pass" grep -q 'comments gh#21' "$HOST_LOG"
 # An item at a gate (not merge) is the owner's: no pass, even with a thread awaiting.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads'][0]['comments']['nodes'].append({'databaseId': 903, 'body': 'And this?', 'author': {'login': 'chatgpt-codex-connector'}, 'createdAt': 't'}); json.dump(d, open(p,'w'))"
-"$P/adapters/github/write-state.sh" 'gh#21' gate=ambiguity
+record set 'gh#21' gate=ambiguity
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: an item waiting at a gate is skipped, threads or not" sh -c "[ ! -s '$HOST_LOG' ] && grep -q 'gh#21: waits at the ambiguity gate, skipped' .flow/log/comments.log"
 check "comments job: the result line names the PR at a gate" sh -c "tail -1 .flow/log/comments.log | grep -q 'quiet: no open PR to address; at a gate: gh#21 (ambiguity gate)\$'"
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "comments job: a named PR runs at a gate" grep -q 'comments gh#21' "$HOST_LOG"
-"$P/adapters/github/write-state.sh" 'gh#21' gate=merge
+record set 'gh#21' gate=merge
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: the merge gate does not stop a pass" grep -q 'comments gh#21' "$HOST_LOG"
-"$P/adapters/github/write-state.sh" 'gh#21' gate=none
+record set 'gh#21' gate=none
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads']=[]; json.dump(d, open(p,'w'))"
 # A pass that stops at a gate leaves the PR as it was: the owner clearing the gate is what is new.
-"$P/jobs/comments.sh" claude >/dev/null; "$P/adapters/github/write-state.sh" 'gh#21' gate=escalation
+"$P/jobs/comments.sh" claude >/dev/null; record set 'gh#21' gate=escalation
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: an item at the escalation gate is skipped as gated" sh -c "[ ! -s '$HOST_LOG' ] && tail -2 .flow/log/comments.log | grep -q 'gh#21: waits at the escalation gate, skipped'"
 "$P/scripts/gate.sh" clear 'gh#21' "carry on" >/dev/null
@@ -1115,14 +1157,14 @@ check "comments job: the clear counts once: the run after it finds nothing new" 
 # gh#157: a gate a comments pass raised on an item past its last step. Its PR is open, so the
 # comments job owns the answer: the clear says so, the board shows it waiting, and the next pass
 # carries it in its brief and takes it once the pass confirms it carried it out.
-"$P/adapters/github/write-state.sh" 'gh#21' step=done
+record set 'gh#21' step=done
 "$P/scripts/gate.sh" raise 'gh#21' ambiguity "1. Merge main into epic/525 first?" >/dev/null 2>&1
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
 "$P/scripts/gate.sh" clear 'gh#21' "Go with a, merge main into epic/525" > "$work/answer.out" 2>&1; code=$?
-check_all "clear at done with a merged PR: refused out loud, as no comments pass comes, and the gate stays" '[ "$code" = 1 ] && grep -q "no step acts on this answer: gh#21 is done and its PR .* is merged" "$work/answer.out" && [ "$("$P/adapters/github/read.sh" "gh#21" | jget state.gate)" = ambiguity ]'
+check_all "clear at done with a merged PR: refused out loud, as no comments pass comes, and the gate stays" '[ "$code" = 1 ] && grep -q "no step acts on this answer: gh#21 is done and its PR .* is merged" "$work/answer.out" && [ "$(record get "gh#21" gate)" = ambiguity ]'
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='OPEN'; json.dump(d, open(p,'w'))"
 "$P/scripts/gate.sh" clear 'gh#21' "Go with a, merge main into epic/525" > "$work/answer.out" 2>&1; code=$?
-check_all "clear at done with an open PR: the answer waits on the comments job, and the clear says so, not next" '[ "$code" = 0 ] && [ "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" = comments ] && grep -q "the comments job" "$work/answer.out" && ! grep -q "run next" "$work/answer.out"'
+check_all "clear at done with an open PR: the answer waits on the comments job, and the clear says so, not next" '[ "$code" = 0 ] && [ "$(record get "gh#21" answer_pending)" = comments ] && grep -q "the comments job" "$work/answer.out" && ! grep -q "run next" "$work/answer.out"'
 check "board: an answer that waits on the comments job shows on its item" sh -c "'$P/scripts/board.sh' | grep -q '| gh#21 | .* | none, answer waits on the comments job |'"
 # Fake passes: one that only logs (it carried nothing out), and one that confirms the answer the
 # way the skill's Answer step does, writing the line the brief names to the file it names.
@@ -1137,26 +1179,26 @@ HOST
 chmod +x "$work/confirm-host"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: the owner's answer goes in the pass's brief" grep -q "comments gh#21.* The owner answered the ambiguity gate: Go with a, merge main into epic/525\. Run the Answer step first; once it is carried out or raised again as a gate, write the line 20[0-9T:-]*Z to .*\.answer\." "$HOST_LOG"
-check_all "comments job: a pass that ends without confirming the answer leaves it pending, and counts as failed" '[ "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" = comments ] && grep -q "gh#21: pass failed, the pass did not confirm it carried out the owner.s answer" .flow/log/comments.log'
+check_all "comments job: a pass that ends without confirming the answer leaves it pending, and counts as failed" '[ "$(record get "gh#21" answer_pending)" = comments ] && grep -q "gh#21: pass failed, the pass did not confirm it carried out the owner.s answer" .flow/log/comments.log'
 cp "$work/confirm-host" "$work/bin/claude"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
-check "comments job: a pass that confirms it carried the answer out takes it" [ -z "$("$P/adapters/github/read.sh" 'gh#21' | jget state.answer_pending)" ]
-"$P/adapters/github/write-state.sh" 'gh#21' answer_pending=comments
+check "comments job: a pass that confirms it carried the answer out takes it" [ -z "$(record get 'gh#21' answer_pending)" ]
+record set 'gh#21' answer_pending=comments
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: an answer still waiting gets a pass though nothing else on the PR is new" grep -q "comments gh#21.* The owner answered the ambiguity gate" "$HOST_LOG"
 # The owner clears a newer gate while the pass runs (gate.sh clear takes no item lock): the pass
 # confirms the answer it was given, and the newer one still waits for the next pass.
-"$P/adapters/github/write-state.sh" 'gh#21' answer_pending=comments
-{ cat "$work/confirm-host"; printf '"%s/adapters/github/write-state.sh" "gh#21" answered_at=2026-11-09T09:00:00Z "answer=Merge it by hand after all" answer_pending=comments >/dev/null\n' "$P"; } > "$work/bin/claude"
+record set 'gh#21' answer_pending=comments
+{ cat "$work/confirm-host"; printf '"%s/scripts/state.sh" set "gh#21" answered_at=2026-11-09T09:00:00Z "answer=Merge it by hand after all" answer_pending=comments >/dev/null\n' "$P"; } > "$work/bin/claude"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
-check_all "comments job: a newer answer that came while the pass ran is not taken with the old one" '[ "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" = comments ] && grep -q "gh#21: a newer answer to its gate came while the pass ran" .flow/log/comments.log'
+check_all "comments job: a newer answer that came while the pass ran is not taken with the old one" '[ "$(record get "gh#21" answer_pending)" = comments ] && grep -q "gh#21: a newer answer to its gate came while the pass ran" .flow/log/comments.log'
 cp "$work/confirm-host" "$work/bin/claude"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
-check_all "comments job: the next pass carries the newer answer and takes it" 'grep -q "comments gh#21.* The owner answered the ambiguity gate: Merge it by hand after all\. .*write the line 2026-11-09T09:00:00Z to" "$HOST_LOG" && [ -z "$("$P/adapters/github/read.sh" "gh#21" | jget state.answer_pending)" ]'
+check_all "comments job: the next pass carries the newer answer and takes it" 'grep -q "comments gh#21.* The owner answered the ambiguity gate: Merge it by hand after all\. .*write the line 2026-11-09T09:00:00Z to" "$HOST_LOG" && [ -z "$(record get "gh#21" answer_pending)" ]'
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a taken answer is not briefed again" sh -c "! grep -q 'The owner answered' '$HOST_LOG'"
 cp "$work/claude.before" "$work/bin/claude"
-"$P/adapters/github/write-state.sh" 'gh#21' step=pr
+record set 'gh#21' step=pr
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['mergeable']='CONFLICTING'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"; "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a PR that conflicts with its base is named in the brief" grep -q 'gh#21. The PR conflicts with its base main: run the Conflicts step first.' "$HOST_LOG"
@@ -1213,18 +1255,21 @@ python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['
 : > "$HOST_LOG"
 "$P/jobs/comments.sh" codex >/dev/null
 check "comments job on codex: exec in the main worktree" sh -c "grep -q 'codex	.*	exec --json -C $realrepo -s workspace-write' '$HOST_LOG'"
-check "a job starts its skill as typed: /plugin:skill on Claude, \$skill on Codex" sh -c "grep -q 'codex	.*workspace-write.* \\\$comments gh#21' '$HOST_LOG' && [ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow implement gh#7')\" = '/flow:implement gh#7' ]"
+check "CommentsJobOnCodex_StartsItsSkillAsPluginColonSkill: the codex pass starts with \$flow:comments gh#21, because Codex starts a plugin's skill only when the prompt names it as \$plugin:skill" sh -c "grep -q 'codex	.*workspace-write.* \\\$flow:comments gh#21' '$HOST_LOG'"
+check "HostSkillPrompt_CodexSkill_PrefixesThePluginName: the Codex prompt for flow review is \$flow:review gh#9, because a bare \$review could resolve to the standards plugin's review skill" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex flow review gh#9')\" = '\$flow:review gh#9' ]"
+check "HostSkillPrompt_CodexSkillOfAnotherPlugin_NamesThatPlugin: the Codex prompt for meta retro is \$meta:retro gh#9 now, because the prompt names the plugin that owns the skill and passes the text untouched" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt codex meta retro \"gh#9 now\"')\" = '\$meta:retro gh#9 now' ]"
+check "HostSkillPrompt_ClaudeSkill_KeepsTheSlashPluginForm: the Claude prompt for flow review is /flow:review gh#9, because Claude starts a plugin's skill as /plugin:skill" sh -c "[ \"\$(FLOW_PLUGIN='$P' sh -c '. \"$P/lib/host.sh\"; host_skill_prompt claude flow review gh#9')\" = '/flow:review gh#9' ]"
 check "the unattended loop starts a skill step as typed" grep -q 'host_skill_prompt "$host" flow "$skill"' "$P/templates/run-unattended.sh"
 # The chase asks the reviewers of the PR's author host: the pr_host of the item its branch names.
 cp .flow/config.yaml "$work/config.jobs"; printf 'reviews:\n  reviewers:\n    claude: [codex]\n    codex: [octo-cat]\n  chase_after: 30m\n' >> .flow/config.yaml
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-21', isDraft=False); json.dump(d, open(p,'w'))"
-"$P/adapters/github/write-state.sh" 'gh#21' pr=https://gh/pull/91 pr_host=claude >/dev/null; seed 7200 running 0; rm -rf .flow/reviews
+record set 'gh#21' pr=https://gh/pull/91 pr_host=claude >/dev/null; seed 7200 running 0; rm -rf .flow/reviews
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a silent reviewer of the author host's list is chased" sh -c "python3 -c \"import json,sys; c=json.loads(sys.argv[1]); assert len(c)==1 and 'flow:chase codex' in c[0], c\" '$(pr_field comments)'"
-"$P/adapters/github/write-state.sh" 'gh#21' pr_host=codex >/dev/null; seed 7200 running 0; rm -rf .flow/reviews
+record set 'gh#21' pr_host=codex >/dev/null; seed 7200 running 0; rm -rf .flow/reviews
 "$P/jobs/comments.sh" claude >/dev/null
 check "comments job: a reviewer off the author host's list is not chased" [ "$(posted)" = 0 ]
-cp "$work/config.jobs" .flow/config.yaml; "$P/adapters/github/write-state.sh" 'gh#21' pr=https://gh/pull/90 pr_host= >/dev/null
+cp "$work/config.jobs" .flow/config.yaml; record set 'gh#21' pr=https://gh/pull/90 pr_host= >/dev/null
 printf 'adapters:\n  default: github\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\njobs:\n  model: haiku\n  effort: low\n' > .flow/config.yaml
 "$P/jobs/comments.sh" claude 'gh#21' >/dev/null
 check "jobs.model and jobs.effort reach the host" sh -c "grep -q 'gh#21.*--model haiku --effort low' '$HOST_LOG'"
@@ -1266,7 +1311,7 @@ check "the unattended loop keeps mapping the roster's names for codex" sh -c "FL
 cp .flow/config.yaml "$work/config.workers"
 # The fake gh has one PR: both items link it, and each pass keeps its own seen file by item.
 par="$("$P/adapters/github/create.sh" task "A second PR")"
-"$P/adapters/github/write-state.sh" "$par" step=pr >/dev/null && "$P/adapters/github/link-pr.sh" "$par" https://gh/pull/90 >/dev/null
+record set "$par" step=pr pr=https://gh/pull/90 >/dev/null
 # The host waits up to 10 s for a second pass to start, so passes at once both start before either ends.
 cat > "$work/bin/claude" <<EOF
 #!/bin/sh
@@ -1318,7 +1363,7 @@ bump 2026-10-25T03:30:00Z
 check "comments job: one failed pass among workers fails the run, exit 1, the line summing both" sh -c "[ $code -eq 1 ] && tail -1 .flow/log/comments.log | grep -q 'failed: gh#21 cut short or failed, of 2 PR(s) addressed\$'"
 # A pass by hand that completes clears the failure and the resume note it left on gh#21.
 printf "$okhost" > "$work/bin/claude"; "$P/jobs/comments.sh" claude 'gh#21' >/dev/null 2>&1
-"$P/adapters/github/write-state.sh" "$par" pr= >/dev/null; "$P/adapters/github/close.sh" "$par" >/dev/null 2>&1
+record set "$par" pr= >/dev/null; "$P/adapters/github/close.sh" "$par" >/dev/null 2>&1
 cp "$work/config.workers" .flow/config.yaml
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr']['state']='MERGED'; json.dump(d, open(p,'w'))"
 : > "$HOST_LOG"
@@ -1739,12 +1784,12 @@ printf 'hi\n' > README.md && git add -A && git commit -qm init && mkdir -p .flow
 printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 2\nauto_gates:\n  plan-approval: S, M\nnotify:\n  desktop: false\n' > .flow/config.yaml
 a1="$("$P/scripts/new.sh" task "Auto plan" --size M --body "## Acceptance
 - [ ] x")"
-for s in design plan; do "$P/scripts/next.sh" "$a1" >/dev/null 2>&1; ra="$(cat .flow/runs/local-task-1.json | jget reports)"; printf '{"status":"done","summary":"planned"}\n' > "$ra/$s.json"; "$P/scripts/advance.sh" "$a1" >/dev/null 2>&1; code=$?; done
-check_all "plan-approval is auto-approved for a listed size" '[ "$code" -eq 0 ] && [ "$("$P/adapters/local/read.sh" "$a1" | jget state.step)" = "implement" ] && [ "$("$P/adapters/local/read.sh" "$a1" | jget state.gate)" != "plan-approval" ] && grep -q '\''auto-approved (size M)'\'' .flow/events.log'
+for s in design plan; do "$P/scripts/next.sh" "$a1" >/dev/null 2>&1; ra="$(record get "$a1" run.reports)"; printf '{"status":"done","summary":"planned"}\n' > "$ra/$s.json"; "$P/scripts/advance.sh" "$a1" >/dev/null 2>&1; code=$?; done
+check_all "plan-approval is auto-approved for a listed size" '[ "$code" -eq 0 ] && [ "$(record get "$a1" step)" = "implement" ] && [ "$(record get "$a1" gate)" != "plan-approval" ] && grep -q '\''auto-approved (size M)'\'' .flow/events.log'
 a2="$("$P/scripts/new.sh" task "Big plan" --size L --body "## Acceptance
 - [ ] x")"
-for s in design plan; do "$P/scripts/next.sh" "$a2" >/dev/null 2>&1; rb2="$(cat .flow/runs/local-task-2.json | jget reports)"; printf '{"status":"done"}\n' > "$rb2/$s.json"; "$P/scripts/advance.sh" "$a2" >/dev/null 2>&1; code=$?; done
-check_all "an unlisted size still stops at plan-approval" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$a2" | jget state.gate)" = "plan-approval" ]'
+for s in design plan; do "$P/scripts/next.sh" "$a2" >/dev/null 2>&1; rb2="$(record get "$a2" run.reports)"; printf '{"status":"done"}\n' > "$rb2/$s.json"; "$P/scripts/advance.sh" "$a2" >/dev/null 2>&1; code=$?; done
+check_all "an unlisted size still stops at plan-approval" '[ "$code" -eq 4 ] && [ "$(record get "$a2" gate)" = "plan-approval" ]'
 printf 'adapters:\n  default: local\nbase: main\npool_max: 1\nauto_gates:\n  merge: S\n' > .flow/config.yaml
 check "init: --check flags an auto gate that is not allowed" sh -c "FLOW_PLUGIN='$P' '$P/skills/init/scripts/init.sh' --check | grep -q 'gap: .flow/config.yaml: auto_gates lists merge'"
 echo "a full pool: next skips what needs a new worktree"
@@ -1761,8 +1806,8 @@ check "a full pool: next takes the item that holds a claim, not exit 3" sh -c '[
 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "a full pool with only unclaimed items left: exit 3, not 5" [ "$code" -eq 3 ]
 check "the pick lock is released after a skipped pick" [ ! -d .flow/pick.lock ]
-check "a skipped pick leaves no cached ready list behind" sh -c '! ls .flow/runs/.ready.* >/dev/null 2>&1'
-rm -f ".flow/runs/$(item_slug "$f2").json"
+check "a skipped pick leaves no cached ready list behind" sh -c '! ls .flow/tmp/.ready.* >/dev/null 2>&1'
+end_run "$f2"
 out="$(FLOW_NEXT_SKIP="$f2" "$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
 check "a FLOW_NEXT_SKIP from the caller's environment is ignored" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$f2"
 "$P/scripts/next.sh" "$f1" >/dev/null 2>&1; code=$?
@@ -1777,25 +1822,25 @@ pa="$("$P/scripts/new.sh" task "Every step ran" --size S --priority P0 --body "#
 pb="$("$P/scripts/new.sh" task "Fresh" --size S --priority P1 --body "## Acceptance
 - [ ] b")"
 stale="$("$P/adapters/local/list-ready.sh")"
-"$P/adapters/local/write-state.sh" "$pa" step=done
+record set "$pa" step=done
 check "ready: an open item whose every step ran is not ready" sh -c "! '$P/adapters/local/list-ready.sh' | grep -q '\"$pa\"'"
 out="$("$P/scripts/next.sh" --json 2>"$work/pass.err")"; code=$?
 check "a pick leaves the item whose every step ran to the owner and takes the next" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb"
-rm -f ".flow/runs/$(item_slug "$pb").json"
+end_run "$pb"
 # The ready list a pick reads can be older than the item's state: here a gate raised in between.
-stale_pick() { sh -c 'printf "%s\n" "$2" > ".flow/runs/.ready.$$"; FLOW_NEXT_PID=$$ exec "$1" --json' _ "$P/scripts/next.sh" "$stale"; }
-"$P/adapters/local/write-state.sh" "$pa" step=implement gate=plan-approval
+stale_pick() { sh -c 'printf "%s\n" "$2" > ".flow/tmp/.ready.$$"; FLOW_NEXT_PID=$$ exec "$1" --json' _ "$P/scripts/next.sh" "$stale"; }
+record set "$pa" step=implement gate=plan-approval
 out="$(stale_pick 2>"$work/pass.err")"; code=$?
 check "a pick passes over an item its ready list holds that waits at a gate, and says so" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ] && grep -q "$4 waits at gate .plan-approval." "$5"' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb" "$pa" "$work/pass.err"
 stale_pick >/dev/null 2>"$work/pass.err"; code=$?
 check "a pass-over with nothing left is nothing ready (exit 5), not a full pool (exit 3)" sh -c "[ $code -eq 5 ] && grep -q 'nothing ready' '$work/pass.err'"
-check "a pass-over leaves no cached ready list behind" sh -c '! ls .flow/runs/.ready.* >/dev/null 2>&1'
+check "a pass-over leaves no cached ready list behind" sh -c '! ls .flow/tmp/.ready.* >/dev/null 2>&1'
 "$P/scripts/next.sh" "$pa" >/dev/null 2>&1; code=$?
 check "a named item at a gate still exits 4" [ "$code" -eq 4 ]
-"$P/adapters/local/write-state.sh" "$pa" step=done gate=none
+record set "$pa" step=done gate=none
 "$P/scripts/next.sh" "$pa" >/dev/null 2>&1; code=$?
 check "a named item whose every step ran still exits 6" [ "$code" -eq 6 ]
-rm -f ".flow/runs/$(item_slug "$pb").json"
+end_run "$pb"
 out="$(stale_pick 2>"$work/pass.err")"; code=$?
 check "a pick passes over an item its ready list holds whose every step ran, and says so" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ] && grep -q "$4 is done (every step ran)" "$5"' _ "$code" "$(printf '%s' "$out" | jget item)" "$pb" "$pa" "$work/pass.err"
 # The pool is full (pb holds its one worktree) and pc needs one: a pass-over and a full-pool skip
@@ -1803,17 +1848,17 @@ check "a pick passes over an item its ready list holds whose every step ran, and
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\npool_max: 1\nnotify:\n  desktop: false\n' > .flow/config.yaml
 pc="$("$P/scripts/new.sh" task "Needs a worktree" --size S --priority P2 --body "## Acceptance
 - [ ] c")"
-"$P/adapters/local/write-state.sh" "$pa" step=implement
+record set "$pa" step=implement
 stale="$("$P/adapters/local/list-ready.sh")"
-"$P/adapters/local/write-state.sh" "$pa" step=done
+record set "$pa" step=done
 stale_pick >/dev/null 2>"$work/pass.err"; code=$?
 check "a pass-over and a full-pool skip in one pick: exit 3, the pool is what stops the work" sh -c "[ $code -eq 3 ] && grep -q '$pa is done' '$work/pass.err' && grep -q 'no free worktree' '$work/pass.err'"
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out" 2>&1
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out2" 2>&1
 check "health: an open item whose every step ran is said once: merge or close it" sh -c "grep -q '$pa: done (every step ran) and still open: merge or close it' '$work/pass.out' && grep -q '; 1 finding(s)' '$work/pass.out' && ! grep -q 'merge or close it' '$work/pass.out2'"
-"$P/adapters/local/write-state.sh" "$pa" step=implement
+record set "$pa" step=implement
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health >/dev/null 2>&1
-"$P/adapters/local/write-state.sh" "$pa" step=done
+record set "$pa" step=done
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$work/pass.out3" 2>&1
 check "health: an item sent back to a step and done again is said again" grep -q "$pa: done (every step ran) and still open" "$work/pass.out3"
 check "next job: a named item whose every step ran says so, not done" sh -c "'$P/jobs/next.sh' claude '$pa' | grep -q '$pa is done (every step ran). Merge or close it.'"
@@ -1829,7 +1874,7 @@ mkdir -p "$(dirname "$report")" && printf '{"status":"done","summary":"stub"}\n'
 printf 'did the step'
 STUB
 chmod +x "$work/dobin/claude"
-rm -f ".flow/runs/$(item_slug "$pb").json"
+end_run "$pb"
 check "next job: the last word counts the steps the run made, even after host output with no newline" sh -c "PATH='$work/dobin:$PATH' '$P/jobs/next.sh' claude --max-steps 1 | grep -q 'done, 1 step'"
 check "jobs: a run that stopped without a step counts as failed in the week, not as work" sh -c "'$P/scripts/jobs.sh' status | grep '^| next ' | grep -q '1 failed'"
 
@@ -1843,7 +1888,7 @@ hb="$("$P/scripts/new.sh" task "Held" --size S --body "## Acceptance
 ha="$("$P/scripts/new.sh" task "Holder" --size S --body "## Acceptance
 - [ ] a")"
 stale="$("$P/adapters/local/list-ready.sh")"
-"$P/adapters/local/write-state.sh" "$hb" "held_by=$ha" "held_reason=changes src/a.c, which $ha rewrites"
+record set "$hb" "held_by=$ha" "held_reason=changes src/a.c, which $ha rewrites"
 check "ready: an item held behind an open item is not ready" sh -c "! '$P/adapters/local/list-ready.sh' | grep -q '\"$hb\"'"
 "$P/scripts/next.sh" "$hb" >/dev/null 2>"$work/hold.err"; code=$?
 check "a named held item exits 4 and says who it waits behind and why" sh -c "[ $code -eq 4 ] && grep -qx '$hb is held behind $ha: changes src/a.c, which $ha rewrites' '$work/hold.err'"
@@ -1855,12 +1900,12 @@ stale_pick >/dev/null 2>"$work/hold.err"; code=$?
 check "a pick whose ready list is older than the hold passes the held item over, and says so" sh -c "[ $code -eq 5 ] && grep -q '^$hb is held behind $ha: ' '$work/hold.err' && tail -n 1 '$work/hold.err' | grep -qx 'nothing ready: 1 running, 1 passed over (said above)'"
 check "next job: a named held item is a quiet run that says who it waits behind" sh -c "'$P/jobs/next.sh' claude '$hb' | grep -q 'quiet: $hb is held behind $ha: changes src/a.c'"
 "$P/adapters/local/close.sh" "$ha" --comment done
-rm -f ".flow/runs/$(item_slug "$ha").json"; "$P/scripts/steward.sh" release "$ha" --force >/dev/null 2>&1
+end_run "$ha"; "$P/scripts/steward.sh" release "$ha" --force >/dev/null 2>&1
 out="$("$P/scripts/next.sh" --json 2>/dev/null)"; code=$?
 check "once its holder is closed the held item is picked" sh -c '[ "$1" -eq 0 ] && [ "$2" = "$3" ]' _ "$code" "$(printf '%s' "$out" | jget item)" "$hb"
 hc="$("$P/scripts/new.sh" task "Held behind nothing" --size S --body "## Acceptance
 - [ ] c")"
-"$P/adapters/local/write-state.sh" "$hc" held_by=local:task/999 "held_reason=gone"
+record set "$hc" held_by=local:task/999 "held_reason=gone"
 check "ready: a holder that cannot be found holds nothing" sh -c "'$P/adapters/local/list-ready.sh' | grep -q '\"$hc\"'"
 
 echo "a full pool: one pass with no tracker read per unclaimed item"
@@ -1876,7 +1921,7 @@ for t in one two three; do "$P/scripts/new.sh" task "Claimed $t" --size S --body
 c1=local:task/4; c2=local:task/5; c3=local:task/6
 "$P/scripts/next.sh" "$c1" >/dev/null 2>&1
 "$P/scripts/steward.sh" claim "$c2" >/dev/null 2>&1; "$P/scripts/steward.sh" claim "$c3" >/dev/null 2>&1
-"$P/adapters/local/write-state.sh" "$c2" "held_by=$c1" "held_reason=both rewrite src/a.c"
+record set "$c2" "held_by=$c1" "held_reason=both rewrite src/a.c"
 # A plugin copy whose local read notes each item it reads: the tracker calls a pick makes.
 counting="$work/plugin-counting"; cp -R "$P" "$counting"; rm -rf "$counting/evals/results"
 printf '#!/bin/sh\nprintf "%%s\\n" "$1" >> "%s/reads.log"\nexec "%s/adapters/local/read.sh" "$@"\n' "$work" "$P" > "$counting/adapters/local/read.sh"
@@ -1919,7 +1964,7 @@ check "MkdirThatExitsZeroOnExistingDirectory_PickWaitsForLiveHolder: the pick ex
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
 FLOW_LOCK_WAIT=1 "$P/scripts/next.sh" >/dev/null 2>&1; code=$?
 check_all "a stale lock (holder gone) is taken over" '[ "$code" -eq 0 ] && [ ! -d .flow/pick.lock ]'
-for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
+for running_item in $(running_items); do "$P/scripts/steward.sh" release "$running_item" --force >/dev/null 2>&1; end_run "$running_item"; done
 # A plugin copy whose local list-ready ends the lock holder before it lists: a pick that lists
 # before it locks then finds the lock stale and takes it; one that locks first waits and gives up.
 slow="$work/plugin-slow"; cp -R "$P" "$slow"; rm -rf "$slow/evals/results"
@@ -1931,7 +1976,7 @@ mkdir -p .flow/pick.lock && echo "$held" > .flow/pick.lock/pid
 FLOW_PLUGIN="$slow" FLOW_LOCK_WAIT=1 "$slow/scripts/next.sh" >/dev/null 2>&1; code=$?
 check "the ready list is read before the pick lock, so a slow listing never counts against the lock wait" [ "$code" -eq 0 ]
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null
-for f in .flow/runs/*.json; do it="$(jget item < "$f")"; "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; mv "$f" "$f.done"; done
+for running_item in $(running_items); do "$P/scripts/steward.sh" release "$running_item" --force >/dev/null 2>&1; end_run "$running_item"; done
 : > "$HOST_LOG"
 # The slow host notes its process group, then holds until the test says go.
 mkdir -p "$work/slow"; rm -f "$work/slow.go" "$work/slow.groups"
@@ -2008,7 +2053,7 @@ assign_local() { # assign_local <id> <who>: the item file's assignee
   python3 -c 'import sys; p=sys.argv[1]; t=open(p).read(); open(p,"w").write(t.replace("---\n", "---\nassignee: %s\n" % sys.argv[2], 1))' ".flow/items/$(printf '%s' "${1#local:}").md" "$2"
 }
 unpick() { # unpick <next.sh --json output>: the run and its claim go, so the next pick starts clean
-  rm -f ".flow/runs/$(item_slug "$(printf '%s' "$1" | jget item)").json"
+  end_run "$(printf '%s' "$1" | jget item)"
   "$P/scripts/steward.sh" release "$(printf '%s' "$1" | jget item)" --force >/dev/null 2>&1
 }
 pick_config '  mine:
@@ -2027,7 +2072,7 @@ unpick "$out"
 out="$("$P/scripts/next.sh" --json 2>/dev/null)"
 check "next with no filter still takes the most urgent ready item of all" [ "$(printf '%s' "$out" | jget item)" = "$kt" ]
 unpick "$out"
-"$P/adapters/local/write-state.sh" "$km1" gate=plan-approval
+record set "$km1" gate=plan-approval
 out="$("$P/scripts/next.sh" --json --pick mine 2>/dev/null)"
 check "next --pick: an item the filter keeps that waits at a gate is passed over" [ "$(printf '%s' "$out" | jget item)" = "$km2" ]
 unpick "$out"
@@ -2130,27 +2175,27 @@ check "sweep: uncommitted changes keep the worktree" sh -c "'$P/scripts/steward.
 rm "$wc_/dirty.txt"
 check "sweep: a closed item's worktree is released" sh -c "'$P/scripts/steward.sh' sweep | grep -q '$sc: released' && [ ! -f '$wc_/.flow/claim.json' ]"
 sm="$("$P/adapters/local/create.sh" task "Merged PR")"; wm="$("$P/scripts/steward.sh" claim "$sm")"
-tip="$(commit_in "$wm" merged)"; "$P/adapters/local/link-pr.sh" "$sm" https://gh/pull/90
+tip="$(commit_in "$wm" merged)"; record set "$sm" pr=https://gh/pull/90
 "$P/scripts/gate.sh" raise "$sm" merge "Merge the PR." >/dev/null 2>&1
 fake_pr OPEN "$tip"
 check "sweep: an open PR keeps its worktree" sh -c "[ -z \"\$('$P/scripts/steward.sh' sweep)\" ] && [ -f '$wm/.flow/claim.json' ]"
 fake_pr MERGED "$tip"
 out="$("$P/scripts/steward.sh" sweep)"
 check "sweep: a merged PR releases its worktree" sh -c "printf '%s' '$out' | grep -q '$sm: released .*pull/90 merged' && [ ! -f '$wm/.flow/claim.json' ]"
-check "sweep: the merge gate clears with the PR" sh -c "[ \"\$('$P/adapters/local/read.sh' '$sm' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"gate\"])')\" = none ] && [ ! -f .flow/gates/$(item_slug "$sm").json ] && grep -q 'Gate cleared: merged: https://gh/pull/90' .flow/items/task/${sm##*/}.md"
+check "sweep: the merge gate clears with the PR" sh -c "[ \"\$('$P/scripts/state.sh' read '$sm' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"gate\"])')\" = none ] && [ -z \"\$('$P/scripts/state.sh' list gates '$sm')\" ] && grep -q 'Gate cleared: merged: https://gh/pull/90' .flow/items/task/${sm##*/}.md"
 check "sweep: the item closes when the merge did not close it" [ "$("$P/adapters/local/read.sh" "$sm" | jget status)" = closed ]
 check "sweep: a squash-merged branch at the PR's head is deleted" sh -c "! git -C '$wm' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sm")"
 # A PR merged while a gate other than merge was open: the sweep closes the item, and the gate
 # goes with it.
 ambiguity_item="$("$P/adapters/local/create.sh" task "Merged with an ambiguity gate open")"; ambiguity_worktree="$("$P/scripts/steward.sh" claim "$ambiguity_item")"
-"$P/adapters/local/link-pr.sh" "$ambiguity_item" https://gh/pull/90
+record set "$ambiguity_item" pr=https://gh/pull/90
 "$P/scripts/gate.sh" raise "$ambiguity_item" ambiguity "Which row owns the retune?" >/dev/null 2>&1
 check_all "GateList_OpenAmbiguityGate_NamesTheItem: gate.sh list names the gate before the sweep" 'gates="$("$P/scripts/gate.sh" list)" && printf "%s\n" "$gates" | grep -q "	$ambiguity_item	"'
 fake_pr MERGED "$(commit_in "$ambiguity_worktree" ambiguous)"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "Sweep_MergedItemWithOpenGate_LeavesNoGate: gate.sh list names no gate of an item the sweep closed" sh -c "gates=\"\$('$P/scripts/gate.sh' list)\" && ! printf '%s\\n' \"\$gates\" | grep -q '	$ambiguity_item	'"
 escalation_item="$("$P/adapters/local/create.sh" task "Merged with an escalation gate open")"; escalation_worktree="$("$P/scripts/steward.sh" claim "$escalation_item")"
-"$P/adapters/local/link-pr.sh" "$escalation_item" https://gh/pull/90
+record set "$escalation_item" pr=https://gh/pull/90
 escalation_question="Which atlas row keeps the NetFriction retune?"
 "$P/scripts/gate.sh" raise "$escalation_item" escalation "$escalation_question" >/dev/null 2>&1
 fake_pr MERGED "$(commit_in "$escalation_worktree" escalated)"
@@ -2159,10 +2204,10 @@ check_all "Sweep_UnansweredEscalationGate_ReportNamesItUnanswered: the sweep's o
 check "Sweep_UnansweredEscalationGate_ReportQuotesTheQuestion: the sweep's output quotes the question nobody answered" grep -qF "$escalation_question" "$work/sweep-unanswered.out"
 check "Sweep_UnansweredEscalationGate_QuotedOnTheItem: a comment on the closed item marks the question unanswered and quotes it" sh -c "sed -n '/[Uu]nanswered/,\$p' .flow/items/task/${escalation_item##*/}.md | grep -qF '$escalation_question'"
 feel_item="$("$P/adapters/github/create.sh" task "Merged with a feel-test gate open")"; feel_worktree="$("$P/scripts/steward.sh" claim "$feel_item")"
-"$P/adapters/github/link-pr.sh" "$feel_item" https://gh/pull/90
+record set "$feel_item" pr=https://gh/pull/90
 "$P/scripts/gate.sh" raise "$feel_item" feel-test "Launch it and play a match." >/dev/null 2>&1
 issue_labels() { python3 -c 'import json,sys; print("\n".join(next(i for i in json.load(open(sys.argv[1]))["issues"] if i["number"] == int(sys.argv[2]))["labels"]))' "$FAKE_GH_DIR/issues.json" "${1#gh#}"; }
-check_all "GateRaise_GitHubItem_CarriesTheGateLabel: a gate raised on a GitHub item labels the issue" 'issue_labels "$feel_item" | grep -qx gate:feel-test'
+mirror_on "the tracker's labels and cards follow the record" check_all "GateRaise_GitHubItem_CarriesTheGateLabel: a gate raised on a GitHub item labels the issue" 'issue_labels "$feel_item" | grep -qx gate:feel-test'
 fake_pr MERGED "$(commit_in "$feel_worktree" felt)"
 "$P/scripts/steward.sh" sweep > "$work/sweep-feel.out" 2>/dev/null
 check "Sweep_MergedGitHubItem_ClosesTheIssue: the sweep closes the merged GitHub item" [ "$("$P/adapters/github/read.sh" "$feel_item" | jget status)" = closed ]
@@ -2170,7 +2215,7 @@ check_all "Sweep_MergedGitHubItemWithOpenGate_RemovesTheGateLabel: the issue the
 check_all "Sweep_FeelTestGate_ReportNamesTheDrop: the sweep's output names the item's feel-test gate" 'grep -q "^$feel_item: .*feel-test" "$work/sweep-feel.out"'
 check_all "Sweep_FeelTestGate_NotReportedUnanswered: a feel-test gate asks no question, so the sweep carries none forward" 'grep -q "^$feel_item: " "$work/sweep-feel.out" && ! grep "^$feel_item: " "$work/sweep-feel.out" | grep -qi unanswered'
 issue_item="$("$P/adapters/github/create.sh" task "Merged with an ambiguity gate open")"; issue_worktree="$("$P/scripts/steward.sh" claim "$issue_item")"
-"$P/adapters/github/link-pr.sh" "$issue_item" https://gh/pull/90
+record set "$issue_item" pr=https://gh/pull/90
 ambiguous_question="Does 05-settings-catalog.md:102 still own the NetFriction retune?"
 "$P/scripts/gate.sh" raise "$issue_item" ambiguity "$ambiguous_question" >/dev/null 2>&1
 fake_pr MERGED "$(commit_in "$issue_worktree" asked)"
@@ -2180,39 +2225,39 @@ sys.exit(0 if any(sys.argv[3] in c["body"] and "unanswered" in c["body"].lower()
 check "Sweep_UnansweredAmbiguityGate_QuotedUnansweredOnTheClosedIssue: a comment on the closed GitHub issue quotes the question and marks it unanswered" issue_quotes_unanswered "$issue_item" "$ambiguous_question"
 sl="$("$P/adapters/local/create.sh" task "Commit after merge")"; wl="$("$P/scripts/steward.sh" claim "$sl")"
 merged_tip="$(commit_in "$wl" first)"; commit_in "$wl" later >/dev/null
-"$P/adapters/local/link-pr.sh" "$sl" https://gh/pull/90; fake_pr MERGED "$merged_tip"
+record set "$sl" pr=https://gh/pull/90; fake_pr MERGED "$merged_tip"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "sweep: a commit after the merge keeps the branch" sh -c "[ ! -f '$wl/.flow/claim.json' ] && git -C '$wl' show-ref --verify --quiet refs/heads/flow/$(item_slug "$sl")"
 # A gate the sweep cannot take off (the tracker write fails; a read-only item file here) keeps the
 # claim, so the next sweep, which reads only claimed worktrees, tries again.
 for kept_gate in ambiguity merge; do
   kept_item="$("$P/adapters/local/create.sh" task "Merged, its $kept_gate gate cannot go")"; kept_worktree="$("$P/scripts/steward.sh" claim "$kept_item")"
-  "$P/adapters/local/link-pr.sh" "$kept_item" https://gh/pull/90
+  record set "$kept_item" pr=https://gh/pull/90
   "$P/scripts/gate.sh" raise "$kept_item" "$kept_gate" "Which row owns the retune?" >/dev/null 2>&1
   fake_pr MERGED "$(commit_in "$kept_worktree" "kept-$kept_gate")"
   kept_file=".flow/items/task/${kept_item##*/}.md"; chmod a-w "$kept_file"
   "$P/scripts/steward.sh" sweep > "$work/sweep-kept.out" 2>/dev/null
   chmod u+w "$kept_file"
-  check_all "Sweep_${kept_gate}GateDropFails_KeepsTheClaim: the sweep keeps the worktree of an item whose gate stays, so the next sweep can retry" '[ -f "$kept_worktree/.flow/claim.json" ] && grep -q "^$kept_item: kept .*could not drop its $kept_gate gate.*the next sweep tries again" "$work/sweep-kept.out" && ! grep -q "^$kept_item: released" "$work/sweep-kept.out"'
-  check_all "Sweep_${kept_gate}GateDropFails_LeavesTheItemOpenAndGated: the item the sweep could not ungate stays open, its gate listed" '[ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" != closed ] && "$P/scripts/gate.sh" list | grep -q "	$kept_item	$kept_gate	"'
+  mirror_on "dropping a gate writes the tracker no more" check_all "Sweep_${kept_gate}GateDropFails_KeepsTheClaim: the sweep keeps the worktree of an item whose gate stays, so the next sweep can retry" '[ -f "$kept_worktree/.flow/claim.json" ] && grep -q "^$kept_item: kept .*could not drop its $kept_gate gate.*the next sweep tries again" "$work/sweep-kept.out" && ! grep -q "^$kept_item: released" "$work/sweep-kept.out"'
+  mirror_on "dropping a gate writes the tracker no more" check_all "Sweep_${kept_gate}GateDropFails_LeavesTheItemOpenAndGated: the item the sweep could not ungate stays open, its gate listed" '[ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" != closed ] && "$P/scripts/gate.sh" list | grep -q "	$kept_item	$kept_gate	"'
   "$P/scripts/steward.sh" sweep > "$work/sweep-kept.out" 2>/dev/null
-  check_all "Sweep_${kept_gate}GateDropRetried_ReleasesAndCloses: the next sweep takes the gate off, closes the item and releases its worktree" 'grep -q "^$kept_item: released" "$work/sweep-kept.out" && [ ! -f "$kept_worktree/.flow/claim.json" ] && [ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" = closed ] && ! "$P/scripts/gate.sh" list | grep -q "	$kept_item	"'
+  mirror_on "dropping a gate writes the tracker no more" check_all "Sweep_${kept_gate}GateDropRetried_ReleasesAndCloses: the next sweep takes the gate off, closes the item and releases its worktree" 'grep -q "^$kept_item: released" "$work/sweep-kept.out" && [ ! -f "$kept_worktree/.flow/claim.json" ] && [ "$("$P/adapters/local/read.sh" "$kept_item" | jget status)" = closed ] && ! "$P/scripts/gate.sh" list | grep -q "	$kept_item	"'
 done
 # A pr step whose worker cannot write the local item file (it lies outside the worker's sandbox)
 # leaves the PR unrecorded: advance records the URL the step's result names, and the sweep finds
 # a PR nobody recorded by the item's task branch.
-ap="$("$P/adapters/local/create.sh" task "PR its worker could not link" --size S)"; "$P/adapters/local/write-state.sh" "$ap" step=pr
+ap="$("$P/adapters/local/create.sh" task "PR its worker could not link" --size S)"; record set "$ap" step=pr
 printf '{"status":"done","summary":"PR open","pr":"https://gh/pull/90"}\n' > "$("$P/scripts/next.sh" "$ap" --json | jget reports)/pr.json"
 "$P/scripts/advance.sh" "$ap" >/dev/null 2>&1
-check "advance: a pr step's result records its PR on an item link-pr never reached" [ "$("$P/adapters/local/read.sh" "$ap" | jget state.pr)" = https://gh/pull/90 ]
+check "advance: a pr step's result records its PR on an item link-pr never reached" [ "$(record get "$ap" pr)" = https://gh/pull/90 ]
 "$P/scripts/gate.sh" clear "$ap" merged >/dev/null; "$P/scripts/steward.sh" release "$ap" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$ap" >/dev/null
-sp="$("$P/adapters/local/create.sh" task "PR found by its branch" --size S)"; "$P/adapters/local/write-state.sh" "$sp" step=pr
+sp="$("$P/adapters/local/create.sh" task "PR found by its branch" --size S)"; record set "$sp" step=pr
 printf '{"status":"done","summary":"PR open"}\n' > "$("$P/scripts/next.sh" "$sp" --json | jget reports)/pr.json"
 "$P/scripts/advance.sh" "$sp" >/dev/null 2>&1
 fake_pr MERGED "$(git -C "$("$P/scripts/steward.sh" find "$sp")" rev-parse HEAD)" "flow/$(item_slug "$sp")"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
-check "sweep: an item at the merge gate with no PR recorded finds it by its branch, and the merge gate clears" [ "$("$P/adapters/local/read.sh" "$sp" | jget state.gate)" = none ]
-check "sweep: the PR found by the branch is recorded on the item" [ "$("$P/adapters/local/read.sh" "$sp" | jget state.pr)" = https://gh/pull/90 ]
+check "sweep: an item at the merge gate with no PR recorded finds it by its branch, and the merge gate clears" [ "$(archived "$sp" gate)" = null ]
+check "sweep: the PR found by the branch is recorded on the item" [ "$(archived "$sp" pr.url)" = https://gh/pull/90 ]
 # The console sweeps one item once its gated PR leaves the open list; a sweep already running is enough.
 si="$("$P/adapters/local/create.sh" task "Swept alone")"; wi="$("$P/scripts/steward.sh" claim "$si")"
 "$P/adapters/local/close.sh" "$si" >/dev/null
@@ -2224,7 +2269,7 @@ kill "$held" 2>/dev/null; wait "$held" 2>/dev/null; rm -rf .flow/sweep.lock
 check "sweep --item: another item's worktree is not looked at" sh -c "out=\"\$('$P/scripts/steward.sh' sweep --item local:task/999)\" && [ -z \"\$out\" ] && [ -f '$wi/.flow/claim.json' ]"
 check "sweep --lock --item: the item's worktree is released and the lock is let go" sh -c "'$P/scripts/steward.sh' sweep --lock --item '$si' | grep -q '$si: released' && [ ! -f '$wi/.flow/claim.json' ] && [ ! -d .flow/sweep.lock ]"
 merged_item="$("$P/adapters/local/create.sh" task "Merged PR, swept by the health job")"; merged_worktree="$("$P/scripts/steward.sh" claim "$merged_item")"
-"$P/adapters/local/link-pr.sh" "$merged_item" https://gh/pull/90
+record set "$merged_item" pr=https://gh/pull/90
 "$P/scripts/gate.sh" raise "$merged_item" merge "Merge the PR." >/dev/null 2>&1
 fake_pr MERGED "$(git -C "$merged_worktree" rev-parse HEAD)"
 check "health job --dry-run: names the merged PR's worktree and keeps it" sh -c "'$P/jobs/health.sh' claude --dry-run | grep -q '$merged_item: would release' && [ -f '$merged_worktree/.flow/claim.json' ]"
@@ -2234,7 +2279,7 @@ FLOW_LOCK_WAIT=1 "$P/jobs/health.sh" claude >/dev/null 2>&1; code=$?
 check_all "health job: a held sweep lock skips the sweep, says so, and the run still ends cleanly" '[ "$code" -eq 0 ] && [ -f "$merged_worktree/.flow/claim.json" ] && grep -q "sweep skipped: the sweep lock is held" .flow/log/health.log && [ ! -d .flow/log/health.lock ]'
 kill "$held" 2>/dev/null; wait "$held" 2>/dev/null; rm -rf .flow/sweep.lock
 "$P/jobs/health.sh" claude >/dev/null 2>&1
-check "health job: the sweep clears a merged PR's gate and frees its worktree" sh -c "[ ! -f '$merged_worktree/.flow/claim.json' ] && [ ! -f .flow/gates/$(item_slug "$merged_item").json ] && grep -q '$merged_item: released' .flow/log/health.log"
+check "health job: the sweep clears a merged PR's gate and frees its worktree" sh -c "[ ! -f '$merged_worktree/.flow/claim.json' ] && [ -z \"\$('$P/scripts/state.sh' list gates '$merged_item')\" ] && grep -q '$merged_item: released' .flow/log/health.log"
 check "health job: a run that swept says done and what it released" sh -c "grep '\"job\":\"health\"' .flow/log/runs.jsonl | tail -1 | grep -q '\"result\":\"done' && tail -n 3 .flow/log/health.log | grep -q '$merged_item: released'"
 fake_pr OPEN ""
 
@@ -2254,14 +2299,16 @@ git -C "$hroot/other" config user.email t@t && git -C "$hroot/other" config user
 hs() { "$P/scripts/steward.sh" health "$@"; }
 hitem() { "$P/adapters/local/create.sh" task "$1" --size S --body "x"; }
 hold() { "$P/scripts/next.sh" "$1" >/dev/null && "$P/scripts/steward.sh" find "$1"; }
-rec() { printf '%s/.flow/runs/%s.json' "$hroot/app" "$(item_slug "$1")"; }
-age_run() { python3 -c '
-import json, sys, time
-p, pid = sys.argv[1], sys.argv[2]
-d = json.load(open(p)); d["started"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 172800))
-d.pop("pid", None)
-if pid != "-": d["pid"] = int(pid)
-json.dump(d, open(p, "w"))' "$(rec "$1")" "${2:-999999}"; }
+two_days_in_seconds=172800; pid_of_no_process=999999
+# two_days_ago: the time two days back, as the flow records write a time.
+two_days_ago() { python3 -c 'import sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - int(sys.argv[1]))))' "$two_days_in_seconds"; }
+# age_run <item> [<pid>|-]: the item's run started two days ago, owned by the pid (none for -).
+age_run() { aged_run="$(record get "$1" run | python3 -c '
+import json, sys
+run = json.load(sys.stdin); run["started"] = sys.argv[2]
+run.pop("pid", None)
+if sys.argv[1] != "-": run["pid"] = int(sys.argv[1])
+print(json.dumps(run))' "${2:-$pid_of_no_process}" "$(two_days_ago)")" && record set "$1" "run:=$aged_run"; }
 stale_claim() { python3 -c '
 import json, sys, time
 p = sys.argv[1] + "/.flow/claim.json"
@@ -2408,19 +2455,19 @@ check "health: a sub-agent's ad hoc claim with no recorded pid is kept while its
 fakeloop="$work/fake/run-unattended.sh"; mkdir -p "$work/fake"; printf '#!/bin/sh\nsleep 60\n' > "$fakeloop"; chmod +x "$fakeloop"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$fakeloop")"
 a="$(hitem "Empty claim")"; FLOW_RUN_PID="$loop" "$P/scripts/next.sh" "$a" >/dev/null; wa="$("$P/scripts/steward.sh" find "$a")"
-check "next records the pid of the loop that owns the run" [ "$(jget pid < "$(rec "$a")")" = "$loop" ]
+check "next records the pid of the loop that owns the run" [ "$(record get "$a" run.pid)" = "$loop" ]
 age_run "$a" "$loop"; stale_claim "$wa"
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
-check "health: a record whose pid still runs the loop is alive, however old" sh -c "[ -f '$(rec "$a")' ] && [ -f '$wa/.flow/claim.json' ] && grep -q '1 claimed (1 running' '$hroot/out'"
+check "health: a record whose pid still runs the loop is alive, however old" sh -c "[ '$(running "$a")' = yes ] && [ -f '$wa/.flow/claim.json' ] && grep -q '1 claimed (1 running' '$hroot/out'"
 check "board: a live run shows where it runs" sh -c "'$P/scripts/board.sh' | grep -q 'running on'"
 pkill -P "$loop" 2>/dev/null; kill "$loop" 2>/dev/null; wait "$loop" 2>/dev/null
 check "board: a record with no process is a dead run, not a running one" sh -c "'$P/scripts/board.sh' > '$hroot/board' && grep -q '(dead run)' '$hroot/board' && ! grep -q 'running on' '$hroot/board' && grep -q '^## Health' '$hroot/board' && grep -q 'dead run of implement' '$hroot/board'"
 events_before="$(wc -l < .flow/events.log | tr -d ' ')"
 hs --dry-run > "$hroot/out" 2>&1
-check "health --dry-run: says what it would do and changes nothing" sh -c "grep -q 'would clear the dead run' '$hroot/out' && grep -q 'would release the empty claim' '$hroot/out' && [ -f '$(rec "$a")' ] && [ -f '$wa/.flow/claim.json' ] && [ \"\$(wc -l < .flow/events.log | tr -d ' ')\" = $events_before ]"
+check "health --dry-run: says what it would do and changes nothing" sh -c "grep -q 'would clear the dead run' '$hroot/out' && grep -q 'would release the empty claim' '$hroot/out' && [ '$(running "$a")' = yes ] && [ -f '$wa/.flow/claim.json' ] && [ \"\$(wc -l < .flow/events.log | tr -d ' ')\" = $events_before ]"
 "$P/jobs/health.sh" claude >/dev/null
-check "health: a dead run's record is cleared and logged" sh -c "[ ! -f '$(rec "$a")' ] && grep -q \"$a: dead run of implement cleared\" .flow/log/health.log && grep -q \"$a	health	dead run of implement cleared\" .flow/events.log"
-check "health: an empty claim is released and the item is back with the tracker" sh -c "[ ! -f '$wa/.flow/claim.json' ] && [ -z \"\$('$P/adapters/local/read.sh' '$a' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"].get(\"worktree\",\"\"))')\" ] && [ \"\$(git -C '$wa' symbolic-ref --short HEAD)\" = main-wt-1 ] && grep -q 'released the empty claim' .flow/log/health.log"
+check "health: a dead run's record is cleared and logged" sh -c "[ '$(running "$a")' = no ] && grep -q \"$a: dead run of implement cleared\" .flow/log/health.log && grep -q \"$a	health	dead run of implement cleared\" .flow/events.log"
+check "health: an empty claim is released and the item is back with the tracker" sh -c "[ ! -f '$wa/.flow/claim.json' ] && [ -z \"\$('$P/scripts/state.sh' get '$a' worktree)\" ] && [ \"\$(git -C '$wa' symbolic-ref --short HEAD)\" = main-wt-1 ] && grep -q 'released the empty claim' .flow/log/health.log"
 check_all "health job: a run that found something says so" 'tail -1 .flow/log/runs.jsonl | grep -q '\''"result":"done: '\'''
 
 b="$(hitem "Has commits")"; wb="$(hold "$b")"; commit_in "$wb" work >/dev/null
@@ -2434,14 +2481,14 @@ c="$(hitem "Dirty tree")"; wc2="$(hold "$c")"; printf 'unsaved\n' > "$wc2/dirty.
 age_run "$c"; stale_claim "$wc2"; : > "$hroot/host.log"
 hs --wait > "$hroot/out" 2>&1
 check "health: a dirty tree is never released or reset, and its run resumes" sh -c "[ -f '$wc2/.flow/claim.json' ] && [ \"\$(cat '$wc2/dirty.txt')\" = unsaved ] && grep -q \"$c: resumed implement\" '$hroot/out' && grep -q \"$wc2\" '$hroot/host.log'"
-d="$(hitem "Idle with commits")"; wd="$(hold "$d")"; commit_in "$wd" idle >/dev/null; rm -f "$(rec "$d")"; stale_claim "$wd"; : > "$hroot/host.log"
+d="$(hitem "Idle with commits")"; wd="$(hold "$d")"; commit_in "$wd" idle >/dev/null; end_run "$d"; stale_claim "$wd"; : > "$hroot/host.log"
 hs --wait > "$hroot/out" 2>&1
 check "health: a claim with commits and no run is left to the next job" sh -c "[ -f '$wd/.flow/claim.json' ] && [ ! -s '$hroot/host.log' ] && ! grep -q \"$d\" '$hroot/out'"
 
 for i in 2 3; do age_run "$b"; hs --wait > "$hroot/out" 2>&1; done
 check "health: a step that keeps dying is resumed up to max_resumes times" [ "$(facts "$b.*resumed implement")" = 3 ]
 age_run "$b"; hs --wait > "$hroot/out" 2>&1
-check "health: after max_resumes it raises an escalation gate instead of looping" sh -c "[ \"\$('$P/adapters/local/read.sh' '$b' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"gate\"])')\" = escalation ] && [ -f .flow/gates/$(item_slug "$b").json ] && grep -q 'died 3 times in a row' '$hroot/out' && [ $(facts "$b.*resumed implement") = 3 ] && [ -f '$wb/.flow/claim.json' ]"
+check "health: after max_resumes it raises an escalation gate instead of looping" sh -c "[ \"\$('$P/scripts/state.sh' get '$b' gate)\" = escalation ] && [ -n \"\$('$P/scripts/state.sh' list gates '$b')\" ] && grep -q 'died 3 times in a row' '$hroot/out' && [ $(facts "$b.*resumed implement") = 3 ] && [ -f '$wb/.flow/claim.json' ]"
 check "health: the escalation notifies" grep -q "$(printf '\t')escalation$(printf '\t')" .flow/events.log
 # The gate says what the dead runs left, so the owner can answer it without reading the logs first.
 # What they left is read here from the same log, and the gate must carry that line whole: a killed
@@ -2449,7 +2496,7 @@ check "health: the escalation notifies" grep -q "$(printf '\t')escalation$(print
 # get a "Killed" line out, and then the gate quotes that line. The path the gate names is the one
 # git resolves, so only its end is checked (a temp folder is a link on macOS).
 left="$(python3 -I "$P/scripts/_health.py" died ".flow/log/resume-$(item_slug "$b").log" "$b" implement "$wb/.flow/reports/$(item_slug "$b")/implement.json" "$hroot/no-resume-file")"
-check_all "health: the escalation gate says what the dead runs left, and names their log" 'jget message < ".flow/gates/$(item_slug "$b").json" > "$hroot/gate.msg" && [ -n "$left" ] && ! printf "%s" "$left" | grep -q "has no line of this step" && grep -qF "without the step advancing. $left $(basename "$wb") keeps its commits" "$hroot/gate.msg" && grep -q "/app/.flow/log/resume-$(item_slug "$b").log, then clear the gate" "$hroot/gate.msg" && ! grep -q "after the last resume" "$hroot/gate.msg"'
+check_all "health: the escalation gate says what the dead runs left, and names their log" 'record get "$b" gate.message > "$hroot/gate.msg" && [ -n "$left" ] && ! printf "%s" "$left" | grep -q "has no line of this step" && grep -qF "without the step advancing. $left $(basename "$wb") keeps its commits" "$hroot/gate.msg" && grep -q "/app/.flow/log/resume-$(item_slug "$b").log, then clear the gate" "$hroot/gate.msg" && ! grep -q "after the last resume" "$hroot/gate.msg"'
 died="$work/died"; mkdir -p "$died"
 printf 'run-unattended: t-1 step implement in /wt\nan older run\nrun-unattended: t-1 step implement in /wt\n\nlast\tline one\nlast line two\n' > "$died/log"
 printf '3 implement\n' > "$died/resume"; touch -t 202401010000 "$died/resume"; printf '{"status":"done"}' > "$died/implement.json"
@@ -2502,27 +2549,27 @@ dr="$wd/.flow/reports/$(item_slug "$d")"; : > "$work/offline.log"
 remote_commit main m2; remote_commit main m3; remote_commit main m4
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
 check "health: a clean branch far behind its base, with no PR, gets the base merged in and no notification" sh -c "git -C '$wd' merge-base --is-ancestor origin/main HEAD && grep -q 'merged origin/main into $bd (3 commits behind)' '$hroot/out' && ! grep -q 'merged origin/main' '$hroot/out2' && [ ! -f '$dr/sync.md' ] && ! grep -q 'flow: health' '$work/offline.log'"
-"$P/adapters/local/write-state.sh" "$d" pr=https://github.com/o/r/pull/9 >/dev/null
+record set "$d" pr=https://github.com/o/r/pull/9 >/dev/null
 remote_commit main m5; remote_commit main m6; remote_commit main m7
 hs > "$hroot/out" 2>&1
 check "health: a branch with a PR is not merged into: its conflicts are the comments job's" sh -c "! git -C '$wd' merge-base --is-ancestor origin/main HEAD && ! grep -q 'origin/main into $bd\|$bd needs' '$hroot/out' && [ ! -f '$dr/sync.md' ]"
-"$P/adapters/local/write-state.sh" "$d" pr= >/dev/null
+record set "$d" pr= >/dev/null
 printf 'mine\n' > "$wd/README.md"; git -C "$wd" commit -qam mine
 git -C "$hroot/other" checkout -q -B main origin/main && git -C "$hroot/other" pull -q origin main && printf 'theirs\n' > "$hroot/other/README.md" && git -C "$hroot/other" commit -qam theirs && git -C "$hroot/other" push -q origin main
 pre="$(git -C "$wd" rev-parse HEAD)"
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
 check "health: a base merge that conflicts is aborted and handed to the sync step, with no notification" sh -c "[ \"\$(git -C '$wd' rev-parse HEAD)\" = '$pre' ] && [ -z \"\$(git -C '$wd' status --porcelain -- . ':!.flow')\" ] && [ \"\$(cat '$dr/sync.md')\" = origin/main ] && grep -q '$bd needs origin/main merged in' '$hroot/out' && ! grep -q 'needs origin/main' '$hroot/out2' && ! grep -q 'flow: health' '$work/offline.log'"
 "$P/scripts/next.sh" "$d" >/dev/null
-run_step="$(jget step < "$(rec "$d")")"; own="$("$P/adapters/local/read.sh" "$d" | jget state.step)"
+run_step="$(record get "$d" run.step)"; own="$(record get "$d" step)"
 check "health: the next run is the sync step, ahead of the item's own step" sh -c "grep -q '## The merge' '$dr/brief-sync.md' && grep -q '^- \`origin/main\`' '$dr/brief-sync.md' && grep -q 'Your own step is implement' '$dr/brief-sync.md' && [ '$run_step' = sync ] && [ '$own' = implement ]"
 printf '{"status": "done", "summary": "merged origin/main"}\n' > "$dr/sync.json"
 "$P/scripts/advance.sh" "$d" > "$hroot/out" 2>&1; code=$?
-own="$("$P/adapters/local/read.sh" "$d" | jget state.step)"
-check "health: a finished sync step drops the order and leaves the item on its own step" sh -c "[ $code = 0 ] && grep -q 'sync done -> implement' '$hroot/out' && [ ! -f '$dr/sync.md' ] && [ ! -f '$(rec "$d")' ] && [ '$own' = implement ]"
+own="$(record get "$d" step)"
+check "health: a finished sync step drops the order and leaves the item on its own step" sh -c "[ $code = 0 ] && grep -q 'sync done -> implement' '$hroot/out' && [ ! -f '$dr/sync.md' ] && [ '$(running "$d")' = no ] && [ '$own' = implement ]"
 check "health: a finished sync step puts the item's own step back in the claim" [ "$(jget step < "$wd/.flow/claim.json")" = implement ]
 printf 'origin/main\n' > "$dr/sync.md"; "$P/scripts/next.sh" "$d" >/dev/null
 printf '{"status": "fail", "summary": "tests red after the merge"}\n' > "$dr/sync.json"; "$P/scripts/advance.sh" "$d" >/dev/null 2>&1; code=$?
-gate_now="$("$P/adapters/local/read.sh" "$d" | jget state.gate)"; own="$("$P/adapters/local/read.sh" "$d" | jget state.step)"
+gate_now="$(record get "$d" gate)"; own="$(record get "$d" step)"
 check "health: a failed sync step raises an escalation gate and keeps the order" sh -c "[ $code = 4 ] && [ '$gate_now' = escalation ] && [ '$own' = implement ] && [ -f '$dr/sync.md' ]"
 "$P/scripts/gate.sh" clear "$d" "retry" >/dev/null 2>&1
 commit_in "$wd" l2 >/dev/null; remote_commit "$bd" r2
@@ -2533,9 +2580,7 @@ side="$(git -C "$wd" commit-tree "HEAD^{tree}" -p HEAD -m side)"; printf '%s\n' 
 hs > "$hroot/out" 2>&1
 check "health: a rewritten sync note keeps a ref another writer put there that is not merged yet" sh -c "[ \"\$(cat '$dr/sync.md')\" = \"\$(printf 'origin/$bd\norigin/main\n$side')\" ]"
 
-python3 -c '
-import json, sys, time
-p = sys.argv[1]; d = json.load(open(p)); d["time"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 172800)); json.dump(d, open(p, "w"))' ".flow/gates/$(item_slug "$b").json"
+gate_with "$b" time "$(two_days_ago)"
 : > "$work/offline.log"
 hs > "$hroot/out" 2>&1; hs > "$hroot/out2" 2>&1
 check "health: a branch waiting at a gate is not merged into" sh -c "! grep -q 'merged origin/main into flow/$(item_slug "$b")' .flow/events.log"
@@ -2555,7 +2600,7 @@ check_all "GateList_GateOnClosedItem_NamesTheItem: gate.sh list names the closed
 check_all "GateDrop_GateOnClosedItem_ListNamesNoGate: gate.sh list names no gate of the item once its gate is dropped" 'gates="$("$P/scripts/gate.sh" list)" && ! printf "%s\n" "$gates" | grep -q "	$closed_gate_item	"'
 
 rm -f "$wc2/dirty.txt"; "$P/scripts/steward.sh" release "$c" --force >/dev/null 2>&1
-e="$(hitem "No remote branch")"; we="$(hold "$e")"; commit_in "$we" solo >/dev/null; rm -f "$(rec "$e")"; stale_claim "$we"
+e="$(hitem "No remote branch")"; we="$(hold "$e")"; commit_in "$we" solo >/dev/null; end_run "$e"; stale_claim "$we"
 hs > "$hroot/out" 2>&1
 check "health: a task branch with no remote counterpart is never pushed" sh -c "[ -z \"\$(git ls-remote --heads origin 'flow/$(item_slug "$e")')\" ] && [ -f '$we/.flow/claim.json' ]"
 hs > "$hroot/out" 2>&1
@@ -2576,7 +2621,7 @@ rm -f "$der/sync.md"
 "$P/scripts/next.sh" "$e" >/dev/null; age_run "$e" -
 printf '4242\t\tclaude -p Follow the brief. Work in %s.\n' "$we" > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
-check "health: a record with no pid is alive while a process names its worktree" sh -c "[ -f '$(rec "$e")' ] && ! grep -q 'dead run' '$hroot/out'"
+check "health: a record with no pid is alive while a process names its worktree" sh -c "[ '$(running "$e")' = yes ] && ! grep -q 'dead run' '$hroot/out'"
 printf '7671\t\tclaude daemon run --spawned-by {"cwd":"%s"}\n4243\t\tvim %s/README.md\n4244\t\ttail -f %s/log\n' "$we" "$we" "$we" > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
 check "health: the same record is a dead run once only a daemon, an editor or a tail names it" grep -q "$e: dead run of implement cleared" "$hroot/out"
@@ -2639,7 +2684,7 @@ check "session: a status file for another folder is an earlier process's, so no 
 kill "$idler" 2>/dev/null; wait "$idler" 2>/dev/null; rm -f "$HOME/.claude/sessions/$idler.json"
 : > "$FLOW_HEALTH_PROCS"
 hs --wait > "$hroot/out" 2>&1
-check "health: a record younger than the grace is left alone, whatever its pid" sh -c "[ -f '$(rec "$e")' ] && [ $(facts "$e.*resumed implement") = 1 ]"
+check "health: a record younger than the grace is left alone, whatever its pid" sh -c "[ '$(running "$e")' = yes ] && [ $(facts "$e.*resumed implement") = 1 ]"
 rm -f "$wd/.flow/reports/$(item_slug "$d")/sync.md"; "$P/scripts/steward.sh" release "$d" --force >/dev/null 2>&1
 g="$(hitem "Empty at a gate")"; wg="$(hold "$g")"; "$P/scripts/gate.sh" raise "$g" ambiguity "Which one?" >/dev/null 2>&1; stale_claim "$wg"
 hs > "$hroot/out" 2>&1
@@ -2659,30 +2704,30 @@ check "health: the same claim is released once the agent is gone" sh -c "[ ! -f 
 h="$(hitem "No ps")"; wh="$(hold "$h")"; age_run "$h"; stale_claim "$wh"
 mkdir -p "$work/nops"; printf '#!/bin/sh\nexit 1\n' > "$work/nops/ps"; chmod +x "$work/nops/ps"
 PATH="$work/nops:$PATH" env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" health > "$hroot/out" 2>&1
-check "health: with no process list no run is judged dead and no claim is released" sh -c "[ -f '$(rec "$h")' ] && [ -f '$wh/.flow/claim.json' ] && grep -q 'cannot list processes' '$hroot/out' && ! grep -q 'dead run\\|released\\|resumed' '$hroot/out'"
-rm -f "$(rec "$h")"; "$P/scripts/steward.sh" release "$h" --force >/dev/null 2>&1
+check "health: with no process list no run is judged dead and no claim is released" sh -c "[ '$(running "$h")' = yes ] && [ -f '$wh/.flow/claim.json' ] && grep -q 'cannot list processes' '$hroot/out' && ! grep -q 'dead run\\|released\\|resumed' '$hroot/out'"
+end_run "$h"; "$P/scripts/steward.sh" release "$h" --force >/dev/null 2>&1
 # stop and resume: the owner's hand on one item's run.
 stoploop="$work/fake/stop/run-unattended.sh"; mkdir -p "$work/fake/stop"; printf '#!/bin/sh\nsleep 60 &\nwait\n' > "$stoploop"; chmod +x "$stoploop"
 s="$(hitem "Stopped by hand")"; ws="$(hold "$s")"; printf 'kept\n' > "$ws/wip.txt"
 loop="$(sh -c '"$1" >/dev/null 2>&1 & echo $!' _ "$stoploop")"; sleep 1; loopchild="$(pgrep -P "$loop")"
 age_run "$s" "$loop"; : > "$hroot/host.log"
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" resume "$s" > "$hroot/out" 2>&1; code=$?
-check "resume: a run whose process is alive is refused, exit 1, and left as it is" sh -c "[ $code = 1 ] && grep -q 'the run of implement is still alive (pid $loop): end it first with steward.sh stop $s' '$hroot/out' && [ -f '$(rec "$s")' ] && kill -0 $loop && [ ! -s '$hroot/host.log' ]"
+check "resume: a run whose process is alive is refused, exit 1, and left as it is" sh -c "[ $code = 1 ] && grep -q 'the run of implement is still alive (pid $loop): end it first with steward.sh stop $s' '$hroot/out' && [ '$(running "$s")' = yes ] && kill -0 $loop && [ ! -s '$hroot/host.log' ]"
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" stop "$s" > "$hroot/out" 2>&1; code=$?
 sleep 1
-check "stop: ends the run's process and every one under it, and removes its record" sh -c "[ $code = 0 ] && [ -n '$loopchild' ] && ! kill -0 $loop 2>/dev/null && ! kill -0 $loopchild 2>/dev/null && [ ! -f '$(rec "$s")' ] && grep -q '$s: run of implement stopped by the owner: 2 process(es) ended' '$hroot/out'"
-check "stop: keeps the claim, the worktree and its changes, and says so in events.log and last_event" sh -c "[ -f '$ws/.flow/claim.json' ] && [ \"\$(cat '$ws/wip.txt')\" = kept ] && grep -q '	$s	stopped	run of implement stopped by the owner\$' .flow/events.log && '$P/adapters/local/read.sh' '$s' | grep -q 'run of implement stopped by the owner'"
+check "stop: ends the run's process and every one under it, and removes its record" sh -c "[ $code = 0 ] && [ -n '$loopchild' ] && ! kill -0 $loop 2>/dev/null && ! kill -0 $loopchild 2>/dev/null && [ '$(running "$s")' = no ] && grep -q '$s: run of implement stopped by the owner: 2 process(es) ended' '$hroot/out'"
+check "stop: keeps the claim, the worktree and its changes, and says so in events.log and last_event" sh -c "[ -f '$ws/.flow/claim.json' ] && [ \"\$(cat '$ws/wip.txt')\" = kept ] && grep -q '	$s	stopped	run of implement stopped by the owner\$' .flow/events.log && '$P/scripts/state.sh' get '$s' last_event | grep -q 'run of implement stopped by the owner'"
 wait "$loop" 2>/dev/null
 check "stop: an item with no run in flight is said, exit 0" sh -c "'$P/scripts/steward.sh' stop '$s' | grep -q '$s: no run in flight, nothing to stop'"
 check "stop: a malformed item is refused, exit 2" sh -c "'$P/scripts/steward.sh' stop 'gh#x' 2>/dev/null; [ \$? = 2 ]"
 check "resume: an item with no run record is refused, exit 1" sh -c "'$P/scripts/steward.sh' resume '$s' 2>&1 | grep -q '$s has no run record'; '$P/scripts/steward.sh' resume '$s' >/dev/null 2>&1; [ \$? = 1 ]"
 "$P/scripts/next.sh" "$s" >/dev/null; age_run "$s"; : > "$hroot/host.log"
-check "resume: an --effort the host does not take is refused, exit 2, and the record stays" sh -c "env -u FLOW_HEALTH_PROCS '$P/scripts/steward.sh' resume '$s' --host codex --effort max 2>&1 | grep -q 'codex takes low, medium, high or xhigh'; [ -f '$(rec "$s")' ] && [ ! -s '$hroot/host.log' ]"
+check "resume: an --effort the host does not take is refused, exit 2, and the record stays" sh -c "env -u FLOW_HEALTH_PROCS '$P/scripts/steward.sh' resume '$s' --host codex --effort max 2>&1 | grep -q 'codex takes low, medium, high or xhigh'; [ '$(running "$s")' = yes ] && [ ! -s '$hroot/host.log' ]"
 env -u FLOW_HEALTH_PROCS "$P/scripts/steward.sh" resume "$s" --wait --model claude-resume-z --effort low > "$hroot/out" 2>&1; code=$?
 check "resume: --model and --effort reach the resumed step with no agent" grep -q -- '--model claude-resume-z --effort low' "$hroot/host.log"
 check "resume: a dead run is cleared and its step starts again, as the health job resumes one" sh -c "[ $code = 0 ] && grep -q '$s: resumed implement on claude (attempt 1 of 3)' '$hroot/out' && grep -q 'Follow the brief' '$hroot/host.log' && grep -q '^$ws	' '$hroot/host.log' && [ \"\$(cat .flow/health/$(item_slug "$s").resume)\" = '1 implement' ] && grep -q '	$s	resume	dead run of implement cleared by the owner' .flow/events.log"
 check "resume: the resumed step's brief carries the health job's note" grep -q 'The previous run of step implement died' "$ws/.flow/reports/$(item_slug "$s")/brief-implement.md"
-rm -f "$(rec "$s")" "$ws/wip.txt" ".flow/health/$(item_slug "$s").resume"; "$P/scripts/steward.sh" release "$s" --force >/dev/null 2>&1
+end_run "$s"; rm -f "$ws/wip.txt" ".flow/health/$(item_slug "$s").resume"; "$P/scripts/steward.sh" release "$s" --force >/dev/null 2>&1
 "$P/scripts/jobs.sh" pause health >/dev/null; : > .flow/events.log
 "$P/jobs/health.sh" claude | grep -q paused
 check "health job: a paused job does nothing" [ ! -s .flow/events.log ]
@@ -2706,8 +2751,8 @@ mkdir -p .flow
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../hwt-1\n  - ../hwt-2\n  - ../hwt-3\nnotify:\n  desktop: true\n' > .flow/config.yaml
 export FLOW_HEALTH_PROCS="$hhroot/procs"; : > "$FLOW_HEALTH_PROCS"
 hnew() { "$P/adapters/local/create.sh" task "$1" --size S --body x; }
-hw() { "$P/adapters/local/write-state.sh" "$@" >/dev/null; }
-hheld() { "$P/adapters/local/read.sh" "$1" | jget state.held_by; }
+hw() { record set "$@" >/dev/null; }
+hheld() { record get "$1" held_by; }
 # held_line <seconds ago> <item> <holder> <reason>: the line the hold writer appends to events.log.
 held_line() { printf '%s\t%s\theld\tbehind %s: %s\n' "$(python3 -c 'import sys,time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time()-int(sys.argv[1]))))' "$1")" "$2" "$3" "$4" >> .flow/events.log; }
 h1="$(hnew "Holder, claimed")"; hw "$h1" "changes=src/a/**"
@@ -2721,17 +2766,17 @@ he="$(hnew "Behind a missing one")"; hw "$he" "changes=src/e/x" "held_by=local:t
 h2="$(hnew "Holder with no claim and no run")"; hw "$h2" "changes=src/f/**"
 hf="$(hnew "Behind an idle one")"; hw "$hf" "changes=src/f/x" "held_by=$h2" "held_reason=src/f"
 h3="$(hnew "Holder with a run")"; hw "$h3" "changes=src/g/**"
-mkdir -p .flow/runs && printf '{"item":"%s","step":"implement","started":"%s"}\n' "$h3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ".flow/runs/$(item_slug "$h3").json"
+record set "$h3" "run:=$(json_obj step=implement "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >/dev/null
 hg="$(hnew "Waits long")"; hw "$hg" "changes=src/g/x" "held_by=$h3" "held_reason=both change src/g"; held_line 108000 "$hg" "$h3" "both change src/g"
 hx="$(hnew "Cycle, older")"; hy="$(hnew "Cycle, newer")"
 "$P/scripts/steward.sh" claim "$hx" >/dev/null; "$P/scripts/steward.sh" claim "$hy" >/dev/null
 hw "$hx" "changes=src/h/**" "held_by=$hy" "held_reason=src/h"; held_line 7200 "$hx" "$hy" "src/h"
 hw "$hy" "changes=src/h/y" "held_by=$hx" "held_reason=src/h"; held_line 3600 "$hy" "$hx" "src/h"
 h4="$(hnew "Holder with touches, no changes")"; hw "$h4" "touches=src/t/**"
-printf '{"item":"%s","step":"implement","started":"%s"}\n' "$h4" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ".flow/runs/$(item_slug "$h4").json"
+record set "$h4" "run:=$(json_obj step=implement "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >/dev/null
 ht="$(hnew "Behind a bugfix")"; hw "$ht" "changes=src/t/x" "held_by=$h4" "held_reason=both change src/t"; held_line 3600 "$ht" "$h4" "both change src/t"
 h5="$(hnew "Holder with nothing recorded")"
-printf '{"item":"%s","step":"implement","started":"%s"}\n' "$h5" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > ".flow/runs/$(item_slug "$h5").json"
+record set "$h5" "run:=$(json_obj step=implement "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)")" >/dev/null
 hn="$(hnew "Behind one with nothing recorded")"; hw "$hn" "changes=src/n/x" "held_by=$h5" "held_reason=src/n"; held_line 3600 "$hn" "$h5" "src/n"
 ho="$(hnew "Undated hold")"; hw "$ho" "changes=src/a/o" "held_by=$h1" "held_reason=src/a too"
 events_before="$(wc -l < .flow/events.log | tr -d ' ')"
@@ -2740,7 +2785,7 @@ check_all "health --dry-run: says which holds it would clear and clears none" 'g
 : > "$work/offline.log"
 "$P/scripts/steward.sh" health > "$hhroot/out" 2>&1
 unheld() { grep -q "	$1	unheld	no longer held behind $2: $3\$" .flow/events.log; }
-check_all "health: a hold whose holder's changes no longer share a path is cleared, with an unheld line" '[ -z "$(hheld "$hb")" ] && [ -z "$("$P/adapters/local/read.sh" "$hb" | jget state.held_reason)" ] && unheld "$hb" "$h1" "the changes of $h1 no longer share a path with its own" && grep -q "^$hb: no longer held behind $h1" "$hhroot/out"'
+check_all "health: a hold whose holder's changes no longer share a path is cleared, with an unheld line" '[ -z "$(hheld "$hb")" ] && [ -z "$(record get "$hb" held_reason)" ] && unheld "$hb" "$h1" "the changes of $h1 no longer share a path with its own" && grep -q "^$hb: no longer held behind $h1" "$hhroot/out"'
 check_all "health: a hold on the item itself is cleared" '[ -z "$(hheld "$hc")" ] && unheld "$hc" "$hc" "it was held behind itself"'
 check_all "health: a hold behind a closed item stays for next.sh to release with its merge note" '[ "$(hheld "$hd")" = "$hk" ] && ! grep -q "	$hd	unheld	" .flow/events.log && ! grep -q "^$hd:" "$hhroot/out"'
 check_all "health: a hold behind an item that cannot be read or found is cleared" '[ -z "$(hheld "$he")" ] && unheld "$he" "local:task/99" "local:task/99 cannot be read or found on the tracker"'
@@ -3055,7 +3100,7 @@ sread() { "$P/adapters/local/read.sh" "$1" | jget "$2"; }
 # to the caller.
 plan_step() {
   ps_item="$1"; ps_mode="$2"; ps_result="$3"; shift 3
-  "$P/adapters/local/write-state.sh" "$ps_item" step=plan >/dev/null
+  record set "$ps_item" step=plan >/dev/null
   ps_out="$("$P/scripts/next.sh" "$ps_item" --json)"; ps_rep="$(printf '%s' "$ps_out" | jget reports)"
   printf '# plan\nDecomposition: %s\n' "$ps_mode" > "$ps_rep/plan.md"
   for ps_kid in "$@"; do "$P/scripts/new.sh" task "$ps_kid" --size S --parent "$ps_item" --body x >/dev/null 2>&1; done
@@ -3072,13 +3117,13 @@ check "new: the inheritance is said on stderr" grep -q "$k1 takes priority P1, a
 check "new: a child that names its own priority keeps it, and still takes the area" [ "$(sread "$k2" priority) $(sread "$k2" area)" = "P0 Bots" ]
 check "local: an item counts its open children" [ "$(sread "$par" open_children)" = 2 ]
 "$P/scripts/advance.sh" "$par" > "$work/split.out" 2>&1; code=$?
-check "split: a plan step ending in tracker tasks with children splits the item (exit 4)" sh -c "[ $code -eq 4 ] && [ \"\$('$P/adapters/local/read.sh' '$par' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; print(s[\"step\"], s[\"gate\"])')\" = 'split decomposition' ]"
-check "split: the decomposition gate tells the owner how to keep it whole" grep -q 'To keep it whole instead, close its children, then clear the gate' .flow/gates/local-task-1.json
-check "split: the parent's clean worktree goes back to the pool" sh -c "[ ! -f '$wp/.flow/claim.json' ] && [ -z \"\$('$P/scripts/steward.sh' find '$par')\" ] && [ -z \"\$('$P/adapters/local/read.sh' '$par' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"worktree\"])')\" ]"
+check "split: a plan step ending in tracker tasks with children splits the item (exit 4)" sh -c "[ $code -eq 4 ] && [ \"\$('$P/scripts/state.sh' read '$par' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; print(s[\"step\"], s[\"gate\"])')\" = 'split decomposition' ]"
+check_all "split: the decomposition gate tells the owner how to keep it whole" 'record get "$par" gate.message | grep -q "To keep it whole instead, close its children, then clear the gate"'
+check "split: the parent's clean worktree goes back to the pool" sh -c "[ ! -f '$wp/.flow/claim.json' ] && [ -z \"\$('$P/scripts/steward.sh' find '$par')\" ] && [ -z \"\$('$P/scripts/state.sh' get '$par' worktree)\" ]"
 check "split: a branch with commits past the base is kept, and the event says so" sh -c "git show-ref --verify --quiet refs/heads/flow/local-task-1 && grep -q '	$par	split	.*released app-wt-1; flow/local-task-1 keeps its 1 commit(s) past main' .flow/events.log"
 check "split: the parent is commented on" grep -q 'Split: split into 2 open child item(s)' .flow/items/task/1.md
 "$P/scripts/gate.sh" clear "$par" "go" > "$work/split.out" 2>&1
-check "split: clearing the gate with children open leaves it split" sh -c "[ \"\$('$P/adapters/local/read.sh' '$par' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = split ] && grep -q 'run next' '$work/split.out'"
+check "split: clearing the gate with children open leaves it split" sh -c "[ \"\$('$P/scripts/state.sh' get '$par' step)\" = split ] && grep -q 'run next' '$work/split.out'"
 "$P/scripts/next.sh" "$par" > /dev/null 2> "$work/split.err"; code=$?
 check "split: next on the parent waits on its children (exit 4)" sh -c "[ $code -eq 4 ] && grep -q 'is split and waits on its 2 open child item(s)' '$work/split.err'"
 check "split: the parent is never ready, the children are" sh -c "'$P/adapters/local/list-ready.sh' | python3 -c 'import json,sys; ids=[i[\"id\"] for i in json.load(sys.stdin)]; assert \"$par\" not in ids and \"$k1\" in ids and \"$k2\" in ids, ids'"
@@ -3093,20 +3138,20 @@ wh="$("$P/scripts/new.sh" task "Keep me whole" --size M --body x)"
 plan_step "$wh" "tracker tasks" '{"status":"gate","gate":"decomposition","message":"One child."}' "Whole child" >/dev/null
 "$P/scripts/advance.sh" "$wh" >/dev/null 2>&1
 "$P/adapters/local/close.sh" "$(grep -l 'title: Whole child' .flow/items/task/*.md | sed 's|.*/\([0-9]*\)\.md|local:task/\1|')" >/dev/null
-check "split: an owner who closed the children and cleared the gate gets the plan step back" sh -c "'$P/scripts/gate.sh' clear '$wh' 'keep it whole' | grep -q 'whole again' && [ \"\$('$P/adapters/local/read.sh' '$wh' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = plan ]"
+check "split: an owner who closed the children and cleared the gate gets the plan step back" sh -c "'$P/scripts/gate.sh' clear '$wh' 'keep it whole' | grep -q 'whole again' && [ \"\$('$P/scripts/state.sh' get '$wh' step)\" = plan ]"
 wwh="$("$P/scripts/steward.sh" claim "$wh")"
 "$P/scripts/new.sh" task "Follow-up of a whole item" --size S --parent "$wh" --body x >/dev/null 2>&1
 "$P/scripts/steward.sh" health >/dev/null 2>&1
-check "split: a kept-whole item with its old tracker-tasks plan and a new child is not split again" sh -c "[ -f '$wwh/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$wh' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = plan ] && '$P/scripts/steward.sh' split '$wh' | grep -q 'the owner kept it whole'"
+check "split: a kept-whole item with its old tracker-tasks plan and a new child is not split again" sh -c "[ -f '$wwh/.flow/claim.json' ] && [ \"\$('$P/scripts/state.sh' get '$wh' step)\" = plan ] && '$P/scripts/steward.sh' split '$wh' | grep -q 'the owner kept it whole'"
 wout="$("$P/scripts/next.sh" "$wh" --json)"; wrep="$(printf '%s' "$wout" | jget reports)"
 printf '# plan\nDecomposition: tracker tasks (rewritten after the owner kept it whole)\n' > "$wrep/plan.md"
 printf '{"status":"done","summary":"two PRs after all"}\n' > "$wrep/plan.json"
 "$P/scripts/advance.sh" "$wh" >/dev/null 2>&1
-check "split: once the plan step rewrites plan.md the mark is gone and the split stands" [ "$(sread "$wh" state.step)" = split ]
+check "split: once the plan step rewrites plan.md the mark is gone and the split stands" [ "$(record get "$wh" step)" = split ]
 am="$("$P/scripts/new.sh" task "Asks first" --size M --body x)"
 wam="$(plan_step "$am" "tracker tasks" '{"status":"gate","gate":"ambiguity","message":"1. Which base?"}' "Asking child")"
 "$P/scripts/advance.sh" "$am" >/dev/null 2>&1
-check "split: a plan step stopping at an ambiguity gate does not split" sh -c "[ -f '$wam/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$am' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; print(s[\"step\"], s[\"gate\"])')\" = 'plan ambiguity' ]"
+check "split: a plan step stopping at an ambiguity gate does not split" sh -c "[ -f '$wam/.flow/claim.json' ] && [ \"\$('$P/scripts/state.sh' read '$am' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; print(s[\"step\"], s[\"gate\"])')\" = 'plan ambiguity' ]"
 "$P/scripts/gate.sh" clear "$am" "main" >/dev/null 2>&1; "$P/scripts/steward.sh" release "$am" --force >/dev/null 2>&1
 # A child filed by hand and a plan in local phases (the gate raised before the planner made any):
 # the owner's answer "keep it whole" never splits it.
@@ -3114,7 +3159,7 @@ lp="$("$P/scripts/new.sh" task "Local phases" --size M --body x)"
 wl="$(plan_step "$lp" "local phases" '{"status":"gate","gate":"decomposition","message":"Approve the split before the items are created."}' "Stray follow-up")"
 "$P/scripts/advance.sh" "$lp" >/dev/null 2>&1
 "$P/scripts/gate.sh" clear "$lp" "keep it whole" >/dev/null 2>&1
-check "split: children exist but the plan is not tracker tasks and the owner said keep it whole: not split" sh -c "[ -f '$wl/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$lp' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = plan ]"
+check "split: children exist but the plan is not tracker tasks and the owner said keep it whole: not split" sh -c "[ -f '$wl/.flow/claim.json' ] && [ \"\$('$P/scripts/state.sh' get '$lp' step)\" = plan ]"
 check "split: the steward refuses a plan that is not tracker tasks" sh -c "! '$P/scripts/steward.sh' split '$lp' | grep -q released && '$P/scripts/steward.sh' split '$lp' | grep -q 'does not say tracker tasks'"
 "$P/scripts/steward.sh" release "$lp" --force >/dev/null 2>&1
 # A dirty worktree is never reset: it stays claimed, the claim says split, and the event says why.
@@ -3122,7 +3167,7 @@ dp="$("$P/scripts/new.sh" task "Dirty split" --size M --body x)"
 wd="$(plan_step "$dp" "tracker tasks" '{"status":"done","summary":"two PRs"}' "Dirty child")"
 printf 'wip\n' > "$wd/wip.txt"
 "$P/scripts/advance.sh" "$dp" >/dev/null 2>&1; code=$?
-check "split: a plan step done in tracker tasks splits with no gate (exit 4)" sh -c "[ $code -eq 4 ] && [ \"\$('$P/adapters/local/read.sh' '$dp' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; print(s[\"step\"], s[\"gate\"])')\" = 'split none' ]"
+check "split: a plan step done in tracker tasks splits with no gate (exit 4)" sh -c "[ $code -eq 4 ] && [ \"\$('$P/scripts/state.sh' read '$dp' | python3 -c 'import json,sys; s=json.load(sys.stdin)[\"state\"]; print(s[\"step\"], s[\"gate\"])')\" = 'split none' ]"
 check "split: a dirty worktree is kept, its change untouched, the claim says split, and the event says why" sh -c "[ -f '$wd/wip.txt' ] && [ \"\$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[\"step\"])' '$wd/.flow/claim.json')\" = split ] && grep -q '	$dp	split	.*is kept: it has uncommitted changes' .flow/events.log"
 lines="$(grep -c "	$dp	split	" .flow/events.log)"
 "$P/scripts/steward.sh" split "$dp" >/dev/null; "$P/scripts/steward.sh" health > "$work/split.out" 2>&1
@@ -3141,27 +3186,27 @@ check "health: once the session is gone the split is released" [ ! -f "$wv/.flow
 # A parent split before 1.19.0: step plan, the gate long cleared, still claimed.
 op="$("$P/scripts/new.sh" task "Old split" --size M --body x)"
 wo="$(plan_step "$op" "tracker tasks" '{"status":"done"}' "Old child")"
-rm -f .flow/runs/local-task-*.json
-"$P/adapters/local/write-state.sh" "$op" step=plan gate=none answered=decomposition
+end_runs
+record set "$op" step=plan gate=none answered=decomposition
 "$P/scripts/steward.sh" health > "$work/split.out" 2>&1
-check "health: a parent split before 1.19.0 is finished: step split, worktree released" sh -c "[ ! -f '$wo/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$op' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = split ]"
+check "health: a parent split before 1.19.0 is finished: step split, worktree released" sh -c "[ ! -f '$wo/.flow/claim.json' ] && [ \"\$('$P/scripts/state.sh' get '$op' step)\" = split ]"
 # An item at implement with the decomposition answer left over and a follow-up child: untouched.
 fp="$("$P/scripts/new.sh" task "Has a follow-up" --size M --body x)"
 wf="$(plan_step "$fp" "tracker tasks" '{"status":"done"}')"
-rm -f .flow/runs/local-task-*.json
-"$P/adapters/local/write-state.sh" "$fp" step=implement answered=decomposition
+end_runs
+record set "$fp" step=implement answered=decomposition
 "$P/scripts/new.sh" task "Follow-up" --size S --parent "$fp" --body x >/dev/null 2>&1
 "$P/scripts/steward.sh" health > "$work/split.out" 2>&1
-check "health: an item at implement with a follow-up child is not split" sh -c "[ -f '$wf/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$fp' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = implement ]"
+check "health: an item at implement with a follow-up child is not split" sh -c "[ -f '$wf/.flow/claim.json' ] && [ \"\$('$P/scripts/state.sh' get '$fp' step)\" = implement ]"
 # The implement step finds open children in tracker-tasks mode: it splits, and advance keeps it split.
 "$P/scripts/next.sh" "$fp" >/dev/null 2>&1
 "$P/scripts/steward.sh" split "$fp" > "$work/split.out" 2>&1
 check "split: during a run the worktree stays" sh -c "[ -f '$wf/.flow/claim.json' ] && grep -q 'is kept: a run is in flight' '$work/split.out'"
 "$P/scripts/advance.sh" "$fp" --status done --summary "the children are open" >/dev/null 2>&1; code=$?
-check "split: the implement step's result does not move a split item, and the run's end releases it" sh -c "[ $code -eq 4 ] && [ ! -f '$wf/.flow/claim.json' ] && [ \"\$('$P/adapters/local/read.sh' '$fp' | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"state\"][\"step\"])')\" = split ]"
+check "split: the implement step's result does not move a split item, and the run's end releases it" sh -c "[ $code -eq 4 ] && [ ! -f '$wf/.flow/claim.json' ] && [ \"\$('$P/scripts/state.sh' get '$fp' step)\" = split ]"
 # Under a gate: uncommitted changes, and threads awaiting a reply at the merge gate, are said once.
 mg="$("$P/scripts/new.sh" task "At the merge gate" --size S --body x)"; wm="$("$P/scripts/steward.sh" claim "$mg")"
-"$P/adapters/local/write-state.sh" "$mg" step=pr gate=merge pr=https://gh/pull/90
+record set "$mg" step=pr gate=merge pr=https://gh/pull/90
 printf 'half a fix\n' > "$wm/half.txt"
 python3 - "$FAKE_GH_DIR/issues.json" <<'PY4'
 import json, sys
@@ -3175,8 +3220,7 @@ check "health: a gated item with uncommitted changes is said once, the changes u
 check "health: threads awaiting a reply at the merge gate are said once" sh -c "[ \"\$(grep -c '$mg: PR #90 has 1 unresolved review thread(s) awaiting a reply while $mg waits at the merge gate' '$work/split.out')\" = 1 ]"
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['threads']=[]; json.dump(d, open(p,'w'))"
 # At the merge gate, a PR still in review waits on its reviewers, not on the owner.
-mgate=".flow/gates/$(item_slug "$mg").json"
-printf '{"item":"%s","gate":"merge","message":"Merge the PR","time":"2026-10-01T00:00:00Z","host":"t"}\n' "$mg" > "$mgate"
+record set "$mg" "gate:=$(json_obj gate=merge "message=Merge the PR" time=2026-10-01T00:00:00Z host=t)"
 review_pr() { # review_pr <decision> <codex reply or -> [<latest review state>]: one @codex request two hours old
   python3 - "$FAKE_GH_DIR/issues.json" "$@" <<'PY5'
 import json, sys, time
@@ -3224,11 +3268,11 @@ check "HealthGates_ClosedItemMergeGateInReview_SaidAsADefect: a closed item's me
 check "HealthClaim_ClosedItemMergeGateInReview_KeepsNoReviewRecord: the closed item's PR gets no review record the console would show as in review" [ ! -f .flow/reviews/90.review.json ]
 sed 's/^status: closed$/status: open/; /^closed: /d' "$mg_file" > "$mg_file.tmp" && mv "$mg_file.tmp" "$mg_file"
 "$P/scripts/steward.sh" health > "$work/review.out" 2>&1 # reopened: its review record is back for the check below
-"$P/adapters/local/write-state.sh" "$mg" gate=none; rm -f "$mgate"
+record set "$mg" gate=none
 "$P/scripts/steward.sh" health > "$work/review.out" 2>&1
 check "health: the review record goes once the PR leaves the merge gate" [ ! -f .flow/reviews/90.review.json ]
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); [d['pr'].pop(k, None) for k in ('reviewDecision','latestReviews','reviewRequests','rest_comments','reviews','timeline')]; json.dump(d, open(p,'w'))"
-"$P/adapters/local/write-state.sh" "$mg" gate=merge
+record set "$mg" gate=merge
 # A worktree left dirty by a pass cut off before 1.19.0 (no note): the next pass is told to continue.
 python3 -c "import json; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'].update(headRefName='flow/gh-77', updatedAt='2026-10-25T01:00:00Z'); json.dump(d, open(p,'w'))"
 mkdir -p "$wm/.flow/reports" && printf '{"item":"gh#77","branch":"flow/gh-77","base":"main"}\n' > "$wm/.flow/claim.json"
@@ -3282,12 +3326,12 @@ check "new: an unreadable parent is warned about, and the child is still made" s
 unset FLOW_HEALTH_PROCS
 
 echo "gate list --json"
-mkdir -p "$work/gates" && cd "$work/gates" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
+mkdir -p "$work/gate-list" && cd "$work/gate-list" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach ../app-wt-2
-mkdir -p .flow/gates ../app-wt-1/.flow
-printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../app-wt-1\n  - ../app-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
+mkdir -p .flow ../app-wt-1/.flow
+printf 'adapters:\n  default: local\nbase: main\ntracker_state: none\npool:\n  - ../app-wt-1\n  - ../app-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
 printf '{"item":"local:task/7"}\n' > ../app-wt-1/.flow/claim.json
-json_obj gate=ambiguity item=local:task/7 "message=Two choices.
+record set local:task/7 "gate:=$(json_obj gate=ambiguity "message=Two choices.
 1. Keep the old name? Recommended: yes, because callers depend on it.
 2) Same for the tap
    and the depth pass?
@@ -3296,43 +3340,42 @@ json_obj gate=ambiguity item=local:task/7 "message=Two choices.
 3. Anything else?
    Recommended reading is plan.md.
 4. Split the type?
-   - Recommended: no." time=2026-10-25T08:00:00Z host=claude > .flow/gates/local-task-7.json
-json_obj gate=plan-approval item=local:task/3 "message=The plan is ready.
-Read plan.md." time=2026-10-24T09:00:00Z host=shell > .flow/gates/local-task-3.json
+   - Recommended: no." time=2026-10-25T08:00:00Z host=claude)"
+record set local:task/3 "gate:=$(json_obj gate=plan-approval "message=The plan is ready.
+Read plan.md." time=2026-10-24T09:00:00Z host=shell)"
 check "gate list: the plain output is unchanged" [ "$("$P/scripts/gate.sh" list)" = "$(printf '2026-10-24T09:00:00Z\tlocal:task/3\tplan-approval\tThe plan is ready.\n2026-10-25T08:00:00Z\tlocal:task/7\tambiguity\tTwo choices.')" ]
 "$P/scripts/gate.sh" list --bogus >/dev/null 2>&1; code=$?
 check "gate list: an unknown flag exits 2" [ "$code" -eq 2 ]
 "$P/scripts/gate.sh" list --json extra >/dev/null 2>&1; code=$?
 check "gate list: an extra argument exits 2" [ "$code" -eq 2 ]
-json_obj gate=escalation item=local:task/9 message=42 time=20261025 host=shell > .flow/gates/local-task-9.json
-cp .flow/gates/local-task-9.json "$work/gates/42.json"
-printf '{"gate":"merge","message":"Merge it.","time":"2026-10-25T07:00:00Z"}\n' > .flow/gates/no-item.json
-printf 'not json\n' > .flow/gates/broken.json
-gj="$(FLOW_NOW=2026-10-25T09:00:00Z "$P/scripts/gate.sh" list --json 2>"$work/gates/err")"; code=$?
+json_obj gate=escalation message=42 time=20261025 host=shell > "$work/gate-list/42.json"
+record set local:task/9 "gate:=$(cat "$work/gate-list/42.json")"
+broken_record="$(record path local:task/11)"; printf 'not json\n' > "$broken_record"
+gj="$(FLOW_NOW=2026-10-25T09:00:00Z "$P/scripts/gate.sh" list --json 2>"$work/gate-list/err")"; code=$?
 gq() { printf '%s' "$gj" | jget "$1"; }
 check "gate json: exits 0 past a broken record" [ "$code" -eq 0 ]
-check "gate json: a broken record is named on stderr" grep -q 'broken.json' "$work/gates/err"
-check "gate json: every valid record is listed" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 4 ]
-check "gate json: each gate has the fields the console reads" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)[2]))')" = "item,gate,message,time,host,worktree,age_seconds,questions,options,raised_by,answered_by,condition,footer" ]
-check "gate json: oldest first" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(g["item"]) for g in json.load(sys.stdin)))')" = "local:task/3,None,local:task/7,local:task/9" ]
+check "CorruptGateRecord_IsNamedOnStderr: gate list --json names the record file that does not parse, because one bad record must never hide silently" grep -qF "$broken_record" "$work/gate-list/err"
+check "gate json: every valid record is listed" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = 3 ]
+check "gate json: each gate has the fields the console reads" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)[1]))')" = "item,gate,message,time,host,worktree,age_seconds,questions,options,raised_by,answered_by,condition,footer" ]
+check "gate json: oldest first" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(g["item"]) for g in json.load(sys.stdin)))')" = "local:task/3,local:task/7,local:task/9" ]
 check "gate json: the age of a day-old gate is against FLOW_NOW" [ "$(gq 0.age_seconds)" = 86400 ]
-check "gate json: the age of an hour-old gate is against FLOW_NOW" [ "$(gq 2.age_seconds)" = 3600 ]
-check "gate json: the claimed pool worktree" [ "$(gq 2.worktree)" = "$(cd ../app-wt-1 && pwd -P)" ]
+check "gate json: the age of an hour-old gate is against FLOW_NOW" [ "$(gq 1.age_seconds)" = 3600 ]
+check "gate json: the claimed pool worktree" [ "$(gq 1.worktree)" = "$(cd ../app-wt-1 && pwd -P)" ]
 check "gate json: no claim, worktree null" [ "$(gq 0.worktree)" = null ]
-check "gate json: no item, no worktree even beside a free one" [ "$(gq 1.worktree)" = null ]
-check "gate json: a digits-only message is a string" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(json.load(sys.stdin)[3]["message"] == "42")')" = True ]
-check "json_obj: a digits-only message is written as a string" [ "$(python3 -c 'import json,sys; print(repr(json.load(open(sys.argv[1]))["message"]))' "$work/gates/42.json")" = "'42'" ]
-check "gate json: a time that is no ISO time has no age" [ "$(gq 3.age_seconds)" = null ]
-check "gate json: one question per numbered line, dot or bracket" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(q["number"]) for q in json.load(sys.stdin)[2]["questions"]))')" = "1,2,3,4" ]
-check "gate json: an inline Recommended ends the question" [ "$(gq 2.questions.0.text)" = "Keep the old name?" ]
-check "gate json: an inline Recommended is the recommended answer" [ "$(gq 2.questions.0.recommended)" = "yes, because callers depend on it." ]
-check "gate json: a following line joins the question" [ "$(gq 2.questions.1.text)" = "Same for the tap and the depth pass?" ]
-check "gate json: a bold Recommended line, continued, is the recommended answer" [ "$(gq 2.questions.1.recommended)" = "the same, until a feel test says otherwise." ]
-check "gate json: Recommended without a colon is prose" [ "$(gq 2.questions.2.text)" = "Anything else? Recommended reading is plan.md." ]
-check "gate json: no Recommended line, recommended null" [ "$(gq 2.questions.2.recommended)" = null ]
-check "gate json: a listed Recommended line is the recommended answer" [ "$(gq 2.questions.3.recommended)" = "no." ]
+check "gate json: a digits-only message is a string" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(json.load(sys.stdin)[2]["message"] == "42")')" = True ]
+check "json_obj: a digits-only message is written as a string" [ "$(python3 -c 'import json,sys; print(repr(json.load(open(sys.argv[1]))["message"]))' "$work/gate-list/42.json")" = "'42'" ]
+check "gate json: a time that is no ISO time has no age" [ "$(gq 2.age_seconds)" = null ]
+check "gate json: one question per numbered line, dot or bracket" [ "$(printf '%s' "$gj" | python3 -c 'import json,sys; print(",".join(str(q["number"]) for q in json.load(sys.stdin)[1]["questions"]))')" = "1,2,3,4" ]
+check "gate json: an inline Recommended ends the question" [ "$(gq 1.questions.0.text)" = "Keep the old name?" ]
+check "gate json: an inline Recommended is the recommended answer" [ "$(gq 1.questions.0.recommended)" = "yes, because callers depend on it." ]
+check "gate json: a following line joins the question" [ "$(gq 1.questions.1.text)" = "Same for the tap and the depth pass?" ]
+check "gate json: a bold Recommended line, continued, is the recommended answer" [ "$(gq 1.questions.1.recommended)" = "the same, until a feel test says otherwise." ]
+check "gate json: Recommended without a colon is prose" [ "$(gq 1.questions.2.text)" = "Anything else? Recommended reading is plan.md." ]
+check "gate json: no Recommended line, recommended null" [ "$(gq 1.questions.2.recommended)" = null ]
+check "gate json: a listed Recommended line is the recommended answer" [ "$(gq 1.questions.3.recommended)" = "no." ]
 check "gate json: no numbered line, no questions" [ "$(gq 0.questions)" = "[]" ]
-rm .flow/gates/*.json
+for gated_item in local:task/7 local:task/3 local:task/9; do record set "$gated_item" gate=none; done
+rm -f "$broken_record"
 check "gate json: nothing pending, an empty array" [ "$("$P/scripts/gate.sh" list --json)" = "[]" ]
 
 echo "quiz: parse, grade, record and mark the draft ready (fake gh)"
@@ -3340,7 +3383,7 @@ mkdir -p "$work/quiz" && cd "$work/quiz" && git init -q -b main app && cd app &&
 git worktree add -q --detach ../q-wt-1
 mkdir -p .flow && printf 'adapters:\n  default: local\nbase: main\ngithub:\n  repo: acme/widgets\npool:\n  - ../q-wt-1\nnotify:\n  desktop: false\n' > .flow/config.yaml
 q1="$("$P/adapters/local/create.sh" task "Charge shot" --size M --body "Hold to power up.")"
-"$P/adapters/local/link-pr.sh" "$q1" https://github.com/acme/widgets/pull/90
+record set "$q1" pr=https://github.com/acme/widgets/pull/90
 qreports="$("$P/scripts/steward.sh" reports "$q1")"
 cat > "$qreports/quiz.md" <<'MD'
 <!-- flow:quiz -->
@@ -3392,7 +3435,7 @@ q2reports="$("$P/scripts/steward.sh" reports "$q2")"; cp "$qreports/quiz.md" "$q
 : > "$FAKE_GH_DIR/calls.log"
 qout="$("$P/scripts/quiz.sh" answer "$q2" 1b 2b 3a)"
 check "quiz answer: a pass with no PR records the pass and asks gh nothing" sh -c "printf '%s' \"$qout\" | grep -q 'quiz passed on $q2: 3 of 3 right\$' && ! grep -q 'pr ready' '$FAKE_GH_DIR/calls.log'"
-"$P/adapters/local/link-pr.sh" "$q2" --help >/dev/null
+record set "$q2" pr=--help
 : > "$FAKE_GH_DIR/calls.log"
 qout="$("$P/scripts/quiz.sh" answer "$q2" 1b 2b 3a)"
 check "quiz answer: a pr in the state that is not a number is not marked ready" sh -c "printf '%s' \"$qout\" | grep -q 'quiz passed on $q2: 3 of 3 right; .*not marked ready' && ! grep -q 'pr ready' '$FAKE_GH_DIR/calls.log'"
@@ -3409,23 +3452,26 @@ dn="$(FLOW_RUN_PID=4242 "$P/scripts/next.sh" --json 2>/dev/null)"
 check "next --json: a title of digits with a leading zero is the string" [ "$(printf '%s' "$dn" | jtype title)" = "str 0451" ]
 check "next --json: the review depth is a string" [ "$(printf '%s' "$dn" | jtype depth)" = "str quick" ]
 check "claim.json: a pool folder named 01 is the string" [ "$(jtype name < ../01/.flow/claim.json)" = "str 01" ]
-check "the run record: pid is a number" [ "$(jtype pid < ".flow/runs/$(item_slug "$d1").json")" = "int 4242" ]
-printf '{"status":"done","summary":"ok"}\n' > "$(jget reports < ".flow/runs/$(item_slug "$d1").json")/implement.json"
+check "the run record: pid is a number" [ "$(record get "$d1" run | jtype pid)" = "int 4242" ]
+printf '{"status":"done","summary":"ok"}\n' > "$(record get "$d1" run.reports)/implement.json"
 check "advance --json: attempts is a number" [ "$("$P/scripts/advance.sh" "$d1" --json 2>/dev/null | jtype attempts)" = "int 0" ]
-"$P/scripts/steward.sh" release "$d1" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+"$P/scripts/steward.sh" release "$d1" --force >/dev/null 2>&1; end_runs
 FLOW_RUN_PID=not-a-pid "$P/scripts/next.sh" --json >/dev/null 2>&1
-check "the run record: a pid that is no number is left out, the record still parses" [ "$(python3 -c 'import json,sys; print("pid" in json.load(sys.stdin))' < ".flow/runs/$(item_slug "$d1").json")" = False ]
-"$P/scripts/steward.sh" release "$d1" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+check "the run record: a pid that is no number is left out, the record still parses" [ "$(record get "$d1" run | python3 -c 'import json,sys; print("pid" in json.load(sys.stdin))')" = False ]
+"$P/scripts/steward.sh" release "$d1" --force >/dev/null 2>&1; end_runs
 FLOW_RUN_PID=0042 "$P/scripts/next.sh" --json >/dev/null 2>&1
-check "the run record: a pid with leading zeros is the number without them, not octal" [ "$(jtype pid < ".flow/runs/$(item_slug "$d1").json")" = "int 42" ]
+check "the run record: a pid with leading zeros is the number without them, not octal" [ "$(record get "$d1" run | jtype pid)" = "int 42" ]
 "$P/scripts/gate.sh" raise "$d1" escalation 007 >/dev/null 2>&1
-check "a gate raised with the message 007: the record parses, the message the string" [ "$(jtype message < ".flow/gates/$(item_slug "$d1").json")" = "str 007" ]
+check "a gate raised with the message 007: the record parses, the message the string" [ "$(record list gates "$d1" | jtype message)" = "str 007" ]
 check "gate list --json: the message 007 is the string" [ "$("$P/scripts/gate.sh" list --json | jtype 0.message)" = "str 007" ]
 # Records from before 1.20.2: a digits message is a number, and one with a leading zero does not parse.
-printf '{"gate":"merge","item":"local:task/98","message":42,"time":"2026-10-24T10:00:00Z","host":"shell"}\n' > .flow/gates/local-task-98.json
-printf '{"gate":"merge","item":"local:task/99","message":007,"time":"2026-10-24T10:00:00Z","host":"shell"}\n' > .flow/gates/local-task-99.json
+# Their items are on no tracker, so nothing is mirrored to one.
+printf 'tracker_state: none\n' >> .flow/config.yaml
+record set local:task/98 "gate:=$(json_obj gate=merge message:=42 time=2026-10-24T10:00:00Z host=shell)"
+old_record="$(record path local:task/99)"
+printf '{"gate":{"name":"merge","message":007,"time":"2026-10-24T10:00:00Z","host":"shell"}}\n' > "$old_record"
 check_all "board: an old gate with a number message shows, an old one that does not parse is skipped" 'b="$("$P/scripts/board.sh")" && printf "%s" "$b" | grep -q "local:task/98 (.*): 42" && printf "%s" "$b" | grep -q "escalation\*\* on $d1" && ! printf "%s" "$b" | grep -q "local:task/99"'
-rm -f .flow/gates/local-task-98.json .flow/gates/local-task-99.json
+record set local:task/98 gate=none; rm -f "$old_record"
 "$P/scripts/lesson.sh" other "$d1" 12345 >/dev/null
 check "a lesson whose text is 12345 is the string" [ "$(tail -1 .flow/lessons.jsonl | jtype text)" = "str 12345" ]
 mkdir -p "$work/nojq" && ln -sf "$(command -v python3)" "$work/nojq/python3"
@@ -3491,10 +3537,10 @@ lt="$("$P/scripts/new.sh" task "Cost large" --size L --body "## Acceptance
 - [ ] l")"
 out="$("$P/scripts/next.sh" "$mt" --json)"
 check_all "architect: an M task's design step runs no architect" '[ "$(printf "%s" "$out" | jget architect)" = no ] && grep -q "^- Architect: no (profile task-M)" "$(printf "%s" "$out" | jget brief)"'
-rm -f ".flow/runs/$(item_slug "$mt").json"
+end_run "$mt"
 out="$("$P/scripts/next.sh" "$lt" --json)"
 check_all "architect: an L task's design step runs the architect" '[ "$(printf "%s" "$out" | jget architect)" = yes ] && grep -q "^- Architect: yes (profile task-L)" "$(printf "%s" "$out" | jget brief)"'
-rm -f ".flow/runs/$(item_slug "$lt").json"
+end_run "$lt"
 check "architect: on for L tasks and epics only, a switch for every profile" python3 -c "import json,sys; p=json.load(open(sys.argv[1])); a=p['architect']; assert set(a)==set(p['profiles']) and [k for k in a if a[k]]==['task-L','epic'], a" "$P/profiles.json"
 check "architect: the plan skill reads the switch and runs no architect on no" sh -c "grep -q 'architect.<profile>' '$P/skills/plan/SKILL.md' && grep -q 'On no, spawn no architect' '$P/skills/plan/SKILL.md'"
 : > "$COST_LOG"
@@ -3518,7 +3564,7 @@ PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; export CLAUDE_CODE_PROMPT_CAC
 check "a prompt cache TTL the owner exported wins" grep -q 'claude	ttl=1h/5m' "$COST_LOG"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ../cost-wt-2\nnotify:\n  desktop: false\njobs:\n  claude:\n    effort: bogus\n' > .flow/config.yaml
 PATH="$cpath" "$P/templates/run-unattended.sh" claude --max-steps 1 > "$work/cost.out" 2>&1; code=$?
-check "a jobs effort the host does not take stops the loop before it claims an item" sh -c "[ $code = 2 ] && grep -q 'jobs.claude.effort is bogus' '$work/cost.out' && [ -z \"\$(ls .flow/runs/*.json 2>/dev/null)\" ]"
+check "a jobs effort the host does not take stops the loop before it claims an item" sh -c "[ $code = 2 ] && grep -q 'jobs.claude.effort is bogus' '$work/cost.out' && [ -z \"\$('$P/scripts/state.sh' list runs)\" ]"
 printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../cost-wt-1\n  - ../cost-wt-2\nnotify:\n  desktop: false\n' > .flow/config.yaml
 for it in "$mt" "$lt"; do "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$it" >/dev/null 2>&1; done
 cp .flow/config.yaml "$work/config.cost"
@@ -3536,9 +3582,9 @@ check_all "next job: --model and --effort reach the host for a step with no agen
 : > "$COST_LOG"
 PATH="$cpath" "$P/jobs/next.sh" claude "$ou" --max-steps 1 >/dev/null 2>&1
 check "next job: --model and --effort hold for their run only: the next run is on jobs.claude again" grep -q "^claude	.*--model claude-jobs-x --effort low" "$COST_LOG"
-: > "$COST_LOG"; runs_before="$(wc -l < .flow/log/runs.jsonl | tr -d ' ')"; claims_before="$(ls .flow/runs)"
+: > "$COST_LOG"; runs_before="$(wc -l < .flow/log/runs.jsonl | tr -d ' ')"; claims_before="$(record list runs)"
 PATH="$cpath" "$P/jobs/next.sh" claude --max-steps 1 --effort bogus > "$work/cost.out" 2>&1; code=$?
-check "next job: an --effort claude does not take is refused, exit 2, before the run touches the tracker" sh -c "[ $code = 2 ] && grep -q 'flow: --effort is bogus; claude takes low, medium, high, xhigh or max, or empty for its default' '$work/cost.out' && [ ! -s '$COST_LOG' ] && [ \"\$(wc -l < .flow/log/runs.jsonl | tr -d ' ')\" = $runs_before ] && [ \"\$(ls .flow/runs)\" = '$claims_before' ]"
+check "next job: an --effort claude does not take is refused, exit 2, before the run touches the tracker" sh -c "[ $code = 2 ] && grep -q 'flow: --effort is bogus; claude takes low, medium, high, xhigh or max, or empty for its default' '$work/cost.out' && [ ! -s '$COST_LOG' ] && [ \"\$(wc -l < .flow/log/runs.jsonl | tr -d ' ')\" = $runs_before ] && [ \"\$('$P/scripts/state.sh' list runs)\" = '$claims_before' ]"
 PATH="$cpath" "$P/jobs/next.sh" codex --max-steps 1 --effort max > "$work/cost.out" 2>&1; code=$?
 check "next job: --effort is checked for the host named: max is a claude effort, not a codex one" sh -c "[ $code = 2 ] && grep -q 'flow: --effort is max; codex takes low, medium, high or xhigh' '$work/cost.out' && [ ! -s '$COST_LOG' ] && [ \"\$(wc -l < .flow/log/runs.jsonl | tr -d ' ')\" = $runs_before ]"
 for it in "$ot" "$ou"; do "$P/scripts/steward.sh" release "$it" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$it" >/dev/null 2>&1; done
@@ -3548,15 +3594,15 @@ st="$("$P/scripts/new.sh" task "Spends" --size S --body "## Acceptance
 : > "$COST_LOG"
 FAKE_HOST=budget PATH="$cpath" "$P/templates/run-unattended.sh" claude "$st" --max-steps 3 > "$work/cost.out" 2>&1; code=$?
 st_step="$(steprun "$st" step)"
-check_all "a spend limit raises the escalation gate at once, naming the cause and the host's line" '[ "$code" = 4 ] && [ "$("$P/adapters/local/read.sh" "$st" | jget state.gate)" = escalation ] && grep -q "claude failed on a spend limit: API Error: 422 .*ExceededBudget" ".flow/gates/$(item_slug "$st").json"'
-check "a spend limit is one session: no retry, and no run left for health to resume" sh -c "[ \"\$(grep -c . '$COST_LOG')\" = 1 ] && [ ! -f '.flow/runs/$(item_slug "$st").json' ]"
+check_all "a spend limit raises the escalation gate at once, naming the cause and the host's line" '[ "$code" = 4 ] && [ "$(record get "$st" gate)" = escalation ] && record get "$st" gate.message | grep -q "claude failed on a spend limit: API Error: 422 .*ExceededBudget"'
+check "a spend limit is one session: no retry, and no run left for health to resume" sh -c "[ \"\$(grep -c . '$COST_LOG')\" = 1 ] && [ '$(running "$st")' = no ]"
 check_all "the stop names the cause and the item whose gate holds it" '[ "$(jget cause < .flow/log/claude.stopped)" = spend-limit ] && [ "$(jget item < .flow/log/claude.stopped)" = "$st" ]'
 check_all "the step line carries the cause" '[ "$(lastrun result | cut -d: -f1)" = spend-limit ]'
 s2="$("$P/scripts/new.sh" task "Waits" --size S --body "## Acceptance
 - [ ] w")"
 : > "$COST_LOG"
 PATH="$cpath" "$P/templates/run-unattended.sh" claude --max-steps 1 > "$work/cost.out" 2>&1; code=$?
-check "a stopped host starts no new session: the next loop exits 4 before it picks" sh -c "[ $code = 4 ] && [ ! -s '$COST_LOG' ] && grep -q 'claude is stopped since .* on a spend limit' '$work/cost.out' && [ -z \"\$(ls .flow/runs/*.json 2>/dev/null)\" ]"
+check "a stopped host starts no new session: the next loop exits 4 before it picks" sh -c "[ $code = 4 ] && [ ! -s '$COST_LOG' ] && grep -q 'claude is stopped since .* on a spend limit' '$work/cost.out' && [ -z \"\$('$P/scripts/state.sh' list runs)\" ]"
 PATH="$cpath" sh -c '. "$FLOW_PLUGIN/lib/host.sh"; host_run claude . hi' > /dev/null 2>"$work/cost.err"; code=$?
 check "a stopped host starts no session for a job either: host_run refuses, exit 75" sh -c "[ $code = 75 ] && [ ! -s '$COST_LOG' ] && grep -q 'until the gate on $st clears' '$work/cost.err'"
 # jobrun <job> <field>: the job's newest line in runs.jsonl.
@@ -3635,12 +3681,13 @@ mkdir -p "$window_loop_folder" && git init -q -b main "$window_loop_repo"
 window_attempts_max="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["max_attempts"])' "$P/profiles.json")"
 window_loop_item="$(cd "$window_loop_repo" && "$P/scripts/new.sh" task "Cut by the 5-hour window" --size S --body "## Acceptance
 - [ ] w")"
-window_loop_attempts="$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)"
+window_loop_attempts="$(cd "$window_loop_repo" && record read "$window_loop_item" | jget state.attempts)"
 (cd "$window_loop_repo" && FAKE_HOST=window FAKE_HOST_SAID="$window_seen" PATH="$cpath" "$P/templates/run-unattended.sh" claude "$window_loop_item" --max-steps "$window_attempts_max" > "$work/windowloop.out" 2>&1)
 window_loop_stopped="$window_loop_repo/.flow/log/claude.stopped"
-window_loop_gate="$window_loop_repo/.flow/gates/$(item_slug "$window_loop_item").json"
+# window_loop_record <command> <argument>...: the flow record of the window loop's project.
+window_loop_record() { (cd "$window_loop_repo" && record "$@"); }
 check "TimeWindowLimit_KeepsAttemptCount: a step cut by a time-window limit keeps its attempt count, because the limit is the host's, not the step's" \
-  [ "$(cd "$window_loop_repo" && "$P/adapters/local/read.sh" "$window_loop_item" | jget state.attempts)" = "$window_loop_attempts" ]
+  [ "$(cd "$window_loop_repo" && record get "$window_loop_item" attempts)" = "$window_loop_attempts" ]
 check "TimeWindowLimit_RecordsOneSession: a time-window limit is one step session in runs.jsonl, no retry, because every retry before the reset fails the same way" \
   python3 -I -c 'import json,sys; sessions=[json.loads(line) for line in open(sys.argv[1]) if line.strip()]; sys.exit([session["item"] for session in sessions] != [sys.argv[2]])' "$window_loop_repo/.flow/log/runs.jsonl" "$window_loop_item"
 check_all "TimeWindowLimit_StopsHostOnSpendLimit: the host is stopped on a spend limit, because no session can run until the window resets" \
@@ -3648,14 +3695,14 @@ check_all "TimeWindowLimit_StopsHostOnSpendLimit: the host is stopped on a spend
 check_all "TimeWindowLimit_StopsHostWithItsLine: the stopped host keeps the host's line, because it says when the window resets" \
   '[ "$(jget said < "$window_loop_stopped")" = "$window_seen" ]'
 check_all "TimeWindowLimit_GateQuotesHostLine: the item's gate quotes the host's line, because it says when the window resets" \
-  'jget message < "$window_loop_gate" | grep -qF "$window_seen"'
+  'window_loop_record get "$window_loop_item" gate.message | grep -qF "$window_seen"'
 check_all "TimeWindowLimit_GateIsNotAttemptLimit: the item's gate is not the attempt limit's escalation, because no attempt failed" \
-  '[ -f "$window_loop_gate" ] && ! jget message < "$window_loop_gate" | grep -qE "Step [a-z-]+ failed [0-9]+ times"'
+  '[ -n "$(window_loop_record list gates "$window_loop_item")" ] && ! window_loop_record get "$window_loop_item" gate.message | grep -qE "Step [a-z-]+ failed [0-9]+ times"'
 
 echo "unattended loop: a pick works on after a gate"
 # A plugin copy whose next.sh hands out the items in $GL/queue (a named one as asked) and whose
 # advance.sh exits with the code in $GL/advance.<slug> (0 when none); the gate it stands for is the
-# record the test writes in .flow/gates. The hosts are the stubs above.
+# gate the test raises in the item's record. The hosts are the stubs above.
 GL="$work/gl"; export GL; mkdir -p "$GL"
 glp="$work/plugin-gl"; cp -R "$P" "$glp"; rm -rf "$glp/evals/results"
 cat > "$glp/scripts/next.sh" <<'STUB'
@@ -3677,12 +3724,13 @@ chmod +x "$glp/scripts/next.sh" "$glp/scripts/advance.sh"
 gi1="$("$P/scripts/new.sh" task "Gate one" --size S --body x)"; gi2="$("$P/scripts/new.sh" task "Gate two" --size S --body x)"
 # gl_case <items for the queue> -- <item>=<advance exit>[:<gate>]...: a fresh queue, calls and gates.
 gl_case() {
-  : > "$GL/calls"; rm -f "$GL"/advance.* .flow/gates/*.json; : > "$GL/queue"
+  : > "$GL/calls"; rm -f "$GL"/advance.*; : > "$GL/queue"
+  for gated_item in "$gi1" "$gi2"; do record set "$gated_item" gate=none; done
   while [ $# -gt 0 ] && [ "$1" != -- ]; do echo "$1" >> "$GL/queue"; shift; done; shift
   for spec in "$@"; do
     it="${spec%%=*}"; rest="${spec#*=}"; slug="$(item_slug "$it")"
     echo "${rest%%:*}" > "$GL/advance.$slug"
-    case "$rest" in *:*) mkdir -p .flow/gates; printf '{"gate":"%s","item":"%s"}\n' "${rest#*:}" "$it" > ".flow/gates/$slug.json" ;; esac
+    case "$rest" in *:*) record set "$it" "gate:=$(json_obj "gate=${rest#*:}")" ;; esac
   done
 }
 gl_calls() { tr '\n' '|' < "$GL/calls"; }
@@ -3706,7 +3754,7 @@ check_all "unattended loop: a host stop on a pick ends the run at its escalation
 gl_case "$gi1" "$gi2" -- "$gi1=4:plan-approval" "$gi2=4:merge"
 FLOW_PLUGIN="$glp" PATH="$cpath" "$glp/jobs/next.sh" claude --max-steps 5 >/dev/null 2>&1; code=$?
 check_all "next job: a run that worked past a gate says it stopped at a gate, with every step it ran" '[ "$code" = 0 ] && tail -1 .flow/log/next.log | grep -q "stopped at a gate (see .*/gates), 2 steps\$"'
-rm -f .flow/gates/*.json
+for gated_item in "$gi1" "$gi2"; do record set "$gated_item" gate=none; done
 for it in "$gi1" "$gi2"; do "$P/adapters/local/close.sh" "$it" >/dev/null 2>&1; done
 
 echo "reserve: the owner's own worktree"
@@ -3785,15 +3833,15 @@ check_all "claim: once the holder is gone it takes the free worktree and frees t
 echo "a cleared gate whose answer no step owns (gh#157)"
 # An item past its last step, with no PR: no step acts on the answer, so the clear fails out loud
 # and the gate stays.
-dn="$("$P/adapters/local/create.sh" task "Done, its PR merged by hand" --size S)"; "$P/adapters/local/write-state.sh" "$dn" step=done
+dn="$("$P/adapters/local/create.sh" task "Done, its PR merged by hand" --size S)"; record set "$dn" step=done
 "$P/scripts/gate.sh" raise "$dn" ambiguity "1. Merge main into epic/525 first?" >/dev/null 2>&1
 "$P/scripts/gate.sh" clear "$dn" "Go with a, merge main into epic/525" > "$work/answer.out" 2>&1; code=$?
-check_all "clear at done with no PR: refused out loud, the gate and its record stay" '[ "$code" = 1 ] && grep -q "no step acts on this answer" "$work/answer.out" && [ "$("$P/adapters/local/read.sh" "$dn" | jget state.gate)" = ambiguity ] && [ -f .flow/gates/$(item_slug "$dn").json ] && [ -z "$("$P/adapters/local/read.sh" "$dn" | jget state.answer)" ]'
+check_all "clear at done with no PR: refused out loud, the gate and its record stay" '[ "$code" = 1 ] && grep -q "no step acts on this answer" "$work/answer.out" && [ "$(record get "$dn" gate)" = ambiguity ] && [ -n "$(record list gates "$dn")" ] && [ -z "$(record get "$dn" answer)" ]'
 "$P/scripts/gate.sh" clear "$dn" --back "Merge it again" > "$work/answer.out" 2>&1; code=$?
-check_all "send back at done: refused, no step runs the done step again" '[ "$code" = 1 ] && grep -q "no step to send back to" "$work/answer.out" && [ "$("$P/adapters/local/read.sh" "$dn" | jget state.gate)" = ambiguity ]'
+check_all "send back at done: refused, no step runs the done step again" '[ "$code" = 1 ] && grep -q "no step to send back to" "$work/answer.out" && [ "$(record get "$dn" gate)" = ambiguity ]'
 "$P/scripts/gate.sh" clear "$dn" > "$work/answer.out" 2>&1; code=$?
-check_all "clear at done with no answer (done by hand): cleared, nothing waits" '[ "$code" = 0 ] && [ "$("$P/adapters/local/read.sh" "$dn" | jget state.gate)" = none ] && [ -z "$("$P/adapters/local/read.sh" "$dn" | jget state.answer_pending)" ] && ! grep -q "run next" "$work/answer.out"'
-"$P/adapters/local/write-state.sh" "$dn" step=plan answer_pending=next answered_at=2026-01-01T00:00:00Z
+check_all "clear at done with no answer (done by hand): cleared, nothing waits" '[ "$code" = 0 ] && [ "$(record get "$dn" gate)" = none ] && [ -z "$(record get "$dn" answer_pending)" ] && ! grep -q "run next" "$work/answer.out"'
+record set "$dn" step=plan answer_pending=next answered_at=2026-01-01T00:00:00Z
 check "board: an answer no run took past the gate reminder is named in Health" sh -c "'$P/scripts/board.sh' | grep -q '^- $dn: the answer to its gate has waited .* on next\$'"
 "$P/adapters/local/close.sh" "$dn" >/dev/null
 
@@ -3811,19 +3859,18 @@ printf 'adapters:\n  default: local\nbase: main\ngithub:\n  repo: acme/widgets\n
 export FAKE_GH_DIR="$work/gate-options-gh"; mkdir -p "$FAKE_GH_DIR"; cp "$P/tests/_fake_gh.py" "$FAKE_GH_DIR/"
 printf '{"issues": [], "pr": {"number": 90, "state": "OPEN", "isDraft": false, "mergedAt": null, "url": "https://github.com/acme/widgets/pull/90", "headRefName": "flow/local-task-1", "baseRefName": "main", "mergeable": "MERGEABLE", "updatedAt": "2026-11-09T10:00:00Z", "headRefOid": "c0ffee"}}\n' > "$FAKE_GH_DIR/issues.json"
 oitem() { "$P/adapters/local/create.sh" task "$1" --size S --body "x"; }
-ostate() { "$P/adapters/local/read.sh" "$1" | jget "state.$2"; }
+ostate() { record get "$1" "$2"; }
 # ogate <item> <path>: one field of the item's entry in gate list --json; nothing when it has none.
 ogate() { "$P/scripts/gate.sh" list --json | python3 -c 'import json,sys
 item, path = sys.argv[1], sys.argv[2]
 v = next(g for g in json.load(sys.stdin) if g["item"] == item)
 for k in path.split("."): v = v[int(k)] if k.isdigit() else v[k]
 print(v if isinstance(v,str) else json.dumps(v))' "$1" "$2" 2>/dev/null; }
-orecord() { printf '%s/.flow/gates/%s.json' "$oroot/app" "$(item_slug "$1")"; }
 opr() { python3 -c "import json,sys; p='$FAKE_GH_DIR/issues.json'; d=json.load(open(p)); d['pr'][sys.argv[1]]=json.loads(sys.argv[2]); json.dump(d, open(p,'w'))" "$1" "$2"; }
 hpass() { "$P/scripts/steward.sh" health >/dev/null 2>&1; }
 
 OPTIONS='[{"label":"Keep the name","text":"Keep FooBar; callers depend on it.","recommended":false},{"label":"Rename","text":"Rename FooBar to Baz everywhere.","recommended":true}]'
-oa="$(oitem 'Two names')"; "$P/adapters/local/write-state.sh" "$oa" step=implement
+oa="$(oitem 'Two names')"; record set "$oa" step=implement
 "$P/scripts/gate.sh" raise "$oa" ambiguity "**Keep the name or rename?**" --options "$OPTIONS" >/dev/null 2>&1
 check "options: list --json gives back each option's label, text and recommended flag as raised" python3 -c 'import json,sys; assert json.loads(sys.argv[1]) == json.loads(sys.argv[2])' "$(ogate "$oa" options)" "$OPTIONS"
 for n in 0 3; do
@@ -3835,13 +3882,13 @@ check "clear --option out of range: the gate stays for the owner" [ "$(ostate "$
 check "clear --option 2: the answer is the second option's text, not the first's" [ "$(ostate "$oa" answer)" = "Rename FooBar to Baz everywhere." ]
 check "clear --option 2: the gate is cleared" [ "$(ostate "$oa" gate)" = none ]
 
-ob="$(oitem 'A note with the pick')"; "$P/adapters/local/write-state.sh" "$ob" step=implement
+ob="$(oitem 'A note with the pick')"; record set "$ob" step=implement
 "$P/scripts/gate.sh" raise "$ob" ambiguity "**Keep the name or rename?**" --options "$OPTIONS" >/dev/null 2>&1
 "$P/scripts/gate.sh" clear "$ob" --option 1 "Mark it deprecated." >/dev/null 2>&1
 check "clear --option with a note: the option's text leads and the note follows it" python3 -c 'import sys; answer = sys.argv[1]; assert answer.startswith("Keep FooBar; callers depend on it.") and answer.rstrip().endswith("Mark it deprecated."), answer' "$(ostate "$ob" answer)"
 
 # A pick and a send-back are two answers; one clear carries one, in either order.
-od="$(oitem 'A pick and a send-back')"; "$P/adapters/local/write-state.sh" "$od" step=implement
+od="$(oitem 'A pick and a send-back')"; record set "$od" step=implement
 "$P/scripts/gate.sh" raise "$od" ambiguity "**Keep the name or rename?**" --options "$OPTIONS" >/dev/null 2>&1
 for pick_and_back in "--option 1 --back Redo_it" "--back --option 1"; do
   # shellcheck disable=SC2086
@@ -3857,7 +3904,7 @@ header = list(itertools.takewhile(lambda line: line.startswith("#"), open(sys.ar
 usage = open(sys.argv[2]).read().splitlines()
 assert header and usage == header, (len(header), usage[-3:])' "$P/scripts/gate.sh" "$work/gate-usage.out"
 
-oc="$(oitem 'Two recommended')"; "$P/adapters/local/write-state.sh" "$oc" step=implement
+oc="$(oitem 'Two recommended')"; record set "$oc" step=implement
 "$P/scripts/gate.sh" raise "$oc" ambiguity "**Which one?**" --options '[{"label":"A","text":"Do A.","recommended":true},{"label":"B","text":"Do B.","recommended":true}]' >/dev/null 2>&1
 check "raise with two options both recommended: the gate still raises" [ "$(ostate "$oc" gate)" = ambiguity ]
 check "raise with two options both recommended: it lists no options" [ "$(ogate "$oc" options)" = "[]" ]
@@ -3870,7 +3917,7 @@ omost="$(sed -n 's/^FEWEST_OPTIONS, MOST_OPTIONS = [0-9][0-9]*, \([0-9][0-9]*\)$
 check "option limit read from _gates.py" [ -n "$omost" ]
 ooptions() { python3 -c 'import json,sys; print(json.dumps([{"label": "Choice %d" % n, "text": "Do thing %d." % n, "recommended": n == 1} for n in range(1, int(sys.argv[1]) + 1)]))' "$1"; }
 olimit="$(ooptions "$omost")"; oover="$(ooptions "$((omost + 1))")"
-oo="$(oitem 'Many options')"; "$P/adapters/local/write-state.sh" "$oo" step=implement
+oo="$(oitem 'Many options')"; record set "$oo" step=implement
 "$P/scripts/gate.sh" raise "$oo" ambiguity "**Which of many?**" --options "$olimit" >/dev/null 2>&1
 check "raise with as many options as the limit: it lists every one" python3 -c 'import json,sys; assert json.loads(sys.argv[1]) == json.loads(sys.argv[2])' "$(ogate "$oo" options)" "$olimit"
 "$P/scripts/gate.sh" clear "$oo" >/dev/null 2>&1
@@ -3878,12 +3925,12 @@ check "raise with as many options as the limit: it lists every one" python3 -c '
 check "raise with one option over the limit: it lists no options" [ "$(ogate "$oo" options)" = "[]" ]
 "$P/scripts/gate.sh" clear "$oo" >/dev/null 2>&1
 
-json_obj gate=escalation item=local:task/98 "message=Raised before 1.36." time=2026-10-24T10:00:00Z host=shell > .flow/gates/local-task-98.json
+record set local:task/98 "gate:=$(json_obj gate=escalation "message=Raised before 1.36." time=2026-10-24T10:00:00Z host=shell)"
 check "a record from an older flow lists an empty options array" [ "$(ogate local:task/98 options)" = "[]" ]
 check "a record from an older flow lists no condition" [ "$(ogate local:task/98 condition)" = null ]
-rm -f .flow/gates/local-task-98.json
+FLOW_TRACKER_STATE=none "$P/scripts/state.sh" set local:task/98 gate=none
 
-od="$(oitem 'Who asks')"; "$P/adapters/local/write-state.sh" "$od" step=implement
+od="$(oitem 'Who asks')"; record set "$od" step=implement
 "$P/scripts/gate.sh" raise "$od" escalation "**The run died three times.**" --raised-by "health job" >/dev/null 2>&1
 check "raised_by: the --raised-by flag names who asked" [ "$(ogate "$od" raised_by)" = "health job" ]
 "$P/scripts/gate.sh" clear "$od" >/dev/null 2>&1
@@ -3894,8 +3941,8 @@ check "board: a gate shows who raised it" sh -c "'$P/scripts/board.sh' | grep -q
 check "board: a gate shows who carries its answer out" sh -c "'$P/scripts/board.sh' | grep -q 'answered by step implement'"
 "$P/scripts/gate.sh" clear "$od" "A" >/dev/null 2>&1
 
-oe="$(oitem 'Done, its PR open')"; "$P/adapters/local/write-state.sh" "$oe" step=done
-"$P/adapters/local/link-pr.sh" "$oe" https://github.com/acme/widgets/pull/90
+oe="$(oitem 'Done, its PR open')"; record set "$oe" step=done
+record set "$oe" pr=https://github.com/acme/widgets/pull/90
 "$P/scripts/gate.sh" raise "$oe" ambiguity "**Rebase or merge?**" >/dev/null 2>&1
 check "answered_by: a done item with an open PR is answered by the comments job" [ "$(ogate "$oe" answered_by)" = "comments job, next pass" ]
 "$P/scripts/gate.sh" clear "$oe" >/dev/null 2>&1
@@ -3903,7 +3950,7 @@ check "answered_by: a done item with an open PR is answered by the comments job"
 # A gate that only waits on a blocker: health clears it once the blocker closes, the item keeps
 # its step and runs it on the next pass, and nothing escalates the blocker.
 oblock="$(oitem 'The blocker')"; ow="$(oitem 'Waits on the blocker')"
-"$P/adapters/local/write-state.sh" "$ow" step=implement
+record set "$ow" step=implement
 "$P/scripts/gate.sh" raise "$ow" escalation "**Waits on $oblock.**" --condition "blocked_by:$oblock" >/dev/null 2>&1
 check "condition: list --json gives back the condition the gate was raised with" [ "$(ogate "$ow" condition)" = "blocked_by:$oblock" ]
 hpass
@@ -3913,19 +3960,19 @@ ofile() { printf '%s/.flow/items/task/%s.md' "$oroot/app" "${1##*/}"; }
 raised_before="$(grep -c ': \*\*Gate: ' "$(ofile "$ow")")"
 hpass
 check "condition blocked_by: one health pass after the blocker closes clears the gate" [ "$(ostate "$ow" gate)" = none ]
-check "condition blocked_by: the cleared gate's record is gone" [ ! -f "$(orecord "$ow")" ]
+check "condition blocked_by: the cleared gate's record is gone" [ -z "$(record list gates "$ow")" ]
 check "condition blocked_by: the item keeps its step" [ "$(ostate "$ow" step)" = implement ]
 check_all "condition blocked_by: the pass raises no new gate on the item for the closed blocker" '[ "$raised_before" -ge 1 ] && [ "$(grep -c ": \*\*Gate: " "$(ofile "$ow")")" = "$raised_before" ]'
 check "condition blocked_by: the next pass hands the item out at its own step" [ "$("$P/scripts/next.sh" "$ow" --json 2>/dev/null | jget step)" = implement ]
-"$P/scripts/steward.sh" release "$ow" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+"$P/scripts/steward.sh" release "$ow" --force >/dev/null 2>&1; end_runs
 
-og="$(oitem 'Waits on nothing readable')"; "$P/adapters/local/write-state.sh" "$og" step=implement
+og="$(oitem 'Waits on nothing readable')"; record set "$og" step=implement
 "$P/scripts/gate.sh" raise "$og" escalation "**Waits on local:task/999.**" --condition "blocked_by:local:task/999" >/dev/null 2>&1
 hpass
 check "condition blocked_by: a blocker the tracker cannot read keeps the gate" [ "$(ostate "$og" gate)" = escalation ]
 "$P/scripts/gate.sh" clear "$og" >/dev/null 2>&1
 
-oh="$(oitem 'A condition outside the grammar')"; "$P/adapters/local/write-state.sh" "$oh" step=implement
+oh="$(oitem 'A condition outside the grammar')"; record set "$oh" step=implement
 "$P/scripts/gate.sh" raise "$oh" escalation "**Wait for the weekend.**" --condition "weekend:soon" >/dev/null 2>&1
 check "condition outside the grammar: the gate still raises" [ "$(ostate "$oh" gate)" = escalation ]
 check "condition outside the grammar: it is dropped" [ "$(ogate "$oh" condition)" = null ]
@@ -3939,7 +3986,7 @@ check "clear --met on a gate with no condition: the gate stays" [ "$(ostate "$oh
 oplant="$work/gate-options-planted"; mkdir -p "$oplant"
 printf '#!/bin/sh\ntouch "%s/ran"\necho "{\\"status\\": \\"closed\\"}"\n' "$oplant" > "$oplant/read.sh"; chmod +x "$oplant/read.sh"
 oclimb="$(printf '../%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24)${oplant#/}"
-on="$(oitem 'A path for a blocker')"; "$P/adapters/local/write-state.sh" "$on" step=implement
+on="$(oitem 'A path for a blocker')"; record set "$on" step=implement
 "$P/scripts/gate.sh" raise "$on" escalation "**Waits on a path.**" --condition "blocked_by:$oclimb" >/dev/null 2>&1
 check "condition blocked_by with a path for an id: the gate still raises" [ "$(ostate "$on" gate)" = escalation ]
 check "condition blocked_by with a path for an id: it is dropped" [ "$(ogate "$on" condition)" = null ]
@@ -3949,7 +3996,7 @@ check "condition blocked_by with .. in a local id: it is dropped" [ "$(ogate "$o
 "$P/scripts/gate.sh" clear "$on" >/dev/null 2>&1
 "$P/scripts/gate.sh" raise "$on" escalation "**Waits on an id no adapter owns.**" --condition "blocked_by:linear:ENG-4" >/dev/null 2>&1
 check "condition blocked_by with an id no adapter owns: it is dropped" [ "$(ogate "$on" condition)" = null ]
-python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["condition"]=sys.argv[2]; json.dump(d, open(p,"w"))' "$(orecord "$on")" "blocked_by:$oclimb"
+gate_with "$on" condition "blocked_by:$oclimb"
 hpass
 check "health on a record whose blocked_by is a path: the path's read.sh never runs" [ ! -f "$oplant/ran" ]
 check "health on a record whose blocked_by is a path: the gate stays" [ "$(ostate "$on" gate)" = escalation ]
@@ -3964,15 +4011,15 @@ check "condition blocked_by with a GitHub issue id: the adapter owns it, so the 
 "$P/scripts/gate.sh" clear "$on" >/dev/null 2>&1
 
 # A gh# blocker is read through the github adapter: the fake gh reports gh#772 closed.
-ogh="$(oitem 'Waits on a GitHub issue')"; "$P/adapters/local/write-state.sh" "$ogh" step=implement
+ogh="$(oitem 'Waits on a GitHub issue')"; record set "$ogh" step=implement
 python3 -c 'import json,sys; p=sys.argv[1]; d=json.load(open(p)); d["issues"].append({"number": 772, "title": "The GitHub blocker", "body": "", "state": "CLOSED", "labels": [], "url": "https://github.com/acme/widgets/issues/772"}); json.dump(d, open(p,"w"))' "$FAKE_GH_DIR/issues.json"
 "$P/scripts/gate.sh" raise "$ogh" escalation "**Waits on gh#772.**" --condition "blocked_by:gh#772" >/dev/null 2>&1
 hpass
 check "condition blocked_by gh#: one health pass after GitHub reports the issue closed clears the gate" [ "$(ostate "$ogh" gate)" = none ]
 check "condition blocked_by gh#: the item keeps its step" [ "$(ostate "$ogh" step)" = implement ]
 
-oi="$(oitem 'A conflicting PR')"; "$P/adapters/local/write-state.sh" "$oi" step=done
-"$P/adapters/local/link-pr.sh" "$oi" https://github.com/acme/widgets/pull/90
+oi="$(oitem 'A conflicting PR')"; record set "$oi" step=done
+record set "$oi" pr=https://github.com/acme/widgets/pull/90
 "$P/scripts/gate.sh" raise "$oi" escalation "**Resolve the conflict on #90.**" --condition "pr:#90 conflicting" >/dev/null 2>&1
 opr mergeable '"UNKNOWN"'; hpass
 check "condition pr conflicting: a PR GitHub has not judged yet (UNKNOWN) keeps the gate" [ "$(ostate "$oi" gate)" = escalation ]
@@ -3982,8 +4029,8 @@ check "clear --met: an item at done keeps no answer waiting on a run" [ -z "$(os
 "$P/scripts/gate.sh" clear "$oi" --met "pr:#90 conflicting" >/dev/null 2>&1; code=$?
 check "clear --met on a gate already cleared: exit 0" [ "$code" -eq 0 ]
 
-oj="$(oitem 'CI is down')"; "$P/adapters/local/write-state.sh" "$oj" step=done
-"$P/adapters/local/link-pr.sh" "$oj" https://github.com/acme/widgets/pull/90
+oj="$(oitem 'CI is down')"; record set "$oj" step=done
+record set "$oj" pr=https://github.com/acme/widgets/pull/90
 "$P/scripts/gate.sh" raise "$oj" escalation "**CI is down.**" --condition "ci:down" >/dev/null 2>&1
 opr statusCheckRollup '[{"__typename": "CheckRun", "name": "test", "workflowName": "ci", "status": "COMPLETED", "conclusion": "FAILURE", "startedAt": "2026-11-09T10:00:00Z"}]'; hpass
 check "condition ci:down: a failing check keeps the gate" [ "$(ostate "$oj" gate)" = escalation ]
@@ -4001,7 +4048,7 @@ python3 -c 'import json,sys; json.dump({"status": "gate", "gate": "ambiguity", "
 check "advance: a result file with options raises the gate with them" python3 -c 'import json,sys; assert json.loads(sys.argv[1]) == json.loads(sys.argv[2])' "$(ogate "$ok" options)" "$OPTIONS"
 check "advance: a result file with a condition raises the gate with it" [ "$(ogate "$ok" condition)" = "ci:down" ]
 check "advance: the gate names the step that raised it" [ "$(ogate "$ok" raised_by)" = "step $okstep" ]
-"$P/scripts/gate.sh" clear "$ok" "Rename." >/dev/null 2>&1; "$P/scripts/steward.sh" release "$ok" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+"$P/scripts/gate.sh" clear "$ok" "Rename." >/dev/null 2>&1; "$P/scripts/steward.sh" release "$ok" --force >/dev/null 2>&1; end_runs
 
 ol="$(oitem 'Malformed options in a result file')"
 olj="$("$P/scripts/next.sh" "$ol" --json 2>/dev/null)"; olr="$(printf '%s' "$olj" | jget reports)"; olstep="$(printf '%s' "$olj" | jget step)"
@@ -4009,16 +4056,16 @@ printf '{"status":"gate","gate":"ambiguity","message":"**A or B?**","options":[{
 "$P/scripts/advance.sh" "$ol" >/dev/null 2>&1; code=$?
 check "advance: malformed options in a result file still stop at the gate (exit 4)" [ "$code" -eq 4 ]
 check "advance: malformed options in a result file raise the gate with none" [ "$(ogate "$ol" options)" = "[]" ]
-"$P/scripts/gate.sh" clear "$ol" "A." >/dev/null 2>&1; "$P/scripts/steward.sh" release "$ol" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+"$P/scripts/gate.sh" clear "$ol" "A." >/dev/null 2>&1; "$P/scripts/steward.sh" release "$ol" --force >/dev/null 2>&1; end_runs
 
 # An escalation at step pr: the tracker comment carries the command the owner runs.
-om="$(oitem 'Escalates at pr')"; "$P/adapters/local/write-state.sh" "$om" step=pr
+om="$(oitem 'Escalates at pr')"; record set "$om" step=pr
 omr="$("$P/scripts/next.sh" "$om" --json 2>/dev/null | jget reports)"
 printf '{"status":"gate","gate":"escalation","message":"**The PR waits on local:task/772.**"}\n' > "$omr/pr.json"
 "$P/scripts/advance.sh" "$om" >/dev/null 2>&1
 check "escalation at step pr: the tracker comment names the gate.sh clear command for the owner" grep -q "gate.sh clear $om" "$(ofile "$om")"
-check "escalation at step pr: the record keeps the message as raised, the command apart from it" [ "$(jget message < "$(orecord "$om")")" = "**The PR waits on local:task/772.**" ]
-"$P/scripts/gate.sh" clear "$om" >/dev/null 2>&1; "$P/scripts/steward.sh" release "$om" --force >/dev/null 2>&1; rm -f .flow/runs/*.json
+check "escalation at step pr: the record keeps the message as raised, the command apart from it" [ "$(record get "$om" gate.message)" = "**The PR waits on local:task/772.**" ]
+"$P/scripts/gate.sh" clear "$om" >/dev/null 2>&1; "$P/scripts/steward.sh" release "$om" --force >/dev/null 2>&1; end_runs
 
 echo "a step with no result file (gh#169)"
 # The session exits 0 but writes no <step>.json, as when every write is denied. That is a failed
@@ -4031,7 +4078,7 @@ printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../nr-wt-1\n  - ../n
 nr="$("$P/scripts/new.sh" task "Ends with no result" --size S --body "## Acceptance
 - [ ] n")"
 FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$nr" --max-steps 1 > "$work/noresult.out" 2>&1
-check "a step whose session ends with no result file counts one failed attempt (gh#169)" [ "$("$P/adapters/local/read.sh" "$nr" | jget state.attempts)" = 1 ]
+check "a step whose session ends with no result file counts one failed attempt (gh#169)" [ "$(record get "$nr" attempts)" = 1 ]
 # The silent stub's last message, as the stub above prints it.
 silent_last='Every write was denied, so no report was written.'
 nr_file=".flow/items/$(printf '%s' "${nr#local:}").md"
@@ -4056,10 +4103,10 @@ while [ "$n" -lt "$max_attempts" ]; do
   FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$ng" --max-steps 1 >> "$work/noresult-gate.out" 2>&1
   n=$((n + 1))
 done
-check "a silent session short of the attempt limit raises no gate (gh#169)" [ "$("$P/adapters/local/read.sh" "$ng" | jget state.gate)" = none ]
+check "a silent session short of the attempt limit raises no gate (gh#169)" [ "$(record get "$ng" gate)" = none ]
 FAKE_HOST=silent PATH="$cpath" "$P/templates/run-unattended.sh" claude "$ng" --max-steps 1 >> "$work/noresult-gate.out" 2>&1
-check "the silent session that reaches the attempt limit raises the escalation gate (gh#169)" [ "$("$P/adapters/local/read.sh" "$ng" | jget state.gate)" = escalation ]
-check_all "the escalation gate for a silent session quotes its last message (gh#169)" 'jget message < ".flow/gates/$(item_slug "$ng").json" | grep -qF "$silent_last"'
+check "the silent session that reaches the attempt limit raises the escalation gate (gh#169)" [ "$(record get "$ng" gate)" = escalation ]
+check_all "the escalation gate for a silent session quotes its last message" 'record get "$ng" gate.message | grep -qF "$silent_last"'
 check "a silent session that reaches the escalation gate keeps its claim (gh#169)" sh -c "[ -f \"\$('$P/scripts/steward.sh' find '$ng')/.flow/claim.json\" ]"
 # Health releases a claim that holds nothing and has been quiet past jobs.health.grace. A short
 # grace and a wait past it put the item from the first check in that window.

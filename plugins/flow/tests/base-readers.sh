@@ -33,7 +33,7 @@ check "EpicChild_BriefNamesTheEpicBranchAsBase: the brief tells the agent the re
   'grep -qF "\`$epic_branch\`" "$(json_value brief < "$work/child.json")"'
 
 echo "base: health, the merge before verify, verify and the PR diff read the recorded base"
-rm -f "$(run_file "$child")"
+end_run "$child"
 printf 'own\n' > "$worktree/own.txt" && git -C "$worktree" add own.txt && git -C "$worktree" commit -qm own
 remote_commit main main-one.txt; remote_commit main main-two.txt
 remote_commit "$epic_branch" epic-a.txt; remote_commit "$epic_branch" epic-b.txt
@@ -48,7 +48,7 @@ check "HealthOnEpicChildWhileMainIsAhead_LeavesMainOut: health merges the record
   '[ "$(git -C "$worktree" rev-list --count "$task_branch..origin/main")" -eq "$(main_drift)" ]'
 check "HealthOnEpicChild_EventsLogNamesTheEpicRefMerged: the events log names the ref health merged" \
   'grep -F "$task_branch" .flow/events.log | grep -qF "origin/$epic_branch"'
-"$local_adapter/write-state.sh" "$child" step=verify >/dev/null
+"$plugin/scripts/state.sh" set "$child" step=verify >/dev/null
 remote_commit main main-three.txt; remote_commit "$epic_branch" epic-c.txt
 "$plugin/scripts/next.sh" "$child" --json > "$work/verify.json" 2>/dev/null; git fetch -q origin
 check "VerifyStepOnEpicChild_SyncMergesTheEpicIn: the merge before verify brings the epic's newest commit onto the branch" \
@@ -70,7 +70,7 @@ echo "base: the hold-release note names the recorded base"
 holder="$(new_task "Ball model")"
 held="$(new_task "Spin drag" "$epic")"
 "$plugin/scripts/next.sh" "$held" >/dev/null 2>&1
-rm -f "$(run_file "$held")"
+end_run "$held"
 "$plugin/scripts/hold.sh" set "$held" "$holder" "both change the ball" >/dev/null
 "$local_adapter/close.sh" "$holder" >/dev/null
 "$plugin/scripts/next.sh" "$held" --json > "$work/held.json" 2>/dev/null

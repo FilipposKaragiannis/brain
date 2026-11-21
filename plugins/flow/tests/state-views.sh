@@ -2,8 +2,9 @@
 # state-views.sh: what the flow record renders and how it starts and ends, on the local adapter in
 # a throwaway repo. A write renders the run file, the gate file and the claim's step only when it
 # names their fact; the first write seeds from the tracker and this machine's gate and run files;
-# take (a next.sh start too) and archive (a release of a closed item too); and the record equals
-# the tracker's state after next, advance, a gate and a hold.
+# take (a next.sh start too) and archive (a release of a closed item too); the record equals
+# the tracker's state after next, advance, a gate and a hold; and an item with no record lists its
+# run and gate files as its rows under labels only.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_state_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -70,7 +71,7 @@ printf '%s' "$started_gate_file" > "$(gate_file "$started")"; printf '%s' "$star
 env FLOW_MACHINE=gamma "$plugin/scripts/state.sh" set "$started" last_event=resumed >/dev/null 2>&1
 for key in step profile size worktree attempts touches changes base held_by held_reason gate gate_from answered asked answer answered_at answer_pending pr pr_host; do
   check "FirstWriteOfAStartedItem_Copies_${key}: the record starts from the tracker's state, so nothing in flight is lost" \
-    '[ "$(record get "$started" "$key" | canonical)" = "$(state "$started" "$key" | canonical)" ]'
+    '[ "$(record get "$started" "$key" | canonical)" = "$(tracker "$started" "$key" | canonical)" ]'
 done
 check "FirstWriteOfAStartedItem_ClaimsItForThisMachine: an item with a step was started here" '[ "$(record get "$started" claim.machine)" = gamma ]'
 check "FirstWriteOfAStartedItem_TakesTheGateFilesOptions: the open gate's options outlive the move to the record" \
@@ -160,6 +161,29 @@ holder="$(new_task "Holder")"; waiter="$(new_task "Waiter")"
 check "HoldSet_RecordEqualsTheTrackersState: a hold reads the same in both stores" 'first_key_differing_from_tracker "$waiter"'
 "$plugin/scripts/hold.sh" clear "$waiter" "holder merged" >/dev/null 2>&1
 check "HoldClear_RecordEqualsTheTrackersState: a lifted hold reads the same in both stores" 'first_key_differing_from_tracker "$waiter"'
+
+echo "rows of an item with no record: its run and gate files under labels, none under none"
+viewed="$(new_task "Views before the records")"
+viewed_run_file="$(printf '%s' "$run_record" | with_item "$viewed")"; viewed_gate_file="$(printf '%s' "$gate_record" | with_item "$viewed")"
+mkdir -p .flow/runs .flow/gates
+printf '%s' "$viewed_run_file" > "$(run_file "$viewed")"; printf '%s' "$viewed_gate_file" > "$(gate_file "$viewed")"
+check "UnrecordedItemWithARunFileUnderLabels_ListsTheRunFile: a run started before the records still shows" \
+  '[ "$(record list runs "$viewed" | canonical)" = "$viewed_run_file" ]'
+check "UnrecordedItemWithAGateFileUnderLabels_ListsTheGateFile: a gate pending before the records can still be answered" \
+  '[ "$(record list gates "$viewed" | canonical)" = "$viewed_gate_file" ]'
+check "UnrecordedItemWithARunFileUnderLabels_IsInTheWholeRunsList: the list of every run carries it too" \
+  '[ "$(record list runs | grep -F "\"item\":\"$viewed\"" | canonical)" = "$viewed_run_file" ]'
+tracker_state_is none
+check "UnrecordedItemWithARunFileUnderNone_ListsNoRun: with the mirror off only a record holds a run" \
+  '[ -z "$(record list runs "$viewed")" ]'
+check "UnrecordedItemWithAGateFileUnderNone_ListsNoGate: with the mirror off only a record holds a gate" \
+  '[ -z "$(record list gates "$viewed")" ]'
+tracker_state_is ""
+stale="$(new_task "Stale run file")"
+record set "$stale" last_event=filed >/dev/null 2>&1
+printf '%s' "$run_record" | with_item "$stale" > "$(run_file "$stale")"
+check "RecordedItemWithAStaleRunFile_ListsNoRun: a record wins whole, so a run file it does not hold is no run" \
+  '[ -z "$(record list runs "$stale")" ]'
 
 [ "$fails" -eq 0 ] && { echo "state-views: ok"; exit 0; }
 echo "state-views: $fails failed"; exit 1

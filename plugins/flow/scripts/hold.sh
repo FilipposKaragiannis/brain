@@ -24,8 +24,8 @@ main="$(dirname "$home")"
 # event <item> <kind> <text>: one events.log line, the text on one line.
 event() { mkdir -p "$home"; printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$1" "$2" "$(printf '%s' "$3" | tr '\n\t' '  ')" >> "$home/events.log"; }
 
-# claimed: "<item>\t<worktree>" for every item a pool worktree claims (not a reservation) or a run
-# record names, once each.
+# claimed: "<item>\t<worktree>" for every item a pool worktree claims (not a reservation) or that
+# has a run in flight (record_list runs), once each.
 claimed() {
   {
     cfg pool | while read -r p; do
@@ -37,9 +37,8 @@ claimed() {
       [ -z "$(json_get "$c" reserved)" ] || continue
       printf '%s\t%s\n' "$it" "$(cd "$p" && pwd)"
     done
-    for f in "$home"/runs/*.json; do
-      [ -f "$f" ] || continue
-      r="$(cat "$f")"; it="$(json_get "$r" item)"; [ -n "$it" ] || continue
+    record_list runs | while IFS= read -r r; do
+      it="$(json_get "$r" item)"; [ -n "$it" ] || continue
       printf '%s\t%s\n' "$it" "$(json_get "$r" worktree)"
     done
   } | awk -F '\t' '!seen[$1]++'
@@ -55,18 +54,18 @@ cmd_candidates() {
     esac
   done
   if [ -z "$mine" ]; then
-    data="$(adapter read "$item")" || die "cannot read $item"
-    mine="$(json_list "$data" state.touches)"
+    data="$(item_read "$item")" || die "cannot read $item"
+    mine="$(state_list "$data" touches)"
   fi
   rows=""
   if [ -n "$mine" ]; then
     rows="$(claimed | while IFS="$(printf '\t')" read -r other wt; do
       [ "$other" != "$item" ] || continue
-      od="$(adapter read "$other" 2>/dev/null </dev/null)" || continue
+      od="$(item_read "$other" 2>/dev/null </dev/null)" || continue
       [ "$(json_get "$od" status)" = open ] || continue
       [ "$(state_get "$od" held_by)" != "$item" ] || continue
-      kind=changes; globs="$(json_list "$od" state.changes)"
-      [ -n "$globs" ] || { kind=touches; globs="$(json_list "$od" state.touches)"; }
+      kind=changes; globs="$(state_list "$od" changes)"
+      [ -n "$globs" ] || { kind=touches; globs="$(state_list "$od" touches)"; }
       [ -n "$globs" ] && touches_overlap "$mine" "$globs" || continue
       plan=""
       for root in "$wt" "$main"; do
@@ -106,7 +105,7 @@ cmd_set() {
 
 cmd_clear() {
   item="$1"; why="$2"
-  data="$(adapter read "$item")" || die "cannot read $item"
+  data="$(item_read "$item")" || die "cannot read $item"
   [ -n "$(state_get "$data" held_by)" ] || return 0
   record_set "$item" held_by= held_reason= >/dev/null || die "could not clear the hold on $item"
   event "$item" unheld "$why"

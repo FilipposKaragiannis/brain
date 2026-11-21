@@ -1,13 +1,13 @@
 #!/bin/sh
 # The flow record of an item: one JSON file per item under state.dir that holds its workflow
 # state, opened only by scripts/_state.py. Sourced by lib/flow.sh; defines functions and runs
-# nothing. No public function changes a variable of its caller or reads its stdin, and each returns
-# its code rather than exiting the caller.
+# nothing. No public function changes a variable of its caller or reads its stdin (but items_join,
+# whose input it is), and each returns its code rather than exiting the caller.
 #   state_dir                   state.dir: absolute as given, relative under the main worktree;
 #                               unset, <flow home>/state
 #   record_file <item>          <state dir>/<slug>.json; closed/<slug>.json once archived
-#   tracker_state               tracker_state: labels (the default) or none; another value is
-#                               refused, exit 2
+#   tracker_state               tracker_state in the config, else FLOW_TRACKER_STATE: labels (the
+#                               default) or none; another value is refused, exit 2
 #   flow_machine                this machine's name: FLOW_MACHINE, else hostname -s
 #   record_get <item> <key>     one of the twenty state keys through the key map (gate reads none
 #                               when clear), or a record path (gate.options.0.label, claim.machine);
@@ -34,9 +34,33 @@
 #                               claim.claimed_at, when the claim names no machine yet
 #   record_archive <item>       the record to closed/; nothing with no record; exit 1 when
 #                               another machine holds it
+#   item_read <item>            the adapter's read of the item with its record joined on as state
+#                               (scripts/_state_join.py: all twenty keys, a record winning whole),
+#                               stamped state_from record, tracker or none. With no record its state
+#                               is the tracker's under labels and empty under none; an archived
+#                               record counts as none. The adapter's code when its read fails (2 for
+#                               an id no adapter owns); 1 a record that does not parse, named
+#   items_join                  item_read's join of the item, or array of items, on stdin, in one
+#                               process; an item whose record does not parse is left out of an
+#                               array and named on stderr
+#   items_listed <adapter> [<argument>...]
+#                               adapter list, joined as items_join does; the adapter's code when
+#                               its list fails
+#   record_list <runs|gates> [<item>]
+#                               one compact row per line, by slug, of each run in flight
+#                               ({"item", ...run}) or each gate notify.sh raised ({"gate", "item",
+#                               ...}; a gate named alone has none); under labels an item with no
+#                               record lists its run or gate file. A record that does not parse is
+#                               left out and named on stderr
+#   run_record <item>           the item's run row; nothing with none; 1 a record that does not parse
+#   gate_record <item>          the item's gate row; nothing with none; 1 a record that does not parse
+#   record_linked_pr <item>     the pr and pr_host link-pr left on the tracker, copied into the
+#                               record; prints the PR, nothing when the tracker holds none. The
+#                               adapter's code when its read fails; record_set's when the write does
 # With no record yet, record_set and take_item start one from the tracker's state (lazy seed).
-# record_get, record_show, record_set, take_item and record_archive refuse, exit 2, an id that is
-# not of its adapter's shape (item_id_shaped).
+# record_get, record_show, record_set, take_item, record_archive, record_list with an item,
+# run_record, gate_record and record_linked_pr refuse, exit 2, an id that is not of its adapter's
+# shape (item_id_shaped).
 
 EXIT_USAGE=2
 
@@ -53,9 +77,10 @@ record_file() { printf '%s/%s.json' "$(state_dir)" "$(item_slug "$1")"; }
 
 tracker_state() (
   flow_record_tracker_state="$(cfg tracker_state)"
-  case "${flow_record_tracker_state:-labels}" in
-    labels|none) printf '%s' "${flow_record_tracker_state:-labels}" ;;
-    *) die "tracker_state in .flow/config.yaml is labels or none, not $flow_record_tracker_state" "$EXIT_USAGE" ;;
+  flow_record_tracker_state="${flow_record_tracker_state:-${FLOW_TRACKER_STATE:-labels}}"
+  case "$flow_record_tracker_state" in
+    labels|none) printf '%s' "$flow_record_tracker_state" ;;
+    *) die "tracker_state (.flow/config.yaml, else FLOW_TRACKER_STATE) is labels or none, not $flow_record_tracker_state" "$EXIT_USAGE" ;;
   esac
 )
 
@@ -107,6 +132,61 @@ record_archive() (
   item_shape_required "$1"
   state_python archive "$(state_dir)" "$(flow_home)" "$1" --machine "$(flow_machine)"
 )
+
+item_read() (
+  [ $# -eq 1 ] || die "usage: item_read <item>" "$EXIT_USAGE"
+  flow_record_read="$( (adapter read "$1") </dev/null)" || exit
+  printf '%s' "$flow_record_read" | items_join
+)
+
+items_join() (
+  [ $# -eq 0 ] || die "usage: items_join (an item or an array of items on stdin)" "$EXIT_USAGE"
+  state_reader join
+)
+
+items_listed() (
+  [ $# -ge 1 ] || die "usage: items_listed <adapter> [<argument>...]" "$EXIT_USAGE"
+  flow_record_listed="$( (adapter list "$@") </dev/null)" || exit
+  printf '%s' "$flow_record_listed" | items_join
+)
+
+record_list() (
+  case "$#:${1:-}" in
+    1:runs|1:gates) state_reader list --kind "$1" </dev/null ;;
+    2:runs|2:gates) item_shape_required "$2"; state_reader list --kind "$1" --item "$2" </dev/null ;;
+    *) die "usage: record_list <runs|gates> [<item>]" "$EXIT_USAGE" ;;
+  esac
+)
+
+run_record() (
+  [ $# -eq 1 ] || die "usage: run_record <item>" "$EXIT_USAGE"
+  item_shape_required "$1"
+  state_reader row --kind runs --item "$1" </dev/null
+)
+
+gate_record() (
+  [ $# -eq 1 ] || die "usage: gate_record <item>" "$EXIT_USAGE"
+  item_shape_required "$1"
+  state_reader row --kind gates --item "$1" </dev/null
+)
+
+record_linked_pr() (
+  [ $# -eq 1 ] || die "usage: record_linked_pr <item>" "$EXIT_USAGE"
+  item_shape_required "$1"
+  flow_record_tracker_item="$( (adapter read "$1") </dev/null)" || exit
+  flow_record_pr="$(json_get "$flow_record_tracker_item" state.pr)"
+  [ -n "$flow_record_pr" ] || exit 0
+  record_set "$1" "pr=$flow_record_pr" "pr_host=$(json_get "$flow_record_tracker_item" state.pr_host)" </dev/null || exit
+  printf '%s\n' "$flow_record_pr"
+)
+
+# state_reader <command> [<option>...]: one _state.py read that joins or lists, in this flow home
+# and tracker_state.
+state_reader() {
+  flow_record_reader_tracker="$(tracker_state)" || return "$EXIT_USAGE"
+  python3 -I "$FLOW_PLUGIN/scripts/_state.py" "$@" --state-dir "$(state_dir)" --flow-home "$(flow_home)" \
+    --tracker-state "$flow_record_reader_tracker"
+}
 
 # item_shape_required <item>: refuses, exit 2, an id that is not of its adapter's shape.
 item_shape_required() {

@@ -100,7 +100,7 @@ printf 'loose\n' > "$loose_worktree/loose.txt" && git -C "$loose_worktree" add l
 for tampered_label in $tampered_labels; do
   eval "tampered_name=\"\$$tampered_label\""
   set_claim_base "$loose" "$tampered_name"
-  rm -f "$(run_file "$loose")"
+  end_run "$loose"
   "$plugin/scripts/next.sh" "$loose" --json > "$work/tampered.json" 2>/dev/null
   check "TamperedClaimBase_JsonBaseIsTheConfigBase [$tampered_label]: next.sh checks the name claim.json records and falls back to the config base, so a bad name never reaches the runner or git" \
     '[ "$(json_value base < "$work/tampered.json")" = main ]'

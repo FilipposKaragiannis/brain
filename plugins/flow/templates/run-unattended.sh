@@ -113,7 +113,7 @@ No $host session starts, on any item, until the gate on $on clears. $(host_stop_
   "$plugin/scripts/advance.sh" "$item"; code=$?
   # A picked item at a gate is set down and the loop picks another; an escalation gate ends the run.
   if [ "$code" -eq 4 ] && [ -z "$named" ]; then
-    at="$(json_get "$(cat "$(flow_home)/gates/$(item_slug "$item").json" 2>/dev/null)" gate)"
+    at="$(record_get "$item" gate 2>/dev/null)"; [ "$at" != none ] || at=""
     if [ "$at" != escalation ]; then
       gated=$((gated + 1))
       if [ -n "$at" ]; then echo "run-unattended: $item waits at the $at gate; picking another item"

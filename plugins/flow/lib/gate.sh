@@ -2,7 +2,8 @@
 # Gate helpers for scripts/gate.sh, sourced after lib/flow.sh and lib/host.sh with $home set: who
 # carries an answer out, the fields and footer a raise records, and one clear_* function per kind
 # of clear. A clear_* function acts on the clear in hand, which gate.sh reads once the item's
-# clear lock is held: item, record (the record's path), record_json, asked, gate, step, from, pr.
+# clear lock is held: item, record_json (its gate row, lib/state.sh gate_record), asked, gate,
+# step, from, pr.
 
 CLEAR_LOCK_WAIT_SECONDS=10
 EXIT_BUSY=75
@@ -75,8 +76,7 @@ carrier_row() {
 # raised_by_default <flag> <item> <step>: who raised the gate: the --raised-by flag, else the step
 # of the run in flight (its record goes once the gate raises), else the item's step, else the owner.
 raised_by_default() {
-  run_record="$home/runs/$(item_slug "$2").json"; run_step=""
-  [ -f "$run_record" ] && run_step="$(json_get "$(cat "$run_record")" step)"
+  run_step="$(json_get "$(run_record "$2" 2>/dev/null)" step)"
   if [ -n "$1" ]; then printf '%s' "$1"
   elif [ -n "$run_step" ]; then printf 'step %s' "$run_step"
   elif [ -n "$3" ]; then printf 'step %s' "$3"
@@ -185,7 +185,7 @@ log_answered() {
 # the split stands or the gate is another one.
 keep_whole_when_children_closed() {
   [ "$gate" = decomposition ] || return 1
-  item_now="$(adapter read "$item" 2>/dev/null)"
+  item_now="$(item_read "$item" 2>/dev/null)"
   [ "$(state_get "$item_now" step)" = split ] && [ "$(json_get "$item_now" open_children)" = 0 ] || return 1
   record_set "$item" "step=plan" "answer_pending=next" "last_event=$(now_iso) kept whole: the children are closed, the plan step runs again" >/dev/null
   "$FLOW_PLUGIN/scripts/steward.sh" keep-whole "$item" >/dev/null

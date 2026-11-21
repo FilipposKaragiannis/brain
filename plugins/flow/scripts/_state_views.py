@@ -10,10 +10,13 @@ merged record, and only for a fact the write names:
                                  names the item; never removed
 A record with no file yet is seeded from the tracker's state, the gate file (when the tracker
 shows no gate or the same one) and the run file. The seed renders no view.
+An item with no record lists its run file and its gate file as its rows while tracker_state is
+labels, so a run or gate from before the records still shows; under none it has no rows.
 """
 import json
 from collections import namedtuple
 
+import _state_join as join
 import _state_schema as schema
 
 STEP_KEY = "step"
@@ -29,9 +32,20 @@ ViewChange = namedtuple("ViewChange", ("path", "content"))
 Seed = namedtuple("Seed", ("state", "gate", "run"))
 
 
+def view_folder(flow_home, kind):
+    return "%s/%s" % (flow_home, kind)
+
+
 def view_paths(flow_home, item):
     slug = schema.item_slug(item)
-    return ViewPaths("%s/runs/%s.json" % (flow_home, slug), "%s/gates/%s.json" % (flow_home, slug))
+    return ViewPaths("%s/%s.json" % (view_folder(flow_home, join.RUN_ROWS), slug),
+                     "%s/%s.json" % (view_folder(flow_home, join.GATE_ROWS), slug))
+
+
+def unrecorded_row(view, tracker_state):
+    if tracker_state != join.TRACKER_LABELS or not isinstance(view.get(schema.RECORD_ITEM_FIELD), str):
+        return join.NO_ROW
+    return view
 
 
 def view_text(content):

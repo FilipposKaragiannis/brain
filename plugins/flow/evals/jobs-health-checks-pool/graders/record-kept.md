@@ -2,8 +2,8 @@
 type: regex
 target:
   source: file
-  path: .flow/runs/local-task-1.json
-pattern: '"item"\s*:\s*"local:task/1"'
+  path: .flow/state/local-task-1.json
+pattern: '"run"\s*:\s*\{'
 flags: ""
 match: contains
 ---

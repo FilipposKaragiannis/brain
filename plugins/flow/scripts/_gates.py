@@ -3,7 +3,7 @@
   _gates.py <now iso>
   _gates.py options <json>
 
-Reads one gate record per line on stdin (the record in <flow home>/gates/ plus its claimed
+Reads one gate row per line on stdin (a row of lib/state.sh record_list gates plus its claimed
 worktree) and prints one JSON array, oldest first. Each gate carries its age against <now> and
 its questions: a line starting with a number and a dot or bracket opens a question. "Recommended:"
 (any case, the colon required, markdown marks such as ** or - allowed before it) starts the

@@ -27,8 +27,10 @@ for key in sys.argv[1].split("."): value = value[int(key)] if key.isdigit() else
 print(value if isinstance(value,str) else json.dumps(value))' "$1"; }
 local_adapter="$plugin/adapters/local"
 slug() { printf '%s' "$1" | tr ':/#' '---'; }
-run_file() { printf '.flow/runs/%s.json' "$(slug "$1")"; }
-state() { "$local_adapter/read.sh" "$1" | json_value "state.$2"; }
+# state <item> <key>: the key of the item's flow record, through state.sh get.
+state() { "$plugin/scripts/state.sh" get "$1" "$2"; }
+# end_run <item>: the item's run in flight ends, so a step can start on it again.
+end_run() { "$plugin/scripts/state.sh" set "$1" run:=null; }
 claim_base() { json_value base < "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json"; }
 # set_claim_base <item> <name>: writes <name> as the base in the item's claim.json, as a hand could.
 set_claim_base() { python3 -c 'import json,sys; path=sys.argv[1]; claim=json.load(open(path)); claim["base"]=sys.argv[2]; json.dump(claim,open(path,"w"))' "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json" "$2"; }

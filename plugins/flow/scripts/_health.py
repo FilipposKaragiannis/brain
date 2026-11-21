@@ -6,7 +6,7 @@
   _health.py sessions <procs file> <stale seconds> <folder>...
   _health.py owner
   _health.py activity <worktree> <reports dir> <events.log> <item>
-  _health.py runs <runs dir> <procs file> <grace seconds>
+  _health.py runs <runs file, - for stdin> <procs file> <grace seconds>
   _health.py last-next <log dir>
   _health.py next-streaks <log dir>
   _health.py works-in <pid> <folder>
@@ -17,7 +17,7 @@
   _health.py died <log> <item> <step> <result file> <resume file>
   _health.py review <state json> <review rows file> [<record path>]
   _health.py holders <items file>
-  _health.py holds <items file> <reads file> <claims file> <runs dir> <events.log> <old seconds>
+  _health.py holds <items file> <reads file> <claims file> <runs file> <events.log> <old seconds>
 
 procs prints one line per process: pid, working directory (agents and verify runs only) and
 command, tab separated, and fails when ps lists nothing, so a missing ps never reads as every run
@@ -54,7 +54,9 @@ that approval is the owner's. With a record path it also writes {pr, state, wait
 there as JSON, for the console.
 
 holders and holds judge the planned holds (state.held_by and held_reason) for steward.sh health.
-The items file holds one JSON list of open items per line, as each tracker's list prints them.
+The items file holds one JSON list of open items per line, each tracker's list joined with the
+flow records (lib/state.sh items_listed). The runs file, of runs and holds, holds one JSON run per
+line, as lib/state.sh record_list runs prints them.
 holders prints the items a hold names that no list holds (closed, missing, or another tracker's),
 one per line, which the health job reads one by one into the reads file: one JSON object per line,
 the item as read, or {"id": ..., "unreadable": true} when it could not be read or found, or
@@ -74,7 +76,7 @@ after it last started the step, or that it logged none. Only the two together, a
 a silent log, say the loop was ended from outside: a loop that ends by itself prints the
 session's text and how advance.sh ended, so a new result with lines after it is said as it is
 (advance.sh may have read it and failed, as when it cannot read the tracker)."""
-import calendar, glob, json, os, re, subprocess, sys, time
+import calendar, json, os, re, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _process  # noqa: E402
@@ -379,13 +381,12 @@ def seconds(key, text):
     return int(m.group(1)) * UNITS[m.group(2)]
 
 
-def runs(directory, path, grace):
+def runs(run_rows, path, grace):
     rows, now, out = snapshot(path), int(time.time()), []
-    for f in sorted(glob.glob(os.path.join(directory, "*.json"))):
-        try:
-            record = json.load(open(f))
-        except ValueError:
+    for line in run_rows:
+        if not line.strip():
             continue
+        record = json.loads(line)
         how = alive(rows, record.get("item", ""), record.get("worktree", ""), str(record.get("pid", "")))
         started = epoch(record.get("started"))
         record.update(alive=bool(how), age=now - started if started else 0)
@@ -566,7 +567,7 @@ def held_times(events):
     return out
 
 
-def holds(items_path, reads_path, claims_path, runs_dir, events, old):
+def holds(items_path, reads_path, claims_path, runs_path, events, old):
     items = open_items(items_path)
     reads = {}
     for line in open(reads_path) if os.path.exists(reads_path) else []:
@@ -577,12 +578,7 @@ def holds(items_path, reads_path, claims_path, runs_dir, events, old):
         if isinstance(row, dict) and row.get("id"):
             reads[row["id"]] = row
     claimed = {l.strip() for l in open(claims_path)} if os.path.exists(claims_path) else set()
-    running = set()
-    for f in glob.glob(os.path.join(runs_dir, "*.json")):
-        try:
-            running.add(json.load(open(f)).get("item", ""))
-        except (OSError, ValueError, AttributeError):
-            pass
+    running = {json.loads(line).get("item", "") for line in open(runs_path) if line.strip()}
     times, now = held_times(events), int(time.time())
     # What an item changes: its plan's `changes`, or its `touches` when it has none (a bugfix or an
     # S task runs no plan step), as hold.sh candidates judges a holder.
@@ -654,7 +650,7 @@ def main():
     elif command == "activity":
         print(activity(*args))
     elif command == "runs":
-        runs(args[0], args[1], int(args[2]))
+        runs(sys.stdin if args[0] == "-" else open(args[0]), args[1], int(args[2]))
     elif command == "last-next":
         last_next(args[0])
     elif command == "next-streaks":

@@ -24,12 +24,9 @@ fail() { echo "  FAIL $1"; fails=$((fails + 1)); }
 check() { # check <name> '<condition>': the condition is shell text, run whole; a FAIL shows its output
   if said="$( (eval "$2") 2>&1)"; then pass "$1"; else fail "$1"; [ -z "$said" ] || printf '%s\n' "$said" | sed 's/^/       /'; fi
 }
-jget() { python3 -c 'import json,sys; v=json.load(sys.stdin)
-for k in sys.argv[1].split("."): v = v[int(k)] if k.isdigit() else v[k]
-print(v if isinstance(v,str) else json.dumps(v))' "$1"; }
 L="$P/adapters/local"
-slug() { printf '%s' "$1" | tr ':/#' '---'; }
-run_file() { printf '.flow/runs/%s.json' "$(slug "$1")"; }
+# record <command> <argument>...: the flow record, through state.sh.
+record() { "$P/scripts/state.sh" "$@"; }
 
 # new_repo <dir> <pool_max>: a throwaway repo on the local adapter, the shell in it.
 base=main
@@ -53,7 +50,7 @@ claimed_at() {
   title="$1"; at="$2"; shift 2
   claimed="$(new_task "$title")"
   "$P/scripts/steward.sh" claim "$claimed" >/dev/null 2>&1
-  "$L/write-state.sh" "$claimed" "step=$at" profile=task-S >/dev/null
+  record set "$claimed" "step=$at" profile=task-S >/dev/null
   block_on "$claimed" "$@"
   echo "$claimed"
 }
@@ -66,7 +63,7 @@ waiting="$(claimed_at "Docs that wait on the fix" pr "$blocker")"
 check "ClaimedItemWithOpenBlocker_NamedRunExitsWithThePassOverCode: a claimed item at pr blocked by an open item exits 4, as a held item does" \
   '[ "$code" -eq 4 ]'
 check "ClaimedItemWithOpenBlocker_NamedRunStartsNoRun: a claimed item at pr blocked by an open item writes no run, so no attempt can be counted" \
-  '[ ! -f "$(run_file "$waiting")" ]'
+  '[ -z "$(record get "$waiting" run)" ]'
 "$P/scripts/board.sh" --json > "$work/board.json" 2>/dev/null
 check "ClaimedBlockedItem_BoardJsonListsItsOpenBlockers: the board's model names the open item a claimed item waits on" \
   'python3 -c "import json,sys; d=json.load(open(sys.argv[1])); i=[i for i in d[\"items\"] if i[\"id\"]==sys.argv[2]]; assert i and i[0][\"open_blockers\"]==[sys.argv[3]]" "$work/board.json" "$waiting" "$blocker"'
@@ -76,19 +73,19 @@ check "ClaimedBlockedItem_BoardRowShowsItsWorktree: the board's row for a claime
   'grep -qF "$waiting_wt" "$work/board.row"'
 check "ClaimedBlockedItem_BoardRowShowsItsBlocker: the board's row for a claimed item blocked by an open item names that item" \
   'grep -qF "$blocker" "$work/board.row"'
-"$L/write-state.sh" "$blocker" gate=ambiguity >/dev/null
+record set "$blocker" gate=ambiguity >/dev/null
 "$P/scripts/next.sh" >/dev/null 2>"$work/pick.err"
 check "PickWhileTheBlockerWaitsAtAGate_SaysTheClaimedItemIsHeldBehindIt: a pick passes the claimed item over and names its blocker" \
   'grep -qF "$waiting behind $blocker (blocked by)" "$work/pick.err"'
 check "PickWhileTheBlockerWaitsAtAGate_StartsNoRunForTheClaimedItem: a pick starts no run for a claimed item whose blocker is open" \
-  '[ ! -f "$(run_file "$waiting")" ]'
-"$L/write-state.sh" "$blocker" gate=none >/dev/null
+  '[ -z "$(record get "$waiting" run)" ]'
+record set "$blocker" gate=none >/dev/null
 "$L/close.sh" "$blocker" --comment fixed >/dev/null
 "$P/scripts/next.sh" "$waiting" >/dev/null 2>&1
 check "LastBlockerClosed_ItemStartsAtItsOwnStep: once its blocker closes, next.sh starts a run for the claimed item at pr again" \
-  '[ "$(jget step < "$(run_file "$waiting")")" = pr ]'
+  '[ "$(record get "$waiting" run.step)" = pr ]'
 # the resumed brief's wait section, from its heading to the next one
-awk '/^## The wait is over/ { on = 1; next } /^## / { on = 0 } on' "$(jget reports < "$(run_file "$waiting")")/brief-pr.md" > "$work/wait.section"
+awk '/^## The wait is over/ { on = 1; next } /^## / { on = 0 } on' "$(record get "$waiting" run.reports)/brief-pr.md" > "$work/wait.section"
 check "LastBlockerClosed_BriefNamesTheClosedBlocker: the resumed step's wait section names the blocker it waited on" \
   'grep -qF "$blocker" "$work/wait.section"'
 check "LastBlockerClosed_BriefMergesTheBaseFirst: the resumed step's wait section has the agent merge the item's base in" \
@@ -111,7 +108,7 @@ for at in pr verify; do
   check "ClaimedItemBlockedAt${at}_NamedRunExitsWithThePassOverCode: a blocker added at $at makes the named run exit 4" \
     '[ "$code" -eq 4 ]'
   check "ClaimedItemBlockedAt${at}_NamedRunStartsNoRun: a blocker added at $at stops the step before any run is written" \
-    '[ ! -f "$(run_file "$held")" ]'
+    '[ -z "$(record get "$held" run)" ]'
   check "ClaimedItemBlockedAt${at}_SaysItIsHeldBehindItsBlocker: the named run says which open item holds it" \
     'grep -qF "held behind $fix (blocked by)" "$work/held.$at.err"'
 done
@@ -121,7 +118,7 @@ both="$(claimed_at "Docs behind two fixes" pr "$first" "$second")"
 "$L/close.sh" "$first" --comment fixed >/dev/null
 "$P/scripts/next.sh" "$both" >/dev/null 2>"$work/both.err"
 check "OneOfTwoBlockersClosed_StartsNoRun: an item resumes only when its last blocker closes, so one open blocker still holds it" \
-  '[ ! -f "$(run_file "$both")" ]'
+  '[ -z "$(record get "$both" run)" ]'
 check "OneOfTwoBlockersClosed_HeldBehindTheOpenOne: the pass-over names the blocker still open" \
   'grep -qF "held behind $second (blocked by)" "$work/both.err"'
 mkdir -p "$work/refusing-bin"
@@ -136,14 +133,14 @@ chmod +x "$work/refusing-bin/claude"
 max="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['max_attempts'])" "$P/profiles.json")"
 for at in pr verify; do
   edge="$(claimed_at "Docs at $at one failure short" "$at" "$second")"
-  "$L/write-state.sh" "$edge" "attempts=$((max - 1))" >/dev/null
+  record set "$edge" "attempts=$((max - 1))" >/dev/null
   for run in 1 2 3; do PATH="$work/refusing-bin:$PATH" "$P/jobs/next.sh" claude "$edge" >> "$work/job.$at.out" 2>&1; done
   check "NextJobOnItemBlockedAt${at}_EachRunSaysItIsHeldBehindItsBlocker: each of three job runs at $at reaches the pass-over and says so" \
     '[ "$(grep -cF "$edge is held behind $second (blocked by)" "$work/job.$at.out")" -eq 3 ]'
   check "NextJobOnItemBlockedAt${at}OneFailureShortOfEscalation_RaisesNoGate: an open blocker at $at is never a failure, so the job raises no escalation" \
-    '[ "$("$L/read.sh" "$edge" | jget state.gate)" = none ]'
+    '[ "$(record get "$edge" gate)" = none ]'
   check "NextJobOnItemBlockedAt${at}OneFailureShortOfEscalation_KeepsItsAttemptCount: three job runs at $at behind an open blocker count no attempt" \
-    '[ "$("$L/read.sh" "$edge" | jget state.attempts)" = "$((max - 1))" ]'
+    '[ "$(record get "$edge" attempts)" = "$((max - 1))" ]'
 done
 
 echo "blockers: the owner's pick on a blocked_by gate waives that blocker"
@@ -162,10 +159,10 @@ picked="$(gated_at_pr "Docs opened now" pr "$fix")"
 "$P/scripts/gate.sh" clear "$picked" --option 1 >/dev/null 2>&1
 "$P/scripts/next.sh" "$picked" --json >/dev/null 2>"$work/picked.err"; code=$?
 check "OpenItNowPicked_NamedRunStartsThePrStep: after the owner picks Open it now, next.sh runs the pr step though the blocker is still open" \
-  '[ "$code" -eq 0 ] && [ "$(jget step < "$(run_file "$picked")")" = pr ]'
+  '[ "$code" -eq 0 ] && [ "$(record get "$picked" run.step)" = pr ]'
 check "OpenItNowPicked_BriefCarriesTheAnswer: the pr step's brief carries the option's text, so the skill opens the PR" \
-  'grep -qF "Open the PR now on main; do not wait." "$(jget reports < "$(run_file "$picked")")/brief-pr.md"'
-rm -f "$(run_file "$picked")"
+  'grep -qF "Open the PR now on main; do not wait." "$(record get "$picked" run.reports)/brief-pr.md"'
+record set "$picked" run:=null
 "$L/list-ready.sh" > "$work/ready.json"
 check "OpenItNowPicked_ReadyFilterKeepsTheItem: the ready filter no longer holds the item behind the blocker the owner waived" \
   'python3 -c "import json,sys; assert sys.argv[2] in [i[\"id\"] for i in json.load(open(sys.argv[1]))]" "$work/ready.json" "$picked"'
@@ -173,7 +170,7 @@ worded="$(gated_at_pr "Docs answered in words" pr "$fix")"
 "$P/scripts/gate.sh" clear "$worded" "Fine." >/dev/null 2>&1
 "$P/scripts/next.sh" "$worded" >/dev/null 2>"$work/worded.err"; code=$?
 check "AnsweredInWordsOnABlockedByGate_ItemStillWaits: an answer in words waives nothing, so next.sh still holds the item behind its blocker" \
-  '[ "$code" -eq 4 ] && [ ! -f "$(run_file "$worded")" ] && grep -qF "held behind $fix (blocked by)" "$work/worded.err"'
+  '[ "$code" -eq 4 ] && [ -z "$(record get "$worded" run)" ] && grep -qF "held behind $fix (blocked by)" "$work/worded.err"'
 other="$(new_task "Other fix")"
 two="$(gated_at_pr "Docs behind two fixes, one waived" pr "$fix" "$other")"
 "$P/scripts/gate.sh" clear "$two" --option 1 >/dev/null 2>&1

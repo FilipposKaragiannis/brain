@@ -12,5 +12,5 @@ github '{"issues": [{"number": 7, "title": "Greet strangers when no name is give
    {"databaseId": 501, "author": {"login": "reviewer"}, "createdAt": "2026-10-17T10:00:00Z",
     "body": "The acceptance says greet with no argument prints \"hello stranger\", and no test checks it. Add one here."}]}}]}'
 git -C "$wt" push -q origin flow/local-task-1
-rm -f .flow/runs/*.json
-"$P/adapters/local/write-state.sh" local:task/1 gate=merge pr=https://gh/pull/7 >/dev/null
+"$P/scripts/state.sh" set local:task/1 run:=null
+"$P/scripts/state.sh" set local:task/1 gate=merge pr=https://gh/pull/7 >/dev/null

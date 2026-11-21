@@ -61,7 +61,7 @@ gh, local = re.match(r"flow/gh-(\d+)$", head), re.match(r"flow/local-([a-z]+)-(\
 print("gh#" + gh.group(1) if gh else "local:%s/%s" % local.groups() if local else "-",
       "claude" if "Generated with [Claude Code]" in body else "codex" if "chatgpt.com/codex/tasks/" in body else "-")' 2>/dev/null)" || return 0
   item="${said% *}"; footer="${said#* }"; recorded=""
-  [ "$item" = "-" ] || recorded="$(json_get "$(adapter read "$item" 2>/dev/null)" state.pr_host)"
+  [ "$item" = "-" ] || recorded="$(state_get "$(item_read "$item" 2>/dev/null)" pr_host)"
   case "$recorded" in claude|codex) echo "$recorded" ;; *) [ "$footer" = "-" ] || echo "$footer" ;; esac
 }
 # pr_reviewers <pr>: the reviewers of the PR's author host. Only a map per host asks who wrote it.

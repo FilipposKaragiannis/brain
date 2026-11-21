@@ -57,7 +57,7 @@ log="$reports/verify.log"; run_out="$reports/verify.out"
 
 # next_attempt: the attempt this run is, one past the item's recorded attempts.
 next_attempt() {
-  item_json="$(adapter read "$item" 2>/dev/null)" || item_json='{}'
+  item_json="$(item_read "$item" 2>/dev/null)" || item_json='{}'
   recorded_attempts="$(state_get "$item_json" attempts)"; printf '%s' $(( ${recorded_attempts:-0} + 1 ))
 }
 # report_text <text>: the text as one line of printable characters with no quote or backslash,

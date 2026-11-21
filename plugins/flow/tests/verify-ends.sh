@@ -31,11 +31,11 @@ write_run_record "$reports" "$stubborn_pid"
 check "StubbornRun_IsLiveBeforeTheStop: the run must be live, or the stop's exit below proves nothing" \
   'process_running "$stubborn_pid"'
 check "StubbornItem_HasARunRecord: the first stop must find a record, or it is the no-record row twice" \
-  '[ -f "$(run_file "$item")" ]'
+  '[ -n "$(state "$item" run)" ]'
 "$plugin/scripts/steward.sh" stop "$item" >/dev/null 2>&1; recorded_stop_code=$?
 check "StopWithARecordAndARunThatIgnoresTerm_ExitsOne: a run still going is a failed stop" '[ "$recorded_stop_code" -eq 1 ]'
 check "StopWithARecordAndARunThatIgnoresTerm_ClearsTheRecord: health must not resume a stopped item" \
-  '[ ! -f "$(run_file "$item")" ]'
+  '[ -z "$(state "$item" run)" ]'
 check "StubbornRun_OutlivesTheFirstStop: the run must still go, or the next stop's exit proves nothing" \
   'process_running "$stubborn_pid"'
 "$plugin/scripts/steward.sh" stop "$item" >/dev/null 2>&1; recordless_stop_code=$?
@@ -45,7 +45,7 @@ kill -9 -- -"$stubborn_pid" 2>/dev/null || kill -9 "$stubborn_pid" 2>/dev/null
 
 echo "steward stop and release leave a run of the item's id that works outside the worktree"
 new_item elsewhere "  ok: 'true'"
-rm -f "$(run_file "$item")"
+end_run "$item"
 mkdir -p "$work/another-repository"
 elsewhere_pid="$(run_cwd="$work/another-repository" fake_run elsewhere)"
 write_run_record "$reports" "$elsewhere_pid"
@@ -84,7 +84,7 @@ check "StopWithARecordAndAVerifyRunThatEnds_NamesTheVerifyPid: the owner sees wh
   'printf "%s" "$stop_said" | grep -qw "$recorded_said_pid"'
 recordless_said_pid="$(fake_run said-again)"
 write_run_record "$reports" "$recordless_said_pid"
-check "SaidAgainItem_HasNoAgentRecord: the first stop cleared it, or this is the record row twice" '[ ! -f "$(run_file "$item")" ]'
+check "SaidAgainItem_HasNoAgentRecord: the first stop cleared it, or this is the record row twice" '[ -z "$(state "$item" run)" ]'
 stop_said="$("$plugin/scripts/steward.sh" stop "$item" 2>&1)"
 check "StopWithNoRecordAndAVerifyRunThatEnds_NamesTheVerifyPid: a verify run started by hand is named all the same" \
   'printf "%s" "$stop_said" | grep -qw "$recordless_said_pid"'

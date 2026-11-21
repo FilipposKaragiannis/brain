@@ -1,16 +1,18 @@
 """The command line of _state.py: its commands and their options.
 Pure: it reads only the words it is given.
 
-A command, then each of its options as `--name value`, every one required (given twice, the last
-counts), then `--` and the command's words: the pairs of set, the one key of get, none for the
-others. --seed is stdin or none. --item is an id whose slug holds only letters, digits, _ and -, as
-the slug of every adapter's id shape does, so no item names a path. A line outside this grammar is
-refused with the command's usage, exit 2. Hand-written rather than argparse, whose import was a
+A command, then each of its options as `--name value`, every one required but the --item of list
+(given twice, the last counts), then `--` and the command's words: the pairs of set, the one key of
+get, none for the others. --seed is stdin or none, --tracker-state labels or none, --kind runs or
+gates. --item, where a command takes one, is an id whose slug holds only letters, digits, _ and -,
+as the slug of every adapter's id shape does, so no item names a path. A line outside this grammar
+is refused with the command's usage, exit 2. Hand-written rather than argparse, whose import was a
 large share of every write's start.
 """
 from collections import namedtuple
 from types import MappingProxyType
 
+import _state_join as join
 import _state_schema as schema
 
 PROGRAM = "_state.py"
@@ -19,19 +21,28 @@ END_OF_OPTIONS = "--"
 WORDS_PER_OPTION = 2
 SEED_OPTION = "seed"
 ITEM_OPTION = "item"
+TRACKER_STATE_OPTION = "tracker-state"
+KIND_OPTION = "kind"
 SEED_SOURCES = ("stdin", "none")
+OPTION_CHOICES = MappingProxyType({SEED_OPTION: SEED_SOURCES, TRACKER_STATE_OPTION: join.TRACKER_STATES,
+                                   KIND_OPTION: join.ROW_KINDS})
 COMMAND_OPTIONS = MappingProxyType({
     "set": ("state-dir", "flow-home", "item", "now", "machine", "host", "claim-file", "seed"),
     "take": ("state-dir", "flow-home", "item", "now", "machine", "host", "seed"),
     "get": ("state-dir", "flow-home", "item"),
     "show": ("state-dir", "flow-home", "item"),
     "archive": ("state-dir", "flow-home", "item", "machine"),
+    "join": ("state-dir", "flow-home", "tracker-state"),
+    "list": ("state-dir", "flow-home", "tracker-state", "kind"),
+    "row": ("state-dir", "flow-home", "tracker-state", "kind", "item"),
 })
+OPTIONAL_OPTIONS = MappingProxyType({"list": (ITEM_OPTION,)})
 PAIRS_COMMAND = "set"
 KEY_COMMAND = "get"
 WORDS_USAGE = MappingProxyType({PAIRS_COMMAND: "-- <pair>...", KEY_COMMAND: "-- <key>"})
-WORD_COUNTS = MappingProxyType({KEY_COMMAND: 1, "take": 0, "show": 0, "archive": 0})
-OPTION_FIELDS = ("state_dir", "flow_home", "item", "now", "machine", "host", "claim_file", "seed")
+WORD_COUNTS = MappingProxyType({KEY_COMMAND: 1, "take": 0, "show": 0, "archive": 0, "join": 0, "list": 0, "row": 0})
+OPTION_FIELDS = ("state_dir", "flow_home", "item", "now", "machine", "host", "claim_file", "seed", "tracker_state",
+                 "kind")
 UNSET_OPTIONS = MappingProxyType(dict.fromkeys(OPTION_FIELDS, ""))
 Options = namedtuple("Options", ("command",) + OPTION_FIELDS + ("pairs", "key"))
 NO_OPTIONS = Options(command="", pairs=(), key="", **UNSET_OPTIONS)
@@ -46,9 +57,15 @@ def option_field(word):
     return word[len(OPTION_PREFIX):].replace("-", "_")
 
 
+def option_usage(option):
+    value = "|".join(OPTION_CHOICES[option]) if option in OPTION_CHOICES else "<%s>" % option
+    return "%s %s" % (option_word(option), value)
+
+
 def usage_line(command):
-    options = " ".join("%s %s" % (option_word(option), "|".join(SEED_SOURCES) if option == SEED_OPTION
-                                  else "<%s>" % option) for option in COMMAND_OPTIONS[command])
+    required = [option_usage(option) for option in COMMAND_OPTIONS[command]]
+    optional = ["[%s]" % option_usage(option) for option in OPTIONAL_OPTIONS.get(command, ())]
+    options = " ".join(required + optional)
     return " ".join(part for part in ("usage:", PROGRAM, command, options, WORDS_USAGE.get(command, "")) if part)
 
 
@@ -62,22 +79,35 @@ def given_options(option_words):
     return dict(zip(option_words[::WORDS_PER_OPTION], option_words[1::WORDS_PER_OPTION]))
 
 
+def choice_problem(given):
+    for option, choices in OPTION_CHOICES.items():
+        value = given.get(option_word(option), choices[0])
+        if value not in choices:
+            return "%s is %s, not %s" % (option_word(option), " or ".join(choices), value)
+    return ""
+
+
+def item_problem(given):
+    item = given.get(option_word(ITEM_OPTION))
+    if item is None or schema.item_slug_shaped(item):
+        return ""
+    return "--item takes an id whose slug is letters, digits, _ and -, not %r" % item
+
+
 def options_problem(command, option_words):
     names, values = option_words[::WORDS_PER_OPTION], option_words[1::WORDS_PER_OPTION]
     given = given_options(option_words)
-    known = tuple(option_word(option) for option in COMMAND_OPTIONS[command])
+    required = tuple(option_word(option) for option in COMMAND_OPTIONS[command])
+    known = required + tuple(option_word(option) for option in OPTIONAL_OPTIONS.get(command, ()))
     unknown = [name for name in names if name not in known]
-    missing = [name for name in known if name not in given]
-    seed = given.get(option_word(SEED_OPTION), SEED_SOURCES[0])
-    item = given.get(option_word(ITEM_OPTION), "")
+    missing = [name for name in required if name not in given]
     checks = (
         (len(names) != len(values), "every option takes one value: %s" % " ".join(option_words)),
         (unknown, "unrecognized options: %s" % " ".join(unknown)),
         (missing, "the following options are required: %s" % " ".join(missing)),
-        (seed not in SEED_SOURCES, "--seed is %s, not %s" % (" or ".join(SEED_SOURCES), seed)),
-        (not schema.item_slug_shaped(item), "--item takes an id whose slug is letters, digits, _ and -, not %r" % item),
     )
-    return next((message for failed, message in checks if failed), "")
+    problem = next((message for failed, message in checks if failed), "")
+    return problem or choice_problem(given) or item_problem(given)
 
 
 def words_problem(command, words):

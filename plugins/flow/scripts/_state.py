@@ -7,6 +7,7 @@ lib/state.sh is its one caller; see there.
   _state.py get     --state-dir D --flow-home H --item I -- <key>
   _state.py show    --state-dir D --flow-home H --item I
   _state.py archive --state-dir D --flow-home H --item I --machine M
+  _state.py join|list|row ...  the record laid onto items, and its run and gate rows: _state_reads.py
 
 The record is <state dir>/<slug>.json, archived to <state dir>/closed/<slug>.json; its lock is
 <flow home>/locks/<slug>.lock, and set, take and archive exit 75 when it stays busy. With no record
@@ -27,10 +28,12 @@ from types import MappingProxyType
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _state_arguments as command_line  # noqa: E402
+import _state_join as join  # noqa: E402
+import _state_reads as reads  # noqa: E402
 import _state_schema as schema  # noqa: E402
 import _state_views as views  # noqa: E402
 
-NO_RECORD = MappingProxyType({})
+NO_RECORD = join.NO_RECORD
 NO_OBJECT = MappingProxyType({})
 StoredRecord = namedtuple("StoredRecord", ("record", "outcome"))
 NEW_FILE_FLAGS = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW
@@ -215,10 +218,16 @@ def command_show(options):
     return schema.DONE
 
 
+def warn(message):
+    sys.stderr.write("flow: %s\n" % message)
+
+
 def commands(random_bytes):
-    return MappingProxyType({"set": lambda options: command_set(options, random_bytes),
-                             "take": lambda options: command_take(options, random_bytes),
-                             "get": command_get, "show": command_show, "archive": command_archive})
+    edge = reads.Edge(read_record, read_object, sys.stdin.read, warn)
+    return MappingProxyType(dict({"set": lambda options: command_set(options, random_bytes),
+                                  "take": lambda options: command_take(options, random_bytes),
+                                  "get": command_get, "show": command_show, "archive": command_archive},
+                                 **reads.commands(edge)))
 
 
 def main(arguments, random_bytes):

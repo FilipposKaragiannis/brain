@@ -1,9 +1,9 @@
 #!/bin/sh
 # Human gates.
 #   gate.sh raise <item> <gate> <message> [<from step>] [--options <json>] [--condition <text>]
-#                 [--raised-by <who>]       record the gate in the tracker, notify, stop the run;
-#                                           notify.sh writes the gate's record through the flow
-#                                           record, which renders <flow home>/gates/<item>.json;
+#                 [--raised-by <who>]       record the gate, notify, stop the run;
+#                                           notify.sh writes the gate's record into the flow
+#                                           record (its view: scripts/_state_views.py);
 #                                           <from step> is the step whose work the gate judges
 #                                           (default: the item's step now), where --back returns.
 #                                           --options: a JSON array of 1 to 9 {label, text,
@@ -62,17 +62,15 @@
 . "$FLOW_PLUGIN/lib/gate.sh"
 home="$(flow_home)"
 
-# gates_json: each gate record with its claimed worktree (steward.sh find) or null, through
-# scripts/_gates.py, which adds the age and the parsed questions. A record that is not a JSON
-# object is skipped with a warning, so one bad file never hides the other gates.
+# gates_json: each gate row (record_list gates) with its claimed worktree (steward.sh find) or
+# null, through scripts/_gates.py, which adds the age and the parsed questions. record_list leaves
+# out a record that does not parse and names it on stderr, so one bad record never hides the
+# other gates.
 gates_json() {
-  for f in "$home"/gates/*.json; do
-    [ -f "$f" ] || continue
-    record="$(json_set "$(cat "$f")" worktree null 2>/dev/null)"
-    [ -n "$record" ] || { echo "flow: skipping $f, not a JSON gate record" >&2; continue; }
+  record_list gates | while IFS= read -r record; do
     item="$(json_get "$record" item)"; worktree=""
-    [ -n "$item" ] && worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$item")"
-    if [ -n "$worktree" ]; then json_set "$record" worktree "$(json_string "$worktree")"; else printf '%s\n' "$record"; fi
+    [ -n "$item" ] && worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$item" </dev/null)"
+    if [ -n "$worktree" ]; then json_set "$record" worktree "$(json_string "$worktree")"; else json_set "$record" worktree null; fi
   done | python3 -I "$FLOW_PLUGIN/scripts/_gates.py" "${FLOW_NOW:-$(now_iso)}"
 }
 
@@ -101,11 +99,11 @@ parse_raise_flags() {
 # stdout, marked unanswered (gate_unanswered). An item with no gate is left as it is. It holds the
 # item's clear lock (lock_gate_clears), so a drop and a clear never take one gate twice.
 gate_drop() {
-  item="$1"; why="$2"; lock_gate_clears "$item"; record="$home/gates/$(item_slug "$item").json"
-  gate_record="$(cat "$record" 2>/dev/null)"
-  gate="$(json_get "$gate_record" gate)"; asked="$(json_get "$gate_record" message)"
+  item="$1"; why="$2"; lock_gate_clears "$item"
+  gate_row="$(gate_record "$item" 2>/dev/null)"
+  gate="$(json_get "$gate_row" gate)"; asked="$(json_get "$gate_row" message)"
   if [ -z "$gate" ]; then
-    item_data="$(adapter read "$item" 2>/dev/null)"
+    item_data="$(item_read "$item" 2>/dev/null)"
     gate="$(state_get "$item_data" gate)"; [ "$gate" != none ] || gate=""
   fi
   [ -n "$gate" ] || return 0
@@ -138,7 +136,7 @@ case "${1:-}" in
     case "${1:-}" in --*) ;; *) [ $# -eq 0 ] || { from="$1"; shift; } ;; esac
     parse_raise_flags "$@"
     json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "gates.$gate" >/dev/null 2>&1 || true
-    data="$(adapter read "$item" 2>/dev/null)"; step="$(state_get "$data" step)"
+    data="$(item_read "$item" 2>/dev/null)"; step="$(state_get "$data" step)"
     [ -n "$from" ] || from="$step"
     options="$(raise_options "$item" "$options_given")"
     condition="$(raise_condition "$item" "$condition_given")"
@@ -179,8 +177,8 @@ $footer" >/dev/null
       rm -f "$(host_stop_file "$item")"; echo "$item starts sessions again"; exit 0 ;;
     esac
     lock_gate_clears "$item"
-    record="$home/gates/$(item_slug "$item").json"; asked=""; gate=""; record_json=""
-    [ -f "$record" ] && { record_json="$(cat "$record")"; asked="$(json_get "$record_json" message)"; gate="$(json_get "$record_json" gate)"; }
+    record_json="$(gate_record "$item")" || exit
+    asked="$(json_get "$record_json" message)"; gate="$(json_get "$record_json" gate)"
     case "$mode" in
       met)
         [ -n "$record_json" ] || { echo "gate already cleared on $item"; exit 0; }
@@ -189,7 +187,7 @@ $footer" >/dev/null
         [ "$recorded_condition" = "$given" ] || die "the ${gate:-gate} gate on $item waits on $recorded_condition, not $given, so it stays; the health job reads it on its next pass" ;;
       option) option_answer="$(picked_option_answer "$option_number" "$given")" || exit $? ;;
     esac
-    data="$(adapter read "$item" 2>/dev/null)"
+    data="$(item_read "$item" 2>/dev/null)"
     [ -n "$gate" ] || { gate="$(state_get "$data" gate)"; [ "$gate" != none ] || gate=""; }
     step="$(state_get "$data" step)"; from="$(state_get "$data" gate_from)"; pr="$(state_get "$data" pr)"
     case "$mode" in
@@ -204,9 +202,7 @@ $footer" >/dev/null
       2:--json) gates_json; exit ;;
       *) die "usage: gate.sh list [--json]" 2 ;;
     esac
-    for f in "$home"/gates/*.json; do
-      [ -f "$f" ] || continue
-      c="$(cat "$f")"
+    record_list gates | while IFS= read -r c; do
       printf '%s\t%s\t%s\t%s\n' "$(json_get "$c" time)" "$(json_get "$c" item)" "$(json_get "$c" gate)" "$(json_get "$c" message | head -1)"
     done
     # A stopped host is a line too: the host for the item, stopped for the gate.

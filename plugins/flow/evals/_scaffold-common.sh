@@ -34,7 +34,7 @@ scaffold() {
   printf '#!/bin/sh\nout="$(sh src/greet.sh bob)"; [ "$out" = "hello bob" ] || { echo "greet failed because the output was $out"; exit 1; }\necho ok\n' > tests/run.sh
   printf '{"version":"0.1.0","build":"sh -n src/*.sh","test":"sh tests/run.sh","mutation":"","languages":[],"protected":[]}\n' > .standards/config.json
   printf '# Testing guide\n\nUnit tests: `sh tests/run.sh`, one assertion per test with a because string in the failure message.\n' > .standards/testing-guide.md
-  printf '.pool/\n.flow/items/\n.flow/reports/\n.flow/runs/\n.flow/gates/\n.flow/claim.json\n.flow/events.log\n.flow/next.txt\n' > .gitignore
+  printf '.pool/\n.flow/items/\n.flow/reports/\n.flow/runs/\n.flow/gates/\n.flow/state/\n.flow/locks/\n.flow/claim.json\n.flow/events.log\n.flow/next.txt\n' > .gitignore
   printf 'adapters:\n  default: local\nbase: main\npool:\n  - %s\nnotify:\n  desktop: false\n' "$pool" > .flow/config.yaml
   # Install stamps that match the plugins on disk, so the session-start hooks stay quiet: the
   # fixture stands for a project whose init ran already.
@@ -56,7 +56,7 @@ $3
 ## Acceptance
 - [ ] greet prints \"hello <name>\" for any name
 - [ ] greet with no argument prints \"hello stranger\"")"
-  [ -n "$4" ] && "$P/adapters/local/write-state.sh" "$id" "step=$4"
+  [ -n "$4" ] && "$P/scripts/state.sh" set "$id" "step=$4"
   if [ "${5:-}" = "ready" ]; then
     git -C "$wt" switch -q -c "flow/$(printf '%s' "$id" | tr ':/#' '---')"
   else

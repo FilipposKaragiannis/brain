@@ -24,10 +24,11 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    (`gate.sh clear <item> --option 1`) waives the blocker for this item, so `next.sh` runs this
    step again while it is still open and the brief carries the answer; an answer in words waives
    nothing, and the item waits for the blocker to close.
-2. **Spawn `pr-creator`** with the step brief plus the path of [PR-BODY.md](PR-BODY.md) (the
-   house body) and, when they exist, `<reports>/explain.html` and `quiz.md`. The PR is a GitHub
-   PR on the origin, opened with `gh pr create`, whatever tracker holds the item: a local item
-   gets one too, and the tracker only records it. A pushed branch is no PR.
+2. **Spawn `pr-creator`** with the step brief plus the plugin root `$P`, the path of
+   [PR-BODY.md](PR-BODY.md) (the house body) and, when they exist, `<reports>/explain.html` and
+   `quiz.md`. The PR is a GitHub PR on the origin, opened with `gh pr create`, whatever tracker
+   holds the item: a local item gets one too, and the tracker only records it. A pushed branch is
+   no PR.
 3. **Result** `<reports>/pr.json`: `done` with the URL (under `pr`), the base and why ("base
    <b>, recorded at claim", or the parent rule for a claim with no `state.base`), draft or
    ready, the reviewers asked. A quiz never goes on the PR: the owner takes it in the console,
@@ -42,11 +43,12 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    rule), draft or ready, and the warning when the base is not the default branch (the merge
    will not auto-close the item; closeout does).
 
-Never open a PR on a failing verify. With the item's `state.base` set, never pick a base other
-than the item's recorded base, `base` in the worktree's `.flow/claim.json`. `state.base` on the
-tracker is a copy anyone who can edit the item can change: when it differs from the claim's, or
-the claim has none, stop with status `fail` naming both. Never pass a base to `git` or `gh` that
-starts with `-`, has a character outside `^[A-Za-z0-9._/-]+$` or fails
+Never open a PR on a failing verify. `state.base` is the base the flow recorded at the claim,
+read from the item's flow record with `"$P/scripts/state.sh" get <item> base`, never from the
+tracker, whose copy anyone who can edit the item can change. With it set, never pick a base other
+than the item's recorded base, `base` in the worktree's `.flow/claim.json`: when the two differ,
+or the claim has none, stop with status `fail` naming both. Never pass a base to `git` or `gh`
+that starts with `-`, has a character outside `^[A-Za-z0-9._/-]+$` or fails
 `git check-ref-format --branch`; stop with status `fail` instead. With `state.base` empty (a
 claim made before the base was recorded, whose `claim.json` holds only the config base), take
 the parent rule and never the default branch when the item has a parent with a branch. Never

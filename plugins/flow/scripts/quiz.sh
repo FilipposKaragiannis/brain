@@ -22,7 +22,7 @@ is_pr() { # is_pr <value>: a PR number, or a GitHub PR URL that ends in one
 }
 mark_ready() { # mark_ready <item>: marks the item's draft PR ready and prints the note for the pass line,
   # nothing when the item has no PR on GitHub
-  pr="$(state_get "$(adapter read "$1" 2>/dev/null)" pr)"
+  pr="$(state_get "$(item_read "$1" 2>/dev/null)" pr)"
   [ -n "$pr" ] && [ -n "$(cfg github.repo)" ] || return 0
   is_pr "$pr" || { echo "; the PR in the state is not a PR number or URL, so it was not marked ready"; return 0; }
   if "$FLOW_PLUGIN/scripts/comments.sh" ready "$pr" >/dev/null 2>&1; then echo "; PR $pr marked ready for review"
