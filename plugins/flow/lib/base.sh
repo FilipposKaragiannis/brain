@@ -150,22 +150,28 @@ fetch_epic_start() {
   return 1
 }
 
-# start_ref <start>: the ref a new branch is cut from: the start branch as the remote holds it,
-# else the local one (a claimed parent's task branch nobody pushed yet).
+# start_ref <epic-json> <start>: the ref the epic's branch is cut from. The task branch of a
+# parent that holds a claim is taken at its local tip, as a claim takes it (cmd_claim in
+# scripts/steward.sh): the parent's newest work may not be pushed. Any other start is taken as
+# the remote holds it, else as the local branch.
 start_ref() {
-  fetch_base "$1"
-  if git -C "$(flow_repository)" show-ref --verify --quiet "refs/remotes/origin/$1"; then printf 'refs/remotes/origin/%s' "$1"; else printf 'refs/heads/%s' "$1"; fi
+  fetch_base "$2"
+  if [ "$(parent_branch "$(json_get "$1" parent)")" != "$2" ] && git -C "$(flow_repository)" show-ref --verify --quiet "refs/remotes/origin/$2"; then
+    printf 'refs/remotes/origin/%s' "$2"
+  else
+    printf 'refs/heads/%s' "$2"
+  fi
 }
 
-# cut_branch <branch> <start>: makes the branch at the start branch's tip: pushed to the remote,
-# never forced, or a local branch in a repository with no origin. Returns 1 and prints why when
-# git refuses.
+# cut_branch <branch> <start> <start ref>: makes the branch at the start ref: pushed to the
+# remote, never forced, or a local branch in a repository with no origin. Returns 1 and prints
+# why when git refuses.
 cut_branch() {
   if ! git -C "$(flow_repository)" remote get-url origin >/dev/null 2>&1; then
-    git -C "$(flow_repository)" branch -q "$1" "$2" >/dev/null 2>&1 && return 0
+    git -C "$(flow_repository)" branch -q "$1" "$3" >/dev/null 2>&1 && return 0
     printf 'git could not make %s from %s' "$1" "$2"; return 1
   fi
-  if git -C "$(flow_repository)" push -q origin "$(start_ref "$2"):refs/heads/$1" >/dev/null 2>&1; then fetch_base "$1"; return 0; fi
+  if git -C "$(flow_repository)" push -q origin "$3:refs/heads/$1" >/dev/null 2>&1; then fetch_base "$1"; return 0; fi
   printf 'git could not push %s from %s' "$1" "$2"; return 1
 }
 
@@ -178,7 +184,7 @@ create_epic_branch() {
   fetch_base "$wanted_branch"
   if ! base_exists "$wanted_branch"; then
     wanted_start="$(fetch_epic_start "$2")" || { printf '%s' "$wanted_start"; return 1; }
-    cut_refusal="$(cut_branch "$wanted_branch" "$wanted_start")" || { printf '%s' "$cut_refusal"; return 1; }
+    cut_refusal="$(cut_branch "$wanted_branch" "$wanted_start" "$(start_ref "$2" "$wanted_start")")" || { printf '%s' "$cut_refusal"; return 1; }
   fi
   printf '%s' "$wanted_branch"
 }

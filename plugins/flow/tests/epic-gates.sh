@@ -148,6 +148,20 @@ check "ClaimedParentBranchNobodyPushed_IsNotOnTheRemote: the parent's branch is 
 check "ApprovedSplitOfAnEpicUnderAClaimedParentNobodyPushed_StartsFromTheParentsLocalTip: the epic builds on its parent's work wherever that work is" \
   '[ "$(remote_tip "$(epic_of "$under_a_claim")")" = "$(git rev-parse "refs/heads/$claimed_parent_branch")" ]'
 
+pushed_parent="$(new_task "League run")"
+pushed_parent_worktree="$("$plugin/scripts/steward.sh" claim "$pushed_parent")"
+pushed_parent_branch="flow/$(slug "$pushed_parent")"
+git -C "$pushed_parent_worktree" commit -q --allow-empty -m "work that is pushed" && git -C "$pushed_parent_worktree" push -q origin "$pushed_parent_branch" 2>/dev/null
+git -C "$pushed_parent_worktree" commit -q --allow-empty -m "newer work, local only"
+ahead_of_its_remote="$("$local_adapter/create.sh" epic "League final" --body x --parent "$pushed_parent")"
+new_task "Final date" "$ahead_of_its_remote" >/dev/null
+ask_for_the_split "$ahead_of_its_remote"
+"$plugin/scripts/gate.sh" clear "$ahead_of_its_remote" "Approved." >/dev/null 2>&1
+check "ClaimedParentBranchAheadOfItsRemote_HasTwoTips: the local branch holds a commit the remote lacks, or the check below proves nothing" \
+  '[ -n "$(remote_tip "$pushed_parent_branch")" ] && [ "$(remote_tip "$pushed_parent_branch")" != "$(git rev-parse "refs/heads/$pushed_parent_branch")" ]'
+check "ApprovedSplitOfAnEpicUnderAClaimedParentAheadOfItsRemote_StartsFromTheLocalTip: a claim takes its parent at the local tip, and so must the epic" \
+  '[ "$(remote_tip "$(epic_of "$ahead_of_its_remote")")" = "$(git rev-parse "refs/heads/$pushed_parent_branch")" ]'
+
 echo "epic gates: a branch the remote refuses leaves the gate cleared and the children waiting"
 new_repo refused
 printf '#!/bin/sh\nexit 1\n' > "$root/origin.git/hooks/pre-receive"; chmod +x "$root/origin.git/hooks/pre-receive"
