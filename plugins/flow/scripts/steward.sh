@@ -1423,8 +1423,69 @@ for line in sys.stdin:
   done
 }
 
+# approved_epics_with_children: the ids of the open epics in $health_items that have an open
+# child and an approved split. Approved means the epic does not wait at its decomposition gate and
+# either its steps are past that gate or the owner's last answer cleared it (an answer or an
+# option, not a split sent back).
+approved_epics_with_children() {
+  python3 -I -c '
+import json, sys
+profiles = json.load(open(sys.argv[1], encoding="utf-8"))["profiles"]
+SPLIT_GATE = "decomposition"
+
+def past_the_gate(state):
+    steps = profiles.get(state.get("profile") or "epic", [])
+    before_the_gate = steps[:steps.index("gate:" + SPLIT_GATE)] if "gate:" + SPLIT_GATE in steps else []
+    return state.get("step") not in before_the_gate
+
+def cleared_by_the_owner(state):
+    answered = state.get("answered") or ""
+    return answered == SPLIT_GATE or answered.startswith(SPLIT_GATE + ", option ")
+
+def approved(state):
+    return state.get("gate") != SPLIT_GATE and (cleared_by_the_owner(state) or past_the_gate(state))
+
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    for item in json.loads(line):
+        if item.get("kind") == "epic" and item.get("open_children") and approved(item.get("state") or {}):
+            print(item["id"])' "$FLOW_PLUGIN/profiles.json" < "$health_items"
+}
+
+# health_make_epic_branch <epic> <epic-json>: makes the epic's branch (create_epic_branch in
+# lib/base.sh) and says so; a branch that cannot be made is said and notified once, with why.
+health_make_epic_branch() {
+  if made_epic_branch="$(create_epic_branch "$1" "$2")"; then
+    health_cleared "$branchless_key"
+    health_say "$1" "made its epic branch $made_epic_branch: its children start from it"
+  elif health_changed "$branchless_key" "$made_epic_branch"; then
+    health_say "$1" "has no epic branch, so its children wait: $made_epic_branch"
+    health_notify "$1 has no epic branch, so its children wait: $made_epic_branch"
+  fi
+}
+
+# health_epic_branch <epic>: an approved epic with no epic branch gets one; --dry-run only says so.
+health_epic_branch() {
+  branchless_key="epic-branch-$(item_slug "$1")"; missing_epic_branch="$(epic_branch "$1")"
+  if base_exists "$missing_epic_branch"; then health_cleared "$branchless_key"; return 0; fi
+  if [ "$dry" -eq 1 ]; then health_say "$1" "would make its epic branch $missing_epic_branch"; return 0; fi
+  branchless_epic_json="$(adapter read "$1" 2>/dev/null)"
+  [ -z "$branchless_epic_json" ] || health_make_epic_branch "$1" "$branchless_epic_json"
+}
+
+# health_epic_branches: an open epic with an open child and an approved split gets its epic
+# branch when it has none: one approved before the flow made the branch at the gate, one whose
+# branch could not be made then, or one whose children the owner made by hand.
+health_epic_branches() {
+  for branchless_epic in $(approved_epics_with_children); do   # no pipe: health_say counts a finding in this shell
+    health_epic_branch "$branchless_epic"
+  done
+}
+
 # health_list: every tracker's open items, one JSON list per line, in $health_items, which
-# health_splits and health_holds read; the trackers whose list failed go in $health_list_failed.
+# health_splits, health_epic_branches and health_holds read; the trackers whose list failed go in
+# $health_list_failed.
 health_list() {
   health_items="$home/health/.items.$$"; health_list_failed=""
   for a in $health_trackers; do
@@ -1653,6 +1714,7 @@ cmd_health() {
   health_gates
   health_list
   health_splits
+  health_epic_branches
   health_holds
   rm -f "$health_items"
   health_pressure

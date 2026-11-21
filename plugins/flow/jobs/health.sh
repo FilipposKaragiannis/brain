@@ -12,7 +12,8 @@
 # item's next run), clears a gate whose condition ended (its blocker closed, its PR's conflict or
 # failing CI gone: `gate.sh clear --met`), reminds on gates pending past
 # jobs.health.gate_reminder (a gate on a closed item is a defect, said once, not a gate waiting),
-# and says once when the pool is full and the next job has no worktree to start in. It clears a
+# and says once when the pool is full and the next job has no worktree to start in. An open epic
+# with an open child and an approved split gets its epic branch when it has none. It clears a
 # planned hold (state.held_by) that is stale or wrong: the holder unreadable, holding no worktree and no run,
 # or its changes (touches, when it records none) no longer sharing a path with the held item's; a
 # hold on itself; the newest hold in a cycle. Each clear is an `unheld` line in events.log. A hold whose holder closed stays:

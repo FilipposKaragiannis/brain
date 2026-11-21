@@ -83,4 +83,141 @@ finish_step "$silent_epic"
 check "StepThatNeverAsked_GetsTheProfileGate: nobody approved the split, so the gate is raised" \
   '[ "$(state "$silent_epic" gate)" = decomposition ]'
 
+# remote_tip <branch>: the commit the remote holds the branch at, or nothing when it has none.
+remote_tip() { git -C "$root/origin.git" rev-parse -q --verify "refs/heads/$1" 2>/dev/null; }
+# ask_for_the_split <epic>: the epic's tasks step ran and asks its decomposition gate.
+ask_for_the_split() {
+  "$local_adapter/write-state.sh" "$1" step=tasks profile=epic
+  start_step "$1"
+  step_result "$1" tasks '{"status":"gate","gate":"decomposition","message":"**Approve these slices?**"}'
+  finish_step "$1"
+}
+health_pass() { "$plugin/scripts/steward.sh" health "$@" 2>&1; }
+
+echo "epic gates: an approved split gives the epic its branch"
+new_repo approved
+approved_epic="$("$local_adapter/create.sh" epic "Replays" --body x)"
+approved_child="$(new_task "Replay file" "$approved_epic")"
+ask_for_the_split "$approved_epic"
+check "EpicWaitingForItsSplitApproval_HasNoEpicBranch: nothing makes the branch before the owner approves, or the checks below prove nothing" \
+  '[ -z "$(remote_tip "$(epic_of "$approved_epic")")" ]'
+"$plugin/scripts/gate.sh" clear "$approved_epic" "Approved." >/dev/null 2>&1
+check "ApprovedSplit_PutsTheEpicBranchOnTheRemoteAtTheConfigBase: the children of the epic start where the default branch stands" \
+  '[ -n "$(remote_tip main)" ] && [ "$(remote_tip "$(epic_of "$approved_epic")")" = "$(remote_tip main)" ]'
+check "ApprovedSplit_ChildIsReadyWithNoBranchPushedByHand: the approval is all the owner does" \
+  'ready_ids | grep -qxF -- "$approved_child"'
+start_step "$approved_child"
+check "ApprovedSplit_ChildStartsFromTheEpicBranch: its PR merges into the epic, not into the default branch" \
+  '[ "$(claim_base "$approved_child")" = "$(epic_of "$approved_epic")" ]'
+
+sent_back="$("$local_adapter/create.sh" epic "Leagues" --body x)"
+new_task "League table" "$sent_back" >/dev/null
+ask_for_the_split "$sent_back"
+"$plugin/scripts/gate.sh" clear "$sent_back" --back "Split the table from the fixtures." >/dev/null 2>&1
+check "SplitSentBack_MakesNoEpicBranch: the owner did not approve this split" \
+  '[ -z "$(remote_tip "$(epic_of "$sent_back")")" ]'
+
+kept="$("$local_adapter/create.sh" epic "Awards" --body x)"
+new_task "Award list" "$kept" >/dev/null
+remote_branch "$(epic_of "$kept")"; remote_commit "$(epic_of "$kept")" awards.txt
+kept_tip="$(remote_tip "$(epic_of "$kept")")"
+ask_for_the_split "$kept"
+"$plugin/scripts/gate.sh" clear "$kept" "Approved." >/dev/null 2>&1
+check "ApprovedSplitOfAnEpicThatHasItsBranch_LeavesTheBranchWhereItIs: work already on the epic branch is never moved" \
+  '[ -n "$kept_tip" ] && [ "$(remote_tip "$(epic_of "$kept")")" = "$kept_tip" ]'
+
+outer="$("$local_adapter/create.sh" epic "Season" --body x)"
+remote_branch "$(epic_of "$outer")"; remote_commit "$(epic_of "$outer")" season.txt
+inner="$("$local_adapter/create.sh" epic "Playoffs" --body x --parent "$outer")"
+new_task "Bracket" "$inner" >/dev/null
+ask_for_the_split "$inner"
+"$plugin/scripts/gate.sh" clear "$inner" "Approved." >/dev/null 2>&1
+check "ApprovedSplitOfAnEpicUnderAnEpicWithABranch_StartsFromThatBranch: the inner epic builds on the outer epic's work" \
+  '[ -n "$(remote_tip "$(epic_of "$outer")")" ] && [ "$(remote_tip "$(epic_of "$inner")")" = "$(remote_tip "$(epic_of "$outer")")" ]'
+
+claimed_parent="$(new_task "Cup run")"
+"$plugin/scripts/steward.sh" claim "$claimed_parent" >/dev/null 2>&1
+claimed_parent_branch="flow/$(slug "$claimed_parent")"
+git -C "$("$plugin/scripts/steward.sh" find "$claimed_parent")" commit -q --allow-empty -m "work nobody pushed yet"
+under_a_claim="$("$local_adapter/create.sh" epic "Cup final" --body x --parent "$claimed_parent")"
+new_task "Final venue" "$under_a_claim" >/dev/null
+ask_for_the_split "$under_a_claim"
+"$plugin/scripts/gate.sh" clear "$under_a_claim" "Approved." >/dev/null 2>&1
+check "ClaimedParentBranchNobodyPushed_IsNotOnTheRemote: the parent's branch is local only, or the check below proves nothing" \
+  '[ -z "$(remote_tip "$claimed_parent_branch")" ] && [ -n "$(git rev-parse -q --verify "refs/heads/$claimed_parent_branch")" ]'
+check "ApprovedSplitOfAnEpicUnderAClaimedParentNobodyPushed_StartsFromTheParentsLocalTip: the epic builds on its parent's work wherever that work is" \
+  '[ "$(remote_tip "$(epic_of "$under_a_claim")")" = "$(git rev-parse "refs/heads/$claimed_parent_branch")" ]'
+
+pushed_parent="$(new_task "League run")"
+pushed_parent_worktree="$("$plugin/scripts/steward.sh" claim "$pushed_parent")"
+pushed_parent_branch="flow/$(slug "$pushed_parent")"
+git -C "$pushed_parent_worktree" commit -q --allow-empty -m "work that is pushed" && git -C "$pushed_parent_worktree" push -q origin "$pushed_parent_branch" 2>/dev/null
+git -C "$pushed_parent_worktree" commit -q --allow-empty -m "newer work, local only"
+ahead_of_its_remote="$("$local_adapter/create.sh" epic "League final" --body x --parent "$pushed_parent")"
+new_task "Final date" "$ahead_of_its_remote" >/dev/null
+ask_for_the_split "$ahead_of_its_remote"
+"$plugin/scripts/gate.sh" clear "$ahead_of_its_remote" "Approved." >/dev/null 2>&1
+check "ClaimedParentBranchAheadOfItsRemote_HasTwoTips: the local branch holds a commit the remote lacks, or the check below proves nothing" \
+  '[ -n "$(remote_tip "$pushed_parent_branch")" ] && [ "$(remote_tip "$pushed_parent_branch")" != "$(git rev-parse "refs/heads/$pushed_parent_branch")" ]'
+check "ApprovedSplitOfAnEpicUnderAClaimedParentAheadOfItsRemote_StartsFromTheLocalTip: a claim takes its parent at the local tip, and so must the epic" \
+  '[ "$(remote_tip "$(epic_of "$ahead_of_its_remote")")" = "$(git rev-parse "refs/heads/$pushed_parent_branch")" ]'
+
+echo "epic gates: a branch the remote refuses leaves the gate cleared and the children waiting"
+new_repo refused
+printf '#!/bin/sh\nexit 1\n' > "$root/origin.git/hooks/pre-receive"; chmod +x "$root/origin.git/hooks/pre-receive"
+refused_epic="$("$local_adapter/create.sh" epic "Trades" --body x)"
+refused_child="$(new_task "Trade window" "$refused_epic")"
+ask_for_the_split "$refused_epic"
+"$plugin/scripts/gate.sh" clear "$refused_epic" "Approved." > "$work/refused.out" 2>&1
+check "ApprovedSplitWhoseBranchTheRemoteRefuses_StillClearsTheGate: the owner's answer stands whatever git said" \
+  '[ "$(state "$refused_epic" gate)" = none ]'
+check "ApprovedSplitWhoseBranchTheRemoteRefuses_SaysTheChildrenWait: the owner hears why nothing starts" \
+  'grep -qF "its children wait" "$work/refused.out"'
+check "ApprovedSplitWhoseBranchTheRemoteRefuses_KeepsTheChildOutOfTheReadyList: no child starts on the default branch instead" \
+  '! ready_ids | grep -qxF -- "$refused_child"'
+check "ApprovedSplitWhoseBranchTheRemoteRefuses_KeepsItsTasksStep: the step that asked the gate has not run again, so only the owner's answer says the split is approved" \
+  '[ "$(state "$refused_epic" step)" = tasks ]'
+rm "$root/origin.git/hooks/pre-receive"
+health_pass > "$work/health-retry.out"
+check "ApprovedSplitWhoseBranchTheRemoteRefused_GetsItFromTheHealthJobOnceTheRemoteTakesIt: the approval stands, so the health job makes the branch without another run of the tasks step" \
+  '[ -n "$(remote_tip main)" ] && [ "$(remote_tip "$(epic_of "$refused_epic")")" = "$(remote_tip main)" ]'
+
+echo "epic gates: the health job gives an approved epic the branch it lacks"
+new_repo backfill
+older_epic="$("$local_adapter/create.sh" epic "Stadiums" --body x)"
+older_child="$(new_task "Stadium list" "$older_epic")"
+"$local_adapter/write-state.sh" "$older_epic" step=closeout profile=epic
+hand_made="$("$local_adapter/create.sh" epic "Kits" --body x)"
+new_task "Kit colours" "$hand_made" >/dev/null
+waiting_epic="$("$local_adapter/create.sh" epic "Sponsors" --body x)"
+new_task "Sponsor list" "$waiting_epic" >/dev/null
+ask_for_the_split "$waiting_epic"
+unreached="$("$local_adapter/create.sh" epic "Tickets" --body x)"
+new_task "Ticket price" "$unreached" >/dev/null
+"$local_adapter/write-state.sh" "$unreached" step=tasks profile=epic
+health_pass --dry-run > "$work/health-dry.out"
+check "HealthDryRun_MakesNoEpicBranch: a dry run only says what it would do" \
+  '[ -z "$(remote_tip "$(epic_of "$older_epic")")" ] && grep -qF "would make its epic branch $(epic_of "$older_epic")" "$work/health-dry.out"'
+health_pass > "$work/health.out"
+check "EpicApprovedBeforeTheFlowMadeBranches_GetsItsBranchFromTheHealthJob: an upgrade must not leave its children waiting on the owner" \
+  '[ -n "$(remote_tip main)" ] && [ "$(remote_tip "$(epic_of "$older_epic")")" = "$(remote_tip main)" ]'
+check "EpicApprovedBeforeTheFlowMadeBranches_ChildIsReadyAfterTheHealthJob: the wait ends without a push by hand" \
+  'ready_ids | grep -qxF -- "$older_child"'
+check "EpicWhoseChildrenTheOwnerMadeByHand_GetsItsBranchFromTheHealthJob: the owner made the split, so nobody is left to approve it" \
+  '[ -n "$(remote_tip "$(epic_of "$hand_made")")" ]'
+check "EpicWaitingAtItsDecompositionGate_GetsNoBranchFromTheHealthJob: its split is not approved yet" \
+  '[ -z "$(remote_tip "$(epic_of "$waiting_epic")")" ]'
+check "EpicWhoseStepsHaveNotReachedTheGate_GetsNoBranchFromTheHealthJob: its split is still being made" \
+  '[ -z "$(remote_tip "$(epic_of "$unreached")")" ]'
+
+echo "epic gates: with no remote, the epic branch is made as a local one"
+new_repo offline
+git remote remove origin
+offline_epic="$("$local_adapter/create.sh" epic "Friendlies" --body x)"
+new_task "Friendly list" "$offline_epic" >/dev/null
+ask_for_the_split "$offline_epic"
+"$plugin/scripts/gate.sh" clear "$offline_epic" "Approved." >/dev/null 2>&1
+check "ApprovedSplitInARepositoryWithNoRemote_MakesALocalEpicBranchAtTheConfigBase: the claim reads the epic branch among the local ones there" \
+  '[ "$(git rev-parse -q --verify "refs/heads/$(epic_of "$offline_epic")")" = "$(git rev-parse main)" ]'
+
 if [ "$fails" -eq 0 ]; then echo "epic-gates: ok"; else echo "epic-gates: $fails failed"; exit 1; fi
