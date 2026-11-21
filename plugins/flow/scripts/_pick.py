@@ -95,19 +95,34 @@ def held_list(rows):
     return f"({', '.join(pairs)}{more})"
 
 
+# How many epic branches a reason names before it counts the rest.
+BRANCHES_NAMED = 5
+
+
+def branch_list(rows):
+    """The epic branches the rows wait for, each once, and what ends the wait."""
+    branches = sorted({r["branch"] for r in rows})
+    more = f", and {len(branches) - BRANCHES_NAMED} more" if len(branches) > BRANCHES_NAMED else ""
+    return f"(push {', '.join(branches[:BRANCHES_NAMED])}{more}, or put a base: line in the item)"
+
+
 WHY = [("gate", "at a gate"), ("blocked", "blocked"), ("needs", "missing a field ready.needs asks for"),
-       ("children", "waiting on child items"), ("done", "done (every step ran)"), ("split", "split")]
+       ("children", "waiting on child items"), ("parent", "waiting on the parent's decomposition gate"),
+       ("done", "done (every step ran)"), ("split", "split")]
 
 
 def reasons(rows, live):
-    """The parts of the reason: running, held (each named, a claimed blocked item among them), then
-    the rest by why."""
+    """The parts of the reason: running, held (each named, a claimed blocked item among them), the
+    ones that wait for an epic branch (each branch named), then the rest by why."""
     parts = []
     if live:
         parts.append(count(live, "running"))
     held = [r for r in rows if waits(r) == "held"]
     if held:
         parts.append(f"{len(held)} held {held_list(held)}")
+    branchless = [r for r in rows if waits(r) == "epic-branch"]
+    if branchless:
+        parts.append(f"{len(branchless)} waiting on an epic branch {branch_list(branchless)}")
     for why, said in WHY:
         n = sum(1 for r in rows if waits(r) == why)
         if n:

@@ -18,14 +18,17 @@ import { sendFile, serveStatic } from './static.ts';
 import type { TerminalProfiles } from './terminalProfiles.ts';
 import { TERMINAL_FONT_PATH, TERMINAL_PROFILE_PATH } from './terminalProtocol.ts';
 import { EVENTS_KEPT, SOURCE_NAMES } from './snapshot.ts';
+import type { CancellableCommandRunner } from './collectors/exec.ts';
+import { readGraphReport } from './collectors/graphReport.ts';
 import { readTranscript, TRANSCRIPT_LINES_MAX, TRANSCRIPT_TURNS_DEFAULT, TRANSCRIPT_TURNS_MAX, transcriptTailStart } from './collectors/sessions.ts';
 
 /**
  * `staticDir` is the built UI, served at `/` without a token: the page carries the token itself, the assets are public code.
  * `openRunner` runs `open` for `POST /api/open` (execFile by default) and `platform` says whether there is one (this process's by default); tests pass both.
  * `panes` runs the terminal panes behind `/api/projects/<id>/panes`; `terminal` is the look they take and the font file served for it.
+ * `graphReportRunner` runs the flow's graph-report.sh for `GET /api/projects/<id>/graph-report`, and ends it when the page that asked has left.
  */
-export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger; panes: PaneSessions; terminal: TerminalProfiles; openRunner?: OpenRunner; platform?: NodeJS.Platform };
+export type ServerOptions = { host: string; port: number; token: string; staticDir: string | null; log: Logger; panes: PaneSessions; terminal: TerminalProfiles; graphReportRunner: CancellableCommandRunner; openRunner?: OpenRunner; platform?: NodeJS.Platform };
 
 export type { ServedProject } from './registry.ts';
 
@@ -147,6 +150,13 @@ export function createConsoleServer(registry: ProjectRegistry, settings: Setting
       const owner = registry.get(decodeURIComponent(transcript[1]!));
       if (owner === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: 'not found' }); return; }
       void transcriptRoute(owner.monitor, decodeURIComponent(transcript[2]!), request, response, url);
+      return;
+    }
+    const graphReport = /^\/api\/projects\/([^/]+)\/graph-report$/.exec(url.pathname);
+    if (graphReport !== null) {
+      const owner = registry.get(decodeURIComponent(graphReport[1]!));
+      if (owner === undefined) { sendJson(response, HTTP_NOT_FOUND, { error: 'not found' }); return; }
+      void graphReportRoute(owner.monitor, options.graphReportRunner, request, response);
       return;
     }
     const match = /^\/api\/projects\/([^/]+)\/(snapshot|events|refresh|actions)(?:\/([^/]+))?$/.exec(url.pathname);
@@ -283,6 +293,21 @@ async function transcriptRoute(monitor: ProjectMonitor, pid: string, request: In
   const read = await readTranscript(agent.session.transcript, agent.session.host, { turns: Math.min(wanted, TRANSCRIPT_TURNS_MAX), lines }, transcriptTailStart(lines));
   if (read === null) { sendJson(response, HTTP_NOT_FOUND, { error: `${agent.session.transcript} cannot be read` }); return; }
   sendJson(response, HTTP_OK, { session: agent.session.id, ...read });
+}
+
+/**
+ * `GET` the flow's graph report of the project as `{days, markdown, daily}`: what each step cost in
+ * the last `days` days and which got slower, and the daily lines of the last 30 days for the chart. 404 with why when it cannot be read: no flow plugin, a
+ * flow older than the report, or the script's own error. A page that leaves ends the script.
+ */
+async function graphReportRoute(monitor: ProjectMonitor, runner: CancellableCommandRunner, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  if (request.method !== 'GET') { sendJson(response, HTTP_METHOD_NOT_ALLOWED, { error: 'GET only' }); return; }
+  const source = monitor.graphReportSource();
+  if (source === null) { sendJson(response, HTTP_NOT_FOUND, { error: 'no flow plugin found for the project' }); return; }
+  const report = await readGraphReport(source, runner, whenClosed(response));
+  if (response.destroyed) return;
+  if (!report.ok) { sendJson(response, HTTP_NOT_FOUND, { error: report.error }); return; }
+  sendJson(response, HTTP_OK, { days: report.days, markdown: report.markdown, daily: report.daily });
 }
 
 /** `GET` the `TerminalProfile` the panes take: iTerm's default profile, or null without one, and where the font is served. */

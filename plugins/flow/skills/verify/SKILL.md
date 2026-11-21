@@ -15,18 +15,27 @@ path `"$P/scripts/steward.sh" reports <item>` prints, with the id as `gh#<n>` or
    (build, format, test, mutation), `.flow/config.yaml` (`gates`, `feel_test_paths`,
    `verify.limit`).
 2. **Spawn `verifier`** with the step brief. The brief names `"$P/scripts/verify.sh" <item>`,
-   which runs every check once and writes `<reports>/verify.json` and `verify.md`. The verifier
+   which runs every check once and writes `<reports>/verify.json` and `verify.md`, each check
+   with its seconds. A build or test command with `paths` in `.standards/config.json` runs only
+   when a changed file is under them, else it is a skipped check that says so. A test command
+   that passed on the same command and files is not run again: the check is a pass that names the run it
+   came from (`--fresh` runs every command). The verifier
    starts it with `--start`, detached, so it outlives any one shell call, and calls `--wait`
    again and again, each a single call under the host's limit, until it exits 0 (pass) or 1
    (fail); 3 is still running. The run stops at `verify.limit` in `.flow/config.yaml` (default
    `2h`; fit it to the slowest gate) and fails naming the check it was on. The verifier adds the
    error text and cause for failed checks and walks the acceptance lines.
 3. **Result**: `verify.json` is the step result. `pass` moves on; `fail` goes back to implement
-   with the failing checks in the summary; three fails escalate. A pass with `feel_test: true`
+   with the failing checks in the summary; three fails escalate. A run that was stopped (its
+   limit, a signal, a run that died: `stopped` in the report) failed no check: the item stays
+   at verify behind the escalation gate with no attempt counted, and the run after the clear
+   reuses every test command that passed. A pass with `feel_test: true`
    raises the feel-test gate after the step (the orchestrator does it from the report).
 4. **Closeout** (epic): the verifier reads every sub-item, fails on any open one, runs
-   `verify.sh` on the epic branch when there is one, walks the epic's acceptance lines, and
-   closes the epic through the adapter only when every line is proven.
+   `verify.sh` on the epic branch when there is one, and walks the epic's acceptance lines. It
+   never closes the epic: after a pass the orchestrator opens the PR from the epic branch into
+   the epic's base (`scripts/epic-pr.sh`) and raises the merge gate, and the merge closes the
+   epic; with nothing to merge the orchestrator closes it.
 5. End with one report: the status, the failing checks, where the report is.
 
 The verifier never edits anything. A flaky check is a finding, not a retry. Never run the

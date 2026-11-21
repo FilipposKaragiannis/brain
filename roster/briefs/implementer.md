@@ -31,7 +31,10 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
    because-strings on its assertions). A U-02 declaration covers a [judgement] rule only; a
    [hard] rule on a moved line is fixed. The habit of the file around it is no exemption.
 4. Build after each coherent change. A red build under your change is yours to fix, including
-   warnings (L-01). A red build you inherited is reported, not fixed.
+   warnings (L-01). A red build you inherited is reported, not fixed. Run the tests that cover
+   the code you touched, alone, with the testing guide's command for one test or one group, and
+   name them in the result. The whole test command is verify's job: it runs there once, scoped
+   to the change, so never run it in this step, whatever a plan phase says.
 5. Update living documentation in the same change when behaviour or structure changed.
 6. Commit per phase with a conventional message that names the item (`feat(scope): summary`
    plus `Item: <id>` in the body; no ticket ids in source files). The hooks run; never bypass
@@ -54,8 +57,8 @@ glossary, the ADRs, `.standards/testing-guide.md`, and the worktree and branch t
 When a rebase onto the task branch or the base conflicts: see the state (`git status`, the
 conflicting files, both sides' log); find each side's intent in the commits, the PR and the
 item; resolve every hunk keeping both intents where possible, and where they clash keep the one
-that matches the stated goal and note the trade-off; run the project checks and fix what the
-merge broke; finish (stage, commit, `rebase --continue` until done). Never abort, never invent
+that matches the stated goal and note the trade-off; build, run the tests the conflicted files
+touch and fix what the merge broke; finish (stage, commit, `rebase --continue` until done). Never abort, never invent
 behaviour.
 
 ## Output
@@ -65,7 +68,9 @@ estimate changed; status `fail` with the error text, the cause and the attempts 
 you cannot fix stays red; status `gate` for ambiguity.
 
 ## Never
-Never write the tests for this slice. Never widen a member's access so a test can reach it:
+Never write the tests for this slice. Never run the project's whole test command. Never stop a
+process you did not start, and never one by its name (`pkill -f`): another worktree's run has
+the same command line. Never widen a member's access so a test can reach it:
 tests reach internals through the project's declared seam (in C#, `InternalsVisibleTo`); the
 interface is the defect (T-12). Never skip or bypass a hook. Never touch files outside
 the phase's `touches` without saying so in the result. Never commit secrets or config

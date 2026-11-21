@@ -1,5 +1,19 @@
 # standards
 
+## 1.7.0 (2026-11-20)
+
+- A project gate takes `forbid_run`: it blocks a command that starts one of the programs named,
+  as written or by a longer path, and through a shell, `env`, `exec`, `nohup`, `nice` or
+  `timeout` too. A command that only names the path (`git add`, `sed`, `grep`, `sh -n`) passes.
+  `forbid` matches a text anywhere in the command, which blocks reading or staging a script
+  whose path it names; it stays for a verb passed as an argument.
+- `build` and `test` in `.standards/config.json` take a map `{command, paths}`, and `test` a list
+  of `{name, command, paths}`: the flow verifier then runs a command only when a changed file is
+  under its paths. The pre-push hook runs the build's command in either form, `init` names a
+  malformed entry among the gaps, and the config's `_readme` says how to scope a command.
+- The testing guide template has a place for the command that runs one test or one group alone,
+  which the implement and test steps use instead of the whole test command.
+
 ## 1.6.0 (2026-11-18)
 
 - `init --scope machine` installs the standards into one clone without changing a tracked file.

@@ -26,6 +26,7 @@
 #   comments.sh chase <pr>                      ask again a reviewer silent past reviews.chase_after, at most
 #                                               reviews.max_chases times per request, then tell the owner once
 . "$(dirname "$0")/../lib/flow.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 (unset -f gh; command -v gh >/dev/null 2>&1) || die "gh is not installed"
 repo="$(cfg github.repo)"; [ -n "$repo" ] || repo="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)" || die "not a GitHub repository"
 owner="${repo%%/*}"; name="${repo#*/}"
@@ -50,18 +51,16 @@ reviewers() { # reviewers <host>: the list for PRs that host wrote; an empty hos
 claude"
   printf '%s\n' "$list" | while read -r reviewer; do reviewer_name reviews.reviewers "$reviewer" || exit 2; done
 }
-# author_host <pr>: the host that wrote the PR, claude or codex: the pr_host of the item its branch
-# names (flow/gh-12 is gh#12, flow/local-task-1 is local:task/1), else its body's footer; nothing
-# when neither says.
+# author_host <pr>: the host that wrote the PR, claude or codex: the pr_host of the item of its head
+# branch (branch_item), else its body's footer; nothing when neither says.
 author_host() {
   said="$(gh pr view "$1" -R "$repo" --json headRefName,body 2>/dev/null | python3 -I -c '
-import json, re, sys
-pr = json.load(sys.stdin); head, body = pr.get("headRefName") or "", pr.get("body") or ""
-gh, local = re.match(r"flow/gh-(\d+)$", head), re.match(r"flow/local-([a-z]+)-(\d+)$", head)
-print("gh#" + gh.group(1) if gh else "local:%s/%s" % local.groups() if local else "-",
-      "claude" if "Generated with [Claude Code]" in body else "codex" if "chatgpt.com/codex/tasks/" in body else "-")' 2>/dev/null)" || return 0
-  item="${said% *}"; footer="${said#* }"; recorded=""
-  [ "$item" = "-" ] || recorded="$(json_get "$(adapter read "$item" 2>/dev/null)" state.pr_host)"
+import json, sys
+pr = json.load(sys.stdin); head, body = pr.get("headRefName") or "-", pr.get("body") or ""
+print(head, "claude" if "Generated with [Claude Code]" in body else "codex" if "chatgpt.com/codex/tasks/" in body else "-")' 2>/dev/null)" || return 0
+  author_head="${said% *}"; footer="${said#* }"; item=""; recorded=""
+  [ "$author_head" = "-" ] || item="$(branch_item "$author_head")"
+  [ -z "$item" ] || recorded="$(json_get "$(adapter read "$item" 2>/dev/null)" state.pr_host)"
   case "$recorded" in claude|codex) echo "$recorded" ;; *) [ "$footer" = "-" ] || echo "$footer" ;; esac
 }
 # pr_reviewers <pr>: the reviewers of the PR's author host. Only a map per host asks who wrote it.

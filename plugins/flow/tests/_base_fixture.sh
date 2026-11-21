@@ -28,6 +28,16 @@ local_adapter="$plugin/adapters/local"
 slug() { printf '%s' "$1" | tr ':/#' '---'; }
 run_file() { printf '.flow/runs/%s.json' "$(slug "$1")"; }
 state() { "$local_adapter/read.sh" "$1" | json_value "state.$2"; }
+# start_step <item>: next.sh on the named item; its exit code is the function's.
+start_step() { "$plugin/scripts/next.sh" "$1" >/dev/null 2>&1; }
+# step_result <item> <step> <json>: writes the result file of the item's run in flight.
+step_result() { printf '%s\n' "$3" > "$(json_value reports < "$(run_file "$1")")/$2.json"; }
+# finish_step <item>: advance.sh on the item's run in flight; its exit code is the function's.
+finish_step() { "$plugin/scripts/advance.sh" "$1" >/dev/null 2>&1; }
+# remote_tip <branch>: the commit the remote holds the branch at, or nothing when it has none.
+remote_tip() { git -C "$root/origin.git" rev-parse -q --verify "refs/heads/$1" 2>/dev/null; }
+# ready_ids [list-ready options]: the ids of the ready items, one per line.
+ready_ids() { "$local_adapter/list-ready.sh" "$@" | python3 -c 'import json,sys; print("\n".join(item["id"] for item in json.load(sys.stdin)))'; }
 claim_base() { json_value base < "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json"; }
 # set_claim_base <item> <name>: writes <name> as the base in the item's claim.json, as a hand could.
 set_claim_base() { python3 -c 'import json,sys; path=sys.argv[1]; claim=json.load(open(path)); claim["base"]=sys.argv[2]; json.dump(claim,open(path,"w"))' "$("$plugin/scripts/steward.sh" find "$1")/.flow/claim.json" "$2"; }

@@ -131,7 +131,8 @@ c["gates"] = [
   {"name": "build", "command": "test -f gate-ok", "paths": ["src/**"], "when": ["commit", "ci"]},
   {"name": "local-only", "command": "test -f local-ok", "when": ["commit"]},
   {"name": "push-gate", "command": "test -f push-ok", "when": ["push"]},
-  {"name": "pause", "forbid": ["update-golden", "update-hash-stream"], "marker": "[closeout #1]"}
+  {"name": "pause", "forbid": ["update-golden", "update-hash-stream"], "marker": "[closeout #1]"},
+  {"name": "whole-suite", "forbid_run": ["tools/test.sh"], "marker": "[whole-suite]"}
 ]
 json.dump(c, open(".standards/config.json", "w"), indent=2)
 PY
@@ -162,6 +163,41 @@ expect "forbid: the script path runs it" check-gates.sh './tools/update-golden.s
 expect "forbid: bash -c runs it" check-gates.sh 'bash -c "update-golden x.json"' 2 "gate pause"
 expect "forbid: after && runs it" check-gates.sh 'git add . && update-hash-stream' 2 "gate pause"
 expect "forbid: a quoted one-word argument still runs it" check-gates.sh 'dotnet run -- "update-golden" x.json' 2 "gate pause"
+expect "ProgramRunAsWritten_IsBlocked: the gate names the program the command starts" check-gates.sh 'tools/test.sh' 2 'gate whole-suite: the command runs "tools/test.sh"'
+expect "ProgramRunWithArgumentsAfterAnotherCommand_IsBlocked: each command of the line is read" check-gates.sh 'cd /repo && tools/test.sh flow > /tmp/out.log 2>&1' 2 "gate whole-suite"
+expect "ProgramRunThroughAShell_IsBlocked: sh only passes the script on" check-gates.sh 'sh ./tools/test.sh' 2 "gate whole-suite"
+expect "ProgramRunByItsFullPath_IsBlocked: a longer path ends in the same program" check-gates.sh '/work/app-wt-2/tools/test.sh' 2 "gate whole-suite"
+expect "ProgramRunBehindEnvAndTimeout_IsBlocked: words that pass a command on do not hide it" check-gates.sh 'env -i LANG=C timeout 3600 tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterANumberedShellScript_Passes: the number after the shell is the script it runs" check-gates.sh 'bash 123 tools/test.sh' 0 ""
+expect "ProgramRunBehindNiceWithANumber_IsBlocked: the number nice takes does not hide the command" check-gates.sh 'nice -n 5 tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAsTheZerothArgument_Passes: exec -a only names the command it runs" check-gates.sh 'exec -a tools/test.sh true' 0 ""
+expect "ProgramRunUnderAnotherZerothArgument_IsBlocked: the word after the -a name is the command" check-gates.sh 'exec -a renamed tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterAQuotedZerothArgument_Passes: a quoted -a name of several words is one operand" check-gates.sh "exec -a 'display name' true tools/test.sh" 0 ""
+expect "ProgramPathAfterAnEmptyZerothArgument_Passes: an empty quoted -a name is still the operand" check-gates.sh "exec -a '' true tools/test.sh" 0 ""
+expect "ProgramRunUnderAQuotedZerothArgument_IsBlocked: the word after a quoted -a name is the command" check-gates.sh "exec -a 'display name' tools/test.sh" 2 "gate whole-suite"
+expect "ProgramPathAsTheVariableEnvUnsets_Passes: env -u takes the name it removes" check-gates.sh 'env -u tools/test.sh true' 0 ""
+expect "ProgramPathAfterASplitStringCommand_Passes: the word after env -S is the command env runs" check-gates.sh 'env -S true tools/test.sh' 0 ""
+expect "ProgramPathAfterALongSplitStringCommand_Passes: the word after --split-string is the command env runs" check-gates.sh 'env --split-string true tools/test.sh' 0 ""
+expect "ProgramRunAsTheSplitStringCommand_IsBlocked: env -S runs the word after it" check-gates.sh 'env -S tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterAnAttachedSplitString_Passes: the text attached to -S is the command env runs" check-gates.sh 'env -Su true tools/test.sh' 0 ""
+expect "ProgramRunBehindTimeoutWithASignal_IsBlocked: the signal timeout takes does not hide the command" check-gates.sh 'timeout -s KILL 60 tools/test.sh' 2 "gate whole-suite"
+expect "ProgramRunInsideShDashC_IsBlocked: the quoted command is the command" check-gates.sh "nohup sh -c 'tools/test.sh; echo done' &" 2 "gate whole-suite"
+expect "ProgramRunInTheBackgroundInASubshell_IsBlocked: a subshell starts it all the same" check-gates.sh '(tools/test.sh > /tmp/out.log 2>&1 &)' 2 "gate whole-suite"
+expect "ProgramRunWithTheMarker_Passes: the owner approved this run" check-gates.sh 'tools/test.sh flow # [whole-suite]' 0 ""
+expect "ProgramPathStaged_Passes: git add starts nothing" check-gates.sh 'git add tools/test.sh && git commit -m "chore: tidy"' 0 ""
+expect "ProgramPathRead_Passes: sed and grep read the file" check-gates.sh 'sed -n 1,20p tools/test.sh; grep -n lint tools/test.sh' 0 ""
+expect "ProgramPathSyntaxChecked_Passes: sh -n parses the script and starts nothing" check-gates.sh 'sh -n tools/test.sh' 0 ""
+expect "ProgramPathLookedUp_Passes: command -v and -V only describe the name" check-gates.sh 'command -v tools/test.sh && command -V tools/test.sh' 0 ""
+expect "ProgramRunThroughCommand_IsBlocked: command without -v or -V starts it" check-gates.sh 'command -p tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterAQuotedSemicolon_Passes: the quoted semicolon is part of the file name" check-gates.sh "git add 'backup;tools/test.sh'" 0 ""
+expect "ProgramPathAfterAnEscapedSemicolon_Passes: the escaped semicolon is part of the file name" check-gates.sh 'git add -- backup\;tools/test.sh' 0 ""
+expect "ProgramRunAfterAQuotedSemicolon_IsBlocked: the semicolon after the quotes still ends the command" check-gates.sh "git add 'backup;x'; tools/test.sh" 2 "gate whole-suite"
+expect "ProgramPathAsTheShellName_Passes: the word after the -c script only names the shell" check-gates.sh "bash -c 'true;' tools/test.sh" 0 ""
+expect "ProgramRunAfterAShellDashC_IsBlocked: the next command after the shell still runs" check-gates.sh "bash -c 'true;' tools/test.sh && tools/test.sh" 2 "gate whole-suite"
+expect "ProgramPathInAParseOnlyScript_Passes: bash -n reads the -c script and starts nothing" check-gates.sh "bash -n -c 'echo ok; tools/test.sh'" 0 ""
+expect "ProgramRunInsideEvalWithArguments_IsBlocked: eval runs its arguments too" check-gates.sh "eval 'true;' tools/test.sh" 2 "gate whole-suite"
+expect "ProgramPathInAnAssignment_Passes: a variable that holds the path starts nothing" check-gates.sh 'script=tools/test.sh; wc -l "$script"' 0 ""
+expect "ProgramWithALongerName_Passes: tools/test.sh.bak is another file" check-gates.sh 'tools/test.sh.bak' 0 ""
 expect "forbid: a quoted script path still runs it" check-gates.sh '"./tools/update-golden.sh"' 2 "gate pause"
 expect "forbid: a one-word -m message is no run" check-gates.sh 'git commit -m "update-golden"' 0 ""
 expect "forbid: a one-word grep pattern is no run" check-gates.sh 'grep -rn "update-golden" docs' 0 ""
@@ -271,6 +307,11 @@ printf 'class E {\n\tTABS\n}\n' > src/App/E.cs; git add src/App/E.cs
 if "$hooks/git/pre-commit" >/dev/null 2>&1; then fail "pre-commit lets a format failure through"; else pass "pre-commit blocks on the formatter"; fi
 git reset -q src/App/E.cs; rm src/App/E.cs
 if "$hooks/git/pre-push" >/dev/null 2>&1; then pass "pre-push runs the build"; else fail "pre-push failed"; fi
+cp .standards/config.json "$work/config.before-build-map"
+python3 -c 'import json,sys; path=".standards/config.json"; config=json.load(open(path)); config["build"]={"command": "touch " + sys.argv[1], "paths": ["src/**"]}; json.dump(config, open(path, "w"))' "$work/built-from-a-map"
+"$hooks/git/pre-push" >/dev/null 2>&1
+check "BuildGivenAsAMapWithPaths_PrePushRunsItsCommand: a push builds whatever changed, because the paths scope verify only" [ -f "$work/built-from-a-map" ]
+cp "$work/config.before-build-map" .standards/config.json
 
 echo "check-range: the gates per commit over a range"
 mkdir -p "$work/range" && cp -R .standards "$work/range/" && cd "$work/range" && git init -q -b main && git config user.email t@t && git config user.name t
@@ -334,16 +375,22 @@ PATH="$orig_path"; export PATH
 plugin_copy="$work/plugin"; cp -R "$hooks/.." "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
 mkdir -p "$work/empty" && cd "$work/empty" && git init -q -b main && git config user.email t@t && git config user.name t
-check "init: an empty repo installs and lists the gaps" sh -c "'$init' | grep -q 'Gaps' && '$init' | grep -q 'build is empty' && '$init' | grep -q 'languages is empty' && '$init' | grep -q 'testing-guide.md: 4 placeholder'"
+check "init: an empty repo installs and lists the gaps" sh -c "'$init' | grep -q 'Gaps' && '$init' | grep -q 'build is empty' && '$init' | grep -q 'languages is empty' && '$init' | grep -q 'testing-guide.md: 5 placeholder'"
 check "init: --check flags the gaps (exit 1)" sh -c "! '$init' --check >/dev/null && '$init' --check | grep -q 'gap: .standards/config.json: test is empty'"
 mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config user.email t@t && git config user.name t
 mkdir -p src/App && printf 'Microsoft Visual Studio Solution File\n' > src/App.sln && printf 'class A {}\n' > src/App/A.cs
 check "init: a fresh install writes the stamp" sh -c "'$init' >/dev/null && grep -q '^source	' .standards/stamp && grep -q '	.standards/rules/' .standards/stamp"
-check "init: detected commands leave only the guide placeholders as gaps" sh -c "'$init' --check | grep -c 'gap:' | grep -qx 1 && '$init' --check | grep -q 'gap: .standards/testing-guide.md: 4 placeholder'"
+check "init: detected commands leave only the guide placeholders as gaps" sh -c "'$init' --check | grep -c 'gap:' | grep -qx 1 && '$init' --check | grep -q 'gap: .standards/testing-guide.md: 5 placeholder'"
 python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
 check "init: writes only under .standards and the host paths" sh -c "[ ! -d docs ] && [ ! -d .githooks ] && [ -f .standards/testing-guide.md ] && [ -f .standards/rules/csharp.md ]"
 check "init: no project roster, no eval runner" sh -c "[ ! -e .standards/evals ]"
 check "init: no .githooks, hooksPath is the plugin folder" sh -c "[ \"\$(git config core.hooksPath)\" = .standards/hooks/git ]"
+cp .standards/config.json "$work/config.before-test-list"
+python3 -c 'import json; path=".standards/config.json"; config=json.load(open(path)); config["test"]=[{"name": "unit", "command": "dotnet test", "paths": ["src/**"]}, {"name": "nameless-command", "paths": ["docs/**"]}]; json.dump(config, open(path, "w"))'
+check "TestListEntryWithNoCommand_InitNamesItAmongTheGaps: the owner reads which entry verify could not run" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: test\[1\] (nameless-command) has no command'"
+python3 -c 'import json; path=".standards/config.json"; config=json.load(open(path)); config["test"]=[{"name": "unit", "command": "dotnet test", "paths": ["src/**"]}]; json.dump(config, open(path, "w"))'
+check "WellFormedTestList_AddsNoGap: a list of named commands with paths is a setting like any other" sh -c "! '$init' --check | grep -q 'gap: .standards/config.json: test'"
+cp "$work/config.before-test-list" .standards/config.json
 check "init: --check is clean after install" sh -c "'$init' --check | grep -q 'up to date'"
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
 printf '# mine\n' >> .codex/agents/standards-reviewer.toml

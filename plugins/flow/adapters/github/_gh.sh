@@ -17,6 +17,15 @@ issue_number() {
   case "$1" in gh#*) printf '%s' "${1#gh#}" ;; *) die "not a GitHub item id: $1" 2 ;; esac
 }
 
+# assignee_login <assignee>: the login a pick or github.scope names as its assignee, with me read
+# as the gh user.
+assignee_login() {
+  [ "$1" = me ] || { printf '%s' "$1"; return 0; }
+  _login="$(gh api user -q .login)" && [ -n "$_login" ] \
+    || die "cannot read the gh user that assignee: me stands for; log in with gh auth login"
+  printf '%s' "$_login"
+}
+
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority
 # name org issue fields (each replaces its size: or priority: labels), github.project numbers the
 # project whose Status the adapter keeps in step. The readiness rules are every tracker's
@@ -36,14 +45,14 @@ project_sync() {
   python3 -I "$FLOW_PLUGIN/adapters/github/_mutate.py" sync "$(gh_repo)" "$GH_PROJECT"
 }
 
-# issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: the issue
-# type Epic or Bug, else the label epic or bug, else task. Parent: the native sub-issue parent,
-# else a "Parent #N" line in the body. Priority: the github.fields.priority field when set, else
-# the priority: label, the one earliest in READY_PRIORITY_ORDER when there are two; priority_labels
-# lists the priority: labels that decided it, empty with the field set. rank orders
-# ready items (lower first) by READY_PRIORITY_ORDER; needs lists the READY_NEEDS fields an
-# unstarted item still lacks, the same rule as the local adapter's _item.py (change both);
-# open_children counts its open native sub-issues.
+# issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: as
+# _query.py's kind_of reads it, the issue type Epic or Bug, else the label epic or bug, else task.
+# Parent: the native sub-issue parent, else a "Parent #N" line in the body. Priority: the
+# github.fields.priority field when set, else the priority: label, the one earliest in
+# READY_PRIORITY_ORDER when there are two; priority_labels lists the priority: labels that decided
+# it, empty with the field set. rank orders ready items (lower first) by READY_PRIORITY_ORDER;
+# needs lists the READY_NEEDS fields an unstarted item still lacks, the same rule as the local
+# adapter's _item.py (change both); open_children counts its open native sub-issues.
 issue_to_item() {
   python3 -I -c '
 import json, os, re, sys
@@ -83,9 +92,7 @@ NO_RANK = 999
 rank = NO_RANK if not priority else order_places.get(priority, len(order))
 m = re.search(r"(?im)^Parent:? #(\d+)", raw.get("body", "") or "")
 parent = "gh#%d" % raw["parent"]["number"] if raw.get("parent") else "gh#%s" % m.group(1) if m else ""
-kind = {"Epic": "epic", "Bug": "bug"}.get(raw.get("type") or "", "")
-if not kind and raw.get("type"): kind = "task"
-if not kind: kind = "epic" if "epic" in labels or "kind:epic" in labels else "bug" if "bug" in labels or "kind:bug" in labels else labelled("kind:", "task")
+kind = raw.get("kind") or "task"
 is_open = raw.get("state", "OPEN").upper() == "OPEN"
 needs = []
 if is_open and not state["step"]:
