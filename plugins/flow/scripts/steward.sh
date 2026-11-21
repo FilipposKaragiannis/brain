@@ -59,7 +59,8 @@
 #                                                whose condition ended, clear stale or wrong
 #                                                holds and name old ones, say when the
 #                                                pool is stuck, discard a free worktree's changes
-#                                                the base's history already holds
+#                                                the base's history already holds, say once when
+#                                                a step got slower (lib/slow_steps.sh)
 #   steward.sh sessions [--stale]                list the claude and codex sessions working in the
 #                                                main worktree and the pool: pid, host, worktree,
 #                                                item, busy or idle and for how long; a stale one
@@ -122,6 +123,7 @@
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/worktree_command.sh"
 . "$FLOW_PLUGIN/lib/worktree_setup.sh"
+. "$FLOW_PLUGIN/lib/slow_steps.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -1785,6 +1787,7 @@ cmd_health() {
   health_epic_branches
   health_holds
   rm -f "$health_items"
+  health_slow_steps
   health_pressure
   health_next_runs
   [ "$procs_ok" -eq 0 ] || health_sessions
