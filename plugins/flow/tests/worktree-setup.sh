@@ -58,6 +58,20 @@ check "ClaimWhereASetupPathChanged_InstallsTheNewLockfile: a changed lockfile me
 check "ClaimWhereASetupPathChanged_RecordsTheNewCommit: the next claim compares against the setup that just ran" \
   '[ "$(recorded_commit wt-3)" = "$(head_commit wt-3)" ]'
 
+echo "worktree setup: a setup that does not finish leaves no record"
+new_repo interrupted
+installing_setup "; [ ! -f $root/setup-breaks ] || { rm -rf installed; exit 1; }; [ ! -f $root/setup-commits ] || git commit -q --allow-empty -m during-setup"
+watching_lockfiles
+"$steward" setup "$root/wt-1" >/dev/null 2>&1
+touch "$root/setup-breaks"; "$steward" setup "$root/wt-1" >/dev/null 2>&1; rm -f "$root/setup-breaks"
+broken="$(new_task "Broken reinstall")"
+"$steward" claim "$broken" >/dev/null 2>&1
+check "ClaimAfterASetupThatFailedAtTheRecordedCommit_InstallsAgain: a failed install may have removed what the earlier one put there" \
+  '[ -n "$(installed_from wt-1)" ] && [ "$(installed_from wt-1)" = "$(head_commit wt-1)" ]'
+touch "$root/setup-commits"; "$steward" setup "$root/wt-2" >/dev/null 2>&1; rm -f "$root/setup-commits"
+check "SetupDuringWhichTheWorktreeMoves_RecordsTheCommitItStartedAt: the setup installed from that commit's files" \
+  '[ -n "$(recorded_commit wt-2)" ] && [ "$(recorded_commit wt-2)" = "$(installed_from wt-2)" ] && [ "$(recorded_commit wt-2)" != "$(head_commit wt-2)" ]'
+
 echo "worktree setup: a lockfile under a folder with a name outside ASCII"
 new_repo unicode
 installing_setup ""

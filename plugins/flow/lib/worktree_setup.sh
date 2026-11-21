@@ -21,7 +21,9 @@ EOF
 
 set_up_and_record() {
   mkdir -p "$1/.flow" && printf '%s\n' "$$" > "$(setup_pid_file "$1")"
-  if run_setup_commands "$1"; then git -C "$1" rev-parse HEAD > "$(setup_record_file "$1")"; fi
+  rm -f "$(setup_record_file "$1")"
+  setup_start_commit="$(git -C "$1" rev-parse HEAD)"
+  if run_setup_commands "$1"; then printf '%s\n' "$setup_start_commit" > "$(setup_record_file "$1")"; fi
   rm -f "$(setup_pid_file "$1")"
 }
 

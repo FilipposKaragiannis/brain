@@ -84,9 +84,10 @@
 # commands run in the new worktree. Both run on add and on setup. worktree_setup_paths lists globs
 # of the files whose change means the setup must run again (a lockfile): a claim runs
 # worktree_setup again before it hands a worktree out when such a file differs between the commit
-# its setup last ran at (.flow/setup-commit, written when every command passed) and its HEAD; no
-# record counts as changed. A failed command is reported and the worktree handed out, as at add;
-# the record stays, so the next claim tries again. While a setup runs, .flow/setup-pid holds the
+# its setup last ran at (.flow/setup-commit: removed when a setup starts, then the commit it
+# started at once every command passed) and its HEAD; no record counts as changed. A failed command
+# is reported and the worktree handed out, as at add; with no record left, the next claim tries
+# again. While a setup runs, .flow/setup-pid holds the
 # steward's pid: health leaves the claim alone, and a claim of the same item (steward.sh claim, or
 # claim_at_base in lib/base.sh) waits for the setup to end before it prints the path.
 # worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
