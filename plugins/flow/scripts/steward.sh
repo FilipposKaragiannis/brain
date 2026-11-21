@@ -1491,12 +1491,17 @@ import json, sys
 profiles = json.load(open(sys.argv[1], encoding="utf-8"))["profiles"]
 SPLIT_GATE = "decomposition"
 
-def approved(state):
+def past_the_gate(state):
     steps = profiles.get(state.get("profile") or "epic", [])
     before_the_gate = steps[:steps.index("gate:" + SPLIT_GATE)] if "gate:" + SPLIT_GATE in steps else []
+    return state.get("step") not in before_the_gate
+
+def cleared_by_the_owner(state):
     answered = state.get("answered") or ""
-    cleared_by_the_owner = answered == SPLIT_GATE or answered.startswith(SPLIT_GATE + ", option ")
-    return state.get("gate") != SPLIT_GATE and (cleared_by_the_owner or state.get("step") not in before_the_gate)
+    return answered == SPLIT_GATE or answered.startswith(SPLIT_GATE + ", option ")
+
+def approved(state):
+    return state.get("gate") != SPLIT_GATE and (cleared_by_the_owner(state) or past_the_gate(state))
 
 for line in sys.stdin:
     if not line.strip():
