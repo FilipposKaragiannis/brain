@@ -36,7 +36,8 @@
 #   steward.sh add [path]                        add a worktree to the pool (worktree_create, else
 #                                                git worktree add; pool entry, copies and setup); a
 #                                                pool path missing on disk is recreated in place
-#   steward.sh setup <path>                      run worktree_copy and worktree_setup there
+#   steward.sh setup <path>                      run worktree_copy and worktree_setup there and
+#                                                record the commit the setup ran at
 #   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
 #                                                worktree and every pool worktree
 #   steward.sh sweep [--dry-run] [--lock] [--item <id>]
@@ -79,7 +80,10 @@
 # ../app-wt-2). A template with no {n}, or one that gives every number the same idle branch, is
 # refused with its reason, exit 2. worktree_copy lists ignored paths copied from the main
 # worktree when the new one lacks them (.claude/settings.local.json); worktree_setup lists
-# commands run in the new worktree. Both run on add and on setup.
+# commands run in the new worktree. Both run on add and on setup. worktree_setup_paths lists globs
+# of the files whose change means the setup must run again (a lockfile): a claim runs
+# worktree_setup again before it hands a worktree out when such a file differs between the commit
+# its setup last ran at and its HEAD (lib/worktree_setup.sh).
 # worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
 # add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes a tmp
 # remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
@@ -113,6 +117,7 @@
 . "$FLOW_PLUGIN/lib/branch.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
 . "$FLOW_PLUGIN/lib/worktree_command.sh"
+. "$FLOW_PLUGIN/lib/worktree_setup.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -241,6 +246,7 @@ cmd_claim() {
   json_obj "item=$item" "worktree=$free" "name=$(basename "$free")" "branch=$branch" "base=$base" "step=" \
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
+  set_up_again_when_outdated "$free" >&2
   write_state "$item" "worktree=$(basename "$free")" "base=$base" "branch=$branch" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
@@ -555,8 +561,6 @@ pool_add_entry() {
   mv "$tmp" "$f"
 }
 
-# run_setup <path>: copy the ignored files the config lists when missing, then run the setup
-# commands there. A failing command is reported and does not undo the worktree.
 run_setup() {
   p="$1"
   cfg worktree_copy | while read -r rel; do
@@ -565,10 +569,7 @@ run_setup() {
     [ -e "$p/$rel" ] && continue
     mkdir -p "$(dirname "$p/$rel")" && cp -R "$main/$rel" "$p/$rel" && echo "copied $rel"
   done
-  cfg worktree_setup | while read -r cmd; do
-    [ -n "$cmd" ] || continue
-    (cd "$p" && sh -c "$cmd") && echo "setup: $cmd" || echo "flow: worktree_setup failed in $p: $cmd" >&2
-  done
+  if run_setup_commands "$p"; then record_setup_commit "$p"; fi
 }
 
 is_worktree_of_this_repository() {
