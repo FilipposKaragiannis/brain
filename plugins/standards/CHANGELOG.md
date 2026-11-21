@@ -1,5 +1,14 @@
 # standards
 
+## 1.8.0 (2026-11-21)
+
+- The testing guide's levels table names the slot that runs each level: the test command, the
+  mutation command, a verify gate, a commit gate, a scheduled check or nothing. It gains rows for
+  smoke, property-based and runtime evidence checks, each `not set up` until the project has one.
+- `init` spawns the `project-advisor` for an empty levels row too, and for a guide written from
+  the older table, which still passes `init --check`. The advisor recommends a slot and a command
+  for each such row, and `init` writes an accepted one into the row and under the slot's key.
+
 ## 1.7.0 (2026-11-20)
 
 - A project gate takes `forbid_run`: it blocks a command that starts one of the programs named,
