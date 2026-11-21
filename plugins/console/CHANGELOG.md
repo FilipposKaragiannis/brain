@@ -1,5 +1,25 @@
 # console
 
+## 0.25.0 (2026-11-21)
+
+- A Graph report screen (`#/<project>/graph`) shows the flow's graph report of the project: per
+  step its runs, median time, the time nine runs in ten finish within, failed runs, cost and runs
+  per item for the last 7 days, the steps whose median grew by half or more against the 7 days
+  before, and the five items that took the most step time, under a "How to read this" block that
+  says what each column means and what to watch for. It is read when the screen opens and
+  with "Read again", through the new route `GET /api/projects/<id>/graph-report`. Needs flow
+  1.44.0; with an older flow the screen says so.
+- The demo's run log holds two weeks of step runs, with a verify step four times slower in the
+  second, so the screen has a report to show.
+- The Graph report screen charts the steps over time: one small line chart per step, for the six
+  steps that used the most time, each the typical time of one run day by day over the last 30
+  days. The charts share their time axis, so a step that got slower is a line that climbs, and
+  pointing at a day reads that day out in every chart. "Daily numbers" lists the same values as a
+  table. Needs a flow that keeps the step history; with an older flow the screen shows the report
+  with no chart.
+- The screen's "How to read this" block is folded until asked for, now that the report opens with
+  its verdict.
+
 ## 0.24.3 (2026-11-20)
 
 - A pull request finds its item by the item's recorded task branch (the `branch` the claim wrote

@@ -1,5 +1,57 @@
 # flow
 
+## 1.45.0 (2026-11-21)
+
+- The flow makes an epic's branch itself. When the owner approves an epic's split (clears its
+  decomposition gate with an answer or an option), the epic gets `epic/<n>`, pushed to the remote
+  at the base the epic itself would start from: an epic branch above it, a `base:` line in its
+  body, else the config base. In a repository with no remote it is a local branch. A branch that
+  exists is left where it is, and a split sent back makes none.
+- The health job gives the branch to an open epic that lacks one, has an open child and an
+  approved split: an epic approved before this version, or one whose children the owner made by
+  hand. An epic that waits at its decomposition gate, or whose steps have not reached it, gets
+  none. `--dry-run` says what it would make.
+- A branch that cannot be made (the remote refused the push, the epic's own base does not resolve)
+  leaves the gate cleared, is said with why, and the children wait until it exists.
+- An epic's child no longer starts from the config base when its epic has no epic branch. While no
+  epic above it has an `epic/<n>` branch on the remote, the item is not ready, a pick says which
+  branch to push, and a named run or a worktree claim is refused (exit 4) with the epic and the
+  branch in the item's `last_event`. It starts once the branch is pushed. A `base: <branch>` line
+  in the item starts it elsewhere, a child of a parent that holds a claim still starts from that
+  parent's task branch, and an item that already holds a claim keeps its base. Before, such a
+  child was cut from the config base and its PR merged there, one slice of the epic at a time.
+- An epic's closeout ends in the epic's pull request. When the closeout passes and the epic
+  branch holds commits its base lacks, the flow opens a GitHub PR from `epic/<n>` into the branch
+  the epic started from (an epic branch above it, a `base:` line in its body, else the config
+  base), records it on the epic and raises the merge gate (`scripts/epic-pr.sh`). An open PR from
+  that branch is taken as it is. The epic stays open until the merge.
+- The sweep closes an item that waits at the merge gate with no claim once its PR is merged: an
+  epic holds no worktree, so the claimed-worktree sweep never saw it.
+- With no epic branch, or nothing on it to merge, the flow closes the epic after the closeout. The
+  verifier no longer closes an epic or opens its PR; it reports the closeout's result.
+- A PR that gh cannot open leaves the epic open at closeout behind an escalation gate that names
+  the `gh pr create` command. Clearing it runs the closeout again, which takes the PR the owner
+  opened.
+- The graph report opens with a verdict, "In short", before any table: each step that got slower
+  with both medians, the steps an item goes through twice or more, the steps with failed runs,
+  and the item that took the most step time. A period where nothing stands out says so. The
+  tables below it are unchanged.
+- Among ready items of one rank the pick takes the lowest item number first, the oldest: a tracker
+  numbers its items as they are made. Before, a tie kept the tracker's listing order, and GitHub
+  and Jira list the newest first, so the newest item of a priority was picked first and an old one
+  could wait behind every item filed after it.
+- The flow keeps a history of the steps that outlives the run log. The run log is cut at 4000
+  lines and its step runs were lost with it. Now `<flow home>/log/steps.daily.jsonl` gets one
+  line per day (UTC) and step: runs, total and median seconds, nine-in-ten time, failed runs,
+  cost and items. A day is kept once, a full day after it ended, so a run that began before
+  midnight and ended after it is counted. Until then its step records are carried over every cut
+  in `steps.pending.jsonl`. Every graph report keeps the history first, and so does the job that
+  cuts the log; one lock keeps two of them from writing a day twice.
+- `graph-report.sh --json` prints `{days, now, markdown, daily}`: the report and the daily lines
+  of the last 30 days, the days not yet kept counted from the records. The console draws its
+  chart from it. `--keep` only keeps the history and prints nothing.
+- The report counts the step records of the pending file too, each once.
+
 ## 1.44.0 (2026-11-20)
 
 - A session a person started that has been idle for `jobs.comments.idle_session` (30m) no longer
