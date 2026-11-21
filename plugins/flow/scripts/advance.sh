@@ -114,9 +114,10 @@ pull_request_on_branch() {
 }
 
 # nothing_to_merge <base>: true when the worktree has no uncommitted change outside .flow and its
-# HEAD no diff against the base.
+# HEAD no diff against the base, at its local tip when a pool claim holds it, as the claim took it.
 nothing_to_merge() {
-  base_reference="$1"; git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$1" && base_reference="origin/$1"
+  base_reference="$1"
+  [ -n "$("$FLOW_PLUGIN/scripts/steward.sh" owner "$1")" ] || ! git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$1" || base_reference="origin/$1"
   uncommitted_changes="$(git -C "$wt" status --porcelain -- . ":!.flow" 2>/dev/null)" || return 1
   [ -z "$uncommitted_changes" ] && git -C "$wt" diff --quiet "$base_reference...HEAD" -- 2>/dev/null
 }

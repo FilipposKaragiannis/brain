@@ -50,6 +50,18 @@ check "PrStepWithNoPullRequestAndAnEmptyBranchDiff_ClosesWithTheStepSummary: the
 check "PrStepWithNoPullRequestAndAnEmptyBranchDiff_ReleasesTheWorktree: a closed item must not hold a pool worktree" \
   '[ -z "$("$plugin/scripts/steward.sh" find "$sign_off")" ]'
 
+echo "pr without a pull request: a child of a claimed parent compares against the parent's local tip"
+ahead_parent="$(new_task "Parent with unpushed work")"
+ahead_parent_worktree="$("$plugin/scripts/steward.sh" claim "$ahead_parent" 2>/dev/null)"
+git -C "$ahead_parent_worktree" push -q origin "flow/$(slug "$ahead_parent")"
+printf 'unpushed\n' > "$ahead_parent_worktree/unpushed.txt" && git -C "$ahead_parent_worktree" add unpushed.txt && git -C "$ahead_parent_worktree" commit -qm unpushed
+unchanged_child="$(new_task "Child with no change of its own" "$ahead_parent")"
+pass_pr_step_with_no_pull_request "$unchanged_child"
+check "ChildOfAClaimedParentWithUnpushedCommitsAndNoChange_ClosesTheItem: the parent's unpushed work is not the child's, so the child has nothing to merge" \
+  '[ "$(item_field "$unchanged_child" status)" = closed ]'
+check "ChildOfAClaimedParentWithUnpushedCommitsAndNoChange_RaisesNoEscalationGate: nothing to merge needs no owner" \
+  '[ "$(state "$unchanged_child" gate)" = none ]'
+
 echo "pr without a pull request: changes on the branch with no PR there escalate"
 unopened="$("$local_adapter/create.sh" bug "Change whose PR was never opened" --size S --body "$body")"
 start_step_with_a_commit "$unopened" unopened-change
