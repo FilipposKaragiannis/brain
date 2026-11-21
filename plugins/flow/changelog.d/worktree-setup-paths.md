@@ -9,5 +9,6 @@ bump: minor
   record counts as changed. Unset, nothing changes.
 - A setup command that fails at a claim is reported and the worktree is handed out, as after a
   failed setup at add; the record stays, so the next claim tries again. While a setup runs the
-  worktree holds `.flow/setup-pid`, and `health` does not release that claim as empty. The init
-  template documents the key in a commented line beside `worktree_setup`.
+  worktree holds `.flow/setup-pid`: `health` does not release that claim as empty, and another
+  claim of the item (`steward.sh claim`, or `next`) waits for the setup before it prints the
+  path. The init template documents the key in a commented line beside `worktree_setup`.

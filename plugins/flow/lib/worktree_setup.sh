@@ -1,5 +1,7 @@
 # The worktree_setup commands of .flow/config.yaml in a pool worktree, and the commit they last
-# ran at there. Sourced by scripts/steward.sh.
+# ran at there. Sourced by scripts/steward.sh and lib/base.sh.
+
+setup_poll_seconds=1
 
 setup_record_file() { printf '%s/.flow/setup-commit' "$1"; }
 setup_pid_file() { printf '%s/.flow/setup-pid' "$1"; }
@@ -27,6 +29,12 @@ setup_running() {
   running_setup_pid="$(cat "$(setup_pid_file "$1")" 2>/dev/null)"
   case "$running_setup_pid" in '' | *[!0-9]*) return 1 ;; esac
   kill -0 "$running_setup_pid" 2>/dev/null
+}
+
+wait_for_running_setup() {
+  setup_running "$1" || return 0
+  echo "flow: waiting for the worktree_setup running in $(basename "$1")" >&2
+  while setup_running "$1"; do sleep "$setup_poll_seconds"; done
 }
 
 setup_outdated() {

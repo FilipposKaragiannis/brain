@@ -2,6 +2,7 @@
 # the item is first claimed, and recorded in claim.json and the item state (base). Sourced after
 # lib/flow.sh by scripts/next.sh, scripts/verify.sh, scripts/steward.sh, scripts/board.sh,
 # scripts/gate.sh, hooks/worktree-create.sh and skills/init/scripts/init.sh.
+. "$FLOW_PLUGIN/lib/worktree_setup.sh"
 
 # The ancestors fetch_item_base reads for an epic branch, from the parent up.
 base_ancestor_levels=5
@@ -208,7 +209,8 @@ claim_base_option() {
 
 # claim_at_base <item> <item-json>: claims a pool worktree for the item and prints its path. A new
 # claim starts from the base fetch_item_base resolves, and the events log says which and why; an
-# item that holds a claim keeps it and its base, and nothing is fetched. A base: line naming a
+# item that holds a claim keeps it and its base, and nothing is fetched; its path is printed once
+# a worktree_setup running there has ended. A base: line naming a
 # branch not on the remote, or no valid name, writes why to the item's last_event and stderr and
 # returns 4: a claim from the config base would put the work on the wrong history. So does an
 # epic's child while no epic above it has an epic branch; the reason names the epic, the branch to
@@ -218,7 +220,7 @@ claim_base_option() {
 # worktree; 4: another claim holds the task branch).
 claim_at_base() {
   claimed_worktree="$("$FLOW_PLUGIN/scripts/steward.sh" find "$1")"
-  if [ -n "$claimed_worktree" ]; then printf '%s\n' "$claimed_worktree"; return 0; fi
+  if [ -n "$claimed_worktree" ]; then wait_for_running_setup "$claimed_worktree"; printf '%s\n' "$claimed_worktree"; return 0; fi
   resolved_base="$(fetch_item_base "$2")"; resolved_code=$?
   claim_base="$(printf '%s\n' "$resolved_base" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved_base" | cut -f2-)"
   if [ "$resolved_code" -ne 0 ]; then

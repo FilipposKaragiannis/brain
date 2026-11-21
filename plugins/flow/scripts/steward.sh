@@ -86,7 +86,8 @@
 # its setup last ran at (.flow/setup-commit, written when every command passed) and its HEAD; no
 # record counts as changed. A failed command is reported and the worktree handed out, as at add;
 # the record stays, so the next claim tries again. While a setup runs, .flow/setup-pid holds the
-# steward's pid and health leaves the claim alone.
+# steward's pid: health leaves the claim alone, and a claim of the same item (steward.sh claim, or
+# claim_at_base in lib/base.sh) waits for the setup to end before it prints the path.
 # worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
 # add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes a tmp
 # remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
@@ -223,7 +224,7 @@ cmd_claim() {
   item="$1"; shift
   base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
-  if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
+  if [ -n "$existing" ]; then wait_for_running_setup "$existing"; printf '%s\n' "$existing"; return 0; fi
   scope_holds "$item" || exit 2
   branch="flow/$(item_slug "$item")"
   if adapter_for "$item" >/dev/null 2>&1; then
@@ -237,7 +238,7 @@ cmd_claim() {
   ref="$(base_ref "$base")"; claimed_branch "$base" && ref="$base"
   claim_lock
   existing="$(cmd_find "$item")"
-  if [ -n "$existing" ]; then flow_unlock; printf '%s\n' "$existing"; return 0; fi
+  if [ -n "$existing" ]; then flow_unlock; wait_for_running_setup "$existing"; printf '%s\n' "$existing"; return 0; fi
   ! claimed_branch "$branch" || { flow_unlock; refuse_claim "$item" "another claim holds its task branch $branch" 4; }
   free="$(free_worktree)" || exit $?
   if git -C "$free" show-ref --verify --quiet "refs/heads/$branch"; then

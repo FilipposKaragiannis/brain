@@ -3,8 +3,9 @@
 # with a bare origin. The steward records the commit a worktree's setup ran at; a claim runs
 # worktree_setup again when a file worktree_setup_paths names differs between that commit and the
 # worktree's HEAD, or when there is no record, and not otherwise; unset, no setup runs at a claim.
-# A setup that fails at a claim is reported and the worktree is still handed out; health keeps a
-# claim whose setup still runs. The init template and the docs name the key.
+# A setup that fails at a claim is reported and the worktree is still handed out. While a claim's
+# setup runs, health keeps the claim and another claim of the item waits for it. The init template
+# and the docs name the key.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -75,18 +76,27 @@ check "ClaimWhoseSetupFails_ReportsTheFailedCommand: the owner learns the packag
 check "ClaimWhoseSetupFails_LeavesNoRecord: the next claim must try the setup again" \
   '[ -n "$(installed_from wt-1)" ] && [ ! -e "$root/wt-1/.flow/setup-commit" ]'
 
-echo "worktree setup: health while a claim's setup runs"
+echo "worktree setup: while a claim's setup runs"
 new_repo busy
-installing_setup "; touch $root/setup-started; while [ ! -f $root/setup-may-end ]; do sleep 1; done"
+installing_setup "; touch $root/setup-started; while [ ! -f $root/setup-may-end ]; do sleep 1; done; echo setup-ended >> $root/order.log"
 watching_lockfiles
 slow="$(new_task "Slow install")"
 "$steward" claim "$slow" > "$work/slow.out" 2>&1 & claim_pid=$!
 while [ ! -f "$root/setup-started" ] && kill -0 "$claim_pid" 2>/dev/null; do sleep 1; done
+{ "$steward" claim "$slow" 2> "$work/again.err" | sed 's/^/claim /' >> "$root/order.log"; } & again_pid=$!
+{ sh -c '. "$FLOW_PLUGIN/lib/flow.sh" && . "$FLOW_PLUGIN/lib/base.sh" && claim_at_base "$1" "{}"' claim-at-base "$slow" 2> "$work/next.err" | sed 's/^/next /' >> "$root/order.log"; } & next_pid=$!
+while ! grep -q "waiting for the worktree_setup" "$work/again.err" 2>/dev/null && kill -0 "$again_pid" 2>/dev/null; do sleep 1; done
+while ! grep -q "waiting for the worktree_setup" "$work/next.err" 2>/dev/null && kill -0 "$next_pid" 2>/dev/null; do sleep 1; done
 stale_claim wt-1
 "$steward" health > "$work/health-during.out" 2>&1
 check "HealthWhileTheSetupAtAClaimRuns_KeepsTheClaim: an install longer than the grace is work, not an empty claim" \
   '[ -f "$root/wt-1/.flow/claim.json" ] && ! grep -q "released the empty claim" "$work/health-during.out"'
-touch "$root/setup-may-end"; wait "$claim_pid"
+touch "$root/setup-may-end"; wait "$claim_pid" "$again_pid" "$next_pid"
+printed_after_setup() { awk -v who="$1" '$1 == "setup-ended" { ended = NR } $1 == who { printed = NR } END { exit !(ended && printed > ended) }' "$root/order.log"; }
+check "ClaimOfAnItemWhoseSetupRuns_PrintsThePathAfterTheSetup: work must not start on half-installed packages" \
+  'printed_after_setup claim'
+check "ClaimAtBaseOfAnItemWhoseSetupRuns_PrintsThePathAfterTheSetup: next.sh starts the step only on a set-up worktree" \
+  'printed_after_setup next'
 stale_claim wt-1
 "$steward" health > "$work/health-after.out" 2>&1
 check "HealthAfterTheSetupAtAClaimEnded_ReleasesTheEmptyClaim: the mark of a running setup goes when the setup ends" \
