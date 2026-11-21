@@ -27,12 +27,12 @@ assignee_login() {
 }
 
 # The opt-in GitHub features, from .flow/config.yaml: github.fields.size and github.fields.priority
-# name org issue fields (the size field replaces the size: labels), github.project numbers the
+# name org issue fields (each replaces its size: or priority: labels), github.project numbers the
 # project whose Status the adapter keeps in step. The readiness rules are every tracker's
 # (ready_rules in lib/flow.sh); list and read take them before they build items.
 GH_SIZE_FIELD="$(cfg github.fields.size)"; GH_PRIORITY_FIELD="$(cfg github.fields.priority)"; GH_AREA_FIELD="$(cfg github.fields.area)"
-GH_PROJECT="$(cfg github.project)"
-export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT
+GH_PROJECT="$(cfg github.project)"; GH_PRIORITY_LABEL="priority:"
+export GH_SIZE_FIELD GH_PRIORITY_FIELD GH_AREA_FIELD GH_PROJECT GH_PRIORITY_LABEL
 for _key in backlog ready gate running review; do
   _v="$(cfg "github.status.$_key")"
   [ -n "$_v" ] && export "GH_STATUS_$(printf '%s' "$_key" | tr a-z A-Z)=$_v"
@@ -47,10 +47,12 @@ project_sync() {
 
 # issue_to_item: stdin one raw issue from _query.py; stdout the adapter item JSON. Kind: as
 # _query.py's kind_of reads it, the issue type Epic or Bug, else the label epic or bug, else task.
-# Parent: the native sub-issue parent, else a "Parent #N" line in the body. rank orders ready items (lower first) by
-# READY_PRIORITY_ORDER; needs lists the READY_NEEDS fields an unstarted item still lacks, the
-# same rule as the local adapter's _item.py (change both); open_children counts its open native
-# sub-issues.
+# Parent: the native sub-issue parent, else a "Parent #N" line in the body. Priority: the
+# github.fields.priority field when set, else the priority: label, the one earliest in
+# READY_PRIORITY_ORDER when there are two; priority_labels lists the priority: labels that decided
+# it, empty with the field set. rank orders ready items (lower first) by READY_PRIORITY_ORDER;
+# needs lists the READY_NEEDS fields an unstarted item still lacks, the same rule as the local
+# adapter's _item.py (change both); open_children counts its open native sub-issues.
 issue_to_item() {
   python3 -I -c '
 import json, os, re, sys
@@ -75,11 +77,19 @@ size_field, priority_field = os.environ.get("GH_SIZE_FIELD", ""), os.environ.get
 size = (fields.get(size_field) or "") if size_field else ""
 size = size or labelled("size:", state.get("size", ""))
 state["size"] = size
-priority = (fields.get(priority_field) or "") if priority_field else ""
+order = [priority_name for priority_name in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if priority_name]
+order_places = {priority_name: order.index(priority_name) for priority_name in order}
+def read_priority(labels, fields, priority_field, priority_place, prefix):
+    if priority_field:
+        return fields.get(priority_field) or "", []
+    priority_labels = [label for label in labels if label.startswith(prefix)]
+    labelled_priorities = sorted((label[len(prefix):] for label in priority_labels), key=priority_place)
+    return (labelled_priorities or [""])[0], priority_labels
+priority, priority_labels = read_priority(labels, fields, priority_field, lambda name: order_places.get(name, len(order)), os.environ["GH_PRIORITY_LABEL"])
 area_field = os.environ.get("GH_AREA_FIELD", "")
 area = (fields.get(area_field) or "") if area_field else ""
-order = [p for p in os.environ.get("READY_PRIORITY_ORDER", "").split(",") if p]
-rank = 999 if not priority else order.index(priority) if priority in order else len(order)
+NO_RANK = 999
+rank = NO_RANK if not priority else order_places.get(priority, len(order))
 m = re.search(r"(?im)^Parent:? #(\d+)", raw.get("body", "") or "")
 parent = "gh#%d" % raw["parent"]["number"] if raw.get("parent") else "gh#%s" % m.group(1) if m else ""
 kind = raw.get("kind") or "task"
@@ -93,7 +103,7 @@ project = os.environ.get("GH_PROJECT", "")
 item = next((p for p in raw.get("project_items", []) if project and str(p["project"]) == project), None)
 print(json.dumps({
     "id": "gh#%d" % raw["number"], "kind": kind, "type": raw.get("type") or "", "title": raw.get("title", ""), "size": size,
-    "priority": priority, "area": area, "rank": rank, "needs": needs,
+    "priority": priority, "priority_labels": priority_labels, "area": area, "rank": rank, "needs": needs,
     "status": "open" if is_open else "closed",
     "labels": labels, "blocked_by": ["gh#%d" % b["number"] for b in raw.get("blocked_by", [])],
     "open_blockers": ["gh#%d" % b["number"] for b in raw.get("blocked_by", []) if b.get("state", "open") != "closed"],
@@ -127,7 +137,7 @@ else:
 # ensure_label <label>: create it when missing (gh issue edit fails on unknown labels).
 ensure_label() {
   case "$1" in
-    step:*) color="1D76DB" ;; gate:*) color="D93F0B" ;; wt:*) color="0E8A16" ;; flow:*) color="5319E7" ;; size:*) color="FBCA04" ;; *) color="EDEDED" ;;
+    step:*) color="1D76DB" ;; gate:*) color="D93F0B" ;; wt:*) color="0E8A16" ;; flow:*) color="5319E7" ;; size:*) color="FBCA04" ;; "$GH_PRIORITY_LABEL"*) color="B60205" ;; *) color="EDEDED" ;;
   esac
   gh label create "$1" --color "$color" --description "flow state" --force >/dev/null 2>&1 || true
 }

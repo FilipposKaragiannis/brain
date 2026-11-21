@@ -546,6 +546,11 @@ sh "$here/graph-report.sh" > "$work/graph-report.out" 2>&1; code=$?
 check "graph-report: $(tail -n 1 "$work/graph-report.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/graph-report.out"
 
+echo "a GitHub item reads its priority from a priority: label where no field is set (tests/github-priority.sh)"
+sh "$here/github-priority.sh" > "$work/github-priority.out" 2>&1; code=$?
+check "github-priority: $(tail -n 1 "$work/github-priority.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/github-priority.out"
+
 echo "the health job says when a step got slower (tests/health-slow-steps.sh)"
 sh "$here/health-slow-steps.sh" > "$work/health-slow-steps.out" 2>&1; code=$?
 check "health-slow-steps: $(tail -n 1 "$work/health-slow-steps.out")" [ "$code" -eq 0 ]
