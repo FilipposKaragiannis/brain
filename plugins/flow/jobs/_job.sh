@@ -44,15 +44,20 @@ job_base() { printf '%s' "${job%%-*}"; }
 # length in seconds, the exit code and the last thing it said. A run that
 # a pause or a live lock skips is a line too, so every scheduled start shows. At 4000 lines the
 # file moves to runs.1.jsonl, replacing the one before: a rename, so a line another worker appends
-# meanwhile lands in one file or the other, never lost. The trim lock stops two workers rotating
-# at once; a worker that finds it held leaves the trim to the holder.
+# meanwhile lands in one file or the other, never lost. The step runs of the file that goes are
+# kept by day first (scripts/graph-report.sh --keep), so the history of the steps outlives the
+# cut. The trim lock stops two workers rotating at once; a worker that finds it held leaves the
+# trim to the holder.
 job_record() {
   _runs="$(job_log_dir)/runs.jsonl"; _end="$(date +%s)"
   # One write per line: workers ending together would otherwise interleave a line and its newline.
   _line="$(json_obj job="$job" host="${host:-}" at="${job_at:-$(now_iso)}" seconds:="$((_end - ${job_t0:-$_end}))" exit:="$1" result="${job_last:-}")"
   printf '%s\n' "$_line" >> "$_runs"
   [ "$(wc -l < "$_runs")" -ge 4000 ] && mkdir_exclusive "$_runs.trim" || return 0
-  if [ "$(wc -l 2>/dev/null < "$_runs" || echo 0)" -ge 4000 ]; then mv "$_runs" "$(job_log_dir)/runs.1.jsonl"; fi
+  if [ "$(wc -l 2>/dev/null < "$_runs" || echo 0)" -ge 4000 ]; then
+    "$FLOW_PLUGIN/scripts/graph-report.sh" --keep >/dev/null 2>&1 || true
+    mv "$_runs" "$(job_log_dir)/runs.1.jsonl"
+  fi
   rmdir "$_runs.trim"
 }
 job_clock() { mkdir -p "$(job_log_dir)"; job_t0="$(date +%s)"; job_at="$(now_iso)"; }

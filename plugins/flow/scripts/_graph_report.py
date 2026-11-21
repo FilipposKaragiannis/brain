@@ -1,6 +1,6 @@
 """The graph report: what each step of the flow cost over a period, from the run log.
 
-  _graph_report.py <log dir> <days> <now>
+  _graph_report.py <log dir> <days> <now> [markdown|json|keep]
 
 Reads every step record of <log dir>/runs.1.jsonl and runs.jsonl (one JSON object per line with
 item, step, at, seconds, exit and cost_usd; a line that is no such record is skipped) and prints
@@ -11,6 +11,13 @@ step the runs, the median time, the time nine runs in ten finish within, the fai
 cost and the runs per item; the steps whose median grew against the period before; and the items
 that took the most step time. No model runs: the retro job hands the report to the retro, and
 the owner reads it as it is.
+
+The run log is cut at 4000 lines, so every call first keeps what the log holds of each finished
+day (UTC) in <log dir>/steps.daily.jsonl, one line per day and step with its runs, median,
+nine-in-ten time, failed runs, cost and items: the history a chart of the steps is drawn from. A
+day already kept is never written again. `keep` does only that and prints nothing (the job that
+cuts the log calls it first). `json` prints {days, now, markdown, daily}: the report, and the
+daily lines of the last 30 days, the day under way counted from the log.
 """
 import calendar
 import json
@@ -28,7 +35,11 @@ SLOWER_BY_SECONDS = 60
 RUNS_TO_COMPARE = 3
 REPEATED_RUNS_PER_ITEM = 2.0
 ITEMS_LISTED = 5
+HISTORY_DAYS = 30
 LOG_FILES = ("runs.1.jsonl", "runs.jsonl")
+HISTORY_FILE = "steps.daily.jsonl"
+DAILY_FIELDS = ("day", "step", "runs", "median", "within", "failed", "cost", "items")
+OUTPUTS = ("markdown", "json", "keep")
 STEP_FIELDS = ("item", "step", "at", "seconds")
 
 
@@ -151,11 +162,61 @@ def in_short(grouped, slower, ranked):
         "- **Most time:** %s took %s over %d step run%s." % (busiest, duration(total["seconds"]), total["steps"], "" if total["steps"] == 1 else "s")]
 
 
-def report(log, days, now_timestamp):
+def day_of(moment):
+    return time.strftime("%Y-%m-%d", time.gmtime(moment))
+
+
+def daily_lines(runs):
+    grouped = {}
+    for run in runs:
+        grouped.setdefault((day_of(run["at"]), run["step"]), []).append(run)
+    lines = []
+    for (day, step), group in sorted(grouped.items()):
+        times = [run["seconds"] for run in group]
+        lines.append({"day": day, "step": step, "runs": len(group), "median": int(median(times)),
+                      "within": int(within(times, NINE_IN_TEN)), "failed": failed_count(group),
+                      "cost": round(sum(run["cost"] for run in group), 2), "items": len({run["item"] for run in group})})
+    return lines
+
+
+def kept_line(text):
+    try:
+        line = json.loads(text)
+        return line if isinstance(line, dict) and all(field in line for field in DAILY_FIELDS) else None
+    except ValueError:
+        return None
+
+
+def kept_history(log):
+    path = os.path.join(log, HISTORY_FILE)
+    lines = open(path, encoding="utf-8", errors="replace") if os.path.exists(path) else []
+    kept = {}
+    for line in filter(None, map(kept_line, lines)):
+        kept.setdefault((line["day"], line["step"]), line)
+    return list(kept.values())
+
+
+def keep_finished_days(log, runs, now):
+    kept = kept_history(log)
+    kept_days = {line["day"] for line in kept}
+    finished = [line for line in daily_lines(runs) if line["day"] < day_of(now) and line["day"] not in kept_days]
+    if finished:
+        with open(os.path.join(log, HISTORY_FILE), "a", encoding="utf-8") as history:
+            history.write("".join(json.dumps(line, separators=(",", ":")) + "\n" for line in finished))
+    return kept + finished
+
+
+def daily_history(kept, runs, now):
+    today = [line for line in daily_lines(runs) if line["day"] == day_of(now)]
+    first_day = day_of(now - HISTORY_DAYS * SECONDS_PER_DAY)
+    return sorted((line for line in kept + today if line["day"] > first_day), key=lambda line: (line["day"], line["step"]))
+
+
+def report(runs, days, now_timestamp):
     now = epoch(now_timestamp)
     period = days * SECONDS_PER_DAY
     this_period, before = [], []
-    for run in step_runs(log):
+    for run in runs:
         if now - period <= run["at"] < now:
             this_period.append(run)
         elif now - 2 * period <= run["at"] < now - period:
@@ -177,12 +238,25 @@ def report(log, days, now_timestamp):
     return lines
 
 
+def printed(output, log, days, now_timestamp):
+    runs = list(step_runs(log))
+    kept = keep_finished_days(log, runs, epoch(now_timestamp))
+    if output == "keep":
+        return ""
+    markdown = "\n".join(report(runs, days, now_timestamp))
+    if output == "markdown":
+        return markdown + "\n"
+    return json.dumps({"days": days, "now": now_timestamp, "markdown": markdown,
+                       "daily": daily_history(kept, runs, epoch(now_timestamp))}) + "\n"
+
+
 def main(arguments):
-    if len(arguments) != 3 or not arguments[1].isdigit() or int(arguments[1]) < 1:
-        print("usage: _graph_report.py <log dir> <days> <now>", file=sys.stderr)
+    output = arguments[3] if len(arguments) == 4 else OUTPUTS[0]
+    if len(arguments) not in (3, 4) or not arguments[1].isdigit() or int(arguments[1]) < 1 or output not in OUTPUTS:
+        print("usage: _graph_report.py <log dir> <days> <now> [%s]" % "|".join(OUTPUTS), file=sys.stderr)
         return 2
     try:
-        print("\n".join(report(arguments[0], int(arguments[1]), arguments[2])))
+        sys.stdout.write(printed(output, arguments[0], int(arguments[1]), arguments[2]))
     except ValueError:
         print("flow: %s is no ISO time (2026-10-25T09:00:00Z)" % arguments[2], file=sys.stderr)
         return 2

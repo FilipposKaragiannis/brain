@@ -3,7 +3,9 @@
 # adapter in a throwaway repo. A step shows its runs, its median time, the time nine runs in ten
 # finish within, its failed runs and its runs per item; a step whose median grew by half or more against the period before is named,
 # one at the same pace is not; runs outside the period are left out; a period with no run says
-# so; a line of the log that is no step record is passed over; a bad --days is refused.
+# so; a line of the log that is no step record is passed over; a bad --days is refused. The step
+# runs of each finished day are kept in a history file that outlives the cut of the run log, a
+# day once and the day under way not yet; --json carries the report and the daily lines.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -81,5 +83,63 @@ check "DaysGiven_SetThePeriod: with --days 1 only the runs of the last day count
   'graph_report --days 1 | grep -q "^| verify | 1 |"'
 graph_report --days 0 >/dev/null 2>&1; zero_days_code=$?
 check "DaysOfZero_IsRefused: exit 2, a period needs at least one day" '[ "$zero_days_code" -eq 2 ]'
+
+echo "graph report: the history of the steps"
+REPORT_NOW="2026-10-25T12:00:00Z"
+FINISHED_DAY=2026-10-23; DAY_UNDER_WAY=2026-10-25
+new_repo history
+mkdir -p .flow/log
+history_file=.flow/log/steps.daily.jsonl
+ran local:task/1 verify 2 100; ran local:task/1 verify 2 300; ran local:task/2 implement 2 60
+ran local:task/1 verify 0.1 500
+kept_lines() { grep -c "\"day\":\"$1\"" "$history_file" 2>/dev/null || true; }
+daily_value() { graph_report --json | python3 -c 'import json, sys
+found = [line[sys.argv[3]] for line in json.load(sys.stdin)["daily"] if (line["day"], line["step"]) == (sys.argv[1], sys.argv[2])]
+print(found[0] if found else "")' "$1" "$2" "$3"; }
+kept_output="$(graph_report --keep)"
+check "KeepOnALogWithAFinishedDay_WritesOneLineForEachStepOfThatDay: verify and implement ran two days ago" \
+  '[ "$(kept_lines "$FINISHED_DAY")" = 2 ]'
+check "KeepOnALogWithARunToday_KeepsNothingOfTheDayUnderWay: a day is kept once, when it is over" \
+  '[ "$(kept_lines "$DAY_UNDER_WAY")" = 0 ]'
+check "Keep_PrintsNothing: the job that cuts the log calls it for the file alone" '[ -z "$kept_output" ]'
+graph_report --keep; graph_report >/dev/null
+check "DayAlreadyKept_IsNotWrittenAgain: every report keeps the finished days first, so a second one must add nothing" \
+  '[ "$(kept_lines "$FINISHED_DAY")" = 2 ]'
+check "KeptDay_CarriesTheMedianOfItsRuns: the two verify runs of 100 and 300 seconds have a median of 200" \
+  '[ "$(daily_value "$FINISHED_DAY" verify median)" = 200 ]'
+check "JsonReport_CountsTheDayUnderWayFromTheLog: today's verify run is on the chart before the day is kept" \
+  '[ "$(daily_value "$DAY_UNDER_WAY" verify runs)" = 1 ]'
+check "JsonReport_CarriesTheReportAsMarkdown: one call gives the console the report and the chart" \
+  '[ "$(graph_report --json | python3 -c "import json, sys; print(json.load(sys.stdin)[\"markdown\"])")" = "$(graph_report)" ]'
+ran local:task/7 verify 40 900
+graph_report --keep
+check "DayOlderThanThirtyDays_IsKeptButLeftOffTheDailyLines: the chart shows the last thirty days" \
+  '[ "$(kept_lines 2026-09-15)" = 1 ] && [ -z "$(daily_value 2026-09-15 verify runs)" ]'
+rm .flow/log/runs.jsonl
+check "DayWhoseRunsLeftTheLog_StaysInTheDailyLines: the history is what remains once the log is cut" \
+  '[ "$(daily_value "$FINISHED_DAY" verify runs)" = 2 ]'
+
+echo "graph report: the cut of the run log keeps the history first"
+new_repo cut
+mkdir -p .flow/log
+ran local:task/1 verify 2 100
+LINES_BEFORE_THE_CUT=3999
+# fill_the_log: job lines up to one line short of the cut, so the next job record cuts the log.
+fill_the_log() {
+  python3 -c 'import sys
+have = sum(1 for _ in open(sys.argv[1])) if len(sys.argv) > 3 else 0
+with open(sys.argv[1], "a") as log:
+    log.write("{\"job\":\"health\",\"seconds\":1}\n" * (int(sys.argv[2]) - have))' .flow/log/runs.jsonl "$LINES_BEFORE_THE_CUT" "$@"
+}
+# record_a_job_run: a health job run, which ends by writing its line to the run log as every job does.
+record_a_job_run() { "$plugin/jobs/health.sh" claude >/dev/null 2>&1; }
+fill_the_log counting; record_a_job_run
+check "LogAtItsLimit_IsCut: the run log moved aside, or the checks below prove nothing" \
+  '[ -f .flow/log/runs.1.jsonl ] && [ ! -s .flow/log/runs.jsonl ]'
+fill_the_log; record_a_job_run
+check "LogCutTwice_HoldsTheStepRunNoMore: the second cut replaced the file the run was in" \
+  '! grep -q "local:task/1" .flow/log/runs.1.jsonl .flow/log/runs.jsonl 2>/dev/null'
+check "StepRunCutFromTheLog_StaysInTheHistory: the cut kept the day before the file went" \
+  '[ "$(daily_value "$FINISHED_DAY" verify runs)" = 1 ]'
 
 if [ "$fails" -eq 0 ]; then echo "graph-report: ok"; else echo "graph-report: $fails failed"; exit 1; fi
