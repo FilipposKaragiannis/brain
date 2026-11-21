@@ -541,6 +541,11 @@ sh "$here/graph-report.sh" > "$work/graph-report.out" 2>&1; code=$?
 check "graph-report: $(tail -n 1 "$work/graph-report.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/graph-report.out"
 
+echo "the health job says when a step got slower (tests/health-slow-steps.sh)"
+sh "$here/health-slow-steps.sh" > "$work/health-slow-steps.out" 2>&1; code=$?
+check "health-slow-steps: $(tail -n 1 "$work/health-slow-steps.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/health-slow-steps.out"
+
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
 mkdir -p "$work/jira" "$work/jirabin" && cp "$P/tests/_fake_jira.py" "$work/jira/" && ln -s "$P/tests/fake-jira.sh" "$work/jirabin/curl"
