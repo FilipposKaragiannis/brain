@@ -8,8 +8,15 @@
 # A plan step also records its changes and, done with a hold, holds the item behind another
 # (hold.sh set; skills/plan/holds.md); done without one, it lifts a hold an earlier plan set.
 # A plan step that ends in tracker-tasks mode with children open splits the item (steward.sh split).
+# A pr step done with no PR recorded looks for one on the task branch, as the sweep does: one found
+# is recorded and the merge gate raised; with none and nothing to merge (a clean tree and no diff
+# against the claim's base) the item closes and its worktree is released, no merge gate raised;
+# with none and changes to merge it raises an escalation gate. A lookup gh cannot answer leaves
+# changes at the merge gate, where the sweep looks again.
 # Exit codes: 0 next step ready · 4 waiting at a gate, or split and waiting on its children · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
+. "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/pull_request.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 [ $# -ge 1 ] || die "usage: advance.sh <item> [--status ...]" 2
@@ -97,6 +104,44 @@ close_out_epic() {
   epic_pull_request="$("$FLOW_PLUGIN/scripts/epic-pr.sh" "$item" "$reports" "$summary" 2>"$reports/epic-pr.err")" || escalate_unopened_epic_pull_request
   rm -f "$reports/epic-pr.err"
   if [ -z "$epic_pull_request" ]; then close_epic_with_nothing_to_merge; else wait_for_the_merge_of "$epic_pull_request"; fi
+}
+
+close_with_nothing_to_merge() {
+  if ! adapter close "$item" --comment "Closed by flow: the pr step opened no pull request, and the branch has no change against $1, so there is nothing to merge. ${summary:-$step done.}" >/dev/null 2>&1; then
+    "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The pr step opened no pull request and the branch has nothing to merge, but the tracker refused to close the item. Clear the gate to run the pr step again, or close the item by hand.**
+
+${summary:-$step done.}" >/dev/null
+    report 4 "" escalation
+  fi
+  step_write "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; no pull request and nothing to merge, closed" >/dev/null
+  finish_run
+  "$FLOW_PLUGIN/scripts/steward.sh" release "$wt" >/dev/null || echo "advance: could not release $wt for $item" >&2
+  report 6 "done" ""
+}
+
+escalate_unopened_pull_request() {
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The pr step opened no pull request, but $1 has changes against $2, committed or not. Clear the gate to run the pr step again, or close the item by hand if nothing should merge.**
+
+${summary:-$step done.}" >/dev/null
+  report 4 "" escalation
+}
+
+link_branch_pull_request() {
+  adapter link-pr "$item" "$1" >/dev/null || echo "advance: could not record $1 on $item" >&2
+}
+
+# settle_unrecorded_pull_request: for a pr step done with no PR in its result or on the item, records
+# the PR the task branch has, closes the item when there is nothing to merge, or escalates.
+settle_unrecorded_pull_request() {
+  [ -z "$(json_get "$result" pr)$(state_get "$data" pr)" ] || return 0
+  task_branch="$(claim_name "$wt" branch)" || return 0
+  claim_base="$(recorded_base "$wt")"
+  settlement="$(pull_request_settlement "$home" "$wt" "$task_branch" "$claim_base")"
+  case "$settlement" in
+    found\ *) link_branch_pull_request "${settlement#found }" ;;
+    nothing-to-merge) close_with_nothing_to_merge "$claim_base" ;;
+    unopened) escalate_unopened_pull_request "$task_branch" "$claim_base" ;;
+  esac
 }
 
 size_index() { i=0; for s in $(json_list "$profiles" sizes); do [ "$s" = "$1" ] && { printf '%s' "$i"; return; }; i=$((i + 1)); done; printf '%s' -1; }
@@ -245,6 +290,7 @@ if [ -z "$following" ]; then
   finish_run
   report 6 "done" ""
 fi
+[ "$step" != pr ] || [ "$following" != gate:merge ] || settle_unrecorded_pull_request
 case "$following" in
   gate:*)
     g="${following#gate:}"
