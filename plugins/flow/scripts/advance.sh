@@ -69,6 +69,36 @@ raise_asked() {
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$@" >/dev/null
 }
 
+escalate_unopened_epic_pull_request() {
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the epic's pull request could not be opened. Open it, then clear the gate.**
+
+$(cat "$reports/epic-pr.err")" >/dev/null
+  report 4 "" escalation
+}
+
+close_epic_with_nothing_to_merge() {
+  [ "$(json_get "$data" status)" != closed ] || return 0
+  adapter close "$item" --comment "Closed by flow: every task is closed and the closeout passed." >/dev/null 2>&1 && return 0
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the tracker refused to close the epic. Clear the gate to run the closeout again, or close the epic by hand.**" >/dev/null
+  report 4 "" escalation
+}
+
+wait_for_the_merge_of() {
+  step_write "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; $1 waits for the merge" >/dev/null
+  adapter comment "$item" --body "Step $step done: ${summary:-no summary}. The epic's pull request: $1." >/dev/null
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" merge "**$(json_get "$profiles" "gates.merge.asks")**
+
+$1 brings the epic's branch into its base. ${summary:-$step done.}" "$step" >/dev/null
+  finish_run
+  report 4 "done" merge
+}
+
+close_out_epic() {
+  epic_pull_request="$("$FLOW_PLUGIN/scripts/epic-pr.sh" "$item" "$reports" "$summary" 2>"$reports/epic-pr.err")" || escalate_unopened_epic_pull_request
+  rm -f "$reports/epic-pr.err"
+  if [ -z "$epic_pull_request" ]; then close_epic_with_nothing_to_merge; else wait_for_the_merge_of "$epic_pull_request"; fi
+}
+
 size_index() { i=0; for s in $(json_list "$profiles" sizes); do [ "$s" = "$1" ] && { printf '%s' "$i"; return; }; i=$((i + 1)); done; printf '%s' -1; }
 
 report() {
@@ -208,6 +238,7 @@ if [ -z "$following" ] && [ "$next_profile" != "$profile" ]; then
 fi
 profile="$next_profile"
 attempts=0
+[ "$step" != closeout ] || [ "$kind" != epic ] || close_out_epic
 if [ -z "$following" ]; then
   step_write "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; every step ran" >/dev/null
   adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Every step of $profile ran." >/dev/null

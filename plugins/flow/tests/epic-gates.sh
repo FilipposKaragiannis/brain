@@ -10,11 +10,6 @@
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
 trap 'sandbox_close $?' EXIT
 
-# step_result <item> <step> <json>: writes the result file of the item's run in flight.
-step_result() { printf '%s\n' "$3" > "$(json_value reports < "$(run_file "$1")")/$2.json"; }
-# start_step <item>: next.sh on the named item; its exit code is the function's.
-start_step() { "$plugin/scripts/next.sh" "$1" >/dev/null 2>&1; }
-finish_step() { "$plugin/scripts/advance.sh" "$1" >/dev/null 2>&1; }
 
 echo "epic gates: a child waits while its parent's split is not approved"
 new_repo children
@@ -83,8 +78,6 @@ finish_step "$silent_epic"
 check "StepThatNeverAsked_GetsTheProfileGate: nobody approved the split, so the gate is raised" \
   '[ "$(state "$silent_epic" gate)" = decomposition ]'
 
-# remote_tip <branch>: the commit the remote holds the branch at, or nothing when it has none.
-remote_tip() { git -C "$root/origin.git" rev-parse -q --verify "refs/heads/$1" 2>/dev/null; }
 # ask_for_the_split <epic>: the epic's tasks step ran and asks its decomposition gate.
 ask_for_the_split() {
   "$local_adapter/write-state.sh" "$1" step=tasks profile=epic

@@ -777,7 +777,11 @@ cmd_prune() {
 # printed here, for a follow-up), an item still open closes (a PR into an epic
 # branch does not close its issue), and the task branch goes even when squash-merged, but only
 # while its tip is the PR's head, so a commit made after the merge keeps it. A worktree with
-# uncommitted changes, a run in flight, or an item that cannot be read is left alone.
+# uncommitted changes, a run in flight, or an item that cannot be read is left alone. An item at
+# the merge gate that holds no claim (an epic, whose PR comes from its epic branch) closes on its
+# merged PR too, and its gate clears after it: a close the tracker refuses keeps the gate record,
+# so the next sweep finds the item again. An epic's PR that was never recorded on it is found by
+# its epic branch, as a claim's is by its task branch.
 # --item is for the console, which runs it once it sees a gated PR leave the open list: one
 # item's PR is read, not every claim's. --lock never waits: a sweep already running is enough.
 cmd_sweep() {
@@ -826,6 +830,63 @@ cmd_sweep() {
     [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
     (cmd_release "$p" $force >/dev/null) && echo "$it: released $name ($why)"
   done
+  sweep_unclaimed_merges
+}
+
+unclaimed_merge_gate_item() {
+  waiting_gate="$(cat "$1")"; gate_item="$(json_get "$waiting_gate" item)"
+  [ "$(json_get "$waiting_gate" gate)" = merge ] || return 1
+  [ -z "$only" ] || [ "$gate_item" = "$only" ] || return 1
+  [ -z "$(cmd_find "$gate_item")" ] || return 1
+  printf '%s' "$gate_item"
+}
+
+pull_request_on_epic_branch() {
+  [ "$(json_get "$2" kind)" = epic ] || return 1
+  github_repository="$(cfg github.repo)"
+  on_epic_branch="$(cd "$main" && gh pr list ${github_repository:+-R "$github_repository"} --head "$(epic_branch "$1")" --state all --json url 2>/dev/null)" || return 1
+  json_get "$on_epic_branch" 0.url
+}
+
+merged_pull_request_of() {
+  pull_request_to_read="$(state_get "$2" pr)"
+  [ -n "$pull_request_to_read" ] || pull_request_to_read="$(pull_request_on_epic_branch "$1" "$2")"
+  [ -n "$pull_request_to_read" ] && [ "$(read_pull_request_state "$pull_request_to_read")" = MERGED ] || return 1
+  printf '%s' "$pull_request_to_read"
+}
+
+record_pull_request_the_item_lacks() {
+  [ -z "$(state_get "$2" pr)" ] || return 0
+  adapter link-pr "$1" "$3" >/dev/null || echo "flow: could not record $3 on $1" >&2
+}
+
+close_merged_item() {
+  if [ "$(json_get "$2" status)" != closed ] && ! adapter close "$1" --comment "Closed by flow: $3 is merged." >/dev/null 2>&1; then
+    echo "$1: could not close it ($3 merged); the next sweep tries again"; return 0
+  fi
+  if ! "$FLOW_PLUGIN/scripts/gate.sh" clear "$1" "merged: $3" >/dev/null 2>&1; then
+    echo "$1: closed, but its merge gate stays; the next sweep tries again"; return 0
+  fi
+  echo "$1: closed ($3 merged)"
+}
+
+sweep_unclaimed_merge() {
+  unclaimed_item="$(unclaimed_merge_gate_item "$1")" || return 0
+  unclaimed_record="$(adapter read "$unclaimed_item" 2>/dev/null)" || return 0
+  merged_pull_request="$(merged_pull_request_of "$unclaimed_item" "$unclaimed_record")" || return 0
+  if [ "$dry" -eq 1 ]; then echo "$unclaimed_item: would close it ($merged_pull_request merged)"; return 0; fi
+  record_pull_request_the_item_lacks "$unclaimed_item" "$unclaimed_record" "$merged_pull_request"
+  close_merged_item "$unclaimed_item" "$unclaimed_record" "$merged_pull_request"
+}
+
+sweep_unclaimed_merges() {
+  for merge_gate_record in "$home"/gates/*.json; do
+    [ ! -f "$merge_gate_record" ] || sweep_unclaimed_merge "$merge_gate_record"
+  done
+}
+
+read_pull_request_state() {
+  pull_request_view="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null)" && json_get "$pull_request_view" state 2>/dev/null
 }
 
 # sweep_drop_gate <item> <gate> <answer> <why>: the gate of an item the sweep closes goes with it.
