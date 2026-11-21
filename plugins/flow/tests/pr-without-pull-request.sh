@@ -20,6 +20,6 @@ new_repo nothing-to-merge
 sign_off="$("$local_adapter/create.sh" bug "Owner sign-off with no code" --size S --body "$body")"
 pass_pr_step_with_no_pull_request "$sign_off"
 check "PrStepWithNoPullRequestAndAnEmptyBranchDiff_RaisesNoMergeGate: there is no pull request to merge, so a merge gate would wait forever" \
-  '[ "$(state "$sign_off" gate)" != merge ]'
+  '[ "$(state "$sign_off" gate)" = none ]'
 
 if [ "$fails" -eq 0 ]; then echo "pr-without-pull-request: ok"; else echo "pr-without-pull-request: $fails failed"; exit 1; fi

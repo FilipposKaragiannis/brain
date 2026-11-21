@@ -153,7 +153,7 @@ for s in test review; do "$P/scripts/next.sh" "$t1" >/dev/null; "$P/scripts/adva
 "$P/scripts/next.sh" "$t1" >/dev/null
 printf '{"status":"pass","attempts":2,"checks":[{"name":"tests","status":"pass","summary":"ok"}]}\n' > "$reports/verify.json"
 check "verify pass -> pr" sh -c "'$P/scripts/advance.sh' '$t1' --json | grep -q '\"next_step\":\"pr\"'"
-"$P/scripts/next.sh" "$t1" >/dev/null; printf '{"status":"done","summary":"PR open"}\n' > "$reports/pr.json"
+"$P/scripts/next.sh" "$t1" >/dev/null; printf '{"status":"done","summary":"PR open","pr":"https://gh/pull/90"}\n' > "$reports/pr.json"
 "$P/scripts/advance.sh" "$t1" >/dev/null 2>&1; code=$?
 check_all "pr done -> merge gate (exit 4), step done" '[ "$code" -eq 4 ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.gate)" = "merge" ] && [ "$("$P/adapters/local/read.sh" "$t1" | jget state.step)" = "done" ]'
 check "pr done at the merge gate: the claim says done, as the issue does" [ "$(claim_step "$t1")" = done ]
@@ -3165,7 +3165,7 @@ for kept_gate in ambiguity merge; do
 done
 # A pr step whose worker cannot write the local item file (it lies outside the worker's sandbox)
 # leaves the PR unrecorded: advance records the URL the step's result names, and the sweep finds
-# a PR nobody recorded by the item's task branch.
+# by the item's task branch a PR nobody recorded, one advance's own lookup could not read.
 ap="$("$P/adapters/local/create.sh" task "PR its worker could not link" --size S)"; "$P/adapters/local/write-state.sh" "$ap" step=pr
 printf '{"status":"done","summary":"PR open","pr":"https://gh/pull/90"}\n' > "$("$P/scripts/next.sh" "$ap" --json | jget reports)/pr.json"
 "$P/scripts/advance.sh" "$ap" >/dev/null 2>&1
@@ -3173,7 +3173,10 @@ check "advance: a pr step's result records its PR on an item link-pr never reach
 "$P/scripts/gate.sh" clear "$ap" merged >/dev/null; "$P/scripts/steward.sh" release "$ap" --force >/dev/null 2>&1; "$P/adapters/local/close.sh" "$ap" >/dev/null
 sp="$("$P/adapters/local/create.sh" task "PR found by its branch" --size S)"; "$P/adapters/local/write-state.sh" "$sp" step=pr
 printf '{"status":"done","summary":"PR open"}\n' > "$("$P/scripts/next.sh" "$sp" --json | jget reports)/pr.json"
+fake_pr OPEN "$(commit_in "$("$P/scripts/steward.sh" find "$sp")" found-by-branch)" "flow/$(item_slug "$sp")"
+printf '1\ngh: HTTP 401: Bad credentials\npr list\n' > "$FAKE_GH_DIR/fail"
 "$P/scripts/advance.sh" "$sp" >/dev/null 2>&1
+rm -f "$FAKE_GH_DIR/fail"
 fake_pr MERGED "$(git -C "$("$P/scripts/steward.sh" find "$sp")" rev-parse HEAD)" "flow/$(item_slug "$sp")"
 "$P/scripts/steward.sh" sweep >/dev/null 2>&1
 check "sweep: an item at the merge gate with no PR recorded finds it by its branch, and the merge gate clears" [ "$("$P/adapters/local/read.sh" "$sp" | jget state.gate)" = none ]

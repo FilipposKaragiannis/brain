@@ -4,7 +4,8 @@
 # open_blockers on every item, the tracker's own list, else those of blocked_by not read as closed,
 # as next.sh judges them; a claimed item waits on them at every step), and in the gate column
 # the owner's answer to a cleared gate while it waits on a run (answer_pending; in Health too once
-# it waits past the gate reminder); pending gates; overlapping claims; the spend per item, from
+# it waits past the gate reminder); pending gates, a merge gate on an item with no PR linked in
+# Health instead (--json: every gate as recorded); overlapping claims; the spend per item, from
 # the step sessions in log/runs.jsonl; each tracker whose list failed, with why (--json:
 # tracker_errors, [{"tracker", "code", "message"}]); the status of each holder an open item is
 # held behind that the list leaves out (--json: holders, [{"id", "status"}], status open, closed or

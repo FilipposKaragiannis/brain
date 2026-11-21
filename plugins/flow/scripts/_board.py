@@ -132,18 +132,25 @@ ROLES = (("raised_by", "raised by"), ("answered_by", "answered by"), ("condition
 def roles_of(g):
     said = ["%s %s" % (label, g[key]) for key, label in ROLES if g.get(key)]
     return " (%s)" % ", ".join(said) if said else ""
-if gates:
+# A merge gate on a listed item with no PR linked has nothing for the owner to merge, so it is a
+# Health line, not a gate waiting on the owner. An item the lists left out is not known to have no
+# PR, so its gate still waits on the owner.
+def merges_no_pull_request(g):
+    return g["gate"] == "merge" and g["item"] in by_id and not by_id[g["item"]]["state"].get("pr")
+merge_gates_without_pull_request = [g for g in gates if merges_no_pull_request(g)]
+owner_gates = [g for g in gates if not merges_no_pull_request(g)]
+if owner_gates:
     print("\n## Waiting on you")
-    for g in gates:
+    for g in owner_gates:
         print("- **%s** on %s (%s): %s%s" % (g["gate"], g["item"], g["time"], str(g["message"]).splitlines()[0] if g["message"] != "" else "", roles_of(g)))
 now = time.time()
-waiting = [g for g in gates if now - epoch(g["time"]) > reminder]
+waiting = [g for g in owner_gates if now - epoch(g["time"]) > reminder]
 dead = [r for r in runs if not r["alive"] and not r["starting"]]
 # An answer that waited past the gate reminder: no run took it.
 unanswered = [i for i in items if (i["state"].get("gate") or "none") == "none" and owner_of(i)
               and epoch(i["state"].get("answered_at")) and now - epoch(i["state"].get("answered_at")) > reminder]
 missing_bases = [claimed for claimed in claimed_bases.values() if claimed["missing"]]
-if dead or waiting or unanswered or missing_bases:
+if dead or waiting or unanswered or missing_bases or merge_gates_without_pull_request:
     print("\n## Health")
     for r in dead:
         print("- %s: dead run of %s, no process since the record was written (%s ago)" % (r["item"], r["step"], age(r["age"])))
@@ -153,6 +160,8 @@ if dead or waiting or unanswered or missing_bases:
         print("- %s: the answer to its gate has waited %s on %s" % (i["id"], age(now - epoch(i["state"]["answered_at"])), owner_of(i)))
     for claimed in missing_bases:
         print("- %s: base %s is not on the remote" % (claimed["item"], claimed["base"]))
+    for g in merge_gates_without_pull_request:
+        print("- %s: at the merge gate with no pull request linked: link its PR, or close the item and run the sweep" % g["item"])
 if overlap:
     print("\n## Overlapping claims")
     for a, b in overlap:
