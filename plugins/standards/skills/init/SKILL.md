@@ -26,16 +26,19 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
 2. **Read what it printed.** The script lists every file it wrote, the `Gaps` (values the hooks
    and the verifier cannot run without, and the guide's placeholders) and what the owner must do
    next.
-3. **When it listed gaps, spawn the `project-advisor`** with the gap lines, the config and the
-   guide paths. It reads the repository and returns one recommendation per gap with its evidence
-   and a confidence word. Do not research the gaps yourself. When the `project-advisor` is not
-   available, which is usual in the session that installed the plugin (the host has not loaded
-   its agents yet), spawn a general-purpose agent instead and give it the advisor's brief: the
-   body of `<plugin root>/agents/project-advisor.md` on Claude, the `developer_instructions` of
-   `<plugin root>/codex-agents/project-advisor.toml` on Codex, followed by the same gap lines,
-   config and guide paths. Say in the report that a general agent stood in. In a session that
-   cannot spawn agents at all, list the gaps without recommendations and say the advisor did
-   not run.
+3. **When it listed gaps, or the guide's levels table has an empty row, spawn the
+   `project-advisor`** with the gap lines (if any), the config and the guide paths. An empty row
+   is one with the slot `nothing` or the command `not set up`; a table with no slot column, or
+   with no smoke, property-based or runtime evidence row, counts too (an older guide passes
+   `--check` without them). It reads the repository and returns one recommendation per gap and
+   per empty row with its evidence and a confidence word. Do not research them yourself. When
+   the `project-advisor` is not available, which is usual in the session that installed the
+   plugin (the host has not loaded its agents yet), spawn a general-purpose agent instead and
+   give it the advisor's brief: the body of `<plugin root>/agents/project-advisor.md` on Claude,
+   the `developer_instructions` of `<plugin root>/codex-agents/project-advisor.toml` on Codex,
+   followed by the same gap lines, config and guide paths. Say in the report that a general
+   agent stood in. In a session that cannot spawn agents at all, list the gaps and empty rows
+   without recommendations and say the advisor did not run.
 4. **End with one report**, per W-07, with no copy of the installer's output: the files
    changed, grouped by folder; what the owner must do by hand, in one list (review
    `.standards/config.json` on a first install, the `init: note:` lines, the Codex `/hooks`
