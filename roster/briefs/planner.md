@@ -44,7 +44,8 @@ before the slices they block, and verify every blocker edge came back from a `re
    claimed from the base its claim resolves (this item's branch while it holds a claim, else
    the nearest `epic/<n>` branch on the remote among its ancestors, else the branch a
    `base: <branch>` line in the child's body names, else the config base) and opens its PR
-   against it. When this branch holds commits a child needs (an ADR, a design
+   against it. An epic's child never starts from the config base by default: while no epic above
+   it has an `epic/<n>` branch on the remote, it waits, unless its body names a `base:` line. When this branch holds commits a child needs (an ADR, a design
    doc), name the branch in that child's `## Notes` ("Merge flow/gh-344 first: it holds ADR
    0022") and block the other children on it; its implementer merges the branch in, so its PR
    carries them.

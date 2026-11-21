@@ -762,6 +762,8 @@ pool:
 notify:
   desktop: false
 YAML
+# gh#31 is a child of the epic gh#30: with the epic's branch in place it is judged on its fields alone.
+git branch -q epic/30
 "$P/adapters/github/list.sh" | python3 -c 'import json,sys; [print("%s %s %s %s %s" % (i["id"], i["kind"], i["size"] or "-", i["priority"] or "-", ",".join(i["needs"]) or "-")) for i in json.load(sys.stdin)]' > "$work/ghlist"
 check "gh type picks the kind: Epic epic, Bug bug, Feature task" sh -c "'$P/adapters/github/list.sh' | python3 -c 'import json,sys; k={i[\"id\"]:i[\"kind\"] for i in json.load(sys.stdin)}; assert (k[\"gh#30\"],k[\"gh#32\"],k[\"gh#31\"])==(\"epic\",\"bug\",\"task\")'"
 check "gh size and priority come from the issue fields" sh -c "'$P/adapters/github/read.sh' 'gh#32' | python3 -c 'import json,sys; i=json.load(sys.stdin); assert (i[\"size\"],i[\"priority\"],i[\"rank\"])==(\"M\",\"P0\",0)'"

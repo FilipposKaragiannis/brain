@@ -68,52 +68,68 @@ parent_branch() {
   [ -z "$parent_worktree" ] || claim_name "$parent_worktree" branch
 }
 
+# What fetch_epic_ancestor and fetch_item_base return when an ancestor is an epic and no epic above
+# the item has its epic branch on the remote.
+epic_without_branch=2
+
 # fetch_epic_ancestor <parent>: fetches the epic branch of each epic from the parent up and prints
-# the first epic whose epic branch exists; nothing, and 1, when none does within
-# base_ancestor_levels, before an id comes twice, or at an id no adapter owns (it is never read).
-# A task or bug ancestor is walked past, never matched: its number may also be an epic's.
+# the first epic whose epic branch exists. With an epic among them and no epic branch, it prints
+# the nearest epic and returns $epic_without_branch. Nothing, and 1, when no ancestor is an epic.
+# The walk ends after base_ancestor_levels, before an id comes twice, and at an id no adapter owns
+# (it is never read). A task or bug ancestor is walked past, never matched: its number may also be
+# an epic's.
 fetch_epic_ancestor() {
-  ancestor="$1"; ancestors_seen=" "; ancestor_level=0
+  ancestor="$1"; ancestors_seen=" "; ancestor_level=0; nearest_epic=""
   while [ -n "$ancestor" ] && [ "$ancestor_level" -lt "$base_ancestor_levels" ]; do
-    case "$ancestors_seen" in *" $ancestor "*) return 1 ;; esac
-    adapter_for "$ancestor" >/dev/null 2>&1 || return 1
+    case "$ancestors_seen" in *" $ancestor "*) break ;; esac
+    adapter_for "$ancestor" >/dev/null 2>&1 || break
     ancestor_json="$(adapter read "$ancestor" </dev/null 2>/dev/null)"
     if [ "$(json_get "$ancestor_json" kind)" = epic ]; then
       ancestor_branch="$(epic_branch "$ancestor")"
       fetch_base "$ancestor_branch"
       if base_exists "$ancestor_branch"; then printf '%s' "$ancestor"; return 0; fi
+      [ -n "$nearest_epic" ] || nearest_epic="$ancestor"
     fi
     ancestors_seen="$ancestors_seen$ancestor "; ancestor_level=$((ancestor_level + 1))
     ancestor="$(json_get "$ancestor_json" parent)"
   done
-  return 1
+  [ -n "$nearest_epic" ] || return 1
+  printf '%s' "$nearest_epic"; return "$epic_without_branch"
 }
 
 # fetch_item_base <item-json>: `<branch>\t<why>`, the base a new claim of the item starts from,
 # fetching each epic and `base:` branch it tries. In order: the branch of the parent's claim; the
 # epic branch of the nearest ancestor that has one on the remote; the branch of a `base:` line in
 # the item's body; the config base. A `base:` line naming a branch that does not exist prints that
-# branch and returns 1: a claim from the config base would put the work on the wrong history.
+# branch and returns 1: a claim from the config base would put the work on the wrong history. So
+# would a claim of an epic's child while no epic above it has an epic branch: with no `base:` line
+# it prints `<the nearest epic's branch>\t<that epic>` and returns $epic_without_branch.
 fetch_item_base() {
-  item_parent="$(json_get "$1" parent)"
+  item_parent="$(json_get "$1" parent)"; epic_owner=""; epic_found=1
   if [ -n "$item_parent" ]; then
     claimed_parent_branch="$(parent_branch "$item_parent")"
     if [ -n "$claimed_parent_branch" ]; then printf '%s\ttask branch of %s' "$claimed_parent_branch" "$item_parent"; return 0; fi
-    if epic_owner="$(fetch_epic_ancestor "$item_parent")"; then printf '%s\tepic branch of %s' "$(epic_branch "$epic_owner")" "$epic_owner"; return 0; fi
+    epic_owner="$(fetch_epic_ancestor "$item_parent")"; epic_found=$?
+    if [ "$epic_found" -eq 0 ]; then printf '%s\tepic branch of %s' "$(epic_branch "$epic_owner")" "$epic_owner"; return 0; fi
   fi
   named_base="$(body_base "$1")"
   if [ -n "$named_base" ]; then
     printf '%s\tbase: line in the item' "$named_base"
     fetch_base "$named_base"
-    base_exists "$named_base"
-    return
+    base_exists "$named_base" || return 1
+    return 0
   fi
+  if [ "$epic_found" -eq "$epic_without_branch" ]; then printf '%s\t%s' "$(epic_branch "$epic_owner")" "$epic_owner"; return "$epic_without_branch"; fi
   printf '%s\tconfig base' "$(cfg_or base main)"
 }
 
 # Why a claim refuses a base: line whose name fails base_name_valid. The name stays out: it may
 # carry control characters.
 base_name_refused='its base is not a valid branch name'
+
+# epic_branch_missing <epic> <branch>: why a claim refuses an epic's child while no epic above it
+# has an epic branch, and the two ways out.
+epic_branch_missing() { printf 'its epic %s has no epic branch on the remote: push %s, or put a base: line in the item' "$1" "$2"; }
 
 # claim_base_option <default> [--base <branch>] [--branch <name>]: the base steward.sh claim cuts the
 # worktree from and records in claim.json and the item state (base): the branch --base names
@@ -136,7 +152,9 @@ claim_base_option() {
 # claim starts from the base fetch_item_base resolves, and the events log says which and why; an
 # item that holds a claim keeps it and its base, and nothing is fetched. A base: line naming a
 # branch not on the remote, or no valid name, writes why to the item's last_event and stderr and
-# returns 4: a claim from the config base would put the work on the wrong history. The task branch
+# returns 4: a claim from the config base would put the work on the wrong history. So does an
+# epic's child while no epic above it has an epic branch; the reason names the epic, the branch to
+# push and the base: line that starts the item elsewhere. The task branch
 # comes from the item JSON too (claim_branch), so the claim reads no item again. Else the exit
 # code of steward.sh claim (2: the branch template gives no valid task branch name; 3: no free
 # worktree; 4: another claim holds the task branch).
@@ -147,7 +165,10 @@ claim_at_base() {
   claim_base="$(printf '%s\n' "$resolved_base" | cut -f1)"; claim_why="$(printf '%s\n' "$resolved_base" | cut -f2-)"
   if [ "$resolved_code" -ne 0 ]; then
     claim_refusal="$base_name_refused"
-    base_name_valid "$claim_base" && claim_refusal="its base $claim_base is not on the remote"
+    if base_name_valid "$claim_base"; then
+      claim_refusal="its base $claim_base is not on the remote"
+      [ "$resolved_code" -ne "$epic_without_branch" ] || claim_refusal="$(epic_branch_missing "$claim_why" "$claim_base")"
+    fi
     adapter write-state "$1" "last_event=$(now_iso) $claim_refusal" >/dev/null
     echo "$1: $claim_refusal" >&2; return 4
   fi
