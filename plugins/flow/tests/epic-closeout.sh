@@ -101,6 +101,40 @@ check "MergedEpicTheTrackerRefusesToClose_IsNotSaidToBeClosed: the sweep reports
 check "MergedEpicTheTrackerRefusedToClose_IsClosedByTheNextSweep: a failed close is tried again" \
   '[ "$(tracked_field status)" = closed ] && [ "$(tracked_field state.gate)" = none ]'
 
+echo "epic closeout: a tracker that refuses to close an epic with nothing to merge leaves the closeout to run again"
+github_repo unclosed
+sed -i.bak 's/^  default: local$/  default: github/' .flow/config.yaml && rm -f .flow/config.yaml.bak
+printf '{"issues": [{"number": 1, "title": "Seed", "body": "", "state": "CLOSED", "labels": [], "url": "https://gh/1"}]}\n' > "$FAKE_GH_DIR/issues.json"
+tracked="$("$plugin/adapters/github/create.sh" epic "Preseason" --body x)"
+"$plugin/adapters/github/write-state.sh" "$tracked" step=closeout profile=epic
+start_step "$tracked"
+step_result "$tracked" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
+printf '9\nGitHub refused the close\nissue close\n' > "$FAKE_GH_DIR/fail"
+finish_step "$tracked"
+rm -f "$FAKE_GH_DIR/fail"
+check "EpicWithNothingToMergeTheTrackerRefusesToClose_RaisesAnEscalationGate: an open epic at done with no gate is one nothing ever looks at again" \
+  '[ "$(tracked_field status)" = open ] && [ "$(tracked_field state.gate)" = escalation ]'
+check "EpicWithNothingToMergeTheTrackerRefusesToClose_StaysAtCloseout: clearing the gate runs the closeout again" \
+  '[ "$(tracked_field state.step)" = closeout ]'
+"$plugin/scripts/gate.sh" clear "$tracked" >/dev/null 2>&1
+start_step "$tracked"
+step_result "$tracked" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
+finish_step "$tracked"
+check "EpicTheTrackerRefusedToClose_IsClosedByTheCloseoutAfterTheGateClears: the retry is what the gate promised" \
+  '[ "$(tracked_field status)" = closed ]'
+
+echo "epic closeout: a pull request that was never recorded on the epic is found by its epic branch"
+github_repo unrecorded
+lost="$(epic_with_work "Derbies")"
+pass_closeout "$lost"
+"$local_adapter/write-state.sh" "$lost" pr=
+merge_pull_request
+check "EpicWhosePullRequestWasNeverRecorded_HasNoneInItsState: the record is gone, or the check below proves nothing" \
+  '[ -z "$(state "$lost" pr)" ] && [ "$(state "$lost" gate)" = merge ]'
+"$plugin/scripts/steward.sh" sweep >/dev/null 2>&1
+check "EpicWhosePullRequestWasNeverRecorded_IsClosedByTheSweepOnceItMerges: the epic branch names the PR as a task branch names a claim's" \
+  '[ "$(item_status "$lost")" = closed ] && [ "$(state "$lost" gate)" = none ]'
+
 echo "epic closeout: an epic with nothing to merge is closed"
 github_repo nothing
 branchless="$("$local_adapter/create.sh" epic "Friendlies" --body x)"

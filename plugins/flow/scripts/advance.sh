@@ -78,7 +78,9 @@ $(cat "$reports/epic-pr.err")" >/dev/null
 
 close_epic_with_nothing_to_merge() {
   [ "$(json_get "$data" status)" != closed ] || return 0
-  adapter close "$item" --comment "Closed by flow: every task is closed and the closeout passed." >/dev/null || echo "advance: could not close $item" >&2
+  adapter close "$item" --comment "Closed by flow: every task is closed and the closeout passed." >/dev/null 2>&1 && return 0
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the tracker refused to close the epic. Clear the gate to run the closeout again, or close the epic by hand.**" >/dev/null
+  report 4 "" escalation
 }
 
 wait_for_the_merge_of() {
