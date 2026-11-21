@@ -47,7 +47,10 @@ plugins_valid() {
 for part in $parts; do
   case "$part" in
     lint) tools/lint.sh || status=1 ;;
-    standards) clean plugins/standards/hooks/tests/run.sh || status=1 ;;
+    standards)
+      clean plugins/standards/hooks/tests/run.sh || status=1
+      clean plugins/standards/hooks/tests/testing-guide.sh || status=1
+      ;;
     flow) clean plugins/flow/tests/run.sh || status=1 ;;
     meta) clean plugins/meta/tests/run.sh || status=1 ;;
     console) clean plugins/console/tests/run.sh || status=1 ;;

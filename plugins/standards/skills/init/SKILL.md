@@ -26,16 +26,19 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
 2. **Read what it printed.** The script lists every file it wrote, the `Gaps` (values the hooks
    and the verifier cannot run without, and the guide's placeholders) and what the owner must do
    next.
-3. **When it listed gaps, spawn the `project-advisor`** with the gap lines, the config and the
-   guide paths. It reads the repository and returns one recommendation per gap with its evidence
-   and a confidence word. Do not research the gaps yourself. When the `project-advisor` is not
-   available, which is usual in the session that installed the plugin (the host has not loaded
-   its agents yet), spawn a general-purpose agent instead and give it the advisor's brief: the
-   body of `<plugin root>/agents/project-advisor.md` on Claude, the `developer_instructions` of
-   `<plugin root>/codex-agents/project-advisor.toml` on Codex, followed by the same gap lines,
-   config and guide paths. Say in the report that a general agent stood in. In a session that
-   cannot spawn agents at all, list the gaps without recommendations and say the advisor did
-   not run.
+3. **When it listed gaps, or the guide's levels table has an empty row, spawn the
+   `project-advisor`** with the gap lines (if any), the config and the guide paths. An empty row
+   is one with the slot `nothing` or the command `not set up`; a table with no slot column, or
+   with no smoke, property-based or runtime evidence row, counts too (an older guide passes
+   `--check` without them). It reads the repository and returns one recommendation per gap and
+   per empty row with its evidence and a confidence word. Do not research them yourself. When
+   the `project-advisor` is not available, which is usual in the session that installed the
+   plugin (the host has not loaded its agents yet), spawn a general-purpose agent instead and
+   give it the advisor's brief: the body of `<plugin root>/agents/project-advisor.md` on Claude,
+   the `developer_instructions` of `<plugin root>/codex-agents/project-advisor.toml` on Codex,
+   followed by the same gap lines, config and guide paths. Say in the report that a general
+   agent stood in. In a session that cannot spawn agents at all, list the gaps and empty rows
+   without recommendations and say the advisor did not run.
 4. **End with one report**, per W-07, with no copy of the installer's output: the files
    changed, grouped by folder; what the owner must do by hand, in one list (review
    `.standards/config.json` on a first install, the `init: note:` lines, the Codex `/hooks`
@@ -46,7 +49,8 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
    names the same one), the advisor's value, its evidence and confidence, so the owner answers
    "1 yes, 2 no, 3 use X" or "all". A gap with no evidence gets one question, nothing more: no
    second question, no example value, no default the owner could accept with "all". Report only
-   the gaps the installer listed.
+   the gaps the installer listed, then the advisor's slot for each empty row of the guide's
+   levels table.
 5. **On a first install, add one more numbered item to that list**: "Doc comments are allowed
    above `public` declarations and on `interface` and `enum` members (`comments.doc_inside`).
    Add more container kinds, such as `class`, `struct` or `record`, or remove one?" An existing
@@ -54,8 +58,9 @@ With an argument that is not a flag (`init add a determinism gate`), skip to **A
    the report back for the answers.
 6. **Apply the answers.** Write each accepted value where the list said: the config keys in
    `.standards/config.json`, the guide lines in `.standards/testing-guide.md` (replace the
-   `_fill in_` placeholder, keep the section). A rejected gap stays open and `init --check`
-   keeps reporting it; say so. Then run `init --check` and show its last line.
+   `_fill in_` placeholder, keep the section), a slot in its levels row and under the key the
+   slot names. A rejected gap stays open and `init --check` keeps reporting it; say so. Then run
+   `init --check` and show its last line.
 
 ## Asks
 
@@ -71,7 +76,7 @@ such and left to `flow:init`.
 | Target | Content | Re-run behaviour |
 |---|---|---|
 | `.standards/config.json` | format, build, test and mutation commands, protected files, hot paths, gates, project links, roster and eval cases folder (`project.evals`), the rules the project relaxes (`rules.relaxed`, `rules.judgement`) | written once, never overwritten; empty `build`, `test`, `languages` or a language without `format` is a gap, and so is a bad id in `rules` |
-| `.standards/testing-guide.md` | levels and commands, fixtures, declared exceptions, the hand-test list | written once, never overwritten; a `_fill in_` placeholder is a gap |
+| `.standards/testing-guide.md` | levels with the slot that runs each and its command, fixtures, declared exceptions, the hand-test list | written once, never overwritten; a `_fill in_` placeholder is a gap |
 | `.standards/rules/*.md` | the full rule text with ids and reasons, without the `rules.relaxed` rules and with the `rules.judgement` ones tagged judgement | replaced |
 | `AGENTS.md` (and a separate `CLAUDE.md`) | one block between `<!-- standards:begin vX.Y.Z -->` and `<!-- standards:end -->`: hard rules, signals, `## Code Review Rules`; with `rules.relaxed` or `rules.judgement` set, those ids leave the hard rules and signals for a `## Waived by this project` and a `## Judgement in this project` list | the block is replaced, nothing outside it is touched |
 | `.claude/rules/standards-*.md` | one file per section with `paths:` for the configured source extensions, filtered like `.standards/rules/*.md` | replaced |
