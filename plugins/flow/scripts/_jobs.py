@@ -192,7 +192,7 @@ def running(log, base, job):
         pid, at, host = (open(os.path.join(d, f)).read().strip() if os.path.exists(os.path.join(d, f)) else ""
                          for f in ("pid", "at", "host"))
         if alive(pid, job):
-            out.append({"job": name[:-5], "pid": int(pid), "at": at, "host": host})
+            out.append({"job": name[:-5] if job == "next" else base, "pid": int(pid), "at": at, "host": host})
     return out
 
 

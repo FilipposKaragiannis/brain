@@ -13,6 +13,13 @@ this file holds only what is specific to this repository.
 | regression | every bug fix, named after the bug | part of the unit run |
 | mutation | on PRs for changed files, full on a schedule; a signal, never a gate | `{{mutation}}` |
 
+## One test or one group
+
+The implement and test steps run only the tests they touched; the whole test command runs once,
+in verify, scoped to the change (`build` and `test` in `.standards/config.json` take `paths`).
+
+- The command that runs one test, one file or one group alone: _fill in_ (example: `dotnet test --filter FullyQualifiedName~BallSpin`).
+
 ## Fixtures and helpers
 
 - Where fixtures live and how to add one: _fill in_.

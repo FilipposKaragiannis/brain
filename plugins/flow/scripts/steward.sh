@@ -1,8 +1,23 @@
 #!/bin/sh
 # Worktree steward: the pool, claims, releases and temporary worktrees.
 #   steward.sh pool                              list the pool with claim, branch and dirt
-#   steward.sh claim <item> [--base <branch>]    claim a free pool worktree, print its path
+#   steward.sh claim <item> [--base <branch>] [--branch <name>]
+#                                                claim a free pool worktree, print its path. The
+#                                                task branch is the one --branch names (next.sh
+#                                                passes the one claim_at_base picked), else the
+#                                                one the item's state records, else an existing
+#                                                flow/<slug>, else the branch template (config
+#                                                branch, flow/{slug} unset); it goes into
+#                                                claim.json and the state (branch). A
+#                                                name git refuses, or a template that needs an
+#                                                item it cannot read, exits 2; a name another
+#                                                claim holds exits 4; both before anything is
+#                                                created. A new claim of an item outside its
+#                                                tracker's scope exits 2 (adhoc: names have no
+#                                                tracker, no scope)
 #   steward.sh find <item>                       print the claimed path, or nothing
+#   steward.sh owner <branch>                    print the item whose pool claim holds the branch
+#                                                as its task branch, or nothing
 #   steward.sh reserve [<worktree>] [--name <who>]
 #                                                claim a free pool worktree for manual work, with
 #                                                no item, under <who> (default: git user.name, else
@@ -15,10 +30,11 @@
 #                                                (<base>-wt-<n>) at the base tip, delete the task
 #                                                branch, clear the claim and a closed item's reports
 #   steward.sh reports <item>                    print (and create) the item's reports folder
-#   steward.sh tmp add <item> <phase>            temporary worktree from the task branch
+#   steward.sh tmp add <item> <phase>            temporary worktree on <branch>-<phase>, from the
+#                                                claim's task branch <branch>
 #   steward.sh tmp remove <path>                 remove it and its branch
-#   steward.sh add [path]                        add a worktree to the pool (git worktree add,
-#                                                pool entry in config.yaml, copies and setup); a
+#   steward.sh add [path]                        add a worktree to the pool (worktree_create, else
+#                                                git worktree add; pool entry, copies and setup); a
 #                                                pool path missing on disk is recreated in place
 #   steward.sh setup <path>                      run worktree_copy and worktree_setup there
 #   steward.sh prune [--dry-run]                 delete the reports of closed items, in the main
@@ -64,6 +80,29 @@
 # refused with its reason, exit 2. worktree_copy lists ignored paths copied from the main
 # worktree when the new one lacks them (.claude/settings.local.json); worktree_setup lists
 # commands run in the new worktree. Both run on add and on setup.
+# worktree_create, when set, is the sh command that makes each new worktree in place of git worktree
+# add: the pool's (grow, add, recreate) and tmp add's. worktree_remove, when set, removes a tmp
+# remove worktree in place of git worktree remove; flow never removes a pool worktree. In the
+# command {path} is the worktree's absolute folder and {base} the ref it starts from (the pool's
+# base, the claim's task branch for tmp add, empty for a remove); sh -c gets them as "$1" and "$2",
+# so the command writes them bare and no value is read as shell. A command that passes {path} on to
+# ssh, eval or sh -c, which parse it again, must quote it again there. It runs from the main
+# worktree, all its output on stderr. After a create a git worktree of this repository must sit at
+# {path}; then the pool's goes onto its idle branch at the base tip (one that cannot move stays as
+# made, and health moves it once free) and tmp add's onto a new <branch>-<phase> at {base}. tmp add
+# refuses a phase that makes no valid branch name, or a folder that exists, and tmp remove takes
+# only a listed worktree under .flow/tmp: else exit 2, nothing run. tmp remove refuses a worktree
+# with uncommitted changes (untracked files and submodule changes that status config hides count
+# too), or one whose git status fails, exit 3. After a remove the folder must be gone; git's record
+# of it goes, and its branch when that is the phase branch tmp add named for its folder:
+# <branch>-<phase> of a pool claim's task branch, or flow/<its folder under .flow/tmp>. A command
+# with no {path}, or with a placeholder inside quotes (a quoted $(...) too) or inside backticks, is
+# refused before it runs, exit 2, and so is a create at a path where something already exists (add
+# of the main or a pool worktree). One that fails, or leaves no worktree (a remove: leaves the
+# folder), is named after its output: add, tmp and a growing pool exit 1 with no pool entry added (a
+# pool that cannot grow says why, not that it is at pool_max), and a claim skips a missing pool path
+# it cannot recreate. A folder a failed create leaves stays for the owner. A value must not hold
+# " #" (the config reads a comment there) or start with [ (it reads a list).
 # A listed pool path missing on disk (Claude Code, or a hand, removed the folder after a release)
 # counts as free: claim and reserve recreate it on its idle branch at the base tip, with the
 # copies and the setup, and health names it with the command that recreates it now.
@@ -71,7 +110,9 @@
 # exception is health's, for a free worktree whose changes the base's history already holds.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 . "$FLOW_PLUGIN/lib/verify.sh"
+. "$FLOW_PLUGIN/lib/worktree_command.sh"
 
 home="$(flow_home)"
 main="$(dirname "$home")"
@@ -127,6 +168,11 @@ park() {
 
 # .flow/ holds the claim and the reports and is never part of the work.
 dirty() { [ -n "$(git -C "$1" status --porcelain -- . ":!.flow" 2>/dev/null)" ]; }
+refuse_removal_with_uncommitted_changes() {
+  uncommitted_changes="$(git -C "$1" -c status.showUntrackedFiles=all status --porcelain --untracked-files=all --ignore-submodules=none -- . ":!.flow")" ||
+    die "$1: git status failed, so its changes cannot be checked. Not removing." 3
+  [ -z "$uncommitted_changes" ] || die "$1 has uncommitted changes. Not removing." 3
+}
 
 write_state() {
   # write_state <item> key=value... ; skipped for ids no adapter owns (ad hoc worktree sessions).
@@ -165,17 +211,36 @@ cmd_find() {
   done
 }
 
+cmd_owner() {
+  pool_paths | while read -r pool_path; do
+    owner_claim="$(claim_of "$pool_path")"
+    [ "$(json_get "$owner_claim" branch)" = "$1" ] || continue
+    owner_item="$(json_get "$owner_claim" item)"
+    [ -z "$owner_item" ] || { printf '%s\n' "$owner_item"; break; }
+  done
+  return 0
+}
+
 cmd_claim() {
   item="$1"; shift
   base="$(claim_base_option "$base_branch" "$@")" || exit $?
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then printf '%s\n' "$existing"; return 0; fi
-  slug="$(item_slug "$item")"; branch="flow/$slug"
+  scope_holds "$item" || exit 2
+  branch="flow/$(item_slug "$item")"
+  if adapter_for "$item" >/dev/null 2>&1; then
+    branch="$(claim_branch_option "$@")"
+    [ -n "$branch" ] || branch="$(claim_branch "$item" "$(item_read "$item" </dev/null 2>/dev/null)" "$base")" || refuse_claim "$item" "$branch_unread_refused" 2
+    branch_name_valid "$branch" || refuse_claim "$item" "$branch_name_refused" 2
+    ! branch_is_base "$branch" "$base" || refuse_claim "$item" "$branch_base_refused" 2
+    ! claimed_branch "$branch" || refuse_claim "$item" "another claim holds its task branch $branch" 4
+  fi
   git -C "$main" remote get-url origin >/dev/null 2>&1 && git -C "$main" fetch -q origin "$base" 2>/dev/null
   ref="$(base_ref "$base")"; claimed_branch "$base" && ref="$base"
   claim_lock
   existing="$(cmd_find "$item")"
   if [ -n "$existing" ]; then flow_unlock; printf '%s\n' "$existing"; return 0; fi
+  ! claimed_branch "$branch" || { flow_unlock; refuse_claim "$item" "another claim holds its task branch $branch" 4; }
   free="$(free_worktree)" || exit $?
   if git -C "$free" show-ref --verify --quiet "refs/heads/$branch"; then
     git -C "$free" switch -q "$branch" || die "cannot switch $free to $branch"
@@ -187,14 +252,17 @@ cmd_claim() {
     "claimed_at=$(now_iso)" "host=$(host_name)" > "$free/.flow/claim.json"
   flow_unlock
   if adapter_for "$item" >/dev/null 2>&1; then take_item "$item"; fi
-  write_state "$item" "worktree=$(basename "$free")" "base=$base" "last_event=$(now_iso) claimed $(basename "$free")"
+  write_state "$item" "worktree=$(basename "$free")" "base=$base" "branch=$branch" "last_event=$(now_iso) claimed $(basename "$free")"
   printf '%s\n' "$free"
 }
 
 # free_worktree: the first pool worktree with no claim, no reservation and a clean tree, or a
-# pool path missing on disk, recreated and printed resolved (one git cannot add is skipped,
-# saying why); else one grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name exits 2 inside
-# grow_pool, before the pool_max message, so claim and reserve pass the template's reason through.
+# pool path missing on disk, recreated and printed resolved (one that cannot be made is skipped,
+# saying why; with worktree_create set, a file or symlink at the path exits 2 before the command
+# runs); else one grow_pool adds; exit 3 when the pool is at pool_max. A refused worktree_name
+# exits 2 inside grow_pool, before the pool_max message, so claim and reserve pass the template's
+# reason through; a worktree that cannot be made exits 1 there, so the pool_max message never
+# stands in for it.
 free_worktree() {
   for p in $(pool_paths); do
     if [ ! -d "$p" ]; then
@@ -427,15 +495,21 @@ cmd_tmp() {
     add)
       item="$2"; phase="$3"; slug="$(item_slug "$item")"
       wt="$(cmd_find "$item")"; [ -n "$wt" ] || die "$item has no claimed worktree" 2
-      path="$home/tmp/$slug-$phase"; branch="flow/$slug-$phase"
+      task_branch="$(json_get "$(claim_of "$wt")" branch)"
+      path="$home/tmp/$slug-$phase"; branch="$task_branch-$phase"
+      refuse_unnamable_phase "$phase" "$branch"
+      branch_name_valid "$branch" || die "$item: its phase branch is not a valid branch name" 2
+      refuse_taken_phase "$path" "$branch"
       mkdir -p "$home/tmp"
-      git -C "$wt" worktree add -q -b "$branch" "$path" "flow/$slug" || die "cannot add $path"
+      if [ -n "$(cfg worktree_create)" ]; then create_temporary_worktree_on_new_branch "$path" "$task_branch" "$branch"
+      else git -C "$wt" worktree add -q -b "$branch" "$path" "$task_branch" || die "cannot add $path"; fi
       printf '%s\n' "$path" ;;
     remove)
-      path="$2"
-      branch="$(git -C "$path" symbolic-ref --short -q HEAD)"
-      dirty "$path" && die "$path has uncommitted changes. Not removing." 3
-      git -C "$main" worktree remove "$path" || die "cannot remove $path"
+      path="$(removable_temporary_worktree "$2")" || exit
+      branch="$(checked_out_phase_branch "$path")"
+      refuse_removal_with_uncommitted_changes "$path"
+      if [ -n "$(cfg worktree_remove)" ]; then run_worktree_remove "$path"
+      else git -C "$main" worktree remove "$path" || die "cannot remove $path"; fi
       [ -n "$branch" ] && git -C "$main" branch -q -D "$branch" 2>/dev/null
       echo "removed $path" ;;
     *) die "usage: tmp add <item> <phase> | tmp remove <path>" 2 ;;
@@ -508,9 +582,119 @@ run_setup() {
   done
 }
 
+is_worktree_of_this_repository() {
+  [ -d "$1" ] && [ "$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" = "$(cd "$1" && pwd -P)" ] &&
+    [ "$(shared_repository_folder "$1")" = "$(shared_repository_folder "$main")" ]
+}
+shared_repository_folder() { (CDPATH='' cd -P -- "$1" && CDPATH='' cd -P -- "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P); }
+
+worktree_maker_name() {
+  if [ -n "$(cfg worktree_create)" ]; then printf 'worktree_create'; else printf 'git worktree add'; fi
+}
+
+runnable_worktree_command() {
+  command_text="$(cfg "$1")"
+  command_flaw="$(worktree_command_flaw "$1" "$command_text")"
+  [ -z "$command_flaw" ] || die "$command_flaw; fix it in $(config_file)" 2
+  printf '%s' "$command_text"
+}
+
+run_worktree_create() {
+  create_command="$(runnable_worktree_command worktree_create)" || exit
+  [ ! -e "$1" ] && [ ! -L "$1" ] || die "$1 already exists; worktree_create makes a new worktree only" 2
+  (cd "$main" && sh -c "$(worktree_command_filled "$create_command")" flow-worktree "$1" "$2") >&2
+  create_exit=$?
+  [ "$create_exit" -eq 0 ] && is_worktree_of_this_repository "$1" && return 0
+  echo "flow: worktree_create failed for $1 (exit $create_exit)" >&2
+  return 1
+}
+
+create_temporary_worktree_on_new_branch() {
+  run_worktree_create "$1" "$2" || die "cannot add $1"
+  git -C "$1" switch -q -c "$3" "$2" >&2 || die "cannot put $1 on a new branch $3 at $2; the worktree stays there, remove it with steward.sh tmp remove $1"
+}
+
+run_worktree_remove() {
+  remove_command="$(runnable_worktree_command worktree_remove)" || exit
+  removed_git_folder="$(worktree_git_folder "$1")"
+  (cd "$main" && sh -c "$(worktree_command_filled "$remove_command")" flow-worktree "$1" "") >&2 ||
+    die "cannot remove $1: worktree_remove failed (exit $?)"
+  [ ! -e "$1" ] || die "cannot remove $1: worktree_remove left it on disk"
+  forget_removed_worktree_record "$1" "$removed_git_folder"
+}
+forget_removed_worktree_record() {
+  [ ! -d "$2" ] || git -C "$main" worktree remove "$1" || die "cannot remove git's record of $1"
+}
+worktree_git_folder() { git -C "$1" rev-parse --absolute-git-dir; }
+
+removable_temporary_worktree() {
+  [ -n "$1" ] || die "tmp remove: no path given" 2
+  removable_path="$(physical_folder "$1")" || die "tmp remove: $1 is not a folder" 2
+  removable_flaw="$(temporary_place_flaw "$removable_path")"
+  [ -n "$removable_flaw" ] || removable_flaw="$(temporary_record_flaw "$removable_path")"
+  [ -z "$removable_flaw" ] || die "tmp remove: $1 $removable_flaw" 2
+  printf '%s' "$removable_path"
+}
+physical_folder() {
+  case "$1" in /*) ;; *) set -- "./$1" ;; esac
+  (cd "$1" 2>/dev/null && pwd -P)
+}
+temporary_place_flaw() {
+  [ ! -L "$home/tmp" ] || { printf 'is not removed while %s is a symlink; only a temporary worktree is removed' "$home/tmp"; return; }
+  case "$1" in "$(physical_temporary_folder)"/*) ;; *) printf 'is not under %s; only a temporary worktree is removed' "$home/tmp"; return ;; esac
+  [ "$1" != "$(cd "$main" && pwd -P)" ] || { printf 'is the main worktree; only a temporary worktree is removed'; return; }
+  ! pool_paths | listed_physical_folder "$1" || printf 'is a pool worktree; only a temporary worktree is removed'
+}
+temporary_record_flaw() {
+  git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | listed_physical_folder "$1" || { printf 'is not a worktree of this repository'; return; }
+  is_worktree_of_this_repository "$1" || { printf 'has a missing or broken .git, so its changes cannot be checked; not removing'; return; }
+  [ ! -f "$(worktree_git_folder "$1")/locked" ] || printf 'is locked; git worktree unlock it first'
+}
+refuse_unnamable_phase() {
+  case "$1" in '' | *[!A-Za-z0-9._-]*) die "tmp add: phase '$1' may hold only letters, digits, ., _ and -" 2 ;; esac
+  git -C "$main" check-ref-format --branch "$2" >/dev/null 2>&1 || die "tmp add: $2 is not a valid branch name; name the phase as a branch" 2
+}
+refuse_taken_phase() {
+  ! git -C "$main" show-ref --verify -q "refs/heads/$2" || die "tmp add: branch $2 already exists" 2
+  [ ! -e "$1" ] && [ ! -L "$1" ] || die "tmp add: $1 already exists" 2
+}
+physical_temporary_folder() { (cd "$home/tmp" 2>/dev/null && pwd -P) || printf '%s' "$home/tmp"; }
+checked_out_phase_branch() {
+  temporary_folder_name="${1#"$(physical_temporary_folder)"/}"
+  checked_out_branch="$(git -C "$1" symbolic-ref --short -q HEAD)"
+  [ -n "$checked_out_branch" ] || return 0
+  ! phase_branches_of_folder "$temporary_folder_name" | grep -qxF -- "$checked_out_branch" || printf '%s' "$checked_out_branch"
+}
+phase_branches_of_folder() {
+  printf 'flow/%s\n' "$1"
+  pool_paths | while IFS= read -r claimed_pool_path; do
+    phase_claim="$(claim_of "$claimed_pool_path")"
+    phase_item="$(json_get "$phase_claim" item)"
+    phase_task_branch="$(json_get "$phase_claim" branch)"
+    [ -n "$phase_item" ] && [ -n "$phase_task_branch" ] || continue
+    phase_item_slug="$(item_slug "$phase_item")"
+    case "$1" in "$phase_item_slug"-?*) printf '%s-%s\n' "$phase_task_branch" "${1#"$phase_item_slug"-}" ;; esac
+  done
+}
+listed_physical_folder() {
+  while IFS= read -r listed_path; do [ "$(cd "$listed_path" 2>/dev/null && pwd -P)" = "$1" ] && return 0; done
+  return 1
+}
+
+pool_worktree_create() {
+  run_worktree_create "$1" "$(base_ref)" || return 1
+  park "$1"
+  case $? in
+    1) echo "flow: $(idle_branch "$1") has commits not in $(base_ref); kept, and $(basename "$1") starts detached" >&2 ;;
+    2) echo "flow: cannot put $(basename "$1") on $(idle_branch "$1") at $(base_ref); it stays as worktree_create left it, and health moves it when it is free" >&2 ;;
+  esac
+  return 0
+}
+
 # pool_worktree_add <path>: a new pool worktree on its idle branch at the base tip (detached
-# when an idle branch of that name has commits of its own).
+# when an idle branch of that name has commits of its own), made by worktree_create when it is set.
 pool_worktree_add() {
+  [ -z "$(cfg worktree_create)" ] || { pool_worktree_create "$1"; return; }
   pa_branch="$(idle_branch "$1")"
   if idle_kept "$pa_branch"; then
     echo "flow: $pa_branch has commits not in $(base_ref); kept, and $(basename "$1") starts detached" >&2
@@ -530,14 +714,15 @@ pool_recreate() {
 }
 
 # grow_pool: add one worktree when the pool is below pool_max; print its path. Returns 1 when the
-# pool is full or git cannot add the worktree; exits 2 when next_pool_path refuses worktree_name.
+# pool is full; exits 1, naming worktree_create or git, when the worktree cannot be made, and 2
+# when next_pool_path refuses worktree_name or worktree_create has no {path}.
 grow_pool() {
   max="$(cfg_or pool_max 0)"
   count="$(cfg pool | grep -c .)"
   [ "$max" -gt "$count" ] 2>/dev/null || return 1
   rel="$(next_pool_path)" || exit
   case "$rel" in /*) abs="$rel" ;; *) abs="$main/$rel" ;; esac
-  pool_worktree_add "$abs" || return 1
+  pool_worktree_add "$abs" || die "cannot add $rel to the pool: $(worktree_maker_name) failed"
   pool_add_entry "$rel"
   run_setup "$abs" >&2
   echo "flow: added $rel to the pool ($((count + 1)) of $max)" >&2
@@ -603,7 +788,11 @@ cmd_prune() {
 # printed here, for a follow-up), an item still open closes (a PR into an epic
 # branch does not close its issue), and the task branch goes even when squash-merged, but only
 # while its tip is the PR's head, so a commit made after the merge keeps it. A worktree with
-# uncommitted changes, a run in flight, or an item that cannot be read is left alone.
+# uncommitted changes, a run in flight, or an item that cannot be read is left alone. An item at
+# the merge gate that holds no claim (an epic, whose PR comes from its epic branch) closes on its
+# merged PR too, and its gate clears after it: a close the tracker refuses keeps the gate record,
+# so the next sweep finds the item again. An epic's PR that was never recorded on it is found by
+# its epic branch, as a claim's is by its task branch.
 # --item is for the console, which runs it once it sees a gated PR leave the open list: one
 # item's PR is read, not every claim's. --lock never waits: a sweep already running is enough.
 cmd_sweep() {
@@ -623,8 +812,8 @@ cmd_sweep() {
     data="$(item_read "$it" 2>/dev/null)" || continue
     status="$(json_get "$data" status)"; gate="$(state_get "$data" gate)"; pr="$(state_get "$data" pr)"
     # A PR the pr step's worker could not record (a local item file lies outside its sandbox) is
-    # found by the claim's task branch, flow/<slug>, while the item waits at the merge gate, and
-    # recorded on the item.
+    # found by the claim's task branch while the item waits at the merge gate, and recorded on the
+    # item.
     if [ -z "$pr" ] && [ "$gate" = merge ]; then
       gh_repo="$(cfg github.repo)"
       found="$(cd "$main" && gh pr list ${gh_repo:+-R "$gh_repo"} --head "$br" --state all --json url 2>/dev/null)" && pr="$(json_get "$found" 0.url)"
@@ -652,6 +841,63 @@ cmd_sweep() {
     [ -n "$head" ] && [ "$(git -C "$p" rev-parse -q --verify "refs/heads/$br" 2>/dev/null)" = "$head" ] && force="--force"
     (cmd_release "$p" $force >/dev/null) && echo "$it: released $name ($why)"
   done
+  sweep_unclaimed_merges
+}
+
+unclaimed_merge_gate_item() {
+  waiting_gate="$(cat "$1")"; gate_item="$(json_get "$waiting_gate" item)"
+  [ "$(json_get "$waiting_gate" gate)" = merge ] || return 1
+  [ -z "$only" ] || [ "$gate_item" = "$only" ] || return 1
+  [ -z "$(cmd_find "$gate_item")" ] || return 1
+  printf '%s' "$gate_item"
+}
+
+pull_request_on_epic_branch() {
+  [ "$(json_get "$2" kind)" = epic ] || return 1
+  github_repository="$(cfg github.repo)"
+  on_epic_branch="$(cd "$main" && gh pr list ${github_repository:+-R "$github_repository"} --head "$(epic_branch "$1")" --state all --json url 2>/dev/null)" || return 1
+  json_get "$on_epic_branch" 0.url
+}
+
+merged_pull_request_of() {
+  pull_request_to_read="$(state_get "$2" pr)"
+  [ -n "$pull_request_to_read" ] || pull_request_to_read="$(pull_request_on_epic_branch "$1" "$2")"
+  [ -n "$pull_request_to_read" ] && [ "$(read_pull_request_state "$pull_request_to_read")" = MERGED ] || return 1
+  printf '%s' "$pull_request_to_read"
+}
+
+record_pull_request_the_item_lacks() {
+  [ -z "$(state_get "$2" pr)" ] || return 0
+  link_pr "$1" "$3"
+}
+
+close_merged_item() {
+  if [ "$(json_get "$2" status)" != closed ] && ! adapter close "$1" --comment "Closed by flow: $3 is merged." >/dev/null 2>&1; then
+    echo "$1: could not close it ($3 merged); the next sweep tries again"; return 0
+  fi
+  if ! "$FLOW_PLUGIN/scripts/gate.sh" clear "$1" "merged: $3" >/dev/null 2>&1; then
+    echo "$1: closed, but its merge gate stays; the next sweep tries again"; return 0
+  fi
+  echo "$1: closed ($3 merged)"
+}
+
+sweep_unclaimed_merge() {
+  unclaimed_item="$(unclaimed_merge_gate_item "$1")" || return 0
+  unclaimed_record="$(item_read "$unclaimed_item" 2>/dev/null)" || return 0
+  merged_pull_request="$(merged_pull_request_of "$unclaimed_item" "$unclaimed_record")" || return 0
+  if [ "$dry" -eq 1 ]; then echo "$unclaimed_item: would close it ($merged_pull_request merged)"; return 0; fi
+  record_pull_request_the_item_lacks "$unclaimed_item" "$unclaimed_record" "$merged_pull_request"
+  close_merged_item "$unclaimed_item" "$unclaimed_record" "$merged_pull_request"
+}
+
+sweep_unclaimed_merges() {
+  for merge_gate_record in "$home"/gates/*.json; do
+    [ ! -f "$merge_gate_record" ] || sweep_unclaimed_merge "$merge_gate_record"
+  done
+}
+
+read_pull_request_state() {
+  pull_request_view="$("$FLOW_PLUGIN/scripts/comments.sh" state "$1" 2>/dev/null)" && json_get "$pull_request_view" state 2>/dev/null
 }
 
 # link_pr <item> <pr>: the PR on the tracker (adapter link-pr), then in the item's flow record with
@@ -1258,8 +1504,69 @@ for line in sys.stdin:
   done
 }
 
+# approved_epics_with_children: the ids of the open epics in $health_items that have an open
+# child and an approved split. Approved means the epic does not wait at its decomposition gate and
+# either its steps are past that gate or the owner's last answer cleared it (an answer or an
+# option, not a split sent back).
+approved_epics_with_children() {
+  python3 -I -c '
+import json, sys
+profiles = json.load(open(sys.argv[1], encoding="utf-8"))["profiles"]
+SPLIT_GATE = "decomposition"
+
+def past_the_gate(state):
+    steps = profiles.get(state.get("profile") or "epic", [])
+    before_the_gate = steps[:steps.index("gate:" + SPLIT_GATE)] if "gate:" + SPLIT_GATE in steps else []
+    return state.get("step") not in before_the_gate
+
+def cleared_by_the_owner(state):
+    answered = state.get("answered") or ""
+    return answered == SPLIT_GATE or answered.startswith(SPLIT_GATE + ", option ")
+
+def approved(state):
+    return state.get("gate") != SPLIT_GATE and (cleared_by_the_owner(state) or past_the_gate(state))
+
+for line in sys.stdin:
+    if not line.strip():
+        continue
+    for item in json.loads(line):
+        if item.get("kind") == "epic" and item.get("open_children") and approved(item.get("state") or {}):
+            print(item["id"])' "$FLOW_PLUGIN/profiles.json" < "$health_items"
+}
+
+# health_make_epic_branch <epic> <epic-json>: makes the epic's branch (create_epic_branch in
+# lib/base.sh) and says so; a branch that cannot be made is said and notified once, with why.
+health_make_epic_branch() {
+  if made_epic_branch="$(create_epic_branch "$1" "$2")"; then
+    health_cleared "$branchless_key"
+    health_say "$1" "made its epic branch $made_epic_branch: its children start from it"
+  elif health_changed "$branchless_key" "$made_epic_branch"; then
+    health_say "$1" "has no epic branch, so its children wait: $made_epic_branch"
+    health_notify "$1 has no epic branch, so its children wait: $made_epic_branch"
+  fi
+}
+
+# health_epic_branch <epic>: an approved epic with no epic branch gets one; --dry-run only says so.
+health_epic_branch() {
+  branchless_key="epic-branch-$(item_slug "$1")"; missing_epic_branch="$(epic_branch "$1")"
+  if base_exists "$missing_epic_branch"; then health_cleared "$branchless_key"; return 0; fi
+  if [ "$dry" -eq 1 ]; then health_say "$1" "would make its epic branch $missing_epic_branch"; return 0; fi
+  branchless_epic_json="$(item_read "$1" 2>/dev/null)"
+  [ -z "$branchless_epic_json" ] || health_make_epic_branch "$1" "$branchless_epic_json"
+}
+
+# health_epic_branches: an open epic with an open child and an approved split gets its epic
+# branch when it has none: one approved before the flow made the branch at the gate, one whose
+# branch could not be made then, or one whose children the owner made by hand.
+health_epic_branches() {
+  for branchless_epic in $(approved_epics_with_children); do   # no pipe: health_say counts a finding in this shell
+    health_epic_branch "$branchless_epic"
+  done
+}
+
 # health_list: every tracker's open items, one JSON list per line, in $health_items, which
-# health_splits and health_holds read; the trackers whose list failed go in $health_list_failed.
+# health_splits, health_epic_branches and health_holds read; the trackers whose list failed go in
+# $health_list_failed.
 health_list() {
   health_items="$home/health/.items.$$"; health_list_failed=""
   for a in $health_trackers; do
@@ -1489,6 +1796,7 @@ cmd_health() {
   health_gates
   health_list
   health_splits
+  health_epic_branches
   health_holds
   rm -f "$health_items"
   health_pressure
@@ -1614,8 +1922,9 @@ cmd_resume() {
 cmd="${1:-}"; [ $# -gt 0 ] && shift
 case "$cmd" in
   pool) cmd_pool ;;
-  claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>]" 2; cmd_claim "$@" ;;
+  claim) [ $# -ge 1 ] || die "usage: claim <item> [--base <branch>] [--branch <name>]" 2; cmd_claim "$@" ;;
   find) [ $# -ge 1 ] || die "usage: find <item>" 2; cmd_find "$1" ;;
+  owner) [ $# -ge 1 ] || die "usage: owner <branch>" 2; cmd_owner "$1" ;;
   reserve) cmd_reserve "$@" ;;
   release) [ $# -ge 1 ] || die "usage: release <item|path> [--force]" 2; cmd_release "$@" ;;
   tmp) cmd_tmp "$@" ;;

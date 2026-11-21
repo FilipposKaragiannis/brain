@@ -740,3 +740,27 @@ test('PickFieldCleared_Saved_KeyTakenOutSoAQueryFilterRuns', async () => {
     assert.deepEqual(pick, { trackers: ['github'], query: 'assignee:@me' }, 'because a cleared field is taken out, not saved empty, so the file reads as the query filter the form shows');
   } finally { fixture.done(); }
 });
+
+test('CommentsPassLimitOfZero_ChangeChecked_Refused', () => {
+  const passLimit = fieldAt('jobs.comments.pass_limit')!;
+  for (const zero of ['0s', '0m', '0h', '0d']) {
+    assert.equal(checkChange(passLimit, zero).ok, false, `because comments.sh refuses ${zero}: a zero limit would stop every pass at once`);
+  }
+});
+
+test('CommentsPassLimitOfZero_FileValueChecked_Refused', () => {
+  const passLimit = fieldAt('jobs.comments.pass_limit')!;
+  for (const zero of ['0s', '0m', '0h', '0d']) {
+    assert.equal(checkFileValue(passLimit, zero).ok, false, `because comments.sh refuses ${zero} read from the file: a zero limit would stop every pass at once`);
+  }
+});
+
+test('CommentsPassLimitOfOneSecond_ChangeChecked_Accepted', () => {
+  const passLimit = fieldAt('jobs.comments.pass_limit')!;
+  assert.equal(checkChange(passLimit, '1s').ok, true, 'because one second is the shortest limit comments.sh takes');
+});
+
+test('CommentsPassLimitOfOneSecond_FileValueChecked_Accepted', () => {
+  const passLimit = fieldAt('jobs.comments.pass_limit')!;
+  assert.equal(checkFileValue(passLimit, '1s').ok, true, 'because one second read from the file is the shortest limit comments.sh takes');
+});

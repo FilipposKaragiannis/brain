@@ -131,7 +131,8 @@ c["gates"] = [
   {"name": "build", "command": "test -f gate-ok", "paths": ["src/**"], "when": ["commit", "ci"]},
   {"name": "local-only", "command": "test -f local-ok", "when": ["commit"]},
   {"name": "push-gate", "command": "test -f push-ok", "when": ["push"]},
-  {"name": "pause", "forbid": ["update-golden", "update-hash-stream"], "marker": "[closeout #1]"}
+  {"name": "pause", "forbid": ["update-golden", "update-hash-stream"], "marker": "[closeout #1]"},
+  {"name": "whole-suite", "forbid_run": ["tools/test.sh"], "marker": "[whole-suite]"}
 ]
 json.dump(c, open(".standards/config.json", "w"), indent=2)
 PY
@@ -162,6 +163,41 @@ expect "forbid: the script path runs it" check-gates.sh './tools/update-golden.s
 expect "forbid: bash -c runs it" check-gates.sh 'bash -c "update-golden x.json"' 2 "gate pause"
 expect "forbid: after && runs it" check-gates.sh 'git add . && update-hash-stream' 2 "gate pause"
 expect "forbid: a quoted one-word argument still runs it" check-gates.sh 'dotnet run -- "update-golden" x.json' 2 "gate pause"
+expect "ProgramRunAsWritten_IsBlocked: the gate names the program the command starts" check-gates.sh 'tools/test.sh' 2 'gate whole-suite: the command runs "tools/test.sh"'
+expect "ProgramRunWithArgumentsAfterAnotherCommand_IsBlocked: each command of the line is read" check-gates.sh 'cd /repo && tools/test.sh flow > /tmp/out.log 2>&1' 2 "gate whole-suite"
+expect "ProgramRunThroughAShell_IsBlocked: sh only passes the script on" check-gates.sh 'sh ./tools/test.sh' 2 "gate whole-suite"
+expect "ProgramRunByItsFullPath_IsBlocked: a longer path ends in the same program" check-gates.sh '/work/app-wt-2/tools/test.sh' 2 "gate whole-suite"
+expect "ProgramRunBehindEnvAndTimeout_IsBlocked: words that pass a command on do not hide it" check-gates.sh 'env -i LANG=C timeout 3600 tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterANumberedShellScript_Passes: the number after the shell is the script it runs" check-gates.sh 'bash 123 tools/test.sh' 0 ""
+expect "ProgramRunBehindNiceWithANumber_IsBlocked: the number nice takes does not hide the command" check-gates.sh 'nice -n 5 tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAsTheZerothArgument_Passes: exec -a only names the command it runs" check-gates.sh 'exec -a tools/test.sh true' 0 ""
+expect "ProgramRunUnderAnotherZerothArgument_IsBlocked: the word after the -a name is the command" check-gates.sh 'exec -a renamed tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterAQuotedZerothArgument_Passes: a quoted -a name of several words is one operand" check-gates.sh "exec -a 'display name' true tools/test.sh" 0 ""
+expect "ProgramPathAfterAnEmptyZerothArgument_Passes: an empty quoted -a name is still the operand" check-gates.sh "exec -a '' true tools/test.sh" 0 ""
+expect "ProgramRunUnderAQuotedZerothArgument_IsBlocked: the word after a quoted -a name is the command" check-gates.sh "exec -a 'display name' tools/test.sh" 2 "gate whole-suite"
+expect "ProgramPathAsTheVariableEnvUnsets_Passes: env -u takes the name it removes" check-gates.sh 'env -u tools/test.sh true' 0 ""
+expect "ProgramPathAfterASplitStringCommand_Passes: the word after env -S is the command env runs" check-gates.sh 'env -S true tools/test.sh' 0 ""
+expect "ProgramPathAfterALongSplitStringCommand_Passes: the word after --split-string is the command env runs" check-gates.sh 'env --split-string true tools/test.sh' 0 ""
+expect "ProgramRunAsTheSplitStringCommand_IsBlocked: env -S runs the word after it" check-gates.sh 'env -S tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterAnAttachedSplitString_Passes: the text attached to -S is the command env runs" check-gates.sh 'env -Su true tools/test.sh' 0 ""
+expect "ProgramRunBehindTimeoutWithASignal_IsBlocked: the signal timeout takes does not hide the command" check-gates.sh 'timeout -s KILL 60 tools/test.sh' 2 "gate whole-suite"
+expect "ProgramRunInsideShDashC_IsBlocked: the quoted command is the command" check-gates.sh "nohup sh -c 'tools/test.sh; echo done' &" 2 "gate whole-suite"
+expect "ProgramRunInTheBackgroundInASubshell_IsBlocked: a subshell starts it all the same" check-gates.sh '(tools/test.sh > /tmp/out.log 2>&1 &)' 2 "gate whole-suite"
+expect "ProgramRunWithTheMarker_Passes: the owner approved this run" check-gates.sh 'tools/test.sh flow # [whole-suite]' 0 ""
+expect "ProgramPathStaged_Passes: git add starts nothing" check-gates.sh 'git add tools/test.sh && git commit -m "chore: tidy"' 0 ""
+expect "ProgramPathRead_Passes: sed and grep read the file" check-gates.sh 'sed -n 1,20p tools/test.sh; grep -n lint tools/test.sh' 0 ""
+expect "ProgramPathSyntaxChecked_Passes: sh -n parses the script and starts nothing" check-gates.sh 'sh -n tools/test.sh' 0 ""
+expect "ProgramPathLookedUp_Passes: command -v and -V only describe the name" check-gates.sh 'command -v tools/test.sh && command -V tools/test.sh' 0 ""
+expect "ProgramRunThroughCommand_IsBlocked: command without -v or -V starts it" check-gates.sh 'command -p tools/test.sh' 2 "gate whole-suite"
+expect "ProgramPathAfterAQuotedSemicolon_Passes: the quoted semicolon is part of the file name" check-gates.sh "git add 'backup;tools/test.sh'" 0 ""
+expect "ProgramPathAfterAnEscapedSemicolon_Passes: the escaped semicolon is part of the file name" check-gates.sh 'git add -- backup\;tools/test.sh' 0 ""
+expect "ProgramRunAfterAQuotedSemicolon_IsBlocked: the semicolon after the quotes still ends the command" check-gates.sh "git add 'backup;x'; tools/test.sh" 2 "gate whole-suite"
+expect "ProgramPathAsTheShellName_Passes: the word after the -c script only names the shell" check-gates.sh "bash -c 'true;' tools/test.sh" 0 ""
+expect "ProgramRunAfterAShellDashC_IsBlocked: the next command after the shell still runs" check-gates.sh "bash -c 'true;' tools/test.sh && tools/test.sh" 2 "gate whole-suite"
+expect "ProgramPathInAParseOnlyScript_Passes: bash -n reads the -c script and starts nothing" check-gates.sh "bash -n -c 'echo ok; tools/test.sh'" 0 ""
+expect "ProgramRunInsideEvalWithArguments_IsBlocked: eval runs its arguments too" check-gates.sh "eval 'true;' tools/test.sh" 2 "gate whole-suite"
+expect "ProgramPathInAnAssignment_Passes: a variable that holds the path starts nothing" check-gates.sh 'script=tools/test.sh; wc -l "$script"' 0 ""
+expect "ProgramWithALongerName_Passes: tools/test.sh.bak is another file" check-gates.sh 'tools/test.sh.bak' 0 ""
 expect "forbid: a quoted script path still runs it" check-gates.sh '"./tools/update-golden.sh"' 2 "gate pause"
 expect "forbid: a one-word -m message is no run" check-gates.sh 'git commit -m "update-golden"' 0 ""
 expect "forbid: a one-word grep pattern is no run" check-gates.sh 'grep -rn "update-golden" docs' 0 ""
@@ -271,6 +307,11 @@ printf 'class E {\n\tTABS\n}\n' > src/App/E.cs; git add src/App/E.cs
 if "$hooks/git/pre-commit" >/dev/null 2>&1; then fail "pre-commit lets a format failure through"; else pass "pre-commit blocks on the formatter"; fi
 git reset -q src/App/E.cs; rm src/App/E.cs
 if "$hooks/git/pre-push" >/dev/null 2>&1; then pass "pre-push runs the build"; else fail "pre-push failed"; fi
+cp .standards/config.json "$work/config.before-build-map"
+python3 -c 'import json,sys; path=".standards/config.json"; config=json.load(open(path)); config["build"]={"command": "touch " + sys.argv[1], "paths": ["src/**"]}; json.dump(config, open(path, "w"))' "$work/built-from-a-map"
+"$hooks/git/pre-push" >/dev/null 2>&1
+check "BuildGivenAsAMapWithPaths_PrePushRunsItsCommand: a push builds whatever changed, because the paths scope verify only" [ -f "$work/built-from-a-map" ]
+cp "$work/config.before-build-map" .standards/config.json
 
 echo "check-range: the gates per commit over a range"
 mkdir -p "$work/range" && cp -R .standards "$work/range/" && cd "$work/range" && git init -q -b main && git config user.email t@t && git config user.name t
@@ -334,16 +375,22 @@ PATH="$orig_path"; export PATH
 plugin_copy="$work/plugin"; cp -R "$hooks/.." "$plugin_copy"; rm -rf "$plugin_copy/evals/results"
 init="$plugin_copy/skills/init/scripts/init.sh"; start="$plugin_copy/hooks/session-start.sh"
 mkdir -p "$work/empty" && cd "$work/empty" && git init -q -b main && git config user.email t@t && git config user.name t
-check "init: an empty repo installs and lists the gaps" sh -c "'$init' | grep -q 'Gaps' && '$init' | grep -q 'build is empty' && '$init' | grep -q 'languages is empty' && '$init' | grep -q 'testing-guide.md: 4 placeholder'"
+check "init: an empty repo installs and lists the gaps" sh -c "'$init' | grep -q 'Gaps' && '$init' | grep -q 'build is empty' && '$init' | grep -q 'languages is empty' && '$init' | grep -q 'testing-guide.md: 5 placeholder'"
 check "init: --check flags the gaps (exit 1)" sh -c "! '$init' --check >/dev/null && '$init' --check | grep -q 'gap: .standards/config.json: test is empty'"
 mkdir -p "$work/fresh" && cd "$work/fresh" && git init -q -b main && git config user.email t@t && git config user.name t
 mkdir -p src/App && printf 'Microsoft Visual Studio Solution File\n' > src/App.sln && printf 'class A {}\n' > src/App/A.cs
 check "init: a fresh install writes the stamp" sh -c "'$init' >/dev/null && grep -q '^source	' .standards/stamp && grep -q '	.standards/rules/' .standards/stamp"
-check "init: detected commands leave only the guide placeholders as gaps" sh -c "'$init' --check | grep -c 'gap:' | grep -qx 1 && '$init' --check | grep -q 'gap: .standards/testing-guide.md: 4 placeholder'"
+check "init: detected commands leave only the guide placeholders as gaps" sh -c "'$init' --check | grep -c 'gap:' | grep -qx 1 && '$init' --check | grep -q 'gap: .standards/testing-guide.md: 5 placeholder'"
 python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
 check "init: writes only under .standards and the host paths" sh -c "[ ! -d docs ] && [ ! -d .githooks ] && [ -f .standards/testing-guide.md ] && [ -f .standards/rules/csharp.md ]"
 check "init: no project roster, no eval runner" sh -c "[ ! -e .standards/evals ]"
 check "init: no .githooks, hooksPath is the plugin folder" sh -c "[ \"\$(git config core.hooksPath)\" = .standards/hooks/git ]"
+cp .standards/config.json "$work/config.before-test-list"
+python3 -c 'import json; path=".standards/config.json"; config=json.load(open(path)); config["test"]=[{"name": "unit", "command": "dotnet test", "paths": ["src/**"]}, {"name": "nameless-command", "paths": ["docs/**"]}]; json.dump(config, open(path, "w"))'
+check "TestListEntryWithNoCommand_InitNamesItAmongTheGaps: the owner reads which entry verify could not run" sh -c "'$init' --check | grep -q 'gap: .standards/config.json: test\[1\] (nameless-command) has no command'"
+python3 -c 'import json; path=".standards/config.json"; config=json.load(open(path)); config["test"]=[{"name": "unit", "command": "dotnet test", "paths": ["src/**"]}]; json.dump(config, open(path, "w"))'
+check "WellFormedTestList_AddsNoGap: a list of named commands with paths is a setting like any other" sh -c "! '$init' --check | grep -q 'gap: .standards/config.json: test'"
+cp "$work/config.before-test-list" .standards/config.json
 check "init: --check is clean after install" sh -c "'$init' --check | grep -q 'up to date'"
 check "session-start: silent when the stamp matches" sh -c "[ -z \"\$(echo '{}' | '$start')\" ]"
 printf '# mine\n' >> .codex/agents/standards-reviewer.toml
@@ -511,5 +558,153 @@ check "init: the user's own lines stay" sh -c "grep -q 'echo mine' .githooks/pre
 cp .githooks/pre-commit "$work/pc.after"
 "$init" >/dev/null
 check "init: a second run changes nothing" sh -c "cmp -s .githooks/pre-commit '$work/pc.after' && ! '$init' --check | grep -q 'githooks'"
+
+echo "init: a live hook in .git/hooks keeps core.hooksPath unset"
+mkdir -p "$work/live-hooks" && cd "$work/live-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+printf '#!/bin/sh\ngit lfs pre-push "$@"\n' > .git/hooks/pre-push; chmod +x .git/hooks/pre-push
+"$init" > "$work/live-hooks.init.out" 2>&1
+check "LiveHookInGitHooks_HooksPathStaysUnset: init leaves core.hooksPath unset so git still runs .git/hooks/pre-push" sh -c "[ -z \"\$(git config core.hooksPath)\" ]"
+check "LiveHookInGitHooks_InitNamesTheHook: init names the live hook it would have bypassed" grep -q 'init: .git/hooks holds pre-push;' "$work/live-hooks.init.out"
+git config --unset core.hooksPath
+"$init" --check > "$work/live-hooks.check.out" 2>&1
+check "LiveHookInGitHooks_CheckReportsNoHooksPathDrift: init --check does not count the unset core.hooksPath as drift" sh -c "[ -s '$work/live-hooks.check.out' ] && ! grep -q 'core.hooksPath is unset' '$work/live-hooks.check.out'"
+
+echo "init: machine scope puts the block, the rules and the agents in the user folders, and wires the clone's hooks"
+CLAUDE_CONFIG_DIR="$work/claude home"; CODEX_HOME="$work/codex"; export CLAUDE_CONFIG_DIR CODEX_HOME
+owner_line="the owner's own instructions"; usage_error_status=2; blocks_per_user_file=1
+mkdir -p "$CLAUDE_CONFIG_DIR" && printf '%s\n' "$owner_line" > "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+machine_config='{"version":"0.1.0","languages":[{"name":"shell","extensions":[".sh"],"format":[{"prefix":"","command":"true"}]}],"build":"true","test":"true","protected":[]}'
+mkdir -p "$work/machine" && cd "$work/machine" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p docs .githooks .standards
+printf '# Instructions\n' > docs/INSTRUCTIONS.md && ln -s docs/INSTRUCTIONS.md AGENTS.md && printf 'AGENTS.md\n' > .gitignore
+printf '#!/bin/sh\necho mine\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+git add docs .gitignore .githooks && git commit -q -m 'chore: tracked instructions and hooks'
+lfs_line='git lfs pre-push "$@"'
+printf '#!/bin/sh\n%s\n' "$lfs_line" > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope project-wide > "$work/machine.bad-scope.out" 2>&1; bad_scope_status=$?
+check "UnknownScope_InitExitsWithUsageError: a --scope value other than machine or project stops init with exit 2" [ "$bad_scope_status" = "$usage_error_status" ]
+"$init" --scope machine > "$work/machine.init.out" 2>&1
+check "MachineScope_TrackedFilesUnchanged: init --scope machine runs to its stamp and changes no tracked file" sh -c "[ -f .standards/stamp ] && git diff --quiet HEAD"
+check "MachineScope_UserClaudeFileHoldsOneBlock: the user CLAUDE.md under \$work holds exactly one standards block" sh -c "[ \"\$(grep -c 'standards:begin' '$CLAUDE_CONFIG_DIR/CLAUDE.md')\" = $blocks_per_user_file ]"
+check "MachineScope_UserCodexFileHoldsOneBlock: the user AGENTS.md under \$work holds exactly one standards block" sh -c "[ \"\$(grep -c 'standards:begin' '$CODEX_HOME/AGENTS.md')\" = $blocks_per_user_file ]"
+check "MachineScope_OwnerTextKeptAboveBlock: the owner's line in the user CLAUDE.md survives the install" grep -qxF "$owner_line" "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+check "MachineScope_RulesInUserClaudeFolder: the Claude rules land in the user rules folder under \$work" test -f "$CLAUDE_CONFIG_DIR/rules/standards-design.md"
+check "MachineScope_AgentsInUserCodexFolder: the Codex agents land in the user agents folder under \$work" test -f "$CODEX_HOME/agents/standards-reviewer.toml"
+check "MachineScope_NoRulesInProjectFolder: machine scope writes no Claude rule into the project" sh -c "! ls .claude/rules/standards-* >/dev/null 2>&1"
+check "MachineScope_HooksPathNeverSet: machine scope leaves core.hooksPath unset so git runs the clone's own hooks" sh -c "[ -z \"\$(git config core.hooksPath)\" ]"
+check "MachineScope_ExistingPrePushLineRunsFirst: the standards call in .git/hooks/pre-push comes after the line already there" \
+  awk -v existing="$lfs_line" -v needle=.standards/hooks/git/pre-push '$0 == existing { existing_line = NR } index($0, needle) { call_line = NR } END { exit !(existing_line && call_line > existing_line) }' .git/hooks/pre-push
+check "MachineScope_MissingHookCreatedExecutable: a hook the clone lacked is created executable with the standards call" \
+  sh -c "[ -x .git/hooks/commit-msg ] && grep -qF .standards/hooks/git/commit-msg .git/hooks/commit-msg"
+check "MachineScope_TrackedGithooksUntouched: the tracked .githooks/pre-commit keeps its committed text" git diff --quiet HEAD -- .githooks/pre-commit
+check "MachineScope_OutputsExcluded: git status lists none of the files machine scope wrote in the clone" sh -c "[ -z \"\$(git status --porcelain --untracked-files=all)\" ]"
+wired_files="hooks/pre-commit hooks/commit-msg hooks/pre-push info/exclude"
+mkdir -p "$work/machine.before"
+for wired_file in $wired_files; do cp ".git/$wired_file" "$work/machine.before/${wired_file##*/}"; done
+"$init" >/dev/null 2>&1
+check "MachineScope_SecondRunChangesNothing: a second init leaves the clone's hook files and its exclude byte-equal" sh -c "
+  for wired_file in $wired_files; do cmp -s \".git/\$wired_file\" \"$work/machine.before/\${wired_file##*/}\" || exit 1; done"
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+"$init" --check > "$work/machine.check.out" 2>&1
+check "MachineScope_CheckWithoutFlagIsClean: init --check, with no --scope, finds the machine install up to date" grep -q 'up to date' "$work/machine.check.out"
+gate_ran="$work/machine.gate-ran"
+python3 -c 'import json, sys
+config = json.load(open(".standards/config.json"))
+config["gates"] = [{"name": "marker", "command": "echo ran > \"%s\"" % sys.argv[1], "when": ["commit"]}]
+json.dump(config, open(".standards/config.json", "w"))' "$gate_ran"
+printf 'note\n' > note.txt && git add note.txt && git commit -q -m 'docs: add a note' >/dev/null 2>&1
+check "MachineScope_CommitRunsTheHook: a commit in the clone runs the standards pre-commit and its project gate" test -f "$gate_ran"
+mkdir -p "$work/machine-second" && cd "$work/machine-second" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope machine >/dev/null 2>&1
+cd "$work/machine"
+"$init" --check > "$work/machine.second-check.out" 2>&1
+check "SecondProjectSameHome_CheckStaysClean: a second project installed on the same user folders leaves the first one's --check up to date" grep -q 'up to date' "$work/machine.second-check.out"
+
+echo "init: machine scope links .standards into the linked worktrees and flow's worktree_setup"
+linked_worktree="$work/machine-wt"; flow_worktree="$work/machine-wt-flow"; flow_items_wanted=1
+git worktree add -q "$linked_worktree" 2>/dev/null
+mkdir -p .flow && printf 'pool:\nworktree_setup:\n  # - dotnet restore\ngates:\n' > .flow/config.yaml
+"$init" >/dev/null 2>&1
+"$init" >/dev/null 2>&1
+check "LinkedWorktree_SeesTheConfig: the linked worktree reads the main worktree's config through .standards" test -f "$linked_worktree/.standards/config.json"
+check "LinkedWorktree_StatusStaysClean: git status in the linked worktree lists nothing init wrote" sh -c "[ -z \"\$(git -C '$linked_worktree' status --porcelain --untracked-files=all)\" ]"
+check "FlowConfig_WorktreeSetupGetsOneLine: two inits leave one item that links .standards under worktree_setup" \
+  sh -c "[ \"\$(grep -c 'ln -s .*\\.standards' .flow/config.yaml)\" = $flow_items_wanted ]"
+(cd "$linked_worktree" && "$init" --check > "$work/machine-wt.check.out" 2>&1)
+check "LinkedWorktree_CheckIsClean: init --check run in the linked worktree finds the install up to date" grep -q 'up to date' "$work/machine-wt.check.out"
+rm -f "$gate_ran"
+(cd "$linked_worktree" && printf 'linked\n' > linked.txt && git add linked.txt && git commit -q -m 'docs: add a linked note' >/dev/null 2>&1)
+check "LinkedWorktree_CommitRunsTheHook: a commit in the linked worktree runs the standards pre-commit and its project gate" test -f "$gate_ran"
+git worktree add -q "$flow_worktree" 2>/dev/null
+flow_setup_line="$(sed -n 's/^  - \(\[ -e \.standards \] .*\)$/\1/p' .flow/config.yaml)"
+(cd "$flow_worktree" && sh -c "$flow_setup_line")
+check "FlowSetupLine_LinksANewWorktree: the worktree_setup line, run in a new worktree, links its .standards to the main one" \
+  sh -c '[ -n "$1" ] && [ -L "$2/.standards" ] && [ -f "$2/.standards/config.json" ]' sh "$flow_setup_line" "$flow_worktree"
+check "MachineScope_RepeatedInits_UserFileKeepsOneBlock: after every init above, the user CLAUDE.md still holds exactly one standards block" \
+  sh -c "[ \"\$(grep -c 'standards:begin' '$CLAUDE_CONFIG_DIR/CLAUDE.md')\" = $blocks_per_user_file ]"
+grep -vF .standards/hooks/git/pre-push .git/hooks/pre-push > "$work/pre-push.stripped"; cat "$work/pre-push.stripped" > .git/hooks/pre-push
+"$init" --check > "$work/machine.stripped-call.out" 2>&1
+check "MachineScope_StrippedHookCall_CheckReportsDrift: init --check names the clone's pre-push once its standards call is gone" \
+  grep -q '^init: drift: .*pre-push' "$work/machine.stripped-call.out"
+"$init" >/dev/null 2>&1
+exclude_file="$(git rev-parse --git-common-dir)/info/exclude"
+sed '/^# standards:begin/,/^# standards:end/d' "$exclude_file" > "$work/exclude.stripped"; cat "$work/exclude.stripped" > "$exclude_file"
+"$init" --check > "$work/machine.stripped-exclude.out" 2>&1
+check "MachineScope_RemovedExcludeBlock_CheckReportsDrift: init --check names the exclude file once its standards block is gone" \
+  grep -q '^init: drift: .*exclude' "$work/machine.stripped-exclude.out"
+"$init" >/dev/null 2>&1
+rm "$linked_worktree/.standards"
+"$init" --check > "$work/machine.missing-link.out" 2>&1
+check "LinkedWorktree_MissingLink_CheckReportsDrift: init --check names the linked worktree that lost its .standards link" \
+  grep -q '^init: drift: .*/machine-wt/\.standards is missing' "$work/machine.missing-link.out"
+"$init" >/dev/null 2>&1
+git worktree remove --force "$linked_worktree"; git worktree remove --force "$flow_worktree"
+
+echo "init: machine scope leaves a tracked flow config alone"
+mkdir -p "$work/tracked-flow" && cd "$work/tracked-flow" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .flow .standards && printf '%s\n' "$machine_config" > .standards/config.json
+printf 'pool:\nworktree_setup:\n  # - dotnet restore\n' > .flow/config.yaml
+git add .flow && git commit -q -m 'chore: flow config'
+"$init" --scope machine > "$work/tracked-flow.init.out" 2>&1
+check "TrackedFlowConfig_StaysUnchanged: machine init leaves a committed .flow/config.yaml with worktree_setup: unchanged" \
+  sh -c "[ -z \"\$(git status --porcelain -- .flow/config.yaml)\" ]"
+check "TrackedFlowConfig_InitPrintsTheItem: machine init prints the worktree_setup item that links .standards for the owner to add" \
+  grep -q 'worktree_setup: .*ln -s .*\.standards' "$work/tracked-flow.init.out"
+
+echo "init: the standards call keeps the status of the hook lines before it"
+mkdir -p "$work/failing-hooks" && cd "$work/failing-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards && printf '%s\n' "$machine_config" > .standards/config.json
+printf '#!/bin/sh\nfalse\n' > .git/hooks/pre-push
+printf '#!/bin/sh\nfalse\nexit $?\n' > .git/hooks/pre-commit
+chmod +x .git/hooks/pre-push .git/hooks/pre-commit
+"$init" --scope machine >/dev/null 2>&1
+check "ClonePrePushEndingInFalse_StillFailsAfterMachineInit: the pre-push exits non-zero once init chained the standards call" \
+  sh -c '! .git/hooks/pre-push origin url </dev/null'
+check "ClonePreCommitEndingInExitStatus_StillFailsAfterMachineInit: exit \$? after a failing line still exits non-zero once init chained the standards call" \
+  sh -c '! .git/hooks/pre-commit'
+mkdir -p "$work/failing-githooks" && cd "$work/failing-githooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .standards .githooks && printf '%s\n' "$machine_config" > .standards/config.json
+printf '#!/bin/sh\nfalse\n' > .githooks/pre-push && chmod +x .githooks/pre-push
+"$init" >/dev/null 2>&1
+check "ProjectPrePushEndingInFalse_StillFailsAfterInit: the tracked .githooks/pre-push exits non-zero once init chained the standards call" \
+  sh -c '! .githooks/pre-push origin url </dev/null'
+
+echo "init: machine scope in a clone whose team set core.hooksPath"
+mkdir -p "$work/team-hooks" && cd "$work/team-hooks" && git init -q -b main && git config user.email t@t && git config user.name t
+mkdir -p .githooks .standards
+printf '#!/bin/sh\necho team\n' > .githooks/pre-commit && chmod +x .githooks/pre-commit
+git add .githooks && git commit -q -m 'chore: team hooks' && git config core.hooksPath .githooks
+printf '%s\n' "$machine_config" > .standards/config.json
+"$init" --scope machine > "$work/team-hooks.init.out" 2>&1
+check "TeamHooksPathSet_MachineScopeKeepsTheTeamPath: machine scope leaves the team's core.hooksPath as it was" \
+  sh -c "[ \"\$(git config core.hooksPath)\" = .githooks ]"
+check "TeamHooksPathSet_TrackedHooksUntouched: machine scope adds no call to the team's tracked hooks" git diff --quiet HEAD -- .githooks
+check "TeamHooksPathSet_InitPrintsTheCallToAdd: init shows the hook call the owner adds by hand" grep -qF .standards/hooks/git/pre-commit "$work/team-hooks.init.out"
+python3 -c 'import re,sys; p=".standards/testing-guide.md"; open(p,"w").write(re.sub(r"_fill in[^_]*_", "done", open(p).read()))'
+"$init" --check > "$work/team-hooks.check.out" 2>&1
+check "TeamHooksPathSet_CheckIsClean: init --check counts the hand-wired team hooks as no drift" grep -q 'up to date' "$work/team-hooks.check.out"
+unset CLAUDE_CONFIG_DIR CODEX_HOME
 
 [ "$fails" -eq 0 ] && echo "hooks: ok" || { echo "hooks: $fails failed"; exit 1; }

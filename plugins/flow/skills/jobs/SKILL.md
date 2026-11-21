@@ -79,9 +79,16 @@ Facts to answer with:
   1.21.1 lacks it, and `status` says `reinstall: jobs.sh install <job>` until it is reinstalled.
 - An idle run (nothing ready, no new notes, no open PR) ends at once and spends no model time.
 - A `comments` run with `--workers N`, or `jobs.comments_workers: N` in `.flow/config.yaml`,
-  addresses up to N PRs at once, one pass per PR; unset or 1 is one after another. It stays one
-  run with one lock and one result line, summed across the passes. Each pass holds its item's
-  lock, so no two passes work one item at once; a PR whose lock is held is skipped as in use.
+  addresses up to N PRs at once, one pass per PR; unset or 1 is one after another. N is a whole
+  number from 1 to 16, as the console takes it; any other count stops the run at its start, exit 2.
+  Runs overlap: each has its own lock and one result line, summed across its passes, a scheduled
+  run starts while another is alive, and `jobs.sh run comments` starts one beside a live run.
+  Every schedule of the job shares one seen record per PR. Each pass holds its PR's lock (its item's, or
+  `pr:<number>` for a PR the flow did not open), so no two passes work one PR at once; a PR whose
+  lock is held is skipped as in use. `jobs.comments_workers` also caps the passes live at once
+  across all runs (a run given `--workers N` may use up to N): a pass waits for a free slot and
+  never skips its PR for lack of one. A pass still running at `jobs.comments.pass_limit` (unset,
+  1h) is stopped with what it started and counts as failed, so the next run tries it again.
   A pass the stopped host ends lets the passes in flight finish and starts no other; the run
   fails when any pass failed. The result line names each PR that got no pass and why: nothing
   new, waits on you (threads still unanswered after two passes, or failing passes), in use (the
@@ -93,6 +100,11 @@ Facts to answer with:
   that confirmation counts as failed, so after `jobs.comments.max_failures` the owner is told.
 - The `retro` job commits nothing: `lessons.jsonl` and `retros.log` stay on this machine under
   `.flow/`, which is excluded from git, so each clone keeps its own lessons.
+- The `retro` job writes the graph report of the last week to `.flow/reports/graph-<date>.md`
+  first and hands it to the retro. `"$P/scripts/graph-report.sh" [--days N]` prints the same
+  report by hand, with no model: per step the runs, the median time, the failed runs, the cost
+  and the runs per item, the steps that got slower since the period before, and the items that
+  took the most step time.
 - The `health` job (every 15 minutes in the config `flow:init` writes) checks each claim and spends
   no model while all is well: it clears a dead run's record, releases an empty claim, resumes
   cut-off work up to `jobs.health.max_resumes` times, then raises an escalation gate, syncs clean

@@ -22,13 +22,13 @@ verify_run_record() {
     mv -f "$run_record_file" "$(verify_run_file "$1")" || { rm -f "$run_record_file"; return 1; }
 }
 
-# verify_run_start <reports> <run output> <limit> <item> <base or empty>: starts the item's detached
-# run (verify.sh <item> --detached [--base <base>]) in its own session, its output to the run
-# output, records it and prints its pid. Says why on stderr and returns 1 when it cannot start or
-# record the run. verify.sh --start calls it.
+# verify_run_start <reports> <run output> <limit> <item> <base or empty> <fresh or empty>: starts
+# the item's detached run (verify.sh <item> --detached [--base <base>] [--fresh]) in its own
+# session, its output to the run output, records it and prints its pid. Says why on stderr and
+# returns 1 when it cannot start or record the run. verify.sh --start calls it.
 verify_run_start() {
   spawned_started="$(date +%s)"; spawned_head="$(git rev-parse --short HEAD)"
-  spawned_pid="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" spawn "$2" sh "$FLOW_PLUGIN/scripts/verify.sh" "$4" --detached ${5:+--base "$5"})" &&
+  spawned_pid="$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" spawn "$2" sh "$FLOW_PLUGIN/scripts/verify.sh" "$4" --detached ${5:+--base "$5"} ${6:+--fresh})" &&
     [ -n "$spawned_pid" ] || { echo "flow: could not start the verify run of $4" >&2; return 1; }
   verify_run_record "$1" "$spawned_pid" "$spawned_started" "$spawned_head" "$3" ||
     { echo "flow: could not record the verify run of $4 (pid $spawned_pid)" >&2; return 1; }

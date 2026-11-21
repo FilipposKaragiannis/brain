@@ -14,6 +14,7 @@
   _health.py seconds <config key> <duration>
   _health.py ago <epoch>
   _health.py spawn <log> <command>...
+  _health.py bounded <seconds> <grace seconds> <command>...
   _health.py died <log> <item> <step> <result file> <resume file>
   _health.py review <state json> <review rows file> [<record path>]
   _health.py holders <items file>
@@ -32,6 +33,10 @@ carries no pid when an older flow wrote it; the scan covers it. Times print in l
 
 Where a sandbox refuses ps, procs, owner and the ancestors a run's liveness skips are read through
 pgrep, and lsof or /proc, instead (_process.py).
+
+alive <procs> <item> <worktree> <pid> [<idle seconds>] names the process that holds the item or
+works in the worktree. With the idle seconds, a session a person started that has been idle that
+long is passed over: the comments job gives it so an abandoned session stops holding a worktree.
 
 session names one process for a line a person reads: `claude process 62102, idle 3d 2h` (idle
 since Claude last changed its status), `claude process 4242, busy`, or `codex process 7, running
@@ -67,6 +72,12 @@ changes sharing no path with the item's; in a cycle the newest hold, by its last
 events.log). A hold whose holder closed is left alone: next.sh releases it with the merge note, then `old<TAB>item<TAB>holder<TAB>seconds<TAB>reason` for a valid hold waiting longer
 than the old seconds (seconds a dash when no `held` line dates it, which counts as old).
 
+bounded runs the command as the leader of its own session, with this process's stdin, stdout and
+stderr, and exits with its code. A command still running after the seconds gets TERM, sent to its
+whole process group, then KILL to what is left after the grace seconds, and the exit is 124. A
+TERM, INT or HUP to this process goes to the group first, then the same stop, and the exit is 128
+plus the signal's number.
+
 works-in exits 0 when the process works in the folder or under it, as procs reads its working
 directory, and 1 when it works elsewhere or its working directory cannot be read.
 
@@ -76,7 +87,7 @@ after it last started the step, or that it logged none. Only the two together, a
 a silent log, say the loop was ended from outside: a loop that ends by itself prints the
 session's text and how advance.sh ended, so a new result with lines after it is said as it is
 (advance.sh may have read it and failed, as when it cannot read the tracker)."""
-import calendar, json, os, re, subprocess, sys, time
+import calendar, json, os, re, signal, subprocess, sys, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import _process  # noqa: E402
@@ -194,10 +205,20 @@ def ancestors():
     return found
 
 
-def alive(rows, item, worktree, pid, skip_self=True):
+def sits_idle(number, where, command, idle_after, now):
+    """True for a session a person started (not claude -p or codex exec) whose status says idle
+    for at least idle_after seconds. A session with no status of its own never sits idle."""
+    if UNATTENDED.search(command):
+        return False
+    state, idle_for = describe(number, where, command, started([number]).get(number, 0), now)
+    return state == "idle" and idle_for >= idle_after
+
+
+def alive(rows, item, worktree, pid, skip_self=True, idle_after=None):
     """The process that holds the item or works in the worktree, or "". A run's liveness skips
     this script's own ancestors (the health job runs under a host); a destructive check passes
-    skip_self=False, so a session that called health from that worktree still counts."""
+    skip_self=False, so a session that called health from that worktree still counts. With
+    idle_after, a person's session idle that many seconds in the worktree does not hold it."""
     own = ancestors() if skip_self else set()
     for number, _, command in rows:
         if number == pid and is_host(command):
@@ -209,6 +230,8 @@ def alive(rows, item, worktree, pid, skip_self=True):
             continue
         real = os.path.realpath(where) if where else ""
         if (is_agent(command) or (VERIFY_RUN.search(command) and item in command.split())) and any(real == w or real.startswith(w + "/") for w in wts):
+            if idle_after is not None and is_agent(command) and sits_idle(number, where, command, idle_after, int(time.time())):
+                continue
             return "process %s" % number
         if is_host(command) and (named.search(command) or item in command.split()):
             return "process %s" % number
@@ -247,9 +270,15 @@ def elapsed(text):
 SAME_START_SLACK = 2 * 3600
 
 
+# The statuses Claude writes for a session, as the two the flow reads: a session running a shell
+# command works, and one waiting on its user does not.
+CLAUDE_STATES = {"busy": "busy", "shell": "busy", "idle": "idle", "waiting": "idle"}
+
+
 def claude_status(pid, cwd, alive_for, now):
     """(busy|idle, since epoch) from ~/.claude/sessions/<pid>.json, or None when the file is
-    missing or belongs to an earlier process with the same pid (another folder or start)."""
+    missing, names a status the flow does not know, or belongs to an earlier process with the
+    same pid (another folder or start)."""
     home = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
     try:
         with open(os.path.join(home, "sessions", "%s.json" % pid)) as f:
@@ -265,9 +294,9 @@ def claude_status(pid, cwd, alive_for, now):
         if abs(began // 1000 - (now - alive_for)) > SAME_START_SLACK:
             return None
     status, since = record.get("status"), record.get("statusUpdatedAt")
-    if status not in ("busy", "idle") or not isinstance(since, (int, float)) or isinstance(since, bool):
+    if status not in CLAUDE_STATES or not isinstance(since, (int, float)) or isinstance(since, bool):
         return None
-    return status, int(since // 1000)
+    return CLAUDE_STATES[status], int(since // 1000)
 
 
 def host_name(command):
@@ -494,6 +523,62 @@ def spawn(log, command):
     print(p.pid)
 
 
+BOUNDED_LIMIT_EXIT = 124
+BOUNDED_POLL_SECONDS = 0.2
+SIGNAL_EXIT_BASE = 128
+FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def signal_group(group, signum):
+    """True when the signal reached the process group, False when no process of it is left."""
+    try:
+        os.killpg(group, signum)
+    except OSError:
+        return False
+    return True
+
+
+def stop_group(child, grace, now):
+    signal_group(child.pid, signal.SIGTERM)
+    deadline = now() + grace
+    while now() < deadline:
+        child.poll()
+        if not _process.group_running(child.pid):
+            child.wait()
+            return
+        time.sleep(BOUNDED_POLL_SECONDS)
+    signal_group(child.pid, signal.SIGKILL)
+    child.wait()
+
+
+def exit_code(returncode):
+    return SIGNAL_EXIT_BASE - returncode if returncode < 0 else returncode
+
+
+def bounded(limit, grace, command, now):
+    received = []
+    started = []
+
+    def forward(signum, _frame):
+        received.append(signum)
+        for child in started:
+            signal_group(child.pid, signum)
+
+    for signum in FORWARDED_SIGNALS:
+        signal.signal(signum, forward)
+    child = subprocess.Popen(command, start_new_session=True)
+    started.append(child)
+    deadline = now() + limit
+    while child.poll() is None and not received and now() < deadline:
+        time.sleep(BOUNDED_POLL_SECONDS)
+    if child.returncode is not None and not received:
+        if _process.group_running(child.pid):
+            stop_group(child, grace, now)
+        return exit_code(child.returncode)
+    stop_group(child, grace, now)
+    return SIGNAL_EXIT_BASE + received[0] if received else BOUNDED_LIMIT_EXIT
+
+
 def review(state, rows, record=None):
     decision = state.get("reviewDecision") or ""
     latest = [r.get("state") for r in state.get("latestReviews") or []]
@@ -638,7 +723,8 @@ def main():
     if command == "procs":
         procs()
     elif command == "alive":
-        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else ""))
+        print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "",
+                    idle_after=int(args[4]) if len(args) > 4 else None))
     elif command == "present":
         print(alive(snapshot(args[0]), args[1], args[2], args[3] if len(args) > 3 else "", skip_self=False))
     elif command == "session":
@@ -674,6 +760,8 @@ def main():
         died(*args[:5])
     elif command == "spawn":
         spawn(args[0], args[1:])
+    elif command == "bounded":
+        sys.exit(bounded(int(args[0]), int(args[1]), args[2:], time.monotonic))
     else:
         sys.exit("flow: unknown command %s" % command)
 

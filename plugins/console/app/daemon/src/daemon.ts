@@ -111,7 +111,7 @@ export async function runDaemon(argv: string[], env: NodeJS.ProcessEnv, version:
   const daemonStopping = new AbortController();
   const terminal = new TerminalProfiles(terminalProfileReaders(config.terminalLook, cancellableProcessRunner, os.userInfo().homedir), log, daemonStopping.signal);
   void terminal.profile(daemonStopping.signal);
-  const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes, terminal });
+  const server = createConsoleServer(registry, settings, { host: config.host, port: config.port, token: config.token, staticDir, log, panes, terminal, graphReportRunner: cancellableProcessRunner });
 
   privateFolder(config.stateDir);
   server.on('error', (error) => {

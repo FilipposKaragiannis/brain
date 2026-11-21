@@ -34,6 +34,8 @@ The item (id, title, body), the repo (its `AGENTS.md` or `CLAUDE.md`, the `## Gl
 ## Unattended
 No owner present (an unattended run, or no answer within the turn): write the open questions,
 each with your recommended answer and why, and finish with status `gate` and gate `interview`.
+Ask for the recap's confirmation the same way. Once the owner has confirmed it, finish with
+status `done`: the flow does not raise the interview gate again for an answer it already has.
 Never answer a decision yourself to keep moving.
 
 ## Output

@@ -2,7 +2,7 @@
 Pure: no file, clock or environment is read here.
 
 A joined item is the adapter's item with `state` replaced and `state_from` stamped. From a record:
-all twenty state keys, text "" when unset, attempts a number, touches and changes lists, gate none
+all twenty-one state keys, text "" when unset, attempts a number, touches and changes lists, gate none
 when clear (state_from record). With no record: the tracker's state as the adapter gave it while
 tracker_state is labels, the empty state when it gave none (state_from tracker); the empty state
 under none (state_from none). A record wins whole, never merged per key.

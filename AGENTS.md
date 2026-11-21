@@ -22,8 +22,8 @@ point one at a real project, its worktrees or the owner's console settings.
 - The token is in `<folder>/state/token`. Run the script again to reset the demo.
 - Stop the demo console when you are done; leave no daemon running.
 
-<!-- standards:begin v1.4.1 -->
-# Coding standards (standards plugin v1.4.1)
+<!-- standards:begin v1.7.0 -->
+# Coding standards (standards plugin v1.7.0)
 Full text with reasons in `.standards/rules/`. Cite rules by id. Rules bind new and touched
 code only; existing code is not refactored to meet a rule (U-05). A [judgement] breach is
 declared in the commit message, the PR body and the review (U-02). Language conventions:
@@ -119,3 +119,16 @@ changes. A new suite starts with the same two lines as `plugins/flow/tests/run.s
   say `workingFolder`.
 - **env**: environment variables; only at the node-pty boundary, daemon-owned names say
   `environment`.
+
+### Verify report
+
+- **verdict**: the report's first line, `Verdict: pass at <sha>` or `fail at <sha>`, then how
+  many acceptance lines are proven live or by test.
+- **proof**: what shows one acceptance line holds: a grade and a link to its evidence.
+- **evidence**: a file a proof points to, such as a screenshot, a log or a test result file.
+- **grade**: how an acceptance line was checked. **live**: run in the real app, with a captured
+  file. **test**: a named automated test passed in this run, or in an earlier run verify reused:
+  the same test command on the same files, and the report names that run. **build-only**: only
+  that it builds. **blocked**: it could not be checked, with why.
+- **Not checked list**: the report section, always present, of the acceptance lines graded
+  build-only or blocked, each with its reason.

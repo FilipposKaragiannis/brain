@@ -46,13 +46,23 @@ before the slices they block, and verify every blocker edge came back from a `re
    this item's `blocked_by` to them, and stop with status `gate`, gate `decomposition`.
    `plan.md` must then say `Decomposition: tracker tasks`: the end of this step splits the item
    (its step becomes `split`, it waits on its children and its worktree goes back to the pool).
-   The owner keeps it whole by closing the children and clearing the gate. The children start from the base and open their PRs
-   against it. When this branch holds commits a child needs (an ADR, a design doc), name the
-   branch in that child's `## Notes` ("Merge flow/gh-344 first: it holds ADR 0022") and block
-   the other children on it; its implementer merges the branch in, so its PR carries them.
+   The owner keeps it whole by closing the children and clearing the gate. Each child is
+   claimed from the base its claim resolves (this item's branch while it holds a claim, else
+   the nearest `epic/<n>` branch on the remote among its ancestors, else the branch a
+   `base: <branch>` line in the child's body names, else the config base) and opens its PR
+   against it. An epic's child never starts from the config base by default: while no epic above
+   it has an `epic/<n>` branch on the remote, it waits, unless its body names a `base:` line. The
+   flow makes that branch when the owner approves the epic's split. When this branch holds
+   commits a child needs (an ADR, a design
+   doc), name the branch in that child's `## Notes` ("Merge flow/gh-344 first: it holds ADR
+   0022") and block the other children on it; its implementer merges the branch in, so its PR
+   carries them.
 2. Write `<reports>/plan.md` from the template in the `flow:plan` skill: goal, non-goals,
    phases (each with concrete items, an autonomous verification with the expected result, its
-   `touches` globs, and `independent: yes|no`), the test seams, the docs to update, risks.
+   `touches` globs, and `independent: yes|no`), the test seams, the docs to update, risks. A
+   phase's verification names the tests that cover the phase, one test or one group as the
+   testing guide runs them. It is never the project's whole test command: verify runs that
+   once, scoped to the change, and a phase that asks for it makes every phase pay for it.
 3. Re-estimate the size from the plan. Report it in the result file when it changed.
 4. Write the union of the phase `touches` to the result file so the board can show overlaps,
    and `changes`: the globs among them whose existing behavior the plan changes (additive work

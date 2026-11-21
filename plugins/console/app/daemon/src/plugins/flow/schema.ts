@@ -38,6 +38,7 @@ export type FieldSpec = {
   group: FieldGroup;
   /** The allowed values of an enum, or the known ones of an enumOrText. */
   values?: string[];
+  /** The least value of a number; of a duration, the least count of its unit (1 refuses 0s and 0m). */
   min?: number;
   max?: number;
   followUp: FollowUp | null;
@@ -296,8 +297,9 @@ export const FLOW_CONFIG_SCHEMA: FieldSpec[] = [
   field('jobs.health.max_resumes', 'number', 'Health job', 'Most resumes in a row', 'How many times in a row the health job resumes cut-off work before it raises an escalation gate. Unset, 3.', { min: 0, max: 20, placeholder: '3' }),
   field('jobs.health.behind_base', 'number', 'Health job', 'Commits behind before the base is merged in', 'How many commits behind the base a task branch may fall before the health job merges the base in. Unset, 20.', { min: 1, max: 1000, placeholder: '20' }),
   field('jobs.health.push', 'boolean', 'Health job', 'Push clean task branches', 'When on, the health job pushes a clean task branch that is only ahead of its remote.'),
-  field('jobs.comments_workers', 'number', 'Comments job', 'PRs addressed at once', 'How many pull requests one comments run addresses at the same time, each in its own session. A schedule given --workers uses its own number instead. Unset, 1: one PR after another.', { min: 1, max: 16, placeholder: '1' }),
+  field('jobs.comments_workers', 'number', 'Comments job', 'PRs addressed at once', 'How many pull requests the comments job addresses at the same time across all its runs, each in its own session. A schedule given --workers uses its own number instead. Unset, 1: one PR after another.', { min: 1, max: 16, placeholder: '1' }),
   field('jobs.comments.max_failures', 'number', 'Comments job', 'Failed passes before a PR is dropped', 'How many failed passes in a row on one pull request before the comments job stops trying it and tells you. Unset, 3.', { min: 1, max: 20, placeholder: '3' }),
+  field('jobs.comments.pass_limit', 'duration', 'Comments job', 'Longest pass', 'How long one comments pass may run before it is stopped and counted as failed, so the next run tries it again. Unset, 1h.', { min: 1, placeholder: '1h' }),
   field('intake.notes', 'string', 'Intake job', 'Notes file', `The notes file the intake job turns into tracker items. ${INTAKE_PATH} The file need not exist yet: with no file there the job says "no notes file" and stops quietly. Unset, the job stops with an error unless its schedule names a notes file.`, { placeholder: '.flow/notes.md' }),
   field('intake.batch', 'number', 'Intake job', 'Notes per intake run', 'How many notes one intake run files at most. Unset, 10.', { min: 1, max: 100, placeholder: '10' }),
   field('intake.rules', 'string', 'Intake job', 'Intake rules file', `The file that says how a note becomes an item: outcomes, type, area, priority. ${INTAKE_PATH} It must exist; unset, .flow/intake.md when there is one, else the flow's own rules.`, { placeholder: '.flow/intake.md' }),
@@ -455,6 +457,10 @@ function inRange(spec: FieldSpec, value: number): Checked {
   return ok;
 }
 
+function durationInRange(spec: FieldSpec, text: string): Checked {
+  return spec.min !== undefined && Number.parseInt(text, 10) < spec.min ? fail(`${spec.path} must be at least ${spec.min}${text.slice(-1)}, not "${text}"`) : ok;
+}
+
 /** A scalar as the file holds it (always text), checked against the field's type. An empty value means unset and always passes. */
 function checkText(spec: FieldSpec, text: string): Checked {
   if (text === '') return ok;
@@ -465,7 +471,7 @@ function checkText(spec: FieldSpec, text: string): Checked {
     case 'boolean': return text === 'true' || text === 'false' ? ok : fail(`${spec.path} must be true or false, not "${text}"`);
     case 'enum': return spec.values?.includes(text) === true ? ok : fail(`${spec.path} must be one of ${(spec.values ?? []).join(', ')}, not "${text}"`);
     case 'enumOrText': return ok;
-    case 'duration': return DURATION.test(text) ? ok : fail(`${spec.path} must be a number with s, m, h or d, like 10m or 24h, not "${text}"`);
+    case 'duration': return DURATION.test(text) ? durationInRange(spec, text) : fail(`${spec.path} must be a number with s, m, h or d, like 10m or 24h, not "${text}"`);
     case 'schedule': { const checked = checkSchedule(text); return checked.ok ? ok : fail(`${spec.path}: ${checked.error}`); }
     case 'list': return ok;
     case 'map': return fail(`${spec.path} must be a map of name: value lines, not "${text}"`);

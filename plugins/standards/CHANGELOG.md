@@ -1,5 +1,53 @@
 # standards
 
+## 1.7.0 (2026-11-20)
+
+- A project gate takes `forbid_run`: it blocks a command that starts one of the programs named,
+  as written or by a longer path, and through a shell, `env`, `exec`, `nohup`, `nice` or
+  `timeout` too. A command that only names the path (`git add`, `sed`, `grep`, `sh -n`) passes.
+  `forbid` matches a text anywhere in the command, which blocks reading or staging a script
+  whose path it names; it stays for a verb passed as an argument.
+- `build` and `test` in `.standards/config.json` take a map `{command, paths}`, and `test` a list
+  of `{name, command, paths}`: the flow verifier then runs a command only when a changed file is
+  under its paths. The pre-push hook runs the build's command in either form, `init` names a
+  malformed entry among the gaps, and the config's `_readme` says how to scope a command.
+- The testing guide template has a place for the command that runs one test or one group alone,
+  which the implement and test steps use instead of the whole test command.
+
+## 1.6.0 (2026-11-18)
+
+- `init --scope machine` installs the standards into one clone without changing a tracked file.
+  The rules block goes to `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` (`CLAUDE_CONFIG_DIR` and
+  `CODEX_HOME` move them), the Claude rules to `~/.claude/rules/` with `paths: "**/*"` and the
+  Codex agents to `~/.codex/agents/`, so they apply to every project on the machine. The git hook
+  calls are chained into the clone's own hooks folder after the lines already there, and the
+  clone's outputs are listed in a marked block in `.git/info/exclude`. The stamp remembers the
+  scope, so `init` and `init --check` keep it; `--check` is clean. An earlier project-scope
+  install is named, never removed.
+  The user-folder block and Claude rules keep the plugin's text, because every project shares
+  them, so a project's `rules.relaxed` and `rules.judgement` reach only its `.standards/rules/`.
+- init no longer points `core.hooksPath` away from live hooks: when `.git/hooks` holds an
+  executable hook (not `*.sample`) that git would stop running, init names it, sets nothing and
+  says how to call the standards hooks from it, or to use `--scope machine`. `--check` reports it
+  as a note, not drift. This changes the default for a clone with its own hooks, such as Git LFS.
+- In machine scope each linked worktree gets a `.standards` link to the main worktree's, so the
+  git hooks, the gates and the session hooks find the config there. When flow is installed, init
+  adds the line that makes the link to `worktree_setup` in `.flow/config.yaml`, or prints it for
+  the owner when that file is tracked.
+- A project relaxes the rules that clash with its house style in `.standards/config.json`:
+  `rules.relaxed` lists the rule ids it waives, `rules.judgement` the hard or signal rule ids it
+  grades as [judgement]. `init` drops a waived rule's line from `.standards/rules/` and
+  `.claude/rules/standards-*.md`, tags a demoted one `[judgement, relaxed from hard by this
+  project]`, and moves both out of the block's hard rules and signals into a
+  `## Waived by this project` and a `## Judgement in this project` list. Re-run `init` after
+  editing the lists. A project without them gets the same files as before.
+- An unknown id, a usage rule, a `judgement` id that is not hard or signal, an id in both lists,
+  or an id a plugin hook enforces (C-01, C-02, W-01, L-03; the gap names the hook and its switch)
+  is an `init` gap, so `init --check` exits 1 until it is fixed.
+- The review skill and the standards, test and performance reviewers never raise a waived rule
+  and grade a demoted one P2 at most. The project-advisor routes a rule the house style breaks on
+  purpose to the two lists, and new configs carry them empty.
+
 ## 1.5.1 (2026-11-17)
 
 - The spec-reviewer grades an acceptance check the diff must carry and the reports call

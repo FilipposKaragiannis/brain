@@ -33,7 +33,7 @@ unrecorded="$(new_task "Unrecorded")"
 "$plugin/scripts/board.sh" --json > "$work/board.json"
 check "BoardJsonOfARecordedItemWhoseTrackerDiffers_ShowsTheRecordsStep: the board reads the record, not the tracker" \
   '[ "$(board_item "$recorded" state.step)" = implement ]'
-check "BoardJson_GivesEveryItemTheTwentyStateKeys: the console reads state on every item, as before" \
+check "BoardJson_GivesEveryItemTheTwentyOneStateKeys: the console reads state on every item, as before" \
   'python3 -c "import json,sys; items=json.load(open(sys.argv[1]))[\"items\"]; keys=sys.argv[2].split(); sys.exit(0 if items and all(sorted(item[\"state\"])==sorted(keys) for item in items) else 1)" "$work/board.json" "$state_keys"'
 check "BoardJson_StampsEveryItemWithWhereItsStateCameFrom: each item says record, tracker or none" \
   'python3 -c "import json,sys; items=json.load(open(sys.argv[1]))[\"items\"]; sys.exit(0 if items and all(item.get(\"state_from\") in (\"record\",\"tracker\",\"none\") for item in items) else 1)" "$work/board.json"'

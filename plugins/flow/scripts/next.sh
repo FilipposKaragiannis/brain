@@ -1,6 +1,7 @@
 #!/bin/sh
 # next.sh [item] [--json] [--embed-agent] [--pick <name>]: prepare the next step of one item. Without an item,
-# picks the first ready item, by rank (ready.priority_order), from every tracker read that no run holds.
+# picks the first ready item, by rank (ready.priority_order) and among equals the lowest item number
+# (the oldest), from every tracker read that no run holds.
 # Items whose touches overlap may run side by side: the plan step puts an item behind another
 # (state.held_by), and a held item is not ready (filter-ready.sh). --pick narrows the items read
 # to the filter pick.<name> in .flow/config.yaml (pick_trackers in lib/flow.sh) before
@@ -9,8 +10,8 @@
 # records the run, writes the step brief and prints what to run. The caller (the next skill in
 # a session, or run-unattended.sh) runs the step and then calls advance.sh.
 # A new claim starts from the item's base (lib/base.sh claim_at_base); every later reader takes the one it records.
-# Exit codes: 0 step ready · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
-# an open item (blocked_by), split and waiting on its children, or its base: line names a branch not on the remote or no valid name · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
+# Exit codes: 0 step ready · 2 the config refuses: a bad --pick, the branch template gives no valid task branch name for it, or a named item with no claim outside its tracker's scope (<tracker>.scope, scope_holds in lib/flow.sh) · 3 no free worktree (pool at pool_max) · 4 waiting at a gate, held behind an open item, blocked by
+# an open item (blocked_by), split and waiting on its children, its base: line names a branch not on the remote or no valid name, or another claim holds its task branch · 5 nothing ready · 6 item is done, or split with every child closed · 7 the item has a run in flight, or another run held the pick lock.
 # A blocker holds a claimed item too (lib/blockers.sh), with no run, so a wait counts no attempt;
 # a blocker the owner waived (an option picked on its blocked_by gate) holds nothing.
 # Codes 4 and 6 are a named item's: a pick passes over an item with nothing to run (closed, at a
@@ -26,6 +27,7 @@
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/blockers.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/branch.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 item=""; as_json=0; embed=0; pick=""
@@ -102,6 +104,11 @@ if [ -z "$item" ]; then
 fi
 
 data="$(item_read "$item")" || die "cannot read $item"
+# A picked item came from the scoped ready list, and a named one that holds a claim was in the
+# scope when it was claimed, so its run goes on after it leaves it: only a named item with no
+# claim is checked.
+[ -z "$named" ] || ! scope_in_config || [ -n "$("$FLOW_PLUGIN/scripts/steward.sh" find "$item" </dev/null 2>/dev/null)" ] \
+  || scope_holds "$item" || exit 2
 [ "$(json_get "$data" status)" = "open" ] || pass_over "$item is closed" 6
 kind="$(json_get "$data" kind)"; size="$(state_get "$data" size)"; [ -n "$size" ] || size="$(json_get "$data" size)"
 [ -n "$size" ] || size="$(json_get "$profiles" default_size)"
@@ -129,6 +136,17 @@ fi
 if [ "$step" = "done" ]; then
   [ "$(state_get "$data" answer_pending)" != comments ] || pass_over "$item is done; its answer to the last gate waits on the comments job: jobs/comments.sh <host> $item" 6
   pass_over "$item is done (every step ran). Merge or close it." 6
+fi
+# An item no step has started waits while its parent's split is not approved (the decomposition
+# gate), as the ready filter holds it. A started one goes on: the owner let it start.
+parent="$(json_get "$data" parent)"
+if [ -z "$(state_get "$data" step)" ] && [ -n "$parent" ] && [ "$(state_get "$(item_read "$parent" 2>/dev/null)" gate)" = decomposition ]; then
+  pass_over "$item waits: its parent $parent waits at the decomposition gate" 4
+fi
+# An epic's closeout checks that every child is closed: it runs nothing while one is open.
+if [ "$step" = closeout ]; then
+  kids="$(json_get "$data" open_children)"
+  if [ "${kids:-0}" -gt 0 ] 2>/dev/null; then pass_over "$item waits on its $kids open child item(s) before closeout" 4; fi
 fi
 # A split item (steward.sh split) runs no step: its children do the work.
 if [ "$step" = split ]; then
