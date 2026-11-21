@@ -16,27 +16,20 @@ ln -s "$plugin/tests/fake-gh.sh" "$work/github/gh"
 PATH="$work/github:$PATH"; export PATH
 
 CLOSEOUT_SUMMARY="Every acceptance line is proven."
-# github_repo <dir>: a fresh repository (new_repo) whose PRs live on a GitHub the fake gh plays,
-# with no pull request yet.
 github_repo() {
   new_repo "$1"
   printf 'github:\n  repo: acme/widgets\n' >> .flow/config.yaml
   printf '{"issues": []}' > "$FAKE_GH_DIR/issues.json"; rm -f "$FAKE_GH_DIR/fail"
 }
-# pull_request <field>: a field of the one pull request the fake GitHub holds, or nothing.
 pull_request() { python3 -c 'import json, sys; print((json.load(open(sys.argv[1])).get("pr") or {}).get(sys.argv[2], ""))' "$FAKE_GH_DIR/issues.json" "$1"; }
-# set_pull_request <json>: the pull request the fake GitHub holds.
 set_pull_request() { python3 -c 'import json, sys; data = json.load(open(sys.argv[1])); data["pr"] = json.loads(sys.argv[2]); json.dump(data, open(sys.argv[1], "w"))' "$FAKE_GH_DIR/issues.json" "$1"; }
-# merge_pull_request: the owner merged the pull request on GitHub.
 merge_pull_request() { python3 -c 'import json, sys; data = json.load(open(sys.argv[1])); data["pr"]["state"] = "MERGED"; json.dump(data, open(sys.argv[1], "w"))' "$FAKE_GH_DIR/issues.json"; }
 item_status() { "$local_adapter/read.sh" "$1" | json_value status; }
-# epic_with_work <title>: an epic whose epic branch holds a commit the default branch lacks; prints the epic.
 epic_with_work() {
   worked_epic="$("$local_adapter/create.sh" epic "$1" --body x)"
   remote_branch "$(epic_of "$worked_epic")"; remote_commit "$(epic_of "$worked_epic")" "$(slug "$worked_epic").txt"
   printf '%s' "$worked_epic"
 }
-# pass_closeout <epic>: the epic's closeout step ran and passed; the exit code is advance.sh's.
 pass_closeout() {
   "$local_adapter/write-state.sh" "$1" step=closeout profile=epic
   start_step "$1"
@@ -199,5 +192,23 @@ check "EpicCloseoutWithAnUnreachableRemote_LeavesTheEpicOpen: its branch may hol
   '[ "$(item_status "$far")" = open ]'
 check "EpicCloseoutWithAnUnreachableRemote_RaisesAnEscalationGate: the owner hears the remote could not be asked" \
   '[ "$(state "$far" gate)" = escalation ] && json_value message < ".flow/gates/$(slug "$far").json" | grep -qF "could not be asked"'
+
+echo "epic closeout: a fetch the remote refuses is no empty difference"
+github_repo stale
+moved_on="$("$local_adapter/create.sh" epic "Cup replays" --body x)"
+remote_branch "$(epic_of "$moved_on")"; git fetch -q origin "$(epic_of "$moved_on")"
+remote_commit "$(epic_of "$moved_on")" replays.txt
+"$local_adapter/write-state.sh" "$moved_on" step=closeout profile=epic
+start_step "$moved_on"
+step_result "$moved_on" closeout "{\"status\":\"done\",\"summary\":\"$CLOSEOUT_SUMMARY\"}"
+chmod -R a-w .git/objects
+finish_step "$moved_on"
+chmod -R u+w .git/objects
+check "EpicBranchCachedAtItsBaseWhileTheRemoteMovedOn_HasNothingAheadLocally: the stale copy shows no work, or the checks below prove nothing" \
+  '[ "$(git rev-list --count "origin/main..origin/$(epic_of "$moved_on")")" = 0 ] && [ "$(remote_tip "$(epic_of "$moved_on")")" != "$(remote_tip main)" ]'
+check "EpicCloseoutWhoseBranchCannotBeFetched_LeavesTheEpicOpen: a stale copy of the branch is no proof that nothing is left to merge" \
+  '[ "$(item_status "$moved_on")" = open ]'
+check "EpicCloseoutWhoseBranchCannotBeFetched_RaisesAnEscalationGate: the owner hears the branch could not be fetched" \
+  '[ "$(state "$moved_on" gate)" = escalation ] && json_value message < ".flow/gates/$(slug "$moved_on").json" | grep -qF "could not be fetched"'
 
 if [ "$fails" -eq 0 ]; then echo "epic-closeout: ok"; else echo "epic-closeout: $fails failed"; exit 1; fi

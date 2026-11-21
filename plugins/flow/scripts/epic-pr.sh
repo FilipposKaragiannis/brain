@@ -8,9 +8,10 @@
 # summary given and <reports>/verify.md, the closeout's report.
 # Prints nothing, exit 0, when there is nothing to merge: the repository has no origin, the
 # remote answers that it has no epic branch, or the epic branch holds no commit its start lacks.
-# Exit 1, with why on stderr, when the remote cannot be asked for the epic branch (unmerged work
-# may sit on it), the epic's start does not resolve or is not on the remote, the two branches
-# cannot be compared or gh refuses; exit 2 on a bad argument.
+# Exit 1, with why on stderr, when the remote cannot be asked for the epic branch or either
+# branch cannot be fetched (unmerged work may sit on the epic branch), the epic's start does not
+# resolve or is not on the remote, the two branches cannot be compared or gh refuses; exit 2 on a
+# bad argument.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
 [ $# -ge 2 ] || die "usage: epic-pr.sh <epic> <reports> [<summary>]" 2
@@ -25,6 +26,10 @@ remote_holds_branch() {
   git -C "$repository" ls-remote --exit-code --heads origin "$1" >/dev/null 2>&1; asked=$?
   [ "$asked" -eq 0 ] || [ "$asked" -eq "$LS_REMOTE_NO_MATCH" ] || die "$epic: the remote could not be asked for $1, so its work may still be unmerged"
   return "$asked"
+}
+
+fetch_fresh() {
+  git -C "$repository" fetch -q origin "$1" >/dev/null 2>&1 || die "$epic: $1 could not be fetched, so what the remote holds of it is not known"
 }
 
 open_pull_request() {
@@ -57,10 +62,10 @@ epic_record="$(adapter read "$epic")" || die "cannot read $epic"
 [ "$(json_get "$epic_record" kind)" = epic ] || die "$epic is no epic" 2
 head_branch="$(epic_branch "$epic")"
 remote_holds_branch "$head_branch" || exit 0
-fetch_base "$head_branch"
+fetch_fresh "$head_branch"
 target_branch="$(fetch_epic_start "$epic_record")" || die "$epic: $target_branch"
-fetch_base "$target_branch"
-base_exists "$target_branch" || die "$epic: its base $target_branch is not on the remote, so $head_branch has no branch to merge into"
+remote_holds_branch "$target_branch" || die "$epic: its base $target_branch is not on the remote, so $head_branch has no branch to merge into"
+fetch_fresh "$target_branch"
 ahead="$(git -C "$repository" rev-list --count "refs/remotes/origin/$target_branch..refs/remotes/origin/$head_branch" 2>/dev/null)" \
   || die "$epic: git could not compare $head_branch with $target_branch"
 [ "$ahead" -gt 0 ] || exit 0

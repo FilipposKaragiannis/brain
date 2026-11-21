@@ -841,21 +841,23 @@ unclaimed_merge_gate_item() {
   printf '%s' "$gate_item"
 }
 
-pull_request_from_epic_branch() {
+pull_request_on_epic_branch() {
   [ "$(json_get "$2" kind)" = epic ] || return 1
   github_repository="$(cfg github.repo)"
-  from_epic_branch="$(cd "$main" && gh pr list ${github_repository:+-R "$github_repository"} --head "$(epic_branch "$1")" --state all --json url 2>/dev/null)" || return 1
-  found_pull_request="$(json_get "$from_epic_branch" 0.url)"
-  [ -n "$found_pull_request" ] || return 1
-  [ "$dry" -eq 1 ] || adapter link-pr "$1" "$found_pull_request" >/dev/null || echo "flow: could not record $found_pull_request on $1" >&2
-  printf '%s' "$found_pull_request"
+  on_epic_branch="$(cd "$main" && gh pr list ${github_repository:+-R "$github_repository"} --head "$(epic_branch "$1")" --state all --json url 2>/dev/null)" || return 1
+  json_get "$on_epic_branch" 0.url
 }
 
 merged_pull_request_of() {
   pull_request_to_read="$(state_get "$2" pr)"
-  [ -n "$pull_request_to_read" ] || pull_request_to_read="$(pull_request_from_epic_branch "$1" "$2")" || return 1
-  [ "$(read_pull_request_state "$pull_request_to_read")" = MERGED ] || return 1
+  [ -n "$pull_request_to_read" ] || pull_request_to_read="$(pull_request_on_epic_branch "$1" "$2")"
+  [ -n "$pull_request_to_read" ] && [ "$(read_pull_request_state "$pull_request_to_read")" = MERGED ] || return 1
   printf '%s' "$pull_request_to_read"
+}
+
+record_pull_request_the_item_lacks() {
+  [ -z "$(state_get "$2" pr)" ] || return 0
+  adapter link-pr "$1" "$3" >/dev/null || echo "flow: could not record $3 on $1" >&2
 }
 
 close_merged_item() {
@@ -873,6 +875,7 @@ sweep_unclaimed_merge() {
   unclaimed_record="$(adapter read "$unclaimed_item" 2>/dev/null)" || return 0
   merged_pull_request="$(merged_pull_request_of "$unclaimed_item" "$unclaimed_record")" || return 0
   if [ "$dry" -eq 1 ]; then echo "$unclaimed_item: would close it ($merged_pull_request merged)"; return 0; fi
+  record_pull_request_the_item_lacks "$unclaimed_item" "$unclaimed_record" "$merged_pull_request"
   close_merged_item "$unclaimed_item" "$unclaimed_record" "$merged_pull_request"
 }
 
