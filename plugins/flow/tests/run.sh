@@ -3017,7 +3017,7 @@ record set "$sin" step=split >/dev/null; record set "$sout" step=split >/dev/nul
 check "ScopedHealth_ReportsItemInside: health says a split item inside the scope is the owner's to close, because health reads the scoped list" grep -q "$sin: split, and every child is closed" "$work/scope.out"
 check "ScopedHealth_SkipsItemOutside: health says nothing of a split item outside the scope, because it reads the scoped list" sh -c "[ -s '$work/scope.out' ] && ! grep -q '$sout: split' '$work/scope.out'"
 record set "$sin" step= >/dev/null; record set "$sout" step= >/dev/null
-"$P/adapters/local/link-pr.sh" "$sin" https://github.com/acme/widgets/pull/90 >/dev/null; "$P/adapters/local/link-pr.sh" "$sout" https://github.com/acme/widgets/pull/90 >/dev/null
+record set "$sin" pr=https://github.com/acme/widgets/pull/90 >/dev/null; record set "$sout" pr=https://github.com/acme/widgets/pull/90 >/dev/null
 mkdir -p "$work/scope/gh" && cp "$P/tests/_fake_gh.py" "$work/scope/gh/"
 printf '{"issues": [], "pr": {"number": 90, "state": "OPEN", "isDraft": false, "mergedAt": null, "url": "https://github.com/acme/widgets/pull/90", "headRefName": "flow/local-task-1", "baseRefName": "main", "mergeable": "MERGEABLE", "updatedAt": "2026-11-09T10:00:00Z", "headRefOid": "c0ffee"}}\n' > "$work/scope/gh/issues.json"
 cat > "$work/scope/bin/claude" <<EOF_SCOPE_HOST
