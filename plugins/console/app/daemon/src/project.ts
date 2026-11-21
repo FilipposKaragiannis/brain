@@ -9,6 +9,7 @@ import type { FlowHomeFacts, GateQuestionCache } from './collectors/flowHome.ts'
 import { flowHomeOf, poolPaths, readFlowHome } from './collectors/flowHome.ts';
 import type { GitFacts } from './collectors/git.ts';
 import { readGit } from './collectors/git.ts';
+import type { GraphReportSource } from './collectors/graphReport.ts';
 import type { JobFacts } from './collectors/jobs.ts';
 import { readJobs } from './collectors/jobs.ts';
 import type { EndedProcess, ProcessFacts } from './collectors/processes.ts';
@@ -151,6 +152,13 @@ export class ProjectMonitor {
   }
 
   get snapshot(): Snapshot | null { return this.current; }
+
+  /** Where the flow's graph report of the project is read from; null until the first read of the flow home has found the plugin. */
+  graphReportSource(): GraphReportSource | null {
+    const flow = this.facts.files.facts;
+    if (flow?.pluginRoot == null) return null;
+    return { projectRoot: this.project.root, pluginRoot: flow.pluginRoot, pluginScripts: flow.pluginScripts };
+  }
 
   /** What a terminal pane may open in the project right now: the folders a shell may open in, the root's jobs' logs, and the sessions it may resume. */
   paneFacts(): PaneFacts {

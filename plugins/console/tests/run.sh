@@ -386,6 +386,8 @@ if [ -d "$P/app/node_modules" ] && command -v curl >/dev/null 2>&1; then
   check "Jobs shows a schedule" in_snapshot 'any(job["schedule"] for job in snapshot["jobs"])'
   check "Jobs shows run history" in_snapshot 'any(job["recent"] for job in snapshot["jobs"])'
   check "Jobs shows a stopped host" in_snapshot 'len(snapshot["stoppedHosts"]) > 0'
+  curl -fsS --max-time "$CURL_SECONDS" -H "Authorization: Bearer $(cat "$live/state/token")" "http://127.0.0.1:$live_port/api/projects/$project_id/graph-report" > "$work/graph-report.json" 2>/dev/null
+  check "Graph report names the step that got slower" python3 -I -c 'import json, sys; sys.exit("- verify:" not in json.load(open(sys.argv[1]))["markdown"].split("## Slower than the period before")[1])' "$work/graph-report.json"
   # all_gone <pids...>: every pid has ended; no pid at all is a failure, so the check cannot pass on nothing.
   all_gone() { [ "$#" -gt 0 ] || return 1; for pid in "$@"; do kill -0 "$pid" 2>/dev/null && return 1; done; return 0; }
   fake_pids() { python3 -I -c 'import json, sys; print(" ".join(str(agent["pid"]) for agent in json.load(open(sys.argv[1]))["agents"]))' "$work/snapshot.json" 2>/dev/null; }
