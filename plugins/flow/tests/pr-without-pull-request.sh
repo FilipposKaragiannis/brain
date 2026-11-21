@@ -28,6 +28,7 @@ gh_offline() { printf '%s\n' "$offline_gh" > "$work/offline/gh"; }
 gh_finds_a_pull_request_on_every_branch() {
   printf '#!/bin/sh\ncase "$1 $2" in "pr list") echo %s ;; esac\n' "'[{\"url\": \"$PULL_REQUEST_ON_THE_BRANCH\"}]'" > "$work/offline/gh"
 }
+gh_cannot_answer() { printf '#!/bin/sh\nexit 1\n' > "$work/offline/gh"; }
 # board_section <title>: the lines of the board's section under the heading ## <title>.
 board_section() { printf '%s\n' "$board_output" | awk -v heading="## $1" '$0 == heading { inside = 1; next } /^## / { inside = 0 } inside'; }
 pass_pr_step_with_no_pull_request() {
@@ -81,6 +82,16 @@ finish_step "$unrecorded"
 gh_offline
 check "PrStepWithAPullRequestOnlyOnTheBranch_RaisesTheMergeGate: a PR the worker did not record still has to merge, so the owner waits on it" \
   '[ "$(state "$unrecorded" gate)" = merge ]'
+
+echo "pr without a pull request: a lookup gh cannot answer keeps changes at the merge gate"
+unanswered="$("$local_adapter/create.sh" bug "Change whose PR lookup failed" --size S --body "$body")"
+start_step_with_a_commit "$unanswered" unanswered-change
+step_result "$unanswered" pr "{\"status\":\"done\",\"summary\":\"$NO_PULL_REQUEST_SUMMARY\"}"
+gh_cannot_answer
+finish_step "$unanswered"
+gh_offline
+check "PrStepWithChangesAndAFailedPullRequestLookup_KeepsTheMergeGate: a PR gh could not see may exist, so the sweep looks again from the merge gate" \
+  '[ "$(state "$unanswered" gate)" = merge ]'
 
 echo "board: a merge gate with no PR linked is a Health line"
 stranded="$("$local_adapter/create.sh" bug "Merge gate raised before any PR" --size S --body "$body")"
