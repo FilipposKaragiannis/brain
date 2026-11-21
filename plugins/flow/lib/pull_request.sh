@@ -21,7 +21,7 @@ nothing_to_merge() {
   [ -z "$uncommitted_changes" ] && git -C "$1" diff --quiet "$base_reference...HEAD" -- 2>/dev/null
 }
 
-# settlement_without_pull_request <worktree> <base> <outcome>: nothing-to-merge, or the outcome.
+# settlement_without_pull_request <worktree> <base> <outcome>
 settlement_without_pull_request() {
   if nothing_to_merge "$1" "$2"; then printf nothing-to-merge; else printf '%s' "$3"; fi
 }
