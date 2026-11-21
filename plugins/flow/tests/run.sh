@@ -501,6 +501,11 @@ sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
 check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-claim.out"
 
+echo "a claim sets a pool worktree up again when a worktree_setup_paths file changed (tests/worktree-setup.sh)"
+sh "$here/worktree-setup.sh" > "$work/worktree-setup.out" 2>&1; code=$?
+check "worktree-setup: $(tail -n 1 "$work/worktree-setup.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/worktree-setup.out"
+
 echo "a task branch is named from the branch template at claim and recorded (tests/branch-name.sh)"
 sh "$here/branch-name.sh" > "$work/branch-name.out" 2>&1; code=$?
 check "branch-name: $(tail -n 1 "$work/branch-name.out")" [ "$code" -eq 0 ]

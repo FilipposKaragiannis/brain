@@ -198,6 +198,7 @@ if [ ! -f .flow/config.yaml ]; then
       echo "  # - .claude/settings.local.json"
       echo "worktree_setup:"
       echo "  # - dotnet restore"
+      echo "# worktree_setup_paths: [packages.lock.json]   # globs of files whose change runs worktree_setup again at a claim"
       echo "# Project gates the verifier runs after build, format and tests: name: command, run from the root."
       echo "# A gate that only matters for some files takes a map: command, and paths (globs; it runs when a"
       echo "# changed file matches one, else the report says it was skipped)."
