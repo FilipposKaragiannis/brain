@@ -12,6 +12,7 @@
   --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.07);
   --accent: #2456d6;
   --accent-tint: #eef2ff;
+  --chart-line: #2456d6;
   --terminal: #15181d;
   --terminal-ink: #d5d9df;
   --terminal-cursor: #7ea2ff;
@@ -62,6 +63,7 @@
   --shadow-card: none;
   --accent: #7ea2ff;
   --accent-tint: #1d2640;
+  --chart-line: #6088f5;
   --terminal: #0b0c0f;
 
   --running: #4cc287;
@@ -299,6 +301,26 @@ h1, h2 { margin: 0; }
 .fact.overdue { background: var(--failing-tint); color: var(--failing); }
 .decision-summary { font-size: 13px; color: var(--ink-soft); max-width: 76ch; }
 .decision-body { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+.graph-report .module-body { padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+.graph-report .module-body > .empty { padding: 0; }
+.step-trends { margin: 0; }
+.step-trends-title { font-size: 14px; font-weight: 600; margin: 0 0 2px; }
+.step-trends-note { font-size: 12px; margin: 0 0 10px; }
+.step-trends-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.step-trends .scroll { padding-bottom: 12px; }
+.step-trend { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 8px; background: var(--panel); }
+.step-trend-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.step-trend-head h3 { font-size: 13px; font-weight: 600; margin: 0; }
+.step-trend-figure { font-size: 18px; font-weight: 600; color: var(--ink); }
+.step-trend-readout { font-size: 12px; color: var(--muted); margin: 0 0 4px; min-height: 18px; }
+.step-trend svg { display: block; width: 100%; height: auto; overflow: visible; }
+.step-trend-line { fill: none; stroke: var(--chart-line); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.step-trend-dot { fill: var(--chart-line); stroke: var(--panel); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.step-trend-grid { stroke: var(--line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.step-trend-crosshair { stroke: var(--muted); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.step-trend-scale { font-size: 10px; fill: var(--muted); font-family: var(--sans); }
+.step-trend-hit { fill: transparent; }
+.step-trend-days { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); margin: 2px 0 0; font-variant-numeric: tabular-nums; }
 .gate-doc { border: 1px solid var(--line); border-radius: 10px; padding: 0 14px; font-size: 14px; line-height: 1.55; }
 .gate-doc > summary { cursor: pointer; padding: 10px 0; font-weight: 600; font-size: 13px; }
 .gate-doc[open] > summary { border-bottom: 1px solid var(--line-soft); margin-bottom: 10px; }

@@ -111,12 +111,27 @@ export const GRAPH_REPORT_MARKDOWN = [
   '',
 ].join('\n');
 
-/** The fake `graph-report.sh`: the report, when called as the daemon must call it, for seven days from the project root. */
+/** The daily lines `graph-report.sh --json` prints for the fixture project: implement on two days. */
+export const GRAPH_REPORT_DAILY = [
+  { day: '2026-10-22', step: 'implement', runs: 1, seconds: 540, median: 540, within: 540, failed: 0, cost: 0.4, items: 1 },
+  { day: '2026-10-24', step: 'implement', runs: 1, seconds: 660, median: 660, within: 660, failed: 0, cost: 0.6, items: 1 },
+];
+
+/**
+ * The fake `graph-report.sh`, when called as the daemon must call it, for seven days from the
+ * project root: the report with its daily lines for `--json`, the Markdown alone without it.
+ */
 export function fakeGraphReport(request: CommandRequest): CommandResult {
   const asked = request.args.slice(1);
-  if (asked.length !== 2 || asked[0] !== '--days' || asked[1] !== '7') return usage('graph-report.sh [--days N]');
+  const structured = asked.length === 3 && asked[2] === '--json';
+  if ((asked.length !== 2 && !structured) || asked[0] !== '--days' || asked[1] !== '7') return usage('graph-report.sh [--days N] [--json | --keep]');
   if (request.cwd !== FIXTURE_ROOT) return { code: 2, stdout: '', stderr: `flow: no .flow in ${request.cwd}`, timedOut: false };
-  return ok(GRAPH_REPORT_MARKDOWN);
+  return ok(structured ? JSON.stringify({ days: 7, now: '2026-10-24T18:16:04Z', markdown: GRAPH_REPORT_MARKDOWN, daily: GRAPH_REPORT_DAILY }) : GRAPH_REPORT_MARKDOWN);
+}
+
+/** A flow from before `--json`: it answers that option with its usage, and the plain call with the Markdown. */
+export function fakeGraphReportWithoutHistory(request: CommandRequest): CommandResult {
+  return request.args.includes('--json') ? usage('graph-report.sh [--days N]') : fakeGraphReport(request);
 }
 
 /** Answers every command the collectors run against the fixture project, without a shell. */

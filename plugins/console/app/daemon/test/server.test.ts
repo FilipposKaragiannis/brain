@@ -21,7 +21,7 @@ import type { OpenRunner } from '../src/openFile.ts';
 import type { ProjectCheck } from '../src/snapshot.ts';
 import type { Snapshot } from '../src/snapshot.ts';
 import { SNAPSHOT_SCHEMA_VERSION } from '../src/snapshot.ts';
-import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner, GRAPH_REPORT_MARKDOWN, LONG_CADENCE } from './fakeRunner.ts';
+import { FAKE_PLUGIN, FIXTURE_ROOT, FIXTURES, fakeRunner, GRAPH_REPORT_DAILY, GRAPH_REPORT_MARKDOWN, LONG_CADENCE } from './fakeRunner.ts';
 import { plainSpawner } from './fakeSpawner.ts';
 import type { FakeProcess } from './fakeSpawner.ts';
 import { noSubagents } from './fakeSubagents.ts';
@@ -233,6 +233,14 @@ test('GraphReport_Get_ServedAsTheScriptsMarkdown', async () => {
   try {
     const response = await fetch(`${base}/api/projects/project/graph-report`, { headers: { authorization: 'Bearer tok' } });
     assert.deepEqual([response.status, ((await response.json()) as { markdown?: string }).markdown], [200, GRAPH_REPORT_MARKDOWN], 'because the page renders the report the flow script printed for the project');
+  } finally { await close(); }
+});
+
+test('GraphReport_Get_ServesTheDailyLinesForTheChart', async () => {
+  const { base, close } = await started();
+  try {
+    const response = await fetch(`${base}/api/projects/project/graph-report`, { headers: { authorization: 'Bearer tok' } });
+    assert.deepEqual(((await response.json()) as { daily?: unknown }).daily, GRAPH_REPORT_DAILY, 'because the page draws the steps over time from them');
   } finally { await close(); }
 });
 
