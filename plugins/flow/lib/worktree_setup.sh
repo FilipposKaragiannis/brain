@@ -42,7 +42,8 @@ setup_outdated() {
   [ -n "$setup_globs" ] || return 1
   recorded_commit="$(cat "$(setup_record_file "$1")" 2>/dev/null)"
   case "$recorded_commit" in '' | *[!0-9a-f]*) return 0 ;; esac
-  setup_changed_paths="$(git -C "$1" diff --name-only --no-renames "$recorded_commit" HEAD -- 2>/dev/null)" || return 0
+  git -C "$1" cat-file -e "$recorded_commit^{commit}" 2>/dev/null || return 0
+  setup_changed_paths="$(git -C "$1" diff -z --name-only --no-renames "$recorded_commit" HEAD -- | tr '\0' '\n')"
   any_path_matches "$setup_globs" "$setup_changed_paths"
 }
 

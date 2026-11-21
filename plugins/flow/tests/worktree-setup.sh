@@ -63,6 +63,25 @@ check "ClaimWhereASetupPathChanged_InstallsTheNewLockfile: a changed lockfile me
 check "ClaimWhereASetupPathChanged_RecordsTheNewCommit: the next claim compares against the setup that just ran" \
   '[ "$(recorded_commit wt-3)" = "$(head_commit wt-3)" ]'
 
+echo "worktree setup: a lockfile under a folder with a name outside ASCII"
+new_repo unicode
+installing_setup ""
+watching_lockfiles
+"$steward" setup "$root/wt-1" >/dev/null 2>&1
+lock_folder='café'
+git -C "$root/other" fetch -q origin && git -C "$root/other" checkout -q -B main origin/main
+mkdir -p "$root/other/$lock_folder" && printf 'lock\n' > "$root/other/$lock_folder/package-lock.json"
+git -C "$root/other" add -- "$lock_folder" && git -C "$root/other" commit -qm lock && git -C "$root/other" push -q origin main
+accented="$(new_task "Accented lockfile")"
+"$steward" claim "$accented" >/dev/null 2>&1
+check "ClaimWhereALockfileUnderANonAsciiFolderChanged_InstallsAgain: git quotes such a path unless asked not to, and a quoted path matches no glob" \
+  '[ -n "$(installed_from wt-1)" ] && [ "$(installed_from wt-1)" = "$(head_commit wt-1)" ]'
+mkdir -p "$root/wt-2/.flow" && printf '%040d\n' 0 > "$root/wt-2/.flow/setup-commit"
+forgotten="$(new_task "Forgotten record")"
+"$steward" claim "$forgotten" >/dev/null 2>&1
+check "ClaimWhoseRecordedCommitIsUnknown_InstallsAgain: nothing can be compared with a commit git does not have" \
+  '[ -n "$(installed_from wt-2)" ] && [ "$(installed_from wt-2)" = "$(head_commit wt-2)" ]'
+
 echo "worktree setup: a setup that fails at a claim"
 new_repo failing
 installing_setup "; exit 1"
