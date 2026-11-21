@@ -51,12 +51,6 @@ loose="$(new_task "Loose docs")"
 "$plugin/scripts/next.sh" "$loose" >/dev/null 2>&1
 check "NoParentNoBaseLine_TakesTheConfigBase: with nothing else to go on the claim starts from the config base" \
   '[ "$(claim_base "$loose")" = main ]'
-bare="$("$local_adapter/create.sh" epic "No branch yet" --size L --body x)"
-move_task_numbers_past_the_epic_numbers three four
-orphan="$(new_task "Early slice" "$bare")"
-"$plugin/scripts/next.sh" "$orphan" >/dev/null 2>&1
-check "ChildOfAnEpicWithNoEpicBranch_TakesTheConfigBase: an epic whose epic/<n> is not on the remote gives no base, so the claim falls through" \
-  '[ "$(claim_base "$orphan")" = main ]'
 
 echo "base: a base: line naming a missing branch passes the item over"
 missing="$(new_task "Gone plan" "" "base: plan/gone
@@ -233,6 +227,78 @@ check "HookClaimOfAnEpicChild_RecordsTheEpicBranchAsBase: the claim names the ep
 printf '{"name":"quiet-elm","cwd":"%s"}' "$PWD" | "$plugin/hooks/worktree-create.sh" >/dev/null 2>&1
 check "HookClaimOfAnAdhocName_RecordsTheConfigBase: a name no tracker owns has no ancestry, so it starts from the config base" \
   '[ "$(claim_base adhoc:quiet-elm)" = main ]'
+
+echo "base: an epic's child waits for an epic branch"
+new_repo branchless
+bare="$("$local_adapter/create.sh" epic "No branch yet" --size L --body x)"
+bare_branch="$(epic_of "$bare")"
+move_task_numbers_past_the_epic_numbers three four
+orphan="$(new_task "Early slice" "$bare")"
+"$plugin/scripts/next.sh" "$orphan" >/dev/null 2>&1; orphan_code=$?
+check "ChildOfAnEpicWithNoEpicBranch_NamedRunExitsWithThePassOverCode: a claim from the config base would put an epic's slice on the wrong history, so the run exits 4" \
+  '[ "$orphan_code" -eq 4 ]'
+check "ChildOfAnEpicWithNoEpicBranch_ClaimsNoWorktree: the item is never claimed from the config base instead" \
+  '[ -z "$("$plugin/scripts/steward.sh" find "$orphan")" ]'
+check "ChildOfAnEpicWithNoEpicBranch_LastEventNamesTheEpic: the owner sees which epic holds the item back" \
+  'state "$orphan" last_event | grep -qF "$bare"'
+check "ChildOfAnEpicWithNoEpicBranch_LastEventNamesTheBranchToPush: the owner sees the branch that ends the wait" \
+  'state "$orphan" last_event | grep -qF "push $bare_branch"'
+check "ChildOfAnEpicWithNoEpicBranch_IsNotReady: a pick must not try a claim that is refused" \
+  '! ready_ids | grep -qxF -- "$orphan"'
+claimed_before_the_rule="$(new_task "Slice in flight" "$bare")"
+"$plugin/scripts/steward.sh" claim "$claimed_before_the_rule" >/dev/null 2>&1
+check "ChildOfAnEpicWithNoEpicBranchThatHoldsAClaim_StaysReady: a claim keeps the base it recorded, so work in flight goes on" \
+  'ready_ids | grep -qxF -- "$claimed_before_the_rule"'
+claim_the_tracker_missed="$(new_task "Slice the tracker lost" "$bare")"
+"$plugin/scripts/steward.sh" claim "$claim_the_tracker_missed" >/dev/null 2>&1
+"$plugin/scripts/state.sh" set "$claim_the_tracker_missed" worktree= >/dev/null 2>&1
+check "ClaimTheTrackerMissed_HasNoWorktreeInItsState: the state write is undone, or the check below proves nothing" \
+  '[ -z "$(state "$claim_the_tracker_missed" worktree)" ] && [ -n "$("$plugin/scripts/steward.sh" find "$claim_the_tracker_missed")" ]'
+check "ChildOfAnEpicWithNoEpicBranchWhoseClaimTheTrackerMissed_StaysReady: the pool holds its claim, so the filter must not stop work the claim would let go on" \
+  'ready_ids | grep -qxF -- "$claim_the_tracker_missed"'
+kid_of_the_missed_claim="$(new_task "Lost slice detail" "$claim_the_tracker_missed")"
+check "ChildOfAParentWhoseClaimTheTrackerMissed_IsReady: its claim starts from the parent's task branch, which the pool still records" \
+  'ready_ids | grep -qxF -- "$kid_of_the_missed_claim"'
+kid_of_the_claimed="$(new_task "Slice detail" "$claimed_before_the_rule")"
+check "ChildOfAClaimedParentUnderAnEpicWithNoEpicBranch_IsReady: its claim starts from the parent's task branch, so it waits for no epic branch" \
+  'ready_ids | grep -qxF -- "$kid_of_the_claimed"'
+lined_orphan="$(new_task "Early docs" "$bare" "base: main
+$body")"
+check "ChildOfAnEpicWithNoEpicBranchAndABaseLine_IsReady: the owner named where the slice starts" \
+  'ready_ids | grep -qxF -- "$lined_orphan"'
+"$plugin/scripts/next.sh" "$lined_orphan" >/dev/null 2>&1
+check "ChildOfAnEpicWithNoEpicBranchAndABaseLine_TakesThatBranch: a base: line starts a slice off the epic" \
+  '[ "$(claim_base "$lined_orphan")" = main ]'
+remote_branch "$bare_branch"
+check "ChildOfAnEpicWhoseBranchWasPushedSince_IsReady: the filter fetches an epic branch the last fetch did not see, or the item would wait for ever" \
+  'ready_ids | grep -qxF -- "$orphan"'
+"$plugin/scripts/next.sh" "$orphan" >/dev/null 2>&1
+check "ChildOfAnEpicWhoseBranchWasPushedSince_TakesTheEpicBranch: the wait ends on the epic's history" \
+  '[ "$(claim_base "$orphan")" = "$bare_branch" ]'
+
+echo "base: with no remote, the epic branch is a local one"
+new_repo unpublished
+git remote remove origin
+local_epic="$("$local_adapter/create.sh" epic "Offline" --size L --body x)"
+local_child="$(new_task "Offline slice" "$local_epic")"
+check "ChildOfAnEpicInARepositoryWithNoRemote_IsNotReadyWithoutALocalEpicBranch: with no remote the epic branch is looked for among the local branches" \
+  '! ready_ids | grep -qxF -- "$local_child"'
+git branch -q "$(epic_of "$local_epic")"
+check "ChildOfAnEpicInARepositoryWithNoRemote_IsReadyOnceTheLocalEpicBranchExists: the local branch is the epic branch there, as the claim reads it" \
+  'ready_ids | grep -qxF -- "$local_child"'
+"$plugin/scripts/next.sh" "$local_child" >/dev/null 2>&1
+check "ChildOfAnEpicInARepositoryWithNoRemote_TakesTheLocalEpicBranch: the filter and the claim agree on where the branch lives" \
+  '[ "$(claim_base "$local_child")" = "$(epic_of "$local_epic")" ]'
+
+echo "base: a pick says which epic branch its items wait for"
+new_repo waiting
+branchless="$("$local_adapter/create.sh" epic "Seasons" --size L --body x)"
+waiting_child="$(new_task "Season table" "$branchless")"
+"$plugin/scripts/next.sh" > "$work/waiting.out" 2>&1; waiting_code=$?
+check "PickWithOnlyChildrenOfAnEpicWithNoEpicBranch_StartsNothing: exit 5 and no run record, because nothing is ready" \
+  '[ "$waiting_code" -eq 5 ] && [ -z "$(state "$waiting_child" run)" ]'
+check "PickWithOnlyChildrenOfAnEpicWithNoEpicBranch_NamesTheBranchToPush: the reason says what ends the wait" \
+  'grep -qF "push $(epic_of "$branchless")" "$work/waiting.out"'
 
 [ "$fails" -eq 0 ] && { echo "base-claim: ok"; exit 0; }
 echo "base-claim: $fails failed"; exit 1

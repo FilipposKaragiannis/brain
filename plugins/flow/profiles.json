@@ -111,7 +111,7 @@
       "agent": "verifier",
       "worktree": false,
       "skill": "verify",
-      "summary": "Check every task of the epic is closed, run the epic-level verification, close the epic (flow:verify, verifier)."
+      "summary": "Check every task of the epic is closed and run the epic-level verification; the flow then opens the epic's PR or closes it (flow:verify, verifier)."
     },
     "reproduce": {
       "agent": "",

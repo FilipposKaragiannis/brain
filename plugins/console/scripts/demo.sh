@@ -1,8 +1,9 @@
 #!/bin/sh
 # The console demo: a throwaway flow project and a trial console on it alone, so the console is
 # tested without touching a real project. It fills every screen: gates, a live and a dead run, a
-# session of the owner's, job schedules and history, a stopped host. Re-running it stops that
-# console, the runs it started and its fake agents, and builds the demo again.
+# session of the owner's, job schedules and history, a stopped host, two weeks of step runs for
+# the graph report. Re-running it stops that console, the runs it started and its fake agents,
+# and builds the demo again.
 #   demo.sh [--dir <folder>] [--port <n>]
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -358,6 +359,28 @@ add_jobs() {
   } >> "$project/.flow/log/runs.jsonl"
 }
 
+# step_line <item> <step> <minutes ago> <seconds> <exit> <cost in dollars>: one step run as flow's
+# host_record writes it to the run log.
+step_line() {
+  json_line "item=$1" "step=$2" host=claude model= effort= "at=$(minutes_ago "$3")" "seconds:=$4" "exit:=$5" usage:={} "cost_usd:=$6" models:=[] result=
+}
+
+# add_step_runs <live item> <dead item>: what the Graph report screen shows: last week's verify
+# runs and this week's, four times slower at the median, and this week's implement runs, two per
+# item with one failed.
+add_step_runs() {
+  minutes_per_day=1440
+  mkdir -p "$project/.flow/log"
+  {
+    for days_ago in 12 10 9; do step_line "$2" verify "$((days_ago * minutes_per_day))" 300 0 0.20; done
+    for days_ago in 5 3 2; do step_line "$1" verify "$((days_ago * minutes_per_day))" 1200 0 0.20; done
+    step_line "$1" implement "$((6 * minutes_per_day))" 900 1 1.40
+    step_line "$1" implement "$((5 * minutes_per_day))" 1500 0 2.10
+    step_line "$2" implement "$((4 * minutes_per_day))" 600 0 0.90
+    step_line "$2" implement "$((3 * minutes_per_day))" 720 0 1.10
+  } >> "$project/.flow/log/runs.jsonl"
+}
+
 # held_out <path in the home>: `held` when HELD_OUT holds it out, `above` when it holds out
 # something inside it, else nothing.
 held_out() {
@@ -432,11 +455,12 @@ trap 'exit 1' INT TERM HUP
 live="$(add_live_run)"
 dead="$(add_dead_run)"
 add_owner_session
+add_step_runs "$live" "$dead"
 add_jobs "$live" "$dead"
 [ -z "$caller_home" ] || [ ! -d "$caller_home" ] || share_home
 python3 -I -c 'import json, sys; print(json.dumps({"projects": [{"root": sys.argv[1]}]}))' "$project" > "$config"
 
-echo "demo: built $project, its worktrees beside it, one item waiting at each gate, a live run, a dead run and a session of yours"
+echo "demo: built $project, its worktrees beside it, one item waiting at each gate, a live run, a dead run, a session of yours and two weeks of step runs"
 echo "demo: the agents are fake processes that end with the demo; a pane's shell gets your home and shell setup, with the stubs first on PATH and without the agents' folders or the console's settings"
 echo "demo: claude and codex are stubs here; each call is a line in $demo_dir/agents.log"
 [ -f "$console/app/ui/dist/index.html" ] || echo "demo: the page is not built, so only the API answers; build it with: npm --prefix '$console/app/ui' run build" >&2

@@ -1,5 +1,209 @@
 # flow
 
+## 1.45.0 (2026-11-21)
+
+- The flow makes an epic's branch itself. When the owner approves an epic's split (clears its
+  decomposition gate with an answer or an option), the epic gets `epic/<n>`, pushed to the remote
+  at the base the epic itself would start from: an epic branch above it, a `base:` line in its
+  body, else the config base. In a repository with no remote it is a local branch. A branch that
+  exists is left where it is, and a split sent back makes none.
+- The health job gives the branch to an open epic that lacks one, has an open child and an
+  approved split: an epic approved before this version, or one whose children the owner made by
+  hand. An epic that waits at its decomposition gate, or whose steps have not reached it, gets
+  none. `--dry-run` says what it would make.
+- A branch that cannot be made (the remote refused the push, the epic's own base does not resolve)
+  leaves the gate cleared, is said with why, and the children wait until it exists.
+- An epic's child no longer starts from the config base when its epic has no epic branch. While no
+  epic above it has an `epic/<n>` branch on the remote, the item is not ready, a pick says which
+  branch to push, and a named run or a worktree claim is refused (exit 4) with the epic and the
+  branch in the item's `last_event`. It starts once the branch is pushed. A `base: <branch>` line
+  in the item starts it elsewhere, a child of a parent that holds a claim still starts from that
+  parent's task branch, and an item that already holds a claim keeps its base. Before, such a
+  child was cut from the config base and its PR merged there, one slice of the epic at a time.
+- An epic's closeout ends in the epic's pull request. When the closeout passes and the epic
+  branch holds commits its base lacks, the flow opens a GitHub PR from `epic/<n>` into the branch
+  the epic started from (an epic branch above it, a `base:` line in its body, else the config
+  base), records it on the epic and raises the merge gate (`scripts/epic-pr.sh`). An open PR from
+  that branch is taken as it is. The epic stays open until the merge.
+- The sweep closes an item that waits at the merge gate with no claim once its PR is merged: an
+  epic holds no worktree, so the claimed-worktree sweep never saw it.
+- With no epic branch, or nothing on it to merge, the flow closes the epic after the closeout. The
+  verifier no longer closes an epic or opens its PR; it reports the closeout's result.
+- A PR that gh cannot open leaves the epic open at closeout behind an escalation gate that names
+  the `gh pr create` command. Clearing it runs the closeout again, which takes the PR the owner
+  opened.
+- The graph report opens with a verdict, "In short", before any table: each step that got slower
+  with both medians, the steps an item goes through twice or more, the steps with failed runs,
+  and the item that took the most step time. A period where nothing stands out says so. The
+  tables below it are unchanged.
+- Among ready items of one rank the pick takes the lowest item number first, the oldest: a tracker
+  numbers its items as they are made. Before, a tie kept the tracker's listing order, and GitHub
+  and Jira list the newest first, so the newest item of a priority was picked first and an old one
+  could wait behind every item filed after it.
+- The flow keeps a history of the steps that outlives the run log. The run log is cut at 4000
+  lines and its step runs were lost with it. Now `<flow home>/log/steps.daily.jsonl` gets one
+  line per day (UTC) and step: runs, total and median seconds, nine-in-ten time, failed runs,
+  cost and items. A day is kept once, a full day after it ended, so a run that began before
+  midnight and ended after it is counted. Until then its step records are carried over every cut
+  in `steps.pending.jsonl`. Every graph report keeps the history first, and so does the job that
+  cuts the log; one lock keeps two of them from writing a day twice.
+- `graph-report.sh --json` prints `{days, now, markdown, daily}`: the report and the daily lines
+  of the last 30 days, the days not yet kept counted from the records. The console draws its
+  chart from it. `--keep` only keeps the history and prints nothing.
+- The report counts the step records of the pending file too, each once.
+
+## 1.44.0 (2026-11-20)
+
+- A session a person started that has been idle for `jobs.comments.idle_session` (30m) no longer
+  keeps the comments job out of a worktree with nothing uncommitted in it. One idle session held
+  a PR's comments for hours. With an uncommitted change in the tree the pass still stays out,
+  and a pass that waited for a slot checks again before it starts.
+- A session running a shell command reads as busy and one waiting on its user as idle. Both read
+  as a session with no status before, shown as "running" for its whole age.
+- A comments run that names its PR prints that it waits for a free pass slot, and the runs that
+  hold the slots. The wait was written to the log only, so a run by hand looked hung.
+- The log line of the failed pass that reaches `jobs.comments.max_failures` says the job stops
+  trying the PR. It said the next run would try again.
+- A child no step has started waits while its parent's decomposition gate is open: it is not
+  ready, and a run that names it starts nothing. It started on a split the owner had not approved.
+- An epic's closeout starts nothing while a child is open. A run that named the epic went to
+  closeout and failed on the open children.
+- A gate a step asked for by itself is not raised again by the profile once the owner answered
+  it. The tasks step asked for the decomposition gate, and the profile then asked it a second
+  time. A step the owner sent back, and one that never asked, still get the gate.
+- `scripts/graph-report.sh [--days N]` prints what each step of the flow cost over the last N
+  days (default 7) from the run log, with no model: per step the runs, the median time, the time
+  nine runs in ten finish within, the failed runs, the cost and the runs per item; the steps
+  whose median grew by half or more against the N days before; and the items that took the most
+  step time.
+- The retro job writes that report to `.flow/reports/graph-<date>.md` and names it to the retro,
+  so a step that got slower or runs again and again is a finding beside the lessons.
+- Verify runs only the build and test commands a change can affect. `build` and `test` in
+  `.standards/config.json` take a map `{command, paths}`, and `test` a list of
+  `{name, command, paths}`, one check `tests <name>` each. A command with paths runs when a file
+  changed since the base matches a glob, else it is a skipped check that says why. A moved file
+  counts at its old path and its new one. A command with no paths always runs, and a config
+  written before behaves as before.
+- Verify does not run a test command again that passed on the same command and the same files. The
+  check is a pass that names the run it came from. A command with no paths is reused only while
+  the whole tree is unchanged, a failed one never (a failed run drops the pass kept for its
+  inputs), and one with an uncommitted change under its paths always runs.
+  `verify.sh <item> --fresh` runs every command. The passes are kept in `.flow/checks` of the main
+  worktree, shared by its worktrees, never committed. A build always runs: its outputs are ignored
+  files, which a pass kept in another worktree cannot bring back.
+- Every check in `verify.json` carries its `seconds`, the report the run's total, and `verify.md`
+  shows the time beside each check.
+- A verify run that was stopped at `verify.limit`, by a signal or by a kill failed no check: its
+  report says `stopped`, and the item stays at verify behind the escalation gate with no attempt
+  counted. It went back to implement before, where there was nothing to fix. A run stopped after
+  a check failed names that check and goes back to implement, as a failed run does.
+- The implementer, the test writer and the comment addresser run only the tests they touched,
+  alone, and never the project's whole test command: verify runs it once. A plan phase's
+  verification names the tests that cover the phase. No agent stops a process it did not start
+  or one by its name, which ended other worktrees' runs.
+- An epic's step that names a size no longer raises the re-size gate. An epic has no size, so
+  the gate came back each time it was cleared.
+- A build or test entry that cannot be read is a failed `config` check that names the entry.
+
+## 1.43.0 (2026-11-20)
+
+- `worktree_create` in `.flow/config.yaml` names the command that makes a flow worktree in place
+  of `git worktree add`: a grown, added or recreated pool worktree and a `tmp add` phase worktree.
+  `{path}` is the new folder and `{base}` the ref it starts from, written bare: `sh -c` gets them
+  as `"$1"` and `"$2"`, so no value is read as shell. It runs from the main worktree with its
+  output on stderr, and flow then puts the worktree on its branch. Unset, nothing changes. A
+  command that passes `{path}` on to `ssh`, `eval` or `sh -c` must quote it again there.
+- `worktree_remove` names the command that removes a `tmp remove` worktree in place of
+  `git worktree remove`; flow then removes git's record of that worktree alone, when the command
+  left it, and deletes its branch when it is the phase branch `tmp add` named for that folder
+  (`<branch>-<phase>` of a pool claim's task branch, or `flow/<its folder under .flow/tmp>`). Pool
+  worktrees are still never removed.
+- A command with no `{path}`, or with a placeholder inside quotes or after a backslash, is
+  refused before it runs, exit 2, and `init --check` names it as a gap. That holds inside a
+  quoted `$(...)` too, as in `"$(dirname "{path}")"`, where `sh` would split the path. A
+  placeholder anywhere inside backticks is refused too, as backticks cannot quote it: write
+  `$(...)` instead. `init` writes both keys commented out.
+- `worktree_create` never runs on a path where something already exists: `add` of the main
+  worktree, of a pool worktree on disk or of any other folder, file or symlink is refused, exit 2,
+  so a command that tolerates an existing folder cannot hand flow a worktree it never made.
+- `tmp remove` refuses, exit 2, a path that is not a worktree git lists under `.flow/tmp`, the
+  main or a pool worktree, a worktree whose `.git` is missing or broken, a locked one and any
+  path while `.flow/tmp` is a symlink, and resolves a relative path from where it runs. It
+  refuses, exit 3, a change in a submodule even when `.gitmodules` tells `git status` to ignore
+  it, an untracked file that `status.showUntrackedFiles=no` hides, in the worktree or in any
+  initialized submodule at any depth, and a worktree whose
+  `git status` fails (a corrupt index), since no change can be ruled out. `tmp add` refuses,
+  exit 2, a phase with a character other than a letter, a digit, `.`, `_` or `-`, one that makes
+  no valid branch name (one holding `..`), and a phase whose branch or folder already exists.
+- A pool that cannot grow because the worktree cannot be made now says so, with the command's or
+  git's output, and exits 1. It used to say the pool was at `pool_max` and exit 3, which sent
+  `next` on to another item instead of naming the failure.
+- `<tracker>.scope` in `.flow/config.yaml` (`github.scope`, `jira.scope`, `local.scope`) bounds
+  every list and search of a shared tracker: the board, `next`, the health and comments jobs and
+  `answers` see only the items it keeps. It takes `assignee`, `status`, `labels` and `kinds`, or
+  the tracker's own `query` alone, applies beside a pick filter, and leaves every read as it was
+  when unset. `init --check` names a scope the tracker cannot map, and a quoted `"scope":` key
+  is checked as the unquoted one is.
+- `jira.limit` and `github.limit` count only the issues a scope or a pick keeps, its kinds too:
+  Jira puts the kinds in its search as issue types, and GitHub pages on past the issues they
+  leave out, so newer issues of other kinds no longer push a scoped one off the list.
+- `next <item>` refuses a named item outside the scope that holds no claim, and
+  `steward.sh claim` refuses a new claim of one, both with exit 2; an item claimed before it left
+  the scope keeps its claim, its worktree and its run, and `adhoc:` claims are never scoped.
+- An adapter has a new required op, `in-scope.sh <id>`: exit 0 inside the scope, 1 outside.
+
+## 1.42.0 (2026-11-20)
+
+- A project names its task branches with `branch` in `.flow/config.yaml`: one template, or one per
+  kind (`epic`, `task`, `bug`), with `{slug}`, `{key}` (the tracker's id lower-cased: `73`,
+  `proj-123`), `{kind}` and `{title}` (the title in ASCII, at most 40 characters). Unset, the
+  branch stays `flow/<slug>`. A phase branch is `<branch>-<phase>`.
+- The claim names the task branch once and records it in `claim.json` and the item state
+  (`branch`), so a re-claim and a title edit keep it, and a claim made before keeps its
+  `flow/<slug>`. A recorded name the template could not give the item, or a base, is ignored: the
+  item state is tracker text anyone may write. A name git refuses stops the claim (exit 2) and
+  one another claim holds passes the item over (exit 4), before anything is created.
+- The comments job and `comments.sh` find a PR's item through the claim that holds its branch
+  (`steward.sh owner <branch>`), so a PR on a templated branch or from Jira is found; a released
+  `flow/<slug>` branch still maps by its slug.
+- `init --check` reports a `branch` template with an unknown placeholder, with neither `{key}` nor
+  `{slug}`, or whose name git refuses, and a key under `branch` that names no kind.
+
+## 1.41.0 (2026-11-18)
+
+- Comments runs overlap: a run starts while another is alive, each under its own
+  `comments-<pid>.lock`, and skips a PR whose lock another pass holds. `jobs.sh run comments` starts
+  a run beside a live one; other jobs still refuse. intake and retro keep their shared lock.
+- `jobs.comments_workers` now caps the passes live at once across all runs, through a slot pool in
+  `log/comments.slots/`. A pass holds a slot for its host session only, until the session's
+  process group is gone even when its run was stopped first, and waits for a free one; it never
+  skips a PR for lack of a slot. A run given `--workers N` may use slots up to N.
+- `jobs.comments_workers` and `--workers` take a whole number from 1 to 16, as the console does,
+  leading zeros allowed (`02` is 2). Any other count, `0`, `00` or one past 16, stops the run at
+  its start, exit 2, instead of leaving every pass waiting for a slot.
+- No comments pass runs forever: one still running at the new `jobs.comments.pass_limit` (default
+  1h) is stopped with what it started and counts as failed, so the next run tries it again and it
+  counts toward `jobs.comments.max_failures`. A bad value stops the run at its start, exit 2.
+- A PR named by hand that the flow did not open takes `pr:<number>.lock`, so no two passes work it
+  at once. Every schedule of the job (comments, comments-<label>) shares one seen record per PR
+  under `comments.seen/`, and each run keeps its own target and gated lists.
+- Upgrading needs no config edit. `jobs.comments_workers` keeps its name and default of 1.
+  `jobs.comments.pass_limit` is new and optional, 1h when unset; the console shows it under the
+  Comments job. `init` never rewrites an existing config, so its new commented `pass_limit` line
+  shows only in the config a new project gets.
+- An older version leaves files behind that nothing reads; they are harmless and safe to delete:
+  `log/comments-<label>.seen/` (a labelled schedule makes at most one extra pass per PR, and its
+  fail counts start again), a stale `log/comments.shared.lock`, and `log/comments.targets` or
+  `log/comments.gated`. A stale `comments.lock` or `comments-<label>.lock` is removed by the next
+  run of its schedule.
+- A run of the older version still alive during the upgrade takes no pass slot, so the cap across
+  runs holds only once it ends.
+- A step or job started on Codex now sends `$<plugin>:<skill>` (for example `$flow:review`), not
+  `$<skill>`, so Codex runs that plugin's skill even when standards or a project skill shares the
+  name.
+- The implementer treats a hard rule the project's standards block lists as waived or as
+  judgement as negotiable, so it stops fighting a house style the project chose.
+
 ## 1.40.0 (2026-11-17)
 
 - The review step fails on a surviving Spec P1, an acceptance line the diff must carry and

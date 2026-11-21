@@ -20,7 +20,7 @@ check "RecordedItemWhoseTrackerDiffers_ReadsTheRecordsStep: once a record exists
   '[ "$(joined "$recorded" state.step)" = implement ]'
 check "RecordedItem_IsStampedFromTheRecord: a reader can tell the state came from the record" \
   '[ "$(joined "$recorded" state_from)" = record ]'
-check "RecordedItem_CarriesEveryStateKey: the joined state holds all twenty keys, set or not" \
+check "RecordedItem_CarriesEveryStateKey: the joined state holds all twenty-one keys, set or not" \
   '[ "$(record read "$recorded" | python3 -c "import json,sys; print(\" \".join(json.load(sys.stdin)[\"state\"]))")" = "$state_keys" ]'
 check "RecordedItem_KeepsTheAdaptersTypes: attempts reads a number and touches and changes lists, as the adapters emit them" \
   'record read "$recorded" | python3 -c "import json,sys; joined=json.load(sys.stdin)[\"state\"]; tracker=json.loads(sys.argv[1]); sys.exit(0 if tracker and all(type(joined[key]) is type(value) for key, value in tracker.items()) else 1)" "$(tracker "$recorded")"'
@@ -38,7 +38,7 @@ check "UnrecordedItemUnderNone_ReadsAnEmptyStep: with the mirror off the tracker
   '[ -z "$(joined "$unrecorded" state.step)" ]'
 check "UnrecordedItemUnderNone_IsStampedNone: a reader can tell the item has no state" \
   '[ "$(joined "$unrecorded" state_from)" = none ]'
-check "UnrecordedItemUnderNone_CarriesEveryStateKey: the empty state holds all twenty keys" \
+check "UnrecordedItemUnderNone_CarriesEveryStateKey: the empty state holds all twenty-one keys" \
   '[ "$(record read "$unrecorded" | python3 -c "import json,sys; print(\" \".join(json.load(sys.stdin)[\"state\"]))")" = "$state_keys" ]'
 check "RecordedItemUnderNone_ReadsTheRecordsStep: the record is read the same in both modes" \
   '[ "$(joined "$recorded" state.step)" = implement ]'

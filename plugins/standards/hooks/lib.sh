@@ -17,10 +17,11 @@ fi
 repo_root() { git rev-parse --show-toplevel 2>/dev/null; }
 
 # The install set of plugin <root>: every file whose content init copies into a project, plus
-# init.sh, relaxed_rules.py and the rule index (they shape the rules files) and the manifest (the
-# version in the block header). init stamps its hash; the session-start hook compares.
+# init's scripts (they shape the rules files and the git wiring), relaxed_rules.py and the rule
+# index (they shape the rules files) and the manifest (the version in the block header). init
+# stamps its hash; the session-start hook compares.
 standards_install_set() {
-  for f in "$1"/.claude-plugin/plugin.json "$1"/skills/init/scripts/init.sh \
+  for f in "$1"/.claude-plugin/plugin.json "$1"/skills/init/scripts/*.sh \
            "$1"/skills/init/scripts/relaxed_rules.py "$1"/rules/block.md "$1"/rules/index.json \
            "$1"/rules/common/*.md "$1"/rules/csharp.md "$1"/codex-agents/*.toml \
            "$1"/hooks/*.sh "$1"/hooks/git/* "$1"/templates/evals/*; do [ -f "$f" ] && echo "$f"; done | sort
@@ -32,6 +33,13 @@ main_worktree() { git worktree list --porcelain 2>/dev/null | sed -n '1s/^worktr
 config_text() {
   root="$(repo_root)" || return 0
   [ -f "$root/.standards/config.json" ] && cat "$root/.standards/config.json"
+}
+
+# config_command <config json> <key>: the command of a setting that is a command or a map with
+# `command` (and `paths`, which the flow verifier reads).
+config_command() {
+  mapped_command="$(json_get "$1" "$2.command")"
+  if [ -n "$mapped_command" ]; then printf '%s' "$mapped_command"; else json_get "$1" "$2"; fi
 }
 
 read_payload() { cat 2>/dev/null || true; }
@@ -93,9 +101,13 @@ command_code() {
   # Quoted text is dropped when it is prose: more than one word, the value of a message or pattern
   # flag (-m, --message, -F, -e, --grep), or an argument of a text tool (echo, printf, grep, rg,
   # sed, awk, cat). Kept: a one-word quoted argument of any other command ("update-golden" passed
-  # to make or dotnet), the quoted argument of `sh -c`, `bash -c` and `eval`, and any $( ) inside
-  # double quotes. A forbid gate matches against this, so a doc, a commit message or an echo that
-  # names a paused verb does not trip it, but quoting the verb does not hide a run.
+  # to make or dotnet) with its ; | & ( ) { } as spaces, the quoted argument of `sh -c`, `bash -c`
+  # and `eval` as written, and any $( ) inside double quotes. A -c script is followed by `; :`, so
+  # the shell's own arguments after it start nothing; a shell given -n runs no -c script, so that
+  # one counts as quoted text. A quoted word that stands alone and leaves no text (dropped or
+  # empty) leaves '' in its place, so the words after it keep their places. A forbid gate matches
+  # against this, so a doc, a commit message or an echo that names a paused verb does not trip it,
+  # but quoting the verb does not hide a run.
   printf '%s\n' "$1" | awk '
     BEGIN { sq = sprintf("%c", 39); dq = sprintf("%c", 34); term = ""; n = 0 }
     {
@@ -113,7 +125,7 @@ command_code() {
     END {
       text = ""
       for (i = 1; i <= n; i++) text = text src[i] "\n"
-      len = length(text); i = 1; out = ""; tok = ""; last = ""; cmdword = ""
+      len = length(text); i = 1; out = ""; tok = ""; last = ""; cmdword = ""; shell_mode = ""
       while (i <= len) {
         c = substr(text, i, 1)
         if (c == sq || c == dq) {
@@ -133,9 +145,14 @@ command_code() {
           prev = (tok != "") ? tok : last
           inert = (cmdword ~ /^(.*\/)?(echo|printf|grep|egrep|fgrep|rg|sed|awk|cat)$/)
           prose = (body ~ /[ \t\n]/ || prev ~ /^(-m|--message|-F|--file|-e|--regexp|--grep)$/ || prev ~ /^--(message|file|grep)=$/)
-          keep = (prev == "eval" || prev ~ /^-[A-Za-z]*c$/ || (!inert && !prose))
+          script = (shell_mode != "parses" && (prev == "eval" || prev ~ /^-[A-Za-z]*c$/))
+          keep = (script || (!inert && !prose))
           if (cmdword == "" && tok == "") cmdword = body
-          out = out " " (keep ? body : "") " " run " "
+          if (!script) gsub(/[;|&(){}]/, " ", body)
+          shown = keep ? body : ""
+          if (shown run == "" && tok == "" && substr(text, j + 1, 1) ~ /^[ \t\n;|&()<>]?$/) shown = sq sq
+          out = out " " shown " " run " "
+          if (script && prev != "eval") out = out "; : "
           tok = ""; last = ""; i = j + 1; continue
         }
         if (c == "\\") { out = out substr(text, i, 2); i += 2; continue }
@@ -143,8 +160,10 @@ command_code() {
         out = out c
         if (c ~ /[ \t\n;|&()<>]/) {
           if (tok != "") { last = tok; if (cmdword == "" && tok !~ /=/) cmdword = tok }
+          if (tok ~ /^(.*\/)?(sh|bash|zsh|dash|ksh)$/) shell_mode = "runs"
+          else if (shell_mode == "runs" && tok ~ /^-[A-Za-z]*n[A-Za-z]*$/) shell_mode = "parses"
           tok = ""
-          if (c ~ /[\n;|&(]/) cmdword = ""
+          if (c ~ /[\n;|&(]/) { cmdword = ""; shell_mode = "" }
         } else tok = tok c
         i++
       }
@@ -166,6 +185,74 @@ code_has_word() {
         if (before !~ /[A-Za-z0-9_-]/ && after !~ /[A-Za-z0-9_-]/) { found = 1; exit }
         base += p; s = substr(s, p + 1)
       }
+    }
+    END { exit !found }'
+}
+
+code_runs() {
+  # $1 code text (command_code), $2 a program. True when one command of the code starts that
+  # program: it is the command's first word, as written or at the end of a longer path, after
+  # any VAR=value words and the words that only pass a command on (a shell, env, exec, nohup,
+  # command, nice, timeout, caffeinate, with their options; a number only after nice, timeout or
+  # caffeinate, as after a shell it is the script). An option that takes a separate operand (exec
+  # -a, env -u -C -P -a, nice -n, timeout -k -s, caffeinate -t -w, a shell's -o -O, and their
+  # long forms) passes that operand on too. env reads the text of -S (--split-string) as its own
+  # words, so that text, attached or the next word, is read like the words after it. A shell given
+  # -n only parses the script and command -v or -V only looks the name up: both start nothing. A
+  # path that is an argument (git add, sed, grep) starts nothing. An escaped character (\;)
+  # separates nothing.
+  printf '%s\n' "$1" | T="$2" awk '
+    BEGIN {
+      t = ENVIRON["T"]; found = 0
+      operand_letters["exec"] = "a"; operand_letters["env"] = "aCPu"; operand_letters["nice"] = "n"
+      operand_letters["timeout"] = "ks"; operand_letters["caffeinate"] = "tw"
+      operand_words["env"] = "unset|chdir|argv0"; operand_words["nice"] = "adjustment"
+      operand_words["timeout"] = "kill-after|signal"
+      split("sh bash zsh dash ksh", shells, " ")
+      for (each in shells) { operand_letters[shells[each]] = "oO"; operand_words[shells[each]] = "rcfile|init-file" }
+    }
+    function names_program(word) {
+      return word == t || (length(word) > length(t) && substr(word, length(word) - length(t)) == "/" t)
+    }
+    function is_setup_word(word) {
+      return word == "" || word ~ /^[A-Za-z_][A-Za-z0-9_]*=/ || word ~ /^(if|then|else|elif|do|while|until|!|time)$/
+    }
+    function is_passer_argument(passer, word) {
+      return passer != "" && (word ~ /^-/ || (passer ~ /^(nice|timeout|caffeinate)$/ && word ~ /^[0-9]+[smhd]?$/))
+    }
+    function takes_operand(passer, option) {
+      if (option ~ /^--/) return (passer in operand_words) && option ~ ("^--(" operand_words[passer] ")$")
+      return (passer in operand_letters) && option ~ ("^-[^" operand_letters[passer] "]*[" operand_letters[passer] "]$")
+    }
+    function without_split_option(passer, word) {
+      if (passer == "env" && match(word, /^(-[^-aCPSu]*S|--split-string(=|$))/)) return substr(word, RLENGTH + 1)
+      return word
+    }
+    function passes_on(base) {
+      return base ~ /^(sh|bash|zsh|dash|ksh|env|exec|nohup|command|nice|timeout|caffeinate)$/
+    }
+    function starts_nothing(passer, option) {
+      if (passer == "command") return option ~ /^-[A-Za-z]*[vV][A-Za-z]*$/
+      return passer ~ /^(sh|bash|zsh|dash|ksh)$/ && option ~ /^-[A-Za-z]*n[A-Za-z]*$/
+    }
+    function started_by(command,    count, words, position, word, base, passer) {
+      count = split(command, words, /[ \t]+/); passer = ""
+      for (position = 1; position <= count; position++) {
+        word = without_split_option(passer, words[position]); base = word; sub(/^.*\//, "", base)
+        if (starts_nothing(passer, word)) return 0
+        if (is_setup_word(word) || is_passer_argument(passer, word)) { position += takes_operand(passer, word); continue }
+        if (passes_on(base)) { passer = base; continue }
+        return names_program(word)
+      }
+      return 0
+    }
+    {
+      line = $0
+      gsub(/\\./, "_", line)
+      gsub(/\$\(/, "\n", line); gsub(/`/, "\n", line)
+      gsub(/&&|\|\||[;|&(){}]/, "\n", line)
+      count = split(line, commands, "\n")
+      for (number = 1; number <= count; number++) if (t != "" && started_by(commands[number])) { found = 1; exit }
     }
     END { exit !found }'
 }

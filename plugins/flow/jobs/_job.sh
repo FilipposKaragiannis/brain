@@ -1,7 +1,9 @@
 #!/bin/sh
 # Shared by the job scripts: host argument, a lock so overlapping schedules skip instead of
-# colliding, a log under <flow home>/log/<job>.log, and the host runner. A job sources this
-# after setting $job, then calls job_start "$host"; everything it prints goes to the log too.
+# colliding, or one lock per run for a job whose runs may overlap (job_lock), a log under
+# <flow home>/log/<job>.log, and the host runner. A job sources this after setting $job, and
+# $job_lock_kind when it is not schedule, then calls job_start "$host"; everything it prints goes
+# to the log too.
 # --as <name>, anywhere in the job's arguments, names the schedule this run belongs to: the job,
 # or the job, a dash and a label (next-codex), as scripts/jobs.sh passes it for a named schedule.
 # It is taken out of the arguments here, so the job reads the rest as before, and $job becomes the
@@ -42,15 +44,20 @@ job_base() { printf '%s' "${job%%-*}"; }
 # length in seconds, the exit code and the last thing it said. A run that
 # a pause or a live lock skips is a line too, so every scheduled start shows. At 4000 lines the
 # file moves to runs.1.jsonl, replacing the one before: a rename, so a line another worker appends
-# meanwhile lands in one file or the other, never lost. The trim lock stops two workers rotating
-# at once; a worker that finds it held leaves the trim to the holder.
+# meanwhile lands in one file or the other, never lost. The step runs of the file that goes are
+# kept first (scripts/graph-report.sh --keep): the settled days by day, the younger ones as they
+# are, so the history of the steps outlives any number of cuts. The trim lock stops two workers
+# rotating at once; a worker that finds it held leaves the trim to the holder.
 job_record() {
   _runs="$(job_log_dir)/runs.jsonl"; _end="$(date +%s)"
   # One write per line: workers ending together would otherwise interleave a line and its newline.
   _line="$(json_obj job="$job" host="${host:-}" at="${job_at:-$(now_iso)}" seconds:="$((_end - ${job_t0:-$_end}))" exit:="$1" result="${job_last:-}")"
   printf '%s\n' "$_line" >> "$_runs"
   [ "$(wc -l < "$_runs")" -ge 4000 ] && mkdir_exclusive "$_runs.trim" || return 0
-  if [ "$(wc -l 2>/dev/null < "$_runs" || echo 0)" -ge 4000 ]; then mv "$_runs" "$(job_log_dir)/runs.1.jsonl"; fi
+  if [ "$(wc -l 2>/dev/null < "$_runs" || echo 0)" -ge 4000 ]; then
+    "$FLOW_PLUGIN/scripts/graph-report.sh" --keep >/dev/null 2>&1 || true
+    mv "$_runs" "$(job_log_dir)/runs.1.jsonl"
+  fi
   rmdir "$_runs.trim"
 }
 job_clock() { mkdir -p "$(job_log_dir)"; job_t0="$(date +%s)"; job_at="$(now_iso)"; }
@@ -62,13 +69,27 @@ job_skip_if_paused() {
 # job_alive <pid>: the pid still runs this job's script. A lock left by a restart can name a pid
 # the system has since given to something else.
 job_alive() { case "$(process_command "$1")" in *"jobs/$(job_base).sh"*) return 0 ;; esac; return 1; }
-# job_lock: exit 0 quietly when another run of this job is alive; a lock whose pid is not is stale.
+job_lock_kind="${job_lock_kind:-schedule}"
+case "$job_lock_kind" in schedule|run) ;; *) die "job_lock_kind is $job_lock_kind: schedule or run" 2 ;; esac
+# job_drop_stale_run_locks: removes this schedule's run locks, and an older <schedule>.lock, whose
+# pid no longer runs the job.
+job_drop_stale_run_locks() {
+  for _run_lock in "$(job_log_dir)/$job.lock" "$(job_log_dir)/$job"-[0-9]*.lock; do
+    _run_pid="$(cat "$_run_lock/pid" 2>/dev/null)"
+    [ -z "$_run_pid" ] || job_alive "$_run_pid" || rm -rf "$_run_lock"
+  done
+}
+# job_lock: the run's lock, of the kind job_lock_kind names. schedule (the default):
+# <schedule>.lock, and exit 0 quietly when another run of the schedule is alive; a lock whose pid is not is stale.
 # The schedules of one job but next (intake and intake-nightly) share that job's state, the notes
-# and ledger, the PR replies, the lessons or the claims, so they take turns on <job>.shared.lock as
-# well: a run that finds another schedule of its job alive skips. next has the pick lock instead.
+# and ledger, the lessons or the claims, so they take turns on <job>.shared.lock as well: a run
+# that finds another schedule of its job alive skips. next has the pick lock instead. run
+# (comments): <schedule>-<pid>.lock and no shared lock, so runs of every schedule overlap and the
+# job guards its own state; the stale run locks go first.
 job_lock() {
   job_shared=
   d="$(job_log_dir)/$job.lock"
+  if [ "$job_lock_kind" = run ]; then job_drop_stale_run_locks; d="$(job_log_dir)/$job-$$.lock"; rm -rf "$d"; fi
   if mkdir_exclusive "$d"; then :; else
     pid="$(cat "$d/pid" 2>/dev/null)"
     if [ -n "$pid" ] && job_alive "$pid"; then job_say "skipped: run $pid still going"; job_record 0; exit 0; fi
@@ -78,7 +99,7 @@ job_lock() {
   trap 'job_end $?' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  [ "$(job_base)" != next ] || return 0
+  [ "$job_lock_kind" = schedule ] && [ "$(job_base)" != next ] || return 0
   _s="$(job_log_dir)/$(job_base).shared.lock"
   if mkdir_exclusive "$_s"; then :; else
     _spid="$(cat "$_s/pid" 2>/dev/null)"

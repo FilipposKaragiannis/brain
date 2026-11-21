@@ -60,6 +60,9 @@ if [ "$step" = pr ]; then
 fi
 
 finish_run() { record_set "$item" "run:=null" >/dev/null; }
+# The gate a step asked for by itself, `<step> <gate>` in <flow home>/asked/<item>, kept until the
+# step ends: the profile's gate after that step would ask the owner the same question again.
+asked_file="$home/asked/$(item_slug "$item")"
 
 # raise_asked <gate> <message>: raise the gate the step asked for, with the options and condition
 # its result names; an empty options list is no options.
@@ -68,6 +71,36 @@ raise_asked() {
   case "$options" in ""|"[]") ;; *) set -- "$@" --options "$options" ;; esac
   [ -z "$condition" ] || set -- "$@" --condition "$condition"
   "$FLOW_PLUGIN/scripts/gate.sh" raise "$@" >/dev/null
+}
+
+escalate_unopened_epic_pull_request() {
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the epic's pull request could not be opened. Open it, then clear the gate.**
+
+$(cat "$reports/epic-pr.err")" >/dev/null
+  report 4 "" escalation
+}
+
+close_epic_with_nothing_to_merge() {
+  [ "$(json_get "$data" status)" != closed ] || return 0
+  adapter close "$item" --comment "Closed by flow: every task is closed and the closeout passed." >/dev/null 2>&1 && return 0
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The closeout passed, but the tracker refused to close the epic. Clear the gate to run the closeout again, or close the epic by hand.**" >/dev/null
+  report 4 "" escalation
+}
+
+wait_for_the_merge_of() {
+  record_set "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; $1 waits for the merge" >/dev/null
+  adapter comment "$item" --body "Step $step done: ${summary:-no summary}. The epic's pull request: $1." >/dev/null
+  "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" merge "**$(json_get "$profiles" "gates.merge.asks")**
+
+$1 brings the epic's branch into its base. ${summary:-$step done.}" "$step" >/dev/null
+  finish_run
+  report 4 "done" merge
+}
+
+close_out_epic() {
+  epic_pull_request="$("$FLOW_PLUGIN/scripts/epic-pr.sh" "$item" "$reports" "$summary" 2>"$reports/epic-pr.err")" || escalate_unopened_epic_pull_request
+  rm -f "$reports/epic-pr.err"
+  if [ -z "$epic_pull_request" ]; then close_epic_with_nothing_to_merge; else wait_for_the_merge_of "$epic_pull_request"; fi
 }
 
 size_index() { i=0; for s in $(json_list "$profiles" sizes); do [ "$s" = "$1" ] && { printf '%s' "$i"; return; }; i=$((i + 1)); done; printf '%s' -1; }
@@ -149,8 +182,22 @@ case "$status" in
     [ -n "$gate" ] || gate="ambiguity"
     raise_asked "$gate" "${message:-$summary}"
     record_set "$item" "step=$step" >/dev/null
+    mkdir -p "$home/asked" && printf '%s %s\n' "$step" "$gate" > "$asked_file"
     report 4 "" "$gate" ;;
   fail)
+    rm -f "$asked_file"
+    # A verify run that was stopped (its limit, a signal, a run that died: the report's `stopped`)
+    # failed no check, so no step has anything to fix: the item stays at verify, no attempt is
+    # counted, and the owner decides at the gate. The run after the clear reuses every test
+    # command that passed.
+    if [ "$step" = verify ] && [ -n "$(json_get "$result" stopped)" ]; then
+      "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**Verify did not finish, and no check failed. Give it room, then clear the gate to run it again.**
+
+- What happened: $(json_get "$result" checks.0.summary).
+- A check that needs longer: raise \`verify.limit\` in \`.flow/config.yaml\`. A busy machine: clear the gate once it is free.
+- The next run reuses every test command that already passed." >/dev/null
+      report 4 "" escalation
+    fi
     attempts=$((attempts + 1))
     max="$(json_get "$profiles" max_attempts)"
     if [ "$attempts" -ge "${max:-3}" ]; then
@@ -166,13 +213,15 @@ case "$status" in
   done) ;;
   *) die "unknown status '$status' (done, fail or gate)" 2 ;;
 esac
+step_asked="$(cat "$asked_file" 2>/dev/null)"; rm -f "$asked_file"
 
 # done: a passing verify that touched rendered code raises the feel-test gate after moving on.
 feel_test=0
 [ "$step" = "$(json_get "$profiles" feel_test_step)" ] && [ "$(json_get "$result" feel_test)" = "true" ] && feel_test=1
-# re-size at the step boundary, then move on.
+# re-size at the step boundary, then move on. An epic has no size: every size selects the one
+# epic profile and next.sh clears the size it starts with, so a size its step names re-sizes nothing.
 next_profile="$profile"
-if [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
+if [ "$kind" != epic ] && [ -n "$new_size" ] && [ "$new_size" != "$size" ]; then
   old_i="$(size_index "$size")"; new_i="$(size_index "$new_size")"
   [ "$new_i" -ge 0 ] || die "unknown size $new_size" 2
   record_set "$item" "size=$new_size" >/dev/null
@@ -193,6 +242,7 @@ if [ -z "$following" ] && [ "$next_profile" != "$profile" ]; then
 fi
 profile="$next_profile"
 attempts=0
+[ "$step" != closeout ] || [ "$kind" != epic ] || close_out_epic
 if [ -z "$following" ]; then
   record_set "$item" "step=done" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; every step ran" >/dev/null
   adapter comment "$item" --body "Step $step done: ${summary:-no summary}. Every step of $profile ran." >/dev/null
@@ -204,6 +254,15 @@ case "$following" in
     g="${following#gate:}"
     after="$(profile_steps "$profile" | awk -v s="$following" 'f {print; exit} $0 == s {f = 1}')"
     [ -n "$after" ] || after="done"
+    # The step asked this gate itself and the owner answered it, not sent it back: the answer
+    # stands, and the gate is not raised a second time for the same step.
+    if [ "$step_asked" = "$step $g" ] && case "$(state_get "$data" answered)" in "$g"|"$g, option "*) true ;; *) false ;; esac; then
+      record_set "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g answered at the step" >/dev/null
+      adapter comment "$item" --body "Step $step done: ${summary:-no summary}. The owner answered the $g gate at this step, so it is not asked again. Next: $after." >/dev/null
+      printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "$item" "$g" "not asked again: the owner answered it at step $step" >> "$home/events.log"
+      finish_run
+      report 0 "$after" ""
+    fi
     # auto_gates: only plan-approval can be cleared by the flow, by item size; every other gate waits.
     if [ "$g" = "plan-approval" ] && case ",$(cfg auto_gates.plan-approval | tr -d ' ')," in *",$size,"*) true ;; *) false ;; esac; then
       record_set "$item" "step=$after" "profile=$profile" "attempts=0" "last_event=$(now_iso) $step done; gate $g auto-approved (size $size)" >/dev/null

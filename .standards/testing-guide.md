@@ -8,10 +8,22 @@ this file holds only what is specific to this repository.
 
 | level | when | command |
 |---|---|---|
-| unit | every change | `tools/test.sh` (lint, every suite, plugin validation); one suite alone: `plugins/flow/tests/run.sh`, `plugins/standards/hooks/tests/run.sh`, `plugins/meta/tests/run.sh`, `plugins/console/tests/run.sh`, `tools/tests/run.sh` |
+| unit | in verify, the parts a change can affect | `test` in `.standards/config.json`: one `tools/test.sh <part>` per suite (standards, flow, meta, console, console-app, tools, plugins), each with the paths it reads; `tools/test.sh` alone runs every part, as CI and a person do |
 | integration | a boundary is crossed (I/O, network, process, engine) | no separate run: the shell suites above cross those boundaries through stub tools; the console app: `cd plugins/console/app && npm run check` |
 | regression | every bug fix, named after the bug | part of the unit run |
 | mutation | on PRs for changed files, full on a schedule; a signal, never a gate | none: `mutation` is empty in `.standards/config.json` |
+
+## One test or one group
+
+The implement, test and comments steps run only the tests they touched. The whole of a suite
+runs once, in verify, and a suite that passed on the same files is not run again.
+
+- A flow test in a suite file of its own, alone: `sh plugins/flow/tests/<file>.sh` (`holds.sh`, `blockers.sh`, `base-claim.sh`, `base-readers.sh`, `verify-detached.sh`, `verify-ends.sh`, `verify-scope.sh`; `adapter-contract.sh <adapter>`). Each takes one to four minutes.
+- A new flow test goes in a suite file of its own, on `_base_fixture.sh`, with a block in `run.sh` that runs it, so it runs alone.
+- `plugins/flow/tests/run.sh` has no filter and takes over an hour on this machine: its inline sections run only as a whole, in verify and in CI. Never start it, or `tools/test.sh`, in an implement, test or comments step: the `whole-suite` gate in `.standards/config.json` blocks a command that starts either, until the owner approves the run with `[whole-suite]`. Reading or staging the files is not blocked.
+- One console daemon test file: `cd plugins/console/app && sh ../../../tools/lib/sandboxed.sh . node --test daemon/test/<file>.test.ts`.
+- One console UI test file: `cd plugins/console/app/ui && npx vitest run test/<file>`.
+- The standards, meta, console and tools shell suites have no filter and take minutes, not an hour: `plugins/standards/hooks/tests/run.sh`, `plugins/meta/tests/run.sh`, `plugins/console/tests/run.sh`, `tools/tests/run.sh`.
 
 ## Fixtures and helpers
 

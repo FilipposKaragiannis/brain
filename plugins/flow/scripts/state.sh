@@ -1,6 +1,6 @@
 #!/bin/sh
 # The flow record of an item: one JSON file per item under state.dir (lib/state.sh).
-#   state.sh get <item> <key>       one of the twenty state keys through the key map, or a record
+#   state.sh get <item> <key>       one of the twenty-one state keys through the key map, or a record
 #                                   path (gate.options.0.label, claim.machine, run); a string raw,
 #                                   anything else as JSON, nothing when there is no record
 #   state.sh set <item> <pair>...   record_set: key=value for the state keys, or run:=<object|null>,

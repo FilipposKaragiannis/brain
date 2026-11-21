@@ -9,11 +9,11 @@
 #   tracker_state               tracker_state in the config, else FLOW_TRACKER_STATE: labels (the
 #                               default) or none; another value is refused, exit 2
 #   flow_machine                this machine's name: FLOW_MACHINE, else hostname -s
-#   record_get <item> <key>     one of the twenty state keys through the key map (gate reads none
+#   record_get <item> <key>     one of the twenty-one state keys through the key map (gate reads none
 #                               when clear), or a record path (gate.options.0.label, claim.machine);
 #                               a string raw, anything else as JSON, nothing with no record
 #   record_show <item>          the record as JSON; exit 1 with none
-#   record_set <item> <pair>... key=value for the twenty keys (adapters/README.md; a dash reads as
+#   record_set <item> <pair>... key=value for the twenty-one keys (adapters/README.md; a dash reads as
 #                               an underscore), or the record pairs run:=<object|null>,
 #                               run.step=<text> and gate:=<object>, never both kinds in one write.
 #                               With tracker_state labels the state pairs go to the tracker first
@@ -35,7 +35,7 @@
 #   record_archive <item>       the record to closed/; nothing with no record; exit 1 when
 #                               another machine holds it
 #   item_read <item>            the adapter's read of the item with its record joined on as state
-#                               (scripts/_state_join.py: all twenty keys, a record winning whole),
+#                               (scripts/_state_join.py: all twenty-one keys, a record winning whole),
 #                               stamped state_from record, tracker or none. With no record its state
 #                               is the tracker's under labels and empty under none; an archived
 #                               record counts as none. The adapter's code when its read fails (2 for

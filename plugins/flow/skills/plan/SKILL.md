@@ -64,7 +64,7 @@ Size: <S|M|L> (was <size>)
 ## Phase 1: <title>   independent: no
 - [ ] <concrete item>
 Touches: src/Sim/**, tests/Sim/**
-Verification: <command> → <expected result>
+Verification: <the command for the tests that cover this phase> → <expected result>
 
 ## Phase 2: <title>   independent: yes
 ...
@@ -80,7 +80,9 @@ Verification: <command> → <expected result>
 ```
 
 Every phase is concrete ("add retry to `PaymentClient.Charge`", not "improve payments"),
-has an autonomous verification with an expected result, and names its touches.
+has an autonomous verification with an expected result, and names its touches. A verification
+runs one test or one group, as the testing guide says how. It is never the project's whole test
+command: verify runs that once, scoped to the change.
 
 ## 4. Finish
 

@@ -3,7 +3,7 @@ Pure: no file, clock or environment is read here.
 
 _state.py is the edge that loads, locks and writes; this module checks pairs, merges and reads
 back; _state_views.py seeds a record and renders its views. A pair is `key=text` for one of the
-twenty state keys (a dash reads as an underscore) or one of the record pairs `run:=<object|null>`,
+twenty-one state keys (a dash reads as an underscore) or one of the record pairs `run:=<object|null>`,
 `run.step=<text>` and `gate:=<object>`. Pairs apply in the key map's order; a key given twice takes
 its last value. Objects that hold only empty fields read null, and lists are never null.
 """
@@ -49,6 +49,7 @@ KEY_MAP = (
     StateKey("changes", "", "changes", LIST),
     StateKey("last_event", "", "last_event", TEXT),
     StateKey("base", "", "base", TEXT),
+    StateKey("branch", "", "branch", TEXT),
     StateKey("size", "", "size_estimate", TEXT),
     StateKey("worktree", "claim", "worktree", TEXT),
     StateKey("held_by", "hold", "by", TEXT),
@@ -177,7 +178,7 @@ def record_outcome(record):
 
 def new_record(item, now):
     return {"v": SCHEMA_VERSION, "item": item, "step": "", "profile": "", "size_estimate": "", "attempts": 0,
-            "touches": [], "changes": [], "base": "", "last_event": "", "hold": None, "gate": None,
+            "touches": [], "changes": [], "base": "", "branch": "", "last_event": "", "hold": None, "gate": None,
             "answer": None, "pr": None, "claim": None, "run": None, "pushed": None,
             "created_at": now, "updated_at": now}
 
