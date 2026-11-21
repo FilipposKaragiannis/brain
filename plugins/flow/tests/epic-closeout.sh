@@ -190,4 +190,14 @@ check "EpicCloseoutWhoseBaseIsNotOnTheRemote_LeavesTheEpicOpen: its branch still
 check "EpicCloseoutWhoseBaseIsNotOnTheRemote_RaisesAnEscalationGate: the owner hears the branch has nowhere to merge" \
   '[ "$(state "$adrift" gate)" = escalation ] && json_value message < ".flow/gates/$(slug "$adrift").json" | grep -qF "trunk is not on the remote"'
 
+echo "epic closeout: a remote that cannot be reached is no missing epic branch"
+github_repo unreachable
+far="$(epic_with_work "Away games")"
+git remote set-url origin "$work/no-such-remote.git"
+pass_closeout "$far"
+check "EpicCloseoutWithAnUnreachableRemote_LeavesTheEpicOpen: its branch may hold work nobody merged, so not seeing it is no proof" \
+  '[ "$(item_status "$far")" = open ]'
+check "EpicCloseoutWithAnUnreachableRemote_RaisesAnEscalationGate: the owner hears the remote could not be asked" \
+  '[ "$(state "$far" gate)" = escalation ] && json_value message < ".flow/gates/$(slug "$far").json" | grep -qF "could not be asked"'
+
 if [ "$fails" -eq 0 ]; then echo "epic-closeout: ok"; else echo "epic-closeout: $fails failed"; exit 1; fi
