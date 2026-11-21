@@ -160,6 +160,7 @@ check "pr done at the merge gate: the claim says done, as the issue does" [ "$(c
 "$P/scripts/gate.sh" clear "$t1" merged >/dev/null
 "$P/scripts/next.sh" "$t1" >/dev/null 2>&1; code=$?
 check "next on a done item: exit 6" [ "$code" -eq 6 ]
+"$P/adapters/local/write-state.sh" "$t1" pr= pr_host= >/dev/null
 
 echo "re-size and gates"
 r2="$(printf '%s' "$out2" | jget reports)"
