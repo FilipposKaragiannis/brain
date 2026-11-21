@@ -16,6 +16,7 @@
 # Exit codes: 0 next step ready · 4 waiting at a gate, or split and waiting on its children · 6 done.
 . "$(dirname "$0")/../lib/flow.sh"
 . "$FLOW_PLUGIN/lib/base.sh"
+. "$FLOW_PLUGIN/lib/pull_request.sh"
 home="$(flow_home)"
 profiles="$(cat "$FLOW_PLUGIN/profiles.json")"
 [ $# -ge 1 ] || die "usage: advance.sh <item> [--status ...]" 2
@@ -105,23 +106,6 @@ close_out_epic() {
   if [ -z "$epic_pull_request" ]; then close_epic_with_nothing_to_merge; else wait_for_the_merge_of "$epic_pull_request"; fi
 }
 
-# pull_request_on_branch <branch>: the URL of a PR whose head is the branch, or nothing; fails when
-# gh cannot answer. The same lookup as the sweep's.
-pull_request_on_branch() {
-  gh_repo="$(cfg github.repo)"
-  pull_requests_found="$(cd "$(dirname "$home")" && gh pr list ${gh_repo:+-R "$gh_repo"} --head "$1" --state all --json url 2>/dev/null)" || return 1
-  json_get "$pull_requests_found" 0.url
-}
-
-# nothing_to_merge <base>: true when the worktree has no uncommitted change outside .flow and its
-# HEAD no diff against the base, at its local tip when a pool claim holds it, as the claim took it.
-nothing_to_merge() {
-  base_reference="$1"
-  [ -n "$("$FLOW_PLUGIN/scripts/steward.sh" owner "$1")" ] || ! git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/$1" || base_reference="origin/$1"
-  uncommitted_changes="$(git -C "$wt" status --porcelain -- . ":!.flow" 2>/dev/null)" || return 1
-  [ -z "$uncommitted_changes" ] && git -C "$wt" diff --quiet "$base_reference...HEAD" -- 2>/dev/null
-}
-
 close_with_nothing_to_merge() {
   if ! adapter close "$item" --comment "Closed by flow: the pr step opened no pull request, and the branch has no change against $1, so there is nothing to merge. ${summary:-$step done.}" >/dev/null 2>&1; then
     "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "**The pr step opened no pull request and the branch has nothing to merge, but the tracker refused to close the item. Clear the gate to run the pr step again, or close the item by hand.**
@@ -142,19 +126,22 @@ ${summary:-$step done.}" >/dev/null
   report 4 "" escalation
 }
 
+link_branch_pull_request() {
+  adapter link-pr "$item" "$1" >/dev/null || echo "advance: could not record $1 on $item" >&2
+}
+
 # settle_unrecorded_pull_request: for a pr step done with no PR in its result or on the item, records
 # the PR the task branch has, closes the item when there is nothing to merge, or escalates.
 settle_unrecorded_pull_request() {
-  [ -z "$(json_get "$result" pr)" ] && [ -z "$(state_get "$data" pr)" ] || return 0
+  [ -z "$(json_get "$result" pr)$(state_get "$data" pr)" ] || return 0
   task_branch="$(claim_name "$wt" branch)" || return 0
   claim_base="$(recorded_base "$wt")"
-  lookup=answered; branch_pull_request="$(pull_request_on_branch "$task_branch")" || lookup=failed
-  if [ -n "$branch_pull_request" ]; then
-    adapter link-pr "$item" "$branch_pull_request" >/dev/null || echo "advance: could not record $branch_pull_request on $item" >&2
-    return 0
-  fi
-  ! nothing_to_merge "$claim_base" || close_with_nothing_to_merge "$claim_base"
-  [ "$lookup" = failed ] || escalate_unopened_pull_request "$task_branch" "$claim_base"
+  settlement="$(pull_request_settlement "$home" "$wt" "$task_branch" "$claim_base")"
+  case "$settlement" in
+    found\ *) link_branch_pull_request "${settlement#found }" ;;
+    nothing-to-merge) close_with_nothing_to_merge "$claim_base" ;;
+    unopened) escalate_unopened_pull_request "$task_branch" "$claim_base" ;;
+  esac
 }
 
 size_index() { i=0; for s in $(json_list "$profiles" sizes); do [ "$s" = "$1" ] && { printf '%s' "$i"; return; }; i=$((i + 1)); done; printf '%s' -1; }
