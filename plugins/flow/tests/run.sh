@@ -501,6 +501,11 @@ sh "$here/base-claim.sh" > "$work/base-claim.out" 2>&1; code=$?
 check "base-claim: $(tail -n 1 "$work/base-claim.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/base-claim.out"
 
+echo "a claim sets a pool worktree up again when a worktree_setup_paths file changed (tests/worktree-setup.sh)"
+sh "$here/worktree-setup.sh" > "$work/worktree-setup.out" 2>&1; code=$?
+check "worktree-setup: $(tail -n 1 "$work/worktree-setup.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/worktree-setup.out"
+
 echo "a task branch is named from the branch template at claim and recorded (tests/branch-name.sh)"
 sh "$here/branch-name.sh" > "$work/branch-name.out" 2>&1; code=$?
 check "branch-name: $(tail -n 1 "$work/branch-name.out")" [ "$code" -eq 0 ]
@@ -545,6 +550,11 @@ echo "a GitHub item reads its priority from a priority: label where no field is 
 sh "$here/github-priority.sh" > "$work/github-priority.out" 2>&1; code=$?
 check "github-priority: $(tail -n 1 "$work/github-priority.out")" [ "$code" -eq 0 ]
 [ "$code" -eq 0 ] || grep '^  FAIL' "$work/github-priority.out"
+
+echo "the health job says when a step got slower (tests/health-slow-steps.sh)"
+sh "$here/health-slow-steps.sh" > "$work/health-slow-steps.out" 2>&1; code=$?
+check "health-slow-steps: $(tail -n 1 "$work/health-slow-steps.out")" [ "$code" -eq 0 ]
+[ "$code" -eq 0 ] || grep '^  FAIL' "$work/health-slow-steps.out"
 
 echo "jira adapter (fake curl)"
 cp .flow/config.yaml "$work/config.gh"
