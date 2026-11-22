@@ -17,7 +17,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable, Iterator, Mapping
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -181,9 +181,10 @@ def _ignore_further_stop_signals() -> None:
         signal.signal(stop_signal, lambda number, frame: None)
 
 
-def _stop_running(workers: ThreadPoolExecutor, lanes: _Lanes, settings: Settings) -> None:
-    workers.shutdown(wait=False, cancel_futures=True)
+def _stop_running(submitted: "Mapping[Future, SuiteName]", lanes: _Lanes, settings: Settings) -> None:
     lanes.running.close()
+    for waiting_or_running in list(submitted):
+        waiting_or_running.cancel()
     _stop(lanes.running.still_running(), settings)
 
 
@@ -194,10 +195,10 @@ def _report_stopped(number: int, unfinished: "set[SuiteName]", lanes: _Lanes) ->
     sys.exit(_SIGNAL_EXIT_BASE + number)
 
 
-def _stop_on_signals(workers: ThreadPoolExecutor, unfinished: "Callable[[], set[SuiteName]]", lanes: _Lanes, settings: Settings) -> None:
+def _stop_on_signals(submitted: "Mapping[Future, SuiteName]", unfinished: "Callable[[], set[SuiteName]]", lanes: _Lanes, settings: Settings) -> None:
     def stop(number: int, frame: object) -> None:
         _ignore_further_stop_signals()
-        _stop_running(workers, lanes, settings)
+        _stop_running(submitted, lanes, settings)
         _report_stopped(number, unfinished(), lanes)
 
     for stop_signal in _STOP_SIGNALS:
@@ -206,10 +207,12 @@ def _stop_on_signals(workers: ThreadPoolExecutor, unfinished: "Callable[[], set[
 
 def run_selected(suites: "Mapping[SuiteName, SuiteCommand]", logs: SuiteLogs, settings: Settings) -> "frozenset[SuiteName]":
     outcomes = {}
+    running: "dict[Future, SuiteName]" = {}
     lanes = _Lanes(logs.folder, _RunningSuites(), threading.Lock())
     with ThreadPoolExecutor(max_workers=settings.lanes.count) as workers:
-        _stop_on_signals(workers, lambda: suites.keys() - outcomes.keys(), lanes, settings)
-        running = {workers.submit(_run_suite, name, command, settings, lanes): name for name, command in suites.items()}
+        _stop_on_signals(running, lambda: suites.keys() - outcomes.keys(), lanes, settings)
+        for name, command in suites.items():
+            running[workers.submit(_run_suite, name, command, settings, lanes)] = name
         for finished in as_completed(running):
             name = running[finished]
             outcomes[name] = finished.result()

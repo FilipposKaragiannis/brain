@@ -168,6 +168,41 @@ expect 'SuiteALaneStartsAfterTheStop_EndsTheRunWithoutAGraceTime because the run
 expect 'SuiteALaneStartsAfterTheStop_ExitsWith128PlusTheSignalNumber because a caller reads the exit code to see the run was stopped' "$late_runner_code" "$((signal_exit_base + $(kill -l TERM)))"
 expect 'SuiteALaneStartsAfterTheStop_LeavesNoProcessBehind because a stopped run leaves no suite behind' "$(if [ -f "$work/late-suite" ]; then process_state "$(cat "$work/late-suite")"; else echo ended; fi)" ended
 rm -r "$work/late-start-runner.py" "$work/first-suite.sh" "$work/late-suite.sh" "$work/late-logs"; rm -f "$work/late-suite"
+cat > "$work/early-stop-runner.py" <<'PY'
+import signal
+import sys
+import threading
+from pathlib import Path
+sys.path.append(sys.argv[1])
+import flow_clock
+import flow_process_groups
+import flow_selection
+import flow_suites
+
+start_of_a_thread = threading.Thread.start
+
+
+def start_a_lane_then_stop_the_run(lane: threading.Thread) -> None:
+    start_of_a_thread(lane)
+    signal.raise_signal(signal.SIGTERM)
+
+
+threading.Thread.start = start_a_lane_then_stop_the_run
+early_script, logs = sys.argv[2:]
+settings = flow_suites.settings_from({}, flow_clock.SystemClock(), flow_process_groups.PROCESS_TABLE)
+suites = {flow_selection.SuiteName("early"): flow_selection.SuiteCommand(Path(early_script), None)}
+sys.exit(flow_suites.report_run(flow_suites.run_selected(suites, flow_suites.SuiteLogs(Path(logs)), settings)))
+PY
+printf 'echo $$ > "%s"\nsleep %s\n' "$work/early-suite" "$child_seconds" > "$work/early-suite.sh"
+mkdir "$work/early-logs"
+python3 -I -B "$work/early-stop-runner.py" "$project/tools/lib" "$work/early-suite.sh" "$work/early-logs" > "$work/output" 2>&1 &
+early_runner=$!
+early_runner_state="$(process_state "$early_runner")"
+if wait "$early_runner"; then early_runner_code=0; else early_runner_code=$?; fi
+expect 'RunnerGivenTermWhileItHandsASuiteToALane_Ends because a stop that lands as the suites are handed out must not hang the run' "$early_runner_state" ended
+expect 'RunnerGivenTermWhileItHandsASuiteToALane_ExitsWith128PlusTheSignalNumber because a caller reads the exit code to see the run was stopped' "$early_runner_code" "$((signal_exit_base + $(kill -l TERM)))"
+expect 'RunnerGivenTermWhileItHandsASuiteToALane_LeavesNoProcessBehind because a stopped run leaves no suite behind' "$(if [ -f "$work/early-suite" ]; then process_state "$(cat "$work/early-suite")"; else echo ended; fi)" ended
+rm -r "$work/early-stop-runner.py" "$work/early-suite.sh" "$work/early-logs"; rm -f "$work/early-suite"
 limit_seconds=3; default_limit_seconds=1800; grace_seconds=5; stop_bound_seconds=1
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"
