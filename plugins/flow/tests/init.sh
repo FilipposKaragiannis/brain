@@ -90,7 +90,7 @@ check "SessionStart_DigitsInAPrereleaseTag_DoNotOutrankARelease" [ "$(jget plugi
 write_registry 1.0.0 main "$cfg/plugins/cache/m/flow/2.0.0"
 echo '{}' | CLAUDE_CONFIG_DIR="$cfg" FLOW_PLUGIN="$plugin_copy" "$start" >/dev/null
 check "SessionStart_VersionNotSemantic_NeverATarget" [ "$(jget plugins.flow@m.1.version < "$registry")" = "1.0.0" ]
-git worktree remove -q --force ../plugin-wt
+git worktree remove --force ../plugin-wt
 rm .flow/stamp
 check "session-start: no stamp asks for one init" sh -c "echo '{}' | FLOW_PLUGIN='$plugin_copy' '$start' | grep -q 'no install stamp'"
 printf 'adapters:\n  default: local\nbase: main\npool:\npool_max: 0\n' > .flow/config.yaml
