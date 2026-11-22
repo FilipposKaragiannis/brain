@@ -1,5 +1,45 @@
 # standards
 
+## 1.9.0 (2026-11-22)
+
+- The formatter hook reads `{files}` through the same shared helper as flow's verify, so the two
+  cannot drift, and a file name is never read as shell. `{files}` is accepted in two forms: as an
+  unquoted word of its own in the command, or as an unquoted word of its own in the script of a
+  `sh -c` or `bash -c` that starts a command. A word ends at a blank or at one of `; & | < > ( )`
+  and a newline. Every other placement is refused, as a failed format check whose message names
+  the accepted forms. To pass the names into any other construct, write `"$@"` there and put
+  `{files}` as the last word of the command, as in `sh -c '... "$@"' sh {files}`. The shell, `-c`
+  and the script are read as words split by any run of spaces and tabs.
+- The rule generator turns every `## Appendix <letter>. <Language>` section of the coding
+  standards into its own rule file, indexes its ids as conventions and lists each appendix with
+  the file types its `Files:` line names in `rules/appendices.json`. The compact block names every
+  appendix.
+- Two new appendices: B. Shell (SH-01 to SH-13) and C. Python (PY-01 to PY-18). PY-02, PY-06,
+  PY-07 and PY-10 carry the suggested readings of the type checker, S-13, D-09 and pytest, which
+  the owner has still to confirm.
+- `init` installs a language appendix only when a configured language shares a file extension
+  with it, and its Claude rule loads for that language's files alone, so a `.sh` read no longer
+  loads the C# appendix. An appendix the project stops using is removed when init wrote it. At
+  machine scope every appendix installs, each for its own extensions. The drift hash covers every
+  appendix and the appendix list.
+- SH-11 no longer asks for a contract line above each function. A script's header says what the
+  script is for and what it takes; no comment above or inside a function says what the code does,
+  names carry the meaning, and a comment stays only for a why the code cannot show.
+- At project scope the block init installs names only the appendix files it installs for the
+  configured languages, in the plugin's order, and no language sentence when none has an appendix.
+  It used to name every appendix, so a shell project's block pointed at a `csharp.md` it did not
+  have. The machine-scope block still names every appendix, as every one installs there.
+- The formatter, comment, gate and protected-file hooks read staged file names NUL-separated from
+  git and treat each as data. A name with a space, a quote, `$( )`, a backtick, a newline or a
+  leading dash reaches the formatter as one argument and can no longer run a command.
+- `{files}` in a `format` command stands for `"$@"`: the command runs as `sh -c <command> sh
+  <names>`. A `{files}` inside quotes, as in `sh -c 'for f in {files}; ...'`, still sees the names:
+  each is backslash-escaped for the nested shell. A name with a newline in such a command blocks.
+- A failing formatter's report lists the files it was given.
+- The comment hook takes file names from git, never from the diff text, so a name with a tab,
+  carriage return, newline, backslash, quote or non-ASCII letter keeps its own content lookup. It
+  reads staged content without following symlinks, and blocks when it cannot read the diff.
+
 ## 1.8.0 (2026-11-21)
 
 - The testing guide's levels table names the slot that runs each level: the test command, the
