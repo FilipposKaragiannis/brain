@@ -574,5 +574,191 @@
     "tag": "convention",
     "section": "Appendix A. C#",
     "file": "csharp.md"
+  },
+  "SH-01": {
+    "title": "Target POSIX `sh`",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-02": {
+    "title": "Start with `set -u`",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-03": {
+    "title": "Quote every expansion",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-04": {
+    "title": "Data never becomes code",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-05": {
+    "title": "No new parsing of JSON, YAML or shell syntax with `sed`, `awk` or `grep`",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-06": {
+    "title": "Resolve a value once per script and pass it on",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-07": {
+    "title": "A function assigns only names that carry its prefix",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-08": {
+    "title": "Write state files through a temp file and `mv`",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-09": {
+    "title": "Temp files come from `mktemp`, and a `trap` removes them",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-10": {
+    "title": "A script over 300 lines, or one that needs data structures, moves its logic to Python",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-11": {
+    "title": "A header says what the script does and takes",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-12": {
+    "title": "One sandboxed test file per area that runs alone",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "SH-13": {
+    "title": "ShellCheck is clean on new and touched lines",
+    "tag": "convention",
+    "section": "Appendix B. Shell",
+    "file": "shell.md"
+  },
+  "PY-01": {
+    "title": "PEP 8",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-02": {
+    "title": "Type annotations on every function signature",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-03": {
+    "title": "Records are frozen dataclasses or named tuples",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-04": {
+    "title": "Outside data is parsed at the boundary into a dataclass",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-05": {
+    "title": "Resources use `with`",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-06": {
+    "title": "Catch the specific library exception where it is raised and turn it into a value or a clear exit",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-07": {
+    "title": "No default value on a function parameter (D-09)",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-08": {
+    "title": "Secrets come from the environment, never from source",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-09": {
+    "title": "Security lint runs in the build",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-10": {
+    "title": "Tests use pytest, a test-only tool installed in CI, marked unit or integration",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-11": {
+    "title": "A `Protocol` states an interface, only where a second implementation or a test seam needs one",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-12": {
+    "title": "A function returns its value",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-13": {
+    "title": "Target Python 3.9, standard library only at run time",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-14": {
+    "title": "Run as `python3 -I`, with `main()` behind the `__main__` guard",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-15": {
+    "title": "One process handles the whole batch",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-16": {
+    "title": "Write state through a temp file and `os.replace`",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-17": {
+    "title": "A subprocess gets an argument list and a timeout",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
+  },
+  "PY-18": {
+    "title": "Time and randomness come in as arguments",
+    "tag": "convention",
+    "section": "Appendix C. Python",
+    "file": "python.md"
   }
 }

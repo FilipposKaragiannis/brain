@@ -5,5 +5,19 @@
     "extensions": [
       ".cs"
     ]
+  },
+  {
+    "file": "shell.md",
+    "language": "Shell",
+    "extensions": [
+      ".sh"
+    ]
+  },
+  {
+    "file": "python.md",
+    "language": "Python",
+    "extensions": [
+      ".py"
+    ]
   }
 ]
