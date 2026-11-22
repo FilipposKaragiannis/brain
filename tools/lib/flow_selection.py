@@ -26,87 +26,103 @@ BASE_UNAVAILABLE = "flow: no comparison base available, running every suite"
 
 
 @dataclass(frozen=True)
+class Checkout:
+    folder: Path
+
+
+@dataclass(frozen=True)
+class ComparisonBase:
+    text: str
+
+
+@dataclass(frozen=True, order=True)
+class SuiteName:
+    text: str
+
+
+@dataclass(frozen=True)
 class Selection:
-    suites: "frozenset[str]"
+    suites: "frozenset[SuiteName]"
     notices: "tuple[str, ...]"
 
 
-def suite_files(directory: Path) -> "list[Path]":
+def _suite_files(directory: Path) -> "list[Path]":
     return [
         file for file in sorted(directory.glob("*.sh"))
         if not (file.name.startswith(("_", "fake-")) or file.name == "run.sh")
     ]
 
 
-def suite_entries(file: Path) -> "dict[str, tuple]":
+def _suite_entries(file: Path) -> "dict[SuiteName, tuple]":
     if file.stem == "adapter-contract":
-        return {"contract-" + adapter: ("sh", file, adapter) for adapter in ADAPTERS}
-    return {file.stem: ("sh", file)}
+        return {SuiteName("contract-" + adapter): ("sh", file, adapter) for adapter in ADAPTERS}
+    return {SuiteName(file.stem): ("sh", file)}
 
 
-def commands(root: Path) -> "dict[str, tuple]":
-    directory = root / TESTS
+def commands(checkout: Checkout) -> "dict[SuiteName, tuple]":
+    directory = checkout.folder / TESTS
     suites = {}
-    for file in suite_files(directory):
-        entries = suite_entries(file)
+    for file in _suite_files(directory):
+        entries = _suite_entries(file)
         if entries.keys() & suites.keys():
             raise ValueError(f"duplicate Flow suite name: {file.stem}")
         suites.update(entries)
     return suites
 
 
-def changed_paths(root: Path, base: str) -> "set[Path]":
+def _changed_paths(checkout: Checkout, base: ComparisonBase) -> "set[Path]":
     def git(*arguments: str) -> bytes:
-        return subprocess.check_output(("git", *arguments), cwd=root, stderr=subprocess.PIPE)
+        return subprocess.check_output(("git", *arguments), cwd=checkout.folder, stderr=subprocess.PIPE)
 
-    committed = git("diff", "--no-renames", "--name-only", "-z", base, "HEAD", "--")
+    committed = git("diff", "--no-renames", "--name-only", "-z", base.text, "HEAD", "--")
     working = git("diff", "--no-renames", "--name-only", "-z", "HEAD", "--")
     untracked = git("ls-files", "--others", "--exclude-standard", "-z")
     return {Path(os.fsdecode(name)) for name in (committed + working + untracked).split(b"\0") if name}
 
 
-def suites_by_path(suites: "Mapping[str, tuple]") -> "dict[Path, frozenset[str]]":
-    verify_suites = frozenset(name for name in suites if name.startswith("verify-"))
+def _suites_by_path(suites: "Mapping[SuiteName, tuple]") -> "dict[Path, frozenset[SuiteName]]":
+    verify_suites = frozenset(name for name in suites if name.text.startswith("verify-"))
     rules = {
         TESTS / "_verify_fixture.sh": verify_suites,
         TESTS / "_base_fixture.sh": frozenset(suites),
-        TESTS / "adapter-contract.sh": frozenset("contract-" + adapter for adapter in ADAPTERS),
+        TESTS / "adapter-contract.sh": frozenset(SuiteName("contract-" + adapter) for adapter in ADAPTERS),
     }
-    return {**rules, **dict.fromkeys(VERIFY_INPUTS, frozenset({"verify-report", "base-claim", "base-readers"}) | verify_suites)}
+    readers_of_verify = frozenset(SuiteName(name) for name in ("verify-report", "base-claim", "base-readers")) | verify_suites
+    return {**rules, **dict.fromkeys(VERIFY_INPUTS, readers_of_verify)}
 
 
-def affected(path: Path, suites: "Mapping[str, tuple]") -> "frozenset[str]":
-    rules = suites_by_path(suites)
+def _affected(path: Path, suites: "Mapping[SuiteName, tuple]") -> "frozenset[SuiteName]":
+    rules = _suites_by_path(suites)
     if path in rules and rules[path] <= suites.keys():
         return rules[path]
-    if path.parent == TESTS and path.suffix == ".sh" and path.stem in suites:
-        return frozenset({path.stem})
+    if path.parent == TESTS and path.suffix == ".sh" and SuiteName(path.stem) in suites:
+        return frozenset({SuiteName(path.stem)})
     return frozenset(suites)
 
 
-def flow_inputs(root: Path) -> "list[str]":
-    config = json.loads((root / ".standards/config.json").read_text(encoding="utf-8"))
+def _flow_inputs(checkout: Checkout) -> "list[str]":
+    config = json.loads((checkout.folder / ".standards/config.json").read_text(encoding="utf-8"))
     entry = next(check for check in config["test"] if check["name"] == "flow")
     return [pattern.replace("**/", "*").replace("**", "*") for pattern in entry["paths"]]
 
 
-def matches(path: Path, patterns: Sequence[str]) -> bool:
+def _matches(path: Path, patterns: Sequence[str]) -> bool:
     return any(fnmatchcase(path.as_posix(), pattern) for pattern in patterns)
 
 
-def narrowed(root: Path, paths: "set[Path]", suites: "Mapping[str, tuple]") -> Selection:
-    patterns = flow_inputs(root)
-    relevant = (path for path in paths if matches(path, patterns) and not matches(path, UNRELATED_TO_TESTS))
-    return Selection(frozenset().union(*(affected(path, suites) for path in relevant)), ())
+def _narrowed(checkout: Checkout, paths: "set[Path]", suites: "Mapping[SuiteName, tuple]") -> Selection:
+    patterns = _flow_inputs(checkout)
+    relevant = (path for path in paths if _matches(path, patterns) and not _matches(path, UNRELATED_TO_TESTS))
+    return Selection(frozenset().union(*(_affected(path, suites) for path in relevant)), ())
 
 
-def selection(root: Path, base: "str | None", suites: "Mapping[str, tuple]") -> Selection:
+def selection(checkout: Checkout, base: "ComparisonBase | None", suites: "Mapping[SuiteName, tuple]") -> Selection:
     if base is None:
         return Selection(frozenset(suites), ())
-    if not COMMIT_ID.fullmatch(base):
+    if not COMMIT_ID.fullmatch(base.text):
         return Selection(frozenset(suites), (BASE_UNAVAILABLE,))
     try:
-        paths = changed_paths(root, base)
+        paths = _changed_paths(checkout, base)
     except subprocess.CalledProcessError:
         return Selection(frozenset(suites), (BASE_UNAVAILABLE,))
-    return narrowed(root, paths, suites)
+    return _narrowed(checkout, paths, suites)

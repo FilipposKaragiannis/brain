@@ -86,6 +86,8 @@ import sys
 import time
 from pathlib import Path
 sys.path.append(sys.argv[1])
+import flow_process_groups
+import flow_selection
 import flow_suites
 
 AWAIT_LIMIT_SECONDS = 30
@@ -122,8 +124,9 @@ class ClockThatStepsOnceTheSuiteIsReady:
 
 
 name, script, ready, logs, awaits_from, awaited, process_table = sys.argv[2:]
-settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(ready), float(awaits_from), Path(awaited)), Path(process_table))
-sys.exit(flow_suites.report_run(flow_suites.run_selected({name: ("sh", script)}, Path(logs), settings)))
+settings = flow_suites.settings_from({}, ClockThatStepsOnceTheSuiteIsReady(Path(ready), float(awaits_from), Path(awaited)), flow_process_groups.ProcessTable(Path(process_table)))
+suites = {flow_selection.SuiteName(name): ("sh", script)}
+sys.exit(flow_suites.report_run(flow_suites.run_selected(suites, flow_suites.SuiteLogs(Path(logs)), settings)))
 PY
 run_on_stepping_clock() { rm -rf "$work/stepping-logs"; mkdir "$work/stepping-logs"; python3 -I -B "$work/stepping-runner.py" "$project/tools/lib" "$1" "$2" "$3" "$work/stepping-logs" "$4" "$5" "$6" > "$work/output" 2>&1; }
 run_on_stepping_clock deaf "$work/deaf-suite.sh" "$work/deaf-suite-ready" inf /dev/null /proc &
@@ -172,8 +175,8 @@ from pathlib import Path
 sys.path.append(sys.argv[1])
 import flow_process_groups
 
-reader, group = sys.argv[2], int(sys.argv[3])
-membership = flow_process_groups.table_membership(group, Path(sys.argv[4])) if reader == "table" else flow_process_groups.listing_membership(group)
+reader, group = sys.argv[2], flow_process_groups.ProcessGroupId(int(sys.argv[3]))
+membership = flow_process_groups.table_membership(group, flow_process_groups.ProcessTable(Path(sys.argv[4]))) if reader == "table" else flow_process_groups.listing_membership(group)
 print(membership.value)
 PY
 member_group=77; other_group=88; fake_table="$work/fake-proc"; name_not_utf8="$(printf 'cut\303')"
