@@ -220,20 +220,13 @@ base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null
 changed_names="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 { git diff --no-renames --name-only -z "$merge_base" HEAD; git diff --no-renames --name-only -z HEAD; git ls-files --others --exclude-standard -z; } > "$changed_names" 2>/dev/null
 name_separator="$(printf '\037')"
-changed_units="$(tr '\0' "$name_separator" < "$changed_names"; printf x)"; changed_units="${changed_units%x}"
-distinct_names() {
-  distinct_seen="$name_separator"; distinct_rest="$1"
-  while [ -n "$distinct_rest" ]; do
-    distinct_name="${distinct_rest%%"$name_separator"*}"; distinct_rest="${distinct_rest#*"$name_separator"}"
-    case "$distinct_name" in .flow/*) continue ;; esac
-    case "$distinct_seen" in *"$name_separator$distinct_name$name_separator"*) continue ;; esac
-    distinct_seen="$distinct_seen$distinct_name$name_separator"
-    printf '%s%s' "$distinct_name" "$name_separator"
-  done
-}
-unreadable_names=""
-[ "$(tr -cd "$name_separator" < "$changed_names" | wc -c)" -eq 0 ] || { unreadable_names=1; changed_units=""; }
-changed_units="$(distinct_names "$changed_units"; printf x)"; changed_units="${changed_units%x}"
+separator_exit=3; unreadable_names=""
+changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names "$changed_names")"; names_exit=$?
+case "$names_exit" in
+  0) ;;
+  "$separator_exit") unreadable_names=1; changed_units="" ;;
+  *) die "cannot read the changed file names" ;;
+esac
 changed="$(printf '%s' "$changed_units" | tr "$name_separator" '\n' | sort -u)"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
@@ -267,15 +260,19 @@ skipped() {
   # skipped <name> <why>: a check that did not apply, kept in the report so the reader sees why.
   record "$1" skipped "" "$2" 0 ""
 }
+changed_unit_matches() {
+  unit_rest="$changed_units"
+  while [ -n "$unit_rest" ]; do
+    unit_name="${unit_rest%%"$name_separator"*}"; unit_rest="${unit_rest#*"$name_separator"}"
+    glob_match "$1" "$unit_name" && return 0
+  done
+  return 1
+}
 changed_matches() {
   # changed_matches <globs, one per line>: true when a changed file matches one of them.
-  while IFS= read -r g; do
-    [ -n "$g" ] || continue
-    while IFS= read -r f; do
-      [ -n "$f" ] && glob_match "$g" "$f" && return 0
-    done <<EOF_FILES
-$changed
-EOF_FILES
+  while IFS= read -r glob_line; do
+    [ -n "$glob_line" ] || continue
+    changed_unit_matches "$glob_line" && return 0
   done <<EOF_GLOBS
 $1
 EOF_GLOBS
@@ -290,8 +287,9 @@ command_with_verify_base() {
 }
 
 run_with_names() {
-  run_command="$1"; shift
-  [ -n "$run_command" ] || { echo "the command is empty" >&2; return 1; }
+  run_template="$1"; shift
+  [ -n "$run_template" ] || { echo "the command is empty" >&2; return 1; }
+  run_command="$(files_placeholder_expanded "$run_template")" || { echo "{files} sits inside nested quotes, where a file name cannot stay data; pass the names on as arguments, sh -c '... \"\$@\"' sh {files}" >&2; return 1; }
   run_names_escaped=""
   case "$run_command" in
     *format_names_escaped*) run_names_escaped="$(names_backslash_escaped "$@")" || { echo "a file name with a newline cannot go into a quoted {files}" >&2; return 1; } ;;
@@ -302,20 +300,19 @@ run_with_names() {
 run_check() {
   # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
-  cmd="$command"
   IFS="$name_separator"; set -f; set -- $files; set +f; unset IFS
-  printf '\n== %s: %s\n' "$name" "$cmd" >> "$log"
+  printf '\n== %s: %s\n' "$name" "$command" >> "$log"
   [ "$#" -eq 0 ] || printf '  files:\n' >> "$log"
   [ "$#" -eq 0 ] || printf '    %s\n' "$@" >> "$log"
   check_started="$(now_seconds)"; log_start="$(($(wc -c < "$log") + 1))"
-  if run_with_names "$(files_placeholder_expanded "$cmd")" "$@" >> "$log" 2>&1; then st="pass"; summary="ok"
+  if run_with_names "$command" "$@" >> "$log" 2>&1; then check_status="pass"; summary="ok"
   else
-    st="fail"; [ "$kind" = "signal" ] && st="signal"
+    check_status="fail"; [ "$kind" = "signal" ] && check_status="signal"
     summary="$(tail -c "+$log_start" "$log")"
   fi
-  [ "$st" = "fail" ] && failed "$name"
-  record "$name" "$st" "$cmd" "$summary" "$(( $(now_seconds) - check_started ))" ""
-  [ "$st" = "pass" ]
+  [ "$check_status" = "fail" ] && failed "$name"
+  record "$name" "$check_status" "$command" "$summary" "$(( $(now_seconds) - check_started ))" ""
+  [ "$check_status" = "pass" ]
 }
 
 scoped_check() {
@@ -356,26 +353,18 @@ fi
 [ -z "$unreadable_names" ] || {
   record "changed files" fail "" "a changed file name holds the character U+001F, which verify cannot hand to a command" 0 ""; failed "changed files"
 }
-existing_names_under() {
-  existing_rest="$changed_units"
-  while [ -n "$existing_rest" ]; do
-    existing_name="${existing_rest%%"$name_separator"*}"; existing_rest="${existing_rest#*"$name_separator"}"
-    case "$existing_name" in "$1"*) ;; *) continue ;; esac
-    [ -f "$existing_name" ] || continue
-    for existing_extension in $2; do
-      case "$existing_name" in *"$existing_extension") printf '%s%s' "$existing_name" "$name_separator"; break ;; esac
-    done
-  done
-}
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
   lang="$(json_get "$std" "languages.$i")"
-  exts="$(json_list "$lang" extensions)"
+  extensions="$(json_list "$lang" extensions)"
   nf="$(json_length "$lang" format)"; j=0
+  if [ "${nf:-0}" -gt 0 ] && [ -z "$extensions" ]; then
+    record format fail "" "the language $(json_get "$lang" name) has a format command and no extensions, so verify cannot tell which changed files it covers" 0 ""; failed format; ran_format=1
+  fi
   while [ "$j" -lt "${nf:-0}" ]; do
     prefix="$(json_get "$lang" "format.$j.prefix")"; command="$(json_get "$lang" "format.$j.command")"
-    files="$(existing_names_under "$prefix" "$exts")"
+    files="$(printf '%s' "$changed_units" | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" existing "$prefix" "$extensions")"
     if [ -n "$files" ]; then run_check "format${prefix:+ $prefix}" "$command" gate "$files"; ran_format=1; all_files="$all_files$files"; fi
     j=$((j + 1))
   done
@@ -400,8 +389,7 @@ for name in $(yaml_keys "$(config_file)" gates); do
 done
 feel=false
 for g in $(cfg feel_test_paths); do
-  printf '%s\n' "$changed" | while read -r f; do glob_match "$g" "$f" && exit 3; done
-  [ $? -eq 3 ] && { feel=true; break; }
+  changed_unit_matches "$g" && { feel=true; break; }
 done
 printf '%s\n' "$changed" > "$changed_list"
 head_sha="$(git rev-parse --short HEAD)"

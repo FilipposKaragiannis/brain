@@ -6,7 +6,9 @@
 #   format_names_escaped="$(names_backslash_escaped "$@")" sh -c "$expanded" sh "$@"
 # and the names reach the command as separate arguments, or, inside quotes, as words with every
 # character that is not a letter, digit or one of _ . / - backslash-escaped. A name with a newline
-# cannot be escaped: names_backslash_escaped then fails.
+# cannot be escaped: names_backslash_escaped then fails. A {files} inside a quote that sits inside
+# another quote would be read by two shells, so escaping cannot keep it data: files_placeholder_expanded
+# then fails, and the command should hand the names on as arguments, sh -c '... "$@"' sh {files}.
 
 backslash_escape_name_failing_on_newline() {
   escape_rest="$1"; escape_result=""
@@ -30,23 +32,62 @@ names_backslash_escaped() {
   done
 }
 
+quote_state_after() {
+  case "$1:$2" in
+    none:"'") printf single ;;
+    none:'"') printf double ;;
+    single:"'") printf none ;;
+    single:'"') printf single_inner ;;
+    single_inner:'"') printf single ;;
+    single_inner:"'") printf none ;;
+    double:"'") printf double_inner_single ;;
+    double:'"') printf none ;;
+    double_inner_single:"'") printf double ;;
+    double_inner_single:'"') printf none ;;
+    double_inner_escaped:'"') printf none ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+quote_state_after_escaped() {
+  case "$1:$2" in
+    double:'"') printf double_inner_escaped ;;
+    double_inner_escaped:'"') printf double ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+begins_an_escape() {
+  case "$1" in none|double|double_inner_escaped) [ "$2" = '\' ] && return 0 ;; esac
+  return 1
+}
+
+files_placeholder_for_quote_state() {
+  case "$1" in
+    none) printf '"$@"' ;;
+    single) printf '%s' "'\"\$format_names_escaped\"'" ;;
+    double) printf '%s' '$format_names_escaped' ;;
+    *) return 1 ;;
+  esac
+}
+
 files_placeholder_expanded() {
   expand_rest="$1"; expand_state=none; expand_result=""
   while [ -n "$expand_rest" ]; do
-    case "$expand_state:$expand_rest" in
-      none:'{files}'*) expand_result="$expand_result\"\$@\""; expand_rest="${expand_rest#'{files}'}"; continue ;;
-      single:'{files}'*) expand_result="$expand_result'\"\$format_names_escaped\"'"; expand_rest="${expand_rest#'{files}'}"; continue ;;
-      double:'{files}'*) expand_result="$expand_result\$format_names_escaped"; expand_rest="${expand_rest#'{files}'}"; continue ;;
+    case "$expand_rest" in
+      '{files}'*)
+        expand_placeholder="$(files_placeholder_for_quote_state "$expand_state")" || return 1
+        expand_result="$expand_result$expand_placeholder"
+        expand_rest="${expand_rest#'{files}'}"; continue ;;
     esac
     expand_tail="${expand_rest#?}"; expand_character="${expand_rest%"$expand_tail"}"
-    case "$expand_state:$expand_character" in
-      none:"'") expand_state=single ;;
-      none:'"') expand_state=double ;;
-      single:"'"|double:'"') expand_state=none ;;
-      none:'\'|double:'\')
-        expand_result="$expand_result$expand_character"; expand_rest="$expand_tail"
-        expand_tail="${expand_rest#?}"; expand_character="${expand_rest%"$expand_tail"}" ;;
-    esac
+    if begins_an_escape "$expand_state" "$expand_character"; then
+      expand_result="$expand_result$expand_character"; expand_rest="$expand_tail"
+      expand_tail="${expand_rest#?}"; expand_character="${expand_rest%"$expand_tail"}"
+      expand_state="$(quote_state_after_escaped "$expand_state" "$expand_character")"
+    else
+      expand_state="$(quote_state_after "$expand_state" "$expand_character")"
+    fi
     expand_result="$expand_result$expand_character"; expand_rest="$expand_tail"
   done
   printf '%s' "$expand_result"

@@ -21,12 +21,13 @@ pipe_name='|pipe.nm'
 dash_name='-dash.nm'
 glob_name='glob*[a].nm'
 hostile_names_total=9
+spaced_names_total=2
 
 configure() {
   rm -f "$received"
   mkdir -p "$worktree/.standards"
-  python3 -c 'import json,sys; json.dump({"version": "1", "build": "", "test": [], "mutation": sys.argv[3], "languages": [{"name": "text", "extensions": [".nm"], "format": [{"prefix": "", "command": sys.argv[2]}]}]}, open(sys.argv[1], "w"))' \
-    "$worktree/.standards/config.json" "$1" "$2"
+  python3 -c 'import json,sys; json.dump({"version": "1", "build": "", "test": [], "mutation": sys.argv[3], "languages": [{"name": "text", "extensions": json.loads(sys.argv[4]), "format": [{"prefix": "", "command": sys.argv[2]}]}]}, open(sys.argv[1], "w"))' \
+    "$worktree/.standards/config.json" "$1" "$2" "${3:-[\".nm\"]}"
   git -C "$worktree" add -A && git -C "$worktree" commit -qm "config"
 }
 add_names() { for added_name in "$@"; do mkdir -p "$(dirname "$worktree/$added_name")"; printf 'x\n' > "$worktree/$added_name"; done; }
@@ -52,7 +53,7 @@ configure 'printf "%s\n" {files} > '"'$received'" ""
 add_names 'a b.nm' 'sub dir/c d.nm'
 verify >/dev/null
 check "NameWithSpace_ArrivesAsOneArgument: a split name would check no file" \
-  'received_has "a b.nm" && received_has "sub dir/c d.nm" && [ "$(received_total)" -eq 2 ]'
+  'received_has "a b.nm" && received_has "sub dir/c d.nm" && [ "$(received_total)" -eq "$spaced_names_total" ]'
 
 new_item hostile ""
 configure 'printf "%s\n" {files} > '"'$received'" ""
@@ -116,8 +117,10 @@ new_item mutationfailing ""
 configure 'true' 'echo "mutants survived" >&2; exit 1; # {files}'
 add_names 'm n.nm'
 verify >/dev/null
-check "MutationFailing_ShowsAsASignalWithItsReason: a failing mutation run is never a silent pass" \
-  '[ "$(check_field status mutation)" = signal ] && check_field summary mutation | grep -qF "mutants survived"'
+check "MutationFailing_IsASignal: a failing mutation run is never a silent pass" \
+  '[ "$(check_field status mutation)" = signal ]'
+check "MutationFailing_GivesItsReason: the report carries what the command said" \
+  'check_field summary mutation | grep -qF "mutants survived"'
 
 new_item nestedsingle ""
 configure "sh -c 'for f in {files}; do printf \"%s\\n\" \"\$f\" >> \"$received\"; done'" ""
@@ -140,8 +143,10 @@ configure '' ""
 add_names kept.nm
 verify >/dev/null
 empty_result=$?
-check "EmptyFormatCommand_FailsVerifyAndNamesTheCheck: a config verify cannot use is never a pass" \
-  '[ "$empty_result" -eq 1 ] && [ "$(failed_checks)" = format ]'
+check "EmptyFormatCommand_FailsVerify: a config verify cannot use is never a pass" \
+  '[ "$empty_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+check "EmptyFormatCommand_NamesTheCheck: the report says which check failed" \
+  '[ "$(failed_checks)" = format ]'
 check "EmptyFormatCommand_GivesItsReason: the report says why the check failed" \
   'check_field summary format | grep -qi empty'
 
@@ -151,6 +156,69 @@ add_names "line
 break.nm"
 verify >/dev/null
 newline_result=$?
-check "NewlineNameInQuotedFiles_FailsTheCheckWithItsReason: a name that cannot be escaped is never dropped silently" \
-  '[ "$newline_result" -eq 1 ] && [ "$(failed_checks)" = format ] && check_field summary format | grep -qi newline'
+check "NewlineNameInQuotedFiles_FailsVerify: a name that cannot be escaped is never dropped silently" \
+  '[ "$newline_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+check "NewlineNameInQuotedFiles_NamesTheCheck: the report says which check failed" \
+  '[ "$(failed_checks)" = format ]'
+check "NewlineNameInQuotedFiles_GivesItsReason: the report says why" \
+  'check_field summary format | grep -qi newline'
+
+new_item separator ""
+configure 'true' ""
+add_names "a$(printf '\037')b.nm"
+verify >/dev/null
+separator_result=$?
+check "NameWithUnitSeparator_FailsVerify: a name verify cannot hand on is never a silent pass" \
+  '[ "$separator_result" -eq 1 ] && [ "$(report_status)" = fail ]'
+check "NameWithUnitSeparator_NamesTheChangedFilesCheck: the report says which check failed" \
+  '[ "$(failed_checks)" = "changed files" ]'
+
+new_item noextensions ""
+configure 'true' "" '[]'
+add_names kept.nm
+verify >/dev/null
+noextensions_result=$?
+check "FormatCommandWithNoExtensions_FailsVerify: verify cannot tell which files it covers, so it never passes" \
+  '[ "$noextensions_result" -eq 1 ] && [ "$(failed_checks)" = format ]'
+check "FormatCommandWithNoExtensions_GivesItsReason: the report says the extensions are missing" \
+  'check_field summary format | grep -qi extensions'
+
+new_item nestedtoodeep ""
+configure "sh -c 'sh -c \"true {files}\"'" ""
+add_names kept.nm
+verify >/dev/null
+nestedtoodeep_result=$?
+check "FilesInsideNestedQuotes_FailsVerify: the names could not stay data through two shells, so the check never passes" \
+  '[ "$nestedtoodeep_result" -eq 1 ] && [ "$(failed_checks)" = format ]'
+check "FilesInsideNestedQuotes_GivesItsReason: the report says to pass the names on as arguments" \
+  'check_field summary format | grep -qF nested'
+
+new_item reportedcommand ""
+configure 'true {files}' ""
+add_names kept.nm
+verify >/dev/null
+check "FormatCheck_ReportsTheConfiguredCommand: the report shows the command as written, not the names it ran on" \
+  '[ "$(check_field command format)" = "true {files}" ]'
+
+new_item mutatingspaced ""
+configure 'true' "printf '%s\\n' {files} > '$received'"
+printf "x\n" > "$worktree/gone.nm" && git -C "$worktree" add -A && git -C "$worktree" commit -qm gone
+add_names 'm n.nm'
+rm "$worktree/gone.nm"
+verify >/dev/null
+check "MutationWithFiles_GetsANameWithASpaceAsOneArgument: a split name would mutate no file" \
+  'received_has "m n.nm"'
+check "MutationWithFiles_DoesNotPassADeletedFile: a mutation tool cannot read a file that is gone" \
+  '[ -s "$received" ] && ! received_has gone.nm'
+
+new_item newlinescope '  guarded:
+    command: '"'false'"'
+    paths: [src/**/*.cs]'
+configure 'true' ""
+add_names "src/x
+y.cs"
+verify >/dev/null
+newlinescope_result=$?
+check "NewlineNameUnderAGatesPaths_RunsTheGate: a name is matched whole, so the gate is not skipped" \
+  '[ "$newlinescope_result" -eq 1 ] && [ "$(failed_checks)" = "gate guarded" ]'
 exit "$((fails > 0))"
