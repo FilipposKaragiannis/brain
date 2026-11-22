@@ -11,6 +11,8 @@ trap 'sandbox_close $?' EXIT
 . "$here/_github_fixture.sh"
 . "$here/_jobs_fixture.sh"
 . "$here/_worktree_helpers.sh"
+printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > "$home2/config.yaml"
+FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null
 echo "gate list --json"
 mkdir -p "$work/gates" && cd "$work/gates" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach ../app-wt-2
