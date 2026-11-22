@@ -16,7 +16,7 @@ cd "$project"
 git init -q -b main
 git config user.email tests@example.test
 git config user.name Tests
-printf 'exit 0\n' > "$suite/sessions.sh"
+printf 'echo "  ok   StubCheck_Holds"\n' > "$suite/sessions.sh"
 printf 'test "$1" = verify\n' > "$suite/run.sh"
 for name in base-claim base-readers verify-scope; do printf 'exit 0\n' > "$suite/$name.sh"; done
 printf 'test "$1" != jira\n' > "$suite/adapter-contract.sh"
@@ -32,8 +32,11 @@ mkdir -p plugins/flow/changelog.d
 echo release > plugins/flow/changelog.d/release.md
 expect 'OneChangedSuite_RunsAlone because an unrelated failing adapter cannot affect it' "$(result)" pass
 expect 'SelectedSuite_IsReported because the verifier needs to show what ran' "$(head -1 "$work/output")" 'flow: selected sessions'
-printf 'exit 1\n' > "$suite/sessions.sh"
+expect 'PassingSuite_PrintsItsLinesWithItsName because a pass needs its evidence' "$(grep -c '^\[sessions\]   ok   StubCheck_Holds$' "$work/output")" 1
+expect 'PassingSuite_KeepsItsSummaryLine because the verifier reads the outcome per suite' "$(grep -c '^flow: sessions pass ([0-9.]*s)$' "$work/output")" 1
+printf 'echo "  FAIL StubCheck_Holds"\nexit 1\n' > "$suite/sessions.sh"
 expect 'SelectedSuiteFails_FailsVerification because a partial run must propagate failure' "$(result)" fail
+expect 'FailingSuite_PrintsItsLinesWithItsName because the failure must name its suite' "$(grep -c '^\[sessions\]   FAIL StubCheck_Holds$' "$work/output")" 1
 git restore plugins/flow/tests/sessions.sh
 expect 'OnlyTheChangelogChanged_SelectsNothing because release notes are no test input' "$(result)" pass
 expect 'NothingSelected_SaysSo because a verifier must see that no suite ran' "$(head -1 "$work/output")" 'flow: no Flow test inputs changed'

@@ -1,7 +1,6 @@
 """Select Brain's Flow tests and run independent suites in their own sandboxes."""
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -102,6 +101,14 @@ def run_suite(command, log):
     return result.returncode, time.monotonic() - started
 
 
+def print_output(name: str, log: Path) -> None:
+    prefix = f"[{name}] ".encode()
+    with log.open("rb") as output:
+        for line in output:
+            sys.stdout.buffer.write(prefix + line.rstrip(b"\n") + b"\n")
+    sys.stdout.buffer.flush()
+
+
 def run_selected(suites, directory):
     status = 0
     with ThreadPoolExecutor(max_workers=WORKERS) as workers:
@@ -109,10 +116,9 @@ def run_selected(suites, directory):
         for finished in as_completed(running):
             name = running[finished]
             code, elapsed = finished.result()
+            print_output(name, directory / name)
             print(f"flow: {name} {'FAIL' if code else 'pass'} ({elapsed:.1f}s)", flush=True)
             if code:
-                with (directory / name).open("rb") as log:
-                    shutil.copyfileobj(log, sys.stdout.buffer)
                 status = 1
     return status
 
