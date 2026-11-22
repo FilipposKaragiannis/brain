@@ -270,13 +270,12 @@ run_check() {
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
   cmd="$(printf '%s' "$command" | sed "s|{files}|$files|g")"
   printf '\n== %s: %s\n' "$name" "$cmd" >> "$log"
-  check_started="$(now_seconds)"
-  if out="$(sh -c "$cmd" 2>&1)"; then st="pass"; summary="ok"
+  check_started="$(now_seconds)"; log_start="$(($(wc -c < "$log") + 1))"
+  if sh -c "$cmd" >> "$log" 2>&1; then st="pass"; summary="ok"
   else
     st="fail"; [ "$kind" = "signal" ] && st="signal"
-    summary="$out"
+    summary="$(tail -c "+$log_start" "$log")"
   fi
-  printf '%s\n' "$out" >> "$log"
   [ "$st" = "fail" ] && failed "$name"
   record "$name" "$st" "$cmd" "$summary" "$(( $(now_seconds) - check_started ))" ""
   [ "$st" = "pass" ]
