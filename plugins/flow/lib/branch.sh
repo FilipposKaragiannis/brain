@@ -45,7 +45,7 @@ branch_key() { printf '%s' "${1#*[#:]}" | LC_ALL=C tr 'A-Z/' 'a-z-'; }
 # branch_title <title>: the title folded to ASCII, lower-cased, each run of other characters as one
 # -, trimmed of -, cut to branch_title_length_cap characters and trimmed of - again.
 branch_title() {
-  python3 -I -c '
+  cached_python3 -I -c '
 import re, sys, unicodedata
 folded = unicodedata.normalize("NFKD", sys.argv[1]).encode("ascii", "ignore").decode("ascii").lower()
 hyphenated = re.sub("[^a-z0-9]+", "-", folded).strip("-")
@@ -124,7 +124,7 @@ branch_remote_default() {
 # branch_title_length_cap, the rest literal.
 branch_fits_template() {
   [ -n "$2" ] || return 1
-  python3 -I -c '
+  cached_python3 -I -c '
 import re, sys
 branch, template, cap = sys.argv[1], sys.argv[2], int(sys.argv[6])
 exact_placeholders = list(zip(("{slug}", "{key}", "{kind}"), sys.argv[3:6]))

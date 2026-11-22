@@ -76,7 +76,7 @@ elif [ -z "$item" ]; then
   [ -z "$pick" ] || trackers="$(pick_trackers "$pick" $trackers)" || exit 2
   notes="$home/runs/.notes.$$"; rm -f "$notes"
   listed="$(FLOW_READY_NOTES="$notes"; export FLOW_READY_NOTES
-    for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | python3 -I -c '
+    for a in $trackers; do adapter list-ready "$a" ${pick:+--pick "$pick"} 2>/dev/null; done | cached_python3 -I -c '
 import json, os, sys
 seen, out = set(), []
 for line in sys.stdin:
@@ -97,7 +97,7 @@ fi
 # claim and the run record happen under one lock. The brief is written after it is released.
 flow_lock pick || { echo "another run is picking an item for over ${FLOW_LOCK_WAIT:-60}s; try again" >&2; exit 7; }
 if [ -z "$item" ]; then
-  item="$(printf '%s\n%s\n' "$ready" "$notready" | python3 -I "$FLOW_PLUGIN/scripts/_pick.py" "$FLOW_PLUGIN" "$home/runs" "${FLOW_NEXT_FULL:-}" "${FLOW_NEXT_SKIP:-}")"; code=$?
+  item="$(printf '%s\n%s\n' "$ready" "$notready" | cached_python3 -I "$FLOW_PLUGIN/scripts/_pick.py" "$FLOW_PLUGIN" "$home/runs" "${FLOW_NEXT_FULL:-}" "${FLOW_NEXT_SKIP:-}")"; code=$?
   case "$code" in
     0) ;;
     3|5) echo "$item" >&2; exit "$code" ;;
@@ -194,10 +194,10 @@ else
   base="$(state_get "$data" base)"; base_name_valid "$base" || base="$config_base"
 fi
 reports="$(reports_dir "$item" "$worktree")"; mkdir -p "$reports"
-touches="$(json_list "$data" state.touches | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
+touches="$(json_list "$data" state.touches | cached_python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')"
 # The run's owner: the unattended loop (it exports its pid), else the host session that called this
 # script. The health job reads it to tell a live run from a dead one.
-owner="${FLOW_RUN_PID:-$(python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
+owner="${FLOW_RUN_PID:-$(cached_python3 -I "$FLOW_PLUGIN/scripts/_health.py" owner)}"
 # A number in JSON has no leading zero, so the zeros go (never $((...)), which reads 0123 as octal).
 case "$owner" in *[!0-9]*) owner="" ;; 0*) owner="${owner#"${owner%%[!0]*}"}"; owner="${owner:-0}" ;; esac
 json_obj "item=$item" "step=$step" "profile=$profile" "worktree=$worktree" "reports=$reports" "host=$(host_name)" \

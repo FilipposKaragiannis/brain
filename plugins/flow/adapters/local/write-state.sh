@@ -4,4 +4,4 @@
 # last gate's answered, asked, answer, answered_at, answer_pending). Lists are comma-separated.
 . "$(dirname "$0")/../../lib/flow.sh"
 [ $# -ge 2 ] || die "usage: write-state <id> key=value..." 2
-python3 -I "$FLOW_PLUGIN/adapters/local/_item.py" write-state "$(flow_home)" "$@"
+cached_python3 -I "$FLOW_PLUGIN/adapters/local/_item.py" write-state "$(flow_home)" "$@"

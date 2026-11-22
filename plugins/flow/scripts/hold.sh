@@ -76,17 +76,17 @@ cmd_candidates() {
         [ -n "$root" ] && [ -f "$f" ] && { plan="$f"; break; }
       done
       json_obj "id=$other" "title=$(json_get "$od" title)" "by=$kind" \
-        "globs:=$(printf '%s\n' "$globs" | python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')" \
+        "globs:=$(printf '%s\n' "$globs" | cached_python3 -I -c 'import json,sys; print(json.dumps([l.rstrip("\n") for l in sys.stdin if l.strip()]))')" \
         "plan=$plan" "step=$(state_get "$od" step)"
       echo
     done)"
   fi
   if [ "$as_json" -eq 1 ]; then
-    printf '%s\n' "$rows" | python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))'
+    printf '%s\n' "$rows" | cached_python3 -I -c 'import json,sys; print(json.dumps([json.loads(l) for l in sys.stdin if l.strip()]))'
     return 0
   fi
   [ -n "$rows" ] || return 0
-  printf '%s\n' "$rows" | python3 -I -c '
+  printf '%s\n' "$rows" | cached_python3 -I -c '
 import json, sys
 for line in sys.stdin:
     if not line.strip(): continue
