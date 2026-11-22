@@ -4,7 +4,7 @@ Non-exhaustive. Each rule is marked **[hard]** (can be checked by a tool or a re
 
 ## 0. How these rules are used
 
-- **U-01 Scope.** Language-neutral rules first; language specifics live in appendices (C# today). *Why:* the marketplace serves more than one language, so the philosophy must not be tied to C# syntax.
+- **U-01 Scope.** Language-neutral rules first; language specifics live in appendices (C#, shell and Python today), one per language, each naming the file types it covers and loaded only for them. *Why:* the marketplace serves more than one language, so the philosophy must not be tied to C# syntax.
 - **U-02 Breaking a [judgement] rule must be declared in three places:** the commit message, the PR body, and the review. *Why:* each is read at a different time by a different reader (log, reviewer, merge gate); one silent breach anywhere starts a review-and-fix loop.
 - **U-03 A [hard] rule is a gate, not advice.** It is checked by a tool (analyzer, hook, CI) wherever one exists, and by the review otherwise. *Why:* rules that are only suggested are the ones agents skip.
 - **U-04 A [signal] rule is a smell detector.** Numbers like complexity, nesting and size are guides that say "this is growing the wrong way", mostly for production code. Crossing one means the agent splits the code or states why not. *Why:* a hard numeric limit invites complexity added only to dodge the limit.
@@ -120,6 +120,8 @@ Non-exhaustive. Each rule is marked **[hard]** (can be checked by a tool or a re
 
 ## Appendix A. C#
 
+Files: `.cs`.
+
 - **CS-01** `sealed` and `internal` by default. `public` only across an assembly boundary.
 - **CS-02** `var` preferred. Private fields `_camelCase`, constants `PascalCase`, interfaces `IPascalCase`.
 - **CS-03** Nullable reference types enabled everywhere.
@@ -133,3 +135,44 @@ Non-exhaustive. Each rule is marked **[hard]** (can be checked by a tool or a re
 - **CS-11** Doc comments are `///`, on public APIs and boundaries only: above `public` declarations and on `interface` and `enum` members.
 - **CS-12** `.editorconfig` severities drive the Roslyn style and usage analyzers; `dotnet format` is the formatter.
 - **CS-13** A parameter is `ref` only when the method's name says it changes that argument (M-08). A method that decides takes `in` or a value and returns a result, a `readonly struct` when it carries more than one value.
+
+## Appendix B. Shell
+
+Files: `.sh`.
+
+- **SH-01** Target POSIX `sh`. No bash features.
+- **SH-02** Start with `set -u`. Check every command whose failure matters. Never report success after a failed step.
+- **SH-03** Quote every expansion. Pass a list as `"$@"` or read it line by line, never by word splitting.
+- **SH-04** Data never becomes code. No `eval`, and no `sh -c` on a string that holds data. Pass data as arguments, with `--` before file names.
+- **SH-05** No new parsing of JSON, YAML or shell syntax with `sed`, `awk` or `grep`. One Python or `jq` call reads structured data.
+- **SH-06** Resolve a value once per script and pass it on. Never start a process per item in a loop.
+- **SH-07** A function assigns only names that carry its prefix. It returns through stdout or its exit status.
+- **SH-08** Write state files through a temp file and `mv`.
+- **SH-09** Temp files come from `mktemp`, and a `trap` removes them.
+- **SH-10** A script over 300 lines, or one that needs data structures, moves its logic to Python.
+- **SH-11** A header says what the script does and takes. A function has one contract line. No other comments.
+- **SH-12** One sandboxed test file per area that runs alone. One behaviour per check, named `Scenario_Outcome`. Waits poll with a bound.
+- **SH-13** ShellCheck is clean on new and touched lines. A `disable` note gives its reason.
+
+## Appendix C. Python
+
+Files: `.py`.
+
+- **PY-01** PEP 8. Ruff formats, sorts imports and lints.
+- **PY-02** Type annotations on every function signature. One type checker runs in lint, with today's findings recorded as a baseline.
+- **PY-03** Records are frozen dataclasses or named tuples. A function does not mutate its arguments.
+- **PY-04** Outside data is parsed at the boundary into a dataclass. Inside, code uses the typed value, not a raw dict.
+- **PY-05** Resources use `with`. Large or lazy sequences use generators.
+- **PY-06** Catch the specific library exception where it is raised and turn it into a value or a clear exit. Own code does not raise for an expected outcome (S-13), and builds no exception class trees (D-03). No bare `except`, no handler that only passes. Chain with `from`.
+- **PY-07** No default value on a function parameter (D-09). A field of a wire or config record may default where its key can be absent, never to a mutable value. Compare to `None` with `is`. Use `isinstance`. No `import *`.
+- **PY-08** Secrets come from the environment, never from source. A missing one stops the script at start.
+- **PY-09** Security lint runs in the build.
+- **PY-10** Tests use pytest, a test-only tool installed in CI, marked unit or integration.
+- **PY-11** A `Protocol` states an interface, only where a second implementation or a test seam needs one.
+- **PY-12** A function returns its value. Only `main` prints. Diagnostics go to stderr.
+- **PY-13** Target Python 3.9, standard library only at run time.
+- **PY-14** Run as `python3 -I`, with `main()` behind the `__main__` guard.
+- **PY-15** One process handles the whole batch. Shell never starts it once per item.
+- **PY-16** Write state through a temp file and `os.replace`.
+- **PY-17** A subprocess gets an argument list and a timeout.
+- **PY-18** Time and randomness come in as arguments.
