@@ -42,18 +42,18 @@ while [ "$i" -lt "$count" ]; do
   i=$((i + 1))
   [ -n "$line_tok" ] && [ -n "$globs" ] || continue
   # shellcheck disable=SC2086
-  diff="$(git -c core.quotePath=false diff $diff_args --diff-filter=ACMRT -U1 --no-color -- $globs 2>/dev/null || true)"
+  diff="$(git diff $diff_args --diff-filter=ACMRT -U1 --no-color -- $globs 2>/dev/null || true)"
   [ -n "$diff" ] || continue
   # shellcheck disable=SC2086
-  git -c core.quotePath=false diff $diff_args --name-only --diff-filter=ACMRT -- $globs > "$work_dir/names" 2>/dev/null || true
+  git diff $diff_args -z --name-only --diff-filter=ACMRT -- $globs > "$work_dir/names-nul" 2>/dev/null || true
+  LC_ALL=C xargs -0 sh -c 'for name; do printf "%s\n%s\n" "${#name}" "$name"; done' sh < "$work_dir/names-nul" > "$work_dir/names"
+  committed_content_root="./"
   if [ "$diff_args" = "--cached" ]; then
-    # shellcheck disable=SC2086
-    git diff $diff_args -z --name-only --diff-filter=ACMRT -- $globs > "$work_dir/names-nul" 2>/dev/null || true
     git -c core.symlinks=false checkout-index -f -z --stdin --prefix="$work_dir/content/" < "$work_dir/names-nul" \
       || block "the staged content could not be read" "  git checkout-index failed on the staged files."
     committed_content_root="$work_dir/content/"
-  else committed_content_root="./"; fi
-  found="$(printf '%s\n' "$diff" | awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
+  fi
+  found="$(printf '%s\n' "$diff" | LC_ALL=C awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
       -v markers="$markers" -v kinds="$kinds" -v committed_content_root="$committed_content_root" -v names_path="$work_dir/names" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
     BEGIN { nk = split(kinds, karr, " "); for (k = 1; k <= nk; k++) if (karr[k] != "") okkind[karr[k]] = 1 }
     function flush() { if (pending != "") { hits = hits pending; pending = "" } }
@@ -63,25 +63,12 @@ while [ "$i" -lt "$count" ]; do
       }
       return ""
     }
-    function unquote(name,   unquoted, position, character) {
-      if (substr(name, 1, 1) != "\"") return name
-      name = substr(name, 2, length(name) - 2); unquoted = ""
-      for (position = 1; position <= length(name); position++) {
-        character = substr(name, position, 1)
-        if (character != "\\") { unquoted = unquoted character; continue }
-        unquoted = unquoted escape_text(substr(name, position + 1, 3))
-        position += escape_width(substr(name, position + 1, 1))
-      }
-      return unquoted
+    function next_name(   byte_count, name, continuation) {
+      if ((getline byte_count < names_path) <= 0) return ""
+      getline name < names_path
+      while (length(name) < byte_count) { getline continuation < names_path; name = name "\n" continuation }
+      return name
     }
-    function next_name(   raw_name) { return (getline raw_name < names_path) > 0 ? unquote(raw_name) : "" }
-    function escape_width(first) { return first ~ /[0-7]/ ? 3 : 1 }
-    function escape_text(after_backslash,   first) {
-      first = substr(after_backslash, 1, 1)
-      if (first ~ /[0-7]/) return sprintf("%c", octal_value(after_backslash))
-      return first == "t" ? "\t" : first == "n" ? "\n" : first
-    }
-    function octal_value(digits,   value, position) { value = 0; for (position = 1; position <= length(digits); position++) value = value * 8 + substr(digits, position, 1); return value }
     function doc_allowed(file, line,   path, l, i, k, indentation, line_indent, kind, lines) {
       # True when the declaration at line, or the nearest enclosing type declaration (the first
       # type keyword above it at a smaller indentation), is one of the allowed kinds.

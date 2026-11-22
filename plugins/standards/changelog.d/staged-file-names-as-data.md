@@ -7,5 +7,6 @@ bump: patch
   <names>`. A `{files}` inside quotes, as in `sh -c 'for f in {files}; ...'`, still sees the names:
   each is backslash-escaped for the nested shell. A name with a newline in such a command blocks.
 - A failing formatter's report lists the files it was given.
-- The comment hook takes file names from git, never from the diff text, reads staged content
-  without following symlinks, and blocks when it cannot read the diff.
+- The comment hook takes file names from git, never from the diff text, so a name with a tab,
+  carriage return, newline, backslash, quote or non-ASCII letter keeps its own content lookup. It
+  reads staged content without following symlinks, and blocks when it cannot read the diff.

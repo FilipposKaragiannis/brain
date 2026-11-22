@@ -30,6 +30,10 @@ names_do() {
   "$@" "line1
 line2.cs"
   "$@" '-dash.cs'
+  "$@" "tab	name.cs"
+  "$@" "$(printf 'carriage\rreturn.cs')"
+  "$@" 'back\slash.cs'
+  "$@" 'café.cs'
 }
 write_interface() { printf 'interface I {\n  /// doc\n  void M();\n}\n' > "$1"; }
 write_line_comment() { printf 'class A {\n  // note\n}\n' > "$1"; }
@@ -79,7 +83,7 @@ echo "check-format: names reach the formatter intact"
 names_do write_interface
 git add -A
 run_hook check-format.sh; format_status=$?
-check "FormatCommand_EverySpecialNameIsAFileToTheFormatter: the formatter found each of the eight names as one file and the hook exited 0" [ "$format_status" -eq 0 ]
+check "FormatCommand_EverySpecialNameIsAFileToTheFormatter: the formatter found each of the twelve names as one file and the hook exited 0" [ "$format_status" -eq 0 ]
 check "FormatCommand_CraftedNamesCreateNoFile: no name ran as a command" no_injection
 names_do bad_name_blocks
 
@@ -211,6 +215,14 @@ run_hook check-comments.sh; forge_status=$?
 check "CommentHook_ForgedHeaderLineStillBlocks: the line comment was reported and the hook exited 2" [ "$forge_status" -eq 2 ]
 check "CommentHook_ForgedHeaderLineKeepsTheRealName: the report names sub/Forge.cs and not the forged name" sh -c 'grep -qF "sub/Forge.cs:3" "$1" && ! grep -qF "forged.cs:" "$1"' sh "$work/stderr"
 check "CommentHook_NestedFileIsCheckedBesideARootFile: a root .cs file does not hide sub/Forge.cs" grep -qF 'sub/Forge.cs' "$work/stderr"
+
+echo "check-comments: a carriage return name does not borrow the content of a look-alike name"
+git reset -q --hard "$base"
+printf 'class Private {\n  /// doc\n  void M() {}\n}\n' > "$(printf 'A\r.cs')"
+write_interface Ar.cs
+git add -A
+run_hook check-comments.sh; look_alike_status=$?
+check "CommentHook_CarriageReturnNameKeepsItsOwnContent: the doc in the class named with a carriage return was reported although Ar.cs holds an interface" [ "$look_alike_status" -eq 2 ]
 
 echo "check-comments: a symlink replaced by a regular file"
 git reset -q --hard "$base"
