@@ -140,7 +140,7 @@ check "CsharpOnly_InstallsNoShellOrPythonAppendix: no shell or Python rules load
   sh -c '[ ! -e .standards/rules/shell.md ] && [ ! -e .standards/rules/python.md ] && [ ! -e .claude/rules/standards-shell.md ] && [ ! -e .claude/rules/standards-python.md ]'
 check "CsharpOnly_ScopesTheCsharpAppendixToCsFiles: the C# rule loads for .cs files alone" \
   [ "$(paths_of .claude/rules/standards-csharp.md)" = "**/*.cs" ]
-check "CsharpOnly_BlockNamesTheCsharpAppendixAlone: the AGENTS.md block points at the C# appendix file and at no appendix init left out" \
+check "CsharpOnly_BlockNamesTheCsharpAppendixAlone because the block must not point at a rule file init left out" \
   [ "$(named_appendices AGENTS.md)" = ".standards/rules/csharp.md " ]
 check "CsharpOnlySecondInstall_ChangesNothing: init run again in the C# project leaves every file as it was" \
   unchanged_on_second_install "$work/csharp"
@@ -157,7 +157,7 @@ check "ShellAndPython_InstallsNoCsharpAppendix: a shell read never loads the C# 
   sh -c '[ ! -e .standards/rules/csharp.md ] && [ ! -e .claude/rules/standards-csharp.md ]'
 check "ShellAndPython_CommonRulesLoadForBothLanguages: a common section keeps the globs of every configured language" \
   [ "$(paths_of .claude/rules/standards-design.md | tr '\n' ' ')" = "**/*.sh **/*.py " ]
-check "ShellAndPython_BlockNamesTheShellAndPythonAppendices: the AGENTS.md block points at the shell and Python appendix files in the plugin's order, and not at the C# one" \
+check "ShellAndPython_BlockNamesTheShellAndPythonAppendices because an agent opens the files the block names, in a stable order" \
   [ "$(named_appendices AGENTS.md)" = ".standards/rules/shell.md .standards/rules/python.md " ]
 check "ShellAndPythonSecondInstall_ChangesNothing: init run again in the shell and Python project leaves every file as it was" \
   unchanged_on_second_install "$work/scripts"
@@ -179,7 +179,7 @@ echo "init: a project whose languages have no appendix"
 new_project "$work/go"
 mkdir -p .standards && printf '%s\n' '{"version": "0.0.0", "languages": [{"name": "go", "extensions": [".go"], "format": []}], "build": "true", "test": "true"}' > .standards/config.json
 "$init" > "$work/go.init.out" 2>&1
-check "NoAppendixLanguage_BlockNamesNoAppendix: the AGENTS.md block holds no language sentence when no configured language has an appendix" \
+check "NoAppendixLanguage_BlockNamesNoAppendix because a sentence with no file would send an agent nowhere" \
   sh -c 'grep -q "standards:begin" AGENTS.md && ! grep -q -e "Language conventions" -e "rules/[a-z]*\.md" AGENTS.md'
 
 echo "init: the drift check"
@@ -194,11 +194,11 @@ json.dump(config, open(path, "w"))' .standards/config.json
 printf '# Testing guide\n' > .standards/testing-guide.md
 "$init" > "$work/drift.init.out" 2>&1
 "$init" --check > "$work/drift.installed.out" 2>&1; installed_check_status=$?
-check "Installed_CheckReportsNoDrift: init --check right after an install exits 0 and finds nothing to change" \
+check "Installed_CheckReportsNoDrift because a fresh install that reads as drift would make every check cry wolf" \
   [ "$installed_check_status" -eq 0 ]
 keep_only_the_first_language
 "$init" --check > "$work/drift.languages.out" 2>&1
-check "LanguagesChanged_CheckReportsTheBlockDrift: once Python leaves the config, init --check names the AGENTS.md block as drift" \
+check "LanguagesChanged_CheckReportsTheBlockDrift because the block would keep naming a rule file the project no longer installs" \
   grep -qxF "init: drift: AGENTS.md block" "$work/drift.languages.out"
 
 echo "init: machine scope"
@@ -215,7 +215,7 @@ for entry in appendices:
     paths = [line.strip()[len("- \""):-len("\"")] for line in lines[2:lines.index("---", 1)]]
     assert paths == ["**/*" + extension for extension in entry["extensions"]], (entry, paths)' \
   "$plugin_copy/rules/appendices.json" "$machine_claude_home/rules"
-check "MachineScope_BlockNamesEveryAppendix: the user block, shared by every project, points at every appendix file the plugin ships" \
+check "MachineScope_BlockNamesEveryAppendix because the user block serves every project, whatever its languages" \
   [ "$(named_appendices "$machine_claude_home/CLAUDE.md")" = ".standards/rules/csharp.md .standards/rules/shell.md .standards/rules/python.md " ]
 
 echo "init: the drift hash"
