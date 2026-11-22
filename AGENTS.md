@@ -27,8 +27,8 @@ point one at a real project, its worktrees or the owner's console settings.
 Full text with reasons in `.standards/rules/`. Cite rules by id. Rules bind new and touched code
 only; existing code is not refactored to meet a rule (U-05). A [judgement] breach is declared in the
 commit message, the PR body and the review (U-02). Language conventions, one file per configured
-language: `.standards/rules/csharp.md` (C#), `.standards/rules/shell.md` (Shell) and
-`.standards/rules/python.md` (Python). Project rules outside this block win where they are stricter.
+language: `.standards/rules/shell.md` (Shell) and `.standards/rules/python.md` (Python). Project
+rules outside this block win where they are stricter.
 
 ## Hard rules (a breach blocks)
 - D-03 Compose, don't inherit.
