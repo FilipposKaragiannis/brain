@@ -215,10 +215,12 @@ esac
 
 ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
+base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
 changed="$(git diff --no-renames --name-only "$merge_base" HEAD 2>/dev/null; git diff --no-renames --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"
 changed="$(printf '%s\n' "$changed" | grep -v '^$' | grep -v '^\.flow/' | sort -u)"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
+[ "$base_commit" != unavailable ] || printf 'the comparison base %s cannot be resolved: every check with paths runs, and {verify_base} is unavailable\n' "$base" >> "$log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
@@ -262,19 +264,25 @@ $1
 EOF_GLOBS
   return 1
 }
+in_scope() { [ "$base_commit" = unavailable ] || changed_matches "$1"; }
+command_with_verify_base() {
+  case "$1" in
+    *'{verify_base}'*) printf '%s\n' "$1" | sed "s/{verify_base}/$base_commit/g" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
 
 run_check() {
   # run_check <name> <command> <kind: gate|signal> [files]: true when the command passed.
   name="$1"; command="$2"; kind="$3"; files="${4:-}"
   cmd="$(printf '%s' "$command" | sed "s|{files}|$files|g")"
   printf '\n== %s: %s\n' "$name" "$cmd" >> "$log"
-  check_started="$(now_seconds)"
-  if out="$(sh -c "$cmd" 2>&1)"; then st="pass"; summary="ok"
+  check_started="$(now_seconds)"; log_start="$(($(wc -c < "$log") + 1))"
+  if sh -c "$cmd" >> "$log" 2>&1; then st="pass"; summary="ok"
   else
     st="fail"; [ "$kind" = "signal" ] && st="signal"
-    summary="$out"
+    summary="$(tail -c "+$log_start" "$log")"
   fi
-  printf '%s\n' "$out" >> "$log"
   [ "$st" = "fail" ] && failed "$name"
   record "$name" "$st" "$cmd" "$summary" "$(( $(now_seconds) - check_started ))" ""
   [ "$st" = "pass" ]
@@ -286,7 +294,8 @@ scoped_check() {
   # and files (lib/checks.sh) is reported as that pass, named with its run, and nothing runs;
   # --fresh runs the command whatever is kept. A test pass is kept for the next run, and a fail
   # drops what is kept. A build has no key, so it always runs and nothing of it is kept.
-  if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
+  if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
+  set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4"
   inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
   if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
@@ -342,7 +351,7 @@ for name in $(yaml_keys "$(config_file)" gates); do
   command="$(cfg "gates.$name")"; paths=""
   if [ -z "$command" ]; then command="$(cfg "gates.$name.command")"; paths="$(cfg "gates.$name.paths")"; fi
   [ -n "$command" ] || continue
-  if [ -n "$paths" ] && ! changed_matches "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
+  if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
   run_check "gate $name" "$command" gate
 done
 feel=false
@@ -361,7 +370,7 @@ report_failed() {
   fail_report report "could not build the report: $cause" "The report could not be built: $cause"
   exit 1
 }
-err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$merge_base" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
+err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
   || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]

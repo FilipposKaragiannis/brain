@@ -30,7 +30,7 @@
     },
     {
       "name": "flow",
-      "command": "tools/test.sh flow",
+      "command": "tools/test.sh flow-since {verify_base}",
       "paths": [
         "plugins/flow/**",
         "shared/**",
