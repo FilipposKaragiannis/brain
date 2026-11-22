@@ -95,6 +95,8 @@ plugins/flow/tests/jira-adapter.sh	SC2034	4
 plugins/flow/tests/jira-adapter.sh	SC2154	1
 plugins/flow/tests/jobs.sh	SC2034	3
 plugins/flow/tests/jobs.sh	SC2154	5
+plugins/flow/tests/lost-result.sh	SC2034	2
+plugins/flow/tests/lost-result.sh	SC2154	4
 plugins/flow/tests/main-worktree-once.sh	SC2034	2
 plugins/flow/tests/main-worktree-once.sh	SC2154	4
 plugins/flow/tests/pick.sh	SC1010	1

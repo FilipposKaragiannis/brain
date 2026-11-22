@@ -224,11 +224,11 @@ if [ "$step" = sync ]; then
       [ -n "$gate" ] || gate="ambiguity"
       raise_asked "$gate" "${message:-$summary}"
       report 4 "" "$gate" ;;
-    fail)
+    fail|lost)
       "$FLOW_PLUGIN/scripts/gate.sh" raise "$item" escalation "The sync step could not merge into the task branch: ${summary:-no summary}" >/dev/null \
         || gate_not_recorded escalation
       report 4 "" escalation ;;
-    *) die "unknown status '$status' (done, fail or gate)" 2 ;;
+    *) die "unknown status '$status' (done, fail, gate or lost)" 2 ;;
   esac
 fi
 
@@ -283,7 +283,7 @@ case "$status" in
     raise_asked "$gate" "${message:-$summary}"
     step_write "$item" "step=$step" >/dev/null
     report 4 "" "$gate" ;;
-  fail)
+  fail|lost)
     rm -f "$asked_file"
     # A verify run that was stopped (its limit, a signal, a run that died: the report's `stopped`)
     # failed no check, so no step has anything to fix: the item stays at verify, no attempt is
@@ -305,13 +305,14 @@ case "$status" in
       report 4 "" escalation
     fi
     fix="$(json_get "$profiles" "fix_step.$step")"; [ -n "$fix" ] || fix="$step"
+    [ "$status" != lost ] || fix="$step"
     step_write "$item" "step=$fix" "attempts=$attempts" "last_event=$(now_iso) $step failed (attempt $attempts): ${summary:-no summary}" >/dev/null \
       || state_not_recorded "attempt $attempts of step $step"
     adapter comment "$item" --body "Step $step failed (attempt $attempts of ${max:-3}): ${summary:-no summary}. Back to $fix." >/dev/null
     finish_run
     report 0 "$fix" "" ;;
   done) ;;
-  *) die "unknown status '$status' (done, fail or gate)" 2 ;;
+  *) die "unknown status '$status' (done, fail, gate or lost)" 2 ;;
 esac
 step_asked="$(json_get "$run" asked)"
 [ -n "$step_asked" ] || step_asked="$(cat "$asked_file" 2>/dev/null)"
