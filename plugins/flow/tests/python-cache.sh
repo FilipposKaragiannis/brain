@@ -3,7 +3,8 @@
 # throwaway repo. The board reads the same with a cold cache, a warm one, a cache folder python
 # cannot write, one holding garbage and a file in the folder's place; the cache folder is made
 # owner-only under XDG_CACHE_HOME when that is an absolute path, else under ~/.cache; flow's own
-# helper modules are compiled there, never into the checkout.
+# helper modules are compiled there, never into the checkout; a sandboxed suite caches under its own
+# work folder, whatever XDG_CACHE_HOME its runner had.
 # Exit 0 when every check passes, 1 on any failure. run.sh runs it.
 . "$(dirname "$0")/_base_fixture.sh"
 . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work" "$plugin"
@@ -48,6 +49,14 @@ check "RelativeXdgCacheHome_UsesTheHomeCache: a relative cache home would land i
   'XDG_CACHE_HOME=relative-cache board >/dev/null && compiled_in "$cache_folder" _process && [ ! -e relative-cache ]'
 check "AnyCacheState_CompilesNothingIntoTheCheckout: flow's own folders stay as the checkout has them" \
   '! compiled_in_the_checkout'
+
+check "BoardFromACopyOfFlow_LeavesNoCompiledFileBesideFlowsSources: flow's folders hold sources only, whatever python would do by itself" \
+  'cp -R "$plugin" "$work/flow-copy" && FLOW_PLUGIN="$work/flow-copy" "$work/flow-copy/scripts/board.sh" >/dev/null 2>&1 && ! find "$work/flow-copy" \( -name "*.pyc" -o -name __pycache__ \) | grep -q .'
+
+echo "python cache: inside the test sandbox"
+outside_cache="$work/outside-cache"; mkdir -p "$outside_cache" "$work/nested"
+check "SandboxWithAnOutsideXdgCacheHome_KeepsTheCacheUnderItsOwnWorkFolder: a suite never writes to the cache home its runner was started with" \
+  '(export XDG_CACHE_HOME="$outside_cache"; . "$plugin/../../tools/lib/sandbox.sh"; sandbox_enter "$work/nested" "$plugin"; "$plugin/scripts/board.sh" >/dev/null 2>&1; compiled_in "$work/nested/home/.cache/flow/python" _process && [ -z "$(ls -A "$outside_cache")" ])'
 
 [ "$fails" -eq 0 ] && { echo "python-cache: ok"; exit 0; }
 echo "python-cache: $fails failed"; exit 1
