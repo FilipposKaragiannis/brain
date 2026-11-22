@@ -1,9 +1,4 @@
-"""Split Brain's Flow suites into shards balanced by the durations in flow_suite_durations.json.
-
-The table holds the seconds each suite took in CI. The longest suite goes first, each to the shard
-with the least time so far. A suite the table does not name counts as the mean of the table, so it
-still lands in exactly one shard. The split depends only on the suite names and the table.
-"""
+"""Split Brain's Flow suites into shards balanced by the seconds in flow_suite_durations.json."""
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -14,6 +9,7 @@ from flow_selection import Checkout, SuiteName
 
 _TABLE = Path("tools/lib/flow_suite_durations.json")
 _SECONDS_WHEN_NOTHING_IS_MEASURED = 1.0
+_FIRST_SHARD_NUMBER = 1
 
 
 @dataclass(frozen=True)
@@ -22,7 +18,7 @@ class Shard:
     count: int
 
 
-WHOLE_RUN = Shard(1, 1)
+WHOLE_RUN = Shard(_FIRST_SHARD_NUMBER, 1)
 
 
 def _measured_seconds(checkout: Checkout) -> "Mapping[SuiteName, float]":
@@ -30,15 +26,19 @@ def _measured_seconds(checkout: Checkout) -> "Mapping[SuiteName, float]":
     return {SuiteName(name): float(seconds) for name, seconds in table.items()}
 
 
-def suites_in(shard: Shard, suites: "frozenset[SuiteName]", checkout: Checkout) -> "frozenset[SuiteName]":
+def _expected_seconds(suites: "frozenset[SuiteName]", checkout: Checkout) -> "Mapping[SuiteName, float]":
     measured = _measured_seconds(checkout)
-    unmeasured = fmean(measured.values()) if measured else _SECONDS_WHEN_NOTHING_IS_MEASURED
-    seconds = {name: measured.get(name, unmeasured) for name in suites}
+    mean_of_measured = fmean(measured.values()) if measured else _SECONDS_WHEN_NOTHING_IS_MEASURED
+    return {name: measured.get(name, mean_of_measured) for name in suites}
+
+
+def suites_in(shard: Shard, suites: "frozenset[SuiteName]", checkout: Checkout) -> "frozenset[SuiteName]":
+    seconds = _expected_seconds(suites, checkout)
     loads = [0.0] * shard.count
     chosen = set()
     for name in sorted(suites, key=lambda name: (-seconds[name], name)):
         lightest = min(range(shard.count), key=lambda index: (loads[index], index))
         loads[lightest] += seconds[name]
-        if lightest == shard.number - 1:
+        if lightest + _FIRST_SHARD_NUMBER == shard.number:
             chosen.add(name)
     return frozenset(chosen)

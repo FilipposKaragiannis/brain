@@ -120,15 +120,17 @@ for count in 1 2 3 4 12; do
 done
 rm "$suite/unmeasured.sh"
 longest_suite="$(printf '%s\n' "$every_suite" | tail -1)"
-printf '%s\n' "$every_suite" | python3 -I -c 'import json, sys; json.dump({name: 100 if name == sys.argv[2] else 1 for name in sys.stdin.read().split()}, open(sys.argv[1], "w"))' tools/lib/flow_suite_durations.json "$longest_suite"
+longest_seconds=100; other_seconds=1
+printf '%s\n' "$every_suite" | python3 -I -c 'import json, sys; json.dump({name: float(sys.argv[3]) if name == sys.argv[2] else float(sys.argv[4]) for name in sys.stdin.read().split()}, open(sys.argv[1], "w"))' tools/lib/flow_suite_durations.json "$longest_suite" "$longest_seconds" "$other_seconds"
 python3 -I tools/lib/flow_suites.py all --shard 1/2 > "$work/output" 2>&1 || true
 expect 'SuiteLongerThanTheRestTogether_RunsInAShardOfItsOwn because shards are balanced by measured time' "$(suite_names | tr '\n' ' ')" "$longest_suite "
 git restore tools/lib/flow_suite_durations.json
 shard_suites() { python3 -I tools/lib/flow_suites.py all --shard "$1" > "$work/output" 2>&1 || true; suite_names | tr '\n' ' '; }
 expect 'ShardRunTwice_RunsTheSameSuites because a job that is retried must run what it ran before' "$(shard_suites 2/4)" "$(shard_suites 2/4)"
-printf '%s\n' "$every_suite" | python3 -I -c 'import json, sys; json.dump({name: 7 for name in sys.stdin.read().split()}, open(sys.argv[1], "w"))' tools/lib/flow_suite_durations.json
+equal_seconds=7; most_suites_apart=1
+printf '%s\n' "$every_suite" | python3 -I -c 'import json, sys; json.dump({name: float(sys.argv[2]) for name in sys.stdin.read().split()}, open(sys.argv[1], "w"))' tools/lib/flow_suite_durations.json "$equal_seconds"
 suites_in_shard() { shard_suites "$1" | wc -w | tr -d ' '; }
-uneven_by_more_than_one() { [ "$(( $(suites_in_shard 1/3) - $(suites_in_shard 3/3) ))" -le 1 ] && echo no || echo yes; }
+uneven_by_more_than_one() { [ "$(( $(suites_in_shard 1/3) - $(suites_in_shard 3/3) ))" -le "$most_suites_apart" ] && echo no || echo yes; }
 expect 'SuitesOfEqualDuration_SplitIntoShardsWithinOneSuite because no shard may carry more than its share' "$(uneven_by_more_than_one)" no
 git restore tools/lib/flow_suite_durations.json
 for bad in 0/4 5/4 4 a/4 1/0 ''; do

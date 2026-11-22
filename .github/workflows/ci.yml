@@ -6,8 +6,6 @@ on:
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-# Every part is named on tools/test.sh's command line, so a part whose tools are missing fails its
-# job instead of being skipped. Time limits sit well above the measured times.
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -94,8 +92,7 @@ jobs:
           node-version: "24"
       - run: npm install -g @anthropic-ai/claude-code@2.1.330
       - run: tools/test.sh plugins
-  # The standards plugin's composite action must load and run. This repo has a
-  # .standards/config.json, so the step checks every commit of the branch against it.
+  # The standards plugin ships this action to other repos, so it must keep loading here.
   gates-action:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -104,7 +101,7 @@ jobs:
         with:
           fetch-depth: 0
       - uses: ./plugins/standards/action
-  # The one check main can require.
+  # Branch protection on main requires this job alone.
   result:
     if: always()
     needs: [lint, standards, tools, flow, console, plugins, gates-action]

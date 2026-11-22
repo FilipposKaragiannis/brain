@@ -40,6 +40,9 @@ _LEAST_WHOLE_NUMBER = 1
 _SIGNAL_EXIT_BASE = 128
 _STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 _SHARD = re.compile(r"([1-9][0-9]*)/([1-9][0-9]*)")
+_SHARD_OPTION = ("--shard", "<number>/<count>")
+_SINCE = ("since", "<base commit>")
+_USAGE = f"usage: flow_suites.py all [{' '.join(_SHARD_OPTION)}] | {' '.join(_SINCE)}"
 
 
 @dataclass(frozen=True)
@@ -259,23 +262,39 @@ def _run(checkout: Checkout, base: "ComparisonBase | None", shard: Shard, settin
     missing = chosen.suites - suites.keys()
     if missing:
         sys.exit("flow: missing selected suites: " + ", ".join(name.text for name in sorted(missing)))
-    to_run = chosen.suites & suites_in(shard, frozenset(suites), checkout)
-    planned = {name: command for name, command in suites.items() if name in to_run}
-    if shard != WHOLE_RUN:
-        print(f"flow: shard {shard.number}/{shard.count}", flush=True)
-    print("flow: selected " + ", ".join(name.text for name in planned), flush=True)
+    planned = _in_shard(suites, chosen.suites, shard, checkout)
+    _print_plan(planned, shard)
     with TemporaryDirectory(prefix="flow-suites-") as logs:
         return report_run(run_selected(planned, SuiteLogs(Path(logs)), settings))
 
 
+def _in_shard(
+    suites: "Mapping[SuiteName, SuiteCommand]", chosen: "frozenset[SuiteName]", shard: Shard, checkout: Checkout
+) -> "dict[SuiteName, SuiteCommand]":
+    to_run = chosen & suites_in(shard, frozenset(suites), checkout)
+    return {name: command for name, command in suites.items() if name in to_run}
+
+
+def _print_plan(planned: "Mapping[SuiteName, SuiteCommand]", shard: Shard) -> None:
+    if shard != WHOLE_RUN:
+        print(f"flow: shard {shard.number}/{shard.count}", flush=True)
+    print("flow: selected " + ", ".join(name.text for name in planned), flush=True)
+
+
+def _shard_of(options: "list[str]") -> Shard:
+    if not options:
+        return WHOLE_RUN
+    if len(options) != len(_SHARD_OPTION) or options[0] != _SHARD_OPTION[0]:
+        sys.exit(_USAGE)
+    return _shard_from(options[1])
+
+
 def main(arguments: "list[str]") -> int:
-    if arguments == ["all"]:
-        return _run(_ROOT, None, WHOLE_RUN, settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
-    if len(arguments) == 3 and arguments[:2] == ["all", "--shard"]:
-        return _run(_ROOT, None, _shard_from(arguments[2]), settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
-    if len(arguments) == 2 and arguments[0] == "since":
+    if arguments[:1] == ["all"]:
+        return _run(_ROOT, None, _shard_of(arguments[1:]), settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
+    if len(arguments) == len(_SINCE) and arguments[0] == _SINCE[0]:
         return _run(_ROOT, ComparisonBase(arguments[1]), WHOLE_RUN, settings_from(os.environ, _SystemClock(), PROCESS_TABLE))
-    sys.exit("usage: flow_suites.py all [--shard <number>/<count>] | since <base commit>")
+    sys.exit(_USAGE)
 
 
 if __name__ == "__main__":
