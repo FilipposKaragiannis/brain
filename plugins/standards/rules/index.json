@@ -636,7 +636,7 @@
     "file": "shell.md"
   },
   "SH-11": {
-    "title": "A header says what the script does and takes",
+    "title": "A script's header says what the script is for and what it takes",
     "tag": "convention",
     "section": "Appendix B. Shell",
     "file": "shell.md"
