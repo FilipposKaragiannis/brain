@@ -55,7 +55,7 @@ while [ "$i" -lt "$count" ]; do
   fi
   found="$(printf '%s\n' "$diff" | LC_ALL=C awk -v line_tok="$line_tok" -v doc_tok="$doc_tok" -v pub="$public_kw" \
       -v markers="$markers" -v kinds="$kinds" -v committed_content_root="$committed_content_root" -v names_path="$work_folder/names-with-lengths" -v allow_line="$allow_line" -v allow_doc="$allow_doc" '
-    BEGIN { kind_count = split(kinds, kind_list, " "); for (k = 1; k <= kind_count; k++) if (kind_list[k] != "") allowed_kind[kind_list[k]] = 1 }
+    BEGIN { kind_count = split(kinds, kind_list, " "); for (kind_index = 1; kind_index <= kind_count; kind_index++) if (kind_list[kind_index] != "") allowed_kind[kind_list[kind_index]] = 1 }
     function flush() { if (pending != "") { hits = hits pending; pending = "" } }
     function kind_of(l,   m) {
       if (match(l, /(^|[^A-Za-z0-9_])(interface|enum|class|struct|record)[ \t]+[A-Za-z_]/)) {
