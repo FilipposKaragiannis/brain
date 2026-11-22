@@ -830,6 +830,10 @@ printf 'jobs:\n  schedule:\n    next: every 30m\n' > "$home2/config.yaml"
 FLOW_HOME="$home2" "$J" uninstall >/dev/null
 check "uninstall unloads and removes every agent" sh -c "[ -z \"\$(ls '$work/agents'/*.plist 2>/dev/null)\" ] && [ \$(grep -c bootout '$LAUNCH_LOG') -ge 5 ]"
 unset FLOW_LAUNCH_AGENTS FLOW_SCHEDULER
+check_all "runs.jsonl: seconds and exit are numbers on every line, result a string" '[ -s "$home2/log/runs.jsonl" ] && python3 -c "import json,sys
+for l in open(sys.argv[1]):
+    r = json.loads(l); assert type(r[\"seconds\"]) is int and type(r[\"exit\"]) is int and type(r[\"result\"]) is str, l" "$home2/log/runs.jsonl"'
+check "LedgerTheTypeCheckReads_HoldsTheRunsOfSeveralJobs: one job's line alone cannot pass it" python3 -I -c 'import json, sys; sys.exit(0 if len({json.loads(line).get("job") for line in open(sys.argv[1])}) > 1 else 1)' "$home2/log/runs.jsonl"
 
 [ "$fails" -eq 0 ] && { echo "jobs: ok"; exit 0; }
 echo "jobs: $fails failed"; exit 1

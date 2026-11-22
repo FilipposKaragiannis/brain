@@ -671,6 +671,18 @@
    "suite": "graph-report",
    "name": "HistoryWriterStarts_HoldsTheLock because the contention check needs an active writer",
    "reason": "added after the baseline by feat(flow): the suite runner never reports green with tests missing"
+  },
+  {
+   "kind": "moved",
+   "suite": "jobs",
+   "name": "runs.jsonl: seconds and exit are numbers on every line, result a string",
+   "reason": "it reads the ledger the job runs fill, and only jobs.sh runs them"
+  },
+  {
+   "kind": "addition",
+   "suite": "jobs",
+   "name": "LedgerTheTypeCheckReads_HoldsTheRunsOfSeveralJobs: one job's line alone cannot pass it",
+   "reason": "the moved type check must not pass on a ledger of one job's line"
   }
  ]
 }

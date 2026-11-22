@@ -11,8 +11,6 @@ trap 'sandbox_close $?' EXIT
 . "$here/_github_fixture.sh"
 . "$here/_jobs_fixture.sh"
 . "$here/_worktree_helpers.sh"
-printf 'adapters:\n  default: local\nbase: main\npool:\n  - ../wt-1\n  - ../wt-2\nnotify:\n  desktop: false\n' > "$home2/config.yaml"
-FLOW_HOME="$home2" "$P/jobs/next.sh" claude >/dev/null
 echo "gate list --json"
 mkdir -p "$work/gates" && cd "$work/gates" && git init -q -b main app && cd app && git config user.email t@t && git config user.name t && git commit -q --allow-empty -m init
 git worktree add -q --detach ../app-wt-1 && git worktree add -q --detach ../app-wt-2
@@ -163,9 +161,6 @@ check "a lesson whose text is 12345 is the string" [ "$(tail -1 .flow/lessons.js
 mkdir -p "$work/nojq" && ln -sf "$(command -v python3)" "$work/nojq/python3"
 nojq="$(PATH="$work/nojq"; json_obj "d=$(printf 'a\377b')" n:=1)"
 check "json_obj without jq: bytes that are not UTF-8 are replaced and the object parses" [ "$(printf '%s' "$nojq" | python3 -c 'import json,sys; print(json.load(sys.stdin)["d"] == "a\ufffdb")')" = True ]
-check_all "runs.jsonl: seconds and exit are numbers on every line, result a string" '[ -s "$home2/log/runs.jsonl" ] && python3 -c "import json,sys
-for l in open(sys.argv[1]):
-    r = json.loads(l); assert type(r[\"seconds\"]) is int and type(r[\"exit\"]) is int and type(r[\"result\"]) is str, l" "$home2/log/runs.jsonl"'
 
 [ "$fails" -eq 0 ] && { echo "gate-list: ok"; exit 0; }
 echo "gate-list: $fails failed"; exit 1
