@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
-tools="$(cd "$(dirname "$0")/.." && pwd)"
+here="$(cd "$(dirname "$0")" && pwd)"; root="$(cd "$here/../.." && pwd)"
+tools="$root/tools"
 work="$(mktemp -d)"
-. "$tools/lib/sandbox.sh"; sandbox_enter "$work" "$tools"
+. "$root/tools/lib/sandbox.sh"; sandbox_enter "$work" "$root/tools"
 trap 'sandbox_close $?' EXIT
 
 project="$work/marketplace"
