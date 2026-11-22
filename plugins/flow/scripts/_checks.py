@@ -29,6 +29,7 @@ import json
 import os
 import subprocess
 import sys
+from types import MappingProxyType
 
 BUILD_NAME = "build"
 TEST_NAME = "tests"
@@ -198,19 +199,28 @@ def print_existing(prefix, extensions):
     return 0
 
 
+def print_key(command):
+    globs = [line.strip() for line in sys.stdin if line.strip()]
+    print(input_key(command, globs), end="")
+    return 0
+
+
+SUBCOMMANDS = MappingProxyType(
+    {
+        ("plan", 1): print_plan,
+        ("key", 1): print_key,
+        ("names", 0): print_names,
+        ("existing", 2): print_existing,
+    }
+)
+
+
 def main(argv):
-    if len(argv) == 2 and argv[0] == "plan":
-        return print_plan(argv[1])
-    if len(argv) == 2 and argv[0] == "key":
-        globs = [line.strip() for line in sys.stdin if line.strip()]
-        print(input_key(argv[1], globs), end="")
-        return 0
-    if len(argv) == 1 and argv[0] == "names":
-        return print_names()
-    if len(argv) == 3 and argv[0] == "existing":
-        return print_existing(argv[1], argv[2])
-    print("usage: _checks.py plan <config.json> | key <command> (globs on stdin) | names (names on stdin) | existing <prefix> <extensions> (names on stdin)", file=sys.stderr)
-    return 2
+    subcommand = SUBCOMMANDS.get((argv[0], len(argv) - 1)) if argv else None
+    if subcommand is None:
+        print("usage: _checks.py plan <config.json> | key <command> (globs on stdin) | names (names on stdin) | existing <prefix> <extensions> (names on stdin)", file=sys.stderr)
+        return 2
+    return subcommand(*argv[1:])
 
 
 if __name__ == "__main__":

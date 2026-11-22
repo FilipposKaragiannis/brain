@@ -67,19 +67,29 @@ else
   echo "  skip bash -c cases: bash is not installed"
 fi
 
-generated_commands() {
-  for outer in $outer_quotings; do
-    for inner in none single double; do
-      for placement in after inside joined followed; do
-        [ "$inner:$placement" = none:inside ] && continue
-        fragments | while IFS= read -r fragment; do
-          configured_command "$outer" "$(script_text "$inner" "$placement" "$fragment" "")"; echo
-          [ "$inner" = none ] || [ -z "$fragment" ] && continue
-          configured_command "$outer" "$(script_text "$inner" "$placement" "" "$fragment")"; echo
-        done
-      done
-    done
+fragment_commands() {
+  fragment_outer="$1"; fragment_inner="$2"; fragment_placement="$3"
+  fragments | while IFS= read -r fragment; do
+    configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "$fragment" "")"; echo
+    [ "$fragment_inner" = none ] || [ -z "$fragment" ] && continue
+    configured_command "$fragment_outer" "$(script_text "$fragment_inner" "$fragment_placement" "" "$fragment")"; echo
   done
+}
+
+placement_commands() {
+  placement_outer="$1"; placement_inner="$2"
+  for placement in after inside joined followed; do
+    [ "$placement_inner:$placement" = none:inside ] && continue
+    fragment_commands "$placement_outer" "$placement_inner" "$placement"
+  done
+}
+
+inner_quoting_commands() {
+  for inner_quoting in none single double; do placement_commands "$1" "$inner_quoting"; done
+}
+
+generated_commands() {
+  for generated_outer in $outer_quotings; do inner_quoting_commands "$generated_outer"; done
 }
 
 run_expanded() {

@@ -161,11 +161,15 @@ files_placeholder_ends_a_word() {
   [ -z "$files_placeholder_after_word" ] || files_placeholder_begins_with_word_end "$files_placeholder_after_word"
 }
 
+files_placeholder_step_when_word_ends() {
+  files_placeholder_ends_a_word "$1" "$2" && printf '%s' "$3"
+}
+
 files_placeholder_for_state() {
   case "$1" in
-    "edge -") files_placeholder_ends_a_word "" "$2" && printf '%s' 'none -:"$@"' ;;
-    "single edge") files_placeholder_ends_a_word "'" "$2" && printf '%s' "single none:'\"\$format_names_escaped\"'" ;;
-    "double edge") files_placeholder_ends_a_word '"' "$2" && printf '%s' 'double none:$format_names_escaped' ;;
+    "edge -") files_placeholder_step_when_word_ends "" "$2" 'none -:"$@"' ;;
+    "single edge") files_placeholder_step_when_word_ends "'" "$2" "single none:'\"\$format_names_escaped\"'" ;;
+    "double edge") files_placeholder_step_when_word_ends '"' "$2" 'double none:$format_names_escaped' ;;
     *) return 1 ;;
   esac
 }
