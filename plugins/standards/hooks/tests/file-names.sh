@@ -38,17 +38,22 @@ run_hook() { clear_markers; printf '{"tool_input":{"command":"git commit -m x"}}
 stderr_names() { case "$(cat "$work/stderr")" in *"$1:2"*) return 0 ;; esac; return 1; }
 no_injection() { [ ! -e INJECTED ] && [ ! -e INJECTEDTICK ] && [ ! -e "$work/INJECTED" ]; }
 
-cat > "$work/record.sh" <<'RECORD'
+cat > "$work/validate.sh" <<'VALIDATE'
 #!/bin/sh
-printf '%s' "$#" > "$(dirname "$0")/count"
-printf '%s\0' "$@" > "$(dirname "$0")/seen"
-RECORD
-cat > "$work/expected-names.sh" <<'EXPECTED'
-#!/bin/sh
-printf '%s\0' '-dash.cs' 'a$(touch${IFS}INJECTED).cs' 'a`touch INJECTEDTICK`.cs' \
-  'it'\''$(touch${IFS}INJECTED)'\''s.cs' "it's.cs" "line1
-line2.cs" 'say "hi".cs' 'with space.cs'
-EXPECTED
+[ "$#" -gt 0 ] || exit 1
+for file in "$@"; do
+  [ -f "$file" ] || exit 1
+  ! grep -q BADCONTENT -- "$file" || exit 1
+done
+VALIDATE
+label_of() { printf '%s' "$1" | tr '\n' ' '; }
+bad_name_blocks() {
+  git reset -q --hard "$base"
+  printf 'class A {}\nBADCONTENT\n' > "$1"
+  git add -A
+  run_hook check-format.sh; bad_status=$?
+  check "FormatCommand_BadContentBlocks: a file named $(label_of "$1") with bad content blocks the commit" [ "$bad_status" -eq 2 ]
+}
 
 cd "$work"
 git init -q -b main repo && cd repo
@@ -59,7 +64,7 @@ cat > .standards/config.json <<JSON
   "version": "0.1.0",
   "languages": [
     { "name": "csharp", "extensions": [".cs"],
-      "format": [ { "prefix": "", "command": "sh $work/record.sh {files}" } ],
+      "format": [ { "prefix": "", "command": "sh $work/validate.sh {files}" } ],
       "comments": { "line": "//", "doc": "///", "public": "public", "doc_inside": ["interface", "enum"], "allow_markers": [] } }
   ],
   "build": "true",
@@ -74,10 +79,9 @@ echo "check-format: names reach the formatter intact"
 names_do write_interface
 git add -A
 run_hook check-format.sh; format_status=$?
-sh "$work/expected-names.sh" > "$work/expected"
-check "FormatCommand_GetsEachSpecialNameAsOneArgument: the formatter saw the eight names byte for byte, one argument each" cmp -s "$work/seen" "$work/expected"
+check "FormatCommand_EverySpecialNameIsAFileToTheFormatter: the formatter found each of the eight names as one file and the hook exited 0" [ "$format_status" -eq 0 ]
 check "FormatCommand_CraftedNamesCreateNoFile: no name ran as a command" no_injection
-check "FormatCommand_NormalCommitPasses: the hook exited 0 with the formatter content clean" [ "$format_status" -eq 0 ]
+names_do bad_name_blocks
 
 echo "check-comments: content is found by name"
 run_hook check-comments.sh; interface_status=$?
@@ -98,22 +102,28 @@ check "ConfigHook_LeadingDashNameIsReported: the report names -dash.cs" grep -qF
 
 echo "check-range: the replay reads the same names"
 names_do write_interface
-git add -A && git commit -qm "special names" && rm -f "$work/seen"
+git add -A && git commit -qm "special names"
 clear_markers
 "$hooks/check-range.sh" --gates "check-format check-comments" "$base" HEAD >"$work/range" 2>&1; range_status=$?
-check "CheckRangeReplay_CleanCommitPasses: check-range exited 0" [ "$range_status" -eq 0 ]
-check "CheckRangeReplay_FormatterGetsEachSpecialNameAsOneArgument: the replayed formatter saw the eight names byte for byte" cmp -s "$work/seen" "$work/expected"
+check "CheckRangeReplay_CleanCommitPasses: the replayed formatter found each special name as one file and check-range exited 0" [ "$range_status" -eq 0 ]
 check "CheckRangeReplay_CraftedNamesCreateNoFile: no name ran as a command" no_injection
+git reset -q --hard "$base"
+printf 'class A {}\nBADCONTENT\n' > 'with space.cs'
+git add -A && git commit -qm "bad content"
+"$hooks/check-range.sh" --gates "check-format" "$base" HEAD >"$work/range" 2>&1; range_bad_status=$?
+check "CheckRangeReplay_BadContentBlocks: check-range exited 1 for the bad file with a space" [ "$range_bad_status" -eq 1 ]
 
 echo "check-format: a path with a space"
 git reset -q --hard "$base"
 mkdir -p "dir with space"
 printf 'class Pre {}\n' > "dir with space/Pre.cs"
 git add -A
-run_hook check-format.sh
-check "FormatCommand_PathWithSpaceIsOneFile: the formatter got one argument" [ "$(cat "$work/count")" = 1 ]
-printf '%s\0' 'dir with space/Pre.cs' > "$work/expected-path"
-check "FormatCommand_PathWithSpaceKeepsItsName: the argument is the whole path byte for byte" cmp -s "$work/seen" "$work/expected-path"
+run_hook check-format.sh; path_clean_status=$?
+check "FormatCommand_PathWithSpaceIsOneFile: the formatter found dir with space/Pre.cs as one file and the hook exited 0" [ "$path_clean_status" -eq 0 ]
+printf 'class Pre {}\nBADCONTENT\n' > "dir with space/Pre.cs"
+git add -A
+run_hook check-format.sh; path_bad_status=$?
+check "FormatCommand_PathWithSpaceIsChecked: the formatter read the bad file under dir with space and the hook exited 2" [ "$path_bad_status" -eq 2 ]
 
 echo "check-format: a loop over {files}"
 git reset -q --hard "$base"
