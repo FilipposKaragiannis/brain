@@ -21,8 +21,11 @@
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
 # the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
-# else the config base. A moved file is changed at its old path and its new one. Exit 0 on pass,
-# 1 on fail; 2 when --base is no valid branch name.
+# else the config base (scripts/_change_list.py). A moved file is changed at its old path and its
+# new one. When the base is unresolved, a git listing fails or a name holds U+001F, a failed
+# `changed files` check names why, every check with paths runs, no kept pass is reused and
+# feel_test is true when feel_test_paths is set. Exit 0 on pass, 1 on fail; 2 when --base is no
+# valid branch name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
 # stdin from /dev/null, output to <reports>/verify.out), so it outlives a shell call the host cuts
@@ -218,28 +221,31 @@ ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="o
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
 base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
 name_separator="$(printf '\037')"
-separator_exit=3; unreadable_names=""
-changed_units="$({ git diff --no-renames --name-only -z "$merge_base" HEAD; git diff --no-renames --name-only -z HEAD; git ls-files --others --exclude-standard -z; } 2>/dev/null | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names)"; names_exit=$?
-case "$names_exit" in
-  0) ;;
-  "$separator_exit") unreadable_names=1; changed_units="" ;;
-  *) die "cannot read the changed file names" ;;
-esac
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
 [ "$base_commit" != unavailable ] || printf 'the comparison base %s cannot be resolved: every check with paths runs, and {verify_base} is unavailable\n' "$base" >> "$log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
-records=""; changed_list=""; timings=""
+records=""; changed_list=""; timings=""; change_list_causes_file=""
 # dash runs no EXIT trap on a signal, so INT and TERM clean up too, then die of the same signal
 # so a parent shell sees it (an exit 130 would hide it).
-trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}' EXIT
-trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -INT $$' INT
-trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"}; kill -TERM $$' TERM
+trap 'rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}' EXIT
+trap 'trap - INT EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}; kill -INT $$' INT
+trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_list"} ${timings:+"$timings"} ${change_list_causes_file:+"$change_list_causes_file"}; kill -TERM $$' TERM
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+change_list_causes_file="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+unreadable_names_exit=3; incomplete_list_exit=4; listed_files_only=" among the files verify could list"
+changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_change_list.py" "$log" "$change_list_causes_file" "$base" "$base_commit")"
+case "$?" in
+  0) change_list=complete; listed_files_only="" ;;
+  "$unreadable_names_exit") change_list=unreadable_names ;;
+  "$incomplete_list_exit") change_list=incomplete ;;
+  *) die "cannot read the changed file names" ;;
+esac
+change_list_causes="$(cat "$change_list_causes_file")" || die "cannot read why the changed file list is short"
 
 record() {
   # record <name> <status> <command> <summary source> <seconds> <reused from>: one check, four
@@ -275,7 +281,7 @@ $1
 EOF_GLOBS
   return 1
 }
-in_scope() { [ "$base_commit" = unavailable ] || changed_matches "$1"; }
+in_scope() { [ "$change_list" != complete ] || changed_matches "$1"; }
 command_with_verify_base() {
   case "$1" in
     *'{verify_base}'*) printf '%s\n' "$1" | sed "s/{verify_base}/$base_commit/g" ;;
@@ -324,7 +330,7 @@ scoped_check() {
   if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
   set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4"
   inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
-  if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
+  if [ -z "$fresh" ] && [ "$change_list" = complete ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
@@ -350,9 +356,10 @@ planned_checks() {
 if ! planned="$(cached_python3 -I "$FLOW_PLUGIN/scripts/_checks.py" plan .standards/config.json 2>&1)"; then
   record config fail "" "$planned" 0 ""; failed config; planned='{"build": [], "test": []}'
 fi
-[ -z "$unreadable_names" ] || {
-  record "changed files" fail "" "a changed file name holds the character U+001F, which verify cannot hand to a command" 0 ""; failed "changed files"
-}
+case "$change_list" in
+  unreadable_names) record "changed files" fail "" "$change_list_causes" 0 ""; failed "changed files" ;;
+  incomplete) record "changed files" fail "" "verify cannot list every changed file, so it cannot pass: $change_list_causes. Every check with paths runs." 0 ""; failed "changed files" ;;
+esac
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
@@ -370,13 +377,13 @@ while [ "$i" -lt "${nlang:-0}" ]; do
   done
   i=$((i + 1))
 done
-[ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule"
+[ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule$listed_files_only"
 planned_checks test tests
 mutation="$(json_get "$std" mutation)"
 if [ -z "$mutation" ]; then skipped mutation "mutation is empty in .standards/config.json (off)"
 else
   case "$mutation" in
-    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run"; fi ;;
+    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run$listed_files_only"; fi ;;
     *) run_check mutation "$mutation" signal ;;
   esac
 fi
@@ -387,10 +394,9 @@ for name in $(yaml_keys "$(config_file)" gates); do
   if [ -n "$paths" ] && ! in_scope "$paths"; then skipped "gate $name" "no changed file under its paths"; continue; fi
   run_check "gate $name" "$command" gate
 done
-feel=false
-for g in $(cfg feel_test_paths); do
-  changed_unit_matches "$g" && { feel=true; break; }
-done
+feel_test_paths="$(cfg feel_test_paths)"; feel=false
+if [ -n "$feel_test_paths" ] && [ "$change_list" != complete ]; then feel=not_ruled_out
+elif changed_matches "$feel_test_paths"; then feel=true; fi
 printf '%s' "$changed_units" > "$changed_list"
 head_sha="$(git rev-parse --short HEAD)"
 

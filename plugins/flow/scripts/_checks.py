@@ -12,10 +12,6 @@
       nothing when a file under them has an uncommitted change, or when there is no commit, so
       the check runs and its pass is not kept.
 
-  _checks.py names
-      Reads NUL-separated names from stdin and prints each distinct name that is not under
-      .flow/, in byte order, each followed by U+001F. Prints nothing and exits 3 when a name holds U+001F itself,
-      which cannot be told from the separator.
   _checks.py existing <prefix> <extensions>
       Reads names, each followed by U+001F, from stdin and prints those that start with the prefix,
       end in one of the extensions (blank separated; none keeps no name) and are files now, in the
@@ -38,7 +34,6 @@ RENAME_STATES = ("R", "C")
 STATUS_PATH_OFFSET = 3
 MALFORMED_EXIT = 2
 NAME_SEPARATOR = b"\x1f"
-SEPARATOR_EXIT = 3
 
 
 def shell_pattern(glob):
@@ -174,18 +169,6 @@ def input_key(command, globs):
     return digest.hexdigest()
 
 
-def distinct_names(raw):
-    return sorted({name for name in raw.split(b"\0") if name and not name.startswith(os.fsencode(FLOW_FOLDER))})
-
-
-def print_names():
-    names = distinct_names(sys.stdin.buffer.read())
-    if any(NAME_SEPARATOR in name for name in names):
-        return SEPARATOR_EXIT
-    sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in names))
-    return 0
-
-
 def is_existing_file_under(name, wanted_prefix, wanted_endings):
     return name.startswith(wanted_prefix) and name.endswith(wanted_endings) and os.path.isfile(name)
 
@@ -209,7 +192,6 @@ SUBCOMMANDS = MappingProxyType(
     {
         ("plan", 1): print_plan,
         ("key", 1): print_key,
-        ("names", 0): print_names,
         ("existing", 2): print_existing,
     }
 )
@@ -218,7 +200,7 @@ SUBCOMMANDS = MappingProxyType(
 def main(argv):
     subcommand = SUBCOMMANDS.get((argv[0], len(argv) - 1)) if argv else None
     if subcommand is None:
-        print("usage: _checks.py plan <config.json> | key <command> (globs on stdin) | names (names on stdin) | existing <prefix> <extensions> (names on stdin)", file=sys.stderr)
+        print("usage: _checks.py plan <config.json> | key <command> (globs on stdin) | existing <prefix> <extensions> (names on stdin)", file=sys.stderr)
         return 2
     return subcommand(*argv[1:])
 
