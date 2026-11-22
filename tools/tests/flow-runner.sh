@@ -61,6 +61,42 @@ expect 'RunnerGivenTermWhileASuiteIgnoresTerm_NamesThatSuiteAsStopped because th
 expect 'RunnerGivenTermWhileASuiteCleansUp_LetsItFinishItsCleanup because the grace time lasts until the whole group is gone' "$(cat "$work/cleanup" 2>/dev/null)" cleaned
 rm "$work/deaf-suite" "$work/deaf-suite-ready" "$work/deaf-descendant" "$work/deaf-descendant-ready" "$work/cleaning-suite-ready" "$work/cleanup"
 git restore plugins/flow/tests/sessions.sh plugins/flow/tests/base-claim.sh plugins/flow/tests/verify-scope.sh
+deaf_names="sessions base-claim verify-scope"; second_signal_seconds=2; third_signal_seconds=3; many_stop_grace_seconds=4
+write_deaf_suites() {
+  for name in $deaf_names; do
+    cat > "$suite/$name.sh" <<STUB
+trap '' TERM
+echo \$\$ > "$work/deaf-$name"
+: > "$work/deaf-$name-ready"
+sleep $child_seconds
+STUB
+  done
+}
+all_deaf_ready() { for name in $deaf_names; do [ -f "$work/deaf-$name-ready" ] || return 1; done; }
+deaf_states() { for name in $deaf_names; do process_state "$(cat "$work/deaf-$name")"; done | tr '\n' ' ' | sed 's/ $//'; }
+stop_runner_of_deaf_suites() {
+  write_deaf_suites
+  FLOW_SUITE_STOP_GRACE_SECONDS="$many_stop_grace_seconds" python3 -I "$project/tools/lib/flow_suites.py" since "$base" > "$work/output" 2>&1 &
+  runner=$!
+  ticks=0; until all_deaf_ready || [ "$ticks" -ge "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
+  kill -"$1" "$runner"; term_sent="$(date +%s)"
+  if [ "$#" -gt 1 ]; then sleep "$second_signal_seconds"; kill -TERM "$runner" 2> /dev/null || true; sleep "$((third_signal_seconds - second_signal_seconds))"; kill -INT "$runner" 2> /dev/null || true; fi
+  runner_state="$(process_state "$runner")"; runner_seconds="$(($(date +%s) - term_sent))"
+  if wait "$runner"; then runner_code=0; else runner_code=$?; fi
+}
+forget_deaf_suites() { for name in $deaf_names; do rm "$work/deaf-$name" "$work/deaf-$name-ready"; done; git restore plugins/flow/tests/sessions.sh plugins/flow/tests/base-claim.sh plugins/flow/tests/verify-scope.sh; }
+within_one_grace() { if [ "$runner_state" = ended ] && [ "$runner_seconds" -le "$((many_stop_grace_seconds + stop_margin_seconds))" ]; then echo within-grace; else echo "$runner_state after ${runner_seconds}s"; fi; }
+stop_runner_of_deaf_suites INT
+expect 'RunnerGivenIntWhileSeveralSuitesIgnoreTerm_EndsWithinOneGraceTime because all running suites share one grace time and not one each' "$(within_one_grace)" within-grace
+expect 'RunnerGivenIntWhileSeveralSuitesIgnoreTerm_EndsEverySuite because a stopped run leaves no suite behind' "$(deaf_states)" 'ended ended ended'
+expect 'RunnerGivenIntWhileSeveralSuitesIgnoreTerm_ExitsWith128PlusTheSignalNumber because a caller reads the exit code to see which signal stopped the run' "$runner_code" "$((signal_exit_base + $(kill -l INT)))"
+forget_deaf_suites
+stop_runner_of_deaf_suites HUP again
+expect 'RunnerGivenHupThenMoreSignalsDuringTheGrace_EndsWithinOneGraceTime because a later signal must not lengthen the wait' "$(within_one_grace)" within-grace
+expect 'RunnerGivenHupThenMoreSignalsDuringTheGrace_ExitsWith128PlusTheFirstSignalNumber because the first signal names why the run stopped' "$runner_code" "$((signal_exit_base + $(kill -l HUP)))"
+expect 'RunnerGivenHupThenMoreSignalsDuringTheGrace_PrintsNoTraceback because a signal must not raise from inside the handler' "$(grep -c Traceback "$work/output")" 0
+expect 'RunnerGivenHupThenMoreSignalsDuringTheGrace_EndsEverySuite because a stopped run leaves no suite behind' "$(deaf_states)" 'ended ended ended'
+forget_deaf_suites
 limit_seconds=3; default_limit_seconds=1800; grace_seconds=10; stop_bound_seconds=1
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"
@@ -93,10 +129,10 @@ for bad in 0 abc -1 1.5 ''; do
   expect "TimeLimit${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_TIME_LIMIT_SECONDS.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES FLOW_SUITE_TIME_LIMIT_SECONDS
-for bad in 0 abc; do
+for bad in 0 abc -1 1.5 ''; do
   export FLOW_SUITE_STOP_GRACE_SECONDS="$bad"
-  expect "StopGrace${bad}_Fails because only a whole number of seconds from 1 is a grace time" "$(result)" fail
-  expect "StopGrace${bad}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_STOP_GRACE_SECONDS.*'$bad'")" 1
+  expect "StopGrace${bad:-Empty}_Fails because only a whole number of seconds from 1 is a grace time" "$(result)" fail
+  expect "StopGrace${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_STOP_GRACE_SECONDS.*'$bad'")" 1
 done
 unset FLOW_SUITE_STOP_GRACE_SECONDS
 rm "$work/child" "$work/cleanup"
