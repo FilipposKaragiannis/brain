@@ -21,7 +21,10 @@
 # cannot be built, verify says why on stderr, writes a minimal report with status fail and the
 # cause as a check summary, and exits 1. The changed files are those since the base: --base, else
 # the base the claim recorded (.flow/claim.json in the worktree) when it is a valid base name,
-# else the config base. A moved file is changed at its old path and its new one. Exit 0 on pass,
+# else the config base. A moved file is changed at its old path and its new one. When the base
+# cannot be resolved or a git listing of changes fails (its error in the log), the list may be
+# short: a failed `changed files` check names the cause, every check with paths runs, no kept pass
+# is reused and feel_test is true when feel_test_paths is set. Exit 0 on pass,
 # 1 on fail; 2 when --base is no valid branch name.
 #
 # verify.sh <item> --start [--base <ref>]: the same run, detached from the caller (its own session,
@@ -218,13 +221,6 @@ ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="o
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
 base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
 name_separator="$(printf '\037')"
-separator_exit=3; unreadable_names=""
-changed_units="$({ git diff --no-renames --name-only -z "$merge_base" HEAD; git diff --no-renames --name-only -z HEAD; git ls-files --others --exclude-standard -z; } 2>/dev/null | python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names)"; names_exit=$?
-case "$names_exit" in
-  0) ;;
-  "$separator_exit") unreadable_names=1; changed_units="" ;;
-  *) die "cannot read the changed file names" ;;
-esac
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
 [ "$base_commit" != unavailable ] || printf 'the comparison base %s cannot be resolved: every check with paths runs, and {verify_base} is unavailable\n' "$base" >> "$log"
@@ -240,6 +236,30 @@ trap 'trap - TERM EXIT; rm -f ${records:+"$records"} ${changed_list:+"$changed_l
 records="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 changed_list="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
 timings="$(mktemp "${TMPDIR:-/tmp}/flow-verify.XXXXXX")" || die "cannot make a temp file"
+
+change_list=complete; change_list_causes=""
+change_list_incomplete() {
+  change_list=incomplete; change_list_causes="${change_list_causes:+$change_list_causes; }$1"
+}
+changed_names_from() {
+  listing="$1"; shift
+  git "$@" >> "$changed_list" 2>> "$log" || change_list_incomplete "$listing failed (git exit $?, its error is in the log)"
+}
+if [ "$base_commit" = unavailable ]; then change_list_incomplete "the comparison base $base cannot be resolved"
+else changed_names_from "the diff from the base $base" diff --no-renames --name-only -z "$merge_base" HEAD; fi
+changed_names_from "the diff of uncommitted changes" diff --no-renames --name-only -z HEAD
+changed_names_from "the listing of untracked files" ls-files --others --exclude-standard -z
+separator_exit=3; unreadable_names=""
+changed_units="$(python3 -I "$FLOW_PLUGIN/scripts/_checks.py" names < "$changed_list")"; names_exit=$?
+case "$names_exit" in
+  0) ;;
+  "$separator_exit") unreadable_names=1; changed_units="" ;;
+  *) die "cannot read the changed file names" ;;
+esac
+case "$change_list" in
+  complete) listed_files_only="" ;;
+  *) listed_files_only=" among the files verify could list" ;;
+esac
 
 record() {
   # record <name> <status> <command> <summary source> <seconds> <reused from>: one check, four
@@ -275,7 +295,7 @@ $1
 EOF_GLOBS
   return 1
 }
-in_scope() { [ "$base_commit" = unavailable ] || changed_matches "$1"; }
+in_scope() { [ "$change_list" != complete ] || changed_matches "$1"; }
 command_with_verify_base() {
   case "$1" in
     *'{verify_base}'*) printf '%s\n' "$1" | sed "s/{verify_base}/$base_commit/g" ;;
@@ -324,7 +344,7 @@ scoped_check() {
   if [ -n "$3" ] && ! in_scope "$3"; then skipped "$1" "no changed file under its paths"; return; fi
   set -- "$1" "$(command_with_verify_base "$2")" "$3" "$4"
   inputs_key=""; [ "$4" != test ] || inputs_key="$(check_key "$2" "$3")"
-  if [ -z "$fresh" ] && reused_from="$(check_passed "$inputs_key")"; then
+  if [ -z "$fresh" ] && [ "$change_list" = complete ] && reused_from="$(check_passed "$inputs_key")"; then
     printf '\n== %s: %s\nreused: it passed on the same command and files in the run of %s\n' "$1" "$2" "$reused_from" >> "$log"
     record "$1" pass "$2" "ok, reused: it passed on the same command and files in the run of $reused_from" 0 "$reused_from"
     return
@@ -353,6 +373,9 @@ fi
 [ -z "$unreadable_names" ] || {
   record "changed files" fail "" "a changed file name holds the character U+001F, which verify cannot hand to a command" 0 ""; failed "changed files"
 }
+[ "$change_list" = complete ] || {
+  record "changed files" fail "" "verify cannot list every changed file, so it cannot pass: $change_list_causes. Every check with paths runs." 0 ""; failed "changed files"
+}
 planned_checks build build
 nlang="$(json_length "$std" languages)"; i=0; ran_format=0; all_files=""
 while [ "$i" -lt "${nlang:-0}" ]; do
@@ -370,13 +393,13 @@ while [ "$i" -lt "${nlang:-0}" ]; do
   done
   i=$((i + 1))
 done
-[ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule"
+[ "$ran_format" -eq 1 ] || skipped format "no changed source files under a format rule$listed_files_only"
 planned_checks test tests
 mutation="$(json_get "$std" mutation)"
 if [ -z "$mutation" ]; then skipped mutation "mutation is empty in .standards/config.json (off)"
 else
   case "$mutation" in
-    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run"; fi ;;
+    *'{files}'*) if [ -n "$all_files" ]; then run_check mutation "$mutation" signal "$all_files"; else skipped mutation "no changed source files for the mutation run$listed_files_only"; fi ;;
     *) run_check mutation "$mutation" signal ;;
   esac
 fi
@@ -389,7 +412,7 @@ for name in $(yaml_keys "$(config_file)" gates); do
 done
 feel=false
 for g in $(cfg feel_test_paths); do
-  changed_unit_matches "$g" && { feel=true; break; }
+  { [ "$change_list" != complete ] || changed_unit_matches "$g"; } && { feel=true; break; }
 done
 printf '%s' "$changed_units" > "$changed_list"
 head_sha="$(git rev-parse --short HEAD)"
