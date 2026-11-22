@@ -1,15 +1,14 @@
 #!/bin/sh
 # The {files} placeholder of a configured command. POSIX sh. Copied into each plugin that runs shell
 # by tools/generate.sh; edit shared/sh/files_placeholder.sh. A command is the project's own text; the
-# names are data. files_placeholder_expanded rewrites a {files} that is an argument word of its own
-# outside quotes to "$@", and one that is an unquoted argument word in the quoted script of a
-# sh -c or bash -c that starts a command to $format_names_escaped, so the caller runs the result as
+# names are data, and the caller runs files_placeholder_expanded's result as
 #   format_names_escaped="$(names_backslash_escaped "$@")" sh -c "$expanded" sh "$@"
-# and the names reach the command as separate arguments, or, in the script, as words with every
-# character that is not a letter, digit or one of _ . / - backslash-escaped. A name with a newline
-# cannot be escaped: names_backslash_escaped then fails. Anywhere else, or after a construct the
-# scanner does not follow ($( ${ $' $" a backtick, # or <<), or in a command that leaves a quote
-# open, files_placeholder_expanded says why on stderr and fails, so a name is never read as shell.
+# {files} is accepted in two forms: as an unquoted word of its own in the command, or as an unquoted
+# word of its own in the script of a sh -c or bash -c that starts a command. A word ends at a blank or
+# at one of ; & | < > ( ) and a newline. Every other placement is refused, with a message on stderr
+# that names the accepted forms, so a name is never read as shell. To pass the names into any other
+# construct, write "$@" there and put {files} as the last word of the command. names_backslash_escaped
+# fails on a name with a newline.
 
 backslash_escape_name_failing_on_newline() {
   escape_rest="$1"; escape_result=""
@@ -34,7 +33,7 @@ names_backslash_escaped() {
 }
 
 files_placeholder_refused() {
-  echo "{files} must be an argument word of its own, outside quotes or unquoted in the quoted script of a sh -c or bash -c that starts a command, with no \$( \${ \$' \$\" backtick, # or << before it and no quote left open; here it sits in nested quotes, joins other text or is not certain to be data. Pass the names on as arguments: sh -c '... \"\$@\"' sh {files}" >&2
+  echo "{files} is accepted only as an unquoted word of its own in the command, or as an unquoted word of its own in the script of a sh -c or bash -c that starts a command; every other placement is refused. To pass the names into any other construct, write \"\$@\" there and put {files} as the last word of the command: sh -c '... \"\$@\"' sh {files}" >&2
   return 1
 }
 
@@ -49,24 +48,22 @@ files_placeholder_is_blank_in_a_command() {
 ' ] && files_placeholder_is_blank "$1"
 }
 
-files_placeholder_begins_with_blank() {
-  files_placeholder_is_blank "${1%"${1#?}"}"
-}
-
 files_placeholder_ends_with_blank_in_a_command() {
   files_placeholder_is_blank_in_a_command "${1#"${1%?}"}"
 }
 
-files_placeholder_ends_with_word_end() {
-  files_placeholder_is_blank "${1#"${1%?}"}" && return 0
-  case "$1" in *[';|&()<>']) return 0 ;; esac
+files_placeholder_is_word_boundary() {
+  files_placeholder_is_blank "$1" && return 0
+  case "$1" in [';&|<>()']) return 0 ;; esac
   return 1
 }
 
-files_placeholder_begins_with_word_end() {
-  files_placeholder_begins_with_blank "$1" && return 0
-  case "$1" in [';|&']*) return 0 ;; esac
-  return 1
+files_placeholder_ends_with_word_boundary() {
+  files_placeholder_is_word_boundary "${1#"${1%?}"}"
+}
+
+files_placeholder_begins_with_word_boundary() {
+  files_placeholder_is_word_boundary "${1%"${1#?}"}"
 }
 
 files_placeholder_begins_unfollowed_unquoted() {
@@ -81,7 +78,7 @@ files_placeholder_begins_unfollowed_in_double() {
 
 files_placeholder_unquoted_after() {
   files_placeholder_begins_unfollowed_unquoted "$1" && { printf unsure; return 0; }
-  if files_placeholder_begins_with_blank "$1"; then printf edge; else printf none; fi
+  if files_placeholder_begins_with_word_boundary "$1"; then printf edge; else printf none; fi
 }
 
 files_placeholder_opened() {
@@ -195,7 +192,7 @@ files_placeholder_state_after() {
 
 files_placeholder_last_word() {
   files_placeholder_word_before="${1%"$(files_placeholder_trailing_blanks "$1")"}"; files_placeholder_last=""
-  while [ -n "$files_placeholder_word_before" ] && ! files_placeholder_ends_with_word_end "$files_placeholder_word_before"; do
+  while [ -n "$files_placeholder_word_before" ] && ! files_placeholder_ends_with_word_boundary "$files_placeholder_word_before"; do
     files_placeholder_last="${files_placeholder_word_before#"${files_placeholder_word_before%?}"}$files_placeholder_last"
     files_placeholder_word_before="${files_placeholder_word_before%?}"
   done
@@ -211,7 +208,7 @@ files_placeholder_follows_an_argument() {
 
 files_placeholder_ends_a_word() {
   files_placeholder_after_word="${2#"$1"}"
-  [ -z "$files_placeholder_after_word" ] || files_placeholder_begins_with_word_end "$files_placeholder_after_word"
+  [ -z "$files_placeholder_after_word" ] || files_placeholder_begins_with_word_boundary "$files_placeholder_after_word"
 }
 
 files_placeholder_step_when_word_ends() {

@@ -5,7 +5,8 @@
 # inside those quotes, the spacing and text joined after {files}, expands each with hostile file
 # names and runs the result as the hooks and verify do. A spacing puts one blank, two blanks or a
 # space and a tab between the shell and -c, between -c and the script and before {files}, each run
-# once at each place, or a tab or a newline before {files}. Every command must be refused, or
+# once at each place, or a tab or a newline before {files}. Each of ; & | < > ( ) and a newline also
+# sits directly before {files} and, but for (, directly after it. Every command must be refused, or
 # deliver every name intact as one word and run nothing. Run from anywhere. Exit 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -44,10 +45,12 @@ fragments() {
 FRAGMENTS
 }
 
+inner_quote() {
+  case "$1" in single) printf "'" ;; double) printf '"' ;; esac
+}
+
 script_text() {
-  case "$1" in
-    single) script_quote="'" ;; double) script_quote='"' ;; *) script_quote="" ;;
-  esac
+  script_quote="$(inner_quote "$1")"
   case "$2" in
     inside) printf 'record %s %s%s%s{files}%s' "$3" "$script_quote" "$4" "$5" "$script_quote" ;;
     after) printf 'record %s %s%s%s%s{files}' "$3" "$script_quote" "$4" "$script_quote" "$5" ;;
@@ -114,8 +117,29 @@ inner_quoting_commands() {
   for inner_quoting in none single double; do placement_commands "$1" "$inner_quoting"; done
 }
 
+operator_before_files() {
+  printf 'record x%s{files}' "$1"
+}
+
+operator_after_files() {
+  case "$1" in
+    '<'|'>') printf 'record {files}%s/dev/null' "$1" ;;
+    ')') printf '(record {files})' ;;
+    *) printf 'record {files}%swait' "$1" ;;
+  esac
+}
+
+operator_commands() {
+  for operator in ';' '&' '|' '<' '>' '(' ')' "$newline"; do
+    tally_outcome "$(configured_command "$1" "$(operator_before_files "$operator")" one)"
+    [ "$operator" = '(' ] || tally_outcome "$(configured_command "$1" "$(operator_after_files "$operator")" one)"
+  done
+}
+
 tally_generated_commands() {
-  for generated_outer in $outer_quotings; do inner_quoting_commands "$generated_outer"; done
+  for generated_outer in $outer_quotings; do
+    inner_quoting_commands "$generated_outer"; operator_commands "$generated_outer"
+  done
 }
 
 run_expanded() {
@@ -228,4 +252,14 @@ check "FilesInACommandSubstitutionInDoubleQuotes_IsRefused: a quote inside it do
   refuses 'record "$(echo " x {files} ")"'
 check "FilesAfterAComment_IsRefused: a commented-out {files} would hand the command no name" refuses 'record # x {files}'
 check "QuoteLeftOpen_IsRefused: the command cannot be read" refuses "record {files} 'x"
+refusal_names_the_accepted_forms() {
+  refusal="$(files_placeholder_expanded 'true; {files}' 2>&1 >/dev/null)"
+  for accepted_form in 'word of its own' 'sh -c or bash -c' '"$@"' 'last word'; do
+    case "$refusal" in *"$accepted_form"*) ;; *) return 1 ;; esac
+  done
+}
+check "RefusedPlacement_NamesTheAcceptedForms: the message says where {files} may go and how to pass names elsewhere" \
+  refusal_names_the_accepted_forms
+check "FilesBeforeARedirection_DeliversEveryName: a > ends the word {files}" delivers "record {files}>/dev/null"
+check "FilesBeforeAClosingParenthesis_DeliversEveryName: a ) ends the word {files}" delivers "(record {files})"
 exit "$((fails > 0))"
