@@ -30,7 +30,7 @@ expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run lea
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
 rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
-limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800; grace_seconds=10; stop_bound_seconds=1
+limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800; grace_seconds=5; stop_bound_seconds=1
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"
 sleep $child_seconds &
@@ -62,6 +62,12 @@ for bad in 0 abc -1 1.5 ''; do
   expect "TimeLimit${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_TIME_LIMIT_SECONDS.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES FLOW_SUITE_TIME_LIMIT_SECONDS
+for bad in 0 abc -1 1.5 ''; do
+  export FLOW_SUITE_STOP_GRACE_SECONDS="$bad"
+  expect "StopGrace${bad:-Empty}_Fails because only a whole number of seconds from 1 is a grace time" "$(result)" fail
+  expect "StopGrace${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_STOP_GRACE_SECONDS.*'$bad'")" 1
+done
+unset FLOW_SUITE_STOP_GRACE_SECONDS
 rm "$work/child" "$work/cleanup"
 git restore plugins/flow/tests/base-claim.sh plugins/flow/tests/sessions.sh
 cat > "$work/deaf-suite.sh" <<STUB
@@ -79,6 +85,7 @@ import sys
 import time
 from pathlib import Path
 sys.path.append(sys.argv[1])
+import flow_clock
 import flow_process_groups
 import flow_selection
 import flow_suites
@@ -105,10 +112,10 @@ class ClockThatStepsOnceTheSuiteIsReady:
         self.awaited = awaited
         self.probe = probe
 
-    def now(self) -> flow_suites.Instant:
-        return flow_suites.Instant(self.seconds)
+    def now(self) -> flow_clock.Instant:
+        return flow_clock.Instant(self.seconds)
 
-    def sleep(self, duration: flow_suites.Duration) -> None:
+    def sleep(self, duration: flow_clock.Duration) -> None:
         if self.seconds >= self.awaits_from:
             self.awaits_from = math.inf
             wait_until_ended(self.awaited, self.probe)
@@ -166,10 +173,12 @@ cat > "$work/membership.py" <<'PY'
 import sys
 from pathlib import Path
 sys.path.append(sys.argv[1])
+import flow_clock
 import flow_process_groups
 
+LISTING_LIMIT_SECONDS = 10
 reader, group = sys.argv[2], flow_process_groups.ProcessGroupId(int(sys.argv[3]))
-membership = flow_process_groups.table_membership(group, flow_process_groups.ProcessTable(Path(sys.argv[4]))) if reader == "table" else flow_process_groups.listing_membership(group)
+membership = flow_process_groups.table_membership(group, flow_process_groups.ProcessTable(Path(sys.argv[4]))) if reader == "table" else flow_process_groups.listing_membership(group, flow_clock.Duration(LISTING_LIMIT_SECONDS))
 print(membership.value)
 PY
 member_group=77; other_group=88; fake_table="$work/fake-proc"; name_not_utf8="$(printf 'cut\303')"
