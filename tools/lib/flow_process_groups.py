@@ -45,7 +45,7 @@ class Membership(Enum):
     UNKNOWN = "unknown"
 
 
-def signal_group(group: ProcessGroupId, sent: signal.Signals) -> bool:
+def _signal_group(group: ProcessGroupId, sent: signal.Signals) -> bool:
     try:
         os.killpg(group.number, sent)
     except (ProcessLookupError, PermissionError):
@@ -123,8 +123,8 @@ def _group_ended(led: LedGroup, table: ProcessTable) -> bool:
 
 def stop_groups(groups: "frozenset[LedGroup]", grace: Duration, clock: Clock, table: ProcessTable) -> None:
     for led in groups:
-        signal_group(led.group, signal.SIGTERM)
+        _signal_group(led.group, signal.SIGTERM)
     ending_within(lambda: all(_group_ended(led, table) for led in groups), grace, clock)
     for led in groups:
         if not _group_ended(led, table):
-            signal_group(led.group, signal.SIGKILL)
+            _signal_group(led.group, signal.SIGKILL)

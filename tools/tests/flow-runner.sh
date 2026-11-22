@@ -30,7 +30,38 @@ expect 'RunnerGivenTerm_EndsTheChildCommandsOfItsSuite because a stopped run lea
 expect 'RunnerGivenTerm_NamesTheStoppedSuite because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
 rm "$work/ticks" "$work/child"
 git restore plugins/flow/tests/sessions.sh
-limit_seconds=3; cleanup_seconds=1; default_limit_seconds=1800; grace_seconds=10; stop_bound_seconds=1
+stop_grace_seconds=2; stop_margin_seconds=3; cleanup_seconds=1; signal_exit_base=128
+cat > "$suite/sessions.sh" <<STUB
+trap '' TERM
+echo "  ok   Stub_DeafToTerm"
+echo \$\$ > "$work/deaf-suite"
+: > "$work/deaf-suite-ready"
+sleep $child_seconds
+STUB
+cat > "$suite/base-claim.sh" <<STUB
+sh -c 'trap "" TERM; echo \$\$ > "$work/deaf-descendant"; : > "$work/deaf-descendant-ready"; exec sleep $child_seconds' &
+sleep $child_seconds
+STUB
+cat > "$suite/verify-scope.sh" <<STUB
+(trap 'sleep $cleanup_seconds; echo cleaned > "$work/cleanup"; exit 0' TERM; : > "$work/cleaning-suite-ready"; sleep $child_seconds) &
+sleep $child_seconds
+STUB
+all_ready() { for ready in deaf-suite-ready deaf-descendant-ready cleaning-suite-ready; do [ -f "$work/$ready" ] || return 1; done; }
+FLOW_SUITE_STOP_GRACE_SECONDS="$stop_grace_seconds" python3 -I "$project/tools/lib/flow_suites.py" since "$base" > "$work/output" 2>&1 &
+runner=$!
+ticks=0; until all_ready || [ "$ticks" -ge "$wait_ticks" ]; do sleep "$poll_seconds"; ticks=$((ticks + 1)); done
+kill -TERM "$runner"; term_sent="$(date +%s)"
+runner_state="$(process_state "$runner")"; runner_seconds="$(($(date +%s) - term_sent))"
+if wait "$runner"; then runner_code=0; else runner_code=$?; fi
+expect 'RunnerGivenTermWhileASuiteIgnoresTerm_EndsWithinTheGraceTime because a suite deaf to TERM must not hold up cancellation' "$(if [ "$runner_state" = ended ] && [ "$runner_seconds" -le "$((stop_grace_seconds + stop_margin_seconds))" ]; then echo within-grace; else echo "$runner_state after ${runner_seconds}s"; fi)" within-grace
+expect 'RunnerGivenTermWhileASuiteIgnoresTerm_EndsThatSuite because a stopped run leaves no suite behind' "$(process_state "$(cat "$work/deaf-suite")")" ended
+expect 'RunnerGivenTermWhileADescendantIgnoresTerm_EndsThatDescendant because a stopped run leaves no check behind' "$(process_state "$(cat "$work/deaf-descendant")")" ended
+expect 'RunnerGivenTermWhileASuiteIgnoresTerm_ExitsWith128PlusTheSignalNumber because a caller reads the exit code to see the run was stopped' "$runner_code" "$((signal_exit_base + $(kill -l TERM)))"
+expect 'RunnerGivenTermWhileASuiteIgnoresTerm_NamesThatSuiteAsStopped because the owner must see where the run stood' "$(grep -cx 'flow: sessions stopped' "$work/output")" 1
+expect 'RunnerGivenTermWhileASuiteCleansUp_LetsItFinishItsCleanup because the grace time lasts until the whole group is gone' "$(cat "$work/cleanup" 2>/dev/null)" cleaned
+rm "$work/deaf-suite" "$work/deaf-suite-ready" "$work/deaf-descendant" "$work/deaf-descendant-ready" "$work/cleaning-suite-ready" "$work/cleanup"
+git restore plugins/flow/tests/sessions.sh plugins/flow/tests/base-claim.sh plugins/flow/tests/verify-scope.sh
+limit_seconds=3; default_limit_seconds=1800; grace_seconds=10; stop_bound_seconds=1
 cat > "$suite/base-claim.sh" <<STUB
 echo "  ok   Stub_CheckBeforeTheHang"
 sleep $child_seconds &
@@ -62,6 +93,12 @@ for bad in 0 abc -1 1.5 ''; do
   expect "TimeLimit${bad:-Empty}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_TIME_LIMIT_SECONDS.*'$bad'")" 1
 done
 unset FLOW_SUITE_LANES FLOW_SUITE_TIME_LIMIT_SECONDS
+for bad in 0 abc; do
+  export FLOW_SUITE_STOP_GRACE_SECONDS="$bad"
+  expect "StopGrace${bad}_Fails because only a whole number of seconds from 1 is a grace time" "$(result)" fail
+  expect "StopGrace${bad}_NamesTheVariableAndTheValue because the owner must see what to fix" "$(tail -1 "$work/output" | grep -c -e "FLOW_SUITE_STOP_GRACE_SECONDS.*'$bad'")" 1
+done
+unset FLOW_SUITE_STOP_GRACE_SECONDS
 rm "$work/child" "$work/cleanup"
 git restore plugins/flow/tests/base-claim.sh plugins/flow/tests/sessions.sh
 cat > "$work/deaf-suite.sh" <<STUB
