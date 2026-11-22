@@ -25,7 +25,7 @@ diff_args="$(commit_diff_args "$seg")"
 work_dir="$(mktemp -d)" || exit 0
 trap 'rm -rf "$work_dir"' EXIT
 mkdir "$work_dir/content"
-set -f   # the globs stay literal
+set -f
 hits=""
 count="$(json_length "$config" "languages")"
 i=0
@@ -42,13 +42,13 @@ while [ "$i" -lt "$count" ]; do
   i=$((i + 1))
   [ -n "$line_tok" ] && [ -n "$globs" ] || continue
   # shellcheck disable=SC2086
-  diff="$(git -c core.quotePath=false diff $diff_args --diff-filter=ACMR -U1 --no-color -- $globs 2>/dev/null || true)"
+  diff="$(git -c core.quotePath=false diff $diff_args --diff-filter=ACMRT -U1 --no-color -- $globs 2>/dev/null || true)"
   [ -n "$diff" ] || continue
   # shellcheck disable=SC2086
-  git -c core.quotePath=false diff $diff_args --name-only --diff-filter=ACMR -- $globs > "$work_dir/names" 2>/dev/null || true
+  git -c core.quotePath=false diff $diff_args --name-only --diff-filter=ACMRT -- $globs > "$work_dir/names" 2>/dev/null || true
   if [ "$diff_args" = "--cached" ]; then
     # shellcheck disable=SC2086
-    git diff $diff_args -z --name-only --diff-filter=ACMR -- $globs > "$work_dir/names-nul" 2>/dev/null || true
+    git diff $diff_args -z --name-only --diff-filter=ACMRT -- $globs > "$work_dir/names-nul" 2>/dev/null || true
     git -c core.symlinks=false checkout-index -f -z --stdin --prefix="$work_dir/content/" < "$work_dir/names-nul" \
       || block "the staged content could not be read" "  git checkout-index failed on the staged files."
     committed_content_root="$work_dir/content/"
@@ -63,17 +63,23 @@ while [ "$i" -lt "$count" ]; do
       }
       return ""
     }
-    function unquote(name,   unquoted, position, character, escaped, octal) {
+    function unquote(name,   unquoted, position, character) {
       if (substr(name, 1, 1) != "\"") return name
       name = substr(name, 2, length(name) - 2); unquoted = ""
       for (position = 1; position <= length(name); position++) {
         character = substr(name, position, 1)
         if (character != "\\") { unquoted = unquoted character; continue }
-        escaped = substr(name, ++position, 1)
-        if (escaped ~ /[0-7]/) { octal = substr(name, position, 3); position += 2; unquoted = unquoted sprintf("%c", octal_value(octal)) }
-        else unquoted = unquoted (escaped == "t" ? "\t" : escaped == "n" ? "\n" : escaped)
+        unquoted = unquoted escape_text(substr(name, position + 1, 3))
+        position += escape_width(substr(name, position + 1, 1))
       }
       return unquoted
+    }
+    function next_name(   raw_name) { return (getline raw_name < names_path) > 0 ? unquote(raw_name) : "" }
+    function escape_width(first) { return first ~ /[0-7]/ ? 3 : 1 }
+    function escape_text(after_backslash,   first) {
+      first = substr(after_backslash, 1, 1)
+      if (first ~ /[0-7]/) return sprintf("%c", octal_value(after_backslash))
+      return first == "t" ? "\t" : first == "n" ? "\n" : first
     }
     function octal_value(digits,   value, position) { value = 0; for (position = 1; position <= length(digits); position++) value = value * 8 + substr(digits, position, 1); return value }
     function doc_allowed(file, line,   path, l, i, k, indentation, line_indent, kind, lines) {
@@ -106,7 +112,7 @@ while [ "$i" -lt "$count" ]; do
       return 0
     }
     function is_public(b) { return pub != "" && b ~ ("(^|[^A-Za-z0-9_])" pub "([^A-Za-z0-9_]|$)") }
-    /^diff --git / { in_hunk = 0; f = ""; if ((getline raw_name < names_path) > 0) f = unquote(raw_name); next }
+    /^diff --git / { in_hunk = 0; if ($0 != previous_header) f = next_name(); previous_header = $0; next }
     !in_hunk && /^(---|\+\+\+) / { next }
     /^@@ /     { in_hunk = 1; flush(); if (match($0, /\+[0-9]+/)) n = substr($0, RSTART + 1, RLENGTH - 1) + 0; next }
     /^\+/ {

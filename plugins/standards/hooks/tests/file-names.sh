@@ -212,6 +212,17 @@ check "CommentHook_ForgedHeaderLineStillBlocks: the line comment was reported an
 check "CommentHook_ForgedHeaderLineKeepsTheRealName: the report names sub/Forge.cs and not the forged name" sh -c 'grep -qF "sub/Forge.cs:3" "$1" && ! grep -qF "forged.cs:" "$1"' sh "$work/stderr"
 check "CommentHook_NestedFileIsCheckedBesideARootFile: a root .cs file does not hide sub/Forge.cs" grep -qF 'sub/Forge.cs' "$work/stderr"
 
+echo "check-comments: a symlink replaced by a regular file"
+git reset -q --hard "$base"
+ln -s Seed.cs Linked.cs
+git add -A && git commit -qm "symlink"
+rm Linked.cs
+printf 'class Linked {\n  // note\n}\n' > Linked.cs
+git add -A
+run_hook check-comments.sh; type_change_status=$?
+check "CommentHook_TypeChangedFileIsChecked: a line comment in a file that replaced a symlink blocks the commit" [ "$type_change_status" -eq 2 ]
+check "CommentHook_TypeChangedFileIsNamed: the report names Linked.cs with its line" grep -qF 'Linked.cs:2' "$work/stderr"
+
 echo "check-range: a line comment in a special name blocks"
 git reset -q --hard "$base"
 printf 'class A {\n  // note\n}\n' > 'with space.cs'

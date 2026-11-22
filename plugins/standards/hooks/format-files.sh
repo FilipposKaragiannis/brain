@@ -38,23 +38,43 @@ backslash_escape_names_space_separated() {
   done
 }
 
+quote_state_after() {
+  case "$1:$2" in
+    none:"'") printf single ;;
+    none:'"') printf double ;;
+    single:"'"|double:'"') printf none ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+begins_an_escape() {
+  case "$1:$2" in none:'\'|double:'\') return 0 ;; esac
+  return 1
+}
+
+files_placeholder_for_quote_state() {
+  case "$1" in
+    none) printf '"$@"' ;;
+    single) printf '%s' "'\"\$format_names_escaped\"'" ;;
+    double) printf '%s' '$format_names_escaped' ;;
+  esac
+}
+
 expand_files_placeholder_for_its_quote() {
   expand_rest="$1"; expand_state=none; expand_result=""
   while [ -n "$expand_rest" ]; do
-    case "$expand_state:$expand_rest" in
-      none:'{files}'*) expand_result="$expand_result\"\$@\""; expand_rest="${expand_rest#'{files}'}"; continue ;;
-      single:'{files}'*) expand_result="$expand_result'\"\$format_names_escaped\"'"; expand_rest="${expand_rest#'{files}'}"; continue ;;
-      double:'{files}'*) expand_result="$expand_result\$format_names_escaped"; expand_rest="${expand_rest#'{files}'}"; continue ;;
+    case "$expand_rest" in
+      '{files}'*)
+        expand_result="$expand_result$(files_placeholder_for_quote_state "$expand_state")"
+        expand_rest="${expand_rest#'{files}'}"; continue ;;
     esac
     expand_tail="${expand_rest#?}"; expand_character="${expand_rest%"$expand_tail"}"
-    case "$expand_state:$expand_character" in
-      none:"'") expand_state=single ;;
-      none:'"') expand_state=double ;;
-      single:"'"|double:'"') expand_state=none ;;
-      none:'\'|double:'\')
-        expand_result="$expand_result$expand_character"; expand_rest="$expand_tail"
-        expand_tail="${expand_rest#?}"; expand_character="${expand_rest%"$expand_tail"}" ;;
-    esac
+    if begins_an_escape "$expand_state" "$expand_character"; then
+      expand_result="$expand_result$expand_character"; expand_rest="$expand_tail"
+      expand_tail="${expand_rest#?}"; expand_character="${expand_rest%"$expand_tail"}"
+    else
+      expand_state="$(quote_state_after "$expand_state" "$expand_character")"
+    fi
     expand_result="$expand_result$expand_character"; expand_rest="$expand_tail"
   done
   printf '%s' "$expand_result"
