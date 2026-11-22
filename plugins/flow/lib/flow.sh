@@ -26,6 +26,7 @@ FLOW_GIT_SEARCH_PATH="$PATH"
 export FLOW_GIT_PROGRAM FLOW_GIT_SEARCH_PATH
 [ "$FLOW_GIT_PROGRAM" = git ] || git() { "$_flow_xcode_git" "$@"; }
 
+_flow_owner_only_umask=077
 _flow_python_cache_folder=""
 case "${XDG_CACHE_HOME:-}" in
   /*) _flow_python_cache_folder="$XDG_CACHE_HOME/flow/python" ;;
@@ -33,7 +34,7 @@ case "${XDG_CACHE_HOME:-}" in
 esac
 if [ -n "$_flow_python_cache_folder" ]; then
   cached_python3() {
-    [ -d "$_flow_python_cache_folder" ] || (umask 077 && mkdir -p "$_flow_python_cache_folder") 2>/dev/null || true
+    [ -d "$_flow_python_cache_folder" ] || (umask "$_flow_owner_only_umask" && mkdir -p "$_flow_python_cache_folder") 2>/dev/null || true
     python3 -X "pycache_prefix=$_flow_python_cache_folder" "$@"
   }
 else
