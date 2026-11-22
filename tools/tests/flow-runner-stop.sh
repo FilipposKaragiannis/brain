@@ -176,7 +176,7 @@ running = flow_running_suites.RunningSuites()
 if when_tracked == AFTER_THE_CLOSE:
     running.close()
 with subprocess.Popen(["sleep", suite_seconds], start_new_session=True) as started:
-    with running.track(flow_process_groups.LedGroup(started, flow_process_groups.ProcessGroupId(started.pid)), flow_clock.Duration(float(time_limit_seconds))) as admitted:
+    with running.track_or_kill_after_the_close(flow_process_groups.LedGroup(started, flow_process_groups.ProcessGroupId(started.pid)), flow_clock.Duration(float(time_limit_seconds))) as admitted:
         print(fate_killing_a_survivor(started), f"{admitted.time_limit.seconds:g}")
 PY
 tracked_after_the_close="$(python3 -I -B "$work/tracked-suite.py" "$project/tools/lib" "$child_seconds" "$time_limit_seconds" after-the-close 2>&1)"

@@ -36,7 +36,7 @@ class RunningSuites:
         self._lock = threading.RLock()
 
     @contextmanager
-    def track(self, suite: LedGroup, time_limit: Duration) -> Iterator[Admitted]:
+    def track_or_kill_after_the_close(self, suite: LedGroup, time_limit: Duration) -> Iterator[Admitted]:
         with self._lock:
             self._suites.add(suite)
             admitted = Admitted(suite, time_limit) if self._admission is _Admission.OPEN else _killed_at_once(suite)

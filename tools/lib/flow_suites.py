@@ -110,7 +110,7 @@ def _run_suite(name: SuiteName, command: SuiteCommand, settings: Settings, lanes
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
     _announce(lanes, f"flow: {name.text} started")
     with (lanes.directory / name.text).open("wb") as output:
-        with subprocess.Popen(_arguments(command), env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track(LedGroup(process, ProcessGroupId(process.pid)), settings.time_limit) as admitted:
+        with subprocess.Popen(_arguments(command), env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track_or_kill_after_the_close(LedGroup(process, ProcessGroupId(process.pid)), settings.time_limit) as admitted:
             ending = _wait_or_stop_at(admitted, settings)
             code = process.wait()
     return _SuiteOutcome(code, Duration(settings.clock.now().seconds - started.seconds), ending)
