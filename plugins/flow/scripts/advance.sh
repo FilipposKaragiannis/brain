@@ -221,6 +221,7 @@ fi
 case "$status" in
   gate)
     [ -n "$gate" ] || gate="ambiguity"
+    gate_known "$gate" || die "the result of step $step names a gate profiles.json does not have; nothing raised, fix $reports/$step.json or pass --gate" 2
     raise_asked "$gate" "${message:-$summary}"
     step_write "$item" "step=$step" >/dev/null
     mkdir -p "$home/asked" && printf '%s %s\n' "$step" "$gate" > "$asked_file"

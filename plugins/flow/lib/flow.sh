@@ -518,6 +518,8 @@ profile_select() {
   esac
 }
 
+# gate_known <gate>: true when the name is a gate of profiles.json.
+gate_known() { python3 -I -c 'import json, sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["gates"] else 1)' "$FLOW_PLUGIN/profiles.json" "$1"; }
 profile_steps() { json_list "$(cat "$FLOW_PLUGIN/profiles.json")" "profiles.$1"; }
 
 step_field() { json_get "$(cat "$FLOW_PLUGIN/profiles.json")" "steps.$1.$2"; }
