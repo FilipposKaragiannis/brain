@@ -69,28 +69,28 @@ while [ "$language_index" -lt "$count" ]; do
       while (length(name) < byte_count) { getline continuation < names_path; name = name "\n" continuation }
       return name
     }
-    function read_committed_lines(file,   path, text, count) {
-      split("", committed_lines)
+    function lines_read_into(lines, file,   path, text, count) {
+      split("", lines)
       path = committed_content_root file
-      count = 0; while ((getline text < path) > 0) committed_lines[++count] = text
+      count = 0; while ((getline text < path) > 0) lines[++count] = text
       close(path)
       return count
     }
     function indentation_of(text) { match(text, /^[ \t]*/); return RLENGTH }
-    function outer_kind(above, indentation,   kind) {
+    function outer_kind(lines, above, indentation,   kind) {
       for (; above >= 1; above--) {
-        if (committed_lines[above] ~ /^[ \t]*$/ || indentation_of(committed_lines[above]) >= indentation) continue
-        kind = kind_of(committed_lines[above]); if (kind != "") return kind
+        if (lines[above] ~ /^[ \t]*$/ || indentation_of(lines[above]) >= indentation) continue
+        kind = kind_of(lines[above]); if (kind != "") return kind
       }
       return ""
     }
-    function declaration_or_enclosing_kind(line,   kind) {
-      kind = kind_of(committed_lines[line]); if (kind != "") return kind
-      return outer_kind(line - 1, indentation_of(committed_lines[line]))
+    function declaration_or_enclosing_kind(lines, line,   kind) {
+      kind = kind_of(lines[line]); if (kind != "") return kind
+      return outer_kind(lines, line - 1, indentation_of(lines[line]))
     }
-    function doc_allowed(file, line,   kind) {
-      if (kind_count == 0 || line > read_committed_lines(file)) return 0
-      kind = declaration_or_enclosing_kind(line)
+    function doc_allowed(file, line,   kind, committed_lines) {
+      if (kind_count == 0 || line > lines_read_into(committed_lines, file)) return 0
+      kind = declaration_or_enclosing_kind(committed_lines, line)
       return kind != "" && (kind in allowed_kind)
     }
     function settle(body) {
