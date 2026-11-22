@@ -214,10 +214,12 @@ esac
 
 ref="$base"; git show-ref --verify --quiet "refs/remotes/origin/$base" && ref="origin/$base"
 merge_base="$(git merge-base "$ref" HEAD 2>/dev/null || echo "$ref")"
+base_commit="$(git rev-parse --verify --quiet "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
 changed="$(git diff --no-renames --name-only "$merge_base" HEAD 2>/dev/null; git diff --no-renames --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null)"
 changed="$(printf '%s\n' "$changed" | grep -v '^$' | grep -v '^\.flow/' | sort -u)"
 std=""; [ -f .standards/config.json ] && std="$(cat .standards/config.json)"
 rm -f "$log" "$failed_file"; (set -C; : > "$log") || die "could not create the verify log $log"
+[ "$base_commit" != unavailable ] || printf 'the comparison base %s cannot be resolved: every check with paths runs, and {verify_base} is unavailable\n' "$base" >> "$log"
 attempts="$(next_attempt)"
 overall="pass"
 run_started="$(now_seconds)"
@@ -248,7 +250,8 @@ skipped() {
   record "$1" skipped "" "$2" 0 ""
 }
 changed_matches() {
-  # changed_matches <globs, one per line>: true when a changed file matches one of them.
+  # changed_matches <globs, one per line>: true when a changed file matches one of them, or the base is unavailable.
+  [ "$base_commit" != unavailable ] || return 0
   while IFS= read -r g; do
     [ -n "$g" ] || continue
     while IFS= read -r f; do
@@ -288,7 +291,6 @@ scoped_check() {
   if [ -n "$3" ] && ! changed_matches "$3"; then skipped "$1" "no changed file under its paths"; return; fi
   case "$2" in
     *'{verify_base}'*)
-      base_commit="$(git rev-parse --verify "$merge_base^{commit}" 2>/dev/null)" || base_commit=unavailable
       set -- "$1" "$(printf '%s\n' "$2" | sed "s/{verify_base}/$base_commit/g")" "$3" "$4"
       ;;
   esac
@@ -366,7 +368,7 @@ report_failed() {
   fail_report report "could not build the report: $cause" "The report could not be built: $cause"
   exit 1
 }
-err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$merge_base" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
+err="$(python3 -I "$FLOW_PLUGIN/scripts/_verify_report.py" "$records" "$changed_list" "$reports" "$overall" "$attempts" "$base" "$base_commit" "$head_sha" "$feel" "$log" "$timings" "$(( $(now_seconds) - run_started ))" 2>&1 >/dev/null)" \
   || report_failed "$(printf '%s\n' "${err:-the report builder exited non-zero}" | grep -v '^ ' | tail -1 | tr '\n' ' ')"
 echo "verify: $overall (attempt $attempts); report $reports/verify.json"
 [ "$overall" = "pass" ]
