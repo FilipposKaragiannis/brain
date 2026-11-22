@@ -3,9 +3,9 @@
 FLOW_SUITE_LANES sets how many suites run at once, 3 when unset. FLOW_SUITE_TIME_LIMIT_SECONDS
 sets how long one suite may run, 1800 when unset. Each suite runs in a process group of its own.
 The runner prints a line when a suite starts, and the suite's output with its result when it
-ends. A suite still running at the limit has its process group ended, its output so far printed,
-and fails. A TERM, INT or HUP prints the output so far of each suite still running, ends the
-process group of each, then ends the run.
+ends. A suite still running at the limit has its process group ended, what is left of the group
+killed after a grace time, its output so far printed, and fails. A TERM, INT or HUP prints the
+output so far of each suite still running, ends the process group of each, then ends the run.
 """
 import json
 import os
@@ -15,8 +15,9 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from fnmatch import fnmatchcase
@@ -61,10 +62,30 @@ class Settings:
     clock: Callable[[], float]
 
 
+class RunningSuites:
+    def __init__(self) -> None:
+        self._processes: "set[subprocess.Popen]" = set()
+        self._lock = threading.RLock()
+
+    @contextmanager
+    def track(self, process: subprocess.Popen) -> Iterator[None]:
+        with self._lock:
+            self._processes.add(process)
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._processes.discard(process)
+
+    def still_running(self) -> "tuple[subprocess.Popen, ...]":
+        with self._lock:
+            return tuple(self._processes)
+
+
 @dataclass(frozen=True)
 class Lanes:
     directory: Path
-    running: set
+    running: RunningSuites
     output: threading.Lock
 
 
@@ -170,21 +191,25 @@ def announce(lanes: Lanes, line: str) -> None:
         print(line, flush=True)
 
 
+def ending_within(process: subprocess.Popen, seconds: int) -> Ending:
+    try:
+        process.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        return Ending.TIMED_OUT
+    return Ending.EXITED
+
+
 def stop_at_limit(process: subprocess.Popen) -> None:
     end_process_group(process, signal.SIGTERM)
-    try:
-        process.wait(timeout=STOP_GRACE_SECONDS)
-    except subprocess.TimeoutExpired:
-        end_process_group(process, signal.SIGKILL)
+    ending_within(process, STOP_GRACE_SECONDS)
+    end_process_group(process, signal.SIGKILL)
 
 
 def wait_within(process: subprocess.Popen, limit_seconds: int) -> Ending:
-    try:
-        process.wait(timeout=limit_seconds)
-    except subprocess.TimeoutExpired:
+    ending = ending_within(process, limit_seconds)
+    if ending is Ending.TIMED_OUT:
         stop_at_limit(process)
-        return Ending.TIMED_OUT
-    return Ending.EXITED
+    return ending
 
 
 def run_suite(name: str, command: tuple, settings: Settings, lanes: Lanes) -> SuiteOutcome:
@@ -192,11 +217,9 @@ def run_suite(name: str, command: tuple, settings: Settings, lanes: Lanes) -> Su
     environment = {key: os.environ[key] for key in ("HOME", "PATH", "TMPDIR", "LANG") if key in os.environ}
     announce(lanes, f"flow: {name} started")
     with (lanes.directory / name).open("wb") as output:
-        with subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process:
-            lanes.running.add(process)
+        with subprocess.Popen(command, env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True) as process, lanes.running.track(process):
             ending = wait_within(process, settings.limit_seconds)
             code = process.wait()
-    lanes.running.discard(process)
     return SuiteOutcome(code, settings.clock() - started, ending)
 
 
@@ -224,9 +247,9 @@ def end_process_group(process: subprocess.Popen, number: signal.Signals) -> None
         pass
 
 
-def report_stopped(number: int, workers: ThreadPoolExecutor, unfinished, directory: Path, running: set) -> None:
+def report_stopped(number: int, workers: ThreadPoolExecutor, unfinished, directory: Path, running: "tuple[subprocess.Popen, ...]") -> None:
     workers.shutdown(wait=False, cancel_futures=True)
-    for process in tuple(running):
+    for process in running:
         end_process_group(process, signal.SIGTERM)
     for name in sorted(name for name in unfinished if (directory / name).exists()):
         print_output(name, directory / name)
@@ -236,10 +259,10 @@ def report_stopped(number: int, workers: ThreadPoolExecutor, unfinished, directo
 
 def run_selected(suites: "dict[str, tuple]", directory: Path, settings: Settings) -> "list[str]":
     failures = {}
-    lanes = Lanes(directory, set(), threading.Lock())
+    lanes = Lanes(directory, RunningSuites(), threading.Lock())
     with ThreadPoolExecutor(max_workers=settings.lanes) as workers:
         for stop_signal in STOP_SIGNALS:
-            signal.signal(stop_signal, lambda number, frame: report_stopped(number, workers, suites.keys() - failures.keys(), directory, lanes.running))
+            signal.signal(stop_signal, lambda number, frame: report_stopped(number, workers, suites.keys() - failures.keys(), directory, lanes.running.still_running()))
         running = {workers.submit(run_suite, name, command, settings, lanes): name for name, command in suites.items()}
         for finished in as_completed(running):
             name = running[finished]
