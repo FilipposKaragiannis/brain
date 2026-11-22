@@ -4,8 +4,7 @@
 # Exit 1 on any failure.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
-P="$(cd "$here/.." && pwd)"
 case "$#" in
-  0) exec python3 -I "$P/../../tools/lib/flow_suites.py" all ;;
+  0) exec python3 -I "$here/../../../tools/lib/flow_suites.py" all ;;
   *) echo "usage: run.sh" >&2; exit 2 ;;
 esac
