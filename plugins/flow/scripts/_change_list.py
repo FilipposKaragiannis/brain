@@ -1,7 +1,7 @@
 """The changed file list verify reads, and whether it holds every change. See scripts/verify.sh.
 
   _change_list.py <log> <causes file> <base name> <base commit | unavailable> <claimed base>
-                  <recorded base> <fallback base>
+                  <recorded base> <fallback base> <recorded task branch>
       Lists the files changed since the base commit (none when it is unavailable), the files
       changed and not committed, and the untracked files, one git call each, with git's errors
       appended to the log. Prints each distinct name that is not under .flow/, in byte order, each
@@ -10,12 +10,17 @@
       output ended with a NUL. Exits 0 for a complete list, 4 when a listing failed or the base is
       unavailable or untrusted, and 3, printing no name, when a name holds U+001F itself, which
       cannot be told from the separator.
-      The claimed base is the claim's base when it chose the base name, else empty; the recorded
-      base is the item state's base, else empty; the fallback base is the config base. The base is
-      untrusted when it is the item's own branch: it names the current branch while that branch is
-      not the item's base (the recorded base, else the fallback), or its commit is HEAD while HEAD
-      holds commits the item's base does not. It is untrusted too when a claimed and a recorded
-      base differ: the claim sits in the worktree whose work is verified, the record does not.
+      The claimed base is the claim's base when verify read the claim, else empty; the recorded
+      base and task branch are the item state's, else empty; the fallback base is the config base.
+      Branches are read by their full ref, the remote's when origin has one, so no tag of the
+      same name stands in. The base is untrusted when it is the item's own branch: it names the
+      current branch or the recorded task branch while it is not the base outside the worktree
+      (the recorded base, else the fallback), or its commit is HEAD while HEAD holds commits the
+      item's base (the recorded base, else the claimed, else the fallback) does not. When a
+      claimed and a recorded base differ, the base name is empty and verify lists no committed
+      change, names both and judges the claimed base by its name alone: the claim sits in the
+      worktree whose work is verified, the record does not, and verify cannot tell which is the
+      item's.
 """
 from __future__ import annotations
 
@@ -37,6 +42,7 @@ UNAVAILABLE_COMMIT = "unavailable"
 CURRENT_BRANCH_ARGUMENTS = ("symbolic-ref", "--short", "-q", HEAD)
 HEAD_COMMIT_ARGUMENTS = ("rev-parse", "--verify", "-q", HEAD + "^{commit}")
 ORIGIN_BRANCH_PREFIX = "refs/remotes/origin/"
+LOCAL_BRANCH_PREFIX = "refs/heads/"
 GIT_SUCCESS = 0
 GIT_DID_NOT_RUN = -1
 FLOW_FOLDER = b".flow/"
@@ -44,11 +50,11 @@ NAME_TERMINATOR = b"\0"
 NAME_SEPARATOR = b"\x1f"
 CAUSE_SEPARATOR = "; "
 UNREADABLE_NAME_CAUSE = "a changed file name holds the character U+001F, which verify cannot hand to a command"
-ARGUMENT_COUNT = 7
+ARGUMENT_COUNT = 8
 USAGE_EXIT = 2
 USAGE = (
     "usage: _change_list.py <log> <causes file> <base name> <base commit | unavailable>"
-    " <claimed base> <recorded base> <fallback base>"
+    " <claimed base> <recorded base> <fallback base> <recorded task branch>"
 )
 
 
@@ -123,6 +129,14 @@ class UnresolvedBase:
 
 
 @dataclass(frozen=True)
+class DisputedBase:
+    causes: tuple[str, ...]
+
+    def listed(self, log: BinaryIO) -> Listed:
+        return Listed(b"", self.causes)
+
+
+@dataclass(frozen=True)
 class GitAnswer:
     exit_code: int
     output: str
@@ -146,7 +160,7 @@ def branch_ref(name: str, log: BinaryIO) -> str:
     origin_ref = ORIGIN_BRANCH_PREFIX + name
     if git_answer(("show-ref", "--verify", "--quiet", origin_ref), log).exit_code == GIT_SUCCESS:
         return origin_ref
-    return name
+    return LOCAL_BRANCH_PREFIX + name
 
 
 def holds_head(name: str, log: BinaryIO) -> bool:
@@ -158,9 +172,13 @@ class BaseRecord:
     claimed: str
     recorded: str
     fallback: str
+    task_branch: str
+
+    def base_outside_the_worktree(self) -> str:
+        return self.recorded or self.fallback
 
     def item_base(self) -> str:
-        return self.recorded or self.fallback
+        return self.recorded or self.claimed or self.fallback
 
     def disagreement(self) -> tuple[str, ...]:
         if self.claimed and self.recorded and self.claimed != self.recorded:
@@ -168,26 +186,32 @@ class BaseRecord:
         return ()
 
 
+def own_branch_names(record: BaseRecord, log: BinaryIO) -> frozenset[str]:
+    return frozenset(name for name in (git_answer(CURRENT_BRANCH_ARGUMENTS, log).output, record.task_branch) if name)
+
+
 def is_own_branch(name: str, commit: str, record: BaseRecord, log: BinaryIO) -> bool:
-    current_branch = git_answer(CURRENT_BRANCH_ARGUMENTS, log).output
-    if current_branch and name == current_branch and current_branch != record.item_base():
+    if name != record.base_outside_the_worktree() and name in own_branch_names(record, log):
         return True
     head_commit = git_answer(HEAD_COMMIT_ARGUMENTS, log).output
     return commit == head_commit and not holds_head(record.item_base(), log)
 
 
-def untrusted_base_causes(name: str, commit: str, record: BaseRecord, log: BinaryIO) -> tuple[str, ...]:
-    own_branch = ("the comparison base %s is the item's own branch" % name,) if is_own_branch(name, commit, record, log) else ()
-    return own_branch + record.disagreement()
+def own_branch_causes(name: str, commit: str, record: BaseRecord, log: BinaryIO) -> tuple[str, ...]:
+    if is_own_branch(name, commit, record, log):
+        return ("the comparison base %s is the item's own branch" % name,)
+    return ()
 
 
-def comparison_base(name: str, commit: str) -> Union[ResolvedBase, UnresolvedBase]:
+def comparison_base(name: str, commit: str, record: BaseRecord) -> Union[ResolvedBase, UnresolvedBase, DisputedBase]:
+    if record.disagreement():
+        return DisputedBase(record.disagreement())
     if commit == UNAVAILABLE_COMMIT:
         return UnresolvedBase(name)
     return ResolvedBase(name, commit)
 
 
-def all_listed(base: Union[ResolvedBase, UnresolvedBase], log: BinaryIO) -> Listed:
+def all_listed(base: Union[ResolvedBase, UnresolvedBase, DisputedBase], log: BinaryIO) -> Listed:
     listed = (base.listed(log),) + tuple(listed_by(listing, log) for listing in WORKING_TREE_LISTINGS)
     return Listed(b"".join(each.names for each in listed), tuple(cause for each in listed for cause in each.causes))
 
@@ -224,12 +248,12 @@ def main(arguments: list[str]) -> int:
     if len(arguments) != ARGUMENT_COUNT:
         print(USAGE, file=sys.stderr)
         return USAGE_EXIT
-    log, causes_file, base_name, base_commit, claimed_base, recorded_base, fallback_base = arguments
-    record = BaseRecord(claimed_base, recorded_base, fallback_base)
+    log, causes_file, base_name, base_commit, claimed_base, recorded_base, fallback_base, task_branch = arguments
+    record = BaseRecord(claimed_base, recorded_base, fallback_base, task_branch)
     with open(log, "ab") as log_file:
-        untrusted = untrusted_base_causes(base_name, base_commit, record, log_file)
-        listed = all_listed(comparison_base(base_name, base_commit), log_file)
-        changed = changed_files(Listed(listed.names, untrusted + listed.causes))
+        own_branch = own_branch_causes(base_name or record.claimed, base_commit, record, log_file)
+        listed = all_listed(comparison_base(base_name, base_commit, record), log_file)
+        changed = changed_files(Listed(listed.names, own_branch + listed.causes))
     replaced_atomically(causes_file, CAUSE_SEPARATOR.join(changed.causes))
     sys.stdout.buffer.write(b"".join(name + NAME_SEPARATOR for name in changed.names))
     return changed.state.value
